@@ -152,20 +152,20 @@ where
     fn build_matrix_keys(&self) -> Result<(Vec<crate::cursor::MatrixKey>, usize), EngineError> {
         if self.input.full_pinyin() {
             // pinyin.cpp:1497-1525 fills the matrix from the indexed parser's
-            // keys, including initial-only keys accepted without INCOMPLETE.
-            // With no pre-parsed keys this is the parse's own graph, the one
-            // `SegmentGraph::build_with_options` gives for the raw input, so
-            // the cached graph serves it.
-            let graph = self.build_graph_at(0, self.input.as_bytes())?;
-            let matrix = build_scan_matrix(&graph, self.settings.options, true);
-            let keys = matrix
+            // keys, including initial-only keys accepted without INCOMPLETE;
+            // zhuyin.cpp:1886-1927 reads the one matrix its own parse
+            // filled. Both facades project their keys from the retained
+            // scan matrix, whichever transforms it carries.
+            let retained = self.retained_parse()?;
+            let keys = retained
+                .scan
                 .iter()
                 .flatten()
                 .map(|key| {
                     crate::cursor::MatrixKey::new(key.key, key.tone, key.syllable_start, key.to)
                 })
                 .collect();
-            return Ok((crate::cursor::in_column_order(keys), graph.consumed()));
+            return Ok((crate::cursor::in_column_order(keys), retained.matrix.bound));
         }
         crate::cursor::matrix_keys(self.input.as_bytes(), self.settings.options)
     }
@@ -203,14 +203,14 @@ where
         phrase: &oxpinyin_core::PhraseText,
         offset: usize,
     ) -> Result<(Option<usize>, bool), EngineError> {
-        // The working graph, not the parsed-only one `matrix_keys`
-        // builds: pre-parsed scheme segments keep their boundaries and
-        // gain no divided/resplit alternates, as every other law over
-        // the session's matrix has it.
-        let graph = self.build_graph_at(0, self.input.as_bytes())?;
-        let parsed = graph.consumed();
-        let matrix = build_scan_matrix(&graph, self.settings.options, self.input.full_pinyin());
-        let keys: Vec<crate::cursor::MatrixKey> = matrix
+        // The retained working matrix, not the parsed-only one `matrix_keys`
+        // builds for scheme modes: pre-parsed scheme segments keep their
+        // boundaries and gain no divided/resplit alternates, as every other
+        // law over the session's matrix has it.
+        let retained = self.retained_parse()?;
+        let parsed = retained.matrix.bound;
+        let keys: Vec<crate::cursor::MatrixKey> = retained
+            .scan
             .iter()
             .flatten()
             .map(|key| crate::cursor::MatrixKey::new(key.key, key.tone, key.syllable_start, key.to))
@@ -282,16 +282,8 @@ where
         // The exact chain drives the length when a scheme parse owns the
         // buffer: re-segmenting the joined text through the pinyin
         // inventory would under-report zhuyin-only spellings ("den" → 2).
-        self.build_graph_at(0, self.input.as_bytes())
-            .map_or(0, |graph| {
-                apostrophe_extended(
-                    self.input.as_bytes(),
-                    graph
-                        .fewest_keys(self.settings.incomplete())
-                        .last()
-                        .map_or(0, Edge::to),
-                )
-            })
+        self.selected_path()
+            .map_or(0, |selected| selected.parsed_len)
     }
 
     /// Rounds `offset` up to the next character boundary of the raw input.

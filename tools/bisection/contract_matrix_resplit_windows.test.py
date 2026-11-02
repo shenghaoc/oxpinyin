@@ -299,7 +299,19 @@ EXPECTED = [('matrix-resplit-pinyin-banangang-plain-exact',
              {'control': False, 'issues': ('682', '683'), 'mode': 'zhuyin'}),
             ('matrix-resplit-zhuyin-xian-tables-fuzzy',
              (),
-             {'control': False, 'issues': ('682', '683'), 'mode': 'zhuyin'})]
+             {'control': False, 'issues': ('682', '683'), 'mode': 'zhuyin'}),
+            ('matrix-resplit-surfaces-pinyin-xian',
+             (),
+             {'control': True, 'issues': ('1031',), 'mode': 'pinyin'}),
+            ('matrix-resplit-surfaces-pinyin-fangan',
+             (),
+             {'control': True, 'issues': ('1031',), 'mode': 'pinyin'}),
+            ('matrix-resplit-surfaces-zhuyin-xian',
+             (),
+             {'control': False, 'issues': ('1031',), 'mode': 'zhuyin'}),
+            ('matrix-resplit-surfaces-zhuyin-fangan',
+             (),
+             {'control': False, 'issues': ('1031',), 'mode': 'zhuyin'})]
 
 
 def declarations():

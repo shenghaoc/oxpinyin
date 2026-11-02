@@ -3739,7 +3739,7 @@ fn retained_matrix_keeps_leading_gaps_empty_and_invalidates_on_input_change() {
     let mut session = session();
     session.replace_raw("'ni''hao'").expect("parsed input");
     session.ensure_matrix().expect("retained matrix");
-    let matrix = session.input.matrix.as_ref().expect("matrix");
+    let matrix = &session.input.parse.get().expect("matrix").matrix;
     assert!(matrix.columns[0].is_empty());
     assert!(!matrix.zeros[0], "leading gap cannot carry a zero-key hop");
     assert!(
@@ -3755,7 +3755,7 @@ fn retained_matrix_keeps_leading_gaps_empty_and_invalidates_on_input_change() {
 
     session.replace_raw("nihao").expect("replacement");
     session.ensure_matrix().expect("replacement matrix");
-    let matrix = session.input.matrix.as_ref().expect("matrix");
+    let matrix = &session.input.parse.get().expect("matrix").matrix;
     assert!(
         !matrix.columns[0].is_empty(),
         "old leading gap must disappear"
@@ -3764,13 +3764,20 @@ fn retained_matrix_keeps_leading_gaps_empty_and_invalidates_on_input_change() {
         !matrix.zeros[3],
         "old separator must not survive replacement"
     );
+    session.matrix_keys().expect("key list");
+    assert!(session.input.keys.get().is_some());
     session.set_collapse_sentence_rows_to_best(true);
-    assert!(session.input.matrix.is_some());
-    assert!(session.input.ending_matrix.is_none());
-    session
-        .ensure_matrix()
-        .expect("zhuyin before-cursor matrix");
-    assert!(session.input.ending_matrix.is_some());
+    assert!(
+        session.input.parse.get().is_none() && session.input.keys.get().is_none(),
+        "the mode drops the retained matrix and its key list together"
+    );
+    session.ensure_matrix().expect("zhuyin matrix");
+    assert!(session.input.parse.get().is_some());
+    session.set_collapse_sentence_rows_to_best(true);
+    assert!(
+        session.input.parse.get().is_some(),
+        "an unchanged mode keeps the retained matrix"
+    );
 }
 
 #[test]
@@ -3834,14 +3841,12 @@ fn changing_sentence_collapse_rebuilds_full_pinyin_split_windows() {
                 .any(|row| row.text() == wanted),
             "zhuyin's full-pinyin matrix omits the split passes"
         );
-        assert!(session.input.matrix.is_some());
-        assert!(session.input.ending_matrix.is_some());
+        assert!(session.input.parse.get().is_some());
 
         session.set_collapse_sentence_rows_to_best(false);
         let rows = session.candidates_at(offset).expect("pinyin window");
         let row = rows.iter().find(|row| row.text() == wanted).expect(wanted);
         assert_eq!(row.consumed_bytes(), end - offset);
-        assert!(session.input.ending_matrix.is_none());
         assert_eq!(session.raw_input(), raw);
 
         session.set_collapse_sentence_rows_to_best(true);
@@ -3854,8 +3859,54 @@ fn changing_sentence_collapse_rebuilds_full_pinyin_split_windows() {
                 .any(|row| row.text() == wanted),
             "switching back must remove the pinyin split topology"
         );
-        assert!(session.input.ending_matrix.is_some());
     }
+}
+
+#[test]
+fn collapse_mode_selects_the_one_matrix_every_reader_projects() {
+    use oxpinyin_core::OptionBits;
+
+    // zhuyin.cpp:1017-1040 runs fill then fuzzy only, so the key list, the
+    // span check and the window scan of the collapse mode all see `xian`
+    // without its divided pair; the pinyin mode (pinyin.cpp:1514-1522)
+    // sees `xi` + `an` in all three.
+    let mut session = session();
+    session
+        .set_options(OptionBits::from_bits(0x18a))
+        .expect("options");
+    let spans = |session: &Session<Silent, Silent>| {
+        let (keys, parsed) = session.matrix_keys().expect("keys");
+        (
+            keys.iter()
+                .map(|key| (key.syllable_start(), key.end()))
+                .collect::<Vec<_>>(),
+            parsed,
+        )
+    };
+    session.replace_raw("xian").expect("parse");
+    let (pinyin_keys, parsed) = spans(&session);
+    assert_eq!(parsed, 4);
+    assert!(pinyin_keys.contains(&(2, 4)), "the divided `an` is a key");
+    assert!(session.spans_a_matrix_key(2).expect("span"));
+
+    session.set_collapse_sentence_rows_to_best(true);
+    assert!(
+        session.input.keys.get().is_none(),
+        "the mode change drops the projected key list"
+    );
+    let (zhuyin_keys, parsed) = spans(&session);
+    assert_eq!(parsed, 4);
+    assert_eq!(
+        zhuyin_keys,
+        [(0, 4)],
+        "no divided pair in the zhuyin matrix"
+    );
+    assert!(!session.spans_a_matrix_key(2).expect("span"));
+    assert_eq!(session.full_parsed_len(), 4);
+
+    session.set_collapse_sentence_rows_to_best(false);
+    assert_eq!(spans(&session).0, pinyin_keys, "pinyin topology returns");
+    assert!(session.spans_a_matrix_key(2).expect("span"));
 }
 
 #[test]
@@ -3891,7 +3942,7 @@ fn retained_exact_key_windows_search_the_reserved_end_slot() {
         ),
     ];
     session.replace_raw_exact("nihk", &segments).expect("parse");
-    assert!(session.input.matrix.as_ref().expect("matrix").zeros[4]);
+    assert!(session.input.parse.get().expect("matrix").matrix.zeros[4]);
     let rows = session.candidates_at(2).expect("hao window");
     assert!(rows.iter().any(|row| row.text() == "好"));
 }

@@ -102,12 +102,10 @@ where
             return Ok(false);
         }
 
-        let graph = self.build_graph_at(0, self.input.as_bytes())?;
-        let bound = graph.consumed();
+        let bound = self.retained_parse()?.matrix.bound;
         if bound == 0 {
             return Ok(false);
         }
-        let matrix = build_scan_matrix(&graph, self.settings.options, self.input.full_pinyin());
 
         // `pinyin_update_constraints`: re-sync the store to the matrix —
         // grow with free cells (forcings survive typing), shrink by
@@ -115,8 +113,15 @@ where
         // forcing dropped (the buffer changed under it), the selection
         // record follows the surviving forcings.
         let mut store = core::mem::take(&mut self.constraints);
+        let retained = match self.retained_parse() {
+            Ok(retained) => retained,
+            Err(error) => {
+                self.constraints = store;
+                return Err(error);
+            }
+        };
         let spelling = crate::nbest::ConstraintSpelling::new(
-            &matrix,
+            &retained.scan,
             bound,
             self.input.physical_separators(),
             self.input.as_bytes(),
@@ -124,6 +129,7 @@ where
         let dropped = store.validate(bound + 1, |start, end, token, text_len| {
             spelling.spells(&self.dictionary, start, end, token, text_len)
         });
+        drop(spelling);
         self.constraints = store;
         if dropped? || (self.constraints.is_active() && self.record.history().is_empty()) {
             // A temporary incompatible parse may have cleared the safe
@@ -131,12 +137,13 @@ where
             self.rebuild_selection_from_constraints();
         }
 
+        let retained = self.retained_parse()?;
         self.sentence.rows = crate::nbest::nbest_sentences_generation(
             crate::nbest::GenerationInput {
-                matrix: &matrix,
+                matrix: &retained.scan,
                 bound,
                 physical_separators: self.input.physical_separators(),
-                topology: self.input.matrix.as_ref(),
+                topology: Some(&retained.matrix),
             },
             &self.dictionary,
             &self.model,
@@ -186,16 +193,21 @@ where
             self.record.clear();
             return Ok(false);
         }
-        let graph = self.build_graph_at(0, self.input.as_bytes())?;
-        let bound = graph.consumed();
+        let bound = self.retained_parse()?.matrix.bound;
         if bound == 0 {
             return Ok(false);
         }
-        let matrix = build_scan_matrix(&graph, self.settings.options, self.input.full_pinyin());
 
         let mut store = core::mem::take(&mut self.constraints);
+        let retained = match self.retained_parse() {
+            Ok(retained) => retained,
+            Err(error) => {
+                self.constraints = store;
+                return Err(error);
+            }
+        };
         let spelling = crate::nbest::ConstraintSpelling::new(
-            &matrix,
+            &retained.scan,
             bound,
             self.input.physical_separators(),
             self.input.as_bytes(),
@@ -203,6 +215,7 @@ where
         let dropped = store.validate(bound + 1, |start, end, token, text_len| {
             spelling.spells(&self.dictionary, start, end, token, text_len)
         });
+        drop(spelling);
         self.constraints = store;
         if dropped? || (self.constraints.is_active() && self.record.history().is_empty()) {
             // A temporary incompatible parse may have cleared the safe
@@ -215,12 +228,13 @@ where
         let mut seeds = Vec::with_capacity(prefix_tokens.len() + 1);
         seeds.push(PhraseToken::new(crate::nbest::SENTENCE_START));
         seeds.extend_from_slice(prefix_tokens);
+        let retained = self.retained_parse()?;
         self.sentence.rows = crate::nbest::nbest_sentences_with_seeds_generation(
             crate::nbest::GenerationInput {
-                matrix: &matrix,
+                matrix: &retained.scan,
                 bound,
                 physical_separators: self.input.physical_separators(),
-                topology: self.input.matrix.as_ref(),
+                topology: Some(&retained.matrix),
             },
             &self.dictionary,
             &self.model,
@@ -256,15 +270,23 @@ where
 
         let offset = self.record.consumed();
         self.sentence.rows = if self.model.has_real_unigrams() {
-            let matrix = build_scan_matrix(&graph, self.settings.options, self.input.full_pinyin());
+            // The whole-input window reads the retained scan and topology;
+            // a later anchor has its own suffix graph, scanned under the
+            // same facade rule.
+            let suffix;
+            let (matrix, topology) = if offset == 0 {
+                let retained = self.retained_parse()?;
+                (&retained.scan, Some(&retained.matrix))
+            } else {
+                suffix = build_scan_matrix(&graph, self.settings.options, self.scan_divided());
+                (&suffix, None)
+            };
             crate::nbest::nbest_sentences_generation(
                 crate::nbest::GenerationInput {
-                    matrix: &matrix,
+                    matrix,
                     bound,
                     physical_separators: self.input.physical_separators(),
-                    topology: (offset == 0)
-                        .then_some(self.input.matrix.as_ref())
-                        .flatten(),
+                    topology,
                 },
                 &self.dictionary,
                 &self.model,

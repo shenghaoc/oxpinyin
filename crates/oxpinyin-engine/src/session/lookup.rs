@@ -208,8 +208,7 @@ where
         // slice's. The suggestion matrix walk starts at column 0 of the
         // same matrix regardless of the guess offset
         // (`search_suggestion_with_matrix`, `phonetic_key_matrix.cpp:504-529`).
-        let graph = self.build_graph_at(0, self.input.as_bytes())?;
-        let selected = graph.fewest_keys(self.settings.incomplete());
+        let selected = &self.selected_path()?.edges;
         let prefix_len = selected.len();
         if prefix_len == 0 || prefix_len >= MAX_PHRASE_LENGTH {
             return Ok(None);
@@ -219,7 +218,7 @@ where
         // SEARCH_NONE`) and longer than `prefix_len * 2` (`:472-475`).
         let max_keys = (prefix_len * 2).min(MAX_PHRASE_LENGTH);
 
-        let matrix = build_scan_matrix(&graph, self.settings.options, self.input.full_pinyin());
+        let matrix = &self.retained_parse()?.scan;
         // `search_suggestion_with_matrix` walks to `matrix->size() - 1`
         // (`phonetic_key_matrix.cpp:512`), the parse's reserved slot: the
         // last byte the SELECTED parse covers. That is not
@@ -239,7 +238,7 @@ where
         // stepped over without pushing.
         let mut paths: Vec<SuggestionPath> = Vec::new();
         let mut path = SuggestionPath::default();
-        self.collect_suggestion_paths(&matrix, 0, end, max_keys, &mut path, &mut paths);
+        self.collect_suggestion_paths(matrix, 0, end, max_keys, &mut path, &mut paths);
 
         let mut winner: Option<(PhraseToken, u64, PhraseText)> = None;
         for SuggestionPath { keys, tones } in &paths {
@@ -396,15 +395,10 @@ where
                     .iter()
                     .any(|segment| segment.start() == offset));
         }
-        let graph = self.build_graph_at(0, self.input.as_bytes())?;
-        // The split alternates are a full-pinyin-parse artifact — the same
-        // law the scan applies (`build_scan_matrix`'s `divided` argument at
-        // the anchored call site) — and exact keys never gain them.
-        let matrix = build_scan_matrix(
-            &graph,
-            self.settings.options,
-            !self.collapse_sentence_rows_to_best,
-        );
+        // The retained scan carries the split alternates exactly when the
+        // window scan does (`scan_divided`), and exact keys never gain them.
+        let retained = self.retained_parse()?;
+        let matrix = &retained.scan;
         if matrix
             .iter()
             .flatten()
@@ -413,7 +407,7 @@ where
             return Ok(true);
         }
         let first = matrix.iter().flatten().map(|key| key.syllable_start).min();
-        Ok(offset < graph.consumed()
+        Ok(offset < retained.matrix.bound
             && first.is_some_and(|start| offset >= start)
             && self.input.as_bytes().get(offset) == Some(&b'\''))
     }
@@ -782,7 +776,7 @@ where
         // pinyin.cpp:2229-2262 searches from the offset in the existing
         // whole-parse matrix. Re-parsing the suffix loses resplit/divided
         // keys whose spans were created by the earlier whole-parse passes.
-        let Some(retained) = self.input.matrix.as_ref() else {
+        let Some(retained) = self.input.parse.get().map(|parse| &parse.matrix) else {
             return Ok(());
         };
         let anchor = self.input.len().saturating_sub(input.len());
@@ -1174,7 +1168,11 @@ where
         // query can start at the anchor on the shared graph too, without
         // reparsing spellings or rebasing/copying edges. The fallback scorer
         // still needs its independent graph's relative edge coordinates.
-        let parsed_prefix = if real_unigrams && anchor != 0 {
+        // At anchor zero either graph is the whole-input one, so the
+        // stored selected path answers.
+        let parsed_prefix = if anchor == 0 {
+            self.selected_path()?.parsed_len
+        } else if real_unigrams {
             self.window_parsed_len(&graph, anchor)
         } else {
             apostrophe_extended(
@@ -1478,12 +1476,10 @@ where
             mut path,
             mut window_addon,
         } = core::mem::take(&mut self.scratch);
-        let matrix = if self.collapse_sentence_rows_to_best {
-            self.input.ending_matrix.as_ref()
-        } else {
-            self.input.matrix.as_ref()
-        };
-        let Some(matrix) = matrix else {
+        // The zhuyin ending topology takes the same inputs as the retained
+        // matrix (`scan_divided` is false in the collapse mode), so the one
+        // retained matrix serves the before-cursor window too.
+        let Some(matrix) = self.input.parse.get().map(|parse| &parse.matrix) else {
             self.scratch = Scratch {
                 entries,
                 path,

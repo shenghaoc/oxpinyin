@@ -56,8 +56,6 @@ pub enum ModeKeys<'a> {
     Full(&'a [FullPinyinIndexKey]),
     /// The plain full-pinyin session's scan-matrix keys.
     Matrix(&'a [MatrixKey]),
-    /// A key list taken earlier from [`InstanceView::mode_key_list`].
-    Listed(&'a [KeyAt]),
 }
 
 impl ModeKeys<'_> {
@@ -69,7 +67,6 @@ impl ModeKeys<'_> {
             Self::Double(keys) => keys.len(),
             Self::Full(keys) => keys.len(),
             Self::Matrix(keys) => keys.len(),
-            Self::Listed(keys) => keys.len(),
         }
     }
 
@@ -123,7 +120,6 @@ impl ModeKeys<'_> {
                     end: key.end(),
                 }
             }
-            Self::Listed(keys) => keys[index],
         }
     }
 
@@ -145,7 +141,6 @@ impl KeySpans for ModeKeys<'_> {
             Self::Double(keys) => (keys[index].start(), keys[index].end()),
             Self::Full(keys) => (keys[index].start(), keys[index].end()),
             Self::Matrix(keys) => (keys[index].syllable_start(), keys[index].end()),
-            Self::Listed(keys) => (keys[index].begin, keys[index].end),
         }
     }
 }
@@ -514,20 +509,6 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
     ) -> Result<usize, EngineError> {
         let keys = self.mode_key_source()?;
         self.validate_abi_lookup_offset_in(keys, offset, zhuyin)
-    }
-
-    /// [`Self::validate_abi_lookup_offset`] over a key list already taken
-    /// from [`Self::mode_key_list`] for the current input and option word.
-    ///
-    /// # Errors
-    /// Returns out-of-range or the pin's zhuyin zero-column assertion.
-    pub fn validate_abi_lookup_offset_over(
-        &self,
-        keys: &[KeyAt],
-        offset: usize,
-        zhuyin: bool,
-    ) -> Result<usize, EngineError> {
-        self.validate_abi_lookup_offset_in(ModeKeys::Listed(keys), offset, zhuyin)
     }
 
     fn validate_abi_lookup_offset_in(

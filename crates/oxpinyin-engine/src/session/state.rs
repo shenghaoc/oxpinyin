@@ -489,13 +489,12 @@ where
         if self.record.consumed() == 0 {
             return Ok(());
         }
-        let graph = self.build_graph_at(0, self.input.as_bytes())?;
-        let bound = graph.consumed();
+        let parse = self.retained_parse()?;
+        let bound = parse.matrix.bound;
         let mut retained = self.constraints.clone();
         if bound > 0 {
-            let matrix = build_scan_matrix(&graph, self.settings.options, self.input.full_pinyin());
             let spelling = crate::nbest::ConstraintSpelling::new(
-                &matrix,
+                &parse.scan,
                 bound,
                 self.input.physical_separators(),
                 self.input.as_bytes(),
@@ -633,6 +632,11 @@ where
     /// equals a non-first row's own text never collides there (the rows all
     /// display the 1-best string), so it must not be absorbed here either.
     pub fn set_collapse_sentence_rows_to_best(&mut self, collapse: bool) {
+        if self.collapse_sentence_rows_to_best != collapse {
+            // The mode picks which topology is retained: drop it and its
+            // key list together, whichever way the mode moves.
+            self.input.invalidate_topology();
+        }
         self.collapse_sentence_rows_to_best = collapse;
     }
 

@@ -15,7 +15,7 @@ use crate::error::TrainingSpanFault;
 pub struct TrainingPlan<'a> {
     state: &'a SessionState,
     index: u8,
-    spans: Option<SpanPlan>,
+    spans: Option<SpanPlan<'a>>,
 }
 
 impl TrainingPlan<'_> {
@@ -65,6 +65,18 @@ where
     L: LanguageModel<Token = PhraseToken>,
     L::Error: Display,
 {
+    /// The retained matrix, borrowed for the composition state's own
+    /// lifetime so a plan can keep it. The checks that precede this call
+    /// have built it; the build is repeated only if they did not.
+    fn plan_matrix(&self) -> Result<&'s super::matrix::ParsedMatrix, EngineError> {
+        let state: &'s SessionState = self.state;
+        if let Some(parse) = state.input.parse.get() {
+            return Ok(&parse.matrix);
+        }
+        let built = self.build_retained_parse()?;
+        Ok(&state.input.parse.get_or_init(|| built).matrix)
+    }
+
     /// Check one n-best training operation without retaining a storage reader.
     ///
     /// # Errors
@@ -84,7 +96,10 @@ where
             }
             None
         } else {
-            self.plan_spans(&row.spans, check)?
+            match self.plan_spans(&row.spans, check)? {
+                Some(ends) => Some((self.plan_matrix()?, ends)),
+                None => None,
+            }
         };
         Ok(Some(TrainingPlan {
             state: self.state,
@@ -249,14 +264,14 @@ where
         U: UserModel<Token = PhraseToken>,
         U::Error: Display,
     {
-        let Some((parsed, ends)) = self.plan_spans(spans, &mut |prefix, token| {
+        let Some(ends) = self.plan_spans(spans, &mut |prefix, token| {
             user.check_step(prefix, token)
                 .map_err(|error| EngineError::UserModel(error.to_string()))
         })?
         else {
             return Ok(());
         };
-        let matrix = &parsed.columns;
+        let matrix = &self.retained_parse()?.matrix.columns;
         let mut context: Vec<PhraseToken> = Vec::with_capacity(spans.len());
         for (index, span) in spans.iter().enumerate() {
             if let Some(end) = ends[index] {
@@ -285,13 +300,13 @@ where
     /// The training walk's checks over `spans`, in the pin's step order,
     /// before anything is observed: each step's forced-phrase assert, then
     /// `check` (the user model's store checks for the step), then the span
-    /// asserts. Answers the matrix and each observed span's end, or `None`
+    /// asserts. Answers each observed span's end, or `None`
     /// when no span is forced (nothing trains).
     fn plan_spans<F>(
         &self,
         spans: &[PhraseSpan],
         check: &mut F,
-    ) -> Result<Option<SpanPlan>, EngineError>
+    ) -> Result<Option<Vec<Option<usize>>>, EngineError>
     where
         F: FnMut(&[PhraseToken], &PhraseToken) -> Result<(), EngineError>,
     {
@@ -308,20 +323,15 @@ where
         // `assert(token == constraint->m_token)` at a forced position
         // (`phonetic_lookup.h:868`): checked in the walk below, in span
         // order, since the pin's abort leaves nothing behind.
-        let graph = self.build_graph_at(0, self.input.as_bytes())?;
-        let scan = build_scan_matrix(&graph, self.settings.options, self.input.full_pinyin());
         // The walk indexes raw-buffer positions, separators included. The
         // pin's `fill_matrix` leaves a leading separator gap empty
         // (`phonetic_key_matrix.cpp:52-78`), but the raw scan has already
         // re-anchored a key that crosses a separator to its buffer start.
-        // Re-apply the physical separators (`ParsedMatrix::from_scan` — the
-        // same retained topology the lookup indexes), or a span over the gap
-        // would silently read a filled column `:663` refuses.
-        let parsed = super::matrix::ParsedMatrix::from_scan(
-            &scan,
-            graph.consumed(),
-            self.input.physical_separators(),
-        );
+        // The retained topology re-applies the physical separators
+        // (`ParsedMatrix::from_scan` — the matrix the lookup indexes), or a
+        // span over the gap would silently read a filled column `:663`
+        // refuses.
+        let parsed = &self.retained_parse()?.matrix;
         let matrix = &parsed.columns;
         let zeros = &parsed.zeros;
         // 074a2219 phonetic_lookup.h:921 tails the last span at
@@ -402,7 +412,7 @@ where
             }
             ends[index] = Some(end);
         }
-        Ok(Some((parsed, ends)))
+        Ok(Some(ends))
     }
 
     /// The sentence recorded so far: the token of every phrase the user
@@ -432,10 +442,10 @@ where
     /// into a segment graph (an input past
     /// [`MAX_GRAPH_POSITION`](oxpinyin_core::graph::MAX_GRAPH_POSITION)).
     pub fn composition_keys(&self) -> Result<Vec<SyllableKey>, EngineError> {
-        let graph = self.build_graph_at(0, self.input.as_bytes())?;
-        Ok(graph
-            .fewest_keys(self.settings.incomplete())
-            .into_iter()
+        Ok(self
+            .selected_path()?
+            .edges
+            .iter()
             .map(|edge| edge.key())
             .collect())
     }
@@ -790,9 +800,10 @@ where
 /// a column is occupied by either a real key or a zero key. `from_scan`
 /// records real keys in `matrix` and internal separator zero keys (and the
 /// reserved end slot) in `zeros`.
-/// A training walk's plan ([`Session::plan_spans`]): the matrix it indexes
-/// and the end of each span it observes (`None` for one it only passes).
-type SpanPlan = (super::matrix::ParsedMatrix, Vec<Option<usize>>);
+/// A training walk's plan ([`Session::plan_spans`]): the retained matrix it
+/// indexes, borrowed from the composition state the plan itself borrows, and
+/// the end of each span it observes (`None` for one it only passes).
+type SpanPlan<'a> = (&'a super::matrix::ParsedMatrix, Vec<Option<usize>>);
 
 pub(crate) fn column_is_empty(matrix: &[Vec<ScanKey>], zeros: &[bool], offset: usize) -> bool {
     matrix.get(offset).is_none_or(Vec::is_empty) && !zeros.get(offset).copied().unwrap_or(false)
