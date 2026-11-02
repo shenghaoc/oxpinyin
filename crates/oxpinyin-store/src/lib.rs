@@ -700,9 +700,10 @@ pub trait WriteStore: ReadStore {
     ) -> Result<R, StoreError>;
 
     /// [`WriteStore::write`] without the backend's end-of-commit flush.
-    /// The default is `write` itself; Berkeley DB uses it for the KMM
-    /// training container, whose pin writes every record and syncs once
-    /// on close (`flexible_ngram_bdb.h:51-57`, `:198-214`).
+    /// The default is `write` itself; Berkeley DB and tkrzw use it for the
+    /// KMM training container, whose pin writes every record and syncs once
+    /// on close (`flexible_ngram_bdb.h:51-57`, `:198-214`;
+    /// `flexible_ngram_tkrzwdb.h:84-90`, `:236-246`, `:259-263`).
     ///
     /// # Errors
     ///

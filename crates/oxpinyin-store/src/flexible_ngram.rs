@@ -298,10 +298,21 @@ impl<H: FixedRecord, I: FixedRecord> SingleGram<H, I> {
 /// `S` names the three record types and the magic number; `B` is the store
 /// backend (`DefaultStore` through [`DefaultFlexibleBigram`], or an
 /// explicitly named peer for a cross-backend caller).
-pub struct FlexibleBigram<B, S> {
+pub struct FlexibleBigram<B: WriteStore, S> {
     db: Option<B>,
     read_only: bool,
     _spec: PhantomData<fn() -> S>,
+}
+
+impl<B: WriteStore, S> Drop for FlexibleBigram<B, S> {
+    /// `~FlexibleBigram` is `reset()` (`flexible_ngram_tkrzwdb.h:84-90,
+    /// 111-113`): the same synchronize [`FlexibleBigram::close`] makes, for
+    /// a container dropped while still open.
+    fn drop(&mut self) {
+        if let Some(db) = self.db.as_ref() {
+            let _ = db.flush();
+        }
+    }
 }
 
 /// One single gram of `S`'s array header and array item types.
@@ -381,7 +392,8 @@ where
     /// Close the backend handle — the pin's `reset()`, which synchronises
     /// and closes. Dropping the handle performs the backend's own close
     /// (`DB->sync` then close on Berkeley DB, `close` on Kyoto Cabinet and
-    /// tkrzw); every write this layer made has already been committed.
+    /// tkrzw); `flush` is the one sync, as each write this layer made is
+    /// deferred.
     pub fn close(&mut self) {
         if let Some(db) = self.db.as_ref() {
             // The pin's `reset()` synchronises once on close; each layer
@@ -689,7 +701,7 @@ where
         if self.read_only {
             return Ok(false);
         }
-        db.write(|txn| txn.remove_raw(key))?;
+        db.write_deferred(|txn| txn.remove_raw(key))?;
         Ok(true)
     }
 }
