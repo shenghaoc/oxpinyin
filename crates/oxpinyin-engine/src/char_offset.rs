@@ -109,10 +109,7 @@ where
         .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?
     {
         oxpinyin_core::PhraseItemRead::Item(rows) => {
-            let Some(query) = oxpinyin_core::ChewingKey::from_pinyin(key.key().text()) else {
-                return Ok(false);
-            };
-            let query = [query.with_tone(key.tone())];
+            let query = [key.key().chewing_key().with_tone(key.tone())];
             let total = rows
                 .iter()
                 .fold(0_u32, |sum, (_, freq)| sum.wrapping_add(*freq));

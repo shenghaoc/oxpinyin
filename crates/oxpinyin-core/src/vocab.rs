@@ -40,6 +40,10 @@ pub const SYLLABLE_KEY_COUNT: usize = FULL_PINYIN_SYLLABLE_COUNT
     + OPTION_ONLY_COMPLETE_SYLLABLE_COUNT
     + ZHUYIN_ONLY_COMPLETE_SYLLABLE_COUNT;
 
+include!(concat!(env!("OUT_DIR"), "/chewing_keys.rs"));
+
+const _: () = assert!(CHEWING_KEYS.len() == SYLLABLE_KEY_COUNT);
+
 /// One decoder-visible pinyin key: a complete syllable or an initial-only key.
 ///
 /// Ids are dense and frozen: `0..405` are [`crate::full_pinyin_syllables`] in their
@@ -195,6 +199,13 @@ impl SyllableKey {
             .get(index - zhuyin_start)
             .copied()
             .unwrap_or_default()
+    }
+
+    /// The key's `ChewingKey`, tone zero: the fields of its `content_table`
+    /// row, by index, equal to `ChewingKey::from_pinyin(self.text())`.
+    #[must_use]
+    pub fn chewing_key(self) -> ChewingKey {
+        CHEWING_KEYS[self.index()]
     }
 
     /// Whether this key is a complete syllable or an initial-only key.
@@ -444,6 +455,7 @@ mod tests {
             let chewing = ChewingKey::from_pinyin(key.text()).expect("content row");
             assert_eq!(SyllableKey::from_chewing_key(chewing), Some(key));
             assert_eq!(chewing.pinyin_spelling(), key.text());
+            assert_eq!(key.chewing_key(), chewing);
             for tone in 1..=5 {
                 assert_eq!(
                     SyllableKey::from_chewing_key(chewing.with_tone(tone)),

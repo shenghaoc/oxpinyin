@@ -52,8 +52,7 @@ impl StandaloneLookup {
                     .iter()
                     .map(|&key| {
                         let syllable = SyllableKey::from_index(crate::key_syllable(key))?;
-                        let chewing = oxpinyin_core::ChewingKey::from_pinyin(syllable.text())?;
-                        Some(chewing.with_tone(crate::key_tone(key)))
+                        Some(syllable.chewing_key().with_tone(crate::key_tone(key)))
                     })
                     .collect::<Option<Vec<_>>>()
                 else {
@@ -278,10 +277,12 @@ fn session_text(phrases: &SessionPhrases, token: u32) -> Option<PhraseText> {
 }
 
 fn query_keys(syllables: &[SyllableKey]) -> Option<Vec<oxpinyin_core::ChewingKey>> {
-    syllables
-        .iter()
-        .map(|syllable| oxpinyin_core::ChewingKey::from_pinyin(syllable.text()))
-        .collect()
+    Some(
+        syllables
+            .iter()
+            .map(|syllable| syllable.chewing_key())
+            .collect(),
+    )
 }
 
 #[cfg(test)]

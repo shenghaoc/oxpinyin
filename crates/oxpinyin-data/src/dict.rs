@@ -80,15 +80,11 @@ impl From<crate::phrase_library::LibraryError> for DictError {
     }
 }
 
-/// Converts syllables to `ChewingKey`s, tone zero. `None` when any
-/// syllable is not a content-table spelling — upstream's parser never
-/// produces such a key, so the lookup answers nothing rather than
-/// substituting a zero key that could collide with a prefix marker.
+/// Converts syllables to `ChewingKey`s, tone zero, by index. Every
+/// `SyllableKey` has a content-table row, so the conversion always
+/// succeeds; the `Option` keeps the callers' signature.
 fn syllables_to_chewing_keys(syllables: &[SyllableKey]) -> Option<Vec<ChewingKey>> {
-    syllables
-        .iter()
-        .map(|s| ChewingKey::from_pinyin(s.text()))
-        .collect()
+    Some(syllables.iter().map(|s| s.chewing_key()).collect())
 }
 
 fn open_tree(path: &Path) -> Result<ChewingTable, DictError> {

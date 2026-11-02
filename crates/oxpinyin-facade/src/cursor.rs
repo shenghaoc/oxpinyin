@@ -87,6 +87,7 @@ impl ModeKeys<'_> {
                 let key = &keys[index];
                 KeyAt {
                     text: key.key().text(),
+                    key: Some(key.key()),
                     tone: key.tone(),
                     begin: key.start(),
                     end: key.end(),
@@ -96,6 +97,7 @@ impl ModeKeys<'_> {
                 let key = keys[index];
                 KeyAt {
                     text: key.key().text(),
+                    key: Some(key.key()),
                     tone: 0,
                     begin: key.start(),
                     end: key.end(),
@@ -105,6 +107,7 @@ impl ModeKeys<'_> {
                 let key = &keys[index];
                 KeyAt {
                     text: key.canonical(),
+                    key: None,
                     tone: key.tone(),
                     begin: key.start(),
                     end: key.end(),
@@ -114,6 +117,7 @@ impl ModeKeys<'_> {
                 let key = keys[index];
                 KeyAt {
                     text: key.key().text(),
+                    key: Some(key.key()),
                     tone: key.tone(),
                     begin: key.syllable_start(),
                     end: key.end(),
@@ -173,8 +177,13 @@ impl AbiColumns<'_> {
         if index < self.keys.len() {
             let key = self.keys.get(index);
             if key.begin == position {
-                let packed = oxpinyin_core::ChewingKey::from_pinyin(key.text)
-                    .map_or(0, |k| k.with_tone(key.tone).to_packed());
+                // The Full index variant has only canonical text: its key
+                // converts by spelling, as before.
+                let chewing = match key.key {
+                    Some(syllable) => Some(syllable.chewing_key()),
+                    None => oxpinyin_core::ChewingKey::from_pinyin(key.text),
+                };
+                let packed = chewing.map_or(0, |k| k.with_tone(key.tone).to_packed());
                 return Some((packed, key.begin, key.end));
             }
         }
@@ -200,13 +209,17 @@ impl AbiColumns<'_> {
 /// One matrix key at an offset: its canonical pinyin spelling, its tone,
 /// and its raw span.
 ///
-/// The spelling rather than a `SyllableKey` because all renderers want
-/// text, and because the LUOMA / `SECONDARY_ZHUYIN` index parse carries a
-/// canonical spelling rather than a vocabulary key.
+/// The spelling because all renderers want text, and because the LUOMA /
+/// `SECONDARY_ZHUYIN` index parse carries a canonical spelling rather than
+/// a vocabulary key; the vocabulary key rides beside it where the parse has
+/// one.
 #[derive(Clone, Copy, Debug)]
 pub struct KeyAt {
     /// The key's canonical full-pinyin spelling.
     pub text: &'static str,
+    /// The key's vocabulary key; `None` for the index parse, which carries
+    /// only canonical text.
+    pub key: Option<oxpinyin_core::SyllableKey>,
     /// The tone consumed with the key, `0` when toneless.
     pub tone: u8,
     /// Inclusive byte offset of the key's first byte.
@@ -583,6 +596,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
             .find(|key| key.end == end)?;
         Some(KeyAt {
             text: found.text,
+            key: found.key,
             tone: found.tone,
             begin,
             end,

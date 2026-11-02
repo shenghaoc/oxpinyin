@@ -364,10 +364,7 @@ pub struct TokenPronunciation {
 /// The pin's query keys for `syllables`.
 #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
 fn chewing_query(syllables: &[SyllableKey]) -> Option<Vec<oxpinyin_core::ChewingKey>> {
-    syllables
-        .iter()
-        .map(|key| oxpinyin_core::ChewingKey::from_pinyin(key.text()))
-        .collect()
+    Some(syllables.iter().map(|key| key.chewing_key()).collect())
 }
 
 // ── Merged backends ─────────────────────────────────────────────────────
@@ -519,19 +516,23 @@ impl<'a> RuntimeDict<'a> {
         }
     }
 
-    /// The query's toned keys; `None` when a syllable is no key.
+    /// The query's toned keys: each syllable's key with the tone at its
+    /// index, `0` past the end of `tones`. Always `Some`; the `Option`
+    /// keeps the callers' signature.
     fn trellis_query(
         syllables: &[SyllableKey],
         tones: &[u8],
     ) -> Option<Vec<oxpinyin_core::ChewingKey>> {
-        syllables
-            .iter()
-            .enumerate()
-            .map(|(index, key)| {
-                oxpinyin_core::ChewingKey::from_pinyin(key.text())
-                    .map(|key| key.with_tone(tones.get(index).copied().unwrap_or(0)))
-            })
-            .collect()
+        Some(
+            syllables
+                .iter()
+                .enumerate()
+                .map(|(index, key)| {
+                    key.chewing_key()
+                        .with_tone(tones.get(index).copied().unwrap_or(0))
+                })
+                .collect(),
+        )
     }
 
     /// Whether a ranged `token` is loaded and visible to the library mask.
@@ -556,13 +557,10 @@ impl<'a> RuntimeDict<'a> {
     }
 
     /// The query keys the effective-item overlay prices against; `None`
-    /// when the store holds no system items or a syllable is no key.
+    /// when the store holds no system items.
     fn effective_query(&self, syllables: &[SyllableKey]) -> Option<Vec<oxpinyin_core::ChewingKey>> {
         self.user.filter(|store| store.has_system_items())?;
-        syllables
-            .iter()
-            .map(|key| oxpinyin_core::ChewingKey::from_pinyin(key.text()))
-            .collect()
+        Some(syllables.iter().map(|key| key.chewing_key()).collect())
     }
 
     /// `(matched, total)` of `token`'s effective system item over `query`,

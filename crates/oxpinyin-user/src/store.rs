@@ -350,28 +350,32 @@ impl From<StoreError> for UserStoreError {
 /// `add_index` would write for this reading: tone-zeroed complete keys, or
 /// initial-only keys when any syllable is incomplete
 /// (`compute_chewing_index` / `compute_incomplete_chewing_index`,
-/// `src/storage/pinyin_phrase3.h:160-178` at the pin). `None` when a
-/// syllable names no `ChewingKey`, which is never a key upstream writes.
+/// `src/storage/pinyin_phrase3.h:160-178` at the pin). Always `Some`: every
+/// `SyllableKey` has a `ChewingKey`; the `Option` keeps the callers'
+/// signature.
 fn index_projection(syllables: &[SyllableKey]) -> Option<Vec<u16>> {
     let incomplete = syllables
         .iter()
         .any(|key| key.completeness() == Completeness::Partial);
-    syllables
-        .iter()
-        .map(|key| {
-            let full = ChewingKey::from_pinyin(key.text())?;
-            if incomplete {
-                // `compute_incomplete_chewing_index` sets only `m_initial`,
-                // so a vowel-initial syllable and `ng` project to the zero
-                // initial (`ChewingKey::new(0, 0, 0, 0)`), not to a missing
-                // key. Building the packed word directly keeps those zeros
-                // representable.
-                Some(ChewingKey::new(full.initial, 0, 0, 0).to_packed())
-            } else {
-                Some(full.with_tone(0).to_packed())
-            }
-        })
-        .collect()
+    Some(
+        syllables
+            .iter()
+            .map(|key| {
+                let full = key.chewing_key();
+                if incomplete {
+                    // `compute_incomplete_chewing_index` sets only
+                    // `m_initial`, so a vowel-initial syllable and `ng`
+                    // project to the zero initial
+                    // (`ChewingKey::new(0, 0, 0, 0)`), not to a missing
+                    // key. Building the packed word directly keeps those
+                    // zeros representable.
+                    ChewingKey::new(full.initial, 0, 0, 0).to_packed()
+                } else {
+                    full.with_tone(0).to_packed()
+                }
+            })
+            .collect(),
+    )
 }
 
 // ── codec helpers ─────────────────────────────────────────────────

@@ -886,10 +886,7 @@ impl Iterator for TrainingReadings<'_> {
             if edge.to <= position {
                 continue;
             }
-            let Some(key) = oxpinyin_core::ChewingKey::from_pinyin(edge.key.text()) else {
-                continue;
-            };
-            self.keys.push(key.with_tone(edge.tone));
+            self.keys.push(edge.key.chewing_key().with_tone(edge.tone));
             self.frames.push((edge.to, 0));
         }
         None
