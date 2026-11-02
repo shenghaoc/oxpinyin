@@ -360,6 +360,20 @@ anything; `check-exports.sh` keeps comparing the cdylib cargo builds
 (names, not versions), which is still the right gate for the development
 artifact the relink then supersedes on install.
 
+On macOS, `just packaging install` also relinks from the cargo-c staticlib.
+It derives one `-exported_symbols_list` from the `.ver` globals, prefixing
+each name with `_`. A second list on rustc's cdylib link would be additive,
+not restrictive. The replacement preserves cargo-c's install name, versions,
+architecture and deployment target. Both `nm -gU` (all external defined
+types) and the export trie must equal the `.ver` set before replacement.
+The installed native dylib must then load and resolve its entry point.
+The nightly `test-macos` job provisions cargo-c, stages both release
+libraries and runs `just abi exports --shipped` with `OXPINYIN_CAPI_SO` and
+`OXPINYIN_ZHUYIN_SO` pointing to those installed files. Without overrides,
+that command still checks Cargo development artifacts with fixture hooks
+disabled. See [macOS shipped exports](findings/macos-shipped-exports.md)
+for the linker constraints, non-vacuity check and added nightly cost.
+
 ## Function layout
 
 Maintainer ruling, 2026-10-30 UTC ([#1448](https://github.com/shenghaoc/oxpinyin/issues/1448)).
@@ -375,7 +389,7 @@ The [M5 findings](findings/macho-function-order-m5-2026-10-27.md) recorded cold 
 These are historical results. They were not measured again for the removal.
 
 Linux keeps the versioned relink described in [Export gate](#export-gate), including the version script and `-Wl,-z,defs`.
-macOS uses the library that cargo-c installs, and `just packaging install` then loads it with `dlopen` and looks up `pinyin_init` or `zhuyin_init`, and fails if either step fails.
+macOS uses the export-controlled relink described in [Export gate](#export-gate); `just packaging install` then loads the replaced file with `dlopen` and looks up `pinyin_init` or `zhuyin_init`, and fails if either step fails.
 On macOS, install with `--prefix=/usr/local` or another non-system prefix. A `/usr` prefix gives the dylibs `/usr/lib` install names, which macOS reserves for its shared cache; the link then fails with "Shared cache eligible dylib cannot link to ineligible dylib" against a library outside the shared cache, such as Homebrew's tkrzw.
 A target whose architecture differs from the running process's (`--target x86_64-apple-darwin` on Apple silicon) is not loaded: the install prints one line saying the load check was skipped.
 The check exists because rustc 1.97.x stripped a Mach-O `cdylib` with its bundled `llvm-objcopy`, which left `LC_SYMTAB`'s string table offset only 4-byte aligned, and dyld on macOS 27 refused the file (`mis-aligned LINKEDIT string pool`, [#1536](https://github.com/shenghaoc/oxpinyin/issues/1536)).

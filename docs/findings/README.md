@@ -36,6 +36,7 @@ series lives in `../perf/`.
 
 | Document | Subject | Status |
 | --- | --- | --- |
+| [`macos-shipped-exports`](macos-shipped-exports.md) | Staticlib relink for exact shipped Mach-O exports, transitive dependency negative control and nightly cost | verified |
 | [`1031-first-candidate`](1031-first-candidate.md) | First candidate after init — source trace, extra work, landed removals and proposed fixes | record (source-only; proposals unimplemented) |
 | [`1514-user-content-offset-wrap`](1514-user-content-offset-wrap.md) | User phrase content past 4 GiB: defined offset wrap and overwrite, later invalid accesses, persistence, reachability and current Rust differences | source finding (phase 1; maintainer decision pending) |
 | [`abi-allocator-pairing`](abi-allocator-pairing.md) | ABI allocator pairing — the audit and the gate | contract (the two `.alloc` registers) + audit |

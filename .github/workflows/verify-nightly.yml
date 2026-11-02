@@ -656,9 +656,9 @@ jobs:
 
   # macOS links the default store backend, tkrzw, from the tkrzw action,
   # selected explicitly so pinyin-oracle's oracle-ffi stays off. The
-  # job excludes the two C-ABI crates (their facade tests are Linux-first;
-  # GLib and cargo-c themselves are available from Homebrew) and the
-  # backend-independent KMM tool. The combined training package remains
+  # workspace tests exclude the two C-ABI crates (their facade tests are
+  # Linux-first) and the backend-independent KMM tool. Their shipped macOS
+  # libraries are built and checked separately below. The training package remains
   # in the lane because its segment/eval modules use the backend. It also
   # runs the tools Python harness tests on macOS.
   #
@@ -774,6 +774,20 @@ jobs:
         run: brew install glib pkgconf
       - name: Provision tkrzw (built at the setup.sh revision and cached)
         uses: ./.github/actions/tkrzw
+      - name: Install cargo-c for shipped macOS libraries
+        run: |
+          # Same pinned version as perf-snapshot; a fresh prefix includes the
+          # actual provisioning cost rather than reusing a runner's cargo-c.
+          just heavy -- cargo install cargo-c --version 0.10.25 --locked --root "$RUNNER_TEMP/cargo-c"
+          echo "$RUNNER_TEMP/cargo-c/bin" >> "$GITHUB_PATH"
+      - name: Check shipped macOS library exports
+        run: |
+          stage="$RUNNER_TEMP/macos-shipped"
+          just packaging install libpinyin --prefix=/usr/local --destdir="$stage" -- --release --locked --no-default-features --features tkrzw,shipped
+          just packaging install libzhuyin --prefix=/usr/local --destdir="$stage" -- --release --locked --no-default-features --features tkrzw
+          OXPINYIN_CAPI_SO="$stage/usr/local/lib/libpinyin.15.0.0.dylib" \
+          OXPINYIN_ZHUYIN_SO="$stage/usr/local/lib/libzhuyin.15.0.0.dylib" \
+            just abi exports --shipped
       # Clippy over the lane's own feature set and exclusions, so a lint in
       # macOS-only code fails here rather than nowhere.
       - name: Clippy (macOS)
