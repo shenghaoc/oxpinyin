@@ -94,7 +94,7 @@ arm64 runners. The amd64 tags are the historical
 and arm64 publishes the siblings `<tag>-arm64` and `<tag>-deps-arm64`.
 `<tag>` is printed by `just compat image-tag`: the libpinyin
 commit and the base image codename (both from `oracle-pin.txt`) and a hash
-of `Dockerfile.oracle`, `build-oracle.sh`, the version-check inputs and
+of `Dockerfile.oracle`, `build-oracle.sh`, the Bash floor, the version-check inputs and
 `oracle-pin.txt` itself, so it changes whenever the library hashes or their
 record can. The arm64 contract gate
 excludes the 13 cases diagnosed in #1137 and reports 0 DIFFER; amd64 still
