@@ -4784,6 +4784,29 @@ impl<S: WriteStore> GenericUserStore<S> {
         items.get(&token).map(read)
     }
 
+    #[cfg(test)]
+    pub(crate) fn system_items_locked(&self) -> bool {
+        self.inner.system_items.try_lock().is_err()
+    }
+
+    /// Reads the decoded session item held under `token`, without the arena
+    /// and without cloning it. The item's unigram field is stale.
+    pub(crate) fn with_overlay_item<R>(
+        &self,
+        token: Token,
+        read: impl FnOnce(&oxpinyin_data::chunk_write::ChunkItem) -> R,
+    ) -> Option<R> {
+        if !self.has_system_items() {
+            return None;
+        }
+        let mut items = self
+            .inner
+            .system_items
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        items.get(&token).map(read)
+    }
+
     /// One past the highest token a `USER_FILE` library holds: the pin's
     /// `SubPhraseIndex::get_range` end (`phrase_index.cpp:624-646` at
     /// 074a2219, the offset array less its trailing zeros). It is the
