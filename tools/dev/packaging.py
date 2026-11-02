@@ -360,6 +360,7 @@ def install_library(argv, tools):
                     *features], tools)
     if system == 'Darwin' and layout.triple.endswith('-apple-darwin'):
         dylib = Path(layout.destdir + layout.libdir) / (layout.library + '.15.0.0.dylib')
+        relink_darwin(layout, dylib, tools)
         host = '\n'.join(re.findall(r'^host: (.*)$', tools.text(['rustc', '-vV']), re.M))
         if layout.triple.split('-')[0] != host.split('-')[0]:
             emit(f'load check skipped: target {layout.triple} is not the running architecture ({host}); '
@@ -370,6 +371,86 @@ def install_library(argv, tools):
             fail(f'error: the installed {dylib} does not load:\n         {problem}')
         emit(f'loaded {dylib} and found {ENTRY_POINTS[layout.library]}')
     return 0
+
+
+@dataclass(frozen=True)
+class DarwinIdentity:
+    """The cargo-c dylib identity that a replacement must preserve."""
+    install_name: str
+    compatibility_version: str
+    current_version: str
+    architecture: str
+    deployment_target: str
+
+    @classmethod
+    def read(cls, library, tools):
+        commands = tools.text(['otool', '-l', library]).split('Load command')
+
+        def field(command, name):
+            match = re.search(r'^\s*' + re.escape(name) + r'\s+(.+?)(?: \(offset \d+\))?$', command, re.M)
+            if not match:
+                fail(f'error: {library}: missing Mach-O {name}')
+            return match[1]
+
+        identity = next((block for block in commands if re.search(r'cmd LC_ID_DYLIB\s', block)), '')
+        build = next((block for block in commands if re.search(r'cmd LC_BUILD_VERSION\s', block)), '')
+        if build:
+            if field(build, 'platform') not in ('1', 'MACOS'):
+                fail(f'error: {library}: expected a macOS dylib')
+            minimum = field(build, 'minos')
+        else:
+            build = next((block for block in commands if re.search(r'cmd LC_VERSION_MIN_MACOSX\s', block)), '')
+            minimum = field(build, 'version')
+        architecture = tools.text(['lipo', '-archs', library]).split()
+        if len(architecture) != 1 or architecture[0] not in ('arm64', 'x86_64'):
+            fail(f'error: {library}: expected one arm64 or x86_64 Mach-O slice')
+        return cls(field(identity, 'name'), field(identity, 'compatibility version'),
+                   field(identity, 'current version'), architecture[0], minimum)
+
+
+def relink_darwin(layout, destination, tools):
+    """Link once under our allowlist, outside rustc's additive export lists."""
+    from .abi import HostFacts, darwin_export_trie, exported_symbols, version_globals
+
+    archive = layout.qualified / (layout.library + '.a')
+    ver = tools.root / 'crates' / LIBRARIES[layout.library] / (layout.library + '.ver')
+    expected = version_globals(ver.read_text())
+    if not expected or any(not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', name) for name in expected):
+        fail(f'error: {ver}: expected explicit global symbol names')
+    if not archive.is_file():
+        fail(f'error: staticlib not found: {archive}')
+    identity = DarwinIdentity.read(destination, tools)
+    backend = 'tkrzw'
+    for feature in layout.features().replace(',', ' ').split():
+        if feature in ('bdb', 'kyotocabinet', 'tkrzw'):
+            backend = feature
+    glib = optional_pkg_config(['--libs', 'glib-2.0', 'gobject-2.0'], tools)
+    flags = glib.stdout.decode().split() if not glib.status else ['-lglib-2.0', '-lgobject-2.0']
+    flags += backend_flags(backend, tools, '-lc++')
+    with tempfile.TemporaryDirectory(prefix=destination.name + '.relink.', dir=destination.parent) as scratch:
+        exports, temporary = Path(scratch) / 'exports', Path(scratch) / destination.name
+        exports.write_text(''.join('_' + name + '\n' for name in sorted(expected)))
+        tools.heavy([tools.env.get('CC') or 'cc', '-dynamiclib', '-o', temporary,
+                     '-arch', identity.architecture, '-mmacosx-version-min=' + identity.deployment_target,
+                     '-install_name', identity.install_name,
+                     '-Wl,-compatibility_version,' + identity.compatibility_version,
+                     '-Wl,-current_version,' + identity.current_version,
+                     '-Xlinker', '-exported_symbols_list', '-Xlinker', exports,
+                     '-Xlinker', '-force_load', '-Xlinker', archive, '-Wl,-dead_strip',
+                     *flags, '-lc++', '-liconv', '-lresolv'])
+        actual = exported_symbols(tools.text(['nm', '-gU', temporary]), HostFacts('Darwin'))
+        try:
+            trie = darwin_export_trie(tools.text(['dyld_info', '-exports', temporary]))
+        except ValueError as error:
+            fail(str(error))
+        if actual != expected or trie != expected:
+            fail(f'error: relinked export set differs from {ver}:\n'
+                 f'  missing: {sorted(expected - actual | expected - trie)}\n'
+                 f'  extra: {sorted(actual - expected | trie - expected)}')
+        if DarwinIdentity.read(temporary, tools) != identity:
+            fail(f'error: relinked Mach-O identity differs from {destination}')
+        os.replace(temporary, destination)
+    emit(f'relinked {destination}: exactly {len(expected)} exports (backend: {backend})')
 
 
 def optional_pkg_config(arguments, tools):

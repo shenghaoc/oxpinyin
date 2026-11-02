@@ -308,7 +308,12 @@ def observe(ctx: Context, driver: Driver, binary: Path, stage: Path, case: Case,
     directories = {name: run / name for name in ('user', 'empty', 'tmp', 'cwd')}
     for directory in directories.values():
         directory.mkdir()
-    shutil.copy2(binary, stage)
+    # Never rewrite a previously executed inode: macOS may retain its code
+    # signature in the kernel cache. Publish a fresh image at the same path.
+    with tempfile.TemporaryDirectory(prefix=stage.name + '.stage.', dir=stage.parent) as temporary:
+        image = Path(temporary) / stage.name
+        shutil.copy2(binary, image)
+        image.replace(stage)
     values = dict(so=str(library[0] or ''), data=str(library[1]), pindata=str(pin_data),
                   here=str(ctx.here),
                   w3=str(ctx.settings.root / 'fixtures/w3' / ctx.settings.extension),

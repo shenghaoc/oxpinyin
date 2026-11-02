@@ -53,8 +53,24 @@ def exported_symbols(text: str, facts: HostFacts) -> set[str]:
             continue
         if facts.system == 'Linux' and fields[1] in 'TtWw':
             result.add(fields[2])
-        elif facts.system == 'Darwin' and fields[1] == 'T':
+        # Darwin's nm -gU already selects external defined symbols. Data,
+        # absolute and weak exports are just as much part of the ABI as text.
+        elif facts.system == 'Darwin':
             result.add(fields[2].removeprefix('_'))
+    return result
+
+
+def darwin_export_trie(text: str) -> set[str]:
+    """Read dyld_info -exports, failing closed on diagnostics or unknown rows."""
+    result = set()
+    for line in text.splitlines():
+        row = line.strip()
+        if not row or row.endswith(':') or row.split() == ['offset', 'symbol']:
+            continue
+        match = re.fullmatch(r'(?:0x[0-9a-fA-F]+|\[re-export\])\s+(\S+)(?:\s+.*)?', row)
+        if not match:
+            raise ValueError(f'unrecognized dyld_info export row: {row}')
+        result.add(match[1].removeprefix('_'))
     return result
 
 
@@ -80,6 +96,21 @@ def check_exports(settings: Settings, argv: Sequence[str], facts: HostFacts) -> 
             sys.stderr.write(result.stderr)
             return result.returncode
         symbols = exported_symbols(result.stdout, facts)
+        if facts.system == 'Darwin':
+            result = subprocess.run(['dyld_info', '-exports', str(library)], env=settings.environment,
+                                    capture_output=True, text=True)
+            if result.returncode:
+                sys.stderr.write(result.stderr)
+                return result.returncode
+            try:
+                trie = darwin_export_trie(result.stdout)
+            except ValueError as error:
+                print(str(error), file=sys.stderr)
+                return 1
+            if trie != symbols:
+                print(f'FAIL: nm and export trie differ: {sorted(trie ^ symbols)}', file=sys.stderr)
+                status = 1
+            symbols |= trie
         expected = version_globals(version.read_text())
         actual = {symbol for symbol in symbols if symbol.startswith(prefix + '_')}
         missing, extra = expected - actual, actual - expected

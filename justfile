@@ -195,9 +195,11 @@ profile-w8 *args: python
 [macos]
 profile-w8 *args: python
     @just heavy -- env \
-        OXPINYIN_BDB_INCLUDE_DIR="$(brew --prefix berkeley-db@5)/include" \
-        OXPINYIN_BDB_LIB_DIR="$(brew --prefix berkeley-db@5)/lib" \
-        PKG_CONFIG_PATH="$(brew --prefix glib)/lib/pkgconfig:$(brew --prefix kyoto-cabinet)/lib/pkgconfig:$(brew --prefix tkrzw)/lib/pkgconfig:$(brew --prefix berkeley-db@5)/lib/pkgconfig" \
+        SYSTEM_DEPS_BDB_NO_PKG_CONFIG=1 \
+        SYSTEM_DEPS_BDB_LIB=db \
+        SYSTEM_DEPS_BDB_SEARCH_NATIVE="$(brew --prefix berkeley-db@5)/lib" \
+        SYSTEM_DEPS_BDB_INCLUDE="$(brew --prefix berkeley-db@5)/include" \
+        PKG_CONFIG_PATH="$(brew --prefix glib)/lib/pkgconfig:$(brew --prefix kyoto-cabinet)/lib/pkgconfig:$(brew --prefix tkrzw)/lib/pkgconfig" \
         LIBRARY_PATH="$(brew --prefix berkeley-db@5)/lib:$(brew --prefix kyoto-cabinet)/lib:$(brew --prefix tkrzw)/lib:$(brew --prefix lz4)/lib:$(brew --prefix xz)/lib:$(brew --prefix zstd)/lib" \
         OXPINYIN_TKRZW_PREFIX="$(brew --prefix tkrzw)" \
         uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev measure profile-w8 "$@"
@@ -248,9 +250,11 @@ sanitize backend="tkrzw" sanitizer="address": python
 [macos]
 sanitize backend="tkrzw" sanitizer="address": python
     @just heavy -- env \
-        OXPINYIN_BDB_INCLUDE_DIR="$(brew --prefix berkeley-db@5)/include" \
-        OXPINYIN_BDB_LIB_DIR="$(brew --prefix berkeley-db@5)/lib" \
-        PKG_CONFIG_PATH="$(brew --prefix glib)/lib/pkgconfig:$(brew --prefix kyoto-cabinet)/lib/pkgconfig:$(brew --prefix tkrzw)/lib/pkgconfig:$(brew --prefix berkeley-db@5)/lib/pkgconfig" \
+        SYSTEM_DEPS_BDB_NO_PKG_CONFIG=1 \
+        SYSTEM_DEPS_BDB_LIB=db \
+        SYSTEM_DEPS_BDB_SEARCH_NATIVE="$(brew --prefix berkeley-db@5)/lib" \
+        SYSTEM_DEPS_BDB_INCLUDE="$(brew --prefix berkeley-db@5)/include" \
+        PKG_CONFIG_PATH="$(brew --prefix glib)/lib/pkgconfig:$(brew --prefix kyoto-cabinet)/lib/pkgconfig:$(brew --prefix tkrzw)/lib/pkgconfig" \
         LIBRARY_PATH="$(brew --prefix berkeley-db@5)/lib:$(brew --prefix kyoto-cabinet)/lib:$(brew --prefix tkrzw)/lib:$(brew --prefix lz4)/lib:$(brew --prefix xz)/lib:$(brew --prefix zstd)/lib" \
         CPATH="$(brew --prefix berkeley-db@5)/include:$(brew --prefix kyoto-cabinet)/include" \
         PATH="$(brew --prefix tkrzw)/bin:$PATH" \

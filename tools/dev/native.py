@@ -27,6 +27,15 @@ def shell_status(code):
     return 128 - code if code < 0 else code
 
 
+def path_list_flags(environment, variable, flag):
+    """Return one ``flag<entry>`` per entry of a path-list override, in order.
+
+    system-deps splits ``SYSTEM_DEPS_<NAME>_INCLUDE`` and ``_SEARCH_NATIVE``
+    with ``env::split_paths``, which is ``os.pathsep``; empty entries are skipped.
+    """
+    return [f'{flag}{entry}' for entry in (environment.get(variable) or '').split(os.pathsep) if entry]
+
+
 def launch_status(error):
     """Return the shell's status for a command that could not be launched.
 

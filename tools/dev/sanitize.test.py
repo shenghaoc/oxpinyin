@@ -129,8 +129,8 @@ class BackendTests(unittest.TestCase):
             status, out, err = run('bdb', tools=tools,
                                    environment=self.environment(
                                        OXPINYIN_LIBPINYIN_DATA_DIR='/fixture/data',
-                                       OXPINYIN_BDB_INCLUDE_DIR='/include',
-                                       OXPINYIN_BDB_LIB_DIR='/library'))
+                                       SYSTEM_DEPS_BDB_INCLUDE='/include',
+                                       SYSTEM_DEPS_BDB_SEARCH_NATIVE='/library'))
         self.assertEqual((status, err), (0, ''), out)
         commands = [call[0] for call in tools.calls]
         test = next(command for command in commands
@@ -145,6 +145,21 @@ class BackendTests(unittest.TestCase):
                          '-Zsanitizer=address -Cdebuginfo=1')
         self.assertIn('--- 2/2: the libdb call pattern under ASan + UBSan (C) ---', out)
         self.assertIn('sanitizers: clean', out)
+
+    def test_bdb_c_harness_splits_the_system_deps_path_lists_in_order(self):
+        tools = FakeTools()
+        include = os.pathsep.join(['/include/a', '', '/include/b'])
+        library = os.pathsep.join(['/library/a', '/library/b'])
+        with mock.patch.object(test_runner.platform, 'system', return_value='Darwin'):
+            status, out, err = run('bdb', tools=tools,
+                                   environment=self.environment(
+                                       OXPINYIN_LIBPINYIN_DATA_DIR='/fixture/data',
+                                       SYSTEM_DEPS_BDB_INCLUDE=include,
+                                       SYSTEM_DEPS_BDB_SEARCH_NATIVE=library))
+        self.assertEqual((status, err), (0, ''), out)
+        gcc = next(call[0] for call in tools.calls if call[0][0] == 'gcc')
+        self.assertEqual([flag for flag in gcc if flag[:2] in ('-I', '-L')],
+                         ['-I/include/a', '-I/include/b', '-L/library/a', '-L/library/b'])
 
     def test_kc_thread_uses_the_darwin_deadlock_option(self):
         tools = FakeTools()
