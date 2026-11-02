@@ -15,7 +15,7 @@ import time
 from .. import cell, slot
 from ..native import shell_status
 from ..runners import Finished
-from . import boundary, identity, images, memory, storage
+from . import boundary, identity, images, memory, runtime as runtime_adapter, storage
 from .process import ROOT, capture, fail, run, tee, text
 
 # These helpers are verified against the same source snapshot, before execution.
@@ -29,11 +29,11 @@ def ensure_volume(runtime, kind, root=ROOT):
     """Create the checkout volume with labels or reject an ownership mismatch."""
     volume = storage.volume_name(root)
     expected = storage.labels(root)
-    metadata = images.volume_metadata(runtime, kind, volume)
+    metadata = runtime_adapter.volume_metadata(runtime, kind, volume)
     if metadata is None:
         volume_labels = [part for key, value in expected.items() for part in ('--label', f'{key}={value}')]
         run([runtime, 'volume', 'create', *(['-s', '20G'] if kind == 'container' else []), *volume_labels, volume])
-        metadata = images.volume_metadata(runtime, kind, volume)
+        metadata = runtime_adapter.volume_metadata(runtime, kind, volume)
     if metadata is None or metadata.get('labels') != expected:
         fail(f'FAIL: compatibility volume ownership labels do not match: {volume}')
     return volume
@@ -76,7 +76,7 @@ def storage_inspect(runtime, kind, *, root=ROOT):
     owners = checkout_owners(root)
     owned = []
     for name in names:
-        metadata = images.volume_metadata(runtime, kind, name)
+        metadata = runtime_adapter.volume_metadata(runtime, kind, name)
         if metadata is None:
             raise ValueError(f'volume disappeared during inspection: {name}')
         state = storage.classify(name, metadata, owners)
@@ -126,7 +126,7 @@ def storage_clean(runtime, kind, categories, *, root=ROOT):
     if not categories or not categories <= allowed:
         fail('choose at least one of --targets, --work or --results', 2)
     volume = storage.volume_name(root)
-    metadata = images.volume_metadata(runtime, kind, volume)
+    metadata = runtime_adapter.volume_metadata(runtime, kind, volume)
     if metadata is None or metadata.get('labels') != storage.labels(root):
         fail(f'volume missing or ownership labels do not match: {volume}', 2)
     exported = identity.unredirected(Path(root) / '.oxpinyin-container/results', root)
@@ -183,7 +183,7 @@ def storage_clean_selected(runtime, kind, selections, *, root=ROOT):
     for expected, name in selections:
         if name in records:
             fail(f'duplicate volume selection: {name}', 2)
-        metadata = images.volume_metadata(runtime, kind, name) if storage.VOLUME.fullmatch(name) else None
+        metadata = runtime_adapter.volume_metadata(runtime, kind, name) if storage.VOLUME.fullmatch(name) else None
         state = storage.classify(name, metadata, owners) if metadata is not None else ''
         if ((expected == 'legacy' and state != 'legacy, unlabelled') or
                 (expected == 'orphan' and not state.startswith('orphaned owner '))):
@@ -195,7 +195,7 @@ def storage_clean_selected(runtime, kind, selections, *, root=ROOT):
         return status
     owners = checkout_owners(root)
     for expected, name in selections:
-        metadata = images.volume_metadata(runtime, kind, name)
+        metadata = runtime_adapter.volume_metadata(runtime, kind, name)
         if metadata != records[name] or (expected == 'orphan' and
                 not storage.classify(name, metadata, owners).startswith('orphaned owner ')):
             fail(f'volume metadata or ownership changed before deletion: {name}', 2)
@@ -232,7 +232,7 @@ def storage_main(argv):
             fail(f'invalid storage option: {option}', 2)
     if action == 'clean' and (bool(categories) == bool(selections)):
         fail('select cleanup categories or explicitly named legacy/orphan volumes', 2)
-    runtime = images.select_runtime(values['runtime'])
+    runtime = runtime_adapter.select_runtime(values['runtime'])
     kind = Path(runtime).name
     if kind not in ('container', 'podman', 'docker'):
         fail('storage maintenance requires Apple container, Podman or Docker', 2)
@@ -358,7 +358,7 @@ def launch(argv, *, root=ROOT):
     values, selection, smoke, listing = arguments(argv)
     if listing:
         return run([sys.executable, '-X', 'lazy_imports=normal', str(Path(root) / 'tools/bisection/run-all.py'), '--list'])
-    runtime = images.select_runtime(values['runtime'])
+    runtime = runtime_adapter.select_runtime(values['runtime'])
     kind = Path(runtime).name
     host = text(['uname', '-s'])
     if host.startswith(('MINGW', 'MSYS')):
@@ -463,13 +463,13 @@ def launch(argv, *, root=ROOT):
                         build([*platform_args, *build_flags, '-f', 'tools/oracle/Dockerfile.oracle', '-t', reference, '.'])
                 build([*platform_args, *build_flags, '--build-arg', f'DEPS_IMAGE={deps}', '--build-arg', f'REFERENCE_IMAGE={reference}',
                        '--build-arg', f'CA_IDENTITY={ca_identity}', '-f', 'tools/oracle/Dockerfile.compat', '-t', image, '.'])
-            content = images.content_digest(runtime, kind, image)
+            content = runtime_adapter.content_digest(runtime, kind, image)
             triple = {'linux/arm64': 'aarch64-unknown-linux-gnu',
                       'linux/amd64': 'x86_64-unknown-linux-gnu'}[platform]
             initial = identity.verify_inputs(directory, input_identity)
             input_identity = identity.seal_inputs(directory, key, reference_tag, initial['head'],
                                                   content, triple, values['cell'])
-            image_check = lambda record: images.verify_created_image(record, content)
+            image_check = lambda record: runtime_adapter.verify_created_image(record, content)
             ensure_volume(runtime, kind, root)
             print(f'Compatibility: {platform}; native execution. No native performance claims.\nVolume: {volume}\nResults: {result_root}', flush=True)
             code = reserved(name, [*platform_args, *run_env, '-v', f'{volume}:/state',

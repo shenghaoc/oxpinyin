@@ -4,7 +4,7 @@ import sys
 
 from ..runners import guarded
 from .. import slot
-from . import campaigns, fixtures, images, launcher, storage
+from . import campaigns, fixtures, images, launcher, runtime as runtime_adapter, storage
 
 RECIPES = {
     'capture': fixtures.capture_fixtures,
@@ -35,7 +35,7 @@ def main(argv=None):
             if shell:
                 rest.pop(0)
             lines = []
-            selected = images.select_runtime(rest[0] if rest else '', output=lines.append if shell else print)
+            selected = runtime_adapter.select_runtime(rest[0] if rest else '', output=lines.append if shell else print)
             if shell:
                 for line in lines:
                     print("printf '%s\\n' " + shlex.quote(line))

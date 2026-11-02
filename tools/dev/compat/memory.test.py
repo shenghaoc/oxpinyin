@@ -19,7 +19,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 from tools.dev import host, slot, test_support
-from tools.dev.compat import boundary, memory, launcher, images, storage
+from tools.dev.compat import boundary, memory, launcher, images, runtime as runtime_adapter, storage
 from tools.dev.runners import Finished
 
 
@@ -34,7 +34,7 @@ class StorageAdapterTests(unittest.TestCase):
             with self.subTest(kind=kind), mock.patch.object(launcher, 'capture', return_value=output) as capture, \
                  mock.patch.object(launcher.memory, 'run', return_value=0) as launch, \
                  mock.patch.object(launcher, 'checkout_owners', return_value=set()), \
-                 mock.patch.object(images, 'volume_metadata', side_effect=self.metadata):
+                 mock.patch.object(runtime_adapter, 'volume_metadata', side_effect=self.metadata):
                 self.assertEqual(launcher.storage_inspect(kind, kind), 0)
                 expected = [kind, 'volume', 'list'] if kind == 'container' else [kind, 'volume', 'ls', '--format', '{{.Name}}']
                 capture.assert_called_once_with(expected)
@@ -66,7 +66,7 @@ class StorageAdapterTests(unittest.TestCase):
             with self.subTest(kind=kind), mock.patch.object(launcher, 'capture', return_value=listing), \
                  mock.patch.object(launcher.memory, 'run', return_value=0) as launch, \
                  mock.patch.object(launcher, 'checkout_owners', return_value=set()), \
-                 mock.patch.object(images, 'volume_metadata', side_effect=self.metadata):
+                 mock.patch.object(runtime_adapter, 'volume_metadata', side_effect=self.metadata):
                 self.assertEqual(launcher.storage_inspect(kind, kind), 0)
                 self.assertEqual(launch.call_count, 2)
                 mounts = [value for call in launch.call_args_list for value in call.args[4] if ':/vol/' in value]
@@ -79,7 +79,7 @@ class StorageAdapterTests(unittest.TestCase):
             with self.subTest(kind=kind), mock.patch.object(launcher, 'capture', return_value=listing), \
                  mock.patch.object(launcher.memory, 'run', return_value=17), \
                  mock.patch.object(launcher, 'checkout_owners', return_value=set()), \
-                 mock.patch.object(images, 'volume_metadata', side_effect=self.metadata):
+                 mock.patch.object(runtime_adapter, 'volume_metadata', side_effect=self.metadata):
                 self.assertEqual(launcher.storage_inspect(kind, kind), 17)
 
     def test_volume_metadata_parses_each_runtime_and_fails_closed(self):
@@ -87,19 +87,19 @@ class StorageAdapterTests(unittest.TestCase):
         labels = {'owner': 'fixture'}
         for kind in ('container', 'podman', 'docker'):
             row = {'configuration': {'name': name, 'labels': labels}} if kind == 'container' else {'Name': name, 'Labels': labels}
-            with self.subTest(kind=kind), mock.patch.object(images, 'capture', return_value=mock.Mock(status=0, stdout=json.dumps([row]).encode())):
-                self.assertEqual(images.volume_metadata(kind, kind, name), {'labels': labels})
-            with mock.patch.object(images, 'capture', return_value=mock.Mock(status=1, stderr=b'permission denied')):
+            with self.subTest(kind=kind), mock.patch.object(runtime_adapter, 'capture', return_value=mock.Mock(status=0, stdout=json.dumps([row]).encode())):
+                self.assertEqual(runtime_adapter.volume_metadata(kind, kind, name), {'labels': labels})
+            with mock.patch.object(runtime_adapter, 'capture', return_value=mock.Mock(status=1, stderr=b'permission denied')):
                 with self.assertRaisesRegex(ValueError, 'cannot inspect'):
-                    images.volume_metadata(kind, kind, name)
-            with mock.patch.object(images, 'capture', return_value=mock.Mock(status=1, stderr=b'volume not found')):
-                self.assertIsNone(images.volume_metadata(kind, kind, name))
+                    runtime_adapter.volume_metadata(kind, kind, name)
+            with mock.patch.object(runtime_adapter, 'capture', return_value=mock.Mock(status=1, stderr=b'volume not found')):
+                self.assertIsNone(runtime_adapter.volume_metadata(kind, kind, name))
 
     def test_volume_creation_labels_and_rejects_wrong_owner_for_each_runtime(self):
         for kind in ('container', 'podman', 'docker'):
             with self.subTest(kind=kind), tempfile.TemporaryDirectory() as root:
                 expected = {'labels': storage.labels(Path(root))}
-                with mock.patch.object(images, 'volume_metadata', side_effect=[None, expected]), \
+                with mock.patch.object(runtime_adapter, 'volume_metadata', side_effect=[None, expected]), \
                      mock.patch.object(launcher, 'run', return_value=0) as run:
                     name = launcher.ensure_volume(kind, kind, Path(root))
                 command = run.call_args.args[0]
@@ -107,7 +107,7 @@ class StorageAdapterTests(unittest.TestCase):
                 for key, value in storage.labels(Path(root)).items():
                     self.assertIn(f'{key}={value}', command)
                 self.assertEqual('-s' in command, kind == 'container')
-                with mock.patch.object(images, 'volume_metadata', return_value={'labels': {}}), \
+                with mock.patch.object(runtime_adapter, 'volume_metadata', return_value={'labels': {}}), \
                      mock.patch.object(launcher, 'run') as run:
                     with self.assertRaises(Finished):
                         launcher.ensure_volume(kind, kind, Path(root))
@@ -116,13 +116,13 @@ class StorageAdapterTests(unittest.TestCase):
     def test_legacy_cleanup_requires_exact_unlabelled_selection_for_each_runtime(self):
         name = 'oxpinyin-compat-0123456789abcdef'
         for kind in ('container', 'podman', 'docker'):
-            with self.subTest(kind=kind), mock.patch.object(images, 'volume_metadata', return_value={'labels': {}}), \
+            with self.subTest(kind=kind), mock.patch.object(runtime_adapter, 'volume_metadata', return_value={'labels': {}}), \
                  mock.patch.object(launcher, 'storage_measure', return_value=0) as measure, \
                  mock.patch.object(launcher, 'run', return_value=0) as run:
                 self.assertEqual(launcher.storage_clean_selected(kind, kind, [('legacy', name)]), 0)
                 measure.assert_called_once_with(kind, kind, [name])
                 self.assertEqual(run.call_args.args[0], [kind, 'volume', 'rm', name])
-            with mock.patch.object(images, 'volume_metadata', return_value={'labels': {'foreign': 'yes'}}), \
+            with mock.patch.object(runtime_adapter, 'volume_metadata', return_value={'labels': {'foreign': 'yes'}}), \
                  mock.patch.object(launcher, 'run') as run:
                 with self.assertRaises(Finished):
                     launcher.storage_clean_selected(kind, kind, [('legacy', name)])
@@ -143,14 +143,14 @@ class StorageAdapterTests(unittest.TestCase):
             events.append(('remove', command))
             return 0
         with mock.patch.object(launcher, 'checkout_owners', return_value=set()), \
-             mock.patch.object(images, 'volume_metadata', side_effect=metadata), \
+             mock.patch.object(runtime_adapter, 'volume_metadata', side_effect=metadata), \
              mock.patch.object(launcher, 'storage_measure', side_effect=measure), \
              mock.patch.object(launcher, 'run', side_effect=remove):
             self.assertEqual(launcher.storage_clean_selected('podman', 'podman', selections), 0)
         self.assertEqual(events[2], ('measure', [legacy, orphan]))
         self.assertEqual(events[-1], ('remove', ['podman', 'volume', 'rm', legacy, orphan]))
         with mock.patch.object(launcher, 'checkout_owners', return_value={orphan[-16:]}), \
-             mock.patch.object(images, 'volume_metadata', side_effect=metadata), \
+             mock.patch.object(runtime_adapter, 'volume_metadata', side_effect=metadata), \
              mock.patch.object(launcher, 'storage_measure') as measure, \
              mock.patch.object(launcher, 'run') as remove:
             with self.assertRaises(Finished):
@@ -159,7 +159,7 @@ class StorageAdapterTests(unittest.TestCase):
             remove.assert_not_called()
 
     def test_storage_runtime_uses_shared_override_handling(self):
-        with mock.patch.object(images, 'select_runtime', return_value='podman') as select, \
+        with mock.patch.object(runtime_adapter, 'select_runtime', return_value='podman') as select, \
              mock.patch.object(launcher.shutil, 'which', return_value='/usr/bin/podman'), \
              mock.patch.object(launcher, 'storage_inspect', return_value=0):
             self.assertEqual(launcher.storage_main(['inspect', '--runtime', 'podman']), 0)
@@ -182,7 +182,7 @@ class StorageAdapterTests(unittest.TestCase):
                 process.wait.return_value = 0
                 capture = mock.Mock(return_value=mock.Mock(status=0))
                 with mock.patch.object(launcher, 'capture', capture), \
-                     mock.patch.object(images, 'volume_metadata', return_value={'labels': storage.labels(Path(root))}), \
+                     mock.patch.object(runtime_adapter, 'volume_metadata', return_value={'labels': storage.labels(Path(root))}), \
                      mock.patch.object(launcher, 'maintenance_image', return_value='local-image'), \
                      mock.patch.object(launcher, 'ThreadPoolExecutor', return_value=executor), \
                      mock.patch.object(launcher.subprocess, 'Popen', return_value=process) as popen, \
@@ -207,7 +207,7 @@ class StorageAdapterTests(unittest.TestCase):
     def test_cleanup_refuses_missing_owned_volume_for_every_runtime(self):
         for kind in ('container', 'podman', 'docker'):
             with self.subTest(kind=kind), tempfile.TemporaryDirectory() as root, \
-                 mock.patch.object(images, 'volume_metadata', return_value=None), \
+                 mock.patch.object(runtime_adapter, 'volume_metadata', return_value=None), \
                  mock.patch.object(launcher.memory, 'run') as launch:
                 with self.assertRaises(Finished):
                     launcher.storage_clean(kind, kind, ['targets'], root=Path(root))
@@ -223,7 +223,7 @@ class StorageAdapterTests(unittest.TestCase):
                 process = mock.Mock()
                 process.poll.return_value = None
                 with mock.patch.object(launcher, 'capture', return_value=mock.Mock(status=0)), \
-                     mock.patch.object(images, 'volume_metadata', return_value={'labels': storage.labels(Path(root))}), \
+                     mock.patch.object(runtime_adapter, 'volume_metadata', return_value={'labels': storage.labels(Path(root))}), \
                      mock.patch.object(launcher, 'maintenance_image', return_value='local-image'), \
                      mock.patch.object(launcher, 'ThreadPoolExecutor', return_value=executor), \
                      mock.patch.object(launcher.subprocess, 'Popen', return_value=process), \
@@ -280,12 +280,12 @@ class MemoryTests(unittest.TestCase):
         for kind in ('container', 'podman', 'docker'):
             image = {'id': digest} if kind == 'container' else {'Id': 'sha256:' + digest}
             row = {'configuration': {'image': {'descriptor': {'digest': 'sha256:' + digest}}}} if kind == 'container' else {'Image': 'sha256:' + digest}
-            with self.subTest(kind=kind), mock.patch.object(images, 'capture', return_value=mock.Mock(stdout=json.dumps([image]).encode())), \
+            with self.subTest(kind=kind), mock.patch.object(runtime_adapter, 'capture', return_value=mock.Mock(stdout=json.dumps([image]).encode())), \
                  mock.patch.object(host, 'inspect_container', return_value=row):
-                self.assertEqual(images.content_digest(kind, kind, 'image'), digest)
-                images.verify_created_image({'kind': kind}, digest)
+                self.assertEqual(runtime_adapter.content_digest(kind, kind, 'image'), digest)
+                runtime_adapter.verify_created_image({'kind': kind}, digest)
                 with self.assertRaisesRegex(ValueError, 'differs'):
-                    images.verify_created_image({'kind': kind}, 'b' * 64)
+                    runtime_adapter.verify_created_image({'kind': kind}, 'b' * 64)
 
     def test_positive_memory_size_and_default_covers_two_job_estimates(self):
         self.assertEqual(host.container_memory_mib(None), host.CONTAINER_MEMORY_MIB)
@@ -1119,7 +1119,7 @@ esac
             env = dict(self.env, SYNTHETIC_HOST=platform, OXPINYIN_CONTAINER=override,
                        PATH=self.temp.name + os.pathsep + os.environ['PATH'])
             result = subprocess.run([sys.executable, '-X', 'lazy_imports=normal', '-c',
-                                     'from tools.dev.compat.images import select_runtime; print("selected:" + select_runtime())'],
+                                     'from tools.dev.compat.runtime import select_runtime; print("selected:" + select_runtime())'],
                                     cwd=ROOT, env=env, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn('selected:' + expected, result.stdout)

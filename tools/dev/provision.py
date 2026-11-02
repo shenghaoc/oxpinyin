@@ -18,7 +18,7 @@ import tempfile
 import time
 
 from . import doctor, model, slot
-from .compat import images
+from .compat import images, runtime as runtime_adapter
 from .compat.identity import digest_file
 from .compat.process import ROOT, capture, fail, run, text
 from .runners import Finished
@@ -768,7 +768,7 @@ class Provision:
                 digest.update((self.root / path).read_bytes())
             self.deps_image = 'oxpinyin-oracle-deps:' + digest.hexdigest()[:12]
             if not self.inside:
-                self.ctr = images.select_runtime(env=self.env)
+                self.ctr = runtime_adapter.select_runtime(env=self.env)
                 if Path(self.ctr).name == 'container':
                     self.die('normal cloud provisioning requires a Linux cloud runtime; use compat.sh for the Apple adapter')
             else:

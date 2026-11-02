@@ -10,6 +10,7 @@ import sys
 from tools.tkrzw import runtime
 from .. import cell
 from . import images
+from . import runtime as runtime_adapter
 from .process import ROOT, PYTHON, fail, run, text
 
 # Paths are the upstream build tree's, shared by developer and fixture campaigns.
@@ -214,7 +215,7 @@ def deps_container(root, work):
     Dockerfile.oracle built here. Files keep the caller's owner, so the host
     side of the build can write into the tree.
     """
-    ctr = images.select_runtime()
+    ctr = runtime_adapter.select_runtime()
     tag = images.image_tag(root)
     image, published = f'oxpinyin-oracle-deps:{tag}', f'ghcr.io/shenghaoc/oxpinyin-oracle:{tag}-deps'
     with open(os.devnull, 'wb') as null:
