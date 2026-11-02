@@ -125,9 +125,11 @@ class StagedCopyTests(unittest.TestCase):
         self.script = self.staged['tools/oracle/compat-inside.sh']
         self.floor = self.staged[bash_floor.FLOOR_FILE]
 
-    def run_staged(self):
+    def run_staged(self, inherited_floor=None):
         environment = {name: value for name, value in os.environ.items()
                        if name not in ('OXPINYIN_COMPAT_CONTAINER', 'OXPINYIN_BASH_FLOOR')}
+        if inherited_floor is not None:
+            environment['OXPINYIN_BASH_FLOOR'] = inherited_floor
         return subprocess.run(['bash', str(self.script)], env=environment,
                               capture_output=True, text=True, timeout=10)
 
@@ -144,6 +146,13 @@ class StagedCopyTests(unittest.TestCase):
         result = self.run_staged()
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertEqual(result.stderr, 'FAIL: compatibility requires a controlled Linux amd64 or arm64 image\n')
+
+    def test_a_missing_staged_floor_rejects_inherited_sentinel(self):
+        self.floor.unlink()
+        result = self.run_staged(inherited_floor='5.0')
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn('Bash floor unchecked', result.stderr)
+        self.assertNotIn('controlled Linux', result.stderr)
 
     def test_a_missing_staged_floor_stops_the_script(self):
         self.floor.unlink()

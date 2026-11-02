@@ -72,12 +72,6 @@
       "basis": "trixie 13.7 libtool 2.5.4-4; the autotools generation that builds the pin."
     },
     {
-      "name": "gettext",
-      "package": "gettext",
-      "major_minor": "0.23",
-      "basis": "trixie 13.7 gettext 0.23.1-2; provides autopoint, which autoreconf runs for the pin."
-    },
-    {
       "name": "pkg-config",
       "package": "pkg-config",
       "major_minor": "1.8",

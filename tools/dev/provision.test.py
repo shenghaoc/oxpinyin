@@ -3,6 +3,7 @@
 import contextlib
 import io
 import os
+import platform
 from pathlib import Path
 import re
 import shutil
@@ -481,6 +482,7 @@ elif name in ('curl','apt-get','sudo'):
         cache = self.work / 'cache'
         pin = self.root / 'tools/oracle/oracle-pin.txt'
         fields = pin.read_text()
+        suffix = '_linux_arm64' if platform.machine() in ('aarch64', 'arm64') else ''
         for cell in ('bdb', 'kc'):
             prefix = cache / 'oracle' / cell
             data = prefix / 'lib/libpinyin/data'
@@ -490,15 +492,15 @@ elif name in ('curl','apt-get','sudo'):
             for library in ('libpinyin', 'libzhuyin'):
                 path = prefix / 'lib' / (library + '.so')
                 path.write_text(cell + ' ' + library + '\n')
-                fields = re.sub(r'^' + library + '_sha256_' + cell + r'=.*$',
-                                library + '_sha256_' + cell + '=' + digest_file(path), fields, flags=re.M)
+                fields = re.sub(r'^' + library + '_sha256_' + cell + suffix + r'=.*$',
+                                library + '_sha256_' + cell + suffix + '=' + digest_file(path), fields, flags=re.M)
             (data / 'table.conf').write_text('synthetic\n')
             (prefix / 'oracle-data.sha256').write_text(digest_file(data / 'table.conf') + '  lib/libpinyin/data/table.conf\n')
             (data / 'bigram.db').write_text('synthetic generated\n')
             (prefix / 'oracle-data-unstable.sha256').write_text(digest_file(data / 'bigram.db') + '  lib/libpinyin/data/bigram.db\n')
             (prefix / 'oracle-pin.txt').write_text('data_unstable_manifest_sha256=' + digest_file(prefix / 'oracle-data-unstable.sha256') + '\n')
-            fields = re.sub(r'^data_manifest_sha256_' + cell + r'=.*$',
-                            'data_manifest_sha256_' + cell + '=' + digest_file(prefix / 'oracle-data.sha256'), fields, flags=re.M)
+            fields = re.sub(r'^data_manifest_sha256_' + cell + suffix + r'=.*$',
+                            'data_manifest_sha256_' + cell + suffix + '=' + digest_file(prefix / 'oracle-data.sha256'), fields, flags=re.M)
         pin.write_text(fields)
         self.env['FAKE_RUNTIME_READY'] = '1'
         (self.bin / 'kchashmgr').symlink_to('/bin/true')
@@ -558,6 +560,20 @@ elif name in ('curl','apt-get','sudo'):
             status = 128 - child.returncode if child.returncode < 0 else child.returncode
             self.assertEqual(status, 1 if custom else 143, err.decode())
             self.assertFalse(any(path.name == 'ca.crt' for path in self.work.rglob('ca.crt')))
+
+
+class InImageCommandTests(unittest.TestCase):
+    def test_deps_image_run_mounts_the_bash_floor_next_to_the_build_script(self):
+        # build-oracle.sh sources ../lib/bash-floor.sh relative to /usr/local/bin; a deps image
+        # published before the floor existed does not carry it.
+        run = object.__new__(provision.Provision)
+        run.inside, run.ctr, run.platform = False, 'podman', 'linux/amd64'
+        run.net_flags, run.env_flags = [], []
+        run.root, run.pin = Path('/checkout'), Path('/checkout/tools/oracle/oracle-pin.txt')
+        run.cache, run.model_cache, run.deps_image = Path('/cache'), Path('/model'), 'deps:tag'
+        command = run.in_image_command(['--libs-only'])
+        self.assertIn('/checkout/tools/oracle/build-oracle.sh:/usr/local/bin/build-oracle.sh:ro,z', command)
+        self.assertIn('/checkout/tools/lib/bash-floor.sh:/usr/local/lib/bash-floor.sh:ro,z', command)
 
 
 if __name__ == '__main__':

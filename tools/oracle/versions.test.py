@@ -48,7 +48,7 @@ class ManifestTest(unittest.TestCase):
         names = [entry['name'] for entry in loaded['components']]
         for expected in ('glibc', 'glib', 'Berkeley DB 5.3', 'Kyoto Cabinet',
                          'tkrzw', 'C compiler', 'C++ compiler', 'binutils',
-                         'autoconf', 'automake', 'libtool', 'gettext', 'pkg-config'):
+                         'autoconf', 'automake', 'libtool', 'pkg-config'):
             self.assertIn(expected, names)
         tkrzw = next(entry for entry in loaded['components'] if entry['name'] == 'tkrzw')
         self.assertTrue(tkrzw.get('probe'))

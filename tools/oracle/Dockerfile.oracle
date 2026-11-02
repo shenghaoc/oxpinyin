@@ -30,6 +30,7 @@ FROM --platform=$ORACLE_PLATFORM debian:trixie AS deps
 # optional BuildKit secret `cacert`; apt trusts that CA for any https source.
 # The base image keeps its default Debian mirrors, so the packages and the
 # toolchain are the same with or without the proxy.
+COPY tools/lib/bash-floor.sh /usr/local/lib/bash-floor.sh
 COPY tools/oracle/version-manifest.json /usr/local/share/oxpinyin/version-manifest.json
 COPY tools/oracle/versions.py /usr/local/bin/versions.py
 COPY tools/tkrzw/distro-probe.sh /usr/local/bin/distro-probe.sh
@@ -41,11 +42,10 @@ RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
     apt-get "$@" update; \
     apt-get "$@" install -y --no-install-recommends \
         build-essential \
-        autoconf automake autopoint libtool \
-        pkg-config gettext gnome-common \
+        autoconf automake libtool \
+        pkg-config \
         curl ca-certificates git tar patch python3 \
         libglib2.0-dev \
-        libsqlite3-dev \
         libdb-dev \
         libkyotocabinet-dev \
         libtkrzw-dev \

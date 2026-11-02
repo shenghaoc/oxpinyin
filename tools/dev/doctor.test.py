@@ -1,6 +1,7 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """Unit tests for tools.dev.doctor."""
 from pathlib import Path
+import json
 import re
 import sys
 import unittest
@@ -22,6 +23,62 @@ def tool(name):
 
 
 class DoctorTests(unittest.TestCase):
+    def _dependency_lines(self, query_result, native='amd64', which='/usr/bin/dpkg-query'):
+        """Run the dependency report with dpkg-query returning QUERY_RESULT and dpkg printing NATIVE."""
+        def run(command, *args, **kwargs):
+            if isinstance(query_result, Exception) and command[1] != '--print-architecture':
+                raise query_result
+            if command[1] == '--print-architecture':
+                return mock.Mock(returncode=0, stdout=(native or '') + '\n', stderr='')
+            return query_result
+        with mock.patch.object(doctor.sys, 'platform', 'linux'), \
+             mock.patch.object(doctor.shutil, 'which', return_value=which) as found, \
+             mock.patch.object(doctor.subprocess, 'run', side_effect=run) as query:
+            lines = doctor.oracle_dependency_lines({'PATH': '/supplied'})
+        return lines, found, query
+
+    def _manifest_packages(self):
+        groups = json.loads((Path(doctor.__file__).resolve().parents[2] / 'tools/oracle/dependencies.json').read_text())
+        return [package for group in groups.values() for package in group]
+
+    def test_oracle_dependency_report_uses_manifest_groups(self):
+        packages = [package for package in self._manifest_packages() if package != 'autopoint']
+        output = ''.join(f'{package}\tamd64\tinstalled\n' for package in packages)
+        lines, found, query = self._dependency_lines(mock.Mock(returncode=1, stdout=output, stderr=''))
+        found.assert_called_with('dpkg-query', path='/supplied')
+        self.assertIn('autopoint', query.call_args_list[0].args[0])
+        self.assertIn('oracle full: optional, not installed autopoint', lines)
+        self.assertIn('oracle common: installed', lines)
+        self.assertIn('oracle tkrzw: installed', lines)
+
+    def test_oracle_dependency_report_survives_a_missing_dpkg_query(self):
+        for case in (None, FileNotFoundError(2, 'No such file')):
+            with self.subTest(case=case):
+                lines, _, _ = self._dependency_lines(case if case else None, which=None if case is None else '/x')
+                self.assertEqual(len(lines), 1)
+                self.assertIn('Debian package check unavailable', lines[0])
+
+    def test_oracle_dependency_report_treats_status_two_as_unavailable(self):
+        lines, _, _ = self._dependency_lines(mock.Mock(returncode=2, stdout='', stderr='dpkg-query: error: cannot read database\n'))
+        self.assertEqual(len(lines), 1)
+        self.assertIn('unavailable', lines[0])
+        self.assertIn('cannot read database', lines[0])
+
+    def test_oracle_dependency_report_keeps_status_one_as_missing(self):
+        lines, _, _ = self._dependency_lines(mock.Mock(returncode=1, stdout='', stderr='no packages found'))
+        self.assertIn('oracle common: missing ' + ', '.join(json.loads(
+            (Path(doctor.__file__).resolve().parents[2] / 'tools/oracle/dependencies.json').read_text())['common']), lines)
+
+    def test_oracle_dependency_report_counts_only_native_or_all_architectures(self):
+        packages = self._manifest_packages()
+        output = ''.join(f'{package}\t{"i386" if index == 0 else "all" if index == 1 else "amd64"}\tinstalled\n'
+                         for index, package in enumerate(packages))
+        lines, _, _ = self._dependency_lines(mock.Mock(returncode=0, stdout=output, stderr=''))
+        text = '\n'.join(lines)
+        self.assertIn(packages[0], text)
+        self.assertNotIn(packages[1], text)
+        self.assertNotIn(packages[2], text)
+
     def test_current_interpreter_identity(self):
         info = doctor.identity()
         self.assertEqual(info['implementation'], 'cpython')

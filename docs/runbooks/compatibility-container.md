@@ -279,16 +279,12 @@ libnotify or cloud-input libraries.
 
 The package groups below name distro packages, including shared build inputs:
 
-- **B**: inherited `build-essential` (C/C++, binutils and libc headers),
-  `pkg-config`, `libglib2.0-dev`, selected DBM development library
-  (`libdb-dev`, `libkyotocabinet-dev` or `libtkrzw-dev`), plus compat's
+- **B**: inherited common and selected DBM inputs from the [oracle dependency manifest](../../tools/oracle/dependencies.json), plus compat's
   `libclang-dev`, `liblz4-dev`, `libzstd-dev`, `zlib1g-dev`. Bash, coreutils,
   findutils, diffutils, awk, sed and libc runtime tools come from Debian.
   Rust and managed Python/uv come from the image's existing pinned bootstrap.
 - **D**: `db5.3-util`, `kyotocabinet-utils`, `tkrzw-utils` (per-cell dump tools).
-- **F**: `libibus-1.0-dev`, `libsqlite3-dev` (already inherited), `sqlite3`,
-  and GLib's schema compiler; upstream preparation also uses inherited
-  `autoconf automake autopoint libtool gettext gnome-common git curl tar patch`.
+- **F**: frontend inputs are listed in the [oracle dependency manifest](../../tools/oracle/dependencies.json); GLib supplies the schema compiler.
 - **L**: `locales` plus generated `zh_CN.UTF-8`.
 - **V**: `valgrind` (including Callgrind/Massif and headers).
 - **C**: distro `cargo-c`, for installation-tree preparation. Trixie's

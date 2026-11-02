@@ -402,9 +402,12 @@ def docker_inside(argv):
                                 'LIBPINYIN_GIT_URL=file:///work/target/mirrors/libpinyin.git')
         source = source.replace('ibus_src=$(fetch_commit ibus-libpinyin "$IBUS_LIBPINYIN_GIT_URL" "$IBUS_LIBPINYIN_SHA")',
                                 'ibus_src=ibus-skipped-github-unreachable')
-        source = re.sub(r'\(\n\tcd "\\\$ibus_src"\n.*?\n\)\n',
-                        'echo "ibus build skipped: github unreachable this run"\n', source, count=1, flags=re.S)
-        Path('/tmp/bo.sh').write_text(source)
+        source, replaced = re.subn(r'\(\n\t\tcd "\$ibus_src"\n.*?\n\t\)\n',
+                                   'echo "ibus build skipped: github unreachable this run"\n',
+                                   source, count=1, flags=re.S)
+        if replaced != 1:
+            raise ValueError('historical round-trip frontend rewrite did not match')
+        Path('/tmp/bo.sh').write_text(source.replace('${0%/*}/../lib/bash-floor.sh', '/work/tools/lib/bash-floor.sh'))
         code = run(['bash', '/tmp/bo.sh', '--dbm', 'tkrzw', '--work-dir', '/tmp/oracle-work', '--prefix', '/tmp/oracle-prefix',
                     '--model-dir', '/work/target/model20/extracted', '--jobs', text(['nproc'])], heavy=True, check=False)
         print(f'ORACLE-BUILD-EXIT:{code}')

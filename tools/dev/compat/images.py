@@ -43,7 +43,7 @@ def image_tag(root=ROOT):
         fail(f'FAIL: Dockerfile.oracle does not use base_image {base}')
     digest = hashlib.sha256()
     for name in ('Dockerfile.oracle', 'build-oracle.sh', 'version-manifest.json', 'versions.py',
-                 '../tkrzw/distro-probe.sh', 'oracle-pin.txt'):
+                 '../tkrzw/distro-probe.sh', '../lib/bash-floor.sh', 'oracle-pin.txt'):
         digest.update((directory / name).read_bytes())
     slug = re.sub(r'[^A-Za-z0-9_.-]', '-', base)
     return f'{commit[:12]}-{slug}-{digest.hexdigest()[:12]}'
@@ -229,6 +229,7 @@ def reproducible(argv, *, root=ROOT):
                     options = [] if Path(engine).name == 'container' else ['--cidfile', str(cidfile), '--label', label + '=' + token]
                     command = [engine, 'run', '--platform', platform, *flags, *options,
                                '-v', f'{root}/tools/oracle/build-oracle.sh:/usr/local/bin/build-oracle.sh:ro',
+                               '-v', f'{root}/tools/lib/bash-floor.sh:/usr/local/lib/bash-floor.sh:ro',
                                image, 'bash', '-c', BUILD_SCRIPT, '--', dbm, work, prefix, jobs]
                     try:
                         return context.launch(command)

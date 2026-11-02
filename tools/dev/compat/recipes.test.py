@@ -37,6 +37,29 @@ class RecipeTests(unittest.TestCase):
         uv.chmod(0o755)
         self.env['PATH'] = str(self.directory) + os.pathsep + self.env['PATH']
 
+    def test_historical_round_trip_rewrites_floor_and_skips_frontend(self):
+        script = self.directory / 'bo.sh'
+        log = self.directory / 'round-trip.log'
+
+        def local_path(value):
+            if value == '/tmp/bo.sh':
+                return script
+            if value == '/work/target/rt-oracle.log':
+                return log
+            return Path(value)
+
+        with mock.patch.object(campaigns, 'Path', side_effect=local_path), \
+             mock.patch.object(campaigns, 'run', return_value=0), \
+             mock.patch.object(campaigns, 'text', return_value='2'):
+            self.assertEqual(campaigns.docker_inside([]), 0)
+        rewritten = script.read_text()
+        self.assertIn('/work/tools/lib/bash-floor.sh', rewritten)
+        self.assertIn('ibus build skipped: github unreachable this run', rewritten)
+        self.assertNotIn('cd "$ibus_src"', rewritten)
+        self.assertNotIn('ibus_src=$(fetch_commit', rewritten)
+        checked = subprocess.run(['bash', '-n', str(script)], capture_output=True, text=True)
+        self.assertEqual(checked.returncode, 0, checked.stderr)
+
     def test_drop_in_producers_use_repository_manifest_from_scratch_cwd(self):
         model = self.directory / 'model'
         model.mkdir()
@@ -115,11 +138,16 @@ raise SystemExit(cli.main(args))
         before = images.image_tag()
         copied = self.directory / 'tree'
         for path in ('tools/oracle/Dockerfile.oracle','tools/oracle/build-oracle.sh','tools/oracle/version-manifest.json',
-                     'tools/oracle/versions.py','tools/tkrzw/distro-probe.sh','tools/oracle/oracle-pin.txt'):
+                     'tools/oracle/versions.py','tools/tkrzw/distro-probe.sh','tools/lib/bash-floor.sh','tools/oracle/oracle-pin.txt'):
             dest = copied / path
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / path, dest)
         self.assertEqual(images.image_tag(copied), before)
+        floor = copied / 'tools/lib/bash-floor.sh'
+        original_floor = floor.read_bytes()
+        floor.write_bytes(b'changed floor')
+        self.assertNotEqual(images.image_tag(copied), before)
+        floor.write_bytes(original_floor)
         (copied / 'tools/oracle/version-manifest.json').write_bytes(b'changed input')
         self.assertNotEqual(images.image_tag(copied), before)
 
@@ -287,6 +315,15 @@ if sys.argv[1]=='cp': sys.exit(19)
             campaigns.certify_tkrzw(self.directory / 'src', self.directory / 'prefix', {}, [])
         self.assertNotIn('REFUSED', output.getvalue())
         self.assertIn(f'libpinyin.so: libtkrzw.so.1 => {verified}', output.getvalue())
+
+
+class BuildMountTests(unittest.TestCase):
+    def test_build_mounts_the_bash_floor_next_to_the_build_script(self):
+        # build-oracle.sh sources ${0%/*}/../lib/bash-floor.sh; an image published before the
+        # floor existed does not carry it, so the build supplies it.
+        source = (ROOT / 'tools/dev/compat/images.py').read_text()
+        self.assertIn('/tools/oracle/build-oracle.sh:/usr/local/bin/build-oracle.sh:ro', source)
+        self.assertIn('/tools/lib/bash-floor.sh:/usr/local/lib/bash-floor.sh:ro', source)
 
 
 class InterchangeTests(unittest.TestCase):

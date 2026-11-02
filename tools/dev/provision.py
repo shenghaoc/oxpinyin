@@ -579,6 +579,7 @@ class Provision:
             return [str(self.root / 'tools/oracle/build-oracle.sh'), *args]
         return [self.ctr, 'run', '--rm', '--platform', self.platform, *self.net_flags, *self.env_flags, *flags,
                 '-v', f'{self.root}/tools/oracle/build-oracle.sh:/usr/local/bin/build-oracle.sh:ro,z',
+                '-v', f'{self.root}/tools/lib/bash-floor.sh:/usr/local/lib/bash-floor.sh:ro,z',
                 '-v', f'{self.pin}:/usr/local/bin/oracle-pin.txt:ro,z',
                 '-v', f'{self.oracle_root}:/opt/pinyin-oracle:z', '-v', f'{self.model_cache}:/model-cache:ro,z',
                 self.deps_image, 'build-oracle.sh', *args]
@@ -750,7 +751,7 @@ class Provision:
             self.published = published + ('-arm64' if self.platform == 'linux/arm64' else '')
             self.published_deps = self.published + '-deps'
             digest = hashlib.sha256()
-            for path in ('tools/oracle/Dockerfile.oracle', 'tools/oracle/versions.py', 'tools/oracle/version-manifest.json', 'tools/tkrzw/distro-probe.sh', 'tools/oracle/oracle-pin.txt'):
+            for path in ('tools/oracle/Dockerfile.oracle', 'tools/oracle/versions.py', 'tools/oracle/version-manifest.json', 'tools/tkrzw/distro-probe.sh', 'tools/lib/bash-floor.sh', 'tools/oracle/oracle-pin.txt'):
                 digest.update((self.root / path).read_bytes())
             self.deps_image = 'oxpinyin-oracle-deps:' + digest.hexdigest()[:12]
             if not self.inside:

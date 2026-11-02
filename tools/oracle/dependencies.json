@@ -1,0 +1,33 @@
+{
+  "common": [
+    "build-essential",
+    "autoconf",
+    "automake",
+    "libtool",
+    "pkg-config",
+    "curl",
+    "ca-certificates",
+    "git",
+    "tar",
+    "patch",
+    "python3",
+    "libglib2.0-dev"
+  ],
+  "bdb": [
+    "libdb-dev"
+  ],
+  "kc": [
+    "libkyotocabinet-dev"
+  ],
+  "tkrzw": [
+    "libtkrzw-dev",
+    "tkrzw-utils"
+  ],
+  "full": [
+    "autopoint",
+    "gettext",
+    "libsqlite3-dev",
+    "sqlite3",
+    "libibus-1.0-dev"
+  ]
+}
