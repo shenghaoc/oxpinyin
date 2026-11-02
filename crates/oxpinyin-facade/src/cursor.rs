@@ -7,7 +7,7 @@
 //! pair. Where the pin's `_check_offset` aborts, these answer an error
 //! the C layers turn into `false` (the no-abort policy).
 //!
-//! Parse-mode dispatch mirrors [`InstanceCore::validate_lookup_offset`]:
+//! Parse-mode dispatch mirrors [`InstanceView::validate_lookup_offset`]:
 //! plain full pinyin runs the law over the session's own buffer; LUOMA /
 //! `SECONDARY_ZHUYIN` run it over the stored original input with the
 //! index parse's key spans (the pinned index parse consumes `'` as the
@@ -17,7 +17,7 @@
 use oxpinyin_core::{DoublePinyinKey, FullPinyinIndexKey, SyllableKey, ZhuyinKey};
 use oxpinyin_engine::{EngineError, KeySpans, MatrixKey};
 
-use crate::instance::InstanceCore;
+use crate::instance::{InstanceState, InstanceView};
 
 /// One original-coordinate ABI column's first item: the packed key and its
 /// raw begin and end. A packed `0` is a zero key (or a key with no
@@ -56,7 +56,7 @@ pub enum ModeKeys<'a> {
     Full(&'a [FullPinyinIndexKey]),
     /// The plain full-pinyin session's scan-matrix keys.
     Matrix(&'a [MatrixKey]),
-    /// A key list taken earlier from [`InstanceCore::mode_key_list`].
+    /// A key list taken earlier from [`InstanceView::mode_key_list`].
     Listed(&'a [KeyAt]),
 }
 
@@ -215,11 +215,13 @@ pub struct KeyAt {
     pub end: usize,
 }
 
-impl InstanceCore {
+impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engine::SessionState>>
+    InstanceView<'_, S, E>
+{
     /// The mode dispatch shared by the three offset laws: zhuyin, then
     /// double pinyin, then the LUOMA / `SECONDARY_ZHUYIN` full-pinyin
     /// index — the same precedence as
-    /// [`InstanceCore::validate_lookup_offset`], and the union of the two
+    /// [`InstanceView::validate_lookup_offset`], and the union of the two
     /// facades' chains (a facade that never populates a parse state never
     /// takes its branch). Zhuyin and double pinyin hold no zero-key
     /// columns (`separators` false); the index parse consumes `'` as a
@@ -323,7 +325,7 @@ impl InstanceCore {
     /// end)`, the mode's own input buffer, and whether `'` is a zero-key
     /// separator in that mode — the same `(input, separators)` dispatch
     /// [`Self::span_source`] and
-    /// [`InstanceCore::validate_lookup_offset`] make. The key spans are
+    /// [`InstanceView::validate_lookup_offset`] make. The key spans are
     /// in the active input's coordinates, so [`Self::key_at`] must walk
     /// that same buffer, not the session's `'`-joined canonical spelling.
     ///
@@ -586,4 +588,11 @@ impl InstanceCore {
             end,
         })
     }
+}
+
+impl<
+    S: std::borrow::BorrowMut<InstanceState>,
+    E: std::borrow::BorrowMut<oxpinyin_engine::SessionState>,
+> InstanceView<'_, S, E>
+{
 }

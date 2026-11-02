@@ -111,7 +111,7 @@ pub fn candidate_text(instance: *mut ZhuyinInstance, index: usize) -> String {
     // SAFETY: `instance` is live and was produced by
     // `zhuyin_alloc_instance`; the borrow ends with this function.
     let inst = unsafe { instance_mut(instance) };
-    inst.candidates[index]
+    inst.state.candidates[index]
         .text_str()
         .expect("candidate text is UTF-8")
         .to_owned()
@@ -243,7 +243,7 @@ pub fn plant_bigram(user_dir: &std::path::Path, rows: Vec<(Vec<u8>, Vec<u8>)>) {
     oxpinyin_user::persistence::save(
         user_dir,
         &state,
-        &std::collections::BTreeMap::new().into(),
+        &oxpinyin_user::SystemOriginals::from(std::collections::BTreeMap::new()),
         &oxpinyin_data::user_files::SystemVersions::from_conf(&conf),
         1,
     )

@@ -163,10 +163,13 @@ pub extern "C" fn zhuyin_fini(context: *mut ZhuyinContext) {
     // SAFETY: `context` was created by `zhuyin_init` via `box_context`
     // (= `Box::into_raw`), the registry held its address and this call
     // removed it, so no other call can free it. The caller transfers
-    // ownership back.
+    // ownership back. The C caller serializes this call with all operations
+    // on its instances and iterators, so the retained allocation is exclusively
+    // borrowed for fini even when other handles still own it.
     unsafe {
-        let ctx = Box::from_raw(context.cast::<CapiContext>());
-        drop(ctx);
+        let mut owner = Box::from_raw(context.cast::<crate::state::ContextOwner>());
+        crate::state::owner_mut(&mut owner).core.finish();
+        drop(owner);
     };
 }
 

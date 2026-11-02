@@ -102,37 +102,211 @@ where
         Self {
             dictionary,
             model,
-            settings,
-            scoring: ScoringConfig::default(),
-            key_costs,
-            collapse_sentence_rows_to_best: false,
-            candidate_ranking: CandidateRanking::SortWord,
-            nbest_shape: crate::nbest::NbestShape::default(),
-            defer_list_builds: false,
-            input: InputBuffer::default(),
-            record: SelectionRecord::default(),
-            constraints: crate::constraint::ConstraintStore::default(),
-            lookup: Lookup::default(),
-            sentence: SentenceState::default(),
-            scratch: Scratch::default(),
-            scan_unreadable: false,
-            scan_ranked_phrase: false,
+            state: SessionState {
+                settings,
+                scoring: ScoringConfig::default(),
+                key_costs,
+                collapse_sentence_rows_to_best: false,
+                candidate_ranking: CandidateRanking::SortWord,
+                nbest_shape: crate::nbest::NbestShape::default(),
+                defer_list_builds: false,
+                input: InputBuffer::default(),
+                record: SelectionRecord::default(),
+                constraints: crate::constraint::ConstraintStore::default(),
+                lookup: Lookup::default(),
+                sentence: SentenceState::default(),
+                scratch: Scratch::default(),
+                scan_unreadable: false,
+                scan_ranked_phrase: false,
+            },
+        }
+    }
+}
+
+impl<D, L, S: std::borrow::Borrow<SessionState>> Session<D, L, S>
+where
+    D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+    D::Error: Display,
+    L: LanguageModel<Token = PhraseToken>,
+    L::Error: Display,
+{
+    /// The scoring weights currently in force.
+    #[must_use]
+    pub fn scoring_config(&self) -> &ScoringConfig {
+        &self.scoring
+    }
+
+    /// Whether `text` extends the bytes the selection record was built
+    /// over (`raw[..consumed]`) — the continuity retaining the record
+    /// requires. The parse seams' own prefix checks run in the caller's
+    /// coordinates (the scheme parses' original input), while the record
+    /// lives in these canonical bytes: a replacement that passes those
+    /// checks but does not extend the covered span — a scheme switch
+    /// that decodes the same codes to a different spelling, any
+    /// transform divergence — must reconcile, or [`Session::selected_text`]
+    /// retains stale text alongside the new raw input.
+    pub(super) fn replacement_extends_selection(&self, text: &str) -> bool {
+        text.as_bytes()
+            .starts_with(&self.input.as_bytes()[..self.record.consumed()])
+    }
+
+    /// Filtered parse length of the remaining input after the last refresh.
+    ///
+    /// This is the last byte of [`SegmentGraph::fewest_keys`] under the
+    /// session's `incomplete-pinyin` setting — not the unfiltered
+    /// [`SegmentGraph::consumed`].
+    ///
+    /// Under [`Session::set_defer_list_builds`], call
+    /// [`Session::refresh_candidates`] first.
+    #[must_use]
+    pub fn parsed_prefix_len(&self) -> usize {
+        self.lookup.parsed_prefix
+    }
+
+    /// The option word applied ([`Self::set_options`]).
+    #[must_use]
+    pub fn options(&self) -> OptionBits {
+        self.settings.options
+    }
+
+    /// The last sort-option word applied ([`Self::set_sort_options`]).
+    #[must_use]
+    pub fn sort_options(&self) -> u32 {
+        self.lookup.sort_word
+    }
+
+    /// The sort word that orders this session's candidate lists under its
+    /// [`CandidateRanking`].
+    ///
+    /// The zhuyin comparator has no span key, and the span key would always
+    /// tie on a zhuyin list anyway: a phrase length is a key count
+    /// (`phrase_index.h:136-150`; zhuyin import refuses a mismatch,
+    /// `zhuyin.cpp:525`); a zhuyin column's keys share one end
+    /// (`zhuyin.cpp:1030-1038,1069-1076` run no split pass; fuzzy keys keep
+    /// the span, `phonetic_key_matrix.cpp:254-258`); and the only longer
+    /// copies the pin makes cross an apostrophe run with the same token's
+    /// frequency (`zhuyin.cpp:1499-1512`, `:1229-1270`), which this scan does
+    /// not produce.
+    pub(super) fn rank_word(&self) -> u32 {
+        match self.candidate_ranking {
+            CandidateRanking::SortWord => self.lookup.sort_word,
+            CandidateRanking::LengthThenFrequency => SORT_BY_PHRASE_LENGTH | SORT_BY_FREQUENCY,
         }
     }
 
+    /// The current candidates, in rank order.
+    ///
+    /// Sentence rows appear at the head of this list only after
+    /// [`Session::guess_sentence`] has run for the current composition:
+    /// upstream's candidate list prepends its n-best rows exactly when
+    /// `m_nbest_results` is non-empty (`pinyin.cpp:2292-2293`), and the
+    /// corpus pins were captured without a sentence guess.
+    ///
+    /// Under [`Session::set_defer_list_builds`], call
+    /// [`Session::refresh_candidates`] first.
+    #[must_use]
+    pub fn candidates(&self) -> &CandidateList {
+        &self.lookup.candidates
+    }
+
+    /// Whether a sentence lookup has run since the last reset.
+    ///
+    /// The lookup-active half of the gate: while this is true,
+    /// `pinyin_get_sentence` answers decoded-or-nothing (upstream's
+    /// `0 == results.size()` false) and never the pre-lookup raw form,
+    /// even when the lookup produced no rows.
+    #[must_use]
+    pub fn sentence_lookup_active(&self) -> bool {
+        self.sentence.active()
+    }
+
+    /// The decoded text of n-best row `index`, best-first, one text per
+    /// phrase as the pin's result vector holds them for `convert_to_utf8`
+    /// (`pinyin_get_sentence`'s payload, `pinyin.cpp:1464-1482`,
+    /// `lookup/lookup.cpp:27-69`). `None` when fewer rows exist or the
+    /// row's text is empty, as [`Self::sentence_text`].
+    #[must_use]
+    pub fn sentence_phrases(&self, index: u8) -> Option<impl Iterator<Item = &PhraseText>> {
+        let row = self.sentence.rows.get(usize::from(index))?;
+        (!row.text.is_empty()).then(|| self.sentence.phrases(row))
+    }
+
+    /// The decoded text of n-best row `index`, best-first. `None` when
+    /// fewer rows exist or the text is empty.
+    #[must_use]
+    pub fn sentence_text(&self, index: u8) -> Option<&PhraseText> {
+        self.sentence
+            .rows
+            .get(usize::from(index))
+            .map(|row| &row.text)
+            .filter(|text| !text.is_empty())
+    }
+
+    /// Accumulated natural-log possibility of a real-table sentence row.
+    /// The fallback scorer has its own integer cost scale and returns None.
+    #[must_use]
+    pub fn sentence_log_possibility(&self, index: u8) -> Option<f32> {
+        self.sentence
+            .rows
+            .get(usize::from(index))
+            .and_then(|row| row.poss)
+    }
+
+    /// The raw input typed so far.
+    #[must_use]
+    pub fn raw_input(&self) -> &str {
+        self.input.as_str()
+    }
+
+    /// Whether a composition is in progress.
+    #[must_use]
+    pub fn is_composing(&self) -> bool {
+        !self.input.is_empty()
+    }
+
+    /// Bytes of the raw input consumed by selections so far — the
+    /// composition offset the candidate lookup is anchored at.
+    ///
+    /// After a successful [`Session::select`] this is the chosen
+    /// candidate's absolute end position: the previous anchor plus the
+    /// candidate's span (separator run included), never past the raw
+    /// input. The C ABI answers it as the new lookup cursor — the caller
+    /// offset may sit past a separator run the span also covers, so
+    /// caller-offset-plus-span would count that run twice
+    /// (libpinyin@412f88e3 instead anchors `m_begin` at the caller offset,
+    /// reaching the same end).
+    #[must_use]
+    pub fn composition_offset(&self) -> usize {
+        self.record.consumed()
+    }
+
+    /// The dictionary backend.
+    #[must_use]
+    pub fn dictionary(&self) -> &D {
+        &self.dictionary
+    }
+
+    /// The language model backend.
+    #[must_use]
+    pub fn language_model(&self) -> &L {
+        &self.model
+    }
+}
+
+impl<D, L, S: std::borrow::BorrowMut<SessionState>> Session<D, L, S>
+where
+    D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+    D::Error: Display,
+    L: LanguageModel<Token = PhraseToken>,
+    L::Error: Display,
+{
     /// Replaces the scoring weights used by subsequent refreshes.
     ///
     /// Does not recompute the per-key cost table (that depends only on the
     /// dictionary and language model). Interactive shells normally keep
     /// [`ScoringConfig::default`].
-    pub const fn set_scoring_config(&mut self, config: ScoringConfig) {
+    pub fn set_scoring_config(&mut self, config: ScoringConfig) {
         self.scoring = config;
-    }
-
-    /// The scoring weights currently in force.
-    #[must_use]
-    pub const fn scoring_config(&self) -> &ScoringConfig {
-        &self.scoring
     }
 
     /// Discards the composition.
@@ -306,20 +480,6 @@ where
         self.refresh_after_parse()
     }
 
-    /// Whether `text` extends the bytes the selection record was built
-    /// over (`raw[..consumed]`) — the continuity retaining the record
-    /// requires. The parse seams' own prefix checks run in the caller's
-    /// coordinates (the scheme parses' original input), while the record
-    /// lives in these canonical bytes: a replacement that passes those
-    /// checks but does not extend the covered span — a scheme switch
-    /// that decodes the same codes to a different spelling, any
-    /// transform divergence — must reconcile, or [`Session::selected_text`]
-    /// retains stale text alongside the new raw input.
-    pub(super) fn replacement_extends_selection(&self, text: &str) -> bool {
-        text.as_bytes()
-            .starts_with(&self.input.as_bytes()[..self.record.consumed()])
-    }
-
     /// Reconciles the selection record to the new input without changing
     /// the stored constraints. Upstream has no selection record, and its
     /// parse never touches m_constraints (074a2219, pinyin.cpp:1497-1525).
@@ -348,8 +508,10 @@ where
             // constraints still survive until something validates them.
             retained.clear();
         }
-        self.record
-            .rebuild_from_constraints(self.input.as_str(), &retained.runs());
+        let state = self.state.borrow_mut();
+        state
+            .record
+            .rebuild_from_constraints(state.input.as_str(), &retained.runs());
         Ok(())
     }
 
@@ -370,20 +532,8 @@ where
         // then `，` replaces it). `refresh`/`scan_window` slice
         // `raw[consumed..]`, so the clamp must land on a char boundary —
         // the composition restarts from the boundary before it.
-        self.record.clamp_consumed(self.input.as_str());
-    }
-
-    /// Filtered parse length of the remaining input after the last refresh.
-    ///
-    /// This is the last byte of [`SegmentGraph::fewest_keys`] under the
-    /// session's `incomplete-pinyin` setting — not the unfiltered
-    /// [`SegmentGraph::consumed`].
-    ///
-    /// Under [`Session::set_defer_list_builds`], call
-    /// [`Session::refresh_candidates`] first.
-    #[must_use]
-    pub const fn parsed_prefix_len(&self) -> usize {
-        self.lookup.parsed_prefix
+        let state = self.state.borrow_mut();
+        state.record.clamp_consumed(state.input.as_str());
     }
 
     /// Apply a live `incomplete-pinyin` change and refresh if composing.
@@ -463,18 +613,6 @@ where
         self.refresh()
     }
 
-    /// The option word applied ([`Self::set_options`]).
-    #[must_use]
-    pub const fn options(&self) -> OptionBits {
-        self.settings.options
-    }
-
-    /// The last sort-option word applied ([`Self::set_sort_options`]).
-    #[must_use]
-    pub const fn sort_options(&self) -> u32 {
-        self.lookup.sort_word
-    }
-
     /// Collapses the prepended sentence rows onto the 1-best row — the
     /// libzhuyin display law. Off by default: the pinyin surface keeps one
     /// candidate row per n-best sentence.
@@ -494,34 +632,15 @@ where
     /// is what keeps the phrase rows upstream keeps: a phrase whose text
     /// equals a non-first row's own text never collides there (the rows all
     /// display the 1-best string), so it must not be absorbed here either.
-    pub const fn set_collapse_sentence_rows_to_best(&mut self, collapse: bool) {
+    pub fn set_collapse_sentence_rows_to_best(&mut self, collapse: bool) {
         self.collapse_sentence_rows_to_best = collapse;
     }
 
     /// Selects the comparator the candidate lists are sorted with: the
     /// pinyin facade's sort word ([`CandidateRanking::SortWord`], the
     /// default) or libzhuyin's ([`CandidateRanking::LengthThenFrequency`]).
-    pub const fn set_candidate_ranking(&mut self, ranking: CandidateRanking) {
+    pub fn set_candidate_ranking(&mut self, ranking: CandidateRanking) {
         self.candidate_ranking = ranking;
-    }
-
-    /// The sort word that orders this session's candidate lists under its
-    /// [`CandidateRanking`].
-    ///
-    /// The zhuyin comparator has no span key, and the span key would always
-    /// tie on a zhuyin list anyway: a phrase length is a key count
-    /// (`phrase_index.h:136-150`; zhuyin import refuses a mismatch,
-    /// `zhuyin.cpp:525`); a zhuyin column's keys share one end
-    /// (`zhuyin.cpp:1030-1038,1069-1076` run no split pass; fuzzy keys keep
-    /// the span, `phonetic_key_matrix.cpp:254-258`); and the only longer
-    /// copies the pin makes cross an apostrophe run with the same token's
-    /// frequency (`zhuyin.cpp:1499-1512`, `:1229-1270`), which this scan does
-    /// not produce.
-    pub(super) const fn rank_word(&self) -> u32 {
-        match self.candidate_ranking {
-            CandidateRanking::SortWord => self.lookup.sort_word,
-            CandidateRanking::LengthThenFrequency => SORT_BY_PHRASE_LENGTH | SORT_BY_FREQUENCY,
-        }
     }
 
     /// Selects whether the parse seams ([`Session::replace_raw`] and its
@@ -540,7 +659,7 @@ where
     /// mode: upstream builds candidates only in `pinyin_guess_candidates`
     /// (`pinyin.cpp:2184-2308` at 074a2219), which the C ABI answers from
     /// its own re-anchored window ([`Session::candidates_at`]).
-    pub const fn set_defer_list_builds(&mut self, defer: bool) {
+    pub fn set_defer_list_builds(&mut self, defer: bool) {
         self.defer_list_builds = defer;
     }
 
@@ -553,105 +672,7 @@ where
     /// [`NbestShape::ZHUYIN`](crate::NbestShape::ZHUYIN) at instance
     /// allocation, beside the sentence-row display law. Takes effect at the
     /// next sentence lookup.
-    pub const fn set_nbest_shape(&mut self, shape: crate::nbest::NbestShape) {
+    pub fn set_nbest_shape(&mut self, shape: crate::nbest::NbestShape) {
         self.nbest_shape = shape;
-    }
-
-    /// The current candidates, in rank order.
-    ///
-    /// Sentence rows appear at the head of this list only after
-    /// [`Session::guess_sentence`] has run for the current composition:
-    /// upstream's candidate list prepends its n-best rows exactly when
-    /// `m_nbest_results` is non-empty (`pinyin.cpp:2292-2293`), and the
-    /// corpus pins were captured without a sentence guess.
-    ///
-    /// Under [`Session::set_defer_list_builds`], call
-    /// [`Session::refresh_candidates`] first.
-    #[must_use]
-    pub const fn candidates(&self) -> &CandidateList {
-        &self.lookup.candidates
-    }
-
-    /// Whether a sentence lookup has run since the last reset.
-    ///
-    /// The lookup-active half of the gate: while this is true,
-    /// `pinyin_get_sentence` answers decoded-or-nothing (upstream's
-    /// `0 == results.size()` false) and never the pre-lookup raw form,
-    /// even when the lookup produced no rows.
-    #[must_use]
-    pub const fn sentence_lookup_active(&self) -> bool {
-        self.sentence.active()
-    }
-
-    /// The decoded text of n-best row `index`, best-first, one text per
-    /// phrase as the pin's result vector holds them for `convert_to_utf8`
-    /// (`pinyin_get_sentence`'s payload, `pinyin.cpp:1464-1482`,
-    /// `lookup/lookup.cpp:27-69`). `None` when fewer rows exist or the
-    /// row's text is empty, as [`Self::sentence_text`].
-    #[must_use]
-    pub fn sentence_phrases(&self, index: u8) -> Option<impl Iterator<Item = &PhraseText>> {
-        let row = self.sentence.rows.get(usize::from(index))?;
-        (!row.text.is_empty()).then(|| self.sentence.phrases(row))
-    }
-
-    /// The decoded text of n-best row `index`, best-first. `None` when
-    /// fewer rows exist or the text is empty.
-    #[must_use]
-    pub fn sentence_text(&self, index: u8) -> Option<&PhraseText> {
-        self.sentence
-            .rows
-            .get(usize::from(index))
-            .map(|row| &row.text)
-            .filter(|text| !text.is_empty())
-    }
-
-    /// Accumulated natural-log possibility of a real-table sentence row.
-    /// The fallback scorer has its own integer cost scale and returns None.
-    #[must_use]
-    pub fn sentence_log_possibility(&self, index: u8) -> Option<f32> {
-        self.sentence
-            .rows
-            .get(usize::from(index))
-            .and_then(|row| row.poss)
-    }
-
-    /// The raw input typed so far.
-    #[must_use]
-    pub fn raw_input(&self) -> &str {
-        self.input.as_str()
-    }
-
-    /// Whether a composition is in progress.
-    #[must_use]
-    pub const fn is_composing(&self) -> bool {
-        !self.input.is_empty()
-    }
-
-    /// Bytes of the raw input consumed by selections so far — the
-    /// composition offset the candidate lookup is anchored at.
-    ///
-    /// After a successful [`Session::select`] this is the chosen
-    /// candidate's absolute end position: the previous anchor plus the
-    /// candidate's span (separator run included), never past the raw
-    /// input. The C ABI answers it as the new lookup cursor — the caller
-    /// offset may sit past a separator run the span also covers, so
-    /// caller-offset-plus-span would count that run twice
-    /// (libpinyin@412f88e3 instead anchors `m_begin` at the caller offset,
-    /// reaching the same end).
-    #[must_use]
-    pub const fn composition_offset(&self) -> usize {
-        self.record.consumed()
-    }
-
-    /// The dictionary backend.
-    #[must_use]
-    pub const fn dictionary(&self) -> &D {
-        &self.dictionary
-    }
-
-    /// The language model backend.
-    #[must_use]
-    pub const fn language_model(&self) -> &L {
-        &self.model
     }
 }

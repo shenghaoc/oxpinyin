@@ -27,7 +27,7 @@ pub extern "C" fn zhuyin_phrase_segment(
 
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
-    let inst = unsafe { instance_mut(instance) };
+    let mut inst = unsafe { instance_mut(instance) };
     // The pin's first call, `g_utf8_strlen(sentence, -1)` (074a2219
     // zhuyin.cpp:969), made through GLib: on NULL, GLib's own precondition
     // logs its critical (GLib 2.84.4 gutf8.c:240). The pin then dereferences

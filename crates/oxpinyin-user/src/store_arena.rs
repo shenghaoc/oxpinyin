@@ -215,7 +215,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             .libpinyin
             .as_ref()
             .ok_or(UserStoreError::InvalidPhrase)?;
-        let originals = target.originals();
+        let originals = &self.originals;
         let db = self.database();
         let mut phrases = target.phrases();
         if phrases.item(token).is_some() {
@@ -260,7 +260,6 @@ impl<S: WriteStore> GenericUserStore<S> {
             }
         }
         drop(items);
-        drop(originals);
         self.mark_committed_write(db, true);
         Ok(())
     }
@@ -536,7 +535,7 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// memory_chunk.h:290-296).
     pub(super) fn arena_replacement(
         &self,
-        originals: &crate::SystemOriginals,
+        originals: &impl crate::persistence::OriginalLibraries,
         state: &crate::persistence::UserState,
     ) -> std::collections::BTreeMap<u8, UserLibrary> {
         let mut libraries = std::collections::BTreeMap::<u8, UserLibrary>::new();

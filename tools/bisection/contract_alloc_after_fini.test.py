@@ -18,7 +18,8 @@ class AllocationAfterFiniTests(unittest.TestCase):
 
     def test_registration_metadata_and_replay(self):
         first, second = self.declarations(), self.declarations()
-        self.assertEqual(list(first), ['alloc-instance-after-fini'])
+        self.assertEqual(list(first), ['alloc-instance-after-fini', 'instance_outlives_context',
+                                       'zhuyin-instance_outlives_context'])
         args, kwargs, fn = first['alloc-instance-after-fini']
         self.assertEqual((args, kwargs), ((), {'issues': ('528',)}))
         self.assertIs(fn, second['alloc-instance-after-fini'][2])
@@ -40,6 +41,27 @@ class AllocationAfterFiniTests(unittest.TestCase):
                                                  call('free_instance', None, family.P),
                                                  call('fini', None, family.P),
                                                  call('alloc_instance', family.P, family.P)])
+
+    def test_orphan_guesses_after_fini_and_then_frees(self):
+        operations = Mock()
+        operations.alloc.return_value = 42
+        operations.guess.return_value = True
+        kit = Mock()
+        kit.init.return_value = 'context'
+        kit.fn.side_effect = lambda name, *types: {
+            'alloc_instance': operations.alloc, 'free_instance': operations.free,
+            'fini': operations.fini, 'guess_sentence': operations.guess,
+            'parse_more_chewings': operations.parse, 'parse_more_full_pinyins': operations.parse,
+        }[name]
+        for name in ('instance_outlives_context', 'zhuyin-instance_outlives_context'):
+            operations.reset_mock()
+            kit.mode = 'zhuyin' if name.startswith('zhuyin') else 'pinyin'
+            _, metadata, case = self.declarations()[name]
+            self.assertEqual(metadata['crash'], {'guess': True})
+            self.assertEqual(case(kit), {'guess': True})
+            self.assertEqual(operations.mock_calls, [call.alloc('context'),
+                call.parse(42, b'su3cl3' if kit.mode == 'zhuyin' else b'nihao'),
+                call.fini('context'), call.guess(42), call.free(42)])
 
 
 if __name__ == '__main__':

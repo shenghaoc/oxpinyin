@@ -63,7 +63,16 @@ impl ParsedMatrix {
     }
 }
 
-impl<D, L> Session<D, L>
+impl<D, L, S: std::borrow::Borrow<SessionState>> Session<D, L, S>
+where
+    D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+    D::Error: Display,
+    L: LanguageModel<Token = PhraseToken>,
+    L::Error: Display,
+{
+}
+
+impl<D, L, S: std::borrow::BorrowMut<SessionState>> Session<D, L, S>
 where
     D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
     D::Error: Display,

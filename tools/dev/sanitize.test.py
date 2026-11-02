@@ -200,6 +200,12 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(build[:4], ['setarch', 'x86_64', '-R', 'cargo'])
         self.assertEqual(tools.checks, [(Path('/fixture/test-binary'), 'subject')])
         self.assertIn('libtkrzw: 1 test binaries resolve it to /fixture/libtkrzw.so.1', out)
+        lifetime, environment = next(call for call in tools.calls if 'outlives_context' in call[0])
+        self.assertEqual(lifetime[:4], ['setarch', 'x86_64', '-R', 'cargo'])
+        self.assertIn('oxpinyin-capi', lifetime)
+        self.assertIn('oxpinyin-zhuyin-capi', lifetime)
+        self.assertEqual(lifetime[-2:], ['--lib', 'outlives_context'])
+        self.assertIn('-Zsanitizer=address', environment['RUSTFLAGS'])
 
     def test_tkrzw_reports_a_missing_verified_runtime(self):
         tools = FakeTools()

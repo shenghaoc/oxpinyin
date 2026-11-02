@@ -12,11 +12,47 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use oxpinyin_data::lm::BigramTables;
 use oxpinyin_data::{BigramLanguageModel, SystemDbm, SystemDictionary};
 use oxpinyin_engine::{Candidate, CandidateKind, EmptyConfigSource, Session};
 
 /// The concrete port session the measurement drives.
-pub type PortSession = Session<SystemDictionary, BigramLanguageModel>;
+pub struct PortSession {
+    dict: SystemDictionary,
+    model: BigramTables,
+    state: oxpinyin_engine::SessionState,
+}
+
+/// One operation over the retained composition and uniquely owned tables.
+pub type PortRead<'a> = Session<
+    &'a SystemDictionary,
+    BigramLanguageModel<&'a oxpinyin_data::PhraseLibraries, &'a BigramTables>,
+    &'a mut oxpinyin_engine::SessionState,
+>;
+
+impl PortSession {
+    /// Open the unchanged dictionary/model inputs and retain only composition.
+    ///
+    /// # Errors
+    /// Returns the existing table-open or session-construction error.
+    pub fn open(dir: &Path) -> Result<Self, String> {
+        let dict = SystemDictionary::open(dir)
+            .map_err(|error| format!("cannot open SystemDictionary: {error}"))?;
+        let mut model = BigramTables::open(&dir.join(SystemDbm::Bigram.file_name()))
+            .map_err(|error| format!("cannot open BigramLanguageModel: {error}"))?;
+        model.set_lambda_from_table_conf(&dir.join("table.conf"));
+        let state = Session::new(&EmptyConfigSource, &dict, model.read_all(dict.libraries()))
+            .map_err(|error| format!("cannot create Session: {error}"))?
+            .into_state();
+        Ok(Self { dict, model, state })
+    }
+
+    /// Re-borrow the current tables for an operation on retained composition.
+    pub fn session(&mut self) -> PortRead<'_> {
+        self.state
+            .bind(&self.dict, self.model.read_all(self.dict.libraries()))
+    }
+}
 
 /// Fixture path, relative to the repository root.
 pub const SENTENCE_FIXTURE: &str = "fixtures/w4/oracle-sentence-surface.txt";
@@ -78,17 +114,7 @@ pub fn open_session_from_env() -> Result<Option<PortSession>, String> {
     let Some(dir) = export_dir() else {
         return Ok(None);
     };
-    let dict = SystemDictionary::open(&dir)
-        .map_err(|error| format!("cannot open SystemDictionary: {error}"))?;
-    let mut lm = BigramLanguageModel::open(
-        &dir.join(SystemDbm::Bigram.file_name()),
-        std::sync::Arc::clone(dict.libraries()),
-    )
-    .map_err(|error| format!("cannot open BigramLanguageModel: {error}"))?;
-    lm.set_lambda_from_table_conf(&dir.join("table.conf"));
-    let session = Session::new(&EmptyConfigSource, dict, lm)
-        .map_err(|error| format!("cannot create Session: {error}"))?;
-    Ok(Some(session))
+    PortSession::open(&dir).map(Some)
 }
 
 /// One frozen oracle line: the ibus surface for one sampled input.
@@ -172,7 +198,8 @@ struct PortSurface {
     rows: Vec<String>,
 }
 
-fn observe_port(session: &mut PortSession, input: &str) -> Result<PortSurface, String> {
+fn observe_port(owner: &mut PortSession, input: &str) -> Result<PortSurface, String> {
+    let mut session = owner.session();
     session.reset();
     session
         .type_pinyin(input)

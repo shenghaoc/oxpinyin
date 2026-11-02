@@ -13,7 +13,7 @@ use oxpinyin_facade::{BigramExportWalk, BigramStep, ExportStep};
 use oxpinyin_user::{MAX_PHRASE_LENGTH, PinyinKey, UserStore, is_user_file_library, toned_key};
 
 use crate::ffi::{malloc_cstr_with, strconcat_pair, strdup, strdup_raw, strjoinv};
-use crate::state::context_ref;
+use crate::state::{ContextOwner, context_mut, context_owner, context_ref, owner_mut, owner_ref};
 use crate::types::{
     BigramExportIterator, ExportIterator, GChar, GUint, ImportIterator, PinyinContext,
 };
@@ -22,11 +22,13 @@ use oxpinyin_capi_marshal::phrase_text::phrase_text_bytes;
 /// State behind `export_iterator_t *`: the pin's iterator state, which
 /// reads each item when a call needs it and buffers no row.
 struct ExportHandle {
+    owner: ContextOwner,
     cursor: oxpinyin_facade::PhraseExportCursor,
 }
 
 /// State behind `bigram_export_iterator_t *`.
 struct BigramHandle {
+    owner: ContextOwner,
     walk: BigramExportWalk,
     /// The pin's `m_phrase` (`pinyin.cpp:830-832`): the loaded pair's
     /// conversion, which every row of the pair duplicates; NULL before the
@@ -90,14 +92,17 @@ impl Drop for BigramHandle {
 // `pinyin_end_add_phrases` only arms `m_modified` so the next `pinyin_save`
 // writes (`docs/findings/user-store.md` §4).
 
-/// State behind `import_iterator_t *`: the target index and the shared user
-/// store clone the adds write through. The clone also carries the shared
-/// §4 dirty flag, so `pinyin_end_add_phrases` can arm `m_modified` without
-/// keeping a raw context pointer alive behind the C caller's back.
+/// Import cursor state and a shared owner of the context allocation. Each add
+/// borrows storage only for the operation, including after public context fini.
 struct ImportHandle {
     index: u8,
-    user: Option<UserStore>,
-    dict: Option<oxpinyin_runtime::RuntimeDict>,
+    owner: ContextOwner,
+}
+
+struct ImportRead<'a> {
+    index: u8,
+    user: Option<&'a UserStore>,
+    dict: Option<oxpinyin_runtime::RuntimeDict<'a>>,
 }
 
 /// Begin adding phrases to an index.
@@ -118,16 +123,14 @@ pub fn begin_add_phrases_impl(context: *mut PinyinContext, index: u8) -> *mut Im
 
     // SAFETY: `context` is non-null and was produced by `pinyin_init`; the
     // borrow lasts only for this constructor.
-    let ctx = unsafe { context_ref(context) };
+    let ctx = unsafe { context_mut(context) };
     // `begin_add_phrases` starts with a compact (`pinyin.cpp:657`,
     // `zhuyin.cpp:542`); a layout-failed empty sub-index's local total
     // becomes zero there.
     let _compacted = ctx.core.compact_layout_failed();
-    let handle = ImportHandle {
-        index,
-        user: ctx.user_store(),
-        dict: ctx.core.runtime.as_ref().map(|runtime| runtime.dict()),
-    };
+    // SAFETY: the public context is live for this serialized constructor call.
+    let owner = unsafe { context_owner(context) };
+    let handle = ImportHandle { index, owner };
     Box::into_raw(Box::new(handle)).cast()
 }
 
@@ -189,7 +192,12 @@ pub extern "C" fn pinyin_iterator_add_phrase(
     // SAFETY: `iter` is non-null and was produced by
     // `pinyin_begin_add_phrases`; the unique borrow lasts for this call.
     let handle = unsafe { &mut *(iter.cast::<ImportHandle>()) };
-    let (phrase, keys, original) = match plan_import(handle, phrase, pinyin) {
+    let plan = {
+        // SAFETY: the iterator retains the allocation; the C caller excludes concurrent mutation.
+        let context = unsafe { owner_ref(&handle.owner) };
+        plan_import(&import_read(handle, context), phrase, pinyin)
+    };
+    let (phrase, keys, original) = match plan {
         ImportPlan::Refuse => return false,
         ImportPlan::LookupFailed => {
             crate::ffi::log_warning("pinyin_iterator_add_phrase: phrase-table lookup failed");
@@ -205,16 +213,21 @@ pub extern "C" fn pinyin_iterator_add_phrase(
             original,
         } => (phrase, keys, original),
     };
-    let Some(user) = handle.user.as_mut() else {
+    // SAFETY: the planning readers ended above; this call now owns the context mutation.
+    let context = unsafe { owner_mut(&mut handle.owner) };
+    if (1..=4).contains(&handle.index)
+        && !context
+            .core
+            .runtime
+            .as_ref()
+            .is_some_and(|runtime| runtime.dict().library_visible(u32::from(handle.index)))
+    {
+        return false;
+    }
+    let Some(user) = context.core.user_store_mut() else {
         return false;
     };
     if (1..=4).contains(&handle.index) {
-        let Some(dict) = handle.dict.as_ref() else {
-            return false;
-        };
-        if !dict.library_visible(u32::from(handle.index)) {
-            return false;
-        }
         // The selected token comes from the combined phrase-table search,
         // including prior imported system-library items.
         user.add_system_phrase_in(handle.index, original, &phrase, &keys, count)
@@ -249,7 +262,22 @@ enum ImportPlan {
 /// `pinyin.cpp:614-652` and `_add_phrase` (`:514-611`) up to the add calls:
 /// the parse, the length gates and the phrase-table checks, in the pin's
 /// order. Reads only.
-fn plan_import(handle: &ImportHandle, phrase: *const c_char, pinyin: *const c_char) -> ImportPlan {
+fn import_read<'a>(
+    handle: &ImportHandle,
+    context: &'a crate::state::CapiContext,
+) -> ImportRead<'a> {
+    ImportRead {
+        index: handle.index,
+        user: context.core.user_store(),
+        dict: context.core.runtime.as_ref().map(|runtime| runtime.dict()),
+    }
+}
+
+fn plan_import(
+    handle: &ImportRead<'_>,
+    phrase: *const c_char,
+    pinyin: *const c_char,
+) -> ImportPlan {
     // Scalar input conversion; raw-word import is tracked by #1279.
     let phrase =
         oxpinyin_capi_marshal::input::utf8_to_ucs4(oxpinyin_capi_marshal::borrow_c_string!(phrase))
@@ -349,7 +377,14 @@ pub fn oxpinyin_import_aborts(
     // SAFETY: `iter` is non-null and was produced by
     // `pinyin_begin_add_phrases`; the shared borrow lasts for this call.
     let handle = unsafe { &*(iter.cast::<ImportHandle>()) };
-    matches!(plan_import(handle, phrase, pinyin), ImportPlan::Abort)
+    {
+        // SAFETY: the iterator retains the allocation; the C caller excludes concurrent mutation.
+        let context = unsafe { owner_ref(&handle.owner) };
+        matches!(
+            plan_import(&import_read(handle, context), phrase, pinyin),
+            ImportPlan::Abort
+        )
+    }
 }
 
 /// Search the system table followed by the user table, then concatenate
@@ -421,7 +456,9 @@ pub extern "C" fn pinyin_end_add_phrases(iter: *mut ImportIterator) {
     // `Box::into_raw`; the caller transfers ownership back here and
     // only here.
     let mut handle = unsafe { Box::from_raw(iter.cast::<ImportHandle>()) };
-    if let Some(user) = handle.user.as_mut() {
+    // SAFETY: the iterator retains the allocation; serialized C calls grant exclusive access.
+    let context = unsafe { owner_mut(&mut handle.owner) };
+    if let Some(user) = context.core.user_store_mut() {
         // The compact (`pinyin.cpp:657`) rebuilds each library's total from
         // its items.
         user.compact_libraries();
@@ -462,7 +499,9 @@ pub extern "C" fn pinyin_begin_get_phrases(
     // The pin's begin cannot fail: its sub-index is in memory, and so are
     // the session's phrases (policy row 62).
     let cursor = ctx.core.phrase_export_cursor(index);
-    Box::into_raw(Box::new(ExportHandle { cursor })).cast()
+    // SAFETY: the public context is live for this serialized constructor call.
+    let owner = unsafe { context_owner(context) };
+    Box::into_raw(Box::new(ExportHandle { owner, cursor })).cast()
 }
 
 /// Check whether the export iterator has a next phrase.
@@ -518,7 +557,9 @@ pub extern "C" fn pinyin_iterator_get_next_phrase(
     // SAFETY: `iter` is non-null and was produced by
     // `pinyin_begin_get_phrases`; the unique borrow lasts for this call.
     let handle = unsafe { &mut *(iter.cast::<ExportHandle>()) };
-    let step = handle.cursor.get_next_with(|row| {
+    // SAFETY: the iterator retains the allocation; the C caller excludes concurrent mutation.
+    let context = unsafe { owner_ref(&handle.owner) };
+    let step = handle.cursor.get_next_with(&context.core, |row| {
         // `pinyin.cpp:715-716`: the fallible `g_ucs4_to_utf8` conversion,
         // NULL on failure, unchecked.
         let text = (!phrase.is_null()).then(|| {
@@ -649,7 +690,10 @@ pub extern "C" fn pinyin_begin_get_bigram_phrases(
     // (`pinyin.cpp:775-787`); `has_next` loads each predecessor in walk
     // order (`:888-889`), where the walk meets a short or partial value.
     let walk = ctx.bigram_export_walk().unwrap_or_default();
+    // SAFETY: the public context is live for this serialized constructor call.
+    let owner = unsafe { context_owner(context) };
     Box::into_raw(Box::new(BigramHandle {
+        owner,
         walk,
         phrase: ptr::null_mut(),
         loads: 0,
@@ -674,7 +718,9 @@ pub extern "C" fn pinyin_bigram_iterator_has_next_phrase(iter: *mut BigramExport
     // `pinyin_begin_get_bigram_phrases`; the unique borrow lasts for this
     // call (the pin's `has_next` advances the iterator).
     let handle = unsafe { &mut *(iter.cast::<BigramHandle>()) };
-    let more = handle.walk.has_next();
+    // SAFETY: the iterator retains the allocation; the C caller excludes concurrent mutation.
+    let context = unsafe { owner_ref(&handle.owner) };
+    let more = handle.walk.has_next(Some(&context.core));
     if more.is_ok() {
         handle.convert_loaded_pair();
     }
@@ -730,7 +776,9 @@ pub extern "C" fn pinyin_bigram_iterator_get_next_phrase(
     // `pinyin_begin_get_bigram_phrases`; the unique borrow lasts for
     // this call.
     let handle = unsafe { &mut *(iter.cast::<BigramHandle>()) };
-    let (row, more) = match handle.walk.get_next() {
+    // SAFETY: the iterator retains the allocation; the C caller excludes concurrent mutation.
+    let context = unsafe { owner_ref(&handle.owner) };
+    let (row, more) = match handle.walk.get_next(Some(&context.core)) {
         BigramStep::Row(row, more) => (row, more),
         // Register row 62, `pinyin.cpp:902`: the pin asserts and aborts.
         BigramStep::Aborts => std::process::abort(),

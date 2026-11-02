@@ -1485,20 +1485,18 @@ fn has_user_data_in_write_txn(txn: &impl WriteTxn) -> Result<bool, StoreError> {
 
 /// An ordered-store-backed store of user-learning counts.
 ///
-/// `Clone` shares the underlying database handle (cheap): the C ABI context
-/// keeps the canonical store and hands each instance a clone, exactly like
-/// the dictionary and language model handles. The handle and the §4
-/// `m_modified` flag live on one `Arc`; the `Mutex` serializes the handle
-/// because compaction (the `pinyin_save` write side) demands `&mut self`.
-/// Clones record dirtiness through their own `&mut self` updates and the
-/// context's `pinyin_save` observes it. The C ABI contract is
-/// main-thread-only, so the flag uses relaxed ordering.
+/// The context owns the store and lends it to each operation. System chunk
+/// originals belong to this owner; sessions and cursors cannot retain them.
+/// The database handle and dirty flag remain shared with the standalone-path
+/// registry. Its mutex serializes backend access, including compaction, while
+/// public mutations require an exclusive borrow of this store.
 pub struct GenericUserStore<S: WriteStore> {
     /// The facade fini's `user.conf` write: armed only on the handle a
-    /// libpinyin open returned, never on a clone ([`FiniGuard`]).
+    /// libpinyin open returned ([`FiniGuard`]).
     _fini: FiniGuard,
     inner: Arc<StoreInner<S>>,
-    /// Keeps a standalone path reservation alive until its last clone drops.
+    pub(crate) originals: crate::persistence::SystemOriginals,
+    /// Keeps the standalone path reserved while this owner is alive.
     _standalone_lease: Option<Arc<StandaloneLease>>,
     /// This handle's current training call's step checks.
     training: TrainingCheck,
@@ -1521,9 +1519,17 @@ pub enum TrainingFault {
 /// One training call's replay: the grams its checked steps left, and the
 /// fault a failing check met.
 #[derive(Debug, Default)]
-struct TrainingCheck {
+pub struct TrainingCheck {
     grams: HashMap<Token, Option<Vec<u8>>>,
     fault: Option<TrainingFault>,
+}
+
+impl TrainingCheck {
+    /// The failure reached by this operation's checked steps.
+    #[must_use]
+    pub const fn fault(&self) -> Option<TrainingFault> {
+        self.fault
+    }
 }
 
 /// Default user store backed by [`DefaultStore`] — whichever peer
@@ -1536,6 +1542,12 @@ struct TrainingCheck {
 pub type UserStore = GenericUserStore<DefaultStore>;
 
 impl<S: WriteStore> GenericUserStore<S> {
+    /// Run the context's fini marker write once, while retaining its live data
+    /// for handles that outlive the public context (compatibility row 42).
+    pub fn finish(&mut self) {
+        self._fini.finish();
+    }
+
     /// Crate-visible handle assembly for the libpinyin constructor
     /// ([`crate::store_libpinyin`]), which runs in memory and arms
     /// the fini guard of the open that raised the counter.
@@ -1543,25 +1555,13 @@ impl<S: WriteStore> GenericUserStore<S> {
         inner: Arc<StoreInner<S>>,
         lease: Option<Arc<StandaloneLease>>,
         fini: FiniGuard,
+        originals: crate::persistence::SystemOriginals,
     ) -> Self {
         Self {
             _fini: fini,
+            originals,
             inner,
             _standalone_lease: lease,
-            training: TrainingCheck::default(),
-            _lease: RegistryLease,
-        }
-    }
-}
-
-impl<S: WriteStore> Clone for GenericUserStore<S> {
-    fn clone(&self) -> Self {
-        Self {
-            // A clone shares the session, not the open: only the handle
-            // the open returned finishes it.
-            _fini: FiniGuard::disarmed(),
-            inner: Arc::clone(&self.inner),
-            _standalone_lease: self._standalone_lease.clone(),
             training: TrainingCheck::default(),
             _lease: RegistryLease,
         }
@@ -1583,6 +1583,16 @@ thread_local! {
 }
 
 impl<S: WriteStore> GenericUserStore<S> {
+    /// Borrow the uniquely owned init baselines for a read operation.
+    pub const fn originals(&self) -> &crate::persistence::SystemOriginals {
+        &self.originals
+    }
+
+    /// Borrow the init baselines exclusively for a library transition.
+    pub fn originals_mut(&mut self) -> &mut crate::persistence::SystemOriginals {
+        &mut self.originals
+    }
+
     /// Locks the shared store handle, recovering from a poisoned lock
     /// (constitution §4: nothing here panics, so a poisoned mutex must not
     /// brick the store either).
@@ -1837,27 +1847,43 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// [`UserStoreError::TrainingSetFreqMiss`] for the miss,
     /// or the store's read error.
     pub fn check_training_step(&mut self, prev: Token, cur: Token) -> Result<(), UserStoreError> {
-        let row = match self.training.grams.get(&prev) {
+        let mut check = std::mem::take(&mut self.training);
+        let result = self.check_training_step_with(&mut check, prev, cur);
+        self.training = check;
+        result
+    }
+
+    /// Check a step using operation-owned bookkeeping while phrase storage is borrowed.
+    ///
+    /// # Errors
+    /// The same store and malformed-gram failures as [`Self::check_training_step`].
+    pub fn check_training_step_with(
+        &self,
+        check: &mut TrainingCheck,
+        prev: Token,
+        cur: Token,
+    ) -> Result<(), UserStoreError> {
+        let row = match check.grams.get(&prev) {
             Some(row) => row.clone(),
             None => self.bigram_row(prev)?,
         };
         if let Some(gram) = row.as_deref() {
             if gram.len() < single_gram::TOTAL_LEN {
-                self.training.fault = Some(TrainingFault::ShortValue(prev));
+                check.fault = Some(TrainingFault::ShortValue(prev));
                 return Err(UserStoreError::ShortUserBigramValue);
             }
             if has_partial_tail(gram) {
-                self.training.fault = Some(TrainingFault::PartialTail(prev));
+                check.fault = Some(TrainingFault::PartialTail(prev));
                 return Err(UserStoreError::PartialUserBigramTail);
             }
         }
         match trained_gram(row.clone(), cur) {
             Ok((_, gram)) => {
-                self.training.grams.insert(prev, gram.or(row));
+                check.grams.insert(prev, gram.or(row));
                 Ok(())
             }
             Err(UserStoreError::TrainingSetFreqMiss) => {
-                self.training.fault = Some(TrainingFault::SetFreqMiss(prev));
+                check.fault = Some(TrainingFault::SetFreqMiss(prev));
                 Err(UserStoreError::TrainingSetFreqMiss)
             }
             Err(error) => Err(error),
@@ -2075,7 +2101,7 @@ impl<S: WriteStore> GenericUserStore<S> {
     ///
     /// This bypasses [`UserStore::open`]'s shared-handle registry, but a
     /// second live `create_standalone` call for the same path returns
-    /// [`UserStoreError::AlreadyOpen`]. Clones share the first handle.
+    /// [`UserStoreError::AlreadyOpen`].
     ///
     /// # Errors
     ///
@@ -2087,6 +2113,10 @@ impl<S: WriteStore> GenericUserStore<S> {
         let inner = Self::init_and_wrap(db)?;
         Ok(Self {
             _fini: FiniGuard::disarmed(),
+            originals: crate::persistence::SystemOriginals::new(
+                Default::default(),
+                oxpinyin_data::user_files::UserFileLayout::stock(),
+            ),
             inner,
             _standalone_lease: Some(standalone_lease),
             training: TrainingCheck::default(),
@@ -2238,7 +2268,7 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// # Errors
     /// Returns the store error if the in-memory transaction fails.
     pub fn add_system_unigram_frequency(
-        &self,
+        &mut self,
         token: Token,
         delta: u32,
     ) -> Result<bool, UserStoreError> {
@@ -2250,8 +2280,8 @@ impl<S: WriteStore> GenericUserStore<S> {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let exists = !self.system_item_removed(token)
             && (self.with_effective_system_item(token, |_| ()).is_some()
-                || self.inner.libpinyin.as_ref().is_some_and(|target| {
-                    target.originals().get(&library).is_some_and(|original| {
+                || self.inner.libpinyin.as_ref().is_some_and(|_| {
+                    self.originals.get(&library).is_some_and(|original| {
                         original.unigram(token & phrase::PHRASE_MASK).is_some()
                     })
                 }));
@@ -2424,7 +2454,7 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// at the end of an import and at the end of a mask_out
     /// (`pinyin.cpp:1139`, `:657`, `:1294`; `zhuyin.cpp:554`, `:542`,
     /// `:829`).
-    pub fn compact_libraries(&self) {
+    pub fn compact_libraries(&mut self) {
         if self.flush_system_unigrams().is_err() {
             return;
         }
@@ -2434,11 +2464,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         // so the flag is cleared only after the rows are gone, under the
         // database lock that every offset writer also holds, and stays set
         // if the write fails.
-        let originals = self
-            .inner
-            .libpinyin
-            .as_ref()
-            .map(|target| target.originals());
+        let originals = self.inner.libpinyin.as_ref().map(|_| &self.originals);
         if originals.is_none() && !self.inner.has_library_offsets.load(Ordering::SeqCst) {
             return;
         }
@@ -2543,9 +2569,8 @@ impl<S: WriteStore> GenericUserStore<S> {
             // `phrase_index.cpp:180-206`).
             return Ok(());
         }
-        let original = self.inner.libpinyin.as_ref().and_then(|target| {
-            target
-                .originals()
+        let original = self.inner.libpinyin.as_ref().and_then(|_| {
+            self.originals
                 .get(&phrase_index_library_index(token))
                 .and_then(|library| library.item(token & phrase::PHRASE_MASK))
         });
@@ -2795,7 +2820,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         self.inner
             .libpinyin
             .as_ref()
-            .is_none_or(|target| target.originals().layout().has_user_library(library))
+            .is_none_or(|_| self.originals.layout().has_user_library(library))
     }
 
     /// [`Self::phrases`] as the user pinyin index sees them: the index also
@@ -3668,11 +3693,11 @@ impl<S: WriteStore> GenericUserStore<S> {
                 return Ok(false);
             };
             self.compact_libraries();
-            // Arc clone: the originals hold every system item (~138k
+            // Borrowed originals hold every system item (~138k
             // ChunkItems) and a dirty save must not copy them — both
             // halves take the Arc by reference.
-            let originals = target.originals();
-            let state = crate::store_libpinyin::export_for_save(self, &originals)?;
+            let originals = &self.originals;
+            let state = crate::store_libpinyin::export_for_save(self, originals)?;
             let bigram_db = self
                 .inner
                 .bigram_db
@@ -3688,7 +3713,7 @@ impl<S: WriteStore> GenericUserStore<S> {
                     phrase_table: Some(&phrases.phrase_table),
                     compacted: &[],
                 },
-                &originals,
+                originals,
                 &target.versions,
                 target.open_counter,
                 bigram_db.as_deref(),
@@ -3734,7 +3759,10 @@ impl<S: WriteStore> GenericUserStore<S> {
         &mut self,
         compacted: &[u8],
     ) -> Result<SaveReport, UserStoreError> {
-        self.save_reporting_inner(compacted, None::<crate::persistence::NoBaseline>)
+        self.save_reporting_inner(
+            compacted,
+            None::<fn(u8, &crate::SystemOriginals) -> crate::persistence::SaveBaseline>,
+        )
     }
 
     /// [`Self::save_reporting_compacted`] with the current-on-disk baseline
@@ -3745,15 +3773,17 @@ impl<S: WriteStore> GenericUserStore<S> {
     pub fn save_reporting_with_baseline(
         &mut self,
         compacted: &[u8],
-        baseline: impl FnMut(u8) -> crate::persistence::SaveBaseline,
+        baseline: impl FnMut(u8, &crate::SystemOriginals) -> crate::persistence::SaveBaseline,
     ) -> Result<SaveReport, UserStoreError> {
         self.save_reporting_inner(compacted, Some(baseline))
     }
 
-    fn save_reporting_inner<B: FnMut(u8) -> crate::persistence::SaveBaseline>(
+    fn save_reporting_inner<
+        B: FnMut(u8, &crate::SystemOriginals) -> crate::persistence::SaveBaseline,
+    >(
         &mut self,
         compacted: &[u8],
-        baseline: Option<B>,
+        mut baseline: Option<B>,
     ) -> Result<SaveReport, UserStoreError> {
         let mut report = SaveReport::default();
         if !self.is_modified() {
@@ -3764,8 +3794,8 @@ impl<S: WriteStore> GenericUserStore<S> {
                 return Ok(report);
             };
             self.compact_libraries();
-            let originals = target.originals();
-            let state = crate::store_libpinyin::export_for_save(self, &originals)?;
+            let originals = &self.originals;
+            let state = crate::store_libpinyin::export_for_save(self, originals)?;
             let bigram_db = self
                 .inner
                 .bigram_db
@@ -3779,7 +3809,9 @@ impl<S: WriteStore> GenericUserStore<S> {
                     bigram_db: bigram_db.as_deref(),
                     interleaved: target.law == crate::persistence::UserConfLaw::Zhuyin,
                     lenient: true,
-                    baseline,
+                    baseline: baseline
+                        .as_mut()
+                        .map(|baseline| |nibble| baseline(nibble, originals)),
                 };
                 report = crate::persistence::save_reporting(
                     dir,
@@ -3790,7 +3822,7 @@ impl<S: WriteStore> GenericUserStore<S> {
                         phrase_table: Some(&phrases.phrase_table),
                         compacted,
                     },
-                    &originals,
+                    originals,
                     &mut reporting,
                 )?;
             }
@@ -3861,7 +3893,20 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// assertion, with nothing replaced.
     pub fn reload_system_libraries(
         &mut self,
-        originals: crate::persistence::SystemOriginals,
+        mut originals: crate::persistence::SystemOriginals,
+        mask: Token,
+        value: Token,
+    ) -> Result<(), crate::JournalFault> {
+        self.reload_system_libraries_retaining(&mut originals, mask, value)
+    }
+
+    /// Replay a remap without losing its mappings when the journal refuses it.
+    ///
+    /// # Errors
+    /// The same journal fault as [`Self::reload_system_libraries`].
+    pub fn reload_system_libraries_retaining(
+        &mut self,
+        originals: &mut crate::persistence::SystemOriginals,
         mask: Token,
         value: Token,
     ) -> Result<(), crate::JournalFault> {
@@ -3869,10 +3914,10 @@ impl<S: WriteStore> GenericUserStore<S> {
             return Ok(());
         };
         let (state, library_totals) = match target.dir.clone() {
-            Some(dir) => crate::persistence::load_masked_logs(&dir, &originals, mask, value)?,
+            Some(dir) => crate::persistence::load_masked_logs(&dir, originals, mask, value)?,
             None => Default::default(),
         };
-        self.replace_system_libraries(originals, &state, &library_totals);
+        self.replace_system_libraries(originals.take(), &state, &library_totals);
         Ok(())
     }
 
@@ -3893,7 +3938,19 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// and 108), with nothing replaced.
     pub fn load_system_libraries(
         &mut self,
-        originals: crate::persistence::SystemOriginals,
+        mut originals: crate::persistence::SystemOriginals,
+    ) -> Result<(), crate::JournalFault> {
+        self.load_system_libraries_retaining(&mut originals)
+    }
+
+    /// Load a remap, retaining it for dictionary publication if replay does not
+    /// replace its original (a transient session or a journal assertion).
+    ///
+    /// # Errors
+    /// The same journal fault as [`Self::load_system_libraries`].
+    pub fn load_system_libraries_retaining(
+        &mut self,
+        originals: &mut crate::persistence::SystemOriginals,
     ) -> Result<(), crate::JournalFault> {
         let Some(dir) = self
             .inner
@@ -3903,8 +3960,8 @@ impl<S: WriteStore> GenericUserStore<S> {
         else {
             return Ok(());
         };
-        let (state, library_totals) = crate::persistence::load_library_logs(&dir, &originals)?;
-        self.replace_system_libraries(originals, &state, &library_totals);
+        let (state, library_totals) = crate::persistence::load_library_logs(&dir, originals)?;
+        self.replace_system_libraries(originals.take(), &state, &library_totals);
         Ok(())
     }
 
@@ -3935,7 +3992,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             .inner
             .libpinyin
             .as_ref()
-            .map(|target| (target.dir.clone(), target.originals().layout().clone()))
+            .map(|target| (target.dir.clone(), self.originals.layout().clone()))
         else {
             return;
         };
@@ -3960,7 +4017,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             .inner
             .libpinyin
             .as_ref()
-            .map(|target| target.originals().layout().clone())
+            .map(|_| self.originals.layout().clone())
         else {
             return;
         };
@@ -3981,11 +4038,33 @@ impl<S: WriteStore> GenericUserStore<S> {
         state: &crate::persistence::UserState,
         library_totals: &std::collections::BTreeMap<u8, u32>,
     ) {
+        self.apply_system_libraries(&originals, state, library_totals);
+        self.originals.append(originals);
+    }
+
+    /// Reset one loaded baseline's replay and training state at unload.
+    pub fn reset_system_library(&mut self, nibble: u8) {
+        if nibble >= 16 {
+            return;
+        }
+        self.apply_system_libraries(
+            &self.originals.selected(1 << nibble),
+            &crate::persistence::UserState::default(),
+            &Default::default(),
+        );
+    }
+
+    fn apply_system_libraries(
+        &self,
+        originals: &impl crate::persistence::OriginalLibraries,
+        state: &crate::persistence::UserState,
+        library_totals: &std::collections::BTreeMap<u8, u32>,
+    ) {
         let Some(target) = self.inner.libpinyin.clone() else {
             return;
         };
         in_session(self.flush_system_unigrams());
-        let replacement = self.arena_replacement(&originals, state);
+        let replacement = self.arena_replacement(originals, state);
         let surviving = target.phrases();
         let arena_libraries = || {
             replacement
@@ -4005,10 +4084,6 @@ impl<S: WriteStore> GenericUserStore<S> {
             let library = phrase_index_library_index(token);
             originals.contains_key(&library)
         };
-        let mut target_originals = target
-            .originals
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let db = self.database();
         // Flag invariant (see `compact_libraries`): set before the rows can
         // exist, and cleared below only once the transaction leaves none,
@@ -4028,8 +4103,7 @@ impl<S: WriteStore> GenericUserStore<S> {
                 txn.remove(LIBRARY_OFFSET, &key)?;
             }
             remove_system_unigrams(txn, reloaded)?;
-            let reseeded =
-                crate::store_libpinyin::seed_txn(txn, state, &originals, library_totals)?;
+            let reseeded = crate::store_libpinyin::seed_txn(txn, state, originals, library_totals)?;
             moved = reseeded
                 .values()
                 .fold(moved, |moved, &offset| moved.wrapping_add(offset));
@@ -4079,12 +4153,6 @@ impl<S: WriteStore> GenericUserStore<S> {
                 .has_removed_system_items
                 .store(!removed.is_empty(), Ordering::Relaxed);
         }
-        target_originals.extend(
-            originals
-                .iter()
-                .map(|(&nibble, library)| (nibble, library.clone())),
-        );
-        drop(target_originals);
         // A session's grams live in the container, not in the tables the
         // transaction probed: they are user data too.
         let has_grams = self
@@ -4355,6 +4423,10 @@ impl GenericUserStore<DefaultStore> {
         if let Some(inner) = reg.get(&key).and_then(std::sync::Weak::upgrade) {
             return Ok(Self {
                 _fini: FiniGuard::disarmed(),
+                originals: crate::persistence::SystemOriginals::new(
+                    Default::default(),
+                    oxpinyin_data::user_files::UserFileLayout::stock(),
+                ),
                 inner,
                 _standalone_lease: None,
                 training: TrainingCheck::default(),
@@ -4367,6 +4439,10 @@ impl GenericUserStore<DefaultStore> {
         reg.insert(key, Arc::downgrade(&inner));
         Ok(Self {
             _fini: FiniGuard::disarmed(),
+            originals: crate::persistence::SystemOriginals::new(
+                Default::default(),
+                oxpinyin_data::user_files::UserFileLayout::stock(),
+            ),
             inner,
             _standalone_lease: None,
             training: TrainingCheck::default(),
@@ -4572,9 +4648,8 @@ impl<S: WriteStore> GenericUserStore<S> {
             .inner
             .libpinyin
             .as_ref()
-            .and_then(|target| {
-                target
-                    .originals()
+            .and_then(|_| {
+                self.originals
                     .get(&phrase_index_library_index(token))
                     .and_then(|library| library.unigram(token & PHRASE_MASK))
             })
@@ -4810,7 +4885,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             .libpinyin
             .as_ref()
             .ok_or(UserStoreError::InvalidPhrase)?;
-        let originals = target.originals();
+        let originals = &self.originals;
         let original = originals
             .get(&library)
             .ok_or(UserStoreError::InvalidPhrase)?;
@@ -4819,7 +4894,6 @@ impl<S: WriteStore> GenericUserStore<S> {
         if original_token.is_none()
             || original_token.is_some_and(|token| target.phrases().item(token).is_some())
         {
-            drop(originals);
             return self.arena_add_phrase(
                 library,
                 &words,
@@ -5397,12 +5471,10 @@ mod tests {
                     store.observe_selection(SENTENCE_START, token).unwrap();
                     assert_eq!(store.phrase_table_generation(), 1);
 
-                    let mut writer = store.clone();
-                    let second = writer.add_phrase(&"中国".into(), &[30, 40], None).unwrap();
+                    let second = store.add_phrase(&"中国".into(), &[30, 40], None).unwrap();
                     assert_eq!(store.phrase_table_generation(), 2);
-                    assert!(writer.remove_user_phrase(second).unwrap());
+                    assert!(store.remove_user_phrase(second).unwrap());
                     assert_eq!(store.phrase_table_generation(), 3);
-                    drop(writer);
                     drop(store);
                     cleanup(&path);
                 }
@@ -6464,7 +6536,7 @@ mod tests {
                         0 => store.save_reporting(),
                         1 => store.save_reporting_compacted(&[]),
                         _ => store
-                            .save_reporting_with_baseline(&[], &mut |_| panic!("guarded baseline")),
+                            .save_reporting_with_baseline(&[], |_, _| panic!("guarded baseline")),
                     }
                     .expect("guarded save");
                     assert_eq!(report, crate::SaveReport::default());
@@ -6504,7 +6576,7 @@ mod tests {
             },
         );
         store.inner.has_system_items.store(true, Ordering::Release);
-        let writer = store.clone();
+        let mut writer = UserStore::open(&path).unwrap();
         let done = AtomicBool::new(false);
         let start = std::sync::Barrier::new(2);
         std::thread::scope(|scope| {

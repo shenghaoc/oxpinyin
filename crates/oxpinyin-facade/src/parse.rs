@@ -9,7 +9,7 @@ use oxpinyin_core::{
     ZhuyinParser, ZhuyinScheme, parse_full_pinyin_index_with_options,
 };
 
-use crate::instance::InstanceCore;
+use crate::instance::{InstanceState, InstanceView};
 
 /// Which option bits the chewing batch seam forwards into the parser.
 ///
@@ -159,7 +159,83 @@ fn parse_one_scheme_key(
     Some(key)
 }
 
-impl InstanceCore {
+impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engine::SessionState>>
+    InstanceView<'_, S, E>
+{
+    /// The one-key full-pinyin probe — the `parse_full_pinyin` law. The
+    /// two facades' pins differ in exactly one bit: the libzhuyin facade
+    /// masks `PINYIN_CORRECT_ALL` off the live word before the probe
+    /// (`zhuyin.cpp:1013`), the pinyin facade passes the word raw
+    /// (`pinyin.cpp:1484`). `None` is upstream's `false`.
+    #[must_use]
+    pub fn parse_one_full_pinyin(&self, text: &str, mask_corrections: bool) -> Option<ChewingKey> {
+        let mut options = self.options().bits();
+        if mask_corrections {
+            options &= !PINYIN_CORRECT_ALL;
+        }
+        // The probe runs on the context's live full-pinyin parser, whose
+        // index `pinyin_set_full_pinyin_scheme` swaps
+        // (`FullPinyinParser2::set_scheme`, `pinyin_parser2.cpp:383-401`
+        // at 074a2219): under LUOMA / SECONDARY_ZHUYIN the spelling is
+        // looked up in that scheme's table — plain rows, no option gating
+        // — and the key is the canonical syllable's (issue #547).
+        if let Some(scheme) = full_scheme(self.live.full_scheme.load(Ordering::Relaxed))
+            && let Some(index) = scheme.index()
+        {
+            return parse_one_scheme_key(options, text.as_bytes(), index);
+        }
+        FullPinyinParser.parse_one_key(options, text.as_bytes())
+    }
+
+    /// The one-key double-pinyin probe — pinyin-facade-only, over the
+    /// live double scheme and the raw option word. `None` is upstream's
+    /// `false`.
+    #[must_use]
+    pub fn parse_one_double_pinyin(&self, text: &str) -> Option<ChewingKey> {
+        let raw = self.live.double_scheme.load(Ordering::Relaxed);
+        let fallback_cleared = raw & crate::context::FALLBACK_CLEARED_BIT != 0;
+        let scheme = double_scheme(raw & !crate::context::FALLBACK_CLEARED_BIT)?;
+        let parser = {
+            let p = DoublePinyinParser::with_scheme(scheme);
+            if fallback_cleared {
+                p.with_fallback_suppressed()
+            } else {
+                p
+            }
+        };
+        parser.parse_one_key(self.options().bits(), text.as_bytes())
+    }
+
+    /// The one-key chewing probe — the `parse_chewing` law both facades
+    /// implement identically: the live scheme parses after the API's
+    /// `ZHUYIN_CORRECT_ALL` strip (the caller's corrections never reach
+    /// the chewing parser). `None` is upstream's `false`.
+    #[must_use]
+    pub fn parse_one_chewing(&self, text: &str) -> Option<ChewingKey> {
+        let scheme = zhuyin_scheme(self.live.zhuyin_scheme.load(Ordering::Relaxed))?;
+        let options = self.options().bits() & !ZHUYIN_CORRECT_ALL;
+        ZhuyinParser::with_scheme(scheme).parse_one_key(options, text.as_bytes())
+    }
+
+    /// The zhuyin symbol(s) one keystroke maps to — the mapping half of
+    /// `in_chewing_keyboard`, both facades' law: the live scheme's
+    /// symbols under the live `USE_TONE` flag. Empty means the key is
+    /// not on the keyboard (upstream's `false`).
+    #[must_use]
+    pub fn in_keyboard(&self, key: u8) -> Vec<String> {
+        let use_tone = self.live.use_tone.load(Ordering::Relaxed);
+        let Some(scheme) = zhuyin_scheme(self.live.zhuyin_scheme.load(Ordering::Relaxed)) else {
+            return Vec::new();
+        };
+        ZhuyinParser::with_scheme(scheme).symbols_for(key, use_tone)
+    }
+}
+
+impl<
+    S: std::borrow::BorrowMut<InstanceState>,
+    E: std::borrow::BorrowMut<oxpinyin_engine::SessionState>,
+> InstanceView<'_, S, E>
+{
     /// The full-pinyin batch seam — the `parse_more_full_pinyins` law
     /// both facades implement identically: continue or restart the
     /// parse, remask the session under the live option word, then for
@@ -338,74 +414,6 @@ impl InstanceCore {
         text.clone_into(&mut self.double_input);
         self.double_parse = Some(parsed);
         self.parsed_len
-    }
-
-    /// The one-key full-pinyin probe — the `parse_full_pinyin` law. The
-    /// two facades' pins differ in exactly one bit: the libzhuyin facade
-    /// masks `PINYIN_CORRECT_ALL` off the live word before the probe
-    /// (`zhuyin.cpp:1013`), the pinyin facade passes the word raw
-    /// (`pinyin.cpp:1484`). `None` is upstream's `false`.
-    #[must_use]
-    pub fn parse_one_full_pinyin(&self, text: &str, mask_corrections: bool) -> Option<ChewingKey> {
-        let mut options = self.options().bits();
-        if mask_corrections {
-            options &= !PINYIN_CORRECT_ALL;
-        }
-        // The probe runs on the context's live full-pinyin parser, whose
-        // index `pinyin_set_full_pinyin_scheme` swaps
-        // (`FullPinyinParser2::set_scheme`, `pinyin_parser2.cpp:383-401`
-        // at 074a2219): under LUOMA / SECONDARY_ZHUYIN the spelling is
-        // looked up in that scheme's table — plain rows, no option gating
-        // — and the key is the canonical syllable's (issue #547).
-        if let Some(scheme) = full_scheme(self.live.full_scheme.load(Ordering::Relaxed))
-            && let Some(index) = scheme.index()
-        {
-            return parse_one_scheme_key(options, text.as_bytes(), index);
-        }
-        FullPinyinParser.parse_one_key(options, text.as_bytes())
-    }
-
-    /// The one-key double-pinyin probe — pinyin-facade-only, over the
-    /// live double scheme and the raw option word. `None` is upstream's
-    /// `false`.
-    #[must_use]
-    pub fn parse_one_double_pinyin(&self, text: &str) -> Option<ChewingKey> {
-        let raw = self.live.double_scheme.load(Ordering::Relaxed);
-        let fallback_cleared = raw & crate::context::FALLBACK_CLEARED_BIT != 0;
-        let scheme = double_scheme(raw & !crate::context::FALLBACK_CLEARED_BIT)?;
-        let parser = {
-            let p = DoublePinyinParser::with_scheme(scheme);
-            if fallback_cleared {
-                p.with_fallback_suppressed()
-            } else {
-                p
-            }
-        };
-        parser.parse_one_key(self.options().bits(), text.as_bytes())
-    }
-
-    /// The one-key chewing probe — the `parse_chewing` law both facades
-    /// implement identically: the live scheme parses after the API's
-    /// `ZHUYIN_CORRECT_ALL` strip (the caller's corrections never reach
-    /// the chewing parser). `None` is upstream's `false`.
-    #[must_use]
-    pub fn parse_one_chewing(&self, text: &str) -> Option<ChewingKey> {
-        let scheme = zhuyin_scheme(self.live.zhuyin_scheme.load(Ordering::Relaxed))?;
-        let options = self.options().bits() & !ZHUYIN_CORRECT_ALL;
-        ZhuyinParser::with_scheme(scheme).parse_one_key(options, text.as_bytes())
-    }
-
-    /// The zhuyin symbol(s) one keystroke maps to — the mapping half of
-    /// `in_chewing_keyboard`, both facades' law: the live scheme's
-    /// symbols under the live `USE_TONE` flag. Empty means the key is
-    /// not on the keyboard (upstream's `false`).
-    #[must_use]
-    pub fn in_keyboard(&self, key: u8) -> Vec<String> {
-        let use_tone = self.live.use_tone.load(Ordering::Relaxed);
-        let Some(scheme) = zhuyin_scheme(self.live.zhuyin_scheme.load(Ordering::Relaxed)) else {
-            return Vec::new();
-        };
-        ZhuyinParser::with_scheme(scheme).symbols_for(key, use_tone)
     }
 }
 

@@ -114,16 +114,19 @@ pub enum UserConfLaw {
 
 /// One system library's original state — the shipped chunk as loaded,
 /// the diff base of its `.dbin` log.
-#[derive(Clone, Debug, Default)]
-pub struct SystemLibrary {
+#[derive(Clone, Copy, Debug)]
+pub struct SystemLibrary<
+    M = oxpinyin_data::phrase_library::PhraseLibrary,
+    I = BTreeMap<u32, ChunkItem>,
+> {
     /// The chunk's `total_freq`.
     pub total: u32,
     /// The pin's trimmed allocation range end (phrase_index.cpp:624-646).
     pub range_end: u32,
     /// Items by slot (`token & PHRASE_MASK`).
-    pub items: BTreeMap<u32, ChunkItem>,
-    /// Shared immutable runtime mapping; inline originals serve fixture stores.
-    pub mapped: Option<oxpinyin_data::phrase_library::PhraseLibrary>,
+    pub items: I,
+    /// The baseline mapping; read interfaces borrow it for one operation.
+    pub mapped: Option<M>,
 }
 
 /// What a save's current-on-disk remap says about one selected system
@@ -158,9 +161,34 @@ pub enum SaveBaseline {
     ChunkHeaderRead,
 }
 
+impl<M, I: Default> Default for SystemLibrary<M, I> {
+    fn default() -> Self {
+        Self {
+            total: 0,
+            range_end: 0,
+            items: I::default(),
+            mapped: None,
+        }
+    }
+}
+
 impl SystemLibrary {
+    #[cfg(test)]
+    pub(crate) fn fixture_copy(&self) -> Self {
+        assert!(
+            self.mapped.is_none(),
+            "mapped fixtures must reopen their file"
+        );
+        Self {
+            total: self.total,
+            range_end: self.range_end,
+            items: self.items.clone(),
+            mapped: None,
+        }
+    }
+
     /// A current on-disk chunk as a diff baseline, with items read through
-    /// the shared immutable mapping.
+    /// the uniquely owned immutable mapping.
     #[must_use]
     pub fn from_library(library: oxpinyin_data::phrase_library::PhraseLibrary) -> Self {
         Self {
@@ -183,14 +211,34 @@ impl SystemLibrary {
         }
     }
 
+    /// Borrows the baseline for one read operation.
+    pub fn view(&self) -> SystemLibraryRef<'_> {
+        SystemLibrary {
+            total: self.total,
+            range_end: self.range_end,
+            items: &self.items,
+            mapped: self.mapped.as_ref(),
+        }
+    }
+}
+
+/// One operation's borrowed baseline metadata and bytes.
+pub type SystemLibraryRef<'a> =
+    SystemLibrary<&'a oxpinyin_data::phrase_library::PhraseLibrary, &'a BTreeMap<u32, ChunkItem>>;
+
+impl<
+    M: std::borrow::Borrow<oxpinyin_data::phrase_library::PhraseLibrary>,
+    I: std::borrow::Borrow<BTreeMap<u32, ChunkItem>>,
+> SystemLibrary<M, I>
+{
     /// Slots with a resident item, inline or mapped. The diff walks the
     /// union of these and the live state; slot 0 is outside the pin's
     /// `get_range` (`1..range_end`) and is filtered by the caller.
     pub(crate) fn slots(&self) -> impl Iterator<Item = u32> + '_ {
-        self.items.keys().copied().chain(
+        self.items.borrow().keys().copied().chain(
             self.mapped
                 .iter()
-                .flat_map(|library| library.items().map(|(slot, _)| slot)),
+                .flat_map(|library| library.borrow().items().map(|(slot, _)| slot)),
         )
     }
 
@@ -199,40 +247,50 @@ impl SystemLibrary {
     pub(crate) fn item_total(&self) -> u32 {
         let inline = self
             .items
+            .borrow()
             .iter()
             .filter(|(slot, _)| **slot >= 1)
             .fold(0_u32, |total, (_, item)| total.wrapping_add(item.unigram));
         self.mapped.as_ref().map_or(inline, |library| {
             self.items
+                .borrow()
                 .keys()
                 .filter(|slot| **slot >= 1)
-                .filter_map(|slot| library.item(*slot))
-                .fold(inline.wrapping_add(library.item_total()), |total, item| {
-                    total.wrapping_sub(item.unigram())
-                })
+                .filter_map(|slot| library.borrow().item(*slot))
+                .fold(
+                    inline.wrapping_add(library.borrow().item_total()),
+                    |total, item| total.wrapping_sub(item.unigram()),
+                )
         })
     }
 
     pub(crate) fn contains_item(&self, slot: u32) -> bool {
-        self.items.contains_key(&slot)
+        self.items.borrow().contains_key(&slot)
             || self
                 .mapped
                 .as_ref()
-                .is_some_and(|library| library.item(slot).is_some())
+                .is_some_and(|library| library.borrow().item(slot).is_some())
     }
 
     pub(crate) fn unigram(&self, slot: u32) -> Option<u32> {
         self.items
+            .borrow()
             .get(&slot)
             .map(|item| item.unigram)
-            .or_else(|| self.mapped.as_ref()?.item(slot).map(|view| view.unigram()))
+            .or_else(|| {
+                self.mapped
+                    .as_ref()?
+                    .borrow()
+                    .item(slot)
+                    .map(|view| view.unigram())
+            })
     }
 
     pub(crate) fn item(&self, slot: u32) -> Option<ChunkItem> {
-        if let Some(item) = self.items.get(&slot) {
+        if let Some(item) = self.items.borrow().get(&slot) {
             return Some(item.clone());
         }
-        let view = self.mapped.as_ref()?.item(slot)?;
+        let view = self.mapped.as_ref()?.borrow().item(slot)?;
         Some(ChunkItem {
             phrase: view.phrase_codes().collect::<Option<Vec<u32>>>()?,
             unigram: view.unigram(),
@@ -255,9 +313,10 @@ impl SystemLibrary {
     /// Whether [`Self::item`] would answer `Some` for `slot`, without building
     /// the item: an inline item, or a mapped one whose phrase text decodes.
     pub(crate) fn is_readable(&self, slot: u32) -> bool {
-        self.items.contains_key(&slot)
+        self.items.borrow().contains_key(&slot)
             || self.mapped.as_ref().is_some_and(|library| {
                 library
+                    .borrow()
                     .item(slot)
                     .is_some_and(|view| view.phrase_codes().all(|code| code.is_some()))
             })
@@ -268,10 +327,10 @@ impl SystemLibrary {
     /// item (a fixture store) is serialised. `None` when there is no item.
     #[cfg(test)]
     pub(crate) fn visible_bytes(&self, slot: u32) -> Option<std::borrow::Cow<'_, [u8]>> {
-        if let Some(item) = self.items.get(&slot) {
+        if let Some(item) = self.items.borrow().get(&slot) {
             return Some(std::borrow::Cow::Owned(journal_item_bytes(item)));
         }
-        let view = self.mapped.as_ref()?.item(slot)?;
+        let view = self.mapped.as_ref()?.borrow().item(slot)?;
         Some(std::borrow::Cow::Borrowed(view.as_bytes()))
     }
 }
@@ -279,23 +338,222 @@ impl SystemLibrary {
 /// The `SYSTEM_FILE` libraries' originals together with the user dir's
 /// file layout (`table.conf`'s user file names): everything a profile's
 /// load and save need to know about the system side.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct SystemOriginals {
     libraries: BTreeMap<u8, SystemLibrary>,
+    mapped: PhraseLibraries,
     layout: UserFileLayout,
     /// The library init's loop stopped at (`memory_chunk.h:493`, register
     /// row 96): the replay merges only the logs of the libraries before it.
     stop: Option<u8>,
 }
 
+/// An operation's selection of original libraries. It retains no byte owner.
+pub struct SelectedOriginals<'a> {
+    owner: &'a SystemOriginals,
+    mask: u16,
+}
+
+/// Baseline reads shared by the whole owner and an operation's selection.
+pub trait OriginalLibraries {
+    /// Configured profile filenames.
+    fn layout(&self) -> &UserFileLayout;
+    /// First library whose initialization asserted, when present.
+    fn stop(&self) -> Option<u8>;
+    /// Borrow one selected original library.
+    fn get(&self, nibble: &u8) -> Option<SystemLibraryRef<'_>>;
+    /// Borrow selected libraries in nibble order.
+    fn iter(&self) -> impl Iterator<Item = (&u8, SystemLibraryRef<'_>)>;
+    /// Whether this operation includes a library.
+    fn contains_key(&self, nibble: &u8) -> bool {
+        self.get(nibble).is_some()
+    }
+    /// Selected library nibbles in order.
+    fn keys(&self) -> impl Iterator<Item = &u8> {
+        self.iter().map(|(nibble, _)| nibble)
+    }
+}
+
+impl OriginalLibraries for SystemOriginals {
+    fn layout(&self) -> &UserFileLayout {
+        &self.layout
+    }
+    fn stop(&self) -> Option<u8> {
+        self.stop
+    }
+    fn get(&self, nibble: &u8) -> Option<SystemLibraryRef<'_>> {
+        self.get(nibble)
+    }
+    fn iter(&self) -> impl Iterator<Item = (&u8, SystemLibraryRef<'_>)> {
+        self.iter()
+    }
+}
+
+impl OriginalLibraries for SelectedOriginals<'_> {
+    fn layout(&self) -> &UserFileLayout {
+        self.owner.layout()
+    }
+    fn stop(&self) -> Option<u8> {
+        self.owner.stop()
+    }
+    fn get(&self, nibble: &u8) -> Option<SystemLibraryRef<'_>> {
+        if *nibble >= 16 || self.mask & (1 << *nibble) == 0 {
+            return None;
+        }
+        self.owner.get(nibble)
+    }
+    fn iter(&self) -> impl Iterator<Item = (&u8, SystemLibraryRef<'_>)> {
+        self.owner
+            .iter()
+            .filter(|(nibble, _)| self.mask & (1 << **nibble) != 0)
+    }
+}
+
 impl SystemOriginals {
     /// `libraries` under `layout`.
     #[must_use]
-    pub const fn new(libraries: BTreeMap<u8, SystemLibrary>, layout: UserFileLayout) -> Self {
+    pub fn new(mut libraries: BTreeMap<u8, SystemLibrary>, layout: UserFileLayout) -> Self {
+        let mut mapped = PhraseLibraries::empty();
+        for (&nibble, library) in &mut libraries {
+            if let Some(mapping) = library.mapped.take() {
+                mapped.insert_mapping(nibble, PathBuf::new(), mapping);
+            }
+        }
         Self {
             libraries,
+            mapped,
             layout,
             stop: None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixture_copy(&self) -> Self {
+        assert!(
+            (0..16).all(|nibble| !self.mapped.is_loaded(nibble)),
+            "mapped fixtures must reopen their file"
+        );
+        Self {
+            libraries: self
+                .libraries
+                .iter()
+                .map(|(&nibble, library)| (nibble, library.fixture_copy()))
+                .collect(),
+            mapped: PhraseLibraries::empty(),
+            layout: self.layout.clone(),
+            stop: self.stop,
+        }
+    }
+
+    /// Select existing baselines for a transition without transferring their bytes.
+    pub fn selected(&self, mask: u16) -> SelectedOriginals<'_> {
+        SelectedOriginals { owner: self, mask }
+    }
+
+    /// The uniquely owned baseline mappings, borrowed by dictionary and LM reads.
+    pub const fn phrase_libraries(&self) -> &PhraseLibraries {
+        &self.mapped
+    }
+
+    /// Exclusive access for a library transition.
+    pub fn phrase_libraries_mut(&mut self) -> &mut PhraseLibraries {
+        &mut self.mapped
+    }
+
+    /// One operation's original library view.
+    pub fn get(&self, nibble: &u8) -> Option<SystemLibraryRef<'_>> {
+        let library = self.libraries.get(nibble)?;
+        Some(SystemLibrary {
+            total: library.total,
+            range_end: library.range_end,
+            items: &library.items,
+            mapped: library
+                .mapped
+                .as_ref()
+                .or_else(|| self.mapped.library(u32::from(*nibble) << 24)),
+        })
+    }
+
+    /// Original library views, in nibble order.
+    pub fn iter(&self) -> impl Iterator<Item = (&u8, SystemLibraryRef<'_>)> {
+        self.libraries.iter().map(|(nibble, library)| {
+            (
+                nibble,
+                SystemLibrary {
+                    total: library.total,
+                    range_end: library.range_end,
+                    items: &library.items,
+                    mapped: library
+                        .mapped
+                        .as_ref()
+                        .or_else(|| self.mapped.library(u32::from(*nibble) << 24)),
+                },
+            )
+        })
+    }
+
+    /// Insert a fixture or newly mapped baseline, transferring ownership.
+    pub fn insert(&mut self, nibble: u8, mut library: SystemLibrary) {
+        self.mapped.unload(nibble);
+        if let Some(mapping) = library.mapped.take() {
+            self.mapped.insert_mapping(nibble, PathBuf::new(), mapping);
+        }
+        self.libraries.insert(nibble, library);
+    }
+
+    /// Install an opened file with its remap path.
+    pub fn insert_mapping(
+        &mut self,
+        nibble: u8,
+        path: PathBuf,
+        library: oxpinyin_data::phrase_library::PhraseLibrary,
+    ) {
+        self.libraries.insert(
+            nibble,
+            SystemLibrary {
+                total: library.total_freq(),
+                range_end: library.token_range().end,
+                items: Default::default(),
+                mapped: None,
+            },
+        );
+        self.mapped.insert_mapping(nibble, path, library);
+    }
+
+    /// Publish dictionary remaps when replay has not replaced its originals.
+    /// The old implementation's dictionary and journal baseline could name
+    /// different mappings after a refused replay or a transient reload. Move
+    /// the old mapping into the original's slot before replacing the current
+    /// dictionary slot; both versions remain uniquely owned.
+    pub fn publish_current(&mut self, mut incoming: Self) {
+        for nibble in incoming.libraries.keys().copied() {
+            let Some((path, mapping)) = incoming.mapped.take_mapping(nibble) else {
+                continue;
+            };
+            if let Some(original) = self.libraries.get_mut(&nibble) {
+                let old = self.mapped.take_mapping(nibble);
+                if original.mapped.is_none() {
+                    original.mapped = old.map(|(_, mapping)| mapping);
+                }
+            }
+            self.mapped.insert_mapping(nibble, path, mapping);
+        }
+    }
+
+    /// Move all originals out after a successful transition.
+    pub(crate) fn take(&mut self) -> Self {
+        let empty = Self::new(Default::default(), self.layout.clone());
+        std::mem::replace(self, empty)
+    }
+
+    /// Transfer the selected baselines after replay, without cloning byte owners.
+    pub fn append(&mut self, mut incoming: Self) {
+        for (nibble, library) in incoming.libraries {
+            self.mapped.unload(nibble);
+            if let Some((path, mapping)) = incoming.mapped.take_mapping(nibble) {
+                self.mapped.insert_mapping(nibble, path, mapping);
+            }
+            self.libraries.insert(nibble, library);
         }
     }
 
@@ -340,14 +598,14 @@ impl From<BTreeMap<u8, SystemLibrary>> for SystemOriginals {
 ///
 /// Items whose UCS-4 text does not
 /// decode are skipped (a malformed entry, never a panic).
-/// Only library metadata and shared mappings are retained here: decoding
+/// Only library metadata and uniquely owned mappings are retained here: decoding
 /// phrases and pronunciations is deferred to a touched slot's [`SystemLibrary`].
 /// A fresh profile therefore pays no full-item pass (#588).
 #[must_use]
-pub fn system_originals(libraries: &PhraseLibraries, layout: UserFileLayout) -> SystemOriginals {
+pub fn system_originals(libraries: PhraseLibraries, layout: UserFileLayout) -> SystemOriginals {
     let mut out = BTreeMap::new();
     for &(nibble, _) in layout.system_logs() {
-        let Some(library) = libraries.library((u32::from(nibble) << 24) | 1) else {
+        let Some(library) = libraries.library(u32::from(nibble) << 24) else {
             continue;
         };
         out.insert(
@@ -356,15 +614,17 @@ pub fn system_originals(libraries: &PhraseLibraries, layout: UserFileLayout) -> 
                 total: library.total_freq(),
                 range_end: library.token_range().end,
                 items: BTreeMap::new(),
-                mapped: Some(library.clone()),
+                mapped: None,
             },
         );
     }
-    let mut originals = SystemOriginals::new(out, layout);
-    // The pin's loop asserted while it mapped this library
-    // (`memory_chunk.h:493`): the libraries after it were never reached.
-    originals.stop = libraries.chunk_header_fault();
-    originals
+    let stop = libraries.chunk_header_fault();
+    SystemOriginals {
+        libraries: out,
+        mapped: libraries,
+        layout,
+        stop,
+    }
 }
 
 /// The user state, in the value shapes the file set carries.
@@ -554,7 +814,7 @@ pub struct Loaded {
 
 /// The private result of a profile parse: the public [`Loaded`] plus
 /// the user pinyin index's key metadata needed by session wiring.
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 pub(crate) struct LoadedProfile {
     /// USER_FILE arenas moved into the session after profile parsing.
     pub(crate) user_libraries: BTreeMap<u8, UserLibrary>,
@@ -587,13 +847,16 @@ pub(crate) struct LoadedProfile {
 /// The readings `add_index` saw, as the pinyin index's rows: those the
 /// libraries carry and `state.indexed` names, and the indexed readings of
 /// items added to a system library.
-pub(crate) fn chewing_rows(state: &UserState, originals: &SystemOriginals) -> Vec<PinyinIndexItem> {
+pub(crate) fn chewing_rows(
+    state: &UserState,
+    originals: &impl OriginalLibraries,
+) -> Vec<PinyinIndexItem> {
     chewing_rows_with_views(state, originals, &BTreeMap::new(), &BTreeMap::new())
 }
 
 fn chewing_rows_with_views(
     state: &UserState,
-    originals: &SystemOriginals,
+    originals: &impl OriginalLibraries,
     libraries: &BTreeMap<u8, UserLibrary>,
     replayed: &BTreeMap<u8, ReplayedLibrary>,
 ) -> Vec<PinyinIndexItem> {
@@ -733,7 +996,7 @@ const fn token_of(nibble: u8, slot: u32) -> u32 {
 /// do.
 pub fn load(
     dir: &Path,
-    originals: &SystemOriginals,
+    originals: &impl OriginalLibraries,
     versions: &SystemVersions,
     law: UserConfLaw,
 ) -> Result<Loaded, PersistenceError> {
@@ -753,7 +1016,7 @@ pub fn load(
 /// As [`load`].
 pub(crate) fn load_profile(
     dir: &Path,
-    originals: &SystemOriginals,
+    originals: &impl OriginalLibraries,
     versions: &SystemVersions,
     law: UserConfLaw,
 ) -> Result<LoadedProfile, PersistenceError> {
@@ -832,7 +1095,7 @@ pub(crate) fn check_format(
 #[must_use]
 pub(crate) fn load_checked(
     dir: &Path,
-    originals: &SystemOriginals,
+    originals: &impl OriginalLibraries,
     check: &ProfileCheck,
 ) -> LoadedProfile {
     load_checked_impl(dir, originals, check, false)
@@ -840,7 +1103,7 @@ pub(crate) fn load_checked(
 
 pub(crate) fn load_session_checked(
     dir: &Path,
-    originals: &SystemOriginals,
+    originals: &impl OriginalLibraries,
     check: &ProfileCheck,
 ) -> LoadedProfile {
     load_checked_impl(dir, originals, check, true)
@@ -848,7 +1111,7 @@ pub(crate) fn load_session_checked(
 
 fn load_checked_impl(
     dir: &Path,
-    originals: &SystemOriginals,
+    originals: &impl OriginalLibraries,
     check: &ProfileCheck,
     lazy: bool,
 ) -> LoadedProfile {
@@ -1212,7 +1475,7 @@ fn load_libraries(
 /// (upstream's `merge` returns false mid-log and `_load_phrase_library`
 /// keeps the partially-merged index); an assertion is recorded in
 /// [`Loaded::journal_fault`] and ends the replay.
-fn load_logs(dir: &Path, originals: &SystemOriginals, loaded: &mut Loaded) {
+fn load_logs(dir: &Path, originals: &impl OriginalLibraries, loaded: &mut Loaded) {
     loaded.journal_fault = replay_logs(dir, originals, loaded, None, false, None).err();
 }
 
@@ -1227,7 +1490,7 @@ fn load_logs(dir: &Path, originals: &SystemOriginals, loaded: &mut Loaded) {
 /// The [`JournalFault`] the merge reaches (rows 91 and 108).
 pub(crate) fn load_library_logs(
     dir: &Path,
-    originals: &SystemOriginals,
+    originals: &impl OriginalLibraries,
 ) -> Result<(UserState, BTreeMap<u8, u32>), JournalFault> {
     let mut loaded = Loaded::default();
     replay_logs(dir, originals, &mut loaded, None, true, None)?;
@@ -1268,7 +1531,7 @@ pub(crate) fn load_user_library(
 /// 108's read in `_compute_new_header`); no later library is read.
 pub(crate) fn load_masked_logs(
     dir: &Path,
-    originals: &SystemOriginals,
+    originals: &impl OriginalLibraries,
     mask: u32,
     value: u32,
 ) -> Result<(UserState, BTreeMap<u8, u32>), JournalFault> {
@@ -1289,7 +1552,7 @@ pub(crate) fn load_masked_logs(
 /// assertion ends it.
 fn replay_logs(
     dir: &Path,
-    originals: &SystemOriginals,
+    originals: &impl OriginalLibraries,
     loaded: &mut Loaded,
     mask: Option<(u32, u32)>,
     only_originals: bool,
@@ -1300,7 +1563,7 @@ fn replay_logs(
         // Init's loop maps each library before it merges its log
         // (`pinyin.cpp:255`, `:276`); at the library whose mapping asserts
         // (`memory_chunk.h:493`) the pin dies, so no later log is merged.
-        if originals.stop.is_some_and(|stop| nibble >= stop) {
+        if originals.stop().is_some_and(|stop| nibble >= stop) {
             break;
         }
         if only_originals && !originals.contains_key(&nibble) {
@@ -1599,7 +1862,7 @@ fn journal_record_item(item: &ChunkItem) -> Result<Vec<u8>, PersistenceError> {
 /// from its items; compact does not preserve that difference.
 #[must_use]
 pub fn system_new_total(
-    original: &SystemLibrary,
+    original: SystemLibraryRef<'_>,
     overrides: &BTreeMap<u32, Option<ChunkItem>>,
 ) -> u32 {
     let mut total = original.item_total();
@@ -1643,7 +1906,7 @@ pub fn system_new_total(
 pub fn save(
     dir: &Path,
     state: &UserState,
-    originals: &SystemOriginals,
+    originals: &impl OriginalLibraries,
     versions: &SystemVersions,
     open_counter: i32,
 ) -> Result<(), PersistenceError> {
@@ -1663,7 +1926,7 @@ pub fn save(
 pub fn save_with_bigram(
     dir: &Path,
     state: &UserState,
-    originals: &SystemOriginals,
+    originals: &impl OriginalLibraries,
     versions: &SystemVersions,
     open_counter: i32,
     bigram_db: Option<&DefaultUserBigramDb>,
@@ -1726,7 +1989,7 @@ pub(crate) type NoBaseline = fn(u8) -> SaveBaseline;
 pub(crate) fn save_session(
     dir: &Path,
     source: SaveSource<'_>,
-    originals: &SystemOriginals,
+    originals: &impl OriginalLibraries,
     versions: &SystemVersions,
     open_counter: i32,
     bigram_db: Option<&DefaultUserBigramDb>,
@@ -1813,7 +2076,7 @@ fn libraries_in_pin_order(layout: &UserFileLayout) -> Vec<(u8, &FileName, Librar
 pub(crate) fn save_with_bigram_reporting(
     dir: &Path,
     source: SaveSource<'_>,
-    originals: &SystemOriginals,
+    originals: &impl OriginalLibraries,
     versions: &SystemVersions,
     open_counter: i32,
     bigram_db: Option<&DefaultUserBigramDb>,
@@ -1834,7 +2097,7 @@ pub(crate) fn save_with_bigram_reporting(
 pub(crate) fn save_reporting<B: FnMut(u8) -> SaveBaseline>(
     dir: &Path,
     source: SaveSource<'_>,
-    originals: &SystemOriginals,
+    originals: &impl OriginalLibraries,
     reporting: &mut SaveReporting<'_, B>,
 ) -> Result<SaveReport, PersistenceError> {
     // `_write_files` writes every file whatever the one before did
@@ -1931,7 +2194,7 @@ impl Staged {
 fn stage_all<B: FnMut(u8) -> SaveBaseline>(
     dir: &Path,
     source: SaveSource<'_>,
-    originals: &SystemOriginals,
+    originals: &impl OriginalLibraries,
     reporting: &mut SaveReporting<'_, B>,
     staged: &mut Staged,
 ) -> Result<(), PersistenceError> {
@@ -1981,7 +2244,7 @@ fn tolerate<T>(
 fn stage_rest<B: FnMut(u8) -> SaveBaseline>(
     dir: &Path,
     source: SaveSource<'_>,
-    originals: &SystemOriginals,
+    originals: &impl OriginalLibraries,
     reporting: &mut SaveReporting<'_, B>,
     staged: &mut Staged,
 ) -> Result<(), PersistenceError> {
@@ -2059,7 +2322,7 @@ fn stage_rest<B: FnMut(u8) -> SaveBaseline>(
                     }
                 }
                 LibraryFile::Log => {
-                    let original = originals.get(&nibble).unwrap_or(&empty_library);
+                    let original = originals.get(&nibble).unwrap_or(empty_library.view());
                     let overrides = state
                         .system_overrides
                         .get(&nibble)
@@ -2070,7 +2333,7 @@ fn stage_rest<B: FnMut(u8) -> SaveBaseline>(
                             nibble,
                             original,
                             &overrides,
-                            &disk,
+                            disk.view(),
                             compacted.contains(&nibble).then_some(0),
                         )?,
                         _ => diff_records_with_new_total(
@@ -2160,7 +2423,7 @@ fn finish_save(
 /// Returns the store's error when a diff walk or record append fails.
 pub fn diff_records(
     nibble: u8,
-    original: &SystemLibrary,
+    original: SystemLibraryRef<'_>,
     overrides: &BTreeMap<u32, Option<ChunkItem>>,
 ) -> Result<Vec<LogRecord>, PersistenceError> {
     diff_records_with_new_total(nibble, original, overrides, None)
@@ -2172,7 +2435,7 @@ pub fn diff_records(
 /// (`phrase_index.cpp:648-675`).
 fn diff_records_with_new_total(
     _nibble: u8,
-    original: &SystemLibrary,
+    original: SystemLibraryRef<'_>,
     overrides: &BTreeMap<u32, Option<ChunkItem>>,
     new_total: Option<u32>,
 ) -> Result<Vec<LogRecord>, PersistenceError> {
@@ -2226,9 +2489,9 @@ fn diff_records_with_new_total(
 /// resident slots (`SubPhraseIndex::diff`, `phrase_index.cpp:394-442`).
 fn diff_records_against(
     _nibble: u8,
-    original: &SystemLibrary,
+    original: SystemLibraryRef<'_>,
     overrides: &BTreeMap<u32, Option<ChunkItem>>,
-    baseline: &SystemLibrary,
+    baseline: SystemLibraryRef<'_>,
     new_total: Option<u32>,
 ) -> Result<Vec<LogRecord>, PersistenceError> {
     let mut records = vec![LogRecord::ModifyHeader {
@@ -2605,7 +2868,7 @@ mod tests {
         let original = &originals[&1];
         let overrides: BTreeMap<u32, Option<ChunkItem>> = BTreeMap::from([(1_u32, None)]);
 
-        let records = diff_records(1, original, &overrides).expect("diff");
+        let records = diff_records(1, original.view(), &overrides).expect("diff");
         assert!(matches!(
             records.as_slice(),
             [
@@ -2638,20 +2901,35 @@ mod tests {
         std::fs::write(&chunk, build_chunk(&pairs).expect("fixture chunk")).expect("write fixture");
         let mut libraries = PhraseLibraries::empty();
         assert!(libraries.load(1, &chunk).expect("map fixture"));
-        let mapped = system_originals(&libraries, inline.layout().clone());
-        drop(libraries); // Originals must keep their own shared mapping alive.
+        let mapped = system_originals(libraries, inline.layout().clone());
+        // Originals now own the mappings consumed above.
 
-        assert_eq!(mapped[&1].total, inline[&1].total);
-        assert_eq!(mapped[&1].range_end, inline[&1].range_end);
-        assert!(mapped[&1].mapped.is_some());
-        assert!(mapped[&1].items.is_empty(), "open eagerly decoded items");
+        assert_eq!(
+            mapped.get(&1).expect("mapped original").total,
+            inline[&1].total
+        );
+        assert_eq!(
+            mapped.get(&1).expect("mapped original").range_end,
+            inline[&1].range_end
+        );
+        assert!(mapped.get(&1).expect("mapped original").mapped.is_some());
+        assert!(
+            mapped.get(&1).expect("mapped original").items.is_empty(),
+            "open eagerly decoded items"
+        );
         for slot in 0..=4 {
             assert_eq!(
-                mapped[&1].contains_item(slot),
+                mapped.get(&1).expect("mapped original").contains_item(slot),
                 inline[&1].contains_item(slot)
             );
-            assert_eq!(mapped[&1].unigram(slot), inline[&1].unigram(slot));
-            assert_eq!(mapped[&1].item(slot), inline[&1].item(slot));
+            assert_eq!(
+                mapped.get(&1).expect("mapped original").unigram(slot),
+                inline[&1].unigram(slot)
+            );
+            assert_eq!(
+                mapped.get(&1).expect("mapped original").item(slot),
+                inline[&1].item(slot)
+            );
         }
 
         let mut changed = inline[&1].item(1).expect("original item");
@@ -2685,7 +2963,7 @@ mod tests {
                 assert_eq!(loaded.state, state);
             }
             assert!(
-                mapped[&1].items.is_empty(),
+                mapped.get(&1).expect("mapped original").items.is_empty(),
                 "save/replay expanded originals"
             );
         }
@@ -3714,8 +3992,6 @@ mod tests {
         let dir = tempdir("mapped-vs-inline");
         let path = dir.join("lib.bin");
         std::fs::write(&path, chunk).expect("write");
-        let mapped_library =
-            oxpinyin_data::phrase_library::PhraseLibrary::open(&path).expect("open");
         let originals_of = |inline: bool| -> SystemOriginals {
             let library = SystemLibrary {
                 total,
@@ -3725,7 +4001,9 @@ mod tests {
                 } else {
                     BTreeMap::new()
                 },
-                mapped: (!inline).then(|| mapped_library.clone()),
+                mapped: (!inline).then(|| {
+                    oxpinyin_data::phrase_library::PhraseLibrary::open(&path).expect("open")
+                }),
             };
             BTreeMap::from([(1_u8, library)]).into()
         };
@@ -3899,12 +4177,13 @@ mod tests {
     #[test]
     fn a_changed_baseline_writes_an_empty_phrase_item_like_the_normal_path() {
         let originals = originals();
-        let original = originals[&1].clone();
-        let mut baseline = original.clone();
+        let original = originals[&1].fixture_copy();
+        let mut baseline = original.fixture_copy();
         let empty = item(&[], 7, &[(vec![], 5), (vec![], 6)]);
         baseline.items.insert(1, empty.clone());
-        let records = diff_records_against(1, &original, &BTreeMap::new(), &baseline, None)
-            .expect("a changed baseline with an empty phrase");
+        let records =
+            diff_records_against(1, original.view(), &BTreeMap::new(), baseline.view(), None)
+                .expect("a changed baseline with an empty phrase");
         let old_item = records
             .iter()
             .find_map(|record| match record {

@@ -12,9 +12,7 @@ use std::os::raw::c_int;
 
 use oxpinyin_engine::CandidateKind;
 
-use crate::state::{
-    CapiCandidate, CapiInstance, candidate_ptr, candidate_ref, instance_mut, instance_ref,
-};
+use crate::state::{CapiCandidate, candidate_ptr, candidate_ref, instance_mut, instance_ref};
 use crate::types::{GChar, GUint, LookupCandidate, ZhuyinInstance, lookup_candidate_type_t};
 
 /// Get the number of candidates.
@@ -35,7 +33,7 @@ pub extern "C" fn zhuyin_get_n_candidate(instance: *mut ZhuyinInstance, num: *mu
     if !num.is_null() {
         // SAFETY: Null-checked above.
         unsafe {
-            *num = GUint::try_from(inst.candidates.len()).unwrap_or(GUint::MAX);
+            *num = GUint::try_from(inst.state.candidates.len()).unwrap_or(GUint::MAX);
         }
     }
     true
@@ -62,7 +60,7 @@ pub extern "C" fn zhuyin_get_candidate(
     // `zhuyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
     let idx = index as usize;
-    if let Some(cand) = inst.candidates.get(idx) {
+    if let Some(cand) = inst.state.candidates.get(idx) {
         if !candidate.is_null() {
             // SAFETY: Null-checked above.
             unsafe {
@@ -181,7 +179,7 @@ pub extern "C" fn zhuyin_choose_candidate(
 
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
-    let inst = unsafe { instance_mut(instance) };
+    let mut inst = unsafe { instance_mut(instance) };
     let Some(index) = inst
         .candidates
         .iter()
@@ -194,10 +192,11 @@ pub extern "C" fn zhuyin_choose_candidate(
     // record. Unlike pinyin.cpp:2515-2520, this facade does not diff the
     // chosen row against result 0; zhuyin_train always walks result 0
     // (zhuyin.cpp:1709-1713).
-    if inst.candidates[index].candidate_type == lookup_candidate_type_t::BEST_MATCH_CANDIDATE {
+    if inst.state.candidates[index].candidate_type == lookup_candidate_type_t::BEST_MATCH_CANDIDATE
+    {
         return c_int::try_from(inst.core.parsed_len).unwrap_or(c_int::MAX);
     }
-    let source_index = inst.candidates[index].source_index as usize;
+    let source_index = inst.state.candidates[index].source_index as usize;
     // An after-cursor row's end in the window the caller saw — the pin's
     // `offset = m_end` (`zhuyin.cpp:1649-1654`). A choose behind the
     // composition offset (register row 37) re-derives the composition
@@ -211,7 +210,7 @@ pub extern "C" fn zhuyin_choose_candidate(
                 .get(source_index)
                 .map(|row| anchor + row.span_start() + row.consumed_bytes())
         });
-    let selection = match inst.core.anchored_window.as_ref() {
+    let selection = match inst.core.state.anchored_window.as_ref() {
         Some((anchor, window)) => inst
             .core
             .session
@@ -227,7 +226,7 @@ pub extern "C" fn zhuyin_choose_candidate(
     // an after-cursor row answers its span's end (`offset = m_end`); a
     // before-cursor row answers its span's START (`offset = m_begin`) —
     // the constraint is written on `[m_begin, m_end)` either way.
-    let chosen = &inst.candidates[index];
+    let chosen = &inst.state.candidates[index];
     let end = match chosen.candidate_type {
         lookup_candidate_type_t::BEST_MATCH_CANDIDATE => inst.core.parsed_len,
         lookup_candidate_type_t::NORMAL_CANDIDATE_BEFORE_CURSOR => chosen.span_begin as usize,
@@ -258,7 +257,7 @@ pub extern "C" fn zhuyin_clear_constraint(instance: *mut ZhuyinInstance, offset:
 
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
-    let inst = unsafe { instance_mut(instance) };
+    let mut inst = unsafe { instance_mut(instance) };
     let session_offset = inst.core.zhuyin_parse.as_ref().map_or(offset, |parse| {
         oxpinyin_facade::zhuyin_session_offset(parse, offset)
     });
@@ -279,8 +278,7 @@ pub extern "C" fn zhuyin_train(instance: *mut ZhuyinInstance) -> bool {
 
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
-    let inst = unsafe { instance_mut(instance) };
-    match inst.core.train(0) {
+    match unsafe { crate::state::train_instance(instance, 0) } {
         Ok(trained) => trained,
         // Register rows 6 and 82: `phonetic_lookup.h:868` (a forcing added
         // after the last sentence lookup no longer matches the decoded
@@ -327,7 +325,7 @@ pub extern "C" fn zhuyin_train(instance: *mut ZhuyinInstance) -> bool {
 /// sentence rows and nothing else — the after-cursor window at a mid-key
 /// offset, where the pin's matrix column is empty (issue #577).
 pub fn snapshot_candidates(
-    inst: &mut CapiInstance,
+    inst: &mut crate::state::CapiInstanceMut<'_>,
     window: &oxpinyin_engine::CandidateList,
     before_cursor: bool,
     before_end: Option<usize>,
@@ -341,7 +339,7 @@ pub fn snapshot_candidates(
     };
     let zhuyin_parse = inst.core.zhuyin_parse.clone();
     // One row vector and one text buffer, each sized once for the window.
-    inst.candidates.reserve(
+    inst.state.candidates.reserve(
         window.len(),
         window
             .iter()
@@ -359,7 +357,7 @@ pub fn snapshot_candidates(
             continue;
         }
         let bytes = phrase_text_bytes(cand.text());
-        let Some(text) = inst.candidates.intern(&bytes) else {
+        let Some(text) = inst.state.candidates.intern(&bytes) else {
             continue;
         };
         let consumed_bytes = zhuyin_parse.as_ref().map_or_else(
@@ -384,7 +382,7 @@ pub fn snapshot_candidates(
         {
             continue;
         }
-        inst.candidates.push(CapiCandidate {
+        inst.state.candidates.push(CapiCandidate {
             text,
             text_ptr: std::ptr::null(),
             candidate_type: match cand.kind() {

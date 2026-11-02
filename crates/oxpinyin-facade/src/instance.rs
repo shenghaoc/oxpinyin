@@ -1,4 +1,4 @@
-//! One instance's orchestration state: the session, the shared handles,
+//! One instance's orchestration state: the composition and live options,
 //! the parse-mode state machine, and the snapshot-adjacent fields both
 //! facades' C layers borrow against.
 
@@ -10,12 +10,12 @@ use oxpinyin_core::{
 use oxpinyin_engine::{
     CandidateList, EngineError, check_lookup_offset_range, normalize_lookup_offset,
 };
-use oxpinyin_runtime::{RuntimeDict, RuntimeLm, RuntimeSession};
-use oxpinyin_user::{TrainingFault, UserStore};
+use oxpinyin_runtime::{Runtime, RuntimeDict, RuntimeLm};
+use oxpinyin_user::UserStore;
 
 use crate::context::LiveOptions;
 
-/// The [`InstanceCore::anchored_window`] anchor for a **before-cursor**
+/// The [`InstanceState::anchored_window`] anchor for a **before-cursor**
 /// window — the buffer start, not the lookup offset.
 ///
 /// The two window builders measure a candidate's `consumed_bytes` in
@@ -48,17 +48,13 @@ pub const BEFORE_CURSOR_ANCHOR: usize = 0;
 /// back-pointer, the `#[repr(C)]` key slots, the `CString` candidate
 /// snapshot).
 pub struct InstanceCore {
-    /// The shared runtime's concrete session — the same assembly every
-    /// facade drives.
-    pub session: RuntimeSession,
-    /// Clone of the context's user store. `None` under no user dir.
-    pub user: Option<UserStore>,
-    /// Shared dictionary handle (system + user-file + addon set) for
-    /// prediction.
-    pub dict: RuntimeDict,
-    /// Clone of the context's language model, for the predicted-candidate
-    /// frequency key.
-    pub lm: RuntimeLm,
+    /// Retained composition, with no dictionary or model owner.
+    pub session: oxpinyin_engine::SessionState,
+    state: InstanceState,
+}
+
+/// Cursor, parse and presentation state retained between calls.
+pub struct InstanceState {
     /// The context's live option/scheme state, by handle.
     pub live: LiveOptions,
     /// The phrase-segment span DP's output, written by `phrase_segment`
@@ -95,48 +91,188 @@ pub struct InstanceCore {
     pub full_input: String,
 }
 
+impl std::ops::Deref for InstanceCore {
+    type Target = InstanceState;
+    fn deref(&self) -> &Self::Target {
+        &self.state
+    }
+}
+impl std::ops::DerefMut for InstanceCore {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.state
+    }
+}
+
+/// One operation's composition and storage borrows.
+pub struct InstanceView<'a, S, E> {
+    /// Composition borrowed with current dictionary and model readers.
+    pub session: oxpinyin_engine::Session<RuntimeDict<'a>, RuntimeLm<'a>, E>,
+    /// Learning store borrowed for this operation.
+    pub user: Option<&'a UserStore>,
+    /// Current dictionary reader.
+    pub dict: RuntimeDict<'a>,
+    /// Current language-model reader.
+    pub lm: RuntimeLm<'a>,
+    /// Borrowed cursor, parse and presentation state.
+    pub state: S,
+}
+
+/// An operation that can change composition but only read phrase storage.
+pub type InstanceMut<'a> =
+    InstanceView<'a, &'a mut InstanceState, &'a mut oxpinyin_engine::SessionState>;
+/// A shared operation over retained composition and current phrase storage.
+pub type InstanceRead<'a> = InstanceView<'a, &'a InstanceState, &'a oxpinyin_engine::SessionState>;
+
+impl<S: std::borrow::Borrow<InstanceState>, E> std::ops::Deref for InstanceView<'_, S, E> {
+    type Target = InstanceState;
+    fn deref(&self) -> &Self::Target {
+        self.state.borrow()
+    }
+}
+impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engine::SessionState>>
+    InstanceView<'_, S, E>
+{
+    /// Re-borrow a composition operation without taking any storage ownership.
+    pub fn read(&self) -> InstanceRead<'_> {
+        InstanceView {
+            session: self.session.read(self.dict, self.lm),
+            user: self.user,
+            dict: self.dict,
+            lm: self.lm,
+            state: self.state.borrow(),
+        }
+    }
+}
+
+impl<S: std::borrow::BorrowMut<InstanceState>, E> std::ops::DerefMut for InstanceView<'_, S, E> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.state.borrow_mut()
+    }
+}
+
 impl InstanceCore {
-    /// Assembles an instance's state from the context's allocation — the
-    /// `alloc_instance` law, minus the C handle wiring.
-    #[must_use]
-    pub(crate) const fn new(
-        session: RuntimeSession,
-        user: Option<UserStore>,
-        dict: RuntimeDict,
-        lm: RuntimeLm,
-        live: LiveOptions,
-    ) -> Self {
-        // The C ABI answers every candidate list from the window
-        // `pinyin_guess_candidates` re-anchors (`anchored_window`), as
-        // upstream builds candidates only there (`pinyin.cpp:2184-2308` at
-        // 074a2219): a parse or sentence guess leaves the session's own
-        // list to its next reader.
-        let mut session = session;
-        session.set_defer_list_builds(true);
+    /// Assemble retained state; operation readers are supplied by the context.
+    pub(crate) fn new(session: oxpinyin_engine::SessionState, live: LiveOptions) -> Self {
         Self {
             session,
-            user,
-            dict,
-            lm,
-            live,
-            phrase_result: Vec::new(),
-            parsed_len: 0,
-            anchored_window: None,
-            double_parse: None,
-            double_input: String::new(),
-            zhuyin_parse: None,
-            zhuyin_input: String::new(),
-            full_parse: None,
-            full_input: String::new(),
+            state: InstanceState {
+                live,
+                phrase_result: Vec::new(),
+                parsed_len: 0,
+                anchored_window: None,
+                double_parse: None,
+                double_input: String::new(),
+                zhuyin_parse: None,
+                zhuyin_input: String::new(),
+                full_parse: None,
+                full_input: String::new(),
+            },
         }
     }
 
+    /// Re-borrow storage for a shared operation.
+    pub fn read<'a>(&'a self, runtime: &'a Runtime) -> InstanceRead<'a> {
+        InstanceView {
+            session: self.session.read(runtime.dict(), runtime.lm()),
+            user: runtime.user_store(),
+            dict: runtime.dict(),
+            lm: runtime.lm(),
+            state: &self.state,
+        }
+    }
+
+    /// Re-borrow storage while changing only this instance's composition state.
+    pub fn bind<'a>(&'a mut self, runtime: &'a Runtime) -> InstanceMut<'a> {
+        InstanceView {
+            session: runtime.session(&mut self.session),
+            user: runtime.user_store(),
+            dict: runtime.dict(),
+            lm: runtime.lm(),
+            state: &mut self.state,
+        }
+    }
+}
+
+impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engine::SessionState>>
+    InstanceView<'_, S, E>
+{
     /// The current live option word.
     #[must_use]
     pub fn options(&self) -> OptionBits {
         OptionBits::from_bits(self.live.options.load(Ordering::Relaxed))
     }
 
+    /// The generalized lookup-offset law in the active parse mode's own
+    /// coordinates — the space the caller's guess/choose offsets live in.
+    ///
+    /// - Plain full pinyin: the full law over the session's raw buffer,
+    ///   whose `'` bytes are the matrix's zero-key columns.
+    /// - LUOMA / `SECONDARY_ZHUYIN`: the full law over the consumed
+    ///   prefix of the stored original input — the pinned index parse
+    ///   consumes `'` as the same separator, and bytes past its consumed
+    ///   length never entered the composition.
+    /// - Double pinyin and the zhuyin keyboards: no zero-key column can
+    ///   exist (`'` is out of scheme or a content symbol), so only the
+    ///   range refusal against the parsed original length applies.
+    ///
+    /// The chain order is the union of the two facades'; a facade that
+    /// never populates one of the parse states simply never takes that
+    /// branch, which preserves its law exactly.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when `offset` exceeds the active parse's
+    /// consumed input, per the range law above.
+    pub fn validate_lookup_offset(&self, offset: usize) -> Result<usize, EngineError> {
+        self.validate_abi_lookup_offset(offset, false)
+    }
+
+    pub(crate) fn validate_lookup_offset_impl(&self, offset: usize) -> Result<usize, EngineError> {
+        if let Some(parse) = self.zhuyin_parse.as_ref() {
+            return check_lookup_offset_range(parse.consumed(), offset);
+        }
+        if let Some(parse) = self.double_parse.as_ref() {
+            return check_lookup_offset_range(parse.consumed(), offset);
+        }
+        if let Some(parse) = self.full_parse.as_ref() {
+            // The min is defensive only: `full_input` and the parse are
+            // set together and cleared together, so consumed never
+            // exceeds the buffer — but a desync must refuse, not
+            // slice-panic.
+            let consumed = parse.consumed().min(self.full_input.len());
+            return normalize_lookup_offset(&self.full_input.as_bytes()[..consumed], offset);
+        }
+        self.session.normalized_lookup_offset(offset)
+    }
+
+    /// Whether training row `index` reaches one of the pin's own
+    /// training aborts — the index past nonempty results, a stale forced
+    /// phrase or a span outside the matrix
+    /// ([`oxpinyin_engine::Session::train_nbest_preflight`]) — after the
+    /// same directory gate. Reads only.
+    #[must_use]
+    pub fn train_aborts(&self, index: u8) -> bool {
+        if !self
+            .user
+            .as_ref()
+            .is_some_and(|user| user.has_user_directory())
+        {
+            return false;
+        }
+        matches!(
+            self.session.train_nbest_preflight(index),
+            Err(EngineError::CandidateIndexOutOfRange { .. }
+                | EngineError::StaleTrainingConstraint { .. }
+                | EngineError::StaleTrainingSpan { .. })
+        )
+    }
+}
+
+impl<
+    S: std::borrow::BorrowMut<InstanceState>,
+    E: std::borrow::BorrowMut<oxpinyin_engine::SessionState>,
+> InstanceView<'_, S, E>
+{
     /// The list a lookup answers from: the window the last
     /// `pinyin_guess_candidates` re-anchored, else the session's own list,
     /// built first if a deferred parse or sentence guess left it stale
@@ -147,7 +283,7 @@ impl InstanceCore {
     /// Returns [`EngineError`] when the deferred build hits a backend
     /// failure.
     pub fn lookup_window(&mut self) -> Result<&CandidateList, EngineError> {
-        if let Some((_, window)) = self.anchored_window.as_ref() {
+        if let Some((_, window)) = self.state.borrow().anchored_window.as_ref() {
             return Ok(window);
         }
         self.session.refresh_candidates()?;
@@ -195,128 +331,5 @@ impl InstanceCore {
     /// its selection record safe for the replaced buffer.
     pub fn begin_parse(&mut self, _original: &[u8]) {
         self.reset_parse_state();
-    }
-
-    /// The generalized lookup-offset law in the active parse mode's own
-    /// coordinates — the space the caller's guess/choose offsets live in.
-    ///
-    /// - Plain full pinyin: the full law over the session's raw buffer,
-    ///   whose `'` bytes are the matrix's zero-key columns.
-    /// - LUOMA / `SECONDARY_ZHUYIN`: the full law over the consumed
-    ///   prefix of the stored original input — the pinned index parse
-    ///   consumes `'` as the same separator, and bytes past its consumed
-    ///   length never entered the composition.
-    /// - Double pinyin and the zhuyin keyboards: no zero-key column can
-    ///   exist (`'` is out of scheme or a content symbol), so only the
-    ///   range refusal against the parsed original length applies.
-    ///
-    /// The chain order is the union of the two facades'; a facade that
-    /// never populates one of the parse states simply never takes that
-    /// branch, which preserves its law exactly.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`EngineError`] when `offset` exceeds the active parse's
-    /// consumed input, per the range law above.
-    pub fn validate_lookup_offset(&self, offset: usize) -> Result<usize, EngineError> {
-        self.validate_abi_lookup_offset(offset, false)
-    }
-
-    pub(crate) fn validate_lookup_offset_impl(&self, offset: usize) -> Result<usize, EngineError> {
-        if let Some(parse) = self.zhuyin_parse.as_ref() {
-            return check_lookup_offset_range(parse.consumed(), offset);
-        }
-        if let Some(parse) = self.double_parse.as_ref() {
-            return check_lookup_offset_range(parse.consumed(), offset);
-        }
-        if let Some(parse) = self.full_parse.as_ref() {
-            // The min is defensive only: `full_input` and the parse are
-            // set together and cleared together, so consumed never
-            // exceeds the buffer — but a desync must refuse, not
-            // slice-panic.
-            let consumed = parse.consumed().min(self.full_input.len());
-            return normalize_lookup_offset(&self.full_input.as_bytes()[..consumed], offset);
-        }
-        self.session.normalized_lookup_offset(offset)
-    }
-
-    /// Train decoded n-best row `index`, refusing an empty result set.
-    ///
-    /// # Errors
-    ///
-    /// Returns the engine's invalid-index, stale-constraint, stale-span,
-    /// short- or unsafe-predecessor or user-model error, each with nothing
-    /// observed. The C facades abort the process on the first three, as the
-    /// pin does; the predecessor faults keep their warning and `false`.
-    pub fn train(&mut self, index: u8) -> Result<bool, EngineError> {
-        let Some(user) = self.user.as_mut() else {
-            return Ok(false);
-        };
-        // The pin checks the directory before nbest (pinyin.cpp:2671,
-        // zhuyin.cpp:1697). Transient imports do not enable training.
-        if !user.has_user_directory() {
-            return Ok(false);
-        }
-        // The training walk checks each step in step order before it observes
-        // any (`Session::train_nbest`, `UserModel::check_step`): a gram too
-        // short for its total (`phonetic_lookup.h:884`), a partial item tail
-        // (`ngram.cpp:190`, `:241`, `:261`) or a `set_freq` that misses its
-        // inserted item (`phonetic_lookup.h:903`) refuses the call where the
-        // pin dies, after an earlier step's stale constraint or span and
-        // before this step's. The store records which one it met.
-        user.begin_training_steps();
-        let result = match self.session.train_nbest(index, user) {
-            Err(EngineError::UserModel(error)) => match user.take_training_fault() {
-                Some(TrainingFault::ShortValue(token)) => {
-                    Err(EngineError::ShortTrainingPredecessor { token })
-                }
-                Some(TrainingFault::PartialTail(token)) => {
-                    Err(EngineError::UnsafeTrainingPredecessor { token })
-                }
-                Some(TrainingFault::SetFreqMiss(token)) => {
-                    Err(EngineError::TrainingSetFreqMiss { token })
-                }
-                None => Err(EngineError::UserModel(error)),
-            },
-            other => other,
-        };
-        if !matches!(
-            &result,
-            Ok(false)
-                | Err(EngineError::CandidateIndexOutOfRange { .. }
-                    | EngineError::StaleTrainingConstraint { .. }
-                    | EngineError::StaleTrainingSpan { .. }
-                    | EngineError::UnsafeTrainingPredecessor { .. }
-                    | EngineError::ShortTrainingPredecessor { .. }
-                    | EngineError::TrainingSetFreqMiss { .. })
-        ) {
-            // A valid call still marks the context modified, including a
-            // constraint-free result or a subsequent user-model failure
-            // (074a2219 pinyin.cpp:2681 / zhuyin.cpp:1707).
-            user.mark_modified();
-        }
-        result
-    }
-
-    /// Whether [`Self::train`] of row `index` reaches one of the pin's own
-    /// training aborts — the index past nonempty results, a stale forced
-    /// phrase or a span outside the matrix
-    /// ([`oxpinyin_engine::Session::train_nbest_preflight`]) — after the
-    /// same directory gate. Reads only.
-    #[must_use]
-    pub fn train_aborts(&self, index: u8) -> bool {
-        if !self
-            .user
-            .as_ref()
-            .is_some_and(UserStore::has_user_directory)
-        {
-            return false;
-        }
-        matches!(
-            self.session.train_nbest_preflight(index),
-            Err(EngineError::CandidateIndexOutOfRange { .. }
-                | EngineError::StaleTrainingConstraint { .. }
-                | EngineError::StaleTrainingSpan { .. })
-        )
     }
 }

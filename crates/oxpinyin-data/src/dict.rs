@@ -21,7 +21,6 @@
 
 use std::fmt;
 use std::path::Path;
-use std::sync::Arc;
 
 use oxpinyin_core::{
     ChewingKey, Dictionary, PhraseEntry, PhraseIndexRanges, PhraseItemRead, PhraseText,
@@ -302,17 +301,30 @@ impl PinyinIndexTable {
 
 /// The system dictionary: the default facade's pinyin DBM, phrase DBM,
 /// and the four system phrase libraries.
-pub struct SystemDictionary {
+#[derive(Clone, Copy)]
+pub struct SystemDictionary<L = PhraseLibraries, T = SystemTables> {
+    tables: T,
+    libraries: L,
+}
+
+/// System DBM handles and row classification, separate from chunk ownership.
+pub struct SystemTables {
     pinyin: ChewingTable,
     phrase: PhraseTable,
-    libraries: Arc<PhraseLibraries>,
     /// The default sub-indices `table.conf` types `USER_FILE`: libraries the
     /// pin has loaded (a user chunk, or a fresh empty one) although no
     /// system chunk backs them, bit `n` for sub-index `n`.
     user_nibbles: u32,
 }
 
-impl SystemDictionary {
+impl<L, T: std::borrow::Borrow<SystemTables>> std::ops::Deref for SystemDictionary<L, T> {
+    type Target = SystemTables;
+    fn deref(&self) -> &Self::Target {
+        self.tables.borrow()
+    }
+}
+
+impl SystemTables {
     /// Whether the main pinyin-table attach failed.
     #[must_use]
     pub fn pinyin_attachment_failed(&self) -> bool {
@@ -329,6 +341,29 @@ impl SystemDictionary {
     pub fn finish_failed_attachments(&self) {
         self.pinyin.finish_failed_attachment();
         self.phrase.finish_failed_attachment();
+    }
+
+    /// Borrow these tables and the owner's phrase storage for one operation.
+    pub fn read<'a>(
+        &'a self,
+        libraries: &'a PhraseLibraries,
+    ) -> SystemDictionary<&'a PhraseLibraries, &'a Self> {
+        SystemDictionary {
+            tables: self,
+            libraries,
+        }
+    }
+}
+
+impl SystemDictionary {
+    /// Separate unique phrase storage from the immutable table handles.
+    pub fn into_parts(self) -> (SystemTables, PhraseLibraries) {
+        (self.tables, self.libraries)
+    }
+
+    /// Exclusive access to the loaded phrase storage.
+    pub fn libraries_mut(&mut self) -> &mut PhraseLibraries {
+        &mut self.libraries
     }
 
     /// Opens the default facade from the backend's native system data
@@ -422,7 +457,7 @@ impl SystemDictionary {
             true,
             retain_failed,
         )?;
-        dict.user_nibbles = conf
+        dict.tables.user_nibbles = conf
             .user_libraries()
             .fold(0, |mask, (index, _)| mask | (1_u32 << index));
         Ok(dict)
@@ -456,64 +491,70 @@ impl SystemDictionary {
             PhraseLibraries::open(library_dir, stems)?
         };
         Ok(Self {
-            pinyin,
-            phrase,
-            libraries: Arc::new(libraries),
-            user_nibbles: 0,
+            tables: SystemTables {
+                pinyin,
+                phrase,
+                user_nibbles: 0,
+            },
+            libraries,
         })
     }
+}
 
+impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTables>>
+    SystemDictionary<L, T>
+{
     /// Whether `token`'s library is loaded in this facade — a system
     /// chunk, or a `table.conf` `USER_FILE` sub-index — the pin's
     /// non-`NULL` `PhraseIndexRanges` array for it.
     #[must_use]
     pub fn library_loaded(&self, token: u32) -> bool {
-        library_loaded(&self.libraries, self.user_nibbles, token)
+        library_loaded(self.libraries(), self.user_nibbles, token)
     }
 
     /// The facade's phrase libraries, shared with the language model
     /// (the unigram counts live in the chunk items).
     #[must_use]
-    pub const fn libraries(&self) -> &Arc<PhraseLibraries> {
-        &self.libraries
+    pub fn libraries(&self) -> &PhraseLibraries {
+        self.libraries.borrow()
     }
 
     /// Phrase text for `token`, if its library is loaded and owns it.
     #[must_use]
     pub fn phrase_text(&self, token: u32) -> Option<PhraseText> {
-        self.libraries.phrase_text(token)
+        self.libraries().phrase_text(token)
     }
 
     /// `PhraseItem::get_unigram_frequency` for `token` — the stored field
     /// (`gen_unigram`'s `+1` included).
     #[must_use]
     pub fn unigram_count(&self, token: u32) -> Option<u64> {
-        self.libraries.unigram_count(token)
+        self.libraries().unigram_count(token)
     }
 
     /// `FacadePhraseIndex::get_phrase_index_total_freq` over the loaded
     /// libraries.
     #[must_use]
     pub fn unigram_total(&self) -> u64 {
-        u64::from(self.libraries.unigram_total())
+        u64::from(self.libraries().unigram_total())
     }
 
     /// The facade's item count.
     #[must_use]
     pub fn item_count(&self) -> u64 {
-        self.libraries.item_count()
+        self.libraries().item_count()
     }
 
     /// The item count over the libraries `visible` accepts by nibble.
     pub fn item_count_where(&self, visible: impl Fn(u8) -> bool) -> u64 {
-        self.libraries.item_count_where(visible)
+        self.libraries().item_count_where(visible)
     }
 
     /// `token`'s pronunciations as `(spelling, freq)` pairs, in stored
     /// order.
     #[must_use]
     pub fn pronunciations(&self, token: u32) -> Vec<(String, u64)> {
-        self.libraries
+        self.libraries()
             .pronunciations(token)
             .map(|prons| {
                 prons
@@ -579,7 +620,7 @@ impl SystemDictionary {
         let Some(keys) = syllables_to_chewing_keys(syllables) else {
             return Ok(false);
         };
-        visible_extension_exists(&self.pinyin, &self.libraries, &keys, visible)
+        visible_extension_exists(&self.pinyin, self.libraries(), &keys, visible)
     }
 
     /// `ChewingLargeTable2::search_suggestion` over the default facade's
@@ -761,7 +802,7 @@ impl SystemDictionary {
     /// converted from the syllables ([`Self::trellis_keys`]).
     #[must_use]
     pub fn trellis_item_keys(&self, keys: &[ChewingKey], token: u32) -> Option<TrellisItem> {
-        self.libraries.trellis_item(token, keys)
+        self.libraries().trellis_item(token, keys)
     }
 
     /// The tone-less keys [`Self::trellis_item`] prices `syllables`
@@ -787,7 +828,7 @@ impl SystemDictionary {
         };
         let items = self.pinyin.search(&keys)?;
         Ok(resolve_items(
-            &self.libraries,
+            self.libraries(),
             price.then_some(keys.as_slice()),
             &items,
             out,
@@ -796,7 +837,9 @@ impl SystemDictionary {
     }
 }
 
-impl Dictionary for SystemDictionary {
+impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTables>> Dictionary
+    for SystemDictionary<L, T>
+{
     type Syllable = SyllableKey;
     type Entry = PhraseEntry;
     type Error = DictError;
@@ -820,7 +863,7 @@ impl Dictionary for SystemDictionary {
         self.trellis_ranges(syllables, tones, &mut ranges)?;
         Ok(ranges
             .walk_tokens()
-            .filter_map(|(token, ())| resolve_item(&self.libraries, Some(&keys), token))
+            .filter_map(|(token, ())| resolve_item(self.libraries(), Some(&keys), token))
             .collect())
     }
 
@@ -864,7 +907,7 @@ impl Dictionary for SystemDictionary {
         if syllables_to_chewing_keys(syllables).is_none() {
             return Ok(None);
         }
-        Ok(self.libraries.phrase_text(token))
+        Ok(self.libraries().phrase_text(token))
     }
 
     fn lookup_into(
@@ -892,7 +935,7 @@ impl Dictionary for SystemDictionary {
     }
 
     fn phrase_index_item_count(&self) -> Result<u64, DictError> {
-        Ok(self.libraries.item_count())
+        Ok(self.libraries().item_count())
     }
 
     /// `SEARCH_CONTINUED`: the query's index key exists in the DBM, as a
@@ -942,7 +985,7 @@ impl Dictionary for SystemDictionary {
 
     /// `_token_get_phrase`'s system half: the loaded library item's text.
     fn phrase_text_for_token(&self, token: u32) -> Option<PhraseText> {
-        self.libraries.phrase_text(token)
+        self.libraries().phrase_text(token)
     }
 
     fn overlong_extension_gate(&self, syllables: &[SyllableKey]) -> bool {
@@ -953,7 +996,7 @@ impl Dictionary for SystemDictionary {
     /// the loaded library ([`PhraseLibraries::pronunciation_rows`]).
     fn phrase_item_pronunciations(&self, token: PhraseToken) -> Result<PhraseItemRead, DictError> {
         Ok(self
-            .libraries
+            .libraries()
             .pronunciation_rows(token.value())
             .map_or(PhraseItemRead::NoItem, PhraseItemRead::Item))
     }

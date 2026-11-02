@@ -41,19 +41,12 @@ use crate::test_support::{DEFAULT_SORT, TempUserDir, candidate, cstr, open, syst
 use crate::types::{LookupCandidate, PinyinInstance, lookup_candidate_type_t};
 use crate::user_data::pinyin_remember_user_input;
 
-/// The instance's user store handle (the same connection the entry points
-/// write through; every update commits before returning).
-fn store_of(instance: *mut PinyinInstance) -> &'static UserStore {
-    // SAFETY: `instance` is non-null and was produced by
-    // `pinyin_alloc_instance`; the store is a value field, so the shared
-    // reference is valid while the instance lives. The `'static` lifetime is
-    // a test convenience: every use sits inside this function's caller and
-    // never outlives the instance.
+/// Read the live store for one assertion; no storage reference escapes.
+fn with_store<R>(instance: *mut PinyinInstance, read: impl FnOnce(&UserStore) -> R) -> R {
+    // SAFETY: tests call this only with a live instance, between serialized
+    // C operations. The closure cannot return a borrow into the store.
     let inst = unsafe { instance_ref(instance) };
-    inst.core
-        .user
-        .as_ref()
-        .expect("instance carries a user store")
+    read(inst.core.user.expect("instance carries a user store"))
 }
 
 /// The token snapshotted on the candidate pointer.
@@ -61,7 +54,8 @@ fn token_of(instance: *mut PinyinInstance, cand: *mut LookupCandidate) -> u32 {
     // SAFETY: `cand` was produced by `pinyin_get_candidate` on `instance`
     // and no later guess invalidated the snapshot.
     let inst = unsafe { instance_ref(instance) };
-    inst.candidates
+    inst.state
+        .candidates
         .iter()
         .find(|c| std::ptr::eq(*c, cand.cast::<crate::state::CapiCandidate>()))
         .and_then(|c| c.token)
@@ -82,19 +76,30 @@ fn train_records_the_pinned_doubling_sequence(instance: *mut PinyinInstance) {
         "a choose without decoded results refuses"
     );
     assert_eq!(
-        store_of(instance).bigram_count(SENTENCE_START, t1).unwrap(),
+        with_store(instance, |store| store.bigram_count(SENTENCE_START, t1)).unwrap(),
         0
     );
-    assert_eq!(store_of(instance).unigram_delta(t1).unwrap(), 0);
+    assert_eq!(
+        with_store(instance, |store| store.unigram_delta(t1)).unwrap(),
+        0
+    );
 
     // 69 on first selection; the predecessor is sentence_start.
     assert!(pinyin_guess_sentence(instance));
     assert!(pinyin_train(instance, 0));
     {
-        let store = store_of(instance);
-        assert_eq!(store.bigram_count(SENTENCE_START, t1).unwrap(), 69);
-        assert_eq!(store.bigram_total(SENTENCE_START).unwrap(), 69);
-        assert_eq!(store.unigram_delta(t1).unwrap(), 483); // 69 * 7
+        assert_eq!(
+            with_store(instance, |store| store.bigram_count(SENTENCE_START, t1)).unwrap(),
+            69
+        );
+        assert_eq!(
+            with_store(instance, |store| store.bigram_total(SENTENCE_START)).unwrap(),
+            69
+        );
+        assert_eq!(
+            with_store(instance, |store| store.unigram_delta(t1)).unwrap(),
+            483
+        ); // 69 * 7
     }
 
     // 138 on reselection (count 207), then 414 (count 621): the pinned
@@ -102,17 +107,17 @@ fn train_records_the_pinned_doubling_sequence(instance: *mut PinyinInstance) {
     assert!(pinyin_guess_sentence(instance));
     assert!(pinyin_train(instance, 0));
     assert_eq!(
-        store_of(instance).bigram_count(SENTENCE_START, t1).unwrap(),
+        with_store(instance, |store| store.bigram_count(SENTENCE_START, t1)).unwrap(),
         207
     );
     assert!(pinyin_guess_sentence(instance));
     assert!(pinyin_train(instance, 0));
     assert_eq!(
-        store_of(instance).bigram_count(SENTENCE_START, t1).unwrap(),
+        with_store(instance, |store| store.bigram_count(SENTENCE_START, t1)).unwrap(),
         621
     );
     assert_eq!(
-        store_of(instance).unigram_delta(t1).unwrap(),
+        with_store(instance, |store| store.unigram_delta(t1)).unwrap(),
         483 + 966 + 2898
     );
 
@@ -130,9 +135,14 @@ fn train_records_the_pinned_doubling_sequence(instance: *mut PinyinInstance) {
     assert!(pinyin_guess_sentence(instance));
     assert!(pinyin_train(instance, 0));
     {
-        let store = store_of(instance);
-        assert_eq!(store.bigram_count(SENTENCE_START, t2).unwrap(), 69);
-        assert_eq!(store.bigram_count(t1, t2).unwrap(), 0);
+        assert_eq!(
+            with_store(instance, |store| store.bigram_count(SENTENCE_START, t2)).unwrap(),
+            69
+        );
+        assert_eq!(
+            with_store(instance, |store| store.bigram_count(t1, t2)).unwrap(),
+            0
+        );
     }
 }
 
@@ -151,18 +161,29 @@ fn remember_user_input_indexes_without_training(instance: *mut PinyinInstance) {
         -1
     ));
     let (user_token, pronunciation, ni_key, hao_key) = {
-        let store = store_of(instance);
-        let user_token = store
-            .token_for_phrase("你好")
+        let user_token = with_store(instance, |store| store.token_for_phrase("你好"))
             .unwrap()
             .expect("phrase indexed");
         assert_eq!(user_token, FIRST_USER_TOKEN);
         // New-phrase seeding: default count 5 × add-phrase factor 3 — and no
         // bigram anywhere (remember does not train).
-        assert_eq!(store.unigram_delta(user_token).unwrap(), 15);
-        assert_eq!(store.bigram_count(SENTENCE_START, user_token).unwrap(), 0);
-        assert_eq!(store.bigram_total(user_token).unwrap(), 0);
-        let phrase = store.phrase(user_token).unwrap().expect("phrase stored");
+        assert_eq!(
+            with_store(instance, |store| store.unigram_delta(user_token)).unwrap(),
+            15
+        );
+        assert_eq!(
+            with_store(instance, |store| store
+                .bigram_count(SENTENCE_START, user_token))
+            .unwrap(),
+            0
+        );
+        assert_eq!(
+            with_store(instance, |store| store.bigram_total(user_token)).unwrap(),
+            0
+        );
+        let phrase = with_store(instance, |store| store.phrase(user_token))
+            .unwrap()
+            .expect("phrase stored");
         assert_eq!(phrase.phrase_text().unwrap(), "你好");
         assert_eq!(phrase.pronunciations().len(), 1);
         // The current composition "nihao" supplies the pronunciation keys.
@@ -197,11 +218,21 @@ fn remember_user_input_indexes_without_training(instance: *mut PinyinInstance) {
         7
     ));
     {
-        let store = store_of(instance);
-        assert_eq!(store.token_for_phrase("你好").unwrap(), Some(user_token));
-        assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN + 1);
-        assert_eq!(store.unigram_delta(user_token).unwrap(), 15);
-        let phrase = store.phrase(user_token).unwrap().expect("phrase stored");
+        assert_eq!(
+            with_store(instance, |store| store.token_for_phrase("你好")).unwrap(),
+            Some(user_token)
+        );
+        assert_eq!(
+            with_store(instance, |store| store.next_user_token()).unwrap(),
+            FIRST_USER_TOKEN + 1
+        );
+        assert_eq!(
+            with_store(instance, |store| store.unigram_delta(user_token)).unwrap(),
+            15
+        );
+        let phrase = with_store(instance, |store| store.phrase(user_token))
+            .unwrap()
+            .expect("phrase stored");
         assert_eq!(phrase.pronunciations().len(), 1);
         assert_eq!(phrase.pronunciations()[0].count(), 12);
     }
@@ -221,7 +252,7 @@ fn remember_user_input_indexes_without_training(instance: *mut PinyinInstance) {
         -1
     ));
     assert_eq!(
-        store_of(instance).next_user_token().unwrap(),
+        with_store(instance, |store| store.next_user_token()).unwrap(),
         FIRST_USER_TOKEN + 1
     );
 }
@@ -255,7 +286,7 @@ fn remember_user_input_requires_known_characters_in_every_parse_mode() {
                 1
             ));
             assert_eq!(
-                store_of(instance).next_user_token().unwrap(),
+                with_store(instance, |store| store.next_user_token()).unwrap(),
                 FIRST_USER_TOKEN
             );
             let export = pinyin_begin_get_phrases(context, 7);
@@ -271,7 +302,7 @@ fn remember_user_input_requires_known_characters_in_every_parse_mode() {
             1
         ));
         assert_eq!(
-            store_of(instance).token_for_phrase("你好").unwrap(),
+            with_store(instance, |store| store.token_for_phrase("你好")).unwrap(),
             Some(FIRST_USER_TOKEN)
         );
 
@@ -326,7 +357,7 @@ fn remember_user_input_rejects_empty_and_oversized_known_phrases() {
         ));
     }
     assert_eq!(
-        store_of(instance).next_user_token().unwrap(),
+        with_store(instance, |store| store.next_user_token()).unwrap(),
         FIRST_USER_TOKEN
     );
     let export = pinyin_begin_get_phrases(context, 7);
@@ -401,7 +432,7 @@ fn longer_choose_trains_the_row_unigram_and_answers_cursor_one() {
         // SAFETY: `instance` is non-null and was produced by
         // `pinyin_alloc_instance`; the borrow ends with this block.
         let inst = unsafe { instance_ref(instance) };
-        inst.candidates[longer_index]
+        inst.state.candidates[longer_index]
             .token
             .expect("a LONGER row carries its token")
     };
@@ -417,11 +448,14 @@ fn longer_choose_trains_the_row_unigram_and_answers_cursor_one() {
         let inst = unsafe { instance_ref(instance) };
         assert_eq!(inst.core.dict.unigram_delta(token.value()), None);
         assert_eq!(
-            store_of(instance).unigram_delta(token.value()).unwrap(),
+            with_store(instance, |store| store.unigram_delta(token.value())).unwrap(),
             483
         );
     }
-    assert_eq!(store_of(instance).bigram_total(SENTENCE_START).unwrap(), 0);
+    assert_eq!(
+        with_store(instance, |store| store.bigram_total(SENTENCE_START)).unwrap(),
+        0
+    );
 
     // The train that follows leans on the live sentence result and
     // writes nothing more: the stored count stays at the choose's 483 and no
@@ -435,11 +469,14 @@ fn longer_choose_trains_the_row_unigram_and_answers_cursor_one() {
         let inst = unsafe { instance_ref(instance) };
         assert_eq!(inst.core.dict.unigram_delta(token.value()), None);
         assert_eq!(
-            store_of(instance).unigram_delta(token.value()).unwrap(),
+            with_store(instance, |store| store.unigram_delta(token.value())).unwrap(),
             483
         );
     }
-    assert_eq!(store_of(instance).bigram_total(SENTENCE_START).unwrap(), 0);
+    assert_eq!(
+        with_store(instance, |store| store.bigram_total(SENTENCE_START)).unwrap(),
+        0
+    );
 
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);
@@ -490,9 +527,15 @@ fn a_predicted_bigram_trains_from_the_prediction_prefix() {
         lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE,
     );
     assert!(pinyin_choose_predicted_candidate(instance, prefix_row));
-    assert_eq!(store_of(instance).bigram_count(ni, word).unwrap(), 0);
-    store_of(instance)
-        .clone()
+    assert_eq!(
+        with_store(instance, |store| store.bigram_count(ni, word)).unwrap(),
+        0
+    );
+    // SAFETY: the live context has no reader retained across this write.
+    unsafe { crate::state::context_mut(context) }
+        .core
+        .user_store_mut()
+        .unwrap()
         .set_bigram_count(ni, word, 10)
         .unwrap();
 
@@ -502,20 +545,17 @@ fn a_predicted_bigram_trains_from_the_prediction_prefix() {
         lookup_candidate_type_t::PREDICTED_BIGRAM_CANDIDATE,
     );
     assert_eq!(bigram_word, word, "the bigram row is the trained word");
-    let before = store_of(instance).bigram_count(ni, word).unwrap();
-    let sentence_start_before = store_of(instance)
-        .bigram_count(SENTENCE_START, word)
-        .unwrap();
+    let before = with_store(instance, |store| store.bigram_count(ni, word)).unwrap();
+    let sentence_start_before =
+        with_store(instance, |store| store.bigram_count(SENTENCE_START, word)).unwrap();
     assert!(pinyin_choose_predicted_candidate(instance, bigram_row));
     assert_eq!(
-        store_of(instance).bigram_count(ni, word).unwrap(),
+        with_store(instance, |store| store.bigram_count(ni, word)).unwrap(),
         before + 69,
         "the predecessor is the prefix token"
     );
     assert_eq!(
-        store_of(instance)
-            .bigram_count(SENTENCE_START, word)
-            .unwrap(),
+        with_store(instance, |store| store.bigram_count(SENTENCE_START, word)).unwrap(),
         sentence_start_before,
         "not sentence_start"
     );
@@ -539,7 +579,7 @@ fn choosing_a_sole_missing_prefix_row_advances_the_facade_total() {
     let token = 0x0100_FFFE;
     assert!(inst.core.dict.phrase_table_token_enabled(token));
     assert!(!inst.core.dict.token_exists(token));
-    inst.candidates.push(CapiCandidate {
+    inst.state.candidates.push(CapiCandidate {
         text: TextSpan::NULL,
         text_ptr: ptr::null(),
         kind: CandidateKind::Phrase,
@@ -548,9 +588,11 @@ fn choosing_a_sole_missing_prefix_row_advances_the_facade_total() {
         token: Some(PhraseToken::new(token)),
         source_index: 0,
     });
-    let candidate = &mut inst.candidates[0] as *mut CapiCandidate as *mut LookupCandidate;
+    let candidate = &mut inst.state.candidates[0] as *mut CapiCandidate as *mut LookupCandidate;
     let before = inst.core.lm.amplified_total();
     assert!(pinyin_choose_predicted_candidate(instance, candidate));
+    // SAFETY: the C operation completed; re-borrow its live instance.
+    let inst = unsafe { instance_ref(instance) };
     let after = inst.core.lm.amplified_total();
     assert_eq!(
         (after.wrapping_sub(before)) as u32,
@@ -562,9 +604,21 @@ fn choosing_a_sole_missing_prefix_row_advances_the_facade_total() {
         "the missing item is not written"
     );
 
-    assert!(inst.core.dict.unload_library(1));
+    assert!(
+        // SAFETY: the preceding instance read has ended before the owner write.
+        unsafe { crate::state::context_mut(context) }
+            .core
+            .runtime
+            .as_mut()
+            .unwrap()
+            .unload_library(1)
+    );
+    // SAFETY: re-borrow the live instance after the owner write.
+    let inst = unsafe { instance_ref(instance) };
     let before = inst.core.lm.amplified_total();
     assert!(pinyin_choose_predicted_candidate(instance, candidate));
+    // SAFETY: the C operation completed; re-borrow its live instance.
+    let inst = unsafe { instance_ref(instance) };
     assert_eq!(
         inst.core.lm.amplified_total(),
         before,
@@ -604,14 +658,18 @@ fn training_through_the_abi_records_the_pinned_counts() {
     );
     assert!(pinyin_choose_predicted_candidate(instance, predicted));
     {
-        let store = store_of(instance);
-        assert_eq!(store.unigram_delta(t4).unwrap(), 483);
+        assert_eq!(
+            with_store(instance, |store| store.unigram_delta(t4)).unwrap(),
+            483
+        );
     }
     // Flat again — the unigram doubles nothing and the count stays linear.
     assert!(pinyin_choose_predicted_candidate(instance, predicted));
     {
-        let store = store_of(instance);
-        assert_eq!(store.unigram_delta(t4).unwrap(), 966);
+        assert_eq!(
+            with_store(instance, |store| store.unigram_delta(t4)).unwrap(),
+            966
+        );
     }
     // A selection in the same composition does not change the predecessor:
     // the pin takes it from the prediction prefix.
@@ -626,9 +684,12 @@ fn training_through_the_abi_records_the_pinned_counts() {
         instance,
         lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE,
     );
-    let before = store_of(instance).bigram_count(t5, chosen).unwrap();
+    let before = with_store(instance, |store| store.bigram_count(t5, chosen)).unwrap();
     assert!(pinyin_choose_predicted_candidate(instance, predicted));
-    assert_eq!(store_of(instance).bigram_count(t5, chosen).unwrap(), before);
+    assert_eq!(
+        with_store(instance, |store| store.bigram_count(t5, chosen)).unwrap(),
+        before
+    );
     // A prefix row leaves both predecessor bigrams unchanged.
     let prefix_token = {
         // SAFETY: `instance` is a live allocated handle.
@@ -636,9 +697,7 @@ fn training_through_the_abi_records_the_pinned_counts() {
         inst.core.dict.tokens_for_text("你")[0].value()
     };
     assert_eq!(
-        store_of(instance)
-            .bigram_count(prefix_token, chosen)
-            .unwrap(),
+        with_store(instance, |store| store.bigram_count(prefix_token, chosen)).unwrap(),
         0
     );
 
@@ -671,7 +730,8 @@ fn force_a_stale_phrase(instance: *mut PinyinInstance) -> u32 {
     let index = {
         // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
         let inst = unsafe { instance_ref(instance) };
-        inst.candidates
+        inst.state
+            .candidates
             .iter()
             .rposition(|c| {
                 c.candidate_type() == lookup_candidate_type_t::NORMAL_CANDIDATE && c.token.is_some()
@@ -711,7 +771,10 @@ fn a_new_sentence_lookup_trains_a_forcing() {
     let user_dir = TempUserDir::new("train-restep");
     let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
     let forced = force_a_stale_phrase(instance);
-    assert_eq!(store_of(instance).unigram_delta(forced).unwrap(), 0);
+    assert_eq!(
+        with_store(instance, |store| store.unigram_delta(forced)).unwrap(),
+        0
+    );
     assert!(pinyin_guess_sentence(instance));
     assert!(pinyin_train(instance, 0), "the lookup is back in step");
 
@@ -834,20 +897,32 @@ fn mask_out_clears_user_entries_and_leaves_the_flag_alone() {
     assert!(!crate::iterators::pinyin_iterator_has_next_phrase(iter));
     crate::iterators::pinyin_end_get_phrases(iter);
     {
-        let store = store_of(instance);
-        assert!(store.token_for_phrase("你好").unwrap().is_none());
-        assert!(store.token_for_phrase("好你").unwrap().is_none());
-        assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN);
-        assert!(!store.is_modified());
+        assert!(
+            with_store(instance, |store| store.token_for_phrase("你好"))
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            with_store(instance, |store| store.token_for_phrase("好你"))
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            with_store(instance, |store| store.next_user_token()).unwrap(),
+            FIRST_USER_TOKEN
+        );
+        assert!(!with_store(instance, |store| store.is_modified()));
     }
     assert!(!pinyin_save(context), "masking does not arm the save gate");
 
     // The "all" clear removes the remaining count tables too.
     assert!(pinyin_mask_out(context, 0, 0));
     {
-        let store = store_of(instance);
-        assert_eq!(store.unigram_total().unwrap(), 0);
-        assert!(!store.is_modified());
+        assert_eq!(
+            with_store(instance, |store| store.unigram_total()).unwrap(),
+            0
+        );
+        assert!(!with_store(instance, |store| store.is_modified()));
     }
 
     // remove_user_candidate: a null candidate reports false. A system-token
@@ -863,7 +938,7 @@ fn mask_out_clears_user_entries_and_leaves_the_flag_alone() {
 /// Snapshot of phrase candidates as `(token, text, cost)`.
 fn phrase_snapshot(instance: *mut PinyinInstance) -> Vec<(u32, String, i64)> {
     // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
-    let inst = unsafe { instance_mut(instance) };
+    let mut inst = unsafe { instance_mut(instance) };
     // The facade defers the parse's list build to its first reader.
     inst.core
         .session
@@ -926,7 +1001,7 @@ fn populated_store_raises_the_trained_unigram() {
         "the chosen token is in the empty-store list"
     );
     // SAFETY: live instance immediately after the guess.
-    let lm = unsafe { instance_ref(instance) }.core.lm.clone();
+    let lm = unsafe { instance_ref(instance) }.core.lm;
     let unigram_before = lm
         .unigram_freq(&PhraseToken::new(token))
         .expect("query")
@@ -935,7 +1010,10 @@ fn populated_store_raises_the_trained_unigram() {
     assert!(pinyin_choose_candidate(instance, 0, first) > 0);
     assert!(pinyin_guess_sentence(instance));
     assert!(pinyin_train(instance, 0));
-    assert_eq!(store_of(instance).unigram_delta(token).unwrap(), 483);
+    assert_eq!(
+        with_store(instance, |store| store.unigram_delta(token)).unwrap(),
+        483
+    );
 
     assert!(pinyin_reset(instance));
     let _ = candidate(instance, "nihao", 0);
@@ -944,6 +1022,8 @@ fn populated_store_raises_the_trained_unigram() {
         after.iter().any(|(t, _, _)| *t == token),
         "the trained token is still offered"
     );
+    // SAFETY: training and the new guess finished; borrow the live model again.
+    let lm = unsafe { instance_ref(instance) }.core.lm;
     let unigram_after = lm
         .unigram_freq(&PhraseToken::new(token))
         .expect("query")
@@ -1018,12 +1098,11 @@ fn save_gates_on_dirty_and_roundtrips_through_the_abi() {
     let _ = candidate(instance, "nihao", 0);
     let decode_before = phrase_snapshot(instance);
     let counts = {
-        let store = store_of(instance);
         (
-            store.bigram_count(SENTENCE_START, t1).unwrap(),
-            store.bigram_total(SENTENCE_START).unwrap(),
-            store.unigram_delta(t1).unwrap(),
-            store.unigram_total().unwrap(),
+            with_store(instance, |store| store.bigram_count(SENTENCE_START, t1)).unwrap(),
+            with_store(instance, |store| store.bigram_total(SENTENCE_START)).unwrap(),
+            with_store(instance, |store| store.unigram_delta(t1)).unwrap(),
+            with_store(instance, |store| store.unigram_total()).unwrap(),
         )
     };
 
@@ -1042,12 +1121,26 @@ fn save_gates_on_dirty_and_roundtrips_through_the_abi() {
         "decode-after-reopen must match the pre-save populated-store decode"
     );
     {
-        let store = store_of(instance2);
-        assert!(!store.is_modified(), "a reopen starts clean");
-        assert_eq!(store.bigram_count(SENTENCE_START, t1).unwrap(), counts.0);
-        assert_eq!(store.bigram_total(SENTENCE_START).unwrap(), counts.1);
-        assert_eq!(store.unigram_delta(t1).unwrap(), counts.2);
-        assert_eq!(store.unigram_total().unwrap(), counts.3);
+        assert!(
+            !with_store(instance2, |store| store.is_modified()),
+            "a reopen starts clean"
+        );
+        assert_eq!(
+            with_store(instance2, |store| store.bigram_count(SENTENCE_START, t1)).unwrap(),
+            counts.0
+        );
+        assert_eq!(
+            with_store(instance2, |store| store.bigram_total(SENTENCE_START)).unwrap(),
+            counts.1
+        );
+        assert_eq!(
+            with_store(instance2, |store| store.unigram_delta(t1)).unwrap(),
+            counts.2
+        );
+        assert_eq!(
+            with_store(instance2, |store| store.unigram_total()).unwrap(),
+            counts.3
+        );
     }
     assert!(
         !pinyin_save(context2),
@@ -1289,14 +1382,14 @@ fn import_iterators_add_per_phrase_and_arm_modified_at_end() {
     // set-site is _end_add_phrases (pinyin.cpp:658) — a save before end is
     // the unmodified no-op.
     assert!(!pinyin_save(context));
-    assert!(!store_of(instance).is_modified());
+    assert!(!with_store(instance, |store| store.is_modified()));
 
     pinyin_end_add_phrases(iter);
 
     // End armed the shared dirty flag; the next save compacts and clears it.
-    assert!(store_of(instance).is_modified());
+    assert!(with_store(instance, |store| store.is_modified()));
     assert!(pinyin_save(context));
-    assert!(!store_of(instance).is_modified());
+    assert!(!with_store(instance, |store| store.is_modified()));
 
     let export = pinyin_begin_get_phrases(context, 7);
     assert_eq!(
@@ -1335,9 +1428,9 @@ fn empty_import_batch_arms_modified_and_saves() {
 
     // Upstream sets m_modified unconditionally at end (:657-658), even with
     // no add calls, so the next save is a write cycle, not a no-op.
-    assert!(store_of(instance).is_modified());
+    assert!(with_store(instance, |store| store.is_modified()));
     assert!(pinyin_save(context));
-    assert!(!store_of(instance).is_modified());
+    assert!(!with_store(instance, |store| store.is_modified()));
 
     let export = pinyin_begin_get_phrases(context, 7);
     assert!(!pinyin_iterator_has_next_phrase(export));
@@ -1584,7 +1677,7 @@ fn export_an_unspellable_reading(page: *mut u8) {
         // SAFETY: `context` is a live `pinyin_init` handle, borrowed
         // uniquely for this block.
         let ctx = unsafe { crate::state::context_mut(context) };
-        let store = ctx.core.user.as_mut().expect("the context owns a store");
+        let store = ctx.core.user_store_mut().expect("the context owns a store");
         let syllable = |text: &str| {
             oxpinyin_core::SyllableKey::from_text(text)
                 .expect("syllable")
@@ -1952,7 +2045,8 @@ fn a_selection_committed_composition_reparses_with_its_store() {
         // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
         let inst = unsafe { instance_ref(instance) };
         assert!(
-            inst.candidates
+            inst.state
+                .candidates
                 .iter()
                 .any(|c| c.text_bytes() == "\u{4f60}".as_bytes()),
             "the re-opened composition offers \u{4f60} at offset 0"
@@ -2270,7 +2364,8 @@ fn a_mid_key_lookup_under_double_pinyin_lists_only_the_sentence_rows() {
     let kinds = |instance: *mut PinyinInstance| -> Vec<lookup_candidate_type_t> {
         // SAFETY: live instance immediately after a guess.
         let inst = unsafe { instance_ref(instance) };
-        inst.candidates
+        inst.state
+            .candidates
             .iter()
             .map(|cd| cd.candidate_type())
             .collect()
@@ -2427,7 +2522,8 @@ fn collect_gbk_candidate_tokens(instance: *mut PinyinInstance, input: &str) -> V
     assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
     // SAFETY: live instance immediately after the guess.
     let inst = unsafe { instance_ref(instance) };
-    inst.candidates
+    inst.state
+        .candidates
         .iter()
         .filter_map(|c| c.token.map(oxpinyin_core::PhraseToken::value))
         .filter(|token| (token >> 24) == 2)
@@ -3028,7 +3124,7 @@ fn remap_a_directory_library(site: &str) -> bool {
             // SAFETY: `context` is a live `pinyin_init` handle, borrowed
             // uniquely for this statement.
             let ctx = unsafe { crate::state::context_mut(context) };
-            ctx.core.user.as_mut().expect("store").mark_modified();
+            ctx.core.user_store_mut().expect("store").mark_modified();
             crate::test_support::directory_library(&system, "merged.bin");
             pinyin_save(context)
         }
@@ -3311,4 +3407,37 @@ fn bigram_export_ends_at_a_partial_predecessor() {
     ));
     crate::iterators::pinyin_end_get_bigram_phrases(iter);
     crate::context::pinyin_fini(context);
+}
+
+/// Both export handles retain one shared runtime after fini; advancing the
+/// cursor re-borrows its storage, including with no surviving instance.
+#[test]
+fn export_iterator_outlives_context() {
+    let user_dir = TempUserDir::new("orphan-export");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    let import = pinyin_begin_add_phrases(context, 5);
+    assert!(pinyin_iterator_add_phrase(
+        import,
+        cstr("你好").as_ptr(),
+        cstr("ni'hao").as_ptr(),
+        7
+    ));
+    pinyin_end_add_phrases(import);
+    train_one_multiphrase_sentence(instance);
+    let phrases = crate::iterators::pinyin_begin_get_phrases(context, 5);
+    let bigrams = crate::iterators::pinyin_begin_get_bigram_phrases(context);
+    assert!(!phrases.is_null());
+    assert!(!bigrams.is_null());
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+    assert_eq!(
+        drain_phrases(phrases),
+        vec![("你好".to_owned(), "ni'hao".to_owned(), 7)]
+    );
+    assert_eq!(
+        drain_bigrams(bigrams),
+        vec![("你好".to_owned(), "ni'hao".to_owned(), 138)]
+    );
+    crate::iterators::pinyin_end_get_phrases(phrases);
+    crate::iterators::pinyin_end_get_bigram_phrases(bigrams);
 }

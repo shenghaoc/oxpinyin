@@ -99,11 +99,18 @@ impl Settings {
 /// `L` and nothing else.
 ///
 #[derive(Clone, Debug)]
-pub struct Session<D, L> {
+pub struct Session<D, L, S = SessionState> {
     // Backends and configuration. Read at construction (and, for the
     // options, remasked live); never composition state.
     dictionary: D,
     model: L,
+    state: S,
+}
+
+/// Composition and query bookkeeping, without dictionary or model ownership.
+/// A facade retains this state and borrows its storage anew for each operation.
+#[derive(Clone, Debug)]
+pub struct SessionState {
     settings: Settings,
     scoring: ScoringConfig,
     /// Per-key costs for the pre-frequency fallback scorer, and **empty
@@ -182,6 +189,48 @@ pub struct Session<D, L> {
     /// total, before any prepend or dedup; read back into the
     /// [`CandidateList`] it built.
     scan_ranked_phrase: bool,
+}
+
+impl<D, L, S: std::borrow::Borrow<SessionState>> std::ops::Deref for Session<D, L, S> {
+    type Target = SessionState;
+
+    fn deref(&self) -> &Self::Target {
+        self.state.borrow()
+    }
+}
+
+impl<D, L, S: std::borrow::BorrowMut<SessionState>> std::ops::DerefMut for Session<D, L, S> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.state.borrow_mut()
+    }
+}
+
+impl SessionState {
+    /// Borrow the composition and storage without allowing composition changes.
+    pub fn read<D, L>(&self, dictionary: D, model: L) -> Session<D, L, &Self> {
+        Session {
+            dictionary,
+            model,
+            state: self,
+        }
+    }
+
+    /// Borrow this composition for an operation over the supplied readers.
+    pub fn bind<D, L>(&mut self, dictionary: D, model: L) -> Session<D, L, &mut Self> {
+        Session {
+            dictionary,
+            model,
+            state: self,
+        }
+    }
+}
+
+impl<D, L> Session<D, L> {
+    /// Retain only composition state after an operation's readers are dropped.
+    #[must_use]
+    pub fn into_state(self) -> SessionState {
+        self.state
+    }
 }
 
 /// The candidate list and the parse length behind it — the output of one
@@ -279,6 +328,7 @@ mod input;
 mod lookup;
 mod offsets;
 mod selection;
+pub use selection::TrainingPlan;
 pub(crate) use selection::{column_is_empty, training_readings};
 mod state;
 

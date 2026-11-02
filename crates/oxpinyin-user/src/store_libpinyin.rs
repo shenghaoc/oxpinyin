@@ -72,8 +72,6 @@ use crate::store::{
 pub struct Target {
     /// The user directory holding the profile.
     pub(crate) dir: Option<PathBuf>,
-    /// The system libraries by nibble, refreshed when mask_out reloads them.
-    pub(crate) originals: std::sync::RwLock<SystemOriginals>,
     /// Live item arenas and independent pinyin-index membership.
     pub(crate) phrases: std::sync::Mutex<crate::user_library::SessionPhrases>,
     /// This build's identity triple.
@@ -98,21 +96,14 @@ impl Target {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
-
-    pub(crate) fn originals(&self) -> std::sync::RwLockReadGuard<'_, SystemOriginals> {
-        self.originals
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
 }
 
 /// The facade fini's `user.conf` write ([`persistence::fini`]): libpinyin
 /// lowers the open counter its init raised and writes the marker, saved
 /// or not (`pinyin_fini`, `pinyin.cpp:1194-1200`); libzhuyin writes
 /// nothing. Armed on the handle [`GenericUserStore::open_libpinyin`]
-/// returns and never on a clone of it, so it runs once per open — every
-/// open runs its own `check_format` — when that handle drops: the
-/// context's fini. A process that dies before then leaves the raised
+/// returns, so it runs once per open — every open runs its own
+/// `check_format` — at explicit context fini, or on drop if unfinished. A process that dies before then leaves the raised
 /// counter on disk, as upstream's does.
 
 #[derive(Debug)]
@@ -126,8 +117,8 @@ impl FiniGuard {
     }
 }
 
-impl Drop for FiniGuard {
-    fn drop(&mut self) {
+impl FiniGuard {
+    pub(crate) fn finish(&mut self) {
         if let Some(target) = self.0.take() {
             // `pinyin_fini` ignores `mark_version`'s result
             // (`pinyin.cpp:1200`); a save that fails has written
@@ -140,6 +131,12 @@ impl Drop for FiniGuard {
                 target.open_counter,
             );
         }
+    }
+}
+
+impl Drop for FiniGuard {
+    fn drop(&mut self) {
+        self.finish();
     }
 }
 
@@ -164,7 +161,7 @@ impl GenericUserStore<DefaultStore> {
     /// profile ([`crate::persistence::load`]) under `law`, seed an
     /// in-memory session store with its values, and carry the persistence target so
     /// [`GenericUserStore::save`] writes the pin's files back. Dropping the
-    /// returned handle — not a clone of it — is the facade's fini: it
+    /// returned owner is the facade's fini: it
     /// makes the law's fini-time `user.conf` write
     /// ([`crate::persistence::fini`]).
     ///
@@ -190,7 +187,7 @@ impl GenericUserStore<DefaultStore> {
         versions: SystemVersions,
         law: UserConfLaw,
     ) -> Result<Self, UserStoreError> {
-        Self::open_session(Some(user_dir), originals, versions, law, None)
+        Self::open_session(Some(user_dir), &mut originals.into(), versions, law, None)
     }
 
     /// Open the pin's NULL-user-directory session entirely in memory.
@@ -206,7 +203,7 @@ impl GenericUserStore<DefaultStore> {
         versions: SystemVersions,
         law: UserConfLaw,
     ) -> Result<Self, UserStoreError> {
-        Self::open_session(None, originals, versions, law, None)
+        Self::open_session(None, &mut originals.into(), versions, law, None)
     }
 
     /// [`open_libpinyin`](Self::open_libpinyin) for a profile
@@ -219,7 +216,7 @@ impl GenericUserStore<DefaultStore> {
     /// judgement.
     pub fn open_libpinyin_checked(
         user_dir: &Path,
-        originals: impl Into<SystemOriginals>,
+        originals: &mut SystemOriginals,
         versions: SystemVersions,
         law: UserConfLaw,
         check: crate::persistence::ProfileCheck,
@@ -252,12 +249,11 @@ impl GenericUserStore<DefaultStore> {
 
     fn open_session(
         user_dir: Option<&Path>,
-        originals: impl Into<SystemOriginals>,
+        originals: &mut SystemOriginals,
         versions: SystemVersions,
         law: UserConfLaw,
         checked: Option<crate::persistence::ProfileCheck>,
     ) -> Result<Self, UserStoreError> {
-        let originals: SystemOriginals = originals.into();
         // Create the session's own container before touching the
         // profile, so a failure here cannot follow a `check_format` that
         // already raised the open counter and wiped a non-conforming
@@ -267,8 +263,8 @@ impl GenericUserStore<DefaultStore> {
 
         let profile = if let Some(dir) = user_dir {
             match checked {
-                Some(check) => persistence::load_session_checked(dir, &originals, &check),
-                None => persistence::load_profile(dir, &originals, &versions, law)?,
+                Some(check) => persistence::load_session_checked(dir, originals, &check),
+                None => persistence::load_profile(dir, originals, &versions, law)?,
             }
         } else {
             // Without a user dir the pin's `check_format` reads and writes
@@ -303,7 +299,6 @@ impl GenericUserStore<DefaultStore> {
         // failed open reads as a finished session, not a crash.
         let target = Arc::new(Target {
             dir: user_dir.map(Path::to_path_buf),
-            originals: std::sync::RwLock::new(originals),
             phrases: std::sync::Mutex::new(Default::default()),
             versions,
             law,
@@ -315,7 +310,7 @@ impl GenericUserStore<DefaultStore> {
             let offset = seed_txn_with_replay(
                 txn,
                 &loaded.state,
-                &target.originals(),
+                originals,
                 &loaded.library_totals,
                 &replayed,
                 &user_libraries,
@@ -341,8 +336,7 @@ impl GenericUserStore<DefaultStore> {
             }
             for (&nibble, items) in &loaded.state.system_overrides {
                 for (&slot, item) in items {
-                    if !target
-                        .originals()
+                    if !originals
                         .get(&nibble)
                         .is_some_and(|library| library.contains_item(slot))
                         && let Some(item) = item
@@ -360,8 +354,7 @@ impl GenericUserStore<DefaultStore> {
             }
             for (&nibble, library) in &replayed {
                 for slot in library.add_candidates() {
-                    if !target
-                        .originals()
+                    if !originals
                         .get(&nibble)
                         .is_some_and(|original| original.contains_item(slot))
                         && let Some(bytes) = library.bytes(slot)
@@ -449,7 +442,18 @@ impl GenericUserStore<DefaultStore> {
             bigram_db: Some(std::sync::Mutex::new(bigram_db)),
             libpinyin: Some(target),
         });
-        Ok(Self::from_parts(inner, None, fini))
+        Ok(Self::from_parts(
+            inner,
+            None,
+            fini,
+            std::mem::replace(
+                originals,
+                SystemOriginals::new(
+                    Default::default(),
+                    oxpinyin_data::user_files::UserFileLayout::stock(),
+                ),
+            ),
+        ))
     }
 }
 
@@ -483,7 +487,7 @@ fn count_tables(txn: &mut impl WriteTxn) -> Result<bool, StoreError> {
 pub(crate) fn seed_txn(
     txn: &mut impl WriteTxn,
     state: &UserState,
-    originals: &SystemOriginals,
+    originals: &impl crate::persistence::OriginalLibraries,
     library_totals: &BTreeMap<u8, u32>,
 ) -> Result<BTreeMap<u8, u32>, StoreError> {
     seed_txn_with_replay(
@@ -515,7 +519,7 @@ impl SeedItem<'_> {
 fn seed_system_unigram_deltas(
     txn: &mut impl WriteTxn,
     state: &UserState,
-    originals: &SystemOriginals,
+    originals: &impl crate::persistence::OriginalLibraries,
     replayed: &BTreeMap<u8, crate::replay::ReplayedLibrary>,
     unigram_total: &mut u64,
     seeded: &mut BTreeMap<u8, u32>,
@@ -596,7 +600,7 @@ fn seed_system_unigram_deltas(
 fn seed_txn_with_replay(
     txn: &mut impl WriteTxn,
     state: &UserState,
-    originals: &SystemOriginals,
+    originals: &impl crate::persistence::OriginalLibraries,
     library_totals: &BTreeMap<u8, u32>,
     replayed: &BTreeMap<u8, crate::replay::ReplayedLibrary>,
     user_libraries: &BTreeMap<u8, crate::user_library::UserLibrary>,
@@ -735,21 +739,21 @@ fn seed_txn_with_replay(
 #[cfg(test)]
 pub fn export_state<S: WriteStore>(
     store: &GenericUserStore<S>,
-    originals: &SystemOriginals,
+    originals: &impl crate::persistence::OriginalLibraries,
 ) -> Result<UserState, UserStoreError> {
     export_session_state(store, originals, true)
 }
 
 pub(crate) fn export_for_save<S: WriteStore>(
     store: &GenericUserStore<S>,
-    originals: &SystemOriginals,
+    originals: &impl crate::persistence::OriginalLibraries,
 ) -> Result<UserState, UserStoreError> {
     export_session_state(store, originals, false)
 }
 
 fn export_session_state<S: WriteStore>(
     store: &GenericUserStore<S>,
-    originals: &SystemOriginals,
+    originals: &impl crate::persistence::OriginalLibraries,
     user_items: bool,
 ) -> Result<UserState, UserStoreError> {
     store.flush_system_unigrams()?;
@@ -982,10 +986,10 @@ mod tests {
     }
 
     /// A mask walks the container's keys once and masks over that walk.
-    /// Another handle's `set_bigram_count` must not land between the two,
+    /// Another operation's `set_bigram_count` must not land between the two,
     /// or the mask misses its gram and can clear `has_user_data` while the
-    /// gram exists. The second handle writes from another thread in that
-    /// window; it waits for the mask's database guard, so its gram is
+    /// gram exists. The second operation writes from another thread in that
+    /// window; it waits for the storage owner's guard, so its gram is
     /// written after the mask and the gate stays true.
     #[test]
     fn a_gram_written_by_another_handle_during_a_mask_is_not_missed() {
@@ -1000,7 +1004,8 @@ mod tests {
             let token = store
                 .add_phrase_in(crate::USER_DICTIONARY, &"你".into(), &keys("ni"), Some(5))
                 .unwrap();
-            let mut other = store.clone();
+            let store = std::sync::Arc::new(std::sync::Mutex::new(store));
+            let other = std::sync::Arc::clone(&store);
             let (sent, written) = std::sync::mpsc::channel();
             let (starting, started) = std::sync::mpsc::channel();
             let writer = std::sync::Arc::new(std::sync::Mutex::new(None));
@@ -1009,7 +1014,7 @@ mod tests {
                 *hook.borrow_mut() = Some(Box::new(move || {
                     let thread = std::thread::spawn(move || {
                         starting.send(()).unwrap();
-                        other.set_bigram_count(token, 9, 3).unwrap();
+                        other.lock().unwrap().set_bigram_count(token, 9, 3).unwrap();
                         let _ = sent.send(());
                     });
                     started.recv().unwrap();
@@ -1020,14 +1025,21 @@ mod tests {
                     *slot.lock().unwrap() = Some(thread);
                 }));
             });
-            if remove {
-                assert!(store.remove_user_phrase(token).unwrap());
-            } else {
-                store.mask_out(0xffff_ffff, token).unwrap();
+            {
+                let mut store = store.lock().unwrap();
+                if remove {
+                    assert!(store.remove_user_phrase(token).unwrap());
+                } else {
+                    store.mask_out(0xffff_ffff, token).unwrap();
+                }
             }
             writer.lock().unwrap().take().unwrap().join().unwrap();
-            assert_eq!(store.bigram_count(token, 9).unwrap(), 3, "remove={remove}");
-            assert!(store.gate_for_test(), "remove={remove}");
+            assert_eq!(
+                store.lock().unwrap().bigram_count(token, 9).unwrap(),
+                3,
+                "remove={remove}"
+            );
+            assert!(store.lock().unwrap().gate_for_test(), "remove={remove}");
         }
     }
 
@@ -2024,9 +2036,13 @@ mod tests {
             },
         ])
         .expect("short kept payload");
-        let mut store =
-            UserStore::open_libpinyin(&dir, original.clone(), versions(), UserConfLaw::Pinyin)
-                .expect("open");
+        let mut store = UserStore::open_libpinyin(
+            &dir,
+            original.fixture_copy(),
+            versions(),
+            UserConfLaw::Pinyin,
+        )
+        .expect("open");
         let path = dir.join("gb_char.dbin");
         let library = 1;
         for (log, fault) in [
@@ -2050,14 +2066,14 @@ mod tests {
         ] {
             std::fs::write(&path, build_memory_chunk(&log).expect("frame")).expect("log");
             assert!(matches!(
-                store.reload_system_libraries(original.clone(), 0x00ff_ffff, 0),
+                store.reload_system_libraries(original.fixture_copy(), 0x00ff_ffff, 0),
                 Err(found) if found == fault
             ));
         }
         std::fs::write(&path, build_memory_chunk(&valid).expect("frame")).expect("log");
         store.mask_out(0x00ff_ffff, 0).expect("mask tables");
         store
-            .reload_system_libraries(original.clone(), 0x00ff_ffff, 0)
+            .reload_system_libraries(original.fixture_copy(), 0x00ff_ffff, 0)
             .expect("replay");
         assert_eq!(
             store
@@ -2090,9 +2106,13 @@ mod tests {
         ];
         let token = PhraseToken::new(0x0100_0001);
         {
-            let mut store =
-                UserStore::open_libpinyin(&dir, base.clone(), versions(), UserConfLaw::Pinyin)
-                    .expect("open");
+            let mut store = UserStore::open_libpinyin(
+                &dir,
+                base.fixture_copy(),
+                versions(),
+                UserConfLaw::Pinyin,
+            )
+            .expect("open");
             let mut paths = vec![vec![key.with_tone(2)]].into_iter();
             UserModel::observe_with_keys(&mut store, &[], &token, &mut paths).expect("train");
             let state = export_state(&store, &base).expect("state");
@@ -2117,9 +2137,13 @@ mod tests {
             assert!(store.save().expect("save"));
         }
         {
-            let mut store =
-                UserStore::open_libpinyin(&dir, base.clone(), versions(), UserConfLaw::Pinyin)
-                    .expect("reopen");
+            let mut store = UserStore::open_libpinyin(
+                &dir,
+                base.fixture_copy(),
+                versions(),
+                UserConfLaw::Pinyin,
+            )
+            .expect("reopen");
             let mut paths = vec![vec![key.with_tone(0)], vec![key.with_tone(0)]].into_iter();
             UserModel::observe_with_keys(&mut store, &[], &token, &mut paths).expect("retrain");
             let state = export_state(&store, &base).expect("state");
@@ -2171,9 +2195,13 @@ mod tests {
                 .expect("live")
         };
         {
-            let mut store =
-                UserStore::open_libpinyin(&dir, base.clone(), versions(), UserConfLaw::Pinyin)
-                    .expect("open");
+            let mut store = UserStore::open_libpinyin(
+                &dir,
+                base.fixture_copy(),
+                versions(),
+                UserConfLaw::Pinyin,
+            )
+            .expect("open");
             store
                 .add_system_phrase_in(1, Some(token.value()), &"你".into(), &dense(2), Some(20))
                 .expect("extra reading");
@@ -2231,7 +2259,7 @@ mod tests {
                 .expect("live")
         };
         let mut store =
-            UserStore::open_libpinyin(&dir, base.clone(), versions(), UserConfLaw::Pinyin)
+            UserStore::open_libpinyin(&dir, base.fixture_copy(), versions(), UserConfLaw::Pinyin)
                 .expect("open");
         store
             .add_system_phrase_in(1, Some(0x0100_0001), &"你".into(), &dense(2), Some(20))
@@ -2245,12 +2273,12 @@ mod tests {
         assert_eq!(saved.len(), 3, "the unsaved reading is live");
         // A reload merges only the saved log: the unsaved reading is gone.
         store
-            .load_system_libraries(base.clone())
+            .load_system_libraries(base.fixture_copy())
             .expect("reload from the saved log");
         assert_eq!(counts(&store).len(), 2);
         // An unload takes the whole library, the saved log included; the
         // next load puts the saved state back.
-        store.unload_system_libraries(base.clone());
+        store.unload_system_libraries(base.fixture_copy());
         assert!(
             store
                 .system_item_override(0x0100_0001)
@@ -2342,7 +2370,7 @@ mod tests {
     }
 
     #[test]
-    fn import_readings_refresh_after_another_handle_writes() {
+    fn import_readings_refresh_after_reborrowing_the_owner() {
         let dir = tempdir("import-reading-memo");
         let readings = distinct_readings();
         let dense = |packed| packed_to_pinyin_keys(&[packed]).expect("dense");
@@ -2351,11 +2379,10 @@ mod tests {
         let mut store =
             UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
                 .expect("open");
-        let mut other = store.clone();
         let user = store
             .add_phrase_in(7, &"龘".into(), &keys, Some(5))
             .expect("new user item");
-        other
+        store
             .add_phrase_in(7, &"龘".into(), &keys, Some(7))
             .expect("other user writer");
         store
@@ -2377,7 +2404,7 @@ mod tests {
         store
             .add_system_phrase_in(1, Some(system), &"拟".into(), &extra, Some(7))
             .expect("append cached row");
-        other
+        store
             .add_system_phrase_in(1, Some(system), &"拟".into(), &extra, Some(11))
             .expect("other system writer");
         store
@@ -2398,7 +2425,6 @@ mod tests {
         );
         store.mark_modified();
         assert!(store.save().expect("save"));
-        drop(other);
         drop(store);
         let store = UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
             .expect("reopen");
@@ -2995,9 +3021,13 @@ mod tests {
         let base = originals();
         let token;
         {
-            let mut store =
-                UserStore::open_libpinyin(&dir, base.clone(), versions(), UserConfLaw::Pinyin)
-                    .expect("open");
+            let mut store = UserStore::open_libpinyin(
+                &dir,
+                base.fixture_copy(),
+                versions(),
+                UserConfLaw::Pinyin,
+            )
+            .expect("open");
             token = store
                 .add_system_phrase_in(1, None, &"拟".into(), &keys, Some(5))
                 .expect("append");

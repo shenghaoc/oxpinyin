@@ -65,19 +65,17 @@ fn main() {
         eprintln!("usage: nbest_tail_probe <system_dir> <user_dir>");
         std::process::exit(2);
     };
-    let runtime = match Runtime::open(Path::new(system_dir), Some(Path::new(user_dir))) {
+    let mut runtime = match Runtime::open(Path::new(system_dir), Some(Path::new(user_dir))) {
         Ok(runtime) => runtime,
         Err(error) => {
             eprintln!("open FAILED: {error}");
             std::process::exit(1);
         }
     };
-    let Some(mut store) = runtime.user_store() else {
+    let Some(store) = runtime.user_store_mut() else {
         eprintln!("the user dir did not open as a user store");
         std::process::exit(1);
     };
-    let dict = runtime.dict();
-    let lm = runtime.lm();
 
     println!("=== import ===");
     let mut user_tokens: Vec<(String, u32)> = Vec::new();
@@ -102,6 +100,8 @@ fn main() {
         Ok(saved) => println!("save = {saved}"),
         Err(error) => println!("save FAILED: {error}"),
     }
+    let dict = runtime.dict();
+    let lm = runtime.lm();
     println!(
         "has_real_unigrams = {}; unigram_total = {:?}",
         lm.has_real_unigrams(),
@@ -187,6 +187,7 @@ fn main() {
             std::process::exit(1);
         }
     };
+    let mut session = runtime.session(&mut session);
     if let Err(error) = session.set_options(OptionBits::from_bits(PARITY_WORD)) {
         eprintln!("set_options FAILED: {error}");
         std::process::exit(1);

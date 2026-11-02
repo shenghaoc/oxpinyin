@@ -7,15 +7,20 @@ use std::ptr;
 use oxpinyin_core::{FORCE_TONE, USE_TONE, parse_zhuyin_direct};
 use oxpinyin_user::{MAX_PHRASE_LENGTH, PinyinKey, UserStore, is_user_file_library, toned_key};
 
-use crate::state::context_ref;
+use crate::state::{ContextOwner, context_mut, context_owner, owner_mut, owner_ref};
 use crate::types::{ImportIterator, ZhuyinContext};
 
-/// State behind `import_iterator_t *`: the target index and the shared user
-/// store clone the adds write through.
+/// Import cursor state and a shared owner of the context allocation. Each add
+/// borrows storage only for the operation, including after public context fini.
 struct ImportHandle {
     index: u8,
-    user: Option<UserStore>,
-    dict: Option<oxpinyin_runtime::RuntimeDict>,
+    owner: ContextOwner,
+}
+
+struct ImportRead<'a> {
+    index: u8,
+    user: Option<&'a UserStore>,
+    dict: Option<oxpinyin_runtime::RuntimeDict<'a>>,
 }
 
 /// Begin adding phrases to an index.
@@ -38,16 +43,14 @@ pub extern "C" fn zhuyin_begin_add_phrases(
     }
 
     // SAFETY: `context` is non-null and was produced by `zhuyin_init`.
-    let ctx = unsafe { context_ref(context) };
+    let ctx = unsafe { context_mut(context) };
     // `begin_add_phrases` starts with a compact (`pinyin.cpp:657`,
     // `zhuyin.cpp:542`); a layout-failed empty sub-index's local total
     // becomes zero there.
     let _compacted = ctx.core.compact_layout_failed();
-    let handle = ImportHandle {
-        index,
-        user: ctx.user_store(),
-        dict: ctx.core.runtime.as_ref().map(|runtime| runtime.dict()),
-    };
+    // SAFETY: the public context is live for this serialized constructor call.
+    let owner = unsafe { context_owner(context) };
+    let handle = ImportHandle { index, owner };
     Box::into_raw(Box::new(handle)).cast()
 }
 
@@ -92,7 +95,12 @@ pub extern "C" fn zhuyin_iterator_add_phrase(
     // SAFETY: `iter` is non-null and was produced by
     // `zhuyin_begin_add_phrases`; the unique borrow lasts for this call.
     let handle = unsafe { &mut *(iter.cast::<ImportHandle>()) };
-    let (phrase, keys, original) = match plan_import(handle, phrase, pinyin) {
+    let plan = {
+        // SAFETY: the iterator retains the allocation; the C caller excludes concurrent mutation.
+        let context = unsafe { owner_ref(&handle.owner) };
+        plan_import(&import_read(handle, context), phrase, pinyin)
+    };
+    let (phrase, keys, original) = match plan {
         ImportPlan::Refuse => return false,
         ImportPlan::LookupFailed => {
             crate::ffi::log_warning("zhuyin_iterator_add_phrase: phrase-table lookup failed");
@@ -108,16 +116,21 @@ pub extern "C" fn zhuyin_iterator_add_phrase(
             original,
         } => (phrase, keys, original),
     };
-    let Some(user) = handle.user.as_mut() else {
+    // SAFETY: the planning readers ended above; this call now owns the context mutation.
+    let context = unsafe { owner_mut(&mut handle.owner) };
+    if (1..=4).contains(&handle.index)
+        && !context
+            .core
+            .runtime
+            .as_ref()
+            .is_some_and(|runtime| runtime.dict().library_visible(u32::from(handle.index)))
+    {
+        return false;
+    }
+    let Some(user) = context.core.user_store_mut() else {
         return false;
     };
     if (1..=4).contains(&handle.index) {
-        let Some(dict) = handle.dict.as_ref() else {
-            return false;
-        };
-        if !dict.library_visible(u32::from(handle.index)) {
-            return false;
-        }
         // The selected token comes from the combined phrase-table search,
         // including prior imported system-library items.
         user.add_system_phrase_in(handle.index, original, &phrase, &keys, count)
@@ -152,7 +165,22 @@ enum ImportPlan {
 /// `zhuyin.cpp:500-534` and `_add_phrase` (`:400-458`) up to the add calls:
 /// the parse, the length gates and the phrase-table checks, in the pin's
 /// order. Reads only.
-fn plan_import(handle: &ImportHandle, phrase: *const c_char, pinyin: *const c_char) -> ImportPlan {
+fn import_read<'a>(
+    handle: &ImportHandle,
+    context: &'a crate::state::CapiContext,
+) -> ImportRead<'a> {
+    ImportRead {
+        index: handle.index,
+        user: context.core.user_store(),
+        dict: context.core.runtime.as_ref().map(|runtime| runtime.dict()),
+    }
+}
+
+fn plan_import(
+    handle: &ImportRead<'_>,
+    phrase: *const c_char,
+    pinyin: *const c_char,
+) -> ImportPlan {
     let phrase =
         oxpinyin_capi_marshal::input::utf8_to_ucs4(oxpinyin_capi_marshal::borrow_c_string!(phrase))
             .unwrap_or_default();
@@ -278,7 +306,9 @@ pub extern "C" fn zhuyin_end_add_phrases(iter: *mut ImportIterator) {
     // SAFETY: `iter` was produced by `zhuyin_begin_add_phrases` via
     // `Box::into_raw`; the caller transfers ownership back here.
     let mut handle = unsafe { Box::from_raw(iter.cast::<ImportHandle>()) };
-    if let Some(user) = handle.user.as_mut() {
+    // SAFETY: the iterator retains the allocation; serialized C calls grant exclusive access.
+    let context = unsafe { owner_mut(&mut handle.owner) };
+    if let Some(user) = context.core.user_store_mut() {
         // The compact (`zhuyin.cpp:542`) rebuilds each library's total from
         // its items.
         user.compact_libraries();

@@ -9,7 +9,7 @@
 use std::ptr;
 use std::sync::atomic::{AtomicU16, Ordering};
 
-use crate::state::{CapiInstance, instance_mut, instance_ref};
+use crate::state::{instance_mut, instance_ref};
 use crate::types::{ChewingKey, ChewingKeyRest, ZhuyinInstance};
 
 /// The slot `zhuyin_get_zhuyin_key` hands out: the pin's function-local
@@ -41,7 +41,7 @@ static KEY_REST_SLOT: KeyRestSlot = KeyRestSlot {
 /// Whether the parse placed a key. The pin's matrix is empty (size 0) for a
 /// fresh instance or a keyless parse (`phonetic_key_matrix.cpp:34-38`); an
 /// unreadable parse is left to the callers' own refusals.
-pub(crate) fn matrix_has_keys(inst: &CapiInstance) -> bool {
+pub(crate) fn matrix_has_keys(inst: &crate::state::CapiInstanceRead<'_>) -> bool {
     inst.core.mode_has_keys().unwrap_or(true)
 }
 
@@ -51,8 +51,8 @@ pub(crate) fn matrix_has_keys(inst: &CapiInstance) -> bool {
 /// `get_column_size` asserts — the key accessors' after `matrix.size() - 1`
 /// wraps (`zhuyin.cpp:1892-1895`, `:1914-1917`), the right move's in its
 /// loop (`:2037-2038`) — and the process aborts.
-fn abort_on_empty_matrix(inst: &CapiInstance) {
-    if !matrix_has_keys(inst) {
+fn abort_on_empty_matrix(inst: &crate::state::CapiInstanceRead<'_>) {
+    if !matrix_has_keys(&inst.read()) {
         std::process::abort();
     }
 }
@@ -61,9 +61,9 @@ fn abort_on_empty_matrix(inst: &CapiInstance) {
 /// `offset >= matrix.size() - 1` first (`zhuyin.cpp:1892-1893`,
 /// `:1914-1915`): on an empty matrix that is `offset >= SIZE_MAX`, so
 /// `SIZE_MAX` itself answers `false` with the out-param NULLed.
-fn abort_on_empty_matrix_below(inst: &CapiInstance, offset: usize) {
+fn abort_on_empty_matrix_below(inst: &crate::state::CapiInstanceRead<'_>, offset: usize) {
     if offset != usize::MAX {
-        abort_on_empty_matrix(inst);
+        abort_on_empty_matrix(&inst.read());
     }
 }
 
@@ -109,7 +109,7 @@ pub extern "C" fn zhuyin_get_zhuyin_key_rest(
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
-    abort_on_empty_matrix_below(inst, offset);
+    abort_on_empty_matrix_below(&inst.read(), offset);
     let found = match inst.core.abi_key_at(offset, true) {
         Ok(Some(found)) => found,
         Ok(None) => return false,
@@ -236,7 +236,7 @@ pub extern "C" fn zhuyin_get_zhuyin_key(
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
-    abort_on_empty_matrix_below(inst, offset);
+    abort_on_empty_matrix_below(&inst.read(), offset);
     let found = match inst.core.abi_key_at(offset, true) {
         Ok(Some(found)) => found,
         Ok(None) => return false,
@@ -310,7 +310,7 @@ pub extern "C" fn zhuyin_get_left_zhuyin_offset(
     // `_check_offset` reads column `offset - 1` (`zhuyin.cpp:1449`), which
     // an empty matrix does not have; offset 0 reads no column and answers 0.
     if offset > 0 {
-        abort_on_empty_matrix(inst);
+        abort_on_empty_matrix(&inst.read());
     }
     let result = match inst.core.abi_left_offset(offset, true) {
         Ok(result) => result,
@@ -357,7 +357,7 @@ pub extern "C" fn zhuyin_get_right_zhuyin_offset(
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
-    abort_on_empty_matrix(inst);
+    abort_on_empty_matrix(&inst.read());
     let result = match inst.core.right_offset(offset) {
         Ok(Some(result)) => result,
         // The pin's own graceful `false` (`zhuyin.cpp:2050-2051`).

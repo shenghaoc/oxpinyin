@@ -39,13 +39,11 @@ fn main() -> ExitCode {
         return ExitCode::from(2);
     }
     let dict = SystemDictionary::open(dir).expect("dict");
-    let mut lm = BigramLanguageModel::open(
-        &dir.join(SystemDbm::Bigram.file_name()),
-        std::sync::Arc::clone(dict.libraries()),
-    )
-    .expect("lm");
+    let mut lm =
+        BigramLanguageModel::open(&dir.join(SystemDbm::Bigram.file_name()), dict.libraries())
+            .expect("lm");
     lm.set_lambda_from_table_conf(&dir.join("table.conf"));
-    let mut session = Session::new(&EmptyConfigSource, dict, lm).expect("session");
+    let mut session = Session::new(&EmptyConfigSource, &dict, lm).expect("session");
 
     let fixture = CandidateFixture::read(repo_root().join(STRUCTURE_FIXTURE))
         .expect("candidate structure fixture")

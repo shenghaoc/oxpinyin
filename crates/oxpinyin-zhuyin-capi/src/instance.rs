@@ -3,7 +3,7 @@
 
 use std::ptr;
 
-use crate::state::{CapiInstance, box_instance, context_ref, instance_mut, instance_ref};
+use crate::state::{CapiInstance, box_instance, context_ref, instance_mut};
 use crate::types::{ZhuyinContext, ZhuyinInstance};
 
 /// Allocate a new zhuyin instance from a context.
@@ -28,7 +28,9 @@ pub extern "C" fn zhuyin_alloc_instance(context: *mut ZhuyinContext) -> *mut Zhu
 
     // SAFETY: `context` is non-null and was produced by `zhuyin_init`.
     let ctx = unsafe { context_ref(context) };
-    ctx.alloc_instance(context)
+    // SAFETY: the public context is live for this serialized allocation call.
+    let owner = unsafe { crate::state::context_owner(context) };
+    ctx.alloc_instance(context, owner)
         .map_or(ptr::null_mut(), box_instance)
 }
 
@@ -65,9 +67,9 @@ pub extern "C" fn zhuyin_reset(instance: *mut ZhuyinInstance) -> bool {
 
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
-    let inst = unsafe { instance_mut(instance) };
+    let mut inst = unsafe { instance_mut(instance) };
     inst.core.full_reset();
-    inst.candidates.clear();
+    inst.state.candidates.clear();
     true
 }
 
@@ -89,6 +91,6 @@ pub fn zhuyin_get_context(instance: *mut ZhuyinInstance) -> *mut ZhuyinContext {
 
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
-    let inst = unsafe { instance_ref(instance) };
+    let inst = unsafe { crate::state::instance_state_ref(instance) };
     inst.context
 }

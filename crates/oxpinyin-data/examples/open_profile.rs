@@ -18,7 +18,6 @@
 //! mappings and DBM pages, not reconstructed heap.
 
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::time::Instant;
 
 use oxpinyin_core::{Dictionary, LanguageModel, PhraseToken, SyllableKey};
@@ -70,11 +69,9 @@ fn main() {
     let dict = SystemDictionary::open(&dir).expect("dictionary opens");
     report("SystemDictionary::open (2 DBMs + chunk maps)", &mut prev);
 
-    let mut lm = BigramLanguageModel::open(
-        &dir.join(SystemDbm::Bigram.file_name()),
-        Arc::clone(dict.libraries()),
-    )
-    .expect("language model opens");
+    let mut lm =
+        BigramLanguageModel::open(&dir.join(SystemDbm::Bigram.file_name()), dict.libraries())
+            .expect("language model opens");
     lm.set_lambda_from_table_conf(&dir.join("table.conf"));
     let punct = PunctTable::open_optional(&dir.join(SystemDbm::Punct.file_name()));
     report("BigramLanguageModel::open + PunctTable", &mut prev);

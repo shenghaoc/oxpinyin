@@ -35,58 +35,74 @@ fn w3_dir() -> PathBuf {
 
 #[test]
 fn token_text_reads_live_items_and_obeys_library_visibility() {
-    let runtime = Runtime::open(&w3_dir(), None).expect("runtime");
-    let dict = runtime.dict();
-    let mut store = runtime.user_store().expect("transient user store");
-    let system = dict.system().tokens_for_text("你").expect("lookup")[0];
+    let mut runtime = Runtime::open(&w3_dir(), None).expect("runtime");
+    let system = runtime
+        .dict()
+        .system()
+        .tokens_for_text("你")
+        .expect("lookup")[0];
     let ni = SyllableKey::from_text("ni").expect("ni");
     let keys = [oxpinyin_user::toned_key(ni.index(), 3).expect("toned key")];
     assert_eq!(
-        dict.token_text(system)
+        runtime
+            .dict()
+            .token_text(system)
             .as_ref()
             .and_then(|text| text.as_str()),
         Some("你")
     );
-    store
+    runtime
+        .user_store_mut()
+        .unwrap()
         .add_system_phrase_in(1, Some(system), &"你".into(), &keys, Some(5))
         .expect("live system item");
     assert_eq!(
-        dict.token_text(system)
+        runtime
+            .dict()
+            .token_text(system)
             .as_ref()
             .and_then(|text| text.as_str()),
         Some("你")
     );
-    let user = store
+    let user = runtime
+        .user_store_mut()
+        .unwrap()
         .add_phrase(&"词".into(), &keys, Some(5))
         .expect("user item");
     assert_eq!(
-        dict.token_text(user)
+        runtime
+            .dict()
+            .token_text(user)
             .as_ref()
             .and_then(|text| text.as_str()),
         Some("词")
     );
     for (library, token, text) in [(1, system, "你"), (7, user, "词")] {
-        assert!(dict.unload_library(library));
-        assert_eq!(dict.token_text(token), None);
-        assert!(dict.load_library(library));
+        assert!(runtime.unload_library(library));
+        assert_eq!(runtime.dict().token_text(token), None);
+        assert!(runtime.load_library(library));
         assert_eq!(
-            dict.token_text(token)
+            runtime
+                .dict()
+                .token_text(token)
                 .as_ref()
                 .and_then(|text| text.as_str()),
             Some(text)
         );
     }
-    assert_eq!(dict.token_text(0), None);
+    assert_eq!(runtime.dict().token_text(0), None);
     for words in [
         vec![0x7532, 0, 0x8000_0000],
         vec![0xd800, 0x110000],
         vec![0x8000_0000],
     ] {
         let text = oxpinyin_core::PhraseText::from_stored_parts(words.clone(), words.len());
-        let token = store
+        let token = runtime
+            .user_store_mut()
+            .unwrap()
             .add_phrase(&text, &vec![keys[0]; words.len()], Some(0))
             .expect("stored user words");
-        let actual = dict.token_text(token);
+        let actual = runtime.dict().token_text(token);
         let expected = oxpinyin_core::PhraseText::from_words(words);
         assert_eq!(actual, expected);
         if let (Some(actual), Some(expected)) = (actual, expected) {
@@ -98,31 +114,46 @@ fn token_text_reads_live_items_and_obeys_library_visibility() {
 
 #[test]
 fn narrow_token_reads_preserve_item_order_and_visibility() {
-    let runtime = Runtime::open(&w3_dir(), None).expect("runtime");
-    let dict = runtime.dict();
-    let mut store = runtime.user_store().expect("transient user store");
-    let system = dict.system().tokens_for_text("你").expect("lookup")[0];
-    let packed = |token, nth| {
-        let reading = dict.token_nth_pronunciation(token, nth).expect("item");
+    let mut runtime = Runtime::open(&w3_dir(), None).expect("runtime");
+    let system = runtime
+        .dict()
+        .system()
+        .tokens_for_text("你")
+        .expect("lookup")[0];
+    let packed = |runtime: &Runtime, token, nth| {
+        let reading = runtime
+            .dict()
+            .token_nth_pronunciation(token, nth)
+            .expect("item");
         assert_eq!(reading.phrase_length, 1);
         reading.keys
     };
-    let original = packed(system, 0).expect("system reading");
-    assert!(dict.token_exists(system));
-    assert_eq!(packed(system, usize::MAX), None);
+    let original = packed(&runtime, system, 0).expect("system reading");
+    assert!(runtime.dict().token_exists(system));
+    assert_eq!(packed(&runtime, system, usize::MAX), None);
     let ni = SyllableKey::from_text("ni").unwrap();
     let keys = [oxpinyin_user::toned_key(ni.index(), 3).unwrap()];
-    store
+    runtime
+        .user_store_mut()
+        .unwrap()
         .add_system_phrase_in(1, Some(system), &"你".into(), &keys, Some(5))
         .expect("override");
-    assert_eq!(packed(system, 0).as_ref(), Some(&original));
+    assert_eq!(packed(&runtime, system, 0).as_ref(), Some(&original));
     // Descending tones make insertion order differ from table-key order.
-    let user = store.add_phrase(&"词".into(), &keys, Some(5)).unwrap();
+    let user = runtime
+        .user_store_mut()
+        .unwrap()
+        .add_phrase(&"词".into(), &keys, Some(5))
+        .unwrap();
     let second = [oxpinyin_user::toned_key(ni.index(), 1).unwrap()];
-    store.add_phrase(&"词".into(), &second, Some(9)).unwrap();
+    runtime
+        .user_store_mut()
+        .unwrap()
+        .add_phrase(&"词".into(), &second, Some(9))
+        .unwrap();
     for (nth, tone) in [(0, 3), (1, 1)] {
         assert_eq!(
-            packed(user, nth),
+            packed(&runtime, user, nth),
             Some(vec![
                 oxpinyin_core::ChewingKey::from_pinyin("ni")
                     .unwrap()
@@ -131,20 +162,20 @@ fn narrow_token_reads_preserve_item_order_and_visibility() {
             ])
         );
     }
-    assert_eq!(dict.token_pronunciation_count(user), Some(2));
-    assert_eq!(packed(user, 2), None);
+    assert_eq!(runtime.dict().token_pronunciation_count(user), Some(2));
+    assert_eq!(packed(&runtime, user, 2), None);
     for (library, token) in [(1, system), (7, user)] {
-        assert!(dict.token_exists(token));
-        assert!(dict.unload_library(library));
-        assert!(!dict.token_exists(token));
-        assert!(dict.token_nth_pronunciation(token, 0).is_none());
-        assert_eq!(dict.token_pronunciation_count(token), None);
-        assert!(dict.load_library(library));
-        assert!(dict.token_exists(token));
+        assert!(runtime.dict().token_exists(token));
+        assert!(runtime.unload_library(library));
+        assert!(!runtime.dict().token_exists(token));
+        assert!(runtime.dict().token_nth_pronunciation(token, 0).is_none());
+        assert_eq!(runtime.dict().token_pronunciation_count(token), None);
+        assert!(runtime.load_library(library));
+        assert!(runtime.dict().token_exists(token));
     }
     for token in [0, 0x01ff_ffff, 0x07ff_ffff, u32::MAX] {
-        assert!(!dict.token_exists(token));
-        assert!(dict.token_nth_pronunciation(token, 0).is_none());
+        assert!(!runtime.dict().token_exists(token));
+        assert!(runtime.dict().token_nth_pronunciation(token, 0).is_none());
     }
 }
 
@@ -152,14 +183,14 @@ fn narrow_token_reads_preserve_item_order_and_visibility() {
 fn trellis_records_filter_user_tones_and_refresh_after_import() {
     let tmp = scratch_dir("oxpinyin-trellis-records-");
     let dir = tmp.path().to_path_buf();
-    let runtime = Runtime::open(&w3_dir(), Some(&dir)).expect("runtime");
-    let dict = runtime.dict();
+    let mut runtime = Runtime::open(&w3_dir(), Some(&dir)).expect("runtime");
     let syllables = [
         SyllableKey::from_text("ni").unwrap(),
         SyllableKey::from_text("hao").unwrap(),
     ];
     assert!(
-        !dict
+        !runtime
+            .dict()
             .trellis_records(&syllables, &[3, 3])
             .unwrap()
             .iter()
@@ -170,11 +201,11 @@ fn trellis_records_filter_user_tones_and_refresh_after_import() {
         .map(|key| oxpinyin_user::toned_key(key.index(), 3).unwrap())
         .collect();
     let token = runtime
-        .user_store()
+        .user_store_mut()
         .unwrap()
         .add_phrase(&"你鎄".into(), &keys, Some(5))
         .unwrap();
-    let records = dict.trellis_records(&syllables, &[3, 3]).unwrap();
+    let records = runtime.dict().trellis_records(&syllables, &[3, 3]).unwrap();
     assert_eq!(
         records
             .iter()
@@ -183,13 +214,17 @@ fn trellis_records_filter_user_tones_and_refresh_after_import() {
         1
     );
     assert!(
-        dict.trellis_records(&syllables, &[1, 3])
+        runtime
+            .dict()
+            .trellis_records(&syllables, &[1, 3])
             .unwrap()
             .iter()
             .all(|entry| entry.token().value() != token)
     );
     assert_eq!(
-        dict.lookup(&syllables)
+        runtime
+            .dict()
+            .lookup(&syllables)
             .unwrap()
             .iter()
             .filter(|entry| entry.token().value() == token)
@@ -197,7 +232,6 @@ fn trellis_records_filter_user_tones_and_refresh_after_import() {
         1
     );
     drop(runtime);
-    drop(dict);
     tmp.close().expect("cleanup");
 }
 
@@ -212,9 +246,13 @@ fn sends_and_syncs() {
 fn opens_the_w3_fixture_and_decodes_nihao() {
     let runtime = Runtime::open(&w3_dir(), None).expect("the fixture dir opens");
     let mut session = runtime.new_session(&EmptyConfigSource).expect("session");
-    let outcome = session.type_pinyin("nihao").expect("batch typing");
+    let outcome = runtime
+        .session(&mut session)
+        .type_pinyin("nihao")
+        .expect("batch typing");
     assert_eq!(outcome, KeyOutcome::Consumed);
-    let first = session
+    let first = runtime
+        .session(&mut session)
         .candidates()
         .get(0)
         .expect("nihao has candidates in the fixture")
@@ -222,8 +260,12 @@ fn opens_the_w3_fixture_and_decodes_nihao() {
         .to_owned();
     assert_eq!(first, "你好");
 
-    session.guess_sentence().expect("sentence guess");
-    let best = session.sentence_text(0).expect("n-best row 0");
+    runtime
+        .session(&mut session)
+        .guess_sentence()
+        .expect("sentence guess");
+    let read = runtime.session(&mut session);
+    let best = read.sentence_text(0).expect("n-best row 0");
     assert_eq!(best, "你好");
 }
 
@@ -285,9 +327,8 @@ fn open_reads_no_records_beyond_the_handles() {
     // The fixture opens with real counts straight from the chunk files:
     // no interpolation text, no fixture mode.
     let runtime = Runtime::open(&w3_dir(), None).expect("open");
-    let lm = runtime.lm();
-    assert!(LanguageModel::has_real_unigrams(&lm));
-    let total = LanguageModel::unigram_total(&lm)
+    assert!(LanguageModel::has_real_unigrams(&runtime.lm()));
+    let total = LanguageModel::unigram_total(&runtime.lm())
         .expect("query")
         .expect("real unigrams");
     assert!(total > 0, "the mini set carries \\1-gram counts");
@@ -298,14 +339,23 @@ fn open_reads_no_records_beyond_the_handles() {
 fn selection_advances_and_reset_clears_the_chosen_text() {
     let runtime = Runtime::open(&w3_dir(), None).expect("open");
     let mut session = runtime.new_session(&EmptyConfigSource).expect("session");
-    session.type_pinyin("nihao").expect("typing");
-    let advanced = session.select(0).expect("first candidate selects");
+    runtime
+        .session(&mut session)
+        .type_pinyin("nihao")
+        .expect("typing");
+    let advanced = runtime
+        .session(&mut session)
+        .select(0)
+        .expect("first candidate selects");
     assert_eq!(advanced, Selection::Completed);
-    assert_eq!(session.selected_text(), "你好");
-    assert_eq!(session.composition_offset(), "nihao".len());
-    session.reset();
-    assert!(!session.is_composing());
-    assert!(session.selected_text().is_empty());
+    assert_eq!(runtime.session(&mut session).selected_text(), "你好");
+    assert_eq!(
+        runtime.session(&mut session).composition_offset(),
+        "nihao".len()
+    );
+    runtime.session(&mut session).reset();
+    assert!(!runtime.session(&mut session).is_composing());
+    assert!(runtime.session(&mut session).selected_text().is_empty());
 }
 
 #[test]
@@ -317,8 +367,7 @@ fn usable_user_dir_feeds_the_merged_lookup_and_overlay() {
     let tmp = scratch_dir("oxpinyin-runtime-user-");
     let dir = tmp.path().to_path_buf();
 
-    let runtime = Runtime::open(&w3_dir(), Some(&dir)).expect("open");
-    let mut store = runtime.user_store().expect("usable user dir opens a store");
+    let mut runtime = Runtime::open(&w3_dir(), Some(&dir)).expect("open");
     let syllables: Vec<SyllableKey> = ["ni", "hao"]
         .iter()
         .map(|s| SyllableKey::from_text(s).expect("fixture key"))
@@ -331,18 +380,20 @@ fn usable_user_dir_feeds_the_merged_lookup_and_overlay() {
     // Two scalars for two keys; the pre-add probe proves this phrase
     // arrives from the user layer, not the fixture tables.
     let phrase = "你鎄";
-    let merged = || runtime.dict().lookup(&syllables).expect("merged lookup");
+    let merged = |runtime: &Runtime| runtime.dict().lookup(&syllables).expect("merged lookup");
     assert!(
-        !merged().iter().any(|entry| entry.text() == phrase),
+        !merged(&runtime).iter().any(|entry| entry.text() == phrase),
         "fixture already carries the probe phrase"
     );
 
-    let token = store
+    let token = runtime
+        .user_store_mut()
+        .unwrap()
         .add_phrase(&oxpinyin_core::PhraseText::from(phrase), &keys, None)
         .expect("learn it");
 
     // Dictionary seam: the merged lookup returns the learned phrase.
-    let entries = merged();
+    let entries = merged(&runtime);
     assert!(
         entries.iter().any(|entry| entry.text() == phrase),
         "learned phrase missing from merged lookup: {:?}",
@@ -355,14 +406,24 @@ fn usable_user_dir_feeds_the_merged_lookup_and_overlay() {
     // Language-model seam: user counts must reach the overlay — the
     // merged answer and the LM total must move by exactly the store's
     // own delta.
-    let store_before = store.unigram_total().expect("store total");
+    let store_before = runtime
+        .user_store_mut()
+        .unwrap()
+        .unigram_total()
+        .expect("store total");
     // Capture the overlay total *before* the observation so the branch
     // below measures the delta the observation causes.
     let lm_before = LanguageModel::unigram_total(&runtime.lm()).expect("total query");
-    store
+    runtime
+        .user_store_mut()
+        .unwrap()
         .observe_selection(SENTENCE_START, FIRST_USER_TOKEN)
         .expect("observe a selection");
-    let store_after = store.unigram_total().expect("store total");
+    let store_after = runtime
+        .user_store_mut()
+        .unwrap()
+        .unigram_total()
+        .expect("store total");
     assert!(
         store_after > store_before,
         "observing must grow the store's unigram total: {store_before} -> {store_after}"
@@ -380,8 +441,6 @@ fn usable_user_dir_feeds_the_merged_lookup_and_overlay() {
         store_after - store_before,
         "LM total must absorb exactly the store's delta"
     );
-
-    drop(store);
 }
 
 /// A regular file as the user dir cannot hold `user.conf`: the pin's
@@ -404,9 +463,8 @@ fn regular_file_as_user_dir_keeps_user_state() {
     if let Err(error) = &runtime {
         panic!("expected open to succeed over a file user dir: {error}");
     }
-    let runtime = runtime.expect("open");
-    let store = runtime.user_store().expect("user state");
-    assert!(store.has_user_directory());
+    let mut runtime = runtime.expect("open");
+    assert!(runtime.user_store_mut().unwrap().has_user_directory());
     drop(runtime);
     marker.close().expect("cleanup temp file");
 }
@@ -417,17 +475,15 @@ fn no_user_path_means_transient_user_state() {
     // `m_user_dir`). The empty path is a different argument — the
     // working directory, as the pin's `""` is — and writes there, so it
     // has an executable of its own: `tests/empty_user_dir.rs`.
-    let runtime = Runtime::open(&w3_dir(), None).expect("open");
-    let store = runtime.user_store().expect("transient store");
-    assert!(!store.has_user_directory());
+    let mut runtime = Runtime::open(&w3_dir(), None).expect("open");
+    assert!(!runtime.user_store_mut().unwrap().has_user_directory());
 }
 
 #[test]
 fn addon_unigram_totals_stay_none_until_a_library_loads() {
-    let runtime = Runtime::open(&w3_dir(), None).expect("open");
-    let lm = runtime.lm();
+    let mut runtime = Runtime::open(&w3_dir(), None).expect("open");
     assert_eq!(
-        LanguageModel::addon_unigram_total(&lm).expect("infallible query"),
+        LanguageModel::addon_unigram_total(&runtime.lm()).expect("infallible query"),
         None,
         "no addon library is loaded"
     );
@@ -437,7 +493,7 @@ fn addon_unigram_totals_stay_none_until_a_library_loads() {
     assert!(runtime.load_addon(index, &w3_dir()));
     assert!(!runtime.load_addon(index, &w3_dir()));
     assert!(
-        LanguageModel::addon_unigram_total(&lm)
+        LanguageModel::addon_unigram_total(&runtime.lm())
             .expect("infallible query")
             .is_some(),
         "the loaded addon library owns items"
@@ -459,8 +515,7 @@ fn phrase_prefix_exists_survives_the_gbk_unload_and_the_reload_restores_the_fast
     // regress with the mask armed, and the dead-end guarantee
     // `nbest::widen_probe` needs for termination must survive both
     // branches (`mask == 0` fast path and the visibility-filtered probe).
-    let runtime = Runtime::open(&w3_dir(), None).expect("open");
-    let dict = runtime.dict();
+    let mut runtime = Runtime::open(&w3_dir(), None).expect("open");
 
     let ni_hao: Vec<SyllableKey> = ["ni", "hao"]
         .iter()
@@ -474,9 +529,9 @@ fn phrase_prefix_exists_survives_the_gbk_unload_and_the_reload_restores_the_fast
     // Baseline (mask clear, fast path): `ni` prefixes `ni,hao`, the
     // full sequence is a stored phrase, and a dead-end sequence
     // reports no continuation.
-    assert!(dict.phrase_prefix_exists(&ni_hao[..1]).unwrap());
-    assert!(dict.phrase_prefix_exists(&ni_hao[..]).unwrap());
-    assert!(!dict.phrase_prefix_exists(&dead_end).unwrap());
+    assert!(runtime.dict().phrase_prefix_exists(&ni_hao[..1]).unwrap());
+    assert!(runtime.dict().phrase_prefix_exists(&ni_hao[..]).unwrap());
+    assert!(!runtime.dict().phrase_prefix_exists(&dead_end).unwrap());
 
     // Arm the visibility mask by unloading GBK. Answers stay `true`
     // for `ni,hao` because every mini-fixture row that carries GBK
@@ -484,24 +539,23 @@ fn phrase_prefix_exists_survives_the_gbk_unload_and_the_reload_restores_the_fast
     // a surviving entry. The dead-end sequence must still answer
     // `false`, so the widen probe still terminates.
     assert!(runtime.unload_library(2), "first GBK unload arms the mask");
-    assert!(dict.phrase_prefix_exists(&ni_hao[..1]).unwrap());
-    assert!(dict.phrase_prefix_exists(&ni_hao[..]).unwrap());
-    assert!(!dict.phrase_prefix_exists(&dead_end).unwrap());
+    assert!(runtime.dict().phrase_prefix_exists(&ni_hao[..1]).unwrap());
+    assert!(runtime.dict().phrase_prefix_exists(&ni_hao[..]).unwrap());
+    assert!(!runtime.dict().phrase_prefix_exists(&dead_end).unwrap());
 
     // Reload restores the plain probe's fast path.
     assert!(runtime.load_library(2), "reload clears the mask");
-    assert!(dict.phrase_prefix_exists(&ni_hao[..1]).unwrap());
-    assert!(dict.phrase_prefix_exists(&ni_hao[..]).unwrap());
-    assert!(!dict.phrase_prefix_exists(&dead_end).unwrap());
+    assert!(runtime.dict().phrase_prefix_exists(&ni_hao[..1]).unwrap());
+    assert!(runtime.dict().phrase_prefix_exists(&ni_hao[..]).unwrap());
+    assert!(!runtime.dict().phrase_prefix_exists(&dead_end).unwrap());
 }
 
 #[test]
 fn rejected_unigram_add_keeps_item_and_library_counts_but_moves_facade_total() {
-    let runtime = Runtime::open(&w3_dir(), None).expect("open");
-    let dict = runtime.dict();
-    let store = runtime.user_store().expect("store");
+    let mut runtime = Runtime::open(&w3_dir(), None).expect("open");
     let before = runtime.lm().amplified_total() as u32;
-    let library = dict
+    let read = runtime.dict();
+    let library = read
         .system()
         .libraries()
         .library(0x0100_0000)
@@ -509,50 +563,65 @@ fn rejected_unigram_add_keeps_item_and_library_counts_but_moves_facade_total() {
     let tokens: Vec<_> = library
         .token_range()
         .map(|local| 0x0100_0000 | local)
-        .filter(|&token| dict.system_unigram_count(token).is_some())
+        .filter(|&token| runtime.dict().system_unigram_count(token).is_some())
         .take(2)
         .collect();
     assert_eq!(tokens.len(), 2);
     let remaining = u32::MAX - library.total_freq();
-    assert!(dict.add_unigram_delta(tokens[0], u64::from(remaining)));
-    assert_eq!(dict.unigram_delta(tokens[0]), None);
+    assert!(runtime.add_unigram_delta(tokens[0], u64::from(remaining)));
+    assert_eq!(runtime.dict().unigram_delta(tokens[0]), None);
     assert_eq!(
-        store.unigram_delta(tokens[0]).unwrap(),
+        runtime
+            .user_store_mut()
+            .unwrap()
+            .unigram_delta(tokens[0])
+            .unwrap(),
         u64::from(remaining)
     );
-    assert!(!dict.add_unigram_delta(tokens[1], 1));
-    assert_eq!(store.unigram_delta(tokens[1]).unwrap(), 0);
-    assert!(!dict.add_unigram_delta(tokens[0], 1));
-    assert_eq!(dict.unigram_delta(tokens[0]), None);
+    assert!(!runtime.add_unigram_delta(tokens[1], 1));
     assert_eq!(
-        store.unigram_delta(tokens[0]).unwrap(),
+        runtime
+            .user_store_mut()
+            .unwrap()
+            .unigram_delta(tokens[1])
+            .unwrap(),
+        0
+    );
+    assert!(!runtime.add_unigram_delta(tokens[0], 1));
+    assert_eq!(runtime.dict().unigram_delta(tokens[0]), None);
+    assert_eq!(
+        runtime
+            .user_store_mut()
+            .unwrap()
+            .unigram_delta(tokens[0])
+            .unwrap(),
         u64::from(remaining)
     );
     assert_eq!(
         (runtime.lm().amplified_total() as u32).wrapping_sub(before),
         remaining + 2
     );
-    assert!(dict.add_unigram_delta(tokens[1], 0));
+    assert!(runtime.add_unigram_delta(tokens[1], 0));
 }
 
 /// The facade total is a `guint32` that wraps (`m_total_freq += delta`,
 /// `phrase_index.h:633`), whether or not the item accepts the delta.
 #[test]
 fn the_facade_total_delta_wraps_like_a_guint32() {
-    let runtime = Runtime::open(&w3_dir(), None).expect("open");
-    let dict = runtime.dict();
+    let mut runtime = Runtime::open(&w3_dir(), None).expect("open");
     let before = runtime.lm().amplified_total() as u32;
-    let token = dict
+    let token = runtime
+        .dict()
         .system()
         .libraries()
         .library(0x0100_0000)
         .expect("library 1")
         .token_range()
         .map(|local| 0x0100_0000 | local)
-        .find(|&token| dict.system_unigram_count(token).is_some())
+        .find(|&token| runtime.dict().system_unigram_count(token).is_some())
         .expect("a token");
-    let _ = dict.add_unigram_delta(token, u64::from(u32::MAX));
-    let _ = dict.add_unigram_delta(token, 3);
+    let _ = runtime.add_unigram_delta(token, u64::from(u32::MAX));
+    let _ = runtime.add_unigram_delta(token, 3);
     assert_eq!(
         (runtime.lm().amplified_total() as u32).wrapping_sub(before),
         2
@@ -564,66 +633,101 @@ fn fresh_nbest_step_observes_training_store_writes_and_mask_out() {
     use oxpinyin_core::NbestStepRow;
     let tmp = scratch_dir("oxpinyin-nbest-step-");
     let dir = tmp.path().to_path_buf();
-    let runtime = Runtime::open(&w3_dir(), Some(&dir)).unwrap();
-    let mut store = runtime.user_store().unwrap();
+    let mut runtime = Runtime::open(&w3_dir(), Some(&dir)).unwrap();
     let keys: Vec<_> = ["ni", "hao"]
         .into_iter()
         .map(|text| SyllableKey::from_text(text).unwrap().index() as PinyinKey)
         .collect();
-    let token = PhraseToken::new(store.add_phrase(&"你鎄".into(), &keys, Some(5)).unwrap());
+    let token = PhraseToken::new(
+        runtime
+            .user_store_mut()
+            .unwrap()
+            .add_phrase(&"你鎄".into(), &keys, Some(5))
+            .unwrap(),
+    );
     // A second successor keeps count/total from remaining exactly 1 when
     // the tested count changes, so a stale row cannot pass by normalization.
-    let other = store.add_phrase(&"你鎬".into(), &keys, Some(5)).unwrap();
-    store.set_bigram_count(SENTENCE_START, other, 1000).unwrap();
+    let other = runtime
+        .user_store_mut()
+        .unwrap()
+        .add_phrase(&"你鎬".into(), &keys, Some(5))
+        .unwrap();
+    runtime
+        .user_store_mut()
+        .unwrap()
+        .set_bigram_count(SENTENCE_START, other, 1000)
+        .unwrap();
     let prev = PhraseToken::new(SENTENCE_START);
-    let lm = runtime.lm();
-    let fresh = || {
-        let actual = lm
+    let fresh = |runtime: &Runtime| {
+        let actual = runtime
+            .lm()
             .nbest_step_costs_in_row(&prev, &token, &mut NbestStepRow::default())
             .unwrap();
-        assert_eq!(actual, lm.nbest_step_costs(&prev, &token).unwrap());
+        assert_eq!(
+            actual,
+            runtime.lm().nbest_step_costs(&prev, &token).unwrap()
+        );
         actual
     };
-    let before = fresh();
-    store
+    let before = fresh(&runtime);
+    runtime
+        .user_store_mut()
+        .unwrap()
         .observe_selection(SENTENCE_START, token.value())
         .unwrap();
-    let trained = fresh();
+    let trained = fresh(&runtime);
     assert_ne!(trained, before);
-    store
+    runtime
+        .user_store_mut()
+        .unwrap()
         .set_bigram_count(SENTENCE_START, token.value(), 1000)
         .unwrap();
-    let written = fresh();
+    let written = fresh(&runtime);
     assert_ne!(written, trained);
-    store.mask_out(u32::MAX, token.value()).unwrap();
-    let masked = fresh();
+    runtime
+        .user_store_mut()
+        .unwrap()
+        .mask_out(u32::MAX, token.value())
+        .unwrap();
+    let masked = fresh(&runtime);
     assert_ne!(masked, written);
-    drop(lm);
-    drop(store);
     drop(runtime);
     tmp.close().unwrap();
 }
 
 #[test]
-fn cached_nbest_row_observes_a_cloned_stores_committed_write() {
+fn cached_nbest_row_observes_a_reborrowed_stores_committed_write() {
     use oxpinyin_core::{NbestStepRow, NbestSuccessors};
     let tmp = scratch_dir("oxpinyin-nbest-snapshot-");
     let dir = tmp.path().to_path_buf();
-    let runtime = Runtime::open(&w3_dir(), Some(&dir)).unwrap();
-    let mut store = runtime.user_store().unwrap();
+    let mut runtime = Runtime::open(&w3_dir(), Some(&dir)).unwrap();
     let keys: Vec<_> = ["ni", "hao"]
         .into_iter()
         .map(|text| SyllableKey::from_text(text).unwrap().index() as PinyinKey)
         .collect();
-    let token = PhraseToken::new(store.add_phrase(&"你鎄".into(), &keys, Some(5)).unwrap());
-    let other = store.add_phrase(&"你鎬".into(), &keys, Some(5)).unwrap();
-    store.set_bigram_count(SENTENCE_START, other, 1000).unwrap();
+    let token = PhraseToken::new(
+        runtime
+            .user_store_mut()
+            .unwrap()
+            .add_phrase(&"你鎄".into(), &keys, Some(5))
+            .unwrap(),
+    );
+    let other = runtime
+        .user_store_mut()
+        .unwrap()
+        .add_phrase(&"你鎬".into(), &keys, Some(5))
+        .unwrap();
+    runtime
+        .user_store_mut()
+        .unwrap()
+        .set_bigram_count(SENTENCE_START, other, 1000)
+        .unwrap();
     let prev = PhraseToken::new(SENTENCE_START);
-    let lm = runtime.lm();
     let mut row = NbestStepRow::default();
     // The step's merged row: whether it carries `successor`, and the item
     // costs of `token` read from it.
-    let carries = |row: &mut NbestStepRow, successor: u32| match lm
+    let carries = |runtime: &Runtime, row: &mut NbestStepRow, successor: u32| match runtime
+        .lm()
         .nbest_successors_in_row(&prev, row)
         .unwrap()
         .unwrap()
@@ -635,47 +739,58 @@ fn cached_nbest_row_observes_a_cloned_stores_committed_write() {
         }
         NbestSuccessors::Miss => false,
     };
-    let costs = |row: &mut NbestStepRow| {
-        let item = match lm.nbest_successors_in_row(&prev, row).unwrap().unwrap() {
+    let costs = |runtime: &Runtime, row: &mut NbestStepRow| {
+        let item = match runtime
+            .lm()
+            .nbest_successors_in_row(&prev, row)
+            .unwrap()
+            .unwrap()
+        {
             NbestSuccessors::Row(gram) => gram
                 .get_freq(token.value())
                 .unwrap()
                 .map(|freq| (freq, gram.total().unwrap())),
             NbestSuccessors::Miss => None,
         };
-        lm.nbest_item_costs_in_row(&prev, &token, item, row)
+        runtime
+            .lm()
+            .nbest_item_costs_in_row(&prev, &token, item, row)
             .unwrap()
     };
-    let before = costs(&mut row);
-    assert_eq!(before, lm.nbest_step_costs(&prev, &token).unwrap());
-    assert!(carries(&mut row, other));
-    // This is a deterministic concurrent interleaving: a different thread
-    // commits after the first candidate populated this step's row, before
-    // the next candidate reads its unigram deltas. The row must not retain
-    // the old counts while scoring with the new phrase-index total.
-    let mut writer = store.clone();
-    std::thread::spawn(move || {
-        writer
-            .observe_selection(SENTENCE_START, token.value())
+    let before = costs(&runtime, &mut row);
+    assert_eq!(
+        before,
+        runtime.lm().nbest_step_costs(&prev, &token).unwrap()
+    );
+    assert!(carries(&runtime, &mut row, other));
+    // The cached query row survives an exclusive write operation; no
+    // dictionary/model reader is retained while the owner changes.
+    std::thread::scope(|scope| {
+        let writer = runtime.user_store_mut().unwrap();
+        scope
+            .spawn(move || {
+                writer
+                    .observe_selection(SENTENCE_START, token.value())
+                    .unwrap()
+            })
+            .join()
             .unwrap();
-        writer
-    })
-    .join()
-    .unwrap();
-    let trained = lm.nbest_step_costs(&prev, &token).unwrap();
+    });
+    let trained = runtime.lm().nbest_step_costs(&prev, &token).unwrap();
     assert_ne!(trained, before);
-    assert!(carries(&mut row, token.value()));
-    assert_eq!(costs(&mut row), trained);
-    let mut writer = store.clone();
-    std::thread::spawn(move || writer.mask_out(u32::MAX, other).unwrap())
-        .join()
-        .unwrap();
-    let forgotten = lm.nbest_step_costs(&prev, &token).unwrap();
+    assert!(carries(&runtime, &mut row, token.value()));
+    assert_eq!(costs(&runtime, &mut row), trained);
+    std::thread::scope(|scope| {
+        let writer = runtime.user_store_mut().unwrap();
+        scope
+            .spawn(move || writer.mask_out(u32::MAX, other).unwrap())
+            .join()
+            .unwrap();
+    });
+    let forgotten = runtime.lm().nbest_step_costs(&prev, &token).unwrap();
     assert_ne!(forgotten, trained);
-    assert!(!carries(&mut row, other));
-    assert_eq!(costs(&mut row), forgotten);
-    drop(lm);
-    drop(store);
+    assert!(!carries(&runtime, &mut row, other));
+    assert_eq!(costs(&runtime, &mut row), forgotten);
     drop(runtime);
     tmp.close().unwrap();
 }
@@ -688,8 +803,7 @@ fn cached_nbest_row_observes_a_cloned_stores_committed_write() {
 fn trellis_ranges_continued_matches_the_ranges_and_prefix_pair() {
     let tmp = scratch_dir("oxpinyin-trellis-fused-");
     let dir = tmp.path().to_path_buf();
-    let runtime = Runtime::open(&w3_dir(), Some(&dir)).expect("runtime");
-    let dict = runtime.dict();
+    let mut runtime = Runtime::open(&w3_dir(), Some(&dir)).expect("runtime");
     let texts: [&[&str]; 9] = [
         &["ni"],
         &["ni", "hao"],
@@ -712,17 +826,21 @@ fn trellis_ranges_continued_matches_the_ranges_and_prefix_pair() {
         .collect();
     assert!(paths.len() >= 8, "the key paths parse: {}", paths.len());
     let seen = std::cell::Cell::new((0_u32, 0_u32, 0_u32));
-    let compare = |phase: &str| {
+    let compare = |runtime: &Runtime, phase: &str| {
         // One value buffer for every fused search, as the decode loop
         // passes it.
         let mut scratch = Vec::new();
         for path in &paths {
             for tones in tones {
                 let mut pair = oxpinyin_core::PhraseIndexRanges::new();
-                dict.trellis_ranges(path, tones, &mut pair).unwrap();
-                let continued = dict.phrase_prefix_exists(path).unwrap();
+                runtime
+                    .dict()
+                    .trellis_ranges(path, tones, &mut pair)
+                    .unwrap();
+                let continued = runtime.dict().phrase_prefix_exists(path).unwrap();
                 let mut fused = oxpinyin_core::PhraseIndexRanges::new();
-                let fused_continued = dict
+                let fused_continued = runtime
+                    .dict()
                     .trellis_ranges_continued(path, tones, &mut fused, &mut scratch)
                     .unwrap();
                 assert_eq!(
@@ -743,7 +861,7 @@ fn trellis_ranges_continued_matches_the_ranges_and_prefix_pair() {
             }
         }
     };
-    compare("system only");
+    compare(&runtime, "system only");
     let user = |texts: &[&str]| -> Vec<_> {
         texts
             .iter()
@@ -752,21 +870,22 @@ fn trellis_ranges_continued_matches_the_ranges_and_prefix_pair() {
             })
             .collect()
     };
-    let mut store = runtime.user_store().unwrap();
-    store
+    runtime
+        .user_store_mut()
+        .unwrap()
         .add_phrase(&"你鎄".into(), &user(&["ni", "hao"]), Some(5))
         .unwrap();
-    store
+    runtime
+        .user_store_mut()
+        .unwrap()
         .add_phrase(&"坐坐坐".into(), &user(&["zuo", "zuo", "zuo"]), Some(5))
         .unwrap();
-    compare("with user phrases");
+    compare(&runtime, "with user phrases");
     assert!(runtime.unload_library(2));
-    compare("library 2 unloaded");
+    compare(&runtime, "library 2 unloaded");
     let (ranged, yes, no) = seen.get();
     assert!(ranged > 0 && yes > 0 && no > 0, "{ranged} {yes} {no}");
     drop(runtime);
-    drop(dict);
-    drop(store);
     tmp.close().expect("cleanup");
 }
 
@@ -777,28 +896,50 @@ fn trellis_ranges_continued_matches_the_ranges_and_prefix_pair() {
 fn a_store_write_between_guesses_reaches_the_second_guess() {
     let tmp = scratch_dir("oxpinyin-guess-memo-");
     let dir = tmp.path().to_path_buf();
-    let runtime = Runtime::open(&w3_dir(), Some(&dir)).unwrap();
-    let mut store = runtime.user_store().unwrap();
+    let mut runtime = Runtime::open(&w3_dir(), Some(&dir)).unwrap();
     let mut session = runtime.new_session(&EmptyConfigSource).unwrap();
-    session.type_pinyin("nihao").unwrap();
-    let mut guess = || {
-        session.guess_sentence().unwrap();
-        session.sentence_text(0).unwrap().to_owned()
+    runtime.session(&mut session).type_pinyin("nihao").unwrap();
+    let mut guess = |runtime: &Runtime| {
+        runtime.session(&mut session).guess_sentence().unwrap();
+        runtime
+            .session(&mut session)
+            .sentence_text(0)
+            .unwrap()
+            .to_owned()
     };
-    assert_eq!(guess(), "你好");
+    assert_eq!(guess(&runtime), "你好");
 
     let keys: Vec<_> = ["ni", "hao"]
         .into_iter()
         .map(|text| SyllableKey::from_text(text).unwrap().index() as PinyinKey)
         .collect();
-    let token = store.add_phrase(&"你鎄".into(), &keys, Some(5)).unwrap();
-    store.set_bigram_count(SENTENCE_START, token, 1000).unwrap();
-    assert_eq!(guess(), "你鎄", "the second guess prices the added phrase");
+    let token = runtime
+        .user_store_mut()
+        .unwrap()
+        .add_phrase(&"你鎄".into(), &keys, Some(5))
+        .unwrap();
+    runtime
+        .user_store_mut()
+        .unwrap()
+        .set_bigram_count(SENTENCE_START, token, 1000)
+        .unwrap();
+    assert_eq!(
+        guess(&runtime),
+        "你鎄",
+        "the second guess prices the added phrase"
+    );
 
-    store.mask_out(u32::MAX, token).unwrap();
-    assert_eq!(guess(), "你好", "the third guess no longer lists it");
+    runtime
+        .user_store_mut()
+        .unwrap()
+        .mask_out(u32::MAX, token)
+        .unwrap();
+    assert_eq!(
+        guess(&runtime),
+        "你好",
+        "the third guess no longer lists it"
+    );
     drop(session);
-    drop(store);
     drop(runtime);
     tmp.close().unwrap();
 }
@@ -808,23 +949,29 @@ fn a_store_write_between_guesses_reaches_the_second_guess() {
 #[test]
 fn a_path_memo_prices_as_trellis_item_does() {
     let runtime = Runtime::open(&w3_dir(), None).unwrap();
-    let dict = runtime.dict();
     let syllables = [
         SyllableKey::from_text("ni").unwrap(),
         SyllableKey::from_text("hao").unwrap(),
     ];
     let tones = [0, 0];
     let mut ranges = oxpinyin_core::PhraseIndexRanges::new();
-    dict.trellis_ranges(&syllables, &tones, &mut ranges)
+    runtime
+        .dict()
+        .trellis_ranges(&syllables, &tones, &mut ranges)
         .unwrap();
     let tokens: Vec<u32> = ranges.walk_tokens().map(|(token, ())| token).collect();
     assert!(!tokens.is_empty(), "vacuity guard: nihao ranges tokens");
 
     let own = <oxpinyin_runtime::RuntimeDict as Dictionary>::PathMemo::default();
     for token in tokens.iter().copied().chain([0, u32::MAX]) {
-        let expected = dict.trellis_item(&syllables, &tones, token).unwrap();
+        let expected = runtime
+            .dict()
+            .trellis_item(&syllables, &tones, token)
+            .unwrap();
         assert_eq!(
-            dict.trellis_item_on_path(&syllables, &tones, token, &own)
+            runtime
+                .dict()
+                .trellis_item_on_path(&syllables, &tones, token, &own)
                 .unwrap(),
             expected,
             "own memo, token {token:#x}"
@@ -832,7 +979,9 @@ fn a_path_memo_prices_as_trellis_item_does() {
     }
     assert!(
         tokens.iter().any(|&token| {
-            dict.trellis_item(&syllables, &tones, token)
+            runtime
+                .dict()
+                .trellis_item(&syllables, &tones, token)
                 .unwrap()
                 .is_some()
         }),

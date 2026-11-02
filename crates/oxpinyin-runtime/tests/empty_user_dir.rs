@@ -72,9 +72,9 @@ fn empty_user_path_is_the_working_directory_at_each_use() {
 
     // Init: the store opens on the working directory, and libpinyin's
     // check_format writes the raised marker there.
-    let runtime = Runtime::open(&w3_dir(), Some(Path::new(""))).expect("open");
-    let mut store = runtime
-        .user_store()
+    let mut runtime = Runtime::open(&w3_dir(), Some(Path::new(""))).expect("open");
+    let store = runtime
+        .user_store_mut()
         .expect("an empty user path is a user dir, not the absence of one");
     assert_eq!(names(&first), ["user.conf"]);
     assert_eq!(open_counter(&first), 1);
@@ -106,7 +106,6 @@ fn empty_user_path_is_the_working_directory_at_each_use() {
     // Fini is the runtime's own handle dropping: it lowers the counter in
     // the directory that is current now. The first directory keeps the
     // raised one, as the pin's does.
-    drop(store);
     drop(runtime);
     assert_eq!(open_counter(&second), 0);
     assert_eq!(open_counter(&first), 1);
@@ -119,8 +118,8 @@ fn empty_user_path_is_the_working_directory_at_each_use() {
     for stray in strays {
         std::fs::write(stray, b"stale").expect("plant a stray file");
     }
-    let runtime = Runtime::open(&w3_dir(), Some(Path::new(""))).expect("reopen");
-    let store = runtime.user_store().expect("the profile reopens");
+    let mut runtime = Runtime::open(&w3_dir(), Some(Path::new(""))).expect("reopen");
+    let store = runtime.user_store_mut().expect("the profile reopens");
     assert!(
         store
             .token_for_phrase(phrase)
@@ -136,7 +135,6 @@ fn empty_user_path_is_the_working_directory_at_each_use() {
         expected,
         "the saved names and the stray files remain"
     );
-    drop(store);
     drop(runtime);
 
     std::env::set_current_dir(std::env::temp_dir()).expect("leave the scratch dirs");

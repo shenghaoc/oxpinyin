@@ -633,9 +633,8 @@ impl PhraseContent {
 /// One per-library phrase index over a mapped libpinyin `*.bin` chunk
 /// file — the `SubPhraseIndex` of `FacadePhraseIndex`, upstream's
 /// mmap-backed half of the system data.
-#[derive(Clone)]
 pub struct PhraseLibrary {
-    file: std::sync::Arc<map::MappedFile>,
+    file: map::MappedFile,
     /// The payload after the 8-byte chunk header.
     payload: std::ops::Range<usize>,
     /// `SubPhraseIndex::m_total_freq`.
@@ -648,8 +647,8 @@ pub struct PhraseLibrary {
     /// `SubPhraseIndex::load` refused the layout; the save path re-checks
     /// such a library exactly as the pin re-maps it.
     layout_failed: bool,
-    /// Immutable mapped item sum, shared by clones and filled at first compact.
-    item_total: std::sync::Arc<std::sync::OnceLock<u32>>,
+    /// Immutable mapped item sum, filled at first compact.
+    item_total: std::sync::OnceLock<u32>,
 }
 
 impl PhraseLibrary {
@@ -667,15 +666,16 @@ impl PhraseLibrary {
     /// The pin's empty sub-index after `SubPhraseIndex::load` refused the
     /// layout: no mapping, `total_freq` as the pin read it before the
     /// failing check, and `get_range`'s `1..1`.
-    pub(crate) fn empty(total_freq: u32) -> Self {
+    #[must_use]
+    pub fn empty(total_freq: u32) -> Self {
         Self {
-            file: std::sync::Arc::new(map::MappedFile::empty()),
+            file: map::MappedFile::empty(),
             payload: 0..0,
             total_freq,
             offsets: 0..0,
             content: 0..0,
             layout_failed: true,
-            item_total: std::sync::Arc::default(),
+            item_total: std::sync::OnceLock::new(),
         }
     }
 
@@ -770,7 +770,7 @@ impl PhraseLibrary {
         }
 
         Ok(Self {
-            file: std::sync::Arc::new(file),
+            file,
             payload,
             total_freq,
             // load's sub-chunk views: the offset array runs to the
@@ -779,7 +779,7 @@ impl PhraseLibrary {
             offsets: index_one..index_two - 1,
             content: index_two..index_three - 1,
             layout_failed: false,
-            item_total: std::sync::Arc::default(),
+            item_total: std::sync::OnceLock::new(),
         })
     }
 

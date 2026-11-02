@@ -17,10 +17,10 @@ use crate::types::{GChar, PinyinInstance};
 /// >= 1)`) or `:3488` (`abort()` for a cut past two bytes) — and the process
 /// aborts there (register row 63); no matrix is the silent `None`.
 fn render_shared(
-    inst: &crate::state::CapiInstance,
+    inst: &crate::state::CapiInstanceRead<'_>,
     render: impl FnOnce(&SharedMatrix) -> Option<AuxText>,
 ) -> Option<AuxText> {
-    let matrix = SharedMatrix::of(inst)?;
+    let matrix = SharedMatrix::of(&inst.read())?;
     let Some(text) = render(&matrix) else {
         std::process::abort();
     };
@@ -31,8 +31,8 @@ fn render_shared(
 /// matrix, so the matrix walk's aborts (`pinyin.cpp:3311`: a leading `'`
 /// leaves column 0 empty) are looked for on the shared matrix first, and
 /// the process aborts where the pin does (register row 63).
-fn abort_on_full_walk(inst: &crate::state::CapiInstance, cursor: usize) {
-    if SharedMatrix::of(inst).is_some_and(|matrix| matrix.full(cursor).is_none()) {
+fn abort_on_full_walk(inst: &crate::state::CapiInstanceRead<'_>, cursor: usize) {
+    if SharedMatrix::of(&inst.read()).is_some_and(|matrix| matrix.full(cursor).is_none()) {
         std::process::abort();
     }
 }
@@ -236,7 +236,7 @@ fn write_aux(aux_text: *mut *mut GChar, text: Option<AuxText>) -> bool {
 /// Whether the parse placed a key: the pin's matrix is empty otherwise
 /// (`fill_matrix`, `phonetic_key_matrix.cpp:34-38`) and every auxiliary-text
 /// function answers `false` with an empty string.
-fn matrix_has_keys(inst: &crate::state::CapiInstance) -> bool {
+fn matrix_has_keys(inst: &crate::state::CapiInstanceRead<'_>) -> bool {
     inst.core.mode_has_keys().unwrap_or(false)
 }
 
@@ -266,15 +266,15 @@ pub extern "C" fn pinyin_get_full_pinyin_auxiliary_text(
     // Upstream returns false with an allocated empty string when
     // the matrix is empty — no parse, or a parse that placed no key
     // (`pinyin.cpp:3382-3386`).
-    if inst.core.parsed_len == 0 || !matrix_has_keys(inst) {
+    if inst.core.parsed_len == 0 || !matrix_has_keys(&inst.read()) {
         return write_aux(aux_text, None);
     }
     let text = if inst.core.double_parse.is_some() || inst.core.zhuyin_parse.is_some() {
         // A double or chewing parse filled the matrix; the pin renders it
         // all the same (register row 55).
-        render_shared(inst, |m| m.full(cursor))
+        render_shared(&inst.read(), |m| m.full(cursor))
     } else {
-        abort_on_full_walk(inst, cursor);
+        abort_on_full_walk(&inst.read(), cursor);
         Some(inst.core.full_parse.as_ref().map_or_else(
             || {
                 full_aux_text(
@@ -320,13 +320,13 @@ pub extern "C" fn pinyin_get_double_pinyin_auxiliary_text(
     let inst = unsafe { instance_ref(instance) };
     // Upstream returns false with an allocated empty string when
     // the matrix is empty (pinyin.cpp:3442-3445).
-    if !matrix_has_keys(inst) {
+    if !matrix_has_keys(&inst.read()) {
         return write_aux(aux_text, None);
     }
     // The pin renders the shared matrix whichever parser filled it
     // (register row 55): the keys of a double-pinyin parse carry their
     // tone, which the renderer appends after a cut key.
-    let text = render_shared(inst, |m| m.double(cursor));
+    let text = render_shared(&inst.read(), |m| m.double(cursor));
     write_aux(aux_text, text)
 }
 
@@ -354,7 +354,7 @@ pub extern "C" fn pinyin_get_chewing_auxiliary_text(
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
-    if !matrix_has_keys(inst) {
+    if !matrix_has_keys(&inst.read()) {
         return write_aux(aux_text, None);
     }
     let text = match inst.core.zhuyin_parse.as_ref() {
@@ -366,7 +366,7 @@ pub extern "C" fn pinyin_get_chewing_auxiliary_text(
         )),
         // Another parser filled the matrix; the pin renders it all the
         // same (register row 55).
-        None => render_shared(inst, |m| m.chewing(cursor)),
+        None => render_shared(&inst.read(), |m| m.chewing(cursor)),
     };
     write_aux(aux_text, text)
 }

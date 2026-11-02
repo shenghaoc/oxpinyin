@@ -18,11 +18,11 @@ use crate::types::{GChar, PinyinInstance};
 fn parse_more(instance: *mut PinyinInstance, text: &str) -> usize {
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
-    let inst = unsafe { instance_mut(instance) };
+    let mut inst = unsafe { instance_mut(instance) };
     // The parse path clears the candidate snapshot before anything else —
     // main's `begin_parse` did this through `reset_parse_state`; the core
     // seam cannot see this layer's snapshot, so the clear lives here.
-    inst.candidates.clear();
+    inst.state.candidates.clear();
     inst.core.parse_full_more(text)
 }
 
@@ -78,9 +78,9 @@ pub extern "C" fn pinyin_parse_more_double_pinyins(
         oxpinyin_capi_marshal::borrow_c_string!(pinyins),
     );
     // SAFETY: `instance` is non-null (checked above).
-    let inst = unsafe { instance_mut(instance) };
+    let mut inst = unsafe { instance_mut(instance) };
     // Parse-path snapshot clear (main's begin_parse law).
-    inst.candidates.clear();
+    inst.state.candidates.clear();
     inst.core.parse_double_more(&text)
 }
 
@@ -107,9 +107,9 @@ pub extern "C" fn pinyin_parse_more_chewings(
         oxpinyin_capi_marshal::borrow_c_string!(chewings),
     );
     // SAFETY: `instance` is non-null (checked above).
-    let inst = unsafe { instance_mut(instance) };
+    let mut inst = unsafe { instance_mut(instance) };
     // Parse-path snapshot clear (main's begin_parse law).
-    inst.candidates.clear();
+    inst.state.candidates.clear();
     inst.core
         .parse_chewing_more(&text, ToneForwarding::PinFacade)
 }

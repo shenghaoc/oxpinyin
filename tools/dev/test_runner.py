@@ -667,6 +667,19 @@ def _run_tkrzw(backend, sanitizer, *, environment, out, err, tools, host_os, nig
     if result.returncode:
         return native.shell_status(result.returncode)
     print('', file=out, flush=True)
+    if sanitizer == 'address':
+        print('--- C facade handles that outlive their context under AddressSanitizer ---',
+              file=out, flush=True)
+        lifetime = ['cargo', f'+{nightly}', 'test', '--locked', '--target', target,
+                    '-p', 'oxpinyin-capi', '-p', 'oxpinyin-zhuyin-capi',
+                    '--no-default-features', '--features', backend.feature,
+                    '--lib', 'outlives_context']
+        if platform.system() == 'Linux':
+            lifetime = ['setarch', platform.machine(), '-R', *lifetime]
+        result = _launch(tools, lifetime, environment=child, err=err,
+                         stdout=None, stderr=None)
+        if result.returncode:
+            return native.shell_status(result.returncode)
     print("sanitizers: clean (libtkrzw's own internals are NOT instrumented)", file=out, flush=True)
     return 0
 

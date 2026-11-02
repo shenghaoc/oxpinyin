@@ -8,7 +8,7 @@
 
 use super::*;
 
-impl<D, L> Session<D, L>
+impl<D, L, S: std::borrow::Borrow<SessionState>> Session<D, L, S>
 where
     D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
     D::Error: Display,
@@ -231,7 +231,7 @@ where
     /// keeps composing through ([`Session::committed_parse_continues`]).
     /// A pure query over valid state.
     #[must_use]
-    pub const fn selection_committed(&self) -> bool {
+    pub fn selection_committed(&self) -> bool {
         self.record.committed()
     }
 
@@ -306,4 +306,13 @@ where
         }
         offset
     }
+}
+
+impl<D, L, S: std::borrow::BorrowMut<SessionState>> Session<D, L, S>
+where
+    D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+    D::Error: Display,
+    L: LanguageModel<Token = PhraseToken>,
+    L::Error: Display,
+{
 }
