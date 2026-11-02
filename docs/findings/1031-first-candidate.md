@@ -313,6 +313,25 @@ none changes ranking keys, stable ties, flags, file formats or C pointer lifetim
    when the set is needed keep it in `Scratch`, cleared rather than allocated.
    Expected effect: −1 allocation and −`c_w` hash inserts per single-path
    window, the `RandomState` policy unchanged.
+
+   **Measured and dropped.** The windows arrive already in library order, so
+   the stable sort finds one run and moves nothing: on `nihao`, `phrases`,
+   tkrzw it costs 2,863 Ir inclusive for the first candidate. Stable bucket
+   placement with a retained token set (`a8e7b631`, branch
+   `wip/1031-buckets`) measured +44,769 to +45,683 Ir (pinyin) and +47,074 to
+   +47,849 Ir (zhuyin) against base `851a6304`. The cost came from the
+   retained set's rehash as it grew from empty (`reserve_rehash`, 37,848 Ir
+   inclusive, where the per-window set had been allocated at its final size)
+   and from moving every row into a bucket and back (+16,206 Ir exclusive in
+   `order_window_tail`, plus bucket growth and drain). The sort stays
+   required while each key path's lookup appends its system rows and then
+   its user rows (`RuntimeDict::fill_lookup`), so a window that several
+   paths reach interleaves libraries. Removing the sort belongs with item 5:
+   collect each window's rows library by library, as the pin's
+   `FacadeChewingTable2::search` files ranges per library and
+   `_append_items` walks the libraries in order
+   ([facade_chewing_table2.h][pin-facade], [pinyin.cpp:1769–1791][pin-fields]),
+   then drop the sort.
 5. **Unify live phrase fields with the single-mapping transition.** After its
    activation, expose narrow current-item length/frequency/text reads through
    the canonical owner; eliminate base-plus-session-row reconstruction where

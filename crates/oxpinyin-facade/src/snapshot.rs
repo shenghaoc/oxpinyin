@@ -63,15 +63,21 @@ pub struct CandidateSnapshot<R> {
 /// The pointer to `span`'s string inside `text`, or to an empty string
 /// when the span is not of this buffer (which the snapshot's own calls
 /// never produce).
+///
+/// The bounds and the terminator are checked, so a stale or foreign span
+/// never points past the buffer or at an unterminated string. The bytes
+/// before the terminator are not scanned again: [`CandidateSnapshot::intern`]
+/// refused an interior NUL when it wrote them.
 fn span_ptr(text: &[u8], span: TextSpan) -> *const c_char {
     if span == TextSpan::NULL {
         return std::ptr::null();
     }
     let start = span.start as usize;
-    text.get(start..=start.saturating_add(span.len as usize))
-        .and_then(|bytes| CStr::from_bytes_with_nul(bytes).ok())
-        .unwrap_or(c"")
-        .as_ptr()
+    let end = start.saturating_add(span.len as usize);
+    match text.get(start..=end) {
+        Some(bytes) if bytes.last() == Some(&0) => bytes.as_ptr().cast(),
+        _ => c"".as_ptr(),
+    }
 }
 
 impl<R> Default for CandidateSnapshot<R> {
@@ -290,6 +296,30 @@ mod tests {
             b"",
             "a stale span reads as empty"
         );
+    }
+
+    #[test]
+    fn a_span_not_written_here_points_outside_the_buffer() {
+        let in_buffer = |snapshot: &CandidateSnapshot<Row>, span| {
+            snapshot
+                .text
+                .as_ptr_range()
+                .contains(&snapshot.text_ptr(span).cast())
+        };
+        let mut snapshot = CandidateSnapshot::<Row>::new();
+        let held = snapshot.intern("你好".as_bytes()).expect("interned");
+        assert_eq!(snapshot.text_ptr(held), snapshot.text.as_ptr().cast());
+        let unterminated = TextSpan { start: 0, len: 3 };
+        assert!(
+            !in_buffer(&snapshot, unterminated),
+            "no terminator after it"
+        );
+        let past_end = TextSpan { start: 0, len: 100 };
+        assert!(!in_buffer(&snapshot, past_end), "beyond the buffer");
+        assert!(!snapshot.text_ptr(past_end).is_null());
+        snapshot.clear();
+        assert!(!in_buffer(&snapshot, held), "stale after a clear");
+        assert!(snapshot.text_ptr(TextSpan::NULL).is_null());
     }
 
     #[test]

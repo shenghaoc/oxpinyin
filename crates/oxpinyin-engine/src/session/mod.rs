@@ -223,6 +223,16 @@ impl SessionState {
             state: self,
         }
     }
+
+    /// Takes back a window list from [`Session::candidates_at`] or
+    /// [`Session::candidates_ending_at`] that its holder has replaced, so
+    /// the next window is built in its storage. Its rows are dropped here;
+    /// only the capacity is kept.
+    pub fn recycle_candidates(&mut self, list: CandidateList) {
+        let mut items = list.into_items();
+        items.clear();
+        self.scratch.window_items = items;
+    }
 }
 
 impl<D, L> Session<D, L> {
@@ -304,6 +314,13 @@ struct Scratch {
     path: SmallVec<[SyllableKey; 16]>,
     /// Per-window scan batch, addon facade.
     window_addon: Vec<Candidate>,
+    /// Candidate frequencies of the rows being ranked, one per row.
+    frequencies: Vec<u32>,
+    /// The rows' rank keys: sorted with them, then read by the text dedup.
+    rank_keys: Vec<(RankKey, u32)>,
+    /// A window list's storage the facade handed back
+    /// ([`SessionState::recycle_candidates`]); the next window builds in it.
+    window_items: Vec<Candidate>,
 }
 
 // The composition state is decomposed into types that own their own
@@ -1126,19 +1143,21 @@ fn dedup_by_text_keep_first(candidates: &mut Vec<Candidate>) {
 ///
 /// The map holds one index per distinct text, as the keep-first set held one
 /// text: time and space stay linear in the rows.
-fn dedup_ranked_by_text(ranked: &mut Vec<Candidate>, keys: &[RankKey]) {
+///
+/// `keys[i].0` is `ranked[i]`'s key, as [`rank_candidates`] leaves it.
+fn dedup_ranked_by_text(ranked: &mut Vec<Candidate>, keys: &[(RankKey, u32)]) {
     debug_assert_eq!(ranked.len(), keys.len());
     let mut keep = vec![true; ranked.len()];
     {
         let mut survivor: HashMap<&PhraseText, usize> = HashMap::with_capacity(ranked.len());
-        for (index, (key, candidate)) in keys.iter().zip(ranked.iter()).enumerate() {
+        for (index, ((key, _), candidate)) in keys.iter().zip(ranked.iter()).enumerate() {
             match survivor.entry(candidate.text()) {
                 Entry::Vacant(slot) => {
                     slot.insert(index);
                 }
                 Entry::Occupied(mut slot) => {
                     let held = *slot.get();
-                    if key.m_freq > keys[held].m_freq {
+                    if key.m_freq > keys[held].0.m_freq {
                         keep[held] = false;
                         slot.insert(index);
                     } else {
