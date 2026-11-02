@@ -15,7 +15,7 @@
 - **Affected inputs:** double-pinyin and chewing compositions longer than 65535 bytes, on both facades.
 - **Tests:** `contract-diff.py`: MATCH `key-position-past-65535/{double-pinyin,chewing-zhuyin}-crossing-key`; POLICY-ACCEPTED `key-position-past-65535/{double-pinyin,chewing-zhuyin}-past-key`; unit test `key_rest_positions_past_byte_65535_wrap`; mutation `tools/bisection/mutations/1501-saturate-key-rest-positions.patch`.
 - **Prior rulings:** none reversed; the 2026-11-01 UTC `gint16` decision stands.
-- **Evidence:** `just runner contract-diff tkrzw "$PINYIN_ORACLE_PREFIX" <capi.so> <zhuyin.so> -- --cases key-position-past-65535/double-pinyin-past-key,key-position-past-65535/chewing-zhuyin-past-key --observations obs.jsonl`, then `just policy-record docs/findings/1501-guint16-key-positions.md obs.jsonl`.
+- **Evidence:** `just runner contract-diff <cell> "$PINYIN_ORACLE_PREFIX" <capi.so> <zhuyin.so> -- --cases key-position-past-65535/double-pinyin-past-key,key-position-past-65535/chewing-zhuyin-past-key --observations obs.jsonl`, then `just policy-record docs/findings/1501-guint16-key-positions.md obs.jsonl`, independently for bdb, kc and tkrzw with each cell's own prefix, libraries and capture.
 - **Conclusion:** accepted. Maintainer ruling 2026-11-01 UTC (#1501).
 
 ```contract-diff-policy
@@ -50,12 +50,108 @@
             "result.rest 65537[0:1]: pin [false]; subject [true, \"2b00\", true] … (length 7)",
             "… further divergence omitted (4096-byte budget)"
           ]
+        },
+        "bdb": {
+          "pin": {
+            "sha256": "29a61f6185339afada06ac9a00d4a3e25ed6c94128215aae077a9c72c4bdfaa9",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.rest 65537": "456e2e3fa05ee1e2",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "c8bb3574bf974050e6d0ed1a90ce6197a78f5a8d530d325792abbf06bff932a0",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.rest 65537": "5c53850023b08bdc",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.rest 65537[0:1]: pin [false]; subject [true, \"2b00\", true] … (length 7)",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        },
+        "kc": {
+          "pin": {
+            "sha256": "29a61f6185339afada06ac9a00d4a3e25ed6c94128215aae077a9c72c4bdfaa9",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.rest 65537": "456e2e3fa05ee1e2",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "c8bb3574bf974050e6d0ed1a90ce6197a78f5a8d530d325792abbf06bff932a0",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.rest 65537": "5c53850023b08bdc",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.rest 65537[0:1]: pin [false]; subject [true, \"2b00\", true] … (length 7)",
+            "… further divergence omitted (4096-byte budget)"
+          ]
         }
       }
     },
     "key-position-past-65535/double-pinyin-past-key": {
       "cells": {
         "tkrzw": {
+          "pin": {
+            "sha256": "29a61f6185339afada06ac9a00d4a3e25ed6c94128215aae077a9c72c4bdfaa9",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.rest 65537": "456e2e3fa05ee1e2",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "c8bb3574bf974050e6d0ed1a90ce6197a78f5a8d530d325792abbf06bff932a0",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.rest 65537": "5c53850023b08bdc",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.rest 65537[0:1]: pin [false]; subject [true, \"2b00\", true] … (length 7)",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        },
+        "bdb": {
+          "pin": {
+            "sha256": "29a61f6185339afada06ac9a00d4a3e25ed6c94128215aae077a9c72c4bdfaa9",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.rest 65537": "456e2e3fa05ee1e2",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "c8bb3574bf974050e6d0ed1a90ce6197a78f5a8d530d325792abbf06bff932a0",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.rest 65537": "5c53850023b08bdc",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.rest 65537[0:1]: pin [false]; subject [true, \"2b00\", true] … (length 7)",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        },
+        "kc": {
           "pin": {
             "sha256": "29a61f6185339afada06ac9a00d4a3e25ed6c94128215aae077a9c72c4bdfaa9",
             "fields": {

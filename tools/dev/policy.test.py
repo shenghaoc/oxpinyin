@@ -25,8 +25,9 @@ PIN = dict(exit=0, result={'ret': True, 'rows': [[2, 'a'], [2, 'b']], 'logs': []
 SUBJECT = dict(PIN, result={'ret': True, 'rows': [[2, 'b']], 'logs': []})
 
 
-def row(case='family/case', cell='bdb', pin=PIN, subject=SUBJECT, userdir=False, abort=False):
-    return dict(cell=cell, case=case, userdir=userdir, abort=abort, policy_record='rec.md', pin=pin, subject=subject)
+def row(case='family/case', cell='bdb', pin=PIN, subject=SUBJECT, userdir=False, abort=False, fatal=False):
+    return dict(cell=cell, case=case, userdir=userdir, abort=abort, fatal=fatal,
+                policy_record='rec.md', pin=pin, subject=subject)
 
 
 def spec(**overrides):
@@ -142,6 +143,33 @@ class PolicyRecordTests(unittest.TestCase):
         self.capture.write_text('{not json\n')
         status, _, err = self.run_main(str(self.capture))
         self.assertEqual((status, 'not JSON' in err), (1, True))
+
+    def test_fatal_critical_capture_accepts_only_sigtrap_and_keeps_other_abort_rules(self):
+        trapped = dict(PIN, exit=-signal.SIGTRAP, result=None)
+        self.write_rows(row(pin=trapped, abort=True, fatal=True))
+        self.assertEqual(self.run_main(str(self.capture))[0], 0)
+        for parent in (False, True):
+            self.assertEqual(contract_verdict.verdict_for(spec(fatal=True), trapped, SUBJECT, parent,
+                                                          policy_root=self.root, cell='bdb', directory_probe=None),
+                             ('POLICY-ACCEPTED', True, False))
+        before = self.record.read_text()
+        aborted = dict(trapped, exit=-signal.SIGABRT)
+        legacy = row(pin=aborted, abort=True)
+        del legacy['fatal']
+        for bad in (row(pin=aborted, abort=True, fatal=True), row(pin=trapped, abort=True),
+                    row(pin=trapped), row(pin=trapped, subject=trapped, abort=True, fatal=True),
+                    legacy, dict(row(), fatal='yes')):
+            with self.subTest(bad=bad):
+                self.write_rows(bad)
+                self.assertEqual(self.run_main(str(self.capture))[0], 1)
+                self.assertEqual(self.record.read_text(), before)
+        # Even a stale record with the old signal cannot accept SIGABRT.
+        self.write_rows(row(pin=aborted, abort=True))
+        self.assertEqual(self.run_main(str(self.capture))[0], 0)
+        for parent in (False, True):
+            self.assertEqual(contract_verdict.verdict_for(spec(fatal=True), aborted, SUBJECT, parent,
+                                                          policy_root=self.root, cell='bdb', directory_probe=None),
+                             ('INVALID', False, False))
 
     def test_a_schema_1_block_is_converted_only_on_request_and_bare_entries_stay_bare(self):
         pin = contract_policy.stable_observation(PIN, False)

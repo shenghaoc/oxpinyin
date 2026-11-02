@@ -72,13 +72,17 @@ def entry_of(where, row):
             raise RecordError(f'{where}: {error}') from None
     if 'database_free' in row:
         raise RecordError(f'{where}: only a tool-diff row can be database-free')
+    if (row['abort'] or 'fatal' in row) and type(row.get('fatal')) is not bool:
+        raise RecordError(f'{where}: a registered termination needs a boolean fatal field; '
+                          'an older capture must be taken again to distinguish SIGABRT from SIGTRAP')
     sides = {}
     for side in contract_policy.SIDES:
         try:
             sides[side] = contract_policy.stable_observation(row[side], row['userdir'])
         except (KeyError, TypeError):
             raise RecordError(f'{where}: the {side} observation is incomplete') from None
-        problem = contract_policy.observation_problem(sides[side], pin_abort=side == 'pin' and row['abort'])
+        problem = contract_policy.observation_problem(sides[side], pin_abort=side == 'pin' and row['abort'],
+                                                      pin_fatal=side == 'pin' and row.get('fatal', False))
         if problem:
             raise RecordError(f'{where}: {side} {problem}')
     try:

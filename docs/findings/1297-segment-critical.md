@@ -34,15 +34,22 @@ observable differences follow, both accepted:
 - The critical is missing: a caller's GLib log handler receives nothing,
   and GLib's default handler writes nothing to stderr.
 - Under GLib fatal-critical settings (`G_DEBUG=fatal-criticals`,
-  `g_log_set_always_fatal`) the pin aborts at the critical. oxpinyin does
-  not abort; it returns `false`. **The fatal-critical behaviour is lost.**
+  `g_log_set_always_fatal`) the pin terminates with SIGTRAP at the critical.
+  oxpinyin does not abort; it returns `false`. **The fatal-critical behaviour is lost.**
   This is an intentional observable difference, not exact compatibility.
+
+Debian 13's GLib 2.84.4 uses `G_BREAKPOINT()` for a non-recursive fatal
+log message. On the linux/amd64 reference host, `g_logv+0x309` is `int3`,
+which raises SIGTRAP. The earlier SIGABRT bindings came from a newer GLib,
+before the oracle moved to Debian stable; #1541 replaces those bindings
+with captures from Debian 13 and GLib 2.84.4.
 
 Return values, the phrase result and every other state are the pin's.
 The NULL-sentence path is not covered by this record: it makes the pin's
 own `g_utf8_strlen` call, whose critical is GLib's.
 
-Cases, bound below with `just policy-record` from a tkrzw capture:
+Cases, bound below with `just policy-record` from each cell's own capture
+(bdb, kc and tkrzw):
 `glib-924-segment-critical-{pinyin,zhuyin}`,
 `glib-924-segment-fatal-critical-{pinyin,zhuyin}` and
 `issue542-phrase-segment-invalid-utf8-{pinyin,zhuyin}`. Controls that
@@ -60,6 +67,64 @@ facades.
     "glib-924-segment-critical-pinyin": {
       "cells": {
         "tkrzw": {
+          "pin": {
+            "sha256": "a60195321be6e341ff1e6bfd37d3ffebf84766927b08495566509ba214a66cb5",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "62273f5f9ce1ddac",
+              "result.messages": "98f4eca89c3f5b4f",
+              "result.ret": "fcbcf165908dd18a",
+              "result.retained": "e7be14d533932cdd",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "fde3c2a1f80efb71edeb5ea8bf55205dee062a5b5bec8075d96111ae131b8f31",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.messages": "4f53cda18c2baa0c",
+              "result.ret": "fcbcf165908dd18a",
+              "result.retained": "e7be14d533932cdd",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.logs[0:1]: subject drops [[null, 8]]",
+            "result.messages (list lengths pin 1, subject 0; first change [0]): subject drops \"bool pinyin_phrase_segment(pinyin_instance\" … (length 104)",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        },
+        "bdb": {
+          "pin": {
+            "sha256": "a60195321be6e341ff1e6bfd37d3ffebf84766927b08495566509ba214a66cb5",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "62273f5f9ce1ddac",
+              "result.messages": "98f4eca89c3f5b4f",
+              "result.ret": "fcbcf165908dd18a",
+              "result.retained": "e7be14d533932cdd",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "fde3c2a1f80efb71edeb5ea8bf55205dee062a5b5bec8075d96111ae131b8f31",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.messages": "4f53cda18c2baa0c",
+              "result.ret": "fcbcf165908dd18a",
+              "result.retained": "e7be14d533932cdd",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.logs[0:1]: subject drops [[null, 8]]",
+            "result.messages (list lengths pin 1, subject 0; first change [0]): subject drops \"bool pinyin_phrase_segment(pinyin_instance\" … (length 104)",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        },
+        "kc": {
           "pin": {
             "sha256": "a60195321be6e341ff1e6bfd37d3ffebf84766927b08495566509ba214a66cb5",
             "fields": {
@@ -120,6 +185,64 @@ facades.
             "result.messages (list lengths pin 1, subject 0; first change [0]): subject drops \"bool zhuyin_phrase_segment(zhuyin_instance\" … (length 104)",
             "… further divergence omitted (4096-byte budget)"
           ]
+        },
+        "bdb": {
+          "pin": {
+            "sha256": "2ee76e4105aee72918ce77f2827aed8f01c983e548cfefd586b4b217953229d1",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "62273f5f9ce1ddac",
+              "result.messages": "f60e3f18b53744ac",
+              "result.ret": "fcbcf165908dd18a",
+              "result.retained": "e7be14d533932cdd",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "fde3c2a1f80efb71edeb5ea8bf55205dee062a5b5bec8075d96111ae131b8f31",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.messages": "4f53cda18c2baa0c",
+              "result.ret": "fcbcf165908dd18a",
+              "result.retained": "e7be14d533932cdd",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.logs[0:1]: subject drops [[null, 8]]",
+            "result.messages (list lengths pin 1, subject 0; first change [0]): subject drops \"bool zhuyin_phrase_segment(zhuyin_instance\" … (length 104)",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        },
+        "kc": {
+          "pin": {
+            "sha256": "2ee76e4105aee72918ce77f2827aed8f01c983e548cfefd586b4b217953229d1",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "62273f5f9ce1ddac",
+              "result.messages": "f60e3f18b53744ac",
+              "result.ret": "fcbcf165908dd18a",
+              "result.retained": "e7be14d533932cdd",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "fde3c2a1f80efb71edeb5ea8bf55205dee062a5b5bec8075d96111ae131b8f31",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.messages": "4f53cda18c2baa0c",
+              "result.ret": "fcbcf165908dd18a",
+              "result.retained": "e7be14d533932cdd",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.logs[0:1]: subject drops [[null, 8]]",
+            "result.messages (list lengths pin 1, subject 0; first change [0]): subject drops \"bool zhuyin_phrase_segment(zhuyin_instance\" … (length 104)",
+            "… further divergence omitted (4096-byte budget)"
+          ]
         }
       }
     },
@@ -127,9 +250,9 @@ facades.
       "cells": {
         "tkrzw": {
           "pin": {
-            "sha256": "bb22edc102df71ad84667b70f4353771d274253ea5c1a9a7098fa6dc35716407",
+            "sha256": "c54304ece74a2d3b0428e86a52d11f259d7cc9d360cf857f49fe5e450779eaa6",
             "fields": {
-              "exit": "03b26944890929ff",
+              "exit": "37aa1ccf80e48183",
               "result": "74234e98afe7498f",
               "stderr": "75193a3d247458df"
             }
@@ -146,7 +269,61 @@ facades.
             }
           },
           "divergence": [
-            "exit: pin -6; subject 0",
+            "exit: pin -5; subject 0",
+            "result: pin null; subject {\"l\" … (length 4): [], \"m\" … (length 8): [], \"r\" … (length 3): false} … (length 4)",
+            "stderr: pin \"open SCRATCH/user-X/user.conf failed.\\n** C\" … (length 159); subject \"open SCRATCH/user-X/user.conf failed.\"",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        },
+        "bdb": {
+          "pin": {
+            "sha256": "c54304ece74a2d3b0428e86a52d11f259d7cc9d360cf857f49fe5e450779eaa6",
+            "fields": {
+              "exit": "37aa1ccf80e48183",
+              "result": "74234e98afe7498f",
+              "stderr": "75193a3d247458df"
+            }
+          },
+          "subject": {
+            "sha256": "fde3c2a1f80efb71edeb5ea8bf55205dee062a5b5bec8075d96111ae131b8f31",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.messages": "4f53cda18c2baa0c",
+              "result.ret": "fcbcf165908dd18a",
+              "result.retained": "e7be14d533932cdd",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "exit: pin -5; subject 0",
+            "result: pin null; subject {\"l\" … (length 4): [], \"m\" … (length 8): [], \"r\" … (length 3): false} … (length 4)",
+            "stderr: pin \"open SCRATCH/user-X/user.conf failed.\\n** C\" … (length 159); subject \"open SCRATCH/user-X/user.conf failed.\"",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        },
+        "kc": {
+          "pin": {
+            "sha256": "c54304ece74a2d3b0428e86a52d11f259d7cc9d360cf857f49fe5e450779eaa6",
+            "fields": {
+              "exit": "37aa1ccf80e48183",
+              "result": "74234e98afe7498f",
+              "stderr": "75193a3d247458df"
+            }
+          },
+          "subject": {
+            "sha256": "fde3c2a1f80efb71edeb5ea8bf55205dee062a5b5bec8075d96111ae131b8f31",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.messages": "4f53cda18c2baa0c",
+              "result.ret": "fcbcf165908dd18a",
+              "result.retained": "e7be14d533932cdd",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "exit: pin -5; subject 0",
             "result: pin null; subject {\"l\" … (length 4): [], \"m\" … (length 8): [], \"r\" … (length 3): false} … (length 4)",
             "stderr: pin \"open SCRATCH/user-X/user.conf failed.\\n** C\" … (length 159); subject \"open SCRATCH/user-X/user.conf failed.\"",
             "… further divergence omitted (4096-byte budget)"
@@ -158,9 +335,9 @@ facades.
       "cells": {
         "tkrzw": {
           "pin": {
-            "sha256": "02c9337daac910a6e34e544bef32428ed384866b073b15425ff233f0da989cc9",
+            "sha256": "4ba37eba49f9def099179e774474854b471869f0aba44f6d0828fd58fdc3c797",
             "fields": {
-              "exit": "03b26944890929ff",
+              "exit": "37aa1ccf80e48183",
               "result": "74234e98afe7498f",
               "stderr": "cc029d284750d7dd"
             }
@@ -177,7 +354,61 @@ facades.
             }
           },
           "divergence": [
-            "exit: pin -6; subject 0",
+            "exit: pin -5; subject 0",
+            "result: pin null; subject {\"l\" … (length 4): [], \"m\" … (length 8): [], \"r\" … (length 3): false} … (length 4)",
+            "stderr: pin \"open SCRATCH/user-X/user.conf failed.\\n** C\" … (length 159); subject \"open SCRATCH/user-X/user.conf failed.\"",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        },
+        "bdb": {
+          "pin": {
+            "sha256": "4ba37eba49f9def099179e774474854b471869f0aba44f6d0828fd58fdc3c797",
+            "fields": {
+              "exit": "37aa1ccf80e48183",
+              "result": "74234e98afe7498f",
+              "stderr": "cc029d284750d7dd"
+            }
+          },
+          "subject": {
+            "sha256": "fde3c2a1f80efb71edeb5ea8bf55205dee062a5b5bec8075d96111ae131b8f31",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.messages": "4f53cda18c2baa0c",
+              "result.ret": "fcbcf165908dd18a",
+              "result.retained": "e7be14d533932cdd",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "exit: pin -5; subject 0",
+            "result: pin null; subject {\"l\" … (length 4): [], \"m\" … (length 8): [], \"r\" … (length 3): false} … (length 4)",
+            "stderr: pin \"open SCRATCH/user-X/user.conf failed.\\n** C\" … (length 159); subject \"open SCRATCH/user-X/user.conf failed.\"",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        },
+        "kc": {
+          "pin": {
+            "sha256": "4ba37eba49f9def099179e774474854b471869f0aba44f6d0828fd58fdc3c797",
+            "fields": {
+              "exit": "37aa1ccf80e48183",
+              "result": "74234e98afe7498f",
+              "stderr": "cc029d284750d7dd"
+            }
+          },
+          "subject": {
+            "sha256": "fde3c2a1f80efb71edeb5ea8bf55205dee062a5b5bec8075d96111ae131b8f31",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.messages": "4f53cda18c2baa0c",
+              "result.ret": "fcbcf165908dd18a",
+              "result.retained": "e7be14d533932cdd",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "exit: pin -5; subject 0",
             "result: pin null; subject {\"l\" … (length 4): [], \"m\" … (length 8): [], \"r\" … (length 3): false} … (length 4)",
             "stderr: pin \"open SCRATCH/user-X/user.conf failed.\\n** C\" … (length 159); subject \"open SCRATCH/user-X/user.conf failed.\"",
             "… further divergence omitted (4096-byte budget)"
@@ -213,12 +444,120 @@ facades.
             "result.messages (list lengths pin 1, subject 0; first change [0]): subject drops \"bool pinyin_phrase_segment(pinyin_instance\" … (length 104)",
             "… further divergence omitted (4096-byte budget)"
           ]
+        },
+        "bdb": {
+          "pin": {
+            "sha256": "249bc9c83fa47a25b527cb707287e519f9c64f953869a32d79ee7ad9bfce4eb4",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "62273f5f9ce1ddac",
+              "result.messages": "98f4eca89c3f5b4f",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "017aff2547ba6dab37f3a74b2ede184000d2b8155f191449255acd4cea7a71f4",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.messages": "4f53cda18c2baa0c",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.logs[0:1]: subject drops [[null, 8]]",
+            "result.messages (list lengths pin 1, subject 0; first change [0]): subject drops \"bool pinyin_phrase_segment(pinyin_instance\" … (length 104)",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        },
+        "kc": {
+          "pin": {
+            "sha256": "249bc9c83fa47a25b527cb707287e519f9c64f953869a32d79ee7ad9bfce4eb4",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "62273f5f9ce1ddac",
+              "result.messages": "98f4eca89c3f5b4f",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "017aff2547ba6dab37f3a74b2ede184000d2b8155f191449255acd4cea7a71f4",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.messages": "4f53cda18c2baa0c",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.logs[0:1]: subject drops [[null, 8]]",
+            "result.messages (list lengths pin 1, subject 0; first change [0]): subject drops \"bool pinyin_phrase_segment(pinyin_instance\" … (length 104)",
+            "… further divergence omitted (4096-byte budget)"
+          ]
         }
       }
     },
     "issue542-phrase-segment-invalid-utf8-zhuyin": {
       "cells": {
         "tkrzw": {
+          "pin": {
+            "sha256": "df4d30997c388d56e7c56a5ee96bdc230d6d2c84cbcb659c3010d5530b611f51",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "62273f5f9ce1ddac",
+              "result.messages": "f60e3f18b53744ac",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "017aff2547ba6dab37f3a74b2ede184000d2b8155f191449255acd4cea7a71f4",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.messages": "4f53cda18c2baa0c",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.logs[0:1]: subject drops [[null, 8]]",
+            "result.messages (list lengths pin 1, subject 0; first change [0]): subject drops \"bool zhuyin_phrase_segment(zhuyin_instance\" … (length 104)",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        },
+        "bdb": {
+          "pin": {
+            "sha256": "df4d30997c388d56e7c56a5ee96bdc230d6d2c84cbcb659c3010d5530b611f51",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "62273f5f9ce1ddac",
+              "result.messages": "f60e3f18b53744ac",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "017aff2547ba6dab37f3a74b2ede184000d2b8155f191449255acd4cea7a71f4",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.messages": "4f53cda18c2baa0c",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.logs[0:1]: subject drops [[null, 8]]",
+            "result.messages (list lengths pin 1, subject 0; first change [0]): subject drops \"bool zhuyin_phrase_segment(zhuyin_instance\" … (length 104)",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        },
+        "kc": {
           "pin": {
             "sha256": "df4d30997c388d56e7c56a5ee96bdc230d6d2c84cbcb659c3010d5530b611f51",
             "fields": {
