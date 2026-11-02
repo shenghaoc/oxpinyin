@@ -79,6 +79,7 @@ series lives in `../perf/`.
 | [`installed-naming`](installed-naming.md) | The installed tree takes libpinyin's name; the source tree keeps ours | implemented |
 | [`interpolation2-grammar`](interpolation2-grammar.md) | The `interpolation2.text` taglib grammar — one shared reader, and the duplicate/zero-count policy split | record (implemented) |
 | [`kbest-search`](kbest-search.md) | K-best search SPEC | frozen |
+| [`kc-native-call-inventory`](kc-native-call-inventory.md) | Pin Kyoto Cabinet classes, native calls, ownership, callbacks, sentinels, status/exception paths and shim mapping before the CXX migration | source inventory and bridge proposal (no implementation or policy closure) |
 | [`kmm-arithmetic-audit`](kmm-arithmetic-audit.md) | KMM arithmetic audit — line-by-line vs the pin | audit |
 | [`kyotocabinet-backend`](kyotocabinet-backend.md) | Kyoto Cabinet compat backend | record (backend; the compat framing is pre-P6) |
 | [`lambda-port`](lambda-port.md) | λ-estimator port — deleted-interpolation EM (W9-T3) | historical (pre-P6) |
