@@ -24,6 +24,22 @@ pub fn phrase_text_bytes(text: &PhraseText) -> Cow<'_, [u8]> {
     }
 }
 
+/// The length of [`phrase_text_bytes`]`(text)`, without encoding it.
+#[must_use]
+#[inline]
+pub fn phrase_text_len(text: &PhraseText) -> usize {
+    match text.outward_bytes() {
+        Some(bytes) => bytes.len(),
+        None => text
+            .stored_words()
+            .unwrap_or(&[])
+            .iter()
+            .take_while(|&&word| word != 0)
+            .map(|&word| encoded_word_len(word))
+            .sum(),
+    }
+}
+
 /// Whether `text` stores exactly `phrase`'s code points: the pin's check of
 /// an existing item against an imported phrase, its stored length then a
 /// `memcmp` over every stored word, a zero and what follows it included
@@ -48,10 +64,10 @@ fn encode_words(words: &[u32]) -> Vec<u8> {
     out
 }
 
-/// `g_unichar_to_utf8`'s encoder for one word, which takes the historical
-/// forms for values above Unicode.
-fn encode_word(word: u32, out: &mut Vec<u8>) {
-    let (first, len) = if word < 0x80 {
+/// `g_unichar_to_utf8`'s lead-byte marker and byte count for one word,
+/// with the historical forms for values above Unicode.
+const fn word_form(word: u32) -> (u8, usize) {
+    if word < 0x80 {
         (0x00, 1)
     } else if word < 0x800 {
         (0xc0, 2)
@@ -63,7 +79,17 @@ fn encode_word(word: u32, out: &mut Vec<u8>) {
         (0xf8, 5)
     } else {
         (0xfc, 6)
-    };
+    }
+}
+
+const fn encoded_word_len(word: u32) -> usize {
+    word_form(word).1
+}
+
+/// `g_unichar_to_utf8`'s encoder for one word, which takes the historical
+/// forms for values above Unicode.
+fn encode_word(word: u32, out: &mut Vec<u8>) {
+    let (first, len) = word_form(word);
     let mut bytes = [0_u8; 6];
     let mut rest = word;
     for slot in bytes.iter_mut().take(len).skip(1).rev() {
@@ -102,6 +128,26 @@ mod tests {
 
         let above = PhraseText::from_words([0x11_0000]).expect("stored");
         assert_eq!(phrase_text_bytes(&above).as_ref(), [0xF4, 0x90, 0x80, 0x80]);
+    }
+
+    #[test]
+    fn length_matches_the_encoding_without_encoding() {
+        use super::phrase_text_len;
+        let texts = [
+            PhraseText::from("甲乙"),
+            PhraseText::from("甲\0乙"),
+            PhraseText::from(""),
+            PhraseText::from_words([0x41, 0x7FF, 0x7532, 0xD800, 0x1_F600]).expect("stored"),
+            PhraseText::from_words([0x20_0000, 0x400_0000, 0x7FFF_FFFF]).expect("stored"),
+            PhraseText::from_words([0x7532, 0, 0x4E59]).expect("stored"),
+        ];
+        for text in &texts {
+            assert_eq!(
+                phrase_text_len(text),
+                phrase_text_bytes(text).len(),
+                "{text:?}"
+            );
+        }
     }
 
     #[test]

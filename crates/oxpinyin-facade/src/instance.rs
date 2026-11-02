@@ -150,6 +150,26 @@ impl<S: std::borrow::BorrowMut<InstanceState>, E> std::ops::DerefMut for Instanc
     }
 }
 
+impl<
+    S: std::borrow::BorrowMut<InstanceState>,
+    E: std::borrow::BorrowMut<oxpinyin_engine::SessionState>,
+> InstanceView<'_, S, E>
+{
+    /// Retains a successful guess's `window` as the anchored window, and
+    /// hands the window it replaces back to the session for its storage.
+    /// Every other path that ends an anchored window simply drops it.
+    pub fn replace_anchored_window(&mut self, anchor: usize, window: CandidateList) {
+        if let Some((_, replaced)) = self
+            .state
+            .borrow_mut()
+            .anchored_window
+            .replace((anchor, window))
+        {
+            self.session.recycle_candidates(replaced);
+        }
+    }
+}
+
 impl InstanceCore {
     /// Assemble retained state; operation readers are supplied by the context.
     pub(crate) fn new(session: oxpinyin_engine::SessionState, live: LiveOptions) -> Self {

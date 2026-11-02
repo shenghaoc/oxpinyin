@@ -1944,12 +1944,13 @@ fn addon_candidates_rank_on_their_own_amplified_scale() {
             None,
         ),
     ];
-    let frequencies = session
-        .candidate_frequencies(&collected, None, true)
+    let mut frequencies = vec![7; 5];
+    session
+        .candidate_frequencies(&collected, None, true, &mut frequencies)
         .expect("frequency reads cannot fail here");
     assert_eq!(
         frequencies,
-        Some(vec![3, 6]),
+        [3, 6],
         "system = amplified(14, 51_051_831) = 3; addon = amplified(14, 25_525_916) = 6"
     );
 }
@@ -2808,6 +2809,37 @@ fn candidates_at_mid_syllable_offsets_answer_the_empty_column() {
             .any(|cand| cand.kind() != CandidateKind::Fallback),
         "offset 2 keeps the hao window"
     );
+}
+
+#[test]
+fn a_recycled_window_lends_its_storage_to_the_next() {
+    let mut session = train_session();
+    session
+        .type_pinyin("nihaoshijie")
+        .expect("typing cannot fail");
+    let first = session
+        .candidates_at(2)
+        .expect("offset 2 is a syllable start");
+    let fresh = session
+        .candidates_at(2)
+        .expect("offset 2 is a syllable start");
+    assert_eq!(first, fresh);
+    let rows = first.iter().as_slice().as_ptr();
+    session.recycle_candidates(first);
+    assert!(
+        session.scratch.window_items.is_empty(),
+        "the rows are dropped"
+    );
+    let reused = session
+        .candidates_at(2)
+        .expect("offset 2 is a syllable start");
+    assert_eq!(reused, fresh, "only the storage carries over");
+    assert_eq!(
+        reused.iter().as_slice().as_ptr(),
+        rows,
+        "the window is built in the recycled storage"
+    );
+    assert_eq!(session.scratch.window_items.capacity(), 0, "lent, not kept");
 }
 
 #[test]
@@ -4125,6 +4157,7 @@ fn the_string_dedup_keeps_the_larger_m_freq_and_the_earlier_tie() {
     ]
     .into_iter()
     .unzip();
+    let keys: Vec<_> = keys.into_iter().map(|key| (key, 0)).collect();
     super::dedup_ranked_by_text(&mut ranked, &keys);
     let rows: Vec<_> = ranked
         .iter()
