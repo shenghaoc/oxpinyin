@@ -78,11 +78,14 @@
 
 mod ffi;
 
+use std::collections::BTreeMap;
 use std::ops::Bound;
 use std::path::Path;
 
 use crate::common::{frame, in_bounds, prefix, unframe};
-use crate::{Flow, ReadStore, StoreError, WriteStore, WriteTxn, validate_table_name};
+use crate::{
+    AttachMode, Flow, HashAttach, ReadStore, StoreError, WriteStore, WriteTxn, validate_table_name,
+};
 
 use ffi::{Db, DbType};
 
@@ -493,8 +496,12 @@ impl crate::RawReadStore for KcStore {
     fn open_user_index(path: &Path) -> Result<Self, crate::StoreError> {
         // 074a2219 chewing_large_table2_kyotodb.cpp:94-105 and
         // phrase_large_table3_kyotodb.cpp:109-121: ProtoTreeDB snapshots.
+        // A snapshot that fails part way keeps the records it set before
+        // the failure (`BasicDB::load_snapshot` sets record by record,
+        // `kcdb.h:2339-2418`), and the pin keeps that container; init
+        // ignores the `load_db` answer.
         let db = Db::open_proto_tree()?;
-        db.load_snapshot(path)?;
+        let _ = db.load_snapshot(path);
         Ok(Self {
             db: db.into_read_only(),
         })
@@ -530,6 +537,50 @@ impl WriteStore for KcStore {
         Ok(Self {
             db: Db::open(path, DbType::Hash, false, true)?,
         })
+    }
+
+    /// `Bigram::attach` (`ngram_kyotodb.cpp:110-120` at 074a2219): a `HashDB`
+    /// opened with the attach mode; a failed open is `None`.
+    fn attach_bigram(path: &Path, read_only: bool) -> Result<Option<Self>, StoreError> {
+        let (db, opened) = Db::open_retained(path, DbType::Hash, read_only, !read_only, "")?;
+        Ok(opened.then_some(Self { db }))
+    }
+
+    /// `FlexibleBigram::attach` (`flexible_ngram_kyotodb.h:129-180` at
+    /// 074a2219): a `HashDB` opened without `OCREATE`, and with
+    /// `ATTACH_CREATE` opened again with it. A failed open without CREATE
+    /// deletes the object with no `close` (`:145-150`); a failed retry
+    /// keeps it (`:154-155`), and every later call answers `INVALID`. The
+    /// retry's signature `set` is ignored (`:157-162`).
+    ///
+    /// The retry is a second `open` of the same object with the pin's
+    /// mode, `OREADER | OWRITER | OCREATE`, so it reads the state the
+    /// first open left (`FFATAL` from `set_error`).
+    fn attach_hash(
+        path: &Path,
+        mode: AttachMode,
+        signature: (&[u8], &[u8]),
+    ) -> Result<HashAttach<Self>, StoreError> {
+        let read_only = mode == AttachMode::ReadOnly;
+        let flags = if read_only {
+            ffi::OREADER
+        } else {
+            ffi::OREADER | ffi::OWRITER
+        };
+        let mut db = Db::new_unopened(DbType::Hash, read_only)?;
+        if db.open_mode(path, flags)? {
+            return Ok(HashAttach::Opened(Self { db }));
+        }
+        if mode != AttachMode::ReadWriteCreate {
+            db.delete_unopened();
+            return Ok(HashAttach::Closed);
+        }
+        if !db.open_mode(path, flags | ffi::OCREATE)? {
+            return Ok(HashAttach::Unopened(Self { db }));
+        }
+        let (key, value) = signature;
+        let _ = db.set(key, value);
+        Ok(HashAttach::Created(Self { db }, true))
     }
 
     /// The pin's own in-memory ordered container, `ProtoTreeDB` (what its
@@ -608,7 +659,10 @@ impl WriteStore for KcStore {
         // commits or rolls them back, so a concurrent reader can observe
         // intermediate values — including ones a rollback then removes.
         self.db.begin_transaction()?;
-        let mut txn = KcTxn { store: self };
+        let mut txn = KcTxn {
+            store: self,
+            buffer: None,
+        };
         match f(&mut txn) {
             Ok(out) => {
                 self.commit()?;
@@ -619,6 +673,39 @@ impl WriteStore for KcStore {
                 Err(error)
             }
         }
+    }
+
+    /// `FlexibleBigram::store` and `remove` (`flexible_ngram_kyotodb.h:
+    /// 227-252` at 074a2219): the `set` or `remove` alone, with no
+    /// transaction and no sync, its answer the pin's. The closure's writes
+    /// are buffered, so an `Err` from it applies nothing. `reset()` makes
+    /// the one `synchronize()` (`:86-92`), which [`WriteStore::flush`] is.
+    fn write_deferred<R>(
+        &self,
+        f: impl FnOnce(&mut Self::Txn<'_>) -> Result<R, StoreError>,
+    ) -> Result<(R, bool), StoreError> {
+        if self.db.is_read_only() {
+            return Err(StoreError::ReadOnly);
+        }
+        let mut txn = KcTxn {
+            store: self,
+            buffer: Some(BTreeMap::new()),
+        };
+        let out = f(&mut txn)?;
+        let mut found = true;
+        for (key, slot) in txn.buffer.unwrap_or_default() {
+            match slot {
+                Some(value) => self.db.set(&key, &value)?,
+                None => found &= self.db.remove(&key)?,
+            }
+        }
+        Ok((out, found))
+    }
+
+    /// `m_db->synchronize()` (`flexible_ngram_kyotodb.h:86-92`), made on a
+    /// read-only container too, as the pin's `reset()` makes it.
+    fn flush(&self) -> Result<(), StoreError> {
+        self.db.synchronize(false)
     }
 
     fn compact(&mut self) -> Result<(), StoreError> {
@@ -639,14 +726,31 @@ impl WriteStore for KcStore {
     }
 }
 
-/// A write transaction — the library's own, not a buffer.
+/// A write transaction: the library's own, or the deferred buffer.
 ///
-/// Every method writes straight through to the database inside Kyoto
-/// Cabinet's transaction, so read-your-writes is the database's semantics
-/// rather than something this type has to emulate, and rollback is the
-/// library's.
+/// Under [`WriteStore::write`] every method writes straight through to the
+/// database inside Kyoto Cabinet's transaction, so read-your-writes is the
+/// database's semantics and rollback is the library's. Under
+/// [`WriteStore::write_deferred`] the writes wait in `buffer`, keyed as
+/// they will be stored (a `None` slot is a pending removal), and reads
+/// look there first.
 pub struct KcTxn<'store> {
     store: &'store KcStore,
+    buffer: Option<BTreeMap<Vec<u8>, Option<Vec<u8>>>>,
+}
+
+impl KcTxn<'_> {
+    /// Applies one write now, or buffers it under `write_deferred`.
+    fn apply(&mut self, key: Vec<u8>, value: Option<&[u8]>) -> Result<(), StoreError> {
+        if let Some(buffer) = self.buffer.as_mut() {
+            buffer.insert(key, value.map(<[u8]>::to_vec));
+            return Ok(());
+        }
+        match value {
+            Some(value) => self.store.db.set(&key, value),
+            None => self.store.db.remove(&key).map(drop),
+        }
+    }
 }
 
 impl WriteTxn for KcTxn<'_> {
@@ -656,32 +760,42 @@ impl WriteTxn for KcTxn<'_> {
     // than a direct call. Dispatch is static either way.
     #[inline(never)]
     fn get(&self, table: &str, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> {
-        self.store.get(table, key, value)
+        validate_table_name(table)?;
+        let framed = frame(table, key);
+        if let Some(slot) = self.buffer.as_ref().and_then(|buffer| buffer.get(&framed)) {
+            value.clear();
+            let Some(bytes) = slot else {
+                return Ok(false);
+            };
+            value.extend_from_slice(bytes);
+            return Ok(true);
+        }
+        self.store.db.get(&framed, value)
     }
 
     #[inline(never)]
     fn put(&mut self, table: &str, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
         validate_table_name(table)?;
-        self.store.db.set(&frame(table, key), value)
+        self.apply(frame(table, key), Some(value))
     }
 
     #[inline(never)]
     fn put_raw(&mut self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
         // The file's bare keyspace, no table-name framing — what
         // `get_raw`/`range_raw` read back on this backend.
-        self.store.db.set(key, value)
+        self.apply(key.to_vec(), Some(value))
     }
 
     #[inline(never)]
     fn remove_raw(&mut self, key: &[u8]) -> Result<(), StoreError> {
         // The removal half of `put_raw`, on the same bare keyspace.
-        self.store.db.remove(key)
+        self.apply(key.to_vec(), None)
     }
 
     #[inline(never)]
     fn remove(&mut self, table: &str, key: &[u8]) -> Result<(), StoreError> {
         validate_table_name(table)?;
-        self.store.db.remove(&frame(table, key))
+        self.apply(frame(table, key), None)
     }
 
     fn scan(
@@ -691,14 +805,38 @@ impl WriteTxn for KcTxn<'_> {
         hi: Bound<&[u8]>,
         mut visit: impl FnMut(&[u8], &[u8]) -> Result<Flow, StoreError>,
     ) -> Result<(), StoreError> {
-        // A cursor inside the transaction sees the transaction's writes,
-        // so the walk needs no merge pass. It does need the rows
-        // collected first: the visitor may itself call back into the
-        // store, and holding a cursor across that is what the borrow of
-        // `self.store.db` would otherwise allow.
+        // A cursor inside the transaction sees the transaction's writes.
+        // The rows are collected first: the visitor may itself call back
+        // into the store, and holding a cursor across that is what the
+        // borrow of `self.store.db` would otherwise allow.
         let rows = self.store.collect_rows(table, lo, hi)?;
-        for index in 0..rows.len() {
-            let (key, value) = rows.get(index);
+        let Some(buffer) = self.buffer.as_ref() else {
+            for index in 0..rows.len() {
+                let (key, value) = rows.get(index);
+                if visit(key, value)?.is_break() {
+                    break;
+                }
+            }
+            return Ok(());
+        };
+        // Under `write_deferred` the buffered writes are laid over the
+        // stored rows, in key order.
+        let table_prefix = prefix(table);
+        let mut merged: BTreeMap<&[u8], &[u8]> =
+            (0..rows.len()).map(|index| rows.get(index)).collect();
+        for (framed, slot) in buffer {
+            let Some(key) = unframe(&table_prefix, framed) else {
+                continue;
+            };
+            if !in_bounds(key, lo, hi) {
+                continue;
+            }
+            match slot {
+                Some(value) => merged.insert(key, value),
+                None => merged.remove(key),
+            };
+        }
+        for (key, value) in merged {
             if visit(key, value)?.is_break() {
                 break;
             }
@@ -708,7 +846,15 @@ impl WriteTxn for KcTxn<'_> {
 
     #[inline(never)]
     fn is_empty(&self, table: &str) -> Result<bool, StoreError> {
-        self.store.is_empty(table)
+        if self.buffer.is_none() {
+            return self.store.is_empty(table);
+        }
+        let mut empty = true;
+        self.scan(table, Bound::Unbounded, Bound::Unbounded, |_, _| {
+            empty = false;
+            Ok(Flow::Break(()))
+        })?;
+        Ok(empty)
     }
 }
 
@@ -746,7 +892,7 @@ impl crate::UserBigramDb for KcUserBigramDb {
     }
 
     fn remove(&self, key: &[u8]) -> Result<(), StoreError> {
-        self.db.remove(key)
+        self.db.remove(key).map(drop)
     }
 
     fn keys(&self) -> Result<Vec<Option<[u8; 4]>>, StoreError> {
@@ -838,6 +984,90 @@ mod tests {
             drop(db);
             assert!(take_native_teardown_calls().is_empty(), "{table}");
         }
+    }
+
+    #[test]
+    fn a_malformed_user_index_snapshot_keeps_its_valid_prefix() {
+        // `BasicDB::load_snapshot` sets each record as it reads it and fails
+        // at the bad tag after them (`kcdb.h:2339-2418`); the pin keeps that
+        // ProtoTreeDB (`chewing_large_table2_kyotodb.cpp:94-106`).
+        let file = Temp::new("partial-snapshot", "bin");
+        KcStore::write_user_index(&file.0, |sink| {
+            sink(b"first", b"1")?;
+            sink(b"second", b"")
+        })
+        .unwrap();
+        let mut bytes = std::fs::read(&file.0).unwrap();
+        assert_eq!(bytes.pop(), Some(0xff), "the snapshot's end mark");
+        bytes.push(0x01);
+        std::fs::write(&file.0, bytes).unwrap();
+
+        let store = KcStore::open_user_index(&file.0).expect("the partial container stays");
+        assert_eq!(store.read_raw(b"first").unwrap(), Some(b"1".to_vec()));
+        assert_eq!(store.read_raw(b"second").unwrap(), Some(Vec::new()));
+    }
+
+    #[test]
+    fn a_create_retry_reopens_the_same_hashdb_and_a_failed_open_deletes_without_close() {
+        use super::ffi::{
+            NativeTeardownCall as Call, OCREATE, OREADER, OWRITER, take_native_teardown_calls,
+        };
+        use crate::{AttachMode, HashAttach};
+
+        // `flexible_ngram_kyotodb.h:143-155`: one `new HashDB`, then
+        // `open(mode)` and, with ATTACH_CREATE, `open(mode | OCREATE)` on
+        // the same object; without CREATE, `delete` and no `close`.
+        let dir = Temp::new("retry-dir", "missing");
+        let path = dir.0.join("model.db");
+        take_native_teardown_calls();
+        let HashAttach::Unopened(store) =
+            KcStore::attach_hash(&path, AttachMode::ReadWriteCreate, (b"k", b"v")).unwrap()
+        else {
+            panic!("a missing directory opened");
+        };
+        let calls = take_native_teardown_calls();
+        let handle = calls.first().expect("native open").0;
+        assert_eq!(
+            calls,
+            [
+                (handle, Call::Open(OREADER | OWRITER)),
+                (handle, Call::Open(OREADER | OWRITER | OCREATE)),
+            ]
+        );
+        drop(store);
+
+        take_native_teardown_calls();
+        let HashAttach::Closed =
+            KcStore::attach_hash(&path, AttachMode::ReadWrite, (b"k", b"v")).unwrap()
+        else {
+            panic!("a failed open without CREATE keeps no object");
+        };
+        let calls = take_native_teardown_calls();
+        let handle = calls.first().expect("native open").0;
+        assert_eq!(
+            calls,
+            [
+                (handle, Call::Open(OREADER | OWRITER)),
+                (handle, Call::Delete)
+            ]
+        );
+    }
+
+    #[test]
+    fn flush_synchronizes_a_read_only_container_natively() {
+        use super::ffi::{NativeTeardownCall, take_native_teardown_calls};
+
+        // `FlexibleBigram::reset()` synchronizes whatever the attach mode
+        // (`flexible_ngram_kyotodb.h:86-92`); an OREADER HashDB answers true
+        // (`kchashdb.h:969-983`).
+        let file = Temp::new("readonly-flush", "kch");
+        drop(KcStore::create_hash(&file.0).unwrap());
+        let store = KcStore::open_hash_read_only(&file.0).unwrap();
+        take_native_teardown_calls();
+        store.flush().expect("an OREADER HashDB synchronizes");
+        let calls = take_native_teardown_calls();
+        assert_eq!(calls.len(), 1, "{calls:?}");
+        assert_eq!(calls[0].1, NativeTeardownCall::Synchronize(false));
     }
 
     #[test]

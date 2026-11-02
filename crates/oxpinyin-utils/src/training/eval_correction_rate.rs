@@ -48,7 +48,10 @@ pub fn main(_args: impl IntoIterator<Item = OsString>) {
     let libraries = load_libraries(&conf);
 
     // `system_bigram.attach(SYSTEM_BIGRAM, ATTACH_READONLY)`: ignored.
-    let bigram = crate::storage::dbm::Hash::open_read_only(Path::new("bigram.db")).ok();
+    let bigram = Some(
+        crate::storage::dbm::Hash::open_read_only(Path::new("bigram.db"))
+            .unwrap_or_else(|error| oxpinyin_input::tool::exit_on_store_error(&error)),
+    );
 
     // `system_table_info.get_lambda()`, the `gfloat` the pin passes to
     // `PhoneticLookup<1, 1>`.
@@ -146,20 +149,7 @@ fn build_model(
 
     let mut bigrams = BTreeMap::new();
     let mut bigram_totals = BTreeMap::new();
-    let unopened = bigram.is_some_and(crate::storage::dbm::Hash::is_unopened);
-    if unopened {
-        // The pin's eval model asks `Bigram::load` as it decodes; with an
-        // unopened handle that is libdb's `BDB1565` on `DB->get`, not the
-        // `get_all_items` cursor export uses.
-        if let Some(bigram) = bigram {
-            let _ = bigram.get(&crate::training::encode_token_key(0));
-        }
-    }
-    for token in if unopened {
-        Vec::new()
-    } else {
-        all_tokens(bigram)
-    } {
+    for token in all_tokens(bigram) {
         let Some(gram) = load_gram(bigram, token) else {
             continue;
         };

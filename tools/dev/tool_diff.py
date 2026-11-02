@@ -254,7 +254,9 @@ def verdict(case, pin, subject, policy_root, cell):
             value, pin_signal=case.get('pin_signal') if side == 'pin' or case.get('reproduces_signal') else None)
         if problem:
             return 'INVALID', f'{side}: {problem}'
-    if case.get('policy_record'):
+    # `policy_cells` limits the record to the cells it names; on any other
+    # cell the case compares as an ordinary case.
+    if case.get('policy_record') and cell in case.get('policy_cells', (cell,)):
         try:
             kept = contract_verdict.policy_expectations(
                 dict(policy_record=case['policy_record'], case_id=case['id'],

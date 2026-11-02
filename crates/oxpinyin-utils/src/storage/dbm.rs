@@ -49,9 +49,18 @@ impl Tree {
     }
 }
 
-/// One writable hash container, or the pin's still-open handle after a
-/// failed attach. The pin ignores a failed attach and keeps the handle;
-/// every later member call prints libdb's own `BDB1565` line.
+/// One writable hash container, or none after a failed attach. On Berkeley
+/// DB the pin keeps the failed handle and calls it again, which libdb
+/// answers with `BDB1565`; Berkeley DB requires `DB->close` after a failed
+/// open, so that handle is closed and its calls have no counterpart
+/// (compatibility register, row 113).
+///
+/// Only a failed native open is a missing container
+/// (`WriteStore::attach_bigram`). On Berkeley DB a failed `db_create`
+/// panics there, where the pin's `Bigram::attach` asserts
+/// (`ngram_bdb.cpp:116-117` at 074a2219). Any other failure before the
+/// open, such as an unsupported linked library, is a [`StoreError`], which
+/// the utility reports with `oxpinyin_input::tool::exit_on_store_error`.
 pub(crate) struct Hash {
     backend: HashBackend,
 }
@@ -59,8 +68,6 @@ pub(crate) struct Hash {
 enum HashBackend {
     Open(DefaultStore),
     Missing,
-    #[cfg(feature = "bdb")]
-    Unopened(oxpinyin_store::BdbUnopenedHandle),
 }
 
 impl Hash {
@@ -73,50 +80,33 @@ impl Hash {
     }
 
     /// `attach(..., ATTACH_READWRITE|ATTACH_CREATE)` whose answer the pin
-    /// ignores: a failed open leaves its still-open handle, not a missing
-    /// one, so later `get`/`put` and the destructor's sync print libdb's
-    /// diagnostics.
-    pub(crate) fn create_or_unopened(path: &Path) -> Self {
-        #[cfg(feature = "bdb")]
-        if let Ok(opened) = oxpinyin_store::open_hash_pin(path, false) {
-            return match opened {
-                oxpinyin_store::BdbOpen::Open(store) => Self {
-                    backend: HashBackend::Open(store),
-                },
-                oxpinyin_store::BdbOpen::Unopened(db) => Self {
-                    backend: HashBackend::Unopened(db),
-                },
-            };
-        }
-        match <DefaultStore as WriteStore>::create_hash(path) {
-            Ok(store) => Self {
-                backend: HashBackend::Open(store),
-            },
-            Err(_) => Self {
-                backend: HashBackend::Missing,
-            },
-        }
+    /// ignores: a failed open leaves no container, and the later calls
+    /// answer as on a missing one.
+    ///
+    /// # Errors
+    ///
+    /// A failure before the native open, such as an unsupported linked
+    /// library: never a missing container.
+    pub(crate) fn create_or_missing(path: &Path) -> Result<Self, StoreError> {
+        Self::attach(path, false)
     }
 
-    /// `attach(filename, ATTACH_READONLY)` on the hash class.
+    /// `attach(filename, ATTACH_READONLY)` on the hash class, whose answer
+    /// the pin's utilities ignore.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::create_or_missing`].
     pub(crate) fn open_read_only(path: &Path) -> Result<Self, StoreError> {
-        #[cfg(feature = "bdb")]
-        if let Ok(opened) = oxpinyin_store::open_hash_pin(path, true) {
-            return Ok(match opened {
-                oxpinyin_store::BdbOpen::Open(store) => Self {
-                    backend: HashBackend::Open(store),
-                },
-                oxpinyin_store::BdbOpen::Unopened(db) => Self {
-                    backend: HashBackend::Unopened(db),
-                },
-            });
-        }
-        match <DefaultStore as RawReadStore>::open_hash_read_only(path) {
-            Ok(store) => Ok(Self {
-                backend: HashBackend::Open(store),
-            }),
-            Err(error) => Err(error),
-        }
+        Self::attach(path, true)
+    }
+
+    /// The store's `Bigram::attach`: `None` is a failed native open.
+    fn attach(path: &Path, read_only: bool) -> Result<Self, StoreError> {
+        Ok(Self {
+            backend: <DefaultStore as WriteStore>::attach_bigram(path, read_only)?
+                .map_or(HashBackend::Missing, HashBackend::Open),
+        })
     }
 
     /// `Bigram::load`'s `m_db->Get(key, &value)`.
@@ -127,11 +117,6 @@ impl Hash {
                 store.get_bigram_raw(key, &mut value).ok()?.then_some(value)
             }
             HashBackend::Missing => None,
-            #[cfg(feature = "bdb")]
-            HashBackend::Unopened(db) => {
-                let _ = db.get(key);
-                None
-            }
         }
     }
 
@@ -143,25 +128,6 @@ impl Hash {
                 Ok(())
             }),
             HashBackend::Missing => Ok(()),
-            #[cfg(feature = "bdb")]
-            HashBackend::Unopened(db) => {
-                db.put(key, value);
-                Ok(())
-            }
-        }
-    }
-
-    /// Whether `attach` failed and left the pin's unopened handle. The
-    /// pin then answers each `load` with libdb's `BDB1565` rather than
-    /// walking anything.
-    pub(crate) fn is_unopened(&self) -> bool {
-        #[cfg(feature = "bdb")]
-        {
-            matches!(self.backend, HashBackend::Unopened(_))
-        }
-        #[cfg(not(feature = "bdb"))]
-        {
-            false
         }
     }
 
@@ -171,11 +137,25 @@ impl Hash {
         match &self.backend {
             HashBackend::Open(store) => store.native_keys(),
             HashBackend::Missing => Ok(Vec::new()),
-            #[cfg(feature = "bdb")]
-            HashBackend::Unopened(db) => {
-                db.cursor();
-                Ok(Vec::new())
-            }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Hash;
+    use std::path::Path;
+
+    #[test]
+    fn a_failure_before_the_open_is_an_error_not_a_missing_container() {
+        // Every backend rejects a NUL path before its native open.
+        let nul = Path::new(std::ffi::OsStr::new("bad\0name.db"));
+        assert!(Hash::open_read_only(nul).is_err());
+        assert!(Hash::create_or_missing(nul).is_err());
+        // A failed native open is a missing container.
+        let dir = std::env::temp_dir().join(format!("oxpinyin-utils-hash-{}", std::process::id()));
+        let missing = Hash::open_read_only(&dir.join("missing.db")).expect("a failed open");
+        assert!(missing.get(&[0; 4]).is_none());
+        assert_eq!(missing.native_keys().expect("keys"), Vec::<Vec<u8>>::new());
     }
 }

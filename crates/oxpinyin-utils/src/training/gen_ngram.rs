@@ -66,9 +66,10 @@ pub(crate) fn run(args: impl IntoIterator<Item = OsString>, deleted: bool) {
 
     // `bigram.attach(name, ATTACH_CREATE|ATTACH_READWRITE)`: the answer is
     // ignored, and a failed attach leaves every load and store a no-op.
-    let bigram = bigram_name
-        .as_deref()
-        .map(|name| Hash::create_or_unopened(&path_of(name)));
+    let bigram = bigram_name.as_deref().map(|name| {
+        Hash::create_or_missing(&path_of(name))
+            .unwrap_or_else(|error| oxpinyin_input::tool::exit_on_store_error(&error))
+    });
 
     train(&mut libraries, bigram.as_ref(), train_pi_gram, deleted);
     if !deleted {

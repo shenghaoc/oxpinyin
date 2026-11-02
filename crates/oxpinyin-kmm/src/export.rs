@@ -131,7 +131,7 @@ impl Sink for Vec<u8> {
 /// `--k-mixture-model-file` value.
 pub fn run(filename: Option<&CStr>, phrases: &dyn PhraseIndex, output: &mut impl Sink) {
     let bigram = Database::open_read_only(filename);
-    if !bigram.is_open() {
+    if !bigram.attached() {
         edge::report_open_failed(filename);
         tool::exit(tool::ENOENT);
     }

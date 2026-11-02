@@ -93,7 +93,10 @@ use std::ops::Bound;
 use std::path::Path;
 
 use crate::common::{Row, fill_buffered, frame, in_bounds, prefix, unframe};
-use crate::{Flow, RawReadStore, ReadStore, StoreError, WriteStore, WriteTxn, validate_table_name};
+use crate::{
+    AttachMode, Flow, HashAttach, RawReadStore, ReadStore, StoreError, WriteStore, WriteTxn,
+    validate_table_name,
+};
 
 use ffi::{Seek, SharedDb as Db};
 
@@ -107,33 +110,24 @@ pub struct BdbStore {
     db: Db,
 }
 
-/// Reproduces the pin's failed read-only attach: the handle stays open,
-/// a cursor and the destructor's sync run, libdb prints its own
-/// `BDB1565` lines, and the handle closes.
-/// The pin's still-open handle after a failed `attach`: every member call
-/// libdb then receives prints its own `BDB1565` line, and the destructor
-/// sync prints one more.
+/// A Berkeley DB attach whose `DB->open` failed. The pin keeps that
+/// handle and calls it again (`chewing_large_table2_bdb.cpp:87-93`,
+/// `ngram_bdb.cpp:40-42`, `flexible_ngram_bdb.h:110-146` at 074a2219), and
+/// libdb answers each call with `BDB1565`. Berkeley DB requires
+/// `DB->close` after a failed open and no other call on the handle
+/// (`dbopen.html`, `dbclose.html`, 5.3.28), so `Db::open` has already
+/// closed it: nothing here reaches libdb (compatibility register,
+/// Berkeley DB failed handles).
 pub struct BdbUnopenedHandle {
-    db: ffi::Db,
+    _closed: (),
 }
 
-/// The pin's `attach` answer: an opened store, or the still-open handle a
-/// failed open leaves behind.
+/// The pin's `attach` answer: an opened store, or a failed open.
 pub enum BdbOpen {
     /// `DB->open` succeeded.
     Open(BdbStore),
-    /// `DB->open` failed; every later member call prints `BDB1565`.
+    /// `DB->open` failed and its handle is closed.
     Unopened(BdbUnopenedHandle),
-}
-
-/// Opens one hash file exactly as the pin's `attach` does, keeping the
-/// handle when the open fails.
-///
-/// # Errors
-///
-/// `db_create` or an internal allocation failure.
-pub fn open_hash_pin(path: &Path, read_only: bool) -> Result<BdbOpen, crate::StoreError> {
-    open_pin(path, true, read_only)
 }
 
 pub(crate) fn open_pin(
@@ -141,70 +135,13 @@ pub(crate) fn open_pin(
     hash: bool,
     read_only: bool,
 ) -> Result<BdbOpen, crate::StoreError> {
-    let db = ffi::Db::open_unopened(path, hash, read_only, !read_only)
-        .ok_or_else(|| crate::StoreError::Backend("db_create failed".into()))?;
-    if db.is_opened() {
-        Ok(BdbOpen::Open(BdbStore {
-            db: ffi::SharedDb::new(db),
-        }))
-    } else {
-        Ok(BdbOpen::Unopened(BdbUnopenedHandle { db }))
-    }
-}
-
-impl BdbUnopenedHandle {
-    /// The failed open's handle, or `None` if `db_create` itself failed.
-    #[must_use]
-    pub fn open_failed(path: &Path, hash: bool, read_only: bool) -> Option<Self> {
-        ffi::Db::open_unopened(path, hash, read_only, !read_only)
-            .filter(|db| !db.is_opened())
-            .map(|db| Self { db })
-    }
-
-    /// `m_db->get(...)`: libdb prints `BDB1565`.
-    #[must_use]
-    pub fn get(&self, key: &[u8]) -> bool {
-        self.db.get(key, &mut Vec::new()).unwrap_or(false)
-    }
-
-    /// `m_db->put(...)`: libdb prints `BDB1565`.
-    pub fn put(&self, key: &[u8], value: &[u8]) {
-        let _ = self.db.put(key, value);
-    }
-
-    /// `m_db->del(...)`: libdb prints `BDB1565`.
-    #[must_use]
-    pub fn del(&self, key: &[u8]) -> bool {
-        self.db.del(key).is_ok()
-    }
-
-    /// `m_db->cursor(...)`: libdb prints `BDB1565`.
-    pub fn cursor(&self) {
-        let _ = self.db.cursor_handle();
-    }
-
-    /// `m_db->sync(...)`: libdb prints `BDB1565`.
-    pub fn sync(&self) {
-        let _ = self.db.sync();
-    }
-}
-
-impl Drop for BdbUnopenedHandle {
-    fn drop(&mut self) {
-        // The pin's `reset()` syncs before closing, and this handle was
-        // never opened, so libdb prints `BDB1565` once more.
-        self.sync();
-    }
-}
-
-/// Reproduces the pin's failed read-only attach for the storage
-/// utilities: a cursor walk, then the destructor's sync.
-pub fn report_failed_read_only_open(path: &Path, hash: bool) {
-    ffi::Db::report_failed_open(
-        path,
-        if hash { ffi::DB_HASH } else { ffi::DB_BTREE },
-        ffi::SYSTEM_FILE_MODE,
-    );
+    let db_type = if hash { ffi::DB_HASH } else { ffi::DB_BTREE };
+    Ok(
+        match Db::open_attach(path, db_type, read_only, !read_only, ffi::SYSTEM_FILE_MODE)? {
+            Some(db) => BdbOpen::Open(BdbStore { db }),
+            None => BdbOpen::Unopened(BdbUnopenedHandle { _closed: () }),
+        },
+    )
 }
 
 impl BdbStore {
@@ -212,20 +149,21 @@ impl BdbStore {
     /// the many `write` closures share one copy of it.
     #[inline(never)]
     fn commit(&self, buffer: BTreeMap<Vec<u8>, Option<Vec<u8>>>) -> Result<(), StoreError> {
-        self.commit_with(buffer, true)
+        self.commit_with(buffer, true).map(drop)
     }
 
+    /// Applies `buffer`, one `DB->put` or `DB->del` per record, then syncs
+    /// when `sync`. The answer is false when a `DB->del` found no record.
     fn commit_with(
         &self,
         buffer: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
         sync: bool,
-    ) -> Result<(), StoreError> {
+    ) -> Result<bool, StoreError> {
+        let mut found = true;
         for (key, value) in buffer {
             match value {
                 Some(value) => self.db.put(&key, &value)?,
-                None => {
-                    self.db.del(&key)?;
-                }
+                None => found &= self.db.del(&key)?,
             }
         }
         // Push the batch out, so a reader — including the user's own
@@ -238,7 +176,7 @@ impl BdbStore {
         if sync {
             self.db.sync()?;
         }
-        Ok(())
+        Ok(found)
     }
 
     /// Walks `table`'s rows in ascending key order, within `[lo, hi]`,
@@ -550,6 +488,51 @@ impl WriteStore for BdbStore {
         })
     }
 
+    /// `Bigram::attach` (`ngram_bdb.cpp:110-124` at 074a2219) through
+    /// `open_pin`: a failed native `DB->open` closes its handle.
+    fn attach_bigram(path: &Path, read_only: bool) -> Result<Option<Self>, StoreError> {
+        Ok(match open_pin(path, true, read_only)? {
+            BdbOpen::Open(store) => Some(store),
+            BdbOpen::Unopened(_) => None,
+        })
+    }
+
+    /// `FlexibleBigram::attach` (`flexible_ngram_bdb.h:94-153` at
+    /// 074a2219) with Berkeley DB's documented handle sequence. The pin
+    /// retries `DB->open` on its failed handle (`:110-115`) and reads the
+    /// signature through a handle whose open failed (`:134-146`). Berkeley
+    /// DB requires `DB->close` after a failed `DB->open`, and no other call
+    /// on that handle (`dbopen.html`, `dbclose.html`, 5.3.28). So each
+    /// failed open closes its handle, the CREATE retry uses a new one, and
+    /// a failed attach keeps nothing. The difference is libdb's missing
+    /// `BDB1565` lines (compatibility register, Berkeley DB failed handles).
+    fn attach_hash(
+        path: &Path,
+        mode: AttachMode,
+        signature: (&[u8], &[u8]),
+    ) -> Result<HashAttach<Self>, StoreError> {
+        let read_only = mode == AttachMode::ReadOnly;
+        // `Ok(None)`: the native `DB->open` failed and its handle is closed.
+        let open = |create| {
+            Db::open_attach(path, ffi::DB_HASH, read_only, create, ffi::SYSTEM_FILE_MODE)
+                .map(|db| db.map(|db| Self { db }))
+        };
+        if let Some(store) = open(false)? {
+            return Ok(HashAttach::Opened(store));
+        }
+        if mode != AttachMode::ReadWriteCreate {
+            return Ok(HashAttach::Closed);
+        }
+        let Some(store) = open(true)? else {
+            return Ok(HashAttach::Closed);
+        };
+        // The pin's `DB_DBT_PARTIAL` put at offset 0 of a new record stores
+        // the same four bytes; its answer is the attach answer (`:118-131`).
+        let (key, value) = signature;
+        let written = store.db.put(key, value).is_ok();
+        Ok(HashAttach::Created(store, written))
+    }
+
     /// libdb's in-memory database (`DB->open` with a null file name, the
     /// form `ngram_bdb.cpp:51-56` uses for the user bigram), as a
     /// `DB_BTREE` so the table framing's ordered walks hold.
@@ -613,10 +596,14 @@ impl WriteStore for BdbStore {
         Ok(out)
     }
 
+    /// `FlexibleBigram::store` and `remove` (`flexible_ngram_bdb.h:
+    /// 198-214`, `:224-235` at 074a2219): the `DB->put` or `DB->del` alone,
+    /// its answer the pin's. `reset()` makes the one `DB->sync`
+    /// (`:51-57`), which [`WriteStore::flush`] is.
     fn write_deferred<R>(
         &self,
         f: impl FnOnce(&mut Self::Txn<'_>) -> Result<R, StoreError>,
-    ) -> Result<R, StoreError> {
+    ) -> Result<(R, bool), StoreError> {
         if self.db.is_read_only() {
             return Err(StoreError::ReadOnly);
         }
@@ -625,8 +612,8 @@ impl WriteStore for BdbStore {
             buffer: BTreeMap::new(),
         };
         let out = f(&mut txn)?;
-        self.commit_with(txn.buffer, false)?;
-        Ok(out)
+        let found = self.commit_with(txn.buffer, false)?;
+        Ok((out, found))
     }
 
     fn flush(&self) -> Result<(), StoreError> {
@@ -948,7 +935,7 @@ impl crate::UserBigramDb for BdbUserBigramDb {
     }
 
     fn remove(&self, key: &[u8]) -> Result<(), StoreError> {
-        self.db.del(key)
+        self.db.del(key).map(drop)
     }
 
     fn keys(&self) -> Result<Vec<Option<[u8; 4]>>, StoreError> {

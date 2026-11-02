@@ -388,6 +388,38 @@ impl<S: WriteStore> WriteStore for SessionValues<S> {
         SessionValues::write(self, f)
     }
 
+    // Session values are never a `FlexibleBigram` container.
+    fn attach_hash(
+        _path: &Path,
+        _mode: oxpinyin_store::AttachMode,
+        _signature: (&[u8], &[u8]),
+    ) -> Result<oxpinyin_store::HashAttach<Self>, StoreError> {
+        Err(StoreError::InvalidInput(
+            "session values hold no FlexibleBigram container",
+        ))
+    }
+
+    fn attach_bigram(_path: &Path, _read_only: bool) -> Result<Option<Self>, StoreError> {
+        Err(StoreError::InvalidInput(
+            "session values hold no bigram file",
+        ))
+    }
+
+    fn write_deferred<R>(
+        &self,
+        _f: impl FnOnce(&mut SessionTxn<'_>) -> Result<R, StoreError>,
+    ) -> Result<(R, bool), StoreError> {
+        Err(StoreError::InvalidInput(
+            "session values hold no FlexibleBigram container",
+        ))
+    }
+
+    fn flush(&self) -> Result<(), StoreError> {
+        Err(StoreError::InvalidInput(
+            "session values hold no FlexibleBigram container",
+        ))
+    }
+
     fn compact(&mut self) -> Result<(), StoreError> {
         match self {
             Self::Native(store) => store.compact(),

@@ -83,6 +83,8 @@
     },
     {
       "id": "eval_correction_rate-missing-bigram-file",
+      "policy_record": "bdb-failed-handle.md",
+      "policy_cells": ["bdb"],
       "utility": "eval_correction_rate",
       "source": "utils/training/eval_correction_rate.cpp at 074a2219: 154-155 (attach's answer is ignored; the decode falls back to the unigram term)",
       "args": [],

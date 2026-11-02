@@ -58,6 +58,21 @@ pub fn abort() -> ! {
     unsafe { libc::abort() }
 }
 
+/// A store error that has no pin counterpart, such as an unsupported
+/// linked libdb: one line on stderr, then `exit(1)`. Callers make it before
+/// they create or write anything, so it is never read as a missing
+/// container.
+pub fn exit_on_store_error(error: &dyn std::fmt::Display) -> ! {
+    print_text(c_stderr(), c"%s\n", &store_error_line(error));
+    exit(1)
+}
+
+/// The one line [`exit_on_store_error`] prints, without its newline.
+fn store_error_line(error: &dyn std::fmt::Display) -> CString {
+    let text = error.to_string().replace(['\n', '\r', '\0'], " ");
+    CString::new(text.trim_end()).unwrap_or_default()
+}
+
 /// `perror(s)` (`ngseg.cpp:124`).
 pub fn perror(s: &CStr) {
     // SAFETY: `s` is NUL-terminated and outlives the call.
@@ -2111,6 +2126,37 @@ pub mod k_mixture_model {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Set in the child: run the helper instead of the test body.
+    const STORE_ERROR_CHILD: &str = "OXPINYIN_INPUT_STORE_ERROR_CHILD";
+
+    #[test]
+    fn a_store_error_is_reported_on_one_line() {
+        let line = store_error_line(&"unsupported Berkeley DB 6.2: surveyed against 5.3\nsecond");
+        let line = line.to_str().expect("UTF-8");
+        assert!(line.contains("unsupported Berkeley DB 6.2"), "{line}");
+        assert!(!line.contains('\n'), "{line:?}");
+    }
+
+    #[test]
+    fn exit_on_store_error_prints_one_line_and_exits_with_status_1() {
+        if std::env::var_os(STORE_ERROR_CHILD).is_some() {
+            exit_on_store_error(&"unsupported Berkeley DB 6.2");
+        }
+        let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .args([
+                "--exact",
+                "tool::tests::exit_on_store_error_prints_one_line_and_exits_with_status_1",
+                "--test-threads=1",
+            ])
+            .env(STORE_ERROR_CHILD, "1")
+            .output()
+            .expect("child test");
+        assert_eq!(output.status.code(), Some(1));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("unsupported Berkeley DB 6.2"), "{stderr}");
+        assert_eq!(stderr.matches('\n').count(), 1, "{stderr:?}");
+    }
 
     #[test]
     fn getline_keeps_the_pins_lines_and_its_last_line() {

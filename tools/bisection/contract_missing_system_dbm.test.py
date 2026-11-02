@@ -40,6 +40,31 @@ class MissingSystemDbmTests(unittest.TestCase):
             self.assertEqual(family.missing_case(None, True)(kit), {'init': False})
         kit.fn.assert_not_called()
 
+    def test_bdb_twins_name_the_record_and_the_others_do_not(self):
+        cases = {}
+
+        def case(name, **spec):
+            return lambda fn: cases.setdefault(name, spec)
+
+        family.register(case)
+        twins = {name: spec for name, spec in cases.items() if '/bdb-' in name}
+        self.assertTrue(twins)
+        for name, spec in twins.items():
+            self.assertEqual(spec['cells'], ('bdb',), name)
+            self.assertEqual(spec['policy_record'], family.RECORD, name)
+            plain = name.replace('/bdb-', '/')
+            self.assertEqual(cases[plain]['cells'], ('kc', 'tkrzw'), plain)
+            self.assertNotIn('policy_record', cases[plain])
+        self.assertEqual(len(twins), 19 + 10)
+        for table in ('punctuation', 'addon-pinyin', 'addon-phrase'):
+            unattached = cases[f'missing-system-dbm/zhuyin-{table}-operations']
+            self.assertNotIn('cells', unattached)
+            self.assertNotIn('policy_record', unattached)
+        for facade in ('pinyin', 'zhuyin'):
+            intact = cases[f'missing-system-dbm/{facade}-intact']
+            self.assertNotIn('cells', intact)
+            self.assertTrue(intact['control'])
+
 
 if __name__ == '__main__':
     unittest.main()

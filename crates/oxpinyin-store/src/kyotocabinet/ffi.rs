@@ -384,9 +384,18 @@ pub(crate) struct Db {
     read_only: bool,
 }
 
+/// `BasicDB::OREADER`, `OWRITER` and `OCREATE`, the bits the pin's
+/// `attach` builds (`kyotodb_utils.h:32-45`, `flexible_ngram_kyotodb.h:
+/// 131-152`).
+pub(crate) const OREADER: u32 = sys::OXKC_OREADER;
+pub(crate) const OWRITER: u32 = sys::OXKC_OWRITER;
+pub(crate) const OCREATE: u32 = sys::OXKC_OCREATE;
+
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum NativeTeardownCall {
+    /// `open(path, mode)` on an existing object, by [`Db::open_mode`].
+    Open(u32),
     Synchronize(bool),
     Close,
     Delete,
@@ -587,6 +596,63 @@ impl Db {
         Ok((this, opened))
     }
 
+    /// A never-opened object of `db_type`: the pin's `new HashDB`
+    /// (`flexible_ngram_kyotodb.h:143`). [`Self::open_mode`] opens it.
+    ///
+    /// # Errors
+    ///
+    /// An unsupported Kyoto Cabinet, or a null `oxkc_db_new` (allocation
+    /// failure).
+    pub(crate) fn new_unopened(db_type: DbType, read_only: bool) -> Result<Self, StoreError> {
+        check_runtime_version()?;
+        // SAFETY: takes a class code and returns either a fresh handle or
+        // null.
+        let handle = unsafe { sys::oxkc_db_new(db_type.code()) };
+        if handle.is_null() {
+            return Err(StoreError::Backend(
+                "kcdbnew returned null (allocation failure)".into(),
+            ));
+        }
+        Ok(Self {
+            handle,
+            db_type,
+            read_only,
+        })
+    }
+
+    /// `m_db->open(path, mode)` on this object, with the pin's own mode
+    /// bits. The pin's CREATE retry calls it twice on one object
+    /// (`flexible_ngram_kyotodb.h:145-155`); the second `open` reads the
+    /// state the first left, such as `FFATAL` from `set_error`.
+    ///
+    /// # Errors
+    ///
+    /// A path that contains NUL, before any native call.
+    pub(crate) fn open_mode(&mut self, path: &Path, mode: u32) -> Result<bool, StoreError> {
+        let spec = cstring_path(path)?;
+        // SAFETY: the handle is live and owned exclusively (`&mut self`);
+        // `spec` outlives the call. Kyoto Cabinet refuses an open of an
+        // object that is already open with INVALID.
+        let opened = unsafe { sys::oxkc_db_open(self.handle, spec.as_ptr(), mode) } != 0;
+        #[cfg(test)]
+        record_native_teardown_call(self.handle, NativeTeardownCall::Open(mode));
+        Ok(opened)
+    }
+
+    /// `delete m_db` with no `close`, as the pin deletes a `HashDB` whose
+    /// open failed (`flexible_ngram_kyotodb.h:145-150`). Call it only after
+    /// a failed open: `~HashDB` closes only an open object
+    /// (`kchashdb.h:532-534`), so nothing else reaches the library.
+    pub(crate) fn delete_unopened(self) {
+        let handle = self.handle;
+        // `Drop` would close first.
+        std::mem::forget(self);
+        // SAFETY: the handle is live and owned, and this is its last use.
+        unsafe { sys::oxkc_db_del(handle) };
+        #[cfg(test)]
+        record_native_teardown_call(handle, NativeTeardownCall::Delete);
+    }
+
     /// The library's own account of the last failure on this handle.
     fn error(&self, what: &str) -> StoreError {
         // SAFETY: the handle is live; both calls are defined for a handle
@@ -770,24 +836,37 @@ impl Db {
         Ok(())
     }
 
-    /// Remove `key`; absent is not an error.
-    pub(crate) fn remove(&self, key: &[u8]) -> Result<(), StoreError> {
+    /// Remove `key`; absent is not an error. `Ok(false)` when the record
+    /// was absent (`NOREC`), the answer the pin's `remove` returns
+    /// (`flexible_ngram_kyotodb.h:246-252`, `kcdb.h:1862-1885`).
+    pub(crate) fn remove(&self, key: &[u8]) -> Result<bool, StoreError> {
         if self.read_only {
             return Err(StoreError::ReadOnly);
         }
         // SAFETY: the handle is live and `key` outlives the call.
         let ok = unsafe { sys::oxkc_db_remove(self.handle, c_ptr(key), key.len()) };
-        if ok == 0 && !self.last_was_no_record() {
-            return Err(self.error("kcdbremove"));
+        if ok != 0 {
+            return Ok(true);
         }
-        Ok(())
+        if self.last_was_no_record() {
+            return Ok(false);
+        }
+        Err(self.error("kcdbremove"))
     }
 
-    /// Flush. `hard` also asks for the physical device.
+    /// Flush. `hard` also asks for the physical device. A read-only
+    /// handle makes no native call.
     pub(crate) fn sync(&self, hard: bool) -> Result<(), StoreError> {
         if self.read_only {
             return Ok(());
         }
+        self.synchronize(hard)
+    }
+
+    /// `synchronize(hard)` on any handle, read-only included: the call a
+    /// FlexibleBigram owner's `reset()` makes (`flexible_ngram_kyotodb.h:
+    /// 86-92`). An `OREADER` HashDB answers true (`kchashdb.h:969-983`).
+    pub(crate) fn synchronize(&self, hard: bool) -> Result<(), StoreError> {
         if self.synchronize_native(hard) == 0 {
             return Err(self.error("kcdbsync"));
         }

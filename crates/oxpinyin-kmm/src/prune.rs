@@ -33,7 +33,9 @@ pub const DEFAULT_CDF: f64 = 0.99;
 /// `EDOM` for an out-of-range probability. The function calls
 /// [`tool::exit`] and does not return in those cases.
 pub fn run(filename: Option<&CStr>, prune_k: i32, cdf: f64) {
-    let db = Database::open_read_write(filename);
+    // `attach(bigram_filename, ATTACH_READWRITE)`, without ATTACH_CREATE
+    // (`prune_k_mixture_model.cpp:129`).
+    let db = Database::attach(filename, oxpinyin_store::AttachMode::ReadWrite);
     let Some(mut magic_header) = db.get_magic_header() else {
         edge::report_no_magic();
         tool::exit(tool::ENODATA);
