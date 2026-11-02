@@ -25,7 +25,7 @@ self-built one (`just tkrzw-build DIR`, what CI uses) is selected with
 
 | backend | Debian/Ubuntu packages | macOS (Homebrew) |
 | --- | --- | --- |
-| tkrzw (the default) | `libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev libclang-dev pkg-config` | `tkrzw`, and `export LIBRARY_PATH="$(brew --prefix)/lib"` (see [setup](setup.md#macos): `cargo test` links lz4/zstd from there, `cargo check`/`clippy` never link and are not evidence) |
+| tkrzw (the default) | `libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev pkg-config g++` (the cxx bridge is C++17; no libclang) | `tkrzw`, and `export LIBRARY_PATH="$(brew --prefix)/lib"` (see [setup](setup.md#macos): `cargo test` links lz4/zstd from there, `cargo check`/`clippy` never link and are not evidence) |
 | kyotocabinet | `libkyotocabinet-dev libclang-dev pkg-config g++` (the shim is C++) | `kyoto-cabinet`; the keg ships `kyotocabinet.pc`, pkg-config resolves it, and the store suite passes (verified on 1.2.80, 2026-09-13). The old "the KC dylib does not dlopen on macOS" note does not reproduce on today's bottled formula — the dylib dlopens by absolute path, and the backend links at link time, so bare-name lookup never enters the picture |
 | bdb | `libdb-dev` (resolves to `libdb5.3-dev`) `libclang-dev pkg-config`; Fedora: `libdb-devel` | `berkeley-db@5` — 5.3.28 under the Sleepycat license, the surveyed version; the default `berkeley-db` formula is 18.1 AGPL-3.0-only and stays unusable. The keg is keg-only and ships no `.pc`, so point the [overrides](#discovery-and-overrides) at it (the build's rpath flag lets the test binaries find the dylib). Clippy and the full suite pass with the same counts as Linux — 36/0/4 (verified 2026-09-13) |
 
@@ -43,10 +43,12 @@ own copy.
 
 ### Packaging: runtime versus build dependencies
 
-For a downstream Linux package built with a C-library backend (tkrzw,
-Kyoto Cabinet, Berkeley DB), `libclang` and `pkg-config` are build-time
-only: `system-deps` locates the library and `bindgen` reads its header to
-generate the declarations. Neither is linked, and neither appears in the
+For a downstream Linux package built with a native-library backend
+(tkrzw, Kyoto Cabinet, Berkeley DB), `pkg-config`, `libclang` (Kyoto
+Cabinet and Berkeley DB) and a C++ compiler (tkrzw, Kyoto Cabinet) are
+build-time only: `system-deps` locates the library, `bindgen` reads the
+C headers of Berkeley DB and the Kyoto Cabinet shim, and `cxx-build`
+compiles the tkrzw bridge against tkrzw's C++ headers. Neither is linked, and neither appears in the
 runtime dependency set — each backend splits into its own
 `lib*-dev` / `lib*` pair (`libdb5.3` / `libdb5.3-dev` on Debian,
 `libdb` / `libdb-devel` on Fedora). The Kyoto Cabinet build also needs a
@@ -71,7 +73,7 @@ three replace what the `.pc` file reports, and each is tracked by
 
 | variable | effect |
 | --- | --- |
-| `SYSTEM_DEPS_<NAME>_INCLUDE` | the header directory (bindgen, and the Kyoto Cabinet shim, read it) |
+| `SYSTEM_DEPS_<NAME>_INCLUDE` | the header directory (bindgen, the Kyoto Cabinet shim and the tkrzw bridge read it) |
 | `SYSTEM_DEPS_<NAME>_SEARCH_NATIVE` | the link-search path, also the rpath |
 | `SYSTEM_DEPS_<NAME>_LIB` | the library name, for a name other than `db` or `kyotocabinet` (vcpkg installs `libdb48.lib`: `SYSTEM_DEPS_BDB_LIB=libdb48`) |
 | `SYSTEM_DEPS_KYOTOCABINET_NO_PKG_CONFIG` | `1` skips the `.pc` lookup; `SYSTEM_DEPS_KYOTOCABINET_LIB` must then name the library |

@@ -26,6 +26,9 @@ missing_safety_doc = "deny"
 must_use_candidate = "warn"
 
 [dependencies]
+# The tkrzw backend's Rust/C++ bridge (Rust/C++ interoperability ruling,
+# 2026-11-02): generated glue over the pin's concrete tkrzw classes.
+cxx = { version = "1.0.205", optional = true }
 [dev-dependencies]
 # Backend micro-benches (benches/); workspace lock pins 0.8.
 criterion = "0.8"
@@ -36,6 +39,9 @@ bindgen = { workspace = true, optional = true }
 cc = { version = "1.4.3", optional = true }
 # Declares and finds the native backends (#1434); see the metadata below.
 system-deps = { version = "9.0.0", optional = true }
+# Generates and compiles the tkrzw bridge's C++ side, with the semantic
+# adapter in src/tkrzw/adapter.cc.
+cxx-build = { version = "1.0.205", optional = true }
 
 # One entry per backend, each probed only with its feature. The version is
 # required by the format; "0" is no floor, as libpinyin's configure sets
@@ -68,7 +74,9 @@ version = "0"
 # "default" means here — select any peer explicitly with
 # `--no-default-features --features {kyotocabinet|tkrzw|bdb}`.
 default = ["tkrzw"]
-tkrzw = ["dep:bindgen", "dep:system-deps"]
+# tkrzw binds the pin's concrete classes through cxx; it needs a C++17
+# compiler and tkrzw's headers, not libclang; `cc` is named for the compiler probe.
+tkrzw = ["dep:cc", "dep:cxx", "dep:cxx-build", "dep:system-deps"]
 # Kyoto Cabinet backend. bindgen is build-time only (it needs libclang);
 # the runtime dependency is the system libkyotocabinet the distro already
 # ships.

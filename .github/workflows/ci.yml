@@ -224,7 +224,8 @@ jobs:
       - name: Install build dependencies (apt)
         # tkrzw is the default store backend (maintainer decision 2026-10-30
         # UTC); the tkrzw action builds it, with this g++ and make, and
-        # points pkg-config at it. bindgen (libclang) reads tkrzw_langc.h.
+        # points pkg-config at it. The tkrzw cxx bridge compiles with g++;
+        # bindgen (libclang) serves the Berkeley DB and Kyoto Cabinet lanes.
         run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libglib2.0-dev
       # The distribution package supplies ShellCheck; the checked minimum is
       # the version whose findings this tree is clean under. No installer.
@@ -365,7 +366,8 @@ jobs:
       - name: Install build dependencies (apt)
         # tkrzw is the default store backend (maintainer decision 2026-10-30
         # UTC); the tkrzw action builds it, with this g++ and make, and
-        # points pkg-config at it. bindgen (libclang) reads tkrzw_langc.h.
+        # points pkg-config at it. The tkrzw cxx bridge compiles with g++;
+        # bindgen (libclang) serves the Berkeley DB and Kyoto Cabinet lanes.
         run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libglib2.0-dev
       - name: Set up pinned repository Python
         if: needs.changes.outputs.reuse != 'true'

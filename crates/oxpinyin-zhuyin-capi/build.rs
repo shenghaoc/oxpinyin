@@ -46,6 +46,19 @@ fn main() {
 
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
         println!("cargo:rustc-cdylib-link-arg=-Wl,-soname,libzhuyin.so.15");
+        // The tkrzw backend's cxx bridge links the `cxx` crate, whose Rust
+        // runtime defines `#[export_name]` symbols (`cxxbridge1$slice$*`,
+        // `cxxbridge1$string$*`, ...) that rustc lists as C-level exports
+        // of every cdylib in the graph. They are not part of the libpinyin
+        // ABI (docs/packaging.md#export-gate). The symbols live in rlib
+        // archives, and GNU ld's `--exclude-libs` gives every symbol
+        // defined in an archive hidden visibility, which a version script
+        // cannot override; this crate's own `pinyin_*` symbols come from
+        // its object files and are untouched. The shipped library is
+        // relinked under `libzhuyin.ver` and needs none of this.
+        if env::var_os("CARGO_FEATURE_TKRZW").is_some() {
+            println!("cargo:rustc-cdylib-link-arg=-Wl,--exclude-libs,ALL");
+        }
     }
     // glib-2.0 linking is handled by glib-sys's build script (system-deps).
     // Constrained builders: use SYSTEM_DEPS_GLIB_2_0_SEARCH_NATIVE,

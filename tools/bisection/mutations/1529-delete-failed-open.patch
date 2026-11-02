@@ -1,0 +1,25 @@
+diff --git a/crates/oxpinyin-store/src/tkrzw/mod.rs b/crates/oxpinyin-store/src/tkrzw/mod.rs
+index 05feab7a..7cff2ecb 100644
+--- a/crates/oxpinyin-store/src/tkrzw/mod.rs
++++ b/crates/oxpinyin-store/src/tkrzw/mod.rs
+@@ -370,12 +370,18 @@ impl Db {
+         options: i32,
+     ) -> Result<ffi::NativeStatus, StoreError> {
+         validate_path(path)?;
+-        Ok(ffi::open(
++        let status = ffi::open(
+             self.dbm.pin_mut(),
+             path.as_os_str().as_encoded_bytes(),
+             writable,
+             options,
+-        ))
++        );
++        // M1529_DELETE_FAILED_OPEN: destroy the concrete object the pin
++        // keeps after a failed Open, as the retired C API's PolyDBM did.
++        if status.code != STATUS_SUCCESS {
++            self.dbm = UniquePtr::null();
++        }
++        Ok(status)
+     }
+ 
+     /// Whether the native object is still owned: always, except under the

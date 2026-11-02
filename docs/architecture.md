@@ -59,7 +59,7 @@ The tree has no pure-Rust database replacement.
 `glib-sys` binds a C library.
 Link Kyoto Cabinet, tkrzw and Berkeley DB to the distribution's libraries.
 Use Berkeley DB through its official C API, `db.h`, with bindgen over system headers.
-tkrzw's approved binding is CXX over the concrete classes the pin uses; the current `tkrzw_langc.h` binding remains until the separate rebinding PR.
+tkrzw binds with CXX over the concrete classes the pin uses (`crates/oxpinyin-store/src/tkrzw/bridge.rs`, with the semantic adapter `adapter.cc`); the `tkrzw_langc.h` C API is no longer used.
 Find tkrzw, Kyoto Cabinet, Berkeley DB where it ships a `.pc` file, and GLib with the `pkg-config` crate, a build-dependency of `oxpinyin-store`, `oxpinyin-input` and `oxpinyin-training` (maintainer approval 2026-10-30 UTC).
 Berkeley DB falls back to fixed header directories and the `OXPINYIN_BDB_*` overrides, because the distributions and Homebrew install no `.pc` file for it.
 The [interoperability ruling](findings/compatibility-policy.md#rust-cpp-interoperability) supersedes the prohibition on tkrzw's C++ interface and sets the migration order and source-proof obligations.

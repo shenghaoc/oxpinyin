@@ -534,16 +534,19 @@ jobs:
   tkrzw-sanitizers:
     needs: changes
     if: needs.changes.outputs.run == 'true' && needs.changes.outputs.reuse != 'true'
-    # The tkrzw backend passes Rust callbacks into tkrzw's visitor dispatch
-    # (db_get/db_scan install Process-full visitors handing borrowed key/value
-    # records to Rust fn pointers valid only for the callback). Panic-unwinding
-    # across that FFI boundary and borrow-escape of those records are the live
-    # hazards, so the feature's own test surface runs under ASan and any
-    # finding kills the job. There are no compiled C/C++ translation units —
-    # the backend is pure bindgen over tkrzw_langc.h — so ASan instruments
-    # the Rust side of the FFI. A UBSan arm ran here until 2026-10-22; with
-    # no C targets and no rustc `undefined` sanitizer it instrumented
-    # nothing, and it was removed.
+    # The tkrzw backend crosses into C++ through a cxx bridge: borrowed byte
+    # slices become std::string_view for one call, iterator reads land in
+    # std::string out-parameters, and a RecordProcessor subclass in the
+    # adapter (crates/oxpinyin-store/src/tkrzw/adapter.cc) walks keys. The
+    # live hazards are a borrow outliving its call and a C++ exception
+    # crossing the noexcept shim, so the feature's own test surface runs
+    # under ASan and any finding kills the job. The adapter and cxx's
+    # generated glue are compiled C++ translation units; the store's build
+    # script passes -fsanitize=address -fno-omit-frame-pointer to them when
+    # CARGO_CFG_SANITIZE names address, as the Kyoto Cabinet shim's does
+    # (#1531), so both sides of the bridge are instrumented. A UBSan arm ran
+    # here until 2026-10-22, when the backend had no C targets; it was
+    # removed then.
     name: tkrzw FFI under address
     runs-on: *ubuntu
     container:

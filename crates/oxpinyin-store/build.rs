@@ -1,16 +1,17 @@
-//! Generates the C backends' bindings.
+//! Generates the backends' native bindings.
 //!
 //! tkrzw is the workspace's default selected backend, so a normal
-//! build runs bindgen over `tkrzw_langc.h` and links libtkrzw. With
-//! `--no-default-features` — and with no C backend feature enabled —
-//! this script does nothing: no bindgen, no extra library. Selecting a
-//! peer backend explicitly (`--no-default-features --features
-//! {kyotocabinet|bdb}`) skips the C-binding step for the ones
-//! it does not build.
+//! build generates and compiles the cxx bridge over tkrzw's classes and
+//! links libtkrzw. With `--no-default-features` — and with no backend
+//! feature enabled — this script does nothing: no bindgen, no C++, no
+//! extra library. Selecting a peer backend explicitly
+//! (`--no-default-features --features {kyotocabinet|bdb}`) skips the
+//! binding steps of the ones it does not build.
 //!
 //! * `kyotocabinet` — the C entry points (`shim.h`) of a C++ shim over
 //!   Kyoto Cabinet's classes, which this script also compiles with `cc`.
-//! * `tkrzw` — the tkrzw C API (`tkrzw_langc.h`), on by default.
+//! * `tkrzw` — the cxx bridge over tkrzw's concrete classes
+//!   (`src/tkrzw/bridge.rs`, `src/tkrzw/adapter.cc`), on by default.
 //! * `bdb` — the Berkeley DB C API (`db.h`), from the system libdb.
 //!
 //! # Discovery
@@ -20,8 +21,8 @@
 //! `SYSTEM_DEPS_<NAME>_*` variables are the only overrides
 //! (`docs/runbooks/backends.md`). It emits the link-search and link-lib
 //! directives. This script reads the resolved include and link paths from
-//! it for what `system-deps` does not configure: bindgen's and `cc`'s
-//! include paths, and the rpath.
+//! it for what `system-deps` does not configure: bindgen's, `cc`'s and
+//! `cxx-build`'s include paths, and the rpath.
 //!
 //! Each backend is found as libpinyin's `configure.ac` finds it: tkrzw and
 //! Kyoto Cabinet through their `.pc` file (`PKG_CHECK_MODULES`), Berkeley
@@ -202,83 +203,140 @@ mod kyotocabinet {
     }
 }
 
+/// tkrzw: the cxx bridge over the pin's concrete classes, plus the
+/// semantic adapter `src/tkrzw/adapter.cc`.
+///
+/// # The concrete classes, not `tkrzw_langc.h`
+///
+/// libpinyin allocates `TreeDBM`, `HashDBM`, `BabyDBM` and `TinyDBM` itself
+/// and calls them through `DBM*`. The bridge (`src/tkrzw/bridge.rs`) does
+/// the same: cxx generates the Rust/C++ glue, and `adapter.cc` holds only
+/// what cxx cannot express — the concrete constructors, the byte-view and
+/// status conversions, the `RecordProcessor` subclass of the key walk, and
+/// the mutation through a shared reference that the classes' own locking
+/// permits. The adapter calls the library; it copies none of it. The C API
+/// (`PolyDBM`) is not used: it deletes a concrete object whose `Open`
+/// failed and catches every C++ exception (Rust/C++ interoperability
+/// ruling, 2026-11-02, `docs/findings/compatibility-policy.md`).
+///
+/// # Compilation
+///
+/// The adapter and the generated glue are compiled at `-O2`, the pin's
+/// autoconf default, as C++17 (tkrzw's own standard), with hidden
+/// visibility so the libraries export nothing beyond their version scripts
+/// (`docs/packaging.md#export-gate`). The address-sanitizer flags match the
+/// Linux sanitizer gate explicitly, as the Kyoto Cabinet shim's do (#1531),
+/// so the adapter object is instrumented whatever `cc`'s own defaults do.
+/// tkrzw's include paths come from the `system-deps` probe, which also
+/// emits the link directives (and, through the pkg-config crate's
+/// `PKG_CONFIG_ALLOW_SYSTEM_CFLAGS`, reports a distro's `/usr/include`
+/// too). A directory outside the compiler's default search list is a
+/// system header directory to the compiler, so a self-built prefix's own
+/// warnings cannot fail a `-D warnings` build; a default directory is
+/// left to the compiler, see `build`.
 #[cfg(feature = "tkrzw")]
 mod tkrzw {
-    pub fn build(dependencies: &system_deps::Dependencies) {
-        println!("cargo:rerun-if-env-changed=BINDGEN_EXTRA_CLANG_ARGS");
+    /// The directories the configured C++ compiler searches for `<...>`
+    /// includes by default, canonicalised: the list it prints between
+    /// `#include <...> search starts here:` and `End of search list.` for
+    /// `-E -x c++ -v` on an empty input (GCC and Clang alike). `None` when
+    /// the compiler cannot be run or prints no list.
+    fn default_include_dirs(compiler: &cc::Tool) -> Option<Vec<std::path::PathBuf>> {
+        let mut command = compiler.to_command();
+        let output = command
+            .args(["-E", "-x", "c++", "-v", "-"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .output()
+            .ok()?;
+        let text = String::from_utf8_lossy(&output.stderr);
+        let mut dirs = Vec::new();
+        let mut listing = false;
+        for line in text.lines() {
+            if line.starts_with("#include <...> search starts here:") {
+                listing = true;
+            } else if line.starts_with("End of search list.") {
+                break;
+            } else if listing {
+                let dir = std::path::PathBuf::from(line.trim());
+                dirs.push(std::fs::canonicalize(&dir).unwrap_or(dir));
+            }
+        }
+        (!dirs.is_empty()).then_some(dirs)
+    }
 
-        // tkrzw is found only through `pkg-config tkrzw`, as libpinyin's
-        // configure finds it (`PKG_CHECK_MODULES(TKRZW, [tkrzw])`, no
-        // version constraint). `system-deps` emits the link-search paths
-        // and libraries. System link paths are not in `link_paths`, as
-        // pkg-config itself leaves them out, so no rpath names one.
+    pub fn build(dependencies: &system_deps::Dependencies) {
+        println!("cargo:rerun-if-changed=src/tkrzw/bridge.rs");
+        println!("cargo:rerun-if-changed=src/tkrzw/adapter.h");
+        println!("cargo:rerun-if-changed=src/tkrzw/adapter.cc");
+
         let library = dependencies
             .get_by_name("tkrzw")
             .expect("system-deps probes tkrzw when the feature is on");
-
-        // The C API is the only header this build may bind: no C++ header
-        // and no other tkrzw API crosses the ABI.
         let Some(header) = library
             .include_paths
             .iter()
-            .map(|dir| dir.join("tkrzw_langc.h"))
+            .map(|dir| dir.join("tkrzw_dbm.h"))
             .find(|path| path.is_file())
         else {
             panic!(
                 "libtkrzw required: pkg-config's include path for tkrzw names no directory \
-                 holding the C API header tkrzw_langc.h."
+                 holding the C++ header tkrzw_dbm.h."
             );
         };
         println!("cargo:rerun-if-changed={}", header.display());
 
-        // Exactly the entry points the backend's safe wrapper calls, and
-        // the types they traffic in. Anything else in tkrzw_langc.h — the
-        // async adapter, the index API, the string utilities — stays
-        // unbound: an unbound API cannot be misused.
-        let mut builder = bindgen::Builder::default()
-            .header(header.to_string_lossy())
-            .allowlist_function("tkrzw_dbm_open")
-            .allowlist_function("tkrzw_dbm_close")
-            .allowlist_function("tkrzw_dbm_check")
-            .allowlist_function("tkrzw_dbm_process")
-            .allowlist_function("tkrzw_dbm_process_multi")
-            .allowlist_function("tkrzw_dbm_process_each")
-            .allowlist_function("tkrzw_dbm_set")
-            .allowlist_function("tkrzw_dbm_count")
-            .allowlist_function("tkrzw_dbm_is_healthy")
-            .allowlist_function("tkrzw_dbm_synchronize")
-            .allowlist_function("tkrzw_dbm_rebuild")
-            .allowlist_function("tkrzw_dbm_make_iterator")
-            .allowlist_function("tkrzw_dbm_iter_free")
-            .allowlist_function("tkrzw_dbm_iter_jump")
-            .allowlist_function("tkrzw_dbm_iter_first")
-            .allowlist_function("tkrzw_dbm_iter_process")
-            .allowlist_function("tkrzw_dbm_iter_next")
-            .allowlist_function("tkrzw_get_last_status")
-            .allowlist_function("tkrzw_get_last_status_code")
-            .allowlist_type("TkrzwDBM")
-            .allowlist_type("TkrzwDBMIter")
-            .allowlist_type("TkrzwStatus")
-            .allowlist_type("TkrzwKeyProcPair")
-            .allowlist_type("tkrzw_record_processor")
-            .allowlist_var("TKRZW_REC_PROC_NOOP")
-            .allowlist_var("TKRZW_REC_PROC_REMOVE")
-            .allowlist_var("TKRZW_STATUS_SUCCESS")
-            .allowlist_var("TKRZW_STATUS_SYSTEM_ERROR")
-            .allowlist_var("TKRZW_STATUS_NOT_FOUND_ERROR")
-            .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()));
-
-        for dir in &library.include_paths {
-            builder = builder.clang_arg(format!("-I{}", dir.display()));
+        let mut bridge = cxx_build::bridge("src/tkrzw/bridge.rs");
+        bridge
+            .file("src/tkrzw/adapter.cc")
+            .std("c++17")
+            .opt_level(2)
+            .flag_if_supported("-fvisibility=hidden")
+            .flag_if_supported("-fvisibility-inlines-hidden");
+        if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux")
+            && std::env::var("CARGO_CFG_SANITIZE")
+                .unwrap_or_default()
+                .split(',')
+                .any(|sanitizer| sanitizer == "address")
+        {
+            bridge
+                .flag("-fsanitize=address")
+                .flag("-fno-omit-frame-pointer");
         }
-
-        let bindings = builder
-            .generate()
-            .expect("bindgen over tkrzw_langc.h must succeed");
-        let out_dir = std::env::var("OUT_DIR").unwrap();
-        bindings
-            .write_to_file(std::path::Path::new(&out_dir).join("tkrzw_langc.rs"))
-            .expect("writing the generated tkrzw bindings must succeed");
+        // tkrzw's headers are third-party: with `-isystem` their own
+        // `-Wall -Wextra` warnings are suppressed. A directory the compiler
+        // already searches by default must not be passed that way: GCC
+        // puts an `-isystem` directory ahead of its own list, so
+        // `/usr/include` lands before libstdc++'s directory and
+        // `<cstdlib>`'s `#include_next <stdlib.h>` finds nothing (GCC,
+        // "Directory Options" and "Wrapper Headers"). `-I` would be
+        // ignored for such a directory but would not silence the warnings
+        // from a self-built prefix. So the compiler is asked for its
+        // default search list once, and each probed directory is skipped
+        // when it is already there and `-isystem` otherwise; a compiler
+        // that does not answer, or is not GCC-like, gets `cc`'s ordinary
+        // include flag.
+        let compiler = bridge.get_compiler();
+        let gnu_like = compiler.is_like_gnu() || compiler.is_like_clang();
+        let defaults = if gnu_like {
+            default_include_dirs(&compiler)
+        } else {
+            None
+        };
+        for dir in &library.include_paths {
+            let canonical = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.clone());
+            match &defaults {
+                Some(defaults) if defaults.contains(&canonical) => {}
+                Some(_) => {
+                    bridge.flag(format!("-isystem{}", dir.display()));
+                }
+                None => {
+                    bridge.include(dir);
+                }
+            }
+        }
+        bridge.compile("oxpinyin_tkrzw_bridge");
 
         // PE targets have no rpath, and link.exe reports the raw flag as
         // LNK4044, which the `linker_messages` lint turns into a failed

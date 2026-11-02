@@ -803,7 +803,7 @@ of completing a contribution.
 - Missing MSVC `link.exe` or Windows SDK: use Developer PowerShell and check
   the Visual Studio workload. Native Windows does not use Unix `cc` or
   `pkg-config` for the Rust-only command above.
-- Missing `tkrzw_langc.h` (`pkg-config ... tkrzw` failed), `db.h`, libclang
+- Missing tkrzw headers (`pkg-config ... tkrzw` failed), `db.h`, libclang
   or native libraries: repeat your OS prerequisite
   checks. The error identifies the missing header/library; ordinary users
   need the environment owner if package installation is restricted. Send
