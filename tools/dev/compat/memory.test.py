@@ -48,6 +48,18 @@ class MemoryTests(unittest.TestCase):
         self.addCleanup(reservation.close)
         return reservation
 
+    def test_image_content_identity_and_created_binding_for_each_runtime(self):
+        digest = 'a' * 64
+        for kind in ('container', 'podman', 'docker'):
+            image = {'id': digest} if kind == 'container' else {'Id': 'sha256:' + digest}
+            row = {'configuration': {'image': {'descriptor': {'digest': 'sha256:' + digest}}}} if kind == 'container' else {'Image': 'sha256:' + digest}
+            with self.subTest(kind=kind), mock.patch.object(images, 'capture', return_value=mock.Mock(stdout=json.dumps([image]).encode())), \
+                 mock.patch.object(host, 'inspect_container', return_value=row):
+                self.assertEqual(images.content_digest(kind, kind, 'image'), digest)
+                images.verify_created_image({'kind': kind}, digest)
+                with self.assertRaisesRegex(ValueError, 'differs'):
+                    images.verify_created_image({'kind': kind}, 'b' * 64)
+
     def test_positive_memory_size_and_default_covers_two_job_estimates(self):
         self.assertEqual(host.container_memory_mib(None), host.CONTAINER_MEMORY_MIB)
         self.assertGreaterEqual(host.CONTAINER_MEMORY_MIB, 2 * host.RUSTC_PEAK_MIB)
@@ -233,10 +245,26 @@ class MemoryTests(unittest.TestCase):
                 mock.patch.object(memory, 'verify_limit', side_effect=lambda *_: events.append('verified')), \
                 mock.patch.object(host, 'container_liveness', return_value='gone'):
             self.assertEqual(memory.run('/usr/bin/docker', 'docker', 'test', 4096,
-                                        ['image', 'argument with spaces'], out=self.out), 0)
+                                        ['image', 'argument with spaces'], out=self.out,
+                                        image_check=lambda _: events.append('image')), 0)
         self.assertLess(events.index('create'), events.index('verified'))
-        self.assertLess(events.index('verified'), events.index('start'))
+        self.assertLess(events.index('verified'), events.index('image'))
+        self.assertLess(events.index('image'), events.index('start'))
         self.assertFalse(list(self.directory.glob('container-memory-*.json')))
+
+    def test_mismatched_created_image_never_starts_for_any_runtime(self):
+        for kind in ('container', 'podman', 'docker'):
+            events = []
+            with self.subTest(kind=kind), \
+                 mock.patch.object(memory, 'call', side_effect=lambda _, args, **kw: events.append(args[0]) or 0), \
+                 mock.patch.object(memory, 'verify_limit'), \
+                 mock.patch.object(host, 'container_liveness', return_value='gone'):
+                def mismatch(_):
+                    raise ValueError('image mismatch')
+                with self.assertRaisesRegex(ValueError, 'image mismatch'):
+                    memory.run('/usr/bin/' + kind, kind, 'test', 4096, ['image'],
+                               out=self.out, image_check=mismatch)
+                self.assertNotIn('start', events)
 
     def test_no_start_without_verified_limit_or_native_reservation(self):
         for failure in ('limit', 'reservation'):
@@ -497,6 +525,7 @@ action=args[0]
 if action=='--version': print('synthetic runtime 1')
 elif action=='image':
     if args[1]=='list': print(os.environ.get('FAKE_COMPAT_IMAGE',''))
+    elif args[1]=='inspect': print(json.dumps([{'id':'a'*64, 'Id':'sha256:'+'a'*64}]))
 elif action in ('info','volume'): pass
 elif action=='create':
     for argument in args:
@@ -508,10 +537,11 @@ elif action=='create':
     assert record['name']==args[args.index('--name')+1], 'wrong container reservation'
     assert args[args.index('--memory')+1]==str(record['memory_mib'])+'M'
     if os.environ.get('CREATE_FAIL'): sys.exit(125)
-    row=dict(Name='/'+record['name'], Config=dict(Labels={'io.oxpinyin.memory-reservation':record['token']}),
+    row=dict(Name='/'+record['name'], Image='sha256:'+'a'*64, Config=dict(Labels={'io.oxpinyin.memory-reservation':record['token']}),
              HostConfig=dict(Memory=record['memory_mib']*1024**2, MemorySwap=record['memory_mib']*1024**2),
              State=dict(Status='created'), status=dict(networks=[], state='created'),
              configuration=dict(labels={'io.oxpinyin.memory-reservation':record['token']},
+                                image={'descriptor':{'digest':'sha256:'+'a'*64}},
                                 resources=dict(memoryInBytes=record['memory_mib']*1024**2)))
     events=root/'created-names'
     with locked():

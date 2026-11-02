@@ -185,8 +185,9 @@ class IdentityTests(unittest.TestCase):
                         self.assertRaisesRegex(ValueError, 'invalid container state namespace'):
                     identity.verify_state(IMAGE, SOURCE, cell_name, run_id, root)
         inside = (ROOT / 'tools/dev/compat/guest.py').read_text()
-        check = inside.index('identity.verify_state(image, source, cell, run_id)')
-        self.assertLess(check, inside.index('.mkdir('))
+        main = inside[inside.index('def main('):]
+        check = main.index('identity.verify_state(image, source, cell, run_id, inputs=inputs)')
+        self.assertLess(check, main.index('.mkdir('))
 
     def test_symlinked_ancestor_is_trusted_for_artifact_targets(self):
         with tempfile.TemporaryDirectory() as directory:

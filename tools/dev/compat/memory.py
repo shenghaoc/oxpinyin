@@ -124,7 +124,7 @@ echo 'Memory smoke: over-limit allocation killed (137)'
 
 
 def run(runtime: str, kind: ContainerKind, name: str, memory_mib: MiB, command, *, console=None,
-        remove: bool = False, exit_confirmed=None, out=sys.stderr):
+        remove: bool = False, exit_confirmed=None, out=sys.stderr, image_check=None):
     """Reserve native memory, create a capped container, verify it, and attach.
 
     Split runtime options from image/payload at -- and return the start
@@ -159,6 +159,8 @@ def run(runtime: str, kind: ContainerKind, name: str, memory_mib: MiB, command, 
         created = True
         reservation.created()
         verify_limit(reservation.record)
+        if image_check is not None:
+            image_check(reservation.record)
         slot.check_cancelled()
         print(f'container hard memory limit verified: {memory_mib} MiB ({kind})', file=out, flush=True)
         start_attempted = True

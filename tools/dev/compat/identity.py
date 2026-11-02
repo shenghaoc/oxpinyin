@@ -68,7 +68,7 @@ def result_directory(repo, source, run_id):
     return unredirected(Path(repo) / '.oxpinyin-container/results' / source / run_id, repo)
 
 
-def verify_state(image, source, cell, run_id, root=STATE_ROOT):
+def verify_state(image, source, cell, run_id, root=STATE_ROOT, inputs=None):
     """Validate container namespace identifiers and reject redirected state paths.
 
     Check paths below root before writes; raise ValueError for invalid names
@@ -84,6 +84,18 @@ def verify_state(image, source, cell, run_id, root=STATE_ROOT):
                      *(f'container/{image}/{name}' for name in
                        ('home', 'cargo', 'uv/cache', 'locks', 'cache', f'targets/{source}/{cell}'))):
         unredirected(root / relative, root)
+    if inputs and inputs.get('image_content'):
+        unredirected(root / target_relative(inputs), root)
+
+
+def target_relative(inputs):
+    content, triple, backend = inputs['image_content'], inputs['target_triple'], inputs['backend']
+    if (not re.fullmatch('[0-9a-f]{64}', content) or
+            triple not in ('aarch64-unknown-linux-gnu', 'x86_64-unknown-linux-gnu') or
+            backend not in ('bdb', 'kc', 'tkrzw') or
+            inputs.get('build_profile', 'dev-opt1') != 'dev-opt1'):
+        raise ValueError('invalid stable target environment identity')
+    return f'targets/{content}/{triple}/dev-opt1/{backend}'
 
 
 def state_paths(inputs):
@@ -93,7 +105,8 @@ def state_paths(inputs):
                 UV_PYTHON_INSTALL_DIR='/opt/uv/python', UV_CACHE_DIR=base + '/uv/cache',
                 UV_INSTALL_DIR='/opt/uv/bin', XDG_CACHE_HOME=base + '/cache',
                 OXPINYIN_LOCK_DIR=base + '/locks',
-                OXPINYIN_TARGET_ROOT=base + '/targets/' + inputs['source_sha256'])
+                OXPINYIN_TARGET_ROOT=('/state/' + target_relative(inputs) if inputs.get('image_content')
+                                      else base + '/targets/' + inputs['source_sha256']))
 
 
 def inner_state(inputs):
@@ -149,7 +162,7 @@ def archive_content(archive):
     return records
 
 
-def seal_inputs(directory, image, reference, head):
+def seal_inputs(directory, image, reference, head, image_content=None, target_triple=None, backend=None):
     """Validate staged source/helpers and write their container input identity.
 
     Hash source.tar, model.tar.gz, inside.sh, bash-floor.sh, identity.py, and guest.py;
@@ -175,6 +188,10 @@ def seal_inputs(directory, image, reference, head):
                   floor_sha256=digest_file(directory / 'bash-floor.sh'),
                   verifier_sha256=digest_file(directory / 'identity.py'),
                   guest_sha256=digest_file(directory / 'guest.py'))
+    if image_content is not None:
+        record.update(image_content=image_content, target_triple=target_triple,
+                      build_profile='dev-opt1', backend=backend)
+        target_relative(record)
     for source, field in (('tools/oracle/compat-inside.sh', 'inside_sha256'),
                           ('tools/lib/bash-floor.sh', 'floor_sha256'),
                           ('tools/dev/compat/identity.py', 'verifier_sha256'),
@@ -197,6 +214,8 @@ def verify_inputs(directory, expected, image=None, reference=None):
     record = read_record(directory / 'identity.json')
     if record.get('environment') != 'container':
         raise ValueError('not a container input identity')
+    if record.get('image_content') is not None:
+        target_relative(record)
     if image is not None and record.get('image') != image:
         raise ValueError('container image namespace mismatch')
     if reference is not None and record.get('reference') != reference:

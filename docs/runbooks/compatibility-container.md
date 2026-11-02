@@ -120,12 +120,13 @@ Network access is needed for uncached images/packages/toolchains/crates/model
 inputs. The default is platform-native first, then Podman, then Docker: Windows
 (`wslc`, `podman`, `docker`), macOS (`container`, `podman`, `docker`), Linux
 (`podman`, `docker`). `--runtime` or `OXPINYIN_CONTAINER` overrides selection;
-`--platform linux/amd64|linux/arm64` overrides the host architecture. The
+`--platform` accepts only the host-native architecture (`linux/amd64` on an
+x86_64 host, `linux/arm64` on an arm64 host); any other value is refused. The
 selected runtime/version is printed before provisioning; none available
 is an error naming the candidates. `wslc` has no verified adapter here and
 stops with an explicit not-yet-verified message instead of silently falling
-back. Apple container runs the arm64 oracle path natively; its amd64 path is
-functional-only (Rosetta), never a timing claim. For an exercised Linux route, use
+back. Apple container runs the arm64 oracle path natively; there is no amd64
+path under Rosetta. For an exercised Linux route, use
 rootless Podman and its [official installation
 instructions](https://podman.io/docs/installation). In this host terminal:
 
@@ -154,13 +155,10 @@ The reference platform defaults to the host's frozen platform: linux/amd64
 or linux/arm64. Both have mandatory recorded hashes. Use a runtime that can
 build and run images for this platform; by default an arm64 host uses
 native arm64 images, not amd64 emulation. `--platform linux/amd64` on an
-arm64 host is an explicit override that runs the amd64 reference under the
-runtime's emulation: its results are functional only, never timing or
-performance claims, and it does not replace the native default. Apple
-`container`'s arm64 oracle path is exercised natively; its restart behavior and the full compatibility smoke
-are not claimed here. If the installed runtime cannot execute the platform,
-use an appropriate Linux VM/environment with Docker/Podman rather than
-changing pins or loading Linux libraries on macOS.
+arm64 host is refused: compatibility execution uses the host's native
+architecture without emulation. If the installed runtime cannot execute that
+platform, use an appropriate native Linux environment rather than changing
+pins or loading Linux libraries on macOS.
 
 ## Select and run a check
 
@@ -169,6 +167,13 @@ An ordinary clone or a linked worktree works: the launcher snapshots visible
 source (including uncommitted edits), not the host `.git` pointer. It never
 mounts another worktree or your whole home. Ignored files, model data and
 native `target/` outputs do not enter the source snapshot.
+
+Each target lives at `/state/targets/<image-content>/<triple>/dev-opt1/<backend>`:
+the key is the inspected image content ID, the native target triple, the profile
+and the backend. The source snapshot is not part of the key. A verified snapshot is reconciled into the stable guest
+worktree; changed files receive fresh modification times so Cargo can rebuild
+affected crates while retaining reusable outputs. An incomplete-run marker forces
+invalidation after interruption. The source digest is recorded in result provenance only.
 
 Discover existing check names on Linux/macOS/WSL (uv and its managed CPython,
 which `just doctor` checks, are needed only for this local listing):
@@ -391,8 +396,9 @@ meaning. No arbitrary inner path or prebuilt host artifact input is accepted.
 
 The inner script assigns Cargo, uv cache, home and heavy locks under
 `/state/container/<image-key>/`; the managed interpreter remains the image's
-`/opt/uv/python` installation. Targets add the source content identity and cell
-to this container namespace. The per-checkout `/state/run.lock` still serializes
+`/opt/uv/python` installation. Targets are not in that namespace: they live at
+`/state/targets/<image-content>/<triple>/dev-opt1/<backend>`, and the source
+content is not part of the key. The per-checkout `/state/run.lock` still serializes
 source replacement and preparation. The native budget reservation is the only
 shared admission state.
 

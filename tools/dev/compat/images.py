@@ -1,5 +1,6 @@
 """Oracle pin, image identity and reproducibility services shared by compat callers."""
 import hashlib
+import json
 import os
 from pathlib import Path
 import re
@@ -47,6 +48,35 @@ def image_tag(root=ROOT):
         digest.update((directory / name).read_bytes())
     slug = re.sub(r'[^A-Za-z0-9_.-]', '-', base)
     return f'{commit[:12]}-{slug}-{digest.hexdigest()[:12]}'
+
+
+def content_digest(runtime, kind, image):
+    """Read the full local image content identity, rejecting ambiguous metadata."""
+    done = capture([runtime, 'image', 'inspect', image])
+    try:
+        rows = json.loads(done.stdout)
+        if not isinstance(rows, list) or len(rows) != 1:
+            raise ValueError('expected one image')
+        value = rows[0]['id'] if kind == 'container' else rows[0]['Id']
+        value = value.removeprefix('sha256:')
+        if not re.fullmatch('[0-9a-f]{64}', value):
+            raise ValueError('invalid image digest')
+        return value
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError(f'cannot establish image content identity: {error}') from error
+
+
+def verify_created_image(record, expected):
+    """Check the created container's image before starting its payload."""
+    from .. import host
+    row = host.inspect_container(record)
+    try:
+        value = (row['configuration']['image']['descriptor']['digest']
+                 if record['kind'] == 'container' else row['Image'])
+        if value.removeprefix('sha256:') != expected:
+            raise ValueError('created container image digest differs from inspected image')
+    except (KeyError, TypeError, AttributeError) as error:
+        raise ValueError('created container image identity unavailable') from error
 
 
 def select_runtime(override='', *, env=None, host=None, output=print):

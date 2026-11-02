@@ -125,6 +125,15 @@ raise SystemExit(cli.main(args))
         self.assertEqual(done.returncode, 77)
         self.assertEqual(self.invoke(['drop-in'], ['invalid', str(self.directory)]).returncode, 2)
 
+    def test_compatibility_refuses_emulated_platform(self):
+        with mock.patch.object(launcher, 'text', return_value='arm64'), \
+             mock.patch.object(launcher.shutil, 'which', return_value='/usr/bin/tool'), \
+             mock.patch.object(launcher.boundary, 'validate'):
+            with self.assertRaises(Finished):
+                launcher.arguments(['--platform', 'linux/amd64', '--runners', 'cpp-smoke'])
+            values, *_ = launcher.arguments(['--platform', 'linux/arm64', '--runners', 'cpp-smoke'])
+            self.assertEqual(values['platform'], 'linux/arm64')
+
     def test_image_options_and_invalid_platform_statuses(self):
         for recipe in ('verify-image', 'reproducible'):
             for args in (['--unknown'], ['--platform', 'linux/riscv64', 'image'] if recipe == 'verify-image'

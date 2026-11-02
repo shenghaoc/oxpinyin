@@ -187,6 +187,8 @@ HARNESS_DEPENDENCIES = {
 # documentation stay unmapped: repository-wide audits read their tracked text.
 COMPAT_HARNESS = (
     'tools/dev/compat/boundary.test.py',
+    'tools/dev/compat/guest.test.py',
+    'tools/dev/compat/cache_fixture.test.py',
     'tools/dev/compat/memory.test.py',
     'tools/dev/compat/recipes.test.py',
     'tools/tkrzw/runtime.test.py',
