@@ -338,6 +338,11 @@ pub(crate) enum Class {
 ///   assigned, never retained.
 pub(crate) struct Db {
     dbm: UniquePtr<ffi::DBM>,
+    /// Whether the owner's `reset()` calls `Synchronize(false)` before
+    /// `Close`. Set only for a successfully opened system `TreeDBM`
+    /// ([`open_system`]); every other holder closes without it, as its
+    /// pin owner does.
+    sync_before_close: bool,
 }
 
 impl Db {
@@ -351,7 +356,10 @@ impl Db {
             Class::Baby => ffi::new_baby_dbm(),
             Class::Tiny => ffi::new_tiny_dbm(),
         };
-        Self { dbm }
+        Self {
+            dbm,
+            sync_before_close: false,
+        }
     }
 
     /// `m_db->Open(dbfile, writable, options)`
@@ -440,6 +448,16 @@ impl Db {
         check_end(&ffi::remove(&self.dbm, key)).map(|missing| !missing)
     }
 
+    /// The `TreeDBM` owners' `reset()` synchronization, `m_db->
+    /// Synchronize(false)` before `Close` (`chewing_large_table2_tkrzwdb.cpp:
+    /// 65-67`, `phrase_large_table3_tkrzwdb.cpp:52-54`, `punct_table_
+    /// tkrzwdb.cpp:45-47`), its status ignored as the pin ignores it.
+    fn reset_synchronize(&self) {
+        #[cfg(test)]
+        RESET_SYNCS.with(|count| count.set(count.get() + 1));
+        let _ = ffi::synchronize(&self.dbm, false);
+    }
+
     /// `m_db->Synchronize(hard)` with no file processor, the pin's
     /// one-argument form (`ngram_tkrzwdb.cpp:80`).
     fn synchronize(&self, hard: bool) -> Result<(), StoreError> {
@@ -491,6 +509,12 @@ impl Db {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// How many owner-reset synchronizations this thread has made.
+    static RESET_SYNCS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl Drop for Db {
     fn drop(&mut self) {
         // `m_db->Close(); delete m_db;` (`ngram_tkrzwdb.cpp:42-43`), the
@@ -498,6 +522,9 @@ impl Drop for Db {
         // virtual destructor afterwards. The null guard exists only for
         // the named mutation that deletes a failed object early.
         if !self.dbm.is_null() {
+            if self.sync_before_close {
+                self.reset_synchronize();
+            }
             let _ = ffi::close(self.dbm.pin_mut());
         }
     }
@@ -636,6 +663,10 @@ pub(crate) fn open_system(
     let mut db = Db::new(class);
     let status = db.open(path, false, OPEN_NO_CREATE)?;
     Ok(if status.code == STATUS_SUCCESS {
+        // The Tree owners' reset synchronizes before it closes; the
+        // bigram's `HashDBM` is closed with no explicit sync
+        // (`ngram_tkrzwdb.cpp:36-45`).
+        db.sync_before_close = class == Class::Tree;
         Ok(TkrzwStore {
             db,
             read_only: true,
@@ -684,7 +715,7 @@ impl Drop for TkrzwUnopenedHandle {
         // Every status is ignored, as the pin ignores it; `Db::drop` then
         // makes the `Close` and the delete.
         if self.class == Class::Tree {
-            let _ = self.db.synchronize(false);
+            self.db.reset_synchronize();
         }
     }
 }
@@ -952,19 +983,23 @@ impl WriteStore for TkrzwStore {
         &self,
         f: impl FnOnce(&mut Self::Txn<'_>) -> Result<R, StoreError>,
     ) -> Result<R, StoreError> {
-        if self.read_only {
-            return Err(StoreError::ReadOnly);
-        }
-        let db = &self.db;
-        let mut txn = TkrzwTxn {
-            db,
-            buffer: BTreeMap::new(),
-        };
-        // On `Err` the buffer dies with the transaction and nothing was
-        // ever written: rollback is the absence of the apply below.
-        let result = f(&mut txn)?;
-        commit(db, &txn.buffer)?;
-        Ok(result)
+        self.write_with(true, f)
+    }
+
+    /// `FlexibleBigram::store` and `remove` (`flexible_ngram_tkrzwdb.h:
+    /// 236-246`, `:259-263` at 074a2219): the `Set` or `Remove` alone, its
+    /// status the answer. The pin's `reset()` makes the one
+    /// `Synchronize(false)` (`:84-90`), which [`WriteStore::flush`] is.
+    fn write_deferred<R>(
+        &self,
+        f: impl FnOnce(&mut Self::Txn<'_>) -> Result<R, StoreError>,
+    ) -> Result<R, StoreError> {
+        self.write_with(false, f)
+    }
+
+    /// `m_db->Synchronize(false)` (`flexible_ngram_tkrzwdb.h:84-90`).
+    fn flush(&self) -> Result<(), StoreError> {
+        self.db.synchronize(false)
     }
 
     fn compact(&mut self) -> Result<(), StoreError> {
@@ -979,13 +1014,40 @@ impl WriteStore for TkrzwStore {
     }
 }
 
+impl TkrzwStore {
+    /// [`WriteStore::write`], with the end-of-commit soft sync when `sync`.
+    fn write_with<R>(
+        &self,
+        sync: bool,
+        f: impl FnOnce(&mut TkrzwTxn<'_>) -> Result<R, StoreError>,
+    ) -> Result<R, StoreError> {
+        if self.read_only {
+            return Err(StoreError::ReadOnly);
+        }
+        let db = &self.db;
+        let mut txn = TkrzwTxn {
+            db,
+            buffer: BTreeMap::new(),
+        };
+        // On `Err` the buffer dies with the transaction and nothing was
+        // ever written: rollback is the absence of the apply below.
+        let result = f(&mut txn)?;
+        commit(db, &txn.buffer, sync)?;
+        Ok(result)
+    }
+}
+
 // ── write transaction ─────────────────────────────────────────────
 
 /// Applies a finished transaction's buffer with the pin's calls, one `Set`
-/// or `Remove` per record in framed-key order, then the soft sync. Not
+/// or `Remove` per record in framed-key order, then, when `sync`, the soft sync. Not
 /// generic, so the many `write` closures share one copy of it.
 #[inline(never)]
-fn commit(db: &Db, buffer: &BTreeMap<Vec<u8>, Option<Vec<u8>>>) -> Result<(), StoreError> {
+fn commit(
+    db: &Db,
+    buffer: &BTreeMap<Vec<u8>, Option<Vec<u8>>>,
+    sync: bool,
+) -> Result<(), StoreError> {
     for (key, slot) in buffer {
         match slot {
             Some(value) => db.set(key, value)?,
@@ -995,7 +1057,7 @@ fn commit(db: &Db, buffer: &BTreeMap<Vec<u8>, Option<Vec<u8>>>) -> Result<(), St
             }
         }
     }
-    if !buffer.is_empty() {
+    if sync && !buffer.is_empty() {
         // Soft: on a file-backed store the commit is visible and
         // process-crash durable, and `compact` is its hard sync. The
         // in-memory session store has no file for either level.
@@ -1291,7 +1353,19 @@ mod tests {
         STATUS_PRECONDITION_ERROR, STATUS_SUCCESS, TkrzwUserBigramDb, holds_no_record, open_hash,
         open_hash_create, open_system, record_base, visit_db,
     };
-    use crate::{StoreError, UserBigramDb};
+    use crate::{StoreError, UserBigramDb, WriteStore, WriteTxn};
+
+    /// `num_records` as the header on disk holds it, eight big-endian bytes
+    /// at 24 (`META_OFFSET_NUM_RECORDS`); only `Synchronize` and `Close`
+    /// write it.
+    fn header_record_count(path: &std::path::Path) -> u64 {
+        let bytes = std::fs::read(path).unwrap();
+        u64::from_be_bytes(bytes[24..32].try_into().unwrap())
+    }
+
+    fn reset_syncs() -> usize {
+        super::RESET_SYNCS.with(std::cell::Cell::get)
+    }
 
     /// A directory under the temp directory, removed on drop.
     struct TempDir(PathBuf);
@@ -1660,5 +1734,64 @@ mod tests {
             sorted_keys(&TkrzwUserBigramDb::load_db(&path).unwrap()),
             expected
         );
+    }
+
+    #[test]
+    fn a_deferred_write_and_remove_leave_the_synchronize_to_flush() {
+        // `FlexibleBigram::store` and `remove` are a bare `Set` and
+        // `Remove` (`flexible_ngram_tkrzwdb.h:236-246`, `:259-263`); the
+        // header's record count reaches the file only at the `reset()`
+        // `Synchronize(false)` that `flush` makes. `write` commits with
+        // that sync, as every other caller expects.
+        let dir = TempDir::new("deferred-write");
+        let path = dir.0.join("flexible.db");
+        let store = open_hash_create(&path).unwrap();
+        store
+            .write_deferred(|txn| txn.put_raw(b"key1", b"one"))
+            .unwrap();
+        store
+            .write_deferred(|txn| txn.put_raw(b"key2", b"two"))
+            .unwrap();
+        assert_eq!(header_record_count(&path), 0);
+        store.flush().unwrap();
+        assert_eq!(header_record_count(&path), 2);
+        store.write_deferred(|txn| txn.remove_raw(b"key1")).unwrap();
+        assert_eq!(header_record_count(&path), 2);
+        store.flush().unwrap();
+        assert_eq!(header_record_count(&path), 1);
+        store.write(|txn| txn.put_raw(b"key3", b"three")).unwrap();
+        assert_eq!(header_record_count(&path), 2);
+    }
+
+    #[test]
+    fn a_system_tree_synchronizes_before_close_and_a_hash_does_not() {
+        // The Tree owners' `reset()` is `Synchronize(false)`, `Close`,
+        // `delete`; the bigram's HashDBM is closed with no explicit sync
+        // (`ngram_tkrzwdb.cpp:36-45`). The read-only open makes the sync
+        // a native `PRECONDITION_ERROR` the pin ignores, so the call is
+        // counted, not read back from the file.
+        let dir = TempDir::new("system-reset");
+        let tree = dir.0.join("pinyin_index.bin");
+        let hash = dir.0.join("bigram.db");
+        let mut db = Db::new(Class::Tree);
+        assert_eq!(
+            db.open(&tree, true, OPEN_DEFAULT).unwrap().code,
+            STATUS_SUCCESS
+        );
+        drop(db);
+        open_hash_create(&hash).unwrap();
+
+        let before = reset_syncs();
+        drop(open_system(&tree, false).unwrap().ok().unwrap());
+        assert_eq!(reset_syncs(), before + 1);
+        drop(open_system(&hash, true).unwrap().ok().unwrap());
+        assert_eq!(reset_syncs(), before + 1);
+        drop(
+            open_system(&dir.0.join("missing.bin"), false)
+                .unwrap()
+                .err()
+                .unwrap(),
+        );
+        assert_eq!(reset_syncs(), before + 2);
     }
 }
