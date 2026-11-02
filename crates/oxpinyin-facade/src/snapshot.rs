@@ -29,6 +29,11 @@ use std::ops::{Deref, DerefMut};
 ///
 /// `u32` offsets size the row to need: a snapshot holds at most a few
 /// hundred phrases of at most 16 characters.
+///
+/// A span is valid only for the build that interned it. Using one after
+/// [`CandidateSnapshot::clear`] or [`CandidateSnapshot::take`] is a caller
+/// error: the snapshot keeps any span inside its buffer and terminated, but
+/// does not detect a span from an earlier build.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TextSpan {
     start: u32,
@@ -64,10 +69,12 @@ pub struct CandidateSnapshot<R> {
 /// when the span is not of this buffer (which the snapshot's own calls
 /// never produce).
 ///
-/// The bounds and the terminator are checked, so a stale or foreign span
-/// never points past the buffer or at an unterminated string. The bytes
-/// before the terminator are not scanned again: [`CandidateSnapshot::intern`]
-/// refused an interior NUL when it wrote them.
+/// The bounds and the terminator are checked, so any span points inside
+/// the buffer at a terminated string. The bytes before the terminator are
+/// not scanned again: [`CandidateSnapshot::intern`] refused an interior NUL
+/// when it wrote them. A span is valid only for the build that interned it
+/// ([`TextSpan`]); these checks do not detect a span from an earlier build,
+/// which can land on a shorter string.
 fn span_ptr(text: &[u8], span: TextSpan) -> *const c_char {
     if span == TextSpan::NULL {
         return std::ptr::null();
@@ -75,7 +82,13 @@ fn span_ptr(text: &[u8], span: TextSpan) -> *const c_char {
     let start = span.start as usize;
     let end = start.saturating_add(span.len as usize);
     match text.get(start..=end) {
-        Some(bytes) if bytes.last() == Some(&0) => bytes.as_ptr().cast(),
+        Some(bytes) if bytes.last() == Some(&0) => {
+            debug_assert!(
+                !bytes[..bytes.len() - 1].contains(&0),
+                "a span from an earlier build"
+            );
+            bytes.as_ptr().cast()
+        }
         _ => c"".as_ptr(),
     }
 }
@@ -317,8 +330,6 @@ mod tests {
         let past_end = TextSpan { start: 0, len: 100 };
         assert!(!in_buffer(&snapshot, past_end), "beyond the buffer");
         assert!(!snapshot.text_ptr(past_end).is_null());
-        snapshot.clear();
-        assert!(!in_buffer(&snapshot, held), "stale after a clear");
         assert!(snapshot.text_ptr(TextSpan::NULL).is_null());
     }
 
