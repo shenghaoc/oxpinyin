@@ -36,6 +36,7 @@ series lives in `../perf/`.
 
 | Document | Subject | Status |
 | --- | --- | --- |
+| [`1031-first-candidate`](1031-first-candidate.md) | First candidate after init — source trace, extra work, landed removals and proposed fixes | record (source-only; proposals unimplemented) |
 | [`abi-allocator-pairing`](abi-allocator-pairing.md) | ABI allocator pairing — the audit and the gate | contract (the two `.alloc` registers) + audit |
 | [`abi-reference`](abi-reference.md) | Reference — the exported libpinyin ABI (all 79 `pinyin_*` symbols; signatures, state model, config, error behaviour) | living reference |
 | [`addon-choose-promotion`](addon-choose-promotion.md) | Addon choose-promotion (default nibble 5) — #105 | record (#105) |
