@@ -25,21 +25,22 @@ impl SystemItems {
         self.decoded.is_empty() && self.replayed.is_empty()
     }
 
-    pub(crate) fn contains_key(&self, token: &Token) -> bool {
-        self.decoded.contains_key(token)
-            || self
-                .replayed
-                .get(&((*token >> 24) as u8))
-                .is_some_and(|library| library.contains(*token & 0x00ff_ffff))
+    /// The item held under `token`: a decoded one, or a replayed library's
+    /// buffer item decoded for this call only. Nothing is kept.
+    pub(crate) fn get(&self, token: &Token) -> Option<std::borrow::Cow<'_, ChunkItem>> {
+        if let Some(item) = self.decoded.get(token) {
+            return Some(std::borrow::Cow::Borrowed(item));
+        }
+        let library = self.replayed.get(&((*token >> 24) as u8))?;
+        library
+            .item(*token & 0x00ff_ffff)
+            .map(std::borrow::Cow::Owned)
     }
 
-    pub(crate) fn get(&mut self, token: &Token) -> Option<&ChunkItem> {
-        if !self.decoded.contains_key(token) {
-            let library = self.replayed.get(&((*token >> 24) as u8))?;
-            self.decoded
-                .insert(*token, library.item(*token & 0x00ff_ffff)?);
-        }
-        self.decoded.get(token)
+    /// Whether `token` holds a decoded item: an import, or one a mask or a
+    /// reload materialized. Such an item is the authoritative value.
+    pub(crate) fn has_decoded(&self, token: &Token) -> bool {
+        self.decoded.contains_key(token)
     }
 
     /// The decoded item held under `token`, without decoding a replayed one.
@@ -66,8 +67,31 @@ impl SystemItems {
     }
 
     pub(crate) fn get_mut(&mut self, token: &Token) -> Option<&mut ChunkItem> {
-        self.get(token)?;
         self.decoded.get_mut(token)
+    }
+
+    /// Trains `token`'s readings in place in its library's live buffer, which
+    /// is made from `original` the first time. Returns whether the buffer
+    /// held the item; `readings` is not consumed otherwise.
+    pub(crate) fn train_live(
+        &mut self,
+        original: Option<crate::persistence::SystemLibraryRef<'_>>,
+        token: Token,
+        readings: impl Iterator<Item = Vec<oxpinyin_core::ChewingKey>>,
+        delta: u32,
+    ) -> bool {
+        let nibble = (token >> 24) as u8;
+        let slot = token & 0x00ff_ffff;
+        let library = match self.replayed.entry(nibble) {
+            std::collections::btree_map::Entry::Occupied(library) => library.into_mut(),
+            std::collections::btree_map::Entry::Vacant(vacant) => {
+                let Some(original) = original.filter(|library| library.contains_item(slot)) else {
+                    return false;
+                };
+                vacant.insert(ReplayedLibrary::pristine(original))
+            }
+        };
+        library.train(slot, readings, delta)
     }
 
     pub(crate) fn insert(&mut self, token: Token, item: ChunkItem) -> Option<ChunkItem> {

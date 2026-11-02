@@ -1559,6 +1559,33 @@ mod tests {
     }
 
     #[test]
+    fn training_a_system_item_writes_the_live_buffer_and_decodes_nothing() {
+        use crate::{ItemOrigin, Lookup};
+        let (dir, mut store) = open_with_log("train-live-buffer", &[]);
+        let token = (1_u32 << 24) | 1;
+        // Untouched, the item is the shipped one.
+        assert_eq!(
+            frequency_of(&store, token),
+            Lookup::Absent,
+            "the inline fixture has no mapped chunk to read"
+        );
+        let reading = vec![ChewingKey::new(23, 0, 1, 0)];
+        store
+            .train_pronunciations(token, std::iter::once(reading), 5)
+            .expect("train");
+        // The count was written in place in the library's buffer: the read
+        // sees it, and no decoded copy of the item was made.
+        assert_eq!(
+            frequency_of(&store, token),
+            Lookup::Found((ItemOrigin::Overlay, 105))
+        );
+        assert!(!store.has_decoded_system_item(token));
+        assert!(store.has_system_items());
+        drop(store);
+        std::fs::remove_dir_all(dir).expect("cleanup");
+    }
+
+    #[test]
     fn a_payload_over_read_reverses_the_applied_records() {
         use crate::{ItemOrigin, Lookup};
         use oxpinyin_data::chunk_write::encode_phrase_item;
