@@ -310,7 +310,7 @@ mod tests {
     }
 
     #[test]
-    fn public_init_refuses_a_directory_without_the_dbms() {
+    fn public_init_missing_pinyin_index_follows_backend_attach() {
         let system = TempSystemDir::new("no-dbms");
         for entry in std::fs::read_dir(&system.path).expect("dir") {
             let path = entry.expect("entry").path();
@@ -324,6 +324,12 @@ mod tests {
             cstr(system.path.to_str().expect("UTF-8 path")).as_ptr(),
             cstr(user.path.to_str().expect("UTF-8 path")).as_ptr(),
         );
-        assert!(context.is_null(), "a missing pinyin index must fail init");
+        #[cfg(feature = "tkrzw")]
+        assert!(context.is_null(), "tkrzw awaits the concrete-class binding");
+        #[cfg(any(feature = "bdb", feature = "kyotocabinet"))]
+        {
+            assert!(!context.is_null(), "the pin ignores a failed system attach");
+            crate::context::pinyin_fini(context);
+        }
     }
 }

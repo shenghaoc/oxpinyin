@@ -3,7 +3,7 @@
 use oxpinyin_capi_marshal::phrase_text::phrase_text_bytes;
 use std::os::raw::c_char;
 
-use oxpinyin_core::{Dictionary as _, LanguageModel as _};
+use oxpinyin_core::LanguageModel as _;
 
 use crate::state::{CapiCandidate, instance_mut, instance_ref};
 use crate::types::{GUint, PinyinInstance, lookup_candidate_type_t};
@@ -340,13 +340,13 @@ pub extern "C" fn pinyin_get_character_offset(
         oxpinyin_capi_marshal::input::utf8_to_ucs4(oxpinyin_capi_marshal::borrow_c_string!(phrase))
             .unwrap_or_default();
     let char_count = match inst.core.character_offset(&text, offset) {
-        Ok(Some(char_count)) => char_count,
-        Ok(None) => {
+        Ok((Some(char_count), _)) => char_count,
+        Ok((None, walked)) => {
             // The walk's own `false` still stores the length it reached
             // (`*plength = length`, `pinyin.cpp:3238`); the earlier
             // returns (no keys, empty phrase, a character without a
             // token) leave it untouched.
-            if character_walk_ran(inst, &text) && !length.is_null() {
+            if walked && !length.is_null() {
                 // SAFETY: Null-checked above.
                 unsafe {
                     *length = 0;
@@ -377,18 +377,6 @@ pub extern "C" fn pinyin_get_character_offset(
         }
     }
     true
-}
-
-/// Whether `pinyin_get_character_offset` got past its early `false`
-/// returns (`pinyin.cpp:3200-3228`): a non-empty matrix, a non-empty
-/// phrase and a dictionary token for every character. The engine answers
-/// all of them, and the walk's own failure, with `Ok(None)`.
-fn character_walk_ran(inst: &crate::state::CapiInstance, text: &oxpinyin_core::PhraseText) -> bool {
-    if !inst.core.mode_has_keys().unwrap_or(false) || text.is_empty() {
-        return false;
-    }
-    text.outward_words()
-        .all(|word| !inst.core.dict.tokens_for_ucs4(&[word]).is_empty())
 }
 
 /// Guess candidates at the given offset with sort option.

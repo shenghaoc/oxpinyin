@@ -133,7 +133,15 @@ pub enum BdbOpen {
 ///
 /// `db_create` or an internal allocation failure.
 pub fn open_hash_pin(path: &Path, read_only: bool) -> Result<BdbOpen, crate::StoreError> {
-    let db = ffi::Db::open_unopened(path, true, read_only, !read_only)
+    open_pin(path, true, read_only)
+}
+
+pub(crate) fn open_pin(
+    path: &Path,
+    hash: bool,
+    read_only: bool,
+) -> Result<BdbOpen, crate::StoreError> {
+    let db = ffi::Db::open_unopened(path, hash, read_only, !read_only)
         .ok_or_else(|| crate::StoreError::Backend("db_create failed".into()))?;
     if db.is_opened() {
         Ok(BdbOpen::Open(BdbStore {
@@ -154,6 +162,7 @@ impl BdbUnopenedHandle {
     }
 
     /// `m_db->get(...)`: libdb prints `BDB1565`.
+    #[must_use]
     pub fn get(&self, key: &[u8]) -> bool {
         self.db.get(key, &mut Vec::new()).unwrap_or(false)
     }
@@ -164,6 +173,7 @@ impl BdbUnopenedHandle {
     }
 
     /// `m_db->del(...)`: libdb prints `BDB1565`.
+    #[must_use]
     pub fn del(&self, key: &[u8]) -> bool {
         self.db.del(key).is_ok()
     }

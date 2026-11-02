@@ -259,6 +259,7 @@ import contract_system_mask_out
 import contract_phrase_index_logger
 import contract_phrase_table_mask
 import contract_punctuation
+import contract_missing_system_dbm
 import contract_training_constraints
 import contract_user_stored_words
 import contract_user_key_spellings
@@ -590,6 +591,7 @@ contract_predicted_types.register(case, predicted_rows=predicted_rows)
 
 
 contract_punctuation.register(case, _craft_db=_craft_db)
+contract_missing_system_dbm.register(case)
 
 
 # The remember-count cases stay at their original point in the registration sequence.

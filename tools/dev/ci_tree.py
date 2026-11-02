@@ -35,6 +35,11 @@ class Workflow:
     # path gate. They are not in `lanes`, so a skipped one never blocks tree
     # reuse, and `reuse` never skips one that applies.
     gated: tuple[tuple[str, str, str], ...] = ()
+    # Reusable workflows share the caller's run, with prefixed job names.
+    caller: str = ""
+    job_prefix: str = ""
+    # Called workflows own their path gates and must always report success.
+    required: tuple[str, ...] = ()
 
 
 WORKFLOWS: dict[str, Workflow] = {
@@ -44,7 +49,8 @@ WORKFLOWS: dict[str, Workflow] = {
         frozenset({"lint", "test"}),
         ("lint", "test", "deny"),
         ("lint", "test", "deny"),
-        (("shipping-sizes", "shipping-sizes", "ship"),)),
+        (("shipping-sizes", "shipping-sizes", "ship"),),
+        required=("store-backends",)),
     "store": Workflow(
         ".github/workflows/store-backends.yml",
         "store backends (kyotocabinet / tkrzw / bdb)",
@@ -56,7 +62,8 @@ WORKFLOWS: dict[str, Workflow] = {
         ("store-features", "store-features", "store-features", "backend-matrix", "tkrzw-sanitizers",
          "bdb-sanitizers", "kc-sanitizers"),
         ("store backend (${{ matrix.backend }})", "backend-matrix (exactly-one-backend gate)",
-         "tkrzw FFI under address", "bdb backend sanitizers", "kc backend sanitizers")),
+         "tkrzw FFI under address", "bdb backend sanitizers", "kc backend sanitizers"),
+        caller=".github/workflows/ci.yml", job_prefix="store-backends / "),
 }
 SHA = re.compile(r"[0-9a-f]{40}")
 # Strict up-to-date checks constrain Git ancestry, not runner-image drift.
@@ -106,7 +113,7 @@ def run_provenance(run: dict[str, Any], workflow: Workflow, repository_id: int,
     return (
         run.get("id") != current_run
         and run.get("event") == "pull_request"
-        and run.get("path") == workflow.path
+        and run.get("path") == (workflow.caller or workflow.path)
         and (run.get("repository") or {}).get("id") == repository_id
         and (run.get("head_repository") or {}).get("id") == repository_id
         and any((pr or {}).get("number") == pr_number for pr in run.get("pull_requests") or [])
@@ -148,7 +155,7 @@ def complete_jobs(jobs: list[dict[str, Any]], workflow: Workflow, tree: str,
     now = now or datetime.now(timezone.utc)
     names = (*workflow.lanes, workflow.aggregate, "tested tree " + tree)
     return all(
-        len(matches := [job for job in jobs if job.get("name") == name]) == 1
+        len(matches := [job for job in jobs if job.get("name") == workflow.job_prefix + name]) == 1
         and matches[0].get("status") == "completed"
         and matches[0].get("conclusion") == "success"
         and fresh_job(matches[0], now)
@@ -168,11 +175,11 @@ def full_source(api: GitHub, run: dict[str, Any], jobs: list[dict[str, Any]],
     if complete_jobs(jobs, workflow, tree, now):
         return int(run["id"])
     for name in (*workflow.skipped_lanes, workflow.aggregate):
-        matches = [job for job in jobs if job.get("name") == name]
+        matches = [job for job in jobs if job.get("name") == workflow.job_prefix + name]
         expected = "success" if name == workflow.aggregate else "skipped"
         if len(matches) != 1 or matches[0].get("status") != "completed" or matches[0].get("conclusion") != expected:
             return None
-    pattern = re.compile(r"reused tree " + tree + r" from run ([0-9]+)")
+    pattern = re.compile(re.escape(workflow.job_prefix) + r"reused tree " + tree + r" from run ([0-9]+)")
     markers = [(job, pattern.fullmatch(job.get("name", ""))) for job in jobs]
     markers = [(job, match) for job, match in markers if match]
     if len(markers) != 1:
@@ -220,7 +227,7 @@ def find_evidence(api: GitHub, workflow: Workflow, event: dict[str, Any],
         commit = api.get("/git/commits/" + head)
         if commit.get("tree", {}).get("sha") != tree:
             continue
-        runs = api.pages("/actions/workflows/" + workflow.path.rsplit("/", 1)[1]
+        runs = api.pages("/actions/workflows/" + (workflow.caller or workflow.path).rsplit("/", 1)[1]
                          + "/runs?" + urlencode({"event": "pull_request", "branch": head_info["ref"]}),
                          "workflow_runs")
         # Only the newest run for this exact tree is eligible. An older green
@@ -330,7 +337,10 @@ def main() -> int:
         own_gate = {name: (needs[job]["result"], outputs.get(flag, "")) for name, job, flag in workflow.gated}
         passed = aggregate(needs["changes"]["result"], outputs.get("run", ""),
                            outputs.get("reuse", ""), results, workflow.cached, os.environ["EVENT_NAME"], own_gate)
-        print(json.dumps({"changes": needs["changes"], "lanes": results, "own_gate": own_gate, "passed": passed}))
+        required = {job: needs.get(job, {}).get("result") for job in workflow.required}
+        passed = passed and all(result == "success" for result in required.values())
+        print(json.dumps({"changes": needs["changes"], "lanes": results, "own_gate": own_gate,
+                          "required": required, "passed": passed}))
         return 0 if passed else 1
     tree = git_tree("HEAD")
     evidence = None

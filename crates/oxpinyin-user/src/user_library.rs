@@ -66,7 +66,9 @@ impl SessionPhrases {
 
     pub(crate) fn phrase(&self, token: u32, item: PhraseItemView<'_>) -> crate::UserPhrase {
         let text = item.as_bytes()[6..6 + 4 * item.phrase_length()]
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
             .collect();
         let pronunciations = item
@@ -74,7 +76,9 @@ impl SessionPhrases {
             .filter_map(|reading| {
                 let packed: Vec<_> = reading
                     .keys
-                    .chunks_exact(2)
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
                     .map(|b| u16::from_le_bytes([b[0], b[1]]))
                     .collect();
                 let keys = crate::store_libpinyin::packed_to_pinyin_keys(&packed)?;
@@ -353,9 +357,16 @@ impl UserLibrary {
         let mut matched = None;
         for (i, reading) in item.pronunciations().enumerate() {
             total = total.wrapping_add(reading.freq);
-            if reading.keys.chunks_exact(2).zip(keys).all(|(bytes, &key)| {
-                u16::from_le_bytes([bytes[0], bytes[1]]) & 0x7fff == key & 0x7fff
-            }) {
+            if reading
+                .keys
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .zip(keys)
+                .all(|(bytes, &key)| {
+                    u16::from_le_bytes([bytes[0], bytes[1]]) & 0x7fff == key & 0x7fff
+                })
+            {
                 matched = Some((i, reading.freq, total.checked_add(delta).is_some()));
                 break;
             }
@@ -414,7 +425,9 @@ impl UserLibrary {
                 let matches = crate::store_libpinyin::pronunciation_matches(
                     &query,
                     self.content[position..frequency]
-                        .chunks_exact(2)
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
                         .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]])),
                 );
                 if !matches {
@@ -500,7 +513,7 @@ impl UserLibrary {
         let mut sum = 0_u32;
         // Retain the old decoder's all-or-nothing validation, including slot
         // zero, partial trailing offset words, and arbitrary text/key values.
-        for (slot, bytes) in offsets.chunks_exact(4).enumerate() {
+        for (slot, bytes) in offsets.as_chunks::<4>().0.iter().enumerate() {
             let offset = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
             if offset == 0 {
                 continue;
@@ -518,7 +531,9 @@ impl UserLibrary {
             }
         }
         let entries = offsets
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
         let slots = if offsets.len() / 4 <= count.saturating_mul(4).saturating_add(256) {
             Slots::Dense(entries.collect())
@@ -555,7 +570,9 @@ impl UserLibrary {
             sum: 0,
             slots: Slots::Dense(
                 offsets
-                    .chunks_exact(4)
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
                     .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
                     .collect(),
             ),

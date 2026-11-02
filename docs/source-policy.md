@@ -195,7 +195,11 @@ Permit a Rust equivalent only after reading both implementations' sources proves
 Use the pin's call when the comparison is unsettled.
 This replaces #1304's external-I/O language-artefact treatment.
 
-**No hand-written C or C++ shims (maintainer ruling 2026-10-31 UTC).**
+**External-library bindings (amended 2026-11-02 UTC).**
+Permit generated Rust–C++ interoperability and minimal semantic adapters under the [Rust/C++ interoperability ruling](findings/compatibility-policy.md#rust-cpp-interoperability).
+It supersedes the blanket prohibition on hand-written C++ shims and governs backend binding choices and their source-proof obligations.
+
+**Macro checks (maintainer ruling 2026-10-31 UTC).**
 Do not reproduce macros such as `assert`, `g_return_val_if_fail` or `G_STRFUNC`.
 Make their checks plain Rust: answer the pin's value, or abort where the pin aborts.
 Do not imitate their message text; record the stderr difference as a POLICY-ACCEPTED language artefact.
@@ -210,16 +214,10 @@ libpinyin is developed and used on Linux; its Windows and macOS support is an af
 On Windows and macOS, oxpinyin builds and is tested, and may use portable Rust abstractions (for example `memmap2` and `std::fs`) instead of the pin's calls.
 Differences that come from a platform's native facilities (file and mapping APIs, text mode, C runtime streams) are platform-dependent behaviour, recorded where known and tested where practical.
 This does not cover platform-independent product behaviour (ranking, parsing, training, data handling), safety, determinism, the C API/ABI, its symbol names and its ownership and lifetime rules, or persistent file formats, which must be the same on every platform.
-The prohibition on hand-written C/C++ shims applies on every platform.
+The [interoperability ruling](findings/compatibility-policy.md#rust-cpp-interoperability) applies on every platform.
 
-<a id="kyoto-cabinet-exception"></a>**Kyoto Cabinet exception (maintainer ruling 2026-10-31 UTC).**
-Retain the existing Kyoto Cabinet adapter in `crates/oxpinyin-store/src/kyotocabinet/shim.cc` and its header.
-It constructs the concrete database classes the pin uses, opens literal paths, and contains C++ exceptions before they can cross the Rust FFI boundary.
-Kyoto Cabinet's upstream C API (`kclangc.h`) does not provide an equivalent for these requirements.
-The adapter's compatibility and performance evidence is in [kc-shim-1118.md](findings/kc-shim-1118.md).
-The CXX implementation evaluated in [kc-c-vs-cxx-adapter-2026-10-22.md](findings/kc-c-vs-cxx-adapter-2026-10-22.md) was not adopted; those measurements apply to that implementation and its baselines, not to every CXX-based binding.
-Removing or replacing this adapter requires a separate maintainer-approved change.
-This exception does not authorize other hand-written shims or copying external-library internals.
+<a id="kyoto-cabinet-exception"></a>**Kyoto Cabinet exception.**
+Superseded by the [Rust/C++ interoperability ruling](findings/compatibility-policy.md#rust-cpp-interoperability), which owns the frozen contract and separate migration.
 
 The call rule does not require an undefined read or abort.
 Existing class (b) records stand, including punctuation refusals.

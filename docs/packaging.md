@@ -375,7 +375,11 @@ The [M5 findings](findings/macho-function-order-m5-2026-10-27.md) recorded cold 
 These are historical results. They were not measured again for the removal.
 
 Linux keeps the versioned relink described in [Export gate](#export-gate), including the version script and `-Wl,-z,defs`.
-macOS uses the library that cargo-c installs.
+macOS uses the library that cargo-c installs, and `just packaging install` then loads it with `dlopen` and looks up `pinyin_init` or `zhuyin_init`, and fails if either step fails.
+On macOS, install with `--prefix=/usr/local` or another non-system prefix. A `/usr` prefix gives the dylibs `/usr/lib` install names, which macOS reserves for its shared cache; the link then fails with "Shared cache eligible dylib cannot link to ineligible dylib" against a library outside the shared cache, such as Homebrew's tkrzw.
+A target whose architecture differs from the running process's (`--target x86_64-apple-darwin` on Apple silicon) is not loaded: the install prints one line saying the load check was skipped.
+The check exists because rustc 1.97.x stripped a Mach-O `cdylib` with its bundled `llvm-objcopy`, which left `LC_SYMTAB`'s string table offset only 4-byte aligned, and dyld on macOS 27 refused the file (`mis-aligned LINKEDIT string pool`, [#1536](https://github.com/shenghaoc/oxpinyin/issues/1536)).
+That is [rust-lang/rust#157750](https://github.com/rust-lang/rust/issues/157750), fixed by [rust-lang/rust#158410](https://github.com/rust-lang/rust/pull/158410) in Rust 1.98.0; the pinned 1.99.1 installs dylibs that load, with no strip step of ours.
 The release profile keeps fat LTO and one codegen unit.
 Export verification, backend identification, artifact provenance, input-digest checks and runtime compatibility checks still apply.
 This internal Stage 2 change must preserve exported symbols, symbol versions, the C ABI, outputs and data files.

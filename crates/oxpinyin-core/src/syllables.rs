@@ -10,7 +10,6 @@ use crate::options::{
 pub const FULL_PINYIN_SYLLABLE_COUNT: usize = 405;
 
 /// Complete full-pinyin syllables in pinned upstream numeric-ID order.
-#[must_use]
 pub fn full_pinyin_syllables()
 -> impl ExactSizeIterator<Item = &'static str> + DoubleEndedIterator + Clone {
     crate::string_tables::full_pinyin_syllables()

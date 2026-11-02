@@ -321,7 +321,9 @@ pub fn decode_phrase_item(bytes: &[u8]) -> Result<ChunkItem, ChunkWriteError> {
         .get(offset..phrase_end)
         .ok_or_else(|| ChunkWriteError("phrase item: phrase text truncated".to_owned()))?;
     let phrase: Vec<u32> = phrase_area
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
         .collect();
     offset = phrase_end;
@@ -333,7 +335,9 @@ pub fn decode_phrase_item(bytes: &[u8]) -> Result<ChunkItem, ChunkWriteError> {
             ChunkWriteError("phrase item: pronunciation keys truncated".to_owned())
         })?;
         let keys: Vec<u16> = keys_area
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|c| u16::from_le_bytes([c[0], c[1]]))
             .collect();
         offset = keys_end;
@@ -375,7 +379,7 @@ pub fn decode_sub_phrase_index(
 ) -> Result<(u32, Vec<(u32, ChunkItem)>), ChunkWriteError> {
     let (total, offset_array, entry_area) = sub_phrase_index_sections(payload)?;
     let mut items = Vec::new();
-    for (slot, window) in offset_array.chunks_exact(4).enumerate() {
+    for (slot, window) in offset_array.as_chunks::<4>().0.iter().enumerate() {
         let offset = u32::from_le_bytes([window[0], window[1], window[2], window[3]]) as usize;
         if offset == 0 {
             continue;

@@ -52,8 +52,8 @@
 #   - reference/** — memory safety docs: no code
 #   - .kiro/** — specs and steering: no code
 #   - *.md at the root — README, CHANGELOG: no code
-#   - .github/workflows/store-backends.yml — store-backends has its own
-#     trigger and its own path gate; ci.yml doesn't need to re-gate on it
+#   - .github/workflows/store-backends.yml — the called workflow has its
+#     own path gate; the lint, test and deny lanes need not re-gate on it
 #
 # The shipping-sizes job has its own, narrower gate (`ship`): it runs when a
 # file that can change a shipping library changes (the crates in the two capi
@@ -117,6 +117,9 @@ concurrency:
 # build-and-smoke of every target cost more than it caught).
 
 jobs:
+  store-backends:
+    uses: ./.github/workflows/store-backends.yml
+
   # The path gate computes one `run` flag for the three code lanes.
   # It runs first on every push and PR; each lane
   # carries an `if` on its flag so it reports `skipped` — a conclusion,
@@ -706,11 +709,11 @@ jobs:
   # The required aggregate checks lint, test and deny against
   # run/reuse, and shipping-sizes against its own `ship` flag. Every
   # applicable lane must succeed; an inapplicable lane must be skipped. It runs after failures and remains cancellable.
-  # store-backends.yml and verify-nightly.yml keep their own triggers
-  # and remain non-required lanes beside this one.
+  # The called store-backends workflow must also succeed. Its own aggregate
+  # checks backend selection and every applicable backend and sanitizer lane.
   ci-aggregate:
     needs:
-      [changes, lint, test, deny, shipping-sizes]
+      [changes, lint, test, deny, shipping-sizes, store-backends]
     if: ${{ !cancelled() }}
     runs-on: *ubuntu
     steps:

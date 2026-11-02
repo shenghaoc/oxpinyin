@@ -33,8 +33,9 @@ Maintainer ruling, 2026-10-28 UTC:
    assertion refusals. Policy row 39 (`LC_NUMERIC`) stands. Row 109's
    mapping call is a revert target; its post-fini residual mapping is a
    separate question, not a decision made here.
-5. **Superseded 2026-10-31 UTC (maintainer ruling): no hand-written C or
-   C++ shims.** C library calls go through the `libc` crate (approved for
+5. **Amended 2026-11-02 UTC:** library bindings and permitted semantic
+   adapters follow the [Rust/C++ interoperability ruling](compatibility-policy.md#rust-cpp-interoperability).
+   The 2026-10-31 UTC C-library and macro rules remain: C library calls go through the `libc` crate (approved for
    `oxpinyin-input`) or `extern "C"` declarations, GLib calls through the
    workspace's `glib-sys`, and C++ streams through Rust `std::io` under the
    C++ contract. Only a function neither crate binds is declared by hand.
@@ -44,9 +45,8 @@ Maintainer ruling, 2026-10-28 UTC:
    ([eio-tool-check-messages](eio-tool-check-messages.md)). The tools
    follow it, and so do the library's stage 1 and 4 calls:
    `oxpinyin-input/native/config.c` and `native/diagnostic.c` are gone,
-   their calls made through `libc` in `native.rs`. The Kyoto Cabinet
-   adapter, `oxpinyin-store/src/kyotocabinet/shim.cc`, is retained under
-   the [Kyoto Cabinet exception](compatibility-policy.md#kyoto-cabinet-exception).
+   their calls made through `libc` in `native.rs`. Backend binding choices
+   and the frozen Kyoto Cabinet contract are governed by the interoperability ruling.
 6. A new bidirectional `oxpinyin-input` crate owns these calls in scoped
    unsafe modules with `// SAFETY:` comments and safe typed functions.
    `oxpinyin-data` becomes `forbid(unsafe_code)` after extraction. The C

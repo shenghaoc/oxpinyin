@@ -102,7 +102,7 @@ RUN set -eu; \
     && echo "$rustup_sha  /tmp/rustup-init" \
     | sha256sum -c - \
     && chmod +x /tmp/rustup-init \
-    && /tmp/rustup-init -y --default-toolchain 1.97.1 --profile minimal \
+    && /tmp/rustup-init -y --default-toolchain 1.99.1 --profile minimal \
        --component clippy,rustfmt \
     && rm /tmp/rustup-init
 ENV PATH="/root/.cargo/bin:${PATH}"

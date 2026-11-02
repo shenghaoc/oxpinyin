@@ -18,12 +18,14 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from tools.dev import packaging
 
-DRIVER = '''import sys
+DRIVER = '''import os, sys
 from pathlib import Path
 from tools.dev import packaging
 class FixtureTools(packaging.Tools):
     def heavy(self, argv, **options):
         self.run(argv, **options)
+    def load(self, path, symbol):
+        return os.environ.get('FIXTURE_LOAD', '')
 sys.exit(packaging.main(sys.argv[2:], tools=FixtureTools(root=Path(sys.argv[1]))))
 '''
 FAKE_CARGO = r'''
@@ -247,14 +249,15 @@ class PackagingTests(unittest.TestCase):
         self.bin = self.work / 'bin'
         self.bin.mkdir()
         self.env = {**os.environ, 'PATH': str(self.bin) + os.pathsep + os.environ['PATH'],
-                    'CALLS': str(self.work / 'calls'), 'CARGO_BUILD_TARGET': 'fixture-target'}
+                    'CALLS': str(self.work / 'calls'), 'STRIP_CALLS': str(self.work / 'strip-calls'), 'CARGO_BUILD_TARGET': 'fixture-target'}
         self.env.pop('CARGO_TARGET_DIR', None)
         self.fake('cargo', FAKE_CARGO)
         # The default fixture host needs no final relink.
         self.fake('uname', "print('fixture-host')")
-        self.fake('rustc', "print('host: fixture-target')")
+        self.fake('rustc', "import os; print('host: ' + os.environ.get('FIXTURE_HOST', 'fixture-target'))")
         self.fake('dpkg', "print('fixture-architecture')")
         self.fake('nm','pass')
+        self.fake('strip', "import json,os,sys; open(os.environ['STRIP_CALLS'],'a').write(json.dumps(sys.argv[1:])+'\\n')")
         self.fake('readelf','pass')
         self.fake('chmod', r"""import os,sys
 from pathlib import Path
@@ -374,10 +377,77 @@ if lines:sys.stdout.buffer.write(separator.join(sorted(lines,key=key))+separator
             with self.subTest(library=library):
                 shutil.rmtree(stage, ignore_errors=True)
                 result = self.invoke('install', [library, '--prefix=/usr', '--destdir=' + str(stage)],
-                                     env={'CARGO_BUILD_TARGET': 'aarch64-apple-darwin'})
+                                     env={'CARGO_BUILD_TARGET': 'aarch64-apple-darwin',
+                                          'FIXTURE_HOST': 'aarch64-apple-darwin'})
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual((stage / 'usr/lib' / (library + '.15.0.0.dylib')).read_bytes(), b'installed dylib')
                 self.assertNotIn(b'relinked', result.stdout)
+                self.assertIn(b'loaded ', result.stdout)
+                calls = json.loads((self.work / 'calls').read_text())
+                self.assertFalse(any('strip' in word for word in calls))
+                self.assertFalse((self.work / 'strip-calls').exists())
+
+    def test_macos_install_fails_when_the_dylib_does_not_load(self):
+        self.fake('uname', "print('Darwin')")
+        result = self.invoke('install', ['libpinyin', '--prefix=/usr', '--destdir=' + str(self.work / 'stage')],
+                             env={'CARGO_BUILD_TARGET': 'aarch64-apple-darwin',
+                                  'FIXTURE_HOST': 'aarch64-apple-darwin', 'FIXTURE_LOAD': 'fixture load failure'})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b'does not load', result.stderr)
+        self.assertIn(b'fixture load failure', result.stderr)
+
+    def test_macos_install_skips_the_load_check_for_a_non_native_target(self):
+        self.fake('uname', "print('Darwin')")
+        stage = self.work / 'stage'
+        result = self.invoke('install', ['libpinyin', '--prefix=/usr', '--destdir=' + str(stage)],
+                             env={'CARGO_BUILD_TARGET': 'x86_64-apple-darwin',
+                                  'FIXTURE_HOST': 'aarch64-apple-darwin', 'FIXTURE_LOAD': 'fixture load failure'})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(b'load check skipped: target x86_64-apple-darwin is not the running architecture '
+                      b'(aarch64-apple-darwin)', result.stdout + result.stderr)
+        self.assertNotIn(b'does not load', result.stderr)
+        self.assertFalse((self.work / 'strip-calls').exists())
+
+    def test_macos_install_fails_when_another_image_answers(self):
+        self.fake('uname', "print('Darwin')")
+        result = self.invoke('install', ['libpinyin', '--prefix=/usr', '--destdir=' + str(self.work / 'stage')],
+                             env={'CARGO_BUILD_TARGET': 'aarch64-apple-darwin',
+                                  'FIXTURE_HOST': 'aarch64-apple-darwin',
+                                  'FIXTURE_LOAD': 'pinyin_init resolved in /elsewhere/libpinyin.15.dylib, not in x'})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b'does not load', result.stderr)
+        self.assertIn(b'resolved in /elsewhere', result.stderr)
+
+    def test_macos_step_runs_only_for_apple_darwin_targets(self):
+        self.fake('uname', "print('Darwin')")
+        result = self.invoke('install', ['libpinyin', '--prefix=/usr', '--destdir=' + str(self.work / 'stage')],
+                             env={'CARGO_BUILD_TARGET': 'aarch64-unknown-linux-gnu',
+                                  'FIXTURE_HOST': 'aarch64-apple-darwin',
+                                  'FIXTURE_LOAD': 'fixture load failure'})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn(b'loaded ', result.stdout)
+        self.assertNotIn(b'load check skipped', result.stdout + result.stderr)
+        self.assertNotIn(b'does not load', result.stderr)
+        self.assertFalse((self.work / 'strip-calls').exists())
+
+    def test_load_checks_the_image_in_a_child_without_dyld_overrides(self):
+        source = self.work / 'probe.c'
+        source.write_text('int probe_entry(void) { return 7; }\n')
+        library = self.work / 'libprobe.dylib'
+        subprocess.run(['cc', '-shared', '-fPIC', '-o', str(library), str(source)], check=True)
+        env = {**os.environ, 'DYLD_LIBRARY_PATH': '/nonexistent', 'DYLD_INSERT_LIBRARIES': '/nonexistent/x.dylib'}
+        tools = packaging.Tools(env=env)
+        self.assertEqual(tools.load(library, 'probe_entry'), '')
+        link = self.work / 'link.dylib'
+        link.symlink_to(library)
+        self.assertEqual(tools.load(link, 'probe_entry'), '')
+        self.assertIn('probe_no_such', tools.load(library, 'probe_no_such'))
+        broken = self.work / 'broken.dylib'
+        broken.write_bytes(b'installed dylib')
+        self.assertNotEqual(tools.load(broken, 'probe_entry'), '')
+        import ctypes.util
+        mismatch = tools.load(ctypes.util.find_library('c'), 'strlen')
+        self.assertIn('resolved in', mismatch)
 
 
     def test_explicit_layout_and_special_replacement_bytes(self):

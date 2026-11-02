@@ -1160,7 +1160,15 @@ where
                         EngineError::Scoring(ScoringError::LanguageModel(error.to_string()))
                     })?
                     .map(|count| {
-                        amplified_frequency_with_bigram(count, default_total, bigram, lambda)
+                        if self.candidate_ranking == CandidateRanking::LengthThenFrequency {
+                            // zhuyin.cpp:1264-1268 has no libpinyin 0.1
+                            // discount (pinyin.cpp:33,1862 at 074a2219).
+                            let possibility = lambda * bigram
+                                + (1.0 - lambda) * count as f32 / default_total as f32;
+                            (possibility * AMPLIFY_SCALE_F32) as u32
+                        } else {
+                            amplified_frequency_with_bigram(count, default_total, bigram, lambda)
+                        }
                     })
             };
             if let Some(count) = count {
@@ -1388,7 +1396,10 @@ where
             // comparator ties.
             order_window_tail(into, start);
             flush_window_batch(scratch.window_addon, into);
-            if !continued {
+            // SEARCH_NONE widens even without SEARCH_CONTINUED; the pin
+            // checks continuation only after SEARCH_OK (pinyin.cpp:2240-
+            // 2242,2260; zhuyin.cpp:1505-1512 at 074a2219).
+            if !continued && into.len() != start {
                 break;
             }
             end += 1;
@@ -1490,6 +1501,40 @@ where
         // `pinyin_phrase3.h:152`); only the explicit guess is the pin's.
         if *explicit {
             EngineError::check_toned_incomplete(path, tones)?;
+        }
+        if let Some((failed_item, extends)) = self
+            .dictionary
+            .candidate_search_into(path, tones, entries)
+            .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?
+        {
+            **unreadable |= failed_item;
+            **continued |= extends;
+            append_scan_entries(
+                entries.drain(..),
+                path.len(),
+                end,
+                CandidateKind::Phrase,
+                system,
+            );
+            self.dictionary
+                .lookup_addon_candidates_into(path, entries)
+                .map_err(|error| {
+                    EngineError::Scoring(ScoringError::Dictionary(error.to_string()))
+                })?;
+            append_scan_entries(
+                entries.drain(..),
+                path.len(),
+                end,
+                CandidateKind::Addon,
+                addon,
+            );
+            **continued |= self
+                .dictionary
+                .phrase_prefix_exists_addon(path)
+                .map_err(|error| {
+                    EngineError::Scoring(ScoringError::Dictionary(error.to_string()))
+                })?;
+            return Ok(());
         }
         let has_incomplete = path
             .iter()

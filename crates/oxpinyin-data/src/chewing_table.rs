@@ -36,6 +36,20 @@ pub use crate::row_format::pinyin_index::{
 /// logic runs over the production [`DefaultDbm`] and over the in-memory,
 /// counting and failing test doubles alike.
 pub trait ChewingDbm {
+    /// Whether this is the retained object of a failed system attach.
+    fn attachment_failed(&self) -> bool {
+        false
+    }
+
+    /// Performs the failed suggestion's native first call, returning
+    /// whether the failed attachment handled the operation.
+    fn failed_suggestion(&self, _key: &[u8]) -> bool {
+        false
+    }
+
+    /// Finalizes a retained failed native object once, at facade fini.
+    fn finish_failed_attachment(&self) {}
+
     /// Point read into `value`, a buffer the caller owns: `value` is
     /// cleared, then holds the stored bytes on a hit. Answers whether the
     /// key was found. A caller that passes one buffer to successive reads
@@ -90,12 +104,28 @@ pub fn prefix_upper_bound(prefix: &[u8]) -> Option<Vec<u8>> {
 /// to the underlying library, matching libpinyin's flat keyspace.
 /// delegates to the well-known `"data"` table.
 pub struct RawChewingDbm<S> {
-    store: S,
+    state: DbmState<S>,
+}
+
+enum DbmState<S> {
+    Open(S),
+    #[cfg(any(feature = "bdb", feature = "kyotocabinet"))]
+    Unopened(oxpinyin_store::UnopenedSystemDbm),
 }
 
 impl<S> RawChewingDbm<S> {
     pub(crate) const fn new(store: S) -> Self {
-        Self { store }
+        Self {
+            state: DbmState::Open(store),
+        }
+    }
+
+    fn store(&self) -> Option<&S> {
+        match &self.state {
+            DbmState::Open(store) => Some(store),
+            #[cfg(any(feature = "bdb", feature = "kyotocabinet"))]
+            DbmState::Unopened(_) => None,
+        }
     }
 }
 
@@ -103,23 +133,101 @@ impl<S> RawChewingDbm<S> {
 /// its raw (unframed) keyspace.
 pub type DefaultDbm = RawChewingDbm<oxpinyin_store::DefaultStore>;
 
+impl DefaultDbm {
+    pub(crate) fn attach(path: &std::path::Path, hash: bool) -> Result<Self, DictError> {
+        #[cfg(any(feature = "bdb", feature = "kyotocabinet"))]
+        {
+            use oxpinyin_store::SystemAttachment;
+            Ok(
+                match SystemAttachment::open(path, hash).map_err(|e| DictError::Table(e.into()))? {
+                    SystemAttachment::Open(store) => Self::new(store),
+                    SystemAttachment::Unopened(db) => Self {
+                        state: DbmState::Unopened(db),
+                    },
+                },
+            )
+        }
+        #[cfg(feature = "tkrzw")]
+        {
+            use oxpinyin_store::{DefaultStore, RawReadStore, ReadStore};
+            // #1516's tkrzw work follows the concrete-class rebinding.
+            let store = if hash {
+                DefaultStore::open_hash_read_only(path)
+            } else {
+                DefaultStore::open_read_only(path)
+            }
+            .map_err(|e| DictError::Table(e.into()))?;
+            Ok(Self::new(store))
+        }
+    }
+}
+
 impl<S: oxpinyin_store::RawReadStore + Send + Sync> ChewingDbm for RawChewingDbm<S> {
+    fn attachment_failed(&self) -> bool {
+        self.store().is_none()
+    }
+
+    fn failed_suggestion(&self, key: &[u8]) -> bool {
+        match &self.state {
+            DbmState::Open(_) => {
+                let _ = key;
+                false
+            }
+            #[cfg(any(feature = "bdb", feature = "kyotocabinet"))]
+            DbmState::Unopened(db) => {
+                db.suggest(key);
+                true
+            }
+        }
+    }
+
+    fn finish_failed_attachment(&self) {
+        match &self.state {
+            DbmState::Open(_) => {}
+            #[cfg(any(feature = "bdb", feature = "kyotocabinet"))]
+            DbmState::Unopened(db) => db.finish(),
+        }
+    }
+
     fn get(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, DictError> {
-        self.store
-            .get_raw(key, value)
-            .map_err(|e| DictError::Table(e.into()))
+        match &self.state {
+            DbmState::Open(store) => store
+                .get_raw(key, value)
+                .map_err(|e| DictError::Table(e.into())),
+            #[cfg(any(feature = "bdb", feature = "kyotocabinet"))]
+            DbmState::Unopened(db) => {
+                value.clear();
+                db.read(key);
+                Ok(false)
+            }
+        }
     }
 
     fn get_bigram(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, DictError> {
-        self.store
-            .get_bigram_raw(key, value)
-            .map_err(|e| DictError::Table(e.into()))
+        match &self.state {
+            DbmState::Open(store) => store
+                .get_bigram_raw(key, value)
+                .map_err(|e| DictError::Table(e.into())),
+            #[cfg(any(feature = "bdb", feature = "kyotocabinet"))]
+            DbmState::Unopened(db) => {
+                value.clear();
+                db.read(key);
+                Ok(false)
+            }
+        }
     }
 
     fn contains(&self, key: &[u8]) -> Result<bool, DictError> {
-        self.store
-            .contains_raw(key)
-            .map_err(|e| DictError::Table(e.into()))
+        match &self.state {
+            DbmState::Open(store) => store
+                .contains_raw(key)
+                .map_err(|e| DictError::Table(e.into())),
+            #[cfg(any(feature = "bdb", feature = "kyotocabinet"))]
+            DbmState::Unopened(db) => {
+                db.read(key);
+                Ok(false)
+            }
+        }
     }
 
     fn walk(
@@ -129,6 +237,11 @@ impl<S: oxpinyin_store::RawReadStore + Send + Sync> ChewingDbm for RawChewingDbm
         mut visit: impl FnMut(&[u8], &[u8]) -> Result<bool, DictError>,
     ) -> Result<(), DictError> {
         use std::ops::{Bound, ControlFlow};
+        let Some(store) = self.store() else {
+            // Auxiliary Rust scans do not correspond to a pin read.
+            // Suggestions dispatch their native first call separately.
+            return Ok(());
+        };
         // The store's visitor speaks `StoreError` and answers
         // continue/break, while the row visitor speaks `DictError` and
         // asks to stop: a stop is a `Break`, which ends the store scan
@@ -138,7 +251,7 @@ impl<S: oxpinyin_store::RawReadStore + Send + Sync> ChewingDbm for RawChewingDbm
         // them over — no collect-then-replay buffer, and nothing past
         // the stop is scanned.
         let mut failure: Option<DictError> = None;
-        let scan = self.store.scan_raw(
+        let scan = store.scan_raw(
             Bound::Included(lo),
             hi.map_or(Bound::Unbounded, Bound::Excluded),
             |key, value| match visit(key, value) {
@@ -169,6 +282,14 @@ pub struct ChewingTable<D = DefaultDbm> {
 impl<D: ChewingDbm> ChewingTable<D> {
     pub(crate) const fn new(dbm: D) -> Self {
         Self { dbm }
+    }
+
+    pub(crate) fn attachment_failed(&self) -> bool {
+        self.dbm.attachment_failed()
+    }
+
+    pub(crate) fn finish_failed_attachment(&self) {
+        self.dbm.finish_failed_attachment();
     }
 
     /// `ChewingLargeTable2::search` (`chewing_large_table2_kyotodb.cpp`)
@@ -310,6 +431,9 @@ impl<D: ChewingDbm> ChewingTable<D> {
         keys: &[ChewingKey],
         mut visit: impl FnMut(usize, &[PinyinIndexItem]) -> Result<bool, DictError>,
     ) -> Result<bool, DictError> {
+        if self.dbm.attachment_failed() && self.dbm.failed_suggestion(&index_key(keys)) {
+            return Ok(false);
+        }
         if !self.key_exists(keys)? {
             return Ok(false);
         }

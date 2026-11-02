@@ -28,7 +28,7 @@ It holds runtime's concrete dictionary, language-model and user handles by value
 It therefore forwards the complete backend feature matrix instead of staying generic over engine traits.
 
 tkrzw has been the default backend since 2026-10-30 (maintainer decision 2026-10-30 UTC).
-The store backends are system C-library dependencies, verified on Linux and buildable on macOS through Homebrew.
+The store backends are system native-library dependencies, verified on Linux and buildable on macOS through Homebrew.
 CI's Linux, macOS and Windows lanes build tkrzw with `.github/actions/tkrzw`.
 The peer matrix remains on Linux.
 
@@ -51,31 +51,28 @@ Do not add runtime dispatch or fallback.
 
 ## Dependencies
 
-**Dependencies (maintainer, 2026-09-12; Kyoto Cabinet shim, maintainer
-approval 2026-10-23 UTC):**
+**Dependencies (amended by the [Rust/C++ interoperability ruling](findings/compatibility-policy.md#rust-cpp-interoperability), 2026-11-02 UTC):**
 
 Use a Rust library as Rust.
 Redb was the example; it was removed 2026-09-22.
 The tree has no pure-Rust database replacement.
 `glib-sys` binds a C library.
 Link Kyoto Cabinet, tkrzw and Berkeley DB to the distribution's libraries.
-Use tkrzw and Berkeley DB through their maintainer-provided C ABIs, `tkrzw_langc.h` and `db.h`.
-Generate bindings with bindgen over system headers.
+Use Berkeley DB through its official C API, `db.h`, with bindgen over system headers.
+tkrzw's approved binding is CXX over the concrete classes the pin uses; the current `tkrzw_langc.h` binding remains until the separate rebinding PR.
 Find tkrzw, Kyoto Cabinet, Berkeley DB where it ships a `.pc` file, and GLib with the `pkg-config` crate, a build-dependency of `oxpinyin-store`, `oxpinyin-input` and `oxpinyin-training` (maintainer approval 2026-10-30 UTC).
 Berkeley DB falls back to fixed header directories and the `OXPINYIN_BDB_*` overrides, because the distributions and Homebrew install no `.pc` file for it.
-Do not use tkrzw's C++ interface.
-It has no ABI stability across compilers, standard libraries or library versions.
-Its C API is the maintainer's stability promise.
+The [interoperability ruling](findings/compatibility-policy.md#rust-cpp-interoperability) supersedes the prohibition on tkrzw's C++ interface and sets the migration order and source-proof obligations.
 
 Use Kyoto Cabinet as libpinyin does.
 Compile `crates/oxpinyin-store/src/kyotocabinet/shim.cc` with `cc` under the `kyotocabinet` feature.
 It constructs `TreeDB`, `HashDB`, `StashDB` and `ProtoTreeDB` from build-time headers.
 Its `noexcept` C entry points in `shim.h` always turn C++ exceptions into failure returns.
 Like libpinyin, it depends on the system library's C++ ABI.
-The no-shims ruling retains it under the [Kyoto Cabinet exception](source-policy.md#kyoto-cabinet-exception).
+Its FFI contract is frozen under the [interoperability ruling](findings/compatibility-policy.md#rust-cpp-interoperability); migration to CXX follows the tkrzw rebinding in a separate PR.
 The facades import 68 `kyotocabinet::` names, 67 among the pin's 77.
 This describes the current tree.
-The `oxpinyin-input` boundary calls the C library through the `libc` crate, with no build step (maintainer ruling 2026-10-31 UTC: no hand-written C or C++ shims).
+The `oxpinyin-input` boundary calls the C library through the `libc` crate, with no build step; its [C-library calls and macro checks](source-policy.md#external-io) retain the 2026-10-31 UTC rule.
 It declares in Rust, per platform and in one place, the C library's `stdout` and `stderr` objects, which `libc` does not name.
 Its `tools` feature adds GLib through `glib-sys` and reads the C++ streams' lines with `std::io`.
 
@@ -84,7 +81,7 @@ See the [shim results](findings/kc-shim-1118.md).
 `kclangc.h` reaches every class through `PolyDB`.
 That dispatch and linked but unopened classes kept about 580 KiB more libkyotocabinet text resident than the pin.
 The shim retains the pin's libkyotocabinet residency.
-An earlier cxx bridge was measured and rejected.
+An earlier cxx bridge was measured and rejected in #1043; this is historical evidence about that implementation, not a restriction on CXX bindings under the [current ruling](findings/compatibility-policy.md#rust-cpp-interoperability).
 See its [results](findings/kc-c-vs-cxx-adapter-2026-10-22.md) and PR #1043 for code.
 Its glue added 0.6–5.5% instructions to point reads, writes and framed scans.
 Cargo-built libraries also exported cxx runtime and bridge symbols beyond the version scripts.
