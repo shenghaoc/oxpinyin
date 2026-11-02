@@ -65,11 +65,13 @@ def arguments(argv):
             selection += [option, value]
     if values['cell'] not in cell.CELLS:
         fail('cell must be bdb, kc or tkrzw', 2)
-    if not values['platform']:
-        arch = text(['uname', '-m'])
-        values['platform'] = {'x86_64': 'linux/amd64', 'aarch64': 'linux/arm64', 'arm64': 'linux/arm64'}.get(arch, '')
-        if not values['platform']:
-            fail(f'FAIL: no compatibility platform for architecture {arch}')
+    arch = text(['uname', '-m'])
+    native = {'x86_64': 'linux/amd64', 'aarch64': 'linux/arm64', 'arm64': 'linux/arm64'}.get(arch, '')
+    if not native:
+        fail(f'FAIL: no compatibility platform for architecture {arch}')
+    if values['platform'] and values['platform'] != native:
+        fail('FAIL: compatibility requires the native architecture; emulation is unsupported', 2)
+    values['platform'] = native
     if not re.fullmatch('[1-9][0-9]*', values['jobs']):
         fail('--jobs must be positive', 2)
     if not re.fullmatch('[1-9][0-9]*', values['memory_mib']):
@@ -235,6 +237,13 @@ def launch(argv, *, root=ROOT):
                         build([*platform_args, *build_flags, '-f', 'tools/oracle/Dockerfile.oracle', '-t', reference, '.'])
                 build([*platform_args, *build_flags, '--build-arg', f'DEPS_IMAGE={deps}', '--build-arg', f'REFERENCE_IMAGE={reference}',
                        '--build-arg', f'CA_IDENTITY={ca_identity}', '-f', 'tools/oracle/Dockerfile.compat', '-t', image, '.'])
+            content = images.content_digest(runtime, kind, image)
+            triple = {'linux/arm64': 'aarch64-unknown-linux-gnu',
+                      'linux/amd64': 'x86_64-unknown-linux-gnu'}[platform]
+            initial = identity.verify_inputs(directory, input_identity)
+            input_identity = identity.seal_inputs(directory, key, reference_tag, initial['head'],
+                                                  content, triple, values['cell'])
+            image_check = lambda record: images.verify_created_image(record, content)
             if capture([runtime, 'volume', 'inspect', volume], check=False, stderr=False).status:
                 run([runtime, 'volume', 'create', *(['-s', '20G'] if kind == 'container' else []), volume])
             print(f'Compatibility: {platform}; native execution. No native performance claims.\nVolume: {volume}\nResults: {result_root}', flush=True)
@@ -242,7 +251,8 @@ def launch(argv, *, root=ROOT):
                             '-v', f'{directory}:/input:ro{relabel}', '-w', '/'],
                             [image, 'bash', '/input/inside.sh', values['cell'], key, run_id, reference_tag,
                              input_identity, *selection, '--jobs', jobs],
-                            console=transport / 'console.log', exit_confirmed=directory / 'exit-confirmed')
+                            console=transport / 'console.log', exit_confirmed=directory / 'exit-confirmed',
+                            image_check=image_check)
             if not (directory / 'exit-confirmed').is_file():
                 fail('FAIL: main container exit unconfirmed; no result reader started')
             if kind == 'container':
@@ -254,7 +264,7 @@ def launch(argv, *, root=ROOT):
                     try:
                         os.dup2(stream.fileno(), 1)
                         result = reserved(name + '-results', [*platform_args, '--cpus', jobs, '-v', f'{volume}:/state:ro', '-w', '/'],
-                                          [image, 'tar', '-C', f'/state/results/container/{source_identity}/{run_id}', '-cf', '-', '.'], remove=True)
+                                          [image, 'tar', '-C', f'/state/results/container/{source_identity}/{run_id}', '-cf', '-', '.'], remove=True, image_check=image_check)
                     finally:
                         os.dup2(descriptor, 1)
                         os.close(descriptor)

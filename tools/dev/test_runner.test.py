@@ -230,6 +230,10 @@ if __name__ == '__main__': unittest.main()
                                                          ['tools/dev/test_runner.py']),
                          ['tools/other.test.py'])
 
+    def test_guest_changes_select_interrupted_target_test(self):
+        selected = test_runner.changed_harness_files(test_runner.harness_files(), ['tools/dev/compat/guest.py'])
+        self.assertIn('tools/dev/compat/guest.test.py', selected)
+
     def test_shared_files_including_justfile_select_every_harness(self):
         files = test_runner.harness_files()
         self.assertIn('tools/dev/python-request.test.py', files)
