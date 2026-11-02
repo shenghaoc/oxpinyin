@@ -4588,7 +4588,7 @@ impl<S: WriteStore> GenericUserStore<S> {
 
     /// Whether this session carries system-item payloads from imports or logs.
     #[must_use]
-    pub fn has_system_items(&self) -> bool {
+    pub(crate) fn has_system_items(&self) -> bool {
         self.inner.has_system_items.load(Ordering::Relaxed)
     }
 
@@ -4604,7 +4604,7 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// Whether this session holds a system token whose item a journal REMOVE
     /// took out ([`Self::system_item_removed`]).
     #[must_use]
-    pub fn has_removed_system_items(&self) -> bool {
+    pub(crate) fn has_removed_system_items(&self) -> bool {
         self.inner.has_removed_system_items.load(Ordering::Relaxed)
     }
 
@@ -4613,7 +4613,7 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// `phrase_index.cpp:219-236`), while the shipped chunk and the phrase
     /// table still hold it.
     #[must_use]
-    pub fn system_item_removed(&self, token: Token) -> bool {
+    pub(crate) fn system_item_removed(&self, token: Token) -> bool {
         self.has_removed_system_items() && self.removed_system_items_guard().contains(&token)
     }
 
@@ -4634,11 +4634,12 @@ impl<S: WriteStore> GenericUserStore<S> {
             .store(!removed.is_empty(), Ordering::Relaxed);
     }
 
+    #[cfg(test)]
     /// The imported/replayed system item, with its current unigram field.
     ///
     /// # Errors
     /// Returns an error if the scratch payload or count cannot be read.
-    pub fn system_item_override(
+    pub(crate) fn system_item_override(
         &self,
         token: Token,
     ) -> Result<Option<oxpinyin_data::chunk_write::ChunkItem>, UserStoreError> {
@@ -4728,7 +4729,7 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// Exclusive token end of imported system items in one library, without
     /// cloning payloads for the streaming export's range probe.
     #[must_use]
-    pub fn system_item_end(&self, library: u8) -> Option<Token> {
+    pub(crate) fn system_item_end(&self, library: u8) -> Option<Token> {
         if !(1..=4).contains(&library) {
             return None;
         }
@@ -4757,7 +4758,7 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// original. A borrowed item is stable for this call and copied nowhere.
     /// Only its unigram field is stale; [`Self::system_item_override`]
     /// supplies the live unigram when a caller needs that field too.
-    pub fn with_effective_system_item<R>(
+    pub(crate) fn with_effective_system_item<R>(
         &self,
         token: Token,
         read: impl FnOnce(&oxpinyin_data::chunk_write::ChunkItem) -> R,
@@ -4844,47 +4845,6 @@ impl<S: WriteStore> GenericUserStore<S> {
             }
         }
         Ok(first_library_token(library))
-    }
-
-    /// System overrides in token order for a bulk export; original items stay lazy.
-    ///
-    /// # Errors
-    /// Returns an error when a scratch payload cannot be decoded.
-    pub fn system_item_overrides(
-        &self,
-        library: u8,
-    ) -> Result<
-        std::collections::BTreeMap<Token, oxpinyin_data::chunk_write::ChunkItem>,
-        UserStoreError,
-    > {
-        let mut items = std::collections::BTreeMap::new();
-        if !self.has_system_items() {
-            return Ok(items);
-        }
-        let mut tokens: std::collections::BTreeSet<_> = self
-            .inner
-            .system_items
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .keys()
-            .copied()
-            .filter(|&token| phrase_index_library_index(token) == library)
-            .collect();
-        if let Some(target) = &self.inner.libpinyin
-            && let Some(arena) = target.phrases().libraries.get(&library)
-        {
-            tokens.extend(
-                arena
-                    .items()
-                    .map(|(slot, _)| (u32::from(library) << 24) | slot),
-            );
-        }
-        for token in tokens {
-            if let Some(item) = self.system_item_override(token)? {
-                items.insert(token, item);
-            }
-        }
-        Ok(items)
     }
 
     /// `_add_phrase` for a system library (074a2219, pinyin.cpp:515-611).

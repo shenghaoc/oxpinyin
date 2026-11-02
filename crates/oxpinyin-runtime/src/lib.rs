@@ -59,7 +59,8 @@ use oxpinyin_data::{
 };
 use oxpinyin_engine::{ConfigSource, EngineError, Session, StoragePaths};
 use oxpinyin_user::{
-    PinyinKey, SaveBaseline, SystemLibrary, UserConfLaw, UserLookup, UserStore, UserStoreError,
+    ItemOrigin, LiveSystemItems, PinyinKey, SaveBaseline, SystemLibrary, UserConfLaw, UserLookup,
+    UserStore, UserStoreError,
 };
 
 /// Orders the system and user phrase-table suggestion tokens the way
@@ -543,7 +544,7 @@ impl<'a> RuntimeDict<'a> {
     /// The query keys the effective-item overlay prices against; `None`
     /// when the store holds no system items.
     fn effective_query(&self, syllables: &[SyllableKey]) -> Option<Vec<oxpinyin_core::ChewingKey>> {
-        self.user.filter(|store| store.has_system_items())?;
+        self.live_items().has_overlay().then_some(())?;
         Some(syllables.iter().map(|key| key.chewing_key()).collect())
     }
 
@@ -554,26 +555,32 @@ impl<'a> RuntimeDict<'a> {
         query: &[oxpinyin_core::ChewingKey],
         token: u32,
     ) -> Option<(u32, u32)> {
-        self.user?.with_effective_system_item(token, |item| {
-            let mut total = 0_u32;
-            let mut matched = 0_u32;
-            for (keys, frequency) in &item.prons {
-                total = total.wrapping_add(*frequency);
-                if query.len() == keys.len()
-                    && query.iter().zip(keys).all(|(q, bits)| {
-                        let s = oxpinyin_core::ChewingKey::from_packed(*bits);
-                        q.initial == s.initial
-                            && ((q.middle == s.middle && q.final_ == s.final_)
-                                || (q.middle == 0 && q.final_ == 0)
-                                || (s.middle == 0 && s.final_ == 0))
-                            && (q.tone == s.tone || q.tone == 0 || s.tone == 0)
-                    })
-                {
-                    matched = matched.wrapping_add(*frequency);
+        self.live_items()
+            .read(token, |item| {
+                if item.origin() != ItemOrigin::Overlay {
+                    return None;
                 }
-            }
-            (matched, total)
-        })
+                let mut total = 0_u32;
+                let mut matched = 0_u32;
+                for reading in item.pronunciations() {
+                    total = total.wrapping_add(reading.frequency);
+                    if query.len() == reading.keys.len()
+                        && query.iter().zip(reading.keys.iter()).all(|(q, bits)| {
+                            let s = oxpinyin_core::ChewingKey::from_packed(bits);
+                            q.initial == s.initial
+                                && ((q.middle == s.middle && q.final_ == s.final_)
+                                    || (q.middle == 0 && q.final_ == 0)
+                                    || (s.middle == 0 && s.final_ == 0))
+                                && (q.tone == s.tone || q.tone == 0 || s.tone == 0)
+                        })
+                    {
+                        matched = matched.wrapping_add(reading.frequency);
+                    }
+                }
+                Some((matched, total))
+            })
+            .found()
+            .flatten()
     }
 
     /// What [`Self::priced_token`] reads of `syllables` whatever the
@@ -648,7 +655,7 @@ impl<'a> RuntimeDict<'a> {
         // The effective-item overlay prices against the same keys, when
         // the store holds system items.
         if let Some(query) = path.keys.as_deref()
-            && self.user.is_some_and(UserStore::has_system_items)
+            && self.live_items().has_overlay()
             && let Some((matched, total)) = self.effective_possibility(query, token)
         {
             priced.item.pronunciation = Some((u64::from(matched), u64::from(total)));
@@ -787,6 +794,20 @@ impl<'a> RuntimeDict<'a> {
             != 0
     }
 
+    /// Borrow the effective system items for one operation.
+    #[must_use]
+    pub fn live_items(&self) -> LiveSystemItems<'_> {
+        LiveSystemItems::new(self.system.libraries(), self.user, self.library_mask)
+    }
+
+    /// Borrow the effective system items with no library unloaded, for the
+    /// phrase export iterator, which checks a library's visibility once when
+    /// it probes.
+    #[must_use]
+    pub fn live_items_ignoring_mask(&self) -> LiveSystemItems<'_> {
+        LiveSystemItems::unmasked(self.system.libraries(), self.user)
+    }
+
     /// Whether library `nibble` is visible (not unloaded). Shared
     /// primitive: `mask == 0` (all libraries loaded) and any nibble
     /// outside the u32 bit range both answer `true` — those nibbles
@@ -827,7 +848,7 @@ impl<'a> RuntimeDict<'a> {
             return false;
         }
         let found = {
-            let system_found = self.system_unigram_count(token).is_some();
+            let system_found = self.live_items().read(token, |_| ()).found().is_some();
             let addons = self
                 .addons
                 .read()
@@ -929,24 +950,6 @@ impl<'a> RuntimeDict<'a> {
         addons.unigram_freq(token)
     }
 
-    /// The system item's stored unigram for `token` —
-    /// `PhraseItem::get_unigram_frequency`, `gen_unigram`'s `+1` included —
-    /// the field the pin's predicted-candidate law reads
-    /// (`pinyin.cpp:1811-1824`). `None` when the token's library is
-    /// unloaded or owns no such item.
-    #[must_use]
-    pub fn system_unigram_count(&self, token: u32) -> Option<u64> {
-        if !self.library_visible_token(token) {
-            return None;
-        }
-        self.system.unigram_count(token).or_else(|| {
-            self.user?
-                .system_item_override(token)
-                .ok()?
-                .map(|item| u64::from(item.unigram))
-        })
-    }
-
     /// The visible item count for the amplified-law denominator: the
     /// items of every library that is not unloaded. Per-library counts
     /// are tallied once and cached.
@@ -963,17 +966,13 @@ impl<'a> RuntimeDict<'a> {
     /// either way ([`Self::phrase_table_token_enabled`]).
     #[must_use]
     pub fn library_visible_token(&self, token: u32) -> bool {
-        self.library_visible(token >> 24)
-            && !self
-                .user
-                .is_some_and(|store| store.system_item_removed(token))
+        self.live_items().is_visible(token)
     }
 
     /// Whether any entry-level filter can hide a token: a library is
     /// unloaded, or the user store holds a removed system item.
     fn token_filter_active(&self) -> bool {
-        self.library_mask.load(Ordering::SeqCst) != 0
-            || self.user.is_some_and(UserStore::has_removed_system_items)
+        self.live_items().filter_active()
     }
 
     /// Whether phrase-table search has an enabled token array for this library.
@@ -1001,21 +1000,7 @@ impl<'a> RuntimeDict<'a> {
         // (074a2219 novel_types.h:42-44).
         let token = token & (oxpinyin_user::PHRASE_INDEX_LIBRARY_MASK | oxpinyin_user::PHRASE_MASK);
         match token >> 24 {
-            1..=4 => {
-                if !self.library_visible_token(token) {
-                    return None;
-                }
-                self.user
-                    .and_then(|store| {
-                        store.with_effective_system_item(token, |item| item.prons.len() as u32)
-                    })
-                    .or_else(|| {
-                        self.system
-                            .libraries()
-                            .library(token)?
-                            .pronunciation_count(token)
-                    })
-            }
+            1..=4 => self.live_items().pronunciation_count(token).found(),
             5..=7 => {
                 if !self.library_visible(token >> 24) {
                     return None;
@@ -1032,19 +1017,11 @@ impl<'a> RuntimeDict<'a> {
     #[must_use]
     pub fn token_text(&self, token: u32) -> Option<PhraseText> {
         match token >> 24 {
-            1..=4 => {
-                if !self.library_visible_token(token) {
-                    return None;
-                }
-                if let Some(text) = self.user.and_then(|store| {
-                    store.with_effective_system_item(token, |item| {
-                        PhraseText::from_words(item.phrase.iter().copied())
-                    })
-                }) {
-                    return text;
-                }
-                self.system.phrase_text(token)
-            }
+            1..=4 => self
+                .live_items()
+                .read(token, |item| item.phrase_text())
+                .found()
+                .flatten(),
             5..=7 => {
                 if !self.library_visible(token >> 24) {
                     return None;
@@ -1069,16 +1046,11 @@ impl<'a> RuntimeDict<'a> {
     #[must_use]
     pub fn token_exists(&self, token: u32) -> bool {
         match token >> 24 {
-            1..=4 => {
-                self.library_visible_token(token)
-                    && (self.user.is_some_and(|store| {
-                        store.with_effective_system_item(token, |_| ()).is_some()
-                    }) || self
-                        .system
-                        .libraries()
-                        .library(token)
-                        .is_some_and(|library| library.pronunciation_count(token).is_some()))
-            }
+            1..=4 => self
+                .live_items()
+                .pronunciation_count(token)
+                .found()
+                .is_some(),
             5..=7 => {
                 self.library_visible(token >> 24)
                     && self
@@ -1097,33 +1069,15 @@ impl<'a> RuntimeDict<'a> {
     #[must_use]
     pub fn token_nth_pronunciation(&self, token: u32, nth: usize) -> Option<TokenPronunciation> {
         match token >> 24 {
-            1..=4 => {
-                if !self.library_visible_token(token) {
-                    return None;
-                }
-                if let Some(reading) = self.user.and_then(|store| {
-                    store.with_effective_system_item(token, |item| TokenPronunciation {
-                        phrase_length: item.phrase.len(),
-                        keys: item.prons.get(nth).map(|(keys, _)| keys.clone()),
-                    })
-                }) {
-                    return Some(reading);
-                }
-                let library = self.system.libraries().library(token)?;
-                let item = library.item(token)?;
-                Some(TokenPronunciation {
+            1..=4 => self
+                .live_items()
+                .read(token, |item| TokenPronunciation {
                     phrase_length: item.phrase_length(),
-                    keys: item.pronunciation(nth).map(|reading| {
-                        reading
-                            .keys
-                            .as_chunks::<2>()
-                            .0
-                            .iter()
-                            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
-                            .collect()
-                    }),
+                    keys: item
+                        .pronunciation(nth)
+                        .map(|reading| reading.keys.iter().collect()),
                 })
-            }
+                .found(),
             5..=7 => {
                 if !self.library_visible(token >> 24) {
                     return None;
@@ -1650,6 +1604,7 @@ pub struct RuntimeLm<'a> {
         &'a AtomicU32,
     >,
     user: Option<&'a UserStore>,
+    libraries: &'a oxpinyin_data::phrase_libraries::PhraseLibraries,
     addons: &'a RwLock<AddonSet>,
     /// The dictionary's `add_unigram_frequency` bumps: the total's is part
     /// of the one facade total every reader divides by, and a token's is
@@ -1658,6 +1613,16 @@ pub struct RuntimeLm<'a> {
 }
 
 impl RuntimeLm<'_> {
+    /// Whether the session holds an item for `token` that the shipped chunk
+    /// does not: a SYSTEM_FILE ADD, absent from the immutable chunk but
+    /// present in the current facade (074a2219 `pinyin.cpp:598-607`). A store
+    /// that cannot read the held item's count fails the step.
+    fn imported_item(&self, token: u32) -> Result<bool, LmError> {
+        LiveSystemItems::unmasked(self.libraries, self.user)
+            .is_imported(token)
+            .map_err(|error| LmError::User(error.to_string()))
+    }
+
     fn delta(&self, prev: Option<u32>, token: u32) -> Result<UserCountDelta, LmError> {
         let mut delta = match self.user {
             None => UserCountDelta::ZERO,
@@ -1798,14 +1763,7 @@ impl LanguageModel for RuntimeLm<'_> {
         let extra = self.delta(Some(prev.value()), token.value())?;
         // A SYSTEM_FILE ADD is absent from the immutable chunk but present
         // in the current facade (074a2219 pinyin.cpp:598-607).
-        let imported = if let Some(store) = self.user {
-            store
-                .system_item_override(token.value())
-                .map_err(|error| LmError::User(error.to_string()))?
-                .is_some()
-        } else {
-            false
-        };
+        let imported = self.imported_item(token.value())?;
         self.inner
             .nbest_step_costs_with_imported_item(prev, token, extra, imported)
     }
@@ -1823,14 +1781,7 @@ impl LanguageModel for RuntimeLm<'_> {
             let generation = self.user.map_or(0, UserStore::generation);
             let result = (|| {
                 let extra = self.delta(None, token.value())?;
-                let imported = if let Some(store) = self.user {
-                    store
-                        .system_item_override(token.value())
-                        .map_err(|error| LmError::User(error.to_string()))?
-                        .is_some()
-                } else {
-                    false
-                };
+                let imported = self.imported_item(token.value())?;
                 self.inner.nbest_item_costs(token, extra, imported, item)
             })();
             if self
@@ -2312,6 +2263,7 @@ impl Runtime {
         RuntimeLm {
             inner: self.model.read(self.libraries(), &self.library_mask),
             user: self.user.as_ref(),
+            libraries: self.libraries(),
             addons: &self.addons,
             bumps: &self.bumps,
         }

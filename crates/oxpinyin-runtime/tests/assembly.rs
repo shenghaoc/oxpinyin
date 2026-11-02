@@ -553,7 +553,14 @@ fn rejected_unigram_add_keeps_item_and_library_counts_but_moves_facade_total() {
     let tokens: Vec<_> = library
         .token_range()
         .map(|local| 0x0100_0000 | local)
-        .filter(|&token| runtime.dict().system_unigram_count(token).is_some())
+        .filter(|&token| {
+            runtime
+                .dict()
+                .live_items()
+                .read(token, |_| ())
+                .found()
+                .is_some()
+        })
         .take(2)
         .collect();
     assert_eq!(tokens.len(), 2);
@@ -608,7 +615,14 @@ fn the_facade_total_delta_wraps_like_a_guint32() {
         .expect("library 1")
         .token_range()
         .map(|local| 0x0100_0000 | local)
-        .find(|&token| runtime.dict().system_unigram_count(token).is_some())
+        .find(|&token| {
+            runtime
+                .dict()
+                .live_items()
+                .read(token, |_| ())
+                .found()
+                .is_some()
+        })
         .expect("a token");
     let _ = runtime.add_unigram_delta(token, u64::from(u32::MAX));
     let _ = runtime.add_unigram_delta(token, 3);

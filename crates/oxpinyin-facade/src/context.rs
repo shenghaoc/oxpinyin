@@ -985,11 +985,18 @@ mod library_transition_tests {
 
     /// The readings the session holds for `token` beyond the chunk's own.
     fn readings(ctx: &ContextCore, token: u32) -> usize {
-        ctx.user_store()
-            .expect("store")
-            .system_item_override(token)
-            .expect("item")
-            .map_or(0, |item| item.prons.len())
+        ctx.runtime
+            .as_ref()
+            .expect("runtime")
+            .dict()
+            .live_items()
+            .read(token, |item| {
+                (item.origin() == oxpinyin_user::ItemOrigin::Overlay)
+                    .then(|| item.n_pronunciations())
+            })
+            .found()
+            .flatten()
+            .unwrap_or(0)
     }
 
     #[test]
