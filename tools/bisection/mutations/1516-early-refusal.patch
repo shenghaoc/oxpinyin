@@ -1,0 +1,30 @@
+diff --git a/crates/oxpinyin-runtime/src/lib.rs b/crates/oxpinyin-runtime/src/lib.rs
+index 3c9988c7..824b7c33 100644
+--- a/crates/oxpinyin-runtime/src/lib.rs
++++ b/crates/oxpinyin-runtime/src/lib.rs
+@@ -2117,6 +2117,25 @@ impl Runtime {
+             system_dir,
+             std::ffi::OsStr::new(&SystemDbm::Bigram.file_name()),
+         );
++        // M1516_EARLY_REFUSAL: refuse a missing primary system DBM before
++        // the attach, as the runtime did before the failed objects were
++        // retained.
++        for kind in [
++            SystemDbm::PinyinIndex,
++            SystemDbm::PhraseIndex,
++            SystemDbm::Bigram,
++        ] {
++            let path = oxpinyin_input::path::build_path(
++                system_dir,
++                std::ffi::OsStr::new(&kind.file_name()),
++            );
++            if !path.is_file() {
++                return Err(OpenError::Io(
++                    path,
++                    std::io::Error::from(std::io::ErrorKind::NotFound),
++                ));
++            }
++        }
+ 
+         let (dict, libraries) = SystemDictionary::attach_with(system_dir, &conf)
+             .map_err(OpenError::Dict)?

@@ -339,6 +339,13 @@ impl SystemTables {
         self.phrase.finish_failed_attachment();
     }
 
+    /// Whether every retained failed main index has been finalized.
+    #[must_use]
+    pub fn failed_attachments_finished(&self) -> bool {
+        (!self.pinyin.attachment_failed() || self.pinyin.failed_attachment_finished())
+            && (!self.phrase.attachment_failed() || self.phrase.failed_attachment_finished())
+    }
+
     /// Borrow these tables and the owner's phrase storage for one operation.
     pub fn read<'a>(
         &'a self,
@@ -421,8 +428,8 @@ impl SystemDictionary {
         Self::open_with_mode(system_dir, conf, false)
     }
 
-    /// Opens the runtime's system tables, retaining failed BDB/KC attaches.
-    /// Tkrzw keeps its strict open until the concrete-class rebinding.
+    /// Opens the runtime's system tables, retaining failed attaches as the
+    /// pin does on every backend.
     ///
     /// # Errors
     /// Returns configuration/chunk errors and failures before native attach.
@@ -1051,33 +1058,23 @@ impl AddonDictionary {
     /// Zhuyin must continue to use [`Self::without_indexes`].
     ///
     /// # Errors
-    /// Returns failures before native attach; tkrzw keeps its old opens.
+    /// Returns failures before native attach.
     pub fn attach_with(system_dir: &Path, conf: &TableConf) -> Result<Self, DictError> {
-        #[cfg(any(feature = "bdb", feature = "kyotocabinet"))]
-        {
-            let path = |kind: SystemDbm| {
-                oxpinyin_input::path::build_path(
-                    system_dir,
-                    std::ffi::OsStr::new(&kind.file_name()),
-                )
-            };
-            Ok(Self {
-                pinyin: Some(ChewingTable::new(crate::chewing_table::DefaultDbm::attach(
-                    &path(SystemDbm::AddonPinyinIndex),
-                    false,
-                )?)),
-                phrase: Some(PhraseTable::new(crate::chewing_table::DefaultDbm::attach(
-                    &path(SystemDbm::AddonPhraseIndex),
-                    false,
-                )?)),
-                libraries: PhraseLibraries::empty(),
-                rows: addon_rows(conf),
-            })
-        }
-        #[cfg(feature = "tkrzw")]
-        {
-            Self::open_with(system_dir, conf)
-        }
+        let path = |kind: SystemDbm| {
+            oxpinyin_input::path::build_path(system_dir, std::ffi::OsStr::new(&kind.file_name()))
+        };
+        Ok(Self {
+            pinyin: Some(ChewingTable::new(crate::chewing_table::DefaultDbm::attach(
+                &path(SystemDbm::AddonPinyinIndex),
+                false,
+            )?)),
+            phrase: Some(PhraseTable::new(crate::chewing_table::DefaultDbm::attach(
+                &path(SystemDbm::AddonPhraseIndex),
+                false,
+            )?)),
+            libraries: PhraseLibraries::empty(),
+            rows: addon_rows(conf),
+        })
     }
 
     /// Finalizes failed addon pinyin then phrase attachments.
@@ -1088,6 +1085,36 @@ impl AddonDictionary {
         if let Some(table) = &self.phrase {
             table.finish_failed_attachment();
         }
+    }
+
+    /// Whether the addon pinyin index is the retained object of a failed
+    /// attach (`chewing_large_table2_tkrzwdb.cpp:87-88` at 074a2219). An
+    /// addon facade without the table answers `false`.
+    #[must_use]
+    pub fn pinyin_attachment_failed(&self) -> bool {
+        self.pinyin
+            .as_ref()
+            .is_some_and(ChewingTable::attachment_failed)
+    }
+
+    /// Whether the addon phrase index is the retained object of a failed
+    /// attach (`phrase_large_table3_tkrzwdb.cpp:77-79` at 074a2219).
+    #[must_use]
+    pub fn phrase_attachment_failed(&self) -> bool {
+        self.phrase
+            .as_ref()
+            .is_some_and(PhraseTable::attachment_failed)
+    }
+
+    /// Whether every retained failed addon index has been finalized.
+    #[must_use]
+    pub fn failed_attachments_finished(&self) -> bool {
+        let pinyin = self.pinyin.as_ref();
+        let phrase = self.phrase.as_ref();
+        pinyin.is_none_or(|table| !table.attachment_failed() || table.failed_attachment_finished())
+            && phrase.is_none_or(|table| {
+                !table.attachment_failed() || table.failed_attachment_finished()
+            })
     }
 
     /// Opens the addon DBM pair from `system_dir` when present; no
@@ -1384,5 +1411,31 @@ impl AddonDictionary {
         self.phrase
             .as_ref()
             .map_or_else(|| Ok(Vec::new()), |table| table.search(text))
+    }
+}
+
+#[cfg(test)]
+mod failed_addon_attachment_tests {
+    use super::{AddonDictionary, TableConf};
+
+    #[test]
+    fn missing_addon_files_leave_the_retained_failed_objects_not_none() {
+        // `AddonDictionary::attach_with` keeps both addon tables with their
+        // failed native objects, the pin's `FacadeChewingTable2::load` and
+        // `FacadePhraseTable3::load` on `pinyin.cpp:421,429`; a table that
+        // is `None` would skip the pin's later calls on them.
+        let dir = std::env::temp_dir().join(format!(
+            "oxpinyin-data-addon-missing-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let addon = AddonDictionary::attach_with(&dir, &TableConf::stock()).unwrap();
+        assert!(addon.pinyin_attachment_failed());
+        assert!(addon.phrase_attachment_failed());
+        assert!(!addon.failed_attachments_finished());
+        addon.finish_failed_attachments();
+        assert!(addon.failed_attachments_finished());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -307,18 +307,8 @@ fn missing_pinyin_index_follows_backend_attach() {
             std::fs::copy(entry.path(), dir.join(entry.file_name())).expect("copy");
         }
     }
-    #[cfg(feature = "tkrzw")]
-    match Runtime::open(&dir, None) {
-        Err(OpenError::Missing(path)) => {
-            assert!(
-                path.ends_with(oxpinyin_data::SystemDbm::PinyinIndex.file_name()),
-                "{path:?}"
-            );
-        }
-        Err(other) => panic!("expected Missing, got {other}"),
-        Ok(_) => panic!("tkrzw awaits the concrete-class binding"),
-    }
-    #[cfg(any(feature = "bdb", feature = "kyotocabinet"))]
+    // Every backend keeps the failed native object and initializes
+    // (pinyin.cpp:357 at 074a2219 ignores the load's answer).
     assert!(Runtime::open(&dir, None).is_ok());
 }
 

@@ -50,6 +50,12 @@ pub trait ChewingDbm {
     /// Finalizes a retained failed native object once, at facade fini.
     fn finish_failed_attachment(&self) {}
 
+    /// Whether a retained failed native object has been finalized. `false`
+    /// for an open table, which retains nothing.
+    fn failed_attachment_finished(&self) -> bool {
+        false
+    }
+
     /// Point read into `value`, a buffer the caller owns: `value` is
     /// cleared, then holds the stored bytes on a hit. Answers whether the
     /// key was found. A caller that passes one buffer to successive reads
@@ -109,7 +115,6 @@ pub struct RawChewingDbm<S> {
 
 enum DbmState<S> {
     Open(S),
-    #[cfg(any(feature = "bdb", feature = "kyotocabinet"))]
     Unopened(oxpinyin_store::UnopenedSystemDbm),
 }
 
@@ -123,7 +128,6 @@ impl<S> RawChewingDbm<S> {
     fn store(&self) -> Option<&S> {
         match &self.state {
             DbmState::Open(store) => Some(store),
-            #[cfg(any(feature = "bdb", feature = "kyotocabinet"))]
             DbmState::Unopened(_) => None,
         }
     }
@@ -135,30 +139,15 @@ pub type DefaultDbm = RawChewingDbm<oxpinyin_store::DefaultStore>;
 
 impl DefaultDbm {
     pub(crate) fn attach(path: &std::path::Path, hash: bool) -> Result<Self, DictError> {
-        #[cfg(any(feature = "bdb", feature = "kyotocabinet"))]
-        {
-            use oxpinyin_store::SystemAttachment;
-            Ok(
-                match SystemAttachment::open(path, hash).map_err(|e| DictError::Table(e.into()))? {
-                    SystemAttachment::Open(store) => Self::new(store),
-                    SystemAttachment::Unopened(db) => Self {
-                        state: DbmState::Unopened(db),
-                    },
+        use oxpinyin_store::SystemAttachment;
+        Ok(
+            match SystemAttachment::open(path, hash).map_err(|e| DictError::Table(e.into()))? {
+                SystemAttachment::Open(store) => Self::new(store),
+                SystemAttachment::Unopened(db) => Self {
+                    state: DbmState::Unopened(db),
                 },
-            )
-        }
-        #[cfg(feature = "tkrzw")]
-        {
-            use oxpinyin_store::{DefaultStore, RawReadStore, ReadStore};
-            // #1516's tkrzw work follows the concrete-class rebinding.
-            let store = if hash {
-                DefaultStore::open_hash_read_only(path)
-            } else {
-                DefaultStore::open_read_only(path)
-            }
-            .map_err(|e| DictError::Table(e.into()))?;
-            Ok(Self::new(store))
-        }
+            },
+        )
     }
 }
 
@@ -173,7 +162,6 @@ impl<S: oxpinyin_store::RawReadStore + Send + Sync> ChewingDbm for RawChewingDbm
                 let _ = key;
                 false
             }
-            #[cfg(any(feature = "bdb", feature = "kyotocabinet"))]
             DbmState::Unopened(db) => {
                 db.suggest(key);
                 true
@@ -184,8 +172,14 @@ impl<S: oxpinyin_store::RawReadStore + Send + Sync> ChewingDbm for RawChewingDbm
     fn finish_failed_attachment(&self) {
         match &self.state {
             DbmState::Open(_) => {}
-            #[cfg(any(feature = "bdb", feature = "kyotocabinet"))]
             DbmState::Unopened(db) => db.finish(),
+        }
+    }
+
+    fn failed_attachment_finished(&self) -> bool {
+        match &self.state {
+            DbmState::Open(_) => false,
+            DbmState::Unopened(db) => db.is_finished(),
         }
     }
 
@@ -194,7 +188,6 @@ impl<S: oxpinyin_store::RawReadStore + Send + Sync> ChewingDbm for RawChewingDbm
             DbmState::Open(store) => store
                 .get_raw(key, value)
                 .map_err(|e| DictError::Table(e.into())),
-            #[cfg(any(feature = "bdb", feature = "kyotocabinet"))]
             DbmState::Unopened(db) => {
                 value.clear();
                 db.read(key);
@@ -208,7 +201,6 @@ impl<S: oxpinyin_store::RawReadStore + Send + Sync> ChewingDbm for RawChewingDbm
             DbmState::Open(store) => store
                 .get_bigram_raw(key, value)
                 .map_err(|e| DictError::Table(e.into())),
-            #[cfg(any(feature = "bdb", feature = "kyotocabinet"))]
             DbmState::Unopened(db) => {
                 value.clear();
                 db.read(key);
@@ -222,7 +214,6 @@ impl<S: oxpinyin_store::RawReadStore + Send + Sync> ChewingDbm for RawChewingDbm
             DbmState::Open(store) => store
                 .contains_raw(key)
                 .map_err(|e| DictError::Table(e.into())),
-            #[cfg(any(feature = "bdb", feature = "kyotocabinet"))]
             DbmState::Unopened(db) => {
                 db.read(key);
                 Ok(false)
@@ -290,6 +281,10 @@ impl<D: ChewingDbm> ChewingTable<D> {
 
     pub(crate) fn finish_failed_attachment(&self) {
         self.dbm.finish_failed_attachment();
+    }
+
+    pub(crate) fn failed_attachment_finished(&self) -> bool {
+        self.dbm.failed_attachment_finished()
     }
 
     /// `ChewingLargeTable2::search` (`chewing_large_table2_kyotodb.cpp`)

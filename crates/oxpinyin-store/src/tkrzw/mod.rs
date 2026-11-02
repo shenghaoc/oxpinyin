@@ -136,7 +136,7 @@
 //! (`flexible_ngram_tkrzwdb.h:147-159`). Which Rust owner keeps a failed
 //! object is the owner's decision, made where the pin's owner makes it; the
 //! store constructors in this module drop it, as they always did, and the
-//! facade's system attachments keep it from #1516's tkrzw part on. The
+//! facade's system attachments keep it ([`open_system`], #1516). The
 //! test `a_failed_open_retains_the_concrete_object_whose_calls_answer_as_the_pins`
 //! proves the retained object is the native one.
 //!
@@ -612,6 +612,81 @@ fn open_in_memory() -> TkrzwStore {
 /// `ATTACH_READWRITE | ATTACH_CREATE` generators open it.
 fn open(path: &Path, writable: bool) -> Result<TkrzwStore, StoreError> {
     open_store(Class::Tree, path, writable, writable)
+}
+
+// ── failed system attachments ─────────────────────────────────────
+
+/// The pin's system attach for one tkrzw table: the concrete object
+/// allocated and `Open`ed read-only without `ATTACH_CREATE`
+/// (`attach_options`, `tkrzwdb_utils.h:32-46`; `ChewingLargeTable2::
+/// attach`, `chewing_large_table2_tkrzwdb.cpp:75-89`; `PhraseLargeTable3::
+/// attach`, `phrase_large_table3_tkrzwdb.cpp:65-80`; `PunctTable::attach`,
+/// `punct_table_tkrzwdb.cpp:58-73`; `Bigram::attach`, `ngram_tkrzwdb.cpp:
+/// 86-99`). On success the store; on failure the object the pin keeps,
+/// which answers the facade's later calls.
+///
+/// # Errors
+///
+/// Returns the failures before the native open: a path containing NUL.
+pub(crate) fn open_system(
+    path: &Path,
+    hash: bool,
+) -> Result<Result<TkrzwStore, TkrzwUnopenedHandle>, StoreError> {
+    let class = if hash { Class::Hash } else { Class::Tree };
+    let mut db = Db::new(class);
+    let status = db.open(path, false, OPEN_NO_CREATE)?;
+    Ok(if status.code == STATUS_SUCCESS {
+        Ok(TkrzwStore {
+            db,
+            read_only: true,
+        })
+    } else {
+        Err(TkrzwUnopenedHandle { db, class })
+    })
+}
+
+/// A system table's `TreeDBM` or `HashDBM` whose `Open` failed, kept as
+/// the pin keeps it: every later call reaches the real object, which
+/// answers `PRECONDITION_ERROR` (`tkrzw_dbm_hash.cc:400-401`,
+/// `tkrzw_dbm_tree.cc:563-564`), and reset makes the owner's calls on it.
+pub(crate) struct TkrzwUnopenedHandle {
+    db: Db,
+    class: Class,
+}
+
+impl TkrzwUnopenedHandle {
+    /// The pin's failed point read, `m_db->Get(key, &value)`, whose status
+    /// each owner then reads as a miss: `ChewingLargeTable2::search_internal`
+    /// (`chewing_large_table2_tkrzwdb.cpp:146-149`), `PhraseLargeTable3::
+    /// search` (`phrase_large_table3_tkrzwdb.cpp:136-139`), `Bigram::load`
+    /// (`ngram_tkrzwdb.cpp:111-114`) and `PunctTable::load_entry`
+    /// (`punct_table_tkrzwdb.cpp:124-130`). tkrzw writes nothing to stderr.
+    pub(crate) fn read(&self, key: &[u8]) {
+        let mut value = Vec::new();
+        let _ = self.db.get(key, &mut value);
+    }
+
+    /// The failed suggestion's first call, `m_db->Get(query_key, nullptr)`,
+    /// after which the pin returns without an iterator
+    /// (`chewing_large_table2_tkrzwdb.cpp:511-512`,
+    /// `phrase_large_table3_tkrzwdb.cpp:166-167`).
+    pub(crate) fn suggest(&self, key: &[u8]) {
+        let _ = self.db.check(key);
+    }
+}
+
+impl Drop for TkrzwUnopenedHandle {
+    fn drop(&mut self) {
+        // The owner's `reset()`: the three `TreeDBM` owners synchronize
+        // before closing (`chewing_large_table2_tkrzwdb.cpp:65-67`,
+        // `phrase_large_table3_tkrzwdb.cpp:52-54`, `punct_table_tkrzwdb.cpp:
+        // 45-47`); `Bigram` closes and deletes (`ngram_tkrzwdb.cpp:42-43`).
+        // Every status is ignored, as the pin ignores it; `Db::drop` then
+        // makes the `Close` and the delete.
+        if self.class == Class::Tree {
+            let _ = self.db.synchronize(false);
+        }
+    }
 }
 
 // ── engine-level operations ───────────────────────────────────────
@@ -1214,7 +1289,7 @@ mod tests {
     use super::{
         Class, Db, HASH_METADATA_SIZE, OPEN_DEFAULT, OPEN_NO_CREATE, STATUS_NOT_FOUND_ERROR,
         STATUS_PRECONDITION_ERROR, STATUS_SUCCESS, TkrzwUserBigramDb, holds_no_record, open_hash,
-        open_hash_create, record_base, visit_db,
+        open_hash_create, open_system, record_base, visit_db,
     };
     use crate::{StoreError, UserBigramDb};
 
@@ -1339,6 +1414,40 @@ mod tests {
             db.set(b"key", b"value").unwrap();
             assert!(db.get(b"key", &mut value).unwrap());
             assert_eq!(value, b"value");
+        }
+    }
+
+    #[test]
+    fn a_failed_system_attach_keeps_the_object_and_its_later_calls_are_inert() {
+        // `pinyin_init` ignores every table's attach answer and later calls
+        // the same object (pinyin.cpp:357,369,396,440 at 074a2219): on
+        // tkrzw the retained TreeDBM or HashDBM answers PRECONDITION_ERROR,
+        // which each owner reads as a miss, and reset synchronizes (Tree
+        // owners), closes and deletes it.
+        let dir = TempDir::new("system-attach");
+        for hash in [false, true] {
+            let handle = match open_system(&dir.0.join("missing"), hash).unwrap() {
+                Err(handle) => handle,
+                Ok(_) => panic!("a missing file opened (hash: {hash})"),
+            };
+            assert!(handle.db.is_retained());
+            assert!(!handle.db.is_open());
+            handle.read(b"key");
+            handle.suggest(b"key");
+            drop(handle);
+            assert!(!dir.0.join("missing").exists(), "no file was created");
+        }
+        // The same call opens a present file.
+        let path = dir.0.join("present.db");
+        {
+            let store = open_hash_create(&path).unwrap();
+            store.db.set(b"k", b"v").unwrap();
+            store.db.synchronize(false).unwrap();
+        }
+        let mut value = Vec::new();
+        match open_system(&path, true).unwrap() {
+            Ok(store) => assert!(store.db.get(b"k", &mut value).unwrap()),
+            Err(_) => panic!("a present file did not open"),
         }
     }
 

@@ -51,6 +51,10 @@ impl<D: ChewingDbm> PhraseTable<D> {
         self.dbm.finish_failed_attachment();
     }
 
+    pub(crate) fn failed_attachment_finished(&self) -> bool {
+        self.dbm.failed_attachment_finished()
+    }
+
     /// Looks up tokens for an exact phrase text.
     ///
     /// Port of `PhraseLargeTable3::search`
