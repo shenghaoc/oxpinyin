@@ -1,6 +1,6 @@
 //! Sentence guessing and retrieval.
 
-use oxpinyin_capi_marshal::phrase_text::phrase_text_bytes;
+use oxpinyin_capi_marshal::phrase_text::{phrase_text_bytes, phrase_text_len};
 use std::os::raw::c_char;
 
 use oxpinyin_core::LanguageModel as _;
@@ -484,8 +484,8 @@ pub extern "C" fn pinyin_guess_candidates(
     // an index into the cached list would select a different row
     // whenever the two differ. `anchored_window` is set here and a later
     // `pinyin_choose_candidate` resolves its index against it.
-    inst.core.anchored_window = match inst.core.session.candidates_at(session_offset) {
-        Ok(window) => Some((session_offset, window)),
+    let window = match inst.core.session.candidates_at(session_offset) {
+        Ok(window) => window,
         // Register rows 84 and 95, `chewing_large_table2_bdb.cpp:282` (kc
         // `:269`, tkrzw `:252`): the suggestion walk reached an index key
         // past MAX_PHRASE_LENGTH syllables that extends this path, and the
@@ -523,6 +523,7 @@ pub extern "C" fn pinyin_guess_candidates(
             return false;
         }
     };
+    inst.core.replace_anchored_window(session_offset, window);
     // A lookup strictly inside a key of the active transformed parse: the
     // pin's matrix column there is empty (keys sit on their key rests'
     // `m_raw_begin` only), so the search finds nothing and the list is the
@@ -583,11 +584,13 @@ pub extern "C" fn pinyin_guess_candidates(
     };
     // One row vector and one text buffer, each sized once for the window
     // (rows the loop skips leave a little slack, never a second growth).
+    // The size is the texts' encoded length, so each text is encoded once,
+    // by the loop.
     inst.state.candidates.reserve(
         candidates.len(),
         candidates
             .iter()
-            .map(|cand| phrase_text_bytes(cand.text()).len() + 1)
+            .map(|cand| phrase_text_len(cand.text()) + 1)
             .sum(),
     );
     for (window_index, cand) in candidates.iter().enumerate() {

@@ -520,8 +520,11 @@ where
         collected: &[Candidate],
         gram: Option<(u32, &MergedGram)>,
         gate: bool,
-    ) -> Result<Option<Vec<u32>>, EngineError> {
-        let mut frequencies: Option<Vec<u32>> = None;
+        frequencies: &mut Vec<u32>,
+    ) -> Result<(), EngineError> {
+        // Tokens the table lacks rank as zero.
+        frequencies.clear();
+        frequencies.resize(collected.len(), 0);
         // The facade total, `get_phrase_index_total_freq()`: the sum of
         // every item's stored unigram (`gen_unigram`'s +1 included).
         let lambda = self.model.amplification_lambda();
@@ -588,15 +591,14 @@ where
                     })
             };
             if let Some(count) = count {
-                let table = frequencies.get_or_insert_with(|| vec![0; collected.len()]);
                 // Unigram term of candidate frequency: always on. Upstream
                 // reads FacadePhraseIndex unigrams (including trained user
                 // counts) with no DYNAMIC_ADJUST check. W6-T4's overlay is
                 // that unigram term and stays for both bit states.
-                table[index] = count;
+                frequencies[index] = count;
             }
         }
-        Ok(frequencies)
+        Ok(())
     }
 
     /// Offers every phrase spelling a prefix of `path`.
@@ -1155,6 +1157,9 @@ where
             mut path,
             mut window_addon,
             mut window_order,
+            mut frequencies,
+            mut rank_keys,
+            window_items,
         } = core::mem::take(&mut self.scratch);
         let collected = out;
 
@@ -1227,44 +1232,44 @@ where
 
             // The scan's result stands even when it found nothing. Tokens the
             // table lacks rank as zero rather than falling back.
-            let frequencies = self
-                .candidate_frequencies(
-                    collected,
-                    gram.as_ref().map(|(prev, row)| (*prev, row)),
-                    gate,
-                )?
-                .unwrap_or_else(|| vec![0; collected.len()]);
+            self.candidate_frequencies(
+                collected,
+                gram.as_ref().map(|(prev, row)| (*prev, row)),
+                gate,
+                &mut frequencies,
+            )?;
             // `Session::rank_word`: the sort word, or libzhuyin's fixed
             // comparator (`zhuyin.cpp:1129-1144`) on a zhuyin facade.
             let rank_word = self.rank_word();
             // One key row per candidate, sorted and applied in place: the
-            // candidates never leave `collected`, and the key rows are the
-            // only per-call buffer of this stage.
-            let mut keys: Vec<(RankKey, u32)> = collected
-                .iter()
-                .zip(frequencies)
-                .enumerate()
-                .map(|(index, (candidate, frequency))| {
-                    // `compare_item_with_sort_option` compares a key
-                    // only while its bit is set and returns 0 — a tie —
-                    // once it is clear (`pinyin.cpp:1678-1709`): zeroing
-                    // a disabled field makes every candidate equal on
-                    // it, which is that comparator exactly.
-                    let key = RankKey::for_sort_word(
-                        candidate.phrase_length(),
-                        candidate.consumed_bytes(),
-                        frequency,
-                        rank_word,
-                    );
-                    (key, index as u32)
-                })
-                .collect();
+            // candidates never leave `collected`, and the key rows, kept in
+            // the session scratch, are the only buffer of this stage.
+            rank_keys.clear();
+            rank_keys.extend(
+                collected
+                    .iter()
+                    .zip(frequencies.iter().copied())
+                    .enumerate()
+                    .map(|(index, (candidate, frequency))| {
+                        // `compare_item_with_sort_option` compares a key
+                        // only while its bit is set and returns 0 — a tie —
+                        // once it is clear (`pinyin.cpp:1678-1709`): zeroing
+                        // a disabled field makes every candidate equal on
+                        // it, which is that comparator exactly.
+                        let key = RankKey::for_sort_word(
+                            candidate.phrase_length(),
+                            candidate.consumed_bytes(),
+                            frequency,
+                            rank_word,
+                        );
+                        (key, index as u32)
+                    }),
+            );
 
             // Stable sort, all three keys descending: an all-equal tie keeps
             // the collection order, which the scan now lays down in the
             // pin's array order (per window, token-ascending).
-            rank_candidates(collected, &mut keys);
-            let mut keys: Vec<RankKey> = keys.into_iter().map(|(key, _)| key).collect();
+            rank_candidates(collected, &mut rank_keys);
 
             // The pin prepends LONGER before the frequency dedup
             // (`pinyin.cpp:2292-2300`). Keep its unigram-only `m_freq`:
@@ -1274,9 +1279,10 @@ where
                 && let Some((key, row)) = self.longer_candidate(gate)?
             {
                 collected.insert(0, row);
-                keys.insert(0, key);
+                // The index half is spent once the rows are in order.
+                rank_keys.insert(0, (key, 0));
             }
-            dedup_ranked_by_text(collected, &keys);
+            dedup_ranked_by_text(collected, &rank_keys);
         } else {
             let scorer = Scorer::with_key_costs(
                 self.scoring,
@@ -1318,6 +1324,9 @@ where
             path,
             window_addon,
             window_order,
+            frequencies,
+            rank_keys,
+            window_items,
         };
         Ok(parsed_prefix)
     }
@@ -1369,7 +1378,7 @@ where
         }
         self.scan_unreadable = false;
         self.scan_ranked_phrase = false;
-        let mut items = Vec::new();
+        let mut items = core::mem::take(&mut self.scratch.window_items);
         if offset < self.input.len() && !self.spans_a_matrix_key(offset)? {
             items.push(Candidate::new(
                 compact_str::CompactString::from(&self.input.as_str()[offset..]),
@@ -1442,7 +1451,7 @@ where
         }
         self.scan_unreadable = false;
         self.scan_ranked_phrase = false;
-        let mut items = Vec::new();
+        let mut items = core::mem::take(&mut self.scratch.window_items);
         // A span cannot end at the composition start, and an end on an
         // apostrophe separator byte is upstream's empty end column: the
         // window is the prepended sentence rows alone.
@@ -1479,6 +1488,9 @@ where
             mut path,
             mut window_addon,
             mut window_order,
+            mut frequencies,
+            mut rank_keys,
+            window_items,
         } = core::mem::take(&mut self.scratch);
         // The zhuyin ending topology takes the same inputs as the retained
         // matrix (`scan_divided` is false in the collapse mode), so the one
@@ -1489,14 +1501,18 @@ where
                 path,
                 window_addon,
                 window_order,
+                frequencies,
+                rank_keys,
+                window_items,
             };
             return Ok(0);
         };
         let bound = matrix.bound.min(offset);
 
         let mut group: Vec<Candidate> = Vec::new();
-        let mut keys: Vec<RankKey> = Vec::new();
-        let mut slice_keys: Vec<(RankKey, u32)> = Vec::new();
+        // `rank_keys[i].0` is `out[i]`'s key: each slice appends its rows'
+        // keys as it appends the rows.
+        rank_keys.clear();
         let mut unreadable = false;
         let mut ranked_phrase = false;
 
@@ -1553,37 +1569,46 @@ where
             for candidate in &mut group {
                 candidate.set_span_start(start);
             }
-            let frequencies = self
-                .candidate_frequencies(&group, gram.as_ref().map(|(prev, row)| (*prev, row)), true)?
-                .unwrap_or_else(|| vec![0; group.len()]);
-            slice_keys.clear();
-            slice_keys.extend(group.iter().zip(frequencies).enumerate().map(
-                |(index, (candidate, frequency))| {
-                    // `Session::rank_word`: on the zhuyin facade, phrase
-                    // length then frequency (`zhuyin.cpp:1129-1144`).
-                    let key = RankKey::for_sort_word(
-                        candidate.phrase_length(),
-                        candidate.consumed_bytes(),
-                        frequency,
-                        rank_word,
-                    );
-                    (key, index as u32)
-                },
-            ));
-            rank_candidates(&mut group, &mut slice_keys);
-            keys.extend(slice_keys.iter().map(|(key, _)| *key));
+            self.candidate_frequencies(
+                &group,
+                gram.as_ref().map(|(prev, row)| (*prev, row)),
+                true,
+                &mut frequencies,
+            )?;
+            let slice_start = rank_keys.len();
+            rank_keys.extend(
+                group
+                    .iter()
+                    .zip(frequencies.iter().copied())
+                    .enumerate()
+                    .map(|(index, (candidate, frequency))| {
+                        // `Session::rank_word`: on the zhuyin facade, phrase
+                        // length then frequency (`zhuyin.cpp:1129-1144`).
+                        let key = RankKey::for_sort_word(
+                            candidate.phrase_length(),
+                            candidate.consumed_bytes(),
+                            frequency,
+                            rank_word,
+                        );
+                        (key, index as u32)
+                    }),
+            );
+            rank_candidates(&mut group, &mut rank_keys[slice_start..]);
             out.append(&mut group);
         }
 
         // Each slice keeps its own sort order. The final dedup compares
         // `m_freq` across all slices (`zhuyin.cpp:1612,1626-1630`).
-        dedup_ranked_by_text(out, &keys);
+        dedup_ranked_by_text(out, &rank_keys);
 
         self.scratch = Scratch {
             entries,
             path,
             window_addon,
             window_order,
+            frequencies,
+            rank_keys,
+            window_items,
         };
 
         self.scan_unreadable = unreadable;

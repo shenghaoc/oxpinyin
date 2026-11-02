@@ -326,6 +326,11 @@ impl CandidateList {
         self.unreadable_item
     }
 
+    /// The rows, for their storage to be reused.
+    pub(crate) fn into_items(self) -> Vec<Candidate> {
+        self.items
+    }
+
     /// Swap the live list with `items`, returning the previous buffer so
     /// the session can keep its capacity across keystrokes.
     pub(crate) const fn swap_items(&mut self, items: &mut Vec<Candidate>) {
