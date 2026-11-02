@@ -65,30 +65,29 @@ Berkeley DB falls back to fixed header directories and the `OXPINYIN_BDB_*` over
 The [interoperability ruling](findings/compatibility-policy.md#rust-cpp-interoperability) supersedes the prohibition on tkrzw's C++ interface and sets the migration order and source-proof obligations.
 
 Use Kyoto Cabinet as libpinyin does.
-Compile `crates/oxpinyin-store/src/kyotocabinet/shim.cc` with `cc` under the `kyotocabinet` feature.
+Kyoto Cabinet binds with CXX over the concrete classes the pin uses (`crates/oxpinyin-store/src/kyotocabinet/bridge.rs`, with the semantic adapter `adapter.cc`), under the `kyotocabinet` feature.
 It constructs `TreeDB`, `HashDB`, `StashDB` and `ProtoTreeDB` from build-time headers.
-Its `noexcept` C entry points in `shim.h` always turn C++ exceptions into failure returns.
+No bridge function returns `Result`, so a C++ exception terminates the process, as it ends the pin's.
 Like libpinyin, it depends on the system library's C++ ABI.
-Its FFI contract is frozen under the [interoperability ruling](findings/compatibility-policy.md#rust-cpp-interoperability); migration to CXX follows the tkrzw rebinding in a separate PR.
+The [KC native-call inventory](findings/kc-native-call-inventory.md) holds the source behind the migration from the C++ shim.
 The facades import 68 `kyotocabinet::` names, 67 among the pin's 77.
 This describes the current tree.
 The `oxpinyin-input` boundary calls the C library through the `libc` crate, with no build step; its [C-library calls and macro checks](source-policy.md#external-io) retain the 2026-10-31 UTC rule.
 It declares in Rust, per platform and in one place, the C library's `stdout` and `stderr` objects, which `libc` does not name.
 Its `tools` feature adds GLib through `glib-sys` and reads the C++ streams' lines with `std::io`.
 
-Kyoto Cabinet left `kclangc.h` after measurement in #1118.
+Kyoto Cabinet left `kclangc.h` after measurement in #1118, through a C++ shim that the CXX bridge replaced.
 See the [shim results](findings/kc-shim-1118.md).
 `kclangc.h` reaches every class through `PolyDB`.
 That dispatch and linked but unopened classes kept about 580 KiB more libkyotocabinet text resident than the pin.
-The shim retains the pin's libkyotocabinet residency.
+Constructing the concrete classes directly, as the shim and the bridge both do, retains the pin's libkyotocabinet residency.
 An earlier cxx bridge was measured and rejected in #1043; this is historical evidence about that implementation, not a restriction on CXX bindings under the [current ruling](findings/compatibility-policy.md#rust-cpp-interoperability).
 See its [results](findings/kc-c-vs-cxx-adapter-2026-10-22.md) and PR #1043 for code.
 Its glue added 0.6–5.5% instructions to point reads, writes and framed scans.
 Cargo-built libraries also exported cxx runtime and bridge symbols beyond the version scripts.
-The adopted shim has no glue layer.
-It uses 0.980–1.004× the C binding's instructions per store operation against exact same-bytes controls.
-It exports nothing beyond the version scripts.
-It adds about 310 KB to each stripped library.
+The shim that #1118 adopted had no glue layer.
+It used 0.980–1.004× the C binding's instructions per store operation against exact same-bytes controls, and added about 310 KB to each stripped library.
+The current bridge's cdylibs hide the cxx runtime symbols as the tkrzw bridge's do ([export gate](packaging.md#export-gate)).
 
 ## External I/O
 

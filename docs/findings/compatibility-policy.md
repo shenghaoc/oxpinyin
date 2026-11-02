@@ -236,8 +236,9 @@ artefact. A macro that does work rather than check, such as
 Where no call or behaviour has the same documented result,
 stop and report it. The tools and `oxpinyin-input`'s library calls
 follow the ruling (`native/config.c` and `native/diagnostic.c` are
-gone); the Kyoto Cabinet adapter is retained under the
-[Rust/C++ interoperability ruling](#rust-cpp-interoperability)'s frozen contract.
+gone); the Kyoto Cabinet adapter (`kyotocabinet/adapter.cc`) is the
+semantic adapter the [Rust/C++ interoperability ruling](#rust-cpp-interoperability)
+permits.
 
 **Platform scope of pinned behaviour (maintainer ruling 2026-10-31
 UTC).** The drop-in and pin-call rules (external I/O uses the pin's
@@ -328,7 +329,8 @@ A registered class (b)/(c) case returning its prescribed result is MATCH.
 
 <a id="kyoto-cabinet-exception"></a>**Kyoto Cabinet exception.**
 Superseded by the [Rust/C++ interoperability ruling](#rust-cpp-interoperability)
-below, which owns the frozen contract and separate migration.
+below, which governed the frozen contract and the separate migration;
+the migration to CXX is done (#1567).
 The prior implementation's evidence remains in [kc-shim-1118.md](kc-shim-1118.md)
 and [kc-c-vs-cxx-adapter-2026-10-22.md](kc-c-vs-cxx-adapter-2026-10-22.md).
 
@@ -362,8 +364,10 @@ This ruling rests on safety, maintainability and review load. It does not rest o
 | Backend | Binding | Status |
 | --- | --- | --- |
 | Berkeley DB | bindgen, C API | Settled. No change. |
-| tkrzw | CXX, concrete classes | Approved. Stage 2 compatibility change. |
-| Kyoto Cabinet | shim + bindgen | Frozen contract. Migration in its own PR. |
+| tkrzw | CXX, concrete classes | Migrated (#1545, `cc266b7a`). Stage 2 compatibility change. |
+| Kyoto Cabinet | CXX, concrete classes | Migrated (#1567). The pin's native semantics are preserved. |
+
+Status update (2026-11-02, `date -u`): Kyoto Cabinet binds with CXX over its concrete classes (`crates/oxpinyin-store/src/kyotocabinet/bridge.rs`); `shim.h`, `shim.cc` and the KC bindgen path are deleted. The [KC native-call inventory](kc-native-call-inventory.md) and #1567's body hold the six proofs.
 
 **tkrzw.** The pin constructs `TreeDBM`, `HashDBM`, `BabyDBM` and `TinyDBM` directly. The C API (`tkrzw_langc.h`, `PolyDBM`) destroys the object on a failed open and collapses status classes. Both differ from the pin (#1516, divergence row 40). Order of work:
 1. Inventory from libpinyin `074a2219`: every concrete class, operation, iterator, `RecordProcessor` site, status and exception path, temporary database, failed-open policy, synchronise, close and destruction. Failed-open policy differs by caller. The ordinary tables retain the object. <a id="flexiblebigram-failed-attach"></a>`FlexibleBigram` differs by backend (corrected 2026-11-02T13:42:29Z, `date -u`): tkrzw deletes the object when an open fails, the first one without CREATE or the CREATE retry ([flexible_ngram_tkrzwdb.h:128-158](https://github.com/shenghaoc/libpinyin/blob/074a2219c90feaf962d0d24f034514033ece5f99/src/storage/flexible_ngram_tkrzwdb.h#L128-L158)). Kyoto Cabinet keeps the object when the signature check fails and when the CREATE retry fails, and deletes it only when the open fails without CREATE ([flexible_ngram_kyotodb.h:129-180](https://github.com/shenghaoc/libpinyin/blob/074a2219c90feaf962d0d24f034514033ece5f99/src/storage/flexible_ngram_kyotodb.h#L129-L180)). Berkeley DB never deletes the handle: it keeps it after every failed open and after a failed signature check ([flexible_ngram_bdb.h:94-153](https://github.com/shenghaoc/libpinyin/blob/074a2219c90feaf962d0d24f034514033ece5f99/src/storage/flexible_ngram_bdb.h#L94-L153)), and `reset()` syncs and closes it ([flexible_ngram_bdb.h:51-57](https://github.com/shenghaoc/libpinyin/blob/074a2219c90feaf962d0d24f034514033ece5f99/src/storage/flexible_ngram_bdb.h#L51-L57)). That is the pin's misuse of its handle, not a rule to keep or reuse a failed one: oxpinyin closes each failed handle ([row 113](#bdb-failed-handles)).
@@ -371,9 +375,9 @@ This ruling rests on safety, maintainability and review load. It does not rest o
 3. The tkrzw part of #1516 on top of that PR.
 Reassess row 40 against the new call path. Do not close it in advance.
 
-**Kyoto Cabinet.** The shim keeps the pin's concrete-class choice and is not shown unsafe. Its FFI contract is frozen: `shim.h`, `shim.cc`, `ffi.rs` and the build and link configuration. A change to any of items 1–6 above in these files states the contract it changes. A migration to CXX is a separate PR after the tkrzw rebinding lands, and reuses what that work settled. It need not show a compatibility or performance gain. <a id="kc-migration-native-semantics"></a>The KC CXX migration preserves the pin's native semantics, including differences that replacing the FFI boundary necessarily resolves. Unrelated product defects stay separate. (Amended 2026-11-02T13:42:29Z, `date -u`; this sentence replaced "It is never combined with a defect fix.")
+**Kyoto Cabinet.** Status (2026-11-03T00:42:04Z, `date -u`): done in #1567; the shim, its frozen contract and the KC bindgen path are gone, and the bridge is `kyotocabinet/bridge.rs` with the adapter `adapter.h`/`adapter.cc`. The ruling as recorded: the shim keeps the pin's concrete-class choice and is not shown unsafe. Its FFI contract is frozen: `shim.h`, `shim.cc`, `ffi.rs` and the build and link configuration. A change to any of items 1–6 above in these files states the contract it changes. A migration to CXX is a separate PR after the tkrzw rebinding lands, and reuses what that work settled. It need not show a compatibility or performance gain. <a id="kc-migration-native-semantics"></a>The KC CXX migration preserves the pin's native semantics, including differences that replacing the FFI boundary necessarily resolves. Unrelated product defects stay separate. (Amended 2026-11-02T13:42:29Z, `date -u`; this sentence replaced "It is never combined with a defect fix.")
 
-The shim's catch-all exception handling is such a difference. Every `shim.cc` entry point catches every exception and returns a failure value; the pin has no handler, so the exception ends the process. A CXX function declared without `Result` terminates on an exception, as the pin does. The [KC native-call inventory](kc-native-call-inventory.md#status-and-exception-channels) holds the source.
+The shim's catch-all exception handling was such a difference. Every `shim.cc` entry point caught every exception and returned a failure value; the pin has no handler, so the exception ends the process. A CXX function declared without `Result` terminates on an exception, as the pin does, and the bridge declares none with `Result`. The [KC native-call inventory](kc-native-call-inventory.md#status-and-exception-channels) holds the source.
 
 ### Exports
 

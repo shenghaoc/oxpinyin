@@ -1785,7 +1785,7 @@ mod tests {
                 /// on purpose: a `Vec<u8>` with no allocation hands its
                 /// `as_ptr()` over as the dangling address `1`, which Kyoto
                 /// Cabinet reads as its `Visitor::REMOVE` sentinel (see
-                /// `kyotocabinet::ffi::c_ptr`); a `b""` literal has a real
+                /// `bytes` in `kyotocabinet/adapter.cc`); a `b""` literal has a real
                 /// address and never trips it.
                 /// Every point read clears the caller's buffer and refills
                 /// it: a longer value than the buffer holds (past Berkeley

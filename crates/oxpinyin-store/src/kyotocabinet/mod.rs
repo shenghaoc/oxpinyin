@@ -2,15 +2,15 @@
 //!
 //! Enabled by the `kyotocabinet` cargo feature (`--no-default-features
 //! --features kyotocabinet`); the workspace's default selected backend is
-//! Berkeley DB.
+//! tkrzw.
 //! [`KcStore`] is a `TreeDB` implementation of the store's two capability
 //! tiers, addressed by `(table, key)` like every other backend.
 //!
 //! # The class is chosen by the caller, never by the file name
 //!
-//! The backend calls Kyoto Cabinet through its own C++ shim
-//! (`shim.cc`, behind `ffi`), which constructs the class the caller
-//! names, as libpinyin does, and opens the plain path. oxpinyin names its
+//! The backend calls Kyoto Cabinet through a cxx bridge (`bridge`, behind
+//! `ffi`), which constructs the class the caller names, as libpinyin
+//! does, and opens the plain path. oxpinyin names its
 //! native tables `.kct` (the Kyoto Cabinet TreeDB convention), but nothing
 //! reads that suffix. `kclangc.h`'s `PolyDB` would pick the class from it,
 //! and fail outright on libpinyin's `.db` names (`kclangc.h:312-320`).
@@ -27,18 +27,15 @@
 //! # Atomicity
 //!
 //! Kyoto Cabinet gives a standalone handle real transactions
-//! (`begin_transaction`/`end_transaction`, through the shim's
-//! `oxkc_db_begin_transaction`/`oxkc_db_end_transaction`; the C API's
-//! `kcdbbegintran`/`kcdbendtran`), so [`WriteStore::write`] is the
+//! (`begin_transaction`/`end_transaction`), so [`WriteStore::write`] is the
 //! library's own transaction rather than a buffered imitation: the
 //! closure's writes go straight to the database inside the transaction,
 //! reads see them, and an `Err` rolls the whole thing back.
 //!
-//! Commits end with `oxkc_db_sync(hard = 0)` (`synchronize(false)`, the C
-//! API's `kcdbsync`): the commit is pushed to the
+//! Commits end with `synchronize(false)`: the commit is pushed to the
 //! operating system, so another process — or another handle in this one
 //! — observes it and it survives a process crash, but it is not yet on
-//! the device. [`WriteStore::compact`] is the hard `oxkc_db_sync(hard = 1)`,
+//! the device. [`WriteStore::compact`] is the hard `synchronize(true)`,
 //! the one point at which a file-backed store reaches stable storage.
 //! The tkrzw backend documents the same split and the measurement
 //! behind it (`docs/findings/perf-train-commit-fsync-2026-09-09.md`).
@@ -48,7 +45,7 @@
 //! moved into memory (#621) the store it compacts is the `ProtoTreeDB`
 //! of [`WriteStore::create_in_memory`], which has no file. The profile
 //! `pinyin_save` writes goes out through `write_user_index` and the
-//! user bigram's `save_db`, which dump a snapshot (`oxkc_db_dump_snapshot`)
+//! user bigram's `save_db`, which dump a snapshot (`dump_snapshot`)
 //! and issue no sync at all — as the pin's own `save_db` does
 //! (`chewing_large_table2_kyotodb.cpp:124-130`,
 //! `phrase_large_table3_kyotodb.cpp:139-145`,
@@ -62,20 +59,21 @@
 //!
 //! [`KcStore`] is `Send + Sync`: Kyoto Cabinet's database classes carry
 //! their own locking (every access method takes the database's rwlock), and the
-//! `unsafe impl`s on the FFI handle record exactly that contract — see the
-//! SAFETY comment in `ffi.rs`. This is required for a peer backend that
+//! `unsafe impl`s on the native owner record exactly that contract — see
+//! the SAFETY comment in `ffi.rs`. This is required for a peer backend that
 //! serves as the compiled-in `DefaultStore`: the user-store registry holds
 //! `DefaultStore` behind a `static Mutex`, and the runtime compile-asserts
 //! its handles `Send + Sync`.
 //!
 //! # Unsafe waiver
 //!
-//! This module carries none. Every `unsafe` in the backend — the
-//! shim calls, the `unsafe impl Send`/`Sync` on the handle, the
-//! generated declarations — is confined to `ffi`, whose
-//! `expect(unsafe_code)` is scoped to that module, so the safe wrapper
-//! here stays under the workspace `deny`.
+//! This module carries none. Every `unsafe` in the backend — the calls
+//! to the bridge's region functions and the `unsafe impl Send`/`Sync` on
+//! the native owner — is confined to `ffi`, and the bridge's declarations
+//! to `bridge`; each has an `expect(unsafe_code)` scoped to that module,
+//! so the safe wrapper here stays under the workspace `deny`.
 
+mod bridge;
 mod ffi;
 
 use std::collections::BTreeMap;
@@ -94,16 +92,26 @@ pub struct KcStore {
     db: Db,
 }
 
+/// A system file's object whose open failed, kept until facade
+/// finalization as the pin keeps it.
 pub(crate) struct KcUnopenedHandle {
     db: Db,
 }
 
+/// The pin's system attach (`chewing_large_table2_kyotodb.cpp:77-90`,
+/// `phrase_large_table3_kyotodb.cpp:92-105`, `punct_table_kyotodb.cpp:
+/// 52-65`, `ngram_kyotodb.cpp:110-120` at 074a2219). Whether the open
+/// succeeds or not, the object's teardown is the owner's `reset()`:
+/// `synchronize()`, `close()`, then `delete` (`chewing_large_table2_kyotodb.
+/// cpp:65-74`, `phrase_large_table3_kyotodb.cpp:76-88`,
+/// `punct_table_kyotodb.cpp:37-49`, `ngram_kyotodb.cpp:43-50`).
 pub(crate) fn open_system(
     path: &Path,
     hash: bool,
 ) -> Result<Result<KcStore, KcUnopenedHandle>, StoreError> {
     let kind = if hash { DbType::Hash } else { DbType::Tree };
-    let (db, opened) = Db::open_retained(path, kind, true, false, "")?;
+    let (db, opened) = Db::open_retained(path, kind, true, false)?;
+    let db = db.with_reset_sync();
     Ok(if opened {
         Ok(KcStore { db })
     } else {
@@ -116,76 +124,6 @@ impl KcUnopenedHandle {
         // Every failed system read ends at check: no body get or cursor
         // follows (ngram_kyotodb.cpp:131-134 at 074a2219).
         let _ = self.db.check(key);
-    }
-}
-
-impl Drop for KcUnopenedHandle {
-    fn drop(&mut self) {
-        // The frozen FFI lifetime change for #1516: preserve the failed
-        // object until reset, synchronize once, then Db closes/deletes it.
-        // Audited separately at pin 074a2219: ngram_kyotodb.cpp:43-48,
-        // chewing_large_table2_kyotodb.cpp:65-73 (main/addon pinyin),
-        // phrase_large_table3_kyotodb.cpp:76-86 (main/addon phrase), and
-        // punct_table_kyotodb.cpp:37-47. Their following entry-cache cleanup
-        // differs, but each failed native DB has this same call order.
-        self.db.synchronize_failed_system_attachment();
-    }
-}
-
-/// Hidden bench entry points.
-///
-/// Reserved for measurement work in this crate's `benches/` directory;
-/// the `bench-internal` feature is off by default and no shipping
-/// profile enables it. The tuning knob these open up is what
-/// shenghaoc/oxpinyin#402's time-side measurement bench uses to
-/// characterise a Kyoto Cabinet default for an upstream report; the
-/// shipping open path itself matches libpinyin's untuned open
-/// byte-for-byte and stays that way (see
-/// `docs/findings/compatibility-policy.md`).
-///
-/// Not stable, not documented for external use, not part of any
-/// contract this backend keeps. Names live only under this feature so
-/// nothing else in the crate — tests, doc builds, the shipping default
-/// selection — can even see them.
-#[cfg(feature = "bench-internal")]
-impl KcStore {
-    /// Opens `path` read-only, appending `extra_tuning` after `#type=kct`.
-    ///
-    /// `extra_tuning` must start with `#` (`#bnum=4096`, `#bnum=4096#pccap=1m`,
-    /// …) or be empty. Empty reproduces [`KcStore::open_read_only`]
-    /// byte-for-byte.
-    #[doc(hidden)]
-    pub fn open_read_only_tuned(path: &Path, extra_tuning: &str) -> Result<Self, StoreError> {
-        Ok(Self {
-            db: Db::open_with_tuning(path, DbType::Tree, true, false, extra_tuning)?,
-        })
-    }
-
-    /// Same as [`Self::open_read_only_tuned`] but for `HashDB`.
-    #[doc(hidden)]
-    pub fn open_hash_read_only_tuned(path: &Path, extra_tuning: &str) -> Result<Self, StoreError> {
-        Ok(Self {
-            db: Db::open_with_tuning(path, DbType::Hash, true, false, extra_tuning)?,
-        })
-    }
-
-    /// Walks the raw keyspace (no table framing), calling `visit` with each
-    /// key. Stops on the first `Err` from `visit`. Used only to sample a
-    /// stable set of keys for the `kyotocabinet_bnum` bench; production
-    /// walks go through [`crate::RawReadStore::range_raw`].
-    #[doc(hidden)]
-    pub fn walk_raw_keys(
-        &self,
-        mut visit: impl FnMut(&[u8]) -> Result<(), StoreError>,
-    ) -> Result<(), StoreError> {
-        let mut cursor = self.db.cursor()?;
-        if !cursor.jump_to(&[])? {
-            return Ok(());
-        }
-        while cursor.next_key()? {
-            visit(cursor.key())?;
-        }
-        Ok(())
     }
 }
 
@@ -249,7 +187,7 @@ impl KcStore {
             Bound::Included(key) | Bound::Excluded(key) => frame(table, key),
         };
         Ok(TableRows {
-            cursor: self.db.cursor()?,
+            cursor: self.db.cursor(),
             positioned: false,
             start,
             table_prefix,
@@ -287,7 +225,7 @@ impl KcStore {
         hi: Bound<&[u8]>,
         mut visit: impl FnMut(&[u8], &[u8]) -> Result<Flow, StoreError>,
     ) -> Result<(), StoreError> {
-        let mut cursor = self.db.cursor()?;
+        let mut cursor = self.db.cursor();
         let positioned = match lo {
             // `kccurjumpkey("")` is the first record on an ordered class,
             // but the no-key jump says so directly.
@@ -415,7 +353,7 @@ impl ReadStore for KcStore {
     fn is_empty(&self, table: &str) -> Result<bool, StoreError> {
         validate_table_name(table)?;
         let table_prefix = prefix(table);
-        let mut cursor = self.db.cursor()?;
+        let mut cursor = self.db.cursor();
         if !cursor.jump_to(&table_prefix)? {
             return Ok(true);
         }
@@ -500,7 +438,7 @@ impl crate::RawReadStore for KcStore {
         // the failure (`BasicDB::load_snapshot` sets record by record,
         // `kcdb.h:2339-2418`), and the pin keeps that container; init
         // ignores the `load_db` answer.
-        let db = Db::open_proto_tree()?;
+        let db = Db::open_proto_tree()?.with_reset_sync();
         let _ = db.load_snapshot(path);
         Ok(Self {
             db: db.into_read_only(),
@@ -513,7 +451,7 @@ impl crate::RawReadStore for KcStore {
         // load the snapshot into it. The system bigram stays a HashDB file
         // through `open_hash_read_only` above — the two are different
         // containers and must not share one open.
-        let db = Db::open_stash()?;
+        let db = Db::open_stash()?.with_reset_sync();
         db.load_snapshot(path)?;
         // The seam is read-only even though the stash class opens
         // writer: seal it so a stray `write` cannot mutate memory that
@@ -540,18 +478,21 @@ impl WriteStore for KcStore {
     }
 
     /// `Bigram::attach` (`ngram_kyotodb.cpp:110-120` at 074a2219): a `HashDB`
-    /// opened with the attach mode; a failed open is `None`.
+    /// opened with the attach mode; a failed open is `None`. The owner's
+    /// `reset()` synchronizes before it closes (`ngram_kyotodb.cpp:43-50`).
     fn attach_bigram(path: &Path, read_only: bool) -> Result<Option<Self>, StoreError> {
-        let (db, opened) = Db::open_retained(path, DbType::Hash, read_only, !read_only, "")?;
-        Ok(opened.then_some(Self { db }))
+        let (db, opened) = Db::open_retained(path, DbType::Hash, read_only, !read_only)?;
+        Ok(opened.then_some(Self {
+            db: db.with_reset_sync(),
+        }))
     }
 
     /// `FlexibleBigram::attach` (`flexible_ngram_kyotodb.h:129-180` at
     /// 074a2219): a `HashDB` opened without `OCREATE`, and with
     /// `ATTACH_CREATE` opened again with it. A failed open without CREATE
     /// deletes the object with no `close` (`:145-150`); a failed retry
-    /// keeps it (`:154-155`), and every later call answers `INVALID`. The
-    /// retry's signature `set` is ignored (`:157-162`).
+    /// keeps it (`:154-155`), and every later call answers `INVALID`. The retry's
+    /// signature `set` is ignored (`:157-162`).
     ///
     /// The retry is a second `open` of the same object with the pin's
     /// mode, `OREADER | OWRITER | OCREATE`, so it reads the state the
@@ -590,7 +531,7 @@ impl WriteStore for KcStore {
     /// [`WriteStore::write`]'s begin/commit/rollback keep their meaning.
     fn create_in_memory() -> Result<Self, StoreError> {
         Ok(Self {
-            db: Db::open_proto_tree()?,
+            db: Db::open_proto_tree()?.with_reset_sync(),
         })
     }
 
@@ -705,7 +646,7 @@ impl WriteStore for KcStore {
     /// `m_db->synchronize()` (`flexible_ngram_kyotodb.h:86-92`), made on a
     /// read-only container too, as the pin's `reset()` makes it.
     fn flush(&self) -> Result<(), StoreError> {
-        self.db.synchronize(false)
+        self.db.sync(false)
     }
 
     fn compact(&mut self) -> Result<(), StoreError> {
@@ -869,9 +810,10 @@ pub struct KcUserBigramDb {
 
 impl crate::UserBigramDb for KcUserBigramDb {
     fn empty() -> Result<Self, StoreError> {
-        // `m_db = new StashDB; m_db->open("-", …)`.
+        // `m_db = new StashDB; m_db->open("-", …)`; `reset()` synchronizes
+        // before it closes (`ngram_kyotodb.cpp:43-50`).
         Ok(Self {
-            db: Db::open_stash()?,
+            db: Db::open_stash()?.with_reset_sync(),
         })
     }
 
@@ -944,9 +886,14 @@ mod tests {
         }
     }
 
+    /// The pin's `attach_options` modes (`kyotodb_utils.h:32-45`).
+    const OREADER: u32 = 1;
+    const OWRITER: u32 = 2;
+    const OCREATE: u32 = 4;
+
     #[test]
     fn retained_failed_system_attachments_synchronize_before_close_once() {
-        use super::ffi::{NativeTeardownCall, take_native_teardown_calls};
+        use super::ffi::{NativeCall, take_native_calls};
         use crate::SystemAttachment;
 
         // Audit each pin class, rather than inferring one from another:
@@ -962,27 +909,133 @@ mod tests {
             ("punctuation", false),
         ] {
             let missing = Temp::new(table, "missing");
-            take_native_teardown_calls();
             let SystemAttachment::Unopened(db) = SystemAttachment::open(&missing.0, hash).unwrap()
             else {
                 panic!("missing {table} unexpectedly opened");
             };
-            assert!(take_native_teardown_calls().is_empty(), "{table}");
+            let opened = take_native_calls();
+            let &[(handle, NativeCall::Open(_, OREADER))] = opened.as_slice() else {
+                panic!("{table}: one read-only open, got {opened:?}");
+            };
             db.finish();
-            let calls = take_native_teardown_calls();
-            let handle = calls.first().expect("native teardown").0;
             assert_eq!(
-                calls,
+                take_native_calls(),
                 [
-                    (handle, NativeTeardownCall::Synchronize(false)),
-                    (handle, NativeTeardownCall::Close),
-                    (handle, NativeTeardownCall::Delete),
+                    (handle, NativeCall::Synchronize(false)),
+                    (handle, NativeCall::Close),
+                    (handle, NativeCall::Delete),
                 ],
                 "{table}: native calls on the same retained object"
             );
             db.finish();
             drop(db);
-            assert!(take_native_teardown_calls().is_empty(), "{table}");
+            assert!(take_native_calls().is_empty(), "{table}");
+        }
+    }
+
+    #[test]
+    fn opened_system_attachments_synchronize_before_close() {
+        use super::ffi::{NativeCall, take_native_calls};
+        use crate::SystemAttachment;
+
+        // The successful attach has the same owner `reset()` as the failed
+        // one: synchronize, close, delete (ngram_kyotodb.cpp:43-50,
+        // chewing_large_table2_kyotodb.cpp:65-74).
+        for hash in [false, true] {
+            let file = Temp::new(&format!("opened-system-{hash}"), "db");
+            if hash {
+                drop(KcStore::create_hash(&file.0).unwrap());
+            } else {
+                drop(KcStore::create(&file.0).unwrap());
+            }
+            let SystemAttachment::Open(store) = SystemAttachment::open(&file.0, hash).unwrap()
+            else {
+                panic!("{hash}: an existing file did not open");
+            };
+            take_native_calls();
+            let handle = store.db.address();
+            drop(store);
+            assert_eq!(
+                take_native_calls(),
+                [
+                    (handle, NativeCall::Synchronize(false)),
+                    (handle, NativeCall::Close),
+                    (handle, NativeCall::Delete),
+                ],
+                "hash: {hash}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_attached_bigram_synchronizes_before_close() {
+        use super::ffi::{NativeCall, take_native_calls};
+
+        // `Bigram::reset()` synchronizes, closes and deletes whatever it
+        // attached (ngram_kyotodb.cpp:43-50, 110-120).
+        let file = Temp::new("attached-bigram", "db");
+        for read_only in [false, true] {
+            let store = KcStore::attach_bigram(&file.0, read_only)
+                .unwrap()
+                .expect("the bigram attaches");
+            take_native_calls();
+            let handle = store.db.address();
+            drop(store);
+            assert_eq!(
+                take_native_calls(),
+                [
+                    (handle, NativeCall::Synchronize(false)),
+                    (handle, NativeCall::Close),
+                    (handle, NativeCall::Delete),
+                ],
+                "read only: {read_only}"
+            );
+        }
+    }
+
+    #[test]
+    fn in_memory_owners_open_dash_and_synchronize_before_close() {
+        use super::ffi::{NativeCall, take_native_calls};
+
+        // The pin opens both in-memory containers as "-" with
+        // OREADER|OWRITER|OCREATE (chewing_large_table2_kyotodb.cpp:100-102,
+        // ngram_kyotodb.cpp:58-60), and its `reset()` synchronizes before it
+        // closes (chewing_large_table2_kyotodb.cpp:65-74,
+        // ngram_kyotodb.cpp:43-50).
+        let snapshot = Temp::new("in-memory-owner", "bin");
+        KcStore::write_user_index(&snapshot.0, |sink| sink(b"k", b"v")).unwrap();
+        take_native_calls();
+        // Each owner is made, dropped, and its object's address returned.
+        type Owner = fn(&std::path::Path) -> usize;
+        let owners: [(&str, Owner); 4] = [
+            ("session store", |_| {
+                KcStore::create_in_memory().unwrap().db.address()
+            }),
+            ("user index", |path| {
+                KcStore::open_user_index(path).unwrap().db.address()
+            }),
+            ("user bigram", |_| {
+                KcUserBigramDb::empty().unwrap().db.address()
+            }),
+            ("user bigram load", |path| {
+                KcUserBigramDb::load_db(path).unwrap().db.address()
+            }),
+        ];
+        for (owner, make) in owners {
+            let handle = make(&snapshot.0);
+            assert_eq!(
+                take_native_calls(),
+                [
+                    (
+                        handle,
+                        NativeCall::Open(b"-".to_vec(), OREADER | OWRITER | OCREATE)
+                    ),
+                    (handle, NativeCall::Synchronize(false)),
+                    (handle, NativeCall::Close),
+                    (handle, NativeCall::Delete),
+                ],
+                "{owner}"
+            );
         }
     }
 
@@ -1009,9 +1062,7 @@ mod tests {
 
     #[test]
     fn a_create_retry_reopens_the_same_hashdb_and_a_failed_open_deletes_without_close() {
-        use super::ffi::{
-            NativeTeardownCall as Call, OCREATE, OREADER, OWRITER, take_native_teardown_calls,
-        };
+        use super::ffi::{NativeCall as Call, take_native_calls};
         use crate::{AttachMode, HashAttach};
 
         // `flexible_ngram_kyotodb.h:143-155`: one `new HashDB`, then
@@ -1019,35 +1070,39 @@ mod tests {
         // the same object; without CREATE, `delete` and no `close`.
         let dir = Temp::new("retry-dir", "missing");
         let path = dir.0.join("model.db");
-        take_native_teardown_calls();
+        let bytes = path.as_os_str().as_encoded_bytes().to_vec();
+        take_native_calls();
         let HashAttach::Unopened(store) =
             KcStore::attach_hash(&path, AttachMode::ReadWriteCreate, (b"k", b"v")).unwrap()
         else {
             panic!("a missing directory opened");
         };
-        let calls = take_native_teardown_calls();
+        let calls = take_native_calls();
         let handle = calls.first().expect("native open").0;
         assert_eq!(
             calls,
             [
-                (handle, Call::Open(OREADER | OWRITER)),
-                (handle, Call::Open(OREADER | OWRITER | OCREATE)),
+                (handle, Call::Open(bytes.clone(), OREADER | OWRITER)),
+                (
+                    handle,
+                    Call::Open(bytes.clone(), OREADER | OWRITER | OCREATE)
+                ),
             ]
         );
         drop(store);
 
-        take_native_teardown_calls();
+        take_native_calls();
         let HashAttach::Closed =
             KcStore::attach_hash(&path, AttachMode::ReadWrite, (b"k", b"v")).unwrap()
         else {
             panic!("a failed open without CREATE keeps no object");
         };
-        let calls = take_native_teardown_calls();
+        let calls = take_native_calls();
         let handle = calls.first().expect("native open").0;
         assert_eq!(
             calls,
             [
-                (handle, Call::Open(OREADER | OWRITER)),
+                (handle, Call::Open(bytes, OREADER | OWRITER)),
                 (handle, Call::Delete)
             ]
         );
@@ -1055,7 +1110,7 @@ mod tests {
 
     #[test]
     fn flush_synchronizes_a_read_only_container_natively() {
-        use super::ffi::{NativeTeardownCall, take_native_teardown_calls};
+        use super::ffi::{NativeCall, take_native_calls};
 
         // `FlexibleBigram::reset()` synchronizes whatever the attach mode
         // (`flexible_ngram_kyotodb.h:86-92`); an OREADER HashDB answers true
@@ -1063,24 +1118,50 @@ mod tests {
         let file = Temp::new("readonly-flush", "kch");
         drop(KcStore::create_hash(&file.0).unwrap());
         let store = KcStore::open_hash_read_only(&file.0).unwrap();
-        take_native_teardown_calls();
+        take_native_calls();
         store.flush().expect("an OREADER HashDB synchronizes");
-        let calls = take_native_teardown_calls();
+        let calls = take_native_calls();
         assert_eq!(calls.len(), 1, "{calls:?}");
-        assert_eq!(calls[0].1, NativeTeardownCall::Synchronize(false));
+        assert_eq!(calls[0].1, NativeCall::Synchronize(false));
     }
 
     #[test]
-    fn ordinary_read_only_sync_does_not_call_native_synchronize() {
-        use super::ffi::take_native_teardown_calls;
-
-        let file = Temp::new("readonly-sync", "kct");
-        drop(KcStore::create(&file.0).unwrap());
-        let store = KcStore::open_read_only(&file.0).unwrap();
-        take_native_teardown_calls();
-        store.db.sync(false).unwrap();
-        store.db.sync(true).unwrap();
-        assert!(take_native_teardown_calls().is_empty());
+    fn an_empty_value_is_stored_on_every_container() {
+        // An empty slice crosses the bridge as address 1, Kyoto Cabinet's
+        // `Visitor::REMOVE` (kcdb.h:46); stored as such, `set` would delete
+        // the record instead of emptying it (kcdb.h:1424-1445). `Vec::new()`
+        // is the slice with no allocation.
+        let empty: Vec<u8> = Vec::new();
+        let check = |store: &KcStore, container: &str| {
+            store
+                .write(|txn| {
+                    txn.put_raw(b"present", b"value")?;
+                    txn.put_raw(b"present", &empty)?;
+                    txn.put_raw(b"fresh", &empty)
+                })
+                .unwrap();
+            for key in [&b"present"[..], b"fresh"] {
+                assert_eq!(
+                    store.read_raw(key).unwrap(),
+                    Some(Vec::new()),
+                    "{container}"
+                );
+                assert!(store.contains_raw(key).unwrap(), "{container}");
+            }
+        };
+        let tree = Temp::new("empty-tree", "kct");
+        check(&KcStore::create(&tree.0).unwrap(), "TreeDB");
+        let hash = Temp::new("empty-hash", "kch");
+        check(&KcStore::create_hash(&hash.0).unwrap(), "HashDB");
+        check(&KcStore::create_in_memory().unwrap(), "ProtoTreeDB");
+        let stash = KcUserBigramDb::empty().unwrap();
+        stash.store(b"present", b"value").unwrap();
+        stash.store(b"present", &empty).unwrap();
+        assert_eq!(
+            stash.read_gram(b"present").unwrap(),
+            Some(Vec::new()),
+            "StashDB"
+        );
     }
 
     #[test]
@@ -1092,7 +1173,7 @@ mod tests {
             db.store(&token.wrapping_mul(2_654_435_761).to_le_bytes(), &[1, 2, 3])
                 .unwrap();
         }
-        let mut cursor = db.db.cursor().unwrap();
+        let mut cursor = db.db.cursor();
         let mut walked = Vec::new();
         if cursor.jump_first().unwrap() {
             while cursor.next_key().unwrap() {

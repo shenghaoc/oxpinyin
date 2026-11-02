@@ -8,8 +8,8 @@
 //! (`--no-default-features --features {kyotocabinet|bdb}`) skips the
 //! binding steps of the ones it does not build.
 //!
-//! * `kyotocabinet` — the C entry points (`shim.h`) of a C++ shim over
-//!   Kyoto Cabinet's classes, which this script also compiles with `cc`.
+//! * `kyotocabinet` — the cxx bridge over Kyoto Cabinet's concrete classes
+//!   (`src/kyotocabinet/bridge.rs`, `src/kyotocabinet/adapter.cc`).
 //! * `tkrzw` — the cxx bridge over tkrzw's concrete classes
 //!   (`src/tkrzw/bridge.rs`, `src/tkrzw/adapter.cc`), on by default.
 //! * `bdb` — the Berkeley DB C API (`db.h`), from the system libdb.
@@ -21,7 +21,7 @@
 //! `SYSTEM_DEPS_<NAME>_*` variables are the only overrides
 //! (`docs/runbooks/backends.md`). It emits the link-search and link-lib
 //! directives. This script reads the resolved include and link paths from
-//! it for what `system-deps` does not configure: bindgen's, `cc`'s and
+//! it for what `system-deps` does not configure: bindgen's and
 //! `cxx-build`'s include paths, and the rpath.
 //!
 //! Each backend is found as libpinyin's `configure.ac` finds it: tkrzw and
@@ -75,167 +75,10 @@ fn probe() -> system_deps::Dependencies {
     })
 }
 
-/// Kyoto Cabinet: a C++ shim and the bindgen declarations of its C entry
-/// points.
-///
-/// # A shim over the classes, not `kclangc.h`
-///
-/// Kyoto Cabinet's database classes are header code. libpinyin constructs
-/// `TreeDB`, `HashDB`, `ProtoTreeDB` and `StashDB` itself and compiles them
-/// from the headers into its own text. `src/kyotocabinet/shim.cc` does the
-/// same, behind a small C API of its own (`shim.h`). Its entry points are
-/// `noexcept`: a C++ exception is always caught there and turned into the
-/// entry point's failure return, and recording it as a `SYSTEM` error on
-/// the database is best effort. `kclangc.h` reached every class through
-/// `PolyDB`, whose dispatch and unopened classes kept libkyotocabinet text
-/// resident (`docs/findings/kc-shim-1118.md`). The system libkyotocabinet
-/// still supplies the out-of-line code, as it does for libpinyin.
-///
-/// The shim is compiled with `cc` at `-O2`, the pin's autoconf default,
-/// with hidden visibility, so the libraries export nothing beyond their
-/// version scripts. `cpp(true)` links libstdc++, which libkyotocabinet already maps.
-///
-/// # Why generated fresh, not checked in
-///
-/// `shim.h` is plain C: two opaque handle types, the class codes and open
-/// modes (`OXKC_*`, which `shim.cc` checks against `kcdb.h` with
-/// `static_assert`) and the entry points. Nothing in it depends on the
-/// installed Kyoto Cabinet, so a checked-in binding could not drift from
-/// the library. Generating it keeps the Rust declarations in lockstep with
-/// `shim.h`, as the other C backends' bindings are, for the build-time
-/// libclang those backends need already.
-#[cfg(feature = "kyotocabinet")]
-mod kyotocabinet {
-    use std::path::PathBuf;
-
-    pub fn build(dependencies: &system_deps::Dependencies) {
-        println!("cargo:rerun-if-changed=src/kyotocabinet/wrapper.h");
-        println!("cargo:rerun-if-env-changed=BINDGEN_EXTRA_CLANG_ARGS");
-
-        // `system-deps` emits the link-search paths and libraries. A
-        // `rustc-link-arg` is package-scoped: cargo applies it only to the
-        // targets it builds from THIS package — this crate's lib and its
-        // own test artifacts — never to another package's binaries. The
-        // rpath below therefore covers `cargo test -p oxpinyin-store` and
-        // nothing else. `oxpinyin-training` links a final binary against
-        // Kyoto Cabinet, so the directories are also published as the
-        // `lib_dir` links metadata, which its build script reads
-        // (`DEP_OXPINYIN_STORE_LIB_DIR`) for its own rpath. That rpath is a
-        // convenience, not the contract: any other artifact built without
-        // it must still find the library via LD_LIBRARY_PATH or its own
-        // rpath setting. System link paths are not in `link_paths`, as
-        // pkg-config itself leaves them out, so no rpath names one.
-        let library = dependencies
-            .get_by_name("kyotocabinet")
-            .expect("system-deps probes kyotocabinet when the feature is on");
-        for path in &library.link_paths {
-            println!("cargo:rustc-link-arg=-Wl,-rpath,{}", path.display());
-        }
-        if !library.link_paths.is_empty() {
-            let joined = std::env::join_paths(&library.link_paths)
-                .expect("a library directory holds no path-list separator");
-            println!("cargo:lib_dir={}", joined.to_string_lossy());
-        }
-        // The shim compiles Kyoto Cabinet's headers into the facade, so they
-        // come from the installation `system-deps` resolved.
-        let include_paths: &[PathBuf] = &library.include_paths;
-
-        // The shim (see the module comment): Kyoto Cabinet's headers and a
-        // C++ compiler are what it needs; bindgen below reads only shim.h.
-        println!("cargo:rerun-if-changed=src/kyotocabinet/shim.h");
-        println!("cargo:rerun-if-changed=src/kyotocabinet/shim.cc");
-        let mut shim = cc::Build::new();
-        shim.cpp(true)
-            .file("src/kyotocabinet/shim.cc")
-            .opt_level(2)
-            .flag_if_supported("-fvisibility=hidden")
-            .flag_if_supported("-fvisibility-inlines-hidden");
-        // Explicitly match the Linux address-sanitizer gate, even when cc's
-        // default flags are disabled. rustc links the sanitizer runtime.
-        // Without ASan, leave the native compiler and linker flags unchanged.
-        if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux")
-            && std::env::var("CARGO_CFG_SANITIZE")
-                .unwrap_or_default()
-                .split(',')
-                .any(|sanitizer| sanitizer == "address")
-        {
-            shim.flag("-fsanitize=address")
-                .flag("-fno-omit-frame-pointer");
-        }
-        for dir in include_paths {
-            shim.include(dir);
-        }
-        shim.compile("oxpinyin_kc_shim");
-
-        let mut builder = bindgen::Builder::default()
-            .header("src/kyotocabinet/wrapper.h")
-            // Only the shim's C entry points; allowlisting keeps the
-            // generated file to what is actually called.
-            .allowlist_function("oxkc_.*")
-            .allowlist_type("oxkc_.*")
-            .allowlist_var("OXKC_.*")
-            .layout_tests(false)
-            .derive_debug(false)
-            .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()));
-
-        for dir in include_paths {
-            builder = builder.clang_arg(format!("-I{}", dir.display()));
-        }
-
-        let bindings = match builder.generate() {
-            Ok(bindings) => bindings,
-            Err(error) => panic!(
-                "the `kyotocabinet` feature generates the Kyoto Cabinet shim's \
-                 declarations from src/kyotocabinet/shim.h, and bindgen could not read \
-                 it ({error}). Generating them needs libclang (Debian/Ubuntu: \
-                 libclang-dev). The shim itself needs Kyoto Cabinet's development \
-                 package (Debian/Ubuntu: libkyotocabinet-dev; Fedora: kyotocabinet-devel) \
-                 and a C++ compiler, or the SYSTEM_DEPS_KYOTOCABINET_* variables pointed at \
-                 an installation (docs/runbooks/backends.md). Build without --features kyotocabinet to \
-                 skip all of it."
-            ),
-        };
-
-        let out = PathBuf::from(std::env::var_os("OUT_DIR").expect("cargo sets OUT_DIR"));
-        bindings
-            .write_to_file(out.join("kc_bindings.rs"))
-            .expect("write generated Kyoto Cabinet declarations");
-    }
-}
-
-/// tkrzw: the cxx bridge over the pin's concrete classes, plus the
-/// semantic adapter `src/tkrzw/adapter.cc`.
-///
-/// # The concrete classes, not `tkrzw_langc.h`
-///
-/// libpinyin allocates `TreeDBM`, `HashDBM`, `BabyDBM` and `TinyDBM` itself
-/// and calls them through `DBM*`. The bridge (`src/tkrzw/bridge.rs`) does
-/// the same: cxx generates the Rust/C++ glue, and `adapter.cc` holds only
-/// what cxx cannot express — the concrete constructors, the byte-view and
-/// status conversions, the `RecordProcessor` subclass of the key walk, and
-/// the mutation through a shared reference that the classes' own locking
-/// permits. The adapter calls the library; it copies none of it. The C API
-/// (`PolyDBM`) is not used: it deletes a concrete object whose `Open`
-/// failed and catches every C++ exception (Rust/C++ interoperability
-/// ruling, 2026-11-02, `docs/findings/compatibility-policy.md`).
-///
-/// # Compilation
-///
-/// The adapter and the generated glue are compiled at `-O2`, the pin's
-/// autoconf default, as C++17 (tkrzw's own standard), with hidden
-/// visibility so the libraries export nothing beyond their version scripts
-/// (`docs/packaging.md#export-gate`). The address-sanitizer flags match the
-/// Linux sanitizer gate explicitly, as the Kyoto Cabinet shim's do (#1531),
-/// so the adapter object is instrumented whatever `cc`'s own defaults do.
-/// tkrzw's include paths come from the `system-deps` probe, which also
-/// emits the link directives (and, through the pkg-config crate's
-/// `PKG_CONFIG_ALLOW_SYSTEM_CFLAGS`, reports a distro's `/usr/include`
-/// too). A directory outside the compiler's default search list is a
-/// system header directory to the compiler, so a self-built prefix's own
-/// warnings cannot fail a `-D warnings` build; a default directory is
-/// left to the compiler, see `build`.
-#[cfg(feature = "tkrzw")]
-mod tkrzw {
+/// What the two cxx bridges share: how a native library's include
+/// directories reach the C++ compiler, and the address-sanitizer flags.
+#[cfg(any(feature = "tkrzw", feature = "kyotocabinet"))]
+mod native {
     /// The directories the configured C++ compiler searches for `<...>`
     /// includes by default, canonicalised: the list it prints between
     /// `#include <...> search starts here:` and `End of search list.` for
@@ -266,6 +109,181 @@ mod tkrzw {
         (!dirs.is_empty()).then_some(dirs)
     }
 
+    /// Adds a library's include directories to a bridge build.
+    ///
+    /// The library's headers are third-party: with `-isystem` their own
+    /// `-Wall -Wextra` warnings are suppressed. A directory the compiler
+    /// already searches by default must not be passed that way: GCC puts
+    /// an `-isystem` directory ahead of its own list, so `/usr/include`
+    /// lands before libstdc++'s directory and `<cstdlib>`'s
+    /// `#include_next <stdlib.h>` finds nothing (GCC, "Directory Options"
+    /// and "Wrapper Headers"). `-I` would be ignored for such a directory
+    /// but would not silence the warnings from a self-built prefix. So the
+    /// compiler is asked for its default search list once, and each probed
+    /// directory is skipped when it is already there and `-isystem`
+    /// otherwise; a compiler that does not answer, or is not GCC-like, gets
+    /// `cc`'s ordinary include flag.
+    pub fn add_includes(build: &mut cc::Build, include_paths: &[std::path::PathBuf]) {
+        let compiler = build.get_compiler();
+        let gnu_like = compiler.is_like_gnu() || compiler.is_like_clang();
+        let defaults = if gnu_like {
+            default_include_dirs(&compiler)
+        } else {
+            None
+        };
+        for dir in include_paths {
+            let canonical = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.clone());
+            match &defaults {
+                Some(defaults) if defaults.contains(&canonical) => {}
+                Some(_) => {
+                    build.flag(format!("-isystem{}", dir.display()));
+                }
+                None => {
+                    build.include(dir);
+                }
+            }
+        }
+    }
+
+    /// The compilation both bridges use: `-O2`, the pin's autoconf
+    /// default, as C++17, with hidden visibility so the libraries export
+    /// nothing beyond their version scripts
+    /// (`docs/packaging.md#export-gate`). The address-sanitizer flags match
+    /// the Linux sanitizer gate explicitly (#1531), so the bridge objects
+    /// are instrumented whatever `cc`'s own defaults do; rustc links the
+    /// sanitizer runtime. Without ASan the flags are unchanged.
+    pub fn configure(build: &mut cc::Build) {
+        build
+            .std("c++17")
+            .opt_level(2)
+            .flag_if_supported("-fvisibility=hidden")
+            .flag_if_supported("-fvisibility-inlines-hidden");
+        if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux")
+            && std::env::var("CARGO_CFG_SANITIZE")
+                .unwrap_or_default()
+                .split(',')
+                .any(|sanitizer| sanitizer == "address")
+        {
+            build
+                .flag("-fsanitize=address")
+                .flag("-fno-omit-frame-pointer");
+        }
+    }
+}
+
+/// Kyoto Cabinet: the cxx bridge over the pin's concrete classes, plus the
+/// semantic adapter `src/kyotocabinet/adapter.cc`.
+///
+/// # The concrete classes, not `kclangc.h`
+///
+/// Kyoto Cabinet's database classes are header code. libpinyin constructs
+/// `TreeDB`, `HashDB`, `ProtoTreeDB` and `StashDB` itself and compiles them
+/// from the headers into its own text. The bridge (`src/kyotocabinet/
+/// bridge.rs`) does the same: cxx generates the Rust/C++ glue, and
+/// `adapter.cc` holds only what cxx cannot express — the `Visitor`
+/// subclass, the empty-region pointer, the read of `BasicDB::error()`, the
+/// constructors and constants, and the forwards through a shared reference
+/// that the classes' own locking permits (Rust/C++ interoperability
+/// ruling, 2026-11-02, `docs/findings/compatibility-policy.md`).
+/// `kclangc.h` reached every class through `PolyDB`, whose dispatch and
+/// unopened classes kept libkyotocabinet text resident
+/// (`docs/findings/kc-shim-1118.md`). The system libkyotocabinet still
+/// supplies the out-of-line code, as it does for libpinyin.
+///
+/// The bridge is compiled as `native::configure` describes; the include
+/// paths come from the `system-deps` probe, added as `native::add_includes`
+/// describes. `cxx` links libstdc++, which libkyotocabinet already maps.
+#[cfg(feature = "kyotocabinet")]
+mod kyotocabinet {
+    pub fn build(dependencies: &system_deps::Dependencies) {
+        println!("cargo:rerun-if-changed=src/kyotocabinet/bridge.rs");
+        println!("cargo:rerun-if-changed=src/kyotocabinet/adapter.h");
+        println!("cargo:rerun-if-changed=src/kyotocabinet/adapter.cc");
+
+        // `system-deps` emits the link-search paths and libraries. A
+        // `rustc-link-arg` is package-scoped: cargo applies it only to the
+        // targets it builds from THIS package — this crate's lib and its
+        // own test artifacts — never to another package's binaries. The
+        // rpath below therefore covers `cargo test -p oxpinyin-store` and
+        // nothing else. `oxpinyin-training` links a final binary against
+        // Kyoto Cabinet, so the directories are also published as the
+        // `lib_dir` links metadata, which its build script reads
+        // (`DEP_OXPINYIN_STORE_LIB_DIR`) for its own rpath. That rpath is a
+        // convenience, not the contract: any other artifact built without
+        // it must still find the library via LD_LIBRARY_PATH or its own
+        // rpath setting. System link paths are not in `link_paths`, as
+        // pkg-config itself leaves them out, so no rpath names one.
+        let library = dependencies
+            .get_by_name("kyotocabinet")
+            .expect("system-deps probes kyotocabinet when the feature is on");
+        for path in &library.link_paths {
+            println!("cargo:rustc-link-arg=-Wl,-rpath,{}", path.display());
+        }
+        if !library.link_paths.is_empty() {
+            let joined = std::env::join_paths(&library.link_paths)
+                .expect("a library directory holds no path-list separator");
+            println!("cargo:lib_dir={}", joined.to_string_lossy());
+        }
+        let Some(header) = library
+            .include_paths
+            .iter()
+            .map(|dir| dir.join("kcdb.h"))
+            .find(|path| path.is_file())
+        else {
+            panic!(
+                "the `kyotocabinet` feature compiles Kyoto Cabinet's C++ headers into the \
+                 facade, and none of kyotocabinet.pc's include directories holds kcdb.h. \
+                 Install its development package (Debian/Ubuntu: libkyotocabinet-dev; \
+                 Fedora: kyotocabinet-devel), or point the SYSTEM_DEPS_KYOTOCABINET_* \
+                 variables at an installation (docs/runbooks/backends.md)."
+            );
+        };
+        println!("cargo:rerun-if-changed={}", header.display());
+
+        let mut bridge = cxx_build::bridge("src/kyotocabinet/bridge.rs");
+        bridge.file("src/kyotocabinet/adapter.cc");
+        super::native::configure(&mut bridge);
+        super::native::add_includes(&mut bridge, &library.include_paths);
+        bridge.compile("oxpinyin_kc_bridge");
+
+        // `system-deps` named Kyoto Cabinet before `compile` named the
+        // bridge archive, and rustc keeps that order. A linker that resolves
+        // left to right and drops an `--as-needed` library nothing has yet
+        // referenced (GNU ld) then discards libkyotocabinet before the
+        // archive that needs it, and every Kyoto Cabinet symbol is
+        // undefined. Naming the libraries again after the archive fixes the
+        // order; an order-independent linker (ld64, lld) is unaffected.
+        for lib in &library.libs {
+            println!("cargo:rustc-link-lib={}", lib.name);
+        }
+    }
+}
+
+/// tkrzw: the cxx bridge over the pin's concrete classes, plus the
+/// semantic adapter `src/tkrzw/adapter.cc`.
+///
+/// # The concrete classes, not `tkrzw_langc.h`
+///
+/// libpinyin allocates `TreeDBM`, `HashDBM`, `BabyDBM` and `TinyDBM` itself
+/// and calls them through `DBM*`. The bridge (`src/tkrzw/bridge.rs`) does
+/// the same: cxx generates the Rust/C++ glue, and `adapter.cc` holds only
+/// what cxx cannot express — the concrete constructors, the byte-view and
+/// status conversions, the `RecordProcessor` subclass of the key walk, and
+/// the mutation through a shared reference that the classes' own locking
+/// permits. The adapter calls the library; it copies none of it. The C API
+/// (`PolyDBM`) is not used: it deletes a concrete object whose `Open`
+/// failed and catches every C++ exception (Rust/C++ interoperability
+/// ruling, 2026-11-02, `docs/findings/compatibility-policy.md`).
+///
+/// # Compilation
+///
+/// The adapter and the generated glue are compiled as `native::configure`
+/// describes. tkrzw's include paths come from the `system-deps` probe,
+/// which also emits the link directives (and, through the pkg-config
+/// crate's `PKG_CONFIG_ALLOW_SYSTEM_CFLAGS`, reports a distro's
+/// `/usr/include` too); `native::add_includes` passes them on.
+#[cfg(feature = "tkrzw")]
+mod tkrzw {
     pub fn build(dependencies: &system_deps::Dependencies) {
         println!("cargo:rerun-if-changed=src/tkrzw/bridge.rs");
         println!("cargo:rerun-if-changed=src/tkrzw/adapter.h");
@@ -288,54 +306,9 @@ mod tkrzw {
         println!("cargo:rerun-if-changed={}", header.display());
 
         let mut bridge = cxx_build::bridge("src/tkrzw/bridge.rs");
-        bridge
-            .file("src/tkrzw/adapter.cc")
-            .std("c++17")
-            .opt_level(2)
-            .flag_if_supported("-fvisibility=hidden")
-            .flag_if_supported("-fvisibility-inlines-hidden");
-        if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux")
-            && std::env::var("CARGO_CFG_SANITIZE")
-                .unwrap_or_default()
-                .split(',')
-                .any(|sanitizer| sanitizer == "address")
-        {
-            bridge
-                .flag("-fsanitize=address")
-                .flag("-fno-omit-frame-pointer");
-        }
-        // tkrzw's headers are third-party: with `-isystem` their own
-        // `-Wall -Wextra` warnings are suppressed. A directory the compiler
-        // already searches by default must not be passed that way: GCC
-        // puts an `-isystem` directory ahead of its own list, so
-        // `/usr/include` lands before libstdc++'s directory and
-        // `<cstdlib>`'s `#include_next <stdlib.h>` finds nothing (GCC,
-        // "Directory Options" and "Wrapper Headers"). `-I` would be
-        // ignored for such a directory but would not silence the warnings
-        // from a self-built prefix. So the compiler is asked for its
-        // default search list once, and each probed directory is skipped
-        // when it is already there and `-isystem` otherwise; a compiler
-        // that does not answer, or is not GCC-like, gets `cc`'s ordinary
-        // include flag.
-        let compiler = bridge.get_compiler();
-        let gnu_like = compiler.is_like_gnu() || compiler.is_like_clang();
-        let defaults = if gnu_like {
-            default_include_dirs(&compiler)
-        } else {
-            None
-        };
-        for dir in &library.include_paths {
-            let canonical = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.clone());
-            match &defaults {
-                Some(defaults) if defaults.contains(&canonical) => {}
-                Some(_) => {
-                    bridge.flag(format!("-isystem{}", dir.display()));
-                }
-                None => {
-                    bridge.include(dir);
-                }
-            }
-        }
+        bridge.file("src/tkrzw/adapter.cc");
+        super::native::configure(&mut bridge);
+        super::native::add_includes(&mut bridge, &library.include_paths);
         bridge.compile("oxpinyin_tkrzw_bridge");
 
         // PE targets have no rpath, and link.exe reports the raw flag as

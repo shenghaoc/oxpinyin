@@ -251,9 +251,9 @@ jobs:
         # cost is deliberate (correctness over shaving install seconds).
         # libdb-dev: the explicit bdb child links the system libdb.
         # libclang-dev: bindgen's runtime dependency for generating the
-        # three backends' FFI declarations from their headers.
+        # Berkeley DB FFI declarations from db.h.
         # libkyotocabinet-dev: the explicit kyotocabinet child links the
-        # distro Kyoto Cabinet; bindgen reads kclangc.h at build time.
+        # distro Kyoto Cabinet; its cxx bridge compiles against the headers.
         # The tkrzw child's library comes from the tkrzw action below.
         run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libdb-dev libkyotocabinet-dev zlib1g-dev libglib2.0-dev
 
@@ -396,7 +396,7 @@ jobs:
         # turn, so it needs every peer's build-time C dependencies:
         # libkyotocabinet-dev + libdb-dev here, tkrzw from the tkrzw
         # action below, and libclang-dev for
-        # bindgen, which generates the C backends' declarations.
+        # bindgen, which generates the Berkeley DB declarations.
         # libglib2.0-dev is a Tier-C
         # requirement: `pinyin_lookup_tokens` /
         # `pinyin_token_get_nth_pronunciation` delegate to
@@ -543,7 +543,7 @@ jobs:
     # under ASan and any finding kills the job. The adapter and cxx's
     # generated glue are compiled C++ translation units; the store's build
     # script passes -fsanitize=address -fno-omit-frame-pointer to them when
-    # CARGO_CFG_SANITIZE names address, as the Kyoto Cabinet shim's does
+    # CARGO_CFG_SANITIZE names address, as the Kyoto Cabinet bridge's does
     # (#1531), so both sides of the bridge are instrumented. A UBSan arm ran
     # here until 2026-10-22, when the backend had no C targets; it was
     # removed then.
@@ -807,11 +807,13 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run == 'true' && needs.changes.outputs.reuse != 'true'
     # The Kyoto Cabinet feature's own suite under ASan + LeakSanitizer, via
-    # `python -m tools.dev sanitize kc`. The backend's hazard is ownership: kcdbget,
-    # kccurgetkey, kccurgetvalue and kccurget return caller-owned regions
-    # released with kcfree, so a leak, a double free or a free through the
-    # wrong allocator is what ASan and LSan see. Fedora and Arch ship this
-    # backend. Feeds store-backends-gate.
+    # `python -m tools.dev sanitize kc`. The backend crosses into C++ through a
+    # cxx bridge (crates/oxpinyin-store/src/kyotocabinet/adapter.cc): visitor
+    # regions are borrowed for one callback, cursors borrow their database, and
+    # an empty region must not reach Kyoto Cabinet as address 1. The store's
+    # build script instruments the adapter and cxx's generated glue under
+    # address, as for tkrzw above. Fedora and Arch ship this backend. Feeds
+    # store-backends-gate.
     name: kc backend sanitizers
     runs-on: *ubuntu
     container:
@@ -883,10 +885,10 @@ jobs:
         run: echo "RUSTUP_TOOLCHAIN=$(uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev sanitize-toolchain)" >> "$GITHUB_ENV"
 
       - name: Install build dependencies (apt)
-        # libkyotocabinet-dev: the library this backend links and whose
-        # kclangc.h bindgen reads; libclang-dev is bindgen's runtime
-        # dependency.
-        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config util-linux libclang-dev libkyotocabinet-dev
+        # libkyotocabinet-dev: the library this backend links and the
+        # headers its cxx bridge compiles against with g++; no bindgen, so
+        # no libclang.
+        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config util-linux libkyotocabinet-dev
 
       - name: Install nightly Rust (sanitizer support)
         run: |

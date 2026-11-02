@@ -272,8 +272,8 @@ override_dh_auto_install:
 ## Kyoto Cabinet: build headers must match the installed library
 
 The Kyoto Cabinet backend compiles Kyoto Cabinet's header code into the
-facade, as libpinyin's Kyoto Cabinet build does. A C++ shim
-(`crates/oxpinyin-store/src/kyotocabinet/shim.cc`) constructs `TreeDB`,
+facade, as libpinyin's Kyoto Cabinet build does. The cxx bridge's adapter
+(`crates/oxpinyin-store/src/kyotocabinet/adapter.cc`) constructs `TreeDB`,
 `HashDB`, `ProtoTreeDB` and `StashDB` from the installed headers. That
 compiled code calls the system libkyotocabinet's out-of-line functions and
 shares its object layouts, so the headers a package builds against must be

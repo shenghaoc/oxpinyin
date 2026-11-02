@@ -984,7 +984,6 @@ resident in only some of the rounds. A startup record holds one round.
 | --- | --- | --- |
 | oxpinyin-capi | `stage2` | the export (`PINYIN_EXPORT_DIR`), the C-ABI surface |
 | oxpinyin-store | `backend_matrix_{tkrzw,kyotocabinet,bdb}` | `--features <backend>` (each is `required-features`-gated) |
-| oxpinyin-store | `kyotocabinet_bnum` | `--features kyotocabinet,bench-internal`; **a distro-installed Kyoto Cabinet data directory via `OXPINYIN_BNUM_DATA_DIR`** for meaningful numbers (see below) |
 | oxpinyin-user | `export_phrases`, `phrase_read` | the export |
 | pinyin-oracle | `scan_perf`, `dbm_bench`, `alloc_profile` | the export, model20 (`dbm_bench` also the bench oracles) |
 
@@ -1024,13 +1023,12 @@ rejected there, so pass them to one bench through `just heavy`, as
 above.
 
 `--benches` skips a target whose `required-features` are not enabled.
-With the default features it skips these four targets:
+With the default features it skips these three targets:
 
 | package | bench | run it with |
 | --- | --- | --- |
 | oxpinyin-store | `backend_matrix_kyotocabinet` | `just heavy -- cargo bench -p oxpinyin-store --no-default-features --features kyotocabinet --bench backend_matrix_kyotocabinet` |
 | oxpinyin-store | `backend_matrix_tkrzw` | `just heavy -- cargo bench -p oxpinyin-store --no-default-features --features tkrzw --bench backend_matrix_tkrzw` |
-| oxpinyin-store | `kyotocabinet_bnum` | `just heavy -- cargo bench -p oxpinyin-store --no-default-features --features kyotocabinet,bench-internal --bench kyotocabinet_bnum` |
 | pinyin-oracle | `dbm_bench` | `just heavy -- cargo bench -p pinyin-oracle --features oracle-ffi --bench dbm_bench` (also needs the bench oracles) |
 
 `backend_matrix_bdb` needs `bdb`, which is a default feature, so it is
@@ -1080,94 +1078,12 @@ workloads using allocation totals and reconciled source-level attribution,
 rather than treating raw site-count changes alone as allocation
 regressions.
 
-### `kyotocabinet_bnum` — the #402 time-and-space measurement
+### `kyotocabinet_bnum` — retired
 
-Motivation: shenghaoc/oxpinyin#402 quantifies the space side of lowering
-`#bnum` on the five read-only system TreeDBs deterministically (~1,057
-KiB → ~80 KiB per TreeDB, ~4.77 MiB across the five). This bench
-produces the matching time-side number.
-
-**Not a local-change proposal.** oxpinyin passes the same open
-parameters libpinyin does (no `#bnum=`, `#msiz=`, `#pccap=`, `#apow=`,
-`#fpow=`, `#psiz=` or `#opts=`), and that is the standing policy —
-external-library handling matches upstream. Tuning `#bnum` locally
-would be a case-3 configuration divergence outside
-[`compatibility-policy.md`](../findings/compatibility-policy.md)'s
-three exception classes. The measurement's audience is an upstream
-report (Kyoto Cabinet, or libpinyin itself), not this repo's shipping
-open path.
-
-**Data.** The bench needs a Kyoto Cabinet-format libpinyin `data/`
-directory containing all five system TreeDBs — `pinyin_index.bin`,
-`addon_pinyin_index.bin`, `phrase_index.bin`, `addon_phrase_index.bin`,
-`punct.bin` — with production-scale record counts (~10^4–10^5 per
-TreeDB). Distro coverage:
-
-* **Fedora arm64** ships `libpinyin` linked against
-  `libkyotocabinet.so.16` and installs `libpinyin-data` (KC-format) at
-  `/usr/lib64/libpinyin/data`. **Use this for the measurement.**
-* **Debian testing** ships `libpinyin-data` at
-  `/usr/lib/aarch64-linux-gnu/libpinyin/data` (multi-arch, arch varies),
-  built against tkrzw — not readable as `TreeDB` and not usable for this
-  bench. See memory: `distro-libpinyin-data-matrix`.
-* The checked-in `fixtures/w3/kct/` has ~10^2 records per TreeDB, so a
-  run against it is a harness smoke test only, not measurement of the
-  `#bnum` axis.
-
-**Container recipe** (Fedora arm64):
-
-```sh
-tar -cf - --exclude=target --exclude=.git . | docker run --rm -i \
-    --platform linux/arm64 \
-    -v "$PWD/target-linux":/src/target \
-    fedora:latest bash -c '
-    set -eu
-    dnf install -y --setopt=install_weak_deps=False -q \
-        gcc gcc-c++ make pkgconf-pkg-config git \
-        clang-devel llvm-devel \
-        kyotocabinet kyotocabinet-devel \
-        libpinyin libpinyin-data \
-        curl ca-certificates
-    # Exact on purpose (#1074): output depends on the Rust version. Keep it equal to the channel in rust-toolchain.toml.
-    curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.99.1 --profile minimal
-    . "$HOME/.cargo/env"
-    mkdir -p /src && tar -xf - -C /src && cd /src
-    OXPINYIN_BNUM_DATA_DIR=/usr/lib64/libpinyin/data \
-        cargo bench \
-            --no-default-features --features kyotocabinet,bench-internal \
-            --bench kyotocabinet_bnum
-    '
-```
-
-Do **not** pass `-- --bench` here. `cargo bench` already appends
-`--bench` to the criterion binary, and criterion 0.8's clap rejects the
-flag when it is specified twice ("an argument cannot be used with one or
-more of the other specified arguments"). Add `-- --sample-size N
---measurement-time Ns` if you want to shorten runs; a bare `cargo bench`
-uses the criterion defaults (100 samples / 5 s warmup / 5 s measurement).
-
-Reads: for each `#bnum` candidate (default 65,536; 16,384; 4,096; 1,024)
-a resident line on stderr (VmHWM in a fresh child process per group)
-and a criterion timing group on stdout — five TreeDB benches per group,
-each timing 512 (or the file's own record count if smaller) `get_raw`
-calls after a warmup pass. Space and time columns sit alongside each
-other in one output.
-
-**Reading the result.** VmHWM at the ~13 MiB total footprint has ~1
-MiB per-process jitter, so the header arithmetic
-(`kcplantdb.h:2399-2409` / `:2822-2830`) is the authoritative source for
-per-configuration bytes; treat the bench's resident column as a
-sanity check. The timing table is the load-bearing output: it says
-what lookup cost falling from `#bnum=65,536` to lower values on the
-read-only system TreeDBs actually is, in µs per 512-key sweep. That
-number belongs on shenghaoc/oxpinyin#402 (and, if it is stable and
-favourable, on an upstream report drafted from
-[`upstream-report-drafts.md`](../findings/upstream-report-drafts.md)) —
-not in this repo's shipping open path.
-
-**Report the result and recipe.** The recipe above regenerates the figures.
-An issue or upstream-report draft needs the conclusion and relevant numbers,
-not the raw run output; follow [results and reproduction](../../CONTRIBUTING.md#results-and-reproduction).
+The #402 time-side bench was retired with the Kyoto Cabinet CXX bridge
+(2026-11-02): the bridge binds no `tune_buckets`, which only that bench
+reached, and #402 is closed. Its recipe and results are in the history of
+`crates/oxpinyin-store/benches/kyotocabinet_bnum.rs` and of this section.
 
 ## BDB guess, training, and import profiles (#757–#759)
 
