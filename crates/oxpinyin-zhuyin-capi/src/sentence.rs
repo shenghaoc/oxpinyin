@@ -507,7 +507,8 @@ fn guess_candidates(instance: *mut ZhuyinInstance, offset: usize, before_cursor:
         window_anchor,
         sentence_rows_only,
     );
-    inst.core.anchored_window = Some((window_anchor, window_owned));
+    inst.core
+        .replace_anchored_window(window_anchor, window_owned);
     // The pin answers `true` for a valid lookup into a non-empty matrix
     // even when no candidate spans the offset (074a2219,
     // zhuyin.cpp:1460-1551). The empty matrix was refused above.

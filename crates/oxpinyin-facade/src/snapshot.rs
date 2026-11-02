@@ -29,6 +29,11 @@ use std::ops::{Deref, DerefMut};
 ///
 /// `u32` offsets size the row to need: a snapshot holds at most a few
 /// hundred phrases of at most 16 characters.
+///
+/// A span is valid only for the build that interned it. Using one after
+/// [`CandidateSnapshot::clear`] or [`CandidateSnapshot::take`] is a caller
+/// error: the snapshot keeps any span inside its buffer and terminated, but
+/// does not detect a span from an earlier build.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TextSpan {
     start: u32,
@@ -63,15 +68,29 @@ pub struct CandidateSnapshot<R> {
 /// The pointer to `span`'s string inside `text`, or to an empty string
 /// when the span is not of this buffer (which the snapshot's own calls
 /// never produce).
+///
+/// The bounds and the terminator are checked, so any span points inside
+/// the buffer at a terminated string. The bytes before the terminator are
+/// not scanned again: [`CandidateSnapshot::intern`] refused an interior NUL
+/// when it wrote them. A span is valid only for the build that interned it
+/// ([`TextSpan`]); these checks do not detect a span from an earlier build,
+/// which can land on a shorter string.
 fn span_ptr(text: &[u8], span: TextSpan) -> *const c_char {
     if span == TextSpan::NULL {
         return std::ptr::null();
     }
     let start = span.start as usize;
-    text.get(start..=start.saturating_add(span.len as usize))
-        .and_then(|bytes| CStr::from_bytes_with_nul(bytes).ok())
-        .unwrap_or(c"")
-        .as_ptr()
+    let end = start.saturating_add(span.len as usize);
+    match text.get(start..=end) {
+        Some(bytes) if bytes.last() == Some(&0) => {
+            debug_assert!(
+                !bytes[..bytes.len() - 1].contains(&0),
+                "a span from an earlier build"
+            );
+            bytes.as_ptr().cast()
+        }
+        _ => c"".as_ptr(),
+    }
 }
 
 impl<R> Default for CandidateSnapshot<R> {
@@ -290,6 +309,28 @@ mod tests {
             b"",
             "a stale span reads as empty"
         );
+    }
+
+    #[test]
+    fn a_span_not_written_here_points_outside_the_buffer() {
+        let in_buffer = |snapshot: &CandidateSnapshot<Row>, span| {
+            snapshot
+                .text
+                .as_ptr_range()
+                .contains(&snapshot.text_ptr(span).cast())
+        };
+        let mut snapshot = CandidateSnapshot::<Row>::new();
+        let held = snapshot.intern("你好".as_bytes()).expect("interned");
+        assert_eq!(snapshot.text_ptr(held), snapshot.text.as_ptr().cast());
+        let unterminated = TextSpan { start: 0, len: 3 };
+        assert!(
+            !in_buffer(&snapshot, unterminated),
+            "no terminator after it"
+        );
+        let past_end = TextSpan { start: 0, len: 100 };
+        assert!(!in_buffer(&snapshot, past_end), "beyond the buffer");
+        assert!(!snapshot.text_ptr(past_end).is_null());
+        assert!(snapshot.text_ptr(TextSpan::NULL).is_null());
     }
 
     #[test]
