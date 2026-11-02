@@ -1,0 +1,22 @@
+--- a/crates/oxpinyin-user/src/live_system.rs
++++ b/crates/oxpinyin-user/src/live_system.rs
+@@ -311,9 +311,6 @@
+             {
+                 return Lookup::Found(found);
+             }
+-            if store.live_item_past_buffer(token) {
+-                return Lookup::Absent;
+-            }
+         }
+         match (
+             self.libraries
+@@ -360,9 +357,6 @@
+                 .flatten()
+             {
+                 return Lookup::Found(found);
+-            }
+-            if store.live_item_past_buffer(token) {
+-                return Lookup::Absent;
+             }
+         }
+         self.libraries

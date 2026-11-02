@@ -1623,6 +1623,11 @@ fn replay_logs(
                     loaded
                         .skipped
                         .push(format!("{name}: a record's payload runs past the log"));
+                    // The library keeps its pre-replay content: the applied
+                    // records are reversed, not dropped with the buffer.
+                    if let Some(replayed) = replayed.as_deref_mut() {
+                        replayed.insert(nibble, merge.rollback());
+                    }
                     continue;
                 }
             }
@@ -1682,7 +1687,7 @@ enum MergeEnd {
 /// `add_phrase_item` does (`memory_chunk.h:390`), each only where the walk
 /// reaches it.
 fn merge_log<'a>(
-    merge: &mut Merge,
+    merge: &mut Merge<'_, 'a>,
     records: impl Iterator<Item = Result<LogRecord<&'a [u8]>, LogFault>>,
     library: u8,
     skipped: &mut Vec<String>,

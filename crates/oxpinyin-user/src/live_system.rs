@@ -38,6 +38,8 @@ pub enum SystemItem<'a> {
     Shipped(PhraseItemView<'a>),
     /// An imported item in the session's phrase arena, in the chunk's layout.
     Arena(PhraseItemView<'a>),
+    /// An item a journal replay wrote, read from the library's live buffer.
+    Replayed(PhraseItemView<'a>),
     /// A session item held decoded. Its `unigram` field is stale; read the
     /// live count through [`LiveSystemItems::effective_unigram`].
     Overlay(&'a ChunkItem),
@@ -98,7 +100,7 @@ impl SystemItem<'_> {
     pub fn origin(&self) -> ItemOrigin {
         match self {
             Self::Shipped(_) => ItemOrigin::Shipped,
-            Self::Arena(_) | Self::Overlay(_) => ItemOrigin::Overlay,
+            Self::Arena(_) | Self::Replayed(_) | Self::Overlay(_) => ItemOrigin::Overlay,
         }
     }
 
@@ -106,7 +108,7 @@ impl SystemItem<'_> {
     #[must_use]
     pub fn phrase_length(&self) -> usize {
         match self {
-            Self::Shipped(item) | Self::Arena(item) => item.phrase_length(),
+            Self::Shipped(item) | Self::Arena(item) | Self::Replayed(item) => item.phrase_length(),
             Self::Overlay(item) => item.phrase.len(),
         }
     }
@@ -115,7 +117,9 @@ impl SystemItem<'_> {
     #[must_use]
     pub fn n_pronunciations(&self) -> usize {
         match self {
-            Self::Shipped(item) | Self::Arena(item) => item.n_pronunciations(),
+            Self::Shipped(item) | Self::Arena(item) | Self::Replayed(item) => {
+                item.n_pronunciations()
+            }
             Self::Overlay(item) => item.prons.len(),
         }
     }
@@ -124,7 +128,7 @@ impl SystemItem<'_> {
     #[must_use]
     pub fn phrase_text(&self) -> Option<PhraseText> {
         match self {
-            Self::Shipped(item) | Self::Arena(item) => item.phrase_text(),
+            Self::Shipped(item) | Self::Arena(item) | Self::Replayed(item) => item.phrase_text(),
             Self::Overlay(item) => PhraseText::from_words(item.phrase.iter().copied()),
         }
     }
@@ -133,7 +137,7 @@ impl SystemItem<'_> {
     #[must_use]
     pub fn pronunciation(&self, nth: usize) -> Option<Reading<'_>> {
         match self {
-            Self::Shipped(item) | Self::Arena(item) => {
+            Self::Shipped(item) | Self::Arena(item) | Self::Replayed(item) => {
                 let reading = item.pronunciation(nth)?;
                 Some(Reading {
                     keys: ReadingKeys::Packed(reading.keys),
@@ -254,9 +258,10 @@ impl<'a> LiveSystemItems<'a> {
     /// other library answers [`Lookup::Absent`].
     ///
     /// The session's item wins over the shipped one. `read` runs at most
-    /// once, inside the borrow. For an arena or overlay item, the callback
-    /// runs while a store mutex is held. Do not call store accessors from the
-    /// callback; copy out what is needed and query the store after it returns.
+    /// once, inside the borrow. For an arena, overlay or replay-buffer item,
+    /// the callback runs while a store mutex is held. Do not call store
+    /// accessors from the callback; copy out what is needed and query the
+    /// store after it returns.
     /// A callback borrowing the shipped chunk directly runs after those
     /// locks are released.
     /// Consumers: pricing
@@ -289,6 +294,25 @@ impl<'a> LiveSystemItems<'a> {
                 .flatten()
             {
                 return Lookup::Found(found);
+            }
+            // The library's live replay buffer: an untouched slot reads as the
+            // shipped item it is, a touched one as the item the replay wrote.
+            if let Some(found) = store
+                .with_live_item(token, |bytes, touched| {
+                    let view = PhraseItemView::from_bytes(bytes)?;
+                    let f = read.take()?;
+                    Some(f(if touched {
+                        SystemItem::Replayed(view)
+                    } else {
+                        SystemItem::Shipped(view)
+                    }))
+                })
+                .flatten()
+            {
+                return Lookup::Found(found);
+            }
+            if store.live_item_past_buffer(token) {
+                return Lookup::Absent;
             }
         }
         match (
@@ -325,6 +349,20 @@ impl<'a> LiveSystemItems<'a> {
             }
             if let Some(found) = store.with_overlay_item(token, |item| count(item.prons.len())) {
                 return Lookup::Found(found);
+            }
+            if let Some(found) = store
+                .with_live_item(token, |bytes, touched| {
+                    touched
+                        .then(|| PhraseItemView::from_bytes(bytes))
+                        .flatten()
+                        .map(|view| count(view.n_pronunciations()))
+                })
+                .flatten()
+            {
+                return Lookup::Found(found);
+            }
+            if store.live_item_past_buffer(token) {
+                return Lookup::Absent;
             }
         }
         self.libraries
@@ -384,7 +422,12 @@ impl<'a> LiveSystemItems<'a> {
             return Ok(false);
         }
         let held = store.with_user_item(token, |_| ()).is_some()
-            || store.with_overlay_item(token, |_| ()).is_some();
+            || store.with_overlay_item(token, |_| ()).is_some()
+            || store
+                .with_live_item(token, |bytes, touched| {
+                    touched && PhraseItemView::from_bytes(bytes).is_some()
+                })
+                .unwrap_or(false);
         if held {
             store.unigram_delta(token)?;
         }

@@ -1337,7 +1337,7 @@ mod tests {
         let mut merge = crate::replay::Merge::new(originals.get(&1));
         assert!(
             merge
-                .apply(LogRecord::Add {
+                .apply_owned(LogRecord::Add {
                     token: 0x0100_0003,
                     new_item: encode_phrase_item(&added).unwrap(),
                 })
@@ -1385,11 +1385,20 @@ mod tests {
         name: &str,
         records: &[oxpinyin_data::user_files::LogRecord],
     ) -> (PathBuf, UserStore) {
-        let dir = tempdir(name);
         let payload = oxpinyin_data::user_files::encode_log_records(records).expect("log");
+        open_with_payload(name, originals(), &payload)
+    }
+
+    /// Opens a profile whose `gb_char.dbin` holds the checksummed `payload`.
+    fn open_with_payload(
+        name: &str,
+        originals: SystemOriginals,
+        payload: &[u8],
+    ) -> (PathBuf, UserStore) {
+        let dir = tempdir(name);
         std::fs::write(
             dir.join("gb_char.dbin"),
-            oxpinyin_data::chunk_format::build_memory_chunk(&payload).expect("chunk"),
+            oxpinyin_data::chunk_format::build_memory_chunk(payload).expect("chunk"),
         )
         .expect("write log");
         std::fs::write(
@@ -1397,9 +1406,201 @@ mod tests {
             oxpinyin_data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
         )
         .expect("write marker");
-        let store = UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+        let store = UserStore::open_libpinyin(&dir, originals, versions(), UserConfLaw::Pinyin)
             .expect("open");
         (dir, store)
+    }
+
+    /// Three single-reading items in library 1, slots 1 to 3.
+    fn three_items() -> [ChunkItem; 3] {
+        let ni = ChewingKey::new(23, 0, 1, 0).to_packed();
+        let make = |word: u32, unigram: u32, frequency: u32| ChunkItem {
+            phrase: vec![word],
+            unigram,
+            prons: vec![(vec![ni], frequency)],
+        };
+        [
+            make(0x4f60, 100, 100),
+            make(0x597d, 50, 50),
+            make(0x4e16, 30, 30),
+        ]
+    }
+
+    fn three_item_originals() -> SystemOriginals {
+        BTreeMap::from([(
+            1_u8,
+            SystemLibrary {
+                mapped: None,
+                total: 180,
+                range_end: 4,
+                items: three_items()
+                    .into_iter()
+                    .zip(1_u32..)
+                    .map(|(item, slot)| (slot, item))
+                    .collect(),
+            },
+        )])
+        .into()
+    }
+
+    /// The `(origin, first reading's frequency)` of one token, or its state.
+    fn frequency_of(store: &UserStore, token: u32) -> crate::Lookup<(crate::ItemOrigin, u32)> {
+        let unloaded = std::sync::atomic::AtomicU32::new(0);
+        let libraries = store.originals().phrase_libraries();
+        crate::LiveSystemItems::new(libraries, Some(store), &unloaded).read(token, |item| {
+            (
+                item.origin(),
+                item.pronunciation(0).map_or(0, |reading| reading.frequency),
+            )
+        })
+    }
+
+    #[test]
+    fn an_over_read_item_answers_no_item_and_the_records_around_it_stay() {
+        use crate::{ItemOrigin, Lookup};
+        use oxpinyin_data::chunk_write::encode_phrase_item;
+        use oxpinyin_data::user_files::LogRecord;
+        let items = three_items();
+        let encode = |item: &ChunkItem| encode_phrase_item(item).expect("item");
+        let (mut first, mut third) = (items[0].clone(), items[2].clone());
+        first.prons[0].1 += 7;
+        third.prons[0].1 += 9;
+        let mut fourth = items[0].clone();
+        fourth.phrase = vec![0x754c];
+        fourth.prons[0].1 = 11;
+        // Row 107, option 1: a header naming 132,096 bytes ends past the
+        // content buffer, so slot 2 answers no item. The records before and
+        // after it still apply.
+        let mut over = encode(&items[1]);
+        over[0] = 255;
+        over[1] = 255;
+        let records = [
+            LogRecord::ModifyHeader {
+                old_total: 180,
+                new_total: 180,
+            },
+            LogRecord::Modify {
+                token: 1,
+                old_item: encode(&items[0]),
+                new_item: encode(&first),
+            },
+            LogRecord::Modify {
+                token: 2,
+                old_item: encode(&items[1]),
+                new_item: over,
+            },
+            LogRecord::Modify {
+                token: 3,
+                old_item: encode(&items[2]),
+                new_item: encode(&third),
+            },
+            // An ADD after it grows the content past the shipped area.
+            LogRecord::Add {
+                token: (1_u32 << 24) | 4,
+                new_item: encode(&fourth),
+            },
+        ];
+        let payload = oxpinyin_data::user_files::encode_log_records(&records).expect("log");
+        let shipped_dir = tempdir("over-read-shipped");
+        let shipped_path = shipped_dir.join("gb_char.bin");
+        let shipped: Vec<_> = items
+            .iter()
+            .cloned()
+            .zip(1_u32..)
+            .map(|(item, slot)| (slot, item))
+            .collect();
+        std::fs::write(
+            &shipped_path,
+            oxpinyin_data::chunk_write::build_chunk(&shipped).expect("chunk"),
+        )
+        .expect("write shipped chunk");
+        let library = oxpinyin_data::phrase_library::PhraseLibrary::open(&shipped_path)
+            .expect("open shipped chunk");
+        let originals = BTreeMap::from([(
+            1_u8,
+            SystemLibrary {
+                total: library.total_freq(),
+                range_end: library.token_range().end,
+                items: BTreeMap::new(),
+                mapped: Some(library),
+            },
+        )])
+        .into();
+        let (dir, store) = open_with_payload("over-read-item", originals, &payload);
+        let token = |slot: u32| (1_u32 << 24) | slot;
+        assert_eq!(
+            frequency_of(&store, token(1)),
+            Lookup::Found((ItemOrigin::Overlay, 107))
+        );
+        assert_eq!(frequency_of(&store, token(2)), Lookup::Removed);
+        assert!(store.system_item_removed(token(2)));
+        // Exercise the live-buffer fallback independently of the removal
+        // marker; the shipped original must not reappear for an over-read.
+        store.test_forget_removal(token(2));
+        let unloaded = std::sync::atomic::AtomicU32::new(0);
+        let live = crate::LiveSystemItems::new(
+            store.originals().phrase_libraries(),
+            Some(&store),
+            &unloaded,
+        );
+        assert_eq!(live.read(token(2), |_| ()), Lookup::Absent);
+        assert_eq!(live.pronunciation_count(token(2)), Lookup::Absent);
+        assert_eq!(
+            frequency_of(&store, token(3)),
+            Lookup::Found((ItemOrigin::Overlay, 39))
+        );
+        assert_eq!(
+            frequency_of(&store, token(4)),
+            Lookup::Found((ItemOrigin::Overlay, 11))
+        );
+        drop(store);
+        std::fs::remove_dir_all(dir).expect("cleanup");
+        std::fs::remove_dir_all(shipped_dir).expect("cleanup shipped chunk");
+    }
+
+    #[test]
+    fn a_payload_over_read_reverses_the_applied_records() {
+        use crate::{ItemOrigin, Lookup};
+        use oxpinyin_data::chunk_write::encode_phrase_item;
+        use oxpinyin_data::user_files::LogRecord;
+        let items = three_items();
+        let encode = |item: &ChunkItem| encode_phrase_item(item).expect("item");
+        let (mut first, mut third) = (items[0].clone(), items[2].clone());
+        first.prons[0].1 += 7;
+        third.prons[0].1 += 9;
+        let records = [
+            LogRecord::ModifyHeader {
+                old_total: 180,
+                new_total: 180,
+            },
+            LogRecord::Modify {
+                token: 1,
+                old_item: encode(&items[0]),
+                new_item: encode(&first),
+            },
+            LogRecord::Modify {
+                token: 3,
+                old_item: encode(&items[2]),
+                new_item: encode(&third),
+            },
+        ];
+        let mut payload = oxpinyin_data::user_files::encode_log_records(&records).expect("log");
+        // The last record's payload now runs past the end of the log.
+        payload.truncate(payload.len() - 3);
+        let (dir, store) = open_with_payload("over-read-tail", three_item_originals(), &payload);
+        let token = |slot: u32| (1_u32 << 24) | slot;
+        // The library keeps its pre-replay content: the first record was
+        // applied before the walk reached the faulty one, then reversed.
+        assert_eq!(
+            frequency_of(&store, token(1)),
+            Lookup::Found((ItemOrigin::Shipped, 100))
+        );
+        assert_eq!(
+            frequency_of(&store, token(3)),
+            Lookup::Found((ItemOrigin::Shipped, 30))
+        );
+        drop(store);
+        std::fs::remove_dir_all(dir).expect("cleanup");
     }
 
     #[test]

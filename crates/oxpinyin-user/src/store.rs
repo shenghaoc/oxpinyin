@@ -4621,6 +4621,11 @@ impl<S: WriteStore> GenericUserStore<S> {
         self.removed_system_items_guard().clone()
     }
 
+    #[cfg(test)]
+    pub(crate) fn test_forget_removal(&self, token: Token) {
+        self.revive_system_item(token);
+    }
+
     /// The token's item is live again: an add put it back (`add_phrase_item`
     /// stores at the token whatever the index held).
     fn revive_system_item(&self, token: Token) {
@@ -4800,12 +4805,37 @@ impl<S: WriteStore> GenericUserStore<S> {
         if !self.has_system_items() {
             return None;
         }
-        let mut items = self
+        let items = self
             .inner
             .system_items
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        items.get(&token).map(read)
+        items.decoded(&token).map(read)
+    }
+
+    /// Reads the item a replayed library's live buffer holds under `token`,
+    /// and whether the replay touched its slot. Nothing is decoded or kept.
+    pub(crate) fn with_live_item<R>(
+        &self,
+        token: Token,
+        read: impl FnOnce(&[u8], bool) -> R,
+    ) -> Option<R> {
+        if !self.has_system_items() {
+            return None;
+        }
+        self.inner
+            .system_items
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .with_live(token, read)
+    }
+
+    pub(crate) fn live_item_past_buffer(&self, token: Token) -> bool {
+        self.inner
+            .system_items
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .live_item_past_buffer(token)
     }
 
     /// One past the highest token a `USER_FILE` library holds: the pin's
