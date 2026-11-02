@@ -182,14 +182,40 @@ fn index_keys(keys: &[ChewingKey]) -> [Vec<u8>; 2] {
     [encode_incomplete_key(keys), encode_complete_key(keys)]
 }
 
-/// The key `ChewingLargeTable2::search` / `search_suggestion` probe.
-fn query_key(keys: &[ChewingKey]) -> Vec<u8> {
-    // `contains_incomplete_pinyin` (`pinyin_phrase3.h:146`).
-    if keys.iter().any(|key| key.middle == 0 && key.final_ == 0) {
-        encode_incomplete_key(keys)
-    } else {
-        encode_complete_key(keys)
+/// A probe key built on the stack: at most `MAX_PHRASE_LENGTH` packed
+/// words.
+struct QueryKey {
+    bytes: [u8; 2 * MAX_PHRASE_LENGTH],
+    len: usize,
+}
+
+impl std::ops::Deref for QueryKey {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        &self.bytes[..self.len]
     }
+}
+
+/// The key `ChewingLargeTable2::search` / `search_suggestion` probe, the
+/// bytes `encode_incomplete_key` or `encode_complete_key` give. Callers
+/// reject an empty or over-long `keys` first.
+fn query_key(keys: &[ChewingKey]) -> QueryKey {
+    // `contains_incomplete_pinyin` (`pinyin_phrase3.h:146`).
+    let incomplete = keys.iter().any(|key| key.middle == 0 && key.final_ == 0);
+    let mut query = QueryKey {
+        bytes: [0; 2 * MAX_PHRASE_LENGTH],
+        len: 2 * keys.len(),
+    };
+    for (word, key) in query.bytes.as_chunks_mut::<2>().0.iter_mut().zip(keys) {
+        let key = if incomplete {
+            ChewingKey::new(key.initial, 0, 0, 0)
+        } else {
+            ChewingKey::new(key.initial, key.middle, key.final_, 0)
+        };
+        *word = key.to_packed().to_le_bytes();
+    }
+    query
 }
 
 /// The user pinyin index, owned in one arena.
@@ -365,7 +391,7 @@ impl UserIndex {
         let key = query_key(keys);
         let nonempty = self.record(&key).is_some_and(|value| !value.is_empty());
         if nonempty {
-            *self.slot_mut(len) = Slot::Record(key);
+            *self.slot_mut(len) = Slot::Record(key.to_vec());
         }
     }
 
@@ -599,8 +625,8 @@ impl UserIndex {
     /// `ChewingLargeTable2::search` over the stored records: the query's
     /// complete or incomplete key is looked up, and its records are filtered
     /// by the pin's `pinyin_compare_with_tones`. Tokens keep the record
-    /// order (exact key, then token).
-    pub(crate) fn search(&self, keys: &[ChewingKey]) -> Vec<(u32, Vec<ChewingKey>)> {
+    /// order (exact key, then token), duplicates kept.
+    pub(crate) fn search(&self, keys: &[ChewingKey]) -> Vec<u32> {
         let len = keys.len();
         if len == 0 || len > MAX_PHRASE_LENGTH {
             return Vec::new();
@@ -614,20 +640,8 @@ impl UserIndex {
         let stride = item2_stride(len);
         value
             .chunks_exact(stride)
-            .filter_map(|record| {
-                let stored: Vec<ChewingKey> = record[4..4 + 2 * len]
-                    .as_chunks::<2>()
-                    .0
-                    .iter()
-                    .map(|word| ChewingKey::from_packed(u16::from_le_bytes([word[0], word[1]])))
-                    .collect();
-                matches_with_tones(keys, &stored, len).then(|| {
-                    (
-                        u32::from_le_bytes([record[0], record[1], record[2], record[3]]),
-                        stored,
-                    )
-                })
-            })
+            .filter(|record| record_matches_with_tones(keys, record))
+            .map(record_token)
             .collect()
     }
 
@@ -644,7 +658,6 @@ impl UserIndex {
     /// `ChewingTableEntry::search_suggestion` over the stored records:
     /// longer keys extending the prefix, filtered with-tones.
     pub(crate) fn suggest(&self, prefix: &[ChewingKey]) -> Vec<u32> {
-        let prefix_len = prefix.len();
         if !self.has_record(prefix) {
             return Vec::new();
         }
@@ -662,19 +675,12 @@ impl UserIndex {
             if !value.len().is_multiple_of(stride) {
                 continue;
             }
-            for record in value.chunks_exact(stride) {
-                let stored: Vec<ChewingKey> = record[4..4 + 2 * len]
-                    .as_chunks::<2>()
-                    .0
-                    .iter()
-                    .map(|word| ChewingKey::from_packed(u16::from_le_bytes([word[0], word[1]])))
-                    .collect();
-                if matches_with_tones(prefix, &stored, prefix_len) {
-                    tokens.push(u32::from_le_bytes([
-                        record[0], record[1], record[2], record[3],
-                    ]));
-                }
-            }
+            tokens.extend(
+                value
+                    .chunks_exact(stride)
+                    .filter(|record| record_matches_with_tones(prefix, record))
+                    .map(record_token),
+            );
         }
         tokens
     }
@@ -725,30 +731,37 @@ fn append_record(arena: &mut Vec<u8>, offsets: &mut Vec<u32>, key: &[u8], value:
     offsets.push(offset);
 }
 
-/// `pinyin_compare_with_tones` (`pinyin_phrase3.h:68-147` at 074a2219):
-/// same length up to `len`; a zero middle/final on either side is a
-/// wildcard, and so is a zero tone.
-fn matches_with_tones(query: &[ChewingKey], stored: &[ChewingKey], len: usize) -> bool {
-    if query.len() < len || stored.len() < len {
-        return false;
-    }
-    for index in 0..len {
-        let query = query[index];
-        let stored = stored[index];
-        if query.initial != stored.initial {
-            return false;
-        }
-        if !((query.middle == stored.middle && query.final_ == stored.final_)
+/// Whether `pinyin_compare_with_tones` (`pinyin_phrase3.h:111-142` at
+/// 074a2219) answers 0 for one position. Its three passes (initials, then
+/// middle/final pairs, then tones) answer 0 only when every position
+/// passes all three tests, so the passes reduce to this conjunction per
+/// position: equal initials (`pinyin_compare_initial3`, `:69-72`); equal
+/// middle and final, or a zero middle and final on either side
+/// (`pinyin_compare_middle_and_final3`, `:74-91`); equal tones, or a zero
+/// tone on either side (`pinyin_compare_tone3`, `:93-102`).
+fn key_matches_with_tones(query: ChewingKey, stored: ChewingKey) -> bool {
+    query.initial == stored.initial
+        && ((query.middle == stored.middle && query.final_ == stored.final_)
             || (query.middle == 0 && query.final_ == 0)
             || (stored.middle == 0 && stored.final_ == 0))
-        {
-            return false;
-        }
-        if !(query.tone == stored.tone || query.tone == 0 || stored.tone == 0) {
-            return false;
-        }
-    }
-    true
+        && (query.tone == stored.tone || query.tone == 0 || stored.tone == 0)
+}
+
+/// `pinyin_compare_with_tones` over the first `query.len()` packed words of
+/// one `PinyinIndexItem2` record, read in place. Each word decodes through
+/// `from_packed`, padding bit 15 masked; the query's own fields are
+/// compared, never a packed copy that would truncate an out-of-range one.
+/// The record holds at least `query.len()` words.
+fn record_matches_with_tones(query: &[ChewingKey], record: &[u8]) -> bool {
+    let (words, _) = record[4..4 + 2 * query.len()].as_chunks::<2>();
+    words.iter().zip(query).all(|(word, query)| {
+        key_matches_with_tones(*query, ChewingKey::from_packed(u16::from_le_bytes(*word)))
+    })
+}
+
+/// The `phrase_token_t` leading a `PinyinIndexItem2` record.
+fn record_token(record: &[u8]) -> u32 {
+    u32::from_le_bytes([record[0], record[1], record[2], record[3]])
 }
 
 fn key_at(arena: &[u8], offset: u32) -> &[u8] {
@@ -886,6 +899,136 @@ mod tests {
             .insert(encode_complete_key(&pair(3, 4)[..1]), Vec::new());
         assert!(index.has_prefix(&pair(3, 4)[..1]));
         assert!(!index.has_prefix(&pair(5, 6)[..1]));
+    }
+
+    fn toned(initial: u8, tone: u8) -> ChewingKey {
+        ChewingKey::new(initial, 1, 1, tone)
+    }
+
+    #[test]
+    fn query_key_builds_the_encoders_bytes_on_the_stack() {
+        let complete = [toned(2, 3), toned(4, 0)];
+        assert_eq!(*query_key(&complete), *encode_complete_key(&complete));
+        let incomplete = [toned(2, 3), ChewingKey::new(4, 0, 0, 0)];
+        assert_eq!(*query_key(&incomplete), *encode_incomplete_key(&incomplete));
+        let longest = [toned(5, 1); MAX_PHRASE_LENGTH];
+        assert_eq!(*query_key(&longest), *encode_complete_key(&longest));
+    }
+
+    #[test]
+    fn search_filters_a_mixed_tone_row_in_stored_order() {
+        let (one, two, none) = (
+            [toned(2, 1), toned(3, 4)],
+            [toned(2, 2), toned(3, 4)],
+            [toned(2, 0), toned(3, 0)],
+        );
+        // Unsorted, with a duplicate: stored as found.
+        let row = record(&[(9, &two), (7, &one), (8, &none), (7, &one), (6, &two)]);
+        let index = index(&[(encode_complete_key(&one), row)]);
+        assert_eq!(index.search(&one), [7, 8, 7]);
+        assert_eq!(index.search(&two), [9, 8, 6]);
+        assert_eq!(index.search(&[toned(2, 3), toned(3, 4)]), [8]);
+        assert_eq!(index.search(&[toned(2, 1), toned(3, 5)]), [8]);
+    }
+
+    #[test]
+    fn a_zero_tone_query_matches_every_toned_record() {
+        let records = [
+            [toned(2, 1), toned(3, 4)],
+            [toned(2, 2), toned(3, 1)],
+            [toned(2, 5), toned(3, 0)],
+        ];
+        let row = record(&[(1, &records[0]), (2, &records[1]), (3, &records[2])]);
+        let index = index(&[(encode_complete_key(&records[0]), row)]);
+        assert_eq!(index.search(&[toned(2, 0), toned(3, 0)]), [1, 2, 3]);
+        assert_eq!(index.search(&[toned(2, 0), toned(3, 1)]), [2, 3]);
+    }
+
+    #[test]
+    fn a_malformed_stride_row_answers_nothing() {
+        let keys = pair(2, 3);
+        let mut row = record(&[(7, &keys), (8, &keys)]);
+        row.push(0);
+        let longer = [key(2), key(3), key(4)];
+        let mut longer_row = record(&[(9, &longer)]);
+        longer_row.pop();
+        let index = index(&[
+            (encode_complete_key(&keys), row),
+            (encode_complete_key(&longer), longer_row),
+        ]);
+        assert!(index.has_record(&keys));
+        assert!(index.search(&keys).is_empty());
+        assert!(index.suggest(&keys).is_empty());
+    }
+
+    #[test]
+    fn suggest_filters_longer_records_with_tones() {
+        let prefix = [toned(2, 1)];
+        let (one, two) = ([toned(2, 1), toned(3, 2)], [toned(2, 2), toned(3, 2)]);
+        let index = index(&[
+            (encode_complete_key(&prefix), Vec::new()),
+            (
+                encode_complete_key(&one),
+                record(&[(5, &two), (4, &one), (4, &one)]),
+            ),
+        ]);
+        assert_eq!(index.suggest(&prefix), [4, 4]);
+        assert_eq!(index.suggest(&[toned(2, 0)]), [5, 4, 4]);
+    }
+
+    /// The pin's `pinyin_compare_with_tones` (`pinyin_phrase3.h:111-142` at
+    /// 074a2219) transcribed pass for pass, over decoded keys.
+    fn pin_compare_with_tones(lhs: &[ChewingKey], rhs: &[ChewingKey]) -> i32 {
+        for (lhs, rhs) in lhs.iter().zip(rhs) {
+            let result = i32::from(lhs.initial) - i32::from(rhs.initial);
+            if result != 0 {
+                return result;
+            }
+        }
+        for (lhs, rhs) in lhs.iter().zip(rhs) {
+            if (lhs.middle == rhs.middle && lhs.final_ == rhs.final_)
+                || (lhs.middle == 0 && lhs.final_ == 0)
+                || (rhs.middle == 0 && rhs.final_ == 0)
+            {
+                continue;
+            }
+            let middle = i32::from(lhs.middle) - i32::from(rhs.middle);
+            if middle != 0 {
+                return middle;
+            }
+            return i32::from(lhs.final_) - i32::from(rhs.final_);
+        }
+        for (lhs, rhs) in lhs.iter().zip(rhs) {
+            if lhs.tone == rhs.tone || lhs.tone == 0 || rhs.tone == 0 {
+                continue;
+            }
+            return i32::from(lhs.tone) - i32::from(rhs.tone);
+        }
+        0
+    }
+
+    #[test]
+    fn the_in_place_compare_agrees_with_decoding_for_every_packed_word() {
+        let mut queries = Vec::new();
+        for initial in [0, 1, 23, 31, 32, 40] {
+            for (middle, final_) in [(0, 0), (0, 3), (1, 0), (2, 17), (3, 31), (4, 0), (0, 32)] {
+                for tone in [0, 1, 5, 7, 8] {
+                    queries.push(ChewingKey::new(initial, middle, final_, tone));
+                }
+            }
+        }
+        let mut record = [0u8; 6];
+        for word in 0..=u16::MAX {
+            record[4..].copy_from_slice(&word.to_le_bytes());
+            let stored = [ChewingKey::from_packed(word)];
+            for query in &queries {
+                assert_eq!(
+                    record_matches_with_tones(std::slice::from_ref(query), &record),
+                    pin_compare_with_tones(std::slice::from_ref(query), &stored) == 0,
+                    "word {word:#06x} query {query:?}",
+                );
+            }
+        }
     }
 
     #[test]
