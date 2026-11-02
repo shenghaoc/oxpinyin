@@ -38,11 +38,8 @@ extracted directory.
 
 ## 2. Build the oracle
 
-Build dependencies: autotools, a C/C++ toolchain, pkg-config, gettext,
-gnome-common, curl, python3, and the dev headers for GLib 2.0, IBus 1.0,
-SQLite 3 and the DBM (a sound tkrzw that pkg-config finds for the default
-tkrzw cell, [verification rule 9](verification.md#9-sound-tkrzw-library); `--dbm bdb` needs `libdb-dev`, `--dbm kc`
-needs `libkyotocabinet-dev`). The parity oracle uses the [reference cell](backends.md)
+Debian build dependencies by mode and backend are listed in
+[`tools/oracle/dependencies.json`](../../tools/oracle/dependencies.json). The reference and compatibility images are libraries-only; a full build needs the `full` dependency group. The parity oracle uses the [reference cell](backends.md)
 (maintainer decision 2026-10-30 UTC: tkrzw is maintained upstream; it supersedes the 2026-09-27 UTC ruling that
 made Berkeley DB the default); differentials pick the cell with
 `PINYIN_ORACLE_DBM`. The capture goldens and the `pinyin-oracle` crate's

@@ -4,14 +4,11 @@
 
 # shellcheck source=../lib/bash-floor.sh
 . "${0%/*}/../lib/bash-floor.sh"
+[[ $? -eq 0 && -n ${OXPINYIN_BASH_FLOOR-} ]] || { echo "FAIL: $0: Bash floor not sourced" >&2; exit 2; }
 
 set -euo pipefail
 
-# Build dependencies: autotools (autoconf, automake, autopoint, libtool),
-# a C/C++ toolchain and make, pkg-config, gettext, gnome-common, curl,
-# tar, python3, and development headers for GLib 2.0, IBus 1.0, SQLite 3,
-# and the DBM backend selected by --dbm (Tkrzw by default, or
-# Berkeley DB / Kyoto Cabinet).
+# Debian build dependencies: tools/oracle/dependencies.json.
 
 # Both upstreams are fetched by commit SHA and verified by commit SHA. For
 # libpinyin this is forced: no release tag carries this pin (2.11.92 is
@@ -236,7 +233,7 @@ bdb)
 esac
 ORACLE_PIN_REF="libpinyin-$LIBPINYIN_VERSION-$LIBPINYIN_SHA+model20-$MODEL_SHA256+dbm-$dbm"
 
-for command in curl git sha256sum tar autoreconf make pkg-config find sort xargs patch; do
+for command in git sha256sum autoreconf make pkg-config find sort xargs; do
 	command -v "$command" >/dev/null 2>&1 || {
 		printf 'required command not found: %s\n' "$command" >&2
 		exit 1
@@ -308,6 +305,7 @@ export LD_LIBRARY_PATH="$prefix/lib:$prefix/lib64"
 fetch() {
 	local name=$1 url=$2 expected=$3 path=$work_dir/downloads/$1
 	if [[ ! -f $path ]]; then
+		command -v curl >/dev/null 2>&1 || { echo "required command not found: curl" >&2; exit 1; }
 		curl --fail --location --retry 3 --show-error "$url" --output "$path"
 	fi
 	printf '%s  %s\n' "$expected" "$path" | sha256sum --check --status || {
@@ -383,12 +381,14 @@ if [[ $mode != libs ]]; then
 		printf 'reusing pre-extracted model export from %s\n' "$model_dir" >&2
 	else
 		model_archive=$(fetch model20.text.tar.gz "$MODEL_URL" "$MODEL_SHA256")
+		command -v tar >/dev/null 2>&1 || { echo "required command not found: tar" >&2; exit 1; }
 		tar -xzf "$model_archive" -C "$model_data_dir"
 	fi
 fi
 
 patch_manifest=
 if [[ -n $apply_patches_dir ]]; then
+	command -v patch >/dev/null 2>&1 || { echo "required command not found: patch" >&2; exit 1; }
 	if [[ ! -d $apply_patches_dir ]]; then
 		printf '%s\n' "--apply-patches: not a directory: $apply_patches_dir" >&2
 		exit 1

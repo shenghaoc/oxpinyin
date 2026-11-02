@@ -60,7 +60,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
     build-essential \
     autoconf automake autopoint libtool \
-    pkg-config gettext gnome-common \
+    pkg-config gettext \
     curl ca-certificates \
     git \
     tar \

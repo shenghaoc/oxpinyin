@@ -14,6 +14,7 @@ semantic versioning for most (a pre-release of the minimum is older than it),
 the projects' own numbering for GNU ld, gcov and Valgrind. Runbooks and
 setup.sh point here instead of repeating version lists.
 """
+import json
 import os
 import platform
 import re
@@ -418,10 +419,48 @@ def host_lines(environ=None):
     return lines
 
 
+def oracle_dependency_lines(environ=None):
+    """Report Debian oracle build packages from the shared mode manifest."""
+    if not sys.platform.startswith('linux'):
+        return []
+    manifest = Path(__file__).resolve().parents[2] / 'tools/oracle/dependencies.json'
+    groups = json.loads(manifest.read_text())
+    environ = os.environ if environ is None else environ
+    unavailable = ['oracle dependencies: Debian package check unavailable on this Linux host']
+    executable = shutil.which('dpkg-query', path=environ.get('PATH'))
+    if executable is None:
+        return unavailable
+    packages = list(dict.fromkeys(package for group in groups.values() for package in group))
+    try:
+        result = subprocess.run([executable, '-W', '-f=${Package}\t${Architecture}\t${db:Status-Status}\n', *packages],
+                                capture_output=True, text=True, env=environ, check=False)
+    except OSError as exc:
+        return [f'{unavailable[0]} ({exc})']
+    if result.returncode == 2:
+        # Exit status 1 only means some package is unknown; 2 means dpkg-query itself failed.
+        detail = (result.stderr or '').strip().splitlines()
+        return [unavailable[0] + (f' ({detail[0]})' if detail else ' (dpkg-query exited with status 2)')]
+    native = _first_line(_run(['dpkg', '--print-architecture'], environ))
+    if native is None:
+        return [unavailable[0] + ' (native architecture unknown)']
+    installed = set()
+    for line in result.stdout.splitlines():
+        fields = line.split('\t')
+        if len(fields) == 3 and fields[2] == 'installed' and fields[1] in ('all', native):
+            installed.add(fields[0].split(':', 1)[0])
+    lines = []
+    for group, members in groups.items():
+        absent = [package for package in members if package not in installed]
+        detail = ('optional, not installed ' if group == 'full' else 'missing ') + ', '.join(absent)
+        lines.append(f'oracle {group}: ' + (detail if absent else 'installed'))
+    return lines
+
+
 def collect(environ=None):
     """Return (lines, status) without printing or provisioning."""
     environ = os.environ if environ is None else environ
     lines = host_lines(environ)
+    lines.extend(oracle_dependency_lines(environ))
     status = 0
     try:
         info = identity(environ)

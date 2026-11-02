@@ -41,6 +41,7 @@ on:
       - tools/oracle/version-manifest.json
       - tools/oracle/versions.py
       - tools/tkrzw/distro-probe.sh
+      - tools/lib/bash-floor.sh
       - tools/dev/compat/**
       - .github/workflows/oracle-image.yml
       - tools/oracle/Dockerfile.compat
@@ -57,6 +58,7 @@ on:
       - tools/oracle/version-manifest.json
       - tools/oracle/versions.py
       - tools/tkrzw/distro-probe.sh
+      - tools/lib/bash-floor.sh
       - tools/dev/compat/**
       - .github/workflows/oracle-image.yml
       - tools/oracle/Dockerfile.compat
@@ -102,7 +104,7 @@ jobs:
             oracle=true
           else
             changed=$(git diff --name-only "$BASE" HEAD)
-            if grep -E '^(tools/dev/compat/.*|tools/oracle/(build-oracle.sh|Dockerfile.oracle|oracle-pin.txt|version-manifest.json|versions.py)|tools/tkrzw/distro-probe.sh|.github/workflows/oracle-image.yml)$' <<< "$changed" >/dev/null; then
+            if grep -E '^(tools/dev/compat/.*|tools/oracle/(build-oracle.sh|Dockerfile.oracle|oracle-pin.txt|version-manifest.json|versions.py)|tools/tkrzw/distro-probe.sh|tools/lib/bash-floor.sh|.github/workflows/oracle-image.yml)$' <<< "$changed" >/dev/null; then
               oracle=true
             fi
           fi
@@ -163,7 +165,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .oracle-image-verified
-          key: oracle-image-verified-linux-amd64-${{ steps.meta.outputs.tag }}-${{ hashFiles('.github/workflows/oracle-image.yml', 'tools/oracle/Dockerfile.compat', 'tools/oracle/compat.sh', 'tools/oracle/compat-inside.sh', 'tools/dev/compat/*.py', 'tools/cloud/setup.sh', 'tools/tkrzw/distro-probe.sh', 'rust-toolchain.toml') }}
+          key: oracle-image-verified-linux-amd64-${{ steps.meta.outputs.tag }}-${{ hashFiles('.github/workflows/oracle-image.yml', 'tools/oracle/Dockerfile.compat', 'tools/oracle/compat.sh', 'tools/oracle/compat-inside.sh', 'tools/dev/compat/*.py', 'tools/cloud/setup.sh', 'tools/tkrzw/distro-probe.sh', 'tools/lib/bash-floor.sh', 'rust-toolchain.toml') }}
           lookup-only: true
 
       - name: Skip the amd64 image rebuild
@@ -236,7 +238,7 @@ jobs:
             exit 1
           fi
           bad=$(grep -E '^COPY ' <<< "$stage" | \
-            grep -vE '^COPY tools/(oracle/(version-manifest.json|versions.py)|tkrzw/distro-probe.sh) ' || true)
+            grep -vE '^COPY tools/(oracle/(version-manifest.json|versions.py)|tkrzw/distro-probe.sh|lib/bash-floor.sh) ' || true)
           if [[ -n $bad ]]; then
             printf 'unexpected COPY in the deps stage: %s\n' "$bad" >&2
             exit 1
@@ -275,7 +277,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .oracle-image-verified
-          key: oracle-image-verified-linux-amd64-${{ steps.meta.outputs.tag }}-${{ hashFiles('.github/workflows/oracle-image.yml', 'tools/oracle/Dockerfile.compat', 'tools/oracle/compat.sh', 'tools/oracle/compat-inside.sh', 'tools/dev/compat/*.py', 'tools/cloud/setup.sh', 'tools/tkrzw/distro-probe.sh', 'rust-toolchain.toml') }}
+          key: oracle-image-verified-linux-amd64-${{ steps.meta.outputs.tag }}-${{ hashFiles('.github/workflows/oracle-image.yml', 'tools/oracle/Dockerfile.compat', 'tools/oracle/compat.sh', 'tools/oracle/compat-inside.sh', 'tools/dev/compat/*.py', 'tools/cloud/setup.sh', 'tools/tkrzw/distro-probe.sh', 'tools/lib/bash-floor.sh', 'rust-toolchain.toml') }}
 
       - name: Log in to GHCR
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.oracle == 'true'
@@ -379,7 +381,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .oracle-image-verified
-          key: oracle-image-verified-linux-arm64-${{ steps.meta.outputs.tag }}-${{ hashFiles('.github/workflows/oracle-image.yml', 'tools/oracle/Dockerfile.compat', 'tools/oracle/compat.sh', 'tools/oracle/compat-inside.sh', 'tools/dev/compat/*.py', 'tools/cloud/setup.sh', 'tools/tkrzw/distro-probe.sh', 'rust-toolchain.toml') }}
+          key: oracle-image-verified-linux-arm64-${{ steps.meta.outputs.tag }}-${{ hashFiles('.github/workflows/oracle-image.yml', 'tools/oracle/Dockerfile.compat', 'tools/oracle/compat.sh', 'tools/oracle/compat-inside.sh', 'tools/dev/compat/*.py', 'tools/cloud/setup.sh', 'tools/tkrzw/distro-probe.sh', 'tools/lib/bash-floor.sh', 'rust-toolchain.toml') }}
           lookup-only: true
 
       - name: Skip the arm64 image rebuild
@@ -442,7 +444,7 @@ jobs:
             exit 1
           fi
           bad=$(grep -E '^COPY ' <<< "$stage" | \
-            grep -vE '^COPY tools/(oracle/(version-manifest.json|versions.py)|tkrzw/distro-probe.sh) ' || true)
+            grep -vE '^COPY tools/(oracle/(version-manifest.json|versions.py)|tkrzw/distro-probe.sh|lib/bash-floor.sh) ' || true)
           if [[ -n $bad ]]; then
             printf 'unexpected COPY in the deps stage: %s\n' "$bad" >&2
             exit 1
@@ -473,7 +475,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .oracle-image-verified
-          key: oracle-image-verified-linux-arm64-${{ steps.meta.outputs.tag }}-${{ hashFiles('.github/workflows/oracle-image.yml', 'tools/oracle/Dockerfile.compat', 'tools/oracle/compat.sh', 'tools/oracle/compat-inside.sh', 'tools/dev/compat/*.py', 'tools/cloud/setup.sh', 'tools/tkrzw/distro-probe.sh', 'rust-toolchain.toml') }}
+          key: oracle-image-verified-linux-arm64-${{ steps.meta.outputs.tag }}-${{ hashFiles('.github/workflows/oracle-image.yml', 'tools/oracle/Dockerfile.compat', 'tools/oracle/compat.sh', 'tools/oracle/compat-inside.sh', 'tools/dev/compat/*.py', 'tools/cloud/setup.sh', 'tools/tkrzw/distro-probe.sh', 'tools/lib/bash-floor.sh', 'rust-toolchain.toml') }}
 
       - name: Log in to GHCR
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.oracle == 'true'
