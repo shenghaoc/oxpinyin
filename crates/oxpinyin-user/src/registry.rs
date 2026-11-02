@@ -52,19 +52,10 @@ pub struct CountCache {
     pub(crate) bigram_rows: HashMap<Token, Vec<u8>>,
 }
 
-/// Accepted exported increments since the last operation that writes counts.
-/// The library totals are cached only while these live item deltas exist.
-#[derive(Default)]
-pub(crate) struct SystemUnigramBumps {
-    pub(crate) tokens: HashMap<Token, u64>,
-    pub(crate) libraries: HashMap<u8, u32>,
-    pub(crate) total: u64,
-}
-
 pub struct StoreInner<S: WriteStore> {
-    pub(crate) system_bumps_live: AtomicBool,
-    pub(crate) system_bumps: Mutex<SystemUnigramBumps>,
     pub(crate) has_system_items: AtomicBool,
+    // When nested, acquire the session phrase-arena mutex first, then
+    // `system_items`, then `removed_system_items`; never reverse this order.
     pub(crate) system_items: Mutex<crate::system_items::SystemItems>,
     /// Whether [`Self::removed_system_items`] holds a token.
     pub(crate) has_removed_system_items: AtomicBool,
@@ -105,12 +96,6 @@ pub struct StoreInner<S: WriteStore> {
     /// opening no store transaction. Recomputed at `open` and maintained only
     /// by `UserStore::mark_committed_write`.
     pub(crate) has_user_data: AtomicBool,
-    /// How far the facade total the loaded libraries' stored totals make
-    /// lies from the one the seeded rows make (`store_libpinyin::seed_txn`),
-    /// a wrapping `guint32`. `compact` never rebuilds the facade's total
-    /// (074a2219 `phrase_index.cpp:648-675`); only a library loaded again
-    /// moves it, by the old sub-index's total out and the new one's in.
-    pub(crate) facade_offset: std::sync::atomic::AtomicU32,
     /// Whether any library still carries its own share of that difference
     /// in [`crate::store::LIBRARY_OFFSET`]: from the load until the next
     /// `compact` (a save, the end of an import, a mask_out), which

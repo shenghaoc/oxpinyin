@@ -1631,6 +1631,10 @@ impl RuntimeLm<'_> {
                 .map_err(|error| LmError::User(error.to_string()))?,
         };
         delta.unigram_delta = delta.unigram_delta.saturating_add(self.bumps.token(token));
+        if let Some(store) = self.user.filter(|store| store.is_libpinyin_session()) {
+            delta.unigram_total_delta =
+                store.unigram_total_over(|nibble| self.inner.is_visible(nibble));
+        }
         delta.unigram_total_delta = self.total_extra(delta.unigram_total_delta);
         Ok(delta)
     }
@@ -1713,9 +1717,12 @@ impl LanguageModel for RuntimeLm<'_> {
                 .map_err(|error| LmError::User(error.to_string()))?,
         };
         let extra = extra.saturating_add(self.bumps.token(token.value()));
+        let live = self
+            .user
+            .and_then(|store| store.system_unigram(token.value()));
         Ok(self
             .inner
-            .unigram_freq_with_user_delta(token.value(), extra))
+            .unigram_freq_with_user_delta(token.value(), live, extra))
     }
 
     fn has_real_unigrams(&self) -> bool {
@@ -1728,6 +1735,9 @@ impl LanguageModel for RuntimeLm<'_> {
         }
         let user_total = match self.user {
             None => 0,
+            Some(store) if store.is_libpinyin_session() => {
+                store.unigram_total_over(|nibble| self.inner.is_visible(nibble))
+            }
             Some(store) => store
                 .unigram_total()
                 .map_err(|error| LmError::User(error.to_string()))?,

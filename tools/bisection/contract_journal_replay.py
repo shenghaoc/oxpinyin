@@ -6,9 +6,10 @@ import os
 from pathlib import Path
 import time
 
-from contract_abi import Arr, B, I, P, S, U, UNTOUCHED, Z, sentence_out, tokens_of, unigram_of, zhuyin_sentence_out
+from contract_abi import (
+    Arr, B, I, P, S, U, UNTOUCHED, Z, sentence_out, tokens_of, unigram_of, zhuyin_chewing, zhuyin_sentence_out)
 from contract_case_helpers import (
-    _chunk, _dynamic_adjust_out, _facade_total_out, _modify_header, _reload_pron_keys, _write_log, candidate_rows,
+    FACADE_TOTAL, _chunk, _dynamic_adjust_out, _facade_total_out, _modify_header, _reload_pron_keys, _write_log, candidate_rows,
     guess_rows, log_walk, phrase_table_reopen, remember_export, token_phrase_of, token_unigram_trained,
     train_selected_top, zhuyin_guess_rows)
 from contract_fixtures import _write_user_conf, import_rows, private_system
@@ -308,6 +309,47 @@ def unigram_lifecycle(k, variant):
         phrase_table_reopen(k)
         out['second-reopen'] = unigram_of(k, watched)
     return out
+
+
+# A refused add stays in the facade total across a reload of the library. The facade
+# total takes the delta before the sub-index answers (`phrase_index.h:628-635`), a
+# sub-index whose `guint32` total cannot take it refuses (`phrase_index.cpp:170-175`),
+# and `load` swaps the old sub-index's total out of the facade and the new one's in
+# (`phrase_index.cpp:237-248`): the refused delta is in neither. The log header makes
+# library 2's total 0xfffffffc, so the delta (the one that wraps the facade total to
+# zero) is refused, and the library is unloaded and loaded again; the pin's zero total
+# then asserts at the first ranked row (`pinyin.cpp:1859`; `zhuyin.cpp:1261`): row 58's
+# registered zero-total path, with its policy.
+def refused_add_reload(k):
+    """Refuse a facade-total-wrapping add on library 2, reload it, and rank a candidate.
+
+    Return the add and reload flags, then the guess flag; the pin aborts at the
+    zero total and the subject answers false."""
+    system = private_system(k)
+    k.data = system
+    total, items, _offsets = _system_items(k, 'gbk_char.bin')
+    slot = next(slot for slot, item in items.items() if item[0] == 1 and item[1] == 1)
+    _write_user_conf(k)
+    _write_log(k, _modify_header(0, total, 0xfffffffc), 'gbk_char.dbin')
+    assert k.ctx
+    facade = (FACADE_TOTAL + 0xfffffffc - total) % 2 ** 32
+    out = {'add': k.fn('token_add_unigram_frequency', B, P, U, U)(
+        k.inst, (2 << 24) | slot, (2 ** 32 - facade) % 2 ** 32)}
+    out['unload'] = k.fn('unload_phrase_library', B, P, C.c_ubyte)(k.ctx, 2)
+    out['load'] = k.fn('load_phrase_library', B, P, C.c_ubyte)(k.ctx, 2)
+    if k.mode == 'pinyin':
+        inst = k.alloc()
+        k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'nihao')
+        out['ret'] = k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0x1E)
+    else:
+        inst = zhuyin_chewing(k)
+        out['ret'] = k.fn('guess_candidates_after_cursor', B, P, Z)(inst, 0)
+    return out
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    case('unigram-refused-reload-' + _mode, mode=_mode, abort=False, sigabrt=True,
+         issues=('697', 'row:58'))(refused_add_reload)
 
 
 for _mode in ('pinyin', 'zhuyin'):

@@ -983,6 +983,66 @@ LAYOUT_CRITICAL_CASES = frozenset((
 ))
 
 
+def transient_reload_replacement_probe(k):
+    """Observe replacement item bytes and unigram after a NULL-user reload."""
+    from contract_abi import Arr, tokens_of, unigram_of
+    from contract_case_helpers import token_phrase_of
+    system = private_system(k)
+    k._ctx = k.init(system=system, user=None, literal=True)
+    assert k._ctx, 'transient init failed'
+    path = Path(system, 'gbk_char.bin')
+    payload = bytearray(path.read_bytes()[8:])
+    word = lambda at: int.from_bytes(payload[at:at + 4], 'little')
+    index, content = word(4), word(8)
+    def nth(token):
+        new = k.glib.g_array_new
+        new.restype, new.argtypes = P, [I, I, U]
+        array = new(0, 0, 2)
+        ok = k.fn('token_get_nth_pronunciation', B, P, U, U, P)(k.inst, token, 0, array)
+        view = C.cast(array, C.POINTER(Arr)).contents
+        return C.string_at(view.data, 2 * view.len) if ok and view.len else b''
+    for slot in range(1, (content - index - 1) // 4):
+        offset = word(index + slot * 4)
+        if not offset or payload[content + offset] != 1 or not payload[content + offset + 1]:
+            continue
+        token = 0x02000000 | slot
+        before_text = token_phrase_of(k, token)
+        if not before_text[0] or not before_text[2]:
+            continue
+        found = tokens_of(k, before_text[2])
+        if len(found) <= 4 and sum(t >> 24 == 2 for t in found) == 1 and token in found:
+            break
+    else:
+        raise AssertionError('no suitable slot')
+    before_count = unigram_of(k, token)
+    before_key = nth(token)
+    assert before_count[0] and before_count[1] < 0xffffffef and len(before_key) == 2
+    assert k.fn('unload_phrase_library', B, P, C.c_ubyte)(k.ctx, 2)
+    at = content + word(index + slot * 4)
+    payload[at + 2:at + 6] = (before_count[1] + 7).to_bytes(4, 'little')
+    payload[at + 10] ^= 1
+    path.unlink()
+    path.write_bytes(_chunk(payload))
+    assert k.fn('load_phrase_library', B, P, C.c_ubyte)(k.ctx, 2)
+    after_key = nth(token)
+    after_count = unigram_of(k, token)
+    iterator = k.fn('begin_add_phrases', P, P, U)(k.ctx, 2)
+    reading = b'ni3' if k.mode == 'pinyin' else 'ㄋㄧˇ'.encode()
+    added = bool(k.fn('iterator_add_phrase', B, P, S, S, I)(
+        iterator, before_text[2].encode(), reading, 1))
+    k.fn('end_add_phrases', None, P)(iterator)
+    imported_key = nth(token)
+    return {'replacement_key': after_key != before_key,
+            'replacement_unigram': after_count[0] and after_count[1] == before_count[1] + 7,
+            'import': added,
+            'import_replacement_key': imported_key == after_key}
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    case('transient-reload-replacement-' + _mode, mode=_mode,
+         issues=('1549',))(transient_reload_replacement_probe)
+
+
 def register(driver_case):
     """Register the declarations with the driver's current decorator, in their original order.
 

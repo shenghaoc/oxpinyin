@@ -490,7 +490,9 @@ EXPECTED = [('stderr-library-init-missing',
             ('second-separator-library-init', (), {'policy_record': '1297-layout-criticals.md', 'mode': 'pinyin', 'stderr': True}),
             ('third-separator-library-init', (), {'policy_record': '1297-layout-criticals.md', 'mode': 'pinyin', 'stderr': True}),
             ('second-separator-library-init-zhuyin', (), {'policy_record': '1297-layout-criticals.md', 'mode': 'zhuyin', 'stderr': True}),
-            ('third-separator-library-init-zhuyin', (), {'policy_record': '1297-layout-criticals.md', 'mode': 'zhuyin', 'stderr': True})]
+            ('third-separator-library-init-zhuyin', (), {'policy_record': '1297-layout-criticals.md', 'mode': 'zhuyin', 'stderr': True}),
+            ('transient-reload-replacement-pinyin', (), {'mode': 'pinyin', 'issues': ('1549',)}),
+            ('transient-reload-replacement-zhuyin', (), {'mode': 'zhuyin', 'issues': ('1549',)})]
 
 
 def declarations():

@@ -492,6 +492,12 @@ impl<
         self.libraries.borrow()
     }
 
+    /// Whether `nibble` names a library the model reads.
+    #[must_use]
+    pub fn is_visible(&self, nibble: u8) -> bool {
+        self.visible(nibble)
+    }
+
     fn visible(&self, nibble: u8) -> bool {
         library_visible(self.library_mask.borrow().load(Ordering::SeqCst), nibble)
     }
@@ -634,10 +640,7 @@ impl<
             return Self::pure_bigram_cost(history, transition);
         }
 
-        let unigram = merge_unigram_counts(
-            self.unigram_count(token.value()).unwrap_or(0),
-            user.unigram_delta,
-        );
+        let unigram = self.live_unigram_count(token.value(), &user);
         let unigram_total = self.facade_total(user.unigram_total_delta);
         if unigram == 0 || unigram_total == 0 {
             return Ok(UNKNOWN_COST);
@@ -776,14 +779,39 @@ impl<
         Ok(edge_cost.saturating_add(model))
     }
 
-    /// The item unigram of `token` plus a user delta. `Some(0)` is a token
+    /// The unigram the model scores `token` with: the live item field when the
+    /// user side holds one for a visible library, else the stored value plus
+    /// the user delta, merged as `guint32` (`phrase_index.cpp:173-175`).
+    fn live_unigram_count(&self, token: u32, user: &UserCountDelta) -> u64 {
+        match user
+            .unigram_live
+            .filter(|_| self.visible((token >> 24) as u8))
+        {
+            Some(live) => u64::from(live),
+            None => {
+                merge_unigram_counts(self.unigram_count(token).unwrap_or(0), user.unigram_delta)
+            }
+        }
+    }
+
+    /// The item unigram of `token` plus a user delta, or the live field when
+    /// there is one. `Some(0)` is a token
     /// with no item that the user overlay did not raise; the chunk items
     /// are the real frequency table, so this is never `None`.
     #[must_use]
-    pub fn unigram_freq_with_user_delta(&self, token: u32, user_delta: u64) -> Option<u64> {
-        Some(merge_unigram_counts(
-            self.unigram_count(token).unwrap_or(0),
-            user_delta,
+    pub fn unigram_freq_with_user_delta(
+        &self,
+        token: u32,
+        live: Option<u32>,
+        user_delta: u64,
+    ) -> Option<u64> {
+        Some(self.live_unigram_count(
+            token,
+            &UserCountDelta {
+                unigram_delta: user_delta,
+                unigram_live: live,
+                ..UserCountDelta::ZERO
+            },
         ))
     }
 
@@ -875,12 +903,21 @@ impl<
         // the seam's default answer — no n-best cost data, no rows — as
         // does no installed unigram table at all.
         let nibble = (token.value() >> 24) as u8;
-        let count = match self.unigram_count(token.value()) {
-            Some(count) => count,
-            None if self.visible(nibble) && (is_user_file_library(nibble) || imported_item) => 0,
-            None => return Ok(oxpinyin_core::NbestStepCosts::default()),
+        let count = match user.unigram_live.filter(|_| self.visible(nibble)) {
+            Some(live) => u64::from(live),
+            None => {
+                let count = match self.unigram_count(token.value()) {
+                    Some(count) => count,
+                    None if self.visible(nibble)
+                        && (is_user_file_library(nibble) || imported_item) =>
+                    {
+                        0
+                    }
+                    None => return Ok(oxpinyin_core::NbestStepCosts::default()),
+                };
+                merge_unigram_counts(count, user.unigram_delta)
+            }
         };
-        let count = merge_unigram_counts(count, user.unigram_delta);
         let unigram_total = self.facade_total(user.unigram_total_delta);
         // Pre-log pieces, with the pin's epsilon gates before weighting.
         // IEEE division deliberately carries zero totals and NaN through.

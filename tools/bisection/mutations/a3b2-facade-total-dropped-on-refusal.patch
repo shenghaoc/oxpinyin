@@ -1,0 +1,7 @@
+diff --git a/crates/oxpinyin-user/src/store_arena.rs b/crates/oxpinyin-user/src/store_arena.rs
+index 23a277cb..23bbe36c 100644
+--- a/crates/oxpinyin-user/src/store_arena.rs
++++ b/crates/oxpinyin-user/src/store_arena.rs
+@@ -497,2 +496,0 @@ impl<S: WriteStore> GenericUserStore<S> {
+-            } else {
+-                items.add_facade_extra(u64::from(delta));

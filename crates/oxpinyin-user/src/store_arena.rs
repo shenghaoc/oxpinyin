@@ -1,6 +1,7 @@
 //! Session phrase operations. Standalone stores retain their row persistence.
 
 use super::*;
+use crate::replay::UnigramAdd;
 use crate::user_library::{SessionPhrases, UserLibrary};
 use oxpinyin_data::chunk_write::{ChunkItem, decode_phrase_item, encode_phrase_item};
 use oxpinyin_data::phrase_library::PhraseItemView;
@@ -13,38 +14,74 @@ fn packed(keys: &[PinyinKey]) -> Result<Vec<u16>, UserStoreError> {
     crate::store_libpinyin::pinyin_keys_to_packed(keys).ok_or(UserStoreError::InvalidPhrase)
 }
 
-fn library_total(
-    txn: &impl WriteTxn,
-    phrases: &SessionPhrases,
-    library: u8,
-) -> Result<u32, StoreError> {
-    let mut total = (txn_get_u64_or(txn, SYSTEM_BASE, &[library], 0)? as u32)
-        .wrapping_add(txn_get_u64_or(txn, LIBRARY_OFFSET, &[library], 0)? as u32)
-        .wrapping_add(
-            phrases
-                .libraries
-                .get(&library)
-                .map_or(0, UserLibrary::item_sum),
-        );
-    let lo = codec::encode_token(u32::from(library) << 24);
-    let hi = codec::encode_token(u32::from(library + 1) << 24);
-    txn.range(
-        UNIGRAM,
-        Bound::Included(&lo),
-        Bound::Excluded(&hi),
-        |_, value| {
-            total = total.wrapping_add(
-                codec::decode_u64(value)
-                    .map_err(|_| StoreError::Backend("corrupt unigram".into()))?
-                    as u32,
-            );
-            Ok(())
-        },
-    )?;
-    Ok(total)
-}
-
 impl<S: WriteStore> GenericUserStore<S> {
+    /// `SubPhraseIndex::m_total_freq` of `library`: a system library's live
+    /// scalar, or a user library's items sum plus the stored total's
+    /// difference from it.
+    fn library_total_of(
+        &self,
+        txn: &impl WriteTxn,
+        phrases: &SessionPhrases,
+        library: u8,
+    ) -> Result<u32, StoreError> {
+        if let Some(original) = self.originals.get(&library) {
+            return Ok(self
+                .inner
+                .system_items
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .library_total(library, Some(original))
+                .unwrap_or(original.total));
+        }
+        Ok(
+            (txn_get_u64_or(txn, LIBRARY_OFFSET, &[library], 0)? as u32).wrapping_add(
+                phrases
+                    .libraries
+                    .get(&library)
+                    .map_or(0, UserLibrary::item_sum),
+            ),
+        )
+    }
+
+    /// `FacadePhraseIndex::add_phrase_item` for an item of `unigram` added to
+    /// `library` (`phrase_index.h:669`): the facade total takes it, and a
+    /// system library's total takes it too when the item's unigram was kept.
+    fn take_item_in(&self, library: u8, unigram: u32, accepted: bool) {
+        let mut items = self
+            .inner
+            .system_items
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match self.originals.get(&library) {
+            Some(original) if accepted => {
+                let total = items
+                    .library_total(library, Some(original))
+                    .unwrap_or(original.total);
+                items.set_library_total(library, total.wrapping_add(unigram));
+            }
+            _ => items.add_facade_extra(u64::from(unigram)),
+        }
+    }
+
+    /// `FacadePhraseIndex::remove_phrase_item` (`phrase_index.h:691`): the
+    /// facade and the library's totals lose the item's unigram.
+    fn take_item_out(&self, library: u8, unigram: u32) {
+        let mut items = self
+            .inner
+            .system_items
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match self.originals.get(&library) {
+            Some(original) => {
+                let total = items
+                    .library_total(library, Some(original))
+                    .unwrap_or(original.total);
+                items.set_library_total(library, total.wrapping_sub(unigram));
+            }
+            None => items.sub_facade_extra(u64::from(unigram)),
+        }
+    }
+
     /// The session side of a `USER_FILE` library transition: `library` takes
     /// the arena's place, with its share of the facade total; `None` is an
     /// unload, which leaves the library without a sub-index until a load. A libpinyin session's values are process memory (see
@@ -54,7 +91,6 @@ impl<S: WriteStore> GenericUserStore<S> {
         let Some(target) = &self.inner.libpinyin else {
             return;
         };
-        in_session(self.flush_system_unigrams());
         let db = self.database();
         let mut phrases = target.phrases();
         let sum = |library: &UserLibrary| {
@@ -76,12 +112,6 @@ impl<S: WriteStore> GenericUserStore<S> {
             } else {
                 txn.put(LIBRARY_OFFSET, &key, &codec::encode_u64(u64::from(offset)))?;
             }
-            let total = txn_get_u64_or(txn, UNIGRAM_TOTAL, &[UNIGRAM_TOTAL_KEY], 0)?;
-            txn.put(
-                UNIGRAM_TOTAL,
-                &[UNIGRAM_TOTAL_KEY],
-                &codec::encode_u64(total.wrapping_sub(before).wrapping_add(after)),
-            )?;
             Ok((
                 offset.wrapping_sub(old_offset),
                 !txn.is_empty(LIBRARY_OFFSET)?,
@@ -91,6 +121,13 @@ impl<S: WriteStore> GenericUserStore<S> {
         // Unreachable `None`: keep the offsets flag set and the user-data
         // gate open, the answers that read every row there is.
         let (moved, offsets_left, tables_live) = in_session(written).unwrap_or((0, true, true));
+        // The facade total takes the library's new total in and the old one
+        // out (`phrase_index.cpp:237-248`).
+        self.inner
+            .system_items
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .add_facade_extra(after.wrapping_sub(before).wrapping_add(u64::from(moved)));
         phrases.libraries.remove(&nibble);
         if let Some(library) = library {
             phrases.libraries.insert(nibble, library);
@@ -103,7 +140,6 @@ impl<S: WriteStore> GenericUserStore<S> {
             .values()
             .any(|library| !library.is_empty());
         drop(phrases);
-        self.inner.facade_offset.fetch_add(moved, Ordering::SeqCst);
         self.inner
             .has_library_offsets
             .store(offsets_left, Ordering::SeqCst);
@@ -111,16 +147,6 @@ impl<S: WriteStore> GenericUserStore<S> {
             .container()
             .is_some_and(|container| container.keys().is_ok_and(|keys| !keys.is_empty()));
         self.mark_committed_phrase_write(db, arena_live || tables_live || grams_live);
-    }
-
-    pub(super) fn arena_has_system_items(&self) -> bool {
-        self.inner.libpinyin.as_ref().is_some_and(|target| {
-            target
-                .phrases()
-                .libraries
-                .iter()
-                .any(|(library, items)| (1..=4).contains(library) && !items.is_empty())
-        })
     }
 
     pub(super) fn arena_has_items(&self) -> bool {
@@ -142,7 +168,6 @@ impl<S: WriteStore> GenericUserStore<S> {
         readings: &[&(Vec<PinyinKey>, u64)],
         unigram: u32,
     ) -> Result<Token, UserStoreError> {
-        self.flush_system_unigrams()?;
         let target = self
             .inner
             .libpinyin
@@ -177,7 +202,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         let replacement = library
             .prepare_replace(slot, bytes)
             .map_err(UserStoreError::Persistence)?;
-        db.write(|txn| bump_unigram_total(txn, u64::from(unigram)))?;
+        self.take_item_in(ADDON_DICTIONARY, unigram, false);
         replacement.apply(phrases.libraries.entry(ADDON_DICTIONARY).or_default());
         phrases
             .phrase_table
@@ -206,7 +231,6 @@ impl<S: WriteStore> GenericUserStore<S> {
         readings: impl Iterator<Item = Vec<ChewingKey>>,
         delta: u32,
     ) -> Result<(), UserStoreError> {
-        self.flush_system_unigrams()?;
         if self.system_item_removed(token) {
             return Ok(());
         }
@@ -292,7 +316,6 @@ impl<S: WriteStore> GenericUserStore<S> {
         selected: Option<Option<Token>>,
         range_end: u32,
     ) -> Result<Token, UserStoreError> {
-        self.flush_system_unigrams()?;
         let target = self
             .inner
             .libpinyin
@@ -357,7 +380,8 @@ impl<S: WriteStore> GenericUserStore<S> {
                 return Ok(Err(UserStoreError::TokenSpaceExhausted));
             }
             let increment = delta.wrapping_mul(ADD_PHRASE_UNIGRAM_FACTOR_U32);
-            let accepted = library_total(txn, &phrases, library)?
+            let accepted = self
+                .library_total_of(txn, &phrases, library)?
                 .checked_add(increment)
                 .is_some();
             let bytes = match encoded(&ChunkItem {
@@ -378,7 +402,7 @@ impl<S: WriteStore> GenericUserStore<S> {
                 Ok(replacement) => replacement,
                 Err(error) => return Ok(Err(UserStoreError::Persistence(error))),
             };
-            bump_unigram_total(txn, u64::from(increment))?;
+            self.take_item_in(library, increment, accepted);
             Ok(Ok((token, true, Some(replacement))))
         })??;
         if let Some(replacement) = replacement {
@@ -409,32 +433,80 @@ impl<S: WriteStore> GenericUserStore<S> {
         token: Token,
         delta: u32,
     ) -> Result<bool, StoreError> {
-        let Some(target) = &self.inner.libpinyin else {
+        if self.inner.libpinyin.is_none() {
             return add_unigram_frequency(txn, phrase_index_library_index(token), token, delta);
+        }
+        // Only the sub-index's overflow is the pin's `ERROR_INTEGER_OVERFLOW`;
+        // a missing item answers another error that callers do not act on.
+        Ok(self.arena_add_unigram_outcome(txn, token, delta)? != UnigramAdd::Refused)
+    }
+
+    /// `FacadePhraseIndex::add_unigram_frequency` over the session's state
+    /// (074a2219 `phrase_index.h:628-635`, `phrase_index.cpp:150-176`). The
+    /// facade total takes `delta` first; the sub-index then takes it only when
+    /// it holds the item and its `guint32` total can: a system library's total
+    /// is its live scalar, a user library's the sum of its items. A
+    /// sub-index that does not take it leaves the delta in the facade's extra.
+    pub(super) fn arena_add_unigram_outcome(
+        &self,
+        txn: &impl WriteTxn,
+        token: Token,
+        delta: u32,
+    ) -> Result<UnigramAdd, StoreError> {
+        let Some(target) = &self.inner.libpinyin else {
+            return Ok(UnigramAdd::Missing);
         };
-        let mut phrases = target.phrases();
         let library = phrase_index_library_index(token);
-        bump_unigram_total(txn, u64::from(delta))?;
-        if library_total(txn, &phrases, library)?
-            .checked_add(delta)
-            .is_none()
-        {
-            return Ok(false);
-        }
-        if phrases.item(token).is_some() {
-            if let Some(library) = phrases.item_mut(token) {
-                library.increment_unigram(token & PHRASE_MASK, delta);
+        let original = self.originals.get(&library);
+        // Read and release the removed-set guard before taking the arena or
+        // items lock; nested acquisitions follow the order in `StoreInner`.
+        let removed = original.is_some() && self.system_item_removed(token);
+        let mut phrases = target.phrases();
+        let arena = phrases.item(token).is_some();
+        let mut items = self
+            .inner
+            .system_items
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if original.is_some() {
+            let outcome = if removed {
+                UnigramAdd::Missing
+            } else {
+                items
+                    .add_unigram(original, token, delta, arena)
+                    .unwrap_or(UnigramAdd::Missing)
+            };
+            if outcome.is_accepted() {
+                if arena {
+                    if let Some(library) = phrases.item_mut(token) {
+                        library.increment_unigram(token & PHRASE_MASK, delta);
+                    }
+                } else {
+                    self.inner.has_system_items.store(true, Ordering::Relaxed);
+                }
+            } else {
+                items.add_facade_extra(u64::from(delta));
             }
-        } else {
-            let key = codec::encode_token(token);
-            let old = txn_get_u64_or(txn, UNIGRAM, &key, 0)?;
-            txn.put(
-                UNIGRAM,
-                &key,
-                &codec::encode_u64(old.wrapping_add(u64::from(delta))),
-            )?;
+            return Ok(outcome);
         }
-        Ok(true)
+        items.add_facade_extra(u64::from(delta));
+        drop(items);
+        let total = (txn_get_u64_or(txn, LIBRARY_OFFSET, &[library], 0)? as u32).wrapping_add(
+            phrases
+                .libraries
+                .get(&library)
+                .map_or(0, UserLibrary::item_sum),
+        );
+        if total.checked_add(delta).is_none() {
+            return Ok(UnigramAdd::Refused);
+        }
+        match phrases.item_mut(token) {
+            Some(library) => {
+                library.increment_unigram(token & PHRASE_MASK, delta);
+                Ok(UnigramAdd::Accepted)
+            }
+            None => Ok(UnigramAdd::Missing),
+        }
     }
 
     pub(super) fn arena_remove(&mut self, token: Token) -> Result<bool, UserStoreError> {
@@ -475,16 +547,11 @@ impl<S: WriteStore> GenericUserStore<S> {
                 return Err(UserStoreError::UserReadingRemoval);
             }
         }
-        let removed = db.write(|txn| {
+        let removed = db.write(|_txn| {
             if bigram_fault.is_some() {
                 return Ok(None);
             }
-            let total = txn_get_u64_or(txn, UNIGRAM_TOTAL, &[UNIGRAM_TOTAL_KEY], 0)?;
-            txn.put(
-                UNIGRAM_TOTAL,
-                &[UNIGRAM_TOTAL_KEY],
-                &codec::encode_u64(total.saturating_sub(u64::from(item.unigram))),
-            )?;
+            self.take_item_out(phrase_index_library_index(token), item.unigram);
             Ok(Some(true))
         })?;
         match removed {
@@ -527,8 +594,20 @@ impl<S: WriteStore> GenericUserStore<S> {
         };
         let mut phrases = target.phrases();
         for (&nibble, library) in &mut phrases.libraries {
+            let selected = |slot: u32| (((u32::from(nibble) << 24) | slot) & mask) == value;
+            // `FacadePhraseIndex::mask_out` takes the old sub-index total out
+            // of the facade and the new one in (`phrase_index.cpp:699-718`):
+            // each removed item's frequency leaves the totals.
+            let removed: Vec<u32> = library
+                .items()
+                .filter(|&(slot, _)| selected(slot))
+                .map(|(_, item)| item.unigram())
+                .collect();
+            for unigram in removed {
+                self.take_item_out(nibble, unigram);
+            }
             library
-                .remove_matching(|slot| (((u32::from(nibble) << 24) | slot) & mask) == value)
+                .remove_matching(selected)
                 .map_err(UserStoreError::Persistence)?;
         }
         Ok(())

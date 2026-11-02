@@ -306,6 +306,7 @@ fn an_above_one_blend_keeps_the_pins_mixed_precision_rounding() {
         bigram_total: 602_365_351 - 7,
         unigram_delta: 21_950_320 - 5,
         unigram_total_delta: 4_294_967_295 - 19,
+        unigram_live: None,
     };
     // Independently evaluated with Python struct.pack/unpack for each f32
     // operation, following 074a2219 phonetic_lookup.h:605-608, :692-693:
@@ -444,6 +445,7 @@ fn user_file_tokens_are_priced_from_their_user_delta_alone() {
                 bigram_total: 5,
                 unigram_delta: 27,
                 unigram_total_delta: 27,
+                unigram_live: None,
             },
         )
         .unwrap();
@@ -506,6 +508,7 @@ fn lambda_routes_by_the_scanned_gfloat_and_overflow_takes_the_float_path() {
         bigram_total: 1 << 31,
         unigram_delta: 1 << 30,
         unigram_total_delta: 1 << 31,
+        unigram_live: None,
     };
     let mut costs = |lambda: &str| {
         lm.set_lambda_from_conf(&conf_with_lambda(lambda));
@@ -557,6 +560,7 @@ fn merged_row_items_price_as_the_pair_overlay_at_wrap_presence_and_lambda_edges(
                         bigram_total: total,
                         unigram_delta: 3,
                         unigram_total_delta: 9,
+                        unigram_live: None,
                     };
                     let expected = lm
                         .nbest_step_costs_with_user_delta(
