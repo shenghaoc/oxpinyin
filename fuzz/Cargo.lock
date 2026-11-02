@@ -385,7 +385,7 @@ name = "oxpinyin-store"
 version = "0.1.0"
 dependencies = [
  "bindgen",
- "pkg-config",
+ "system-deps",
 ]
 
 [[package]]

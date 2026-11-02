@@ -516,12 +516,8 @@ def _run_bdb(backend, sanitizer, *, environment, out, err, tools, host_os, night
     try:
         compile = ['gcc', '-Wall', '-Wextra', '-Werror', '-O1', '-g',
                    '-fsanitize=address,undefined', '-fno-sanitize-recover=all']
-        include = child.get('OXPINYIN_BDB_INCLUDE_DIR')
-        if include:
-            compile.append(f'-I{include}')
-        library = child.get('OXPINYIN_BDB_LIB_DIR')
-        if library:
-            compile.append(f'-L{library}')
+        compile += native.path_list_flags(child, 'SYSTEM_DEPS_BDB_INCLUDE', '-I')
+        compile += native.path_list_flags(child, 'SYSTEM_DEPS_BDB_SEARCH_NATIVE', '-L')
         hash_walk = str(Path(work) / 'hash-walk')
         btree_order = str(Path(work) / 'btree-order')
         for output, source in ((hash_walk, 'tools/bdb/hash-walk.c'),

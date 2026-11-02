@@ -12,15 +12,66 @@
 //!   Kyoto Cabinet's classes, which this script also compiles with `cc`.
 //! * `tkrzw` — the tkrzw C API (`tkrzw_langc.h`), on by default.
 //! * `bdb` — the Berkeley DB C API (`db.h`), from the system libdb.
+//!
+//! # Discovery
+//!
+//! `system-deps` is the one discovery layer. The backends are declared in
+//! this package's `[package.metadata.system-deps]`, and the
+//! `SYSTEM_DEPS_<NAME>_*` variables are the only overrides
+//! (`docs/runbooks/backends.md`). It emits the link-search and link-lib
+//! directives. This script reads the resolved include and link paths from
+//! it for what `system-deps` does not configure: bindgen's and `cc`'s
+//! include paths, and the rpath.
+//!
+//! Each backend is found as libpinyin's `configure.ac` finds it: tkrzw and
+//! Kyoto Cabinet through their `.pc` file (`PKG_CHECK_MODULES`), Berkeley
+//! DB without pkg-config (`AC_CHECK_HEADER([db.h])` and
+//! `AC_SEARCH_LIBS([db_create], [db])`).
 
+#[cfg(any(feature = "tkrzw", feature = "kyotocabinet", feature = "bdb"))]
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
-    #[cfg(feature = "tkrzw")]
-    tkrzw::build();
-    #[cfg(feature = "kyotocabinet")]
-    kyotocabinet::build();
     #[cfg(feature = "bdb")]
-    bdb::build();
+    bdb::pin_defaults();
+    let dependencies = probe();
+    #[cfg(feature = "tkrzw")]
+    tkrzw::build(&dependencies);
+    #[cfg(feature = "kyotocabinet")]
+    kyotocabinet::build(&dependencies);
+    #[cfg(feature = "bdb")]
+    bdb::build(&dependencies);
+}
+
+/// With no C backend selected there is nothing to find or bind.
+#[cfg(not(any(feature = "tkrzw", feature = "kyotocabinet", feature = "bdb")))]
+fn main() {
+    println!("cargo:rerun-if-changed=build.rs");
+}
+
+/// Probes the selected backend's `[package.metadata.system-deps]` entry.
+/// A failure is fatal: no backend has a silent fallback.
+#[cfg(any(feature = "tkrzw", feature = "kyotocabinet", feature = "bdb"))]
+fn probe() -> system_deps::Dependencies {
+    system_deps::Config::new().probe().unwrap_or_else(|error| {
+        let hint = if cfg!(feature = "tkrzw") {
+            "libtkrzw required: the `tkrzw` feature (the default backend) finds tkrzw \
+             through pkg-config. Make tkrzw.pc visible to pkg-config (PKG_CONFIG_PATH), or \
+             select another backend with `--no-default-features --features bdb` or \
+             `--features kyotocabinet`."
+        } else if cfg!(feature = "kyotocabinet") {
+            "the `kyotocabinet` feature finds Kyoto Cabinet through kyotocabinet.pc, as \
+             libpinyin's configure does (PKG_CHECK_MODULES). Install its development \
+             package (Debian/Ubuntu: libkyotocabinet-dev; Fedora: kyotocabinet-devel), or, \
+             for an installation with no .pc file, set \
+             SYSTEM_DEPS_KYOTOCABINET_NO_PKG_CONFIG=1 and SYSTEM_DEPS_KYOTOCABINET_LIB=kyotocabinet \
+             (with _SEARCH_NATIVE and _INCLUDE for a non-default prefix); see \
+             docs/runbooks/backends.md."
+        } else {
+            "the `bdb` feature links the system Berkeley DB without pkg-config; see \
+             docs/runbooks/backends.md for the SYSTEM_DEPS_BDB_* variables."
+        };
+        panic!("native dependency discovery failed ({error}). {hint}")
+    })
 }
 
 /// Kyoto Cabinet: a C++ shim and the bindgen declarations of its C entry
@@ -56,56 +107,37 @@ fn main() {
 mod kyotocabinet {
     use std::path::PathBuf;
 
-    pub fn build() {
+    pub fn build(dependencies: &system_deps::Dependencies) {
         println!("cargo:rerun-if-changed=src/kyotocabinet/wrapper.h");
         println!("cargo:rerun-if-env-changed=BINDGEN_EXTRA_CLANG_ARGS");
-        println!("cargo:rerun-if-env-changed=OXPINYIN_KC_INCLUDE_DIR");
-        println!("cargo:rerun-if-env-changed=OXPINYIN_KC_LIB_DIR");
 
-        // A `rustc-link-search` reaches every later link in the graph, but a
-        // build script's `rustc-link-arg` is package-scoped: cargo applies
-        // it only to the targets it builds from THIS package — this crate's
-        // lib and its own test artifacts — never to another package's
-        // binaries. The rpath below therefore covers `cargo test -p
-        // oxpinyin-store` and nothing else; every workspace package that
-        // links a final binary against Kyoto Cabinet (oxpinyin-utils and
-        // the training package) mirrors this
-        // rpath from its own build script. That rpath is a convenience,
-        // not the contract: any other artifact built without it must still
-        // find the library via LD_LIBRARY_PATH or its own rpath setting.
-        if let Ok(dir) = std::env::var("OXPINYIN_KC_LIB_DIR") {
-            println!("cargo:rustc-link-search=native={dir}");
-            println!("cargo:rustc-link-arg=-Wl,-rpath,{dir}");
+        // `system-deps` emits the link-search paths and libraries. A
+        // `rustc-link-arg` is package-scoped: cargo applies it only to the
+        // targets it builds from THIS package — this crate's lib and its
+        // own test artifacts — never to another package's binaries. The
+        // rpath below therefore covers `cargo test -p oxpinyin-store` and
+        // nothing else. `oxpinyin-training` links a final binary against
+        // Kyoto Cabinet, so the directories are also published as the
+        // `lib_dir` links metadata, which its build script reads
+        // (`DEP_OXPINYIN_STORE_LIB_DIR`) for its own rpath. That rpath is a
+        // convenience, not the contract: any other artifact built without
+        // it must still find the library via LD_LIBRARY_PATH or its own
+        // rpath setting. System link paths are not in `link_paths`, as
+        // pkg-config itself leaves them out, so no rpath names one.
+        let library = dependencies
+            .get_by_name("kyotocabinet")
+            .expect("system-deps probes kyotocabinet when the feature is on");
+        for path in &library.link_paths {
+            println!("cargo:rustc-link-arg=-Wl,-rpath,{}", path.display());
         }
-        // The probe emits the link-search paths and libraries itself, after
-        // the override above. Kyoto Cabinet does not always install a .pc
-        // file, so a miss is not fatal: name the library directly. A distro
-        // package puts it on the default search path. System link paths stay
-        // out, as pkg-config itself leaves them, so no rpath names one.
-        let include_paths = match pkg_config::Config::new()
-            .print_system_libs(false)
-            .probe("kyotocabinet")
-        {
-            Ok(library) => {
-                for path in &library.link_paths {
-                    println!("cargo:rustc-link-arg=-Wl,-rpath,{}", path.display());
-                }
-                library.include_paths
-            }
-            Err(_) => {
-                println!("cargo:rustc-link-lib=kyotocabinet");
-                Vec::new()
-            }
-        };
-        // The override goes ahead of pkg-config's directories, as for BDB.
+        if !library.link_paths.is_empty() {
+            let joined = std::env::join_paths(&library.link_paths)
+                .expect("a library directory holds no path-list separator");
+            println!("cargo:lib_dir={}", joined.to_string_lossy());
+        }
         // The shim compiles Kyoto Cabinet's headers into the facade, so they
-        // must come from the installation OXPINYIN_KC_LIB_DIR links, whose
-        // link-search path is likewise emitted first (docs/packaging.md).
-        let include_paths: Vec<PathBuf> = std::env::var_os("OXPINYIN_KC_INCLUDE_DIR")
-            .map(PathBuf::from)
-            .into_iter()
-            .chain(include_paths)
-            .collect();
+        // come from the installation `system-deps` resolved.
+        let include_paths: &[PathBuf] = &library.include_paths;
 
         // The shim (see the module comment): Kyoto Cabinet's headers and a
         // C++ compiler are what it needs; bindgen below reads only shim.h.
@@ -129,7 +161,7 @@ mod kyotocabinet {
             shim.flag("-fsanitize=address")
                 .flag("-fno-omit-frame-pointer");
         }
-        for dir in &include_paths {
+        for dir in include_paths {
             shim.include(dir);
         }
         shim.compile("oxpinyin_kc_shim");
@@ -145,7 +177,7 @@ mod kyotocabinet {
             .derive_debug(false)
             .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()));
 
-        for dir in &include_paths {
+        for dir in include_paths {
             builder = builder.clang_arg(format!("-I{}", dir.display()));
         }
 
@@ -157,8 +189,8 @@ mod kyotocabinet {
                  it ({error}). Generating them needs libclang (Debian/Ubuntu: \
                  libclang-dev). The shim itself needs Kyoto Cabinet's development \
                  package (Debian/Ubuntu: libkyotocabinet-dev; Fedora: kyotocabinet-devel) \
-                 and a C++ compiler, or OXPINYIN_KC_INCLUDE_DIR and OXPINYIN_KC_LIB_DIR \
-                 pointed at an installation. Build without --features kyotocabinet to \
+                 and a C++ compiler, or the SYSTEM_DEPS_KYOTOCABINET_* variables pointed at \
+                 an installation (docs/runbooks/backends.md). Build without --features kyotocabinet to \
                  skip all of it."
             ),
         };
@@ -172,26 +204,17 @@ mod kyotocabinet {
 
 #[cfg(feature = "tkrzw")]
 mod tkrzw {
-    pub fn build() {
+    pub fn build(dependencies: &system_deps::Dependencies) {
         println!("cargo:rerun-if-env-changed=BINDGEN_EXTRA_CLANG_ARGS");
 
         // tkrzw is found only through `pkg-config tkrzw`, as libpinyin's
         // configure finds it (`PKG_CHECK_MODULES(TKRZW, [tkrzw])`, no
-        // version constraint). The probe emits the link-search paths and
-        // libraries, and reruns this script when a PKG_CONFIG_* variable
-        // changes. System link paths stay out, as pkg-config itself leaves
-        // them, so no rpath names one.
-        let library = pkg_config::Config::new()
-            .print_system_libs(false)
-            .probe("tkrzw")
-            .unwrap_or_else(|error| {
-                panic!(
-                    "libtkrzw required: the `tkrzw` feature (the default backend) finds \
-                     tkrzw through pkg-config, which failed ({error}). Make tkrzw.pc \
-                     visible to pkg-config, or select another backend with \
-                     `--no-default-features --features bdb` or `--features kyotocabinet`."
-                )
-            });
+        // version constraint). `system-deps` emits the link-search paths
+        // and libraries. System link paths are not in `link_paths`, as
+        // pkg-config itself leaves them out, so no rpath names one.
+        let library = dependencies
+            .get_by_name("tkrzw")
+            .expect("system-deps probes tkrzw when the feature is on");
 
         // The C API is the only header this build may bind: no C++ header
         // and no other tkrzw API crosses the ABI.
@@ -312,127 +335,62 @@ mod tkrzw {
 mod bdb {
     use std::path::PathBuf;
 
-    /// Locates `db.h` under the discovered include path. Neither target
-    /// distro ships a `db.pc` (Debian's `libdb5.3-dev` and Fedora's
-    /// `libdb-devel` both install headers and no pkg-config file), so
-    /// the fixed directories are the normal case and pkg-config a
-    /// bonus: `/usr/include/db.h` (Debian, and Fedora's top-level
-    /// symlink), `/usr/include/libdb/db.h` (Fedora's real location),
-    /// `/usr/include/db5/db.h` (historical Ubuntu).
-    fn db_header(clang_args: &[String]) -> Option<PathBuf> {
-        let mut dirs: Vec<PathBuf> = clang_args
-            .iter()
-            .filter_map(|flag| flag.strip_prefix("-I"))
-            .map(PathBuf::from)
-            .collect();
-        for extra in ["/usr/include", "/usr/include/libdb", "/usr/include/db5"] {
-            let dir = PathBuf::from(extra);
-            if !dirs.contains(&dir) {
-                dirs.push(dir);
+    /// The pin finds Berkeley DB without pkg-config
+    /// (`AC_CHECK_HEADER([db.h])`, `AC_SEARCH_LIBS([db_create], [db])`), and
+    /// no target distro ships a `db.pc`, so neither does this build. The
+    /// override variables are `system-deps`', and they only take effect for
+    /// a dependency it does not look up through pkg-config. Defaulting
+    /// `NO_PKG_CONFIG` and `LIB` makes the no-override result the pin's:
+    /// `db.h` on the compiler's default include path and `-ldb`. Anything
+    /// the caller set stays (`SYSTEM_DEPS_BDB_LIB=libdb48` for vcpkg, say).
+    pub fn pin_defaults() {
+        for (name, value) in [
+            ("SYSTEM_DEPS_BDB_NO_PKG_CONFIG", "1"),
+            ("SYSTEM_DEPS_BDB_LIB", "db"),
+        ] {
+            if std::env::var_os(name).is_none() {
+                // SAFETY: a build script's `main` is single-threaded, and
+                // this runs first, before any thread (bindgen, `cc`,
+                // `system-deps`) exists to read or write the environment.
+                #[allow(unsafe_code)]
+                unsafe {
+                    std::env::set_var(name, value);
+                }
             }
         }
-        dirs.into_iter()
-            .map(|dir| dir.join("db.h"))
-            .find(|path| path.is_file())
     }
 
-    pub fn build() {
+    pub fn build(dependencies: &system_deps::Dependencies) {
         println!("cargo:rerun-if-changed=src/bdb/wrapper.h");
         println!("cargo:rerun-if-env-changed=BINDGEN_EXTRA_CLANG_ARGS");
-        println!("cargo:rerun-if-env-changed=OXPINYIN_BDB_INCLUDE_DIR");
-        println!("cargo:rerun-if-env-changed=OXPINYIN_BDB_LIB_DIR");
-        println!("cargo:rerun-if-env-changed=OXPINYIN_BDB_LIB_NAME");
 
-        // pkg-config first (a hit is a bonus — no target distro ships a
-        // db.pc), then the explicit override ahead of it, then the fixed
-        // header directories. The probe only reads: the library is linked
-        // below, after the OXPINYIN_BDB_LIB_NAME override has had its say,
-        // so it emits no link metadata. It tracks the PKG_CONFIG_*
-        // variables itself. System paths stay out, as for `pkg-config
-        // --cflags` and `--libs` without the allow-system variables.
-        let library = ["libdb", "db"].iter().find_map(|name| {
-            pkg_config::Config::new()
-                .cargo_metadata(false)
-                .print_system_cflags(false)
-                .print_system_libs(false)
-                .probe(name)
-                .ok()
-        });
-        let mut clang_args: Vec<String> = Vec::new();
-        if let Some(library) = &library {
-            clang_args.extend(
-                library
-                    .include_paths
-                    .iter()
-                    .map(|dir| format!("-I{}", dir.display())),
-            );
-            clang_args.extend(library.defines.iter().map(|(name, value)| match value {
-                Some(value) => format!("-D{name}={value}"),
-                None => format!("-D{name}"),
-            }));
-        }
-        if let Ok(dir) = std::env::var("OXPINYIN_BDB_INCLUDE_DIR") {
-            clang_args.insert(0, format!("-I{dir}"));
-        }
-        if let Ok(dir) = std::env::var("OXPINYIN_BDB_LIB_DIR") {
-            println!("cargo:rustc-link-search=native={dir}");
-            // Package-scoped, like every build-script `rustc-link-arg`
-            // (see the Kyoto Cabinet module): reaches this package's own
-            // lib, test and bench artifacts and nothing else.
-            // The rpath is GNU-ld/ELF syntax; PE targets have no rpath, and
-            // the raw flag reaches the Windows linker as at best a warning
-            // it ignores — link.exe's LNK4044 "unrecognized option; ignored"
-            // (documented) or lld-link's "ignoring unknown argument"
-            // (observed) — so it is emitted only where it means something.
-            // CARGO_CFG_TARGET_OS describes the TARGET cargo is building
-            // for, unlike `cfg!`, which describes this build script's host.
-            let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
-            if target_os != "windows" {
-                println!("cargo:rustc-link-arg=-Wl,-rpath,{dir}");
+        // `system-deps` emits the link-search paths and the library.
+        let library = dependencies
+            .get_by_name("bdb")
+            .expect("system-deps probes bdb when the feature is on");
+        // The rpath is GNU-ld/ELF syntax; PE targets have no rpath, and the
+        // raw flag reaches the Windows linker as at best a warning it
+        // ignores — link.exe's LNK4044 "unrecognized option; ignored"
+        // (documented) or lld-link's "ignoring unknown argument"
+        // (observed) — so it is emitted only where it means something.
+        // CARGO_CFG_TARGET_OS describes the TARGET cargo is building for,
+        // unlike `cfg!`, which describes this build script's host.
+        //
+        // Package-scoped, like every build-script `rustc-link-arg` (see the
+        // Kyoto Cabinet module): reaches this package's own lib, test and
+        // bench artifacts and nothing else.
+        if std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default() != "windows" {
+            for path in &library.link_paths {
+                println!("cargo:rustc-link-arg=-Wl,-rpath,{}", path.display());
             }
         }
-        let Some(header) = db_header(&clang_args) else {
-            panic!(
-                "libdb required: the `bdb` feature links the SYSTEM Berkeley DB and needs its \
-                 header db.h, which was found nowhere on the include path. Install the \
-                 platform's development package (Debian/Ubuntu: libdb-dev, which resolves to \
-                 libdb5.3-dev; Fedora: libdb-devel; Arch: db) — the same one libpinyin's \
-                 --with-dbm=BerkeleyDB build uses — or point OXPINYIN_BDB_INCLUDE_DIR and \
-                 OXPINYIN_BDB_LIB_DIR at an installation directly. oxpinyin deliberately does \
-                 NOT vendor or compile its own copy of Berkeley DB, so there is no fallback to \
-                 download or build one -- see docs/runbooks/backends.md."
-            );
-        };
-        println!("cargo:rerun-if-changed={}", header.display());
-
-        // An installation whose library carries a name the pkg-config and
-        // `-ldb` paths below cannot express (vcpkg's `berkeleydb` port
-        // installs `libdb48.lib`): name it directly, in the same shape as
-        // the INCLUDE_DIR/LIB_DIR overrides above. Precedence, exactly:
-        // this override (if set) skips the probed libraries entirely;
-        // otherwise pkg-config's `libdb`/`db` is used, then the bare
-        // `-ldb` fallback.
-        if let Ok(name) = std::env::var("OXPINYIN_BDB_LIB_NAME") {
-            println!("cargo:rustc-link-lib={name}");
-        } else {
-            match &library {
-                Some(library) => {
-                    for name in &library.libs {
-                        println!("cargo:rustc-link-lib={name}");
-                    }
-                    for path in &library.link_paths {
-                        println!("cargo:rustc-link-search=native={}", path.display());
-                        // Package-scoped, like every build-script
-                        // `rustc-link-arg` (see the Kyoto Cabinet module).
-                        println!("cargo:rustc-link-arg=-Wl,-rpath,{}", path.display());
-                    }
-                }
-                // No `.pc` on either target distro: name the library directly
-                // (both ship an unversioned `libdb.so` dev symlink) and let the
-                // loader's default path resolve it.
-                None => println!("cargo:rustc-link-lib=db"),
-            }
-        }
+        // With no `SYSTEM_DEPS_BDB_INCLUDE`, `<db.h>` is resolved on the
+        // compiler's default include path, as the pin's configure does.
+        let clang_args: Vec<String> = library
+            .include_paths
+            .iter()
+            .map(|dir| format!("-I{}", dir.display()))
+            .collect();
 
         // Exactly the entry points `src/bdb/ffi.rs` calls plus the types
         // and codes they traffic in — the small surface libpinyin itself
@@ -463,11 +421,16 @@ mod bdb {
         let bindings = match builder.generate() {
             Ok(bindings) => bindings,
             Err(error) => panic!(
-                "libdb required: bindgen could not read the system db.h at {} ({error}). \
-                 Generating these declarations needs libclang (Debian/Ubuntu: libclang-dev; \
-                 Fedora: clang-devel). oxpinyin does not vendor Berkeley DB; there is no \
-                 fallback to a bundled copy.",
-                header.display()
+                "libdb required: the `bdb` feature links the SYSTEM Berkeley DB and needs its \
+                 header db.h on the compiler's default include path, and bindgen could not read \
+                 it ({error}). Install the platform's development package (Debian/Ubuntu: \
+                 libdb-dev, which resolves to libdb5.3-dev; Fedora: libdb-devel; Arch: db) — \
+                 the same one libpinyin's --with-dbm=BerkeleyDB build uses — or point \
+                 SYSTEM_DEPS_BDB_INCLUDE and SYSTEM_DEPS_BDB_SEARCH_NATIVE at an installation \
+                 (docs/runbooks/backends.md). Generating the declarations also needs libclang \
+                 (Debian/Ubuntu: libclang-dev; Fedora: clang-devel). oxpinyin deliberately does \
+                 NOT vendor or compile its own copy of Berkeley DB, so there is no fallback to \
+                 download or build one."
             ),
         };
 

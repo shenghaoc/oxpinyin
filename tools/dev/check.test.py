@@ -42,7 +42,7 @@ esac
             path.chmod(0o755)
         env = dict(os.environ, PATH=self.temp.name + os.pathsep + os.environ['PATH'],
                    CARGO_TARGET_DIR='fixture-target', FIXTURE_CARGO_STATUS='0')
-        for name in ('PINYIN_MODEL_DIR', 'PINYIN_ORACLE_PREFIX', 'OXPINYIN_BDB_INCLUDE_DIR'):
+        for name in ('PINYIN_MODEL_DIR', 'PINYIN_ORACLE_PREFIX', 'SYSTEM_DEPS_BDB_INCLUDE'):
             env.pop(name, None)
         patch = mock.patch.dict(os.environ, env, clear=True)
         patch.start()

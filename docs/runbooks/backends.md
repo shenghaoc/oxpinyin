@@ -18,7 +18,8 @@ selects tkrzw (since 2026-10-30; Berkeley DB was the default 2026-09-20 →
 then, tkrzw 2026-09-05 → 2026-09-20), and two backends at once is refused.
 The store build script finds tkrzw only through `pkg-config tkrzw`; a
 self-built one (`just tkrzw-build DIR`, what CI uses) is selected with
-`PKG_CONFIG_PATH` and the runtime library path.
+`PKG_CONFIG_PATH` and the runtime library path
+([discovery and overrides](#discovery-and-overrides)).
 
 ## System libraries
 
@@ -26,7 +27,7 @@ self-built one (`just tkrzw-build DIR`, what CI uses) is selected with
 | --- | --- | --- |
 | tkrzw (the default) | `libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev libclang-dev pkg-config` | `tkrzw`, and `export LIBRARY_PATH="$(brew --prefix)/lib"` (see [setup](setup.md#macos): `cargo test` links lz4/zstd from there, `cargo check`/`clippy` never link and are not evidence) |
 | kyotocabinet | `libkyotocabinet-dev libclang-dev pkg-config g++` (the shim is C++) | `kyoto-cabinet`; the keg ships `kyotocabinet.pc`, pkg-config resolves it, and the store suite passes (verified on 1.2.80, 2026-09-13). The old "the KC dylib does not dlopen on macOS" note does not reproduce on today's bottled formula — the dylib dlopens by absolute path, and the backend links at link time, so bare-name lookup never enters the picture |
-| bdb | `libdb-dev` (resolves to `libdb5.3-dev`) `libclang-dev pkg-config`; Fedora: `libdb-devel` | `berkeley-db@5` — 5.3.28 under the Sleepycat license, the surveyed version; the default `berkeley-db` formula is 18.1 AGPL-3.0-only and stays unusable. The keg ships no `.pc`, so point the overrides at it: `OXPINYIN_BDB_INCLUDE_DIR="$(brew --prefix)/opt/berkeley-db@5/include"` and `OXPINYIN_BDB_LIB_DIR="$(brew --prefix)/opt/berkeley-db@5/lib"` (the build's rpath flag lets the test binaries find the dylib). Clippy and the full suite pass with the same counts as Linux — 36/0/4 (verified 2026-09-13) |
+| bdb | `libdb-dev` (resolves to `libdb5.3-dev`) `libclang-dev pkg-config`; Fedora: `libdb-devel` | `berkeley-db@5` — 5.3.28 under the Sleepycat license, the surveyed version; the default `berkeley-db` formula is 18.1 AGPL-3.0-only and stays unusable. The keg is keg-only and ships no `.pc`, so point the [overrides](#discovery-and-overrides) at it (the build's rpath flag lets the test binaries find the dylib). Clippy and the full suite pass with the same counts as Linux — 36/0/4 (verified 2026-09-13) |
 
 Every backend links a **system** library, the one the distribution
 ships and patches. oxpinyin vendors none of them. tkrzw and Berkeley DB
@@ -44,7 +45,7 @@ own copy.
 
 For a downstream Linux package built with a C-library backend (tkrzw,
 Kyoto Cabinet, Berkeley DB), `libclang` and `pkg-config` are build-time
-only: `pkg-config` locates the library and `bindgen` reads its header to
+only: `system-deps` locates the library and `bindgen` reads its header to
 generate the declarations. Neither is linked, and neither appears in the
 runtime dependency set — each backend splits into its own
 `lib*-dev` / `lib*` pair (`libdb5.3` / `libdb5.3-dev` on Debian,
@@ -53,14 +54,40 @@ C++ compiler at build time. Its facades then list `libstdc++.so.6` and
 `libm.so.6` in `DT_NEEDED`, as libpinyin's Kyoto Cabinet build does; both
 are already dependencies of libkyotocabinet.
 
-An installation `pkg-config` cannot find — a custom prefix, or a build
-that ships no `.pc` file — is reachable without it:
-`OXPINYIN_KC_INCLUDE_DIR` prepends a header directory and
-`OXPINYIN_KC_LIB_DIR` adds a link-search path and an rpath, mirroring
-the `OXPINYIN_BDB_INCLUDE_DIR` / `OXPINYIN_BDB_LIB_DIR` pair.
-`OXPINYIN_BDB_LIB_NAME` names the library when it is not `db` (vcpkg
-installs `libdb48.lib`). `BINDGEN_EXTRA_CLANG_ARGS`
-reaches bindgen as usual. All are tracked by `build.rs`, so changing one
+## Discovery and overrides
+
+`system-deps` finds every backend, from `[package.metadata.system-deps]` in
+`crates/oxpinyin-store/Cargo.toml`, as libpinyin's `configure.ac` does.
+tkrzw and Kyoto Cabinet are found through `tkrzw.pc` and `kyotocabinet.pc`
+and a missing `.pc` file is a hard error. Berkeley DB is never looked up
+through pkg-config: with no override, `db.h` is read from the compiler's
+default include path and the build links `-ldb`. A self-built tkrzw is
+selected with `PKG_CONFIG_PATH` and the runtime library path.
+
+An installation outside the defaults is reached with these
+`system-deps` variables. `<NAME>` is `KYOTOCABINET` or `BDB`. The first
+three replace what the `.pc` file reports, and each is tracked by
+`build.rs`:
+
+| variable | effect |
+| --- | --- |
+| `SYSTEM_DEPS_<NAME>_INCLUDE` | the header directory (bindgen, and the Kyoto Cabinet shim, read it) |
+| `SYSTEM_DEPS_<NAME>_SEARCH_NATIVE` | the link-search path, also the rpath |
+| `SYSTEM_DEPS_<NAME>_LIB` | the library name, for a name other than `db` or `kyotocabinet` (vcpkg installs `libdb48.lib`: `SYSTEM_DEPS_BDB_LIB=libdb48`) |
+| `SYSTEM_DEPS_KYOTOCABINET_NO_PKG_CONFIG` | `1` skips the `.pc` lookup; `SYSTEM_DEPS_KYOTOCABINET_LIB` must then name the library |
+| `SYSTEM_DEPS_BDB_NO_PKG_CONFIG` | `build.rs` defaults it to `1` and `SYSTEM_DEPS_BDB_LIB` to `db`; a value you set wins |
+| `SYSTEM_DEPS_LINK`, `SYSTEM_DEPS_<NAME>_LINK` | `static` links statically |
+
+`_INCLUDE` and `_SEARCH_NATIVE` take path lists (split on `:`, or `;` on Windows), and `_LIB` takes space-separated names.
+
+Homebrew's `berkeley-db@5` is keg-only and ships no `.pc`. The macOS
+`sanitize` and `profile-w8` recipes set, from `brew --prefix berkeley-db@5`:
+`SYSTEM_DEPS_BDB_NO_PKG_CONFIG=1`, `SYSTEM_DEPS_BDB_LIB=db`,
+`SYSTEM_DEPS_BDB_SEARCH_NATIVE=<prefix>/lib` and
+`SYSTEM_DEPS_BDB_INCLUDE=<prefix>/include`. Export the same four to run
+`cargo` or `just check bdb` by hand. The build script never calls `brew`.
+
+`BINDGEN_EXTRA_CLANG_ARGS` reaches bindgen as usual. Changing any of these
 regenerates the declarations instead of leaving a stale set behind.
 The generated bindings are not committed, deliberately — they cross the
 ABI by layout rather than as opaque handles, and generating them from
