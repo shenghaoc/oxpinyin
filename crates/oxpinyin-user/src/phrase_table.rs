@@ -91,7 +91,14 @@ impl PhraseTableEntry {
     /// Insert before the first greater token; detect equality only before it.
     pub fn add_index(&mut self, token: u32) -> i32 {
         let mut offset = self.bytes.len();
-        for (index, existing) in self.bytes.chunks_exact(4).map(decode).enumerate() {
+        for (index, existing) in self
+            .bytes
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|word| decode(word))
+            .enumerate()
+        {
             if existing == token {
                 return ERROR_INSERT_ITEM_EXISTS;
             }
@@ -108,8 +115,10 @@ impl PhraseTableEntry {
     pub fn remove_index(&mut self, token: u32) -> i32 {
         let Some(index) = self
             .bytes
-            .chunks_exact(4)
-            .map(decode)
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|word| decode(word))
             .position(|v| v == token)
         else {
             return ERROR_REMOVE_ITEM_DONOT_EXISTS;
@@ -158,7 +167,7 @@ pub fn search_bytes(
 
 fn search_tokens(bytes: &[u8], tokens: &mut Vec<u32>, mut enabled: impl FnMut(u32) -> bool) -> i32 {
     let mut result = SEARCH_NONE;
-    for token in bytes.chunks_exact(4).map(decode) {
+    for token in bytes.as_chunks::<4>().0.iter().map(|word| decode(word)) {
         if enabled(token) {
             tokens.push(token);
             result |= SEARCH_OK;

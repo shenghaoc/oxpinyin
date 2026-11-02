@@ -146,7 +146,9 @@ pub mod pinyin_index {
     impl PinyinIndexItemView<'_> {
         pub(crate) fn keys(&self) -> impl ExactSizeIterator<Item = ChewingKey> + '_ {
             self.keys
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|bytes| ChewingKey::from_packed(u16::from_le_bytes([bytes[0], bytes[1]])))
         }
     }
@@ -308,7 +310,7 @@ pub mod phrase_index {
             return None;
         }
         let mut text = String::with_capacity(key.len() / 4 * 3);
-        for chunk in key.chunks_exact(4) {
+        for chunk in key.as_chunks::<4>().0.iter() {
             let code = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
             text.push(char::from_u32(code)?);
         }
@@ -344,7 +346,9 @@ pub mod phrase_index {
             )));
         }
         Ok(value
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
             .collect())
     }
@@ -401,7 +405,9 @@ pub mod bigram {
         }
         let total = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
         let records = data[4..]
-            .chunks_exact(8)
+            .as_chunks::<8>()
+            .0
+            .iter()
             .map(|chunk| {
                 (
                     u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]),
@@ -459,7 +465,9 @@ pub mod punct {
     #[must_use]
     pub fn decode_puncts(value: &[u8]) -> Vec<PhraseText> {
         let words: Vec<u32> = value
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
             .collect();
         let mut out = Vec::new();

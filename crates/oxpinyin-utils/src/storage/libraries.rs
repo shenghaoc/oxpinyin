@@ -266,7 +266,9 @@ fn item_of(view: &PhraseItemView<'_>) -> Option<oxpinyin_data::chunk_write::Chun
     for pronunciation in view.pronunciations() {
         let keys: Option<Vec<u16>> = pronunciation
             .keys
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|bytes| Some(u16::from_le_bytes([bytes[0], bytes[1]])))
             .collect();
         prons.push((keys?, pronunciation.freq));

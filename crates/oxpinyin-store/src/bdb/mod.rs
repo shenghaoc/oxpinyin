@@ -154,6 +154,7 @@ impl BdbUnopenedHandle {
     }
 
     /// `m_db->get(...)`: libdb prints `BDB1565`.
+    #[must_use]
     pub fn get(&self, key: &[u8]) -> bool {
         self.db.get(key, &mut Vec::new()).unwrap_or(false)
     }
@@ -164,6 +165,7 @@ impl BdbUnopenedHandle {
     }
 
     /// `m_db->del(...)`: libdb prints `BDB1565`.
+    #[must_use]
     pub fn del(&self, key: &[u8]) -> bool {
         self.db.del(key).is_ok()
     }

@@ -2,4 +2,4 @@
 # etc.) aligned with the pinned toolchain so local hints never disagree
 # with what CI enforces.
 # Exact on purpose (#1074): the MSRV is the pinned stable toolchain in rust-toolchain.toml.
-msrv = "1.97.1"
+msrv = "1.99.1"

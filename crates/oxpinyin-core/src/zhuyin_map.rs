@@ -33,7 +33,6 @@ impl ZhuyinIndex {
         Some((input, canonical, pinyin, *self.flags.get(index)?))
     }
 
-    #[must_use]
     pub(crate) fn entries(
         self,
     ) -> impl ExactSizeIterator<Item = (&'static str, &'static str, &'static str, u32)>

@@ -203,7 +203,9 @@ pub(crate) fn encode_keys(keys: &[PinyinKey]) -> Vec<u8> {
 #[must_use]
 pub(crate) fn decode_keys(bytes: &[u8]) -> Vec<PinyinKey> {
     bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|chunk| PinyinKey::from_le_bytes([chunk[0], chunk[1]]))
         .collect()
 }

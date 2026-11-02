@@ -616,7 +616,9 @@ impl UserIndex {
             .chunks_exact(stride)
             .filter_map(|record| {
                 let stored: Vec<ChewingKey> = record[4..4 + 2 * len]
-                    .chunks_exact(2)
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
                     .map(|word| ChewingKey::from_packed(u16::from_le_bytes([word[0], word[1]])))
                     .collect();
                 matches_with_tones(keys, &stored, len).then(|| {
@@ -662,7 +664,9 @@ impl UserIndex {
             }
             for record in value.chunks_exact(stride) {
                 let stored: Vec<ChewingKey> = record[4..4 + 2 * len]
-                    .chunks_exact(2)
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
                     .map(|word| ChewingKey::from_packed(u16::from_le_bytes([word[0], word[1]])))
                     .collect();
                 if matches_with_tones(prefix, &stored, prefix_len) {
@@ -698,7 +702,9 @@ impl UserIndex {
                 overlong.push(Vec::new());
             } else if key.len() / 2 > MAX_PHRASE_LENGTH {
                 overlong.push(
-                    key.chunks_exact(2)
+                    key.as_chunks::<2>()
+                        .0
+                        .iter()
                         .map(|word| u16::from_le_bytes([word[0], word[1]]))
                         .collect(),
                 );
@@ -769,7 +775,9 @@ fn value_has_reading(value: &[u8], len: usize, token: u32, packed: &[u16]) -> bo
         && value.chunks_exact(stride).any(|record| {
             u32::from_le_bytes([record[0], record[1], record[2], record[3]]) == token
                 && record[4..4 + 2 * len]
-                    .chunks_exact(2)
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
                     .map(|word| u16::from_le_bytes([word[0], word[1]]))
                     .eq(packed.iter().copied())
         })
