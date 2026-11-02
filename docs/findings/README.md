@@ -84,6 +84,7 @@ series lives in `../perf/`.
 | [`libpinyin-structures-and-algorithms`](libpinyin-structures-and-algorithms.md) | libpinyin's components, data structures, algorithms and coefficients beside oxpinyin's, with the open gaps | register |
 | [`libpinyin-system-data-formats-2026-09-01`](libpinyin-system-data-formats-2026-09-01.md) | libpinyin system-data formats vs the #269 sysimage — source-level comparison | record (P1 input) |
 | [`live-typing`](live-typing.md) | Findings — live-typing differential (post-choose surfaces no pin gates) | record (W12, parked behaviours) |
+| [`macos-export-baseline`](macos-export-baseline.md) | macOS export baseline — what the shipping libpinyin and libzhuyin dylibs export before the tkrzw cxx rebinding (#1529); also records that the release dylibs fail `dlopen` on macOS 27.2 | record (2026-11-02 UTC; 0 missing, 0 extra on both libraries) |
 | [`matrix-split-tables`](matrix-split-tables.md) | Matrix split tables SPEC | frozen |
 | [`model-provenance`](model-provenance.md) | Model and table provenance | policy (model20 not redistributable) |
 | [`option-bits`](option-bits.md) | Findings — option bits | record (W10 Phase 0) |
