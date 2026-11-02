@@ -374,6 +374,23 @@ that command still checks Cargo development artifacts with fixture hooks
 disabled. See [macOS shipped exports](findings/macos-shipped-exports.md)
 for the linker constraints, non-vacuity check and added nightly cost.
 
+The tkrzw backend's cxx bridge links the `cxx` crate, whose Rust runtime
+defines `#[export_name]` symbols (`cxxbridge1$slice$*`, `cxxbridge1$string$*`,
+`cxxbridge1$exception`, ...). rustc lists every such upstream symbol as a
+C-level export of a `cdylib`, so without a counter-measure the cargo-built
+cdylibs export the whole runtime (166 symbols on Linux, referenced or not).
+Both relinks above already exclude them from the shipped libraries: the
+Linux version script's `local: *` and the macOS `-exported_symbols_list`.
+For the development cdylibs the gate checks, both capi build scripts pass
+`-Wl,--exclude-libs,ALL` to the Linux cdylib link when the tkrzw feature is
+on: GNU ld gives every symbol defined in an archive — the rlibs and the
+bridge's static library — hidden visibility, which rustc's anonymous version
+script cannot override, while the `pinyin_*` and `zhuyin_*` symbols come
+from the capi crates' own object files and are untouched. No such flag
+exists on macOS, where the development cdylibs carry the extra symbols;
+`just abi exports` there is run against the relinked installed files, as the
+nightly job does.
+
 ## Function layout
 
 Maintainer ruling, 2026-10-30 UTC ([#1448](https://github.com/shenghaoc/oxpinyin/issues/1448)).

@@ -2125,6 +2125,8 @@ section.
 
 ### tkrzw binding: exception-origin `SYSTEM_ERROR` and OS `SYSTEM_ERROR` share one error class (policy row 40)
 
+> **Retired 2026-11-02 UTC** (tkrzw cxx rebinding): the collapse was `tkrzw_langc.h`'s; the backend now calls the concrete classes through cxx and catches no exception, so a C++ exception terminates the process as the pin's does and a status keeps its own class. Row 40 in `compatibility-policy.md` records the retirement; the entry below is kept as written.
+
 - **Registered as:** a standing divergence (ruled accepted 2026-08-28;
   a Rust/C++ language-boundary consequence under the language-quirk
   exception, maintainer ruling 2026-10-03), not a numbered exception

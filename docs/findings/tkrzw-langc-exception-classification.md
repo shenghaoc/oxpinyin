@@ -2,7 +2,18 @@
 
 Date: 2026-08-28 · Source tier: binding-migration audit (cxx → bindgen,
 `feat/tkrzw-bindgen-migration`).
-Status: **ruled accepted** (maintainer decision 2026-08-28). Registered as
+Status: **retired 2026-11-02 UTC** (tkrzw cxx rebinding). The divergence
+below belonged to the `tkrzw_langc.h` binding, whose wrappers caught every
+C++ exception and reported it as `TKRZW_STATUS_SYSTEM_ERROR`
+(`tkrzw_langc.cc:530-620` at 1.0.34). The backend now calls the concrete
+classes through cxx (`crates/oxpinyin-store/src/tkrzw/bridge.rs`) and
+catches nothing, as the pin catches nothing: a concrete call returns its
+own `tkrzw::Status` — `GetErrnoStatus`'s class for an operating-system
+failure (`tkrzw_lib_common.cc:247-278`), `PRECONDITION_ERROR` for an
+unopened database (`tkrzw_dbm_hash.cc:400-401`) — and an allocation
+failure throws `std::bad_alloc` (`tkrzw_lib_common.h:147-183`), which
+terminates the process through the bridge's `noexcept` shim. The record
+is kept as written. Previously: **ruled accepted** (maintainer decision 2026-08-28). Registered as
 a standing divergence — binding-ABI error-origin collapse — rather than a
 defect, because it is externally observable in principle and fits none of
 the previously accepted divergence buckets. **Registered 2026-09-27

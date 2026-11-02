@@ -205,7 +205,7 @@ def probe(prefix, env=None, *, system=None, script=PROBE, resolve=runtime.resolv
     env = dict(os.environ if env is None else env)
     prefix = Path(prefix)
     util = prefix / 'bin' / ('tkrzw_dbm_util.exe' if system == 'Windows' else 'tkrzw_dbm_util')
-    missing = [str(path) for path in (prefix / 'include/tkrzw_langc.h', prefix / LIBRARY[system],
+    missing = [str(path) for path in (prefix / 'include/tkrzw_dbm.h', prefix / LIBRARY[system],
                                       prefix / 'lib/pkgconfig/tkrzw.pc', util) if not path.is_file()]
     if missing:
         raise RecipeError(f'{prefix} lacks {", ".join(missing)}')

@@ -102,7 +102,7 @@ class ProbeTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.work = Path(temporary.name).resolve()
         self.prefix = self.work / 'tkrzw'
-        for name in ('include/tkrzw_langc.h', 'lib/libtkrzw.so.1', 'lib/pkgconfig/tkrzw.pc', 'bin/tkrzw_dbm_util'):
+        for name in ('include/tkrzw_dbm.h', 'lib/libtkrzw.so.1', 'lib/pkgconfig/tkrzw.pc', 'bin/tkrzw_dbm_util'):
             (self.prefix / name).parent.mkdir(parents=True, exist_ok=True)
             (self.prefix / name).write_bytes(b'x')
         self.env = {'PATH': os.environ['PATH']}
