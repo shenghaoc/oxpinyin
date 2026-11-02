@@ -3,7 +3,7 @@
 
 use std::ptr;
 
-use crate::state::{CapiInstance, box_instance, context_ref, instance_mut, instance_ref};
+use crate::state::{CapiInstance, box_instance, context_ref, instance_mut};
 use crate::types::{PinyinContext, PinyinInstance};
 
 /// Allocate a new pinyin instance from a context.
@@ -30,7 +30,9 @@ pub extern "C" fn pinyin_alloc_instance(context: *mut PinyinContext) -> *mut Pin
     // SAFETY: `context` is non-null, was produced by `pinyin_init` and is
     // still live (checked above).
     let ctx = unsafe { context_ref(context) };
-    ctx.alloc_instance(context)
+    // SAFETY: the public context is live for this serialized allocation call.
+    let owner = unsafe { crate::state::context_owner(context) };
+    ctx.alloc_instance(context, owner)
         .map_or(ptr::null_mut(), box_instance)
 }
 
@@ -52,7 +54,7 @@ pub extern "C" fn pinyin_get_context(instance: *mut PinyinInstance) -> *mut Piny
 
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
-    let inst = unsafe { instance_ref(instance) };
+    let inst = unsafe { crate::state::instance_state_ref(instance) };
     inst.context
 }
 
@@ -84,7 +86,7 @@ pub extern "C" fn pinyin_free_instance(instance: *mut PinyinInstance) {
 ///
 /// The full reset: upstream's `pinyin_reset` also clears the instance's
 /// constraint store (`pinyin.cpp:2697`) — the parse path's
-/// [`oxpinyin_facade::InstanceCore::reset_parse_state`] split deliberately
+/// [`oxpinyin_facade::InstanceView::reset_parse_state`] split deliberately
 /// leaves it alive across keystrokes — and the phrase result
 /// (`pinyin.cpp:2699`), which this clears with it.
 #[unsafe(no_mangle)]
@@ -95,9 +97,9 @@ pub extern "C" fn pinyin_reset(instance: *mut PinyinInstance) -> bool {
 
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
-    let inst = unsafe { instance_mut(instance) };
+    let mut inst = unsafe { instance_mut(instance) };
     inst.core.full_reset();
-    inst.candidates.clear();
-    inst.prefixes.clear();
+    inst.state.candidates.clear();
+    inst.state.prefixes.clear();
     true
 }

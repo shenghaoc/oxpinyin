@@ -32,10 +32,10 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use oxpinyin_core::{OptionBits, PINYIN_CORRECT_GN_NG, PINYIN_CORRECT_MG_NG, PINYIN_CORRECT_UE_VE};
-use oxpinyin_data::{BigramLanguageModel, SystemDbm, SystemDictionary};
-use oxpinyin_engine::{EmptyConfigSource, Session};
+use oxpinyin_data::SystemDbm;
 use pinyin_oracle::candidate_fixture::{CandidateFixture, STRUCTURE_FIXTURE};
 use pinyin_oracle::corpus;
+use pinyin_oracle::sentence_tail::PortSession;
 
 const CAPTURE_DEPTH: usize = 10;
 
@@ -80,23 +80,14 @@ fn export_dir() -> Result<PathBuf, String> {
 /// The shared read-only environment of both passes: exported tables,
 /// real unigrams, a fresh session, and the frozen oracle fixture.
 struct TailEnv {
-    session: Session<SystemDictionary, BigramLanguageModel>,
+    session: PortSession,
     fixture: BTreeMap<String, Vec<String>>,
 }
 
 fn open_env() -> Result<TailEnv, String> {
     let dir = export_dir()?;
 
-    let dict = SystemDictionary::open(&dir)
-        .map_err(|error| format!("cannot open SystemDictionary: {error}"))?;
-    let mut lm = BigramLanguageModel::open(
-        &dir.join(SystemDbm::Bigram.file_name()),
-        std::sync::Arc::clone(dict.libraries()),
-    )
-    .map_err(|error| format!("cannot open BigramLanguageModel: {error}"))?;
-    lm.set_lambda_from_table_conf(&dir.join("table.conf"));
-    let session = Session::new(&EmptyConfigSource, dict, lm)
-        .map_err(|error| format!("cannot create Session: {error}"))?;
+    let session = PortSession::open(&dir)?;
     let fixture = CandidateFixture::read(repo_root().join(STRUCTURE_FIXTURE))
         .map_err(|error| format!("cannot read candidate structure: {error}"))?
         .candidate_lists();
@@ -112,15 +103,15 @@ struct Snapshot {
 }
 
 fn snapshot(env: &mut TailEnv, input: &str, options: OptionBits) -> Result<Snapshot, String> {
-    env.session.reset();
-    env.session
+    let mut session = env.session.session();
+    session.reset();
+    session
         .set_options(options)
         .map_err(|error| format!("set_options on {input:?}: {error:?}"))?;
-    env.session
+    session
         .type_pinyin(input)
         .map_err(|error| format!("type_pinyin {input:?}: {error:?}"))?;
-    let keys = env
-        .session
+    let keys = session
         .composition_keys()
         .map_err(|error| format!("composition_keys on {input:?}: {error:?}"))?;
     let parse = keys
@@ -128,15 +119,14 @@ fn snapshot(env: &mut TailEnv, input: &str, options: OptionBits) -> Result<Snaps
         .map(|key| key.text().to_owned())
         .collect::<Vec<_>>()
         .join("'");
-    let texts = env
-        .session
+    let texts = session
         .candidates()
         .iter()
         .map(|candidate| candidate.text().as_str().unwrap_or_default().to_owned())
         .collect();
     Ok(Snapshot {
         parse,
-        parsed: env.session.parsed_prefix_len(),
+        parsed: session.parsed_prefix_len(),
         texts,
     })
 }
@@ -280,10 +270,10 @@ fn run(env: &mut TailEnv) -> Result<(), String> {
             continue;
         };
         total += 1;
-        env.session.reset();
-        let _ = env.session.type_pinyin(input);
-        let ours: Vec<String> = env
-            .session
+        let mut session = env.session.session();
+        session.reset();
+        let _ = session.type_pinyin(input);
+        let ours: Vec<String> = session
             .candidates()
             .iter()
             .map(|c| c.text().as_str().unwrap_or_default().to_owned())

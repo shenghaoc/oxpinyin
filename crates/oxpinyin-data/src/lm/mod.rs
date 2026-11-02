@@ -40,7 +40,6 @@
 
 use std::fmt;
 use std::path::Path;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use oxpinyin_core::cost::{UNKNOWN_COST, cost_of_probability, reduce_ratio, surprisal};
@@ -229,13 +228,19 @@ const fn is_user_file_library(nibble: u8) -> bool {
 }
 
 /// Bigram language model over `bigram.db` and the phrase libraries.
-pub struct BigramLanguageModel {
-    bigram: BigramTable,
+#[derive(Clone, Copy)]
+pub struct BigramLanguageModel<L = PhraseLibraries, T = BigramTables, M = AtomicU32> {
+    tables: T,
     /// The facade's chunk items — the unigram source.
-    libraries: Arc<PhraseLibraries>,
+    libraries: L,
     /// The loaded-library mask shared with the dictionary: bit `n` set =
     /// library `n` unloaded.
-    library_mask: Arc<AtomicU32>,
+    library_mask: M,
+}
+
+/// Bigram DBM and interpolation parameters, without phrase byte ownership.
+pub struct BigramTables {
+    bigram: BigramTable,
     /// Bigram/unigram interpolation weight λ, read from the model's
     /// `table.conf` when available and [`Lambda::PINNED`] (`0.312699`,
     /// `data-formats.md` §3) otherwise. Read from config rather than
@@ -311,36 +316,17 @@ fn zero_total_bigram_cost(lambda_num: u128) -> Cost {
     }
 }
 
-impl BigramLanguageModel {
-    /// Opens the bigram model: a lazy handle on `bigram_path` (the
-    /// selected backend's hash container — `bigram.db` on Kyoto Cabinet
-    /// and tkrzw) over the facade's `libraries`, with every library
-    /// visible.
-    ///
-    /// λ defaults to [`Lambda::PINNED`] (`0.312699`, `data-formats.md` §3);
-    /// override it from a real install's config with
-    /// [`Self::set_lambda_from_table_conf`] or [`Self::set_lambda`].
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LmError`] when the bigram file cannot be opened.
-    pub fn open(bigram_path: &Path, libraries: Arc<PhraseLibraries>) -> Result<Self, LmError> {
-        Self::open_with_mask(bigram_path, libraries, Arc::new(AtomicU32::new(0)))
+impl<L, T: std::borrow::Borrow<BigramTables>, M> std::ops::Deref for BigramLanguageModel<L, T, M> {
+    type Target = BigramTables;
+    fn deref(&self) -> &Self::Target {
+        self.tables.borrow()
     }
+}
 
-    /// [`Self::open`] sharing `library_mask` with the dictionary that
-    /// owns the unload state.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LmError`] when the bigram file cannot be opened.
-    pub fn open_with_mask(
-        bigram_path: &Path,
-        libraries: Arc<PhraseLibraries>,
-        library_mask: Arc<AtomicU32>,
-    ) -> Result<Self, LmError> {
-        let bigram = BigramTable::open(bigram_path)?;
-        Ok(Self::with_table(bigram, libraries, library_mask))
+impl BigramTables {
+    /// Open only the bigram table; readers borrow phrase storage separately.
+    pub fn open(bigram_path: &Path) -> Result<Self, LmError> {
+        Ok(Self::with_table(BigramTable::open(bigram_path)?))
     }
 
     /// Runtime system attachment, preserving the pin's failed BDB/KC
@@ -348,24 +334,13 @@ impl BigramLanguageModel {
     ///
     /// # Errors
     /// Returns failures before native attach; tkrzw remains strict.
-    pub fn attach_with_mask(
-        bigram_path: &Path,
-        libraries: Arc<PhraseLibraries>,
-        library_mask: Arc<AtomicU32>,
-    ) -> Result<Self, LmError> {
-        let bigram = BigramTable::attach(bigram_path)?;
-        Ok(Self::with_table(bigram, libraries, library_mask))
+    pub fn attach(bigram_path: &Path) -> Result<Self, LmError> {
+        Ok(Self::with_table(BigramTable::attach(bigram_path)?))
     }
 
-    fn with_table(
-        bigram: BigramTable,
-        libraries: Arc<PhraseLibraries>,
-        library_mask: Arc<AtomicU32>,
-    ) -> Self {
+    fn with_table(bigram: BigramTable) -> Self {
         Self {
             bigram,
-            libraries,
-            library_mask,
             lambda: Lambda::PINNED,
             lambda_raw: None,
             lambda_f32: crate::table_conf::PINNED_LAMBDA,
@@ -383,6 +358,73 @@ impl BigramLanguageModel {
         self.bigram.finish_failed_attachment();
     }
 
+    /// Borrow all loaded phrase libraries for a model operation.
+    pub fn read_all<'a>(
+        &'a self,
+        libraries: &'a PhraseLibraries,
+    ) -> BigramLanguageModel<&'a PhraseLibraries, &'a Self> {
+        BigramLanguageModel {
+            tables: self,
+            libraries,
+            library_mask: AtomicU32::new(0),
+        }
+    }
+
+    /// Bind a model read to the owner's current library state.
+    pub fn read<'a>(
+        &'a self,
+        libraries: &'a PhraseLibraries,
+        library_mask: &'a AtomicU32,
+    ) -> BigramLanguageModel<&'a PhraseLibraries, &'a Self, &'a AtomicU32> {
+        BigramLanguageModel {
+            tables: self,
+            libraries,
+            library_mask,
+        }
+    }
+}
+
+impl<L: std::borrow::Borrow<PhraseLibraries>, M: std::borrow::Borrow<AtomicU32>>
+    BigramLanguageModel<L, BigramTables, M>
+{
+    /// Opens the bigram model: a lazy handle on `bigram_path` (the
+    /// selected backend's hash container — `bigram.db` on Kyoto Cabinet
+    /// and tkrzw) over the facade's `libraries`, with every library
+    /// visible.
+    ///
+    /// λ defaults to [`Lambda::PINNED`] (`0.312699`, `data-formats.md` §3);
+    /// override it from a real install's config with
+    /// [`BigramTables::set_lambda_from_table_conf`] or [`BigramTables::set_lambda`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LmError`] when the bigram file cannot be opened.
+    pub fn open_with_mask(
+        bigram_path: &Path,
+        libraries: L,
+        library_mask: M,
+    ) -> Result<Self, LmError> {
+        Ok(Self {
+            tables: BigramTables::open(bigram_path)?,
+            libraries,
+            library_mask,
+        })
+    }
+
+    /// Separate the model tables from phrase storage.
+    pub fn into_parts(self) -> (BigramTables, L, M) {
+        (self.tables, self.libraries, self.library_mask)
+    }
+}
+
+impl<L: std::borrow::Borrow<PhraseLibraries>> BigramLanguageModel<L> {
+    /// Open a model with every library visible.
+    pub fn open(bigram_path: &Path, libraries: L) -> Result<Self, LmError> {
+        Self::open_with_mask(bigram_path, libraries, AtomicU32::new(0))
+    }
+}
+
+impl BigramTables {
     /// The interpolation weight λ currently in effect.
     #[must_use]
     pub const fn lambda(&self) -> Lambda {
@@ -423,15 +465,28 @@ impl BigramLanguageModel {
             Err(_) => false,
         }
     }
+}
 
+impl<L, M> std::ops::DerefMut for BigramLanguageModel<L, BigramTables, M> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.tables
+    }
+}
+
+impl<
+    L: std::borrow::Borrow<PhraseLibraries>,
+    T: std::borrow::Borrow<BigramTables>,
+    M: std::borrow::Borrow<AtomicU32>,
+> BigramLanguageModel<L, T, M>
+{
     /// The facade's phrase libraries this model reads unigrams from.
     #[must_use]
-    pub const fn libraries(&self) -> &Arc<PhraseLibraries> {
-        &self.libraries
+    pub fn libraries(&self) -> &PhraseLibraries {
+        self.libraries.borrow()
     }
 
     fn visible(&self, nibble: u8) -> bool {
-        library_visible(self.library_mask.load(Ordering::SeqCst), nibble)
+        library_visible(self.library_mask.borrow().load(Ordering::SeqCst), nibble)
     }
 
     /// Whether unigram counts are available for interpolation: some
@@ -439,8 +494,8 @@ impl BigramLanguageModel {
     /// facade total, which a `guint32` can wrap to zero while they stand.
     #[must_use]
     pub fn has_unigrams(&self) -> bool {
-        self.libraries
-            .has_items_unloaded(self.library_mask.load(Ordering::SeqCst))
+        self.libraries()
+            .has_items_unloaded(self.library_mask.borrow().load(Ordering::SeqCst))
     }
 
     /// `PhraseItem::get_unigram_frequency` for `token`: the stored item
@@ -454,7 +509,7 @@ impl BigramLanguageModel {
         if !self.visible((token >> 24) as u8) {
             return None;
         }
-        self.libraries.unigram_count(token)
+        self.libraries().unigram_count(token)
     }
 
     /// `FacadePhraseIndex::get_phrase_index_total_freq` over the visible
@@ -462,8 +517,8 @@ impl BigramLanguageModel {
     /// (074a2219 `phrase_index.h:440`, `phrase_index.cpp:237-248`).
     #[must_use]
     pub fn unigram_total(&self) -> u32 {
-        self.libraries
-            .unigram_total_unloaded(self.library_mask.load(Ordering::SeqCst))
+        self.libraries()
+            .unigram_total_unloaded(self.library_mask.borrow().load(Ordering::SeqCst))
     }
 
     /// The facade total the n-best step and the score divide by
@@ -852,7 +907,12 @@ impl BigramLanguageModel {
     }
 }
 
-impl LanguageModel for BigramLanguageModel {
+impl<
+    L: std::borrow::Borrow<PhraseLibraries>,
+    T: std::borrow::Borrow<BigramTables>,
+    M: std::borrow::Borrow<AtomicU32>,
+> LanguageModel for BigramLanguageModel<L, T, M>
+{
     type Token = PhraseToken;
     type Error = LmError;
 

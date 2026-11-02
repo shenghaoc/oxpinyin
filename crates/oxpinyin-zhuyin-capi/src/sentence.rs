@@ -24,8 +24,8 @@ pub extern "C" fn zhuyin_guess_sentence(instance: *mut ZhuyinInstance) -> bool {
 
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
-    let inst = unsafe { instance_mut(instance) };
-    if refuse_empty_matrix(inst) {
+    let mut inst = unsafe { instance_mut(instance) };
+    if refuse_empty_matrix(&mut inst) {
         return false;
     }
     match inst.core.session.guess_sentence() {
@@ -85,15 +85,15 @@ pub(crate) fn refuse_lookup_gram(name: &str, error: &oxpinyin_engine::EngineErro
 // Validate against it, but keep the previous sentence rows: get_nbest_match
 // returns false before results->clear (074a2219, phonetic_lookup.h:743-748;
 // zhuyin.cpp:902-907). The same rule applies to the prefix-seeded lookup.
-fn refuse_empty_matrix(inst: &mut crate::state::CapiInstance) -> bool {
-    if matrix_has_keys(inst) {
+fn refuse_empty_matrix(inst: &mut crate::state::CapiInstanceMut<'_>) -> bool {
+    if matrix_has_keys(&inst.read()) {
         return false;
     }
     inst.core.session.discard_composition();
     true
 }
 
-fn matrix_has_keys(inst: &crate::state::CapiInstance) -> bool {
+fn matrix_has_keys(inst: &crate::state::CapiInstanceRead<'_>) -> bool {
     if inst.core.parsed_len == 0 {
         return false;
     }
@@ -135,7 +135,7 @@ pub extern "C" fn zhuyin_guess_sentence_with_prefix(
 
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
-    let inst = unsafe { instance_mut(instance) };
+    let mut inst = unsafe { instance_mut(instance) };
     // `m_prefixes` becomes `[sentence_start]` and the prefix adds what it
     // converts to (`zhuyin.cpp:949-953`); `None` adds nothing.
     let prefix =
@@ -144,14 +144,12 @@ pub extern "C" fn zhuyin_guess_sentence_with_prefix(
     // each tail substring's search with the validating `reduce_tokens`
     // (`zhuyin.cpp:933`, `:953`), which asserts on more than four tokens
     // (`phrase_large_table3.h:95`).
-    let Ok(prefixes) = oxpinyin_facade::compute_prefixes(
-        &inst.core.dict,
-        inst.core.user.as_ref(),
-        prefix.as_ref(),
-    ) else {
+    let Ok(prefixes) =
+        oxpinyin_facade::compute_prefixes(&inst.core.dict, inst.core.user, prefix.as_ref())
+    else {
         std::process::abort();
     };
-    if refuse_empty_matrix(inst) {
+    if refuse_empty_matrix(&mut inst) {
         return false;
     }
     let prefix_tokens: Vec<oxpinyin_core::PhraseToken> = prefixes
@@ -342,7 +340,10 @@ pub extern "C" fn zhuyin_guess_candidates_before_cursor(
 /// reserved slot aborts there, and any further out aborts in that read's
 /// `get_column_size` (`phonetic_key_matrix.h:103`). So does this facade
 /// (register row 66).
-fn validated_lookup_offset(inst: &crate::state::CapiInstance, offset: usize) -> Option<usize> {
+fn validated_lookup_offset(
+    inst: &crate::state::CapiInstanceRead<'_>,
+    offset: usize,
+) -> Option<usize> {
     match inst.core.validate_abi_lookup_offset(offset, true) {
         Ok(normalized) => Some(normalized),
         Err(
@@ -362,7 +363,7 @@ fn validated_lookup_offset(inst: &crate::state::CapiInstance, offset: usize) -> 
 /// libraries' sum, the user store's deltas and the accepted
 /// `zhuyin_token_add_unigram_frequency` deltas, wrapped. A model without real
 /// unigrams has no total to divide by.
-fn facade_total_is_zero(inst: &crate::state::CapiInstance) -> bool {
+fn facade_total_is_zero(inst: &crate::state::CapiInstanceRead<'_>) -> bool {
     use oxpinyin_core::LanguageModel as _;
 
     inst.core.lm.has_real_unigrams() && inst.core.lm.amplified_total() == 0
@@ -377,12 +378,12 @@ fn guess_candidates(instance: *mut ZhuyinInstance, offset: usize, before_cursor:
 
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
-    let inst = unsafe { instance_mut(instance) };
+    let mut inst = unsafe { instance_mut(instance) };
     // Both candidate exports free their rows before the empty-matrix
     // refusal, leaving sentence results intact (074a2219,
     // zhuyin.cpp:1468-1471,1548-1551).
-    if !matrix_has_keys(inst) {
-        inst.candidates.clear();
+    if !matrix_has_keys(&inst.read()) {
+        inst.state.candidates.clear();
         return false;
     }
     if inst.core.session.set_options(inst.core.options()).is_err() {
@@ -391,11 +392,11 @@ fn guess_candidates(instance: *mut ZhuyinInstance, offset: usize, before_cursor:
     if !inst.core.session.is_composing() {
         return false;
     }
-    let Some(normalized) = validated_lookup_offset(inst, offset) else {
-        inst.candidates.clear();
+    let Some(normalized) = validated_lookup_offset(&inst.read(), offset) else {
+        inst.state.candidates.clear();
         return false;
     };
-    inst.candidates.clear();
+    inst.state.candidates.clear();
     // The before-cursor entry searches the spans ENDING at the offset
     // (the engine's backward-anchored window builder, the pin's
     // `search_matrix` walk over `(start, offset)`); the after-cursor
@@ -447,7 +448,7 @@ fn guess_candidates(instance: *mut ZhuyinInstance, offset: usize, before_cursor:
         Err(error) => {
             refuse_lookup_gram("zhuyin_guess_candidates", &error);
             inst.core.anchored_window = None;
-            inst.candidates.clear();
+            inst.state.candidates.clear();
             return false;
         }
     };
@@ -478,7 +479,7 @@ fn guess_candidates(instance: *mut ZhuyinInstance, offset: usize, before_cursor:
             || inst.core.zhuyin_parse.as_ref().is_none_or(|parse| {
                 oxpinyin_facade::zhuyin_original_offset(parse, session_offset) == normalized
             }));
-    if facade_total_is_zero(inst) && searched_here && window_owned.ranked_phrase_row() {
+    if facade_total_is_zero(&inst.read()) && searched_here && window_owned.ranked_phrase_row() {
         std::process::abort();
     }
     // Class (b), `zhuyin.cpp:1096`: a token of a loaded library whose item
@@ -487,7 +488,7 @@ fn guess_candidates(instance: *mut ZhuyinInstance, offset: usize, before_cursor:
     // library at another file (or at none) gets here. The call fails, once.
     if window_owned.had_unreadable_item() {
         inst.core.anchored_window = None;
-        inst.candidates.clear();
+        inst.state.candidates.clear();
         crate::ffi::log_warning(
             "zhuyin_guess_candidates: a candidate's phrase item cannot be read",
         );
@@ -499,7 +500,7 @@ fn guess_candidates(instance: *mut ZhuyinInstance, offset: usize, before_cursor:
         None
     };
     crate::candidates::snapshot_candidates(
-        &mut *inst,
+        &mut inst,
         &window_owned,
         before_cursor,
         before_end,

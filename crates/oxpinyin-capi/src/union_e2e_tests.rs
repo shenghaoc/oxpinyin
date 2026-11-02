@@ -102,7 +102,7 @@ fn addon_library_load_is_idempotent_and_surfaces_addon_candidates() {
     // SAFETY: live instance.
     let inst = unsafe { instance_ref(instance) };
     assert!(
-        inst.candidates.iter().any(|c| {
+        inst.state.candidates.iter().any(|c| {
             c.candidate_type() == lookup_candidate_type_t::ADDON_CANDIDATE
                 && (c.text_bytes() == "二簧".as_bytes() || c.text_bytes() == "二黄".as_bytes())
         }),
@@ -162,7 +162,7 @@ fn chosen_addon_candidate_is_promoted_into_default_nibble_5() {
     let promoted = {
         // SAFETY: snapshot untouched since the choose (no intervening guess).
         let inst = unsafe { instance_ref(instance) };
-        let snapshot = &inst.candidates[index];
+        let snapshot = &inst.state.candidates[index];
         assert_eq!(
             snapshot.candidate_type(),
             lookup_candidate_type_t::NORMAL_CANDIDATE,
@@ -251,11 +251,11 @@ fn predicted_candidates_include_trained_bigram_successors() {
     // SAFETY: live instance after guess_predicted.
     let inst = unsafe { instance_ref(instance) };
     assert!(
-        !inst.candidates.is_empty(),
+        !inst.state.candidates.is_empty(),
         "prediction must return at least the prefix suggestions or bigrams"
     );
     assert!(
-        inst.candidates.iter().all(|c| {
+        inst.state.candidates.iter().all(|c| {
             matches!(
                 c.candidate_type(),
                 lookup_candidate_type_t::PREDICTED_BIGRAM_CANDIDATE
@@ -289,10 +289,10 @@ fn predicted_candidates_prepend_punctuation_for_hao() {
         .collect();
     assert_eq!(puncts, ["，", "。"]);
     assert_eq!(
-        inst.candidates[0].candidate_type(),
+        inst.state.candidates[0].candidate_type(),
         lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE
     );
-    assert!(inst.candidates[0].token.is_none());
+    assert!(inst.state.candidates[0].token.is_none());
 
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);
@@ -460,7 +460,10 @@ fn tier_c_overlay_delta_flips_predicted_order_on_fixture_scale() {
     ));
     // SAFETY: live instance after guess_predicted.
     let inst = unsafe { instance_ref(instance) };
-    assert!(inst.candidates.len() >= 2, "both suggestion rows present");
+    assert!(
+        inst.state.candidates.len() >= 2,
+        "both suggestion rows present"
+    );
     let before: Vec<String> = inst
         .candidates
         .iter()

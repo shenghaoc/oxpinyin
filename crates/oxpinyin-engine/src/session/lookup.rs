@@ -10,91 +10,13 @@ use std::sync::Arc;
 
 use super::*;
 
-impl<D, L> Session<D, L>
+impl<D, L, S: std::borrow::Borrow<SessionState>> Session<D, L, S>
 where
     D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
     D::Error: Display,
     L: LanguageModel<Token = PhraseToken>,
     L::Error: Display,
 {
-    /// Recomputes the candidate list for the current state.
-    ///
-    /// Parse into a graph and run libpinyin's expanding-window scan over it:
-    /// every key-path through the parser-shaped key set, searched against the
-    /// phrase table window by window. Cross-segmentation pooling falls out of
-    /// the scan — `xian` offers `西安` (`xi` + `an`) alongside the single key
-    /// `xian`, and `fangan` mixes `方案` (`fang` + `an`) with `反感`
-    /// (`fan` + `gan`) — without a separate pooling step.
-    ///
-    /// Under the pinned observation surface the pin emits no sentence-level
-    /// candidates at all — its `nihaoshi` list never contains `你好是`, the
-    /// best sentence the DP over the segment lattice would produce — so the
-    /// pooled phrase candidates are ranked by the three-key order and
-    /// deduplicated directly, with no sentence prepend.
-    ///
-    /// This is also the eager refresh a parse (`replace_raw`) and every
-    /// other non-guess operation runs, so it does **not** apply the
-    /// over-long user-index gate: the pin's parse never calls
-    /// `_prepend_longer_candidates` (`pinyin.cpp:2292-2293`) and cannot
-    /// reach its abort. Nor does it refuse a `DYNAMIC_ADJUST` gram the pin
-    /// cannot read: the pin's parse merges no gram
-    /// (`pinyin_parse_more_full_pinyins`, `pinyin.cpp:1497-1520`), so the
-    /// eager list leaves that gram's bigram term out and keeps the unigram
-    /// term. Only an explicit guess ([`Session::candidates_at`],
-    /// [`Session::candidates_ending_at`]) gates.
-    pub(super) fn refresh(&mut self) -> Result<(), EngineError> {
-        // The cached list is anchored at the composition offset the session
-        // owns. Reuse its buffer so the scan keeps its capacity across
-        // keystrokes.
-        self.ensure_matrix()?;
-        let anchor = self.record.consumed();
-        let mut items = Vec::new();
-        self.lookup.candidates.swap_items(&mut items);
-        // A failed scan leaves the emptied list, as it always has; it is
-        // not stale, so the next reader indexes it rather than rescanning.
-        self.lookup.stale = false;
-        self.lookup.parsed_prefix = self.scan_window(anchor, &mut items, false)?;
-        self.lookup.candidates.swap_items(&mut items);
-        Ok(())
-    }
-
-    /// The parse seams' and sentence guesses' refresh: [`Self::refresh`],
-    /// unless the session defers list builds
-    /// ([`Session::set_defer_list_builds`]). Deferred, the scan matrix is
-    /// still built, so its errors surface here as before, and the list is
-    /// left stale for [`Session::refresh_candidates`].
-    pub(super) fn refresh_after_parse(&mut self) -> Result<(), EngineError> {
-        if !self.defer_list_builds {
-            return self.refresh();
-        }
-        self.ensure_matrix()?;
-        self.lookup.stale = true;
-        Ok(())
-    }
-
-    /// Builds the candidate list a deferred parse or sentence guess left
-    /// stale ([`Session::set_defer_list_builds`]): the list, and the parse
-    /// length behind it, that the parse or guess would have built. A no-op
-    /// when the list is current, and always under the default eager mode.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`EngineError`] when the deferred build hits a backend
-    /// failure. The list then stays stale, so the next
-    /// `refresh_candidates`, [`Session::select`] or `Space` retries the
-    /// scan.
-    pub fn refresh_candidates(&mut self) -> Result<(), EngineError> {
-        if self.lookup.stale
-            && let Err(error) = self.refresh()
-        {
-            // `refresh` marks the list current before it scans; the build
-            // the deferred parse or guess owes is still owed.
-            self.lookup.stale = true;
-            return Err(error);
-        }
-        Ok(())
-    }
-
     /// Builds the candidate window anchored at byte `anchor` in the raw
     /// buffer into `out`, returning the filtered parse length of the
     /// remaining slice from `anchor`.
@@ -171,197 +93,6 @@ where
             })
             .collect();
         SegmentGraph::build_exact(remaining, &rebased).map_err(EngineError::Graph)
-    }
-
-    pub(super) fn scan_window(
-        &mut self,
-        anchor: usize,
-        out: &mut Vec<Candidate>,
-        gate: bool,
-    ) -> Result<usize, EngineError> {
-        out.clear();
-        self.ensure_matrix()?;
-        if anchor >= self.input.len() {
-            // A fully-consumed (or past-end) anchor still carries its
-            // sentence rows — upstream's window prepends `m_nbest_results`
-            // whether or not any phrase candidate remains at the cursor (the
-            // L1 terminal-choose surface) — and its LONGER row, which the
-            // pin prepends at every valid offset (`pinyin.cpp:2292-2293`;
-            // row 65: the reserved slot's column holds no key, so the span
-            // loop finds nothing but the prepends still run).
-            self.prepend_longer_row(out, gate)?;
-            self.prepend_nbest_rows(out);
-            return Ok(0);
-        }
-
-        // Lift the scratch out before borrowing `raw`, so graph/scan can
-        // use `&self.input.as_str()[anchor..]` without cloning into a
-        // CompactString. Destructured into owned locals so the scan body
-        // below reads exactly as before; reassembled and handed back at the
-        // end. The candidates themselves are collected straight into
-        // `out`, the buffer the caller keeps.
-        let Scratch {
-            mut entries,
-            mut path,
-            mut window_addon,
-        } = core::mem::take(&mut self.scratch);
-        let collected = out;
-
-        let remaining = &self.input.as_str()[anchor..];
-        let real_unigrams = self.model.has_real_unigrams();
-        let graph = if real_unigrams {
-            self.build_graph_at(0, self.input.as_bytes())?
-        } else {
-            self.build_graph_at(anchor, remaining.as_bytes())?
-        };
-        // Production windows scan the retained matrix. Their parse-length
-        // query can start at the anchor on the shared graph too, without
-        // reparsing spellings or rebasing/copying edges. The fallback scorer
-        // still needs its independent graph's relative edge coordinates.
-        let parsed_prefix = if real_unigrams && anchor != 0 {
-            self.window_parsed_len(&graph, anchor)
-        } else {
-            apostrophe_extended(
-                remaining.as_bytes(),
-                graph
-                    .fewest_keys(self.settings.incomplete())
-                    .last()
-                    .map_or(0, Edge::to),
-            )
-        };
-
-        // When the model carries the phrase index's real unigram
-        // frequencies, the pinned construction runs — the expanding-window
-        // scan, the three-key order (text length, pinyin span, frequency),
-        // frequency-aware dedup, and a raw-input fallback for an empty
-        // scan. Without real frequencies the session reproduces its
-        // pre-frequency behaviour exactly: k-best prefixes, sentence
-        // candidates, cost order, adjacent dedup.
-        let mut empty_phrase_scan = false;
-        if real_unigrams {
-            // Upstream's Gates 1 and 2 (`pinyin.cpp:2200-2216`,
-            // `zhuyin.cpp:1474-1489`), before the search exactly as the pin
-            // orders them and hoisted out of the candidate loop as it hoists
-            // them: the previous token is resolved once, and the system and
-            // user grams are merged once, for the whole guess. Indexing that
-            // row per candidate is Gate 3.
-            let gram = self.dynamic_adjust_gram(anchor, gate)?;
-            {
-                let mut unreadable = false;
-                let mut scratch = ScanScratch {
-                    unreadable: &mut unreadable,
-                    path: &mut path,
-                    entries: &mut entries,
-                    window_addon: &mut window_addon,
-                    explicit: gate,
-                };
-                self.collect_window_scan(remaining.as_bytes(), collected, &mut scratch)?;
-                self.scan_unreadable = unreadable;
-            }
-            // The rows the pin's `_compute_frequency_of_items` runs on: the
-            // freshly searched list, before its sort, the LONGER and
-            // sentence prepends and `_remove_duplicated_items_by_phrase_string`
-            // (`pinyin.cpp:2283` against `:2300`, `zhuyin.cpp:1526` against
-            // `:1537`). Its `0 < total_freq` assert (`pinyin.cpp:1859`,
-            // `zhuyin.cpp:1261`) runs for every row but an addon or predicted
-            // prefix row (`pinyin.cpp:1812-1840`); libzhuyin skips none.
-            self.scan_ranked_phrase = collected
-                .iter()
-                .any(|candidate| candidate.kind() == CandidateKind::Phrase);
-
-            // The scan's result stands even when it found nothing. Tokens the
-            // table lacks rank as zero rather than falling back.
-            let frequencies = self
-                .candidate_frequencies(
-                    collected,
-                    gram.as_ref().map(|(prev, row)| (*prev, row)),
-                    gate,
-                )?
-                .unwrap_or_else(|| vec![0; collected.len()]);
-            // `Session::rank_word`: the sort word, or libzhuyin's fixed
-            // comparator (`zhuyin.cpp:1129-1144`) on a zhuyin facade.
-            let rank_word = self.rank_word();
-            // One key row per candidate, sorted and applied in place: the
-            // candidates never leave `collected`, and the key rows are the
-            // only per-call buffer of this stage.
-            let mut keys: Vec<(RankKey, u32)> = collected
-                .iter()
-                .zip(frequencies)
-                .enumerate()
-                .map(|(index, (candidate, frequency))| {
-                    // `compare_item_with_sort_option` compares a key
-                    // only while its bit is set and returns 0 — a tie —
-                    // once it is clear (`pinyin.cpp:1678-1709`): zeroing
-                    // a disabled field makes every candidate equal on
-                    // it, which is that comparator exactly.
-                    let key = RankKey::for_sort_word(
-                        candidate.phrase_length(),
-                        candidate.consumed_bytes(),
-                        frequency,
-                        rank_word,
-                    );
-                    (key, index as u32)
-                })
-                .collect();
-
-            // Stable sort, all three keys descending: an all-equal tie keeps
-            // the collection order, which the scan now lays down in the
-            // pin's array order (per window, token-ascending).
-            rank_candidates(collected, &mut keys);
-            let mut keys: Vec<RankKey> = keys.into_iter().map(|(key, _)| key).collect();
-
-            // The pin prepends LONGER before the frequency dedup
-            // (`pinyin.cpp:2292-2300`). Keep its unigram-only `m_freq`:
-            // a same-text NORMAL row can have a larger bigram term.
-            empty_phrase_scan = collected.is_empty();
-            if self.lookup.sort_word & SORT_WITHOUT_LONGER_CANDIDATE == 0
-                && let Some((key, row)) = self.longer_candidate(gate)?
-            {
-                collected.insert(0, row);
-                keys.insert(0, key);
-            }
-            dedup_ranked_by_text(collected, &keys);
-        } else {
-            let scorer = Scorer::with_key_costs(
-                self.scoring,
-                &self.dictionary,
-                &self.model,
-                self.key_costs.clone(),
-            );
-            let paths = k_best(&graph, &scorer, SEGMENTATION_K)?;
-            for path in &paths {
-                self.collect_prefix_phrases(&graph, &scorer, path, collected)?;
-                self.collect_sentence(&graph, &scorer, path, collected)?;
-            }
-            collected.sort_by_key(Candidate::cost);
-            collected.dedup_by(|left, right| left.text() == right.text());
-        }
-
-        if collected.is_empty() || empty_phrase_scan {
-            collected.push(Candidate::new(
-                compact_str::CompactString::from(remaining),
-                CandidateKind::Fallback,
-                0,
-                remaining.len(),
-                0,
-                None,
-                None,
-            ));
-        }
-
-        // W14: prepend the stored n-best rows, head first, then drop every
-        // later candidate with the same text — upstream prepends after the
-        // sort and its phrase-string dedup keeps the NBEST row (and the
-        // lower n-best index) over any phrase candidate with the same
-        // string (`pinyin.cpp:2290-2298`, `2058-2126`).
-        self.prepend_nbest_rows(collected);
-
-        self.scratch = Scratch {
-            entries,
-            path,
-            window_addon,
-        };
-        Ok(parsed_prefix)
     }
 
     /// Filtered reachability from a nonzero window origin. Fewest-key ties
@@ -635,270 +366,6 @@ where
         }
     }
 
-    /// Rebuilds the candidate window anchored at a caller lookup `offset`,
-    /// mirroring the pin's per-offset span search — `pinyin_guess_candidates`
-    /// re-runs `search_matrix` from `start = offset` (`pinyin.cpp:2224-2262`),
-    /// its candidates all beginning at `offset` — and returns it without
-    /// disturbing the cached list or any composition state (constraints,
-    /// consumed, history). The C ABI uses this on every guess, including
-    /// [`Session::composition_offset`]: the dictionary's loaded libraries
-    /// may have changed since the cached [`Session::candidates`] were built.
-    ///
-    /// A byte no matrix key starts on — a mid-syllable position of the
-    /// composition's own parse — is one of the pin's empty columns:
-    /// `search_matrix` matches nothing from it for every end, so the
-    /// window there is the raw-suffix fallback under the prepended n-best
-    /// rows, never a re-parse of the suffix (the suffix's own keys are not
-    /// the matrix's). A zero-key (apostrophe) column inside the parse is
-    /// not empty: the span search steps over it to the next key, so that
-    /// apostrophe byte answers the following key's window. An apostrophe
-    /// past a stop byte sits outside the matrix — the pin aborts there —
-    /// and takes the empty-column window like any other unreachable byte.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`EngineError`] when a backend fails during the scan, exactly
-    /// as the anchored `Session::refresh` does;
-    /// [`EngineError::LookupOffsetOutOfRange`] when `offset` exceeds the raw
-    /// buffer's one-past-end position — the pin reads its matrix out of
-    /// bounds there, so no pinned behaviour exists and the offset is
-    /// refused — and [`EngineError::LookupOffsetInsideCharacter`] when
-    /// `offset` falls inside a multi-byte character of the raw buffer (no
-    /// window exists under a mid-character slice). An offset equal to
-    /// one-past-end is valid: `scan_window` answers the terminal sentence
-    /// rows for it (the pin's reserved slot).
-    pub fn candidates_at(&mut self, offset: usize) -> Result<CandidateList, EngineError> {
-        if offset > self.input.len() {
-            return Err(EngineError::LookupOffsetOutOfRange {
-                offset,
-                len: self.input.len(),
-            });
-        }
-        if !self.input.is_char_boundary(offset) {
-            return Err(EngineError::LookupOffsetInsideCharacter {
-                offset,
-                len: self.input.len(),
-            });
-        }
-        self.scan_unreadable = false;
-        self.scan_ranked_phrase = false;
-        let mut items = Vec::new();
-        if offset < self.input.len() && !self.spans_a_matrix_key(offset)? {
-            items.push(Candidate::new(
-                compact_str::CompactString::from(&self.input.as_str()[offset..]),
-                CandidateKind::Fallback,
-                0,
-                self.input.len() - offset,
-                0,
-                None,
-                None,
-            ));
-            // Row 65: an offset no span starts at is an EMPTY matrix column,
-            // but the pin's two prepends run after the span loop regardless
-            // of it — the LONGER row (`pinyin.cpp:2292-2293`) first, then the
-            // sentence rows (`:2295-2296`). The n-best rows rotate above the
-            // LONGER one, matching the pin's two prepends.
-            self.prepend_longer_row(&mut items, true)?;
-            self.prepend_nbest_rows(&mut items);
-            return Ok(CandidateList::from_vec(items));
-        }
-        self.scan_window(offset, &mut items, true)?;
-        Ok(CandidateList::from_vec(items)
-            .with_unreadable_item(self.scan_unreadable)
-            .with_ranked_phrase_row(self.scan_ranked_phrase))
-    }
-
-    /// Builds the candidate window over spans ENDING at byte `offset` in the
-    /// raw buffer — the pin's before-cursor walk
-    /// (`zhuyin_guess_candidates_before_cursor`, `zhuyin.cpp:1542-1629` at
-    /// the pin 0c5e80e1): every key-path from each start `0..offset` to the
-    /// fixed end, enumerated longest-span-first (start ascending — the pin's
-    /// `len` loop), each span's slice ranked by the three-key order exactly
-    /// like the after-cursor windows, the stored n-best rows prepended over
-    /// the whole set, then text dedup by frequency.
-    ///
-    /// Measured decomposition on the pin (su3u3, `before(5)`, the
-    /// instrumented oracle at 0c5e80e1): span (0,5) yields 3 phrase
-    /// candidates, span (3,5) yields 597, the mid-syllable starts (1, 2, 4)
-    /// answer no match (empty columns — `search_matrix` returns
-    /// `SEARCH_NONE` before recursing), 600 phrases total, +1 sentence row,
-    /// −1 string-duplicate phrase → 600. The builder reproduces that walk: a
-    /// start with no matrix column (a mid-syllable byte) contributes nothing
-    /// naturally (no key starts there), and a span ending on an apostrophe
-    /// separator byte answers nothing (upstream's zero-key end column:
-    /// `search_matrix` returns `SEARCH_CONTINUED` with no items,
-    /// `phonetic_key_matrix.cpp:419-423`).
-    ///
-    /// Does not disturb the cached list or any composition state (the
-    /// [`Session::candidates_at`] contract). At offset 0 nothing precedes
-    /// the first key, so the window is the prepended sentence rows alone.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`EngineError::LookupOffsetOutOfRange`] when `offset` exceeds
-    /// the raw buffer's one-past-end position, and
-    /// [`EngineError::LookupOffsetInsideCharacter`] when it falls inside a
-    /// multi-byte character — the same refusals as
-    /// [`Session::candidates_at`] — plus backend failures during the scan.
-    pub fn candidates_ending_at(&mut self, offset: usize) -> Result<CandidateList, EngineError> {
-        if offset > self.input.len() {
-            return Err(EngineError::LookupOffsetOutOfRange {
-                offset,
-                len: self.input.len(),
-            });
-        }
-        if !self.input.is_char_boundary(offset) {
-            return Err(EngineError::LookupOffsetInsideCharacter {
-                offset,
-                len: self.input.len(),
-            });
-        }
-        self.scan_unreadable = false;
-        self.scan_ranked_phrase = false;
-        let mut items = Vec::new();
-        // A span cannot end at the composition start, and an end on an
-        // apostrophe separator byte is upstream's empty end column: the
-        // window is the prepended sentence rows alone.
-        if offset == 0 || self.input.as_bytes().get(offset - 1) == Some(&b'\'') {
-            self.prepend_nbest_rows(&mut items);
-            return Ok(CandidateList::from_vec(items));
-        }
-        self.scan_window_ending(offset, &mut items)?;
-        Ok(CandidateList::from_vec(items)
-            .with_unreadable_item(self.scan_unreadable)
-            .with_ranked_phrase_row(self.scan_ranked_phrase))
-    }
-
-    /// The backward-anchored scan proper: the complete retained parse, every
-    /// live start enumerated ascending (the pin's longest span first), each
-    /// span's batch flushed and ranked with its own previous-token gram (the
-    /// pin resolves `_get_previous_token` per `len` slice), groups appended
-    /// in order, then one text dedup — the pin dedups once, after the
-    /// prepend, and [`Session::prepend_nbest_rows`] re-runs it over the
-    /// joined list.
-    ///
-    /// Returns the retained parse length bounded by the cursor, mirroring
-    /// [`Session::scan_window`]'s return.
-    pub(super) fn scan_window_ending(
-        &mut self,
-        offset: usize,
-        out: &mut Vec<Candidate>,
-    ) -> Result<usize, EngineError> {
-        out.clear();
-        self.ensure_matrix()?;
-        let rank_word = self.rank_word();
-        let matrix = if self.collapse_sentence_rows_to_best {
-            self.input.ending_matrix.as_ref()
-        } else {
-            self.input.matrix.as_ref()
-        };
-        let Some(matrix) = matrix else {
-            return Ok(0);
-        };
-        let bound = matrix.bound.min(offset);
-
-        let Scratch {
-            mut entries,
-            mut path,
-            mut window_addon,
-        } = core::mem::take(&mut self.scratch);
-        let mut group: Vec<Candidate> = Vec::new();
-        let mut keys: Vec<RankKey> = Vec::new();
-        let mut slice_keys: Vec<(RankKey, u32)> = Vec::new();
-        let mut unreadable = false;
-        let mut ranked_phrase = false;
-
-        for start in 0..bound {
-            // The pin ranks each `len` slice on its own, with the previous
-            // token resolved and its grams merged at that slice's start,
-            // before the search (`zhuyin.cpp:1566-1582`).
-            let gram = self.dynamic_adjust_gram(start, true)?;
-            // An empty column — no key starts here — is the pin's
-            // `SEARCH_NONE` start (`search_matrix`,
-            // `phonetic_key_matrix.cpp:416-418`): the span contributes
-            // nothing and the walk skips it.
-            if matrix
-                .columns
-                .get(start)
-                .is_none_or(std::vec::Vec::is_empty)
-                && !matrix.zeros.get(start).copied().unwrap_or(false)
-            {
-                continue;
-            }
-            let mut continued = false;
-            group.clear();
-            {
-                let mut buf = ScanBuf {
-                    span_base: 0,
-                    path: &mut path,
-                    tones: SmallVec::new(),
-                    system: &mut group,
-                    addon: &mut window_addon,
-                    continued: &mut continued,
-                    unreadable: &mut unreadable,
-                    entries: &mut entries,
-                    // `scan_window_ending` serves only the explicit
-                    // before-cursor guess (`zhuyin.cpp:1542-1607`).
-                    explicit: true,
-                };
-                self.scan_parsed_paths(matrix, start, offset, &mut buf)?;
-            }
-            order_window_tail(&mut group, 0);
-            flush_window_batch(&mut window_addon, &mut group);
-            if group.is_empty() {
-                continue;
-            }
-            // Each `len` slice's rows are scored before the final dedup
-            // (`zhuyin.cpp:1607` against `:1630`).
-            ranked_phrase |= group
-                .iter()
-                .any(|candidate| candidate.kind() == CandidateKind::Phrase);
-            // Every row of this slice spans `[start, offset)` — the pin's
-            // `template_item.m_begin = start; m_end = offset`
-            // (`zhuyin.cpp:1595`). The retained matrix's coordinates are
-            // absolute, so the start is recorded as such; the end is the
-            // row's `consumed_bytes` already.
-            for candidate in &mut group {
-                candidate.set_span_start(start);
-            }
-            let frequencies = self
-                .candidate_frequencies(&group, gram.as_ref().map(|(prev, row)| (*prev, row)), true)?
-                .unwrap_or_else(|| vec![0; group.len()]);
-            slice_keys.clear();
-            slice_keys.extend(group.iter().zip(frequencies).enumerate().map(
-                |(index, (candidate, frequency))| {
-                    // `Session::rank_word`: on the zhuyin facade, phrase
-                    // length then frequency (`zhuyin.cpp:1129-1144`).
-                    let key = RankKey::for_sort_word(
-                        candidate.phrase_length(),
-                        candidate.consumed_bytes(),
-                        frequency,
-                        rank_word,
-                    );
-                    (key, index as u32)
-                },
-            ));
-            rank_candidates(&mut group, &mut slice_keys);
-            keys.extend(slice_keys.iter().map(|(key, _)| *key));
-            out.append(&mut group);
-        }
-
-        // Each slice keeps its own sort order. The final dedup compares
-        // `m_freq` across all slices (`zhuyin.cpp:1612,1626-1630`).
-        dedup_ranked_by_text(out, &keys);
-
-        self.scratch = Scratch {
-            entries,
-            path,
-            window_addon,
-        };
-
-        self.scan_unreadable = unreadable;
-        self.scan_ranked_phrase = ranked_phrase;
-        self.prepend_nbest_rows(out);
-        Ok(bound)
-    }
-
     /// Whether `offset` names a column the pin's span search can answer.
     ///
     /// The pin's matrix holds the chosen parse's keys at their raw begins
@@ -949,51 +416,6 @@ where
         Ok(offset < graph.consumed()
             && first.is_some_and(|start| offset >= start)
             && self.input.as_bytes().get(offset) == Some(&b'\''))
-    }
-
-    /// Prepends the stored n-best rows onto `collected`, head first, then
-    /// drops every later candidate with the same text — upstream prepends
-    /// after the sort and its phrase-string dedup keeps the NBEST row
-    /// (and the lower n-best index) over any phrase candidate with the
-    /// same string (`pinyin.cpp:2290-2298`, `2058-2126`). Extend-then-
-    /// rotate keeps `collected`'s allocation — the session scratch on the
-    /// scan path, a fresh small vec on the fully-consumed path.
-    ///
-    /// Under [`Session::set_collapse_sentence_rows_to_best`] only the 1-best
-    /// row is prepended — libzhuyin's display law.
-    ///
-    /// A sort word with `SORT_WITHOUT_SENTENCE_CANDIDATE` set prepends
-    /// nothing and so dedups nothing against the sentences: the pin skips
-    /// `_prepend_sentence_candidates` under that bit (`pinyin.cpp:2295-2296`)
-    /// before `_remove_duplicated_items_by_phrase_string` runs (`:2300`), so
-    /// a phrase row whose string repeats an n-best sentence survives there
-    /// (issue #582). Filtering the sentence rows out after the dedup would
-    /// drop both copies of that string.
-    pub(super) fn prepend_nbest_rows(&mut self, collected: &mut Vec<Candidate>) {
-        if self.sentence.rows.is_empty()
-            || self.lookup.sort_word & SORT_WITHOUT_SENTENCE_CANDIDATE != 0
-        {
-            return;
-        }
-        let rows = if self.collapse_sentence_rows_to_best {
-            &self.sentence.rows[..1]
-        } else {
-            &self.sentence.rows[..]
-        };
-        let nbest_n = rows.len();
-        collected.extend(rows.iter().enumerate().map(|(index, row)| {
-            Candidate::new(
-                row.text.clone(),
-                CandidateKind::Sentence,
-                row.keys,
-                row.span,
-                row.cost,
-                None,
-                Some(u8::try_from(index).unwrap_or(u8::MAX)),
-            )
-        }));
-        collected.rotate_right(nbest_n);
-        dedup_by_text_keep_first(collected);
     }
 
     /// The previous token at `offset`, as upstream's `_get_previous_token`
@@ -1619,6 +1041,598 @@ where
             addon,
         );
         Ok(unreadable)
+    }
+}
+
+impl<D, L, S: std::borrow::BorrowMut<SessionState>> Session<D, L, S>
+where
+    D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+    D::Error: Display,
+    L: LanguageModel<Token = PhraseToken>,
+    L::Error: Display,
+{
+    /// Recomputes the candidate list for the current state.
+    ///
+    /// Parse into a graph and run libpinyin's expanding-window scan over it:
+    /// every key-path through the parser-shaped key set, searched against the
+    /// phrase table window by window. Cross-segmentation pooling falls out of
+    /// the scan — `xian` offers `西安` (`xi` + `an`) alongside the single key
+    /// `xian`, and `fangan` mixes `方案` (`fang` + `an`) with `反感`
+    /// (`fan` + `gan`) — without a separate pooling step.
+    ///
+    /// Under the pinned observation surface the pin emits no sentence-level
+    /// candidates at all — its `nihaoshi` list never contains `你好是`, the
+    /// best sentence the DP over the segment lattice would produce — so the
+    /// pooled phrase candidates are ranked by the three-key order and
+    /// deduplicated directly, with no sentence prepend.
+    ///
+    /// This is also the eager refresh a parse (`replace_raw`) and every
+    /// other non-guess operation runs, so it does **not** apply the
+    /// over-long user-index gate: the pin's parse never calls
+    /// `_prepend_longer_candidates` (`pinyin.cpp:2292-2293`) and cannot
+    /// reach its abort. Nor does it refuse a `DYNAMIC_ADJUST` gram the pin
+    /// cannot read: the pin's parse merges no gram
+    /// (`pinyin_parse_more_full_pinyins`, `pinyin.cpp:1497-1520`), so the
+    /// eager list leaves that gram's bigram term out and keeps the unigram
+    /// term. Only an explicit guess ([`Session::candidates_at`],
+    /// [`Session::candidates_ending_at`]) gates.
+    pub(super) fn refresh(&mut self) -> Result<(), EngineError> {
+        // The cached list is anchored at the composition offset the session
+        // owns. Reuse its buffer so the scan keeps its capacity across
+        // keystrokes.
+        self.ensure_matrix()?;
+        let anchor = self.record.consumed();
+        let mut items = Vec::new();
+        self.lookup.candidates.swap_items(&mut items);
+        // A failed scan leaves the emptied list, as it always has; it is
+        // not stale, so the next reader indexes it rather than rescanning.
+        self.lookup.stale = false;
+        self.lookup.parsed_prefix = self.scan_window(anchor, &mut items, false)?;
+        self.lookup.candidates.swap_items(&mut items);
+        Ok(())
+    }
+
+    /// The parse seams' and sentence guesses' refresh: [`Self::refresh`],
+    /// unless the session defers list builds
+    /// ([`Session::set_defer_list_builds`]). Deferred, the scan matrix is
+    /// still built, so its errors surface here as before, and the list is
+    /// left stale for [`Session::refresh_candidates`].
+    pub(super) fn refresh_after_parse(&mut self) -> Result<(), EngineError> {
+        if !self.defer_list_builds {
+            return self.refresh();
+        }
+        self.ensure_matrix()?;
+        self.lookup.stale = true;
+        Ok(())
+    }
+
+    /// Builds the candidate list a deferred parse or sentence guess left
+    /// stale ([`Session::set_defer_list_builds`]): the list, and the parse
+    /// length behind it, that the parse or guess would have built. A no-op
+    /// when the list is current, and always under the default eager mode.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when the deferred build hits a backend
+    /// failure. The list then stays stale, so the next
+    /// `refresh_candidates`, [`Session::select`] or `Space` retries the
+    /// scan.
+    pub fn refresh_candidates(&mut self) -> Result<(), EngineError> {
+        if self.lookup.stale
+            && let Err(error) = self.refresh()
+        {
+            // `refresh` marks the list current before it scans; the build
+            // the deferred parse or guess owes is still owed.
+            self.lookup.stale = true;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub(super) fn scan_window(
+        &mut self,
+        anchor: usize,
+        out: &mut Vec<Candidate>,
+        gate: bool,
+    ) -> Result<usize, EngineError> {
+        out.clear();
+        self.ensure_matrix()?;
+        if anchor >= self.input.len() {
+            // A fully-consumed (or past-end) anchor still carries its
+            // sentence rows — upstream's window prepends `m_nbest_results`
+            // whether or not any phrase candidate remains at the cursor (the
+            // L1 terminal-choose surface) — and its LONGER row, which the
+            // pin prepends at every valid offset (`pinyin.cpp:2292-2293`;
+            // row 65: the reserved slot's column holds no key, so the span
+            // loop finds nothing but the prepends still run).
+            self.prepend_longer_row(out, gate)?;
+            self.prepend_nbest_rows(out);
+            return Ok(0);
+        }
+
+        // Lift the scratch out before borrowing `raw`, so graph/scan can
+        // use `&self.input.as_str()[anchor..]` without cloning into a
+        // CompactString. Destructured into owned locals so the scan body
+        // below reads exactly as before; reassembled and handed back at the
+        // end. The candidates themselves are collected straight into
+        // `out`, the buffer the caller keeps.
+        let Scratch {
+            mut entries,
+            mut path,
+            mut window_addon,
+        } = core::mem::take(&mut self.scratch);
+        let collected = out;
+
+        let remaining = &self.input.as_str()[anchor..];
+        let real_unigrams = self.model.has_real_unigrams();
+        let graph = if real_unigrams {
+            self.build_graph_at(0, self.input.as_bytes())?
+        } else {
+            self.build_graph_at(anchor, remaining.as_bytes())?
+        };
+        // Production windows scan the retained matrix. Their parse-length
+        // query can start at the anchor on the shared graph too, without
+        // reparsing spellings or rebasing/copying edges. The fallback scorer
+        // still needs its independent graph's relative edge coordinates.
+        let parsed_prefix = if real_unigrams && anchor != 0 {
+            self.window_parsed_len(&graph, anchor)
+        } else {
+            apostrophe_extended(
+                remaining.as_bytes(),
+                graph
+                    .fewest_keys(self.settings.incomplete())
+                    .last()
+                    .map_or(0, Edge::to),
+            )
+        };
+
+        // When the model carries the phrase index's real unigram
+        // frequencies, the pinned construction runs — the expanding-window
+        // scan, the three-key order (text length, pinyin span, frequency),
+        // frequency-aware dedup, and a raw-input fallback for an empty
+        // scan. Without real frequencies the session reproduces its
+        // pre-frequency behaviour exactly: k-best prefixes, sentence
+        // candidates, cost order, adjacent dedup.
+        let mut empty_phrase_scan = false;
+        if real_unigrams {
+            // Upstream's Gates 1 and 2 (`pinyin.cpp:2200-2216`,
+            // `zhuyin.cpp:1474-1489`), before the search exactly as the pin
+            // orders them and hoisted out of the candidate loop as it hoists
+            // them: the previous token is resolved once, and the system and
+            // user grams are merged once, for the whole guess. Indexing that
+            // row per candidate is Gate 3.
+            let gram = self.dynamic_adjust_gram(anchor, gate)?;
+            {
+                let mut unreadable = false;
+                let mut scratch = ScanScratch {
+                    unreadable: &mut unreadable,
+                    path: &mut path,
+                    entries: &mut entries,
+                    window_addon: &mut window_addon,
+                    explicit: gate,
+                };
+                self.collect_window_scan(remaining.as_bytes(), collected, &mut scratch)?;
+                self.scan_unreadable = unreadable;
+            }
+            // The rows the pin's `_compute_frequency_of_items` runs on: the
+            // freshly searched list, before its sort, the LONGER and
+            // sentence prepends and `_remove_duplicated_items_by_phrase_string`
+            // (`pinyin.cpp:2283` against `:2300`, `zhuyin.cpp:1526` against
+            // `:1537`). Its `0 < total_freq` assert (`pinyin.cpp:1859`,
+            // `zhuyin.cpp:1261`) runs for every row but an addon or predicted
+            // prefix row (`pinyin.cpp:1812-1840`); libzhuyin skips none.
+            self.scan_ranked_phrase = collected
+                .iter()
+                .any(|candidate| candidate.kind() == CandidateKind::Phrase);
+
+            // The scan's result stands even when it found nothing. Tokens the
+            // table lacks rank as zero rather than falling back.
+            let frequencies = self
+                .candidate_frequencies(
+                    collected,
+                    gram.as_ref().map(|(prev, row)| (*prev, row)),
+                    gate,
+                )?
+                .unwrap_or_else(|| vec![0; collected.len()]);
+            // `Session::rank_word`: the sort word, or libzhuyin's fixed
+            // comparator (`zhuyin.cpp:1129-1144`) on a zhuyin facade.
+            let rank_word = self.rank_word();
+            // One key row per candidate, sorted and applied in place: the
+            // candidates never leave `collected`, and the key rows are the
+            // only per-call buffer of this stage.
+            let mut keys: Vec<(RankKey, u32)> = collected
+                .iter()
+                .zip(frequencies)
+                .enumerate()
+                .map(|(index, (candidate, frequency))| {
+                    // `compare_item_with_sort_option` compares a key
+                    // only while its bit is set and returns 0 — a tie —
+                    // once it is clear (`pinyin.cpp:1678-1709`): zeroing
+                    // a disabled field makes every candidate equal on
+                    // it, which is that comparator exactly.
+                    let key = RankKey::for_sort_word(
+                        candidate.phrase_length(),
+                        candidate.consumed_bytes(),
+                        frequency,
+                        rank_word,
+                    );
+                    (key, index as u32)
+                })
+                .collect();
+
+            // Stable sort, all three keys descending: an all-equal tie keeps
+            // the collection order, which the scan now lays down in the
+            // pin's array order (per window, token-ascending).
+            rank_candidates(collected, &mut keys);
+            let mut keys: Vec<RankKey> = keys.into_iter().map(|(key, _)| key).collect();
+
+            // The pin prepends LONGER before the frequency dedup
+            // (`pinyin.cpp:2292-2300`). Keep its unigram-only `m_freq`:
+            // a same-text NORMAL row can have a larger bigram term.
+            empty_phrase_scan = collected.is_empty();
+            if self.lookup.sort_word & SORT_WITHOUT_LONGER_CANDIDATE == 0
+                && let Some((key, row)) = self.longer_candidate(gate)?
+            {
+                collected.insert(0, row);
+                keys.insert(0, key);
+            }
+            dedup_ranked_by_text(collected, &keys);
+        } else {
+            let scorer = Scorer::with_key_costs(
+                self.scoring,
+                &self.dictionary,
+                &self.model,
+                self.key_costs.clone(),
+            );
+            let paths = k_best(&graph, &scorer, SEGMENTATION_K)?;
+            for path in &paths {
+                self.collect_prefix_phrases(&graph, &scorer, path, collected)?;
+                self.collect_sentence(&graph, &scorer, path, collected)?;
+            }
+            collected.sort_by_key(Candidate::cost);
+            collected.dedup_by(|left, right| left.text() == right.text());
+        }
+
+        if collected.is_empty() || empty_phrase_scan {
+            let remaining = &self.input.as_str()[anchor..];
+            collected.push(Candidate::new(
+                compact_str::CompactString::from(remaining),
+                CandidateKind::Fallback,
+                0,
+                remaining.len(),
+                0,
+                None,
+                None,
+            ));
+        }
+
+        // W14: prepend the stored n-best rows, head first, then drop every
+        // later candidate with the same text — upstream prepends after the
+        // sort and its phrase-string dedup keeps the NBEST row (and the
+        // lower n-best index) over any phrase candidate with the same
+        // string (`pinyin.cpp:2290-2298`, `2058-2126`).
+        self.prepend_nbest_rows(collected);
+
+        self.scratch = Scratch {
+            entries,
+            path,
+            window_addon,
+        };
+        Ok(parsed_prefix)
+    }
+
+    /// Rebuilds the candidate window anchored at a caller lookup `offset`,
+    /// mirroring the pin's per-offset span search — `pinyin_guess_candidates`
+    /// re-runs `search_matrix` from `start = offset` (`pinyin.cpp:2224-2262`),
+    /// its candidates all beginning at `offset` — and returns it without
+    /// disturbing the cached list or any composition state (constraints,
+    /// consumed, history). The C ABI uses this on every guess, including
+    /// [`Session::composition_offset`]: the dictionary's loaded libraries
+    /// may have changed since the cached [`Session::candidates`] were built.
+    ///
+    /// A byte no matrix key starts on — a mid-syllable position of the
+    /// composition's own parse — is one of the pin's empty columns:
+    /// `search_matrix` matches nothing from it for every end, so the
+    /// window there is the raw-suffix fallback under the prepended n-best
+    /// rows, never a re-parse of the suffix (the suffix's own keys are not
+    /// the matrix's). A zero-key (apostrophe) column inside the parse is
+    /// not empty: the span search steps over it to the next key, so that
+    /// apostrophe byte answers the following key's window. An apostrophe
+    /// past a stop byte sits outside the matrix — the pin aborts there —
+    /// and takes the empty-column window like any other unreachable byte.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when a backend fails during the scan, exactly
+    /// as the anchored `Session::refresh` does;
+    /// [`EngineError::LookupOffsetOutOfRange`] when `offset` exceeds the raw
+    /// buffer's one-past-end position — the pin reads its matrix out of
+    /// bounds there, so no pinned behaviour exists and the offset is
+    /// refused — and [`EngineError::LookupOffsetInsideCharacter`] when
+    /// `offset` falls inside a multi-byte character of the raw buffer (no
+    /// window exists under a mid-character slice). An offset equal to
+    /// one-past-end is valid: `scan_window` answers the terminal sentence
+    /// rows for it (the pin's reserved slot).
+    pub fn candidates_at(&mut self, offset: usize) -> Result<CandidateList, EngineError> {
+        if offset > self.input.len() {
+            return Err(EngineError::LookupOffsetOutOfRange {
+                offset,
+                len: self.input.len(),
+            });
+        }
+        if !self.input.is_char_boundary(offset) {
+            return Err(EngineError::LookupOffsetInsideCharacter {
+                offset,
+                len: self.input.len(),
+            });
+        }
+        self.scan_unreadable = false;
+        self.scan_ranked_phrase = false;
+        let mut items = Vec::new();
+        if offset < self.input.len() && !self.spans_a_matrix_key(offset)? {
+            items.push(Candidate::new(
+                compact_str::CompactString::from(&self.input.as_str()[offset..]),
+                CandidateKind::Fallback,
+                0,
+                self.input.len() - offset,
+                0,
+                None,
+                None,
+            ));
+            // Row 65: an offset no span starts at is an EMPTY matrix column,
+            // but the pin's two prepends run after the span loop regardless
+            // of it — the LONGER row (`pinyin.cpp:2292-2293`) first, then the
+            // sentence rows (`:2295-2296`). The n-best rows rotate above the
+            // LONGER one, matching the pin's two prepends.
+            self.prepend_longer_row(&mut items, true)?;
+            self.prepend_nbest_rows(&mut items);
+            return Ok(CandidateList::from_vec(items));
+        }
+        self.scan_window(offset, &mut items, true)?;
+        Ok(CandidateList::from_vec(items)
+            .with_unreadable_item(self.scan_unreadable)
+            .with_ranked_phrase_row(self.scan_ranked_phrase))
+    }
+
+    /// Builds the candidate window over spans ENDING at byte `offset` in the
+    /// raw buffer — the pin's before-cursor walk
+    /// (`zhuyin_guess_candidates_before_cursor`, `zhuyin.cpp:1542-1629` at
+    /// the pin 0c5e80e1): every key-path from each start `0..offset` to the
+    /// fixed end, enumerated longest-span-first (start ascending — the pin's
+    /// `len` loop), each span's slice ranked by the three-key order exactly
+    /// like the after-cursor windows, the stored n-best rows prepended over
+    /// the whole set, then text dedup by frequency.
+    ///
+    /// Measured decomposition on the pin (su3u3, `before(5)`, the
+    /// instrumented oracle at 0c5e80e1): span (0,5) yields 3 phrase
+    /// candidates, span (3,5) yields 597, the mid-syllable starts (1, 2, 4)
+    /// answer no match (empty columns — `search_matrix` returns
+    /// `SEARCH_NONE` before recursing), 600 phrases total, +1 sentence row,
+    /// −1 string-duplicate phrase → 600. The builder reproduces that walk: a
+    /// start with no matrix column (a mid-syllable byte) contributes nothing
+    /// naturally (no key starts there), and a span ending on an apostrophe
+    /// separator byte answers nothing (upstream's zero-key end column:
+    /// `search_matrix` returns `SEARCH_CONTINUED` with no items,
+    /// `phonetic_key_matrix.cpp:419-423`).
+    ///
+    /// Does not disturb the cached list or any composition state (the
+    /// [`Session::candidates_at`] contract). At offset 0 nothing precedes
+    /// the first key, so the window is the prepended sentence rows alone.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::LookupOffsetOutOfRange`] when `offset` exceeds
+    /// the raw buffer's one-past-end position, and
+    /// [`EngineError::LookupOffsetInsideCharacter`] when it falls inside a
+    /// multi-byte character — the same refusals as
+    /// [`Session::candidates_at`] — plus backend failures during the scan.
+    pub fn candidates_ending_at(&mut self, offset: usize) -> Result<CandidateList, EngineError> {
+        if offset > self.input.len() {
+            return Err(EngineError::LookupOffsetOutOfRange {
+                offset,
+                len: self.input.len(),
+            });
+        }
+        if !self.input.is_char_boundary(offset) {
+            return Err(EngineError::LookupOffsetInsideCharacter {
+                offset,
+                len: self.input.len(),
+            });
+        }
+        self.scan_unreadable = false;
+        self.scan_ranked_phrase = false;
+        let mut items = Vec::new();
+        // A span cannot end at the composition start, and an end on an
+        // apostrophe separator byte is upstream's empty end column: the
+        // window is the prepended sentence rows alone.
+        if offset == 0 || self.input.as_bytes().get(offset - 1) == Some(&b'\'') {
+            self.prepend_nbest_rows(&mut items);
+            return Ok(CandidateList::from_vec(items));
+        }
+        self.scan_window_ending(offset, &mut items)?;
+        Ok(CandidateList::from_vec(items)
+            .with_unreadable_item(self.scan_unreadable)
+            .with_ranked_phrase_row(self.scan_ranked_phrase))
+    }
+
+    /// The backward-anchored scan proper: the complete retained parse, every
+    /// live start enumerated ascending (the pin's longest span first), each
+    /// span's batch flushed and ranked with its own previous-token gram (the
+    /// pin resolves `_get_previous_token` per `len` slice), groups appended
+    /// in order, then one text dedup — the pin dedups once, after the
+    /// prepend, and [`Session::prepend_nbest_rows`] re-runs it over the
+    /// joined list.
+    ///
+    /// Returns the retained parse length bounded by the cursor, mirroring
+    /// [`Session::scan_window`]'s return.
+    pub(super) fn scan_window_ending(
+        &mut self,
+        offset: usize,
+        out: &mut Vec<Candidate>,
+    ) -> Result<usize, EngineError> {
+        out.clear();
+        self.ensure_matrix()?;
+        let rank_word = self.rank_word();
+        let Scratch {
+            mut entries,
+            mut path,
+            mut window_addon,
+        } = core::mem::take(&mut self.scratch);
+        let matrix = if self.collapse_sentence_rows_to_best {
+            self.input.ending_matrix.as_ref()
+        } else {
+            self.input.matrix.as_ref()
+        };
+        let Some(matrix) = matrix else {
+            self.scratch = Scratch {
+                entries,
+                path,
+                window_addon,
+            };
+            return Ok(0);
+        };
+        let bound = matrix.bound.min(offset);
+
+        let mut group: Vec<Candidate> = Vec::new();
+        let mut keys: Vec<RankKey> = Vec::new();
+        let mut slice_keys: Vec<(RankKey, u32)> = Vec::new();
+        let mut unreadable = false;
+        let mut ranked_phrase = false;
+
+        for start in 0..bound {
+            // The pin ranks each `len` slice on its own, with the previous
+            // token resolved and its grams merged at that slice's start,
+            // before the search (`zhuyin.cpp:1566-1582`).
+            let gram = self.dynamic_adjust_gram(start, true)?;
+            // An empty column — no key starts here — is the pin's
+            // `SEARCH_NONE` start (`search_matrix`,
+            // `phonetic_key_matrix.cpp:416-418`): the span contributes
+            // nothing and the walk skips it.
+            if matrix
+                .columns
+                .get(start)
+                .is_none_or(std::vec::Vec::is_empty)
+                && !matrix.zeros.get(start).copied().unwrap_or(false)
+            {
+                continue;
+            }
+            let mut continued = false;
+            group.clear();
+            {
+                let mut buf = ScanBuf {
+                    span_base: 0,
+                    path: &mut path,
+                    tones: SmallVec::new(),
+                    system: &mut group,
+                    addon: &mut window_addon,
+                    continued: &mut continued,
+                    unreadable: &mut unreadable,
+                    entries: &mut entries,
+                    // `scan_window_ending` serves only the explicit
+                    // before-cursor guess (`zhuyin.cpp:1542-1607`).
+                    explicit: true,
+                };
+                self.scan_parsed_paths(matrix, start, offset, &mut buf)?;
+            }
+            order_window_tail(&mut group, 0);
+            flush_window_batch(&mut window_addon, &mut group);
+            if group.is_empty() {
+                continue;
+            }
+            // Each `len` slice's rows are scored before the final dedup
+            // (`zhuyin.cpp:1607` against `:1630`).
+            ranked_phrase |= group
+                .iter()
+                .any(|candidate| candidate.kind() == CandidateKind::Phrase);
+            // Every row of this slice spans `[start, offset)` — the pin's
+            // `template_item.m_begin = start; m_end = offset`
+            // (`zhuyin.cpp:1595`). The retained matrix's coordinates are
+            // absolute, so the start is recorded as such; the end is the
+            // row's `consumed_bytes` already.
+            for candidate in &mut group {
+                candidate.set_span_start(start);
+            }
+            let frequencies = self
+                .candidate_frequencies(&group, gram.as_ref().map(|(prev, row)| (*prev, row)), true)?
+                .unwrap_or_else(|| vec![0; group.len()]);
+            slice_keys.clear();
+            slice_keys.extend(group.iter().zip(frequencies).enumerate().map(
+                |(index, (candidate, frequency))| {
+                    // `Session::rank_word`: on the zhuyin facade, phrase
+                    // length then frequency (`zhuyin.cpp:1129-1144`).
+                    let key = RankKey::for_sort_word(
+                        candidate.phrase_length(),
+                        candidate.consumed_bytes(),
+                        frequency,
+                        rank_word,
+                    );
+                    (key, index as u32)
+                },
+            ));
+            rank_candidates(&mut group, &mut slice_keys);
+            keys.extend(slice_keys.iter().map(|(key, _)| *key));
+            out.append(&mut group);
+        }
+
+        // Each slice keeps its own sort order. The final dedup compares
+        // `m_freq` across all slices (`zhuyin.cpp:1612,1626-1630`).
+        dedup_ranked_by_text(out, &keys);
+
+        self.scratch = Scratch {
+            entries,
+            path,
+            window_addon,
+        };
+
+        self.scan_unreadable = unreadable;
+        self.scan_ranked_phrase = ranked_phrase;
+        self.prepend_nbest_rows(out);
+        Ok(bound)
+    }
+
+    /// Prepends the stored n-best rows onto `collected`, head first, then
+    /// drops every later candidate with the same text — upstream prepends
+    /// after the sort and its phrase-string dedup keeps the NBEST row
+    /// (and the lower n-best index) over any phrase candidate with the
+    /// same string (`pinyin.cpp:2290-2298`, `2058-2126`). Extend-then-
+    /// rotate keeps `collected`'s allocation — the session scratch on the
+    /// scan path, a fresh small vec on the fully-consumed path.
+    ///
+    /// Under [`Session::set_collapse_sentence_rows_to_best`] only the 1-best
+    /// row is prepended — libzhuyin's display law.
+    ///
+    /// A sort word with `SORT_WITHOUT_SENTENCE_CANDIDATE` set prepends
+    /// nothing and so dedups nothing against the sentences: the pin skips
+    /// `_prepend_sentence_candidates` under that bit (`pinyin.cpp:2295-2296`)
+    /// before `_remove_duplicated_items_by_phrase_string` runs (`:2300`), so
+    /// a phrase row whose string repeats an n-best sentence survives there
+    /// (issue #582). Filtering the sentence rows out after the dedup would
+    /// drop both copies of that string.
+    pub(super) fn prepend_nbest_rows(&mut self, collected: &mut Vec<Candidate>) {
+        if self.sentence.rows.is_empty()
+            || self.lookup.sort_word & SORT_WITHOUT_SENTENCE_CANDIDATE != 0
+        {
+            return;
+        }
+        let rows = if self.collapse_sentence_rows_to_best {
+            &self.sentence.rows[..1]
+        } else {
+            &self.sentence.rows[..]
+        };
+        let nbest_n = rows.len();
+        collected.extend(rows.iter().enumerate().map(|(index, row)| {
+            Candidate::new(
+                row.text.clone(),
+                CandidateKind::Sentence,
+                row.keys,
+                row.span,
+                row.cost,
+                None,
+                Some(u8::try_from(index).unwrap_or(u8::MAX)),
+            )
+        }));
+        collected.rotate_right(nbest_n);
+        dedup_by_text_keep_first(collected);
     }
 }
 

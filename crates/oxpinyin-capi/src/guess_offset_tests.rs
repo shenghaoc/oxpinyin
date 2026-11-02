@@ -29,7 +29,8 @@ use crate::types::{LookupCandidate, PinyinInstance};
 fn texts(instance: *mut PinyinInstance) -> Vec<String> {
     // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
     let inst = unsafe { instance_ref(instance) };
-    inst.candidates
+    inst.state
+        .candidates
         .iter()
         .map(|c| c.text_str().expect("UTF-8 candidate").to_owned())
         .collect()
@@ -39,7 +40,8 @@ fn texts(instance: *mut PinyinInstance) -> Vec<String> {
 fn position_of(instance: *mut PinyinInstance, text: &str) -> usize {
     // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
     let inst = unsafe { instance_ref(instance) };
-    inst.candidates
+    inst.state
+        .candidates
         .iter()
         .position(|c| c.text_str() == Ok(text))
         .unwrap_or_else(|| panic!("{text:?} is offered"))
@@ -283,7 +285,7 @@ fn the_ranking_context_survives_either_guess_offset() {
     let ni_token = {
         // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
         let inst = unsafe { instance_ref(instance) };
-        inst.candidates[ni_pos]
+        inst.state.candidates[ni_pos]
             .token
             .expect("\u{4f60} carries its token")
     };
@@ -499,7 +501,8 @@ fn a_choose_then_guess_covers_the_remaining_group() {
             .anchored_window
             .as_ref()
             .expect("the guess retains its window");
-        inst.candidates
+        inst.state
+            .candidates
             .iter()
             .position(|c| {
                 window

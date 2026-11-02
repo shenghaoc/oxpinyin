@@ -6,9 +6,7 @@ use oxpinyin_core::PhraseToken;
 use oxpinyin_engine::CandidateKind;
 use oxpinyin_user::{SENTENCE_START, is_user_token};
 
-use crate::state::{
-    CapiCandidate, CapiInstance, candidate_ptr, candidate_ref, instance_mut, instance_ref,
-};
+use crate::state::{CapiCandidate, candidate_ptr, candidate_ref, instance_mut, instance_ref};
 use crate::types::{
     GChar, GUint, LookupCandidate, PinyinInstance, lookup_candidate_type_t, sort_option_t,
 };
@@ -31,7 +29,7 @@ pub extern "C" fn pinyin_get_n_candidate(instance: *mut PinyinInstance, num: *mu
     if !num.is_null() {
         // SAFETY: Null-checked above.
         unsafe {
-            *num = GUint::try_from(inst.candidates.len()).unwrap_or(GUint::MAX);
+            *num = GUint::try_from(inst.state.candidates.len()).unwrap_or(GUint::MAX);
         }
     }
     true
@@ -62,7 +60,7 @@ pub extern "C" fn pinyin_get_candidate(
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
     let idx = index as usize;
-    if let Some(cand) = inst.candidates.get(idx) {
+    if let Some(cand) = inst.state.candidates.get(idx) {
         if !candidate.is_null() {
             // SAFETY: Null-checked above.
             unsafe {
@@ -258,16 +256,20 @@ pub extern "C" fn pinyin_remove_user_candidate(
     };
     // Register row 64: `assert(NORMAL_CANDIDATE == type)` (`pinyin.cpp:3734`)
     // and `assert(USER_DICTIONARY == index)` (`:3738`).
-    if inst.candidates[index].candidate_type() != lookup_candidate_type_t::NORMAL_CANDIDATE {
+    if inst.state.candidates[index].candidate_type() != lookup_candidate_type_t::NORMAL_CANDIDATE {
         std::process::abort();
     }
-    let Some(token) = inst.candidates[index].token else {
+    let Some(token) = inst.state.candidates[index].token else {
         return false;
     };
     if !is_user_token(token.value()) {
         std::process::abort();
     }
-    let Some(user) = inst.core.user.as_mut() else {
+    let context = inst.context;
+    // SAFETY: the candidate reads are complete and the live context is now
+    // borrowed exclusively for the store mutation.
+    let ctx = unsafe { crate::state::context_mut(context) };
+    let Some(user) = ctx.core.user_store_mut() else {
         return false;
     };
     match user.remove_user_phrase(token.value()) {
@@ -374,7 +376,7 @@ pub extern "C" fn pinyin_choose_candidate(
     let inst = unsafe { instance_mut(instance) };
     // Identify the candidate by pointer equality over the current
     // snapshot. `offset_from` would be UB unless `candidate` points
-    // into `inst.candidates`, which cannot be assumed across C calls.
+    // into `inst.state.candidates`, which cannot be assumed across C calls.
     let Some(index) = inst
         .candidates
         .iter()
@@ -386,14 +388,14 @@ pub extern "C" fn pinyin_choose_candidate(
     // predicted bigram or prefix row (those go to
     // `pinyin_choose_predicted_candidate`).
     if matches!(
-        inst.candidates[index].candidate_type(),
+        inst.state.candidates[index].candidate_type(),
         lookup_candidate_type_t::PREDICTED_BIGRAM_CANDIDATE
             | lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE
     ) {
         std::process::abort();
     }
     // `index` is the candidate's position in the SNAPSHOT, which
-    // `try_promote_addon` reads (it indexes `inst.candidates`); the
+    // `try_promote_addon` reads (it indexes `inst.state.candidates`); the
     // snapshot may omit entries (the engine's `Fallback` row, a
     // `CString` conversion failure), so that position is NOT the row's position in the
     // window the `select*` calls index. Select by the candidate's
@@ -407,17 +409,32 @@ pub extern "C" fn pinyin_choose_candidate(
     // `int` cursor surfaces as `1`. An overlay refusal (the token's
     // library invisible) answers `-1`, standing in for the pin's
     // overflow `false`.
-    if inst.candidates[index].candidate_type() == lookup_candidate_type_t::LONGER_CANDIDATE {
-        let Some(token) = inst.candidates[index].token else {
+    if inst.state.candidates[index].candidate_type() == lookup_candidate_type_t::LONGER_CANDIDATE {
+        let Some(token) = inst.state.candidates[index].token else {
             return -1;
         };
-        return if inst.core.dict.add_unigram_delta(token.value(), 483) {
+        let context = inst.context;
+        // SAFETY: the instance read is finished; this serialized C operation
+        // exclusively borrows its live context for the unigram write.
+        let ctx = unsafe { crate::state::context_mut(context) };
+        return if ctx
+            .core
+            .runtime
+            .as_mut()
+            .is_some_and(|runtime| runtime.add_unigram_delta(token.value(), 483))
+        {
             1
         } else {
             -1
         };
     }
-    let addon_token = try_promote_addon(inst, index);
+    let context = inst.context;
+    // SAFETY: the prior view is no longer used. Promotion borrows the live
+    // context only for its own reads and write, before the new instance view.
+    let addon_token = unsafe { try_promote_addon(instance, context, index) };
+    // SAFETY: promotion has released its context borrow; the live instance
+    // is re-borrowed for the remainder of this serialized operation.
+    let mut inst = unsafe { instance_mut(instance) };
     // The `SORT_WITHOUT_SENTENCE_CANDIDATE` leg (`pinyin.cpp:2565-2576`),
     // reached after the addon promotion exactly as the pin's dispatch
     // falls through to it: only the unigram trains, by the LONGER
@@ -430,16 +447,25 @@ pub extern "C" fn pinyin_choose_candidate(
             // after the addon promotion above, which is in memory.
             std::process::abort();
         }
-        let Some(token) = addon_token.or(inst.candidates[index].token) else {
+        let Some(token) = addon_token.or(inst.state.candidates[index].token) else {
             return -1;
         };
-        return if inst.core.dict.add_unigram_delta(token.value(), 483) {
+        let context = inst.context;
+        // SAFETY: the instance read is finished; this serialized C operation
+        // exclusively borrows its live context for the unigram write.
+        let ctx = unsafe { crate::state::context_mut(context) };
+        return if ctx
+            .core
+            .runtime
+            .as_mut()
+            .is_some_and(|runtime| runtime.add_unigram_delta(token.value(), 483))
+        {
             1
         } else {
             -1
         };
     }
-    let source_index = inst.candidates[index].source_index as usize;
+    let source_index = inst.state.candidates[index].source_index as usize;
     // The chosen row's end in the window the caller saw — the pin's
     // `offset + len` (`pinyin.cpp:2582-2589`, `m_begin = start = offset`,
     // `:2246`). A choose behind the composition offset (register row 37)
@@ -460,7 +486,7 @@ pub extern "C" fn pinyin_choose_candidate(
     // `anchored_window`, and an index into the composition-anchored
     // cached list would select a different row.
     let selection = match addon_token {
-        Some(promoted) => match inst.core.anchored_window.as_ref() {
+        Some(promoted) => match inst.core.state.anchored_window.as_ref() {
             Some((anchor, window)) => {
                 inst.core
                     .session
@@ -468,7 +494,7 @@ pub extern "C" fn pinyin_choose_candidate(
             }
             None => inst.core.session.select_promoted(source_index, promoted),
         },
-        None => match inst.core.anchored_window.as_ref() {
+        None => match inst.core.state.anchored_window.as_ref() {
             Some((anchor, window)) => {
                 inst.core
                     .session
@@ -495,7 +521,7 @@ pub extern "C" fn pinyin_choose_candidate(
     // coordinates through the parse's key spans. The sentence-row
     // branch above answers the parse end before this mapping — a
     // whole-composition hypothesis consumes the composition.
-    let end = if inst.candidates[index].candidate_type()
+    let end = if inst.state.candidates[index].candidate_type()
         == lookup_candidate_type_t::NBEST_MATCH_CANDIDATE
     {
         inst.core.parsed_len
@@ -546,7 +572,7 @@ pub extern "C" fn pinyin_clear_constraint(instance: *mut PinyinInstance, offset:
 
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
-    let inst = unsafe { instance_mut(instance) };
+    let mut inst = unsafe { instance_mut(instance) };
     let session_offset = if let Some(parse) = inst.core.zhuyin_parse.as_ref() {
         oxpinyin_facade::zhuyin_session_offset(parse, offset)
     } else if let Some(parse) = inst.core.double_parse.as_ref() {
@@ -568,23 +594,36 @@ pub extern "C" fn pinyin_clear_constraint(instance: *mut PinyinInstance, offset:
 /// `None` — leaving a plain selection — when the candidate is not an addon
 /// candidate, the addon item cannot be resolved, there is no user store to
 /// promote into, or the store write fails.
-fn try_promote_addon(inst: &mut CapiInstance, index: usize) -> Option<PhraseToken> {
-    if inst.candidates[index].kind != CandidateKind::Addon {
-        return None;
-    }
-    let addon_token = inst.candidates[index].token?;
-    let item = inst.core.dict.addon_phrase_item(addon_token.value())?;
+unsafe fn try_promote_addon(
+    instance: *mut PinyinInstance,
+    context: *mut crate::types::PinyinContext,
+    index: usize,
+) -> Option<PhraseToken> {
+    let item = {
+        // SAFETY: the caller supplies a live instance and snapshot index.
+        let inst = unsafe { instance_ref(instance) };
+        if inst.state.candidates[index].kind != CandidateKind::Addon {
+            return None;
+        }
+        let addon_token = inst.state.candidates[index].token?;
+        inst.core.dict.addon_phrase_item(addon_token.value())?
+    };
     // The user store's phrase text is UTF-8; a non-scalar addon item has no
     // representable text there, so the promotion is skipped.
     let text = item.text.as_str()?;
-    let promoted = inst
-        .core
-        .user
-        .as_mut()?
-        .promote_addon_phrase(text, &item.readings, item.unigram)
-        .ok()?;
+    let promoted = {
+        // SAFETY: the read view above has ended; the caller serializes this
+        // context mutation with every other operation on its instances.
+        let ctx = unsafe { crate::state::context_mut(context) };
+        ctx.core
+            .user_store_mut()?
+            .promote_addon_phrase(text, &item.readings, item.unigram)
+            .ok()?
+    };
     let promoted = PhraseToken::new(promoted);
-    let snapshot = &mut inst.candidates[index];
+    // SAFETY: the context write has ended and the same live snapshot remains.
+    let inst = unsafe { instance_mut(instance) };
+    let snapshot = &mut inst.state.candidates[index];
     snapshot.set_candidate_type(lookup_candidate_type_t::NORMAL_CANDIDATE);
     snapshot.kind = CandidateKind::Phrase;
     snapshot.token = Some(promoted);
@@ -639,7 +678,7 @@ pub extern "C" fn pinyin_choose_predicted_candidate(
     // Register row 64, `pinyin.cpp:2593`: only the three predicted row
     // types are chosen here; the pin asserts on any other.
     if !matches!(
-        inst.candidates[index].candidate_type(),
+        inst.state.candidates[index].candidate_type(),
         lookup_candidate_type_t::PREDICTED_BIGRAM_CANDIDATE
             | lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE
             | lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE
@@ -647,12 +686,12 @@ pub extern "C" fn pinyin_choose_predicted_candidate(
         std::process::abort();
     }
     // "The punctuation candidate does not have the frequency."
-    if inst.candidates[index].candidate_type()
+    if inst.state.candidates[index].candidate_type()
         == lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE
     {
         return true;
     }
-    let Some(token) = inst.candidates[index].token else {
+    let Some(token) = inst.state.candidates[index].token else {
         return false;
     };
     // A sole missing prefix item is still selectable. The pin advances the
@@ -660,25 +699,35 @@ pub extern "C" fn pinyin_choose_predicted_candidate(
     // sub-index write; the prefix branch then answers true without a bigram
     // (`pinyin.cpp:2608-2616`, `phrase_index.h:628-634`; #1231 ruling).
     // `text_ptr` is NULL only for the sole missing row built above.
-    if inst.candidates[index].candidate_type()
+    if inst.state.candidates[index].candidate_type()
         == lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE
-        && inst.candidates[index].text_ptr.is_null()
+        && inst.state.candidates[index].text_ptr.is_null()
     {
         // An unloaded library has no sub-index: the pin returns
         // ERROR_NO_SUB_PHRASE_INDEX before touching the facade total,
         // and the prefix branch still answers true.
         if inst.core.dict.phrase_table_token_enabled(token.value()) {
-            let _ = inst.core.dict.add_unigram_delta(token.value(), 483);
+            let context = inst.context;
+            // SAFETY: the read view is no longer used; the live context is
+            // exclusively borrowed for this serialized unigram mutation.
+            let ctx = unsafe { crate::state::context_mut(context) };
+            if let Some(runtime) = ctx.core.runtime.as_mut() {
+                let _ = runtime.add_unigram_delta(token.value(), 483);
+            }
         }
         return true;
     }
-    let last = previous_token(inst);
-    let Some(user) = inst.core.user.as_mut() else {
+    let last = previous_token(&inst.read());
+    let prefix = inst.state.candidates[index].candidate_type()
+        == lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE;
+    let context = inst.context;
+    // SAFETY: all candidate and prefix reads are complete; the live context
+    // is exclusively borrowed for the prediction training write.
+    let ctx = unsafe { crate::state::context_mut(context) };
+    let Some(user) = ctx.core.user_store_mut() else {
         return false;
     };
-    if inst.candidates[index].candidate_type()
-        == lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE
-    {
+    if prefix {
         user.observe_predicted_prefix(token.value()).is_ok()
     } else {
         match user.observe_predicted(last, token.value()) {
@@ -705,13 +754,13 @@ pub extern "C" fn pinyin_choose_predicted_candidate(
 
 /// `_get_previous_token(instance, 0)` (`pinyin.cpp:1711-1740`): the longest
 /// phrase among the instance's prefixes, `sentence_start` when there is none.
-fn previous_token(inst: &CapiInstance) -> u32 {
+fn previous_token(inst: &crate::state::CapiInstanceRead<'_>) -> u32 {
     let mut previous = SENTENCE_START;
-    let Some(store) = inst.core.user.as_ref() else {
+    let Some(store) = inst.core.user else {
         return previous;
     };
     let mut longest = 0;
-    for &token in &inst.prefixes {
+    for &token in &inst.state.prefixes {
         if token == SENTENCE_START {
             continue;
         }
@@ -757,8 +806,7 @@ pub extern "C" fn pinyin_train(instance: *mut PinyinInstance, index: u8) -> bool
 
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
-    let inst = unsafe { instance_mut(instance) };
-    match inst.core.train(index) {
+    match unsafe { crate::state::train_instance(instance, index) } {
         Ok(trained) => trained,
         // Register rows 38, 6 and 82: `pinyin.cpp:2684`,
         // `phonetic_lookup.h:868` (a forcing added after the last sentence
@@ -795,7 +843,7 @@ pub extern "C" fn pinyin_train(instance: *mut PinyinInstance, index: u8) -> bool
 
 /// Whether [`pinyin_train`] of row `index` reaches one of the pin's own
 /// training asserts (register rows 6, 38 and 82): the facade's
-/// [`oxpinyin_facade::InstanceCore::train_aborts`], the same row lookup and
+/// [`oxpinyin_facade::InstanceView::train_aborts`], the same row lookup and
 /// span walk `pinyin_train` runs. Reads only. For the in-tree fuzz harness,
 /// which skips such a call: not in `pinyin.h`, a Rust function compiled
 /// only with `fuzz-api` and never into the shipped artifact.
@@ -858,6 +906,6 @@ mod previous_token_tests {
 
     fn previous(instance: *mut crate::types::PinyinInstance) -> u32 {
         // SAFETY: a live `pinyin_alloc_instance` handle of the caller.
-        previous_token(unsafe { instance_ref(instance) })
+        previous_token(&unsafe { instance_ref(instance) })
     }
 }

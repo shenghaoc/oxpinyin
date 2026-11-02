@@ -464,8 +464,11 @@ pub extern "C" fn pinyin_token_add_unigram_frequency(
         return false;
     }
 
-    // SAFETY: `instance` is non-null and was produced by
-    // `pinyin_alloc_instance`.
-    let inst = unsafe { instance_ref(instance) };
-    inst.core.dict.add_unigram_delta(token, delta as u64)
+    // SAFETY: the live instance retains its runtime allocation, and the C
+    // caller serializes mutations across every handle sharing that allocation.
+    let ctx = unsafe { crate::state::instance_context_mut(instance) };
+    ctx.core
+        .runtime
+        .as_mut()
+        .is_some_and(|runtime| runtime.add_unigram_delta(token, u64::from(delta)))
 }

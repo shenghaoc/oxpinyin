@@ -341,7 +341,7 @@ mod tests {
     fn standalone_lookup_refreshes_across_store_handles() {
         let (_dir, path) = temp_path("refresh");
         let store = UserStore::open(&path).unwrap();
-        let mut writer = store.clone();
+        let mut writer = UserStore::open(&path).unwrap();
         let ni = u16::try_from(key("ni").index()).unwrap();
         assert!(store.lookup().unwrap().lookup(&[key("ni")]).is_empty());
         let token = writer.add_phrase(&"你".into(), &[ni], Some(5)).unwrap();

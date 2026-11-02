@@ -47,7 +47,9 @@ use oxpinyin_data::chunk_write::{
 use oxpinyin_data::phrase_library::PhraseLibrary;
 use oxpinyin_data::user_files::LogRecord;
 
-use crate::persistence::{SystemLibrary, journal_item_bytes};
+#[cfg(test)]
+use crate::persistence::SystemLibrary;
+use crate::persistence::{SystemLibraryRef, journal_item_bytes};
 
 /// Why the merge ended at a record.
 pub(crate) enum Stop {
@@ -359,8 +361,8 @@ impl Content {
 }
 
 /// Where a mapped library's item offsets come from.
-enum Origin {
-    Mapped(PhraseLibrary),
+enum Origin<'a> {
+    Mapped(&'a PhraseLibrary),
     /// A fixture `SystemLibrary`'s inline items, laid out as the pin's
     /// appended content would be. `bytes` is the shipped item area, kept
     /// for the finish-time overlap comparison.
@@ -379,11 +381,11 @@ struct OriginalItem {
 }
 
 /// The content and offsets a replay starts from.
-fn origin_and_content(original: Option<&SystemLibrary>) -> (Origin, Content) {
+fn origin_and_content(original: Option<SystemLibraryRef<'_>>) -> (Origin<'_>, Content) {
     match original {
         Some(library) => match &library.mapped {
             Some(mapped) => (
-                Origin::Mapped(mapped.clone()),
+                Origin::Mapped(mapped),
                 Content::shipped(
                     mapped
                         .private_content()
@@ -394,7 +396,7 @@ fn origin_and_content(original: Option<&SystemLibrary>) -> (Origin, Content) {
             None if !library.items.is_empty() => {
                 let mut bytes = vec![0; FIRST_ITEM_OFFSET];
                 let mut offsets = BTreeMap::new();
-                for (slot, item) in &library.items {
+                for (slot, item) in library.items {
                     let item_bytes = journal_item_bytes(item);
                     offsets.insert(
                         *slot,
@@ -441,8 +443,8 @@ fn visible_len(bytes: &[u8]) -> Option<usize> {
     (len <= bytes.len()).then_some(len)
 }
 
-pub(crate) struct Merge {
-    origin: Origin,
+pub(crate) struct Merge<'a> {
+    origin: Origin<'a>,
     content: Content,
     /// Slot IDs only. Replay appends; finalization sorts and deduplicates before
     /// any membership query or ascending walk. No record payloads are staged.
@@ -469,8 +471,8 @@ pub(crate) struct Merge {
     appends: u64,
 }
 
-impl Merge {
-    pub(crate) fn new(original: Option<&SystemLibrary>) -> Self {
+impl<'a> Merge<'a> {
+    pub(crate) fn new(original: Option<SystemLibraryRef<'a>>) -> Self {
         let (origin, content) = origin_and_content(original);
         Self {
             origin,
@@ -480,8 +482,8 @@ impl Merge {
             has_added_items: false,
             overreach: false,
             offsets: BTreeMap::new(),
-            total: original.map(|library| library.total),
-            running: original.map_or(0, |library| library.total),
+            total: original.as_ref().map(|library| library.total),
+            running: original.as_ref().map_or(0, |library| library.total),
             stale: Stale::Default(vec![0; PHRASE_ITEM_HEADER]),
             stale_slot: None,
             appends: 0,
@@ -899,56 +901,61 @@ impl Merge {
     }
 }
 
-/// A completed private sub-index view. Typed payloads are decoded on demand.
-#[derive(Clone)]
-pub(crate) struct ReplayedLibrary(std::sync::Arc<Merge>);
+/// A completed private sub-index view. It owns only the replay content;
+/// finish resolves the retained slots' offsets while the baseline is borrowed.
+/// No baseline byte owner survives the replay operation.
+pub(crate) struct ReplayedLibrary {
+    content: Content,
+    slots: Vec<(u32, u32)>,
+    unigram_changes: Vec<u32>,
+    has_added_items: bool,
+}
 
 impl std::fmt::Debug for ReplayedLibrary {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ReplayedLibrary")
-            .field("slots", &self.0.touched.len())
+            .field("slots", &self.slots.len())
             .finish()
     }
 }
 
 impl ReplayedLibrary {
     pub(crate) fn slots(&self) -> impl DoubleEndedIterator<Item = u32> + '_ {
-        self.0.touched.iter().copied()
+        self.slots.iter().map(|&(slot, _)| slot)
     }
-    /// Skip ADD discovery for MODIFY-only views. Mixed views keep the existing
-    /// original-item filter at the caller, including inline fixture overrides.
     pub(crate) fn add_candidates(&self) -> impl Iterator<Item = u32> + '_ {
-        let slots = if self.0.has_added_items {
-            self.0.touched.as_slice()
+        let slots = if self.has_added_items {
+            self.slots.as_slice()
         } else {
             &[]
         };
-        slots.iter().copied()
+        slots.iter().map(|&(slot, _)| slot)
     }
-    /// Only slots that may need a stored unigram delta. Repeated changes are
-    /// visited once, and rejected/removed slots never reach this iterator.
     pub(crate) fn unigram_slots(&self) -> impl Iterator<Item = u32> + '_ {
-        self.0.unigram_changes.iter().copied()
+        self.unigram_changes.iter().copied()
     }
     pub(crate) fn contains(&self, slot: u32) -> bool {
-        self.0.touched.binary_search(&slot).is_ok()
+        self.slots
+            .binary_search_by_key(&slot, |&(slot, _)| slot)
+            .is_ok()
     }
     pub(crate) fn bytes(&self, slot: u32) -> Option<Cow<'_, [u8]>> {
-        if !self.contains(slot) {
-            return None;
-        }
-        let offset = self.0.slot_offset(slot) as usize;
-        let Found::Item { offset, len } = self.0.content.header(offset) else {
+        let index = self
+            .slots
+            .binary_search_by_key(&slot, |&(slot, _)| slot)
+            .ok()?;
+        let offset = self.slots[index].1 as usize;
+        let Found::Item { offset, len } = self.content.header(offset) else {
             return None;
         };
-        self.0.content.item(offset, len)
+        self.content.item(offset, len)
     }
     pub(crate) fn item(&self, slot: u32) -> Option<ChunkItem> {
         decode_phrase_item(&self.bytes(slot)?).ok()
     }
 }
 
-impl Merge {
+impl<'a> Merge<'a> {
     /// Add every original slot whose bytes a finished over-length item
     /// changed. The eager path decodes all touched slots afterwards; the lazy
     /// path validates the added slots through its own loop.
@@ -1232,8 +1239,19 @@ impl Merge {
             .retain(|slot| self.touched.binary_search(slot).is_ok());
         self.unigram_changes.shrink_to_fit();
         let total = self.total;
-        let retained =
-            (!self.touched.is_empty()).then(|| ReplayedLibrary(std::sync::Arc::new(self)));
+        let retained = (!self.touched.is_empty()).then(|| {
+            let slots = self
+                .touched
+                .iter()
+                .map(|&slot| (slot, self.slot_offset(slot)))
+                .collect();
+            ReplayedLibrary {
+                content: self.content,
+                slots,
+                unigram_changes: self.unigram_changes,
+                has_added_items: self.has_added_items,
+            }
+        });
         (total, typed, retained)
     }
 }
@@ -1257,7 +1275,7 @@ mod tests {
         changed[2..6].copy_from_slice(&70_u32.to_le_bytes());
         let mut restored = changed.clone();
         restored[2..6].copy_from_slice(&50_u32.to_le_bytes());
-        let mut merge = Merge::new(Some(&original));
+        let mut merge = Merge::new(Some(original.view()));
         for record in [
             modify(1, one(), with_freq(one(), 77)),
             modify(2, two(), changed.clone()),
@@ -1279,7 +1297,7 @@ mod tests {
     fn add_candidates_skip_modify_only_and_original_slot_add_records() {
         let original = library();
         for replacement in [false, true] {
-            let mut merge = Merge::new(Some(&original));
+            let mut merge = Merge::new(Some(original.view()));
             let changed = with_freq(one(), 77);
             let record = if replacement {
                 LogRecord::Add {
@@ -1305,9 +1323,9 @@ mod tests {
         let original = library();
         for overreach in [false, true] {
             let mut merge = if overreach {
-                over_length_merge()
+                over_length_merge(&original)
             } else {
-                Merge::new(Some(&original))
+                Merge::new(Some(original.view()))
             };
             if !overreach {
                 assert!(merge.apply(modify(1, one(), with_freq(one(), 77))).is_ok());
@@ -1348,8 +1366,9 @@ mod tests {
 
     #[test]
     fn add_candidates_ignore_rejected_additions_and_original_overreach() {
+        let original = library();
         for rejected_add in [false, true] {
-            let mut merge = over_length_merge();
+            let mut merge = over_length_merge(&original);
             if rejected_add {
                 assert!(
                     merge
@@ -1373,7 +1392,7 @@ mod tests {
         let reading_only = with_freq(one(), 77);
         let mut changed = reading_only.clone();
         changed[2..6].copy_from_slice(&150_u32.to_le_bytes());
-        let mut merge = Merge::new(Some(&original));
+        let mut merge = Merge::new(Some(original.view()));
         assert!(merge.apply(modify(1, one(), reading_only.clone())).is_ok());
         assert!(merge.apply(modify(9, reading_only, changed)).is_ok());
         let (_, _, view) = merge.finish_lazy(&mut Vec::new(), &"test");
@@ -1386,7 +1405,7 @@ mod tests {
     #[test]
     fn a_cross_item_write_marks_the_other_retained_unigram() {
         let original = library();
-        let mut merge = Merge::new(Some(&original));
+        let mut merge = Merge::new(Some(original.view()));
         assert!(merge.apply(modify(2, two(), with_freq(two(), 88))).is_ok());
         // A longer header in a short payload borrows the next item's bytes,
         // just as the existing cross-item replay cases require.
@@ -1418,9 +1437,8 @@ mod tests {
     /// The over-length item's raw pronunciation words, built once: A's
     /// second character is A's first pronunciation key plus its frequency's
     /// low half, and both readings borrow B's bytes.
-    fn over_length_merge() -> Merge {
-        let original = library();
-        let mut merge = Merge::new(Some(&original));
+    fn over_length_merge(original: &SystemLibrary) -> Merge<'_> {
+        let mut merge = Merge::new(Some(original.view()));
         assert!(
             merge
                 .apply(modify(1, one(), bytes_with(&[2, 2], 200)))
@@ -1444,7 +1462,8 @@ mod tests {
 
     #[test]
     fn an_unrecorded_overlapped_slot_is_visible_and_seeded() {
-        let merge = over_length_merge();
+        let original = library();
+        let merge = over_length_merge(&original);
         let (_, _, view) = merge.finish_lazy(&mut Vec::new(), &"test");
         let view = view.expect("retained originals");
         assert_eq!(view.slots().collect::<Vec<_>>(), [1, 2]);
@@ -1456,7 +1475,8 @@ mod tests {
 
     #[test]
     fn an_over_length_item_reports_the_borrowed_keys() {
-        let merge = over_length_merge();
+        let original = library();
+        let merge = over_length_merge(&original);
         let (_, _, view) = merge.finish_lazy(&mut Vec::new(), &"test");
         let view = view.expect("retained originals");
         let item = view.item(1).expect("over-length item");
@@ -1468,7 +1488,7 @@ mod tests {
     #[test]
     fn an_in_place_write_within_the_original_item_adds_no_slot() {
         let original = library();
-        let mut merge = Merge::new(Some(&original));
+        let mut merge = Merge::new(Some(original.view()));
         assert!(merge.apply(modify(1, one(), with_freq(one(), 77))).is_ok());
         assert_eq!(merge.touched, vec![1]);
         let (_, _, view) = merge.finish_lazy(&mut Vec::new(), &"test");
@@ -1480,7 +1500,7 @@ mod tests {
     #[test]
     fn rejected_unigram_candidates_do_not_seed_the_baseline_fallback() {
         let original = library();
-        let mut merge = Merge::new(Some(&original));
+        let mut merge = Merge::new(Some(original.view()));
         assert!(merge.apply(modify(2, two(), with_freq(two(), 88))).is_ok());
         assert!(
             merge
@@ -1534,7 +1554,7 @@ mod tests {
     #[test]
     fn an_overlong_header_past_the_area_keeps_the_last_changed_item() {
         let original = library();
-        let mut merge = Merge::new(Some(&original));
+        let mut merge = Merge::new(Some(original.view()));
         assert!(
             merge
                 .apply(modify(1, one(), bytes_with(&[2, 3], 200)))
@@ -1556,7 +1576,7 @@ mod tests {
         let original = library();
         let invalid = bytes_with(&[255, 255], 200);
         let replay = || {
-            let mut merge = Merge::new(Some(&original));
+            let mut merge = Merge::new(Some(original.view()));
             assert!(
                 merge
                     .apply(modify(1, one(), bytes_with(&[2, 1], 200)))
@@ -1586,17 +1606,17 @@ mod tests {
     fn overreach_tracks_only_a_growing_header() {
         let original = library();
 
-        let mut merge = Merge::new(Some(&original));
+        let mut merge = Merge::new(Some(original.view()));
         let same = with_last(one(), 0x7f);
         assert!(merge.modify(1, &one(), &same).is_ok());
         assert!(!merge.overreach);
 
-        let mut merge = Merge::new(Some(&original));
+        let mut merge = Merge::new(Some(original.view()));
         let grown = bytes_with(&[3, 1], 200);
         assert!(merge.modify(1, &one(), &grown).is_ok());
         assert!(merge.overreach);
 
-        let mut merge = Merge::new(Some(&original));
+        let mut merge = Merge::new(Some(original.view()));
         let shorter = bytes_with(&[0, 0], 0);
         assert!(merge.modify(1, &one(), &shorter).is_ok());
         assert!(!merge.overreach);
@@ -1615,7 +1635,7 @@ mod tests {
         let mut grown = with_freq(two(), 88);
         grown.extend_from_slice(&[1, 2, 3]);
         let replay = || {
-            let mut merge = Merge::new(Some(&original));
+            let mut merge = Merge::new(Some(original.view()));
             for record in [
                 modify(2, two(), grown.clone()),
                 modify(1, one(), with_freq(one(), 77)),
@@ -1674,7 +1694,7 @@ mod tests {
         let invalid = bytes_with(&[255, 255], 200);
         let expected = format!("test: {}", decode_phrase_item(&invalid).unwrap_err());
         let replay = || {
-            let mut merge = Merge::new(Some(&original));
+            let mut merge = Merge::new(Some(original.view()));
             for record in [
                 modify(2, two(), with_freq(two(), 88)),
                 modify(1, one(), with_freq(one(), 77)),
@@ -1721,7 +1741,7 @@ mod tests {
         };
         let invalid = bytes_with(&[255, 255], 200);
         let replay = || {
-            let mut merge = Merge::new(Some(&original));
+            let mut merge = Merge::new(Some(original.view()));
             assert!(
                 merge
                     .apply(modify(valid_slot, one(), with_freq(one(), 88)))
@@ -1774,7 +1794,7 @@ mod tests {
         let invalid = bytes_with(&[255, 255], 200);
         assert!(decode_phrase_item(&invalid).is_err());
         let replay = || {
-            let mut merge = Merge::new(Some(&original));
+            let mut merge = Merge::new(Some(original.view()));
             assert!(merge.apply(modify(1, one(), invalid.clone())).is_ok());
             assert!(merge.apply(modify(2, two(), with_freq(two(), 88))).is_ok());
             merge
@@ -1813,7 +1833,7 @@ mod tests {
         let invalid = bytes_with(&[255, 255], 200);
         let expected = format!("test: {}", decode_phrase_item(&invalid).unwrap_err());
         let replay = || {
-            let mut merge = Merge::new(Some(&original));
+            let mut merge = Merge::new(Some(original.view()));
             assert!(merge.apply(modify(1, one(), with_freq(one(), 77))).is_ok());
             assert!(merge.apply(modify(2, two(), with_freq(two(), 88))).is_ok());
             assert!(merge.touched.contains(&1));
@@ -1835,7 +1855,7 @@ mod tests {
         assert_eq!(lazy_skipped, [expected]);
         assert!(!eager_items.contains_key(&1));
         assert!(!lazy_items.contains_key(&1));
-        assert!(!retained.0.touched.contains(&1));
+        assert!(!retained.slots.iter().any(|&(slot, _)| slot == 1));
         assert!(!retained.contains(1));
         assert!(retained.item(1).is_none());
         assert_eq!(retained.item(2), eager_items[&2]);
@@ -1862,7 +1882,7 @@ mod tests {
     );
 
     fn merge_of(library: &SystemLibrary, records: Vec<LogRecord>) -> Merged {
-        let mut merge = Merge::new(Some(library));
+        let mut merge = Merge::new(Some(library.view()));
         let mut outcome = Ok(());
         for record in records {
             if let Err(stop) = merge.apply(record) {

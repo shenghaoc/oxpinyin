@@ -7,7 +7,6 @@
 //! ```
 
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use oxpinyin_core::{Dictionary, LanguageModel, PhraseToken, SyllableKey};
 use oxpinyin_data::{BigramLanguageModel, SystemDbm, SystemDictionary};
@@ -16,11 +15,8 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let dir: PathBuf = args.next().map(PathBuf::from).expect("system dir");
     let dict = SystemDictionary::open(&dir).expect("open");
-    let lm = BigramLanguageModel::open(
-        &dir.join(SystemDbm::Bigram.file_name()),
-        Arc::clone(dict.libraries()),
-    )
-    .expect("lm");
+    let lm = BigramLanguageModel::open(&dir.join(SystemDbm::Bigram.file_name()), dict.libraries())
+        .expect("lm");
     println!("items {} · total {}", dict.item_count(), lm.unigram_total());
     for spelling in args {
         let keys: Vec<SyllableKey> = spelling

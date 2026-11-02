@@ -110,7 +110,7 @@ fn conforming_profile(system: &Path, user: &Path) {
     persistence::save(
         user,
         &persistence::UserState::default(),
-        &std::collections::BTreeMap::new().into(),
+        &oxpinyin_user::SystemOriginals::from(std::collections::BTreeMap::new()),
         &SystemVersions::from_conf(&conf),
         1,
     )
@@ -181,7 +181,10 @@ fn save_stops_at_the_directory_with_the_pins_files() {
         let reaches = reaches_the_assert(&system);
         let mut context =
             ContextCore::open(&system, Some(&user), PINYIN_DEFAULT_OPTION_WORD, law).expect("open");
-        context.user_store().expect("user store").mark_modified();
+        context
+            .user_store_mut()
+            .expect("user store")
+            .mark_modified();
         let before = listing(&user);
         make_directory(&system, "merged.bin");
         let outcome = context.save_user();

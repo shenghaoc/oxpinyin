@@ -106,7 +106,8 @@ fn raw_modify(slot: u32, old: &[u8], new: &[u8]) -> LogRecord {
 }
 
 fn open(dir: &std::path::Path, base: &SystemOriginals) -> UserStore {
-    UserStore::open_libpinyin(dir, base.clone(), versions(), UserConfLaw::Pinyin).expect("open")
+    UserStore::open_libpinyin(dir, base.fixture_copy(), versions(), UserConfLaw::Pinyin)
+        .expect("open")
 }
 
 /// A profile whose `gb_char.dbin` holds `records` over `base`.
@@ -819,10 +820,14 @@ fn the_gate_never_hides_a_count_or_a_gram_after_a_mask_removal_reload_or_import(
     assert_the_gate_suppresses_nothing(&store, &tokens, "a removal");
     store.mask_out(0xff00_0000, LIBRARY).expect("mask 1");
     assert_the_gate_suppresses_nothing(&store, &tokens, "a mask of the replayed library");
-    store.load_system_libraries(base.clone()).expect("reload");
+    store
+        .load_system_libraries(base.fixture_copy())
+        .expect("reload");
     assert_the_gate_suppresses_nothing(&store, &tokens, "a reload");
-    store.unload_system_libraries(base.clone());
-    store.load_system_libraries(base.clone()).expect("load");
+    store.unload_system_libraries(base.fixture_copy());
+    store
+        .load_system_libraries(base.fixture_copy())
+        .expect("load");
     assert_the_gate_suppresses_nothing(&store, &tokens, "an unload and load");
     drop(store);
     std::fs::remove_dir_all(dir).expect("cleanup");

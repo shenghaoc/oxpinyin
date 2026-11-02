@@ -14,9 +14,7 @@ use std::time::Duration;
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use oxpinyin_core::{Cost, LanguageModel, PhraseToken, UserCountDelta};
-use oxpinyin_data::{
-    BigramLanguageModel, LmError, SystemDbm, SystemDictionary, parse_interpolation2,
-};
+use oxpinyin_data::{LmError, SystemDbm, SystemDictionary, parse_interpolation2};
 use oxpinyin_engine::{EmptyConfigSource, Session};
 use oxpinyin_user::{SENTENCE_START, UserStore};
 
@@ -28,7 +26,7 @@ use harness::{CYCLE_INPUTS, load_real_tables, real_session, type_keystrokes};
 /// Mirrors `oxpinyin-capi`'s `SharedLm`: dict unigrams plus an optional
 /// [`UserStore`] overlay consulted on every `score` / `unigram_freq`.
 struct BenchLm<'a> {
-    inner: &'a BigramLanguageModel,
+    inner: harness::ReadModel<'a>,
     user: Option<UserStore>,
 }
 
@@ -86,14 +84,11 @@ impl LanguageModel for BenchLm<'_> {
 /// dependency keeps it runnable from an export dir alone. The scores are not
 /// the pinned construction's, so absolute timings here do not compare against
 /// `keystroke_cycle`.
-fn load_scoring_tables() -> (SystemDictionary, BigramLanguageModel) {
+fn load_scoring_tables() -> (SystemDictionary, oxpinyin_data::lm::BigramTables) {
     let export = harness::export_dir();
     let dict = SystemDictionary::open(&export).expect("SystemDictionary opens");
-    let mut lm = BigramLanguageModel::open(
-        &export.join(SystemDbm::Bigram.file_name()),
-        std::sync::Arc::clone(dict.libraries()),
-    )
-    .expect("BigramLanguageModel opens");
+    let mut lm = oxpinyin_data::lm::BigramTables::open(&export.join(SystemDbm::Bigram.file_name()))
+        .expect("BigramLanguageModel opens");
     lm.set_lambda_from_table_conf(&export.join("table.conf"));
     (dict, lm)
 }
@@ -161,13 +156,13 @@ fn user_store_decode_pass(criterion: &mut Criterion) {
     let (dict, lm) = load_scoring_tables();
 
     let no_user_lm = BenchLm {
-        inner: &lm,
+        inner: lm.read_all(dict.libraries()),
         user: None,
     };
     let empty_path = bench_store_path("empty");
     let empty_store = UserStore::open(&empty_path.0).expect("empty user store opens");
     let empty_lm = BenchLm {
-        inner: &lm,
+        inner: lm.read_all(dict.libraries()),
         user: Some(empty_store),
     };
     let populated_path = bench_store_path("populated");
@@ -180,7 +175,7 @@ fn user_store_decode_pass(criterion: &mut Criterion) {
         .observe_selection(0x0100_1225, 0x0100_05db)
         .expect("populate common transition");
     let populated_lm = BenchLm {
-        inner: &lm,
+        inner: lm.read_all(dict.libraries()),
         user: Some(populated_store),
     };
 

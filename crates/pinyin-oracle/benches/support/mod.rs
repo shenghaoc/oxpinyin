@@ -9,7 +9,10 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use oxpinyin_core::{Dictionary, LanguageModel, PhraseEntry, PhraseToken, SyllableKey};
-use oxpinyin_data::{BigramLanguageModel, SystemDbm, SystemDictionary};
+use oxpinyin_data::lm::BigramTables;
+use oxpinyin_data::{SystemDbm, SystemDictionary};
+pub type ReadModel<'a> =
+    oxpinyin_data::BigramLanguageModel<&'a oxpinyin_data::PhraseLibraries, &'a BigramTables>;
 use oxpinyin_engine::{EmptyConfigSource, Session};
 // Canonical export-dir resolution, shared with the capi benches.
 pub use oxpinyin_testsupport::model_cache::export_dir;
@@ -50,17 +53,14 @@ pub fn model_dir() -> PathBuf {
 /// Dictionary + real-frequency language model used by the pinned scan:
 /// the system data directory's DBMs and chunk files, whose items carry
 /// the real unigram counts.
-pub fn load_real_tables() -> (SystemDictionary, BigramLanguageModel) {
+pub fn load_real_tables() -> (SystemDictionary, BigramTables) {
     let export = export_dir();
     let dict = SystemDictionary::open(&export).expect("SystemDictionary opens");
-    let mut lm = BigramLanguageModel::open(
-        &export.join(SystemDbm::Bigram.file_name()),
-        std::sync::Arc::clone(dict.libraries()),
-    )
-    .expect("BigramLanguageModel opens");
+    let mut lm = BigramTables::open(&export.join(SystemDbm::Bigram.file_name()))
+        .expect("BigramLanguageModel opens");
     lm.set_lambda_from_table_conf(&export.join("table.conf"));
     assert!(
-        lm.has_real_unigrams(),
+        lm.read_all(dict.libraries()).has_real_unigrams(),
         "loaded model must expose real unigrams"
     );
     (dict, lm)
@@ -129,17 +129,18 @@ impl Dictionary for CountingDict<'_> {
 /// Session over a counting dictionary and the real-frequency model.
 pub fn counting_session<'a>(
     dict: CountingDict<'a>,
-    lm: &'a BigramLanguageModel,
-) -> Session<CountingDict<'a>, &'a BigramLanguageModel> {
-    Session::new(&EmptyConfigSource, dict, lm).expect("Session::new")
+    lm: &'a BigramTables,
+) -> Session<CountingDict<'a>, ReadModel<'a>> {
+    let model = lm.read_all(dict.inner.libraries());
+    Session::new(&EmptyConfigSource, dict, model).expect("Session::new")
 }
 
 /// Session over the real tables.
 pub fn real_session<'a>(
     dict: &'a SystemDictionary,
-    lm: &'a BigramLanguageModel,
-) -> Session<&'a SystemDictionary, &'a BigramLanguageModel> {
-    Session::new(&EmptyConfigSource, dict, lm).expect("Session::new")
+    lm: &'a BigramTables,
+) -> Session<&'a SystemDictionary, ReadModel<'a>> {
+    Session::new(&EmptyConfigSource, dict, lm.read_all(dict.libraries())).expect("Session::new")
 }
 
 /// Types `input` one character at a time, refreshing after each.

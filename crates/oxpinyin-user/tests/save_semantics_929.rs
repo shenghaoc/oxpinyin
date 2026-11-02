@@ -202,7 +202,7 @@ fn interrupted_save_preserves_the_facade_specific_committed_prefix() {
         }
         store.mark_modified();
         store
-            .save_reporting_with_baseline(&[], |index| {
+            .save_reporting_with_baseline(&[], |index, _| {
                 if index == stop_before {
                     std::process::exit(73);
                 }

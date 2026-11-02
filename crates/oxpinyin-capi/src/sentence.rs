@@ -29,11 +29,11 @@ pub extern "C" fn pinyin_guess_sentence(instance: *mut PinyinInstance) -> bool {
 
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
-    let inst = unsafe { instance_mut(instance) };
+    let mut inst = unsafe { instance_mut(instance) };
     // `m_prefixes` becomes `[sentence_start]` before the lookup runs
     // (`pinyin.cpp:1376-1377`).
-    inst.prefixes.clear();
-    if !matrix_has_keys(inst) {
+    inst.state.prefixes.clear();
+    if !matrix_has_keys(&inst.read()) {
         // Validate against the empty matrix for every keyless parse,
         // including nonempty zero-consumption text. Keep the sentence
         // rows (074a2219, pinyin.cpp:1379-1380, phonetic_lookup.h:743-748).
@@ -96,7 +96,7 @@ pub(crate) fn refuse_lookup_gram(name: &str, error: &oxpinyin_engine::EngineErro
 /// libraries' sum, the user store's deltas and the accepted
 /// `pinyin_token_add_unigram_frequency` deltas, wrapped. A model without real
 /// unigrams has no total to divide by.
-fn facade_total_is_zero(inst: &crate::state::CapiInstance) -> bool {
+fn facade_total_is_zero(inst: &crate::state::CapiInstanceRead<'_>) -> bool {
     inst.core.lm.has_real_unigrams() && inst.core.lm.amplified_total() == 0
 }
 
@@ -113,7 +113,7 @@ fn facade_total_is_zero(inst: &crate::state::CapiInstance) -> bool {
 /// `keys` is the active mode's key list when the caller holds one for the
 /// current input and option word; `None` reads it again.
 fn validated_lookup_offset(
-    inst: &crate::state::CapiInstance,
+    inst: &crate::state::CapiInstanceRead<'_>,
     keys: Option<&[oxpinyin_facade::KeyAt]>,
     offset: usize,
 ) -> Option<usize> {
@@ -141,7 +141,7 @@ fn validated_lookup_offset(
 /// for a parse without keys (`phonetic_key_matrix.cpp:34-38`): `"'"` and
 /// `"!"` consume a byte or none and place nothing. An unreadable parse is
 /// left to the session.
-pub(crate) fn matrix_has_keys(inst: &crate::state::CapiInstance) -> bool {
+pub(crate) fn matrix_has_keys(inst: &crate::state::CapiInstanceRead<'_>) -> bool {
     inst.core.mode_has_keys().unwrap_or(true)
 }
 
@@ -170,7 +170,7 @@ pub extern "C" fn pinyin_guess_sentence_with_prefix(
 
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
-    let inst = unsafe { instance_mut(instance) };
+    let mut inst = unsafe { instance_mut(instance) };
     // `m_prefixes` becomes `[sentence_start]` and the prefix adds what it
     // converts to (`pinyin.cpp:1431-1434`); `None` adds nothing.
     let prefix =
@@ -178,15 +178,13 @@ pub extern "C" fn pinyin_guess_sentence_with_prefix(
     // `_compute_prefixes` reduces each tail substring's search with the
     // validating `reduce_tokens` (`pinyin.cpp:1415`), which asserts on more
     // than four tokens (`phrase_large_table3.h:95`) before the guess.
-    let Ok(prefixes) = oxpinyin_facade::compute_prefixes(
-        &inst.core.dict,
-        inst.core.user.as_ref(),
-        prefix.as_ref(),
-    ) else {
+    let Ok(prefixes) =
+        oxpinyin_facade::compute_prefixes(&inst.core.dict, inst.core.user, prefix.as_ref())
+    else {
         std::process::abort();
     };
-    inst.prefixes.clone_from(&prefixes);
-    if !matrix_has_keys(inst) {
+    inst.state.prefixes.clone_from(&prefixes);
+    if !matrix_has_keys(&inst.read()) {
         // Validate against the empty matrix for every keyless parse,
         // including nonempty zero-consumption text. Keep the sentence
         // rows (074a2219, pinyin.cpp:1379-1380, phonetic_lookup.h:743-748).
@@ -228,16 +226,16 @@ pub extern "C" fn pinyin_guess_predicted_candidates_with_punctuations(
 
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
-    let inst = unsafe { instance_mut(instance) };
+    let mut inst = unsafe { instance_mut(instance) };
     // The nested prediction's aliased-prefix outcome leaves no prefix, so
     // no punctuation is prepended, and the pin answers `true`
     // (`pinyin.cpp:2459-2498`).
-    if crate::predict::clear_borrowed_prefix(inst, prefix) {
+    if crate::predict::clear_borrowed_prefix(&mut inst, prefix) {
         return true;
     }
     let prefix =
         oxpinyin_capi_marshal::ucs4::prefix_text(oxpinyin_capi_marshal::borrow_c_string!(prefix));
-    crate::predict::guess_predicted_with_punctuations(inst, prefix.as_ref())
+    crate::predict::guess_predicted_with_punctuations(&mut inst, prefix.as_ref())
 }
 
 /// Get a sentence string from the instance (n-best variant).
@@ -427,7 +425,7 @@ pub extern "C" fn pinyin_guess_candidates(
 
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
-    let inst = unsafe { instance_mut(instance) };
+    let mut inst = unsafe { instance_mut(instance) };
     // One key list serves the keyless check and the offset validation
     // below. Plain full pinyin rebuilds the scan
     // matrix for every read of it, and the list is a function of the input
@@ -442,7 +440,7 @@ pub extern "C" fn pinyin_guess_candidates(
         .as_ref()
         .is_ok_and(|keys| keys.is_empty() || inst.core.mode_input().0.is_empty())
     {
-        inst.candidates.clear();
+        inst.state.candidates.clear();
         return false;
     }
     let options = inst.core.options();
@@ -468,11 +466,11 @@ pub extern "C" fn pinyin_guess_candidates(
     if !inst.core.session.is_composing() {
         return false;
     }
-    let Some(normalized) = validated_lookup_offset(inst, keys.as_deref(), offset) else {
-        inst.candidates.clear();
+    let Some(normalized) = validated_lookup_offset(&inst.read(), keys.as_deref(), offset) else {
+        inst.state.candidates.clear();
         return false;
     };
-    inst.candidates.clear();
+    inst.state.candidates.clear();
     // Search on every guess, including the composition offset: library
     // visibility can change without a parse (074a2219 pinyin.cpp:2193,
     // :2224-2262). The session's cached list predates such a change.
@@ -525,7 +523,7 @@ pub extern "C" fn pinyin_guess_candidates(
             | oxpinyin_engine::EngineError::ReadAfterCheck { .. }),
         ) => {
             refuse_lookup_gram("pinyin_guess_candidates", &error);
-            inst.candidates.clear();
+            inst.state.candidates.clear();
             return false;
         }
         Err(_) => {
@@ -535,7 +533,7 @@ pub extern "C" fn pinyin_guess_candidates(
             // mid-syllable byte is not an error — the window answers the
             // pin's empty-column law. The arm remains for genuine backend
             // failures during the re-anchored scan.
-            inst.candidates.clear();
+            inst.state.candidates.clear();
             return false;
         }
     };
@@ -565,7 +563,7 @@ pub extern "C" fn pinyin_guess_candidates(
     // so a row the dedup removes still counts. A lookup strictly inside a
     // key searches nothing at the pin. The process aborts there, before the
     // phrase strings are read.
-    if facade_total_is_zero(inst)
+    if facade_total_is_zero(&inst.read())
         && !sentence_rows_only
         && inst
             .core
@@ -587,19 +585,19 @@ pub extern "C" fn pinyin_guess_candidates(
         .is_some_and(|(_, window)| window.had_unreadable_item())
     {
         inst.core.anchored_window = None;
-        inst.candidates.clear();
+        inst.state.candidates.clear();
         crate::ffi::log_warning(
             "pinyin_guess_candidates: a candidate's phrase item cannot be read",
         );
         return false;
     }
     let Ok(candidates) = inst.core.lookup_window() else {
-        inst.candidates.clear();
+        inst.state.candidates.clear();
         return false;
     };
     // One row vector and one text buffer, each sized once for the window
     // (rows the loop skips leave a little slack, never a second growth).
-    inst.candidates.reserve(
+    inst.state.candidates.reserve(
         candidates.len(),
         candidates
             .iter()
@@ -638,10 +636,10 @@ pub extern "C" fn pinyin_guess_candidates(
             continue;
         }
         let bytes = phrase_text_bytes(cand.text());
-        let Some(text) = inst.candidates.intern(&bytes) else {
+        let Some(text) = inst.state.candidates.intern(&bytes) else {
             continue;
         };
-        inst.candidates.push(CapiCandidate {
+        inst.state.candidates.push(CapiCandidate {
             text,
             text_ptr: std::ptr::null(),
             kind: cand.kind(),
@@ -671,7 +669,7 @@ pub extern "C" fn pinyin_guess_candidates(
     // parse that produced no keys answers false, not an empty list.
     // A non-empty parse with no candidates (apostrophe-only runs,
     // unmatchable tails) answers true with zero rows.
-    if inst.candidates.is_empty() && inst.core.parsed_len == 0 {
+    if inst.state.candidates.is_empty() && inst.core.parsed_len == 0 {
         return false;
     }
     true

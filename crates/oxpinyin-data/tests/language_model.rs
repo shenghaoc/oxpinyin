@@ -52,9 +52,13 @@ impl Fixture {
         Self { dir }
     }
 
-    fn open(&self) -> (BigramLanguageModel, Arc<AtomicU32>) {
-        let libraries =
-            Arc::new(PhraseLibraries::open(self.dir.path(), SYSTEM_LIBRARY_FILES).unwrap());
+    fn open(
+        &self,
+    ) -> (
+        BigramLanguageModel<PhraseLibraries, oxpinyin_data::lm::BigramTables, Arc<AtomicU32>>,
+        Arc<AtomicU32>,
+    ) {
+        let libraries = PhraseLibraries::open(self.dir.path(), SYSTEM_LIBRARY_FILES).unwrap();
         let mask = Arc::new(AtomicU32::new(0));
         let lm = BigramLanguageModel::open_with_mask(
             &self.dir.path().join(SystemDbm::Bigram.file_name()),
@@ -217,7 +221,7 @@ fn wrapped_bigram_fields_keep_record_presence_and_nan_costs() {
 /// with its system gram, read with `get_freq` and `get_total_freq`, then
 /// priced from that item.
 fn merged_row_costs(
-    lm: &BigramLanguageModel,
+    lm: &BigramLanguageModel<PhraseLibraries, oxpinyin_data::lm::BigramTables, Arc<AtomicU32>>,
     prev: u32,
     token: u32,
     user: UserCountDelta,

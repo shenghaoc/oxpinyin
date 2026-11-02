@@ -8,7 +8,46 @@
 
 use super::*;
 
-impl<D, L> Session<D, L>
+impl<D, L, S: std::borrow::Borrow<SessionState>> Session<D, L, S>
+where
+    D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+    D::Error: Display,
+    L: LanguageModel<Token = PhraseToken>,
+    L::Error: Display,
+{
+    /// Segments an arbitrary already-typed sentence string into its
+    /// best dictionary phrase path — upstream `pinyin_phrase_segment`
+    /// (`pinyin.cpp:1443-1460`), the phrase-lookup span DP over the
+    /// sentence's characters, independent of the live composition.
+    /// Returns `(matched, tokens)` in `m_phrase_result`'s shape:
+    /// character-length, each phrase's token at its span's start
+    /// position, `null_token` between phrases — and, on a failed
+    /// match, the fully sized all-null array (`PhraseLookup::final_step`
+    /// sizes and null-fills before its empty-last-step `false`).
+    ///
+    /// # Errors
+    ///
+    /// Propagates the model's step-cost failures.
+    pub fn phrase_segment(&self, sentence: &str) -> Result<(bool, Vec<PhraseToken>), EngineError> {
+        crate::phrase::phrase_segment(&self.dictionary, &self.model, sentence)
+    }
+
+    /// [`Self::phrase_segment`] over raw UCS-4 words, including
+    /// surrogate or above-Unicode values. The dictionary compares stored
+    /// raw phrase keys; no `char` or `str` is built from a non-scalar.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the model's step-cost failures.
+    pub fn phrase_segment_ucs4(
+        &self,
+        sentence: &[u32],
+    ) -> Result<(bool, Vec<PhraseToken>), EngineError> {
+        crate::phrase::phrase_segment_ucs4(&self.dictionary, &self.model, sentence)
+    }
+}
+
+impl<D, L, S: std::borrow::BorrowMut<SessionState>> Session<D, L, S>
 where
     D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
     D::Error: Display,
@@ -109,8 +148,9 @@ where
         // row's record is its own whole path, so no lookup-time history
         // snapshot stands behind it (the remaining-input walk's §10
         // snapshot-restore pair does not apply).
-        self.sentence.history.clear();
-        self.sentence.last_result = self
+        let state = self.state.borrow_mut();
+        state.sentence.history.clear();
+        state.sentence.last_result = state
             .sentence
             .rows
             .first()
@@ -118,37 +158,6 @@ where
 
         self.refresh_after_parse()?;
         Ok(true)
-    }
-
-    /// Segments an arbitrary already-typed sentence string into its
-    /// best dictionary phrase path — upstream `pinyin_phrase_segment`
-    /// (`pinyin.cpp:1443-1460`), the phrase-lookup span DP over the
-    /// sentence's characters, independent of the live composition.
-    /// Returns `(matched, tokens)` in `m_phrase_result`'s shape:
-    /// character-length, each phrase's token at its span's start
-    /// position, `null_token` between phrases — and, on a failed
-    /// match, the fully sized all-null array (`PhraseLookup::final_step`
-    /// sizes and null-fills before its empty-last-step `false`).
-    ///
-    /// # Errors
-    ///
-    /// Propagates the model's step-cost failures.
-    pub fn phrase_segment(&self, sentence: &str) -> Result<(bool, Vec<PhraseToken>), EngineError> {
-        crate::phrase::phrase_segment(&self.dictionary, &self.model, sentence)
-    }
-
-    /// [`Self::phrase_segment`] over raw UCS-4 words, including
-    /// surrogate or above-Unicode values. The dictionary compares stored
-    /// raw phrase keys; no `char` or `str` is built from a non-scalar.
-    ///
-    /// # Errors
-    ///
-    /// Propagates the model's step-cost failures.
-    pub fn phrase_segment_ucs4(
-        &self,
-        sentence: &[u32],
-    ) -> Result<(bool, Vec<PhraseToken>), EngineError> {
-        crate::phrase::phrase_segment_ucs4(&self.dictionary, &self.model, sentence)
     }
 
     /// Guesses a sentence seeded with prefix tokens — upstream
@@ -295,28 +304,30 @@ where
         // The rows were seeded with the history as it stands right here;
         // a later row selection restores this snapshot before extending
         // the record with the row's own tokens.
-        self.sentence.history.clear();
-        self.sentence
+        let state = self.state.borrow_mut();
+        state.sentence.history.clear();
+        state
+            .sentence
             .history
-            .extend_from_slice(self.record.history());
+            .extend_from_slice(state.record.history());
         // The walk's positions are remaining-relative; the store and the
         // train result are absolute.
-        for row in &mut self.sentence.rows {
+        for row in &mut state.sentence.rows {
             for span in &mut row.spans {
                 span.start += offset;
             }
         }
-        self.sentence.last_result = self
+        state.sentence.last_result = state
             .sentence
             .rows
             .first()
             .map_or_else(Vec::new, |row| row.spans.clone());
 
-        if !self.record.selected().is_empty() {
-            self.sentence.prefix = self.record.parts().to_vec();
-            for row in &mut self.sentence.rows {
+        if !state.record.selected().is_empty() {
+            state.sentence.prefix = state.record.parts().to_vec();
+            for row in &mut state.sentence.rows {
                 let mut full = PhraseTextConcat::new();
-                full.push(self.record.selected());
+                full.push(state.record.selected());
                 full.push(&row.text);
                 row.text = full.finish();
             }

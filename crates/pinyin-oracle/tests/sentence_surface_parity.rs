@@ -87,6 +87,7 @@ fn sentence_surface_detects_per_step_score_shift() {
     let mut session = sentence_tail::open_session_from_env()
         .expect("system-table export and model20 must open")
         .expect("system-table export and model20 must be present");
+    let mut session = session.session();
     let actual: Vec<_> = [
         "yaomeichong",
         "xiehenshuaitong",
@@ -290,6 +291,7 @@ fn sentence_surface_matches_supplementary_tie_order() {
     let mut session = sentence_tail::open_session_from_env()
         .expect("system-table export must open")
         .expect("system-table export must be present");
+    let mut session = session.session();
     session
         .set_options(oxpinyin_core::OptionBits::from_bits(0x18a))
         .expect("capture options must apply");

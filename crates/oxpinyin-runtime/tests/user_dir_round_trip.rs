@@ -39,9 +39,8 @@ fn oxpinyin_trains_and_saves_its_own_profile() {
     let system = env("OX_SYSTEM_DIR");
     let owned = env("OX_OWNED_DIR");
 
-    let runtime = Runtime::open(Path::new(&system), Some(Path::new(&owned)))
+    let mut runtime = Runtime::open(Path::new(&system), Some(Path::new(&owned)))
         .expect("the runtime opens the fresh dir");
-    let mut store = runtime.user_store().expect("a fresh profile backs a store");
 
     // Train through the engine session — choose, then a sentence train —
     // so the profile carries a bigram. The token set is whatever this
@@ -60,10 +59,16 @@ fn oxpinyin_trains_and_saves_its_own_profile() {
         let session = &mut runtime
             .new_session(&oxpinyin_engine::EmptyConfigSource)
             .expect("a session allocates");
-        session.type_pinyin(input).expect("input processes");
-        session.guess_sentence().expect("guess");
-        session.select(0).expect("candidate 0 selects");
-        session.train(&mut store).expect("train");
+        runtime
+            .session(session)
+            .type_pinyin(input)
+            .expect("input processes");
+        runtime.session(session).guess_sentence().expect("guess");
+        runtime
+            .session(session)
+            .select(0)
+            .expect("candidate 0 selects");
+        runtime.train_session(session, 0).expect("train");
         // ibus's remember-every-input path (§6): the committed text also
         // becomes a user phrase through the composition's own keys — the
         // same shape `pinyin_remember_user_input` drives — which is what
@@ -74,13 +79,15 @@ fn oxpinyin_trains_and_saves_its_own_profile() {
         // the test rather than silently skipping the phrase (a skip
         // would leave user.bin unexercised and the phase green for
         // nothing).
-        let committed = session
+        let committed = runtime
+            .session(session)
             .selected_text()
             .as_str()
             .expect("fixture sentence is UTF-8")
             .to_owned();
         assert!(!committed.is_empty(), "a committed sentence exists");
-        let keys: Vec<oxpinyin_user::PinyinKey> = session
+        let keys: Vec<oxpinyin_user::PinyinKey> = runtime
+            .session(session)
             .composition_keys()
             .expect("composition keys read")
             .into_iter()
@@ -88,7 +95,9 @@ fn oxpinyin_trains_and_saves_its_own_profile() {
                 u16::try_from(key.index()).expect("the syllable id fits the store's PinyinKey")
             })
             .collect();
-        store
+        runtime
+            .user_store_mut()
+            .unwrap()
             .add_phrase(&oxpinyin_core::PhraseText::from(&committed), &keys, None)
             .expect("the committed sentence is remembered");
         expected_phrases.push(committed);
@@ -104,9 +113,13 @@ fn oxpinyin_trains_and_saves_its_own_profile() {
 
     // Mark and save: the dirty gate is the pin's (§4), so the forced
     // write is explicit here.
-    store.mark_modified();
+    runtime.user_store_mut().unwrap().mark_modified();
     assert!(
-        store.save().expect("save succeeds"),
+        runtime
+            .user_store_mut()
+            .unwrap()
+            .save()
+            .expect("save succeeds"),
         "the dirty save writes"
     );
 
@@ -140,10 +153,10 @@ fn a_pin_profile_loads_and_saves_back_in_place() {
     // user.conf, loads the bigram hash, the USER_FILE chunk stores and
     // replays the .dbin logs onto the system originals — exactly what
     // `pinyin_init(systemdir, userdir)` does upstream.
-    let runtime = Runtime::open(Path::new(&system), Some(Path::new(&pin_dir)))
+    let mut runtime = Runtime::open(Path::new(&system), Some(Path::new(&pin_dir)))
         .expect("the runtime opens the pin's system dir and profile");
-    let mut store = runtime
-        .user_store()
+    let store = runtime
+        .user_store_mut()
         .expect("the profile backs a user store");
 
     // A load alone is not "modified" (§4); the round trip forces the
@@ -175,7 +188,11 @@ fn a_pin_profile_loads_and_saves_back_in_place() {
     let conf = TableConf::load_from_dir(Path::new(&system)).unwrap_or_else(|_| TableConf::stock());
     let versions = SystemVersions::from_conf(&conf);
     let originals = system_originals(
-        runtime.dict().system().libraries(),
+        oxpinyin_data::PhraseLibraries::open(
+            Path::new(&system),
+            oxpinyin_data::SYSTEM_LIBRARY_FILES,
+        )
+        .expect("fresh fixture mappings"),
         UserFileLayout::from_conf(&conf),
     );
     let first = persistence::load(

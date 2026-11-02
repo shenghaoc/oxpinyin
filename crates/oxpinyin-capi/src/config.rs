@@ -3,7 +3,7 @@
 use std::os::raw::c_int;
 use std::sync::atomic::Ordering;
 
-use crate::state::{PHRASE_INDEX_LIBRARY_COUNT, context_mut, context_ref};
+use crate::state::{PHRASE_INDEX_LIBRARY_COUNT, context_mut};
 use crate::types::{PinyinContext, PinyinOptionT};
 
 /// `GBK_DICTIONARY` (`novel_types.h`): the one default library that can be
@@ -196,7 +196,7 @@ pub extern "C" fn pinyin_load_addon_phrase_library(context: *mut PinyinContext, 
     }
 
     // SAFETY: `context` is non-null and was produced by `pinyin_init`.
-    let ctx = unsafe { context_ref(context) };
+    let ctx = unsafe { context_mut(context) };
     ctx.load_addon(index)
 }
 
@@ -225,7 +225,7 @@ pub extern "C" fn pinyin_unload_addon_phrase_library(
     }
 
     // SAFETY: `context` is non-null and was produced by `pinyin_init`.
-    let ctx = unsafe { context_ref(context) };
+    let ctx = unsafe { context_mut(context) };
     ctx.unload_addon(index)
 }
 
@@ -251,7 +251,7 @@ pub extern "C" fn pinyin_load_phrase_library(context: *mut PinyinContext, index:
     }
 
     // SAFETY: `context` is non-null and was produced by `pinyin_init`.
-    let ctx = unsafe { context_ref(context) };
+    let ctx = unsafe { crate::state::context_mut(context) };
     // `pinyin.cpp:457`: the pin `assert`s that the row of a loaded library
     // is a `SYSTEM_FILE` or `USER_FILE` (an index of 16 or more answers
     // `false` first, `:448`); which rows are is the context's `table.conf`.
@@ -303,7 +303,7 @@ pub extern "C" fn pinyin_unload_phrase_library(context: *mut PinyinContext, inde
     }
 
     // SAFETY: `context` is non-null and was produced by `pinyin_init`.
-    let ctx = unsafe { context_ref(context) };
+    let ctx = unsafe { crate::state::context_mut(context) };
     if index >= PHRASE_INDEX_LIBRARY_COUNT {
         // Register row 21, `pinyin.cpp:466`: `assert`.
         std::process::abort();

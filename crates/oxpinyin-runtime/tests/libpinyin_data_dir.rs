@@ -65,7 +65,7 @@ fn an_unmodified_libpinyin_data_directory_opens_and_decodes() {
         assert!(dir.join(name).is_file(), "{name} missing");
     }
 
-    let runtime = Runtime::open(&dir, None).expect("libpinyin's data dir opens as is");
+    let mut runtime = Runtime::open(&dir, None).expect("libpinyin's data dir opens as is");
     let dict = runtime.dict();
     let lm = runtime.lm();
 
@@ -150,6 +150,7 @@ fn an_unmodified_libpinyin_data_directory_opens_and_decodes() {
     // The addon facade: addon_pinyin_index.bin + art.bin on demand.
     assert!(runtime.load_addon(4, &dir), "art loads from the same dir");
     assert!(!runtime.load_addon(4, &dir), "second load is false");
+    let dict = runtime.dict();
     let art = dict
         .lookup_addon(&syllables("er'huang"))
         .expect("addon lookup");
@@ -157,6 +158,7 @@ fn an_unmodified_libpinyin_data_directory_opens_and_decodes() {
 
     // A session decodes over the same handles.
     let mut session = runtime.new_session(&EmptyConfigSource).expect("session");
+    let mut session = runtime.session(&mut session);
     assert_eq!(
         session.type_pinyin("nihao").expect("typing"),
         KeyOutcome::Consumed

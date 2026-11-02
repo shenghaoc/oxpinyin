@@ -62,6 +62,59 @@ mod tests {
     use crate::test_support::{TempUserDir, open_with_user};
 
     #[test]
+    fn instance_outlives_context() {
+        let user_dir = TempUserDir::new("orphan-instance");
+        let (context, instance) = open_with_user(&user_dir.path);
+        // SAFETY: the context is live and this test serializes all handle calls.
+        let owner = unsafe { crate::state::context_owner(context) };
+        let weak = std::rc::Rc::downgrade(&owner);
+        drop(owner);
+        let input = crate::test_support::cstr("su3cl3");
+        assert_eq!(
+            crate::parse::zhuyin_parse_more_chewings(instance, input.as_ptr()),
+            6
+        );
+        let marker = user_dir.path.join("user.conf");
+        let before = std::fs::read(&marker).ok();
+        crate::context::zhuyin_fini(context);
+        assert!(!is_live(context));
+        let at_fini = std::fs::read(&marker).ok();
+        assert_eq!(before, at_fini);
+        assert!(
+            weak.upgrade().is_some(),
+            "the instance retains the same allocation"
+        );
+        assert!(crate::sentence::zhuyin_guess_sentence(instance));
+        assert!(crate::candidates::zhuyin_train(instance));
+        assert!(crate::instance::zhuyin_reset(instance));
+        crate::instance::zhuyin_free_instance(instance);
+        assert!(
+            weak.upgrade().is_none(),
+            "the last handle releases the allocation"
+        );
+        assert_eq!(std::fs::read(marker).ok(), at_fini);
+    }
+
+    #[test]
+    fn import_iterator_outlives_context() {
+        let user_dir = TempUserDir::new("orphan-import");
+        let (context, instance) = open_with_user(&user_dir.path);
+        let import = crate::iterators::zhuyin_begin_add_phrases(context, 5);
+        assert!(!import.is_null());
+        crate::instance::zhuyin_free_instance(instance);
+        crate::context::zhuyin_fini(context);
+        let phrase = crate::test_support::cstr("你好");
+        let reading = crate::test_support::cstr("ㄋㄧˇ ㄏㄠˇ");
+        assert!(crate::iterators::zhuyin_iterator_add_phrase(
+            import,
+            phrase.as_ptr(),
+            reading.as_ptr(),
+            7
+        ));
+        crate::iterators::zhuyin_end_add_phrases(import);
+    }
+
+    #[test]
     fn a_context_is_live_from_init_to_fini() {
         let user_dir = TempUserDir::new("live-context");
         let (context, instance) = open_with_user(&user_dir.path);

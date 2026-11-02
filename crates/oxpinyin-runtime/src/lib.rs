@@ -40,7 +40,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 /// `PHRASE_INDEX_LIBRARY_COUNT` (`phrase_index.h`): sixteen sub-indices.
 const PHRASE_INDEX_LIBRARY_COUNT: u32 = 16;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Mutex, RwLock};
 
 use oxpinyin_core::{
     Cost, Dictionary, LanguageModel, MergedGram, NbestStepCosts, PhraseEntry, PhraseIndexRanges,
@@ -379,7 +379,7 @@ struct TextTokens {
     tokens: Vec<u32>,
 }
 
-type TextLookupCache = Arc<Mutex<Option<TextTokens>>>;
+type TextLookupCache = Mutex<Option<TextTokens>>;
 
 #[derive(Default)]
 struct UnigramOverlay {
@@ -445,27 +445,30 @@ impl FacadeBumps {
 ///
 /// `SystemDictionary` holds DBM handles and mappings, so it rides an
 /// `Arc`.
-#[derive(Clone)]
-pub struct RuntimeDict {
-    system: Arc<SystemDictionary>,
-    user: Option<UserStore>,
-    text_lookup_cache: TextLookupCache,
-    addons: Arc<RwLock<AddonSet>>,
-    punct: Arc<PunctTable>,
+#[derive(Clone, Copy)]
+pub struct RuntimeDict<'a> {
+    system: SystemDictionary<
+        &'a oxpinyin_data::phrase_libraries::PhraseLibraries,
+        &'a oxpinyin_data::dict::SystemTables,
+    >,
+    user: Option<&'a UserStore>,
+    text_lookup_cache: &'a TextLookupCache,
+    addons: &'a RwLock<AddonSet>,
+    punct: &'a PunctTable,
     /// Transient bumps for libraries without canonical store ownership,
     /// plus rejected calls' unconditional facade-total changes. Accepted
     /// system-item bumps live in the user store alongside training/replay.
-    bumps: Arc<FacadeBumps>,
+    bumps: &'a FacadeBumps,
     /// The loaded-library mask: bit `n` **set** = library `n` unloaded
     /// (matches `library_visible` at :344 and the query surface —
     /// `library_visible_token`, `visible_item_count`, and the
     /// `unload_library` setter — that all consult it).  The pinyin ABI only
     /// ever sets bit 2 (`GBK_DICTIONARY`, `pinyin.cpp:464-472`); the zhuyin
     /// ABI any bit but 1 (`zhuyin.cpp:378-388`).
-    library_mask: Arc<AtomicU32>,
+    library_mask: &'a AtomicU32,
 }
 
-impl RuntimeDict {
+impl<'a> RuntimeDict<'a> {
     /// Shared lookup keeps search side effects and visibility identical;
     /// candidate collection omits only the pronunciation prices it discards.
     fn fill_lookup(
@@ -511,7 +514,7 @@ impl RuntimeDict {
     /// behind is what a later `mask_out` walk starts from (#785).
     #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
     fn note_user_search(&self, syllables: &[SyllableKey]) {
-        if let Some(store) = self.user.as_ref() {
+        if let Some(store) = self.user {
             store.note_pinyin_search(|| chewing_query(syllables));
         }
     }
@@ -555,9 +558,7 @@ impl RuntimeDict {
     /// The query keys the effective-item overlay prices against; `None`
     /// when the store holds no system items or a syllable is no key.
     fn effective_query(&self, syllables: &[SyllableKey]) -> Option<Vec<oxpinyin_core::ChewingKey>> {
-        self.user
-            .as_ref()
-            .filter(|store| store.has_system_items())?;
+        self.user.filter(|store| store.has_system_items())?;
         syllables
             .iter()
             .map(|key| oxpinyin_core::ChewingKey::from_pinyin(key.text()))
@@ -571,28 +572,26 @@ impl RuntimeDict {
         query: &[oxpinyin_core::ChewingKey],
         token: u32,
     ) -> Option<(u32, u32)> {
-        self.user
-            .as_ref()?
-            .with_effective_system_item(token, |item| {
-                let mut total = 0_u32;
-                let mut matched = 0_u32;
-                for (keys, frequency) in &item.prons {
-                    total = total.wrapping_add(*frequency);
-                    if query.len() == keys.len()
-                        && query.iter().zip(keys).all(|(q, bits)| {
-                            let s = oxpinyin_core::ChewingKey::from_packed(*bits);
-                            q.initial == s.initial
-                                && ((q.middle == s.middle && q.final_ == s.final_)
-                                    || (q.middle == 0 && q.final_ == 0)
-                                    || (s.middle == 0 && s.final_ == 0))
-                                && (q.tone == s.tone || q.tone == 0 || s.tone == 0)
-                        })
-                    {
-                        matched = matched.wrapping_add(*frequency);
-                    }
+        self.user?.with_effective_system_item(token, |item| {
+            let mut total = 0_u32;
+            let mut matched = 0_u32;
+            for (keys, frequency) in &item.prons {
+                total = total.wrapping_add(*frequency);
+                if query.len() == keys.len()
+                    && query.iter().zip(keys).all(|(q, bits)| {
+                        let s = oxpinyin_core::ChewingKey::from_packed(*bits);
+                        q.initial == s.initial
+                            && ((q.middle == s.middle && q.final_ == s.final_)
+                                || (q.middle == 0 && q.final_ == 0)
+                                || (s.middle == 0 && s.final_ == 0))
+                            && (q.tone == s.tone || q.tone == 0 || s.tone == 0)
+                    })
+                {
+                    matched = matched.wrapping_add(*frequency);
                 }
-                (matched, total)
-            })
+            }
+            (matched, total)
+        })
     }
 
     /// What [`Self::priced_token`] reads of `syllables` whatever the
@@ -600,7 +599,10 @@ impl RuntimeDict {
     fn path_pricing(&self, syllables: &[SyllableKey]) -> Result<PathPricing, DictError> {
         Ok(PathPricing {
             user: self.user_lookup()?.lookup(syllables),
-            keys: SystemDictionary::trellis_keys(syllables),
+            keys:
+                SystemDictionary::<oxpinyin_data::phrase_libraries::PhraseLibraries>::trellis_keys(
+                    syllables,
+                ),
         })
     }
 
@@ -664,7 +666,7 @@ impl RuntimeDict {
         // The effective-item overlay prices against the same keys, when
         // the store holds system items.
         if let Some(query) = path.keys.as_deref()
-            && self.user.as_ref().is_some_and(UserStore::has_system_items)
+            && self.user.is_some_and(UserStore::has_system_items)
             && let Some((matched, total)) = self.effective_possibility(query, token)
         {
             priced.item.pronunciation = Some((u64::from(matched), u64::from(total)));
@@ -676,7 +678,7 @@ impl RuntimeDict {
     }
 
     fn user_lookup(&self) -> Result<UserLookup<'_>, DictError> {
-        self.user.as_ref().map_or_else(
+        self.user.map_or_else(
             || Ok(UserLookup::empty()),
             |store| {
                 store
@@ -688,7 +690,12 @@ impl RuntimeDict {
 
     /// The underlying system table set, without the user overlay.
     #[must_use]
-    pub fn system(&self) -> &SystemDictionary {
+    pub fn system(
+        &self,
+    ) -> &SystemDictionary<
+        &'a oxpinyin_data::phrase_libraries::PhraseLibraries,
+        &'a oxpinyin_data::dict::SystemTables,
+    > {
         &self.system
     }
 
@@ -702,7 +709,7 @@ impl RuntimeDict {
     /// Loads addon library `index` from `system_dir`; `false` when already
     /// loaded or the tables are missing/unopenable.
     #[must_use]
-    pub fn load_addon(&self, index: u8, system_dir: &Path) -> bool {
+    fn load_addon(&self, index: u8, system_dir: &Path) -> bool {
         self.load_addon_reporting(index, system_dir)
             .unwrap_or(false)
     }
@@ -716,20 +723,12 @@ impl RuntimeDict {
     /// # Errors
     ///
     /// [`LibraryError`] when the library file is absent or does not verify.
-    pub fn load_addon_reporting(&self, index: u8, system_dir: &Path) -> Result<bool, LibraryError> {
+    fn load_addon_reporting(&self, index: u8, system_dir: &Path) -> Result<bool, LibraryError> {
         let mut addons = self
             .addons
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         addons.load_reporting(index, system_dir)
-    }
-
-    /// `FacadePhraseIndex::compact` over the system layout-failed empty
-    /// sub-indices: their local total becomes zero and the facade aggregate
-    /// already excludes it. Returns the compacted nibbles.
-    #[must_use]
-    pub fn compact_layout_failed(&self) -> Vec<u8> {
-        self.system.libraries().compact_layout_failed()
     }
 
     /// The system library files absent when the runtime opened, in the
@@ -755,7 +754,7 @@ impl RuntimeDict {
     /// `index < PHRASE_INDEX_LIBRARY_COUNT` bound: that assertion is an ABI
     /// availability-class concern, not a runtime one.
     #[must_use]
-    pub fn unload_addon(&self, index: u8) -> bool {
+    fn unload_addon(&self, index: u8) -> bool {
         let mut addons = self
             .addons
             .write()
@@ -772,7 +771,7 @@ impl RuntimeDict {
     /// everything but `GBK_DICTIONARY` (2), `zhuyin_unload_phrase_library`
     /// everything but `TSI_DICTIONARY` (1).
     #[must_use]
-    pub fn unload_library(&self, index: u32) -> bool {
+    fn unload_library(&self, index: u32) -> bool {
         if index >= PHRASE_INDEX_LIBRARY_COUNT {
             return false;
         }
@@ -792,7 +791,7 @@ impl RuntimeDict {
     /// never unloaded is already loaded: the system tables load at init, so
     /// upstream's already-loaded rule answers `false` there too.
     #[must_use]
-    pub fn load_library(&self, index: u32) -> bool {
+    fn load_library(&self, index: u32) -> bool {
         // The system tables (1, 2, 4) and the USER_FILE library (7) all load
         // at init (the default-tables loop includes the USER_DICTIONARY row —
         // measured `load(7)` = false on the pin), so the already-loaded rule
@@ -841,22 +840,9 @@ impl RuntimeDict {
     /// the total nor the overlay moves, matching the visibility filter
     /// the rest of the surface honours.
     #[must_use]
-    pub fn add_unigram_delta(&self, token: u32, delta: u64) -> bool {
+    fn add_unigram_delta(&self, token: u32, delta: u64) -> bool {
         if !self.library_visible(token >> 24) {
             return false;
-        }
-        // System libraries share live counts with training and journal replay.
-        // The store folds them into count rows before writing. It owns the
-        // facade total, including refusals; never overlay them a second time.
-        if (1..=4).contains(&(token >> 24))
-            && let Some(user) = self.user.as_ref()
-        {
-            let Ok(delta) = u32::try_from(delta) else {
-                return false;
-            };
-            return user
-                .add_system_unigram_frequency(token, delta)
-                .unwrap_or(false);
         }
         let found = {
             let system_found = self.system_unigram_count(token).is_some();
@@ -867,7 +853,6 @@ impl RuntimeDict {
             let addon_found = addons.unigram_freq(token).is_some();
             let user_found = self
                 .user
-                .as_ref()
                 .and_then(|store| store.phrase(token).ok())
                 .flatten()
                 .is_some();
@@ -894,12 +879,7 @@ impl RuntimeDict {
             .library(library << 24)
             .map_or(0, |lib| lib.total_freq());
         let accepted = overlay.libraries.get(&library).copied().unwrap_or(0);
-        let user_bound = match self
-            .user
-            .as_ref()
-            .map(|user| user.unigram_total())
-            .transpose()
-        {
+        let user_bound = match self.user.map(|user| user.unigram_total()).transpose() {
             Ok(total) => total.unwrap_or(0),
             Err(_) => return false,
         };
@@ -911,7 +891,6 @@ impl RuntimeDict {
         // item-sum bound. One atomic load when no library carries one.
         let offset = match self
             .user
-            .as_ref()
             .map(|user| user.library_offset(library as u8))
             .transpose()
         {
@@ -927,7 +906,6 @@ impl RuntimeDict {
         {
             let user_total = match self
                 .user
-                .as_ref()
                 .map(|user| user.unigram_library_total(library as u8))
                 .transpose()
             {
@@ -980,8 +958,7 @@ impl RuntimeDict {
             return None;
         }
         self.system.unigram_count(token).or_else(|| {
-            self.user
-                .as_ref()?
+            self.user?
                 .system_item_override(token)
                 .ok()?
                 .map(|item| u64::from(item.unigram))
@@ -1007,7 +984,6 @@ impl RuntimeDict {
         self.library_visible(token >> 24)
             && !self
                 .user
-                .as_ref()
                 .is_some_and(|store| store.system_item_removed(token))
     }
 
@@ -1015,10 +991,7 @@ impl RuntimeDict {
     /// unloaded, or the user store holds a removed system item.
     fn token_filter_active(&self) -> bool {
         self.library_mask.load(Ordering::SeqCst) != 0
-            || self
-                .user
-                .as_ref()
-                .is_some_and(UserStore::has_removed_system_items)
+            || self.user.is_some_and(UserStore::has_removed_system_items)
     }
 
     /// Whether phrase-table search has an enabled token array for this library.
@@ -1051,7 +1024,6 @@ impl RuntimeDict {
                     return None;
                 }
                 self.user
-                    .as_ref()
                     .and_then(|store| {
                         store.with_effective_system_item(token, |item| item.prons.len() as u32)
                     })
@@ -1066,7 +1038,7 @@ impl RuntimeDict {
                 if !self.library_visible(token >> 24) {
                     return None;
                 }
-                self.user.as_ref()?.user_pronunciation_count(token)
+                self.user?.user_pronunciation_count(token)
             }
             _ => None,
         }
@@ -1082,7 +1054,7 @@ impl RuntimeDict {
                 if !self.library_visible_token(token) {
                     return None;
                 }
-                if let Some(text) = self.user.as_ref().and_then(|store| {
+                if let Some(text) = self.user.and_then(|store| {
                     store.with_effective_system_item(token, |item| {
                         PhraseText::from_words(item.phrase.iter().copied())
                     })
@@ -1095,7 +1067,7 @@ impl RuntimeDict {
                 if !self.library_visible(token >> 24) {
                     return None;
                 }
-                let store = self.user.as_ref()?;
+                let store = self.user?;
                 store
                     .with_user_item(token, |item| item.phrase_text())
                     .unwrap_or_else(|| {
@@ -1117,7 +1089,7 @@ impl RuntimeDict {
         match token >> 24 {
             1..=4 => {
                 self.library_visible_token(token)
-                    && (self.user.as_ref().is_some_and(|store| {
+                    && (self.user.is_some_and(|store| {
                         store.with_effective_system_item(token, |_| ()).is_some()
                     }) || self
                         .system
@@ -1147,7 +1119,7 @@ impl RuntimeDict {
                 if !self.library_visible_token(token) {
                     return None;
                 }
-                if let Some(reading) = self.user.as_ref().and_then(|store| {
+                if let Some(reading) = self.user.and_then(|store| {
                     store.with_effective_system_item(token, |item| TokenPronunciation {
                         phrase_length: item.phrase.len(),
                         keys: item.prons.get(nth).map(|(keys, _)| keys.clone()),
@@ -1174,7 +1146,7 @@ impl RuntimeDict {
                 if !self.library_visible(token >> 24) {
                     return None;
                 }
-                let store = self.user.as_ref()?;
+                let store = self.user?;
                 Some(TokenPronunciation {
                     phrase_length: store.phrase_length(token).ok()??,
                     keys: store.nth_pronunciation_words(token, nth).ok()?,
@@ -1201,9 +1173,7 @@ impl RuntimeDict {
         if !(5..=7).contains(&(token >> 24)) || !self.library_visible(token >> 24) {
             return None;
         }
-        self.user
-            .as_ref()?
-            .with_nth_pronunciation_words(token, nth, read)
+        self.user?.with_nth_pronunciation_words(token, nth, read)
     }
 
     /// The addon phrase item behind `token`, for the choose-promotion path.
@@ -1232,7 +1202,7 @@ struct PricedToken {
     text: Option<PhraseText>,
 }
 
-impl Dictionary for RuntimeDict {
+impl Dictionary for RuntimeDict<'_> {
     type Syllable = SyllableKey;
     type Entry = PhraseEntry;
     type Error = DictError;
@@ -1465,7 +1435,7 @@ impl Dictionary for RuntimeDict {
         // pinyin.cpp:2652-2667, storage/facade_phrase_table3.h:120-126).
         // Read only this text's row. A phrase write must not make this
         // query rebuild the full pronunciation and phrase indices.
-        if let Some(store) = self.user.as_ref() {
+        if let Some(store) = self.user {
             let mut cache = self
                 .text_lookup_cache
                 .lock()
@@ -1507,7 +1477,7 @@ impl Dictionary for RuntimeDict {
             .into_iter()
             .map(PhraseToken::new)
             .collect();
-        if let Some(store) = self.user.as_ref() {
+        if let Some(store) = self.user {
             tokens.extend(
                 store
                     .phrase_table_tokens_for_ucs4(ucs4)
@@ -1608,14 +1578,13 @@ impl Dictionary for RuntimeDict {
         };
         if self
             .user
-            .as_ref()
             .is_some_and(|store| store.overlong_extension_gate(syllables))
         {
             return Ok(None);
         }
         let user = self.user_lookup()?;
         #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
-        if let Some(store) = self.user.as_ref() {
+        if let Some(store) = self.user {
             store.note_pinyin_suggestion(|| chewing_query(syllables));
         }
         tokens.extend(user.suggest_extensions(syllables));
@@ -1636,7 +1605,6 @@ impl Dictionary for RuntimeDict {
         self.system.overlong_extension_gate(syllables)
             || self
                 .user
-                .as_ref()
                 .is_some_and(|store| store.overlong_extension_gate(syllables))
     }
 
@@ -1651,7 +1619,7 @@ impl Dictionary for RuntimeDict {
         if let Some(text) = self.system.phrase_text(token) {
             return Some(text);
         }
-        let store = self.user.as_ref()?;
+        let store = self.user?;
         store
             .phrase(token)
             .ok()
@@ -1671,7 +1639,7 @@ impl Dictionary for RuntimeDict {
         if !self.library_visible_token(value) {
             return Ok(PhraseItemRead::NoItem);
         }
-        if let Some(store) = self.user.as_ref()
+        if let Some(store) = self.user
             && let Some(rows) = store
                 .item_pronunciations(value)
                 .map_err(|error| DictError::Parse(error.to_string()))?
@@ -1692,20 +1660,24 @@ impl Dictionary for RuntimeDict {
 }
 
 /// The bigram language model with the user-count overlay.
-#[derive(Clone)]
-pub struct RuntimeLm {
-    inner: Arc<BigramLanguageModel>,
-    user: Option<UserStore>,
-    addons: Arc<RwLock<AddonSet>>,
+#[derive(Clone, Copy)]
+pub struct RuntimeLm<'a> {
+    inner: BigramLanguageModel<
+        &'a oxpinyin_data::phrase_libraries::PhraseLibraries,
+        &'a oxpinyin_data::lm::BigramTables,
+        &'a AtomicU32,
+    >,
+    user: Option<&'a UserStore>,
+    addons: &'a RwLock<AddonSet>,
     /// The dictionary's `add_unigram_frequency` bumps: the total's is part
     /// of the one facade total every reader divides by, and a token's is
     /// part of its item's frequency, which every reader prices with.
-    bumps: Arc<FacadeBumps>,
+    bumps: &'a FacadeBumps,
 }
 
-impl RuntimeLm {
+impl RuntimeLm<'_> {
     fn delta(&self, prev: Option<u32>, token: u32) -> Result<UserCountDelta, LmError> {
-        let mut delta = match self.user.as_ref() {
+        let mut delta = match self.user {
             None => UserCountDelta::ZERO,
             Some(store) => store
                 .count_delta(prev, token)
@@ -1729,7 +1701,7 @@ impl RuntimeLm {
     /// ([`BigramLanguageModel::load_merged_row`]). The user side is the
     /// stored value itself (`bigram_row`), `None` without a key.
     fn merged_row(&self, prev: u32) -> Result<Option<MergedGram>, LmError> {
-        let user = match self.user.as_ref() {
+        let user = match self.user {
             None => None,
             Some(store) => store
                 .bigram_row(prev)
@@ -1752,7 +1724,7 @@ impl RuntimeLm {
     }
 }
 
-impl LanguageModel for RuntimeLm {
+impl LanguageModel for RuntimeLm<'_> {
     type Token = PhraseToken;
     type Error = LmError;
 
@@ -1787,7 +1759,7 @@ impl LanguageModel for RuntimeLm {
     }
 
     fn unigram_freq(&self, token: &Self::Token) -> Result<Option<u64>, Self::Error> {
-        let extra = match self.user.as_ref() {
+        let extra = match self.user {
             None => 0,
             Some(store) => store
                 .unigram_delta(token.value())
@@ -1807,7 +1779,7 @@ impl LanguageModel for RuntimeLm {
         if !self.inner.has_real_unigrams() {
             return Ok(None);
         }
-        let user_total = match self.user.as_ref() {
+        let user_total = match self.user {
             None => 0,
             Some(store) => store
                 .unigram_total()
@@ -1844,7 +1816,7 @@ impl LanguageModel for RuntimeLm {
         let extra = self.delta(Some(prev.value()), token.value())?;
         // A SYSTEM_FILE ADD is absent from the immutable chunk but present
         // in the current facade (074a2219 pinyin.cpp:598-607).
-        let imported = if let Some(store) = self.user.as_ref() {
+        let imported = if let Some(store) = self.user {
             store
                 .system_item_override(token.value())
                 .map_err(|error| LmError::User(error.to_string()))?
@@ -1866,10 +1838,10 @@ impl LanguageModel for RuntimeLm {
         loop {
             // A committed write moves the generation under the same database
             // guard used by the unigram and override reads below.
-            let generation = self.user.as_ref().map_or(0, UserStore::generation);
+            let generation = self.user.map_or(0, UserStore::generation);
             let result = (|| {
                 let extra = self.delta(None, token.value())?;
-                let imported = if let Some(store) = self.user.as_ref() {
+                let imported = if let Some(store) = self.user {
                     store
                         .system_item_override(token.value())
                         .map_err(|error| LmError::User(error.to_string()))?
@@ -1881,7 +1853,6 @@ impl LanguageModel for RuntimeLm {
             })();
             if self
                 .user
-                .as_ref()
                 .is_none_or(|store| store.generation() == generation)
             {
                 return result;
@@ -1901,13 +1872,12 @@ impl LanguageModel for RuntimeLm {
         row: &'a mut oxpinyin_core::NbestStepRow,
     ) -> Result<Option<oxpinyin_core::NbestSuccessors<'a>>, Self::Error> {
         loop {
-            let generation = self.user.as_ref().map_or(0, UserStore::generation);
+            let generation = self.user.map_or(0, UserStore::generation);
             let result = row
                 .get_or_try_init_in_generation(generation, || self.merged_row(prev.value()))
                 .map(|_| ());
             if self
                 .user
-                .as_ref()
                 .is_none_or(|store| store.generation() == generation)
             {
                 result?;
@@ -1923,7 +1893,8 @@ impl LanguageModel for RuntimeLm {
 // ── Runtime ─────────────────────────────────────────────────────────────
 
 /// A [`Session`] over this crate's concrete backends.
-pub type RuntimeSession = Session<RuntimeDict, RuntimeLm>;
+pub type RuntimeSession<'a> =
+    Session<RuntimeDict<'a>, RuntimeLm<'a>, &'a mut oxpinyin_engine::SessionState>;
 
 // Compile-time proof that adapters may share a `Runtime` across threads
 // behind their own synchronization.
@@ -1938,35 +1909,48 @@ const _: () = {
 /// system tables, the unigram model, λ, the optional learning store, and the
 /// merged backends sessions decode over.
 ///
-/// `Runtime` itself is not `Clone`; the backend handles it hands out —
-/// [`Runtime::dict`], [`Runtime::lm`], [`Runtime::user_store`] — are cheap
-/// clones sharing the table handles, and sessions built through
-/// [`Runtime::new_session`] share them too.
+/// Storage has one owner. [`Runtime::dict`], [`Runtime::lm`] and
+/// [`Runtime::user_store`] borrow it for an operation; writers require
+/// exclusive access. [`Runtime::new_session`] retains composition only.
 pub struct Runtime {
     paths: StoragePaths,
-    dict: RuntimeDict,
-    lm: RuntimeLm,
+    system: oxpinyin_data::dict::SystemTables,
+    model: oxpinyin_data::lm::BigramTables,
+    originals: oxpinyin_user::SystemOriginals,
     user: Option<UserStore>,
-    conf: Arc<TableConf>,
+    conf: TableConf,
+    text_lookup_cache: TextLookupCache,
+    addons: RwLock<AddonSet>,
+    punct: PunctTable,
+    bumps: FacadeBumps,
+    library_mask: AtomicU32,
 }
 
-#[cfg(any(feature = "bdb", feature = "kyotocabinet"))]
+impl Runtime {
+    /// Perform context fini effects once without releasing storage retained by
+    /// orphan instances or iterators (compatibility row 42).
+    pub fn finish(&mut self) {
+        // pinyin.cpp:1200 writes the marker before deleting failed attachments.
+        if let Some(user) = self.user.as_mut() {
+            user.finish();
+        }
+        #[cfg(any(feature = "bdb", feature = "kyotocabinet"))]
+        {
+            self.system.finish_failed_attachments();
+            self.model.finish_failed_attachment();
+            self.addons
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .dict
+                .finish_failed_attachments();
+            self.punct.finish_failed_attachment();
+        }
+    }
+}
+
 impl Drop for Runtime {
     fn drop(&mut self) {
-        // pinyin.cpp:1200 writes the marker before deleting the tables.
-        // Only this original UserStore owns the fini guard; its clones
-        // are disarmed. Failed native handles must finish here even if a
-        // safe facade instance retains an Arc past context finalization.
-        drop(self.user.take());
-        self.dict.system.finish_failed_attachments();
-        self.lm.inner.finish_failed_attachment();
-        self.dict
-            .addons
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .dict
-            .finish_failed_attachments();
-        self.dict.punct.finish_failed_attachment();
+        self.finish();
     }
 }
 
@@ -2015,13 +1999,11 @@ fn check_profile_early(
 fn open_user_store(
     conf: &TableConf,
     user_dir: &Path,
-    dict: &SystemDictionary,
+    originals: &mut oxpinyin_user::SystemOriginals,
     law: UserConfLaw,
     check: oxpinyin_user::ProfileCheck,
 ) -> Result<Option<UserStore>, OpenError> {
     let versions = SystemVersions::from_conf(conf);
-    let originals =
-        oxpinyin_user::system_originals(dict.libraries(), UserFileLayout::from_conf(conf));
     let opened = UserStore::open_libpinyin_checked(user_dir, originals, versions, law, check);
     match opened {
         Ok(store) => Ok(Some(store)),
@@ -2149,7 +2131,11 @@ impl Runtime {
             require_file(&bigram)?;
         }
 
-        let dict = SystemDictionary::attach_with(system_dir, &conf).map_err(OpenError::Dict)?;
+        let (dict, libraries) = SystemDictionary::attach_with(system_dir, &conf)
+            .map_err(OpenError::Dict)?
+            .into_parts();
+        let mut originals =
+            oxpinyin_user::system_originals(libraries, UserFileLayout::from_conf(&conf));
         // Register row 96: the library loop maps each default library and
         // merges its `.dbin` in order (`pinyin.cpp:377-392`,
         // `zhuyin.cpp:318-334`); `MemoryChunk::mmap` asserts on a library
@@ -2157,19 +2143,22 @@ impl Runtime {
         // the earlier libraries' logs are merged (a merge can assert first,
         // rows 91 and 108) and the fault is returned at that point, after
         // `check_format`'s writes.
-        if let Some(stop) = dict.libraries().chunk_header_fault() {
+        if let Some(stop) = originals.phrase_libraries().chunk_header_fault() {
             if let (Some(dir), Some(check)) = (user_dir, early)
-                && let Err(error) = open_user_store(&conf, dir, &dict, law, check)
+                && let Err(error) = open_user_store(&conf, dir, &mut originals, law, check)
             {
                 if let OpenError::Journal(fault) = &error {
-                    for path in dict.libraries().unmapped_before(fault.library(), true) {
+                    for path in originals
+                        .phrase_libraries()
+                        .unmapped_before(fault.library(), true)
+                    {
                         unmapped(path);
                     }
                 }
                 return Err(error);
             }
             // The libraries before it were mapped and their lines written.
-            for path in dict.libraries().unmapped_before(stop, false) {
+            for path in originals.phrase_libraries().unmapped_before(stop, false) {
                 unmapped(path);
             }
             return Err(OpenError::Dict(DictError::Library(LibraryError::Row(
@@ -2179,13 +2168,8 @@ impl Runtime {
         // The loaded-library mask is shared with the language model: an
         // unloaded library's items leave both the lookups and the unigram
         // denominator, as freeing the sub-index does upstream.
-        let library_mask = Arc::new(AtomicU32::new(0));
-        let mut lm = BigramLanguageModel::attach_with_mask(
-            &bigram,
-            Arc::clone(dict.libraries()),
-            Arc::clone(&library_mask),
-        )
-        .map_err(OpenError::Lm)?;
+        let library_mask = AtomicU32::new(0);
+        let mut lm = oxpinyin_data::lm::BigramTables::attach(&bigram).map_err(OpenError::Lm)?;
         // λ is the `gfloat` table.conf's scanner read.
         lm.set_lambda_from_conf(&conf);
 
@@ -2204,23 +2188,31 @@ impl Runtime {
         // writes the pin's files — a same-backend libpinyin picks them
         // up seamlessly.
         let user = match (user_dir, early) {
-            (Some(dir), Some(check)) => match open_user_store(&conf, dir, &dict, law, check) {
-                Ok(user) => user,
-                // Rows 91 and 108: the loop died merging library `library`'s
-                // log, after mapping it and every library before it.
-                Err(error @ OpenError::Journal(fault)) => {
-                    for path in dict.libraries().unmapped_before(fault.library(), true) {
-                        unmapped(path);
+            (Some(dir), Some(check)) => {
+                match open_user_store(&conf, dir, &mut originals, law, check) {
+                    Ok(user) => user,
+                    // Rows 91 and 108: the loop died merging library `library`'s
+                    // log, after mapping it and every library before it.
+                    Err(error @ OpenError::Journal(fault)) => {
+                        for path in originals
+                            .phrase_libraries()
+                            .unmapped_before(fault.library(), true)
+                        {
+                            unmapped(path);
+                        }
+                        return Err(error);
                     }
-                    return Err(error);
+                    Err(error) => return Err(error),
                 }
-                Err(error) => return Err(error),
-            },
+            }
             _ => Some(
                 UserStore::open_transient(
-                    oxpinyin_user::system_originals(
-                        dict.libraries(),
-                        UserFileLayout::from_conf(&conf),
+                    std::mem::replace(
+                        &mut originals,
+                        oxpinyin_user::SystemOriginals::new(
+                            Default::default(),
+                            UserFileLayout::from_conf(&conf),
+                        ),
                     ),
                     SystemVersions::from_conf(&conf),
                     law,
@@ -2231,18 +2223,23 @@ impl Runtime {
 
         // The init loop wrote each absent library's line as it mapped it
         // (`pinyin.cpp:253-256` within `:377-392`); none of them stopped it.
-        for path in dict.libraries().unmapped() {
+        for path in user
+            .as_ref()
+            .map_or(&originals, UserStore::originals)
+            .phrase_libraries()
+            .unmapped()
+        {
             unmapped(path);
         }
 
-        let addons = Arc::new(RwLock::new(AddonSet {
+        let addons = RwLock::new(AddonSet {
             dict: match law {
                 UserConfLaw::Pinyin => {
                     AddonDictionary::attach_with(system_dir, &conf).map_err(OpenError::Dict)?
                 }
                 UserConfLaw::Zhuyin => AddonDictionary::without_indexes(&conf),
             },
-        }));
+        });
         let punct = match law {
             UserConfLaw::Pinyin => {
                 PunctTable::attach(&system_dir.join(SystemDbm::Punct.file_name()))
@@ -2251,31 +2248,34 @@ impl Runtime {
             UserConfLaw::Zhuyin => PunctTable::empty(),
         };
 
-        let bumps = Arc::new(FacadeBumps::default());
-        let dict = RuntimeDict {
-            system: Arc::new(dict),
-            user: user.clone(),
-            text_lookup_cache: TextLookupCache::default(),
-            addons: Arc::clone(&addons),
-            punct: Arc::new(punct),
-            bumps: Arc::clone(&bumps),
-            library_mask,
-        };
-        let lm = RuntimeLm {
-            inner: Arc::new(lm),
-            user: user.clone(),
-            addons,
-            bumps,
-        };
-
         Ok(Self {
             paths: StoragePaths::new(user_dir.unwrap_or_else(|| Path::new("")))
                 .with_system_dirs([system_dir]),
-            dict,
-            lm,
+            system: dict,
+            model: lm,
+            originals,
             user,
-            conf: Arc::new(conf),
+            conf,
+            text_lookup_cache: TextLookupCache::default(),
+            addons,
+            punct,
+            bumps: FacadeBumps::default(),
+            library_mask,
         })
+    }
+
+    fn libraries(&self) -> &oxpinyin_data::phrase_libraries::PhraseLibraries {
+        self.user
+            .as_ref()
+            .map_or(&self.originals, UserStore::originals)
+            .phrase_libraries()
+    }
+
+    fn originals_mut(&mut self) -> &mut oxpinyin_user::SystemOriginals {
+        match self.user.as_mut() {
+            Some(user) => user.originals_mut(),
+            None => &mut self.originals,
+        }
     }
 
     /// The system `table.conf` this runtime opened (the stock layout for a
@@ -2286,8 +2286,8 @@ impl Runtime {
         &self.conf
     }
 
-    /// Builds a fresh session over this backend set. Sessions are cheap:
-    /// they share the table handles.
+    /// Builds retained composition state for this backend set. Operations
+    /// bind it to current readers through [`Self::session`].
     ///
     /// Configuration arrives per call (`oxpinyin-capi` passes its
     /// `Config`; simple embedders pass
@@ -2300,35 +2300,148 @@ impl Runtime {
     /// infallible for the runtime's [`BigramLanguageModel`]. It always has
     /// real unigram frequencies, so [`Session::new`] skips the fallback
     /// key-cost walk and reads no dictionary or model records.
-    pub fn new_session(&self, config: &impl ConfigSource) -> Result<RuntimeSession, EngineError> {
-        // The runtime owns the paths and stores; sessions share their handles.
-        Session::new(config, self.dict.clone(), self.lm.clone())
+    pub fn new_session(
+        &self,
+        config: &impl ConfigSource,
+    ) -> Result<oxpinyin_engine::SessionState, EngineError> {
+        Session::new(config, self.dict(), self.lm()).map(Session::into_state)
     }
 
-    /// A handle clone of the merged dictionary backend.
+    /// Borrow the merged dictionary for one operation.
     #[must_use]
-    pub fn dict(&self) -> RuntimeDict {
-        self.dict.clone()
+    pub fn dict(&self) -> RuntimeDict<'_> {
+        RuntimeDict {
+            system: self.system.read(self.libraries()),
+            user: self.user.as_ref(),
+            text_lookup_cache: &self.text_lookup_cache,
+            addons: &self.addons,
+            punct: &self.punct,
+            bumps: &self.bumps,
+            library_mask: &self.library_mask,
+        }
     }
 
-    /// A handle clone of the overlaid language model backend.
+    /// Borrow the overlaid language model for one operation.
     #[must_use]
-    pub fn lm(&self) -> RuntimeLm {
-        self.lm.clone()
+    pub fn lm(&self) -> RuntimeLm<'_> {
+        RuntimeLm {
+            inner: self.model.read(self.libraries(), &self.library_mask),
+            user: self.user.as_ref(),
+            addons: &self.addons,
+            bumps: &self.bumps,
+        }
     }
 
-    /// Clone of the user-learning handle, when the runtime was opened with
-    /// a usable user directory.
+    /// Borrow composition and phrase storage for one operation.
+    pub fn session<'a>(
+        &'a self,
+        state: &'a mut oxpinyin_engine::SessionState,
+    ) -> RuntimeSession<'a> {
+        state.bind(self.dict(), self.lm())
+    }
+
+    /// Borrow the learning store without retaining an independent owner.
     #[must_use]
-    pub fn user_store(&self) -> Option<UserStore> {
-        self.user.clone()
+    pub fn user_store(&self) -> Option<&UserStore> {
+        self.user.as_ref()
+    }
+
+    /// Check training with operation-local bookkeeping, then release all phrase
+    /// readers before applying the observations to the sole store owner.
+    ///
+    /// # Errors
+    /// The engine's ordered training errors; completed observations stay applied.
+    pub fn train_session(
+        &mut self,
+        state: &oxpinyin_engine::SessionState,
+        index: u8,
+    ) -> Result<bool, EngineError> {
+        let Some(user) = self.user.as_ref().filter(|user| user.has_user_directory()) else {
+            return Ok(false);
+        };
+        let mut check = oxpinyin_user::TrainingCheck::default();
+        let prepared =
+            state
+                .read(self.dict(), self.lm())
+                .prepare_training(index, &mut |history, token| {
+                    user.check_training_step_with(
+                        &mut check,
+                        history
+                            .last()
+                            .map_or(oxpinyin_user::SENTENCE_START, |token| token.value()),
+                        token.value(),
+                    )
+                    .map_err(|error| EngineError::UserModel(error.to_string()))
+                });
+        let Some(user) = self.user.as_mut() else {
+            return Ok(false);
+        };
+        let result = match prepared {
+            Ok(Some(plan)) => plan.observe(user),
+            Ok(None) => Ok(false),
+            Err(EngineError::UserModel(error)) => match check.fault() {
+                Some(oxpinyin_user::TrainingFault::ShortValue(token)) => {
+                    Err(EngineError::ShortTrainingPredecessor { token })
+                }
+                Some(oxpinyin_user::TrainingFault::PartialTail(token)) => {
+                    Err(EngineError::UnsafeTrainingPredecessor { token })
+                }
+                Some(oxpinyin_user::TrainingFault::SetFreqMiss(token)) => {
+                    Err(EngineError::TrainingSetFreqMiss { token })
+                }
+                None => Err(EngineError::UserModel(error)),
+            },
+            Err(error) => Err(error),
+        };
+        if !matches!(
+            &result,
+            Ok(false)
+                | Err(EngineError::CandidateIndexOutOfRange { .. }
+                    | EngineError::StaleTrainingConstraint { .. }
+                    | EngineError::StaleTrainingSpan { .. }
+                    | EngineError::UnsafeTrainingPredecessor { .. }
+                    | EngineError::ShortTrainingPredecessor { .. }
+                    | EngineError::TrainingSetFreqMiss { .. })
+        ) {
+            user.mark_modified();
+        }
+        result
+    }
+
+    /// Apply a unigram increment with exclusive access to the storage owner.
+    #[must_use]
+    pub fn add_unigram_delta(&mut self, token: u32, delta: u64) -> bool {
+        if !self.dict().library_visible(token >> 24) {
+            return false;
+        }
+        if (1..=4).contains(&(token >> 24))
+            && let Some(user) = self.user.as_mut()
+        {
+            let Ok(delta) = u32::try_from(delta) else {
+                return false;
+            };
+            return user
+                .add_system_unigram_frequency(token, delta)
+                .unwrap_or(false);
+        }
+        self.dict().add_unigram_delta(token, delta)
+    }
+
+    /// Publish dictionary remaps while retaining any unreplaced journal originals.
+    pub fn install_baselines(&mut self, originals: oxpinyin_user::SystemOriginals) {
+        self.originals_mut().publish_current(originals);
+    }
+
+    /// Borrow the learning store exclusively for a mutation.
+    pub fn user_store_mut(&mut self) -> Option<&mut UserStore> {
+        self.user.as_mut()
     }
 
     /// Loads addon library `index` from `system_dir`; `false` when already
     /// loaded or the library tables do not open.
     #[must_use]
-    pub fn load_addon(&self, index: u8, system_dir: &Path) -> bool {
-        self.dict.load_addon(index, system_dir)
+    pub fn load_addon(&mut self, index: u8, system_dir: &Path) -> bool {
+        self.dict().load_addon(index, system_dir)
     }
 
     /// Loads addon library `index` from this runtime's first configured
@@ -2337,11 +2450,11 @@ impl Runtime {
     /// system-directory resolution here, next to the `paths` it reads,
     /// rather than duplicated in every embedder.
     #[must_use]
-    pub fn load_system_addon(&self, index: u8) -> bool {
+    pub fn load_system_addon(&mut self, index: u8) -> bool {
         let Some(system_dir) = self.paths.system_data_dirs().first() else {
             return false;
         };
-        self.load_addon(index, system_dir)
+        self.dict().load_addon(index, system_dir)
     }
 
     /// [`Runtime::load_system_addon`] with the failure kept; `Ok(false)`
@@ -2351,11 +2464,11 @@ impl Runtime {
     /// # Errors
     ///
     /// [`LibraryError`] when the library file is absent or does not verify.
-    pub fn load_system_addon_reporting(&self, index: u8) -> Result<bool, LibraryError> {
+    pub fn load_system_addon_reporting(&mut self, index: u8) -> Result<bool, LibraryError> {
         let Some(system_dir) = self.paths.system_data_dirs().first() else {
             return Ok(false);
         };
-        self.dict.load_addon_reporting(index, system_dir)
+        self.dict().load_addon_reporting(index, system_dir)
     }
 
     /// The system directory the libraries load from, when there is one.
@@ -2366,14 +2479,14 @@ impl Runtime {
 
     /// The system library files absent when this runtime opened.
     pub fn unmapped_system_libraries(&self) -> impl Iterator<Item = &Path> {
-        self.dict.unmapped_system_libraries()
+        self.libraries().unmapped()
     }
 
     /// The loaded, visible system libraries whose files no longer map; see
     /// [`RuntimeDict::unmappable_system_libraries`].
     #[must_use]
     pub fn unmappable_system_libraries(&self, only: Option<u8>) -> Vec<PathBuf> {
-        self.dict.unmappable_system_libraries(only)
+        self.dict().unmappable_system_libraries(only)
     }
 
     /// One validation pass over the system files this operation remaps.
@@ -2385,11 +2498,11 @@ impl Runtime {
         &self,
         only: Option<u8>,
     ) -> oxpinyin_data::phrase_libraries::LibraryCheck {
-        self.dict.system.libraries().check_now(
+        self.libraries().check_now(
             |nibble| {
                 only.is_some()
                     || (nibble != 0
-                        && self.dict.library_visible(u32::from(nibble))
+                        && self.dict().library_visible(u32::from(nibble))
                         && self.conf.default_row(nibble).is_some_and(|row| {
                             row.user.is_some()
                                 && matches!(
@@ -2405,8 +2518,10 @@ impl Runtime {
     /// `FacadePhraseIndex::compact` over the system layout-failed empty
     /// sub-indices. Returns the compacted nibbles.
     #[must_use]
-    pub fn compact_layout_failed(&self) -> Vec<u8> {
-        self.dict.compact_layout_failed()
+    pub fn compact_layout_failed(&mut self) -> Vec<u8> {
+        self.originals_mut()
+            .phrase_libraries_mut()
+            .compact_layout_failed()
     }
 
     /// The save's current on-disk baseline for one selected system library.
@@ -2432,6 +2547,29 @@ impl Runtime {
     /// header read the pin asserts on (`memory_chunk.h:493`, register row
     /// 96): the save stops there.
     pub fn save_disk_baseline(&self, nibble: u8) -> Result<SaveBaseline, SaveRemapFault> {
+        Self::read_save_baseline(
+            self.user
+                .as_ref()
+                .map_or(&self.originals, UserStore::originals),
+            self.unloaded_libraries(),
+            nibble,
+        )
+    }
+
+    /// The current loaded-library mask, snapshotted for an exclusive save.
+    pub fn unloaded_libraries(&self) -> u32 {
+        self.library_mask.load(Ordering::SeqCst)
+    }
+
+    /// Read a save baseline while its unique owner performs the operation.
+    ///
+    /// # Errors
+    /// The remap faults reported by [`Self::save_disk_baseline`].
+    pub fn read_save_baseline(
+        originals: &oxpinyin_user::SystemOriginals,
+        unloaded: u32,
+        nibble: u8,
+    ) -> Result<SaveBaseline, SaveRemapFault> {
         // Nibble 0 is the reserved row the loop never visits.
         if nibble == 0 {
             return Ok(SaveBaseline::Keep);
@@ -2440,15 +2578,15 @@ impl Runtime {
         // (`pinyin.cpp:928-933`, `zhuyin.cpp:563-568`), a `USER_FILE`
         // library included: an unloaded library is neither remapped nor
         // written, and its file on disk stays.
-        if !self.dict.library_visible(u32::from(nibble)) {
+        if unloaded & (1 << nibble) != 0 {
             return Ok(SaveBaseline::Unloaded);
         }
-        let Some((path, original)) = self.dict.system.libraries().loaded_path_library(nibble)
+        let Some((path, original)) = originals.phrase_libraries().loaded_path_library(nibble)
         else {
             return Ok(SaveBaseline::Keep);
         };
-        match oxpinyin_data::phrase_library::PhraseLibrary::open(&path) {
-            Ok(current) if current.byte_identical(&original) => Ok(SaveBaseline::Unchanged),
+        match oxpinyin_data::phrase_library::PhraseLibrary::open(path) {
+            Ok(current) if current.byte_identical(original) => Ok(SaveBaseline::Unchanged),
             Ok(current) => Ok(SaveBaseline::Changed(SystemLibrary::from_library(current))),
             Err(LibraryError::Layout(fault)) => Err(SaveRemapFault::Layout(fault)),
             Err(LibraryError::Row(RowFault::ChunkHeaderRead)) => {
@@ -2474,7 +2612,7 @@ impl Runtime {
     /// ([`SystemRemap::header_fault`]), and the originals hold the libraries
     /// mapped before it, whose logs the pin merged before it died.
     #[must_use]
-    pub fn reload_system_libraries(&self) -> SystemRemap {
+    pub fn reload_system_libraries(&mut self) -> SystemRemap {
         self.remap_system_libraries(1..16, false)
     }
 
@@ -2486,45 +2624,13 @@ impl Runtime {
     /// Call it before [`Runtime::load_library`] makes the library visible,
     /// so no reader sees the session's state of the freed sub-index.
     #[must_use]
-    pub fn reload_system_library(&self, index: u8) -> oxpinyin_user::SystemOriginals {
+    pub fn reload_system_library(&mut self, index: u8) -> oxpinyin_user::SystemOriginals {
         self.remap_system_libraries(index..index.saturating_add(1), true)
             .originals
     }
 
-    /// The loaded SYSTEM_FILE/DICTIONARY default library `index` as it is
-    /// mapped now, without mapping it again: what `unload` frees
-    /// (074a2219 `phrase_index.cpp:261-268`). Empty for a row with no
-    /// system chunk and no user file, and for a library already unloaded.
-    #[must_use]
-    pub fn current_system_library(&self, index: u8) -> oxpinyin_user::SystemOriginals {
-        let layout = UserFileLayout::from_conf(&self.conf);
-        let mut originals = oxpinyin_user::SystemOriginals::new(Default::default(), layout);
-        let Some(row) = self.conf.default_row(index) else {
-            return originals;
-        };
-        if !(1..16).contains(&index)
-            || !matches!(row.file_type, FileType::SystemFile | FileType::Dictionary)
-            || row.user.is_none()
-            || !self.dict.library_visible(u32::from(index))
-        {
-            return originals;
-        }
-        if let Some(library) = self.dict.system.libraries().library(u32::from(index) << 24) {
-            originals.insert(
-                index,
-                oxpinyin_user::SystemLibrary {
-                    total: library.total_freq(),
-                    range_end: library.token_range().end,
-                    items: Default::default(),
-                    mapped: Some(library),
-                },
-            );
-        }
-        originals
-    }
-
     fn remap_system_libraries(
-        &self,
+        &mut self,
         indices: std::ops::Range<u8>,
         include_unloaded: bool,
     ) -> SystemRemap {
@@ -2537,14 +2643,14 @@ impl Runtime {
         let Some(dir) = self.paths.system_data_dirs().first() else {
             return remap;
         };
-        let libraries = self.dict.system.libraries();
+        let libraries = self.libraries();
         for index in indices.filter(|&index| (1..16).contains(&index)) {
             let Some(row) = self.conf.default_row(index) else {
                 continue;
             };
             if !matches!(row.file_type, FileType::SystemFile | FileType::Dictionary)
                 || row.user.is_none()
-                || (!include_unloaded && !self.dict.library_visible(u32::from(index)))
+                || (!include_unloaded && !self.dict().library_visible(u32::from(index)))
             {
                 continue;
             }
@@ -2552,9 +2658,16 @@ impl Runtime {
                 continue;
             };
             let path = oxpinyin_input::path::build_path(dir, name.as_ref());
-            match libraries.reload(index, &path) {
-                Ok(true) => {}
-                Ok(false) => continue,
+            if !libraries.is_loaded(index) {
+                continue;
+            }
+            match oxpinyin_data::phrase_library::PhraseLibrary::open(&path) {
+                Ok(library) => remap.originals.insert_mapping(index, path, library),
+                Err(LibraryError::Layout(fault)) => remap.originals.insert_mapping(
+                    index,
+                    path,
+                    oxpinyin_data::phrase_library::PhraseLibrary::empty(fault.total_freq),
+                ),
                 Err(LibraryError::Row(RowFault::ChunkHeaderRead)) => {
                     remap.header_fault = Some(index);
                     break;
@@ -2563,25 +2676,12 @@ impl Runtime {
                     if let Some(path) = error.unmappable_path() {
                         remap.unmappable.push((index, path.to_path_buf()));
                     }
-                    continue;
                 }
-            }
-            if let Some(library) = libraries.library(u32::from(index) << 24) {
-                remap.originals.insert(
-                    index,
-                    oxpinyin_user::SystemLibrary {
-                        total: library.total_freq(),
-                        range_end: library.token_range().end,
-                        items: Default::default(),
-                        mapped: Some(library),
-                    },
-                );
             }
         }
         // add_unigram_frequency's accepted deltas belong to the replaced
         // sub-index too. Keep overlays for every library we did not reload.
-        self.dict
-            .bumps
+        self.bumps
             .drop_libraries(|nibble| remap.originals.contains_key(&(nibble as u8)));
         remap
     }
@@ -2591,15 +2691,15 @@ impl Runtime {
     /// The bound the pin asserts on `index` is the caller's to apply; see
     /// `RuntimeDict::unload_addon`.
     #[must_use]
-    pub fn unload_system_addon(&self, index: u8) -> bool {
-        self.dict.unload_addon(index)
+    pub fn unload_system_addon(&mut self, index: u8) -> bool {
+        self.dict().unload_addon(index)
     }
 
     /// Loads default library `index` — the GBK-reload path after an
     /// unload; `false` when already visible.
     #[must_use]
-    pub fn load_library(&self, index: u32) -> bool {
-        self.dict.load_library(index)
+    pub fn load_library(&mut self, index: u32) -> bool {
+        self.dict().load_library(index)
     }
 
     /// Unloads default library `index`; `false` only outside the sixteen
@@ -2607,8 +2707,8 @@ impl Runtime {
     /// `unload` returns, `pinyin.cpp:473-474`). Which indices a facade lets
     /// through is the C ABI's rule.
     #[must_use]
-    pub fn unload_library(&self, index: u32) -> bool {
-        self.dict.unload_library(index)
+    pub fn unload_library(&mut self, index: u32) -> bool {
+        self.dict().unload_library(index)
     }
 }
 
@@ -2643,24 +2743,31 @@ mod tests {
 
     #[test]
     fn candidate_lookup_omits_prices_without_changing_live_priced_reads() {
-        let runtime = Runtime::open(&w3_dir(), None).unwrap();
-        let dict = Arc::new(runtime.dict());
+        let mut runtime = Runtime::open(&w3_dir(), None).unwrap();
+
         let ni = SyllableKey::from_text("ni").unwrap();
-        let token = dict.system().tokens_for_text("你").unwrap()[0];
-        let mut store = runtime.user_store().unwrap();
+        let token = runtime.dict().system().tokens_for_text("你").unwrap()[0];
+
         let keys = [oxpinyin_user::toned_key(ni.index(), 3).unwrap()];
-        store
+        runtime
+            .user_store_mut()
+            .unwrap()
             .add_system_phrase_in(1, Some(token), &"你".into(), &keys, Some(5))
             .unwrap();
         let mut candidates = Vec::new();
-        assert!(!dict.lookup_candidates_into(&[ni], &mut candidates).unwrap());
+        assert!(
+            !runtime
+                .dict()
+                .lookup_candidates_into(&[ni], &mut candidates)
+                .unwrap()
+        );
         assert!(!candidates.is_empty());
         assert!(
             candidates
                 .iter()
                 .all(|entry| entry.pronunciation_possibility().is_none())
         );
-        let priced = dict.lookup(&[ni]).unwrap();
+        let priced = runtime.dict().lookup(&[ni]).unwrap();
         let rows = |entries: &[PhraseEntry]| {
             entries
                 .iter()
@@ -2677,7 +2784,9 @@ mod tests {
                 .is_some()
         );
         assert!(
-            dict.trellis_records(&[ni], &[3])
+            runtime
+                .dict()
+                .trellis_records(&[ni], &[3])
                 .unwrap()
                 .iter()
                 .find(|entry| entry.token().value() == token)
@@ -2685,15 +2794,21 @@ mod tests {
                 .pronunciation_possibility()
                 .is_some()
         );
-        assert!(dict.unload_library(1));
-        dict.lookup_candidates_into(&[ni], &mut candidates).unwrap();
+        assert!(runtime.unload_library(1));
+        runtime
+            .dict()
+            .lookup_candidates_into(&[ni], &mut candidates)
+            .unwrap();
         assert!(
             candidates
                 .iter()
                 .all(|entry| entry.token().value() != token)
         );
-        assert!(dict.load_library(1));
-        dict.lookup_candidates_into(&[ni], &mut candidates).unwrap();
+        assert!(runtime.load_library(1));
+        runtime
+            .dict()
+            .lookup_candidates_into(&[ni], &mut candidates)
+            .unwrap();
         assert!(
             candidates
                 .iter()
@@ -2706,39 +2821,41 @@ mod tests {
         let system = w3_dir();
         let pinyin = Runtime::open(&system, None).expect("pinyin fixture opens");
         assert!(
-            pinyin.dict.addons.read().unwrap().dict.has_open_indexes(),
+            pinyin.dict().addons.read().unwrap().dict.has_open_indexes(),
             "vacuity guard: pinyin eagerly opens the fixture's addon indexes"
         );
         assert!(
-            pinyin.dict.punct.is_open(),
+            pinyin.dict().punct.is_open(),
             "vacuity guard: pinyin eagerly opens the fixture's punctuation table"
         );
 
         let user = tempfile::tempdir().unwrap();
         for user_dir in [None, Some(user.path())] {
-            let zhuyin = Runtime::open_with_law(&system, user_dir, UserConfLaw::Zhuyin)
+            let mut zhuyin = Runtime::open_with_law(&system, user_dir, UserConfLaw::Zhuyin)
                 .expect("zhuyin fixture opens");
             // An empty loaded-library set would also pass before the fix;
             // inspect the actual index handles, not just visible items.
-            assert!(!zhuyin.dict.addons.read().unwrap().dict.has_open_indexes());
-            assert!(!zhuyin.dict.punct.is_open());
+            assert!(!zhuyin.dict().addons.read().unwrap().dict.has_open_indexes());
+            assert!(!zhuyin.dict().punct.is_open());
 
             // Default user library 5 (addon.bin) is separate from the
             // addon DBM pair and remains available to zhuyin imports.
-            let mut store = zhuyin.user_store().expect("user state");
+
             let ni = SyllableKey::from_text("ni").unwrap();
             let hao = SyllableKey::from_text("hao").unwrap();
             let keys = [
                 oxpinyin_user::toned_key(ni.index(), 3).unwrap(),
                 oxpinyin_user::toned_key(hao.index(), 3).unwrap(),
             ];
-            let token = store
+            let token = zhuyin
+                .user_store_mut()
+                .unwrap()
                 .add_phrase_in(5, &"你鎄".into(), &keys, Some(5))
                 .unwrap();
             assert_eq!(token >> 24, 5);
             assert!(
                 zhuyin
-                    .dict
+                    .dict()
                     .tokens_for_text("你鎄")
                     .contains(&PhraseToken::new(token))
             );
@@ -2764,7 +2881,7 @@ mod tests {
         for user_dir in [None, Some(user.path())] {
             let zhuyin = Runtime::open_with_law(system.path(), user_dir, UserConfLaw::Zhuyin)
                 .expect("edited fixture opens");
-            let addons = zhuyin.dict.addons.read().unwrap();
+            let addons = zhuyin.dict().addons.read().unwrap();
             assert!(
                 !addons.dict.has_open_indexes(),
                 "no addon index handle is open"
@@ -2778,43 +2895,60 @@ mod tests {
                 "the configured addon row is kept, not the stock one"
             );
             assert_eq!(Some(row), zhuyin.table_conf().addon_row(4));
-            assert!(!zhuyin.dict.punct.is_open());
+            assert!(!zhuyin.dict().punct.is_open());
         }
     }
 
     #[test]
     fn tokens_for_text_reads_live_rows_without_rebuilding_user_lookup() {
         let dir = tempfile::tempdir().unwrap();
-        let runtime = Runtime::open(&w3_dir(), Some(dir.path())).unwrap();
-        let dict = runtime.dict();
-        let phrase = "你鎄";
-        assert!(dict.tokens_for_text(phrase).is_empty());
+        let mut runtime = Runtime::open(&w3_dir(), Some(dir.path())).unwrap();
 
-        // Keep a borrowed query handle alive across writes through another
-        // store handle. Exact-text queries still read their own live rows.
-        let lookup = dict.user_lookup().unwrap();
+        let phrase = "你鎄";
+        assert!(runtime.dict().tokens_for_text(phrase).is_empty());
+
+        // Each operation re-borrows the same storage owner. Exact-text
+        // queries still read their live rows after writes.
+
         let keys: Vec<_> = ["ni", "hao"]
             .into_iter()
             .map(|text| PinyinKey::try_from(SyllableKey::from_text(text).unwrap().index()).unwrap())
             .collect();
-        let mut store = runtime.user_store().unwrap();
-        let token = store
+
+        let token = runtime
+            .user_store_mut()
+            .unwrap()
             .add_phrase(&oxpinyin_core::PhraseText::from(phrase), &keys, None)
             .unwrap();
-        assert_eq!(dict.tokens_for_text(phrase), [PhraseToken::new(token)]);
+        assert_eq!(
+            runtime.dict().tokens_for_text(phrase),
+            [PhraseToken::new(token)]
+        );
         let syllables = [
             SyllableKey::from_text("ni").unwrap(),
             SyllableKey::from_text("hao").unwrap(),
         ];
         assert!(
-            lookup
+            runtime
+                .dict()
+                .user_lookup()
+                .unwrap()
                 .lookup(&syllables)
                 .iter()
                 .any(|entry| entry.token().value() == token && entry.text() == phrase)
         );
-        assert_eq!(lookup.phrase_text(token).unwrap(), phrase);
-        let row_generation = store.phrase_table_generation();
-        let row_tokens = dict
+        assert_eq!(
+            runtime
+                .dict()
+                .user_lookup()
+                .unwrap()
+                .phrase_text(token)
+                .unwrap(),
+            phrase
+        );
+        let row_generation = runtime.user_store_mut().unwrap().phrase_table_generation();
+        let row_tokens = runtime
+            .dict()
             .text_lookup_cache
             .lock()
             .unwrap()
@@ -2823,15 +2957,25 @@ mod tests {
             .tokens
             .as_ptr();
         assert_eq!(
-            store
+            runtime
+                .user_store_mut()
+                .unwrap()
                 .add_phrase(&oxpinyin_core::PhraseText::from(phrase), &keys, Some(5))
                 .unwrap(),
             token
         );
-        assert_eq!(store.phrase_table_generation(), row_generation);
-        assert_eq!(dict.tokens_for_text(phrase), [PhraseToken::new(token)]);
         assert_eq!(
-            dict.text_lookup_cache
+            runtime.user_store_mut().unwrap().phrase_table_generation(),
+            row_generation
+        );
+        assert_eq!(
+            runtime.dict().tokens_for_text(phrase),
+            [PhraseToken::new(token)]
+        );
+        assert_eq!(
+            runtime
+                .dict()
+                .text_lookup_cache
                 .lock()
                 .unwrap()
                 .as_ref()
@@ -2840,7 +2984,9 @@ mod tests {
             row_generation
         );
         assert_eq!(
-            dict.text_lookup_cache
+            runtime
+                .dict()
+                .text_lookup_cache
                 .lock()
                 .unwrap()
                 .as_ref()
@@ -2849,20 +2995,37 @@ mod tests {
                 .as_ptr(),
             row_tokens
         );
-        assert!(store.remove_user_phrase(token).unwrap());
-        assert!(dict.tokens_for_text(phrase).is_empty());
+        assert!(
+            runtime
+                .user_store_mut()
+                .unwrap()
+                .remove_user_phrase(token)
+                .unwrap()
+        );
+        assert!(runtime.dict().tokens_for_text(phrase).is_empty());
 
-        // Another session's store handle can write without touching this
-        // dictionary or its query handle.
-        let mut other = runtime.user_store().unwrap();
-        let imported = other
+        // A later operation re-borrows the owner without rebuilding query state.
+
+        let imported = runtime
+            .user_store_mut()
+            .unwrap()
             .add_phrase_in(7, &oxpinyin_core::PhraseText::from(phrase), &keys, Some(5))
             .unwrap();
-        assert_eq!(dict.tokens_for_text(phrase), [PhraseToken::new(imported)]);
-        other.mask_out(u32::MAX, imported).unwrap();
-        assert!(dict.tokens_for_text(phrase).is_empty());
+        assert_eq!(
+            runtime.dict().tokens_for_text(phrase),
+            [PhraseToken::new(imported)]
+        );
+        runtime
+            .user_store_mut()
+            .unwrap()
+            .mask_out(u32::MAX, imported)
+            .unwrap();
+        assert!(runtime.dict().tokens_for_text(phrase).is_empty());
         assert!(
-            lookup
+            runtime
+                .dict()
+                .user_lookup()
+                .unwrap()
                 .tokens_for_ucs4(&phrase.chars().map(u32::from).collect::<Vec<_>>())
                 .is_empty()
         );
@@ -2871,27 +3034,37 @@ mod tests {
     #[test]
     fn tokens_for_text_retains_the_row_after_a_system_reading_merge() {
         let dir = tempfile::tempdir().unwrap();
-        let runtime = Runtime::open(&w3_dir(), Some(dir.path())).unwrap();
-        let dict = runtime.dict();
-        let tokens = dict.tokens_for_text("你好");
+        let mut runtime = Runtime::open(&w3_dir(), Some(dir.path())).unwrap();
+
+        let tokens = runtime.dict().tokens_for_text("你好");
         let token = tokens[0].value();
         let library = u8::try_from(token >> 24).unwrap();
         let keys: Vec<_> = ["ni", "hao"]
             .into_iter()
             .map(|text| PinyinKey::try_from(SyllableKey::from_text(text).unwrap().index()).unwrap())
             .collect();
-        let mut store = runtime.user_store().unwrap();
-        let generation = store.phrase_table_generation();
-        store
+
+        let generation = runtime.user_store_mut().unwrap().phrase_table_generation();
+        runtime
+            .user_store_mut()
+            .unwrap()
             .add_system_phrase_in(library, Some(token), &"你好".into(), &keys, Some(5))
             .unwrap();
-        assert_eq!(store.phrase_table_generation(), generation);
-        assert_eq!(dict.tokens_for_text("你好"), tokens);
-        let added = store
+        assert_eq!(
+            runtime.user_store_mut().unwrap().phrase_table_generation(),
+            generation
+        );
+        assert_eq!(runtime.dict().tokens_for_text("你好"), tokens);
+        let added = runtime
+            .user_store_mut()
+            .unwrap()
             .add_system_phrase_in(library, None, &"你鎄".into(), &keys, Some(5))
             .unwrap();
-        assert!(store.phrase_table_generation() > generation);
-        assert_eq!(dict.tokens_for_text("你鎄"), [PhraseToken::new(added)]);
+        assert!(runtime.user_store_mut().unwrap().phrase_table_generation() > generation);
+        assert_eq!(
+            runtime.dict().tokens_for_text("你鎄"),
+            [PhraseToken::new(added)]
+        );
     }
 
     #[test]

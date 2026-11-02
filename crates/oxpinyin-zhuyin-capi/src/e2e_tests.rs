@@ -869,7 +869,7 @@ fn map_a_directory_library(site: &str) -> bool {
             // SAFETY: `context` is a live `zhuyin_init` handle, borrowed
             // uniquely for this statement.
             let ctx = unsafe { crate::state::context_mut(context) };
-            ctx.core.user.as_mut().expect("store").mark_modified();
+            ctx.core.user_store_mut().expect("store").mark_modified();
             crate::test_support::directory_library(&system, "merged.bin");
             zhuyin_save(context)
         }

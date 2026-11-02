@@ -3,7 +3,7 @@
 use std::os::raw::c_int;
 use std::sync::atomic::Ordering;
 
-use crate::state::{context_mut, context_ref};
+use crate::state::context_mut;
 use crate::types::{PinyinOptionT, ZhuyinContext};
 
 /// `PHRASE_INDEX_LIBRARY_COUNT` (`phrase_index.h`): sixteen sub-indices.
@@ -182,7 +182,7 @@ pub extern "C" fn zhuyin_load_phrase_library(context: *mut ZhuyinContext, index:
     }
 
     // SAFETY: `context` is non-null and was produced by `zhuyin_init`.
-    let ctx = unsafe { context_ref(context) };
+    let ctx = unsafe { crate::state::context_mut(context) };
     // `zhuyin.cpp:372`: the pin `assert`s that the row of a loaded library
     // is a `SYSTEM_FILE` or `USER_FILE` (an index of 16 or more answers
     // `false` first, `:362-363`); which rows are is the context's
@@ -228,7 +228,7 @@ pub extern "C" fn zhuyin_unload_phrase_library(context: *mut ZhuyinContext, inde
     }
 
     // SAFETY: `context` is non-null and was produced by `zhuyin_init`.
-    let ctx = unsafe { context_ref(context) };
+    let ctx = unsafe { crate::state::context_mut(context) };
     if index >= PHRASE_INDEX_LIBRARY_COUNT {
         // Register row 66, `zhuyin.cpp:381`: `assert`.
         std::process::abort();

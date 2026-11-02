@@ -116,7 +116,10 @@ pub extern "C" fn pinyin_remember_user_input(
     else {
         return false;
     };
-    let Some(user) = inst.core.user.as_mut() else {
+    // SAFETY: all composition reads are complete; the live context is borrowed
+    // exclusively for this store write under the C API's serialization rule.
+    let ctx = unsafe { crate::state::instance_context_mut(instance) };
+    let Some(user) = ctx.core.user_store_mut() else {
         return false;
     };
     // `if (-1 == count) count = default_count;` otherwise the `gint` is

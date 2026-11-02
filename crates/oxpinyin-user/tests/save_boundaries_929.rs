@@ -128,7 +128,7 @@ fn child_store() -> Option<UserStore> {
 fn interruption_after_user_chunks_keeps_indexes_and_bigram_at_previous_save() {
     if let Some(mut store) = child_store() {
         store
-            .save_reporting_with_baseline(&[], |index| {
+            .save_reporting_with_baseline(&[], |index, _| {
                 assert_eq!(index, 7);
                 std::process::exit(73);
             })

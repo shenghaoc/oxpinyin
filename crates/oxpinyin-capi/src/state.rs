@@ -13,6 +13,7 @@
 //! user-data export machinery.
 
 use std::path::Path;
+use std::{cell::UnsafeCell, rc::Rc};
 
 use oxpinyin_core::PhraseToken;
 use oxpinyin_engine::CandidateKind;
@@ -35,10 +36,8 @@ use crate::types::{LookupCandidate, PinyinContext, PinyinInstance};
 
 /// State behind `pinyin_context_t *`.
 ///
-/// Owns the shared [`Runtime`] (when this context has system tables).
-/// Instances receive cheap handle clones from it — `dict()`, `lm()`,
-/// `user_store()` — so they never borrow the context and stay alive past
-/// `pinyin_fini`.
+/// Owns the runtime and its storage. Context, instances and iterators share
+/// this allocation; every operation borrows it under the C serialization contract.
 pub struct CapiContext {
     /// The shared orchestration half: assembly, user store, layered
     /// configuration, and the live option/scheme word.
@@ -79,30 +78,28 @@ impl CapiContext {
         })
     }
 
-    pub(crate) fn alloc_instance(&self, context: *mut PinyinContext) -> Option<CapiInstance> {
+    pub(crate) fn alloc_instance(
+        &self,
+        context: *mut PinyinContext,
+        owner: ContextOwner,
+    ) -> Option<CapiInstance> {
         Some(CapiInstance {
             context,
-            predicted_lambda: self.predicted_lambda,
-            prefixes: Vec::new(),
-            candidates: CandidateSnapshot::new(),
+            owner,
             core: self.core.alloc_instance()?,
+            state: CapiInstanceState {
+                predicted_lambda: self.predicted_lambda,
+                prefixes: Vec::new(),
+                candidates: CandidateSnapshot::new(),
+            },
         })
     }
 
     /// `pinyin_unload_phrase_library`'s read side: GBK-only, `true` on
     /// every unload of GBK; `false` without a runtime (a user-store-only context
     /// never loaded GBK — upstream's sub-index is NULL there too).
-    pub(crate) fn unload_phrase_library(&self, index: u8) -> bool {
+    pub(crate) fn unload_phrase_library(&mut self, index: u8) -> bool {
         self.core.unload_phrase_library(index)
-    }
-
-    /// Clone of the context's user store, if this context has one.
-    ///
-    /// The import iterator owns this clone; because the store's §4 dirty flag
-    /// is shared by every clone, `pinyin_end_add_phrases` can arm
-    /// `m_modified` through it without retaining a context pointer.
-    pub(crate) fn user_store(&self) -> Option<oxpinyin_user::UserStore> {
-        self.core.user_store()
     }
 
     /// `pinyin_save`'s body (§4): `false` without a user dir (upstream
@@ -130,7 +127,7 @@ impl CapiContext {
     /// stray `addon_{index}_*` table on disk (whichever backend's
     /// extension `default_store_file` names) rather than being refused. A
     /// user-store-only context has no runtime, so it loads nothing.
-    pub(crate) fn load_addon(&self, index: u8) -> bool {
+    pub(crate) fn load_addon(&mut self, index: u8) -> bool {
         if index >= PHRASE_INDEX_LIBRARY_COUNT {
             return false;
         }
@@ -176,13 +173,13 @@ impl CapiContext {
     /// (`novel_types.h:43`, 1<<4), and the process aborts here too
     /// (register row 21, `pinyin.cpp:499`). In range, it mirrors the pin's
     /// unconditional `true`.
-    pub(crate) fn unload_addon(&self, index: u8) -> bool {
+    pub(crate) fn unload_addon(&mut self, index: u8) -> bool {
         if index >= PHRASE_INDEX_LIBRARY_COUNT {
             std::process::abort();
         }
         self.core
             .runtime
-            .as_ref()
+            .as_mut()
             .is_some_and(|runtime| runtime.unload_system_addon(index))
     }
 
@@ -294,16 +291,23 @@ impl SnapshotRow for CapiCandidate {
 }
 
 /// State behind `pinyin_instance_t *`.
-pub struct CapiInstance {
+pub struct CapiInstance<C = InstanceCore, S = CapiInstanceState, O = ContextOwner> {
+    /// Retains the sole runtime allocation after the public context is finalised.
+    pub(crate) owner: O,
     /// The owning context's C handle, returned by `pinyin_get_context`
     /// (upstream `pinyin_get_context`, `pinyin.cpp:1358-1360`). A raw
     /// pointer like every C handle here: no ownership, and using it
     /// after `pinyin_fini` is the caller's UAF, exactly upstream's.
     pub(crate) context: *mut PinyinContext,
-    /// The orchestration half — session, shared handles, live option
+    /// The orchestration half — composition, live option
     /// word, parse-mode state machine, re-anchored window — shared with
     /// the zhuyin facade.
-    pub(crate) core: InstanceCore,
+    pub(crate) core: C,
+    pub(crate) state: S,
+}
+
+/// ABI presentation state retained independently of phrase storage.
+pub struct CapiInstanceState {
     /// The context's initial gfloat interpolation weight for prediction.
     pub(crate) predicted_lambda: f32,
     /// The pin's `instance->m_prefixes` minus its `sentence_start` entry:
@@ -328,9 +332,167 @@ pub struct CapiInstance {
 // candidate_ref/ptr) are stamped by the shared marshalling macro so this
 // facade and the zhuyin one cannot drift; the generated `unsafe` blocks land
 // here in the C-ABI crate, where the constitution's allowlist permits them.
-oxpinyin_capi_marshal::opaque_handle_casts! {
-    vis: pub,
-    context: PinyinContext => CapiContext,
-    instance: PinyinInstance => CapiInstance,
-    candidate: LookupCandidate => CapiCandidate,
+impl<C, S: std::borrow::Borrow<CapiInstanceState>, O> std::ops::Deref for CapiInstance<C, S, O> {
+    type Target = CapiInstanceState;
+    fn deref(&self) -> &Self::Target {
+        self.state.borrow()
+    }
 }
+impl<C, S: std::borrow::BorrowMut<CapiInstanceState>, O> std::ops::DerefMut
+    for CapiInstance<C, S, O>
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.state.borrow_mut()
+    }
+}
+
+pub type CapiInstanceRead<'a> =
+    CapiInstance<oxpinyin_facade::InstanceRead<'a>, &'a CapiInstanceState, &'a ContextOwner>;
+pub type CapiInstanceMut<'a> =
+    CapiInstance<oxpinyin_facade::InstanceMut<'a>, &'a mut CapiInstanceState, &'a ContextOwner>;
+
+impl<
+    S: std::borrow::Borrow<oxpinyin_facade::InstanceState>,
+    E: std::borrow::Borrow<oxpinyin_engine::SessionState>,
+    V: std::borrow::Borrow<CapiInstanceState>,
+    O: std::borrow::Borrow<ContextOwner>,
+> CapiInstance<oxpinyin_facade::InstanceView<'_, S, E>, V, O>
+{
+    pub(crate) fn read(&self) -> CapiInstanceRead<'_> {
+        CapiInstance {
+            context: self.context,
+            owner: self.owner.borrow(),
+            core: self.core.read(),
+            state: self.state.borrow(),
+        }
+    }
+}
+
+/// Shared ownership of one context allocation, including its sole runtime.
+/// Handles retain ownership; every access still borrows only for one C call.
+pub type ContextOwner = Rc<UnsafeCell<CapiContext>>;
+
+/// Borrow storage retained by a handle, including after context fini.
+/// # Safety
+/// The C caller must serialize calls on this context and all its handles;
+/// no mutation may overlap the returned operation-scoped borrow.
+pub(crate) unsafe fn owner_ref(owner: &ContextOwner) -> &CapiContext {
+    // SAFETY: the owner keeps the allocation alive, and the caller's
+    // one-call-at-a-time contract excludes mutation during this borrow.
+    unsafe { &*owner.get() }
+}
+
+/// Borrow the shared allocation exclusively for one C call.
+/// # Safety
+/// No other call or retained Rust borrow may access this allocation until
+/// the returned borrow ends, including through another owning handle.
+pub(crate) unsafe fn owner_mut(owner: &mut ContextOwner) -> &mut CapiContext {
+    // SAFETY: ownership guarantees liveness; the C caller's one-call-at-a-time
+    // contract, not uniqueness of the reference count, guarantees exclusivity.
+    unsafe { &mut *owner.get() }
+}
+
+/// Retain the backing allocation while the public context handle is live.
+/// # Safety
+/// `ptr` must be a live context; the caller serializes operations on it.
+pub(crate) unsafe fn context_owner(ptr: *mut PinyinContext) -> ContextOwner {
+    // SAFETY: the public handle is live for this call; clone only its owner.
+    Rc::clone(unsafe { handles::context_ref(ptr) })
+}
+
+/// Box the context's reference-counted owner as the public C handle.
+pub(crate) fn box_context(context: CapiContext) -> *mut PinyinContext {
+    handles::box_context(Rc::new(UnsafeCell::new(context)))
+}
+
+/// Borrow a live public context for one operation.
+/// # Safety
+/// `ptr` is live and the caller excludes mutation during the borrow.
+pub(crate) unsafe fn context_ref<'a>(ptr: *mut PinyinContext) -> &'a CapiContext {
+    // SAFETY: the caller keeps the public handle live and serializes its calls.
+    unsafe { owner_ref(handles::context_ref(ptr)) }
+}
+
+/// Borrow a live public context exclusively for one operation.
+/// # Safety
+/// `ptr` is live; no call or borrow through any handle overlaps this one.
+pub(crate) unsafe fn context_mut<'a>(ptr: *mut PinyinContext) -> &'a mut CapiContext {
+    // SAFETY: the caller keeps the public handle live and grants exclusive access.
+    unsafe { owner_mut(handles::context_mut(ptr)) }
+}
+
+/// Borrow the runtime retained by an instance, without its public context.
+/// # Safety
+/// `ptr` is live; all earlier readers have ended and the C caller grants
+/// exclusive access across every handle sharing this runtime for this call.
+pub(crate) unsafe fn instance_context_mut<'a>(ptr: *mut PinyinInstance) -> &'a mut CapiContext {
+    // SAFETY: the instance owns the allocation; serialized C calls exclude
+    // access through any other instance, iterator or the public context.
+    unsafe { owner_mut(&mut handles::instance_mut(ptr).owner) }
+}
+
+mod handles {
+    use super::*;
+    oxpinyin_capi_marshal::opaque_handle_casts! {
+        vis: pub,
+        context: PinyinContext => ContextOwner,
+        instance: PinyinInstance => CapiInstance,
+        candidate: LookupCandidate => CapiCandidate,
+    }
+}
+pub(crate) use handles::{box_instance, candidate_ptr, candidate_ref};
+
+/// Borrow this call's instance and its live context.
+/// # Safety
+/// The instance must be live and all calls sharing its runtime serialized.
+/// No instance or context mutation may overlap the returned reader.
+pub unsafe fn instance_ref<'a>(ptr: *mut PinyinInstance) -> CapiInstanceRead<'a> {
+    // SAFETY: the caller supplies a live instance and serializes all shared-handle calls.
+    let instance = unsafe { handles::instance_ref(ptr) };
+    // SAFETY: the instance retains the allocation; the C caller excludes concurrent mutation.
+    let context = unsafe { owner_ref(&instance.owner) };
+    let Some(runtime) = context.core.runtime.as_ref() else {
+        std::process::abort();
+    };
+    CapiInstance {
+        context: instance.context,
+        owner: &instance.owner,
+        core: instance.core.read(runtime),
+        state: &instance.state,
+    }
+}
+
+/// Borrow composition exclusively and phrase storage for this call only.
+/// # Safety
+/// The instance must be live, with no overlapping access through any shared handle.
+pub unsafe fn instance_mut<'a>(ptr: *mut PinyinInstance) -> CapiInstanceMut<'a> {
+    // SAFETY: the caller grants exclusive access to this live instance.
+    let instance = unsafe { handles::instance_mut(ptr) };
+    // SAFETY: the instance retains the allocation; the C caller excludes runtime mutation.
+    let context = unsafe { owner_ref(&instance.owner) };
+    let Some(runtime) = context.core.runtime.as_ref() else {
+        std::process::abort();
+    };
+    CapiInstance {
+        context: instance.context,
+        owner: &instance.owner,
+        core: instance.core.bind(runtime),
+        state: &mut instance.state,
+    }
+}
+
+/// Train with exclusive access to the context, after all read views have ended.
+/// # Safety
+/// The caller supplies a live instance and exclusive access across all shared handles.
+pub(crate) unsafe fn train_instance(
+    ptr: *mut PinyinInstance,
+    index: u8,
+) -> Result<bool, oxpinyin_engine::EngineError> {
+    // SAFETY: the caller grants this operation exclusive access to the live instance.
+    let instance = unsafe { handles::instance_mut(ptr) };
+    // SAFETY: the owner retains the allocation; serialized C calls exclude other readers.
+    let context = unsafe { owner_mut(&mut instance.owner) };
+    context.core.train(&instance.core, index)
+}
+
+pub(crate) use handles::instance_ref as instance_state_ref;

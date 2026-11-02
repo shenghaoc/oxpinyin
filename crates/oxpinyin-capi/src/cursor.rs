@@ -84,7 +84,7 @@ pub extern "C" fn pinyin_get_pinyin_key_rest(
     let found = match inst.core.abi_key_at(offset, false) {
         Ok(Some(found)) => found,
         Ok(None) => {
-            abort_on_empty_matrix_below(inst, offset);
+            abort_on_empty_matrix_below(&inst.read(), offset);
             return false;
         }
         Err(_) => {
@@ -117,8 +117,8 @@ pub extern "C" fn pinyin_get_pinyin_key_rest(
 /// `matrix.size() - 1` wraps, the offset test passes, and `get_column_size`
 /// asserts, so the process aborts. A matrix with keys is the graceful
 /// `false`.
-fn abort_on_empty_matrix(inst: &crate::state::CapiInstance) {
-    if !crate::sentence::matrix_has_keys(inst) {
+fn abort_on_empty_matrix(inst: &crate::state::CapiInstanceRead<'_>) {
+    if !crate::sentence::matrix_has_keys(&inst.read()) {
         std::process::abort();
     }
 }
@@ -128,9 +128,9 @@ fn abort_on_empty_matrix(inst: &crate::state::CapiInstance) {
 /// on an empty matrix that is `offset >= SIZE_MAX`, so `SIZE_MAX` itself
 /// answers `false` with the out-param NULLed, and only a smaller offset
 /// reaches the assert.
-fn abort_on_empty_matrix_below(inst: &crate::state::CapiInstance, offset: usize) {
+fn abort_on_empty_matrix_below(inst: &crate::state::CapiInstanceRead<'_>, offset: usize) {
     if offset != usize::MAX {
-        abort_on_empty_matrix(inst);
+        abort_on_empty_matrix(&inst.read());
     }
 }
 
@@ -464,7 +464,7 @@ pub extern "C" fn pinyin_get_right_pinyin_offset(
         // on an empty matrix, where the loop's `get_column_size` asserts
         // first.
         Ok(None) => {
-            abort_on_empty_matrix(inst);
+            abort_on_empty_matrix(&inst.read());
             return false;
         }
         // Register row 14: `assert(_check_offset(...))`, `pinyin.cpp:3067`,
@@ -687,7 +687,7 @@ pub extern "C" fn pinyin_get_pinyin_key(
     let found = match inst.core.abi_key_at(offset, false) {
         Ok(Some(found)) => found,
         Ok(None) => {
-            abort_on_empty_matrix_below(inst, offset);
+            abort_on_empty_matrix_below(&inst.read(), offset);
             return false;
         }
         Err(_) => {

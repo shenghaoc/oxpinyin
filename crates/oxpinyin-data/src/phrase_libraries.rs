@@ -13,8 +13,7 @@
 //! on demand by `pinyin_load_addon_phrase_library`).
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{OnceLock, RwLock};
+use std::sync::OnceLock;
 
 use oxpinyin_core::{ChewingKey, PhraseText, TrellisItem};
 
@@ -38,6 +37,7 @@ pub struct LibraryPronunciation {
 }
 
 /// A loaded library plus its lazily tallied item count.
+#[derive(Debug)]
 struct Loaded {
     library: PhraseLibrary,
     /// The file it was mapped from, as `load` was given it.
@@ -64,9 +64,10 @@ impl Loaded {
 /// chunk is present but empty, as the pin leaves it; a file that is absent
 /// is simply unloaded, and token resolution answers `None` for its nibble,
 /// matching upstream's `ERROR_NO_SUB_PHRASE_INDEX`.
+#[derive(Debug)]
 pub struct PhraseLibraries {
     /// nibble → library, `None` = not loaded.
-    by_nibble: [RwLock<Option<Loaded>>; 16],
+    by_nibble: [Option<Loaded>; 16],
     /// Files `open` found absent.
     unmapped: Vec<(u8, PathBuf)>,
     /// The library [`PhraseLibraries::open_to_header_fault`] stopped at: a
@@ -78,11 +79,11 @@ pub struct PhraseLibraries {
     /// added when it loads and subtracted when it unloads or is replaced,
     /// with no overflow check (`phrase_index.cpp:237-248`, `:261-269`).
     /// A `guint32`, so it wraps.
-    total: AtomicU32,
+    total: u32,
     /// Bit `n` set when library `n` is loaded and holds at least one
     /// item: whether a frequency table is there to price with, which the
     /// wrapping [`Self::total`] cannot tell when it lands on zero.
-    stocked: AtomicU32,
+    stocked: u32,
 }
 
 /// The fault and diagnostic paths from one validation of each selected
@@ -103,8 +104,8 @@ impl PhraseLibraries {
             by_nibble: Default::default(),
             unmapped: Vec::new(),
             chunk_header_fault: None,
-            total: AtomicU32::new(0),
-            stocked: AtomicU32::new(0),
+            total: 0,
+            stocked: 0,
         }
     }
 
@@ -228,9 +229,6 @@ impl PhraseLibraries {
             .zip(&self.by_nibble)
             .filter(|&(nibble, _)| only.is_none_or(|wanted| wanted == nibble) && visible(nibble))
             .filter_map(|(_, slot)| {
-                let slot = slot
-                    .read()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 let loaded = slot.as_ref()?;
                 verify_chunk(&loaded.path)
                     .err()
@@ -251,9 +249,6 @@ impl PhraseLibraries {
             .zip(&self.by_nibble)
             .filter(|&(nibble, _)| only.is_none_or(|wanted| wanted == nibble) && selected(nibble))
         {
-            let slot = slot
-                .read()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
             let Some(loaded) = slot.as_ref() else {
                 continue;
             };
@@ -302,15 +297,13 @@ impl PhraseLibraries {
             Err(LibraryError::Layout(fault)) => (PhraseLibrary::empty(fault.total_freq), false),
             Err(error) => return Err(error),
         };
-        let slot = self.by_nibble[slot]
-            .get_mut()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let slot = &mut self.by_nibble[slot];
         if accepted {
-            let total = self.total.get_mut();
+            let total = &mut self.total;
             *total = total.wrapping_add(library.total_freq());
         }
         if library.has_items() {
-            *self.stocked.get_mut() |= 1 << nibble;
+            self.stocked |= 1 << nibble;
         }
         *slot = Some(Loaded {
             library,
@@ -326,13 +319,10 @@ impl PhraseLibraries {
     ///
     /// # Errors
     /// Returns [`LibraryError`] when the chunk cannot be mapped or decoded.
-    pub fn reload(&self, nibble: u8, path: &Path) -> Result<bool, LibraryError> {
-        let Some(slot) = self.by_nibble.get(usize::from(nibble)) else {
+    pub fn reload(&mut self, nibble: u8, path: &Path) -> Result<bool, LibraryError> {
+        let Some(slot) = self.by_nibble.get_mut(usize::from(nibble)) else {
             return Ok(false);
         };
-        let mut slot = slot
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(old) = slot.as_ref().map(|loaded| loaded.library.total_freq()) else {
             return Ok(false);
         };
@@ -344,8 +334,8 @@ impl PhraseLibraries {
                 // one; the caller ignores the false and the slot holds the
                 // empty sub-index the failed load left.
                 let total = fault.total_freq;
-                self.total.fetch_sub(old, Ordering::SeqCst);
-                self.stocked.fetch_and(!(1 << nibble), Ordering::SeqCst);
+                self.total = self.total.wrapping_sub(old);
+                self.stocked &= !(1 << nibble);
                 *slot = Some(Loaded {
                     library: PhraseLibrary::empty(total),
                     path: path.to_path_buf(),
@@ -357,12 +347,13 @@ impl PhraseLibraries {
         };
         // The old sub-index's total leaves and the new one's enters, as
         // `FacadePhraseIndex::load` does over a loaded slot.
-        self.total
-            .fetch_add(library.total_freq().wrapping_sub(old), Ordering::SeqCst);
+        self.total = self
+            .total
+            .wrapping_add(library.total_freq().wrapping_sub(old));
         if library.has_items() {
-            self.stocked.fetch_or(1 << nibble, Ordering::SeqCst);
+            self.stocked |= 1 << nibble;
         } else {
-            self.stocked.fetch_and(!(1 << nibble), Ordering::SeqCst);
+            self.stocked &= !(1 << nibble);
         }
         *slot = Some(Loaded {
             library,
@@ -378,51 +369,71 @@ impl PhraseLibraries {
         let Some(loaded) = self
             .by_nibble
             .get_mut(usize::from(nibble))
-            .and_then(|slot| {
-                slot.get_mut()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .take()
-            })
+            .and_then(Option::take)
         else {
             return false;
         };
-        let total = self.total.get_mut();
+        let total = &mut self.total;
         *total = total.wrapping_sub(loaded.library.total_freq());
-        *self.stocked.get_mut() &= !(1 << nibble);
+        self.stocked &= !(1 << nibble);
         true
+    }
+
+    /// Installs an already opened library, transferring its byte ownership.
+    /// The path is retained for operations that remap the loaded file.
+    pub fn insert_mapping(&mut self, nibble: u8, path: PathBuf, library: PhraseLibrary) {
+        let Some(slot) = self.by_nibble.get_mut(usize::from(nibble)) else {
+            return;
+        };
+        if let Some(old) = slot.take() {
+            self.total = self.total.wrapping_sub(old.library.total_freq());
+        }
+        if !library.is_layout_failed() {
+            self.total = self.total.wrapping_add(library.total_freq());
+        }
+        if library.has_items() {
+            self.stocked |= 1 << nibble;
+        } else {
+            self.stocked &= !(1 << nibble);
+        }
+        *slot = Some(Loaded {
+            library,
+            path,
+            item_count: OnceLock::new(),
+        });
+    }
+
+    /// Transfers one loaded mapping, retaining no reader of its bytes.
+    pub fn take_mapping(&mut self, nibble: u8) -> Option<(PathBuf, PhraseLibrary)> {
+        let loaded = self.by_nibble.get_mut(usize::from(nibble))?.take()?;
+        self.total = self.total.wrapping_sub(loaded.library.total_freq());
+        self.stocked &= !(1 << nibble);
+        Some((loaded.path, loaded.library))
     }
 
     /// Whether library `nibble` is loaded.
     #[must_use]
     pub fn is_loaded(&self, nibble: u8) -> bool {
-        self.by_nibble.get(usize::from(nibble)).is_some_and(|slot| {
-            slot.read()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .is_some()
-        })
+        self.by_nibble
+            .get(usize::from(nibble))
+            .is_some_and(Option::is_some)
     }
 
     /// Whether any library is loaded.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.by_nibble.iter().all(|slot| {
-            slot.read()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .is_none()
-        })
+        self.by_nibble.iter().all(Option::is_none)
     }
 
     /// The library owning `token`'s nibble, when loaded. Nibbles at or
     /// beyond the 16-library count answer `None`, matching upstream's
     /// `PHRASE_INDEX_LIBRARY_INDEX` bound.
     #[must_use]
-    pub fn library(&self, token: u32) -> Option<PhraseLibrary> {
+    pub fn library(&self, token: u32) -> Option<&PhraseLibrary> {
         self.by_nibble
             .get((token >> 24) as usize)?
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .as_ref()
-            .map(|loaded| loaded.library.clone())
+            .map(|loaded| &loaded.library)
     }
 
     /// A loaded library's on-disk path and its snapshot, for the save's
@@ -431,13 +442,10 @@ impl PhraseLibraries {
     /// the one `load` was given; the snapshot is the mapping that load
     /// made, which keeps the replaced file's old bytes alive.
     #[must_use]
-    pub fn loaded_path_library(&self, nibble: u8) -> Option<(std::path::PathBuf, PhraseLibrary)> {
+    pub fn loaded_path_library(&self, nibble: u8) -> Option<(&Path, &PhraseLibrary)> {
         let slot = self.by_nibble.get(usize::from(nibble))?;
-        let slot = slot
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let loaded = slot.as_ref()?;
-        Some((loaded.path.clone(), loaded.library.clone()))
+        Some((&loaded.path, &loaded.library))
     }
 
     /// `FacadePhraseIndex::get_phrase_item`'s text half: the phrase
@@ -470,7 +478,7 @@ impl PhraseLibraries {
     /// load and unload, so a read is one load.
     #[must_use]
     pub fn unigram_total(&self) -> u32 {
-        self.total.load(Ordering::SeqCst)
+        self.total
     }
 
     /// `FacadePhraseIndex::compact` over the layout-failed empty
@@ -482,12 +490,9 @@ impl PhraseLibraries {
     /// well-formed library's stored total equals its item sum, so it is
     /// left alone. Returns the compacted nibbles.
     #[must_use]
-    pub fn compact_layout_failed(&self) -> Vec<u8> {
+    pub fn compact_layout_failed(&mut self) -> Vec<u8> {
         let mut compacted = Vec::new();
-        for (nibble, slot) in self.by_nibble.iter().enumerate() {
-            let mut slot = slot
-                .write()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for (nibble, slot) in self.by_nibble.iter_mut().enumerate() {
             if let Some(loaded) = slot.as_mut()
                 && loaded.library.is_layout_failed()
             {
@@ -503,7 +508,7 @@ impl PhraseLibraries {
     /// wrapping total adds up to.
     #[must_use]
     pub fn has_items_unloaded(&self, unloaded: u32) -> bool {
-        self.stocked.load(Ordering::SeqCst) & !unloaded != 0
+        self.stocked & !unloaded != 0
     }
 
     /// [`Self::unigram_total`] with the libraries whose bit `unloaded`
@@ -517,9 +522,7 @@ impl PhraseLibraries {
         while bits != 0 {
             let nibble = bits.trailing_zeros() as usize;
             bits &= bits - 1;
-            let slot = self.by_nibble[nibble]
-                .read()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let slot = &self.by_nibble[nibble];
             if let Some(loaded) = slot.as_ref() {
                 total = total.wrapping_sub(loaded.library.total_freq());
             }
@@ -548,9 +551,6 @@ impl PhraseLibraries {
                 if !visible(u8::try_from(nibble).unwrap_or(u8::MAX)) {
                     return None;
                 }
-                let slot = slot
-                    .read()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 let loaded = slot.as_ref()?;
                 Some(count(loaded))
             })

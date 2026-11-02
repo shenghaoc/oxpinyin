@@ -24,8 +24,6 @@
 use oxpinyin_core::ChewingKey;
 use oxpinyin_facade::KeyAt;
 
-use crate::state::CapiInstance;
-
 /// Which spelling the prefix and postfix keys take.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Spelling {
@@ -83,19 +81,22 @@ impl SharedMatrix {
     /// `None` where the pin's matrix is empty (`fill_matrix` clears it for
     /// a parse without keys, `phonetic_key_matrix.cpp:34-38`) or a key has
     /// no spelling.
-    pub(crate) fn of(inst: &CapiInstance) -> Option<Self> {
+    pub(crate) fn of(inst: &crate::state::CapiInstanceRead<'_>) -> Option<Self> {
         let keys = if inst.core.double_parse.is_some() {
             Vec::new()
         } else {
             inst.core.mode_key_list().ok()?
         };
-        Self::of_keys(inst, &keys)
+        Self::of_keys(&inst.read(), &keys)
     }
 
     /// [`Self::of`] over the key list
-    /// [`oxpinyin_facade::InstanceCore::mode_key_list`] gave for the
+    /// [`oxpinyin_facade::InstanceView::mode_key_list`] gave for the
     /// current parse. Double pinyin reads its parse's keys instead.
-    pub(crate) fn of_keys(inst: &CapiInstance, keys: &[KeyAt]) -> Option<Self> {
+    pub(crate) fn of_keys(
+        inst: &crate::state::CapiInstanceRead<'_>,
+        keys: &[KeyAt],
+    ) -> Option<Self> {
         let core = &inst.core;
         let parsed_len = core.parsed_len;
         let spans: Vec<(&'static str, u8, usize, usize)> =

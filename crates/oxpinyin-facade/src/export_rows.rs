@@ -59,8 +59,6 @@ pub struct PhraseExportCursor {
     index: u8,
     next_token: u32,
     next_pronunciation: usize,
-    system: Option<RuntimeDict>,
-    user: Option<UserStore>,
     /// Whether `table.conf` gives this `USER_FILE` library a file: fixed
     /// for the session, the pin's `NULL` sub-index otherwise.
     user_library_present: bool,
@@ -403,14 +401,51 @@ impl ItemRef<'_> {
     }
 }
 
+struct PhraseExportRead<'a> {
+    cursor: &'a mut PhraseExportCursor,
+    system: Option<RuntimeDict<'a>>,
+    user: Option<&'a UserStore>,
+}
+
+impl std::ops::Deref for PhraseExportRead<'_> {
+    type Target = PhraseExportCursor;
+    fn deref(&self) -> &Self::Target {
+        self.cursor
+    }
+}
+impl std::ops::DerefMut for PhraseExportRead<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.cursor
+    }
+}
+
 impl PhraseExportCursor {
+    fn read<'a>(&'a mut self, context: &'a ContextCore) -> PhraseExportRead<'a> {
+        PhraseExportRead {
+            cursor: self,
+            system: context.runtime.as_ref().map(|runtime| runtime.dict()),
+            user: context.user_store(),
+        }
+    }
+
+    /// Read the next row by borrowing this call's current context.
+    pub fn get_next_with<R>(
+        &mut self,
+        context: &ContextCore,
+        read: impl FnOnce(&ExportRow<'_>) -> R,
+    ) -> ExportStep<R> {
+        self.read(context).get_next_with(read)
+    }
+
     /// `pinyin_iterator_has_next_phrase` (`pinyin.cpp:690-695`): whether
     /// the begin or the previous call probed a token.
     #[must_use]
     pub fn has_next(&self) -> bool {
         self.next_token != NULL_TOKEN
     }
+}
 
+impl PhraseExportRead<'_> {
     /// `pinyin_iterator_get_next_phrase` (`pinyin.cpp:698-768`): reads the
     /// probed item, hands `read` the pronunciation the cursor is at, then
     /// moves to the item's next pronunciation or, when there is none,
@@ -539,7 +574,7 @@ impl PhraseExportCursor {
                 Some(found) => found,
                 None => {
                     // No replacement under this token at this generation.
-                    self.memo.plain_token = token;
+                    self.cursor.memo.plain_token = token;
                     library
                         .item(token)
                         .and_then(|item| ItemRef::Mapped(item).first_pronunciation())
@@ -705,21 +740,18 @@ impl ContextCore {
             index,
             ADDON_DICTIONARY | NETWORK_DICTIONARY | USER_DICTIONARY
         ) && self
-            .user
-            .as_ref()
+            .user_store()
             .is_some_and(|user| user.has_user_library(index));
         let mut cursor = PhraseExportCursor {
             index,
             next_token: NULL_TOKEN,
             next_pronunciation: 0,
-            system: self.runtime.as_ref().map(|runtime| runtime.dict()),
-            user: self.user.clone(),
             user_library_present,
             memo: Memo::default(),
             current: None,
         };
         // `range.m_range_begin`: tokens start at 1 (`phrase_index.cpp:642`).
-        cursor.probe_from((u32::from(index) << 24) | 1);
+        cursor.read(self).probe_from((u32::from(index) << 24) | 1);
         cursor
     }
 
@@ -740,7 +772,7 @@ impl ContextCore {
         if self.runtime.is_some() {
             return true;
         }
-        let Some(store) = self.user.as_ref() else {
+        let Some(store) = self.user_store() else {
             return true;
         };
         let Ok(raw) = store.export_bigrams() else {
@@ -762,14 +794,10 @@ impl ContextCore {
     /// store.
     #[must_use]
     pub fn bigram_export_walk(&self) -> Option<BigramExportWalk> {
-        let store = self.user.as_ref()?;
+        let store = self.user_store()?;
         let items = store.bigram_predecessors().ok()?;
         Some(BigramExportWalk {
             items: items.into(),
-            source: Some(ExportSource {
-                user: store.clone(),
-                dict: self.runtime.as_ref().map(oxpinyin_runtime::Runtime::dict),
-            }),
             ..BigramExportWalk::default()
         })
     }
@@ -778,12 +806,12 @@ impl ContextCore {
 /// What a [`BigramExportWalk`] loads grams and renders tokens from: the
 /// context's user store, and its system dictionary when it has one.
 #[derive(Clone)]
-struct ExportSource {
-    user: oxpinyin_user::UserStore,
-    dict: Option<oxpinyin_runtime::RuntimeDict>,
+struct ExportSource<'a> {
+    user: &'a oxpinyin_user::UserStore,
+    dict: Option<oxpinyin_runtime::RuntimeDict<'a>>,
 }
 
-impl ExportSource {
+impl ExportSource<'_> {
     /// `load(token, gram, true)` then `retrieve_all` (`pinyin.cpp:889-890`):
     /// the gram's whole items in stored order, duplicates included, or the
     /// fault where `retrieve_all`'s `get_total_freq` asserts on a value too
@@ -904,9 +932,6 @@ pub struct BigramExportWalk {
     pinyins: Vec<String>,
     pinyin_index: usize,
     count: u32,
-    /// The live store the grams load from and the tokens render from;
-    /// `None` for a walk the tests plant through `grams` and `rendered`.
-    source: Option<ExportSource>,
     /// Planted grams, read when there is no `source`; `None` plants a value
     /// too short for its total.
     grams: HashMap<u32, Option<Vec<(u32, u32)>>>,
@@ -951,7 +976,16 @@ impl BigramExportWalk {
     /// The [`GramLoadFault`] of the predecessor it loaded and could not read
     /// (`pinyin.cpp:888-889`, `ngram.cpp:133-143`), after the rows before it
     /// were handed out; the walk ends there.
-    pub fn has_next(&mut self) -> Result<bool, GramLoadFault> {
+    pub fn has_next(&mut self, context: Option<&ContextCore>) -> Result<bool, GramLoadFault> {
+        let source = context.and_then(|context| {
+            context.user_store().map(|user| ExportSource {
+                user,
+                dict: context
+                    .runtime
+                    .as_ref()
+                    .map(oxpinyin_runtime::Runtime::dict),
+            })
+        });
         if self.pair.is_some() && self.pinyin_index < self.pinyins.len() {
             return Ok(true);
         }
@@ -964,7 +998,7 @@ impl BigramExportWalk {
                 while let Some(&(token, count)) = self.phrase_tokens.front() {
                     // Find the next item above the threshold.
                     if count > EXPORT_THRESHOLD {
-                        self.load_row(token, count);
+                        self.load_row(token, count, source.as_ref());
                         self.phrase_tokens.pop_front();
                         retval = true;
                         break;
@@ -980,7 +1014,7 @@ impl BigramExportWalk {
             };
             self.index_token = index_token;
             // `load(…, user_gram, true)` then `retrieve_all`, which appends.
-            let loaded = match &self.source {
+            let loaded = match &source {
                 Some(source) => source.gram(index_token),
                 None => match self.grams.get(&index_token) {
                     Some(Some(gram)) => Ok(gram.clone()),
@@ -1008,7 +1042,7 @@ impl BigramExportWalk {
 
     /// `pinyin_bigram_iterator_get_next_phrase` (`pinyin.cpp:896-911`):
     /// the current row — count × 2 in `guint32` — then `has_next`.
-    pub fn get_next(&mut self) -> BigramStep {
+    pub fn get_next(&mut self, context: Option<&ContextCore>) -> BigramStep {
         if self.index_token == NULL_TOKEN || self.index_token == SENTENCE_START {
             return BigramStep::Aborts;
         }
@@ -1020,7 +1054,7 @@ impl BigramExportWalk {
             count: i64::from(self.count.wrapping_mul(2).cast_signed()),
         };
         self.pinyin_index += 1;
-        let more = self.has_next();
+        let more = self.has_next(context);
         BigramStep::Row(row, more)
     }
 
@@ -1047,11 +1081,10 @@ impl BigramExportWalk {
     }
 
     /// `token`'s rendering, memoised.
-    fn render(&mut self, token: u32) {
-        if !self.rendered.contains_key(&token) {
-            let rendering = self.source.as_ref().and_then(|source| source.render(token));
-            self.rendered.insert(token, rendering);
-        }
+    fn render(&mut self, token: u32, source: Option<&ExportSource<'_>>) {
+        self.rendered
+            .entry(token)
+            .or_insert_with(|| source.and_then(|source| source.render(token)));
     }
 
     /// The row `has_next` builds for `(m_index_token, token)`
@@ -1059,9 +1092,9 @@ impl BigramExportWalk {
     /// first-pronunciation × second-pronunciation pair joined by `'`. A
     /// token the phrase index does not resolve reads as the pin's empty
     /// `PhraseItem` — no text, no pronunciation.
-    fn load_row(&mut self, token: u32, count: u32) {
-        self.render(self.index_token);
-        self.render(token);
+    fn load_row(&mut self, token: u32, count: u32, source: Option<&ExportSource<'_>>) {
+        self.render(self.index_token, source);
+        self.render(token, source);
         let empty = (PhraseText::default(), Vec::new());
         let (first_text, first_pinyins) = self
             .rendered
@@ -1128,10 +1161,10 @@ mod tests {
     /// A caller that trusts `get_next`'s return: stops on the first `false`.
     fn drain_by_return(walk: &mut BigramExportWalk) -> Vec<(PhraseText, bool)> {
         let mut rows = Vec::new();
-        let mut more = walk.has_next().expect("no short gram");
+        let mut more = walk.has_next(None).expect("no short gram");
         while more {
             let phrase = pair_text(walk);
-            let BigramStep::Row(_, next) = walk.get_next() else {
+            let BigramStep::Row(_, next) = walk.get_next(None) else {
                 break;
             };
             let next = next.expect("no short gram");
@@ -1145,9 +1178,9 @@ mod tests {
     /// get_next`.
     fn drain_by_has_next(walk: &mut BigramExportWalk) -> Vec<(PhraseText, bool)> {
         let mut rows = Vec::new();
-        while walk.has_next().expect("no short gram") {
+        while walk.has_next(None).expect("no short gram") {
             let phrase = pair_text(walk);
-            let BigramStep::Row(_, next) = walk.get_next() else {
+            let BigramStep::Row(_, next) = walk.get_next(None) else {
                 break;
             };
             rows.push((phrase.expect("a loaded pair"), next.expect("no short gram")));
@@ -1182,10 +1215,10 @@ mod tests {
             ]
         );
         // A further has_next scans the gram loaded but never scanned.
-        assert_eq!(walk.has_next(), Ok(true));
+        assert_eq!(walk.has_next(None), Ok(true));
         assert_eq!(pair_text(&walk), Some("我爱".into()));
         assert_eq!(
-            walk.get_next(),
+            walk.get_next(None),
             BigramStep::Row(
                 ExportedBigramRow {
                     pinyin: "wo'ai".to_owned(),
@@ -1194,8 +1227,8 @@ mod tests {
                 Ok(false),
             )
         );
-        assert_eq!(walk.has_next(), Ok(false));
-        assert_eq!(walk.get_next(), BigramStep::Undefined);
+        assert_eq!(walk.has_next(None), Ok(false));
+        assert_eq!(walk.get_next(None), BigramStep::Undefined);
     }
 
     /// ibus-libpinyin's `while (has_next)` loop therefore exports the last
@@ -1218,7 +1251,7 @@ mod tests {
     #[test]
     fn a_dropped_phrase_is_the_pins_null_m_phrase() {
         let mut walk = scenario();
-        assert_eq!(walk.has_next(), Ok(true));
+        assert_eq!(walk.has_next(None), Ok(true));
         assert_eq!(walk.loads(), 1);
         assert_eq!(
             walk.pair(),
@@ -1226,7 +1259,7 @@ mod tests {
         );
         walk.drop_phrase();
         assert_eq!(pair_text(&walk), None);
-        let BigramStep::Row(row, more) = walk.get_next() else {
+        let BigramStep::Row(row, more) = walk.get_next(None) else {
             panic!("a row");
         };
         assert_eq!(row.pinyin, "ni'wo");
@@ -1241,8 +1274,8 @@ mod tests {
     #[test]
     fn get_next_without_a_predecessor_is_the_pins_abort() {
         let mut walk = walk(&[], &[]);
-        assert_eq!(walk.has_next(), Ok(false));
-        assert_eq!(walk.get_next(), BigramStep::Aborts);
+        assert_eq!(walk.has_next(None), Ok(false));
+        assert_eq!(walk.get_next(None), BigramStep::Aborts);
     }
 
     /// Register row 85 (`pinyin.cpp:889`, `ngram.cpp:133-141`): the walk
@@ -1258,15 +1291,15 @@ mod tests {
             &[(0x0100_0001, &[(0x0100_0002, 138), (0x0100_0004, 69)])],
         );
         planted.grams.insert(short, None);
-        assert_eq!(planted.has_next(), Ok(true));
+        assert_eq!(planted.has_next(None), Ok(true));
         assert_eq!(pair_text(&planted), Some(PhraseText::from("你好")));
-        let BigramStep::Row(_, Ok(true)) = planted.get_next() else {
+        let BigramStep::Row(_, Ok(true)) = planted.get_next(None) else {
             panic!("the first predecessor's first row");
         };
         // The second row is handed out, then the `has_next` inside
         // `get_next` loads the short predecessor; the row comes back with
         // the fault, for the C adapter to write before it aborts.
-        let BigramStep::Row(row, more) = planted.get_next() else {
+        let BigramStep::Row(row, more) = planted.get_next(None) else {
             panic!("the first predecessor's second row");
         };
         assert_eq!(row.count, 138);
@@ -1275,7 +1308,7 @@ mod tests {
         let mut direct = walk(&[short], &[]);
         direct.grams.insert(short, None);
         assert_eq!(
-            direct.has_next(),
+            direct.has_next(None),
             Err(GramLoadFault::ShortTotal { token: short })
         );
     }
@@ -1354,8 +1387,8 @@ mod phrase_cursor_tests {
     }
 
     /// One `get_next`.
-    fn next_row(cursor: &mut PhraseExportCursor) -> Option<Row> {
-        match cursor.get_next_with(render) {
+    fn next_row(ctx: &ContextCore, cursor: &mut PhraseExportCursor) -> Option<Row> {
+        match cursor.get_next_with(ctx, render) {
             ExportStep::Row(row) => row,
             ExportStep::Assert(_) => None,
         }
@@ -1363,10 +1396,10 @@ mod phrase_cursor_tests {
 
     /// Every row the cursor still yields, driven as a C caller drives the
     /// iterator (`while has_next { get_next }`); `None` once a call fails.
-    fn drain(cursor: &mut PhraseExportCursor) -> Option<Vec<Row>> {
+    fn drain(ctx: &ContextCore, cursor: &mut PhraseExportCursor) -> Option<Vec<Row>> {
         let mut rows = Vec::new();
         while cursor.has_next() {
-            rows.push(next_row(cursor)?);
+            rows.push(next_row(ctx, cursor)?);
         }
         Some(rows)
     }
@@ -1378,10 +1411,10 @@ mod phrase_cursor_tests {
         assert!(cursor.has_next());
         assert_eq!(cursor.next_token >> 24, 1, "the guint8 alias of library 1");
         assert_eq!(cursor.next_pronunciation, 0);
-        let all = drain(&mut cursor).expect("every row");
+        let all = drain(&ctx, &mut cursor).expect("every row");
         assert!(!all.is_empty());
         let mut library = ctx.phrase_export_cursor(1);
-        assert_eq!(all, drain(&mut library).expect("every row"));
+        assert_eq!(all, drain(&ctx, &mut library).expect("every row"));
     }
 
     #[test]
@@ -1391,7 +1424,7 @@ mod phrase_cursor_tests {
             let mut cursor = ctx.phrase_export_cursor(index);
             assert!(!cursor.has_next(), "nibble {index}");
             assert!(matches!(
-                cursor.get_next_with(|_| ()),
+                cursor.get_next_with(&ctx, |_| ()),
                 ExportStep::Assert(ExportAssert::Item)
             ));
         }
@@ -1416,12 +1449,13 @@ mod phrase_cursor_tests {
                 // A dense Rust ID outside the syllable inventory has no
                 // ChewingKey encoding. Only the standalone row store can
                 // hold that synthetic input; C parsers produce packed keys.
+                ctx.runtime = None;
                 ctx.user = Some(
                     oxpinyin_user::UserStore::create_standalone(&standalone.path().join("phrases"))
                         .expect("standalone store"),
                 );
             }
-            let store = ctx.user.as_mut().unwrap();
+            let store = ctx.user_store_mut().unwrap();
             store
                 .add_phrase_in(
                     USER_DICTIONARY,
@@ -1435,14 +1469,14 @@ mod phrase_cursor_tests {
                 .expect("representable session key or standalone row");
             let mut cursor = ctx.phrase_export_cursor(u32::from(USER_DICTIONARY));
             assert_eq!(
-                next_row(&mut cursor),
+                next_row(&ctx, &mut cursor),
                 Some(row("你好", "ni'hao", 5)),
                 "{tag}"
             );
             assert!(cursor.has_next(), "{tag}: the probe selects the item");
             for _ in 0..2 {
                 assert!(
-                    matches!(cursor.get_next_with(|_| ()), ExportStep::Assert(at) if at == site),
+                    matches!(cursor.get_next_with(&ctx, |_| ()), ExportStep::Assert(at) if at == site),
                     "{tag}"
                 );
             }
@@ -1452,7 +1486,7 @@ mod phrase_cursor_tests {
     #[test]
     fn session_rejects_a_rust_key_without_a_packed_representation() {
         let mut ctx = open();
-        let store = ctx.user.as_mut().unwrap();
+        let store = ctx.user_store_mut().unwrap();
         assert!(matches!(
             store.add_phrase_in(USER_DICTIONARY, &"甲".into(), &[KEY_SYLLABLE_MASK], Some(2)),
             Err(UserStoreError::InvalidPhrase)
@@ -1488,7 +1522,7 @@ mod phrase_cursor_tests {
     fn the_re_probe_reads_a_reading_imported_under_the_next_system_token() {
         let mut ctx = open();
         let mut cursor = ctx.phrase_export_cursor(1);
-        let first = next_row(&mut cursor);
+        let first = next_row(&ctx, &mut cursor);
         assert!(first.is_some());
         let next = cursor.next_token;
         assert_eq!(next >> 24, 1);
@@ -1511,11 +1545,9 @@ mod phrase_cursor_tests {
             })
             .collect();
         let stored = dict.system().pronunciations(next);
-        drop(library);
         // The same syllables with tone 1: a reading the item does not hold.
         let keys = user_keys(&spellings, 1);
-        ctx.user
-            .as_mut()
+        ctx.user_store_mut()
             .unwrap()
             .add_system_phrase_in(
                 1,
@@ -1532,7 +1564,7 @@ mod phrase_cursor_tests {
             .join("'");
         let mut rows = Vec::new();
         for _ in 0..=stored.len() {
-            rows.push(next_row(&mut cursor).expect("row"));
+            rows.push(next_row(&ctx, &mut cursor).expect("row"));
         }
         let mut expected: Vec<_> = stored
             .iter()
@@ -1548,7 +1580,7 @@ mod phrase_cursor_tests {
     #[test]
     fn a_user_library_import_after_begin_is_exported() {
         let mut ctx = open();
-        let store = ctx.user.as_mut().unwrap();
+        let store = ctx.user_store_mut().unwrap();
         store
             .add_phrase_in(
                 USER_DICTIONARY,
@@ -1559,7 +1591,7 @@ mod phrase_cursor_tests {
             .expect("first");
         let mut cursor = ctx.phrase_export_cursor(u32::from(USER_DICTIONARY));
         assert!(cursor.has_next());
-        let store = ctx.user.as_mut().unwrap();
+        let store = ctx.user_store_mut().unwrap();
         store
             .add_phrase_in(
                 USER_DICTIONARY,
@@ -1576,7 +1608,7 @@ mod phrase_cursor_tests {
                 Some(3),
             )
             .expect("merged reading");
-        let rows = drain(&mut cursor).expect("every row");
+        let rows = drain(&ctx, &mut cursor).expect("every row");
         assert_eq!(
             rows,
             vec![

@@ -53,7 +53,9 @@ pub use export_rows::{
     BigramExportWalk, BigramStep, ExportAssert, ExportRow, ExportStep, ExportedBigramRow,
     GramLoadFault, PhraseExportCursor,
 };
-pub use instance::{BEFORE_CURSOR_ANCHOR, InstanceCore};
+pub use instance::{
+    BEFORE_CURSOR_ANCHOR, InstanceCore, InstanceMut, InstanceRead, InstanceState, InstanceView,
+};
 pub use offsets::{
     double_offset_is_mid_key, double_original_offset, double_session_offset,
     full_offset_is_mid_key, full_original_offset, full_session_offset,

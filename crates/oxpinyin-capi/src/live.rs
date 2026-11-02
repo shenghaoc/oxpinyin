@@ -62,6 +62,62 @@ mod tests {
     use crate::test_support::{TempUserDir, open};
 
     #[test]
+    fn instance_outlives_context() {
+        let user_dir = TempUserDir::new("orphan-instance");
+        let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+        // SAFETY: the context is live and this test serializes all handle calls.
+        let owner = unsafe { crate::state::context_owner(context) };
+        let weak = std::rc::Rc::downgrade(&owner);
+        drop(owner);
+        let input = crate::test_support::cstr("nihao");
+        assert_eq!(
+            crate::parse::pinyin_parse_more_full_pinyins(instance, input.as_ptr()),
+            5
+        );
+        let marker = user_dir.path.join("user.conf");
+        let before = std::fs::read(&marker).expect("init marker");
+        crate::context::pinyin_fini(context);
+        assert!(!is_live(context));
+        let at_fini = std::fs::read(&marker).expect("fini marker");
+        assert_ne!(before, at_fini);
+        assert!(
+            weak.upgrade().is_some(),
+            "the instance retains the same allocation"
+        );
+        assert!(crate::sentence::pinyin_guess_sentence(instance));
+        assert!(crate::candidates::pinyin_train(instance, 0));
+        assert!(crate::instance::pinyin_reset(instance));
+        crate::instance::pinyin_free_instance(instance);
+        assert!(
+            weak.upgrade().is_none(),
+            "the last handle releases the allocation"
+        );
+        assert_eq!(
+            std::fs::read(marker).expect("marker after release"),
+            at_fini
+        );
+    }
+
+    #[test]
+    fn import_iterator_outlives_context() {
+        let user_dir = TempUserDir::new("orphan-import");
+        let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+        let import = crate::iterators::pinyin_begin_add_phrases(context, 5);
+        assert!(!import.is_null());
+        crate::instance::pinyin_free_instance(instance);
+        crate::context::pinyin_fini(context);
+        let phrase = crate::test_support::cstr("你好");
+        let reading = crate::test_support::cstr("ni3'hao3");
+        assert!(crate::iterators::pinyin_iterator_add_phrase(
+            import,
+            phrase.as_ptr(),
+            reading.as_ptr(),
+            7
+        ));
+        crate::iterators::pinyin_end_add_phrases(import);
+    }
+
+    #[test]
     fn a_context_is_live_from_init_to_fini() {
         let user_dir = TempUserDir::new("live-context");
         let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));

@@ -246,7 +246,7 @@ pub fn plant_bigram(user_dir: &std::path::Path, rows: Vec<(Vec<u8>, Vec<u8>)>) {
     oxpinyin_user::persistence::save(
         user_dir,
         &state,
-        &std::collections::BTreeMap::new().into(),
+        &oxpinyin_user::SystemOriginals::from(std::collections::BTreeMap::new()),
         &oxpinyin_data::user_files::SystemVersions::from_conf(&conf),
         1,
     )

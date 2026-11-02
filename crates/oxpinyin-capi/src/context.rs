@@ -6,8 +6,6 @@ use std::ptr;
 use crate::state::{CapiContext, box_context, context_mut};
 // Only the harness-gated fixture hooks below take a shared context ref; the
 // shipped build (--features shipped) does not compile them.
-#[cfg(not(feature = "shipped"))]
-use crate::state::context_ref;
 use crate::types::PinyinContext;
 
 fn init_context(systemdir: *const c_char, userdir: *const c_char) -> *mut PinyinContext {
@@ -172,8 +170,8 @@ pub extern "C" fn oxpinyin_test_set_user_bigram(
     }
 
     // SAFETY: `context` is non-null and was produced by `pinyin_init`.
-    let ctx = unsafe { context_ref(context) };
-    let Some(mut user) = ctx.user_store() else {
+    let ctx = unsafe { context_mut(context) };
+    let Some(user) = ctx.core.user_store_mut() else {
         return false;
     };
     let prev_text =
@@ -207,7 +205,7 @@ pub extern "C" fn oxpinyin_test_set_user_bigram(
 /// It does write `user.conf`, as the pin's does: the open counter
 /// `pinyin_init` raised is lowered (`counter > 1 ? counter - 1 : 0`) and
 /// the marker re-written, saved or not (`pinyin.cpp:1194-1200`) — the
-/// user store's fini, run as the context drops. A process that never
+/// user store's fini, run before releasing the public context handle. A process that never
 /// calls this leaves the raised counter behind, and the init that reads
 /// it past the limit wipes the profile, exactly as upstream's does.
 ///
@@ -224,15 +222,18 @@ pub extern "C" fn pinyin_fini(context: *mut PinyinContext) {
     }
 
     // `mark_version`'s user.conf write (`pinyin.cpp:1200`) runs when the
-    // user store drops, through `UserTableInfo::save`, which resets
+    // user store is finalised, through `UserTableInfo::save`, which resets
     // LC_NUMERIC to "C" (`table_info.cpp:378`; register row 39).
     // SAFETY: `context` was created by `pinyin_init` via `box_context`
     // (= `Box::into_raw`), the registry held its address and this call
     // removed it, so no other call can free it. The caller transfers
-    // ownership back.
+    // ownership back. The C caller serializes this call with all operations
+    // on its instances and iterators, so the retained allocation is exclusively
+    // borrowed for fini even when other handles still own it.
     unsafe {
-        let ctx = Box::from_raw(context.cast::<CapiContext>());
-        drop(ctx);
+        let mut owner = Box::from_raw(context.cast::<crate::state::ContextOwner>());
+        crate::state::owner_mut(&mut owner).core.finish();
+        drop(owner);
     };
 }
 
