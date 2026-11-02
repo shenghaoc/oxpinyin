@@ -410,7 +410,9 @@ fn append_punctuation(table: &Tree, token: u32, punctuation: &CStr) {
     let mut runs: Vec<Vec<u32>> = Vec::new();
     let mut current = Vec::new();
     for word in existing
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|word| u32::from_le_bytes([word[0], word[1], word[2], word[3]]))
     {
         if word == 0 {

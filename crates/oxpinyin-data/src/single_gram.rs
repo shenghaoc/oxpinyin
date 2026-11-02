@@ -67,7 +67,7 @@ pub fn decode_single_gram(bytes: &[u8]) -> Result<(u32, Vec<SingleGramRecord>), 
         )));
     }
     let mut records = Vec::with_capacity(rest.len() / 8);
-    for record in rest.chunks_exact(8) {
+    for record in rest.as_chunks::<8>().0.iter() {
         let next = u32::from_le_bytes([record[0], record[1], record[2], record[3]]);
         let count = u32::from_le_bytes([record[4], record[5], record[6], record[7]]);
         records.push((next, count));

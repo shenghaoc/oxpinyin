@@ -3153,7 +3153,9 @@ impl<S: WriteStore> GenericUserStore<S> {
         if self.inner.libpinyin.is_some() {
             return Ok(self.with_user_item(token, |item| {
                 item.as_bytes()[6..6 + 4 * item.phrase_length()]
-                    .chunks_exact(4)
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
                     .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
                     .collect()
             }));
@@ -3218,7 +3220,9 @@ impl<S: WriteStore> GenericUserStore<S> {
                     let reading = item.pronunciation(nth)?;
                     reading
                         .keys
-                        .chunks_exact(2)
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
                         .map(|bytes| {
                             let key =
                                 ChewingKey::from_packed(u16::from_le_bytes([bytes[0], bytes[1]]));
@@ -3285,7 +3289,9 @@ impl<S: WriteStore> GenericUserStore<S> {
                     Some(
                         reading
                             .keys
-                            .chunks_exact(2)
+                            .as_chunks::<2>()
+                            .0
+                            .iter()
                             .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]))
                             .collect(),
                     )
@@ -3496,7 +3502,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             if let Some(items) = phrases.libraries.get(&library) {
                 for (_, item) in items.items() {
                     for reading in item.pronunciations() {
-                        let pinyin = reading.keys.chunks_exact(2).enumerate().try_fold(
+                        let pinyin = reading.keys.as_chunks::<2>().0.iter().enumerate().try_fold(
                             String::new(),
                             |mut text, (position, bytes)| {
                                 let key = ChewingKey::from_packed(u16::from_le_bytes([
@@ -3516,7 +3522,9 @@ impl<S: WriteStore> GenericUserStore<S> {
                         );
                         if let Some(pinyin) = pinyin {
                             let text = item.as_bytes()[6..6 + 4 * item.phrase_length()]
-                                .chunks_exact(4)
+                                .as_chunks::<4>()
+                                .0
+                                .iter()
                                 .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
                                 .collect();
                             out.push(ExportedPhrase {
@@ -4578,7 +4586,9 @@ impl<S: WriteStore> GenericUserStore<S> {
                     (
                         reading
                             .keys
-                            .chunks_exact(2)
+                            .as_chunks::<2>()
+                            .0
+                            .iter()
                             .map(|b| ChewingKey::from_packed(u16::from_le_bytes([b[0], b[1]])))
                             .collect(),
                         reading.freq,

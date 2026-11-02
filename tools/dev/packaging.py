@@ -20,6 +20,29 @@ from .runners import Finished, emit, guarded, status, write
 ROOT = Path(__file__).resolve().parents[2]
 LIBRARIES = {'libpinyin': 'oxpinyin-capi', 'libzhuyin': 'oxpinyin-zhuyin-capi'}
 HEADERS = ('novel_types.h', 'pinyin_custom2.h')
+LOAD_CHILD = r'''
+import ctypes, os, sys
+path, symbol = sys.argv[1:]
+class Info(ctypes.Structure):
+    _fields_ = [('fname', ctypes.c_char_p), ('fbase', ctypes.c_void_p),
+                ('sname', ctypes.c_char_p), ('saddr', ctypes.c_void_p)]
+try:
+    function = getattr(ctypes.CDLL(path), symbol)
+except (OSError, AttributeError) as error:
+    print(error)
+    sys.exit(1)
+info = Info()
+libc = ctypes.CDLL(None)
+libc.dladdr.argtypes = [ctypes.c_void_p, ctypes.POINTER(Info)]
+if not libc.dladdr(ctypes.cast(function, ctypes.c_void_p), ctypes.byref(info)) or not info.fname:
+    print(f'dladdr could not place {symbol}')
+    sys.exit(1)
+loaded = os.path.realpath(info.fname.decode(errors='surrogateescape'))
+if loaded != os.path.realpath(path):
+    print(f'{symbol} resolved in {loaded}, not in {path}')
+    sys.exit(1)
+'''
+ENTRY_POINTS = {'libpinyin': 'pinyin_init', 'libzhuyin': 'zhuyin_init'}
 NAMES = ('install', 'relink-versioned', 'pc-version', 'check-pc-version', 'check-pc-metadata',
          'release-stage', 'release-deb', 'release-rpm', 'release-arch', 'compare-installs', 'sizes')
 
@@ -73,6 +96,16 @@ class Tools:
                 fail(str(error), 126)
         if code:
             raise Finished(code)
+
+    def load(self, path, symbol):
+        """dlopen the library in a child with the dyld search overrides removed and look one symbol up.
+
+        Returns the loader's message on failure, else ''. The child asks dladdr where the symbol came
+        from, so a different image of the same install name cannot satisfy the check.
+        """
+        env = {name: value for name, value in self.env.items() if not name.startswith('DYLD_')}
+        done = self.capture([sys.executable, '-I', '-c', LOAD_CHILD, str(path), symbol], env=env)
+        return done.stdout.decode(errors='surrogateescape').strip() if done.status else ''
 
     def which(self, name):
         return shutil.which(name, path=self.env.get('PATH'))
@@ -261,6 +294,7 @@ def install_library(argv, tools):
                f'--includedir={layout.includedir}', f'--target-dir={layout.target}']
     if layout.destdir:
         command.append(f'--destdir={layout.destdir}')
+    system = tools.text(['uname', '-s'])
     tools.heavy([*command, *layout.passthru], cwd=crate)
     data = layout.baked().read_bytes()
     for name, value in [('prefix', layout.prefix), ('exec_prefix', '${prefix}'),
@@ -269,7 +303,6 @@ def install_library(argv, tools):
     pc = layout.pcdir / (layout.library + '.pc')
     pc.write_bytes(data)
     emit(f'installed complete pkg-config file: {pc}')
-    system = tools.text(['uname', '-s'])
     features = ['--features', layout.features()] if layout.features() else []
     if system == 'Linux':
         with directory(tools.root):
@@ -278,6 +311,17 @@ def install_library(argv, tools):
                     '--soname', layout.library + '.so.15',
                     '--dest', layout.destdir + layout.libdir + '/' + layout.library + '.so.15.0.0',
                     *features], tools)
+    if system == 'Darwin' and layout.triple.endswith('-apple-darwin'):
+        dylib = Path(layout.destdir + layout.libdir) / (layout.library + '.15.0.0.dylib')
+        host = '\n'.join(re.findall(r'^host: (.*)$', tools.text(['rustc', '-vV']), re.M))
+        if layout.triple.split('-')[0] != host.split('-')[0]:
+            emit(f'load check skipped: target {layout.triple} is not the running architecture ({host}); '
+                 'the in-process dlopen cannot load it')
+            return 0
+        problem = tools.load(dylib, ENTRY_POINTS[layout.library])
+        if problem:
+            fail(f'error: the installed {dylib} does not load:\n         {problem}')
+        emit(f'loaded {dylib} and found {ENTRY_POINTS[layout.library]}')
     return 0
 
 

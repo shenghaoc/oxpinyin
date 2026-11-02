@@ -477,7 +477,7 @@ where
             if value.len() != header_len {
                 return Ok(None);
             }
-            return Ok(Some(S::MagicHeader::decode(&value)?));
+            Ok(Some(S::MagicHeader::decode(&value)?))
         }
         #[cfg(not(feature = "bdb"))]
         {
@@ -560,7 +560,7 @@ where
                 "flexible bigram array header is {} bytes, shorter than the pin's {header_len}",
                 value.len(),
             );
-            return Ok(Some(S::ArrayHeader::decode(&value)?));
+            Ok(Some(S::ArrayHeader::decode(&value)?))
         }
         #[cfg(not(feature = "bdb"))]
         {

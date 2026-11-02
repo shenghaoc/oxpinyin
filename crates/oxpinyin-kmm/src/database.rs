@@ -122,7 +122,7 @@ impl Database {
     pub fn set_magic_header(&self, header: &KMixtureModelMagicHeader) {
         #[cfg(feature = "bdb")]
         if let Some(db) = self.unopened.as_ref() {
-            let _ = db.put(&[0; 8], &header.encode());
+            db.put(&[0; 8], &header.encode());
             return;
         }
         if let Some(inner) = self.inner.as_ref() {
@@ -180,7 +180,7 @@ impl Database {
     pub fn store(&self, token: u32, gram: &KmmGram) {
         #[cfg(feature = "bdb")]
         if let Some(db) = self.unopened.as_ref() {
-            let _ = db.put(&token.to_ne_bytes(), &gram.encode());
+            db.put(&token.to_ne_bytes(), &gram.encode());
             return;
         }
         if let Some(inner) = self.inner.as_ref() {
@@ -224,7 +224,7 @@ impl Database {
     pub fn set_array_header(&self, token: u32, header: &KMixtureModelArrayHeader) {
         #[cfg(feature = "bdb")]
         if let Some(db) = self.unopened.as_ref() {
-            let _ = db.put(&token.to_ne_bytes(), &header.encode());
+            db.put(&token.to_ne_bytes(), &header.encode());
             return;
         }
         if let Some(inner) = self.inner.as_ref() {

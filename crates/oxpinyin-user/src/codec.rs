@@ -124,7 +124,9 @@ pub(crate) fn decode_words(bytes: &[u8]) -> Result<Vec<u32>, DecodeError> {
         });
     }
     Ok(bytes
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|word| u32::from_le_bytes([word[0], word[1], word[2], word[3]]))
         .collect())
 }

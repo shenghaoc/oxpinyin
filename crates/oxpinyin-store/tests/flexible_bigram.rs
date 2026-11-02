@@ -133,10 +133,8 @@ fn read_words<const N: usize>(bytes: &[u8]) -> Result<[u32; N], StoreError> {
         ));
     }
     let mut values = [0u32; N];
-    for (value, chunk) in values.iter_mut().zip(bytes.chunks_exact(4)) {
-        let mut word = [0u8; 4];
-        word.copy_from_slice(chunk);
-        *value = u32::from_ne_bytes(word);
+    for (value, chunk) in values.iter_mut().zip(bytes.as_chunks::<4>().0) {
+        *value = u32::from_ne_bytes(*chunk);
     }
     Ok(values)
 }

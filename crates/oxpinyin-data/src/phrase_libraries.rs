@@ -605,7 +605,9 @@ impl PhraseLibraries {
                 .map(|view| {
                     let keys = view
                         .keys
-                        .chunks_exact(2)
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
                         .map(|pair| ChewingKey::from_packed(u16::from_le_bytes([pair[0], pair[1]])))
                         .collect();
                     (keys, view.freq)
@@ -626,7 +628,9 @@ impl PhraseLibraries {
                 .map(|view| {
                     let keys = view
                         .keys
-                        .chunks_exact(2)
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
                         .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
                         .collect();
                     (keys, u64::from(view.freq))
@@ -646,7 +650,7 @@ impl PhraseLibraries {
         for view in item.pronunciations() {
             let mut syllables = Vec::new();
             let mut ok = true;
-            for pair in view.keys.chunks_exact(2) {
+            for pair in view.keys.as_chunks::<2>().0.iter() {
                 let packed = u16::from_le_bytes([pair[0], pair[1]]);
                 let key = ChewingKey::from_packed(packed);
                 let spelling = key.pinyin_spelling();
@@ -680,7 +684,7 @@ fn item_possibility(item: &PhraseItemView<'_>, query: &[ChewingKey]) -> (u64, u6
         if view.keys.len() / 2 == query.len()
             && query
                 .iter()
-                .zip(view.keys.chunks_exact(2))
+                .zip(view.keys.as_chunks::<2>().0.iter())
                 .all(|(q, pair)| {
                     key_matches(
                         q,
@@ -726,7 +730,7 @@ mod tests {
     fn chunk(payload: &[u8]) -> Vec<u8> {
         let mut checksum = 0_u32;
         let aligned = payload.len() & !0x3;
-        for word in payload[..aligned].chunks_exact(4) {
+        for word in payload[..aligned].as_chunks::<4>().0.iter() {
             checksum ^= u32::from_le_bytes([word[0], word[1], word[2], word[3]]);
         }
         for (shift, byte) in payload[aligned..].iter().enumerate() {
