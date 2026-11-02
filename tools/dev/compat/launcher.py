@@ -1,8 +1,11 @@
 """Host compatibility orchestration, using one reserved container launch service."""
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import os
+import platform
 from pathlib import Path
 import re
+import selectors
 import shutil
 import subprocess
 import sys
@@ -12,7 +15,7 @@ import time
 from .. import cell, slot
 from ..native import shell_status
 from ..runners import Finished
-from . import boundary, identity, images, memory
+from . import boundary, identity, images, memory, storage
 from .process import ROOT, capture, fail, run, tee, text
 
 # These helpers are verified against the same source snapshot, before execution.
@@ -20,6 +23,227 @@ STAGED = {'tools/oracle/compat-inside.sh': 'inside.sh',
           'tools/lib/bash-floor.sh': 'bash-floor.sh',
           'tools/dev/compat/identity.py': 'identity.py',
           'tools/dev/compat/guest.py': 'guest.py'}
+
+
+def ensure_volume(runtime, kind, root=ROOT):
+    """Create the checkout volume with labels or reject an ownership mismatch."""
+    volume = storage.volume_name(root)
+    expected = storage.labels(root)
+    metadata = images.volume_metadata(runtime, kind, volume)
+    if metadata is None:
+        volume_labels = [part for key, value in expected.items() for part in ('--label', f'{key}={value}')]
+        run([runtime, 'volume', 'create', *(['-s', '20G'] if kind == 'container' else []), *volume_labels, volume])
+        metadata = images.volume_metadata(runtime, kind, volume)
+    if metadata is None or metadata.get('labels') != expected:
+        fail(f'FAIL: compatibility volume ownership labels do not match: {volume}')
+    return volume
+
+
+def storage_inspection_script():
+    """Propagate failures from every volume and target size command."""
+    return ('for d in /vol/*; do du -sk "$d" || exit $?; '
+            'for t in "$d"/targets "$d"/container/*/targets; do '
+            'if [ -d "$t" ]; then du -sk "$t" || exit $?; fi; done; '
+            'n=0; for t in "$d"/targets/*/*/*/*; do '
+            'if [ -d "$t" ]; then n=$((n+1)); fi; done; '
+            'printf "target trees: %s %s\\n" "$n" "$d"; done')
+
+
+def storage_measure(runtime, kind, names):
+    """Measure named volumes in read-only batches under memory admission."""
+    script = storage_inspection_script()
+    for offset in range(0, len(names), 12):
+        mounts = [part for volume in names[offset:offset + 12] for part in ('-v', f'{volume}:/vol/{volume}:ro')]
+        name = f'oxpinyin-storage-inspect-{os.getpid()}-{offset}'
+        status = shell_status(memory.run(runtime, kind, name, 512,
+                              ['--cpus', '1', *mounts, '--', 'debian:trixie', 'sh', '-c', script], remove=True))
+        if status:
+            return status
+    return 0
+
+
+def checkout_owners(root=ROOT):
+    """Discover current and linked checkout identities without a manual registry."""
+    output = capture(['git', 'worktree', 'list', '--porcelain'], cwd=root).stdout.decode()
+    paths = [line.removeprefix('worktree ') for line in output.splitlines() if line.startswith('worktree ')]
+    return {storage.owner_id(Path(path).resolve()) for path in paths if Path(path).is_dir()} | {storage.owner_id(root)}
+
+
+def storage_inspect(runtime, kind, *, root=ROOT):
+    """List legacy names and measure only labelled project volumes."""
+    command = [runtime, 'volume', 'list'] if kind == 'container' else [runtime, 'volume', 'ls', '--format', '{{.Name}}']
+    names = storage.volume_names(capture(command).stdout.decode())
+    owners = checkout_owners(root)
+    owned = []
+    for name in names:
+        metadata = images.volume_metadata(runtime, kind, name)
+        if metadata is None:
+            raise ValueError(f'volume disappeared during inspection: {name}')
+        state = storage.classify(name, metadata, owners)
+        print(f'{name}: {state}', flush=True)
+        if state.startswith(('active owner ', 'orphaned owner ')):
+            owned.append(name)
+    return storage_measure(runtime, kind, owned)
+
+
+def maintenance_image(root=ROOT):
+    """Use this checkout's existing compatibility image, which contains Python."""
+    arch = {'arm64': 'linux/arm64', 'aarch64': 'linux/arm64', 'x86_64': 'linux/amd64'}.get(platform.machine())
+    if not arch:
+        fail('unsupported native architecture for storage maintenance', 2)
+    reference = images.image_tag(root)
+    ca = os.environ.get('OXPINYIN_PROXY_CA', '')
+    ca_identity = identity.digest_file(ca) if ca else 'no-custom-ca'
+    return 'oxpinyin-compat:' + image_identity(root, reference, ca_identity, arch)
+
+
+def wait_cleanup_ready(process):
+    """Drain size output while allowing cooperative cancellation."""
+    pending = b''
+    with selectors.DefaultSelector() as selector:
+        selector.register(process.stdout, selectors.EVENT_READ)
+        while True:
+            slot.check_cancelled()
+            if not selector.select(0.25):
+                continue
+            block = os.read(process.stdout.fileno(), 65536)
+            if not block:
+                raise ValueError('cleanup exited before confirming the volume lock')
+            pending += block
+            if len(pending) > 1024 * 1024:
+                raise ValueError('cleanup output line exceeded its limit')
+            while b'\n' in pending:
+                line, pending = pending.split(b'\n', 1)
+                if line == b'OXPINYIN_CLEAN_READY':
+                    return
+                print(line.decode(errors='replace'), flush=True)
+
+
+def storage_clean(runtime, kind, categories, *, root=ROOT):
+    """Clean selected paths only in this checkout's volume under the guest lock."""
+    allowed = {'targets', 'work', 'results'}
+    categories = set(categories)
+    if not categories or not categories <= allowed:
+        fail('choose at least one of --targets, --work or --results', 2)
+    volume = storage.volume_name(root)
+    metadata = images.volume_metadata(runtime, kind, volume)
+    if metadata is None or metadata.get('labels') != storage.labels(root):
+        fail(f'volume missing or ownership labels do not match: {volume}', 2)
+    exported = identity.unredirected(Path(root) / '.oxpinyin-container/results', root)
+    if 'results' in categories and exported.exists():
+        if not exported.is_dir():
+            fail('refusing non-directory exported results')
+        run(['du', '-sk', exported])
+    image = maintenance_image(root)
+    if capture([runtime, 'image', 'inspect', image], check=False, stderr=False).status:
+        fail('compatibility image is absent; run a compatibility check first', 2)
+    name = f'oxpinyin-storage-clean-{os.getpid()}'
+    options = ['--cpus', '1', '-v', f'{volume}:/state', '--',
+               image, 'sh', '-c', "trap 'exit 0' TERM INT; while :; do sleep 1 & wait $!; done"]
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(memory.run, runtime, kind, name, 512, options, remove=True)
+        try:
+            while True:
+                slot.check_cancelled()
+                if future.done():
+                    future.result()  # Preserve admission or creation failures.
+                    raise ValueError('maintenance container exited before cleanup')
+                if not capture([runtime, 'exec', name, 'true'], check=False, stderr=False).status:
+                    break
+                time.sleep(0.25)
+            process = subprocess.Popen([runtime, 'exec', '-i', name, 'python3', '-u', '-c', storage.CLEAN_GUEST,
+                                        '/state', *sorted(categories)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                       start_new_session=True)
+            try:
+                wait_cleanup_ready(process)
+                if kind == 'container':
+                    run([runtime, 'clean', name])
+                if 'results' in categories and exported.exists():
+                    shutil.rmtree(exported)
+                process.stdin.write(b'\n')
+                process.stdin.flush()
+                if process.wait(timeout=30):
+                    raise ValueError('cleanup process failed')
+            finally:
+                if process.poll() is None:
+                    slot.terminate_group(process)
+                process.stdin.close()
+                process.stdout.close()
+        finally:
+            subprocess.run([runtime, 'stop', name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           timeout=30, check=False)
+        status = shell_status(future.result())
+    return status
+
+
+def storage_clean_selected(runtime, kind, selections, *, root=ROOT):
+    """Verify and measure every named legacy or orphan before removing any."""
+    owners = checkout_owners(root)
+    records = {}
+    for expected, name in selections:
+        if name in records:
+            fail(f'duplicate volume selection: {name}', 2)
+        metadata = images.volume_metadata(runtime, kind, name) if storage.VOLUME.fullmatch(name) else None
+        state = storage.classify(name, metadata, owners) if metadata is not None else ''
+        if ((expected == 'legacy' and state != 'legacy, unlabelled') or
+                (expected == 'orphan' and not state.startswith('orphaned owner '))):
+            fail(f'selected volume is missing or not verified {expected} storage: {name}', 2)
+        records[name] = metadata
+        print(f'{name}: {state}', flush=True)
+    status = storage_measure(runtime, kind, list(records))
+    if status:
+        return status
+    owners = checkout_owners(root)
+    for expected, name in selections:
+        metadata = images.volume_metadata(runtime, kind, name)
+        if metadata != records[name] or (expected == 'orphan' and
+                not storage.classify(name, metadata, owners).startswith('orphaned owner ')):
+            fail(f'volume metadata or ownership changed before deletion: {name}', 2)
+    return run([runtime, 'volume', 'rm', *records], check=False)
+
+
+def consume_runtime_option(option, args, values):
+    """Consume the launcher's shared runtime override for any compat command."""
+    if option != '--runtime':
+        return False
+    if not args:
+        fail('--runtime requires a value', 2)
+    values['runtime'] = args.pop(0)
+    return True
+
+
+def storage_main(argv):
+    """Dispatch an explicitly invoked storage operation."""
+    args = list(argv)
+    if not args or args[0] not in ('inspect', 'clean'):
+        fail('usage: just compat storage inspect | clean --targets|--work|--results|--legacy NAME|--orphan NAME', 2)
+    action = args.pop(0)
+    values = {'runtime': os.environ.get('OXPINYIN_CONTAINER', '')}
+    categories, selections = [], []
+    while args:
+        option = args.pop(0)
+        if consume_runtime_option(option, args, values):
+            continue
+        if action == 'clean' and option in ('--targets', '--work', '--results'):
+            categories.append(option[2:])
+        elif action == 'clean' and option in ('--legacy', '--orphan') and args:
+            selections.append((option[2:], args.pop(0)))
+        else:
+            fail(f'invalid storage option: {option}', 2)
+    if action == 'clean' and (bool(categories) == bool(selections)):
+        fail('select cleanup categories or explicitly named legacy/orphan volumes', 2)
+    runtime = images.select_runtime(values['runtime'])
+    kind = Path(runtime).name
+    if kind not in ('container', 'podman', 'docker'):
+        fail('storage maintenance requires Apple container, Podman or Docker', 2)
+    executable = shutil.which(runtime)
+    if not executable:
+        fail('container runtime unavailable')
+    if action == 'inspect':
+        return storage_inspect(executable, kind)
+    if selections:
+        return storage_clean_selected(executable, kind, selections)
+    return storage_clean(executable, kind, categories)
 
 
 def usage(error=False):
@@ -39,6 +263,8 @@ def arguments(argv):
         if option in ('-h', '--help'):
             usage()
             raise Finished(0)
+        if consume_runtime_option(option, args, values):
+            continue
         if option in ('--memory-smoke', '--list'):
             smoke |= option == '--memory-smoke'
             listing |= option == '--list'
@@ -184,7 +410,7 @@ def launch(argv, *, root=ROOT):
             transport, exported = result_root / 'transport', result_root / 'result'
             transport.mkdir(parents=True)
             exported.mkdir(parents=True)
-            volume = 'oxpinyin-compat-' + hashlib.sha256(str(root).encode()).hexdigest()[:16]
+            volume = storage.volume_name(root)
             relabel = ',z' if kind == 'podman' else ''
             build_flags = [] if platform == 'linux/amd64' else ['--build-arg', f'ORACLE_PLATFORM={platform}']
             run_env = ['--cpus', jobs, '-e', f'CARGO_BUILD_JOBS={jobs}', '-e', f'RUST_TEST_THREADS={jobs}']
@@ -244,8 +470,7 @@ def launch(argv, *, root=ROOT):
             input_identity = identity.seal_inputs(directory, key, reference_tag, initial['head'],
                                                   content, triple, values['cell'])
             image_check = lambda record: images.verify_created_image(record, content)
-            if capture([runtime, 'volume', 'inspect', volume], check=False, stderr=False).status:
-                run([runtime, 'volume', 'create', *(['-s', '20G'] if kind == 'container' else []), volume])
+            ensure_volume(runtime, kind, root)
             print(f'Compatibility: {platform}; native execution. No native performance claims.\nVolume: {volume}\nResults: {result_root}', flush=True)
             code = reserved(name, [*platform_args, *run_env, '-v', f'{volume}:/state',
                             '-v', f'{directory}:/input:ro{relabel}', '-w', '/'],

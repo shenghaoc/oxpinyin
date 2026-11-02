@@ -234,6 +234,13 @@ if __name__ == '__main__': unittest.main()
         selected = test_runner.changed_harness_files(test_runner.harness_files(), ['tools/dev/compat/guest.py'])
         self.assertIn('tools/dev/compat/guest.test.py', selected)
 
+    def test_storage_and_preparation_changes_select_their_tests(self):
+        files = test_runner.harness_files()
+        for source, test in (('tools/dev/compat/storage.py', 'tools/dev/compat/storage.test.py'),
+                             ('tools/dev/compat/prepared.py', 'tools/dev/compat/prepared.test.py')):
+            with self.subTest(source=source):
+                self.assertIn(test, test_runner.changed_harness_files(files, [source]))
+
     def test_shared_files_including_justfile_select_every_harness(self):
         files = test_runner.harness_files()
         self.assertIn('tools/dev/python-request.test.py', files)

@@ -19,7 +19,234 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 from tools.dev import host, slot, test_support
-from tools.dev.compat import boundary, memory, launcher, images
+from tools.dev.compat import boundary, memory, launcher, images, storage
+from tools.dev.runners import Finished
+
+
+class StorageAdapterTests(unittest.TestCase):
+    @staticmethod
+    def metadata(runtime, kind, name):
+        return {'labels': {storage.PROJECT: 'oxpinyin', storage.OWNER: name[-16:], storage.PURPOSE: storage.PURPOSE_VALUE}}
+
+    def test_inspection_uses_readonly_mounts_and_reservation_for_each_runtime(self):
+        output = mock.Mock(stdout=b'NAME TYPE\noxpinyin-compat-v2-0123456789abcdef named\nother named\n')
+        for kind in ('container', 'podman', 'docker'):
+            with self.subTest(kind=kind), mock.patch.object(launcher, 'capture', return_value=output) as capture, \
+                 mock.patch.object(launcher.memory, 'run', return_value=0) as launch, \
+                 mock.patch.object(launcher, 'checkout_owners', return_value=set()), \
+                 mock.patch.object(images, 'volume_metadata', side_effect=self.metadata):
+                self.assertEqual(launcher.storage_inspect(kind, kind), 0)
+                expected = [kind, 'volume', 'list'] if kind == 'container' else [kind, 'volume', 'ls', '--format', '{{.Name}}']
+                capture.assert_called_once_with(expected)
+                args = launch.call_args.args
+                self.assertEqual(args[1], kind)
+                self.assertEqual(args[3], 512)
+                mounts = [value for value in args[4] if ':/vol/' in value]
+                self.assertEqual(mounts, ['oxpinyin-compat-v2-0123456789abcdef:/vol/oxpinyin-compat-v2-0123456789abcdef:ro'])
+                self.assertTrue(launch.call_args.kwargs['remove'])
+
+    def test_inspection_command_propagates_failed_du(self):
+        with tempfile.TemporaryDirectory() as root:
+            Path(root, 'volume/container/0123456789abcdef/targets').mkdir(parents=True)
+            Path(root, 'volume/targets/image/triple/dev-opt1/tkrzw').mkdir(parents=True)
+            script = launcher.storage_inspection_script().replace('/vol/*', root + '/*')
+            measured = subprocess.run(['sh', '-c', script], capture_output=True, text=True)
+            self.assertEqual(measured.returncode, 0, measured.stderr)
+            self.assertIn('target trees: 1 ', measured.stdout)
+            for fail_at in (1, 2, 3):
+                with self.subTest(fail_at=fail_at):
+                    stub = f'n=0; du() {{ n=$((n+1)); [ "$n" -ne {fail_at} ] || return 73; }}; '
+                    result = subprocess.run(['sh', '-c', stub + script], capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 73)
+
+    def test_inspection_batches_large_volume_lists_for_each_runtime(self):
+        names = [f'oxpinyin-compat-v2-{n:016x}' for n in range(22)]
+        listing = mock.Mock(stdout=('\n'.join(names)).encode())
+        for kind in ('container', 'podman', 'docker'):
+            with self.subTest(kind=kind), mock.patch.object(launcher, 'capture', return_value=listing), \
+                 mock.patch.object(launcher.memory, 'run', return_value=0) as launch, \
+                 mock.patch.object(launcher, 'checkout_owners', return_value=set()), \
+                 mock.patch.object(images, 'volume_metadata', side_effect=self.metadata):
+                self.assertEqual(launcher.storage_inspect(kind, kind), 0)
+                self.assertEqual(launch.call_count, 2)
+                mounts = [value for call in launch.call_args_list for value in call.args[4] if ':/vol/' in value]
+                self.assertEqual(len(mounts), 22)
+                self.assertTrue(all(value.endswith(':ro') for value in mounts))
+
+    def test_inspection_propagates_runtime_failure(self):
+        listing = mock.Mock(stdout=b'oxpinyin-compat-v2-0123456789abcdef\n')
+        for kind in ('container', 'podman', 'docker'):
+            with self.subTest(kind=kind), mock.patch.object(launcher, 'capture', return_value=listing), \
+                 mock.patch.object(launcher.memory, 'run', return_value=17), \
+                 mock.patch.object(launcher, 'checkout_owners', return_value=set()), \
+                 mock.patch.object(images, 'volume_metadata', side_effect=self.metadata):
+                self.assertEqual(launcher.storage_inspect(kind, kind), 17)
+
+    def test_volume_metadata_parses_each_runtime_and_fails_closed(self):
+        name = 'oxpinyin-compat-v2-0123456789abcdef'
+        labels = {'owner': 'fixture'}
+        for kind in ('container', 'podman', 'docker'):
+            row = {'configuration': {'name': name, 'labels': labels}} if kind == 'container' else {'Name': name, 'Labels': labels}
+            with self.subTest(kind=kind), mock.patch.object(images, 'capture', return_value=mock.Mock(status=0, stdout=json.dumps([row]).encode())):
+                self.assertEqual(images.volume_metadata(kind, kind, name), {'labels': labels})
+            with mock.patch.object(images, 'capture', return_value=mock.Mock(status=1, stderr=b'permission denied')):
+                with self.assertRaisesRegex(ValueError, 'cannot inspect'):
+                    images.volume_metadata(kind, kind, name)
+            with mock.patch.object(images, 'capture', return_value=mock.Mock(status=1, stderr=b'volume not found')):
+                self.assertIsNone(images.volume_metadata(kind, kind, name))
+
+    def test_volume_creation_labels_and_rejects_wrong_owner_for_each_runtime(self):
+        for kind in ('container', 'podman', 'docker'):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as root:
+                expected = {'labels': storage.labels(Path(root))}
+                with mock.patch.object(images, 'volume_metadata', side_effect=[None, expected]), \
+                     mock.patch.object(launcher, 'run', return_value=0) as run:
+                    name = launcher.ensure_volume(kind, kind, Path(root))
+                command = run.call_args.args[0]
+                self.assertEqual(name, storage.volume_name(Path(root)))
+                for key, value in storage.labels(Path(root)).items():
+                    self.assertIn(f'{key}={value}', command)
+                self.assertEqual('-s' in command, kind == 'container')
+                with mock.patch.object(images, 'volume_metadata', return_value={'labels': {}}), \
+                     mock.patch.object(launcher, 'run') as run:
+                    with self.assertRaises(Finished):
+                        launcher.ensure_volume(kind, kind, Path(root))
+                    run.assert_not_called()
+
+    def test_legacy_cleanup_requires_exact_unlabelled_selection_for_each_runtime(self):
+        name = 'oxpinyin-compat-0123456789abcdef'
+        for kind in ('container', 'podman', 'docker'):
+            with self.subTest(kind=kind), mock.patch.object(images, 'volume_metadata', return_value={'labels': {}}), \
+                 mock.patch.object(launcher, 'storage_measure', return_value=0) as measure, \
+                 mock.patch.object(launcher, 'run', return_value=0) as run:
+                self.assertEqual(launcher.storage_clean_selected(kind, kind, [('legacy', name)]), 0)
+                measure.assert_called_once_with(kind, kind, [name])
+                self.assertEqual(run.call_args.args[0], [kind, 'volume', 'rm', name])
+            with mock.patch.object(images, 'volume_metadata', return_value={'labels': {'foreign': 'yes'}}), \
+                 mock.patch.object(launcher, 'run') as run:
+                with self.assertRaises(Finished):
+                    launcher.storage_clean_selected(kind, kind, [('legacy', name)])
+                run.assert_not_called()
+
+    def test_selected_volumes_are_all_verified_and_measured_before_removal(self):
+        legacy = 'oxpinyin-compat-0123456789abcdef'
+        orphan = 'oxpinyin-compat-v2-fedcba9876543210'
+        selections = [('legacy', legacy), ('orphan', orphan)]
+        events = []
+        def metadata(runtime, kind, name):
+            events.append(('inspect', name))
+            return {'labels': {}} if name == legacy else self.metadata(runtime, kind, name)
+        def measure(runtime, kind, names):
+            events.append(('measure', list(names)))
+            return 0
+        def remove(command, **kwargs):
+            events.append(('remove', command))
+            return 0
+        with mock.patch.object(launcher, 'checkout_owners', return_value=set()), \
+             mock.patch.object(images, 'volume_metadata', side_effect=metadata), \
+             mock.patch.object(launcher, 'storage_measure', side_effect=measure), \
+             mock.patch.object(launcher, 'run', side_effect=remove):
+            self.assertEqual(launcher.storage_clean_selected('podman', 'podman', selections), 0)
+        self.assertEqual(events[2], ('measure', [legacy, orphan]))
+        self.assertEqual(events[-1], ('remove', ['podman', 'volume', 'rm', legacy, orphan]))
+        with mock.patch.object(launcher, 'checkout_owners', return_value={orphan[-16:]}), \
+             mock.patch.object(images, 'volume_metadata', side_effect=metadata), \
+             mock.patch.object(launcher, 'storage_measure') as measure, \
+             mock.patch.object(launcher, 'run') as remove:
+            with self.assertRaises(Finished):
+                launcher.storage_clean_selected('podman', 'podman', selections)
+            measure.assert_not_called()
+            remove.assert_not_called()
+
+    def test_storage_runtime_uses_shared_override_handling(self):
+        with mock.patch.object(images, 'select_runtime', return_value='podman') as select, \
+             mock.patch.object(launcher.shutil, 'which', return_value='/usr/bin/podman'), \
+             mock.patch.object(launcher, 'storage_inspect', return_value=0):
+            self.assertEqual(launcher.storage_main(['inspect', '--runtime', 'podman']), 0)
+        select.assert_called_once_with('podman')
+        values = {'runtime': ''}
+        self.assertTrue(launcher.consume_runtime_option('--runtime', ['docker'], values))
+        self.assertEqual(values['runtime'], 'docker')
+
+    def test_cleanup_uses_only_current_volume_and_reclaims_only_on_apple(self):
+        from tools.dev.compat import storage
+        for kind in ('container', 'podman', 'docker'):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as root:
+                future = mock.Mock()
+                future.done.return_value = False
+                future.result.return_value = 0
+                executor = mock.MagicMock()
+                executor.__enter__.return_value.submit.return_value = future
+                process = mock.Mock()
+                process.poll.return_value = 0
+                process.wait.return_value = 0
+                capture = mock.Mock(return_value=mock.Mock(status=0))
+                with mock.patch.object(launcher, 'capture', capture), \
+                     mock.patch.object(images, 'volume_metadata', return_value={'labels': storage.labels(Path(root))}), \
+                     mock.patch.object(launcher, 'maintenance_image', return_value='local-image'), \
+                     mock.patch.object(launcher, 'ThreadPoolExecutor', return_value=executor), \
+                     mock.patch.object(launcher.subprocess, 'Popen', return_value=process) as popen, \
+                     mock.patch.object(launcher.subprocess, 'run') as stop, \
+                     mock.patch.object(launcher, 'wait_cleanup_ready'), \
+                     mock.patch.object(launcher, 'run') as run:
+                    self.assertEqual(launcher.storage_clean(kind, kind, ['targets'], root=Path(root)), 0)
+                call = executor.__enter__.return_value.submit.call_args.args
+                self.assertEqual(call[2], kind)
+                self.assertEqual(call[4], 512)
+                options = call[5]
+                mounts = [value for value in options if ':/state' in value]
+                self.assertEqual(mounts, [storage.volume_name(Path(root)) + ':/state'])
+                self.assertIn(storage.CLEAN_GUEST, popen.call_args.args[0])
+                self.assertEqual(popen.call_args.args[0][:3], [kind, 'exec', '-i'])
+                self.assertTrue(popen.call_args.kwargs['start_new_session'])
+                self.assertTrue(stop.called)
+                commands = [item.args[0] for item in run.call_args_list]
+                self.assertEqual(any(command[1:2] == ['clean'] for command in commands), kind == 'container')
+                self.assertFalse(any('prune' in command for command in commands))
+
+    def test_cleanup_refuses_missing_owned_volume_for_every_runtime(self):
+        for kind in ('container', 'podman', 'docker'):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as root, \
+                 mock.patch.object(images, 'volume_metadata', return_value=None), \
+                 mock.patch.object(launcher.memory, 'run') as launch:
+                with self.assertRaises(Finished):
+                    launcher.storage_clean(kind, kind, ['targets'], root=Path(root))
+                launch.assert_not_called()
+
+    def test_adapter_failures_do_not_reclaim_or_touch_other_volumes(self):
+        for kind in ('container', 'podman', 'docker'):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as root:
+                future = mock.Mock()
+                future.done.return_value = False
+                executor = mock.MagicMock()
+                executor.__enter__.return_value.submit.return_value = future
+                process = mock.Mock()
+                process.poll.return_value = None
+                with mock.patch.object(launcher, 'capture', return_value=mock.Mock(status=0)), \
+                     mock.patch.object(images, 'volume_metadata', return_value={'labels': storage.labels(Path(root))}), \
+                     mock.patch.object(launcher, 'maintenance_image', return_value='local-image'), \
+                     mock.patch.object(launcher, 'ThreadPoolExecutor', return_value=executor), \
+                     mock.patch.object(launcher.subprocess, 'Popen', return_value=process), \
+                     mock.patch.object(launcher.subprocess, 'run') as stop, \
+                     mock.patch.object(launcher, 'wait_cleanup_ready', side_effect=ValueError('guest failed')), \
+                     mock.patch.object(slot, 'terminate_group') as terminate, \
+                     mock.patch.object(launcher, 'run') as run:
+                    with self.assertRaisesRegex(ValueError, 'guest failed'):
+                        launcher.storage_clean(kind, kind, ['targets'], root=Path(root))
+                terminate.assert_called_once_with(process)
+                self.assertEqual(stop.call_args.args[0][1], 'stop')
+                run.assert_not_called()
+
+    def test_cleanup_wait_honours_cancellation(self):
+        process = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], stdout=subprocess.PIPE)
+        try:
+            with mock.patch.object(slot, 'check_cancelled', side_effect=slot.Cancelled('cancelled')):
+                with self.assertRaises(slot.Cancelled):
+                    launcher.wait_cleanup_ready(process)
+        finally:
+            process.terminate()
+            process.wait(timeout=5)
+            process.stdout.close()
 
 
 class MemoryTests(unittest.TestCase):
@@ -526,7 +753,12 @@ if action=='--version': print('synthetic runtime 1')
 elif action=='image':
     if args[1]=='list': print(os.environ.get('FAKE_COMPAT_IMAGE',''))
     elif args[1]=='inspect': print(json.dumps([{'id':'a'*64, 'Id':'sha256:'+'a'*64}]))
-elif action in ('info','volume'): pass
+elif action=='volume':
+    if args[1]=='inspect':
+        name=args[2]; owner=name[-16:]
+        labels={'io.oxpinyin.project':'oxpinyin','io.oxpinyin.owner':owner,'io.oxpinyin.purpose':'checkout'}
+        print(json.dumps([{'configuration':{'name':name,'labels':labels}}]))
+elif action=='info': pass
 elif action=='create':
     for argument in args:
         if ':/input:ro' in argument:

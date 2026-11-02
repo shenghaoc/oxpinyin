@@ -4,7 +4,7 @@ import sys
 
 from ..runners import guarded
 from .. import slot
-from . import campaigns, fixtures, images, launcher
+from . import campaigns, fixtures, images, launcher, storage
 
 RECIPES = {
     'capture': fixtures.capture_fixtures,
@@ -17,6 +17,7 @@ RECIPES = {
     'verify-image': images.verify_image,
     'reproducible': images.reproducible,
     'pin-field': images.pin_field,
+    'storage': storage.main,
 }
 NAMES = (*RECIPES, 'image-tag', 'select-runtime')
 

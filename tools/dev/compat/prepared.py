@@ -9,6 +9,25 @@ from ..tool_diff import PIN_UTILITIES
 from .process import ROOT, PYTHON, run
 
 
+REQUIREMENTS = frozenset(('reference', 'model20', 'backend_utilities', 'cargo_c'))
+
+
+def requirements(rows):
+    """Union complete registry declarations; unknown or malformed means all."""
+    result = {key: False for key in REQUIREMENTS}
+    if not rows:
+        return dict.fromkeys(REQUIREMENTS, True)
+    for row in rows:
+        value = row.get('compat_requirements')
+        if (not isinstance(value, dict) or set(value) != REQUIREMENTS
+                or any(type(value[key]) is not bool for key in REQUIREMENTS)
+                or (not value['reference'] and (value['model20'] or row.get('oracle', True)))):
+            return dict.fromkeys(REQUIREMENTS, True)
+        for key in REQUIREMENTS:
+            result[key] |= value[key]
+    return result
+
+
 def require_metadata_tool(environment):
     """Apply the existing cargo-c version floor before any metadata build."""
     tool = next(tool for tool in doctor.TOOLS if tool.name == 'cargo-c')
