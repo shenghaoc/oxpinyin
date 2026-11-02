@@ -7,6 +7,85 @@ is a drop-in for libpinyin: consumers such as `ibus-libpinyin` link the
 `-lpinyin`, `libpinyin.so.15` — and need no source changes. The same
 applies to `oxpinyin-zhuyin-capi` and `libzhuyin`.
 
+## Trainer utility layout
+
+Peng Wu's [epico/trainer](https://github.com/epico/trainer/tree/b1927376735c0c1042d72af2eca0e25c53595724)
+at `b1927376735c0c1042d72af2eca0e25c53595724` changes into a libpinyin
+tree's `data/` directory before invoking utilities. Build the tools with the
+[native setup](runbooks/setup.md), then stage two new trees:
+
+```sh
+just build --locked -p oxpinyin-utils --bins
+just trainer-layout /absolute/path/trainer-tools --bin-dir target/debug
+just trainer-layout /absolute/path/trainer-evals --bin-dir target/debug
+```
+
+The recipe delegates to `tools.dev.packaging`. It copies all 21 pin-named
+utilities into `utils/storage/`, `utils/segment/` and `utils/training/` and
+writes `data/Makefile`. Copies preserve executable permissions and survive
+Cargo cleanup; native shared-library dependencies must still be available.
+The destination must not exist. `--bin-dir` selects another build/profile
+directory; its default is `$CARGO_TARGET_DIR/debug` or `target/debug`.
+Nothing is installed system-wide and no trainer code or model data is copied.
+
+In the trainer's existing `lib/myconfig.py` configuration, set `m_tools_dir`
+(returned by `getToolsDir()`) to `/absolute/path/trainer-tools` and
+`m_evals_dir` (returned by `getEvalsDir()`) to `/absolute/path/trainer-evals`.
+Use the tree roots, not their `data/` subdirectories. Keep them separate:
+evaluation replaces `interpolation2.text` and regenerates its binary data.
+Populate each `data/` with the model's textual tables, `interpolation2.text`
+and a configured `table.conf` matching the tools' DBM backend, then run
+`make -C /absolute/path/trainer-tools/data` (and likewise for the eval tree).
+Supply the trainer's held-out inputs too: tools `data/estimates.db`, and eval
+`data/deleted_bigram.db` and `data/evals2.text`. This recipe stages a layout;
+it does not prepare a corpus, download model20 or run the trainer.
+
+The generated Makefile provides the trainer's default build, `clean` and
+`modify LAMBDA_PARAMETER=...` targets. Build and clean use the pin's file
+lists and the exact relative utility calls from
+[`data/Makefile.am:18–69` at `074a2219c90feaf962d0d24f034514033ece5f99`](https://github.com/libpinyin/libpinyin/blob/074a2219c90feaf962d0d24f034514033ece5f99/data/Makefile.am#L18-L69).
+`modify` keeps the first `table.conf` as `data/.trainer-table.conf` and
+reapplies the pin's lambda substitution to that baseline on every call.
+It does not run the pin's checkout-wide `git reset --hard` in a caller's
+directory. Remove that baseline when deliberately replacing the configuration.
+The trainer requires `/usr/bin/make`; the staged Makefile uses `rm`, `cp`
+and `sed`. The pin's optional model-download rule (`wget`, `tar`) is not
+staged: supply the data first.
+
+The complete reached-utility inventory follows. Paths are relative to `data/`;
+each maps to the **same basename** in `oxpinyin-utils`. All 15 are ported.
+
+| Trainer source at `b1927376` / pin make rule | Relative utility path |
+|---|---|
+| `segment.py:32,35` | `../utils/segment/spseg`, `../utils/segment/ngseg` |
+| `mergeseq.py:35` | `../utils/segment/mergeseq` |
+| `generate.py:32` | `../utils/training/gen_k_mixture_model` |
+| `estimate.py:39` | `../utils/training/estimate_k_mixture_model` |
+| `tryprune.py:22` | `../utils/training/validate_k_mixture_model` |
+| `tryprune.py:35` | `../utils/training/export_k_mixture_model` |
+| `tryprune.py:53` | `../utils/training/k_mixture_model_to_interpolation` |
+| `tryprune.py:78` | `../utils/training/merge_k_mixture_model` |
+| `tryprune.py:119` | `../utils/training/prune_k_mixture_model` |
+| `evaluate.py:59,101` | `../utils/training/estimate_interpolation`, `../utils/training/eval_correction_rate` |
+| `evaluate.py:45` → pin `data/Makefile.am:60–62` | `../utils/storage/gen_binary_files`, `../utils/storage/import_interpolation`, `../utils/training/gen_unigram` |
+
+`gen_pinyin_table` appears only in trainer helper comments, not as a call.
+The six additional staged pin utilities are storage `gen_pinyin_table`,
+`gen_zhuyin_table`, `export_interpolation`, and training `gen_ngram`,
+`gen_deleted_ngram`, `import_k_mixture_model`. There are no missing utility
+ports in this inventory; the trainer's own Python scripts remain external.
+
+Run `just test-tools` for the packaging fixtures. After the build above,
+run the explicit real-tool integration test in the same Python test file:
+
+```sh
+uv run --no-project --managed-python python -X lazy_imports=normal tools/dev/packaging.test.py TrainerLayoutTests.check_real_tools
+```
+
+It checks every reached path and runs `../utils/training/gen_unigram --help`
+from the created `data/`. Set `OXPINYIN_TRAINER_BIN_DIR` for another binary
+directory. Missing tools fail this test; it does not substitute fixtures.
+
 ## Why cargo-c
 
 `oxpinyin-capi` is a `cdylib` that must be installed like any other C library:

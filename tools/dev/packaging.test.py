@@ -12,6 +12,7 @@ import sys
 import tempfile
 import time
 import unittest
+import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
@@ -83,6 +84,151 @@ for name in ['novel_types.h','pinyin_custom2.h', 'zhuyin_custom2.h' if library==
 def tree(path):
     return {str(entry.relative_to(path)): ('link', os.readlink(entry)) if entry.is_symlink()
             else ('file', entry.read_bytes()) for entry in path.rglob('*') if not entry.is_dir()}
+
+
+class TrainerLayoutTests(unittest.TestCase):
+    # Independent source inventory: trainer b1927376's subprocess calls plus
+    # libpinyin 074a2219 data/Makefile.am:60-62. Not derived from TRAINER_TOOLS.
+    REACHED = (
+        'segment/ngseg', 'segment/spseg', 'segment/mergeseq',
+        'storage/gen_binary_files', 'storage/import_interpolation',
+        'training/gen_unigram', 'training/gen_k_mixture_model',
+        'training/estimate_k_mixture_model', 'training/validate_k_mixture_model',
+        'training/export_k_mixture_model', 'training/k_mixture_model_to_interpolation',
+        'training/merge_k_mixture_model', 'training/prune_k_mixture_model',
+        'training/estimate_interpolation', 'training/eval_correction_rate',
+    )
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix='trainer-layout-')
+        self.addCleanup(temporary.cleanup)
+        self.work = Path(temporary.name)
+        self.binaries = self.work / 'built tools'
+        self.binaries.mkdir()
+        self.target = self.work / 'trainer tree'
+        self.tools = packaging.Tools(root=ROOT)
+        self.manifest = tomllib.loads((ROOT / 'crates/oxpinyin-utils/Cargo.toml').read_text())
+        for binary in self.manifest['bin']:
+            path = self.binaries / binary['name']
+            path.write_text('#!' + sys.executable + '\n' + '''import json, sys
+from pathlib import Path
+with Path('calls').open('a') as out:
+    out.write(json.dumps([Path(sys.argv[0]).name, *sys.argv[1:]]) + '\\n')
+if Path(sys.argv[0]).name == 'import_interpolation':
+    Path('imported').write_bytes(sys.stdin.buffer.read())
+''')
+            path.chmod(0o755)
+
+    def stage(self, target=None, binaries=None):
+        return packaging.main(['trainer-layout', str(target or self.target), '--bin-dir',
+                               str(binaries or self.binaries)], tools=self.tools)
+
+    def assert_inventory(self):
+        for relative in self.REACHED:
+            with self.subTest(path=relative):
+                path = self.target / 'utils' / relative
+                self.assertTrue(path.is_file())
+                self.assertTrue(os.access(path, os.X_OK))
+                self.assertFalse(path.is_symlink())
+
+    def test_inventory_resolves_to_copied_executable_ports(self):
+        self.assertEqual(self.stage(), 0)
+        self.assert_inventory()
+        ports = {binary['name'] for binary in self.manifest['bin']} - {'dbm_rows'}
+        installed = {path.name for path in (self.target / 'utils').glob('*/*')}
+        self.assertEqual(installed, ports)
+        self.assertEqual(len(installed), 21)
+        # A Cargo clean must not invalidate a staged trainer tree.
+        shutil.rmtree(self.binaries)
+        self.assert_inventory()
+
+    def test_existing_target_and_links_are_refused_without_writes(self):
+        self.target.mkdir()
+        (self.target / 'model').write_bytes(b'user data')
+        before = tree(self.target)
+        self.assertEqual(self.stage(), 2)
+        self.assertEqual(tree(self.target), before)
+        link = self.work / 'linked'
+        link.symlink_to(self.target, target_is_directory=True)
+        self.assertEqual(self.stage(target=link), 2)
+        self.assertEqual(tree(self.target), before)
+        dangling = self.work / 'dangling'
+        dangling.symlink_to(self.work / 'absent', target_is_directory=True)
+        self.assertEqual(self.stage(target=dangling), 2)
+        self.assertFalse((self.work / 'absent').exists())
+
+    def test_missing_or_nonexecutable_tool_fails_before_creating_target(self):
+        tool = self.binaries / 'gen_unigram'
+        tool.chmod(0o644)
+        self.assertEqual(self.stage(), 2)
+        self.assertFalse(self.target.exists())
+        tool.unlink()
+        self.assertEqual(self.stage(), 2)
+        self.assertFalse(self.target.exists())
+
+    def make(self, *args):
+        result = subprocess.run(['make', *args], cwd=self.target / 'data',
+                                capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result
+
+    def test_make_build_clean_and_repeated_lambda_update(self):
+        self.assertEqual(self.stage(), 0)
+        data = self.target / 'data'
+        model = b'caller-supplied interpolation model\n'
+        (data / 'interpolation2.text').write_bytes(model)
+        initial = 'lambda parameter:0.312699\ndatabase format:Tkrzw\n'
+        (data / 'table.conf').write_text(initial)
+        self.make()
+        calls = [json.loads(line) for line in (data / 'calls').read_text().splitlines()]
+        self.assertEqual(calls, [
+            ['gen_binary_files', '--gen-punct-table', '--table-dir', '../data'],
+            ['import_interpolation', '--table-dir', '../data'],
+            ['gen_unigram', '--table-dir', '../data'],
+        ])
+        self.assertEqual((data / 'imported').read_bytes(), model)
+        generated = ['bigram.db', 'phrase_index.bin', 'pinyin_index.bin',
+                     'addon_phrase_index.bin', 'addon_pinyin_index.bin',
+                     'gb_char.bin', 'gbk_char.bin', 'opengram.bin', 'merged.bin',
+                     'art.bin', 'culture.bin', 'economy.bin', 'geology.bin', 'history.bin',
+                     'life.bin', 'nature.bin', 'people.bin', 'science.bin', 'society.bin',
+                     'sport.bin', 'technology.bin', 'punct.bin']
+        preserved = ['deleted_bigram.db', 'estimates.db', 'evals2.text', 'unrelated.bin']
+        for name in generated + preserved:
+            (data / name).touch()
+        self.make('clean')
+        self.assertFalse(any((data / name).exists() for name in generated))
+        self.assertTrue(all((data / name).is_file() for name in preserved))
+        self.assertEqual((data / 'interpolation2.text').read_bytes(), model)
+        self.assertEqual((data / 'table.conf').read_text(), initial)
+        # A short/scientific lambda no longer matches the pin's pattern.
+        # Repeated modify must still start from the original configuration.
+        for value in ('1e-05', '0.4', '0.654321'):
+            self.make('modify', 'LAMBDA_PARAMETER=' + value)
+            self.assertEqual((data / 'table.conf').read_text(),
+                             initial.replace('0.312699', value))
+
+    def test_real_just_recipe_transports_paths_with_spaces(self):
+        result = subprocess.run(['just', 'trainer-layout', str(self.target), '--bin-dir',
+                                 str(self.binaries)], cwd=ROOT, capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assert_inventory()
+
+    def check_real_tools(self):
+        """Explicit integration test; needs built tools, fails if they are absent.
+
+        Select TrainerLayoutTests.check_real_tools after building --bins.
+        Ordinary harness discovery stays build-free (CI runs before tkrzw setup).
+        OXPINYIN_TRAINER_BIN_DIR selects a nondefault Cargo output directory.
+        """
+        binaries = Path(os.environ.get('OXPINYIN_TRAINER_BIN_DIR', ROOT / 'target/debug'))
+        self.assertEqual(self.stage(binaries=binaries), 0)
+        self.assert_inventory()
+        result = subprocess.run(['../utils/training/gen_unigram', '--help'],
+                                cwd=self.target / 'data', capture_output=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(b'Usage:', result.stdout)
+        self.assertIn(b'--table-dir', result.stdout)
 
 
 class PackagingTests(unittest.TestCase):

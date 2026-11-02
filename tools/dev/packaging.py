@@ -21,7 +21,54 @@ ROOT = Path(__file__).resolve().parents[2]
 LIBRARIES = {'libpinyin': 'oxpinyin-capi', 'libzhuyin': 'oxpinyin-zhuyin-capi'}
 HEADERS = ('novel_types.h', 'pinyin_custom2.h')
 NAMES = ('install', 'relink-versioned', 'pc-version', 'check-pc-version', 'check-pc-metadata',
-         'release-stage', 'release-deb', 'release-rpm', 'release-arch', 'compare-installs', 'sizes')
+         'release-stage', 'release-deb', 'release-rpm', 'release-arch', 'compare-installs', 'sizes',
+         'trainer-layout')
+
+# libpinyin 074a2219 utils/{storage,segment,training}/Makefile.am. dbm_rows
+# is oxpinyin's inspection helper, not one of the pin's 21 utilities.
+TRAINER_TOOLS = {
+    'storage': ('gen_binary_files', 'import_interpolation', 'export_interpolation',
+                'gen_pinyin_table', 'gen_zhuyin_table'),
+    'segment': ('ngseg', 'spseg', 'mergeseq'),
+    'training': ('gen_unigram', 'gen_ngram', 'gen_deleted_ngram', 'gen_k_mixture_model',
+                 'estimate_interpolation', 'estimate_k_mixture_model', 'merge_k_mixture_model',
+                 'prune_k_mixture_model', 'import_k_mixture_model', 'export_k_mixture_model',
+                 'k_mixture_model_to_interpolation', 'validate_k_mixture_model',
+                 'eval_correction_rate'),
+}
+
+
+def trainer_layout(argv, tools):
+    """Copy built tools into a new, private trainer tree; never install data."""
+    import argparse
+    from .packaging_templates import TRAINER_MAKEFILE
+
+    parser = argparse.ArgumentParser(prog='just trainer-layout')
+    parser.add_argument('target', type=Path, help='new output directory (must not exist)')
+    build = Path(tools.env.get('CARGO_TARGET_DIR') or tools.root / 'target')
+    parser.add_argument('--bin-dir', type=Path, default=build / 'debug',
+                        help='directory containing built oxpinyin-utils binaries (default: target/debug)')
+    args = parser.parse_args(argv)
+    target = args.target.absolute()
+    if target.exists() or target.is_symlink():
+        fail(f'error: trainer layout target already exists: {target}', 2)
+    sources = [(Path('utils') / group / name, args.bin_dir / name)
+               for group, names in TRAINER_TOOLS.items() for name in names]
+    for _, source in sources:
+        if not source.is_file() or not os.access(source, os.X_OK):
+            fail(f'error: missing executable {source}; build oxpinyin-utils --bins first', 2)
+    # Claim the directory before writing. In particular, never merge into a
+    # trainer tree containing a user's models or follow an existing target link.
+    target.mkdir(parents=True)
+    for relative, source in sources:
+        destination = target / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+    data = target / 'data'
+    data.mkdir()
+    (data / 'Makefile').write_text(TRAINER_MAKEFILE, encoding='utf-8')
+    emit(f'trainer layout: copied {len(sources)} utilities to {target}; populate data/ before training')
+    return 0
 
 
 def fail(message='', code=1):
@@ -931,6 +978,7 @@ def main(argv=None, *, tools=None):
         return 2
     name, rest = argv[0], argv[1:]
     functions = {'compare-installs': compare_installs, 'install': install, 'relink-versioned': relink,
+                 'trainer-layout': trainer_layout,
                  'check-pc-version': check_version,
                  'check-pc-metadata': metadata,
                  'release-stage': release_stage, 'release-deb': release_deb, 'release-rpm': release_rpm,

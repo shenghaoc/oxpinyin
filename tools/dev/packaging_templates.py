@@ -1,5 +1,45 @@
 """Package identities and consumer fixtures preserved from the U4 shell entry points."""
 
+TRAINER_MAKEFILE = r'''# External interface: epico/trainer evaluate.py invokes /usr/bin/make here.
+# Thin recipes adapted from libpinyin 074a2219 data/Makefile.am:18-69
+# (Copyright (C) 2011 Peng Wu, GPL-3.0-or-later).
+# Supply the model's textual tables, interpolation2.text and configured
+# table.conf before running make. This tree never downloads or installs data.
+top_srcdir = ..
+tablefiles = gb_char.table gbk_char.table opengram.table merged.table \
+             art.table culture.table economy.table geology.table history.table \
+             life.table nature.table people.table science.table society.table \
+             sport.table technology.table punct.table
+binfiles = ${tablefiles:.table=.bin}
+textual_model_data = interpolation2.text $(tablefiles)
+binary_model_data = phrase_index.bin pinyin_index.bin \
+                    addon_phrase_index.bin addon_pinyin_index.bin bigram.db $(binfiles)
+
+.PHONY: all clean modify
+all: $(binary_model_data) table.conf
+
+$(tablefiles) table.conf: interpolation2.text
+
+bigram.db: $(textual_model_data)
+	$(RM) $(binary_model_data)
+	../utils/storage/gen_binary_files --gen-punct-table --table-dir $(top_srcdir)/data
+	../utils/storage/import_interpolation --table-dir $(top_srcdir)/data < $(top_srcdir)/data/interpolation2.text
+	../utils/training/gen_unigram --table-dir $(top_srcdir)/data
+
+addon_phrase_index.bin phrase_index.bin addon_pinyin_index.bin pinyin_index.bin $(binfiles): bigram.db
+
+clean:
+	$(RM) $(binary_model_data)
+
+# The pin resets its source checkout before substituting lambda. This tree
+# has no source checkout: retain the initial table.conf locally instead.
+# Do not run git reset here: the target may be inside an unrelated checkout.
+export LAMBDA_PARAMETER
+modify: table.conf
+	test -f .trainer-table.conf || cp table.conf .trainer-table.conf
+	sed -E "s'lambda parameter:0\.[0-9]{3,6}'lambda parameter:$$LAMBDA_PARAMETER'" .trainer-table.conf > table.conf
+'''
+
 COPYRIGHT = r'''Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: oxpinyin
 Source: $HOMEPAGE

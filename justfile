@@ -74,6 +74,11 @@ doctor:
 packaging *args: python
     @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev packaging "$@"
 
+# Stage built utilities in the tree expected by epico/trainer.
+[unix]
+trainer-layout target *args: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev packaging trainer-layout "$@"
+
 # Run one native setup check: tkrzw (default), bdb or kyotocabinet.
 check backend="tkrzw": python
     @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev check {{backend}}
