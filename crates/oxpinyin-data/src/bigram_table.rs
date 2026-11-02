@@ -71,6 +71,10 @@ impl<D: ChewingDbm> BigramTable<D> {
         self.dbm.finish_failed_attachment();
     }
 
+    pub(crate) fn failed_attachment_finished(&self) -> bool {
+        self.dbm.failed_attachment_finished()
+    }
+
     /// Loads successor records for `prev_token`.
     ///
     /// Returns `None` when the token has no bigram entry.

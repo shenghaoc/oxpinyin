@@ -358,6 +358,13 @@ impl BigramTables {
         self.bigram.finish_failed_attachment();
     }
 
+    /// Whether a retained failed system hash has been finalized; `true`
+    /// when the attach succeeded.
+    #[must_use]
+    pub fn failed_attachment_finished(&self) -> bool {
+        !self.bigram.attachment_failed() || self.bigram.failed_attachment_finished()
+    }
+
     /// Borrow all loaded phrase libraries for a model operation.
     pub fn read_all<'a>(
         &'a self,

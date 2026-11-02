@@ -98,23 +98,13 @@ pub fn merge_suggestion_rows(system: &[u32], user_rows: &[(u32, Vec<u8>)]) -> Ve
 
 /// Why a runtime could not be opened.
 ///
-/// Deliberately distinguishes missing files ([`OpenError::Missing`]) from
-/// present-but-unreadable/unparsable ones, so adapters can raise
-/// `FileNotFoundError`, `OSError` and friends without string matching.
+/// A missing or irregular system DBM file is not an error here: the pin
+/// keeps the failed native object and initializes (pinyin.cpp:357,369,396
+/// at 074a2219), and so does the runtime on every backend.
 #[derive(Debug)]
 pub enum OpenError {
-    /// A required path does not exist.
-    Missing(PathBuf),
     /// A required path exists but could not be read.
     Io(PathBuf, std::io::Error),
-    /// A required path exists and is readable but is not a regular file
-    /// (a directory, socket, FIFO, …).
-    ///
-    /// Its own variant rather than an [`OpenError::Io`] carrying a
-    /// synthesized `std::io::Error`: no operating-system call failed, so
-    /// there is no `ErrorKind` or `raw_os_error` to report and nothing
-    /// for a caller to inspect beyond the path.
-    NotRegularFile(PathBuf),
     /// The dictionary tables failed to open or parse.
     Dict(DictError),
     /// The language model failed to open or parse.
@@ -183,9 +173,7 @@ impl OpenError {
     pub fn unmappable_library(&self) -> Option<&Path> {
         match self {
             Self::Dict(DictError::Library(error)) => error.unmappable_path(),
-            Self::Missing(_)
-            | Self::Io(..)
-            | Self::NotRegularFile(_)
+            Self::Io(..)
             | Self::Dict(_)
             | Self::Lm(_)
             | Self::UnknownDatabaseFormat(_)
@@ -223,11 +211,7 @@ impl OpenError {
 impl core::fmt::Display for OpenError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::Missing(path) => write!(f, "missing file: {}", path.display()),
             Self::Io(path, error) => write!(f, "cannot read {}: {error}", path.display()),
-            Self::NotRegularFile(path) => {
-                write!(f, "cannot read {}: not a regular file", path.display())
-            }
             Self::Dict(error) => write!(f, "dictionary error: {error}"),
             Self::Lm(error) => write!(f, "language model error: {error}"),
             Self::UnknownDatabaseFormat(path) => write!(
@@ -1932,17 +1916,38 @@ impl Runtime {
         if let Some(user) = self.user.as_mut() {
             user.finish();
         }
-        #[cfg(any(feature = "bdb", feature = "kyotocabinet"))]
-        {
-            self.system.finish_failed_attachments();
-            self.model.finish_failed_attachment();
-            self.addons
+        // pinyin.cpp:1205-1215 and zhuyin.cpp:744-748: the failed objects
+        // are reset in the pin's member order on every backend; a second
+        // finish finds them gone.
+        self.system.finish_failed_attachments();
+        self.model.finish_failed_attachment();
+        self.addons
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .dict
+            .finish_failed_attachments();
+        self.punct.finish_failed_attachment();
+    }
+
+    /// Whether every retained failed system attachment has been finalized
+    /// by [`Self::finish`]; `true` when none failed.
+    #[must_use]
+    pub fn failed_attachments_finished(&self) -> bool {
+        self.system.failed_attachments_finished()
+            && self.model.failed_attachment_finished()
+            && self
+                .addons
                 .read()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .dict
-                .finish_failed_attachments();
-            self.punct.finish_failed_attachment();
-        }
+                .failed_attachments_finished()
+            && (!self.punct.retains_failed_attachment() || self.punct.failed_attachment_finished())
+    }
+
+    /// Whether the main pinyin index is a retained failed attachment.
+    #[must_use]
+    pub fn pinyin_attachment_failed(&self) -> bool {
+        self.system.pinyin_attachment_failed()
     }
 }
 
@@ -2106,28 +2111,10 @@ impl Runtime {
             }
             return Err(OpenError::TableConf(TableConfError::Abort(site)));
         }
-        #[cfg(feature = "tkrzw")]
-        let pinyin_index = oxpinyin_input::path::build_path(
-            system_dir,
-            std::ffi::OsStr::new(&SystemDbm::PinyinIndex.file_name()),
-        );
-        #[cfg(feature = "tkrzw")]
-        let phrase_index = oxpinyin_input::path::build_path(
-            system_dir,
-            std::ffi::OsStr::new(&SystemDbm::PhraseIndex.file_name()),
-        );
         let bigram = oxpinyin_input::path::build_path(
             system_dir,
             std::ffi::OsStr::new(&SystemDbm::Bigram.file_name()),
         );
-        // The tkrzw part of #1516 is deferred until concrete-class cxx
-        // bindings can retain the pin's real unopened TreeDBM/HashDBM.
-        #[cfg(feature = "tkrzw")]
-        {
-            require_file(&pinyin_index)?;
-            require_file(&phrase_index)?;
-            require_file(&bigram)?;
-        }
 
         let (dict, libraries) = SystemDictionary::attach_with(system_dir, &conf)
             .map_err(OpenError::Dict)?
@@ -2707,19 +2694,6 @@ impl Runtime {
     #[must_use]
     pub fn unload_library(&mut self, index: u32) -> bool {
         self.dict().unload_library(index)
-    }
-}
-
-#[cfg(feature = "tkrzw")]
-fn require_file(path: &Path) -> Result<(), OpenError> {
-    let meta = std::fs::metadata(path).map_err(|error| match error.kind() {
-        std::io::ErrorKind::NotFound => OpenError::Missing(path.to_path_buf()),
-        _ => OpenError::Io(path.to_path_buf(), error),
-    })?;
-    if meta.is_file() {
-        Ok(())
-    } else {
-        Err(OpenError::NotRegularFile(path.to_path_buf()))
     }
 }
 

@@ -325,12 +325,9 @@ mod tests {
             cstr(system.path.to_str().expect("UTF-8 path")).as_ptr(),
             cstr(user.path.to_str().expect("UTF-8 path")).as_ptr(),
         );
-        #[cfg(feature = "tkrzw")]
-        assert!(context.is_null(), "tkrzw awaits the concrete-class binding");
-        #[cfg(any(feature = "bdb", feature = "kyotocabinet"))]
-        {
-            assert!(!context.is_null(), "the pin ignores a failed system attach");
-            crate::context::pinyin_fini(context);
-        }
+        // Every backend keeps the failed native object: the pin ignores the
+        // attach's answer (pinyin.cpp:357 at 074a2219) and fini closes it.
+        assert!(!context.is_null(), "the pin ignores a failed system attach");
+        crate::context::pinyin_fini(context);
     }
 }

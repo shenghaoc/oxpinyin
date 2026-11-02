@@ -3,8 +3,10 @@
 Pinyin ignores six attaches (pinyin.cpp:357,369,396,421,429,440);
 zhuyin opens only the main indexes and bigram (zhuyin.cpp:301,312,338).
 Each case removes one link from its own system directory. The ordinary
-worker pool keeps cases independent and parallel. Tkrzw's cases remain
-registered away from that cell until its concrete-class binding lands.
+worker pool keeps cases independent and parallel. Every cell retains the
+failed native object: BDB and KC since 553866c, tkrzw since the
+concrete-class binding (the pin's TreeDBM or HashDBM answers
+PRECONDITION_ERROR and writes nothing to stderr).
 """
 import ctypes as C
 from pathlib import Path
@@ -102,13 +104,13 @@ def register(case):
         for table in TABLES:
             for operation in ('lifecycle', 'operations'):
                 case(f'missing-system-dbm/{facade}-{table}-{operation}', mode=facade,
-                     cells=('bdb', 'kc'), stderr=True, userdir=True, issues=('1516',))(
+                     stderr=True, userdir=True, issues=('1516',))(
                          missing_case(table, operation == 'operations'))
             case(f'missing-system-dbm/{facade}-{table}-overlay', mode=facade,
-                 cells=('bdb', 'kc'), stderr=True, userdir=True, issues=('1516',))(
+                 stderr=True, userdir=True, issues=('1516',))(
                      missing_case(table, True, overlay=True))
         case(f'missing-system-dbm/{facade}-intact', mode=facade, control=True,
              stderr=True, userdir=True, issues=('1516',))(missing_case(None, True))
         case(f'missing-system-dbm/{facade}-pinyin-unloaded', mode=facade,
-             cells=('bdb', 'kc'), stderr=True, userdir=True, issues=('1516',))(
+             stderr=True, userdir=True, issues=('1516',))(
                  missing_case('pinyin', True, unload=True))

@@ -64,6 +64,23 @@ impl<D: ChewingDbm> PunctTable<D> {
         }
     }
 
+    /// Whether this table holds the retained native object of a failed
+    /// attach, as the pin's `PunctTable` does after `attach` returns false
+    /// (`punct_table_tkrzwdb.cpp:70-72` at 074a2219). An empty table holds
+    /// none.
+    #[must_use]
+    pub fn retains_failed_attachment(&self) -> bool {
+        self.dbm.as_ref().is_some_and(|dbm| dbm.attachment_failed())
+    }
+
+    /// Whether the retained failed object has been finalized.
+    #[must_use]
+    pub fn failed_attachment_finished(&self) -> bool {
+        self.dbm
+            .as_ref()
+            .is_some_and(|dbm| dbm.failed_attachment_finished())
+    }
+
     /// Punctuations stored for `token`, in table order, as stored words
     /// (`decode_puncts`).
     ///
@@ -88,20 +105,14 @@ impl<D: ChewingDbm> PunctTable<D> {
 }
 
 impl PunctTable {
-    /// Attaches the runtime punctuation file, retaining a failed BDB/KC
-    /// native object. Tkrzw keeps its existing optional-file behavior.
+    /// Attaches the runtime punctuation file, retaining a failed native
+    /// object (`PunctTable::attach`, `punct_table_tkrzwdb.cpp:58-73` and its
+    /// BDB and KC peers at 074a2219).
     ///
     /// # Errors
     /// Returns failures before native attach.
     pub fn attach(path: &Path) -> Result<Self, DictError> {
-        #[cfg(any(feature = "bdb", feature = "kyotocabinet"))]
-        {
-            Ok(Self::new(DefaultDbm::attach(path, false)?))
-        }
-        #[cfg(feature = "tkrzw")]
-        {
-            Ok(Self::open_optional(path))
-        }
+        Ok(Self::new(DefaultDbm::attach(path, false)?))
     }
     /// Opens a punct DBM lazily (no scan). `punct.bin` is a KC
     /// **`TreeDB`** / Tkrzw **`TreeDBM`** — the plain read-only open.
@@ -127,6 +138,28 @@ impl PunctTable {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_missing_file_leaves_the_retained_failed_object_not_an_empty_table() {
+        // `PunctTable::attach` allocates the TreeDBM and returns the failed
+        // Open's answer with the object still owned (`punct_table_tkrzwdb.cpp:
+        // 70-72`, `punct_table_kyotodb.cpp:37-47`, BDB `db_create` then
+        // `open`); the facade ignores the answer (`pinyin.cpp:440`) and
+        // later calls that object. An empty table would call nothing.
+        let dir = std::env::temp_dir().join(format!(
+            "oxpinyin-data-punct-missing-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let table = super::PunctTable::attach(&dir.join("punct.bin")).unwrap();
+        assert!(table.retains_failed_attachment());
+        assert!(!table.is_open());
+        assert!(!table.failed_attachment_finished());
+        table.finish_failed_attachment();
+        assert!(table.failed_attachment_finished());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     use super::*;
 
     use std::collections::BTreeMap;
