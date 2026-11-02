@@ -128,9 +128,6 @@ impl<'a> UserLookup<'a> {
     #[must_use]
     pub fn search_toned(&self, keys: &[oxpinyin_core::ChewingKey]) -> Vec<u32> {
         self.with_index(|index| index.search(keys))
-            .into_iter()
-            .map(|(token, _)| token)
-            .collect()
     }
 
     fn entries_for(&self, keys: &[oxpinyin_core::ChewingKey]) -> Vec<PhraseEntry> {
@@ -144,7 +141,7 @@ impl<'a> UserLookup<'a> {
                     .index
                     .search(keys)
                     .into_iter()
-                    .filter_map(|(token, _)| {
+                    .filter_map(|token| {
                         let text = session_text(&phrases, token)?;
                         Some(PhraseEntry::new(PhraseToken::new(token), text))
                     })
@@ -154,7 +151,7 @@ impl<'a> UserLookup<'a> {
                 .index
                 .search(keys)
                 .into_iter()
-                .filter_map(|(token, _)| {
+                .filter_map(|token| {
                     let text = lookup.token_text.get(&token)?.clone();
                     Some(PhraseEntry::new(PhraseToken::new(token), text))
                 })
