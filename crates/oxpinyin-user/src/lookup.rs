@@ -24,7 +24,12 @@ pub struct UserLookup<'a> {
 enum Source<'a> {
     #[default]
     Empty,
-    Session(&'a Mutex<SessionPhrases>),
+    /// The session's arenas and, for system libraries with an original, the
+    /// live buffers that hold their appended items.
+    Session(
+        &'a Mutex<SessionPhrases>,
+        &'a Mutex<crate::system_items::SystemItems>,
+    ),
     Standalone(Arc<StandaloneLookup>),
 }
 
@@ -78,9 +83,12 @@ impl<'a> UserLookup<'a> {
         Self::default()
     }
 
-    pub(crate) fn session(phrases: &'a Mutex<SessionPhrases>) -> Self {
+    pub(crate) fn session(
+        phrases: &'a Mutex<SessionPhrases>,
+        items: &'a Mutex<crate::system_items::SystemItems>,
+    ) -> Self {
         Self {
-            source: Source::Session(phrases),
+            source: Source::Session(phrases, items),
         }
     }
 
@@ -93,7 +101,7 @@ impl<'a> UserLookup<'a> {
     fn with_index<R>(&self, read: impl FnOnce(&UserIndex) -> R) -> R {
         match &self.source {
             Source::Empty => read(&UserIndex::new()),
-            Source::Session(phrases) => read(
+            Source::Session(phrases, _) => read(
                 &phrases
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -133,7 +141,7 @@ impl<'a> UserLookup<'a> {
     fn entries_for(&self, keys: &[oxpinyin_core::ChewingKey]) -> Vec<PhraseEntry> {
         match &self.source {
             Source::Empty => Vec::new(),
-            Source::Session(phrases) => {
+            Source::Session(phrases, items) => {
                 let phrases = phrases
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -142,7 +150,7 @@ impl<'a> UserLookup<'a> {
                     .search(keys)
                     .into_iter()
                     .filter_map(|token| {
-                        let text = session_text(&phrases, token)?;
+                        let text = session_text(&phrases, items, token)?;
                         Some(PhraseEntry::new(PhraseToken::new(token), text))
                     })
                     .collect()
@@ -178,10 +186,11 @@ impl<'a> UserLookup<'a> {
     pub fn phrase_text(&self, token: u32) -> Option<PhraseText> {
         match &self.source {
             Source::Empty => None,
-            Source::Session(phrases) => session_text(
+            Source::Session(phrases, items) => session_text(
                 &phrases
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner),
+                items,
                 token,
             ),
             Source::Standalone(lookup) => lookup.token_text.get(&token).cloned(),
@@ -192,7 +201,7 @@ impl<'a> UserLookup<'a> {
     /// included. Plain stores retain their previous empty phrase-table seam.
     #[must_use]
     pub fn tokens_for_ucs4(&self, words: &[u32]) -> Vec<u32> {
-        let Source::Session(phrases) = &self.source else {
+        let Source::Session(phrases, _) = &self.source else {
             return Vec::new();
         };
         phrases
@@ -238,7 +247,7 @@ impl<'a> UserLookup<'a> {
     /// the DBM walk order by the runtime before the stable prediction sort.
     #[must_use]
     pub fn suggest_after(&self, prefix: &[u32]) -> Vec<(u32, Vec<u8>)> {
-        let Source::Session(phrases) = &self.source else {
+        let Source::Session(phrases, _) = &self.source else {
             return Vec::new();
         };
         let prefix = crate::phrase_table::key_ucs4(prefix);
@@ -265,12 +274,32 @@ impl<'a> UserLookup<'a> {
 
 // The old text map used the full token emitted by the library walk. Do not
 // alias a foreign index token's high bits to an otherwise valid arena item.
-fn session_text(phrases: &SessionPhrases, token: u32) -> Option<PhraseText> {
-    phrases
+fn session_text(
+    phrases: &SessionPhrases,
+    items: &Mutex<crate::system_items::SystemItems>,
+    token: u32,
+) -> Option<PhraseText> {
+    if let Some(item) = phrases
         .libraries
-        .get(&((token >> 24) as u8))?
-        .item(token & crate::PHRASE_MASK)?
-        .phrase_text()
+        .get(&((token >> 24) as u8))
+        .and_then(|library| library.item(token & crate::PHRASE_MASK))
+    {
+        return item.phrase_text();
+    }
+    // A mask or another library's reload can materialize an appended item.
+    let items = items
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    items
+        .with_live(token, |bytes, _| {
+            oxpinyin_data::phrase_library::PhraseItemView::from_bytes(bytes)?.phrase_text()
+        })
+        .flatten()
+        .or_else(|| {
+            items
+                .decoded(&token)
+                .and_then(|item| PhraseText::from_words(item.phrase.iter().copied()))
+        })
 }
 
 fn query_keys(syllables: &[SyllableKey]) -> Option<Vec<oxpinyin_core::ChewingKey>> {
@@ -326,7 +355,8 @@ mod tests {
         phrases.index.add(&keys, token);
         phrases.index.add(&keys, token | 0x8000_0000);
         let phrases = Mutex::new(phrases);
-        let lookup = UserLookup::session(&phrases);
+        let items = Mutex::new(crate::system_items::SystemItems::default());
+        let lookup = UserLookup::session(&phrases, &items);
         assert_eq!(lookup.search_toned(&keys), [token, token | 0x8000_0000]);
         let entries = lookup.lookup(&[key("ni")]);
         assert_eq!(entries.len(), 1);

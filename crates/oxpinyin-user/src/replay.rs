@@ -658,8 +658,6 @@ pub(crate) struct Merge<'a, 'l> {
     has_added_items: bool,
     /// A finished in-place write's header claims more than the slot it wrote.
     overreach: bool,
-    /// Slots whose offset word the replay wrote: relocated or removed.
-    relocated: BTreeSet<u32>,
     /// Whether the library has an original: only then does the replay report a
     /// total (`finish`).
     has_original: bool,
@@ -683,7 +681,6 @@ impl<'a, 'l> Merge<'a, 'l> {
             touched: Vec::new(),
             has_added_items: false,
             overreach: false,
-            relocated: BTreeSet::new(),
             has_original: original.is_some(),
             initial_total: original.map_or(0, |library| library.total),
             stale: Stale::Default(vec![0; PHRASE_ITEM_HEADER]),
@@ -793,9 +790,24 @@ impl<'a, 'l> Merge<'a, 'l> {
         slots
     }
 
+    /// Whether the replay wrote `slot`'s offset word (it relocated or removed
+    /// the item): the word no longer is the original's. A slot the original
+    /// lacks only gets a word that way.
+    fn relocated(&self, slot: u32) -> bool {
+        let current = self.slot_offset(slot);
+        match &self.origin {
+            Origin::Mapped(library) => library
+                .content_offset(slot)
+                .is_none_or(|offset| offset != current),
+            Origin::Inline { offsets, .. } => {
+                offsets.get(&slot).is_none_or(|item| item.offset != current)
+            }
+            Origin::None => true,
+        }
+    }
+
     fn set_offset(&mut self, slot: u32, offset: u32) {
         self.touched.push(slot);
-        self.relocated.insert(slot);
         if self.content.slot_write_hits_mapping(slot)
             && let Some(old) = self.content.slot_offset(slot)
         {
@@ -1135,7 +1147,7 @@ impl<'a, 'l> Merge<'a, 'l> {
 /// No baseline byte owner survives the replay operation.
 pub(crate) struct ReplayedLibrary {
     content: Content,
-    slots: Vec<(u32, u32)>,
+    slots: Vec<u32>,
     has_added_items: bool,
     training_disjoint: Option<bool>,
 }
@@ -1150,7 +1162,7 @@ impl std::fmt::Debug for ReplayedLibrary {
 
 impl ReplayedLibrary {
     pub(crate) fn slots(&self) -> impl DoubleEndedIterator<Item = u32> + '_ {
-        self.slots.iter().map(|&(slot, _)| slot)
+        self.slots.iter().copied()
     }
     pub(crate) fn add_candidates(&self) -> impl Iterator<Item = u32> + '_ {
         let slots = if self.has_added_items {
@@ -1158,19 +1170,17 @@ impl ReplayedLibrary {
         } else {
             &[]
         };
-        slots.iter().map(|&(slot, _)| slot)
+        slots.iter().copied()
     }
     pub(crate) fn contains(&self, slot: u32) -> bool {
-        self.slots
-            .binary_search_by_key(&slot, |&(slot, _)| slot)
-            .is_ok()
+        self.slots.binary_search(&slot).is_ok()
     }
     pub(crate) fn bytes(&self, slot: u32) -> Option<Cow<'_, [u8]>> {
-        let index = self
-            .slots
-            .binary_search_by_key(&slot, |&(slot, _)| slot)
-            .ok()?;
-        let offset = self.slots[index].1 as usize;
+        self.slots.binary_search(&slot).ok()?;
+        let offset = self
+            .content
+            .slot_offset(slot)
+            .filter(|&offset| offset != 0)? as usize;
         let Found::Item { offset, len } = self.content.header(offset) else {
             return None;
         };
@@ -1245,10 +1255,69 @@ impl ReplayedLibrary {
         self.content
             .write(at, &field.wrapping_add(delta).to_le_bytes());
         self.content.total = total;
-        if let Err(place) = self.slots.binary_search_by_key(&slot, |&(slot, _)| slot) {
-            self.slots.insert(place, (slot, offset));
-        }
+        self.register(slot);
         UnigramAdd::Accepted
+    }
+
+    fn register(&mut self, slot: u32) {
+        if let Err(at) = self.slots.binary_search(&slot) {
+            self.slots.insert(at, slot);
+        }
+    }
+
+    /// `SubPhraseIndex::add_phrase_item` over the buffer (074a2219
+    /// `phrase_index.cpp:208-217`): the payload is stored at the content's end,
+    /// the slot's offset word points at it, and the `guint32` total takes the
+    /// payload's unigram. The slot becomes a touched slot, and the buffer holds
+    /// an item the shipped chunk may lack.
+    pub(crate) fn add_item(&mut self, slot: u32, payload: &[u8]) {
+        self.training_disjoint = None;
+        let unigram = raw_unigram(payload);
+        let offset = self.content.append(payload);
+        self.content.set_slot_offset(slot, offset);
+        self.content.total = self.content.total.wrapping_add(unigram);
+        self.has_added_items = true;
+        self.register(slot);
+    }
+
+    /// `SubPhraseIndex::remove_phrase_item` over the buffer (`:219-236`): the
+    /// readable item's bytes are copied out, its offset word is zeroed and its
+    /// unigram leaves the total. `None` where no readable item is there.
+    pub(crate) fn remove_item(&mut self, slot: u32) -> Option<Vec<u8>> {
+        let offset = self
+            .content
+            .slot_offset(slot)
+            .filter(|&offset| offset != 0)?;
+        let Found::Item { offset, len } = self.content.header(offset as usize) else {
+            return None;
+        };
+        let bytes = self.content.item(offset, len)?.into_owned();
+        self.training_disjoint = None;
+        self.content.set_slot_offset(slot, 0);
+        self.content.total = self.content.total.wrapping_sub(raw_unigram(&bytes));
+        self.register(slot);
+        Some(bytes)
+    }
+
+    /// `SubPhraseIndex::get_range`'s end (`:624-646`): one past the last slot
+    /// whose offset word is not zero, and never below the first token.
+    pub(crate) fn range_end(&self) -> u32 {
+        let words = self.content.slots.data_end / 4;
+        let mut end = words;
+        while end > 0
+            && self
+                .content
+                .slot_offset((end - 1) as u32)
+                .is_none_or(|word| word == 0)
+        {
+            end -= 1;
+        }
+        u32::try_from(end).unwrap_or(u32::MAX).max(1)
+    }
+
+    /// Whether the buffer holds an item the shipped chunk lacks.
+    pub(crate) fn has_added(&self) -> bool {
+        self.has_added_items
     }
 
     /// The live buffer of a library no journal touched: the shipped chunk's
@@ -1356,9 +1425,7 @@ impl ReplayedLibrary {
                 *was_written |= changed != count;
             }
         }
-        if let Err(at) = self.slots.binary_search_by_key(&slot, |&(slot, _)| slot) {
-            self.slots.insert(at, (slot, offset as u32));
-        }
+        self.register(slot);
         if !disjoint && written.contains(&true) {
             self.mark_overlapping_training_slots(slot, first + 2 * length, row, &written);
         }
@@ -1398,12 +1465,8 @@ impl ReplayedLibrary {
                 let count = first + place * stride;
                 changed && count < start + len && start < count + 4
             });
-            if overlaps
-                && let Err(at) = self
-                    .slots
-                    .binary_search_by_key(&candidate, |&(slot, _)| slot)
-            {
-                self.slots.insert(at, (candidate, offset));
+            if overlaps {
+                self.register(candidate);
             }
         }
     }
@@ -1442,7 +1505,7 @@ impl<'a> Merge<'a, '_> {
             let Some((_unigram, original_extent)) = self.original_item(slot) else {
                 continue;
             };
-            if !self.relocated.contains(&slot) && len > original_extent {
+            if !self.relocated(slot) && len > original_extent {
                 for extra in self.overlapped_slots_at_finish(offset, original_extent, len) {
                     if extra != slot && !self.touched.contains(&extra) {
                         self.touched.push(extra);
@@ -1467,7 +1530,7 @@ impl<'a> Merge<'a, '_> {
         next: &mut Vec<u32>,
         retain_adds: bool,
     ) -> bool {
-        let relocated = self.relocated.contains(&slot);
+        let relocated = self.relocated(slot);
         let offset = self.slot_offset(slot);
         if offset == 0 {
             typed.insert(slot, None);
@@ -1681,11 +1744,7 @@ impl<'a> Merge<'a, '_> {
         let total = self.has_original.then_some(self.content.total);
         let retained =
             (!self.touched.is_empty() || self.content.total != self.initial_total).then(|| {
-                let slots = self
-                    .touched
-                    .iter()
-                    .map(|&slot| (slot, self.slot_offset(slot)))
-                    .collect();
+                let slots = std::mem::take(&mut self.touched);
                 ReplayedLibrary {
                     content: self.content,
                     slots,
@@ -2349,7 +2408,7 @@ mod tests {
         assert_eq!(lazy_skipped, [expected]);
         assert!(!eager_items.contains_key(&1));
         assert!(!lazy_items.contains_key(&1));
-        assert!(!retained.slots.iter().any(|&(slot, _)| slot == 1));
+        assert!(!retained.slots.contains(&1));
         assert!(!retained.contains(1));
         assert!(retained.item(1).is_none());
         assert_eq!(retained.item(2), eager_items[&2]);

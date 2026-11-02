@@ -8,7 +8,27 @@ use crate::persistence::SystemLibraryRef;
 use crate::replay::{ReplayedLibrary, UnigramAdd};
 use crate::store::Token;
 
-#[derive(Default)]
+/// The live buffer of system library `nibble`, made from `original` the first
+/// time with the total a reload left.
+fn library_of<'a>(
+    replayed: &'a mut BTreeMap<u8, ReplayedLibrary>,
+    totals: &mut BTreeMap<u8, u32>,
+    nibble: u8,
+    original: SystemLibraryRef<'_>,
+) -> &'a mut ReplayedLibrary {
+    match replayed.entry(nibble) {
+        std::collections::btree_map::Entry::Occupied(library) => library.into_mut(),
+        std::collections::btree_map::Entry::Vacant(vacant) => {
+            let mut library = ReplayedLibrary::pristine(original);
+            if let Some(total) = totals.remove(&nibble) {
+                library.set_total(total);
+            }
+            vacant.insert(library)
+        }
+    }
+}
+
+#[derive(Debug, Default)]
 pub(crate) struct SystemItems {
     decoded: BTreeMap<Token, ChunkItem>,
     replayed: BTreeMap<u8, ReplayedLibrary>,
@@ -150,6 +170,77 @@ impl SystemItems {
         }
     }
 
+    /// `SubPhraseIndex::get_range`'s end of system library `nibble`: its live
+    /// buffer's, else the original's.
+    pub(crate) fn range_end(&self, nibble: u8, original: SystemLibraryRef<'_>) -> u32 {
+        let live = self
+            .replayed
+            .get(&nibble)
+            .map_or(original.range_end.max(1), ReplayedLibrary::range_end);
+        let lo = u32::from(nibble) << 24;
+        let decoded = self
+            .decoded
+            .range(lo..=(lo | 0x00ff_ffff))
+            .next_back()
+            .map_or(0, |(&token, _)| (token & 0x00ff_ffff) + 1);
+        live.max(decoded)
+    }
+
+    /// `add_phrase_item` over `token`'s library buffer.
+    pub(crate) fn add_item(
+        &mut self,
+        original: SystemLibraryRef<'_>,
+        token: Token,
+        payload: &[u8],
+    ) {
+        library_of(
+            &mut self.replayed,
+            &mut self.totals,
+            (token >> 24) as u8,
+            original,
+        )
+        .add_item(token & 0x00ff_ffff, payload);
+    }
+
+    /// Adds an item a load already counted in the library's total: the buffer
+    /// takes the payload and the total stays as the load left it.
+    pub(crate) fn load_item(
+        &mut self,
+        original: SystemLibraryRef<'_>,
+        token: Token,
+        payload: &[u8],
+    ) {
+        let library = library_of(
+            &mut self.replayed,
+            &mut self.totals,
+            (token >> 24) as u8,
+            original,
+        );
+        let total = library.total();
+        library.add_item(token & 0x00ff_ffff, payload);
+        library.set_total(total);
+    }
+
+    /// `remove_phrase_item` over `token`'s library buffer: the item's bytes.
+    pub(crate) fn remove_item(
+        &mut self,
+        original: SystemLibraryRef<'_>,
+        token: Token,
+    ) -> Option<Vec<u8>> {
+        library_of(
+            &mut self.replayed,
+            &mut self.totals,
+            (token >> 24) as u8,
+            original,
+        )
+        .remove_item(token & 0x00ff_ffff)
+    }
+
+    /// Whether any live buffer holds an item its original lacks.
+    pub(crate) fn has_added(&self) -> bool {
+        self.replayed.values().any(ReplayedLibrary::has_added)
+    }
+
     /// `FacadePhraseIndex::add_unigram_frequency`'s sub-index half
     /// (`phrase_index.cpp:150-176`) for system library `token >> 24`, whose
     /// item is the arena's when `arena`, else the decoded item or the live
@@ -165,16 +256,7 @@ impl SystemItems {
         let original = original?;
         let nibble = (token >> 24) as u8;
         let slot = token & 0x00ff_ffff;
-        let library = match self.replayed.entry(nibble) {
-            std::collections::btree_map::Entry::Occupied(library) => library.into_mut(),
-            std::collections::btree_map::Entry::Vacant(vacant) => {
-                let mut library = ReplayedLibrary::pristine(original);
-                if let Some(total) = self.totals.remove(&nibble) {
-                    library.set_total(total);
-                }
-                vacant.insert(library)
-            }
-        };
+        let library = library_of(&mut self.replayed, &mut self.totals, nibble, original);
         if arena {
             return Some(Self::take_total(library, delta));
         }
@@ -316,6 +398,11 @@ impl SystemItems {
 
     pub(crate) fn retain(&mut self, keep: impl FnMut(&Token, &mut ChunkItem) -> bool) {
         self.materialize();
+        self.decoded.retain(keep);
+    }
+
+    /// Drops decoded items, leaving every live buffer as it is.
+    pub(crate) fn retain_decoded(&mut self, keep: impl FnMut(&Token, &mut ChunkItem) -> bool) {
         self.decoded.retain(keep);
     }
 

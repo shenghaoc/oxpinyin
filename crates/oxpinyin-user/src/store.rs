@@ -2792,7 +2792,10 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// Returns an error when standalone phrase rows cannot be read.
     pub fn lookup(&self) -> Result<crate::UserLookup<'_>, UserStoreError> {
         if let Some(target) = self.inner.libpinyin.as_ref() {
-            return Ok(crate::UserLookup::session(&target.phrases));
+            return Ok(crate::UserLookup::session(
+                &target.phrases,
+                &self.inner.system_items,
+            ));
         }
         let mut cache = self
             .inner
@@ -3095,8 +3098,9 @@ impl<S: WriteStore> GenericUserStore<S> {
             .as_ref()?
             .phrases()
             .libraries
-            .get(&phrase_index_library_index(token))?
-            .pronunciation_count(token & PHRASE_MASK)
+            .get(&phrase_index_library_index(token))
+            .and_then(|library| library.pronunciation_count(token & PHRASE_MASK))
+            .or_else(|| self.with_appended_item(token, |item| item.n_pronunciations() as u32))
     }
 
     /// The item's text, without decoding or collecting its readings.
@@ -3296,7 +3300,10 @@ impl<S: WriteStore> GenericUserStore<S> {
     pub fn phrase(&self, token: Token) -> Result<Option<UserPhrase>, UserStoreError> {
         if let Some(target) = &self.inner.libpinyin {
             let phrases = target.phrases();
-            return Ok(phrases.item(token).map(|item| phrases.phrase(token, item)));
+            return Ok(match phrases.item(token) {
+                Some(item) => Some(phrases.phrase(token, item)),
+                None => self.with_appended_item(token, |item| phrases.phrase(token, item)),
+            });
         }
         let db = self.database();
         let token_key = codec::encode_token(token);
@@ -4002,7 +4009,13 @@ impl<S: WriteStore> GenericUserStore<S> {
                     (!originals.contains_key(nibble)).then_some(library)
                 }))
                 .any(|library| !library.is_empty())
-        };
+        } || state.system_overrides.iter().any(|(nibble, items)| {
+            originals.get(nibble).is_some_and(|original| {
+                items
+                    .iter()
+                    .any(|(&slot, item)| item.is_some() && !original.contains_item(slot))
+            })
+        });
         let reloaded = |token| {
             let library = phrase_index_library_index(token);
             originals.contains_key(&library)
@@ -4059,13 +4072,22 @@ impl<S: WriteStore> GenericUserStore<S> {
                     items.set_library_total(nibble, total);
                 }
             }
-            items.retain(|&token, _| !reloaded(token));
+            items.retain_decoded(|&token, _| !reloaded(token));
             removed.retain(|&token| !reloaded(token));
             for (&nibble, overrides) in &state.system_overrides {
                 for (&slot, item) in overrides {
                     let token = (u32::from(nibble) << 24) | slot;
                     if let Some(item) = item {
-                        items.insert(token, item.clone());
+                        match originals.get(&nibble) {
+                            Some(original) if !original.contains_item(slot) => {
+                                if let Ok(bytes) = crate::persistence::encode_persisted_item(item) {
+                                    items.load_item(original, token, &bytes);
+                                }
+                            }
+                            _ => {
+                                items.insert(token, item.clone());
+                            }
+                        }
                     } else {
                         removed.insert(token);
                     }
@@ -4843,11 +4865,9 @@ impl<S: WriteStore> GenericUserStore<S> {
         if !(1..=4).contains(&library) || !phrase_fits_keys(&words, keys) {
             return Err(UserStoreError::InvalidPhrase);
         }
-        let target = self
-            .inner
-            .libpinyin
-            .as_ref()
-            .ok_or(UserStoreError::InvalidPhrase)?;
+        if self.inner.libpinyin.is_none() {
+            return Err(UserStoreError::InvalidPhrase);
+        }
         let originals = &self.originals;
         let original = originals
             .get(&library)
@@ -4855,7 +4875,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         let range_end = original.range_end;
         let delta = u32::try_from(count.unwrap_or(DEFAULT_PHRASE_COUNT)).unwrap_or(u32::MAX);
         if original_token.is_none()
-            || original_token.is_some_and(|token| target.phrases().item(token).is_some())
+            || original_token.is_some_and(|token| self.with_appended_item(token, |_| ()).is_some())
         {
             return self.arena_add_phrase(
                 library,
@@ -4887,7 +4907,29 @@ impl<S: WriteStore> GenericUserStore<S> {
         let change = plan_system_reading(&item, &reading);
         validate_system_merge(&item, &reading, change)?;
         apply_system_reading(&mut item, &reading, change);
-        items.insert(token, item);
+        if items.has_decoded(&token) {
+            // A reload or a mask materialized this item: the decoded copy stays
+            // the value until the save and reload members move it.
+            items.insert(token, item);
+        } else {
+            // `remove_phrase_item`, `add_pronunciation`, `add_phrase_item` over
+            // the buffer (`pinyin.cpp:559-569`). A slot the journal removed has
+            // nothing to remove, so its total is left as the removal left it.
+            let bytes = oxpinyin_data::chunk_write::encode_phrase_item(&item)
+                .map_err(|error| UserStoreError::Persistence(error.to_string()))?;
+            let removed = items.remove_item(original, token).is_some();
+            items.add_item(original, token, &bytes);
+            if !removed {
+                let library = phrase_index_library_index(token);
+                let total = items
+                    .library_total(library, Some(original))
+                    .unwrap_or(original.total);
+                items.set_library_total(
+                    library,
+                    total.wrapping_sub(crate::replay::raw_unigram(&bytes)),
+                );
+            }
+        }
         drop(items);
         self.revive_system_item(token);
         self.inner.has_system_items.store(true, Ordering::Relaxed);

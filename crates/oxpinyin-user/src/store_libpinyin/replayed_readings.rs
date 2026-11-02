@@ -845,3 +845,176 @@ fn the_gate_never_hides_a_count_or_a_gram_after_a_mask_removal_reload_or_import(
     drop(store);
     std::fs::remove_dir_all(dir).expect("cleanup");
 }
+
+/// A replayed ADD and every import into a system library with an original live
+/// only in that library's live buffer: no arena holds a copy and no decoded item
+/// is made, so one value stands for each item and each total moves once.
+#[test]
+fn a_replayed_add_and_the_imports_live_only_in_the_buffer() {
+    let one = item(0x4f60, 100, &[(tone("ni", 3), 10)]);
+    let two = item(0x597d, 50, &[(tone("hao", 3), 20)]);
+    let added = item(0x4e94, 11, &[(tone("wu", 3), 50)]);
+    let base = library_of(vec![(1, one.clone()), (2, two.clone())]);
+    let (dir, mut store) = open_over(
+        "buffer-only",
+        &base,
+        &[LogRecord::Add {
+            token: 5,
+            new_item: encode_phrase_item(&added).expect("added"),
+        }],
+    );
+    let arena_library = |store: &UserStore| {
+        store
+            .session_target()
+            .expect("session")
+            .phrases()
+            .libraries
+            .contains_key(&1)
+    };
+    let appended = LIBRARY | 5;
+    // The replayed ADD: the buffer's item, no arena copy, no decoded copy.
+    assert!(!arena_library(&store));
+    assert!(store.with_user_item(appended, |_| ()).is_some());
+    assert!(!store.has_decoded_system_item(appended));
+    assert_eq!(store.system_unigram(appended), Some(11));
+    assert_eq!(store.system_library_total(1), Some(161));
+
+    // A new phrase goes after the range's end, with no unigram and then the
+    // count times three (`pinyin.cpp:593-604`): the item and the library's
+    // total take it once, and no copy is made.
+    let new = store
+        .add_system_phrase_in(1, None, &"六".into(), &dense("liu", 4), Some(5))
+        .expect("import a new phrase");
+    assert_eq!(new, LIBRARY | 6);
+    assert!(!arena_library(&store));
+    assert!(!store.has_decoded_system_item(new));
+    assert_eq!(store.system_unigram(new), Some(15));
+    assert_eq!(store.system_library_total(1), Some(176));
+    assert_eq!(store.unigram_total().expect("extra"), 0);
+
+    // A reading onto the appended item, onto a shipped one, and onto the new
+    // phrase: each is removed, takes the reading and is added back in the
+    // buffer, and none of them moves a total.
+    store
+        .add_system_phrase_in(1, Some(appended), &"五".into(), &dense("wu", 3), Some(4))
+        .expect("onto the appended item");
+    store
+        .add_system_phrase_in(1, Some(LIBRARY | 1), &"你".into(), &dense("ni", 3), Some(7))
+        .expect("onto a shipped item");
+    store
+        .add_system_phrase_in(1, Some(new), &"六".into(), &dense("liu", 4), Some(3))
+        .expect("onto the new phrase");
+    assert_eq!(counts(&store, 5), [54]);
+    assert_eq!(counts(&store, 1), [17]);
+    assert_eq!(counts(&store, 6), [8]);
+    for token in [appended, new, LIBRARY | 1] {
+        assert!(!store.has_decoded_system_item(token));
+    }
+    assert!(!arena_library(&store));
+    assert_eq!(store.system_library_total(1), Some(176));
+    assert_eq!(store.system_unigram(LIBRARY | 1), Some(100));
+
+    // The save reads the buffer, and a reopen finds the same items.
+    store.mark_modified();
+    assert!(store.save().expect("save"));
+    drop(store);
+    let store = open(&dir, &base);
+    assert!(!arena_library(&store));
+    assert_eq!(counts(&store, 5), [54]);
+    assert_eq!(counts(&store, 6), [8]);
+    assert_eq!(counts(&store, 1), [17]);
+    drop(store);
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}
+
+#[test]
+fn materialized_appended_item_keeps_its_lookup_text() {
+    let base = library_of(vec![(1, item(0x4f60, 100, &[(tone("ni", 3), 10)]))]);
+    let added = item(0x4e94, 11, &[(tone("wu", 3), 50)]);
+    let (dir, mut store) = open_over(
+        "materialized-appended-text",
+        &base,
+        &[LogRecord::Add {
+            token: 5,
+            new_item: encode_phrase_item(&added).expect("added"),
+        }],
+    );
+    let token = LIBRARY | 5;
+    store.mask_out(u32::MAX, 0).expect("mask other token");
+    assert!(store.has_decoded_system_item(token));
+    assert_eq!(
+        store.lookup().expect("lookup").phrase_text(token),
+        Some("五".into())
+    );
+    drop(store);
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}
+
+#[test]
+fn materialized_appended_item_accepts_import_after_failed_mask() {
+    let base = library_of(vec![(1, item(0x4f60, 100, &[(tone("ni", 3), 10)]))]);
+    let added = item(0x4e94, 11, &[(tone("wu", 3), 50)]);
+    let (dir, mut store) = open_over(
+        "materialized-appended-failed-mask",
+        &base,
+        &[LogRecord::Add {
+            token: 5,
+            new_item: encode_phrase_item(&added).expect("added"),
+        }],
+    );
+    let token = LIBRARY | 5;
+    store.mask_out(u32::MAX, 0).expect("mask other token");
+    assert!(store.has_decoded_system_item(token));
+    store.plant_raw_bigram(1, &[0, 0, 0, 0, 1]);
+    assert!(matches!(
+        store.mask_out(u32::MAX, 0),
+        Err(crate::UserStoreError::PartialUserBigramTail)
+    ));
+    let before = store.system_library_total(1);
+    assert_eq!(
+        store
+            .add_system_phrase_in(1, Some(token), &"五".into(), &dense("wu", 3), Some(4))
+            .expect("import existing"),
+        token
+    );
+    assert!(store.has_decoded_system_item(token));
+    assert_eq!(counts(&store, 5), [54]);
+    assert_eq!(store.system_unigram(token), Some(11));
+    assert_eq!(store.system_library_total(1), before);
+    drop(store);
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}
+
+#[test]
+fn materialized_new_import_keeps_text_and_accepts_another_reading_after_failed_mask() {
+    let base = library_of(vec![(1, item(0x4f60, 100, &[(tone("ni", 3), 10)]))]);
+    let (dir, mut store) = open_over("materialized-new-import", &base, &[]);
+    let token = store
+        .add_system_phrase_in(1, None, &"五".into(), &dense("wu", 3), Some(5))
+        .expect("import new");
+    store.mask_out(u32::MAX, 0).expect("mask other token");
+    assert!(store.has_decoded_system_item(token));
+    assert_eq!(
+        store.lookup().expect("lookup").phrase_text(token),
+        Some("五".into())
+    );
+    store.plant_raw_bigram(1, &[0, 0, 0, 0, 1]);
+    assert!(matches!(
+        store.mask_out(u32::MAX, 0),
+        Err(crate::UserStoreError::PartialUserBigramTail)
+    ));
+    assert_eq!(
+        store
+            .add_system_phrase_in(1, Some(token), &"五".into(), &dense("wu", 3), Some(4))
+            .expect("import existing"),
+        token
+    );
+    assert!(store.has_decoded_system_item(token));
+    assert_eq!(
+        store.with_user_item(token, |item| item.pronunciation(0).expect("reading").freq),
+        Some(9)
+    );
+    assert_eq!(store.system_unigram(token), Some(15));
+    drop(store);
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}
