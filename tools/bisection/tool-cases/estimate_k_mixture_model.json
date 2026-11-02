@@ -25,6 +25,8 @@
     },
     {
       "id": "kmm-estimate-no-models",
+      "policy_record": "bdb-failed-handle.md",
+      "policy_cells": ["bdb"],
       "utility": "estimate_k_mixture_model",
       "source": "utils/training/estimate_k_mixture_model.cpp at 074a2219: 98-155, 36-96",
       "args": [],

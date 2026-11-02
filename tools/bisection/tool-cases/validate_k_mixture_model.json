@@ -34,6 +34,8 @@
     },
     {
       "id": "kmm-validate-missing-file",
+      "policy_record": "bdb-failed-handle.md",
+      "policy_cells": ["bdb"],
       "utility": "validate_k_mixture_model",
       "source": "utils/training/validate_k_mixture_model.cpp at 074a2219: 141-173, 28-139; src/include/pinyin_utils.h:26-31",
       "args": [

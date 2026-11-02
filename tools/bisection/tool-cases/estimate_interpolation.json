@@ -26,6 +26,8 @@
     },
     {
       "id": "estimate_interpolation-missing-bigram-file",
+      "policy_record": "bdb-failed-handle.md",
+      "policy_cells": ["bdb"],
       "utility": "estimate_interpolation",
       "source": "utils/training/estimate_interpolation.cpp at 074a2219: 107-111 (both attaches are ignored) and 56-63 (a missing system row leaves the numerator zero)",
       "args": [],
@@ -37,6 +39,8 @@
     },
     {
       "id": "estimate_interpolation-missing-deleted-bigram",
+      "policy_record": "bdb-failed-handle.md",
+      "policy_cells": ["bdb"],
       "utility": "estimate_interpolation",
       "source": "utils/training/estimate_interpolation.cpp at 074a2219: 113-114 (get_all_items on a failed attach answers empty) and 139 (0.0/0 prints the host NaN)",
       "args": [],

@@ -256,9 +256,9 @@ byte-identical stdout: 83,457,181 bytes in 1,913,520 lines.
 One bdb `exp-missing-bigram` case also differs in stderr: the pin calls
 `Bigram::get_all_items` on the handle a failed `attach` left unopened,
 and libdb itself writes `BDB1565 DB->cursor: method not permitted before
-handle's open method`; the subject's store answers the failed open
-without a library diagnostic. The record is a backend library
-diagnostic, not a pin format.
+handle's open method`; the subject closes that handle. The case is
+POLICY-ACCEPTED on bdb from
+[bdb-failed-handle](../findings/bdb-failed-handle.md).
 
 The named mutation `storage-native-order` replaces
 `Hash::native_keys` with the store's ascending `range_raw` walk in
@@ -301,12 +301,13 @@ On the tkrzw reference cell all 40 cases report MATCH with the sound
 LD_LIBRARY_PATH=/home/sheng/.cache/oxpinyin/tkrzw/lib`); the kc cell's 40
 are MATCH as well, and the existing 45 non-generator cases stay 78
 MATCH plus 7 POLICY-ACCEPTED there with the new ones included (85 cases).
-On the bdb cell the failed-`attach` cases and the empty-file cases differ
-only in Berkeley DB's own error log (`BDB1565`/`BDB0004`): the pin leaves
-an unopened handle whose destructor calls `sync`/`close`, while
-`oxpinyin-store` reports the failed open and stops; those lines are
-library diagnostics, not the utilities' output. No policy record was
-created for them, and the reference cell carries no such lines.
+On the bdb cell the failed-`attach` cases differ only in libdb's
+`BDB1565` lines: the pin keeps a handle whose open failed and calls it
+again, while `oxpinyin-store` closes it. Both sides print the same
+`BDB0004` open error. Those cases name
+[bdb-failed-handle](../findings/bdb-failed-handle.md) with
+`policy_cells: ["bdb"]` and are POLICY-ACCEPTED there; on kc and tkrzw
+they compare as ordinary cases.
 
 The named mutation `ngram-unigram-two` changes only
 `gen_ngram::train`'s `libraries.add_unigram(cur_token, 1)` to `2`. The

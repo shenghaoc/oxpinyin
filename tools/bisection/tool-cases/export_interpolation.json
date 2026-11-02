@@ -55,6 +55,8 @@
     },
     {
       "id": "exp-missing-bigram",
+      "policy_record": "bdb-failed-handle.md",
+      "policy_cells": ["bdb"],
       "utility": "export_interpolation",
       "source": "utils/storage/export_interpolation.cpp at 074a2219: 30-73, 75-143; src/storage/tag_utility.cpp: 362-417",
       "args": [],

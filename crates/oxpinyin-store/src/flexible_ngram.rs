@@ -44,11 +44,11 @@
 //! flags: Berkeley DB `DB_HASH` at mode 0644
 //! (`flexible_ngram_bdb.h:110-114`), Kyoto Cabinet `HashDB`
 //! (`flexible_ngram_kyotodb.h:143-155`) and tkrzw `HashDBM`
-//! (`flexible_ngram_tkrzwdb.h:145-159`). [`FlexibleBigram::open`] opens or
-//! creates that container through [`WriteStore::create_hash`] and
-//! [`FlexibleBigram::open_read_only`] through
-//! [`RawReadStore::open_hash_read_only`], exactly the constructors
-//! `import_interpolation`'s port already uses for libpinyin's `bigram.db`.
+//! (`flexible_ngram_tkrzwdb.h:145-159`). [`FlexibleBigram::attach`] opens
+//! it through [`WriteStore::attach_hash`], which runs that backend's own
+//! open, retry and signature-write sequence. The object it leaves and the
+//! attach answer are kept apart, as the pin keeps `m_db` and `attach`'s
+//! return value apart.
 //!
 //! # Iteration order
 //!
@@ -78,7 +78,10 @@
 use std::marker::PhantomData;
 use std::path::Path;
 
-use crate::{BackendError, DefaultStore, RawReadStore, StoreError, WriteStore, WriteTxn};
+use crate::{
+    AttachMode, BackendError, DefaultStore, HashAttach, RawReadStore, StoreError, WriteStore,
+    WriteTxn,
+};
 
 /// The magic record's eight-byte key: two `null_token` `phrase_token_t`s
 /// (`flexible_ngram_bdb.h:118-121`, `flexible_ngram_kyotodb.h:157-158`,
@@ -299,7 +302,13 @@ impl<H: FixedRecord, I: FixedRecord> SingleGram<H, I> {
 /// backend (`DefaultStore` through [`DefaultFlexibleBigram`], or an
 /// explicitly named peer for a cross-backend caller).
 pub struct FlexibleBigram<B: WriteStore, S> {
+    /// The pin's `m_db`: `None` when it is null.
     db: Option<B>,
+    /// Whether `db`'s native open succeeded. Kyoto Cabinet keeps an object
+    /// whose CREATE retry failed ([`HashAttach::Unopened`]).
+    opened: bool,
+    /// `attach`'s answer, kept apart from the object it leaves.
+    attached: bool,
     read_only: bool,
     _spec: PhantomData<fn() -> S>,
 }
@@ -327,66 +336,56 @@ where
     B: RawReadStore + WriteStore,
     S: FlexibleGramSpec,
 {
-    /// Open the working model read-write, creating it when the path is
-    /// absent or empty.
-    ///
-    /// This is the pin's `attach(path, ATTACH_READWRITE | ATTACH_CREATE)`:
-    /// a hash container in the backend's own class
-    /// ([`WriteStore::create_hash`]), a fresh one carrying the four-byte
-    /// magic number, an existing one checked against it. An existing
-    /// container whose magic record is missing or different is refused, as
-    /// the pin's signature check refuses it.
+    /// The pin's `attach(filename, flags)` (`flexible_ngram_bdb.h:94-153`,
+    /// `flexible_ngram_kyotodb.h:129-180`, `flexible_ngram_tkrzwdb.h:
+    /// 128-187` at 074a2219). A null filename leaves no object. Otherwise
+    /// the backend opens the hash container ([`WriteStore::attach_hash`]),
+    /// and an existing container is checked against
+    /// [`FlexibleGramSpec::MAGIC_NUMBER`]. [`Self::attached`] is the
+    /// answer; the object stays whatever the answer is, where the pin's
+    /// stays, and every later call reaches it.
     ///
     /// # Errors
     ///
-    /// Returns [`StoreError`] when the container cannot be opened or
-    /// created, or does not carry [`FlexibleGramSpec::MAGIC_NUMBER`].
-    pub fn open(path: &Path) -> Result<Self, StoreError> {
-        let fresh = match std::fs::metadata(path) {
-            Ok(metadata) => metadata.len() == 0,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
-            Err(error) => return Err(StoreError::Io(error)),
-        };
-        let this = Self {
-            db: Some(B::create_hash(path)?),
-            read_only: false,
+    /// Returns [`StoreError`] for a failure before the native open.
+    pub fn attach(path: Option<&Path>, mode: AttachMode) -> Result<Self, StoreError> {
+        let mut this = Self {
+            db: None,
+            opened: false,
+            attached: false,
+            read_only: mode == AttachMode::ReadOnly,
             _spec: PhantomData,
         };
-        match this.read_value(&MAGIC_KEY)? {
-            Some(value) => {
-                if !this.matches_magic(&value) {
-                    return Err(signature_error());
-                }
+        let Some(path) = path else {
+            return Ok(this);
+        };
+        match B::attach_hash(path, mode, (&MAGIC_KEY, &S::MAGIC_NUMBER))? {
+            HashAttach::Closed => {}
+            HashAttach::Unopened(db) => this.db = Some(db),
+            HashAttach::Created(db, answer) => {
+                this.db = Some(db);
+                this.opened = true;
+                this.attached = answer;
             }
-            None if fresh => {
-                if !this.write_value(&MAGIC_KEY, &S::MAGIC_NUMBER)? {
-                    return Err(StoreError::Backend(BackendError::from(
-                        "flexible bigram container was not writable while creating its magic record",
-                    )));
-                }
+            HashAttach::Opened(db) => {
+                this.db = Some(db);
+                this.opened = true;
+                // A failed signature read is the pin's `false`, as a
+                // missing or different magic number is.
+                this.attached = this
+                    .read_value(&MAGIC_KEY)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|value| this.matches_magic(&value));
             }
-            None => return Err(signature_error()),
         }
         Ok(this)
     }
 
-    /// Open an existing working model read-only, as the pin's
-    /// `attach(path, ATTACH_READONLY)` does.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError`] when the container cannot be opened or does
-    /// not carry [`FlexibleGramSpec::MAGIC_NUMBER`].
-    pub fn open_read_only(path: &Path) -> Result<Self, StoreError> {
-        let this = Self {
-            db: Some(B::open_hash_read_only(path)?),
-            read_only: true,
-            _spec: PhantomData,
-        };
-        match this.read_value(&MAGIC_KEY)? {
-            Some(value) if this.matches_magic(&value) => Ok(this),
-            _ => Err(signature_error()),
-        }
+    /// `attach`'s answer.
+    #[must_use]
+    pub const fn attached(&self) -> bool {
+        self.attached
     }
 
     /// Close the backend handle — the pin's `reset()`, which synchronises
@@ -443,14 +442,18 @@ where
     ///
     /// Returns [`StoreError`] when the existence read or the delete fails.
     pub fn remove(&self, token: u32) -> Result<bool, StoreError> {
-        let key = token.to_ne_bytes();
-        if self.db.is_none() || self.read_only {
+        let Some(db) = self.db.as_ref() else {
+            return Ok(false);
+        };
+        if self.read_only {
             return Ok(false);
         }
-        if self.read_value(&key)?.is_none() {
-            return Ok(false);
-        }
-        self.delete_value(&key)
+        // The pin's one `del`/`remove`/`Remove`, whose answer is the
+        // method's (`flexible_ngram_bdb.h:224-235`,
+        // `flexible_ngram_kyotodb.h:246-252`, `flexible_ngram_tkrzwdb.h:
+        // 257-263`).
+        let ((), found) = db.write_deferred(|txn| txn.remove_raw(&token.to_ne_bytes()))?;
+        Ok(found)
     }
 
     /// Retrieve every item of one single gram; `None` when the token has no
@@ -639,6 +642,13 @@ where
     #[must_use]
     pub fn get_all_items(&self) -> Option<Vec<u32>> {
         let db = self.db.as_ref()?;
+        if !self.opened {
+            // Kyoto Cabinet's kept object answers `INVALID`; the pin ignores
+            // `iterate`'s answer and returns the cleared array
+            // (`flexible_ngram_kyotodb.h:262-272`).
+            let _ = db.native_keys();
+            return Some(Vec::new());
+        }
         match db.native_keys() {
             Ok(keys) => Some(
                 keys.into_iter()
@@ -691,19 +701,6 @@ where
         db.write_deferred(|txn| txn.put_raw(key, value))?;
         Ok(true)
     }
-
-    /// Remove `key` from the raw keyspace; `false` on a closed or
-    /// read-only handle.
-    fn delete_value(&self, key: &[u8]) -> Result<bool, StoreError> {
-        let Some(db) = self.db.as_ref() else {
-            return Ok(false);
-        };
-        if self.read_only {
-            return Ok(false);
-        }
-        db.write_deferred(|txn| txn.remove_raw(key))?;
-        Ok(true)
-    }
 }
 
 /// The value of a single gram: the encoded header then the token-then-item
@@ -747,13 +744,6 @@ fn decode_value<H: FixedRecord, I: FixedRecord>(
         });
     }
     Ok((header, items))
-}
-
-/// A container that does not carry this flexible gram's magic number.
-fn signature_error() -> StoreError {
-    StoreError::Backend(BackendError::from(
-        "flexible bigram container does not carry the expected magic number",
-    ))
 }
 
 /// The pin's unrecoverable `get_all_items` cursor failure

@@ -190,7 +190,7 @@ use std::pin::Pin;
 use cxx::{CxxString, CxxVector, UniquePtr, let_cxx_string};
 
 use crate::common::{fill_buffered, framed, in_bounds, table_prefix, validate_path};
-use crate::{Flow, ReadStore, StoreError, WriteStore, WriteTxn};
+use crate::{AttachMode, Flow, HashAttach, ReadStore, StoreError, WriteStore, WriteTxn};
 use bridge::ffi;
 
 /// `Status::SUCCESS` — pinned by number, with `adapter.cc`'s `static_assert`
@@ -386,8 +386,14 @@ impl Db {
         ))
     }
 
-    /// Whether the native object is still owned: always, except under the
-    /// named mutation that deletes a failed object.
+    /// `delete m_db` with no `Close` (`flexible_ngram_tkrzwdb.h:148-158`):
+    /// the virtual destructor runs now, and `Drop` finds a null owner.
+    pub(crate) fn delete(&mut self) {
+        self.dbm = UniquePtr::null();
+    }
+
+    /// Whether the native object is still owned: always, except after
+    /// [`Self::delete`].
     #[cfg(test)]
     pub(crate) fn is_retained(&self) -> bool {
         !self.dbm.is_null()
@@ -519,8 +525,8 @@ impl Drop for Db {
     fn drop(&mut self) {
         // `m_db->Close(); delete m_db;` (`ngram_tkrzwdb.cpp:42-43`), the
         // status ignored as the pin ignores it. `UniquePtr` runs the
-        // virtual destructor afterwards. The null guard exists only for
-        // the named mutation that deletes a failed object early.
+        // virtual destructor afterwards. The null guard is for an object
+        // that `Db::delete` already destroyed.
         if !self.dbm.is_null() {
             if self.sync_before_close {
                 self.reset_synchronize();
@@ -957,6 +963,55 @@ impl WriteStore for TkrzwStore {
         open_hash_create(path)
     }
 
+    /// `Bigram::attach` (`ngram_tkrzwdb.cpp:86-99` at 074a2219): a `HashDBM`
+    /// opened with `attach_options`; a status other than success is `None`.
+    fn attach_bigram(path: &Path, read_only: bool) -> Result<Option<Self>, StoreError> {
+        let writable = !read_only;
+        let mut db = Db::new(Class::Hash);
+        let options = if writable {
+            OPEN_DEFAULT
+        } else {
+            OPEN_NO_CREATE
+        };
+        Ok((db.open(path, writable, options)?.code == STATUS_SUCCESS)
+            .then_some(TkrzwStore { db, read_only }))
+    }
+
+    /// `FlexibleBigram::attach` (`flexible_ngram_tkrzwdb.h:128-187` at
+    /// 074a2219): one `HashDBM`, opened with `OPEN_NO_CREATE`, and with
+    /// `ATTACH_CREATE` opened again without it. A failed open without
+    /// CREATE, or a failed retry, deletes the object with no `Close`
+    /// (`:148-158`). The retry's signature `Set` is ignored (`:161-167`).
+    fn attach_hash(
+        path: &Path,
+        mode: AttachMode,
+        signature: (&[u8], &[u8]),
+    ) -> Result<HashAttach<Self>, StoreError> {
+        let writable = mode != AttachMode::ReadOnly;
+        let mut db = Db::new(Class::Hash);
+        if db.open(path, writable, OPEN_NO_CREATE)?.code == STATUS_SUCCESS {
+            return Ok(HashAttach::Opened(TkrzwStore {
+                db,
+                read_only: !writable,
+            }));
+        }
+        if mode != AttachMode::ReadWriteCreate
+            || db.open(path, writable, OPEN_DEFAULT)?.code != STATUS_SUCCESS
+        {
+            db.delete();
+            return Ok(HashAttach::Closed);
+        }
+        let (key, value) = signature;
+        let _ = db.set(key, value);
+        Ok(HashAttach::Created(
+            TkrzwStore {
+                db,
+                read_only: false,
+            },
+            true,
+        ))
+    }
+
     fn create_in_memory() -> Result<Self, StoreError> {
         Ok(open_in_memory())
     }
@@ -983,7 +1038,7 @@ impl WriteStore for TkrzwStore {
         &self,
         f: impl FnOnce(&mut Self::Txn<'_>) -> Result<R, StoreError>,
     ) -> Result<R, StoreError> {
-        self.write_with(true, f)
+        self.write_with(true, f).map(|(out, _)| out)
     }
 
     /// `FlexibleBigram::store` and `remove` (`flexible_ngram_tkrzwdb.h:
@@ -993,7 +1048,7 @@ impl WriteStore for TkrzwStore {
     fn write_deferred<R>(
         &self,
         f: impl FnOnce(&mut Self::Txn<'_>) -> Result<R, StoreError>,
-    ) -> Result<R, StoreError> {
+    ) -> Result<(R, bool), StoreError> {
         self.write_with(false, f)
     }
 
@@ -1020,7 +1075,7 @@ impl TkrzwStore {
         &self,
         sync: bool,
         f: impl FnOnce(&mut TkrzwTxn<'_>) -> Result<R, StoreError>,
-    ) -> Result<R, StoreError> {
+    ) -> Result<(R, bool), StoreError> {
         if self.read_only {
             return Err(StoreError::ReadOnly);
         }
@@ -1032,8 +1087,8 @@ impl TkrzwStore {
         // On `Err` the buffer dies with the transaction and nothing was
         // ever written: rollback is the absence of the apply below.
         let result = f(&mut txn)?;
-        commit(db, &txn.buffer, sync)?;
-        Ok(result)
+        let found = commit(db, &txn.buffer, sync)?;
+        Ok((result, found))
     }
 }
 
@@ -1041,20 +1096,20 @@ impl TkrzwStore {
 
 /// Applies a finished transaction's buffer with the pin's calls, one `Set`
 /// or `Remove` per record in framed-key order, then, when `sync`, the soft sync. Not
-/// generic, so the many `write` closures share one copy of it.
+/// generic, so the many `write` closures share one copy of it. The answer
+/// is false when a `Remove` found no record (`NOT_FOUND_ERROR`), which the
+/// trait's `remove` treats as a no-op and `write_deferred` reports.
 #[inline(never)]
 fn commit(
     db: &Db,
     buffer: &BTreeMap<Vec<u8>, Option<Vec<u8>>>,
     sync: bool,
-) -> Result<(), StoreError> {
+) -> Result<bool, StoreError> {
+    let mut found = true;
     for (key, slot) in buffer {
         match slot {
             Some(value) => db.set(key, value)?,
-            // A removal of an absent record is the trait's no-op.
-            None => {
-                db.remove(key)?;
-            }
+            None => found &= db.remove(key)?,
         }
     }
     if sync && !buffer.is_empty() {
@@ -1063,7 +1118,7 @@ fn commit(
         // in-memory session store has no file for either level.
         db.synchronize(false)?;
     }
-    Ok(())
+    Ok(found)
 }
 
 /// Buffers a write transaction's mutations until the apply in

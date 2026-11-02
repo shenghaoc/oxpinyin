@@ -54,8 +54,10 @@ pub struct UnopenedSystemDbm {
 }
 
 impl UnopenedSystemDbm {
-    /// Makes the pin's failed point read: BDB get, KC check, or tkrzw
-    /// `Get(key, &value)`.
+    /// Makes the pin's failed point read: KC check or tkrzw
+    /// `Get(key, &value)`. On Berkeley DB the failed handle is already
+    /// closed (`BdbUnopenedHandle`), so the pin's `DB->get` has
+    /// no counterpart.
     pub fn read(&self, key: &[u8]) {
         let db = self
             .db
@@ -63,16 +65,18 @@ impl UnopenedSystemDbm {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(db) = db.as_ref() {
             #[cfg(feature = "bdb")]
-            let _ = db.get(key);
+            let _ = (db, key);
             #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
             db.read(key);
         }
     }
 
     /// Makes the failed suggestion's first call, with no following cursor
-    /// operation: BDB cursor, KC check, tkrzw `Get(key, nullptr)`
-    /// (chewing_large_table2_bdb.cpp:567; chewing_large_table2_kyotodb.cpp:541;
-    /// chewing_large_table2_tkrzwdb.cpp:511 at 074a2219).
+    /// operation: KC check, tkrzw `Get(key, nullptr)`
+    /// (chewing_large_table2_kyotodb.cpp:541;
+    /// chewing_large_table2_tkrzwdb.cpp:511 at 074a2219). The pin's BDB
+    /// cursor (chewing_large_table2_bdb.cpp:567) has no counterpart, as in
+    /// [`Self::read`].
     pub fn suggest(&self, key: &[u8]) {
         let db = self
             .db
@@ -80,10 +84,7 @@ impl UnopenedSystemDbm {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(db) = db.as_ref() {
             #[cfg(feature = "bdb")]
-            {
-                let _ = key;
-                db.cursor();
-            }
+            let _ = (db, key);
             #[cfg(feature = "kyotocabinet")]
             db.read(key);
             #[cfg(feature = "tkrzw")]
@@ -101,7 +102,8 @@ impl UnopenedSystemDbm {
             .is_none()
     }
 
-    /// Synchronizes, closes and destroys the failed object once. Repeated
+    /// Synchronizes, closes and destroys the failed object once (on
+    /// Berkeley DB the handle is already closed). Repeated
     /// finalization is inert; surviving safe facade instances cannot call
     /// a freed native object.
     pub fn finish(&self) {

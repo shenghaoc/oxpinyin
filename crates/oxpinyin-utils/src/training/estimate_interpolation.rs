@@ -77,8 +77,12 @@ fn compute_interpolation(deleted_bigram: &Gram, unigram: &Libraries, bigram: Opt
 pub fn main(_args: impl IntoIterator<Item = OsString>) {
     let conf = load_table_conf();
     let unigram = Libraries::load_rows(&conf, false, &[FileType::SystemFile], tool::ENOENT);
-    let bigram = Hash::open_read_only(Path::new("bigram.db")).ok();
-    let deleted_bigram = Hash::open_read_only(Path::new("deleted_bigram.db")).ok();
+    let attach = |name: &str| {
+        Hash::open_read_only(Path::new(name))
+            .unwrap_or_else(|error| oxpinyin_input::tool::exit_on_store_error(&error))
+    };
+    let bigram = Some(attach("bigram.db"));
+    let deleted_bigram = Some(attach("deleted_bigram.db"));
 
     let mut lambda_sum = 0.0_f64;
     let mut lambda_count = 0_i32;

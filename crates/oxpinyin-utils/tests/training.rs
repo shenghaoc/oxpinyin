@@ -408,15 +408,11 @@ fn estimate_interpolation_prints_the_host_nan_without_a_deleted_bigram() {
     assert_eq!(exit_word(&outcome), 0);
     assert_eq!(outcome.stdout, b"average lambda:-nan\n");
     // `estimate_interpolation.cpp:111-114` keeps the failed attach's
-    // handle and asks for a cursor. `ngram_bdb.cpp:40-42,188` calls that
-    // cursor and the destructor's sync on the unopened BDB handle.
-    let expected = if cfg!(feature = "bdb") {
-        &b"BDB1565 DB->cursor: method not permitted before handle's open method\n\
-           BDB1565 DB->sync: method not permitted before handle's open method\n"[..]
-    } else {
-        &[][..]
-    };
-    assert_eq!(outcome.stderr, expected);
+    // handle, and the BDB pin's cursor and destructor sync on it print
+    // libdb's `BDB1565` (`ngram_bdb.cpp:40-42,188`). Berkeley DB requires
+    // `DB->close` after a failed open, so the store closed that handle and
+    // no line follows (compatibility register, Berkeley DB failed handles).
+    assert_eq!(outcome.stderr, b"");
 }
 
 #[test]

@@ -3,10 +3,13 @@
 Pinyin ignores six attaches (pinyin.cpp:357,369,396,421,429,440);
 zhuyin opens only the main indexes and bigram (zhuyin.cpp:301,312,338).
 Each case removes one link from its own system directory. The ordinary
-worker pool keeps cases independent and parallel. Every cell retains the
-failed native object: BDB and KC since 553866c, tkrzw since the
-concrete-class binding (the pin's TreeDBM or HashDBM answers
-PRECONDITION_ERROR and writes nothing to stderr).
+worker pool keeps cases independent and parallel. KC and tkrzw retain the
+failed native object: KC since 553866c, tkrzw since the concrete-class
+binding (the pin's TreeDBM or HashDBM answers PRECONDITION_ERROR and writes
+nothing to stderr). BDB closes the failed handle, as Berkeley DB requires
+after a failed DB->open, so the pin's later calls on it and libdb's BDB1565
+lines have no counterpart (compatibility register, Berkeley DB failed
+handles).
 """
 import ctypes as C
 from pathlib import Path
@@ -15,6 +18,13 @@ from contract_abi import B, I, P, S, U, Z, sentence_out, tokens_of, zhuyin_sente
 from contract_case_helpers import candidate_rows
 from contract_fixtures import _write_user_conf, private_system
 
+
+# The tables each facade attaches (pinyin.cpp:357,369,396,421,429,440;
+# zhuyin.cpp:301,312,338). Only these reach a failed BDB handle.
+ATTACHED = {
+    'pinyin': ('pinyin', 'phrase', 'bigram', 'punctuation', 'addon-pinyin', 'addon-phrase'),
+    'zhuyin': ('pinyin', 'phrase', 'bigram'),
+}
 
 TABLES = {
     'pinyin': 'pinyin_index.bin',
@@ -98,19 +108,36 @@ def missing_case(table, operations, overlay=False, unload=False):
     return probe
 
 
+# The bdb pin's later calls on its failed handle print libdb's BDB1565 lines,
+# which the subject does not make (compatibility register, row 113).
+RECORD = 'bdb-failed-handle.md'
+
+
 def register(case):
-    """Register both facades, isolated missing files, and intact controls."""
+    """Register both facades, isolated missing files, and intact controls.
+
+    A missing table the facade attaches runs on kc and tkrzw under its
+    name, and on bdb as a `bdb-` twin that names the record of the BDB1565
+    difference. A table the facade never attaches runs on every cell.
+    """
+    def missing(name, facade, table, probe):
+        if table not in ATTACHED[facade]:
+            case(f'missing-system-dbm/{name}', mode=facade,
+                 stderr=True, userdir=True, issues=('1516',))(probe)
+            return
+        case(f'missing-system-dbm/{name}', mode=facade, cells=('kc', 'tkrzw'),
+             stderr=True, userdir=True, issues=('1516',))(probe)
+        case(f'missing-system-dbm/bdb-{name}', mode=facade, cells=('bdb',), policy_record=RECORD,
+             stderr=True, userdir=True, issues=('1516',))(probe)
+
     for facade in ('pinyin', 'zhuyin'):
         for table in TABLES:
             for operation in ('lifecycle', 'operations'):
-                case(f'missing-system-dbm/{facade}-{table}-{operation}', mode=facade,
-                     stderr=True, userdir=True, issues=('1516',))(
-                         missing_case(table, operation == 'operations'))
-            case(f'missing-system-dbm/{facade}-{table}-overlay', mode=facade,
-                 stderr=True, userdir=True, issues=('1516',))(
-                     missing_case(table, True, overlay=True))
+                missing(f'{facade}-{table}-{operation}', facade, table,
+                        missing_case(table, operation == 'operations'))
+            missing(f'{facade}-{table}-overlay', facade, table,
+                    missing_case(table, True, overlay=True))
         case(f'missing-system-dbm/{facade}-intact', mode=facade, control=True,
              stderr=True, userdir=True, issues=('1516',))(missing_case(None, True))
-        case(f'missing-system-dbm/{facade}-pinyin-unloaded', mode=facade,
-             stderr=True, userdir=True, issues=('1516',))(
-                 missing_case('pinyin', True, unload=True))
+        missing(f'{facade}-pinyin-unloaded', facade, 'pinyin',
+                missing_case('pinyin', True, unload=True))

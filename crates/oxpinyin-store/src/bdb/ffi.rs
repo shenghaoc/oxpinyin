@@ -246,6 +246,17 @@ impl SharedDb {
         Db::open(path, db_type, read_only, create, mode).map(Self::new)
     }
 
+    /// [`Db::open_attach`] on a shared handle.
+    pub(crate) fn open_attach(
+        path: &Path,
+        db_type: DBTYPE,
+        read_only: bool,
+        create: bool,
+        mode: c_int,
+    ) -> Result<Option<Self>, StoreError> {
+        Ok(Db::open_attach(path, db_type, read_only, create, mode)?.map(Self::new))
+    }
+
     /// [`Db::close_unsynced`] on the owned handle.
     pub(crate) fn close_unsynced(self) {
         self.inner
@@ -294,7 +305,7 @@ impl SharedDb {
         self.lock().put(key, value)
     }
 
-    pub(crate) fn del(&self, key: &[u8]) -> Result<(), StoreError> {
+    pub(crate) fn del(&self, key: &[u8]) -> Result<bool, StoreError> {
         self.lock().del(key)
     }
 
@@ -401,21 +412,64 @@ impl Db {
         create: bool,
         mode: c_int,
     ) -> Result<Self, StoreError> {
-        check_runtime_version()?;
+        Self::open_steps(path, db_type, read_only, create, mode).map_err(OpenFailure::into_error)
+    }
+
+    /// The pin's `attach` open: `Ok(None)` when the native `DB->open`
+    /// failed, after its handle was closed (Berkeley DB requires
+    /// `DB->close` then, `dbopen.html`, 5.3.28).
+    ///
+    /// # Errors
+    ///
+    /// A path that contains NUL, or a linked libdb this backend does not
+    /// support: neither is a failed attach.
+    ///
+    /// # Panics
+    ///
+    /// When `db_create` fails, where every pin `attach` asserts or aborts
+    /// (`chewing_large_table2_bdb.cpp:87-88`, `phrase_large_table3_bdb.cpp:
+    /// 102-103`, `punct_table_bdb.cpp:64-65`, `ngram_bdb.cpp:116-117`,
+    /// `flexible_ngram_bdb.h:106-108` at 074a2219).
+    pub(crate) fn open_attach(
+        path: &Path,
+        db_type: DBTYPE,
+        read_only: bool,
+        create: bool,
+        mode: c_int,
+    ) -> Result<Option<Self>, StoreError> {
+        let path = c_path(path)?;
+        attach_outcome(Self::open_steps(
+            Some(&path),
+            db_type,
+            read_only,
+            create,
+            mode,
+        ))
+    }
+
+    /// The open sequence, with the step that failed.
+    fn open_steps(
+        path: Option<&std::ffi::CStr>,
+        db_type: DBTYPE,
+        read_only: bool,
+        create: bool,
+        mode: c_int,
+    ) -> Result<Self, OpenFailure> {
+        check_runtime_version().map_err(OpenFailure::Before)?;
 
         let mut handle: *mut sys::DB = ptr::null_mut();
         // SAFETY: `db_create` writes a fresh handle through the pointer
         // it is given. A null environment asks for a standalone database,
         // which is what libpinyin uses everywhere.
         let code = unsafe { sys::db_create(&raw mut handle, ptr::null_mut(), 0) };
-        check(code, "db_create")?;
+        check(code, "db_create").map_err(OpenFailure::Create)?;
         // Hazard (d): libdb reports an allocation failure here by leaving
         // the out-parameter null. Calling a member on that is a null
         // dereference, so it is refused before the handle is wrapped.
         if handle.is_null() {
-            return Err(StoreError::Backend(
+            return Err(OpenFailure::Create(StoreError::Backend(
                 "db_create returned success with a null handle (allocation failure)".into(),
-            ));
+            )));
         }
         // From here on the handle is owned: every early return must close
         // it, which `this` does by construction.
@@ -437,7 +491,7 @@ impl Db {
         // An existing file must not be silently re-created as a different
         // type; libdb checks that itself when DB_CREATE is absent.
 
-        let open = method!(this.handle, open, "DB->open")?;
+        let open = method!(this.handle, open, "DB->open").map_err(OpenFailure::Before)?;
         // SAFETY: `this.handle` is live; `path`, when present, outlives
         // the call, and a null file name is libdb's documented in-memory
         // database; both the environment (already bound at create) and
@@ -454,97 +508,9 @@ impl Db {
                 mode,
             )
         };
-        check(code, "DB->open")?;
+        // On failure `this` drops here: `DB->close`, with no sync.
+        check(code, "DB->open").map_err(OpenFailure::Open)?;
         this.opened = true;
-        Ok(this)
-    }
-
-    /// Opens `path` exactly as the pin's `attach` does and, if the open
-    /// fails, makes the calls the pin then makes on its still-open handle:
-    /// a cursor walk and the destructor's sync. libdb prints the same
-    /// `BDB1565` lines the pin prints, then the handle is closed.
-    pub(crate) fn report_failed_open(path: &Path, db_type: DBTYPE, mode: c_int) {
-        let Ok(path) = c_path(path) else {
-            return;
-        };
-        let Ok(this) = Self::open_keep_unopened(Some(path.as_c_str()), db_type, true, false, mode)
-        else {
-            return;
-        };
-        if this.opened {
-            return;
-        }
-        let _ = this.cursor_handle();
-        let _ = this.sync();
-    }
-
-    pub(crate) fn open_unopened(
-        path: &Path,
-        hash: bool,
-        read_only: bool,
-        create: bool,
-    ) -> Option<Self> {
-        let path = c_path(path).ok()?;
-        Self::open_keep_unopened(
-            Some(path.as_c_str()),
-            if hash { DB_HASH } else { DB_BTREE },
-            read_only,
-            create,
-            SYSTEM_FILE_MODE,
-        )
-        .ok()
-    }
-
-    pub(crate) const fn is_opened(&self) -> bool {
-        self.opened
-    }
-
-    fn open_keep_unopened(
-        path: Option<&std::ffi::CStr>,
-        db_type: DBTYPE,
-        read_only: bool,
-        create: bool,
-        mode: c_int,
-    ) -> Result<Self, StoreError> {
-        let mut handle = ptr::null_mut();
-        // SAFETY: as in `open_at`.
-        let code = unsafe { sys::db_create(&raw mut handle, ptr::null_mut(), 0) };
-        check(code, "db_create")?;
-        if handle.is_null() {
-            return Err(StoreError::Backend(
-                "db_create returned success with a null handle (allocation failure)".into(),
-            ));
-        }
-        let mut this = Self {
-            handle,
-            read_only,
-            hash: db_type == DB_HASH,
-            opened: false,
-            sync_on_drop: true,
-            cursor_buffers: None,
-        };
-        let mut flags = 0;
-        if read_only {
-            flags |= sys::DB_RDONLY;
-        } else if create {
-            flags |= sys::DB_CREATE;
-        }
-        let open = method!(this.handle, open, "DB->open")?;
-        // SAFETY: as in `open_at`.
-        let code = unsafe {
-            open(
-                this.handle,
-                ptr::null_mut(),
-                path.map_or(ptr::null(), std::ffi::CStr::as_ptr),
-                ptr::null(),
-                db_type,
-                flags,
-                mode,
-            )
-        };
-        if code == 0 {
-            this.opened = true;
-        }
         Ok(this)
     }
 
@@ -697,7 +663,10 @@ impl Db {
     }
 
     /// Remove `key`; absent is not an error.
-    pub(crate) fn del(&self, key: &[u8]) -> Result<(), StoreError> {
+    /// `DB->del`: `Ok(false)` for `DB_NOTFOUND`, the answer the pin's
+    /// `remove` returns for a missing record (`ret == 0`,
+    /// `flexible_ngram_bdb.h:233-234`).
+    pub(crate) fn del(&self, key: &[u8]) -> Result<bool, StoreError> {
         if self.read_only {
             return Err(StoreError::ReadOnly);
         }
@@ -706,9 +675,9 @@ impl Db {
         // SAFETY: `key` outlives the call; the transaction is null.
         let code = unsafe { del(self.handle, ptr::null_mut(), &raw mut key_dbt, 0) };
         if code == sys::DB_NOTFOUND {
-            return Ok(());
+            return Ok(false);
         }
-        check(code, "DB->del")
+        check(code, "DB->del").map(|()| true)
     }
 
     /// Flush to stable storage. `DB->sync` is libdb's only flush for a
@@ -802,6 +771,45 @@ impl Db {
 //   here; 001-checkpoint-opd-deadlock adds five lines to __dbc_iget's
 //   off-page-duplicate branch (src/db/db_cam.c:868), past those cited.
 unsafe impl Send for Db {}
+
+/// The step at which [`Db::open_steps`] stopped.
+#[derive(Debug)]
+enum OpenFailure {
+    /// Before `db_create`: an unsupported libdb, or no `DB->open` method.
+    Before(StoreError),
+    /// `db_create` failed or left a null handle.
+    Create(StoreError),
+    /// The native `DB->open` failed; its handle is closed.
+    Open(StoreError),
+}
+
+impl OpenFailure {
+    fn into_error(self) -> StoreError {
+        match self {
+            Self::Before(error) | Self::Create(error) | Self::Open(error) => error,
+        }
+    }
+}
+
+/// [`Db::open_attach`]'s answer for one open: only a failed native
+/// `DB->open` is a failed attach.
+#[cfg_attr(
+    not(test),
+    expect(
+        clippy::panic,
+        clippy::panic_in_result_fn,
+        reason = "every pin attach asserts or aborts on a failed db_create \
+                  (chewing_large_table2_bdb.cpp:87-88, flexible_ngram_bdb.h:106-108)"
+    )
+)]
+fn attach_outcome<T>(opened: Result<T, OpenFailure>) -> Result<Option<T>, StoreError> {
+    match opened {
+        Ok(db) => Ok(Some(db)),
+        Err(OpenFailure::Open(_)) => Ok(None),
+        Err(OpenFailure::Before(error)) => Err(error),
+        Err(OpenFailure::Create(error)) => panic!("Berkeley DB attach: {error}"),
+    }
+}
 
 impl Drop for Db {
     fn drop(&mut self) {
@@ -1061,6 +1069,24 @@ fn empty_dbt() -> sys::DBT {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_failed_native_open_is_a_failed_attach() {
+        let backend = || StoreError::Backend("x".into());
+        assert_eq!(attach_outcome(Ok(7)).unwrap(), Some(7));
+        assert_eq!(
+            attach_outcome::<u8>(Err(OpenFailure::Open(backend()))).unwrap(),
+            None
+        );
+        // An unsupported libdb has no pin counterpart: an ordinary error.
+        assert!(attach_outcome::<u8>(Err(OpenFailure::Before(backend()))).is_err());
+    }
+
+    #[test]
+    #[should_panic(expected = "Berkeley DB attach")]
+    fn a_failed_db_create_panics_where_the_pin_asserts() {
+        let _ = attach_outcome::<u8>(Err(OpenFailure::Create(StoreError::Backend("x".into()))));
+    }
     use std::sync::{Arc, mpsc};
     use std::time::Duration;
 

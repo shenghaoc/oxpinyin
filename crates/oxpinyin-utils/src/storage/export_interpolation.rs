@@ -23,7 +23,10 @@ pub fn main(_args: impl IntoIterator<Item = OsString>) {
     let libraries = Libraries::load(&conf);
     // `bigram.attach(bigram_filename, ATTACH_READONLY);` — the answer is
     // not checked; a failed attach leaves `m_db` without records.
-    let bigram = Hash::open_read_only(Path::new("bigram.db")).ok();
+    let bigram = Some(
+        Hash::open_read_only(Path::new("bigram.db"))
+            .unwrap_or_else(|error| oxpinyin_input::tool::exit_on_store_error(&error)),
+    );
 
     let Some(output) = OutputStream::stdout() else {
         // The C runtime's `stdout` is never NULL in a started process.

@@ -94,6 +94,14 @@ class ToolDiffTests(unittest.TestCase):
             policy.entry_of('bad', dict(row, subject=dict(subject, exit=-11)))
         self.assertIsNotNone(contract_policy.tool_observation_problem(dict(pin, exit='TIMEOUT'), pin_signal=-11))
 
+    def test_policy_cells_limit_the_record_to_the_cells_they_name(self):
+        case = dict(id='bdb-only', policy_record='absent.md', policy_cells=['bdb'])
+        side = dict(exit=0, stdout='', stderr='', files={})
+        self.assertEqual(tool_diff.verdict(case, side, side, self.root, 'kc')[0], 'MATCH')
+        self.assertEqual(tool_diff.verdict(case, side, dict(side, stderr='x'), self.root, 'tkrzw')[0], 'DIFFER')
+        # On a named cell the record decides; this one is not registered.
+        self.assertEqual(tool_diff.verdict(case, side, side, self.root, 'bdb')[0], 'INVALID')
+
     def test_a_reproduced_abort_compares_without_a_policy_record(self):
         case = dict(id='abort', pin_signal=-6, reproduces_signal=True)
         side = dict(exit=-6, stdout='', stderr='assertion\n', files={})

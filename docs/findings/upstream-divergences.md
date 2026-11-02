@@ -4509,3 +4509,8 @@ fixture's provenance. The implementation already uses Rust partitioning;
 there is no copied external probe sequence. Sorted results remain exact.
 Any distinguishing unsorted result is a language artefact under the
 2026-10-29 ruling, requiring concrete POLICY-ACCEPTED evidence.
+
+### Berkeley DB handles whose open failed (2026-11-02 UTC, #1516)
+
+[bdb-failed-handle](bdb-failed-handle.md) holds the accepted digests.
+The explanation is [compatibility register, row 113](compatibility-policy.md#bdb-failed-handles).

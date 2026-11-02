@@ -23,8 +23,8 @@ use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use oxpinyin_store::{
-    ArrayItemWithToken, DefaultFlexibleBigram, DefaultStore, FixedRecord, FlexibleGramSpec,
-    MAGIC_KEY, RawReadStore, SingleGram, StoreError, WriteStore, WriteTxn,
+    ArrayItemWithToken, AttachMode, DefaultFlexibleBigram, DefaultStore, FixedRecord,
+    FlexibleGramSpec, MAGIC_KEY, RawReadStore, SingleGram, StoreError, WriteStore, WriteTxn,
 };
 
 // ── the k-mixture-model records ────────────────────────────────────
@@ -199,6 +199,27 @@ impl Drop for Scratch {
     }
 }
 
+/// `attach(path, ATTACH_READWRITE | ATTACH_CREATE)`, which must answer true.
+fn open(path: &Path) -> Model {
+    let model = Model::attach(Some(path), AttachMode::ReadWriteCreate).expect("attach");
+    assert!(model.attached(), "{} attaches", path.display());
+    model
+}
+
+/// `attach(path, ATTACH_READONLY)`, which must answer true.
+fn open_read_only(path: &Path) -> Model {
+    let model = Model::attach(Some(path), AttachMode::ReadOnly).expect("attach");
+    assert!(model.attached(), "{} attaches read-only", path.display());
+    model
+}
+
+/// Whether `path` holds `key` as a raw record, read through a fresh handle.
+fn raw_has(path: &Path, key: &[u8]) -> bool {
+    let raw = DefaultStore::open_hash_read_only(path).expect("raw open");
+    let mut value = Vec::new();
+    raw.get_raw(key, &mut value).expect("raw read")
+}
+
 fn copy_tree(from: &Path, to: &Path) {
     fs::create_dir_all(to).expect("copy destination");
     for entry in fs::read_dir(from).expect("fixture directory") {
@@ -347,7 +368,7 @@ fn every_operation_round_trips() {
     let other = Header { wc: 9, freq: 4 };
 
     {
-        let mut bigram = Model::open(&path).expect("open a fresh model");
+        let mut bigram = open(&path);
         assert!(bigram.is_open());
         assert_eq!(bigram.get_magic_header().expect("magic read"), None);
         assert_eq!(bigram.get_all_items(), Some(Vec::new()));
@@ -368,7 +389,7 @@ fn every_operation_round_trips() {
     }
 
     {
-        let mut bigram = Model::open(&path).expect("reopen an existing model");
+        let mut bigram = open(&path);
         assert!(bigram.set_magic_header(&magic).expect("magic write"));
         assert_eq!(
             bigram.get_magic_header().expect("magic read"),
@@ -478,7 +499,7 @@ fn every_operation_round_trips() {
         bigram.close();
     }
 
-    let mut read_only = Model::open_read_only(&path).expect("read-only open");
+    let mut read_only = open_read_only(&path);
     assert_eq!(
         read_only.load(11).expect("read-only load"),
         Some(gram_with_header())
@@ -524,7 +545,10 @@ fn gram_with_header() -> SingleGram<Header, Item> {
 }
 
 #[test]
-fn a_foreign_or_signatureless_container_is_refused() {
+fn an_invalid_signature_answers_false_and_keeps_the_opened_object() {
+    // Every backend keeps the opened object when the signature check fails
+    // (`flexible_ngram_bdb.h:134-152`, `flexible_ngram_kyotodb.h:165-180`,
+    // `flexible_ngram_tkrzwdb.h:170-187` at 074a2219).
     let scratch = Scratch::new("signature");
 
     let foreign = scratch.path().join("foreign.db");
@@ -533,25 +557,217 @@ fn a_foreign_or_signatureless_container_is_refused() {
         db.write(|txn| txn.put_raw(&MAGIC_KEY, b"BAAD"))
             .expect("foreign magic");
     }
-    assert!(Model::open(&foreign).is_err(), "wrong magic number");
-    assert!(
-        Model::open_read_only(&foreign).is_err(),
-        "wrong magic number read-only"
-    );
+    for mode in [AttachMode::ReadWriteCreate, AttachMode::ReadOnly] {
+        let model = Model::attach(Some(&foreign), mode).expect("attach");
+        assert!(!model.attached(), "{mode:?}: wrong magic number");
+        assert!(model.is_open(), "{mode:?}: the opened object stays");
+    }
 
-    let missing = scratch.path().join("missing.db");
+    let signatureless = scratch.path().join("signatureless.db");
     {
-        let db = DefaultStore::create_hash(&missing).expect("hash create");
+        let db = DefaultStore::create_hash(&signatureless).expect("hash create");
         db.write(|txn| txn.put_raw(&7u32.to_ne_bytes(), b"not a model"))
             .expect("foreign row");
     }
+    let model = Model::attach(Some(&signatureless), AttachMode::ReadWriteCreate).expect("attach");
+    assert!(!model.attached(), "a non-empty file has no magic");
+    assert!(model.is_open());
+}
+
+#[test]
+fn a_retained_object_takes_the_later_writes() {
+    // The pin's tools ignore `attach`'s answer and keep writing through
+    // the object it left (`import_k_mixture_model.cpp:293`).
+    let scratch = Scratch::new("retained");
+    let path = scratch.path().join("foreign.db");
+    {
+        let db = DefaultStore::create_hash(&path).expect("hash create");
+        db.write(|txn| txn.put_raw(&MAGIC_KEY, b"BAAD"))
+            .expect("foreign magic");
+    }
+    {
+        let mut model = Model::attach(Some(&path), AttachMode::ReadWriteCreate).expect("attach");
+        assert!(!model.attached());
+        assert!(model.store(11, &gram_with_header()).expect("store"));
+        model.close();
+    }
     assert!(
-        Model::open(&missing).is_err(),
-        "a non-empty file has no magic"
+        raw_has(&path, &11u32.to_ne_bytes()),
+        "the write reached the file"
+    );
+}
+
+#[test]
+fn a_missing_file_is_created_only_with_create() {
+    let scratch = Scratch::new("missing");
+
+    let created = scratch.path().join("created.db");
+    let model = Model::attach(Some(&created), AttachMode::ReadWriteCreate).expect("attach");
+    assert!(model.attached() && model.is_open());
+    drop(model);
+    assert!(
+        raw_has(&created, &MAGIC_KEY),
+        "the CREATE retry wrote the signature"
+    );
+
+    // `prune_k_mixture_model` attaches without ATTACH_CREATE
+    // (`prune_k_mixture_model.cpp:129`): a missing file stays missing.
+    for (name, mode) in [
+        ("rw.db", AttachMode::ReadWrite),
+        ("ro.db", AttachMode::ReadOnly),
+    ] {
+        let path = scratch.path().join(name);
+        let model = Model::attach(Some(&path), mode).expect("attach");
+        assert!(!model.attached(), "{mode:?}");
+        assert!(!model.is_open(), "{mode:?}: no object stays");
+        assert!(!path.exists(), "{mode:?}: no file is created");
+    }
+
+    let model = Model::attach(None, AttachMode::ReadWriteCreate).expect("attach");
+    assert!(!model.attached() && !model.is_open(), "a NULL filename");
+}
+
+#[test]
+fn an_existing_empty_file_follows_the_backends_open() {
+    // Berkeley DB refuses a zero-length file without DB_CREATE
+    // (`fop_util.c:381-393`, 5.3.28), so the CREATE retry initializes it
+    // and writes the signature. Kyoto Cabinet and tkrzw initialize a
+    // writable empty file on the first open (`kchashdb.h:835-850`,
+    // `tkrzw_dbm_hash.cc:1173`), so the signature check fails.
+    let scratch = Scratch::new("empty");
+    let path = scratch.path().join("empty.db");
+    fs::write(&path, b"").expect("empty file");
+    let model = Model::attach(Some(&path), AttachMode::ReadWriteCreate).expect("attach");
+    assert!(model.is_open());
+    if cfg!(feature = "bdb") {
+        assert!(model.attached());
+        drop(model);
+        assert!(raw_has(&path, &MAGIC_KEY));
+    } else {
+        assert!(!model.attached());
+        drop(model);
+        assert!(!raw_has(&path, &MAGIC_KEY), "no signature was written");
+    }
+}
+
+#[test]
+fn a_failed_create_retry_follows_the_backends_rule() {
+    // Kyoto Cabinet keeps the object whose CREATE retry failed
+    // (`flexible_ngram_kyotodb.h:154-155`); tkrzw deletes it
+    // (`flexible_ngram_tkrzwdb.h:154-158`); Berkeley DB closes the handle.
+    let scratch = Scratch::new("retry");
+    let path = scratch.path().join("no-such-directory").join("model.db");
+    let model = Model::attach(Some(&path), AttachMode::ReadWriteCreate).expect("attach");
+    assert!(!model.attached());
+    if cfg!(feature = "kyotocabinet") {
+        assert!(model.is_open(), "the unopened HashDB stays");
+        assert!(model.store(11, &gram_with_header()).is_err(), "INVALID");
+        assert_eq!(model.get_all_items(), Some(Vec::new()));
+    } else {
+        assert!(!model.is_open());
+        assert!(!model.store(11, &gram_with_header()).expect("closed store"));
+    }
+}
+
+#[test]
+fn removal_answers_from_the_native_remove() {
+    let scratch = Scratch::new("removal");
+    let path = scratch.path().join("model.db");
+    let model = open(&path);
+    assert!(model.store(11, &gram_with_header()).expect("store"));
+    assert!(!model.remove(9).expect("missing remove"), "a missing key");
+    assert!(model.remove(11).expect("remove"), "a stored key");
+    assert!(!model.remove(11).expect("second remove"), "already removed");
+
+    // The native answer comes from the deferred apply, not a read before it.
+    let raw = scratch.path().join("raw.db");
+    let db = DefaultStore::create_hash(&raw).expect("hash create");
+    let ((), found) = db
+        .write_deferred(|txn| txn.remove_raw(b"k"))
+        .expect("remove");
+    assert!(!found);
+    db.write_deferred(|txn| txn.put_raw(b"k", b"v"))
+        .expect("put");
+    let ((), found) = db
+        .write_deferred(|txn| txn.remove_raw(b"k"))
+        .expect("remove");
+    assert!(found);
+}
+
+#[test]
+fn the_deferred_removal_flag_aggregates_every_removal() {
+    let scratch = Scratch::new("removal-aggregate");
+    let db = DefaultStore::create_hash(&scratch.path().join("raw.db")).expect("hash create");
+    let put = |key: &'static [u8]| {
+        db.write_deferred(|txn| txn.put_raw(key, b"v"))
+            .expect("put");
+    };
+    let remove_two = |first: &'static [u8], second: &'static [u8]| {
+        db.write_deferred(|txn| {
+            txn.remove_raw(first)?;
+            txn.remove_raw(second)
+        })
+        .expect("remove")
+        .1
+    };
+    put(b"a");
+    put(b"b");
+    assert!(remove_two(b"a", b"b"), "both records found");
+    put(b"b");
+    // The buffer applies in key order: the missing `a` first, the found
+    // `b` last, so a last-answer-wins flag would answer true here.
+    assert!(!remove_two(b"a", b"b"), "one of two missing");
+    assert!(!remove_two(b"y", b"z"), "both missing");
+    let ((), found) = db
+        .write_deferred(|txn| txn.put_raw(b"c", b"v"))
+        .expect("put");
+    assert!(found, "no removal at all");
+}
+
+#[test]
+fn attach_bigram_answers_a_failed_open_apart_from_an_earlier_failure() {
+    // `Bigram::attach`: a failed native open leaves no container; a failure
+    // before the open is an error on every backend.
+    let scratch = Scratch::new("attach-bigram");
+    let missing = scratch.path().join("missing.db");
+    assert!(
+        DefaultStore::attach_bigram(&missing, true)
+            .expect("attach")
+            .is_none()
+    );
+    assert!(!missing.exists());
+    let created = scratch.path().join("bigram.db");
+    assert!(
+        DefaultStore::attach_bigram(&created, false)
+            .expect("attach")
+            .is_some()
     );
     assert!(
-        Model::open_read_only(&missing).is_err(),
-        "a non-empty file has no magic read-only"
+        DefaultStore::attach_bigram(&created, true)
+            .expect("attach")
+            .is_some()
+    );
+    let nul = Path::new(std::ffi::OsStr::new("bad\0name.db"));
+    assert!(
+        DefaultStore::attach_bigram(nul, true).is_err(),
+        "a rejected path"
+    );
+}
+
+#[test]
+fn a_failed_deferred_closure_applies_nothing() {
+    let scratch = Scratch::new("deferred-err");
+    let path = scratch.path().join("raw.db");
+    let db = DefaultStore::create_hash(&path).expect("hash create");
+    let result = db.write_deferred(|txn| {
+        txn.put_raw(b"k", b"v")?;
+        Err::<(), _>(StoreError::InvalidInput("closure failed"))
+    });
+    assert!(result.is_err());
+    let mut value = Vec::new();
+    assert!(
+        !db.get_raw(b"k", &mut value).expect("read"),
+        "no earlier write stays"
     );
 }
 
@@ -569,7 +785,7 @@ fn get_array_header_asserts_the_records_header_length() {
         })
         .expect("short record");
     }
-    let bigram = Model::open_read_only(&path).expect("open");
+    let bigram = open_read_only(&path);
     let _ = bigram.get_array_header(7);
 }
 
@@ -675,7 +891,7 @@ fn a_pin_generated_file_is_read_in_the_pins_native_order() {
     );
     assert_eq!(parsed.items, items, "source-derived array items");
 
-    let bigram = Model::open_read_only(&scratch.path().join("out.db")).expect("layer open");
+    let bigram = open_read_only(&scratch.path().join("out.db"));
     assert_eq!(
         bigram.get_magic_header().expect("magic read"),
         Some(magic),
@@ -722,7 +938,7 @@ fn a_layer_written_file_is_read_by_pin_validate_and_export() {
     let (magic, headers, items) = expected();
 
     {
-        let mut bigram = Model::open(&path).expect("layer create");
+        let mut bigram = open(&path);
         assert!(bigram.set_magic_header(&magic).expect("magic write"));
         for (token, header) in &headers {
             let gram = SingleGram::from_parts(
@@ -802,7 +1018,7 @@ fn an_over_long_magic_record_is_read_with_the_pins_partial_read() {
         .expect("put magic");
     drop(store);
 
-    let gram = DefaultFlexibleBigram::<Kmm>::open_read_only(&path).expect("open");
+    let gram = open_read_only(&path);
     assert_eq!(
         gram.get_magic_header().expect("read header"),
         Some(Magic {

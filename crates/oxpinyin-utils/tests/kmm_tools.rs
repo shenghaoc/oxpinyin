@@ -471,33 +471,20 @@ fn prune_refuses_a_nan_probability_with_edom_and_leaves_the_file_alone() {
     );
 }
 
-// The BDB pin retains its unopened handle after failed attach
-// (`flexible_ngram_bdb.h:94-145`); subsequent calls emit libdb diagnostics.
-fn unopened_diagnostics(methods: &[&str]) -> String {
-    if cfg!(feature = "bdb") {
-        methods
-            .iter()
-            .map(|method| {
-                format!("BDB1565 DB->{method}: method not permitted before handle's open method\n")
-            })
-            .collect()
-    } else {
-        String::new()
-    }
-}
+// The BDB pin retains its unopened handle after a failed attach
+// (`flexible_ngram_bdb.h:94-145`), and its later calls print libdb's
+// `BDB1565`. Berkeley DB requires `DB->close` after a failed open, so the
+// store closed that handle and no line follows on any backend
+// (compatibility register, Berkeley DB failed handles).
 
 #[test]
 fn estimate_with_no_models_divides_zero_by_zero() {
     let dir = tempfile::tempdir().unwrap();
     let out = run(dir.path(), "estimate_k_mixture_model", &[], None);
     assert_eq!(out.status.code(), Some(0));
-    // Both default filenames are non-null (`estimate:25-26`): two attach
-    // signature gets, the deleted-model cursor (`:113-119`), then two
-    // destructor syncs (`flexible_ngram_bdb.h:51-54,81-83,256`).
-    assert_eq!(
-        text(&out.stderr),
-        unopened_diagnostics(&["get", "get", "cursor", "sync", "sync"])
-    );
+    // Both default filenames are non-null (`estimate:25-26`); both
+    // attaches fail and leave no handle.
+    assert_eq!(text(&out.stderr), "");
     let stdout = text(&out.stdout);
     assert_eq!(stdout.lines().count(), 1);
     let value = stdout
@@ -565,12 +552,11 @@ fn an_absent_export_target_is_open_failed_and_enoent() {
     for args in [&["--k-mixture-model-file", "absent.db"][..], &[][..]] {
         let out = run(dir.path(), "export_k_mixture_model", args, None);
         assert_eq!(out.status.code(), Some(tool::ENOENT), "{args:?}");
-        // A null filename returns before db_create; an absent filename
-        // reaches the signature get (`flexible_ngram_bdb.h:103-145`).
-        // `export:143-145` exits without running the handle's destructor.
+        // A null filename returns before db_create; an absent filename's
+        // attach fails (`flexible_ngram_bdb.h:103-145`).
         let expected = match args.len() {
-            0 => "open (null) failed.\n".to_owned(),
-            _ => unopened_diagnostics(&["get"]) + "open absent.db failed.\n",
+            0 => "open (null) failed.\n",
+            _ => "open absent.db failed.\n",
         };
         assert_eq!(text(&out.stderr), expected, "{args:?}");
     }
@@ -583,11 +569,20 @@ fn validate_of_an_absent_container_is_enodata() {
     assert_eq!(out.status.code(), Some(tool::ENODATA));
     assert_eq!(
         text(&out.stderr),
-        // Attach's signature get then validate_unigram's header get;
-        // `validate:160-164` exits without a destructor sync.
-        unopened_diagnostics(&["get", "get"])
-            + "no magic header in k mixture model.\nk mixture model validation failed.\n"
+        "no magic header in k mixture model.\nk mixture model validation failed.\n"
     );
+}
+
+#[test]
+fn prune_attaches_without_create_and_leaves_a_missing_model_missing() {
+    // `prune_k_mixture_model.cpp:129` attaches ATTACH_READWRITE without
+    // ATTACH_CREATE, so a missing model is not created and its magic
+    // header is missing (`:131-134`).
+    let dir = scratch();
+    let out = run(dir.path(), "prune_k_mixture_model", &["absent.db"], None);
+    assert_eq!(out.status.code(), Some(tool::ENODATA));
+    assert_eq!(text(&out.stderr), "no magic header in k mixture model.\n");
+    assert!(!dir.path().join("absent.db").exists(), "no file is created");
 }
 
 #[test]

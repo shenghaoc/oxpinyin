@@ -15,6 +15,8 @@
     },
     {
       "id": "gen_deleted_ngram-too-many-arguments",
+      "policy_record": "bdb-failed-handle.md",
+      "policy_cells": ["bdb"],
       "utility": "gen_deleted_ngram",
       "source": "utils/training/gen_deleted_ngram.cpp at 074a2219: 54-118 (g_option_context_parse leaves extra arguments; main never reads argc)",
       "args": ["--deleted-bigram-file", "absent/deleted.db", "first", "second"],
@@ -40,6 +42,8 @@
     },
     {
       "id": "gen_deleted_ngram-missing-bigram-file",
+      "policy_record": "bdb-failed-handle.md",
+      "policy_cells": ["bdb"],
       "utility": "gen_deleted_ngram",
       "source": "utils/training/gen_deleted_ngram.cpp at 074a2219: 75-76 (attach's answer is ignored) and 118 (no chunk save)",
       "args": ["--deleted-bigram-file", "absent/deleted.db"],
@@ -48,6 +52,8 @@
     },
     {
       "id": "gen_deleted_ngram-empty-stdin",
+      "policy_record": "bdb-failed-handle.md",
+      "policy_cells": ["bdb"],
       "utility": "gen_deleted_ngram",
       "source": "utils/training/gen_deleted_ngram.cpp at 074a2219: 80-118 (no line, then return 0)",
       "args": ["--deleted-bigram-file", "absent/deleted.db"],
@@ -66,6 +72,8 @@
     },
     {
       "id": "gen_deleted_ngram-ordinary",
+      "policy_record": "bdb-failed-handle.md",
+      "policy_cells": ["bdb"],
       "utility": "gen_deleted_ngram",
       "source": "utils/training/gen_deleted_ngram.cpp at 074a2219: 80-116 (sentence_start after a null token, deleted bi-gram rows; no chunk save)",
       "args": ["--deleted-bigram-file", "absent/deleted.db"],
