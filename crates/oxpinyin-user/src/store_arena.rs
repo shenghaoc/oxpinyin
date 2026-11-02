@@ -149,6 +149,8 @@ impl<S: WriteStore> GenericUserStore<S> {
         self.mark_committed_phrase_write(db, arena_live || tables_live || grams_live);
     }
 
+    /// Whether the session holds an item beyond the shipped chunks: an arena
+    /// item of a user library, or one a system library's live buffer added.
     pub(super) fn arena_has_items(&self) -> bool {
         self.inner.libpinyin.as_ref().is_some_and(|target| {
             target
@@ -156,7 +158,12 @@ impl<S: WriteStore> GenericUserStore<S> {
                 .libraries
                 .values()
                 .any(|library| !library.is_empty())
-        })
+        }) || self
+            .inner
+            .system_items
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .has_added()
     }
 
     /// Addon selection copies the complete item to the current range end,
@@ -304,7 +311,40 @@ impl<S: WriteStore> GenericUserStore<S> {
         read: impl FnOnce(PhraseItemView<'_>) -> R,
     ) -> Option<R> {
         let phrases = self.inner.libpinyin.as_ref()?.phrases();
-        phrases.item(token).map(read)
+        match phrases.item(token) {
+            Some(view) => Some(read(view)),
+            None => self.with_appended_item(token, read),
+        }
+    }
+
+    /// Reads the item a system library's live buffer holds under `token` and
+    /// its shipped chunk lacks: an import or a replayed ADD. The buffer is the
+    /// only copy; no arena holds it. Locks the buffers after the arena, as
+    /// every caller does.
+    pub(crate) fn with_appended_item<R>(
+        &self,
+        token: Token,
+        read: impl FnOnce(PhraseItemView<'_>) -> R,
+    ) -> Option<R> {
+        let original = self.originals.get(&phrase_index_library_index(token))?;
+        if original.contains_item(token & PHRASE_MASK) {
+            return None;
+        }
+        let mut read = Some(read);
+        let live = self
+            .with_live_item(token, |bytes, _| {
+                PhraseItemView::from_bytes(bytes).and_then(|view| Some((read.take()?)(view)))
+            })
+            .flatten();
+        if live.is_some() {
+            return live;
+        }
+        // A mask or a reload of another library materialized the item; the
+        // decoded copy answers until the save and reload members move it.
+        let bytes = self.with_overlay_item(token, |item| {
+            crate::persistence::encode_persisted_item(item).ok()
+        })??;
+        PhraseItemView::from_bytes(&bytes).and_then(|view| Some((read.take()?)(view)))
     }
 
     pub(super) fn arena_add_phrase(
@@ -316,6 +356,9 @@ impl<S: WriteStore> GenericUserStore<S> {
         selected: Option<Option<Token>>,
         range_end: u32,
     ) -> Result<Token, UserStoreError> {
+        if self.originals.contains_key(&library) {
+            return self.buffer_add_phrase(library, words, keys, delta, selected);
+        }
         let target = self
             .inner
             .libpinyin
@@ -424,6 +467,142 @@ impl<S: WriteStore> GenericUserStore<S> {
             self.inner.has_system_items.store(true, Ordering::Relaxed);
         }
         self.mark_committed_import_write(db, new);
+        Ok(token)
+    }
+
+    /// `_add_phrase` for a system library that has an original (074a2219
+    /// `pinyin.cpp:515-611`), over the library's live buffer, which holds the
+    /// only copy of the item. A phrase the library already holds is removed
+    /// (`remove_phrase_item`), takes the reading (`add_pronunciation`) and is
+    /// added back (`add_phrase_item`); a new one is added after the range's
+    /// end with no unigram and then takes `count * 3` through
+    /// `add_unigram_frequency`.
+    fn buffer_add_phrase(
+        &mut self,
+        library: u8,
+        words: &[u32],
+        keys: &[PinyinKey],
+        delta: u32,
+        selected: Option<Option<Token>>,
+    ) -> Result<Token, UserStoreError> {
+        let target = self
+            .inner
+            .libpinyin
+            .as_ref()
+            .ok_or(UserStoreError::InvalidPhrase)?;
+        let original = self
+            .originals
+            .get(&library)
+            .ok_or(UserStoreError::InvalidPhrase)?;
+        let packed = packed(keys)?;
+        let db = self.database();
+        let mut phrases = target.phrases();
+        // `_add_phrase` searches the phrase table before any change
+        // (`pinyin.cpp:536-542`); a record that search would read past (register
+        // row 101) is refused here, before any commit.
+        phrases
+            .phrase_table
+            .check_add(words)
+            .map_err(|error| UserStoreError::Persistence(error.to_string()))?;
+        let existing = match selected {
+            Some(token) => token,
+            None => {
+                let tokens = phrases
+                    .phrase_table
+                    .tokens(&phrase_table::key_ucs4(words))
+                    .map_err(|error| UserStoreError::Persistence(error.to_string()))?;
+                let tokens: Vec<_> = tokens
+                    .into_iter()
+                    .filter(|token| phrase_index_library_index(*token) == library)
+                    .collect();
+                if tokens.len() > 1 {
+                    return Err(UserStoreError::InvalidPhrase);
+                }
+                tokens.first().copied()
+            }
+        };
+        let mut items = self
+            .inner
+            .system_items
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(token) = existing {
+            // The shipped chunk's own items are merged by the caller; only an
+            // item the buffer added is held here.
+            if original.contains_item(token & PHRASE_MASK) {
+                return Err(UserStoreError::InvalidPhrase);
+            }
+            // A mask can have materialized the appended item. Keep the
+            // merged value in that overlay until the library is reloaded.
+            let overlay = items
+                .decoded(&token)
+                .map(crate::persistence::encode_persisted_item)
+                .transpose()
+                .map_err(|error| UserStoreError::Persistence(error.to_string()))?;
+            let merge = |bytes: &[u8]| {
+                let view = PhraseItemView::from_bytes(bytes)?;
+                if view.as_bytes()[6..6 + 4 * view.phrase_length()] != phrase_table::key_ucs4(words)
+                {
+                    return None;
+                }
+                Some(UserLibrary::merged_reading(view, &packed, delta))
+            };
+            let merged = match &overlay {
+                Some(bytes) => merge(bytes),
+                None => items.with_live(token, |bytes, _| merge(bytes)).flatten(),
+            }
+            .ok_or(UserStoreError::InvalidPhrase)?
+            .map_err(UserStoreError::Persistence)?;
+            if overlay.is_some() {
+                let item = oxpinyin_data::chunk_write::decode_phrase_item(&merged)
+                    .map_err(|error| UserStoreError::Persistence(error.to_string()))?;
+                items.insert(token, item);
+            } else {
+                items.remove_item(original, token);
+                items.add_item(original, token, &merged);
+            }
+            drop(items);
+            drop(phrases);
+            self.revive_system_item(token);
+            self.inner.has_system_items.store(true, Ordering::Relaxed);
+            self.mark_committed_import_write(db, false);
+            return Ok(token);
+        }
+        let end = items.range_end(library, original);
+        let raw = (u32::from(library) << 24) | end;
+        let token = phrase::canonicalize_library_token(library, raw)
+            .ok_or(UserStoreError::TokenSpaceExhausted)?;
+        if phrase::next_library_token_after(library, token).is_none() {
+            return Err(UserStoreError::TokenSpaceExhausted);
+        }
+        let bytes = encoded(&ChunkItem {
+            phrase: words.to_vec(),
+            unigram: 0,
+            prons: vec![(packed.clone(), delta)],
+        })?;
+        items.add_item(original, token, &bytes);
+        let increment = delta.wrapping_mul(ADD_PHRASE_UNIGRAM_FACTOR_U32);
+        let outcome = items
+            .add_unigram(Some(original), token, increment, false)
+            .unwrap_or(UnigramAdd::Missing);
+        if !outcome.is_accepted() {
+            items.add_facade_extra(u64::from(increment));
+        }
+        drop(items);
+        phrases
+            .phrase_table
+            .add(words, token)
+            .map_err(|error| UserStoreError::Persistence(error.to_string()))?;
+        let chewing: Vec<oxpinyin_core::ChewingKey> = packed
+            .iter()
+            .copied()
+            .map(oxpinyin_core::ChewingKey::from_packed)
+            .collect();
+        phrases.index.add(&chewing, token);
+        drop(phrases);
+        self.revive_system_item(token);
+        self.inner.has_system_items.store(true, Ordering::Relaxed);
+        self.mark_committed_import_write(db, true);
         Ok(token)
     }
 
@@ -642,9 +821,9 @@ impl<S: WriteStore> GenericUserStore<S> {
         }
         for (&nibble, items) in &state.system_overrides {
             for (&slot, item) in items {
-                if !originals
-                    .get(&nibble)
-                    .is_some_and(|library| library.contains_item(slot))
+                // A library with an original keeps what the chunk lacks in its
+                // live buffer; only one with none holds it here.
+                if originals.get(&nibble).is_none()
                     && let Some(item) = item
                 {
                     hold(&mut libraries, nibble, slot, item);

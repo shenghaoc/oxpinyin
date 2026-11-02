@@ -343,9 +343,7 @@ enum ItemRef<'a> {
 impl<'a> From<SystemItem<'a>> for ItemRef<'a> {
     fn from(item: SystemItem<'a>) -> Self {
         match item {
-            SystemItem::Shipped(item) | SystemItem::Arena(item) | SystemItem::Replayed(item) => {
-                Self::Mapped(item)
-            }
+            SystemItem::Shipped(item) | SystemItem::Replayed(item) => Self::Mapped(item),
             SystemItem::Overlay(item) => Self::Override {
                 phrase: &item.phrase,
                 prons: &item.prons,

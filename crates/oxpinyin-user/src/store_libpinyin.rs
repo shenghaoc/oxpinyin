@@ -333,31 +333,17 @@ impl GenericUserStore<DefaultStore> {
                         .map_err(UserStoreError::Persistence)?;
                 }
             }
+            // An item a system library with an original lacks lives in that
+            // library's live buffer below, its only copy. A library with no
+            // original has no buffer; its items are held in an arena.
             for (&nibble, items) in &loaded.state.system_overrides {
+                if originals.get(&nibble).is_some() {
+                    continue;
+                }
                 for (&slot, item) in items {
-                    if !originals
-                        .get(&nibble)
-                        .is_some_and(|library| library.contains_item(slot))
-                        && let Some(item) = item
-                    {
+                    if let Some(item) = item {
                         let bytes = persistence::encode_persisted_item(item)
                             .map_err(|e| UserStoreError::Persistence(e.to_string()))?;
-                        phrases
-                            .libraries
-                            .entry(nibble)
-                            .or_default()
-                            .replace(slot, &bytes)
-                            .map_err(UserStoreError::Persistence)?;
-                    }
-                }
-            }
-            for (&nibble, library) in &replayed {
-                for slot in library.add_candidates() {
-                    if !originals
-                        .get(&nibble)
-                        .is_some_and(|original| original.contains_item(slot))
-                        && let Some(bytes) = library.bytes(slot)
-                    {
                         phrases
                             .libraries
                             .entry(nibble)
@@ -386,6 +372,17 @@ impl GenericUserStore<DefaultStore> {
             None => (DefaultUserBigramDb::empty()?, false),
         };
         let has_user_data = has_user_data
+            || replayed
+                .values()
+                .any(crate::replay::ReplayedLibrary::has_added)
+            || loaded.state.system_overrides.iter().any(|(nibble, items)| {
+                items.iter().any(|(&slot, item)| {
+                    item.is_some()
+                        && originals
+                            .get(nibble)
+                            .is_some_and(|library| !library.contains_item(slot))
+                })
+            })
             || has_bigram_file
             || target
                 .phrases()
@@ -400,12 +397,18 @@ impl GenericUserStore<DefaultStore> {
         // One pass over the replayed overrides: an item is kept, a removal has
         // none to keep and the session records its token.
         let mut kept_items = Vec::new();
+        let mut appended = Vec::new();
         let mut removed_system_items = std::collections::BTreeSet::new();
         for (nibble, items) in std::mem::take(&mut loaded.state.system_overrides) {
             for (slot, item) in items {
                 let token = (u32::from(nibble) << 24) | slot;
                 match item {
-                    Some(item) => kept_items.push((token, item)),
+                    Some(item) => match originals.get(&nibble) {
+                        Some(original) if !original.contains_item(slot) => {
+                            appended.push((token, item));
+                        }
+                        _ => kept_items.push((token, item)),
+                    },
                     None => {
                         removed_system_items.insert(token);
                     }
@@ -413,9 +416,16 @@ impl GenericUserStore<DefaultStore> {
             }
         }
         let library_offsets = seeded_totals.offsets;
-        let system_items =
+        let mut system_items =
             crate::system_items::SystemItems::new(kept_items.into_iter().collect(), replayed)
                 .with_totals(seeded_totals.totals, seeded_totals.facade_extra);
+        for (token, item) in appended {
+            if let Some(original) = originals.get(&phrase_index_library_index(token)) {
+                let bytes = persistence::encode_persisted_item(&item)
+                    .map_err(|e| UserStoreError::Persistence(e.to_string()))?;
+                system_items.load_item(original, token, &bytes);
+            }
+        }
 
         let inner = Arc::new(StoreInner {
             has_system_items: std::sync::atomic::AtomicBool::new(has_system_items),

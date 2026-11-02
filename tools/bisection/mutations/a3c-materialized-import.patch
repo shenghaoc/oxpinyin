@@ -1,0 +1,51 @@
+diff --git b/crates/oxpinyin-user/src/store_arena.rs a/crates/oxpinyin-user/src/store_arena.rs
+index 368cf6a6..2b531949 100644
+--- b/crates/oxpinyin-user/src/store_arena.rs
++++ a/crates/oxpinyin-user/src/store_arena.rs
+@@ -544,31 +544,17 @@ impl<S: WriteStore> GenericUserStore<S> {
+             }
+-            // A mask can have materialized the appended item. Keep the
+-            // merged value in that overlay until the library is reloaded.
+-            let overlay = items
+-                .decoded(&token)
+-                .map(crate::persistence::encode_persisted_item)
+-                .transpose()
+-                .map_err(|error| UserStoreError::Persistence(error.to_string()))?;
+-            let merge = |bytes: &[u8]| {
+-                let view = PhraseItemView::from_bytes(bytes)?;
+-                if view.as_bytes()[6..6 + 4 * view.phrase_length()] != phrase_table::key_ucs4(words)
+-                {
+-                    return None;
+-                }
+-                Some(UserLibrary::merged_reading(view, &packed, delta))
+-            };
+-            let merged = match &overlay {
+-                Some(bytes) => merge(bytes),
+-                None => items.with_live(token, |bytes, _| merge(bytes)).flatten(),
+-            }
+-            .ok_or(UserStoreError::InvalidPhrase)?
+-            .map_err(UserStoreError::Persistence)?;
+-            if overlay.is_some() {
+-                let item = oxpinyin_data::chunk_write::decode_phrase_item(&merged)
+-                    .map_err(|error| UserStoreError::Persistence(error.to_string()))?;
+-                items.insert(token, item);
+-            } else {
+-                items.remove_item(original, token);
+-                items.add_item(original, token, &merged);
+-            }
++            let merged = items
++                .with_live(token, |bytes, _| {
++                    let view = PhraseItemView::from_bytes(bytes)?;
++                    if view.as_bytes()[6..6 + 4 * view.phrase_length()]
++                        != phrase_table::key_ucs4(words)
++                    {
++                        return None;
++                    }
++                    Some(UserLibrary::merged_reading(view, &packed, delta))
++                })
++                .flatten()
++                .ok_or(UserStoreError::InvalidPhrase)?
++                .map_err(UserStoreError::Persistence)?;
++            items.remove_item(original, token);
++            items.add_item(original, token, &merged);
+             drop(items);

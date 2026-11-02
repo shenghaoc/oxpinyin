@@ -184,6 +184,32 @@ def register(case, *, _craft_hash, crafted_bigram_context, index_file_rows):
         return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 1)}
 
 
+    def import_after_partial_mask(k):
+        """Import an appended phrase, refuse a partial-tail mask, and import it again."""
+        # Row 98: the pin's SingleGram::mask_out reads beyond the partial
+        # item (ngram.cpp:76-86). This case executes only the subject.
+        ctx = crafted_bigram_context(k, [(b'\x01\x00\x00\x00', b'\x00\x00\x00\x00\x01')])
+        text = '你你你你'.encode()
+        reading = ("ni3'ni3'ni3'ni3" if k.mode == 'pinyin' else 'ㄋㄧˇ ㄋㄧˇ ㄋㄧˇ ㄋㄧˇ').encode()
+        begin = k.fn('begin_add_phrases', P, P, U)
+        add = k.fn('iterator_add_phrase', B, P, S, S, I)
+        end = k.fn('end_add_phrases', None, P)
+        iterator = begin(ctx, 1)
+        assert iterator
+        first = add(iterator, text, reading, 5)
+        end(iterator)
+        masked = k.fn('mask_out', B, P, U, U)(ctx, 0xffffffff, 0)
+        iterator = begin(ctx, 1)
+        assert iterator
+        second = add(iterator, text, reading, 4)
+        end(iterator)
+        k.fn('fini', None, P)(ctx)
+        return {'first': bool(first), 'mask': bool(masked), 'second': bool(second)}
+
+    for mode in ('pinyin', 'zhuyin'):
+        case('import-after-partial-bigram-mask-' + mode, mode=mode,
+             pin_not_run={'first': True, 'mask': False, 'second': True})(import_after_partial_mask)
+
     @case('abort-mask-out-non-token-bigram-key', abort=False, sigabrt=True)
     def _(k):
         """Mask a profile with a two-byte bigram key and a four-byte total value."""

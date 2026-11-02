@@ -398,6 +398,53 @@ impl UserLibrary {
         self.replace(slot, &bytes)
     }
 
+    /// `add_reading`'s result for an item held elsewhere: the item's bytes
+    /// after `keys` take `delta`, for a caller that writes them back itself.
+    /// An unchanged item answers its own bytes.
+    pub(crate) fn merged_reading(
+        item: PhraseItemView<'_>,
+        keys: &[u16],
+        delta: u32,
+    ) -> Result<Vec<u8>, String> {
+        if item.phrase_length() != keys.len() {
+            return Err("user phrase reading length differs".into());
+        }
+        let mut bytes = item.as_bytes().to_vec();
+        let mut total = 0_u32;
+        for (i, reading) in item.pronunciations().enumerate() {
+            total = total.wrapping_add(reading.freq);
+            let matches = reading
+                .keys
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .zip(keys)
+                .all(|(bytes, &key)| {
+                    u16::from_le_bytes([bytes[0], bytes[1]]) & 0x7fff == key & 0x7fff
+                });
+            if matches {
+                if total.checked_add(delta).is_some() {
+                    let position = 6 + 4 * keys.len() + i * (2 * keys.len() + 4) + 2 * keys.len();
+                    bytes[position..position + 4]
+                        .copy_from_slice(&reading.freq.wrapping_add(delta).to_le_bytes());
+                }
+                return Ok(bytes);
+            }
+        }
+        bytes[1] = bytes[1].wrapping_add(1);
+        if bytes[1] == 0 {
+            // The next get_phrase_item sizes the body from the wrapped header
+            // (074a2219 phrase_index.cpp:195-204); no reading is then visible.
+            bytes.truncate(6 + keys.len() * 4);
+        } else {
+            for key in keys {
+                bytes.extend_from_slice(&key.to_le_bytes());
+            }
+            bytes.extend_from_slice(&delta.to_le_bytes());
+        }
+        Ok(bytes)
+    }
+
     pub(crate) fn train(
         &mut self,
         slot: u32,
