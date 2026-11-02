@@ -1744,7 +1744,7 @@ fn amplified_frequency_is_c_float_not_f64() {
 
 #[test]
 fn window_flush_is_token_ascending_and_one_row_per_token() {
-    use super::{CandidateKind, flush_window_batch};
+    use super::{CandidateKind, WindowOrder, flush_window_batch};
     use crate::candidate::Candidate;
 
     let mut batch = vec![
@@ -1777,7 +1777,7 @@ fn window_flush_is_token_ascending_and_one_row_per_token() {
         ),
     ];
     let mut into = Vec::new();
-    flush_window_batch(&mut batch, &mut into);
+    flush_window_batch(&mut batch, &mut into, &mut WindowOrder::default());
     let tokens: Vec<u32> = into
         .iter()
         .filter_map(|c| c.token().map(oxpinyin_core::PhraseToken::value))
@@ -1788,6 +1788,64 @@ fn window_flush_is_token_ascending_and_one_row_per_token() {
         2,
         "the first collected row of a duplicated token is the one kept"
     );
+}
+
+#[test]
+fn window_order_buckets_match_the_stable_library_sort() {
+    use super::{CandidateKind, WindowOrder, order_window_tail};
+    use crate::candidate::Candidate;
+
+    // Rows tagged by their arrival index (`consumed_keys`): library bytes
+    // in and out of the phrase-index range, tokenless rows, and tokens
+    // repeated across libraries' arrival order.
+    let tokens = [
+        Some(0x0300_0001),
+        None,
+        Some(0x2a00_0005),
+        Some(0x0000_0002),
+        Some(0x0300_0001),
+        Some(0x1000_0004),
+        None,
+        Some(0x0f00_0003),
+        Some(0x0000_0002),
+        Some(0xff00_0006),
+        Some(0x1000_0004),
+        Some(0x0000_0007),
+    ];
+    let rows = || {
+        tokens.iter().enumerate().map(|(index, token)| {
+            Candidate::new(
+                compact_str::CompactString::from("字"),
+                CandidateKind::Phrase,
+                index + 1,
+                1,
+                0,
+                token.map(PhraseToken::new),
+                None,
+            )
+        })
+    };
+    let mut expected: Vec<Candidate> = rows().collect();
+    expected.sort_by_key(|candidate| {
+        candidate
+            .token()
+            .map_or(u32::MAX, |token| token.value() >> 24)
+    });
+    let mut seen = std::collections::HashSet::new();
+    expected.retain(|candidate| candidate.token().is_none_or(|token| seen.insert(token)));
+
+    let mut order = WindowOrder::default();
+    let mut into = vec![rows().next().expect("one row")];
+    // Twice through the same storage: nothing but capacity carries over.
+    for _ in 0..2 {
+        into.truncate(1);
+        into.extend(rows());
+        order_window_tail(&mut into, 1, &mut order);
+        let got: Vec<usize> = into[1..].iter().map(Candidate::consumed_keys).collect();
+        let want: Vec<usize> = expected.iter().map(Candidate::consumed_keys).collect();
+        assert_eq!(got, want);
+        assert_eq!(into[0].consumed_keys(), 1, "rows before `start` stay put");
+    }
 }
 
 /// A model with fixed facade answers, so the frequency table's

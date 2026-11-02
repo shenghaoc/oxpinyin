@@ -810,8 +810,8 @@ where
             // appended), then the addon facade's — the order
             // `_append_items` lays down and the stable sort keeps for
             // comparator ties.
-            order_window_tail(into, start);
-            flush_window_batch(scratch.window_addon, into);
+            order_window_tail(into, start, scratch.window_order);
+            flush_window_batch(scratch.window_addon, into, scratch.window_order);
             // SEARCH_NONE widens even without SEARCH_CONTINUED; the pin
             // checks continuation only after SEARCH_OK (pinyin.cpp:2240-
             // 2242,2260; zhuyin.cpp:1505-1512 at 074a2219).
@@ -1154,6 +1154,7 @@ where
             mut entries,
             mut path,
             mut window_addon,
+            mut window_order,
         } = core::mem::take(&mut self.scratch);
         let collected = out;
 
@@ -1207,6 +1208,7 @@ where
                     path: &mut path,
                     entries: &mut entries,
                     window_addon: &mut window_addon,
+                    window_order: &mut window_order,
                     explicit: gate,
                 };
                 self.collect_window_scan(remaining.as_bytes(), collected, &mut scratch)?;
@@ -1315,6 +1317,7 @@ where
             entries,
             path,
             window_addon,
+            window_order,
         };
         Ok(parsed_prefix)
     }
@@ -1475,6 +1478,7 @@ where
             mut entries,
             mut path,
             mut window_addon,
+            mut window_order,
         } = core::mem::take(&mut self.scratch);
         // The zhuyin ending topology takes the same inputs as the retained
         // matrix (`scan_divided` is false in the collapse mode), so the one
@@ -1484,6 +1488,7 @@ where
                 entries,
                 path,
                 window_addon,
+                window_order,
             };
             return Ok(0);
         };
@@ -1530,8 +1535,8 @@ where
                 };
                 self.scan_parsed_paths(matrix, start, offset, &mut buf)?;
             }
-            order_window_tail(&mut group, 0);
-            flush_window_batch(&mut window_addon, &mut group);
+            order_window_tail(&mut group, 0, &mut window_order);
+            flush_window_batch(&mut window_addon, &mut group, &mut window_order);
             if group.is_empty() {
                 continue;
             }
@@ -1578,6 +1583,7 @@ where
             entries,
             path,
             window_addon,
+            window_order,
         };
 
         self.scan_unreadable = unreadable;

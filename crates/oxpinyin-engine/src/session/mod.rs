@@ -304,6 +304,21 @@ struct Scratch {
     path: SmallVec<[SyllableKey; 16]>,
     /// Per-window scan batch, addon facade.
     window_addon: Vec<Candidate>,
+    /// [`order_window_tail`]'s buckets and membership set.
+    window_order: WindowOrder,
+}
+
+/// The library buckets [`order_window_tail`] places a window's rows into:
+/// one per phrase-index library, then one for every other sort key.
+const WINDOW_BUCKETS: usize = oxpinyin_core::PHRASE_INDEX_LIBRARY_COUNT + 1;
+
+/// [`order_window_tail`]'s reusable storage. Emptied by every window it
+/// orders, so only capacity carries over.
+#[derive(Clone, Debug, Default)]
+struct WindowOrder {
+    buckets: [Vec<Candidate>; WINDOW_BUCKETS],
+    /// Tokens already kept from the window being ordered.
+    seen: HashSet<u32>,
 }
 
 // The composition state is decomposed into types that own their own
@@ -380,38 +395,56 @@ fn append_scan_entries(
 /// the pin's order is a stable sort by library nibble over the batch,
 /// keeping the first occurrence of a token reached through several
 /// key-paths — the duplicate the pin's string dedup drops later.
-fn flush_window_batch(batch: &mut Vec<Candidate>, into: &mut Vec<Candidate>) {
+fn flush_window_batch(
+    batch: &mut Vec<Candidate>,
+    into: &mut Vec<Candidate>,
+    order: &mut WindowOrder,
+) {
     let start = into.len();
     into.append(batch);
-    order_window_tail(into, start);
+    order_window_tail(into, start, order);
 }
 
 /// Puts one window's rows, appended at `into[start..]`, into the pin's
-/// array order in place: tokens ascending by library (a stable sort of
-/// the tail), then the first row of each token kept — the same
-/// membership rule as [`flush_window_batch`], without a batch buffer
-/// between the lookups and the output.
-fn order_window_tail(into: &mut Vec<Candidate>, start: usize) {
-    into[start..].sort_by_key(|candidate| {
+/// array order in place: tokens ascending by library, then the first row
+/// of each token kept — the same membership rule as
+/// [`flush_window_batch`], without a batch buffer between the lookups and
+/// the output.
+///
+/// The library order is a stable bucket placement rather than a sort:
+/// each row goes to its library's bucket in arrival order, and the buckets
+/// are laid back down in library order. A token whose library byte is not
+/// a phrase-index library, and a tokenless row, go to the last bucket,
+/// which is stably sorted by the same key, so the result equals the stable
+/// sort by `token >> 24` (tokenless last) for every token. Every bucket
+/// keeps the membership check: one table row holds a token under several
+/// stored keys, and a tone-less or incomplete query matches all of them.
+fn order_window_tail(into: &mut Vec<Candidate>, start: usize, order: &mut WindowOrder) {
+    fn sort_key(candidate: &Candidate) -> u32 {
         candidate
             .token()
             .map_or(u32::MAX, |token| token.value() >> 24)
-    });
-    // Membership only: the retained candidates keep the batch's order, so
-    // the set's own (unspecified) iteration order is never observed.
-    let mut seen: std::collections::HashSet<u32> =
-        std::collections::HashSet::with_capacity(into.len() - start);
-    let mut write = start;
-    for read in start..into.len() {
-        if let Some(token) = into[read].token().map(oxpinyin_core::PhraseToken::value)
-            && !seen.insert(token)
-        {
-            continue;
-        }
-        into.swap(write, read);
-        write += 1;
     }
-    into.truncate(write);
+    let WindowOrder { buckets, seen } = order;
+    let last = buckets.len() - 1;
+    for candidate in into.drain(start..) {
+        let bucket = usize::try_from(sort_key(&candidate)).map_or(last, |key| key.min(last));
+        buckets[bucket].push(candidate);
+    }
+    buckets[last].sort_by_key(sort_key);
+    // Membership only: the retained candidates keep the bucket order, so
+    // the set's own (unspecified) iteration order is never observed.
+    seen.clear();
+    for bucket in buckets.iter_mut() {
+        for candidate in bucket.drain(..) {
+            if let Some(token) = candidate.token().map(oxpinyin_core::PhraseToken::value)
+                && !seen.insert(token)
+            {
+                continue;
+            }
+            into.push(candidate);
+        }
+    }
 }
 
 /// λ as the pin parses it out of `table.conf` (`fscanf "%f"`,
@@ -620,6 +653,7 @@ struct ScanScratch<'a> {
     path: &'a mut SmallVec<[SyllableKey; 16]>,
     entries: &'a mut Vec<PhraseEntry>,
     window_addon: &'a mut Vec<Candidate>,
+    window_order: &'a mut WindowOrder,
     /// An explicit guess: the scan is the pin's `pinyin_guess_candidates`
     /// search, so its table searches assert where the pin's do
     /// ([`EngineError::TonedIncompleteKey`]); an eager refresh, which the
