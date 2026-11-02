@@ -4,13 +4,22 @@ use std::collections::BTreeMap;
 
 use oxpinyin_data::chunk_write::ChunkItem;
 
-use crate::replay::ReplayedLibrary;
+use crate::persistence::SystemLibraryRef;
+use crate::replay::{ReplayedLibrary, UnigramAdd};
 use crate::store::Token;
 
 #[derive(Default)]
 pub(crate) struct SystemItems {
     decoded: BTreeMap<Token, ChunkItem>,
     replayed: BTreeMap<u8, ReplayedLibrary>,
+    /// The sub-index total of a library that holds no live buffer but whose
+    /// total is not its original's: what a reload's replay left.
+    totals: BTreeMap<u8, u32>,
+    /// `FacadePhraseIndex::m_total_freq` beyond the sub-index totals of the
+    /// system libraries: the user libraries' totals and every delta the facade
+    /// took that a sub-index refused or could not take (`phrase_index.h:633`
+    /// adds before the sub-index answers).
+    facade_extra: u64,
 }
 
 impl SystemItems {
@@ -18,11 +27,175 @@ impl SystemItems {
         decoded: BTreeMap<Token, ChunkItem>,
         replayed: BTreeMap<u8, ReplayedLibrary>,
     ) -> Self {
-        Self { decoded, replayed }
+        Self {
+            decoded,
+            replayed,
+            totals: BTreeMap::new(),
+            facade_extra: 0,
+        }
+    }
+
+    /// The sub-index totals of libraries without a live buffer and the facade
+    /// total's extra, as an open or a reload leaves them.
+    pub(crate) fn with_totals(mut self, totals: BTreeMap<u8, u32>, facade_extra: u64) -> Self {
+        self.totals = totals;
+        self.facade_extra = facade_extra;
+        self
     }
 
     pub(crate) fn is_empty(&self) -> bool {
         self.decoded.is_empty() && self.replayed.is_empty()
+    }
+
+    /// `SubPhraseIndex::m_total_freq` of system library `nibble`: its live
+    /// buffer's, a reload's, or the original's.
+    pub(crate) fn library_total(
+        &self,
+        nibble: u8,
+        original: Option<SystemLibraryRef<'_>>,
+    ) -> Option<u32> {
+        if let Some(library) = self.replayed.get(&nibble) {
+            return Some(library.total());
+        }
+        self.totals
+            .get(&nibble)
+            .copied()
+            .or_else(|| original.map(|library| library.total))
+    }
+
+    /// Sets a system library's sub-index total outside a replay.
+    pub(crate) fn set_library_total(&mut self, nibble: u8, total: u32) {
+        match self.replayed.get_mut(&nibble) {
+            Some(library) => library.set_total(total),
+            None => {
+                self.totals.insert(nibble, total);
+            }
+        }
+    }
+
+    /// Forgets a system library's live buffer and total.
+    pub(crate) fn forget_library(&mut self, nibble: u8) {
+        self.replayed.remove(&nibble);
+        self.totals.remove(&nibble);
+    }
+
+    pub(crate) fn facade_extra(&self) -> u64 {
+        self.facade_extra
+    }
+
+    pub(crate) fn add_facade_extra(&mut self, delta: u64) {
+        self.facade_extra = self.facade_extra.wrapping_add(delta);
+    }
+
+    pub(crate) fn sub_facade_extra(&mut self, delta: u64) {
+        self.facade_extra = self.facade_extra.wrapping_sub(delta);
+    }
+
+    /// `FacadePhraseIndex::compact`'s sub-index total (074a2219
+    /// `phrase_index.cpp:648-675`): the sum of the readable items the library
+    /// holds, as each is now: an arena item's field, a decoded item's, the live
+    /// buffer's, the original's, and nothing for a removed one. Only what the
+    /// session changed is visited; the original's own sum is cached.
+    pub(crate) fn compacted_total(
+        &self,
+        nibble: u8,
+        original: SystemLibraryRef<'_>,
+        arena: Option<&crate::user_library::UserLibrary>,
+        removed: impl Iterator<Item = Token>,
+    ) -> u32 {
+        let base = |slot: u32| original.unigram(slot).unwrap_or(0);
+        let mut total = original.item_total();
+        let mut handled = std::collections::BTreeSet::new();
+        let mut take = |slot: u32, now: u32, total: &mut u32| {
+            if handled.insert(slot) {
+                *total = total.wrapping_add(now).wrapping_sub(base(slot));
+            }
+        };
+        if let Some(arena) = arena {
+            for (slot, item) in arena.items() {
+                take(slot, item.unigram(), &mut total);
+            }
+        }
+        let lo = u32::from(nibble) << 24;
+        let hi = lo | 0x00ff_ffff;
+        for (&token, item) in self.decoded.range(lo..=hi) {
+            take(token & 0x00ff_ffff, item.unigram, &mut total);
+        }
+        if let Some(buffer) = self.replayed.get(&nibble) {
+            for slot in buffer.slots() {
+                take(slot, buffer.unigram(slot).unwrap_or(0), &mut total);
+            }
+        }
+        for token in removed {
+            take(token & 0x00ff_ffff, 0, &mut total);
+        }
+        total
+    }
+
+    /// The live unigram of `token`'s system item: the decoded item's, else the
+    /// library's live buffer's, else the original's (no write has made a
+    /// buffer). `None` when no readable item is there.
+    pub(crate) fn unigram(
+        &self,
+        token: Token,
+        original: Option<SystemLibraryRef<'_>>,
+    ) -> Option<u32> {
+        if let Some(item) = self.decoded.get(&token) {
+            return Some(item.unigram);
+        }
+        let slot = token & 0x00ff_ffff;
+        match self.replayed.get(&((token >> 24) as u8)) {
+            Some(library) => library.unigram(slot),
+            None => original?.unigram(slot),
+        }
+    }
+
+    /// `FacadePhraseIndex::add_unigram_frequency`'s sub-index half
+    /// (`phrase_index.cpp:150-176`) for system library `token >> 24`, whose
+    /// item is the arena's when `arena`, else the decoded item or the live
+    /// buffer's. `None` for a library with no original. The sub-index total
+    /// moves with an accepted add; the caller moves the facade's.
+    pub(crate) fn add_unigram(
+        &mut self,
+        original: Option<SystemLibraryRef<'_>>,
+        token: Token,
+        delta: u32,
+        arena: bool,
+    ) -> Option<UnigramAdd> {
+        let original = original?;
+        let nibble = (token >> 24) as u8;
+        let slot = token & 0x00ff_ffff;
+        let library = match self.replayed.entry(nibble) {
+            std::collections::btree_map::Entry::Occupied(library) => library.into_mut(),
+            std::collections::btree_map::Entry::Vacant(vacant) => {
+                let mut library = ReplayedLibrary::pristine(original);
+                if let Some(total) = self.totals.remove(&nibble) {
+                    library.set_total(total);
+                }
+                vacant.insert(library)
+            }
+        };
+        if arena {
+            return Some(Self::take_total(library, delta));
+        }
+        if let Some(item) = self.decoded.get_mut(&token) {
+            let outcome = Self::take_total(library, delta);
+            if outcome == UnigramAdd::Accepted {
+                item.unigram = item.unigram.wrapping_add(delta);
+            }
+            return Some(outcome);
+        }
+        Some(library.add_unigram(slot, delta))
+    }
+
+    fn take_total(library: &mut ReplayedLibrary, delta: u32) -> UnigramAdd {
+        match library.total().checked_add(delta) {
+            Some(total) => {
+                library.set_total(total);
+                UnigramAdd::Accepted
+            }
+            None => UnigramAdd::Refused,
+        }
     }
 
     /// The item held under `token`: a decoded one, or a replayed library's
@@ -88,7 +261,11 @@ impl SystemItems {
                 let Some(original) = original.filter(|library| library.contains_item(slot)) else {
                     return false;
                 };
-                vacant.insert(ReplayedLibrary::pristine(original))
+                let mut library = ReplayedLibrary::pristine(original);
+                if let Some(total) = self.totals.remove(&nibble) {
+                    library.set_total(total);
+                }
+                vacant.insert(library)
             }
         };
         library.train(slot, readings, delta)
@@ -114,11 +291,26 @@ impl SystemItems {
         items
     }
 
+    /// Touched slots made unreadable by an in-place write must not fall back
+    /// to the shipped item when the save builds its journal.
+    pub(crate) fn unreadable_slots(&self) -> impl Iterator<Item = Token> + '_ {
+        self.replayed.iter().flat_map(move |(&library, replayed)| {
+            replayed.slots().filter_map(move |slot| {
+                let token = (u32::from(library) << 24) | slot;
+                (replayed.item_past_buffer(slot) && !self.decoded.contains_key(&token))
+                    .then_some(token)
+            })
+        })
+    }
+
     fn materialize(&mut self) {
         if self.replayed.is_empty() {
             return;
         }
         self.decoded = self.snapshot();
+        for (&library, buffer) in &self.replayed {
+            self.totals.insert(library, buffer.total());
+        }
         self.replayed.clear();
     }
 

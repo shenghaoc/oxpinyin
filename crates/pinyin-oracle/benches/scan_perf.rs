@@ -67,7 +67,7 @@ impl LanguageModel for BenchLm<'_> {
         };
         Ok(self
             .inner
-            .unigram_freq_with_user_delta(token.value(), extra))
+            .unigram_freq_with_user_delta(token.value(), None, extra))
     }
 
     fn has_real_unigrams(&self) -> bool {

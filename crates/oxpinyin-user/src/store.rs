@@ -99,7 +99,6 @@ pub const SENTENCE_START: Token = 1;
 /// grams in the pin's own container instead ([`StoreInner::bigram_db`]),
 /// keyed and walked the pin's way, and never writes this table.
 pub const BIGRAM_GRAM: &str = "user_bigram_gram";
-pub(crate) const SYSTEM_BASE: &str = "system_base";
 /// Per library, how far the total the pin's sub-index holds lies from the
 /// one the seeded rows make, a wrapping `guint32` keyed by nibble: the
 /// difference a stored header or a `.dbin` replay left, until the next
@@ -774,7 +773,7 @@ fn library_total_overflows(
     if delta == 0 {
         return Ok(false);
     }
-    let base = txn_get_u64_or(txn, SYSTEM_BASE, &codec::encode_u8(library), 0)?;
+    let base = 0_u64;
     // Until the next compact the sub-index still holds the stored total, not
     // its items' sum (`phrase_index.cpp:170-171`): the difference
     // [`LIBRARY_OFFSET`] keeps is part of the guarded sum, and it breaks the
@@ -1437,43 +1436,6 @@ fn rederive_alloc_cursors(txn: &mut impl WriteTxn, only: &[u8]) -> Result<(), St
     Ok(())
 }
 
-/// Discard system unigram deltas before replaying the selected libraries.
-fn remove_system_unigrams(
-    txn: &mut impl WriteTxn,
-    reloaded: impl Fn(Token) -> bool,
-) -> Result<(), StoreError> {
-    let mut unigrams = Vec::new();
-    txn.for_each(UNIGRAM, |key, _| {
-        let token = codec::decode_token(key)
-            .map_err(|_| StoreError::Backend("corrupt unigram key".into()))?;
-        if reloaded(token) {
-            unigrams.push(key.to_vec());
-        }
-        Ok(())
-    })?;
-    for key in unigrams {
-        txn.remove(UNIGRAM, &key)?;
-    }
-    Ok(())
-}
-
-/// The facade total's unigram sum, stored after a replacement.
-fn store_unigram_total(txn: &mut impl WriteTxn) -> Result<(), StoreError> {
-    let mut total = 0_u64;
-    txn.for_each(UNIGRAM, |_, value| {
-        total = total.saturating_add(
-            codec::decode_u64(value)
-                .map_err(|_| StoreError::Backend("corrupt unigram value".into()))?,
-        );
-        Ok(())
-    })?;
-    txn.put(
-        UNIGRAM_TOTAL,
-        &codec::encode_u8(UNIGRAM_TOTAL_KEY),
-        &codec::encode_u64(total),
-    )
-}
-
 /// Whether the store holds any user data, evaluated inside `txn`.
 ///
 /// `||` short-circuits, so each table is probed with a first-row
@@ -2080,8 +2042,6 @@ impl<S: WriteStore> GenericUserStore<S> {
         })?;
 
         Ok(Arc::new(StoreInner {
-            system_bumps_live: std::sync::atomic::AtomicBool::new(false),
-            system_bumps: Mutex::new(crate::registry::SystemUnigramBumps::default()),
             has_system_items: AtomicBool::new(false),
             system_items: std::sync::Mutex::new(crate::system_items::SystemItems::default()),
             has_removed_system_items: AtomicBool::new(false),
@@ -2094,7 +2054,6 @@ impl<S: WriteStore> GenericUserStore<S> {
             phrase_generation: AtomicU64::new(0),
             phrase_table_generation: AtomicU64::new(0),
             has_user_data: AtomicBool::new(has_user_data),
-            facade_offset: std::sync::atomic::AtomicU32::new(0),
             has_library_offsets: AtomicBool::new(false),
             libpinyin: None,
             bigram_db: None,
@@ -2210,36 +2169,38 @@ impl<S: WriteStore> GenericUserStore<S> {
         Ok(())
     }
 
-    /// Accumulated phrase-index unigram delta for `token`; `0` if none.
+    /// Accumulated phrase-index unigram delta for `token`; `0` if none. A
+    /// session store answers a user library item's count, or a system item's
+    /// live field less the original's, as a wrapping `guint32` (the model
+    /// prices the live field itself, [`Self::system_unigram`]). A standalone
+    /// store answers its stored row.
     ///
     /// # Errors
     ///
     /// Returns [`UserStoreError`] when the store cannot be read.
     pub fn unigram_delta(&self, token: Token) -> Result<u64, UserStoreError> {
-        let bumps = self.system_unigrams_for_read();
-        let stored =
-            if let Some(count) = self.with_user_item(token, |item| u64::from(item.unigram())) {
-                count
-            } else if self.has_user_data() {
-                self.with_count_cache(|cached, db| cached.unigram_delta(db, token))?
-            } else {
-                0
-            };
-        Ok(stored.wrapping_add(
-            bumps
-                .as_ref()
-                .and_then(|b| b.tokens.get(&token))
-                .copied()
-                .unwrap_or(0),
-        ))
+        if let Some(count) = self.with_user_item(token, |item| u64::from(item.unigram())) {
+            Ok(count)
+        } else if self.inner.libpinyin.is_none() && self.has_user_data() {
+            self.with_count_cache(|cached, db| cached.unigram_delta(db, token))
+        } else if let Some(live) = self.system_unigram(token) {
+            let slot = token & PHRASE_MASK;
+            let base = self
+                .originals
+                .get(&phrase_index_library_index(token))
+                .and_then(|original| original.unigram(slot))
+                .unwrap_or(0);
+            Ok(u64::from(live.wrapping_sub(base)))
+        } else {
+            Ok(0)
+        }
     }
 
-    /// A user item's unigram frequency, including pending increments, or
-    /// `None` when the item is absent. A present zero count stays `Some(0)`.
-    /// Session reads check existence and read the count under one arena guard,
-    /// as the pin reads one item (074a2219 `pinyin.cpp:2821-2833`,
-    /// `zhuyin.cpp:1813-1825`). The caller applies library visibility and any
-    /// facade overlay.
+    /// A user item's unigram frequency, or `None` when the item is absent. A
+    /// present zero count stays `Some(0)`. Session reads check existence and
+    /// read the count under one arena guard, as the pin reads one item
+    /// (074a2219 `pinyin.cpp:2821-2833`, `zhuyin.cpp:1813-1825`). The caller
+    /// applies library visibility and any facade overlay.
     ///
     /// # Errors
     /// Returns an error when a standalone store cannot be read.
@@ -2250,24 +2211,51 @@ impl<S: WriteStore> GenericUserStore<S> {
                 .then(|| self.unigram_delta(token))
                 .transpose();
         }
-        // Keep the same bumps-before-arena lock order as `unigram_delta`.
-        let bumps = self.system_unigrams_for_read();
-        Ok(self.with_user_item(token, |item| {
-            u64::from(item.unigram()).wrapping_add(
-                bumps
-                    .as_ref()
-                    .and_then(|b| b.tokens.get(&token))
-                    .copied()
-                    .unwrap_or(0),
-            )
-        }))
+        Ok(self.with_user_item(token, |item| u64::from(item.unigram())))
     }
 
-    /// Apply the exported unigram increment to a loaded system library.
-    /// The caller checks library visibility. The facade total changes even
-    /// for a missing item or overflowing sub-index; accepted increments stay
-    /// in memory until another count writer or the save diff needs the rows. This does not mark the context dirty
-    /// (074a2219 `pinyin.cpp:2836-2843`, `zhuyin.cpp:1828-1835`).
+    /// The live `guint32` unigram of the system item behind `token`
+    /// (`PhraseItem::get_unigram_frequency`), where the session holds the
+    /// library's state: an arena item's, a decoded item's, the library's live
+    /// buffer's, or the original's before any write. `None` for a removed item,
+    /// a library with no original or an item nothing holds.
+    #[must_use]
+    pub fn system_unigram(&self, token: Token) -> Option<u32> {
+        self.inner.libpinyin.as_ref()?;
+        let original = self.originals.get(&phrase_index_library_index(token))?;
+        if self.system_item_removed(token) {
+            return None;
+        }
+        if let Some(count) = self.with_user_item(token, |item| item.unigram()) {
+            return Some(count);
+        }
+        self.inner
+            .system_items
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .unigram(token, Some(original))
+    }
+
+    /// `SubPhraseIndex::m_total_freq` of system library `library`, where the
+    /// session holds its state; `None` for a library with no original.
+    #[must_use]
+    pub fn system_library_total(&self, library: u8) -> Option<u32> {
+        self.inner.libpinyin.as_ref()?;
+        let original = self.originals.get(&library)?;
+        self.inner
+            .system_items
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .library_total(library, Some(original))
+    }
+
+    /// Apply the exported unigram increment to a loaded system library, as
+    /// `FacadePhraseIndex::add_unigram_frequency` does (074a2219
+    /// `phrase_index.h:628-635`, `phrase_index.cpp:150-176`): the facade total
+    /// takes `delta` first, whatever the sub-index then answers, and the
+    /// sub-index takes it only when it holds the item and its `guint32` total
+    /// can. The caller checks library visibility. This does not mark the
+    /// context dirty (`pinyin.cpp:2836-2843`, `zhuyin.cpp:1828-1835`).
     ///
     /// # Errors
     /// Returns the store error if the in-memory transaction fails.
@@ -2276,161 +2264,90 @@ impl<S: WriteStore> GenericUserStore<S> {
         token: Token,
         delta: u32,
     ) -> Result<bool, UserStoreError> {
-        let library = phrase_index_library_index(token);
-        let mut bumps = self
-            .inner
-            .system_bumps
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let exists = !self.system_item_removed(token)
-            && (self.with_effective_system_item(token, |_| ()).is_some()
-                || self.inner.libpinyin.as_ref().is_some_and(|_| {
-                    self.originals.get(&library).is_some_and(|original| {
-                        original.unigram(token & phrase::PHRASE_MASK).is_some()
-                    })
-                }));
-        if !exists {
-            self.inner.facade_offset.fetch_add(delta, Ordering::SeqCst);
+        if self.inner.libpinyin.is_none() {
             return Ok(false);
         }
-        let total = if let Some(total) = bumps.libraries.get(&library) {
-            *total
-        } else {
-            let db = self.database();
-            let base = get_u64_or(&*db, SYSTEM_BASE, &codec::encode_u8(library), 0)? as u32;
-            let offset = get_u64_or(&*db, LIBRARY_OFFSET, &codec::encode_u8(library), 0)? as u32;
-            drop(db);
-            base.wrapping_add(offset)
-                .wrapping_add(self.stored_unigram_library_total(library)?)
-        };
-        let Some(total) = total.checked_add(delta) else {
-            self.inner.facade_offset.fetch_add(delta, Ordering::SeqCst);
-            return Ok(false);
-        };
-        bumps.libraries.insert(library, total);
-        let count = bumps.tokens.entry(token).or_default();
-        *count = count.wrapping_add(u64::from(delta));
-        bumps.total = bumps.total.wrapping_add(u64::from(delta));
-        self.inner.system_bumps_live.store(true, Ordering::Release);
-        Ok(true)
-    }
-
-    fn system_unigrams_for_read(
-        &self,
-    ) -> Option<MutexGuard<'_, crate::registry::SystemUnigramBumps>> {
-        self.inner
-            .system_bumps_live
-            .load(Ordering::Acquire)
-            .then(|| {
-                self.inner
-                    .system_bumps
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-            })
-    }
-
-    /// Commit live item counts before another count writer or the save diff.
-    /// This does not change the modified gate. Lock order is bumps, then DB;
-    /// readers take the same bumps-first order so a flush cannot split a
-    /// read between old rows and an already cleared overlay.
-    pub(crate) fn flush_system_unigrams(&self) -> Result<(), UserStoreError> {
-        if !self.inner.system_bumps_live.load(Ordering::Acquire) {
-            return Ok(());
-        }
-        let mut bumps = self
-            .inner
-            .system_bumps
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let db = self.database();
-        db.write(|txn| {
-            for (&token, &delta) in &bumps.tokens {
-                if let Some(target) = &self.inner.libpinyin {
-                    let mut phrases = target.phrases();
-                    if phrases.item(token).is_some() {
-                        if let Some(library) = phrases.item_mut(token) {
-                            library.increment_unigram(token & PHRASE_MASK, delta as u32);
-                        }
-                        continue;
-                    }
-                }
-                let key = codec::encode_token(token);
-                let old = txn_get_u64_or(txn, UNIGRAM, &key, 0)?;
-                txn.put(UNIGRAM, &key, &codec::encode_u64(old.wrapping_add(delta)))?;
-            }
-            bump_unigram_total(txn, bumps.total)
+        let accepted = db.write(|txn| {
+            Ok(self
+                .arena_add_unigram_outcome(txn, token, delta)?
+                .is_accepted())
         })?;
-        bumps.tokens.clear();
-        bumps.libraries.clear();
-        bumps.total = 0;
-        self.inner.system_bumps_live.store(false, Ordering::Release);
-        self.mark_committed_write(db, true);
-        Ok(())
+        Ok(accepted)
     }
 
-    /// What the user side adds to the facade's unigram total: the sum of
-    /// every stored unigram delta, plus the session's facade offset (what
-    /// the loaded libraries' stored totals hold beyond their items).
+    /// What the user side adds to the facade's unigram total: for a session
+    /// store everything of `FacadePhraseIndex::m_total_freq` beyond the system
+    /// libraries' sub-index totals (the user libraries' totals and every delta
+    /// a sub-index did not take); for a standalone store the stored sum.
     /// `0` for an empty store.
     ///
     /// # Errors
     ///
     /// Returns [`UserStoreError`] when the store cannot be read.
     pub fn unigram_total(&self) -> Result<u64, UserStoreError> {
-        let bumps = self.system_unigrams_for_read();
+        if self.inner.libpinyin.is_some() {
+            return Ok(self
+                .inner
+                .system_items
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .facade_extra());
+        }
         let db = self.database();
-        let total = get_u64_or(&*db, UNIGRAM_TOTAL, &codec::encode_u8(UNIGRAM_TOTAL_KEY), 0)?;
-        drop(db);
-        Ok(total
-            .wrapping_add(u64::from(self.facade_offset()))
-            .wrapping_add(bumps.as_ref().map_or(0, |b| b.total)))
+        get_u64_or(&*db, UNIGRAM_TOTAL, &codec::encode_u8(UNIGRAM_TOTAL_KEY), 0)
     }
 
-    /// The pinned sub-index's wrapping u32 total of stored deltas in one library.
+    /// Whether this is a libpinyin session, whose unigram state lives in the
+    /// live items and scalars rather than in rows.
+    #[must_use]
+    pub fn is_libpinyin_session(&self) -> bool {
+        self.inner.libpinyin.is_some()
+    }
+
+    /// What a session's facade total holds beyond the stored totals of the
+    /// visible system libraries: [`Self::unigram_total`] plus how far each
+    /// visible library's live sub-index total lies from its original's, as a
+    /// wrapping `guint32` the model adds to those stored totals.
+    #[must_use]
+    pub fn unigram_total_over(&self, visible: impl Fn(u8) -> bool) -> u64 {
+        let items = self
+            .inner
+            .system_items
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut extra = items.facade_extra();
+        for (&library, original) in self.originals.iter() {
+            if !visible(library) {
+                continue;
+            }
+            let live = items
+                .library_total(library, Some(original))
+                .unwrap_or(original.total);
+            extra = extra.wrapping_add(u64::from(live.wrapping_sub(original.total)));
+        }
+        extra
+    }
+
+    /// The `guint32` total of a user library: its items' sum plus the stored
+    /// total's difference from it, until the next compaction.
     ///
     /// # Errors
-    /// Returns the store error if a unigram row cannot be read or decoded.
+    ///
+    /// Returns [`UserStoreError`] when the store cannot be read.
     pub fn unigram_library_total(&self, library: u8) -> Result<u32, UserStoreError> {
-        let bumps = self.system_unigrams_for_read();
-        let stored = self.stored_unigram_library_total(library)?;
-        Ok(bumps.as_ref().map_or(stored, |bumps| {
-            bumps
-                .tokens
-                .iter()
-                .filter(|(token, _)| phrase_index_library_index(**token) == library)
-                .fold(stored, |total, (_, delta)| {
-                    total.wrapping_add(*delta as u32)
-                })
-        }))
-    }
-
-    fn stored_unigram_library_total(&self, library: u8) -> Result<u32, UserStoreError> {
+        let Some(target) = &self.inner.libpinyin else {
+            return Ok(0);
+        };
         let db = self.database();
-        let lo = codec::encode_token(u32::from(library) << 24);
-        let hi = u32::from(library)
-            .checked_add(1)
-            .and_then(|next| next.checked_mul(1 << 24))
-            .map(codec::encode_token);
-        let mut total = self.inner.libpinyin.as_ref().map_or(0, |target| {
+        let offset = get_u64_or(&*db, LIBRARY_OFFSET, &codec::encode_u8(library), 0)? as u32;
+        Ok(offset.wrapping_add(
             target
                 .phrases()
                 .libraries
                 .get(&library)
-                .map_or(0, crate::user_library::UserLibrary::item_sum)
-        });
-        db.range(
-            UNIGRAM,
-            Bound::Included(lo.as_slice()),
-            hi.as_ref()
-                .map_or(Bound::Unbounded, |hi| Bound::Excluded(hi.as_slice())),
-            |_, value| {
-                let count = codec::decode_u64(value)
-                    .map_err(|_| StoreError::Backend("corrupt unigram".into()))?;
-                total = total.wrapping_add(count as u32);
-                Ok(())
-            },
-        )?;
-        Ok(total)
+                .map_or(0, crate::user_library::UserLibrary::item_sum),
+        ))
     }
 
     /// How far `library`'s stored total lies from the sum of its items
@@ -2447,10 +2364,6 @@ impl<S: WriteStore> GenericUserStore<S> {
         Ok(get_u64_or(&*db, LIBRARY_OFFSET, &codec::encode_u8(library), 0)? as u32)
     }
 
-    fn facade_offset(&self) -> u32 {
-        self.inner.facade_offset.load(Ordering::SeqCst)
-    }
-
     /// `FacadePhraseIndex::compact` (074a2219 `phrase_index.cpp:648-675`):
     /// every library's total is rebuilt from its items, so none carries a
     /// stored total's difference any more. The facade's total keeps it.
@@ -2459,31 +2372,45 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// (`pinyin.cpp:1139`, `:657`, `:1294`; `zhuyin.cpp:554`, `:542`,
     /// `:829`).
     pub fn compact_libraries(&mut self) {
-        if self.flush_system_unigrams().is_err() {
-            return;
-        }
         // Flag invariant: `has_library_offsets` is never false while a
         // LIBRARY_OFFSET row exists (true with no rows is harmless: the row
         // read gives 0). `library_offset` reads the flag without the lock,
         // so the flag is cleared only after the rows are gone, under the
         // database lock that every offset writer also holds, and stays set
         // if the write fails.
-        let originals = self.inner.libpinyin.as_ref().map(|_| &self.originals);
-        if originals.is_none() && !self.inner.has_library_offsets.load(Ordering::SeqCst) {
+        let Some(target) = self.inner.libpinyin.clone() else {
             return;
+        };
+        // Each system library's total becomes the sum of its live readable
+        // items; the facade total keeps what the libraries held, so the
+        // difference moves to the facade's extra.
+        {
+            let phrases = target.phrases();
+            let mut items = self
+                .inner
+                .system_items
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let removed = self.removed_system_items_guard();
+            for (&library, original) in self.originals.iter() {
+                let old = items
+                    .library_total(library, Some(original))
+                    .unwrap_or(original.total);
+                let new = items.compacted_total(
+                    library,
+                    original,
+                    phrases.libraries.get(&library),
+                    removed
+                        .iter()
+                        .copied()
+                        .filter(|&token| phrase_index_library_index(token) == library),
+                );
+                items.set_library_total(library, new);
+                items.add_facade_extra(u64::from(old.wrapping_sub(new)));
+            }
         }
         let db = self.database();
         let cleared = db.write(|txn| {
-            if let Some(originals) = originals.as_ref() {
-                for (&library, original) in originals.iter() {
-                    txn.put(
-                        SYSTEM_BASE,
-                        &codec::encode_u8(library),
-                        &codec::encode_u64(u64::from(original.item_total())),
-                    )?;
-                }
-            }
-
             let mut keys = Vec::new();
             txn.for_each(LIBRARY_OFFSET, |key, _| {
                 keys.push(key.to_vec());
@@ -2495,10 +2422,8 @@ impl<S: WriteStore> GenericUserStore<S> {
             Ok(())
         });
         if cleared.is_ok() {
-            if let Some(target) = &self.inner.libpinyin {
-                for library in target.phrases().libraries.values_mut() {
-                    let _ = library.compact();
-                }
+            for library in target.phrases().libraries.values_mut() {
+                let _ = library.compact();
             }
             self.inner
                 .has_library_offsets
@@ -2516,7 +2441,6 @@ impl<S: WriteStore> GenericUserStore<S> {
         prev: Option<Token>,
         token: Token,
     ) -> Result<UserCountDelta, UserStoreError> {
-        let bumps = self.system_unigrams_for_read();
         let mut delta = if self.has_user_data() {
             self.with_count_cache(|cached, db| {
                 let prev = prev.map(|prev| (prev, move || self.gram_in(db, prev)));
@@ -2529,14 +2453,16 @@ impl<S: WriteStore> GenericUserStore<S> {
         } else {
             UserCountDelta::ZERO
         };
-        let (item, total) = bumps.as_ref().map_or((0, 0), |bumps| {
-            (bumps.tokens.get(&token).copied().unwrap_or(0), bumps.total)
-        });
-        delta.unigram_delta = delta.unigram_delta.wrapping_add(item);
-        delta.unigram_total_delta = delta
-            .unigram_total_delta
-            .wrapping_add(u64::from(self.facade_offset()))
-            .wrapping_add(total);
+        if self.inner.libpinyin.is_some() {
+            // The session holds no unigram rows: a user item's count is its
+            // arena field, a system item's frequency its live field, and the
+            // facade total's user side one scalar.
+            delta.unigram_delta = self
+                .with_user_item(token, |item| u64::from(item.unigram()))
+                .unwrap_or(0);
+            delta.unigram_total_delta = self.unigram_total()?;
+            delta.unigram_live = self.system_unigram(token);
+        }
         Ok(delta)
     }
 
@@ -2566,7 +2492,6 @@ impl<S: WriteStore> GenericUserStore<S> {
         if self.inner.libpinyin.is_some() {
             return self.arena_train(token, readings, seed as u32);
         }
-        self.flush_system_unigrams()?;
         use crate::store_libpinyin::{pinyin_keys_to_packed, pronunciation_matches};
         if self.system_item_removed(token) {
             // `get_phrase_item` fails: there is no item to train (074a2219
@@ -2708,7 +2633,6 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// cannot accept 483. The facade-total increment is retained even on
     /// refusal, as at the pin. Other store failures return [`UserStoreError`].
     pub fn observe_predicted_prefix(&mut self, cur: Token) -> Result<u64, UserStoreError> {
-        self.flush_system_unigrams()?;
         let seed = seed::predicted_seed();
         let delta = seed::unigram_delta(seed) as u32;
         let db = self.database();
@@ -2731,7 +2655,6 @@ impl<S: WriteStore> GenericUserStore<S> {
         cur: Token,
         policy: SeedPolicy,
     ) -> Result<u64, UserStoreError> {
-        self.flush_system_unigrams()?;
         let db = self.database();
         let row = self.gram_in(&db, last)?;
         // Class (b), register row 100: the pin's `get_freq`/`insert_freq`/
@@ -2931,7 +2854,6 @@ impl<S: WriteStore> GenericUserStore<S> {
         count: Option<u64>,
     ) -> Result<Token, UserStoreError> {
         let words = phrase_words(phrase);
-        self.flush_system_unigrams()?;
         if !is_user_file_library(library)
             || !self.has_user_library(library)
             || !phrase_fits_keys(&words, keys)
@@ -3950,8 +3872,8 @@ impl<S: WriteStore> GenericUserStore<S> {
         self.load_system_libraries_retaining(&mut originals)
     }
 
-    /// Load a remap, retaining it for dictionary publication if replay does not
-    /// replace its original (a transient session or a journal assertion).
+    /// Load a remap, retaining it for dictionary publication if replay reaches
+    /// a journal assertion. A transient session has no log to merge.
     ///
     /// # Errors
     /// The same journal fault as [`Self::load_system_libraries`].
@@ -3959,15 +3881,16 @@ impl<S: WriteStore> GenericUserStore<S> {
         &mut self,
         originals: &mut crate::persistence::SystemOriginals,
     ) -> Result<(), crate::JournalFault> {
-        let Some(dir) = self
-            .inner
-            .libpinyin
-            .as_ref()
-            .and_then(|target| target.dir.clone())
-        else {
+        let Some(target) = self.inner.libpinyin.as_ref() else {
             return Ok(());
         };
-        let (state, library_totals) = crate::persistence::load_library_logs(&dir, originals)?;
+        let (state, library_totals) = match &target.dir {
+            Some(dir) => crate::persistence::load_library_logs(dir, originals)?,
+            // No user directory means no journal; the freshly mapped system
+            // library still replaces the unloaded one (phrase_index.cpp:261,
+            // pinyin.cpp:246-276 at 074a2219).
+            None => Default::default(),
+        };
         self.replace_system_libraries(originals.take(), &state, &library_totals);
         Ok(())
     }
@@ -4070,23 +3993,16 @@ impl<S: WriteStore> GenericUserStore<S> {
         let Some(target) = self.inner.libpinyin.clone() else {
             return;
         };
-        in_session(self.flush_system_unigrams());
         let replacement = self.arena_replacement(originals, state);
-        let surviving = target.phrases();
-        let arena_libraries = || {
+        let arena_live = {
+            let surviving = target.phrases();
             replacement
                 .values()
                 .chain(surviving.libraries.iter().filter_map(|(nibble, library)| {
                     (!originals.contains_key(nibble)).then_some(library)
                 }))
+                .any(|library| !library.is_empty())
         };
-        let arena_total = arena_libraries()
-            .flat_map(crate::user_library::UserLibrary::items)
-            .fold(0_u64, |sum, (_, item)| {
-                sum.wrapping_add(u64::from(item.unigram()))
-            });
-        let arena_live = arena_libraries().any(|library| !library.is_empty());
-        drop(surviving);
         let reloaded = |token| {
             let library = phrase_index_library_index(token);
             originals.contains_key(&library)
@@ -4097,31 +4013,19 @@ impl<S: WriteStore> GenericUserStore<S> {
         // still under the database lock.
         self.inner.has_library_offsets.store(true, Ordering::SeqCst);
         let written = db.write(|txn| {
-            // `FacadePhraseIndex::load` and `merge_with_mask` take the old
-            // sub-index's total out of the facade and put the new one's in
-            // (`phrase_index.cpp:237-248`, `:301-332`): each reloaded
-            // library's difference leaves with it, and the one its masked
-            // replay leaves comes in.
-            let mut moved = 0_u32;
+            // A reloaded library has no stored total difference any more: its
+            // total is the one its replay left, held in the live scalar below.
             for nibble in originals.keys() {
-                let key = codec::encode_u8(*nibble);
-                let old = txn_get_u64_or(txn, LIBRARY_OFFSET, &key, 0)?;
-                moved = moved.wrapping_sub(old as u32);
-                txn.remove(LIBRARY_OFFSET, &key)?;
+                txn.remove(LIBRARY_OFFSET, &codec::encode_u8(*nibble))?;
             }
-            remove_system_unigrams(txn, reloaded)?;
-            let reseeded = crate::store_libpinyin::seed_txn(txn, state, originals, library_totals)?;
-            moved = reseeded
-                .values()
-                .fold(moved, |moved, &offset| moved.wrapping_add(offset));
-            let offsets_left = !txn.is_empty(LIBRARY_OFFSET)?;
-            store_unigram_total(txn)?;
-            bump_unigram_total(txn, arena_total)?;
-            Ok((has_user_data_in_write_txn(txn)?, moved, offsets_left))
+            Ok((
+                has_user_data_in_write_txn(txn)?,
+                !txn.is_empty(LIBRARY_OFFSET)?,
+            ))
         });
         // Unreachable `None`: keep the offsets flag set and the user-data
         // gate open, the answers that read every row there is.
-        let (has_user_data, moved, offsets_left) = in_session(written).unwrap_or((true, 0, true));
+        let (has_user_data, offsets_left) = in_session(written).unwrap_or((true, true));
         {
             let mut phrases = target.phrases();
             phrases
@@ -4129,17 +4033,32 @@ impl<S: WriteStore> GenericUserStore<S> {
                 .retain(|nibble, _| !originals.contains_key(nibble));
             phrases.libraries.extend(replacement);
         }
-        self.inner.facade_offset.fetch_add(moved, Ordering::SeqCst);
         self.inner
             .has_library_offsets
             .store(offsets_left, Ordering::SeqCst);
         {
+            let phrases = target.phrases();
+            let arena_has_system_items = phrases
+                .libraries
+                .iter()
+                .any(|(library, items)| (1..=4).contains(library) && !items.is_empty());
             let mut items = self
                 .inner
                 .system_items
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             let mut removed = self.removed_system_items_guard();
+            // `FacadePhraseIndex::load` and `merge_with_mask` swap the old
+            // sub-index for the new one (`phrase_index.cpp:237-248`,
+            // `:301-332`): the library's live buffer and total go, and the
+            // replay's total comes in. The facade's total follows the
+            // sub-index totals, and keeps what no sub-index took.
+            for &nibble in originals.keys() {
+                items.forget_library(nibble);
+                if let Some(&total) = library_totals.get(&nibble) {
+                    items.set_library_total(nibble, total);
+                }
+            }
             items.retain(|&token, _| !reloaded(token));
             removed.retain(|&token| !reloaded(token));
             for (&nibble, overrides) in &state.system_overrides {
@@ -4153,7 +4072,7 @@ impl<S: WriteStore> GenericUserStore<S> {
                 }
             }
             self.inner.has_system_items.store(
-                !items.is_empty() || !removed.is_empty() || self.arena_has_system_items(),
+                !items.is_empty() || !removed.is_empty() || arena_has_system_items,
                 Ordering::Relaxed,
             );
             self.inner
@@ -4169,6 +4088,13 @@ impl<S: WriteStore> GenericUserStore<S> {
     }
 
     fn clear_masked_system_items(&self, mask: Token, value: Token) {
+        let phrases = self.inner.libpinyin.as_ref().map(|target| target.phrases());
+        let arena_has_system_items = phrases.as_ref().is_some_and(|phrases| {
+            phrases
+                .libraries
+                .iter()
+                .any(|(library, items)| (1..=4).contains(library) && !items.is_empty())
+        });
         let mut items = self
             .inner
             .system_items
@@ -4178,7 +4104,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         let mut removed = self.removed_system_items_guard();
         removed.retain(|&token| (token & mask) != value);
         self.inner.has_system_items.store(
-            !items.is_empty() || !removed.is_empty() || self.arena_has_system_items(),
+            !items.is_empty() || !removed.is_empty() || arena_has_system_items,
             Ordering::Relaxed,
         );
         self.inner
@@ -4196,7 +4122,6 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// it (`chewing_large_table2_bdb.cpp:529`) — or [`UserStoreError`] when
     /// the mask cannot otherwise be written.
     pub fn mask_out(&mut self, mask: Token, value: Token) -> Result<(), UserStoreError> {
-        self.flush_system_unigrams()?;
         if self.has_overlong_index_key() {
             return Err(UserStoreError::OverlongIndexKey);
         }
@@ -4558,6 +4483,7 @@ impl CountCache {
             bigram_total,
             unigram_delta,
             unigram_total_delta,
+            unigram_live: None,
         })
     }
 }
@@ -4621,7 +4547,14 @@ impl<S: WriteStore> GenericUserStore<S> {
     }
 
     pub(crate) fn stored_removed_system_items(&self) -> std::collections::BTreeSet<Token> {
-        self.removed_system_items_guard().clone()
+        let mut removed = self.removed_system_items_guard().clone();
+        let items = self
+            .inner
+            .system_items
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        removed.extend(items.unreadable_slots());
+        removed
     }
 
     #[cfg(test)]
@@ -4907,7 +4840,6 @@ impl<S: WriteStore> GenericUserStore<S> {
         count: Option<u64>,
     ) -> Result<Token, UserStoreError> {
         let words = phrase_words(text);
-        self.flush_system_unigrams()?;
         if !(1..=4).contains(&library) || !phrase_fits_keys(&words, keys) {
             return Err(UserStoreError::InvalidPhrase);
         }
@@ -5076,6 +5008,7 @@ mod tests {
                             bigram_total: 69,
                             unigram_delta: 483,
                             unigram_total_delta: 483,
+                            unigram_live: None,
                         }
                     );
 
@@ -5091,6 +5024,7 @@ mod tests {
                             bigram_total: 207,
                             unigram_delta: 483 + 966,
                             unigram_total_delta: 483 + 966,
+                            unigram_live: None,
                         }
                     );
                     cleanup(&path);
@@ -5167,6 +5101,7 @@ mod tests {
                             bigram_total: 207,
                             unigram_delta: 483 + 966,
                             unigram_total_delta: 483 + 966,
+                            unigram_live: None,
                         }
                     );
                     assert_eq!(
@@ -5176,6 +5111,7 @@ mod tests {
                             bigram_total: 0,
                             unigram_delta: 483 + 966,
                             unigram_total_delta: 483 + 966,
+                            unigram_live: None,
                         }
                     );
 
@@ -5350,6 +5286,7 @@ mod tests {
                             bigram_total: 207,
                             unigram_delta: 1449,
                             unigram_total_delta: 483 + 1449 + 15,
+                            unigram_live: None,
                         }
                     );
                     assert_eq!(store.count_delta(None, 20).unwrap().bigram_count, 0);
@@ -6526,28 +6463,15 @@ mod tests {
                         UserStore::open_transient(originals(), versions(), law)
                     }
                     .expect("open");
-                    // A stored sub-index total of MAX-4, independent of its
-                    // one item's frequency 100. Compact must not erase this
-                    // offset on either rejected save path.
-                    let offset = u32::MAX - 104;
-                    store
-                        .database()
-                        .write(|txn| {
-                            txn.put(
-                                LIBRARY_OFFSET,
-                                &codec::encode_u8(1),
-                                &codec::encode_u64(u64::from(offset)),
-                            )
-                        })
-                        .expect("offset");
+                    // A sub-index total of MAX-4, independent of its one
+                    // item's frequency 100. Compact must not erase the
+                    // difference on either rejected save path.
                     store
                         .inner
-                        .has_library_offsets
-                        .store(true, std::sync::atomic::Ordering::Release);
-                    store
-                        .inner
-                        .facade_offset
-                        .store(offset, std::sync::atomic::Ordering::Release);
+                        .system_items
+                        .lock()
+                        .unwrap()
+                        .set_library_total(1, u32::MAX - 4);
                     if !has_dir {
                         store.mark_modified();
                     }
@@ -6560,7 +6484,7 @@ mod tests {
                     let before = (
                         store.unigram_delta(token).unwrap(),
                         store.unigram_total().unwrap(),
-                        store.library_offset(1).unwrap(),
+                        store.system_library_total(1).unwrap(),
                         store.is_modified(),
                     );
                     let report = match entry {
@@ -6575,7 +6499,7 @@ mod tests {
                         (
                             store.unigram_delta(token).unwrap(),
                             store.unigram_total().unwrap(),
-                            store.library_offset(1).unwrap(),
+                            store.system_library_total(1).unwrap(),
                             store.is_modified()
                         ),
                         before
@@ -6586,7 +6510,11 @@ mod tests {
                             .expect("refusal")
                     );
                     assert_eq!(store.unigram_delta(token).unwrap(), 2);
-                    assert_eq!((store.unigram_total().unwrap() as u32).wrapping_add(100), 1);
+                    assert_eq!(
+                        (store.unigram_total().unwrap() as u32)
+                            .wrapping_add(store.system_library_total(1).unwrap()),
+                        1
+                    );
                     drop(store);
                 }
             }
@@ -6594,45 +6522,64 @@ mod tests {
     }
 
     #[test]
-    fn concurrent_readers_keep_live_unigrams_across_flushes() {
-        let path = temp_path("live-unigram-flush");
-        let store = UserStore::open(&path).unwrap();
+    fn repeated_increments_move_the_live_unigram_and_total() {
+        use crate::persistence::{SystemLibrary, SystemOriginals, UserConfLaw};
+        use oxpinyin_data::user_files::SystemVersions;
+        let item = oxpinyin_data::chunk_write::ChunkItem {
+            phrase: vec![u32::from('你')],
+            unigram: 0,
+            prons: Vec::new(),
+        };
+        let originals = || -> SystemOriginals {
+            BTreeMap::from([(
+                1,
+                SystemLibrary {
+                    total: 0,
+                    range_end: 2,
+                    mapped: None,
+                    items: BTreeMap::from([(1, item.clone())]),
+                },
+            )])
+            .into()
+        };
+        let mut store = UserStore::open_transient(
+            originals(),
+            SystemVersions::for_this_build(7, 14),
+            UserConfLaw::Pinyin,
+        )
+        .unwrap();
         let token = 0x0100_0001;
-        store.inner.system_items.lock().unwrap().insert(
-            token,
-            oxpinyin_data::chunk_write::ChunkItem {
-                phrase: vec![u32::from('你')],
-                unigram: 0,
-                prons: Vec::new(),
-            },
-        );
-        store.inner.has_system_items.store(true, Ordering::Release);
-        let mut writer = UserStore::open(&path).unwrap();
-        let done = AtomicBool::new(false);
-        let start = std::sync::Barrier::new(2);
+        let mut last = 0;
+        for _ in 0..2000 {
+            assert!(store.add_system_unigram_frequency(token, 1).unwrap());
+            let live = u64::from(
+                store
+                    .count_delta(None, token)
+                    .unwrap()
+                    .unigram_live
+                    .unwrap(),
+            );
+            assert_eq!(live, last + 1);
+            last = live;
+        }
+        assert_eq!(store.unigram_delta(token).unwrap(), 2000);
+        assert_eq!(store.system_unigram(token), Some(2000));
+        assert_eq!(store.system_library_total(1), Some(2000));
+        assert_eq!(store.unigram_total().unwrap(), 0);
+        // Readers of one store share it by `&`; the writer holds `&mut`, so the
+        // two never overlap. Several readers see the same live state.
+        let shared = &store;
         std::thread::scope(|scope| {
-            scope.spawn(|| {
-                start.wait();
-                for _ in 0..2000 {
-                    assert!(writer.add_system_unigram_frequency(token, 1).unwrap());
-                    writer.flush_system_unigrams().unwrap();
-                }
-                done.store(true, Ordering::Release);
-            });
-            start.wait();
-            let mut last = 0;
-            while !done.load(Ordering::Acquire) {
-                let counts = store.count_delta(None, token).unwrap();
-                assert_eq!(counts.unigram_delta, counts.unigram_total_delta);
-                assert!(counts.unigram_delta >= last);
-                last = counts.unigram_delta;
+            for _ in 0..4 {
+                scope.spawn(move || {
+                    for _ in 0..500 {
+                        let counts = shared.count_delta(None, token).unwrap();
+                        assert_eq!(counts.unigram_live, Some(2000));
+                        assert_eq!(shared.system_library_total(1), Some(2000));
+                    }
+                });
             }
         });
-        assert_eq!(store.unigram_delta(token).unwrap(), 2000);
-        assert_eq!(store.unigram_total().unwrap(), 2000);
-        drop(writer);
-        drop(store);
-        let _ = std::fs::remove_file(path);
     }
 
     #[test]
@@ -6671,6 +6618,45 @@ mod tests {
         drop(writer);
         drop(reader);
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn shared_open_handles_keep_session_lock_order_during_compact_and_reload() {
+        use crate::persistence::{SystemOriginals, UserConfLaw};
+        use oxpinyin_data::user_files::{SystemVersions, UserFileLayout};
+        let path = temp_path("shared-session-lock-order");
+        let seed = UserStore::open_transient(
+            SystemOriginals::new(Default::default(), UserFileLayout::stock()),
+            SystemVersions::for_this_build(7, 14),
+            UserConfLaw::Pinyin,
+        )
+        .unwrap();
+        // Session constructors make independent inners. Seed the registry
+        // with one session inner to exercise these methods through two actual
+        // same-path `open` handles sharing its mutexes.
+        registry::lock_registry()
+            .insert(registry::registry_key(&path), Arc::downgrade(&seed.inner));
+        let mut first = UserStore::open(&path).unwrap();
+        let mut second = UserStore::open(&path).unwrap();
+        assert!(Arc::ptr_eq(&first.inner, &second.inner));
+        let start = std::sync::Barrier::new(2);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                start.wait();
+                for _ in 0..500 {
+                    first.compact_libraries();
+                }
+            });
+            scope.spawn(|| {
+                start.wait();
+                for _ in 0..500 {
+                    second.reset_system_library(1);
+                    second.clear_masked_system_items(u32::MAX, 1);
+                }
+            });
+        });
+        drop((first, second, seed));
+        assert!(!registry::contains_key(&path));
     }
 
     #[test]

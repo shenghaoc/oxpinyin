@@ -60,8 +60,7 @@ use crate::persistence::{self, PersistenceError, SystemOriginals, UserConfLaw, U
 use crate::phrase::{self, phrase_index_library_index};
 use crate::registry::StoreInner;
 use crate::store::{
-    ALLOC, ALLOC_CURSOR, GenericUserStore, LIBRARY_OFFSET, SYSTEM_BASE, Token, UNIGRAM,
-    UNIGRAM_TOTAL, UNIGRAM_TOTAL_KEY, UserStoreError,
+    ALLOC, ALLOC_CURSOR, GenericUserStore, LIBRARY_OFFSET, Token, UNIGRAM, UserStoreError,
 };
 
 /// The persistence target a session store carries: the user dir, the
@@ -306,8 +305,8 @@ impl GenericUserStore<DefaultStore> {
             overlong_index_keys,
         });
         let fini = FiniGuard(Some(Arc::clone(&target)));
-        let (has_user_data, library_offsets) = db.write(|txn| {
-            let offset = seed_txn_with_replay(
+        let (has_user_data, seeded_totals) = db.write(|txn| {
+            let seeded = seed_txn_with_replay(
                 txn,
                 &loaded.state,
                 originals,
@@ -315,7 +314,7 @@ impl GenericUserStore<DefaultStore> {
                 &replayed,
                 &user_libraries,
             )?;
-            Ok((count_tables(txn)?, offset))
+            Ok((count_tables(txn)?, seeded))
         })?;
         {
             let mut phrases = target.phrases();
@@ -413,12 +412,12 @@ impl GenericUserStore<DefaultStore> {
                 }
             }
         }
+        let library_offsets = seeded_totals.offsets;
         let system_items =
-            crate::system_items::SystemItems::new(kept_items.into_iter().collect(), replayed);
+            crate::system_items::SystemItems::new(kept_items.into_iter().collect(), replayed)
+                .with_totals(seeded_totals.totals, seeded_totals.facade_extra);
 
         let inner = Arc::new(StoreInner {
-            system_bumps_live: std::sync::atomic::AtomicBool::new(false),
-            system_bumps: std::sync::Mutex::new(crate::registry::SystemUnigramBumps::default()),
             has_system_items: std::sync::atomic::AtomicBool::new(has_system_items),
             system_items: std::sync::Mutex::new(system_items),
             has_removed_system_items: std::sync::atomic::AtomicBool::new(
@@ -433,11 +432,6 @@ impl GenericUserStore<DefaultStore> {
             phrase_generation: std::sync::atomic::AtomicU64::new(0),
             phrase_table_generation: std::sync::atomic::AtomicU64::new(0),
             has_user_data: std::sync::atomic::AtomicBool::new(has_user_data),
-            facade_offset: std::sync::atomic::AtomicU32::new(
-                library_offsets
-                    .values()
-                    .fold(0_u32, |sum, &offset| sum.wrapping_add(offset)),
-            ),
             has_library_offsets: std::sync::atomic::AtomicBool::new(!library_offsets.is_empty()),
             bigram_db: Some(std::sync::Mutex::new(bigram_db)),
             libpinyin: Some(target),
@@ -484,12 +478,13 @@ fn count_tables(txn: &mut impl WriteTxn) -> Result<bool, StoreError> {
 /// facade keeps that difference until the library is loaded again, since
 /// `compact` rebuilds the libraries' totals and never the facade's
 /// (074a2219 `phrase_index.cpp:648-675`).
+#[cfg(test)]
 pub(crate) fn seed_txn(
     txn: &mut impl WriteTxn,
     state: &UserState,
     originals: &impl crate::persistence::OriginalLibraries,
     library_totals: &BTreeMap<u8, u32>,
-) -> Result<BTreeMap<u8, u32>, StoreError> {
+) -> Result<SeedTotals, StoreError> {
     seed_txn_with_replay(
         txn,
         state,
@@ -516,85 +511,43 @@ impl SeedItem<'_> {
     }
 }
 
-fn seed_system_unigram_deltas(
-    txn: &mut impl WriteTxn,
+/// The unigram mass the decoded overrides add to each system library on top of
+/// its original: the sub-index total a library without a live buffer starts
+/// from when no log total names it. A replayed library holds its own total.
+fn system_override_mass(
     state: &UserState,
     originals: &impl crate::persistence::OriginalLibraries,
-    replayed: &BTreeMap<u8, crate::replay::ReplayedLibrary>,
-    unigram_total: &mut u64,
     seeded: &mut BTreeMap<u8, u32>,
-) -> Result<(), StoreError> {
-    // System-token deltas: the training mass on top of the originals. Only
-    // the unigram is a stored delta here (the count reads and the library
-    // totals consult it); the readings' counts stay in the live items.
+) {
     for (&nibble, overrides) in &state.system_overrides {
         let Some(original) = originals.get(&nibble) else {
             continue;
         };
         for (&slot, item) in overrides {
             let Some(new_item) = item else {
-                continue; // a replayed removal: not expressible in the
-                // value model; the load's `skipped` list carries it
+                continue; // a replayed removal: the load's `skipped` list
+                // carries it
             };
             if !original.is_readable(slot) {
                 continue;
             }
-            // The replayed readings write no row: the session's live item
-            // ([`StoreInner::system_items`]) holds their counts through
-            // training, import and save.
-            let token = (u32::from(nibble) << 24) | slot;
             // `is_readable` held, so the item exists and this is its unigram.
             let base = original.unigram(slot).unwrap_or(0);
-            let delta = u64::from(new_item.unigram.wrapping_sub(base));
-            if delta == 0 {
-                continue;
-            }
-            let key = codec::encode_token(token);
-            let prev = crate::store::txn_get_u64_or(txn, UNIGRAM, &key, 0)?;
-            txn.put(
-                UNIGRAM,
-                &key,
-                &codec::encode_u64(prev.saturating_add(delta)),
-            )?;
-            *unigram_total = unigram_total.saturating_add(delta);
             let sum = seeded.entry(nibble).or_insert(0);
-            *sum = sum.wrapping_add(delta as u32);
+            *sum = sum.wrapping_add(new_item.unigram.wrapping_sub(base));
         }
     }
+}
 
-    // Replay records which slots can need a unigram delta while it already
-    // compares the raw bytes. Reading-only changes keep their original counts
-    // without another item visit. The private view retains absolute entry counts.
-    for (&nibble, view) in replayed {
-        let Some(original) = originals.get(&nibble) else {
-            continue;
-        };
-        for slot in view.unigram_slots() {
-            if !original.is_readable(slot) {
-                continue;
-            }
-            let Some(bytes) = view.bytes(slot) else {
-                continue;
-            };
-            let base = original.unigram(slot).unwrap_or(0);
-            let delta = u64::from(crate::replay::raw_unigram(&bytes).wrapping_sub(base));
-            if delta == 0 {
-                continue;
-            }
-            let key = codec::encode_token((u32::from(nibble) << 24) | slot);
-            let prev = crate::store::txn_get_u64_or(txn, UNIGRAM, &key, 0)?;
-            txn.put(
-                UNIGRAM,
-                &key,
-                &codec::encode_u64(prev.saturating_add(delta)),
-            )?;
-            *unigram_total = unigram_total.saturating_add(delta);
-            let sum = seeded.entry(nibble).or_insert(0);
-            *sum = sum.wrapping_add(delta as u32);
-        }
-    }
-
-    Ok(())
+/// What the seed leaves the session's unigram model: the user libraries'
+/// stored-total differences, the sub-index totals of the system libraries
+/// without a live buffer, and what the facade total holds beyond the system
+/// sub-index totals.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct SeedTotals {
+    pub(crate) offsets: BTreeMap<u8, u32>,
+    pub(crate) totals: BTreeMap<u8, u32>,
+    pub(crate) facade_extra: u64,
 }
 
 fn seed_txn_with_replay(
@@ -604,8 +557,7 @@ fn seed_txn_with_replay(
     library_totals: &BTreeMap<u8, u32>,
     replayed: &BTreeMap<u8, crate::replay::ReplayedLibrary>,
     user_libraries: &BTreeMap<u8, crate::user_library::UserLibrary>,
-) -> Result<BTreeMap<u8, u32>, StoreError> {
-    let mut unigram_total = 0_u64;
+) -> Result<SeedTotals, StoreError> {
     // The unigrams seeded per library, as the facade would sum them.
     let mut seeded: BTreeMap<u8, u32> = BTreeMap::new();
     let mut alloc_cursor: BTreeMap<u8, Token> = BTreeMap::new();
@@ -623,11 +575,6 @@ fn seed_txn_with_replay(
         })
         .collect();
     for (&nibble, original) in originals.iter() {
-        txn.put(
-            SYSTEM_BASE,
-            &codec::encode_u8(nibble),
-            &codec::encode_u64(u64::from(original.total)),
-        )?;
         alloc_cursor.insert(
             nibble,
             (u32::from(nibble) << 24) | original.range_end.max(1).saturating_sub(1),
@@ -648,7 +595,6 @@ fn seed_txn_with_replay(
     }
     let mut seed = |nibble: u8, slot: u32, item: SeedItem<'_>| -> Result<(), StoreError> {
         let token = (u32::from(nibble) << 24) | slot;
-        unigram_total = unigram_total.saturating_add(u64::from(item.unigram()));
         let sum = seeded.entry(nibble).or_insert(0);
         *sum = sum.wrapping_add(item.unigram());
         let cursor = alloc_cursor.entry(nibble).or_insert(0);
@@ -687,14 +633,7 @@ fn seed_txn_with_replay(
         txn.put(crate::phrase_table::TABLE, key, value)?;
     }
 
-    seed_system_unigram_deltas(
-        txn,
-        state,
-        originals,
-        replayed,
-        &mut unigram_total,
-        &mut seeded,
-    )?;
+    system_override_mass(state, originals, &mut seeded);
 
     // The alloc cursors: one past the highest loaded token per library.
     for (nibble, max_token) in alloc_cursor {
@@ -709,28 +648,52 @@ fn seed_txn_with_replay(
             )?;
         }
     }
-    txn.put(
-        UNIGRAM_TOTAL,
-        &codec::encode_u8(UNIGRAM_TOTAL_KEY),
-        &codec::encode_u64(unigram_total),
-    )?;
-    let offsets: BTreeMap<u8, u32> = library_totals
-        .iter()
-        .map(|(&nibble, &total)| {
-            let base = originals.get(&nibble).map_or(0, |original| original.total);
-            let modelled = base.wrapping_add(seeded.get(&nibble).copied().unwrap_or(0));
-            (nibble, total.wrapping_sub(modelled))
-        })
-        .filter(|&(_, offset)| offset != 0)
-        .collect();
-    for (&nibble, &offset) in &offsets {
-        txn.put(
-            LIBRARY_OFFSET,
-            &codec::encode_u8(nibble),
-            &codec::encode_u64(u64::from(offset)),
-        )?;
+    // The facade total is the sum of the loaded libraries' totals
+    // (`phrase_index.cpp:237-248`). A system library's is its own scalar; a
+    // user library's is kept as the difference from its items' sum, and the
+    // facade's share of it as `facade_extra`.
+    let mut offsets = BTreeMap::new();
+    let mut totals = BTreeMap::new();
+    let mut facade_extra = 0_u64;
+    for (&nibble, &total) in library_totals {
+        if originals.contains_key(&nibble) {
+            continue;
+        }
+        let items = seeded.get(&nibble).copied().unwrap_or(0);
+        let offset = total.wrapping_sub(items);
+        if offset != 0 {
+            txn.put(
+                LIBRARY_OFFSET,
+                &codec::encode_u8(nibble),
+                &codec::encode_u64(u64::from(offset)),
+            )?;
+            offsets.insert(nibble, offset);
+        }
+        facade_extra = facade_extra.wrapping_add(u64::from(total));
     }
-    Ok(offsets)
+    for (&nibble, &items) in &seeded {
+        if !originals.contains_key(&nibble) && !library_totals.contains_key(&nibble) {
+            facade_extra = facade_extra.wrapping_add(u64::from(items));
+        }
+    }
+    for (&nibble, original) in originals.iter() {
+        if replayed.contains_key(&nibble) {
+            continue;
+        }
+        let total = library_totals.get(&nibble).copied().unwrap_or_else(|| {
+            original
+                .total
+                .wrapping_add(seeded.get(&nibble).copied().unwrap_or(0))
+        });
+        if total != original.total {
+            totals.insert(nibble, total);
+        }
+    }
+    Ok(SeedTotals {
+        offsets,
+        totals,
+        facade_extra,
+    })
 }
 
 /// Reads the session values back into the persistence shape — the
@@ -756,9 +719,10 @@ fn export_session_state<S: WriteStore>(
     originals: &impl crate::persistence::OriginalLibraries,
     user_items: bool,
 ) -> Result<UserState, UserStoreError> {
-    store.flush_system_unigrams()?;
     let db = store.database();
 
+    // A standalone store keeps its unigram counts as stored deltas; a session
+    // holds them in its live items.
     let mut unigrams: BTreeMap<Token, u64> = BTreeMap::new();
     db.for_each(UNIGRAM, |key, value| {
         let token = codec::decode_token(key)
@@ -784,39 +748,39 @@ fn export_session_state<S: WriteStore>(
         })?;
     }
     drop(db);
-    for (token, delta) in &unigrams {
-        let nibble = phrase_index_library_index(*token);
-        if !originals.contains_key(&nibble) {
-            continue; // user tokens landed above; unknown libraries skip
+    if !session {
+        for (token, delta) in &unigrams {
+            let nibble = phrase_index_library_index(*token);
+            let slot = token & crate::phrase::PHRASE_MASK;
+            let Some(old) = originals
+                .get(&nibble)
+                .and_then(|library| library.item(slot))
+            else {
+                continue; // user tokens landed above; unknown libraries skip
+            };
+            let mut new_item = old.clone();
+            new_item.unigram = old.unigram.wrapping_add(*delta as u32);
+            state
+                .system_overrides
+                .entry(nibble)
+                .or_default()
+                .insert(slot, Some(new_item));
         }
-        let Some(original) = originals.get(&nibble) else {
-            continue;
-        };
-        let slot = token & crate::phrase::PHRASE_MASK;
-        let Some(old) = original.item(slot) else {
-            continue;
-        };
-        let mut new_item = old.clone();
-        new_item.unigram = old.unigram.wrapping_add(*delta as u32);
-        state
-            .system_overrides
-            .entry(nibble)
-            .or_default()
-            .insert(slot, Some(new_item));
     }
-
+    // The live item is the authority for its unigram and its readings'
+    // counts, as it is for pricing: replay, an import and training each leave
+    // it holding what the save writes. Entries remain an ordered list, so a
+    // count is never rebuilt from a row found by keys.
     for (token, mut item) in system_items {
         let nibble = phrase_index_library_index(token);
         let slot = token & crate::phrase::PHRASE_MASK;
-        let base = originals
-            .get(&nibble)
-            .and_then(|original| original.unigram(slot))
-            .unwrap_or(0);
-        item.unigram = base.wrapping_add(unigrams.get(&token).copied().unwrap_or(0) as u32);
-        // The live item is the authority for its readings' counts, as it is
-        // for pricing: replay, an import and training each leave it holding
-        // the count the save writes. Entries remain an ordered list, so a
-        // count is never rebuilt from a row found by keys.
+        if !session {
+            let base = originals
+                .get(&nibble)
+                .and_then(|original| original.unigram(slot))
+                .unwrap_or(0);
+            item.unigram = base.wrapping_add(unigrams.get(&token).copied().unwrap_or(0) as u32);
+        }
         state
             .system_overrides
             .entry(nibble)
@@ -913,6 +877,7 @@ pub(crate) fn pinyin_keys_to_packed(ids: &[crate::phrase::PinyinKey]) -> Option<
 mod tests {
     use super::*;
     use crate::persistence::SystemLibrary;
+    use crate::store::UNIGRAM_TOTAL;
 
     /// The container's gram under `key`, owned: `None` on a miss.
     fn gram(raw: &DefaultUserBigramDb, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
@@ -1362,7 +1327,9 @@ mod tests {
                 seed_txn_with_replay(txn, &views, &originals, &totals, &replayed, &libraries)
             })
             .unwrap();
-        assert_eq!(before_offsets, after_offsets);
+        // A replayed library's total lives in its buffer, not in the map.
+        assert_eq!(before_offsets.offsets, after_offsets.offsets);
+        assert_eq!(before_offsets.facade_extra, after_offsets.facade_extra);
         let snapshot = |db: &SessionValues<DefaultStore>| match db {
             SessionValues::Memory(tables) => tables.borrow().clone(),
             SessionValues::Native(_) => panic!("test uses session rows"),
@@ -1441,6 +1408,35 @@ mod tests {
             },
         )])
         .into()
+    }
+
+    #[test]
+    fn transient_reload_replaces_the_unloaded_system_baseline() {
+        let mut store =
+            UserStore::open_transient(three_item_originals(), versions(), UserConfLaw::Pinyin)
+                .expect("transient session");
+        let token = (1_u32 << 24) | 2;
+        assert_eq!(store.system_unigram(token), Some(50));
+        let mut items = three_items();
+        items[1].unigram = 57;
+        let replacement = BTreeMap::from([(
+            1_u8,
+            SystemLibrary {
+                mapped: None,
+                total: 187,
+                range_end: 4,
+                items: items
+                    .into_iter()
+                    .zip(1_u32..)
+                    .map(|(item, slot)| (slot, item))
+                    .collect(),
+            },
+        )]);
+        store
+            .load_system_libraries(replacement.into())
+            .expect("reload");
+        assert_eq!(store.system_unigram(token), Some(57));
+        assert_eq!(store.system_library_total(1), Some(187));
     }
 
     /// The `(origin, first reading's frequency)` of one token, or its state.
@@ -1559,6 +1555,28 @@ mod tests {
     }
 
     #[test]
+    fn training_creates_a_live_buffer_with_the_saved_library_total() {
+        let originals = three_item_originals();
+        let original = originals.get(&1).expect("original");
+        let token = (1_u32 << 24) | 1;
+        let saved_total = u32::MAX - 3;
+        let mut items = crate::system_items::SystemItems::default()
+            .with_totals(BTreeMap::from([(1, saved_total)]), 0);
+        assert_eq!(items.library_total(1, Some(original)), Some(saved_total));
+        assert!(items.train_live(
+            Some(original),
+            token,
+            std::iter::once(vec![ChewingKey::new(23, 0, 1, 0)]),
+            1
+        ));
+        assert_eq!(items.library_total(1, Some(original)), Some(saved_total));
+        assert_eq!(
+            items.add_unigram(Some(original), token, 4, false),
+            Some(crate::replay::UnigramAdd::Refused)
+        );
+    }
+
+    #[test]
     fn training_a_system_item_writes_the_live_buffer_and_decodes_nothing() {
         use crate::{ItemOrigin, Lookup};
         let (dir, mut store) = open_with_log("train-live-buffer", &[]);
@@ -1583,6 +1601,178 @@ mod tests {
         assert!(store.has_system_items());
         drop(store);
         std::fs::remove_dir_all(dir).expect("cleanup");
+    }
+
+    #[test]
+    fn overlapping_training_is_saved_with_live_unigram_and_compacted_total() {
+        use oxpinyin_data::chunk_write::encode_phrase_item;
+        use oxpinyin_data::user_files::LogRecord;
+        let items = three_items();
+        let old = encode_phrase_item(&items[0]).expect("item");
+        let mut new = old.clone();
+        new[0] = 2;
+        new[1] = 2;
+        let payload = oxpinyin_data::user_files::encode_log_records(&[LogRecord::Modify {
+            token: 1,
+            old_item: old,
+            new_item: new,
+        }])
+        .expect("log");
+        for prior_add in [false, true] {
+            let (dir, mut store) = open_with_payload(
+                if prior_add {
+                    "overlap-before-add"
+                } else {
+                    "overlap-only"
+                },
+                three_item_originals(),
+                &payload,
+            );
+            let first = (1_u32 << 24) | 1;
+            let second = (1_u32 << 24) | 2;
+            let reading = {
+                let unloaded = std::sync::atomic::AtomicU32::new(0);
+                let live = crate::LiveSystemItems::new(
+                    store.originals().phrase_libraries(),
+                    Some(&store),
+                    &unloaded,
+                );
+                live.read(first, |item| {
+                    item.pronunciation(0)
+                        .expect("reading")
+                        .keys
+                        .iter()
+                        .map(ChewingKey::from_packed)
+                        .collect::<Vec<_>>()
+                })
+                .found()
+                .expect("item")
+            };
+            if prior_add {
+                assert!(store.add_system_unigram_frequency(second, 2).expect("add"));
+            }
+            let total = store.system_library_total(1).expect("library total");
+            let facade = 180_u32.wrapping_add(store.unigram_total_over(|_| true) as u32);
+            store
+                .train_pronunciations(first, std::iter::once(reading), 7)
+                .expect("train");
+            let expected = if prior_add { 59 } else { 57 };
+            assert_eq!(store.system_unigram(second), Some(expected));
+            assert_eq!(store.system_library_total(1), Some(total));
+            assert_eq!(
+                180_u32.wrapping_add(store.unigram_total_over(|_| true) as u32),
+                facade
+            );
+            store.mark_modified();
+            assert!(store.save().expect("save"));
+            assert_eq!(store.system_unigram(second), Some(expected));
+            assert_eq!(store.system_library_total(1), Some(total + 7));
+            assert_eq!(
+                180_u32.wrapping_add(store.unigram_total_over(|_| true) as u32),
+                facade
+            );
+            drop(store);
+            let reopened = UserStore::open_libpinyin(
+                &dir,
+                three_item_originals(),
+                versions(),
+                UserConfLaw::Pinyin,
+            )
+            .expect("reopen");
+            assert_eq!(reopened.system_unigram(second), Some(expected));
+            assert_eq!(reopened.system_library_total(1), Some(total + 7));
+            drop(reopened);
+            std::fs::remove_dir_all(dir).expect("cleanup");
+        }
+    }
+
+    #[test]
+    fn overlapping_training_that_invalidates_another_item_saves_its_absence() {
+        use oxpinyin_data::chunk_write::{build_chunk, encode_phrase_item};
+        use oxpinyin_data::user_files::LogRecord;
+        let items = three_items();
+        let pairs: Vec<_> = items
+            .iter()
+            .cloned()
+            .zip(1_u32..)
+            .map(|(item, slot)| (slot, item))
+            .collect();
+        let file = build_chunk(&pairs).expect("chunk");
+        let mut payload = file[8..].to_vec();
+        let word = |bytes: &[u8], at: usize| {
+            u32::from_le_bytes(bytes[at..at + 4].try_into().expect("word"))
+        };
+        let index = word(&payload, 4) as usize;
+        let content = word(&payload, 8) as usize;
+        let second_offset = word(&payload, index + 2 * 4) as usize;
+        let third_offset = word(&payload, index + 3 * 4);
+        let end = word(&payload, 12);
+        payload.splice(content + second_offset..content + second_offset, [0, 0]);
+        payload[12..16].copy_from_slice(&(end + 2).to_le_bytes());
+        payload[index + 2 * 4..index + 3 * 4]
+            .copy_from_slice(&((second_offset as u32) + 2).to_le_bytes());
+        payload[index + 3 * 4..index + 4 * 4].copy_from_slice(&(third_offset + 2).to_le_bytes());
+        let system_dir = tempdir("overlap-header-system");
+        let path = system_dir.join("gb_char.bin");
+        std::fs::write(
+            &path,
+            oxpinyin_data::chunk_format::build_memory_chunk(&payload).expect("frame"),
+        )
+        .expect("system chunk");
+        let originals = || -> SystemOriginals {
+            let mapped =
+                oxpinyin_data::phrase_library::PhraseLibrary::open(&path).expect("library");
+            BTreeMap::from([(1_u8, SystemLibrary::from_library(mapped))]).into()
+        };
+        let old = encode_phrase_item(&items[0]).expect("old");
+        let mut new = old.clone();
+        new[0] = 2;
+        new[1] = 2;
+        let log = oxpinyin_data::user_files::encode_log_records(&[LogRecord::Modify {
+            token: 1,
+            old_item: old,
+            new_item: new,
+        }])
+        .expect("log");
+        let (dir, mut store) = open_with_payload("overlap-header-profile", originals(), &log);
+        let first = (1_u32 << 24) | 1;
+        let second = (1_u32 << 24) | 2;
+        let reading = {
+            let unloaded = std::sync::atomic::AtomicU32::new(0);
+            let live = crate::LiveSystemItems::new(
+                store.originals().phrase_libraries(),
+                Some(&store),
+                &unloaded,
+            );
+            live.read(first, |item| {
+                item.pronunciation(0)
+                    .expect("reading")
+                    .keys
+                    .iter()
+                    .map(ChewingKey::from_packed)
+                    .collect::<Vec<_>>()
+            })
+            .found()
+            .expect("item")
+        };
+        assert_eq!(store.system_unigram(second), Some(50));
+        let total = store.system_library_total(1);
+        store
+            .train_pronunciations(first, std::iter::once(reading), 7)
+            .expect("train");
+        assert_eq!(store.system_unigram(second), None);
+        assert_eq!(store.system_library_total(1), total);
+        store.mark_modified();
+        assert!(store.save().expect("save"));
+        assert_eq!(store.system_library_total(1), Some(130));
+        drop(store);
+        let reopened =
+            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                .expect("reopen");
+        assert_eq!(reopened.system_unigram(second), None);
+        drop(reopened);
+        std::fs::remove_dir_all(dir).expect("cleanup");
+        std::fs::remove_dir_all(system_dir).expect("cleanup system");
     }
 
     #[test]
@@ -2736,29 +2926,32 @@ mod tests {
                         Some(vec![])
                     );
                 }
-                assert_eq!(store.unigram_library_total(1).unwrap(), 37);
-                assert_eq!(
-                    store.unigram_total().unwrap(),
-                    74,
-                    "facade keeps replay's second count"
-                );
+            };
+            // The facade total is the sub-index total plus what no sub-index
+            // took: replay's second count lives in the sub-index until a
+            // compact rebuilds it from the items.
+            let facade = |store: &UserStore| {
+                u64::from(store.system_library_total(1).unwrap())
+                    .wrapping_add(store.unigram_total().unwrap())
             };
             observe(&store);
-            assert_eq!(store.library_offset(1).unwrap(), 37);
+            assert_eq!(store.system_library_total(1), Some(174));
+            assert_eq!(store.unigram_total().unwrap(), 0);
             store.unload_system_libraries(originals());
             assert!(store.with_user_item(token, |_| ()).is_none());
             assert!(store.system_item_override(token).unwrap().is_none());
             store.load_system_libraries(originals()).unwrap();
             observe(&store);
-            assert_eq!(store.library_offset(1).unwrap(), 37);
+            assert_eq!(facade(&store), 174);
             store.mark_modified();
             assert!(store.save().unwrap());
             observe(&store);
             assert_eq!(
-                store.library_offset(1).unwrap(),
-                0,
+                store.system_library_total(1),
+                Some(137),
                 "save compacts the sub-index only"
             );
+            assert_eq!(facade(&store), 174, "the facade keeps what it held");
             let exported = export_session_state(&store, &originals(), true).unwrap();
             assert_eq!(exported.system_overrides[&1][&9], Some(item.clone()));
             drop(store);

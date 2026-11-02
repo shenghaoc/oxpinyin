@@ -173,14 +173,7 @@ fn per_slot_seeding_keeps_mixed_restored_added_removed_and_header_counts() {
     assert_eq!(store.unigram_delta(LIBRARY | 2).expect("changed"), 20);
     assert_eq!(store.unigram_delta(LIBRARY | 3).expect("restored"), 0);
     assert_eq!(store.unigram_delta(LIBRARY | 5).expect("added"), 11);
-    assert_eq!(store.unigram_library_total(1).expect("seeded deltas"), 31);
-    assert_eq!(
-        base[&1]
-            .total
-            .wrapping_add(store.unigram_library_total(1).expect("deltas"))
-            .wrapping_add(store.library_offset(1).expect("header offset")),
-        971
-    );
+    assert_eq!(store.system_library_total(1), Some(971));
     assert_eq!(counts(&store, 1), [77]);
     assert!(
         store
@@ -249,9 +242,10 @@ fn a_replayed_item_opens_without_reading_rows_and_trains_from_its_counts() {
     assert_eq!(pronunciation_rows(&store), 0);
     assert_eq!(counts(&store, 1), [107, 40]);
     assert_eq!(exported(&store, &base, 1), [107, 40]);
-    // The unigram is still a stored delta: pricing and the totals read it.
-    assert_eq!(store.unigram_delta(LIBRARY | 1).expect("delta"), 50);
-    assert_eq!(store.unigram_total().expect("total"), 50);
+    // The unigram is the live field: pricing and the totals read it.
+    assert_eq!(store.system_unigram(LIBRARY | 1), Some(150));
+    assert_eq!(store.system_library_total(1), Some(150));
+    assert_eq!(store.unigram_total().expect("total"), 0);
 
     // One accepted path adds the seed to the matching live reading alone.
     // Session training no longer writes pronunciation rows.
