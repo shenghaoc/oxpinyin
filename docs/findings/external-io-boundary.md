@@ -86,12 +86,270 @@ the entire mapping. The unchanged lockfile resolves 0.9.12, whose same
 items retain that sequence. The maintainer chose memmap2 on Windows too;
 this boundary does not reproduce the pin's non-mmap Windows heap path.
 
-**Not activated.** Production still uses data's mapper and its original/
-replay ownership. This member neither changes data's unsafe level nor
-claims the one-mapping C-API model is verified. memmap2 is temporarily a
-dependency of both crates; data's dependency and mmap exception go only
-with activation. The published two-mapping design at #1517 `df672789`
-is replaced by this preparation; its results do not validate one live map.
+**Not activated; activation argument awaiting maintainer approval.**
+Production still uses data's mapper and its original/replay ownership. Member 1
+neither changed data's unsafe level nor claimed the one-mapping C-API model is
+verified; memmap2 is temporarily a dependency of both crates, and data's
+dependency and mmap exception go only with activation. The published
+two-mapping design at #1517 `df672789` is replaced by member 1's preparation;
+its results do not validate one live map. The argument below is derived from
+source at `074a2219` and `main` `b75f7735`. It is a source argument, not a
+measurement. Constants and page counts are not established by it.
+
+#### Activation: complexity argument (member 3)
+
+Dimensions, per library unless stated. `F` is the file size, `I` the item
+area, `S` the offset slots (offset array `4S` bytes), `L` the journal bytes,
+`R` its records, `k` the distinct slots a replay or training touches, `r ≤ R`
+the records that change a slot offset (REMOVE, ADD, a MODIFY longer than the
+stored item), `p` the distinct pages written, `Lb ≤ 15` the loaded
+libraries, and `P` the platform page size. `F ≈ I + 4S + 25`. "Shared" pages are file-backed page-cache pages;
+"private" are copy-on-write pages; "heap" is `malloc`/`Vec`.
+
+**What each design holds per loaded system or addon library.**
+
+| | Pin (`memory_chunk.h:475-524`, `phrase_index.cpp:301-330`) | `main` | Proposed |
+|---|---|---|---|
+| Mappings | one `MAP_PRIVATE` `PROT_READ\|PROT_WRITE` of `F`, freed with its sub-index | an immutable `map_copy_read_only` original, plus a second `map_copy` replay view when a journal exists (`phrase_library.rs:259,283`; `replay.rs:391`) | one `map_copy` of `F` |
+| Descriptor | closed after `mmap` (`memory_chunk.h:523`) | retained for the library's life (`MappedFile.file`) | closed by `finish` on Unix; on Windows the memmap2 crate keeps a duplicated handle until the mapping drops (0.9.12 `src/windows.rs:203-225`), so "no retained handle" is a Unix-only claim |
+| Journal state | in place; sub-chunk views | `touched`, `unigram_changes`, `offsets` side maps, decoded `system_overrides`, lazily decoded retained views | in place, plus a transient undo `Vec` (below) and the same `touched`/`unigram_changes` bookkeeping until its consumers change (below) |
+| Session reads of a touched item | borrowed view, `O(1)` | `BTreeMap` lookup `O(log k)`, a decoded owned item, a clone in `SystemLibrary::item` | borrowed view, `O(1)` |
+
+**1. Init and `*_load_phrase_library`** (`pinyin.cpp:250-294`,
+`zhuyin.cpp:196-237`).
+Pin: `open`, two `lseek`, two `read`, `mmap`, checksum `O(F)` over the mapped
+bytes (`memory_chunk.h:514`), `close`; `SubPhraseIndex::load` `O(1)` (four word reads and
+three separator probes). Log: read `O(L)` into the heap with its checksum.
+Merge `O(R)` record steps; each step is `O(1)` slot lookup plus a `memcmp`
+bounded by the item; an in-place MODIFY writes a private page. Time
+`O(F + L + Σ item bytes touched)`. Space: shared `≤ F` (the checksum touches
+every page), private `p·P`, heap `L`.
+`main`: the same open and checksum `O(F)` over the read-only mapping, then a
+second mapping `O(1)` syscall, the same merge, then `O(k log k)` sort and
+decode of the touched slots. Space: shared pages are mapped twice (the process
+RSS counts them twice), private `p·P` in the second mapping, heap `O(k)`
+decoded items and side maps (until the consumers below change), one descriptor per library.
+Proposed: the pin's sequence and costs. One mapping and no descriptor on Unix; the
+decoded items stay until their consumers read the live buffer (below). Compared with the pin, only the undo vector
+below is extra.
+
+*Undo vector (replaces the side map).* Offsets and content are written
+directly into the writable private mapping, or into the grown `Vec`, with the
+pin's logical operations: `O(1)` offset access, no `BTreeMap`. Before each
+mutation of a mapped byte, the replay pushes one typed undo entry onto a
+`Vec`: the old 4-byte offset word (slot and value), or the destination range
+of an in-place content write. The old content bytes are not copied: the entry
+borrows the journal record's checked old payload from the log buffer the
+replay already holds. A write into a grown `Vec` needs no entry because
+undoing discards that `Vec`. Normal completion, a mismatch stop or an
+unknown-record stop drops the undo `Vec` and keeps every applied change,
+offsets and total frequency included, as `SubPhraseIndex::merge` does
+(`phrase_index.cpp:439-519`, which returns early at a mismatch with the prefix
+applied). Only when the replay reaches the payload over-read are the entries
+applied in reverse, the original total restored from a scalar saved at the
+start, and any grown buffer dropped; the library keeps its pre-replay content.
+Space: the undo `Vec` is `O(R)` entries of constant size, separate from the
+`O(L)` journal heap. Every record occupies at least eight bytes of the log (a
+four-byte type word and a four-byte token, `phrase_index_logger.h:233-241`), so
+`R ≤ L/8` and the total space order is `O(L)`, the pin's. Time `O(1)` per
+record on the success path; the reversal is `O(Σ range bytes)` of the applied
+entries and runs only on the over-read. An optional header-only framing walk
+may decide whether to record entries at all (a log whose walk finds no
+over-read tail records none). It never decides the outcome, because the walk
+cannot know where a mismatch will stop the merge. It is left out: it costs an
+extra `O(R)` pass on every replay to save `O(R)` entries only when the log has
+no over-read tail.
+
+*Reverse-order undo restores the mapped bytes and offsets (source proof).*
+Each entry restores the exact bytes its destination range held immediately
+before its write, so applying the entries in reverse restores the state before
+the first write (induction: after undoing entries `n..k` the state equals the
+state before entry `k`). The entry's saved bytes equal those bytes in every
+reachable case:
+
+- *In-place MODIFY*: the apply compares the stored item (`len` bytes) with the
+  record's old payload and writes `new.len() ≤ len` bytes at its offset, so the
+  destination is a prefix of the checked range and the saved bytes are
+  `old[..new.len()]` (`replay.rs` `modify`, `phrase_index.cpp:485-501`).
+- *Repeated MODIFY of one token*: the second compare sees the first write's
+  result, so its saved bytes are the post-first-write bytes; the reverse
+  application restores them, then the first entry restores the original.
+- *Overlapping writes*: the argument is over byte ranges, not tokens, so two
+  items that share bytes undo correctly.
+- *Relocated items* (a longer MODIFY, REMOVE then ADD): the content append goes
+  to the grown `Vec`; the only mapped mutation is the slot's offset word, whose
+  old value the entry holds. REMOVE of a mismatching item still removes (the
+  pin removes first), and its offset entry is pushed before the write.
+- *Stale-item writes* (row 107's absent-MODIFY path): the stale compare reads
+  the stale place (`stale_read`) and requires it equal to the old payload before
+  writing; the destination is a prefix of that place. A write into the default
+  six-byte stale buffer is not library state and has no entry. A `Shipped`
+  stale place addresses the mapping, also after growth (the pin's stale
+  pointer addresses the old mapping, still mapped), and has an entry. An
+  `Owned` place addresses the `Vec`, which the reversal discards.
+- *Offset-array growth*: an offset write past the array's end copies the
+  array into a zero-filled `Vec` of `cursize + extra` bytes. Writes before the
+  copy have entries on the mapping; writes after it go to the `Vec`; reversal
+  drops the `Vec`, so the mapping's offsets return to the original.
+- *Content growth that moves content from the mapping to the `Vec`*: the copy
+  takes the mapping's current bytes at that point, and every later content
+  write goes to the `Vec`, except a `Shipped` stale write. Earlier writes have
+  mapping entries. Reversal restores the mapping and drops the `Vec`, and the
+  logical size, capacity and `appends` count return to the saved scalars.
+
+No reachable case lacks an entry. Nothing here needs a second mapping or a
+copy of payload bytes.
+
+*Logical capacity.* The pin's growth is `malloc(cursize+extra)` and `memset`
+on the first copy, then `realloc(max(2·capacity, cursize+extra))` and `memset`
+of the tail (`memory_chunk.h:102-130`). The reached-payload outcome reads
+`capacity()`, so the logical `capacity` and `data_end`, and the zero-filled
+extension, are tracked in their own fields as `Content` does today, and a
+`Vec`'s own capacity is never consulted. The tracked bytes beyond the pin's
+`m_data_end` read as zero.
+
+*Bookkeeping consumers (traced).* `touched` and `unigram_changes` do not go
+away with the second mapping. `Merge::finish` turns `touched` into typed
+`system_overrides`, which `persistence::save` diffs and
+`store_libpinyin.rs:337,405,530,636` and `store_arena.rs:556` seed into the
+session store; `finish_views` retains them in `ReplayedLibrary`, which
+`system_items.rs:57,97` and `store_libpinyin.rs:356,572,671` read through
+`slots`, `add_candidates` and `unigram_slots`. Those consumers decide which
+store rows the replay seeds, and they compare against the pristine original
+bytes. The `O(k)` bookkeeping and the decoded items are removed only if the
+consumers read the live buffer instead; until then they stay, and the claim in
+the table that decoded items disappear holds only for that change.
+
+**2. Reads during guess, training and export.** Pin: `get_phrase_item` is two
+bounds-checked `get_content` reads and a `set_chunk` view, `O(1)`, no copy
+(`phrase_index.cpp:180-206`). Training writes in place: `O(item)` plus one
+private-page fault the first time a page is written (`P` bytes, shared to
+private). `main`: a read of a touched item is `O(log k)`; first training of a
+system token decodes it into `system_items` (`store_arena.rs` `arena_train`),
+`O(item)` heap, and `SystemLibrary::item` clones. Proposed: the pin's read and
+write. Time better than `main` and equal to the pin. Space: the pin's page
+granularity. Where training touches few tokens in widely spread pages, a
+private page (`P` bytes) is larger than `main`'s decoded item (about the
+item's bytes plus a map node). That is worse than `main` and equal to the pin;
+bounded above by `F` for the whole library.
+
+**3. First growth.** Pin: an append or an offset beyond the array end reaches
+`ensure_has_more_space` with `m_free_func != free`: `malloc(cursize+extra)`,
+`memset`, `memmove` of the whole current sub-chunk, then the view is
+abandoned (`memory_chunk.h:102-123`). Time `O(I + extra)` for the content, and
+`O(4S)` for the offset array if a slot lies beyond it; space heap `I + extra`
+(and `4S + extra`), and the copy touches every shared page of the area.
+`main`: replay's `Content::append` does the same copy (`to_vec`, `replay.rs`
+`append`); training never grows a system library. Proposed: copy the whole
+current content into a contiguous `Vec` with the pin's capacity rule
+(`cursize+extra`, then `max(2·capacity, cursize+extra)` below). Equal to the
+pin, equal to `main`.
+
+**4. Later growth.** Pin: `realloc` to `max(2·capacity, cursize+extra)` and
+`memset` the new tail (`memory_chunk.h:127-130`): amortised `O(1)` per appended byte.
+Capacity is at most twice the largest requested extent, not twice the original
+content size. Proposed: the same rule and the same capacity, which the
+reached-payload over-read outcome already depends on (`Content::capacity`).
+Equal. `main`'s arena (`UserLibrary`) is a different structure for user
+libraries and is not changed.
+
+**5. Save, `mask_out` and reload remaps.**
+*Save* (`pinyin.cpp:952-959`, `zhuyin.cpp:585-592`). Pin: per library, a fresh
+mapping `O(F)` for its checksum, then `diff` (`phrase_index.cpp:271-285`,
+`SubPhraseIndex::diff`, `:392-430`): a walk over `[1, max(range_end))`, two `O(1)`
+`get_phrase_item` per slot and one `memcmp` of equal-sized items, so
+`O(S + Σ equal-size item bytes)`. The log chunk is `O(changed bytes)` heap. The
+fresh mapping is released when `old_sub_phrases` goes out of scope
+(`~SubPhraseIndex` → `reset` → `delete m_chunk`). Peak per library: live state
+plus the fresh shared mapping.
+`main`: fresh mapping and checksum `O(F)`, `byte_identical` against the
+retained original `O(F)`; when equal the diff runs only over `k` overrides;
+when different `diff_records_against` walks the union of both sides' items.
+Proposed: the pin's `diff` against the fresh mapping, with no retained
+original to compare against (the live mapping holds replay and training
+writes). Time equals the pin. Against `main`'s unchanged-file fast path it is
+the same order `O(F)` with a larger constant (a slot walk and per-item
+`memcmp` against a `memcmp` of two regions plus `k` records). Space: the fresh
+mapping and the log only. Not both worse than the pin.
+*`mask_out` and reload* (`pinyin.cpp:1260-1268`, `zhuyin.cpp:795-803`). Pin:
+per library `mmap` and checksum `O(F)`, `load` replaces the sub-index (the old
+mapping and its heap copies are freed after the new mapping exists), the
+log is read `O(L)` and merged. Peak holds the old state and the new shared
+mapping together. Proposed: the same order, mapping and validating the new
+chunk before releasing the old one. `main` replaces its original and its
+replay view as well. Equal to the pin.
+*Failed remap* (row 76, "stop"): the pin's failed `mmap` leaves an empty chunk
+that `SubPhraseIndex::load` dereferences. The proposed save stops at that
+library and answers `false`. No cost path; filesystem changes before it stay.
+
+**6. Replay rollback.** The pin has none: a record whose payload runs past
+the journal's end reads past the allocation (the class (b) payload over-read),
+so the pin and the proposed design do not do comparable work there. Row 107 is
+not a rollback trigger: a record that reaches an unreadable or out-of-bounds
+item answers "no item" and the other changes of the replay are kept.
+`main` rolls back by dropping the private replay view (`O(1)`, but only because
+the second mapping exists on every successful replay).
+Proposed: the undo vector of item 1, applied only when the replay reaches the
+payload over-read. The entries are applied in reverse (an offset entry rewrites
+its old word; a content entry rewrites its destination range from the
+journal's checked old payload, borrowed from the log buffer already held), the
+original total frequency is restored from the scalar saved at the start, and
+any grown buffer is dropped. Time `O(Σ range bytes of the applied entries)`,
+only when a log is refused. Space `O(R)` constant-size entries recorded on
+every replay (a mapped-byte mutation records one), dropped when the replay
+ends; this is within the journal's `O(L)` order because `R ≤ L/8`. The success
+path pays the `O(1)` push per mutation and nothing else. The outcome stays
+`main`'s: the log is skipped whole and the library keeps its pre-replay
+content. A mismatch stop or an unknown-record stop is not a rollback: it drops
+the entries and keeps every applied change.
+
+**7. Fini.** Pin: `~SubPhraseIndex` → one `munmap(header + capacity)` per
+library and a `free` of any grown copy. Proposed: one `Drop` of the mapping
+(`munmap` of the whole mapping, row 109) and the `Vec`. `main` also drops the
+second mapping and the descriptor. `O(Lb)` syscalls in all three.
+
+**Resident and peak memory per library.**
+
+| | Shared (file) | Private (copy-on-write) | Heap |
+|---|---|---|---|
+| Pin, steady | `≤ F` | `p·P` | grown copies `≤ 2(H_I + H_S)`; log `L` while merging |
+| `main`, steady | `≤ 2F` as counted by RSS (two mappings) | `p·P` | `O(k)` decoded items and maps, one descriptor |
+| Proposed, steady | `≤ F` | `p·P` | as the pin; transient `O(R)` undo entries while replaying, within the `O(L)` journal order |
+| Pin peak (save) | `≤ 2F` (live and fresh) | `p·P` | log `O(changed)` |
+| Proposed peak (save, reload) | same | same | same |
+
+`H_I` and `H_S` are the largest logical extents requested so far for the
+item content and offset array, including their original extents. Each grown
+capacity is at most twice its corresponding high-water extent: on growth, the
+old capacity is below the requested extent, and the new capacity is the larger
+of twice the old capacity and that extent (`memory_chunk.h:102-130`). A large
+append or offset extension can make these extents exceed `I` or `4S`. This is
+a steady-capacity bound; a moving `realloc` can transiently hold both the old
+and new allocations.
+
+Page-cache pages are counted once physically in all designs; the RSS counts
+differ only where one process maps a file twice. A file whose size passes the
+pin's length check but wraps `guint32 data_len` maps `F` bytes in the pin and
+in the proposed design. `main` maps only the checked extent. The mapping's
+virtual size is therefore larger than `main`'s for those files and resident
+size is unchanged (only touched pages are resident). The pin leaves the rest of
+that mapping unreleased; the proposed design releases it (row 109,
+POLICY-ACCEPTED).
+
+**Where the proposed design is worse.**
+
+- Than the pin: space only, transiently, on the replay path: the `O(R)` undo
+  vector (item 1), which stays within the pin's `O(L)` order. No other path is worse on either axis.
+- Than `main`: the unchanged-file save fast path becomes the pin's full diff
+  (same order, larger constant); first training of a sparsely touched page
+  costs a private page rather than a decoded item; virtual size of wrapped
+  sparse files. Time and space are not both worse than the pin anywhere.
+
+**Maintainer decision (2026-11-02 UTC).** Option (b), a pre-walk, is rejected:
+`merge_log` and `SubPhraseIndex::merge` stop at a mismatch with the applied
+prefix kept, so a pre-walk that found an over-read tail would discard a prefix
+the pin keeps. Option (a) is approved with the undo vector above instead of a
+`BTreeMap`.
 
 The later coherent transition must remove retained originals, use one
 borrowed live owner for replay/training/reads, copy the whole current
