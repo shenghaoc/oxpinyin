@@ -571,9 +571,9 @@ build integration, not permanent limitations of the portable Rust code.
 
 CI's macOS job builds tkrzw with `.github/actions/tkrzw` instead of
 Homebrew's. Berkeley DB is a non-default backend: `brew install berkeley-db@5`,
-`export OXPINYIN_BDB_INCLUDE_DIR="$(brew --prefix berkeley-db@5)/include"`
-and `OXPINYIN_BDB_LIB_DIR="$(brew --prefix berkeley-db@5)/lib"` (it is
-keg-only), `export CARGO_TARGET_DIR=target/bdb`, then `just check bdb`.
+export the keg-only `SYSTEM_DEPS_BDB_*` overrides
+([backends](backends.md#discovery-and-overrides)),
+`export CARGO_TARGET_DIR=target/bdb`, then `just check bdb`.
 Keep each backend's target and user-data directories separate.
 
 Fuzzing and the backend sanitizer gates run natively on macOS. The recipes
@@ -812,8 +812,8 @@ of completing a contribution.
   check discovery; the setup check prints the backend version and bindgen's
   missing libclang diagnostic, so retain those lines too.
 - macOS cannot link tkrzw's lz4/lzma/zstd: repeat the `LIBRARY_PATH` export
-  above. For Berkeley DB, repeat both `OXPINYIN_BDB_INCLUDE_DIR` and
-  `OXPINYIN_BDB_LIB_DIR` exports. Do not treat a
+  above. For Berkeley DB, repeat the `SYSTEM_DEPS_BDB_*` exports
+  ([backends](backends.md#discovery-and-overrides)). Do not treat a
   successful Clippy/check as a link test.
 - Missing oracle/model inputs do not block ordinary native tests. They must
   be supplied for the selected compatibility checks, where a skipped/missing

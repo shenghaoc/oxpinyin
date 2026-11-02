@@ -6,6 +6,10 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 description = "oxpinyin internal crate — no stability promise; use oxpinyin-engine."
+# Names no native library: the build script publishes the resolved Kyoto
+# Cabinet library directory as `DEP_OXPINYIN_STORE_LIB_DIR` for the one
+# package that links a final binary against it (oxpinyin-training).
+links = "oxpinyin_store"
 
 [lints.rust]
 unsafe_code = "deny"
@@ -30,8 +34,25 @@ criterion = "0.8"
 bindgen = { workspace = true, optional = true }
 # Compiles the Kyoto Cabinet C++ shim (#1118).
 cc = { version = "1.4.3", optional = true }
-# Finds tkrzw, Kyoto Cabinet and, where a .pc file exists, Berkeley DB (#1434).
-pkg-config = { version = "0.3.34", optional = true }
+# Declares and finds the native backends (#1434); see the metadata below.
+system-deps = { version = "9.0.0", optional = true }
+
+# One entry per backend, each probed only with its feature. The version is
+# required by the format; "0" is no floor, as libpinyin's configure sets
+# none. tkrzw and Kyoto Cabinet are found through their .pc file. Berkeley
+# DB is found without pkg-config (build.rs defaults its NO_PKG_CONFIG and
+# LIB), so its version here is never consulted.
+[package.metadata.system-deps.tkrzw]
+feature = "tkrzw"
+version = "0"
+
+[package.metadata.system-deps.kyotocabinet]
+feature = "kyotocabinet"
+version = "0"
+
+[package.metadata.system-deps.bdb]
+feature = "bdb"
+version = "0"
 
 [features]
 # The backends (kyotocabinet, tkrzw, bdb) are peer
@@ -47,16 +68,16 @@ pkg-config = { version = "0.3.34", optional = true }
 # "default" means here — select any peer explicitly with
 # `--no-default-features --features {kyotocabinet|tkrzw|bdb}`.
 default = ["tkrzw"]
-tkrzw = ["dep:bindgen", "dep:pkg-config"]
+tkrzw = ["dep:bindgen", "dep:system-deps"]
 # Kyoto Cabinet backend. bindgen is build-time only (it needs libclang);
 # the runtime dependency is the system libkyotocabinet the distro already
 # ships.
-kyotocabinet = ["dep:bindgen", "dep:cc", "dep:pkg-config"]
+kyotocabinet = ["dep:bindgen", "dep:cc", "dep:system-deps"]
 # Berkeley DB backend — libpinyin's original DBM and the third drop-in
 # set. bindgen is build-time only; the runtime dependency is the system
 # libdb 5.3 the distro already ships (Debian libdb-dev, Fedora
 # libdb-devel), the same library that wrote the files it must read.
-bdb = ["dep:bindgen", "dep:pkg-config"]
+bdb = ["dep:bindgen", "dep:system-deps"]
 # `bench-internal` — exposes hidden test/bench-only helpers that would
 # otherwise be `pub(crate)`. Off by default; not part of `default`, not
 # reached by any shipping build. Currently just widens the Kyoto Cabinet

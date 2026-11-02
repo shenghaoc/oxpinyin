@@ -60,9 +60,7 @@ def run(backend=None, out=sys.stdout, err=sys.stderr, env=None):
         print('libclang: discovered by bindgen during build (a .pc file is optional)', file=out, flush=True)
     if backend == 'bdb':
         command = ['cc']
-        include = os.environ.get('OXPINYIN_BDB_INCLUDE_DIR')
-        if include:
-            command.append(f'-I{include}')
+        command += native.path_list_flags(os.environ, 'SYSTEM_DEPS_BDB_INCLUDE', '-I')
         command += ['-E', '-P', '-']
         result = tools.run(command, input='#include <db.h>\nDB_VERSION_STRING\n')
         if result.returncode:

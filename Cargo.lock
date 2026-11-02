@@ -722,7 +722,7 @@ dependencies = [
  "bindgen",
  "cc",
  "criterion",
- "pkg-config",
+ "system-deps",
 ]
 
 [[package]]
@@ -739,8 +739,8 @@ version = "0.1.0"
 dependencies = [
  "oxpinyin-core",
  "oxpinyin-data",
+ "oxpinyin-store",
  "oxpinyin-testsupport",
- "pkg-config",
  "tempfile",
 ]
 
