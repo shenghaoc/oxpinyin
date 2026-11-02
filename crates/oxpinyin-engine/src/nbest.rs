@@ -1294,7 +1294,7 @@ impl<'a> ConstraintSpelling<'a> {
 /// equal (`:68-71`); middle and final equal, or either side the
 /// incomplete `(ZERO_MIDDLE, ZERO_FINAL)` pair (`:73-94`, the incomplete
 /// test at `:80-86`); tones equal, or either side zero (`:96-105`).
-fn reading_matches(query: &[ChewingKey], stored: &[ChewingKey]) -> bool {
+pub(crate) fn reading_matches(query: &[ChewingKey], stored: &[ChewingKey]) -> bool {
     query.len() == stored.len()
         && query.iter().zip(stored).all(|(q, s)| {
             q.initial == s.initial
@@ -1396,6 +1396,7 @@ where
         selected.clear();
         let prev = predecessor.value.token;
         let row = costs.rows.entry(prev).or_default();
+        model.begin_successor_span(row);
         let traversal = match model
             .nbest_successors_in_row(&PhraseToken::new(prev), row)
             .map_err(|error| EngineError::row_read(model, prev, &error))?

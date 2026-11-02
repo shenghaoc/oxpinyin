@@ -1,0 +1,38 @@
+diff --git a/crates/oxpinyin-data/src/dict.rs b/crates/oxpinyin-data/src/dict.rs
+index f3c8ea7b..349dea6d 100644
+--- a/crates/oxpinyin-data/src/dict.rs
++++ b/crates/oxpinyin-data/src/dict.rs
+@@ -1021,14 +1021,10 @@ impl AddonDictionary {
+                 )
+             };
+             Ok(Self {
+-                pinyin: Some(ChewingTable::new(crate::chewing_table::DefaultDbm::attach(
+-                    &path(SystemDbm::AddonPinyinIndex),
+-                    false,
+-                )?)),
+-                phrase: Some(PhraseTable::new(crate::chewing_table::DefaultDbm::attach(
+-                    &path(SystemDbm::AddonPhraseIndex),
+-                    false,
+-                )?)),
++                // M1516_DROP_FAILED_AUXILIARY: strict opens close failed
++                // native handles immediately; keep no failed addon table.
++                pinyin: open_tree(&path(SystemDbm::AddonPinyinIndex)).ok(),
++                phrase: open_phrase_table(&path(SystemDbm::AddonPhraseIndex)).ok(),
+                 libraries: PhraseLibraries::empty(),
+                 rows: addon_rows(conf),
+             })
+diff --git a/crates/oxpinyin-data/src/punct.rs b/crates/oxpinyin-data/src/punct.rs
+index f5901d0d..ab29c880 100644
+--- a/crates/oxpinyin-data/src/punct.rs
++++ b/crates/oxpinyin-data/src/punct.rs
+@@ -96,7 +96,9 @@ impl PunctTable {
+     pub fn attach(path: &Path) -> Result<Self, DictError> {
+         #[cfg(any(feature = "bdb", feature = "kyotocabinet"))]
+         {
+-            Ok(Self::new(DefaultDbm::attach(path, false)?))
++            // M1516_DROP_FAILED_AUXILIARY: a failed strict open closes
++            // its native handle now and leaves no punctuation table.
++            Ok(Self::open(path).unwrap_or_else(|_| Self::empty()))
+         }
+         #[cfg(feature = "tkrzw")]
+         {

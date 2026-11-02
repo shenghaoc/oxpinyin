@@ -1298,11 +1298,15 @@ impl Dictionary for RuntimeDict {
         ranges: &mut PhraseIndexRanges<()>,
         scratch: &mut Vec<u8>,
     ) -> Result<bool, Self::Error> {
-        let query = Self::trellis_query(syllables, tones);
-        let (Some(query), 0) = (query, self.library_mask.load(Ordering::SeqCst)) else {
+        let Some(query) = Self::trellis_query(syllables, tones) else {
             self.trellis_ranges(syllables, tones, ranges)?;
             return self.phrase_prefix_exists(syllables);
         };
+        if self.library_mask.load(Ordering::SeqCst) != 0 && !self.system.pinyin_attachment_failed()
+        {
+            self.trellis_ranges(syllables, tones, ranges)?;
+            return self.phrase_prefix_exists(syllables);
+        }
         let loaded = |token: u32| self.token_ranged(token);
         let system_extends = self
             .system
@@ -1379,6 +1383,33 @@ impl Dictionary for RuntimeDict {
         out: &mut Vec<Self::Entry>,
     ) -> Result<bool, Self::Error> {
         self.fill_lookup(syllables, out, false)
+    }
+
+    fn candidate_search_into(
+        &self,
+        syllables: &[Self::Syllable],
+        tones: &[u8],
+        out: &mut Vec<Self::Entry>,
+    ) -> Result<Option<(bool, bool)>, Self::Error> {
+        if !self.system.pinyin_attachment_failed() {
+            return Ok(None);
+        }
+        // One failed native get/check per search_matrix leaf. Tone and
+        // continuation probes must not make additional system reads.
+        let unreadable = self.fill_lookup(syllables, out, false)?;
+        if tones.iter().any(|tone| *tone != 0) {
+            let mut ranges = PhraseIndexRanges::new();
+            if let Some(query) = Self::trellis_query(syllables, tones) {
+                self.user_trellis_ranges(&query, &mut ranges)?;
+            }
+            let mut tokens: Vec<u32> = ranges.walk_tokens().map(|(token, ())| token).collect();
+            tokens.sort_unstable();
+            out.retain(|entry| tokens.binary_search(&entry.token().value()).is_ok());
+        }
+        Ok(Some((
+            unreadable,
+            self.user_lookup()?.phrase_prefix_exists(syllables),
+        )))
     }
 
     fn phrase_prefix_exists(&self, syllables: &[Self::Syllable]) -> Result<bool, Self::Error> {
@@ -1488,6 +1519,18 @@ impl Dictionary for RuntimeDict {
         tokens.retain(|token| self.phrase_table_token_enabled(token.value()));
         tokens.sort_by_key(|token| token.value() >> 24);
         tokens
+    }
+
+    fn phrase_span_searches_are_observable(&self) -> bool {
+        self.system.phrase_attachment_failed()
+    }
+
+    fn phrase_span_continues(&self, words: &[u32]) -> bool {
+        !self.system.phrase_attachment_failed()
+            || self
+                .user
+                .as_ref()
+                .is_some_and(|store| store.phrase_table_contains_ucs4(words).unwrap_or(false))
     }
 
     fn lookup_addon(&self, syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error> {
@@ -1846,6 +1889,12 @@ impl LanguageModel for RuntimeLm {
         }
     }
 
+    fn begin_successor_span(&self, row: &mut oxpinyin_core::NbestStepRow) {
+        if self.inner.attachment_failed() {
+            *row = oxpinyin_core::NbestStepRow::default();
+        }
+    }
+
     fn nbest_successors_in_row<'a>(
         &self,
         prev: &Self::Token,
@@ -1899,6 +1948,26 @@ pub struct Runtime {
     lm: RuntimeLm,
     user: Option<UserStore>,
     conf: Arc<TableConf>,
+}
+
+#[cfg(any(feature = "bdb", feature = "kyotocabinet"))]
+impl Drop for Runtime {
+    fn drop(&mut self) {
+        // pinyin.cpp:1200 writes the marker before deleting the tables.
+        // Only this original UserStore owns the fini guard; its clones
+        // are disarmed. Failed native handles must finish here even if a
+        // safe facade instance retains an Arc past context finalization.
+        drop(self.user.take());
+        self.dict.system.finish_failed_attachments();
+        self.lm.inner.finish_failed_attachment();
+        self.dict
+            .addons
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .dict
+            .finish_failed_attachments();
+        self.dict.punct.finish_failed_attachment();
+    }
 }
 
 /// `check_format` where the pin runs it: right after `table.conf` loads,
@@ -2057,10 +2126,12 @@ impl Runtime {
             }
             return Err(OpenError::TableConf(TableConfError::Abort(site)));
         }
+        #[cfg(feature = "tkrzw")]
         let pinyin_index = oxpinyin_input::path::build_path(
             system_dir,
             std::ffi::OsStr::new(&SystemDbm::PinyinIndex.file_name()),
         );
+        #[cfg(feature = "tkrzw")]
         let phrase_index = oxpinyin_input::path::build_path(
             system_dir,
             std::ffi::OsStr::new(&SystemDbm::PhraseIndex.file_name()),
@@ -2069,11 +2140,16 @@ impl Runtime {
             system_dir,
             std::ffi::OsStr::new(&SystemDbm::Bigram.file_name()),
         );
-        require_file(&pinyin_index)?;
-        require_file(&phrase_index)?;
-        require_file(&bigram)?;
+        // The tkrzw part of #1516 is deferred until concrete-class cxx
+        // bindings can retain the pin's real unopened TreeDBM/HashDBM.
+        #[cfg(feature = "tkrzw")]
+        {
+            require_file(&pinyin_index)?;
+            require_file(&phrase_index)?;
+            require_file(&bigram)?;
+        }
 
-        let dict = SystemDictionary::open_with(system_dir, &conf).map_err(OpenError::Dict)?;
+        let dict = SystemDictionary::attach_with(system_dir, &conf).map_err(OpenError::Dict)?;
         // Register row 96: the library loop maps each default library and
         // merges its `.dbin` in order (`pinyin.cpp:377-392`,
         // `zhuyin.cpp:318-334`); `MemoryChunk::mmap` asserts on a library
@@ -2104,7 +2180,7 @@ impl Runtime {
         // unloaded library's items leave both the lookups and the unigram
         // denominator, as freeing the sub-index does upstream.
         let library_mask = Arc::new(AtomicU32::new(0));
-        let mut lm = BigramLanguageModel::open_with_mask(
+        let mut lm = BigramLanguageModel::attach_with_mask(
             &bigram,
             Arc::clone(dict.libraries()),
             Arc::clone(&library_mask),
@@ -2162,14 +2238,15 @@ impl Runtime {
         let addons = Arc::new(RwLock::new(AddonSet {
             dict: match law {
                 UserConfLaw::Pinyin => {
-                    AddonDictionary::open_with(system_dir, &conf).map_err(OpenError::Dict)?
+                    AddonDictionary::attach_with(system_dir, &conf).map_err(OpenError::Dict)?
                 }
                 UserConfLaw::Zhuyin => AddonDictionary::without_indexes(&conf),
             },
         }));
         let punct = match law {
             UserConfLaw::Pinyin => {
-                PunctTable::open_optional(&system_dir.join(SystemDbm::Punct.file_name()))
+                PunctTable::attach(&system_dir.join(SystemDbm::Punct.file_name()))
+                    .map_err(OpenError::Dict)?
             }
             UserConfLaw::Zhuyin => PunctTable::empty(),
         };
@@ -2535,6 +2612,7 @@ impl Runtime {
     }
 }
 
+#[cfg(feature = "tkrzw")]
 fn require_file(path: &Path) -> Result<(), OpenError> {
     let meta = std::fs::metadata(path).map_err(|error| match error.kind() {
         std::io::ErrorKind::NotFound => OpenError::Missing(path.to_path_buf()),

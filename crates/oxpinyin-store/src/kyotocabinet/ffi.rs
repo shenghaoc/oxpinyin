@@ -384,6 +384,31 @@ pub(crate) struct Db {
     read_only: bool,
 }
 
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum NativeTeardownCall {
+    Synchronize(bool),
+    Close,
+    Delete,
+}
+
+#[cfg(test)]
+thread_local! {
+    // Observe completed native calls, never the wrapper's early returns.
+    static NATIVE_TEARDOWN_CALLS: std::cell::RefCell<Vec<(usize, NativeTeardownCall)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+#[cfg(test)]
+fn record_native_teardown_call(handle: *mut sys::oxkc_db, call: NativeTeardownCall) {
+    NATIVE_TEARDOWN_CALLS.with(|calls| calls.borrow_mut().push((handle as usize, call)));
+}
+
+#[cfg(test)]
+pub(super) fn take_native_teardown_calls() -> Vec<(usize, NativeTeardownCall)> {
+    NATIVE_TEARDOWN_CALLS.with(|calls| std::mem::take(&mut *calls.borrow_mut()))
+}
+
 // SAFETY: verified against the Kyoto Cabinet 1.2.80 headers (the version
 // floor this backend builds against), file and symbol at a time:
 //
@@ -412,9 +437,11 @@ pub(crate) struct Db {
 //   them immediately after the failing call on the same thread, before
 //   any other call could overwrite the slot.
 // * The shim constructs the class directly, so there is no PolyDB state;
-//   a handle exists here only after `open` succeeded, and the close and
-//   delete run in `Drop`, which holds the handle exclusively. Open
-//   completes before the handle exists to share.
+//   open completes before the handle is shared, including a failed open
+//   retained by `open_retained`. On that object omode_ remains zero;
+//   accept/check, synchronize and close take the same locks before
+//   returning INVALID (kcplantdb.h:1050,1593,1645; kchashdb.h:559,936,973).
+//   Close and delete run in Drop, which holds the handle exclusively.
 // * The class-level contract (`kcdb.h`, `BasicDB`'s @note) forbids two
 //   database objects in one process opening the same file, and sharing a
 //   database object with child processes — cross-thread sharing of one
@@ -477,6 +504,25 @@ impl Db {
         create: bool,
         extra_tuning: &str,
     ) -> Result<Self, StoreError> {
+        let (db, opened) = Self::open_retained(path, db_type, read_only, create, extra_tuning)?;
+        if !opened {
+            return Err(db.error("kcdbopen"));
+        }
+        Ok(db)
+    }
+
+    /// Retains the concrete object when open fails, as the pin's system
+    /// attach does (chewing_large_table2_kyotodb.cpp:87-89 and
+    /// ngram_kyotodb.cpp:117-119 at 074a2219). KC's omode_ stays zero
+    /// (kcplantdb.h:1516; kchashdb.h:823-832); later calls are valid
+    /// object operations returning INVALID, not calls through a null DB.
+    pub(crate) fn open_retained(
+        path: &Path,
+        db_type: DbType,
+        read_only: bool,
+        create: bool,
+        extra_tuning: &str,
+    ) -> Result<(Self, bool), StoreError> {
         check_runtime_version()?;
 
         // The shim opens the concrete class with the literal path, as
@@ -537,10 +583,8 @@ impl Db {
             sys::OXKC_OWRITER
         };
         // SAFETY: the handle is live and `spec` outlives the call.
-        if unsafe { sys::oxkc_db_open(this.handle, spec.as_ptr(), mode) } == 0 {
-            return Err(this.error("kcdbopen"));
-        }
-        Ok(this)
+        let opened = unsafe { sys::oxkc_db_open(this.handle, spec.as_ptr(), mode) } != 0;
+        Ok((this, opened))
     }
 
     /// The library's own account of the last failure on this handle.
@@ -744,14 +788,30 @@ impl Db {
         if self.read_only {
             return Ok(());
         }
+        if self.synchronize_native(hard) == 0 {
+            return Err(self.error("kcdbsync"));
+        }
+        Ok(())
+    }
+
+    /// The pin resets retained failed system objects with synchronize,
+    /// even though attach requested OREADER. Keep this separate from the
+    /// ordinary read-only sync no-op. The live unopened TreeDB/HashDB
+    /// rejects the call with INVALID (kcplantdb.h:1645-1648;
+    /// kchashdb.h:973-976), after taking its native reader lock.
+    pub(super) fn synchronize_failed_system_attachment(&self) {
+        // The pin discards this result without querying the error object.
+        let _ = self.synchronize_native(false);
+    }
+
+    fn synchronize_native(&self, hard: bool) -> i32 {
         // SAFETY: the handle is live; the post-processor callback and its
         // opaque argument are both null, which the API documents as "no
         // callback".
         let ok = unsafe { sys::oxkc_db_sync(self.handle, i32::from(hard)) };
-        if ok == 0 {
-            return Err(self.error("kcdbsync"));
-        }
-        Ok(())
+        #[cfg(test)]
+        record_native_teardown_call(self.handle, NativeTeardownCall::Synchronize(hard));
+        ok
     }
 
     /// Reads a snapshot stream (`KCSS`) into this database —
@@ -882,7 +942,11 @@ impl Drop for Db {
         // and Kyoto Cabinet requires the close before the delete.
         unsafe {
             sys::oxkc_db_close(self.handle);
+            #[cfg(test)]
+            record_native_teardown_call(self.handle, NativeTeardownCall::Close);
             sys::oxkc_db_del(self.handle);
+            #[cfg(test)]
+            record_native_teardown_call(self.handle, NativeTeardownCall::Delete);
         }
     }
 }

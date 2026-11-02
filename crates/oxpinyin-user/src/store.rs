@@ -3430,6 +3430,23 @@ impl<S: WriteStore> GenericUserStore<S> {
         Ok(phrase_table::search_ucs4(&*self.database(), words)?.tokens)
     }
 
+    /// Whether the user phrase table holds this exact key, including an
+    /// empty prefix marker (`SEARCH_CONTINUED` in the pin).
+    ///
+    /// # Errors
+    /// Returns a backend or malformed-record error.
+    pub fn phrase_table_contains_ucs4(&self, words: &[u32]) -> Result<bool, UserStoreError> {
+        if let Some(target) = self.inner.libpinyin.as_ref() {
+            return Ok(target
+                .phrases()
+                .phrase_table
+                .contains_key(&phrase_table::key_ucs4(words)));
+        }
+        Ok(phrase_table::search_ucs4(&*self.database(), words)?.flags
+            & phrase_table::SEARCH_CONTINUED
+            != 0)
+    }
+
     /// Current write generation: moves on every committed write, counts
     /// included.
     #[must_use]

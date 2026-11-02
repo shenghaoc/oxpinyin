@@ -3,9 +3,8 @@
 //! re-parse applies, the lookup-offset validation per parse mode, the
 //! key-at and cursor laws, and the reset shapes.
 //!
-//! The fixture directory for the compiled backend is the one the runtime
-//! opens: this crate has no direct dependency on the store extension, so
-//! the helper probes the four committed sets and keeps the one that opens.
+//! Fixture selection follows the compiled backend. Initialization succeeds
+//! even after a failed system attach, so it cannot identify a file format.
 
 use std::path::PathBuf;
 
@@ -26,17 +25,8 @@ fn fixture_root() -> PathBuf {
 
 /// Opens the committed fixture set the compiled backend reads.
 fn open_context(option_word: u32) -> ContextCore {
-    let root = fixture_root();
-    for ext in ["tkt", "kct", "db"] {
-        let dir = root.join(ext);
-        if !dir.is_dir() {
-            continue;
-        }
-        if let Some(context) = ContextCore::open(&dir, None, option_word, UserConfLaw::Pinyin) {
-            return context;
-        }
-    }
-    panic!("no fixtures/w3/<backend> set opens under the compiled backend");
+    ContextCore::open(&fixture_dir(), None, option_word, UserConfLaw::Pinyin)
+        .expect("committed backend fixtures")
 }
 
 fn pinyin_instance() -> InstanceCore {
@@ -197,16 +187,14 @@ fn one_key_probes_follow_the_live_schemes() {
 
 /// The committed fixture directory the compiled backend opens.
 fn fixture_dir() -> PathBuf {
-    let root = fixture_root();
-    ["tkt", "kct", "db"]
-        .into_iter()
-        .map(|ext| root.join(ext))
-        .find(|dir| {
-            dir.is_dir()
-                && ContextCore::open(dir, None, PINYIN_DEFAULT_OPTION_WORD, UserConfLaw::Pinyin)
-                    .is_some()
-        })
-        .expect("a fixtures/w3/<backend> set opens under the compiled backend")
+    let extension = if cfg!(feature = "bdb") {
+        "db"
+    } else if cfg!(feature = "kyotocabinet") {
+        "kct"
+    } else {
+        "tkt"
+    };
+    fixture_root().join(extension)
 }
 
 /// A user dir holding one user-bigram row, `(key, value)` verbatim, under a

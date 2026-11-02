@@ -51,8 +51,17 @@ impl<D: ChewingDbm> PunctTable<D> {
 
     /// Whether a table file is open behind this handle.
     #[must_use]
-    pub const fn is_open(&self) -> bool {
-        self.dbm.is_some()
+    pub fn is_open(&self) -> bool {
+        self.dbm
+            .as_ref()
+            .is_some_and(|dbm| !dbm.attachment_failed())
+    }
+
+    /// Resets the retained failed object once at facade fini.
+    pub fn finish_failed_attachment(&self) {
+        if let Some(dbm) = self.dbm.as_ref() {
+            dbm.finish_failed_attachment();
+        }
     }
 
     /// Punctuations stored for `token`, in table order, as stored words
@@ -79,6 +88,21 @@ impl<D: ChewingDbm> PunctTable<D> {
 }
 
 impl PunctTable {
+    /// Attaches the runtime punctuation file, retaining a failed BDB/KC
+    /// native object. Tkrzw keeps its existing optional-file behavior.
+    ///
+    /// # Errors
+    /// Returns failures before native attach.
+    pub fn attach(path: &Path) -> Result<Self, DictError> {
+        #[cfg(any(feature = "bdb", feature = "kyotocabinet"))]
+        {
+            Ok(Self::new(DefaultDbm::attach(path, false)?))
+        }
+        #[cfg(feature = "tkrzw")]
+        {
+            Ok(Self::open_optional(path))
+        }
+    }
     /// Opens a punct DBM lazily (no scan). `punct.bin` is a KC
     /// **`TreeDB`** / Tkrzw **`TreeDBM`** — the plain read-only open.
     ///

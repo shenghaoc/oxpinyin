@@ -28,7 +28,7 @@ mod session;
 mod storage;
 
 pub use candidate::{Candidate, CandidateKind, CandidateList, rank_by_frequency};
-pub use char_offset::character_offset_over_keys;
+pub use char_offset::{character_offset_over_keys, character_offset_with_walk_over_keys};
 pub use config::{Config, ConfigSource, ConfigValue, EmptyConfigSource, UPSTREAM_DEFAULT_COUNT};
 pub use cursor::{
     KeySpans, MatrixKey, left_word_offset, left_word_offset_over_spans, lookup_offset_for_cursor,

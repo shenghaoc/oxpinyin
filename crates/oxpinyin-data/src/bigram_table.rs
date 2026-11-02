@@ -41,6 +41,10 @@ pub struct BigramTable<D = DefaultDbm> {
 }
 
 impl BigramTable {
+    pub(crate) fn attach(path: &Path) -> Result<Self, DictError> {
+        Ok(Self::new(DefaultDbm::attach(path, true)?))
+    }
+
     /// Opens a bigram DBM lazily (no scan). libpinyin's `bigram.db` is
     /// a KC **`HashDB`** / Tkrzw **`HashDBM`**, so the open goes through
     /// `RawReadStore::open_hash_read_only`.
@@ -57,6 +61,14 @@ impl BigramTable {
 impl<D: ChewingDbm> BigramTable<D> {
     pub(crate) const fn new(dbm: D) -> Self {
         Self { dbm }
+    }
+
+    pub(crate) fn attachment_failed(&self) -> bool {
+        self.dbm.attachment_failed()
+    }
+
+    pub(crate) fn finish_failed_attachment(&self) {
+        self.dbm.finish_failed_attachment();
     }
 
     /// Loads successor records for `prev_token`.
