@@ -61,7 +61,7 @@ coverage and are superseded for these programs; no program is exempt.
 | A | `tests/test_phrase.cpp` / `test_phrase` | No | `../data`: raw Chinese phrase segmentation, token text, save and mask-out/save/fini | **Ported** (2026-11-01 UTC) |
 | A | `tests/test_chewing.cpp` / `test_chewing` | No | `../data`: Pinyin C API's chewing parse, sentence and auxiliary text, train/reset/save and teardown | **Ported** (2026-11-01 UTC) |
 | A | `tests/test_zhuyin.cpp` / `test_zhuyin` | No | `../data`: the separate `zhuyin_*` C API, chewing parse and sentence, train/reset/save and teardown | **Ported** (2026-11-01 UTC) |
-| B | `tests/storage/test_parser2.cpp` / `test_parser2` | No | GLib `--parser`, `--incomplete`, `--scheme`; stdin; every parser variant, consumed length and raw key spans; `timer.h` output | **GAP** |
+| B | `tests/storage/test_parser2.cpp` / `test_parser2` | No | GLib `--parser`, `--incomplete`, `--scheme`; stdin; every parser variant, consumed length and raw key spans; `timer.h` output | **Ported** — `test_parser2.json`, 26 tkrzw cases |
 | C | `tests/storage/test_ngram.cpp` / `test_ngram` | Yes | `SingleGram`/`Bigram` operations; `/tmp/test.db`, `/tmp/snapshot.db` | **GAP** |
 | C | `tests/storage/test_flexible_ngram.cpp` / `test_flexible_ngram` | Yes | Flexible single-gram range search and mutation, bigram storage; `/tmp/training.db` | **GAP** |
 | C | `tests/storage/test_punct_table.cpp` / `test_punct_table` | Yes | Punctuation append/remove and snapshot save/load; `/tmp/punct.bin`, `/tmp/snapshot.db` | **GAP** |
@@ -130,7 +130,7 @@ ABI behaviors are N/A by design rather than artificially reconstructed.
 ## Totals
 
 - **libpinyin**: 17 `noinst_PROGRAMS`, six also in automated `TESTS`;
-  **4 Ported, 13 GAP** after family A. Family PRs update their rows
+  **5 Ported, 12 GAP** after families A and B. Family PRs update their rows
   and this total when their drop-in verification passes.
 - The libchewing rows retain their separately audited behavior-coverage
   classifications. They do not count toward the libpinyin drop-in total.

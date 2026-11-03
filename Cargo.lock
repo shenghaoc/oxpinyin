@@ -856,6 +856,7 @@ dependencies = [
  "oxpinyin-capi",
  "oxpinyin-core",
  "oxpinyin-data",
+ "oxpinyin-engine",
  "oxpinyin-input",
  "oxpinyin-kmm",
  "oxpinyin-store",

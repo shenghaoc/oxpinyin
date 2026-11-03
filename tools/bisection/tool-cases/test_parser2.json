@@ -1,0 +1,411 @@
+{
+  "schema": 1,
+  "cases": [
+    {
+      "id": "parser2-default",
+      "utility": "test_parser2",
+      "source": "tests/storage/test_parser2.cpp:37-147; tests/timer.h:30-44 at 074a2219",
+      "args": [],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "mask_print_time": true,
+      "stdin": {
+        "text": "ni3hao3\nni''hao'\n'''\nxian\nxianan\nbagn\nn\nzh\nni hao\nNI\nni!hao\n\nquit\nnihao\n"
+      }
+    },
+    {
+      "id": "parser2-full",
+      "utility": "test_parser2",
+      "source": "tests/storage/test_parser2.cpp:37-147; tests/timer.h:30-44 at 074a2219",
+      "args": [
+        "--parser",
+        "fullpinyin"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "mask_print_time": true,
+      "stdin": {
+        "text": "ni3hao3\nni''hao'\n'''\nxian\nxianan\nbagn\nn\nzh\nni hao\nNI\nni!hao\n\nquit\nnihao\n"
+      }
+    },
+    {
+      "id": "parser2-full-incomplete",
+      "utility": "test_parser2",
+      "source": "tests/storage/test_parser2.cpp:37-147; tests/timer.h:30-44 at 074a2219",
+      "args": [
+        "-p",
+        "fullpinyin",
+        "-i"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "mask_print_time": true,
+      "stdin": {
+        "text": "ni3hao3\nni''hao'\n'''\nxian\nxianan\nbagn\nn\nzh\nni hao\nNI\nni!hao\n\nquit\nnihao\n"
+      }
+    },
+    {
+      "id": "parser2-double",
+      "utility": "test_parser2",
+      "source": "tests/storage/test_parser2.cpp:37-147; tests/timer.h:30-44 at 074a2219",
+      "args": [
+        "-p",
+        "doublepinyin"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "mask_print_time": true,
+      "stdin": {
+        "text": "nihk\nni3hk3\nuang\nb\naaa\nni'hk\n\nquit\n"
+      }
+    },
+    {
+      "id": "parser2-double-incomplete",
+      "utility": "test_parser2",
+      "source": "tests/storage/test_parser2.cpp:37-147; tests/timer.h:30-44 at 074a2219",
+      "args": [
+        "-p",
+        "doublepinyin",
+        "--incomplete"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "mask_print_time": true,
+      "stdin": {
+        "text": "nihk\nni3hk3\nuang\nb\naaa\nni'hk\n\nquit\n"
+      }
+    },
+    {
+      "id": "parser2-standard",
+      "utility": "test_parser2",
+      "source": "tests/storage/test_parser2.cpp:37-147; tests/timer.h:30-44 at 074a2219",
+      "args": [
+        "-p",
+        "zhuyin",
+        "-s",
+        "standard"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "mask_print_time": true,
+      "stdin": {
+        "text": "su3cl3\nsu cl\n1\n5j/\nli\nju\n\nquit\n"
+      }
+    },
+    {
+      "id": "parser2-standard-incomplete",
+      "utility": "test_parser2",
+      "source": "tests/storage/test_parser2.cpp:37-147; tests/timer.h:30-44 at 074a2219",
+      "args": [
+        "-p",
+        "zhuyin",
+        "-s",
+        "standard",
+        "--incomplete"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "mask_print_time": true,
+      "stdin": {
+        "text": "su3cl3\nsu cl\n1\n5j/\nli\nju\n\nquit\n"
+      }
+    },
+    {
+      "id": "parser2-hsu",
+      "utility": "test_parser2",
+      "source": "tests/storage/test_parser2.cpp:37-147; tests/timer.h:30-44 at 074a2219",
+      "args": [
+        "-p",
+        "zhuyin",
+        "-s",
+        "hsu"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "mask_print_time": true,
+      "stdin": {
+        "text": "hk\nny\nb\nj\nnyka\n\nquit\n"
+      }
+    },
+    {
+      "id": "parser2-hsu-incomplete",
+      "utility": "test_parser2",
+      "source": "tests/storage/test_parser2.cpp:37-147; tests/timer.h:30-44 at 074a2219",
+      "args": [
+        "-p",
+        "zhuyin",
+        "-s",
+        "hsu",
+        "--incomplete"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "mask_print_time": true,
+      "stdin": {
+        "text": "hk\nny\nb\nj\nnyka\n\nquit\n"
+      }
+    },
+    {
+      "id": "parser2-dachen26",
+      "utility": "test_parser2",
+      "source": "tests/storage/test_parser2.cpp:37-147; tests/timer.h:30-44 at 074a2219",
+      "args": [
+        "-p",
+        "zhuyin",
+        "-s",
+        "dachen26"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "mask_print_time": true,
+      "stdin": {
+        "text": "b\nbb\nbbb\na\naa\naaa\nsu3cl3\n\nquit\n"
+      }
+    },
+    {
+      "id": "parser2-dachen26-incomplete",
+      "utility": "test_parser2",
+      "source": "tests/storage/test_parser2.cpp:37-147; tests/timer.h:30-44 at 074a2219",
+      "args": [
+        "-p",
+        "zhuyin",
+        "-s",
+        "dachen26",
+        "--incomplete"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "mask_print_time": true,
+      "stdin": {
+        "text": "b\nbb\nbbb\na\naa\naaa\nsu3cl3\n\nquit\n"
+      }
+    },
+    {
+      "id": "parser2-pinyindirect",
+      "utility": "test_parser2",
+      "source": "tests/storage/test_parser2.cpp:37-147; tests/timer.h:30-44 at 074a2219",
+      "args": [
+        "-p",
+        "pinyindirect"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "mask_print_time": true,
+      "stdin": {
+        "text": "ni3'' hao3  invalid\nbagn n\nnihao\nni'\nni6\n\nquit\n"
+      }
+    },
+    {
+      "id": "parser2-pinyindirect-incomplete",
+      "utility": "test_parser2",
+      "source": "tests/storage/test_parser2.cpp:37-147; tests/timer.h:30-44 at 074a2219",
+      "args": [
+        "-p",
+        "pinyindirect",
+        "--incomplete"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "mask_print_time": true,
+      "stdin": {
+        "text": "ni3'' hao3  invalid\nbagn n\nnihao\nni'\nni6\n\nquit\n"
+      }
+    },
+    {
+      "id": "parser2-zhuyindirect",
+      "utility": "test_parser2",
+      "source": "tests/storage/test_parser2.cpp:37-147; tests/timer.h:30-44 at 074a2219",
+      "args": [
+        "-p",
+        "zhuyindirect"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "mask_print_time": true,
+      "stdin": {
+        "text": "ㄋㄧˇ' ㄏㄠˇ  bad\nㄋㄧ ㄏㄠ\nㄅ\nㄋㄧˊ  \n\nquit\n"
+      }
+    },
+    {
+      "id": "parser2-zhuyindirect-incomplete",
+      "utility": "test_parser2",
+      "source": "tests/storage/test_parser2.cpp:37-147; tests/timer.h:30-44 at 074a2219",
+      "args": [
+        "-p",
+        "zhuyindirect",
+        "--incomplete"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "mask_print_time": true,
+      "stdin": {
+        "text": "ㄋㄧˇ' ㄏㄠˇ  bad\nㄋㄧ ㄏㄠ\nㄅ\nㄋㄧˊ  \n\nquit\n"
+      }
+    },
+    {
+      "id": "parser2-unknown-parser",
+      "utility": "test_parser2",
+      "source": "tests/storage/test_parser2.cpp:37-147; tests/timer.h:30-44 at 074a2219",
+      "args": [
+        "--parser",
+        "unknown"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "mask_print_time": true,
+      "stdin": {
+        "text": "ni3hao3\nni''hao'\n'''\nxian\nxianan\nbagn\nn\nzh\nni hao\nNI\nni!hao\n\nquit\nnihao\n"
+      }
+    },
+    {
+      "id": "parser2-zhuyin-default-scheme",
+      "utility": "test_parser2",
+      "source": "tests/storage/test_parser2.cpp:37-147; tests/timer.h:30-44 at 074a2219",
+      "args": [
+        "--parser",
+        "zhuyin"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "mask_print_time": true,
+      "stdin": {
+        "text": "ni3hao3\nni''hao'\n'''\nxian\nxianan\nbagn\nn\nzh\nni hao\nNI\nni!hao\n\nquit\nnihao\n"
+      }
+    },
+    {
+      "id": "parser2-unknown-scheme",
+      "utility": "test_parser2",
+      "source": "tests/storage/test_parser2.cpp:37-147; tests/timer.h:30-44 at 074a2219",
+      "args": [
+        "--parser",
+        "zhuyin",
+        "--scheme",
+        "unknown"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "mask_print_time": true,
+      "stdin": {
+        "text": "ni3hao3\nni''hao'\n'''\nxian\nxianan\nbagn\nn\nzh\nni hao\nNI\nni!hao\n\nquit\nnihao\n"
+      }
+    },
+    {
+      "id": "parser2-ignored-args",
+      "utility": "test_parser2",
+      "source": "tests/storage/test_parser2.cpp:37-147; tests/timer.h:30-44 at 074a2219",
+      "args": [
+        "unread-file",
+        "another-file"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "mask_print_time": true,
+      "stdin": {
+        "text": "nihao\n"
+      }
+    },
+    {
+      "id": "parser2-no-final-newline",
+      "utility": "test_parser2",
+      "source": "tests/storage/test_parser2.cpp:37-147; tests/timer.h:30-44 at 074a2219",
+      "args": [],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "mask_print_time": true,
+      "stdin": {
+        "text": "ni3hao3"
+      }
+    },
+    {
+      "id": "parser2-quit-exact",
+      "utility": "test_parser2",
+      "source": "tests/storage/test_parser2.cpp:37-147; tests/timer.h:30-44 at 074a2219",
+      "args": [],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "mask_print_time": true,
+      "stdin": {
+        "text": "quitx\nquit\nnihao\n"
+      }
+    },
+    {
+      "id": "parser2-eof",
+      "utility": "test_parser2",
+      "source": "tests/storage/test_parser2.cpp:37-147; tests/timer.h:30-44 at 074a2219",
+      "args": [],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "mask_print_time": true
+    },
+    {
+      "id": "parser2-help",
+      "utility": "test_parser2",
+      "source": "tests/storage/test_parser2.cpp:37-147; tests/timer.h:30-44 at 074a2219",
+      "args": [
+        "--help"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "mask_print_time": true
+    },
+    {
+      "id": "parser2-bad-option",
+      "utility": "test_parser2",
+      "source": "tests/storage/test_parser2.cpp:37-147; tests/timer.h:30-44 at 074a2219",
+      "args": [
+        "--bogus"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "mask_print_time": true
+    },
+    {
+      "id": "parser2-missing-parser",
+      "utility": "test_parser2",
+      "source": "tests/storage/test_parser2.cpp:37-147; tests/timer.h:30-44 at 074a2219",
+      "args": [
+        "--parser"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "mask_print_time": true
+    },
+    {
+      "id": "parser2-missing-scheme",
+      "utility": "test_parser2",
+      "source": "tests/storage/test_parser2.cpp:37-147; tests/timer.h:30-44 at 074a2219",
+      "args": [
+        "--scheme"
+      ],
+      "env": {
+        "LC_ALL": "C"
+      },
+      "mask_print_time": true
+    }
+  ]
+}

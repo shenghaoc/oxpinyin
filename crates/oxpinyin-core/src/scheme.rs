@@ -1629,28 +1629,16 @@ fn search_zhuyin_index(
 /// `(syllable, tone)`.
 #[must_use]
 pub fn parse_zhuyin_direct(input: &str, options: u32) -> Vec<(SyllableKey, u8)> {
-    let bytes = input.as_bytes();
-    let is_separator = |byte: u8| byte == b' ' || byte == b'\'';
     let mut keys = Vec::new();
-    let mut cur = 0;
-    while cur < bytes.len() {
-        let next = bytes[cur..]
-            .iter()
-            .position(|&byte| is_separator(byte))
-            .map_or(bytes.len(), |offset| cur + offset);
-        // Separators are ASCII, so both ends are char boundaries.
-        let Some(key) = input
-            .get(cur..next)
-            .and_then(|segment| parse_zhuyin_direct_key(segment, options))
-        else {
-            return keys;
-        };
-        keys.push(key);
-        cur = bytes[next..]
-            .iter()
-            .position(|&byte| !is_separator(byte))
-            .map_or(bytes.len(), |offset| next + offset);
-    }
+    crate::direct::parse(
+        input.as_bytes(),
+        |span| {
+            input
+                .get(span)
+                .and_then(|segment| parse_zhuyin_direct_key(segment, options))
+        },
+        |key, _| keys.push(key),
+    );
     keys
 }
 
@@ -1660,7 +1648,7 @@ pub fn parse_zhuyin_direct(input: &str, options: u32) -> Vec<(SyllableKey, u8)> 
 /// `zhuyin_index` spelling admitted by `check_chewing_options` with the
 /// ambiguity bits cleared. `FORCE_TONE` never refuses: the default tone
 /// is already non-zero.
-fn parse_zhuyin_direct_key(segment: &str, options: u32) -> Option<(SyllableKey, u8)> {
+pub(crate) fn parse_zhuyin_direct_key(segment: &str, options: u32) -> Option<(SyllableKey, u8)> {
     let options = options & !PINYIN_AMB_ALL;
     let last = segment.chars().last()?;
     let mut tone = 1_u8;

@@ -410,3 +410,27 @@ recorded in
 the case carries that record and is POLICY-ACCEPTED on a cell where the
 padding is its only divergence, DIFFER where the container header also
 differs.
+
+
+## Parser test program (2026-11-01 UTC)
+
+`tool-cases/test_parser2.json` has 26 cases: the default/full, double,
+standard/Hsu/DaChenCP26 zhuyin and two direct parsers, incomplete options,
+unknown-parser/scheme fallbacks, ignored positional arguments, EOF,
+unterminated input, exact `quit`, and GLib help/errors. All 26 match on
+reference tkrzw with `mask_print_time`; consumed lengths, key spellings,
+byte spans, blank lines, exit status and stderr are compared. This program
+opens no DBM. The selector chooses tkrzw for family B.
+
+Run against the prepared pin and subject binaries with:
+
+```sh
+just heavy -- just runner tool-diff --pin-build "$PIN_BUILD" \
+  --subject-dir "$SUBJECT_DIR" \
+  --case-file tools/bisection/tool-cases/test_parser2.json
+```
+
+
+The named mutation `pin-tests-b-direct-span-start` increments only the raw
+begin offset returned by the tools accessor. `parser2-pinyindirect` reports
+1 DIFFER. Restoring the source returns all 26 cases to MATCH.

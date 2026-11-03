@@ -349,7 +349,25 @@ Library visibility filters the cached raw tokens on every query.
 | Full pinyin parse | forward DP, one `parse_value_t` per byte (`storage/pinyin_parser2.cpp:64`, `:217`); spans up to `max_full_pinyin_length = 7` (`:82`); a step is replaced by a longer parse, else fewer keys, else lower total distance (`:296-310`); `final_step` backtracks (`:346`); O(7n) time, O(n) space | `SegmentGraph::build_with_options` builds the whole lattice (`emit_edges`), then `SegmentGraph::fewest_keys` selects (`oxpinyin-core/src/graph.rs`); O(7n) time, O(7n) space | different / argued — since #832 `fewest_keys` ranks a step by (key count, total distance) and replaces it only on strictly less, the pin's three rules; verification in §11 |
 | Double pinyin | greedy longest match, `DoublePinyinParser2::parse` (`storage/pinyin_parser2.cpp:532`), `parse_one_key` (`:405`) | `parse_with_options`, `parse_one_key` in `oxpinyin-core/src/scheme.rs` | same / follows |
 | Zhuyin keyboards | `storage/zhuyin_parser2.cpp` (DaChen CP26 at `:573`) | `oxpinyin-core/src/zhuyin_map.rs` and the scheme parsers | same / follows |
-| Pinyin direct parser | `PinyinDirectParser2` (`storage/pinyin_parser2.cpp:618`), used only to load `.table` text (`storage/chewing_large_table2.cpp:130`, `storage/phrase_index.cpp:564`), so on the data-generation path, not the runtime | `parse_pinyin_keys` (`oxpinyin-datagen/src/system.rs`), which resolves spellings through `ChewingKey::from_pinyin` where the pin looks them up in `pinyin_index` with option flags | different / unverified (§11) |
+| Direct parsers | `PinyinDirectParser2::parse` (`storage/pinyin_parser2.cpp:623-715`) and `ZhuyinDirectParser2::parse` (`storage/zhuyin_parser2.cpp:858-960`) probe a whole segment, append its key/raw begin/raw end, skip consecutive spaces/apostrophes and return the last reached byte; first failure stops | `oxpinyin-core::direct::parse` shares that walk with the shipping `parse_zhuyin_direct`; tools expose its consumed count and spans and reuse `FullPinyinParser::parse_one_key` / `parse_zhuyin_direct_key` | same / follows; the nonshipping `test_parser2` cases exercise both direct parsers and their incomplete option |
+
+The nonshipping parser driver (`tests/storage/test_parser2.cpp:37-147` at
+074a2219) uses the same `SegmentGraph` selection and `apostrophe_extended`
+helper as the C API's `Session::full_parsed_len`. It takes keys before the
+scan-matrix transformations: the pin disables parser `post_process2` at
+`pinyin_parser2.cpp:377-379`. Double-pinyin and keyboard zhuyin use the
+existing `parse_with_options` results directly. Tool-only accessors are
+behind `tools`; shipping parsing has no additional result allocation.
+
+For n input bytes and k returned keys, the shared direct walk visits each
+segment and separator once: O(n) scanning and O(k) output, with the same
+single-key parser work as before. The pin's bounded inventories add
+O(m log T) work across m segments (T is the fixed table size); Rust uses
+the existing frozen lookup maps. Full-pinyin selection keeps the O(7n)
+time/space bound above and copies k selected keys/spans; keyboard parser
+bounds are unchanged. The driver's 1000 parse calls and the `gettimeofday`
+and `printf` calls are the pin's protocol (`tests/timer.h:30-44`), not a
+performance measurement campaign.
 
 ## 3. Phonetic key matrix
 

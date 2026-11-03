@@ -41,3 +41,5 @@ pub mod validate_k_mixture_model;
 /// The pin's line tagger, shared with the KMM operations that read its text
 /// models. Its edge calls are `oxpinyin-input`'s.
 pub use oxpinyin_kmm::taglib;
+
+pub mod test_parser2;

@@ -26,6 +26,8 @@ mod nbest;
 mod phrase;
 mod session;
 mod storage;
+#[cfg(feature = "tools")]
+pub use session::tool;
 
 pub use candidate::{Candidate, CandidateKind, CandidateList, rank_by_frequency};
 pub use char_offset::{character_offset_over_keys, character_offset_with_walk_over_keys};

@@ -39,3 +39,7 @@ path = "tests/integration.rs"
 [[bench]]
 name = "parse_and_graph"
 harness = false
+
+[features]
+# Parser result access for the nonshipping pin test programs.
+tools = []
