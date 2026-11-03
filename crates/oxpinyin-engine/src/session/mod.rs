@@ -405,6 +405,30 @@ fn flush_window_batch(batch: &mut Vec<Candidate>, into: &mut Vec<Candidate>) {
 /// membership rule as [`flush_window_batch`], without a batch buffer
 /// between the lookups and the output.
 fn order_window_tail(into: &mut Vec<Candidate>, start: usize) {
+    // Strict token order implies library order and uniqueness. No row can
+    // move or be removed by the fallback, so this O(n), O(1)-space check
+    // avoids its sort and membership-set allocation on ordered windows.
+    if window_tokens_are_strictly_increasing(&into[start..]) {
+        return;
+    }
+    sort_dedup_window_tail(into, start);
+}
+
+fn window_tokens_are_strictly_increasing(window: &[Candidate]) -> bool {
+    let mut previous = None;
+    for candidate in window {
+        let Some(token) = candidate.token() else {
+            return false;
+        };
+        if previous.is_some_and(|previous| previous >= token) {
+            return false;
+        }
+        previous = Some(token);
+    }
+    true
+}
+
+fn sort_dedup_window_tail(into: &mut Vec<Candidate>, start: usize) {
     into[start..].sort_by_key(|candidate| {
         candidate
             .token()
