@@ -40,6 +40,21 @@ pub fn build_path(dir: &Path, name: &OsStr) -> PathBuf {
     path_from_c_string(joined)
 }
 
+/// Build a system/addon chunk path, retaining Windows `OsStr` bytes through
+/// GLib's separator handling without a lossy UTF-8 conversion.
+#[must_use]
+pub fn build_chunk_path(dir: &Path, name: &OsStr) -> PathBuf {
+    #[cfg(not(windows))]
+    {
+        build_path(dir, name)
+    }
+    #[cfg(windows)]
+    {
+        let joined = build_filename(Some(&c_string(dir.as_os_str())), Some(&c_string(name)));
+        PathBuf::from(native::chunk_path_from_encoded(joined.into_bytes()))
+    }
+}
+
 /// `g_build_filename(dir, name, NULL)` as the bytes `fprintf("%s")`
 /// writes. `None` is the pin's `NULL` element.
 #[must_use]

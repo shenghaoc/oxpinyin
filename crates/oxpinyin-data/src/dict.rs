@@ -185,9 +185,10 @@ fn visible_extension_exists(
         Ok(items.iter().any(|item| {
             prefix_keys_match(keys, &item.keys)
                 && visible(item.token)
-                && libraries
-                    .library(item.token)
-                    .is_some_and(|library| library.item(item.token).is_some())
+                && libraries.library(item.token).is_some_and(|library| {
+                    (library.is_detached() && !library.has_history())
+                        || library.originally_contains(item.token & 0x00ff_ffff)
+                })
         }))
     })
 }
@@ -507,6 +508,52 @@ impl SystemDictionary {
 impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTables>>
     SystemDictionary<L, T>
 {
+    /// Resolve system-index tokens through the live owner of detached chunks.
+    ///
+    /// # Errors
+    /// Returns a dictionary error when the system index cannot be searched.
+    pub fn lookup_with_live(
+        &self,
+        syllables: &[SyllableKey],
+        out: &mut Vec<PhraseEntry>,
+        price: bool,
+        mut visible: impl FnMut(u32) -> bool,
+        mut live: impl FnMut(u32, Option<&[ChewingKey]>) -> Option<PhraseEntry>,
+    ) -> Result<bool, DictError> {
+        out.clear();
+        if syllables.is_empty() {
+            return Ok(false);
+        }
+        let Some(keys) = syllables_to_chewing_keys(syllables) else {
+            return Ok(false);
+        };
+        let tokens = self.pinyin.search(&keys)?;
+        let pricing = price.then_some(keys.as_slice());
+        let mut unreadable = false;
+        for token in tokens {
+            // Unloaded or removed tokens are not malformed loaded items.
+            // Their live owner can be absent precisely because it was unloaded.
+            if !visible(token) {
+                continue;
+            }
+            let entry = if self
+                .libraries()
+                .library(token)
+                .is_some_and(|library| library.is_detached())
+            {
+                live(token, pricing)
+            } else {
+                resolve_item(self.libraries(), pricing, token)
+            };
+            if let Some(entry) = entry {
+                out.push(entry);
+            } else {
+                unreadable |= library_loaded(self.libraries(), self.user_nibbles, token);
+            }
+        }
+        Ok(unreadable)
+    }
+
     /// Whether `token`'s library is loaded in this facade — a system
     /// chunk, or a `table.conf` `USER_FILE` sub-index — the pin's
     /// non-`NULL` `PhraseIndexRanges` array for it.
@@ -1233,7 +1280,7 @@ impl AddonDictionary {
         let Some(file) = file else {
             return Err(LibraryError::Row(RowFault::NullChunkName));
         };
-        let path = oxpinyin_input::path::build_path(dir, file.as_ref());
+        let path = oxpinyin_input::path::build_chunk_path(dir, file.as_ref());
         match std::fs::metadata(&path) {
             // A directory is `MemoryChunk::mmap`'s to judge by its reported
             // size (`phrase_library::directory_chunk_fault`, Unix only).

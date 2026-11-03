@@ -16,15 +16,28 @@ use std::ffi::CStr;
 pub(crate) struct ReadChunk(c_int);
 
 impl ReadChunk {
-    pub(crate) fn open(path: &CStr) -> std::io::Result<Self> {
+    pub(crate) fn open(path: &std::path::Path) -> std::io::Result<Self> {
         #[cfg(unix)]
-        let flags = libc::O_RDONLY;
+        let fd = {
+            let path = crate::path::c_string(path.as_os_str());
+            // SAFETY: path is NUL-terminated and lives through open; without
+            // O_CREAT its variadic mode argument is not read.
+            unsafe { libc::open(path.as_ptr(), libc::O_RDONLY) }
+        };
         #[cfg(windows)]
-        let flags = libc::O_RDONLY | libc::O_BINARY;
-        // SAFETY: `path` is NUL-terminated and lives through open. Without
-        // O_CREAT the variadic mode argument is not read. This owner alone
-        // closes the returned descriptor.
-        let fd = unsafe { libc::open(path.as_ptr(), flags) };
+        let fd = {
+            use std::os::windows::ffi::OsStrExt as _;
+            let wide: Vec<u16> = path
+                .as_os_str()
+                .encode_wide()
+                .take_while(|&word| word != 0)
+                .chain(std::iter::once(0))
+                .collect();
+            // SAFETY: wide is NUL-terminated and lives through _wopen; without
+            // O_CREAT its variadic mode argument is not read. The returned CRT
+            // descriptor is owned and closed by ReadChunk.
+            unsafe { libc::wopen(wide.as_ptr(), libc::O_RDONLY | libc::O_BINARY) }
+        };
         if fd < 0 {
             Err(std::io::Error::last_os_error())
         } else {
@@ -469,6 +482,16 @@ pub(crate) fn build_filename(dir: Option<&CStr>, name: Option<&CStr>) -> std::ff
     // one else owns it.
     unsafe { glib_sys::g_free(joined.cast()) };
     std::ffi::CString::new(bytes).unwrap_or_default()
+}
+
+/// GLib's filename builder joins or removes only ASCII separators. The
+/// inputs are the current platform's `OsStr::as_encoded_bytes`, truncated at
+/// their NULs; GLib does not alter the non-ASCII encoded segments.
+#[cfg(windows)]
+pub(crate) fn chunk_path_from_encoded(bytes: Vec<u8>) -> std::ffi::OsString {
+    // SAFETY: `g_build_filename` has only combined self-synchronizing encoded
+    // OsStr segments at ASCII separator boundaries from this same process.
+    unsafe { std::ffi::OsString::from_encoded_bytes_unchecked(bytes) }
 }
 
 /// `g_rename(from, to)`; `rename(2)` is what the Unix macro expands to.

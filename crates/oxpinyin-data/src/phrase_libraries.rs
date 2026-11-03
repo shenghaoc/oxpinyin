@@ -52,7 +52,7 @@ impl Loaded {
     fn item_count(&self) -> u64 {
         *self
             .item_count
-            .get_or_init(|| self.library.items().count() as u64)
+            .get_or_init(|| self.library.original_item_count())
     }
 }
 
@@ -170,7 +170,7 @@ impl PhraseLibraries {
             }
             seen[slot] = true;
             // `g_build_filename`: a name never leaves the directory.
-            let path = oxpinyin_input::path::build_path(dir, file.as_ref());
+            let path = oxpinyin_input::path::build_chunk_path(dir, file.as_ref());
             match std::fs::metadata(&path) {
                 // A directory is `MemoryChunk::mmap`'s to judge by its
                 // reported size (`phrase_library::directory_chunk_fault`);
@@ -284,19 +284,10 @@ impl PhraseLibraries {
         if self.is_loaded(nibble) {
             return Ok(false);
         }
-        let (library, accepted) = match PhraseLibrary::open(path) {
-            Ok(library) => (library, true),
-            // The pin's `SubPhraseIndex::load` refused the layout and its
-            // caller ignored the `false`: the sub-index is present but
-            // empty, and the load reports success (`pinyin.cpp:264-277`,
-            // `zhuyin.cpp:208-221`). `FacadePhraseIndex::load` subtracts the
-            // old total, then returns `false` **before** adding the newly
-            // read one (`phrase_index.cpp:237-248`), so the local total is
-            // kept on the empty sub-index but stays out of the facade
-            // aggregate.
-            Err(LibraryError::Layout(fault)) => (PhraseLibrary::empty(fault.total_freq), false),
-            Err(error) => return Err(error),
-        };
+        let library = PhraseLibrary::open_retaining_layout(path)?;
+        // A failed layout leaves the mapped chunk in the empty sub-index,
+        // but its total does not enter the facade total (phrase_index.cpp:244-247).
+        let accepted = !library.is_layout_failed();
         let slot = &mut self.by_nibble[slot];
         if accepted {
             let total = &mut self.total;
@@ -326,25 +317,17 @@ impl PhraseLibraries {
         let Some(old) = slot.as_ref().map(|loaded| loaded.library.total_freq()) else {
             return Ok(false);
         };
-        let library = match PhraseLibrary::open(path) {
-            Ok(library) => library,
-            Err(LibraryError::Layout(fault)) => {
-                // `FacadePhraseIndex::load` subtracts the old sub-index's
-                // total first, then returns false without adding the new
-                // one; the caller ignores the false and the slot holds the
-                // empty sub-index the failed load left.
-                let total = fault.total_freq;
-                self.total = self.total.wrapping_sub(old);
-                self.stocked &= !(1 << nibble);
-                *slot = Some(Loaded {
-                    library: PhraseLibrary::empty(total),
-                    path: path.to_path_buf(),
-                    item_count: OnceLock::new(),
-                });
-                return Ok(true);
-            }
-            Err(error) => return Err(error),
-        };
+        let library = PhraseLibrary::open_retaining_layout(path)?;
+        if library.is_layout_failed() {
+            self.total = self.total.wrapping_sub(old);
+            self.stocked &= !(1 << nibble);
+            *slot = Some(Loaded {
+                library,
+                path: path.to_path_buf(),
+                item_count: OnceLock::new(),
+            });
+            return Ok(true);
+        }
         // The old sub-index's total leaves and the new one's enters, as
         // `FacadePhraseIndex::load` does over a loaded slot.
         self.total = self
@@ -409,6 +392,19 @@ impl PhraseLibraries {
         self.total = self.total.wrapping_sub(loaded.library.total_freq());
         self.stocked &= !(1 << nibble);
         Some((loaded.path, loaded.library))
+    }
+
+    /// Transfer a loaded library's mapping into the session's live sub-index.
+    /// The library entry keeps its load-time metadata and path.
+    pub fn take_live_content(
+        &mut self,
+        nibble: u8,
+    ) -> Option<crate::phrase_library::PhraseContent> {
+        self.by_nibble
+            .get_mut(usize::from(nibble))?
+            .as_mut()?
+            .library
+            .take_live_content()
     }
 
     /// Whether library `nibble` is loaded.
@@ -541,6 +537,33 @@ impl PhraseLibraries {
     /// [`Self::item_count`] over the loaded libraries `visible` accepts.
     pub fn item_count_where(&self, visible: impl Fn(u8) -> bool) -> u64 {
         self.sum_loaded(visible, Loaded::item_count)
+    }
+
+    /// Count initial items, consulting the live owner before first-write
+    /// history exists. The scalar is cached just as in the direct reader.
+    pub fn item_count_where_live(
+        &self,
+        visible: impl Fn(u8) -> bool,
+        pristine: impl Fn(u8) -> Option<u64>,
+    ) -> u64 {
+        self.by_nibble
+            .iter()
+            .enumerate()
+            .filter_map(|(nibble, slot)| {
+                let nibble = u8::try_from(nibble).ok()?;
+                if !visible(nibble) {
+                    return None;
+                }
+                let loaded = slot.as_ref()?;
+                Some(*loaded.item_count.get_or_init(|| {
+                    if loaded.library.is_detached() && !loaded.library.has_history() {
+                        pristine(nibble).unwrap_or(0)
+                    } else {
+                        loaded.library.original_item_count()
+                    }
+                }))
+            })
+            .fold(0_u64, u64::saturating_add)
     }
 
     fn sum_loaded(&self, visible: impl Fn(u8) -> bool, count: impl Fn(&Loaded) -> u64) -> u64 {

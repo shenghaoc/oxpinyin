@@ -390,6 +390,14 @@ impl Content {
             item_override: None,
         }
     }
+    fn capture_history(&self, original: SystemLibraryRef<'_>) {
+        if let Some(library) = original.mapped {
+            library.capture_history(
+                self.backing.bytes(Area::Offsets),
+                self.backing.bytes(Area::Content),
+            );
+        }
+    }
     fn data_len(&self) -> usize {
         self.items.data_end
     }
@@ -552,13 +560,10 @@ fn origin_and_content_bytes(original: Option<SystemLibraryRef<'_>>) -> (Origin<'
         Some(library) => match &library.mapped {
             Some(mapped) => (
                 Origin::Mapped(mapped),
-                Content::new(mapped.private_content().map_or_else(
-                    |_| Backing::Inline {
-                        offsets: mapped.offset_array().to_vec(),
-                        content: mapped.item_area().to_vec(),
-                    },
-                    Backing::Mapped,
-                )),
+                Content::new(Backing::Inline {
+                    offsets: mapped.offset_array().to_vec(),
+                    content: mapped.item_area().to_vec(),
+                }),
             ),
             None if !library.items.is_empty() => {
                 let mut bytes = vec![0; FIRST_ITEM_OFFSET];
@@ -647,6 +652,7 @@ enum Undo<'l> {
 pub(crate) struct Merge<'a, 'l> {
     origin: Origin<'a>,
     content: Content,
+    live_owner: bool,
     /// One entry per mutation of the mapping, in order. Dropped when the replay
     /// ends or stops; applied backwards only by [`Self::rollback`].
     undo: Vec<Undo<'l>>,
@@ -677,12 +683,34 @@ impl<'a, 'l> Merge<'a, 'l> {
         Self {
             origin,
             content,
+            live_owner: false,
             undo: Vec::new(),
             touched: Vec::new(),
             has_added_items: false,
             overreach: false,
             has_original: original.is_some(),
             initial_total: original.map_or(0, |library| library.total),
+            stale: Stale::Default(vec![0; PHRASE_ITEM_HEADER]),
+            stale_slot: None,
+            appends: 0,
+        }
+    }
+
+    pub(crate) fn from_live(original: Option<SystemLibraryRef<'a>>, live: ReplayedLibrary) -> Self {
+        let origin = original
+            .and_then(|library| library.mapped)
+            .map_or(Origin::None, Origin::Mapped);
+        let initial_total = live.content.total;
+        Self {
+            origin,
+            content: live.content,
+            live_owner: true,
+            undo: Vec::new(),
+            touched: Vec::new(),
+            has_added_items: false,
+            overreach: false,
+            has_original: original.is_some(),
+            initial_total,
             stale: Stale::Default(vec![0; PHRASE_ITEM_HEADER]),
             stale_slot: None,
             appends: 0,
@@ -806,7 +834,16 @@ impl<'a, 'l> Merge<'a, 'l> {
         }
     }
 
+    fn capture_history(&self) {
+        if let Origin::Mapped(library) = &self.origin {
+            library.capture_history(
+                self.content.backing.bytes(Area::Offsets),
+                self.content.backing.bytes(Area::Content),
+            );
+        }
+    }
     fn set_offset(&mut self, slot: u32, offset: u32) {
+        self.capture_history();
         self.touched.push(slot);
         if self.content.slot_write_hits_mapping(slot)
             && let Some(old) = self.content.slot_offset(slot)
@@ -877,6 +914,7 @@ impl<'a, 'l> Merge<'a, 'l> {
             return Err(Stop::ShortAdd(token));
         }
         let unigram = raw_unigram(payload);
+        self.capture_history();
         let offset = self.content.append(payload);
         self.appends += 1;
         self.set_offset(slot, offset);
@@ -944,6 +982,7 @@ impl<'a, 'l> Merge<'a, 'l> {
                 if bytes.as_ref() != old_item {
                     return Err(mismatch());
                 }
+                self.capture_history();
                 if new_item.len() > len {
                     // A remove and an add of the whole new payload.
                     let old_unigram = raw_unigram(&bytes);
@@ -1030,6 +1069,7 @@ impl<'a, 'l> Merge<'a, 'l> {
                 Stale::Shipped { .. } | Stale::Owned { .. } => false,
             },
             Place::Shipped { offset, .. } => {
+                self.capture_history();
                 // The stale compare made `old` the bytes at this place.
                 if self.content.shipped_has(offset, bytes.len())
                     && let Some(old) = old.get(..bytes.len())
@@ -1038,7 +1078,10 @@ impl<'a, 'l> Merge<'a, 'l> {
                 }
                 self.content.write_shipped(offset, bytes)
             }
-            Place::Owned { offset, .. } => self.content.write(offset, bytes),
+            Place::Owned { offset, .. } => {
+                self.capture_history();
+                self.content.write(offset, bytes)
+            }
         }
     }
 
@@ -1094,6 +1137,7 @@ impl<'a, 'l> Merge<'a, 'l> {
             #[cfg(test)]
             slots: Vec::new(),
             has_added_items: false,
+            rejected: Vec::new(),
             removed: false,
         }
     }
@@ -1152,6 +1196,9 @@ pub(crate) struct ReplayedLibrary {
     #[cfg(test)]
     slots: Vec<u32>,
     has_added_items: bool,
+    /// Journal-written slots rejected by row 107, even when their two-byte
+    /// header remains readable.
+    rejected: Vec<u32>,
     /// The replay took an item the shipped chunk holds out of the buffer.
     removed: bool,
 }
@@ -1165,6 +1212,22 @@ impl std::fmt::Debug for ReplayedLibrary {
 }
 
 impl ReplayedLibrary {
+    pub(crate) fn from_mapping(
+        mapping: oxpinyin_data::phrase_library::PhraseContent,
+        total: u32,
+    ) -> Self {
+        let mut content = Content::new(Backing::Mapped(mapping));
+        content.total = total;
+        Self {
+            content,
+            #[cfg(test)]
+            slots: Vec::new(),
+            has_added_items: false,
+            rejected: Vec::new(),
+            removed: false,
+        }
+    }
+
     pub(crate) fn item(&self, slot: u32) -> Option<ChunkItem> {
         decode_phrase_item(&self.item_bytes(slot)?).ok()
     }
@@ -1173,6 +1236,23 @@ impl ReplayedLibrary {
         self.content.slot_offset(slot).is_some_and(|offset| {
             offset != 0 && matches!(self.content.header(offset as usize), Found::Past)
         })
+    }
+
+    /// Count from the offset and two header bytes, except a journal item
+    /// rejected by row 107, which answers no item to every getter.
+    pub(crate) fn pronunciation_count(&self, slot: u32) -> Option<u32> {
+        if self.rejected.binary_search(&slot).is_ok() {
+            return None;
+        }
+        let offset = self
+            .content
+            .slot_offset(slot)
+            .filter(|&offset| offset != 0)? as usize;
+        if offset.checked_add(2)? > self.content.data_len() {
+            return None;
+        }
+        self.content.byte(offset)?;
+        self.content.byte(offset.checked_add(1)?).map(u32::from)
     }
 
     /// `SubPhraseIndex::m_total_freq` of the library the buffer holds.
@@ -1211,7 +1291,12 @@ impl ReplayedLibrary {
     /// `guint32` total must take `delta` (`ERROR_INTEGER_OVERFLOW`, before any
     /// write); then the field takes `delta` unchecked, so it wraps, and the
     /// total takes it.
-    pub(crate) fn add_unigram(&mut self, slot: u32, delta: u32) -> UnigramAdd {
+    pub(crate) fn add_unigram(
+        &mut self,
+        slot: u32,
+        delta: u32,
+        original: Option<SystemLibraryRef<'_>>,
+    ) -> UnigramAdd {
         let Some(offset) = self.content.slot_offset(slot).filter(|&offset| offset != 0) else {
             return UnigramAdd::Missing;
         };
@@ -1231,6 +1316,9 @@ impl ReplayedLibrary {
             return UnigramAdd::Refused;
         };
         let field = u32::from_le_bytes([b0, b1, b2, b3]);
+        if let Some(original) = original {
+            self.content.capture_history(original);
+        }
         self.content
             .write(at, &field.wrapping_add(delta).to_le_bytes());
         self.content.total = total;
@@ -1242,7 +1330,9 @@ impl ReplayedLibrary {
     /// the slot's offset word points at it, and the `guint32` total takes the
     /// payload's unigram. The slot becomes a touched slot, and the buffer holds
     /// an item the shipped chunk may lack.
-    pub(crate) fn add_item(&mut self, slot: u32, payload: &[u8]) {
+    pub(crate) fn add_item(&mut self, slot: u32, payload: &[u8], original: SystemLibraryRef<'_>) {
+        self.content.capture_history(original);
+        self.rejected.retain(|&rejected| rejected != slot);
         let unigram = raw_unigram(payload);
         let offset = self.content.append(payload);
         self.content.set_slot_offset(slot, offset);
@@ -1253,7 +1343,11 @@ impl ReplayedLibrary {
     /// `SubPhraseIndex::remove_phrase_item` over the buffer (`:219-236`): the
     /// readable item's bytes are copied out, its offset word is zeroed and its
     /// unigram leaves the total. `None` where no readable item is there.
-    pub(crate) fn remove_item(&mut self, slot: u32) -> Option<Vec<u8>> {
+    pub(crate) fn remove_item(
+        &mut self,
+        slot: u32,
+        original: SystemLibraryRef<'_>,
+    ) -> Option<Vec<u8>> {
         let offset = self
             .content
             .slot_offset(slot)
@@ -1262,6 +1356,7 @@ impl ReplayedLibrary {
             return None;
         };
         let bytes = self.content.item(offset, len)?.into_owned();
+        self.content.capture_history(original);
         self.content.set_slot_offset(slot, 0);
         self.content.total = self.content.total.wrapping_sub(raw_unigram(&bytes));
         Some(bytes)
@@ -1297,6 +1392,7 @@ impl ReplayedLibrary {
             #[cfg(test)]
             slots: Vec::new(),
             has_added_items: false,
+            rejected: Vec::new(),
             removed: false,
         }
     }
@@ -1314,6 +1410,7 @@ impl ReplayedLibrary {
         slot: u32,
         readings: impl Iterator<Item = Vec<oxpinyin_core::ChewingKey>>,
         delta: u32,
+        original: Option<SystemLibraryRef<'_>>,
     ) -> bool {
         let Some(offset) = self.content.slot_offset(slot).filter(|&offset| offset != 0) else {
             return false;
@@ -1358,10 +1455,16 @@ impl ReplayedLibrary {
                     break;
                 };
                 total = next;
+                if let Some(original) = original {
+                    self.content.capture_history(original);
+                }
                 self.content
                     .write(count_at, &count.wrapping_add(delta).to_le_bytes());
             }
         }
+        // A reading count can alias a different item's header. Keep the
+        // per-token removal check active without scanning all slots here.
+        self.removed = true;
         true
     }
 
@@ -1376,6 +1479,12 @@ impl ReplayedLibrary {
             return None;
         };
         self.content.item(offset, len)
+    }
+
+    pub(crate) fn readable_item_count(&self) -> u64 {
+        (0..self.content.slots.data_end / 4)
+            .filter(|&slot| self.item_bytes(slot as u32).is_some())
+            .count() as u64
     }
 
     /// The sum of the readable items' unigrams over the library's range, as
@@ -1593,6 +1702,81 @@ impl<'a> Merge<'a, '_> {
         self.finish_lazy_impl(skipped, name, true)
     }
 
+    fn finish_live_owner(
+        self,
+        skipped: &mut Vec<String>,
+        name: &impl std::fmt::Display,
+    ) -> (
+        Option<u32>,
+        BTreeMap<u32, Option<ChunkItem>>,
+        Option<ReplayedLibrary>,
+    ) {
+        // Deduplicate in slot order without sorting the journal. Every
+        // addressed slot fits in the live offset array (or was rejected), so
+        // the bitmap and scan are bounded by that array's logical extent.
+        let slots = self.content.slots.data_end / 4;
+        let mut touched = vec![false; slots];
+        for &slot in &self.touched {
+            if let Some(mark) = touched.get_mut(slot as usize) {
+                *mark = true;
+            }
+        }
+        let mut removed = self.overreach;
+        let mut added = false;
+        let mut rejected = Vec::new();
+        #[cfg(test)]
+        let mut retained_slots = Vec::new();
+        for (slot, &changed) in touched.iter().enumerate() {
+            if !changed {
+                continue;
+            }
+            let Ok(slot) = u32::try_from(slot) else {
+                continue;
+            };
+            let original = match &self.origin {
+                Origin::Mapped(library) => library.originally_contains(slot),
+                _ => false,
+            };
+            let offset = self.content.slot_offset(slot).unwrap_or(0);
+            if offset == 0 {
+                removed |= original;
+                continue;
+            }
+            match self.content.header(offset as usize) {
+                Found::Failed | Found::Past => {
+                    removed |= original;
+                    if matches!(self.content.header(offset as usize), Found::Past) {
+                        rejected.push(slot);
+                        skipped.push(format!("{name}: item {slot} ends past the phrase content"));
+                    }
+                }
+                Found::Item { offset, len } => {
+                    if let Some(bytes) = self.content.item(offset, len) {
+                        if let Err(error) = validate_phrase_item(&bytes) {
+                            skipped.push(format!("{name}: {error}"));
+                        } else {
+                            added |= !original;
+                            #[cfg(test)]
+                            retained_slots.push(slot);
+                        }
+                    }
+                }
+            }
+        }
+        let total = self.has_original.then_some(self.content.total);
+        let retained = ReplayedLibrary {
+            content: self.content,
+            #[cfg(test)]
+            slots: retained_slots,
+            has_added_items: added,
+            rejected,
+            removed,
+        };
+        // Session reads, including removed slots and ADDs, use `retained`.
+        // They no longer need a separate typed override map.
+        (total, BTreeMap::new(), Some(retained))
+    }
+
     fn finish_lazy_impl(
         mut self,
         skipped: &mut Vec<String>,
@@ -1603,6 +1787,9 @@ impl<'a> Merge<'a, '_> {
         BTreeMap<u32, Option<ChunkItem>>,
         Option<ReplayedLibrary>,
     ) {
+        if self.live_owner {
+            return self.finish_live_owner(skipped, name);
+        }
         self.sort_touched();
         let mut typed = BTreeMap::new();
         if !self.overreach {
@@ -1687,6 +1874,7 @@ impl<'a> Merge<'a, '_> {
                 #[cfg(test)]
                 slots: std::mem::take(&mut self.touched),
                 has_added_items: self.has_added_items,
+                rejected: Vec::new(),
                 removed,
             });
         (total, typed, retained)
@@ -2825,21 +3013,33 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("dir");
         let path = dir.join("rollback.bin");
         std::fs::write(&path, chunk).expect("write");
-        let mapped = oxpinyin_data::phrase_library::PhraseLibrary::open(&path).expect("open");
-        std::fs::remove_dir_all(&dir).expect("cleanup");
-        let library = SystemLibrary {
-            total: mapped.total_freq(),
-            range_end: mapped.token_range().end,
-            items: BTreeMap::new(),
-            mapped: Some(mapped),
-        };
-        assert!(matches!(
-            Merge::new(Some(library.view())).content.backing,
-            Backing::Mapped(_)
-        ));
         for records in rollback_cases() {
-            assert_rollback_restores(&library, records);
+            let mapped = oxpinyin_data::phrase_library::PhraseLibrary::open(&path).expect("open");
+            let mut library = SystemLibrary {
+                total: mapped.total_freq(),
+                range_end: mapped.token_range().end,
+                items: BTreeMap::new(),
+                mapped: Some(mapped),
+            };
+            let before = pristine(&library);
+            let content = library
+                .mapped
+                .as_mut()
+                .expect("mapped")
+                .take_live_content()
+                .expect("owner");
+            let live = ReplayedLibrary::from_mapping(content, library.total);
+            let mut merge = Merge::from_live(Some(library.view()), live);
+            assert!(matches!(merge.content.backing, Backing::Mapped(_)));
+            for record in records {
+                assert!(merge.apply_owned(record).is_ok());
+            }
+            assert!(!same_buffer(&merge.content, &before));
+            let rolled = merge.rollback();
+            assert!(same_buffer(&rolled.content, &before));
+            assert_eq!(rolled.slots().count(), 0);
         }
+        std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 
     #[test]
@@ -2955,7 +3155,7 @@ mod tests {
                         mapped: None,
                     };
                     let mut buffer = ReplayedLibrary::pristine(library.view());
-                    assert!(buffer.train(1, readings.clone().into_iter(), delta));
+                    assert!(buffer.train(1, readings.clone().into_iter(), delta, None));
                     let mut expected = item;
                     train_decoded(&mut expected, readings, delta);
                     assert_eq!(
@@ -2978,7 +3178,7 @@ mod tests {
             consumed = true;
             None::<Vec<ChewingKey>>
         });
-        assert!(!buffer.train(9, readings, 5));
+        assert!(!buffer.train(9, readings, 5, None));
         assert!(!consumed);
         assert!(!buffer.contains(9));
     }

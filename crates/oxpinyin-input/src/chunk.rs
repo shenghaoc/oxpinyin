@@ -30,7 +30,7 @@ impl MappingSource {
     /// # Errors
     /// Returns the open or end-seek error.
     pub fn open(path: &Path) -> io::Result<Self> {
-        let source = native::ReadChunk::open(&path::c_string(path.as_os_str()))?;
+        let source = native::ReadChunk::open(path)?;
         let file_size = source.size_and_rewind()?;
         Ok(Self { source, file_size })
     }
@@ -192,6 +192,24 @@ pub fn save(path: &Path, bytes: &[u8]) -> Result<(), ChunkSaveError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn mapping_opens_a_non_ascii_windows_path() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = crate::path::build_chunk_path(root.path(), std::ffi::OsStr::new("目录"));
+        std::fs::create_dir(&dir).unwrap();
+        let path = crate::path::build_chunk_path(&dir, std::ffi::OsStr::new("词库.bin"));
+        std::fs::write(&path, [1_u8, 2, 3, 4, 5, 6, 7, 8]).unwrap();
+        let mut source = MappingSource::open(&path).unwrap();
+        assert_eq!(source.file_size(), 8);
+        assert_eq!(source.read_word().unwrap(), [1, 2, 3, 4]);
+        assert_eq!(source.read_word().unwrap(), [5, 6, 7, 8]);
+        assert_eq!(
+            source.map().unwrap().finish().as_slice(),
+            &[1, 2, 3, 4, 5, 6, 7, 8]
+        );
+    }
 
     #[test]
     fn one_mapping_owns_all_file_bytes_and_keeps_writes_private() {

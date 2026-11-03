@@ -17,12 +17,6 @@ use std::collections::{HashMap, VecDeque};
 
 use crate::ContextCore;
 
-/// The first `SYSTEM_FILE` library (`novel_types.h:154`).
-const GB_DICTIONARY: u8 = 1;
-
-/// The last `SYSTEM_FILE` library (`novel_types.h:158`).
-const MERGED_DICTIONARY: u8 = 4;
-
 /// Upstream's first training seed (`initial_seed`, 23·3): the §9 bigram
 /// export threshold — counts at or above it export, below it stay.
 const INITIAL_SEED: u64 = 23 * 3;
@@ -70,7 +64,7 @@ pub struct PhraseExportCursor {
 #[derive(Default)]
 struct Memo {
     generation: Option<u64>,
-    /// One past the highest system token the session appended (`1..=4`).
+    /// One past the highest system token the session appended.
     appended_end: u32,
     /// One past the highest token of the `USER_FILE` library (`5..=7`).
     user_end: u32,
@@ -497,10 +491,17 @@ impl PhraseExportRead<'_> {
     fn probe_from(&mut self, start: u32) {
         self.next_token = NULL_TOKEN;
         self.refresh();
-        match self.index {
-            GB_DICTIONARY..=MERGED_DICTIONARY => self.probe_system(start),
-            ADDON_DICTIONARY | NETWORK_DICTIONARY | USER_DICTIONARY => self.probe_user(start),
-            _ => {}
+        if self
+            .system
+            .as_ref()
+            .is_some_and(|dict| dict.is_system_library(self.index))
+        {
+            self.probe_system(start);
+        } else if matches!(
+            self.index,
+            ADDON_DICTIONARY | NETWORK_DICTIONARY | USER_DICTIONARY
+        ) {
+            self.probe_user(start);
         }
     }
 
@@ -573,26 +574,23 @@ impl PhraseExportRead<'_> {
         read: impl FnOnce(ItemRef<'_>) -> R,
     ) -> Result<Option<R>, ExportAssert> {
         self.refresh();
-        match self.index {
-            GB_DICTIONARY..=MERGED_DICTIONARY => {
-                let Some(dict) = self.system.as_ref() else {
-                    return Ok(None);
-                };
-                // One call reads the arena, the session's decoded items and
-                // the chunk. The decoded-item lock (`StoreInner::system_items`,
-                // `registry.rs:68`) is taken per row while the session holds
-                // such items; the memo this replaces skipped it within one
-                // store generation. Stage B removes that map and the lock with
-                // it, so there is no overlay lookup left for a memo to skip.
-                Ok(dict
-                    .live_items_ignoring_mask()
-                    .read(token, |item| read(ItemRef::from(item)))
-                    .found())
-            }
-            ADDON_DICTIONARY | NETWORK_DICTIONARY | USER_DICTIONARY => {
-                self.with_user_item(token, read)
-            }
-            _ => Ok(None),
+        if let Some(dict) = self
+            .system
+            .as_ref()
+            .filter(|dict| dict.is_system_library(self.index))
+        {
+            return Ok(dict
+                .live_items_ignoring_mask()
+                .read(token, |item| read(ItemRef::from(item)))
+                .found());
+        }
+        if matches!(
+            self.index,
+            ADDON_DICTIONARY | NETWORK_DICTIONARY | USER_DICTIONARY
+        ) {
+            self.with_user_item(token, read)
+        } else {
+            Ok(None)
         }
     }
 
@@ -755,10 +753,33 @@ impl ExportSource<'_> {
     /// user store's phrase/pronunciation tables, system tokens from the
     /// system phrase index and the pinyin index (reverse-scanned).
     fn render(&self, token: u32) -> Option<(PhraseText, Vec<String>)> {
+        let is_system =
+            u8::try_from(token >> 24).is_ok_and(|index| self.user.is_system_library(index));
+        if is_system {
+            let dict = self.dict.as_ref()?;
+            return dict
+                .live_items()
+                .read(token, |item| {
+                    let text = item.phrase_text()?;
+                    let pinyins: Vec<String> = item
+                        .pronunciations()
+                        .filter_map(|reading| {
+                            let words: Vec<_> = reading
+                                .keys
+                                .iter()
+                                .map(|packed| ChewingKey::from_packed(packed).pinyin_spelling())
+                                .collect();
+                            (!words.is_empty() && words.iter().all(|word| !word.is_empty()))
+                                .then(|| words.join("'"))
+                        })
+                        .collect();
+                    (!pinyins.is_empty()).then_some((text, pinyins))
+                })
+                .found()
+                .flatten();
+        }
         if is_user_file_token(token) {
             let phrase = self.user.phrase(token).ok().flatten()?;
-            // Render each reading through the shared `render_pinyin` helper,
-            // skipping any unrenderable one.
             let pinyins: Vec<String> = phrase
                 .pronunciations()
                 .iter()
@@ -767,23 +788,9 @@ impl ExportSource<'_> {
             if pinyins.is_empty() {
                 return None;
             }
-            Some((phrase.phrase_text()?, pinyins))
-        } else {
-            let dict = self.dict.as_ref()?;
-            // The item's stored words: the pin converts each phrase of the
-            // pair from them (`pinyin.cpp:811-830` at 074a2219).
-            let text = dict.system().phrase_text(token)?;
-            let pinyins: Vec<String> = dict
-                .system()
-                .pronunciations(token)
-                .into_iter()
-                .map(|(pinyin, _freq)| pinyin)
-                .collect();
-            if pinyins.is_empty() {
-                return None;
-            }
-            Some((text, pinyins))
+            return Some((phrase.phrase_text()?, pinyins));
         }
+        None
     }
 }
 /// One rendered §9 bigram-export row: the `'`-joined pronunciation of the
@@ -1449,20 +1456,32 @@ mod phrase_cursor_tests {
             "the next token's first reading"
         );
         let dict = ctx.runtime.as_ref().unwrap().dict();
-        let text = dict.system().phrase_text(next).expect("text");
-        let library = dict.system().libraries().library(next).expect("library");
-        let item = library.item(next).expect("item");
-        let pronunciation = item.pronunciation(0).expect("reading");
-        let spellings: Vec<&'static str> = pronunciation
-            .keys
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|pair| {
-                ChewingKey::from_packed(u16::from_le_bytes([pair[0], pair[1]])).pinyin_spelling()
+        let (text, spellings, stored) = dict
+            .live_items()
+            .read(next, |item| {
+                let text = item.phrase_text().expect("text");
+                let spellings: Vec<&'static str> = item
+                    .pronunciation(0)
+                    .expect("reading")
+                    .keys
+                    .iter()
+                    .map(|bits| ChewingKey::from_packed(bits).pinyin_spelling())
+                    .collect();
+                let stored: Vec<_> = item
+                    .pronunciations()
+                    .map(|pronunciation| {
+                        let words: Vec<_> = pronunciation
+                            .keys
+                            .iter()
+                            .map(|bits| ChewingKey::from_packed(bits).pinyin_spelling())
+                            .collect();
+                        (words.join("'"), u64::from(pronunciation.frequency))
+                    })
+                    .collect();
+                (text, spellings, stored)
             })
-            .collect();
-        let stored = dict.system().pronunciations(next);
+            .found()
+            .expect("item");
         // The same syllables with tone 1: a reading the item does not hold.
         let keys = user_keys(&spellings, 1);
         ctx.user_store_mut()

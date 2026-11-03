@@ -118,7 +118,12 @@ pub extern "C" fn zhuyin_iterator_add_phrase(
     };
     // SAFETY: the planning readers ended above; this call now owns the context mutation.
     let context = unsafe { owner_mut(&mut handle.owner) };
-    if (1..=4).contains(&handle.index)
+    let is_system = context
+        .core
+        .runtime
+        .as_ref()
+        .is_some_and(|runtime| runtime.dict().is_system_library(handle.index));
+    if is_system
         && !context
             .core
             .runtime
@@ -130,7 +135,7 @@ pub extern "C" fn zhuyin_iterator_add_phrase(
     let Some(user) = context.core.user_store_mut() else {
         return false;
     };
-    if (1..=4).contains(&handle.index) {
+    if is_system {
         // The selected token comes from the combined phrase-table search,
         // including prior imported system-library items.
         user.add_system_phrase_in(handle.index, original, &phrase, &keys, count)
@@ -255,7 +260,7 @@ fn plan_import(
     // The pin walks the tokens and asserts for any library index
     // (`zhuyin.cpp:431-458`); only then does `get_range` reject a library
     // that is not loaded, in its `else` branch.
-    if !is_user_file_library(handle.index) && !(1..=4).contains(&handle.index) {
+    if !is_user_file_library(handle.index) && !user.is_system_library(handle.index) {
         return ImportPlan::Refuse;
     }
     ImportPlan::Add {

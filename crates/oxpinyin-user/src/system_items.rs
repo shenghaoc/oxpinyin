@@ -177,7 +177,7 @@ impl SystemItems {
             (token >> 24) as u8,
             original,
         )
-        .add_item(token & 0x00ff_ffff, payload);
+        .add_item(token & 0x00ff_ffff, payload, original);
     }
 
     /// `remove_phrase_item` over `token`'s library buffer: the item's bytes.
@@ -192,7 +192,7 @@ impl SystemItems {
             (token >> 24) as u8,
             original,
         )
-        .remove_item(token & 0x00ff_ffff)
+        .remove_item(token & 0x00ff_ffff, original)
     }
 
     /// Whether any live buffer holds an item its original lacks.
@@ -232,7 +232,7 @@ impl SystemItems {
         let nibble = (token >> 24) as u8;
         let slot = token & 0x00ff_ffff;
         let library = library_of(&mut self.replayed, &mut self.totals, nibble, original);
-        Some(library.add_unigram(slot, delta))
+        Some(library.add_unigram(slot, delta, Some(original)))
     }
 
     /// The item held under `token`, decoded for this call only. Nothing is
@@ -249,6 +249,18 @@ impl SystemItems {
         let library = self.replayed.get(&((token >> 24) as u8))?;
         let bytes = library.item_bytes(token & 0x00ff_ffff)?;
         Some(read(&bytes))
+    }
+
+    pub(crate) fn pristine_item_count(&self, nibble: u8) -> Option<u64> {
+        self.replayed
+            .get(&nibble)
+            .map(ReplayedLibrary::readable_item_count)
+    }
+
+    pub(crate) fn live_pronunciation_count(&self, token: Token) -> Option<u32> {
+        self.replayed
+            .get(&((token >> 24) as u8))?
+            .pronunciation_count(token & 0x00ff_ffff)
     }
 
     pub(crate) fn live_item_past_buffer(&self, token: Token) -> bool {
@@ -282,7 +294,7 @@ impl SystemItems {
                 vacant.insert(library)
             }
         };
-        library.train(slot, readings, delta)
+        library.train(slot, readings, delta, original)
     }
 
     /// Exclusive token end of the items one library's buffer added, for the

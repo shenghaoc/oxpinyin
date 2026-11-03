@@ -1003,13 +1003,13 @@ for _mode in ('pinyin', 'zhuyin'):
 # its allocation and the pin is not run. The subject applies the records in
 # place, reaches the faulty one and reverses them: the library keeps its
 # pre-replay content, so the MODIFY that came first leaves no trace. The
-# pinyin export lists the item's reading and frequency (zhuyin has no export),
-# which is where an unreversed write shows.
+# Both facades read the changed unigram; pinyin export also reads the
+# changed pronunciation count (zhuyin has no export).
 def _over_read_tail(p):
     """A MODIFY of one's reading frequency, then an ADD whose payload runs past the log."""
     return ([
         _log_record(_LOG_MODIFY, p['one'][0], old=p['one'][1],
-                    new=_item_with(p['one'][1], freq=77)),
+                    new=_item_with(p['one'][1], unigram=10, freq=77)),
         _over_read_add(p['absent'][0])], _watch(p))
 
 

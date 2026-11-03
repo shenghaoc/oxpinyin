@@ -63,7 +63,30 @@ def register(case, *, _chunk):
         return probe
 
 
+    def untouched_truncated(k):
+        # Same two-byte-only item as the data crate's count test: the
+        # declared body leaves the content, but the count byte is in it.
+        content = b'\0' * 8 + bytes((255, 17))
+        offsets = (0, 8, 9, 10, 0)
+        index_two = 17 + 4 * len(offsets) + 1
+        payload = b''.join(value.to_bytes(4, 'little') for value in
+                           (0, 17, index_two, index_two + len(content) + 1))
+        payload += b'#' + b''.join(value.to_bytes(4, 'little') for value in offsets) + b'#' + content + b'#'
+        system = conf_system(k, ('gb_char.bin', 'count.bin'))
+        Path(system, 'count.bin').write_bytes(_chunk(payload))
+        ctx = k.init(system=system, user=None, literal=True)
+        assert ctx, 'count fixture init'
+        inst = k.fn('alloc_instance', P, P)(ctx)
+        count = U(UNTOUCHED)
+        ok = k.fn('token_get_n_pronunciation', B, P, U, C.POINTER(U))(
+            inst, 0x01000001, C.byref(count))
+        k.fn('free_instance', None, P)(inst)
+        k.fn('fini', None, P)(ctx)
+        return {'count': [bool(ok), count.value]}
+
     for _mode in ('pinyin', 'zhuyin'):
+        case('untouched-truncated-count-' + _mode, mode=_mode, userdir=False,
+             issues=('1549',))(untouched_truncated)
         for _user in (False, True):
             case('stored-count-headers-' + ('user-' if _user else 'system-') + _mode,
                  mode=_mode, issues=('882',))(stored_count_headers(_user))

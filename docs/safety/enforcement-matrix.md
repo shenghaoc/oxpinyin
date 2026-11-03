@@ -20,20 +20,19 @@ and the 2026-09-05 profile decision below remain unchanged.
 
 ## A. Language & memory safety
 
-**Stage 2 member 1, 2026-11-01 UTC:** input prepares a single-owner memmap2
-mapping API, with libc calls scoped in `native.rs` and borrowed slice
-access. Production data retains its mmap exception until activation;
-this preparation changes no crate's `forbid` status. The historical counts
-below are not a claim that extraction has landed.
+**Stage 2 mapping activation:** input owns the single whole-file writable
+private memmap2 mapping, with libc calls scoped in `native.rs` and borrowed
+slice access. Production data has `#![forbid(unsafe_code)]`; its mapper and
+memmap2 dependency are gone. The historical counts below predate extraction.
 
 | Rule | Today | Proposed | Mechanism |
 |---|---|---|---|
 | No UB in shipped library code | HG (safe Rust) | HG | rustc borrow/type checker; safe crates contain zero unsafe (verified) |
 | No uninitialized reads | HG | HG | definite initialization; no `MaybeUninit` in workspace |
 | No null derefs in safe code | HG | HG | references non-null; `Option` checked |
-| No data races | HG for safe code · REV for the manual impls | unchanged | the language guarantees `Send`/`Sync` for safe code; the manual `unsafe impl Send`/`Sync` — store `Db` (Kyoto Cabinet, tkrzw) and `Env` (LMDB), data's `MappedFile`, the fuzz harness `Session` — are review-covered soundness claims with a `// SAFETY:` note each; capi's `CountingAlloc` is an `unsafe impl GlobalAlloc`, not a `Send`/`Sync` claim |
-| No unsafe outside capi/oracle/store(-features) | HGATE (workspace `deny` + per-crate allows) | HGATE (as landed: crate-root `#![forbid(unsafe_code)]` in 20 of 25 crates (oxpinyin-facade and oxpinyin-runtime carry the manifest form as well); `data` keeps `deny` exercising its documented mmap exception; store stays deny+scoped module allows) | Cargo `[lints]` + crate-root attributes; `forbid` cannot be re-allowed |
-| Every unsafe block justified | REV (prose) | HGATE (capi, zhuyin-capi, oracle, store, data) | `clippy::undocumented_unsafe_blocks = deny` in oxpinyin-capi, oxpinyin-zhuyin-capi, pinyin-oracle, oxpinyin-store and oxpinyin-data |
+| No data races | HG for safe code · REV for the manual impls | unchanged | the language guarantees `Send`/`Sync` for safe code; the manual `unsafe impl Send`/`Sync` — store `Db` (Kyoto Cabinet, tkrzw) and `Env` (LMDB), the fuzz harness `Session` — are review-covered soundness claims with a `// SAFETY:` note each; capi's `CountingAlloc` is an `unsafe impl GlobalAlloc`, not a `Send`/`Sync` claim |
+| No unsafe outside capi/oracle/store(-features) | HGATE (workspace `deny` + per-crate allows) | HGATE (data, core, user, engine and runtime forbid unsafe; input and store retain scoped allows) | Cargo `[lints]` + crate-root attributes; `forbid` cannot be re-allowed |
+| Every unsafe block justified | REV (prose) | HGATE (capi, zhuyin-capi, oracle, store, input) | `clippy::undocumented_unsafe_blocks = deny` for scoped unsafe blocks |
 | Every `unsafe fn` documented | REV | HGATE | `clippy::missing_safety_doc = deny` |
 | No unsafe ops silently inside `unsafe fn` bodies | not enforced | HGATE | `rust::unsafe_op_in_unsafe_fn = deny` |
 | Dependency unsafe inventoried | not enforced | ~~SCHED~~ retired 2026-09-01 | the scheduled `cargo geiger` report artifact was retired with its lane (`docs/findings/verify-nightly.md`); dependency unsafe is no longer inventoried by any job |

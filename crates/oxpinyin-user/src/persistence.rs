@@ -35,6 +35,8 @@
 //! the pin's own lifecycle (`Bigram::load_db` copies into memory,
 //! `save_db` writes a fresh file).
 
+use oxpinyin_data::phrase_library::{LibraryError, PhraseLibrary, RowFault};
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -268,7 +270,7 @@ impl<
             || self
                 .mapped
                 .as_ref()
-                .is_some_and(|library| library.borrow().item(slot).is_some())
+                .is_some_and(|library| library.borrow().originally_contains(slot))
     }
 
     pub(crate) fn unigram(&self, slot: u32) -> Option<u32> {
@@ -276,13 +278,7 @@ impl<
             .borrow()
             .get(&slot)
             .map(|item| item.unigram)
-            .or_else(|| {
-                self.mapped
-                    .as_ref()?
-                    .borrow()
-                    .item(slot)
-                    .map(|view| view.unigram())
-            })
+            .or_else(|| self.mapped.as_ref()?.borrow().original_unigram(slot))
     }
 
     pub(crate) fn item(&self, slot: u32) -> Option<ChunkItem> {
@@ -313,12 +309,10 @@ impl<
     /// the item: an inline item, or a mapped one whose phrase text decodes.
     pub(crate) fn is_readable(&self, slot: u32) -> bool {
         self.items.borrow().contains_key(&slot)
-            || self.mapped.as_ref().is_some_and(|library| {
-                library
-                    .borrow()
-                    .item(slot)
-                    .is_some_and(|view| view.phrase_codes().all(|code| code.is_some()))
-            })
+            || self
+                .mapped
+                .as_ref()
+                .is_some_and(|library| library.borrow().originally_readable(slot))
     }
 
     /// The item `get_phrase_item` finds at `slot` as bytes: the shipped
@@ -414,7 +408,11 @@ impl SystemOriginals {
         let mut mapped = PhraseLibraries::empty();
         for (&nibble, library) in &mut libraries {
             if let Some(mapping) = library.mapped.take() {
-                mapped.insert_mapping(nibble, PathBuf::new(), mapping);
+                let path = mapping
+                    .source_path()
+                    .unwrap_or_else(|| Path::new(""))
+                    .to_path_buf();
+                mapped.insert_mapping(nibble, path, mapping);
             }
         }
         Self {
@@ -458,6 +456,23 @@ impl SystemOriginals {
         &mut self.mapped
     }
 
+    /// Transfer each mapped system library's sole byte owner into its live
+    /// sub-index; the library entries retain only load-time metadata.
+    pub(crate) fn take_live_libraries(&mut self) -> BTreeMap<u8, crate::replay::ReplayedLibrary> {
+        let nibbles: Vec<u8> = self.libraries.keys().copied().collect();
+        nibbles
+            .into_iter()
+            .filter_map(|nibble| {
+                let total = self.libraries.get(&nibble)?.total;
+                let content = self.mapped.take_live_content(nibble)?;
+                Some((
+                    nibble,
+                    crate::replay::ReplayedLibrary::from_mapping(content, total),
+                ))
+            })
+            .collect()
+    }
+
     /// One operation's original library view.
     pub fn get(&self, nibble: &u8) -> Option<SystemLibraryRef<'_>> {
         let library = self.libraries.get(nibble)?;
@@ -494,7 +509,11 @@ impl SystemOriginals {
     pub fn insert(&mut self, nibble: u8, mut library: SystemLibrary) {
         self.mapped.unload(nibble);
         if let Some(mapping) = library.mapped.take() {
-            self.mapped.insert_mapping(nibble, PathBuf::new(), mapping);
+            let path = mapping
+                .source_path()
+                .unwrap_or_else(|| Path::new(""))
+                .to_path_buf();
+            self.mapped.insert_mapping(nibble, path, mapping);
         }
         self.libraries.insert(nibble, library);
     }
@@ -979,6 +998,7 @@ pub fn load(
 /// # Errors
 ///
 /// As [`load`].
+#[cfg(test)]
 pub(crate) fn load_profile(
     dir: &Path,
     originals: &impl OriginalLibraries,
@@ -1063,15 +1083,35 @@ pub(crate) fn load_checked(
     originals: &impl OriginalLibraries,
     check: &ProfileCheck,
 ) -> LoadedProfile {
-    load_checked_impl(dir, originals, check, false)
+    load_checked_impl(dir, originals, check, false, BTreeMap::new())
 }
 
+#[cfg(test)]
 pub(crate) fn load_session_checked(
     dir: &Path,
     originals: &impl OriginalLibraries,
     check: &ProfileCheck,
 ) -> LoadedProfile {
-    load_checked_impl(dir, originals, check, true)
+    load_checked_impl(dir, originals, check, true, BTreeMap::new())
+}
+
+pub(crate) fn load_session_checked_live(
+    dir: &Path,
+    originals: &mut SystemOriginals,
+    check: &ProfileCheck,
+) -> LoadedProfile {
+    let initial = originals.take_live_libraries();
+    load_checked_impl(dir, originals, check, true, initial)
+}
+
+pub(crate) fn load_profile_live(
+    dir: &Path,
+    originals: &mut SystemOriginals,
+    versions: &SystemVersions,
+    law: UserConfLaw,
+) -> Result<LoadedProfile, PersistenceError> {
+    let check = check_format(dir, versions, originals.layout(), law)?;
+    Ok(load_session_checked_live(dir, originals, &check))
 }
 
 fn load_checked_impl(
@@ -1079,6 +1119,7 @@ fn load_checked_impl(
     originals: &impl OriginalLibraries,
     check: &ProfileCheck,
     lazy: bool,
+    initial: BTreeMap<u8, ReplayedLibrary>,
 ) -> LoadedProfile {
     let mut profile = LoadedProfile {
         loaded: Loaded {
@@ -1086,7 +1127,7 @@ fn load_checked_impl(
             wiped: !check.conform,
             ..Loaded::default()
         },
-        replayed: BTreeMap::new(),
+        replayed: initial,
         user_libraries: BTreeMap::new(),
         overlong_index_keys: Vec::new(),
         index: UserIndex::default(),
@@ -1457,12 +1498,23 @@ pub(crate) type Reloaded = (BTreeMap<u8, ReplayedLibrary>, BTreeMap<u8, u32>);
 /// # Errors
 ///
 /// The [`JournalFault`] the merge reaches (rows 91 and 108).
+#[cfg(test)]
 pub(crate) fn load_library_logs(
     dir: &Path,
     originals: &impl OriginalLibraries,
 ) -> Result<Reloaded, JournalFault> {
     let mut loaded = Loaded::default();
     let mut replayed = BTreeMap::new();
+    replay_logs(dir, originals, &mut loaded, None, true, Some(&mut replayed))?;
+    Ok((replayed, loaded.library_totals))
+}
+
+pub(crate) fn load_library_logs_live(
+    dir: &Path,
+    originals: &mut SystemOriginals,
+) -> Result<Reloaded, JournalFault> {
+    let mut loaded = Loaded::default();
+    let mut replayed = originals.take_live_libraries();
     replay_logs(dir, originals, &mut loaded, None, true, Some(&mut replayed))?;
     Ok((replayed, loaded.library_totals))
 }
@@ -1499,6 +1551,7 @@ pub(crate) fn load_user_library(
 ///
 /// The [`JournalFault`] the first library's log reaches (rows 91, 92, 97 and
 /// 108's read in `_compute_new_header`); no later library is read.
+#[cfg(test)]
 pub(crate) fn load_masked_logs(
     dir: &Path,
     originals: &impl OriginalLibraries,
@@ -1507,6 +1560,25 @@ pub(crate) fn load_masked_logs(
 ) -> Result<Reloaded, JournalFault> {
     let mut loaded = Loaded::default();
     let mut replayed = BTreeMap::new();
+    replay_logs(
+        dir,
+        originals,
+        &mut loaded,
+        Some((mask, value)),
+        false,
+        Some(&mut replayed),
+    )?;
+    Ok((replayed, loaded.library_totals))
+}
+
+pub(crate) fn load_masked_logs_live(
+    dir: &Path,
+    originals: &mut SystemOriginals,
+    mask: u32,
+    value: u32,
+) -> Result<Reloaded, JournalFault> {
+    let mut loaded = Loaded::default();
+    let mut replayed = originals.take_live_libraries();
     replay_logs(
         dir,
         originals,
@@ -1574,8 +1646,24 @@ fn replay_logs(
         // bytes compared as bytes, payloads kept whole, the first failure the
         // end (`phrase_index.cpp:439-517`). Session opens retain the byte
         // views; value-only callers decode the final touched slots.
-        let mut merge = Merge::new(originals.get(&nibble));
-        match mask {
+        // A masked logger with no header is empty. Decide that before
+        // taking ownership so rollback remains exclusive to payload over-read.
+        let masked = if let Some((mask, value)) = mask {
+            let Some(records) = masked_log(payload, mask, value, nibble)? else {
+                continue;
+            };
+            Some(records)
+        } else {
+            None
+        };
+        let live = replayed
+            .as_deref_mut()
+            .and_then(|views| views.remove(&nibble));
+        let mut merge = match live {
+            Some(live) => Merge::from_live(originals.get(&nibble), live),
+            None => Merge::new(originals.get(&nibble)),
+        };
+        match masked {
             None => {
                 // A payload past the log's end is the pin's over-read (class
                 // (b)): where the walk reaches it, the log is skipped whole, as
@@ -1602,11 +1690,7 @@ fn replay_logs(
                     continue;
                 }
             }
-            Some((mask, value)) => {
-                // `_peek_header`'s false: the new logger is empty.
-                let Some(records) = masked_log(payload, mask, value, nibble)? else {
-                    continue;
-                };
+            Some(records) => {
                 merge_log(
                     &mut merge,
                     records.into_iter().map(Ok),
@@ -2270,7 +2354,27 @@ fn stage_rest<B: FnMut(u8) -> SaveBaseline>(
             // written. The hook maps it and, for a layout fault, emits the
             // critical here.
             let baseline = match kind {
-                LibraryFile::Log => reporting.baseline.as_mut().map(|hook| hook(nibble)),
+                LibraryFile::Log => reporting
+                    .baseline
+                    .as_mut()
+                    .map(|hook| hook(nibble))
+                    .or_else(|| {
+                        let original = originals.get(&nibble)?;
+                        let mapped = original.mapped?;
+                        if !mapped.is_detached() {
+                            return None;
+                        }
+                        let path = mapped.source_path()?;
+                        Some(match PhraseLibrary::open_retaining_layout(path) {
+                            Ok(current) => {
+                                SaveBaseline::Changed(SystemLibrary::from_library(current))
+                            }
+                            Err(LibraryError::Row(RowFault::ChunkHeaderRead)) => {
+                                SaveBaseline::ChunkHeaderRead
+                            }
+                            Err(_) => SaveBaseline::Unmappable,
+                        })
+                    }),
                 LibraryFile::User => None,
             };
             if matches!(baseline, Some(SaveBaseline::Unloaded)) {

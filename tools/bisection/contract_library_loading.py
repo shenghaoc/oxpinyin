@@ -934,7 +934,7 @@ def save_remap_retry_probe():
         out['save'] = bool(k.fn('save', B, P)(ctx))
         out['stopped-files'] = sorted(
             name for name in os.listdir(user) if name.endswith(('.dbin', '.tmp')))
-        out['stale-tmp'] = stale.read_bytes().decode()
+        out['stale-tmp'] = stale.read_bytes().decode() if stale.exists() else None
         out['marker-kept'] = (conf.read_bytes() if conf.exists() else None) == marker
         # The session is dirty and usable: a second edit trains, and a repaired
         # file lets the next save run to the end.
@@ -1103,6 +1103,74 @@ def transient_reload_replacement_probe(k):
 for _mode in ('pinyin', 'zhuyin'):
     case('transient-reload-replacement-' + _mode, mode=_mode,
          issues=('1549',))(transient_reload_replacement_probe)
+
+
+# The pin dispatches the SYSTEM_FILE branch by the row's file type, not by
+# its library number (pinyin.cpp:246-276, zhuyin.cpp:190-221 at 074a2219).
+# The network row supplies index 6 without changing the existing four system
+# rows. Its initial items come from art.bin; subsequent adds make user-table
+# index entries and save/reopen exercises the system .dbin.
+def high_system_library_probe(k):
+    """Exercise a SYSTEM_FILE above 4 through reads, import, train and reopen."""
+    from contract_abi import tokens_of, unigram_of
+    from contract_case_helpers import remember_export, token_phrase_of, train_selected_top
+    from contract_fixtures import conf_system, import_rows
+
+    system = conf_system(k, (
+        'default NETWORK_DICTIONARY NULL NULL network.bin USER_FILE',
+        'default NETWORK_DICTIONARY art.table art.bin network.dbin SYSTEM_FILE'))
+    k._ctx = k.init(system=system)
+    assert k._ctx, 'system-file init failed'
+    payload = Path(system, 'art.bin').read_bytes()[8:]
+    word = lambda at: int.from_bytes(payload[at:at + 4], 'little')
+    index, content = word(4), word(8)
+    for slot in range(1, (content - index - 1) // 4):
+        if word(index + slot * 4):
+            token = 0x06000000 | slot
+            initial = token_phrase_of(k, token)
+            break
+    else:
+        raise AssertionError('no readable item in high system library')
+    out = {'initial_token': hex(token), 'initial_phrase': initial,
+           'initial_unigram': unigram_of(k, token)}
+    phrase = '龘龘'
+    reading = "da3'da3" if k.mode == 'pinyin' else 'ㄉㄚˇ ㄉㄚˇ'
+    out['import'] = import_rows(k, 6, [(phrase, reading, 9)])
+    imported = [t for t in tokens_of(k, phrase) if t >> 24 == 6]
+    out['lookup'] = [hex(t) for t in imported]
+    if imported:
+        chosen = imported[0]
+        out['imported_phrase'] = token_phrase_of(k, chosen)
+        out['before_training'] = unigram_of(k, chosen)
+        parse = 'parse_more_full_pinyins' if k.mode == 'pinyin' else 'parse_more_chewings'
+        spelling = b'da3da3' if k.mode == 'pinyin' else b'283283'
+        out['parsed'] = k.fn(parse, Z, P, S)(k.inst, spelling)
+        try:
+            out['training'] = train_selected_top(k, phrase, chosen)
+        except AssertionError as error:
+            out['training'] = {'failed': str(error)}
+        out['after_training'] = unigram_of(k, chosen)
+        out['import_again'] = import_rows(k, 6, [(phrase, reading, 1)])
+        out['export'] = remember_export(k, 6, phrase, adjacent=True)
+    out['save'] = bool(k.fn('save', B, P)(k.ctx))
+    if k._inst is not None:
+        k.fn('free_instance', None, P)(k._inst)
+        k._inst = None
+    k.fn('fini', None, P)(k._ctx)
+    k._ctx = k.init(system=system)
+    assert k._ctx, 'system-file reopen failed'
+    out['reopened_initial'] = token_phrase_of(k, token)
+    reopened = [t for t in tokens_of(k, phrase) if t >> 24 == 6]
+    out['reopened_lookup'] = [hex(t) for t in reopened]
+    if reopened:
+        out['reopened_phrase'] = token_phrase_of(k, reopened[0])
+        out['reopened_unigram'] = unigram_of(k, reopened[0])
+        out['reopened_export'] = remember_export(k, 6, phrase, adjacent=True)
+    return out
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    case('high-system-library-' + _mode, mode=_mode, issues=('1549',))(high_system_library_probe)
 
 
 def register(driver_case):
