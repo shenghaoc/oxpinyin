@@ -123,6 +123,9 @@ mod sentence;
 mod text;
 mod user_data;
 
+#[cfg(feature = "tools")]
+pub mod tool;
+
 pub use context::{pinyin_fini, pinyin_init, pinyin_save};
 pub use iterators::{pinyin_begin_add_phrases, pinyin_end_add_phrases, pinyin_iterator_add_phrase};
 pub use oxpinyin_user::{DEFAULT_PHRASE_COUNT, NETWORK_DICTIONARY, USER_DICTIONARY};

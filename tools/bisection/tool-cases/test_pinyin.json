@@ -1,0 +1,134 @@
+{
+  "schema": 1,
+  "cases": [
+    {
+      "id": "test-pinyin-eof",
+      "utility": "test_pinyin",
+      "source": "074a2219 tests/test_pinyin.cpp:34-101; src/include/pinyin_utils.h:LineString",
+      "args": [],
+      "cwd": "tests",
+      "fixture_dir": "fixtures/w3",
+      "fixture_prefix": "data",
+      "stdin": {
+        "text": ""
+      },
+      "dbm_rows": [
+        "data/user_bigram.db",
+        "data/user_pinyin_index.bin",
+        "data/user_phrase_index.bin"
+      ],
+      "dbm_rows_cells": [
+        "bdb",
+        "tkrzw"
+      ]
+    },
+    {
+      "id": "test-pinyin-prefix-eof",
+      "utility": "test_pinyin",
+      "source": "074a2219 tests/test_pinyin.cpp:34-101; src/include/pinyin_utils.h:LineString",
+      "args": [],
+      "cwd": "tests",
+      "fixture_dir": "fixtures/w3",
+      "fixture_prefix": "data",
+      "stdin": {
+        "text": "你好\n"
+      },
+      "dbm_rows": [
+        "data/user_bigram.db",
+        "data/user_pinyin_index.bin",
+        "data/user_phrase_index.bin"
+      ],
+      "dbm_rows_cells": [
+        "bdb",
+        "tkrzw"
+      ]
+    },
+    {
+      "id": "test-pinyin-quit",
+      "utility": "test_pinyin",
+      "source": "074a2219 tests/test_pinyin.cpp:34-101; src/include/pinyin_utils.h:LineString",
+      "args": [
+        "ignored",
+        "--help"
+      ],
+      "cwd": "tests",
+      "fixture_dir": "fixtures/w3",
+      "fixture_prefix": "data",
+      "stdin": {
+        "text": "\nquit\n"
+      },
+      "dbm_rows": [
+        "data/user_bigram.db",
+        "data/user_pinyin_index.bin",
+        "data/user_phrase_index.bin"
+      ],
+      "dbm_rows_cells": [
+        "bdb",
+        "tkrzw"
+      ]
+    },
+    {
+      "id": "test-pinyin-session",
+      "utility": "test_pinyin",
+      "source": "074a2219 tests/test_pinyin.cpp:34-101; src/include/pinyin_utils.h:LineString",
+      "args": [],
+      "cwd": "tests",
+      "fixture_dir": "fixtures/w3",
+      "fixture_prefix": "data",
+      "stdin": {
+        "text": "\nnihao\n你好\nzhongguo\n\nquit\n"
+      },
+      "dbm_rows": [
+        "data/user_bigram.db",
+        "data/user_pinyin_index.bin",
+        "data/user_phrase_index.bin"
+      ],
+      "dbm_rows_cells": [
+        "bdb",
+        "tkrzw"
+      ]
+    },
+    {
+      "id": "test-pinyin-final-line",
+      "utility": "test_pinyin",
+      "source": "074a2219 tests/test_pinyin.cpp:34-101; src/include/pinyin_utils.h:LineString",
+      "args": [],
+      "cwd": "tests",
+      "fixture_dir": "fixtures/w3",
+      "fixture_prefix": "data",
+      "stdin": {
+        "text": "\nnihao"
+      },
+      "dbm_rows": [
+        "data/user_bigram.db",
+        "data/user_pinyin_index.bin",
+        "data/user_phrase_index.bin"
+      ],
+      "dbm_rows_cells": [
+        "bdb",
+        "tkrzw"
+      ]
+    },
+    {
+      "id": "test-pinyin-embedded-nul",
+      "utility": "test_pinyin",
+      "source": "074a2219 tests/test_pinyin.cpp:34-101; src/include/pinyin_utils.h:LineString",
+      "args": [],
+      "cwd": "tests",
+      "fixture_dir": "fixtures/w3",
+      "fixture_prefix": "data",
+      "stdin": {
+        "text": "\nnihao\u0000ignored\n\nquit\n"
+      },
+      "dbm_rows": [
+        "data/user_bigram.db",
+        "data/user_pinyin_index.bin",
+        "data/user_phrase_index.bin"
+      ],
+      "dbm_rows_cells": [
+        "bdb",
+        "tkrzw"
+      ]
+    }
+  ]
+}

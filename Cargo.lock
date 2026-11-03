@@ -853,6 +853,7 @@ name = "oxpinyin-utils"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "oxpinyin-capi",
  "oxpinyin-core",
  "oxpinyin-data",
  "oxpinyin-input",
@@ -860,6 +861,7 @@ dependencies = [
  "oxpinyin-store",
  "oxpinyin-training",
  "oxpinyin-user",
+ "oxpinyin-zhuyin-capi",
  "tempfile",
 ]
 

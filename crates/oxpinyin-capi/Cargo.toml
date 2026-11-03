@@ -23,6 +23,8 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 # target. cargo-c checks for the *presence* of this feature name; it is never
 # enabled by default, so plain `cargo build`/`--workspace` behaviour is unchanged.
 capi = []
+# Safe ownership adapters for oxpinyin-utils' nonshipping pin test drivers.
+tools = []
 # Rust-visible facade for the in-tree fuzz harness only. Off by default:
 # the default build carries no Rust-visible facade (the supported external
 # interfaces are the C ABI alone).
