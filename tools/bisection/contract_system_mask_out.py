@@ -1,6 +1,8 @@
 """System mask out cases (inventory row 36, #1175).
 """
+import os
 from pathlib import Path
+import tempfile
 
 from contract_abi import B, I, P, S, U, Z, sentence_out, tokens_of, unigram_of, zhuyin_sentence_out
 from contract_case_helpers import _chunk, _modify_header, _write_log, token_phrase_of
@@ -139,6 +141,78 @@ for _mode in ('pinyin', 'zhuyin'):
         lambda k: mask_out_system_modify(k, False))
     case('mask-out-system-disk-replacement-' + _mode, mode=_mode, issues=('728',))(
         lambda k: mask_out_system_modify(k, disk=True))
+
+
+def mask_out_unmappable_keeps_session(k):
+    """Row 76: a refused remap leaves saved and unsaved live data intact."""
+    system = private_system(k)
+    k._ctx = k.init(system=system)
+    assert k._ctx, 'init failed'
+    original = Path(system, 'gb_char.bin').read_bytes()
+    token = 0x01001225  # 你 in library one
+    baseline = unigram_of(k, token)
+    assert baseline[0]
+
+    added_tokens = []
+    for library, phrase, py, zy in (
+        (1, '龘龘', "da2'da2", 'ㄉㄚˊ ㄉㄚˊ'),
+        (7, '龘龘龘', "da2'da2'da2", 'ㄉㄚˊ ㄉㄚˊ ㄉㄚˊ'),
+    ):
+        if library == 7:
+            assert k.fn('save', B, P)(k.ctx)
+        assert not tokens_of(k, phrase)
+        iterator = k.fn('begin_add_phrases', P, P, U)(k.ctx, library)
+        assert iterator
+        reading = py if k.mode == 'pinyin' else zy
+        assert k.fn('iterator_add_phrase', B, P, S, S, I)(
+            iterator, phrase.encode(), reading.encode(), 1)
+        k.fn('end_add_phrases', None, P)(iterator)
+        found = tokens_of(k, phrase)
+        assert len(found) == 1 and found[0] >> 24 == library
+        added_tokens.append(found[0])
+    assert k.fn('token_add_unigram_frequency', B, P, U, U)(k.inst, token, 7)
+    trained = unigram_of(k, token)
+    assert trained[0] and trained[1] == baseline[1] + 7
+    before = [token_phrase_of(k, added) for added in added_tokens]
+    files = lambda: {str(p.relative_to(k.user)): p.read_bytes()
+                     for p in Path(k.user).rglob('*') if p.is_file()}
+    saved_files = files()
+    path = Path(system, 'gb_char.bin')
+    path.unlink()
+    with tempfile.TemporaryFile() as capture:
+        previous = os.dup(2)
+        try:
+            os.dup2(capture.fileno(), 2)
+            answer = k.fn('mask_out', B, P, U, U)(k.ctx, 0, 0)
+        finally:
+            os.dup2(previous, 2)
+            os.close(previous)
+        capture.seek(0)
+        stderr = capture.read().decode()
+    result = {'mask': bool(answer),
+              'line': stderr == f'mmap {path} failed!\n',
+              'files_unchanged': files() == saved_files,
+              'live_count_unchanged': unigram_of(k, token) == trained,
+              'live_items_unchanged': [token_phrase_of(k, t) for t in added_tokens] == before}
+    path.write_bytes(original)
+    result['save'] = bool(k.fn('save', B, P)(k.ctx))
+    k.fn('free_instance', None, P)(k.inst)
+    k.fn('fini', None, P)(k.ctx)
+    k._inst = None
+    k._ctx = k.init(system=system)
+    assert k._ctx, 'reopen failed'
+    result['reopened_count_unchanged'] = unigram_of(k, token) == trained
+    result['reopened_items_unchanged'] = [token_phrase_of(k, t) for t in added_tokens] == before
+    return result
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    case('mask-out-unmappable-no-change-' + _mode, mode=_mode,
+         issues=('545', 'row:76'),
+         pin_not_run={'mask': True, 'line': True, 'files_unchanged': True,
+                      'live_count_unchanged': True, 'live_items_unchanged': True,
+                      'save': True, 'reopened_count_unchanged': True,
+                      'reopened_items_unchanged': True})(mask_out_unmappable_keeps_session)
 
 
 def register(driver_case):

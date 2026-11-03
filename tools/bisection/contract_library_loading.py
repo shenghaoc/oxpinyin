@@ -219,9 +219,12 @@ def library_probe(site, how):
     return probe
 
 
-def library_expected(site, how, mode):
+def library_expected(site, how, mode, row76_stop=True):
     """What the subject answers at a site where the pin dies: its answers
-    from before the lines were added, held unchanged. An init that fails on a
+    from before the lines were added, held unchanged, except the save of a
+    library `MemoryChunk::mmap` refuses: the row 76 ruling stops that save and
+    answers `false` (`row76_stop`; only the short-directory save passes it
+    among the directory cases, for its row 76 SIGSEGV arm). An init that fails on a
     library logs one warning in its own domain and answers NULL.
 
     A missing-library init is the success-without-logs exception. Other init
@@ -234,7 +237,7 @@ def library_expected(site, how, mode):
     return dict(logs=[], **{
         'load': {'unload': True, 'load': True},
         'addon': {'unload': True, 'load': False},
-        'save': {'train': True, 'save': True},
+        'save': {'train': True, 'save': not row76_stop},
         'mask-out': {'train': True, 'mask_out': True},
     }[site])
 
@@ -285,11 +288,12 @@ for _mode in ('pinyin', 'zhuyin'):
         # row 76's class (b) matcher.
         _userdir = {'userdir': True} if _site in ('init', 'save') else {}
         case(f'abort-library-directory-long-entry-{_site}' + _suffix, mode=_mode,
-             abort=False, crash=library_expected(_site, 'short', _mode), either=True, sigabrt=True,
-             issues=('545',), **_userdir)(library_directory_probe(_site, 'dir-long'))
+             abort=False, crash=library_expected(_site, 'short', _mode, row76_stop=False), either=True,
+             sigabrt=True, issues=('545',), **_userdir)(library_directory_probe(_site, 'dir-long'))
+        _save_crash = {'crash_stderr_pattern': r'^mmap .+ failed!$'} if _site == 'save' else {}
         case(f'library-directory-one-entry-{_site}' + _suffix, mode=_mode, abort=False,
-             crash=library_expected(_site, 'short', _mode), either=True, sigabrt=True,
-             issues=('545',), **_userdir)(library_directory_probe(_site, 'dir-short'))
+             crash=library_expected(_site, 'short', _mode, row76_stop=_site == 'save'), either=True,
+             sigabrt=True, issues=('545',), **_save_crash, **_userdir)(library_directory_probe(_site, 'dir-short'))
 
 
 def library_directory_guard(site, guard):
@@ -868,8 +872,8 @@ for _mode in ('pinyin', 'zhuyin'):
 def save_missing_system_probe():
     """A modified save after the first system chunk is removed. The pin
     prints `mmap %s failed!` and dies in the empty chunk's
-    SubPhraseIndex::load (row 76); the subject prints the line and saves,
-    the registered row 76 answer.
+    SubPhraseIndex::load (row 76); the subject prints the line, stops at that
+    library and answers `false`, the registered row 76 safe outcome.
 
     Return a callable that records training and save flags if the native
     calls return; crash expectations come from case registration."""
@@ -892,7 +896,65 @@ def save_missing_system_probe():
 for _mode in ('pinyin', 'zhuyin'):
     _suffix = '-zhuyin' if _mode == 'zhuyin' else ''
     case('crash-save-missing-system' + _suffix, mode=_mode,
-         crash={'save': True}, control=True)(save_missing_system_probe())
+         crash={'save': False}, control=True)(save_missing_system_probe())
+
+
+def save_remap_retry_probe():
+    """A failed save that stops at a library whose file cannot be mapped again,
+    then a repair and a retry (register row 76, ruling 2026-11-01).
+
+    A live edit trains library four; library two's system file is removed and
+    a stale `gbk_char.dbin.tmp` is left in the user directory. The pin writes
+    `mmap %s failed!` at library two and dies. The subject stops there: the
+    save answers `false`, the files written for library one stand as the
+    facade's order leaves them (libpinyin: its `.tmp`, nothing renamed;
+    libzhuyin: its `.dbin` already renamed), the stale `.tmp` is untouched, no
+    marker is written, and the session is still dirty and usable. Once the file
+    is repaired the next save writes every library, and the edit is in the log.
+
+    Return a callable recording each of those."""
+    def probe(k):
+        """Train, break library two, save (stopped), train again, repair, save again.
+
+        Apply worker limits and assert init. The user directory is listed after
+        each save; the stopped save's list carries the stale `.tmp` bytes."""
+        chunk_limits()
+        system = private_system(k)
+        ctx = k.init(system=system)
+        assert ctx, 'init failed'
+        _, _, parse, text, train_args = LIBRARY_FACADES[k.mode]
+        out = {'train': train_once(k, ctx, parse, text, train_args)}
+        user = Path(k.user)
+        stale = user / 'gbk_char.dbin.tmp'
+        stale.write_bytes(b'stale')
+        conf = user / 'user.conf'
+        marker = conf.read_bytes() if conf.exists() else None
+        link = Path(system, 'gbk_char.bin')
+        link.unlink()
+        out['save'] = bool(k.fn('save', B, P)(ctx))
+        out['stopped-files'] = sorted(
+            name for name in os.listdir(user) if name.endswith(('.dbin', '.tmp')))
+        out['stale-tmp'] = stale.read_bytes().decode()
+        out['marker-kept'] = (conf.read_bytes() if conf.exists() else None) == marker
+        # The session is dirty and usable: a second edit trains, and a repaired
+        # file lets the next save run to the end.
+        out['retrain'] = train_once(k, ctx, parse, text, train_args)
+        os.symlink(os.path.join(k.data, 'gbk_char.bin'), link)
+        out['retry-save'] = bool(k.fn('save', B, P)(ctx))
+        out['saved-files'] = sorted(
+            name for name in os.listdir(user) if name.endswith(('.dbin', '.tmp')))
+        data = (user / 'merged.dbin').read_bytes()
+        header, counts = log_walk(data)
+        out['merged-records'] = counts
+        return out
+    return probe
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    _suffix = '-zhuyin' if _mode == 'zhuyin' else ''
+    case('crash-save-remap-failed-retry' + _suffix, mode=_mode, crash={
+        'save': False, 'stale-tmp': 'stale', 'marker-kept': True, 'retrain': True,
+        'retry-save': True}, userdir=False)(save_remap_retry_probe())
 
 
 def save_unloaded_replacement_probe():

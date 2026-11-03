@@ -2474,16 +2474,14 @@ impl Runtime {
     /// The save's current on-disk baseline for one selected system library.
     /// The pin remaps the library at its `_write_files` position and diffs
     /// that chunk against the live sub-index (`pinyin.cpp:956`,
-    /// `zhuyin.cpp:589`). `Unchanged` is a byte-for-byte match with the
-    /// loaded snapshot; `Changed` carries the current sub-index; a
+    /// `zhuyin.cpp:589`). `Changed` carries the chunk as it is on disk now,
+    /// whether or not it differs from the one the session loaded; a
     /// header-accepted layout refusal is returned for the caller to log and
-    /// turn into the pin's empty old sub-index. A missing or unmappable
-    /// chunk falls back to the pre-existing init-snapshot behavior: the
-    /// registered row 76 answer at the save site (the caller writes
-    /// `mmap %s failed!` for [`SaveRemapFault::Unmappable`] and the save
-    /// continues; the pin's empty-chunk SIGSEGV is not reproduced). An
-    /// unloaded default library, system or `USER_FILE`, is `Unloaded`: the
-    /// save leaves its file alone.
+    /// turn into the pin's empty old sub-index. A file `MemoryChunk::mmap`
+    /// refuses is [`SaveRemapFault::Unmappable`]: the registered row 76 safe
+    /// outcome (the caller writes `mmap %s failed!` and the save stops at
+    /// that library). An unloaded default library, system or `USER_FILE`, is
+    /// `Unloaded`: the save leaves its file alone.
     ///
     /// # Errors
     ///
@@ -2528,12 +2526,10 @@ impl Runtime {
         if unloaded & (1 << nibble) != 0 {
             return Ok(SaveBaseline::Unloaded);
         }
-        let Some((path, original)) = originals.phrase_libraries().loaded_path_library(nibble)
-        else {
+        let Some((path, _)) = originals.phrase_libraries().loaded_path_library(nibble) else {
             return Ok(SaveBaseline::Keep);
         };
         match oxpinyin_data::phrase_library::PhraseLibrary::open(path) {
-            Ok(current) if current.byte_identical(original) => Ok(SaveBaseline::Unchanged),
             Ok(current) => Ok(SaveBaseline::Changed(SystemLibrary::from_library(current))),
             Err(LibraryError::Layout(fault)) => Err(SaveRemapFault::Layout(fault)),
             Err(LibraryError::Row(RowFault::ChunkHeaderRead)) => {

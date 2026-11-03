@@ -519,7 +519,7 @@ impl ContextCore {
                 }
                 Err(oxpinyin_runtime::SaveRemapFault::Unmappable(path)) => {
                     c_stderr::mmap_failed(&path);
-                    oxpinyin_user::SaveBaseline::Keep
+                    oxpinyin_user::SaveBaseline::Unmappable
                 }
                 Err(oxpinyin_runtime::SaveRemapFault::ChunkHeaderRead) => {
                     oxpinyin_user::SaveBaseline::ChunkHeaderRead
@@ -532,6 +532,9 @@ impl ContextCore {
                 return SaveOutcome::ChunkWriteFailed(field);
             }
             Err(UserStoreError::LibraryChunkHeaderRead) => return SaveOutcome::ChunkHeaderRead,
+            // Row 76: the save stopped at a library whose file cannot be
+            // mapped again, with the session still dirty.
+            Err(UserStoreError::SaveRemapFailed) => return SaveOutcome::NotSaved,
             Err(_) => return SaveOutcome::NotSaved,
         };
         // Each failed rename's `rename %s to %s failed.` line and a failed
@@ -595,6 +598,17 @@ impl ContextCore {
                 return MaskOutOutcome::ChunkHeaderRead;
             }
             return MaskOutOutcome::Done(false);
+        }
+        // Row 76: a refused system remap leaves the entire call without
+        // effects. Check before touching the user tables or any live buffer.
+        if let Some(runtime) = &self.runtime {
+            let checked = runtime.check_system_libraries(None);
+            if !checked.unmappable.is_empty() {
+                for path in checked.unmappable {
+                    c_stderr::mmap_failed(&path);
+                }
+                return MaskOutOutcome::Done(true);
+            }
         }
         let Some(store) = self.user_store_mut() else {
             return MaskOutOutcome::Done(false);

@@ -286,20 +286,14 @@ fn session_text(
     {
         return item.phrase_text();
     }
-    // A mask or another library's reload can materialize an appended item.
-    let items = items
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    // An item a system library's live buffer holds and its chunk lacks.
     items
-        .with_live(token, |bytes, _| {
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .with_live(token, |bytes| {
             oxpinyin_data::phrase_library::PhraseItemView::from_bytes(bytes)?.phrase_text()
         })
         .flatten()
-        .or_else(|| {
-            items
-                .decoded(&token)
-                .and_then(|item| PhraseText::from_words(item.phrase.iter().copied()))
-        })
 }
 
 fn query_keys(syllables: &[SyllableKey]) -> Option<Vec<oxpinyin_core::ChewingKey>> {

@@ -206,7 +206,7 @@ fn interrupted_save_preserves_the_facade_specific_committed_prefix() {
                 if index == stop_before {
                     std::process::exit(73);
                 }
-                SaveBaseline::Unchanged
+                SaveBaseline::Keep
             })
             .unwrap();
         panic!("the selected library boundary must be reached");

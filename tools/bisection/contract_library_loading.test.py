@@ -2,6 +2,7 @@
 """Tests for the library loading and replacement cases (#1175)."""
 from pathlib import Path
 import sys
+import signal
 
 import unittest
 
@@ -9,6 +10,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from tools.dev.test_support import collect_declarations
 
 import contract_library_loading as family
+import contract_registry
+import contract_verdict
 
 
 # (case ID, positional options, keyword options) in registration order.
@@ -20,7 +23,7 @@ EXPECTED = [('stderr-library-init-missing',
              {'crash': {'load': True, 'logs': [], 'unload': True}, 'issues': ('545',), 'mode': 'pinyin'}),
             ('stderr-library-save-missing',
              (),
-             {'crash': {'logs': [], 'save': True, 'train': True}, 'issues': ('545',), 'mode': 'pinyin'}),
+             {'crash': {'logs': [], 'save': False, 'train': True}, 'issues': ('545',), 'mode': 'pinyin'}),
             ('stderr-library-mask-out-missing',
              (),
              {'crash': {'logs': [], 'mask_out': True, 'train': True}, 'issues': ('545',), 'mode': 'pinyin'}),
@@ -41,7 +44,7 @@ EXPECTED = [('stderr-library-init-missing',
              {'crash': {'load': True, 'logs': [], 'unload': True}, 'issues': ('545',), 'mode': 'pinyin'}),
             ('stderr-library-save-empty',
              (),
-             {'crash': {'logs': [], 'save': True, 'train': True}, 'issues': ('545',), 'mode': 'pinyin'}),
+             {'crash': {'logs': [], 'save': False, 'train': True}, 'issues': ('545',), 'mode': 'pinyin'}),
             ('stderr-library-mask-out-empty',
              (),
              {'crash': {'logs': [], 'mask_out': True, 'train': True}, 'issues': ('545',), 'mode': 'pinyin'}),
@@ -62,7 +65,7 @@ EXPECTED = [('stderr-library-init-missing',
              {'crash': {'load': True, 'logs': [], 'unload': True}, 'issues': ('545',), 'mode': 'pinyin'}),
             ('stderr-library-save-short',
              (),
-             {'crash': {'logs': [], 'save': True, 'train': True}, 'issues': ('545',), 'mode': 'pinyin'}),
+             {'crash': {'logs': [], 'save': False, 'train': True}, 'issues': ('545',), 'mode': 'pinyin'}),
             ('stderr-library-mask-out-short',
              (),
              {'crash': {'logs': [], 'mask_out': True, 'train': True}, 'issues': ('545',), 'mode': 'pinyin'}),
@@ -83,7 +86,7 @@ EXPECTED = [('stderr-library-init-missing',
              {'crash': {'load': True, 'logs': [], 'unload': True}, 'issues': ('545',), 'mode': 'pinyin'}),
             ('stderr-library-save-bad-length',
              (),
-             {'crash': {'logs': [], 'save': True, 'train': True}, 'issues': ('545',), 'mode': 'pinyin'}),
+             {'crash': {'logs': [], 'save': False, 'train': True}, 'issues': ('545',), 'mode': 'pinyin'}),
             ('stderr-library-mask-out-bad-length',
              (),
              {'crash': {'logs': [], 'mask_out': True, 'train': True}, 'issues': ('545',), 'mode': 'pinyin'}),
@@ -104,7 +107,7 @@ EXPECTED = [('stderr-library-init-missing',
              {'crash': {'load': True, 'logs': [], 'unload': True}, 'issues': ('545',), 'mode': 'pinyin'}),
             ('stderr-library-save-checksum',
              (),
-             {'crash': {'logs': [], 'save': True, 'train': True}, 'issues': ('545',), 'mode': 'pinyin'}),
+             {'crash': {'logs': [], 'save': False, 'train': True}, 'issues': ('545',), 'mode': 'pinyin'}),
             ('stderr-library-mask-out-checksum',
              (),
              {'crash': {'logs': [], 'mask_out': True, 'train': True}, 'issues': ('545',), 'mode': 'pinyin'}),
@@ -125,7 +128,7 @@ EXPECTED = [('stderr-library-init-missing',
              {'crash': {'load': True, 'logs': [], 'unload': True}, 'issues': ('545',), 'mode': 'zhuyin'}),
             ('stderr-library-save-missing-zhuyin',
              (),
-             {'crash': {'logs': [], 'save': True, 'train': True}, 'issues': ('545',), 'mode': 'zhuyin'}),
+             {'crash': {'logs': [], 'save': False, 'train': True}, 'issues': ('545',), 'mode': 'zhuyin'}),
             ('stderr-library-mask-out-missing-zhuyin',
              (),
              {'crash': {'logs': [], 'mask_out': True, 'train': True}, 'issues': ('545',), 'mode': 'zhuyin'}),
@@ -143,7 +146,7 @@ EXPECTED = [('stderr-library-init-missing',
              {'crash': {'load': True, 'logs': [], 'unload': True}, 'issues': ('545',), 'mode': 'zhuyin'}),
             ('stderr-library-save-empty-zhuyin',
              (),
-             {'crash': {'logs': [], 'save': True, 'train': True}, 'issues': ('545',), 'mode': 'zhuyin'}),
+             {'crash': {'logs': [], 'save': False, 'train': True}, 'issues': ('545',), 'mode': 'zhuyin'}),
             ('stderr-library-mask-out-empty-zhuyin',
              (),
              {'crash': {'logs': [], 'mask_out': True, 'train': True}, 'issues': ('545',), 'mode': 'zhuyin'}),
@@ -161,7 +164,7 @@ EXPECTED = [('stderr-library-init-missing',
              {'crash': {'load': True, 'logs': [], 'unload': True}, 'issues': ('545',), 'mode': 'zhuyin'}),
             ('stderr-library-save-short-zhuyin',
              (),
-             {'crash': {'logs': [], 'save': True, 'train': True}, 'issues': ('545',), 'mode': 'zhuyin'}),
+             {'crash': {'logs': [], 'save': False, 'train': True}, 'issues': ('545',), 'mode': 'zhuyin'}),
             ('stderr-library-mask-out-short-zhuyin',
              (),
              {'crash': {'logs': [], 'mask_out': True, 'train': True}, 'issues': ('545',), 'mode': 'zhuyin'}),
@@ -179,7 +182,7 @@ EXPECTED = [('stderr-library-init-missing',
              {'crash': {'load': True, 'logs': [], 'unload': True}, 'issues': ('545',), 'mode': 'zhuyin'}),
             ('stderr-library-save-bad-length-zhuyin',
              (),
-             {'crash': {'logs': [], 'save': True, 'train': True}, 'issues': ('545',), 'mode': 'zhuyin'}),
+             {'crash': {'logs': [], 'save': False, 'train': True}, 'issues': ('545',), 'mode': 'zhuyin'}),
             ('stderr-library-mask-out-bad-length-zhuyin',
              (),
              {'crash': {'logs': [], 'mask_out': True, 'train': True}, 'issues': ('545',), 'mode': 'zhuyin'}),
@@ -197,7 +200,7 @@ EXPECTED = [('stderr-library-init-missing',
              {'crash': {'load': True, 'logs': [], 'unload': True}, 'issues': ('545',), 'mode': 'zhuyin'}),
             ('stderr-library-save-checksum-zhuyin',
              (),
-             {'crash': {'logs': [], 'save': True, 'train': True}, 'issues': ('545',), 'mode': 'zhuyin'}),
+             {'crash': {'logs': [], 'save': False, 'train': True}, 'issues': ('545',), 'mode': 'zhuyin'}),
             ('stderr-library-mask-out-checksum-zhuyin',
              (),
              {'crash': {'logs': [], 'mask_out': True, 'train': True}, 'issues': ('545',), 'mode': 'zhuyin'}),
@@ -253,7 +256,8 @@ EXPECTED = [('stderr-library-init-missing',
             ('library-directory-one-entry-save',
              (),
              {'abort': False,
-              'crash': {'logs': [], 'save': True, 'train': True},
+              'crash': {'logs': [], 'save': False, 'train': True},
+              'crash_stderr_pattern': r'^mmap .+ failed!$',
               'either': True,
               'sigabrt': True,
               'issues': ('545',),
@@ -337,7 +341,8 @@ EXPECTED = [('stderr-library-init-missing',
             ('library-directory-one-entry-save-zhuyin',
              (),
              {'abort': False,
-              'crash': {'logs': [], 'save': True, 'train': True},
+              'crash': {'logs': [], 'save': False, 'train': True},
+              'crash_stderr_pattern': r'^mmap .+ failed!$',
               'either': True,
               'sigabrt': True,
               'issues': ('545',),
@@ -481,10 +486,18 @@ EXPECTED = [('stderr-library-init-missing',
             ('save-fatal-valid-to-invalid-zhuyin',
              (),
              {'policy_record': '1297-layout-criticals.md', 'fatal': True, 'mode': 'zhuyin', 'stderr': True, 'userdir': True}),
-            ('crash-save-missing-system', (), {'control': True, 'crash': {'save': True}, 'mode': 'pinyin'}),
+            ('crash-save-missing-system', (), {'control': True, 'crash': {'save': False}, 'mode': 'pinyin'}),
             ('crash-save-missing-system-zhuyin',
              (),
-             {'control': True, 'crash': {'save': True}, 'mode': 'zhuyin'}),
+             {'control': True, 'crash': {'save': False}, 'mode': 'zhuyin'}),
+            ('crash-save-remap-failed-retry',
+             (),
+             {'crash': {'marker-kept': True, 'retrain': True, 'retry-save': True, 'save': False,
+                        'stale-tmp': 'stale'}, 'mode': 'pinyin', 'userdir': False}),
+            ('crash-save-remap-failed-retry-zhuyin',
+             (),
+             {'crash': {'marker-kept': True, 'retrain': True, 'retry-save': True, 'save': False,
+                        'stale-tmp': 'stale'}, 'mode': 'zhuyin', 'userdir': False}),
             ('save-unloaded-replacement', (), {'mode': 'pinyin', 'stderr': True, 'userdir': True}),
             ('save-unloaded-replacement-zhuyin', (), {'mode': 'zhuyin', 'stderr': True, 'userdir': True}),
             ('second-separator-library-init', (), {'policy_record': '1297-layout-criticals.md', 'mode': 'pinyin', 'stderr': True}),
@@ -503,6 +516,27 @@ class LibraryLoadingTests(unittest.TestCase):
     def test_case_ids_order_and_metadata(self):
         cases = declarations()
         self.assertEqual([(name, args, kwargs) for name, args, kwargs, _ in cases], EXPECTED)
+
+    def test_short_directory_save_selects_the_signal_specific_expectation(self):
+        cases = {name: kwargs for name, _, kwargs, _ in declarations()}
+        def observation(exit, result=None, stderr=""):
+            return dict(exit=exit, result=result, stderr=stderr,
+                        stderr_lines=len(stderr.splitlines()), userfiles={})
+        for suffix in ("", "-zhuyin"):
+            name = "library-directory-one-entry-save" + suffix
+            spec = contract_registry.case_spec(case_id=name, **cases[name])
+            match = lambda pin, subject: contract_verdict.matches(
+                spec, pin, subject, directory_probe=lambda: True)
+            with self.subTest(case=name):
+                abort = observation(-signal.SIGABRT)
+                self.assertTrue(match(abort, abort))
+                line = "mmap /system/merged.bin failed!\n"
+                crash = observation(-signal.SIGSEGV, stderr=line)
+                stopped = observation(0, {"logs": [], "train": True, "save": False}, line)
+                self.assertTrue(match(crash, stopped))
+                self.assertFalse(match(crash, observation(0, {"logs": [], "train": True, "save": True}, line)))
+                self.assertFalse(match(observation(-signal.SIGSEGV),
+                                       observation(0, {"logs": [], "train": True, "save": False})))
 
 if __name__ == '__main__':
     unittest.main()

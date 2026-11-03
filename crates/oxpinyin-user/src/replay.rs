@@ -1091,9 +1091,10 @@ impl<'a, 'l> Merge<'a, 'l> {
         self.content.reset_growth();
         ReplayedLibrary {
             content: self.content,
+            #[cfg(test)]
             slots: Vec::new(),
             has_added_items: false,
-            training_disjoint: None,
+            removed: false,
         }
     }
 
@@ -1147,47 +1148,25 @@ impl<'a, 'l> Merge<'a, 'l> {
 /// No baseline byte owner survives the replay operation.
 pub(crate) struct ReplayedLibrary {
     content: Content,
+    /// The slots the replay left touched, for the replay's own tests.
+    #[cfg(test)]
     slots: Vec<u32>,
     has_added_items: bool,
-    training_disjoint: Option<bool>,
+    /// The replay took an item the shipped chunk holds out of the buffer.
+    removed: bool,
 }
 
 impl std::fmt::Debug for ReplayedLibrary {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ReplayedLibrary")
-            .field("slots", &self.slots.len())
+            .field("total", &self.content.total)
             .finish()
     }
 }
 
 impl ReplayedLibrary {
-    pub(crate) fn slots(&self) -> impl DoubleEndedIterator<Item = u32> + '_ {
-        self.slots.iter().copied()
-    }
-    pub(crate) fn add_candidates(&self) -> impl Iterator<Item = u32> + '_ {
-        let slots = if self.has_added_items {
-            self.slots.as_slice()
-        } else {
-            &[]
-        };
-        slots.iter().copied()
-    }
-    pub(crate) fn contains(&self, slot: u32) -> bool {
-        self.slots.binary_search(&slot).is_ok()
-    }
-    pub(crate) fn bytes(&self, slot: u32) -> Option<Cow<'_, [u8]>> {
-        self.slots.binary_search(&slot).ok()?;
-        let offset = self
-            .content
-            .slot_offset(slot)
-            .filter(|&offset| offset != 0)? as usize;
-        let Found::Item { offset, len } = self.content.header(offset) else {
-            return None;
-        };
-        self.content.item(offset, len)
-    }
     pub(crate) fn item(&self, slot: u32) -> Option<ChunkItem> {
-        decode_phrase_item(&self.bytes(slot)?).ok()
+        decode_phrase_item(&self.item_bytes(slot)?).ok()
     }
     /// Whether the slot names an item that would end past the live buffer.
     pub(crate) fn item_past_buffer(&self, slot: u32) -> bool {
@@ -1255,14 +1234,7 @@ impl ReplayedLibrary {
         self.content
             .write(at, &field.wrapping_add(delta).to_le_bytes());
         self.content.total = total;
-        self.register(slot);
         UnigramAdd::Accepted
-    }
-
-    fn register(&mut self, slot: u32) {
-        if let Err(at) = self.slots.binary_search(&slot) {
-            self.slots.insert(at, slot);
-        }
     }
 
     /// `SubPhraseIndex::add_phrase_item` over the buffer (074a2219
@@ -1271,13 +1243,11 @@ impl ReplayedLibrary {
     /// payload's unigram. The slot becomes a touched slot, and the buffer holds
     /// an item the shipped chunk may lack.
     pub(crate) fn add_item(&mut self, slot: u32, payload: &[u8]) {
-        self.training_disjoint = None;
         let unigram = raw_unigram(payload);
         let offset = self.content.append(payload);
         self.content.set_slot_offset(slot, offset);
         self.content.total = self.content.total.wrapping_add(unigram);
         self.has_added_items = true;
-        self.register(slot);
     }
 
     /// `SubPhraseIndex::remove_phrase_item` over the buffer (`:219-236`): the
@@ -1292,10 +1262,8 @@ impl ReplayedLibrary {
             return None;
         };
         let bytes = self.content.item(offset, len)?.into_owned();
-        self.training_disjoint = None;
         self.content.set_slot_offset(slot, 0);
         self.content.total = self.content.total.wrapping_sub(raw_unigram(&bytes));
-        self.register(slot);
         Some(bytes)
     }
 
@@ -1326,39 +1294,11 @@ impl ReplayedLibrary {
         let (_, content) = origin_and_content(Some(original));
         Self {
             content,
+            #[cfg(test)]
             slots: Vec::new(),
             has_added_items: false,
-            training_disjoint: None,
+            removed: false,
         }
-    }
-
-    /// Prove that item ranges are disjoint in slot order. An unreadable or
-    /// non-monotone layout takes the conservative overlap path. On a proven
-    /// disjoint layout, training or a unigram write cannot alter another
-    /// item's header or slot, so subsequent calls reuse the result.
-    fn training_is_disjoint(&mut self) -> bool {
-        if let Some(disjoint) = self.training_disjoint {
-            return disjoint;
-        }
-        let mut end = 0_usize;
-        let slots = (self.content.slots.data_end / 4).min(0x0100_0000);
-        let mut disjoint = true;
-        for slot in 1..slots as u32 {
-            let Some(offset) = self.content.slot_offset(slot).filter(|&offset| offset != 0) else {
-                continue;
-            };
-            let Found::Item { offset, len } = self.content.header(offset as usize) else {
-                disjoint = false;
-                break;
-            };
-            if offset < end {
-                disjoint = false;
-                break;
-            }
-            end = offset + len;
-        }
-        self.training_disjoint = Some(disjoint);
-        disjoint
     }
 
     /// `PhraseItem::increase_pronunciation_possibility` over the buffer
@@ -1390,11 +1330,9 @@ impl ReplayedLibrary {
         };
         let row = 2 * length + 4;
         let first = offset + PHRASE_ITEM_HEADER + 4 * length;
-        let disjoint = self.training_is_disjoint();
-        let mut written = [false; 255];
         for reading in readings {
             let mut total = 0_u32;
-            for (place, was_written) in written.iter_mut().take(entries).enumerate() {
+            for place in 0..entries {
                 let keys_at = first + place * row;
                 let count_at = keys_at + 2 * length;
                 // The entry's last byte is in the buffer, so every byte before
@@ -1420,61 +1358,16 @@ impl ReplayedLibrary {
                     break;
                 };
                 total = next;
-                let changed = count.wrapping_add(delta);
-                self.content.write(count_at, &changed.to_le_bytes());
-                *was_written |= changed != count;
+                self.content
+                    .write(count_at, &count.wrapping_add(delta).to_le_bytes());
             }
-        }
-        self.register(slot);
-        if !disjoint && written.contains(&true) {
-            self.mark_overlapping_training_slots(slot, first + 2 * length, row, &written);
         }
         true
     }
 
-    /// A reading count can be physically inside another item's extent. Keep
-    /// that slot for compact and save without changing either total here.
-    fn mark_overlapping_training_slots(
-        &mut self,
-        trained: u32,
-        first: usize,
-        stride: usize,
-        written: &[bool; 255],
-    ) {
-        let end = (self.content.slots.data_end / 4).min(0x0100_0000);
-        for candidate in 1..end as u32 {
-            if candidate == trained {
-                continue;
-            }
-            let Some(offset) = self
-                .content
-                .slot_offset(candidate)
-                .filter(|&offset| offset != 0)
-            else {
-                continue;
-            };
-            let start = offset as usize;
-            // The write may itself have made the header's extent unreadable.
-            // Its two header bytes still identify that affected slot.
-            let len = match self.content.header(start) {
-                Found::Item { len, .. } => len,
-                Found::Past => 2,
-                Found::Failed => continue,
-            };
-            let overlaps = written.iter().enumerate().any(|(place, &changed)| {
-                let count = first + place * stride;
-                changed && count < start + len && start < count + 4
-            });
-            if overlaps {
-                self.register(candidate);
-            }
-        }
-    }
-
-    /// The item under `slot` as the live buffer holds it, whether or not the
-    /// replay touched the slot, and whether it did. `None` where the buffer
-    /// holds no readable item there.
-    pub(crate) fn live_item(&self, slot: u32) -> Option<(Cow<'_, [u8]>, bool)> {
+    /// The item under `slot` as the live buffer holds it. `None` where the
+    /// buffer holds no readable item there.
+    pub(crate) fn item_bytes(&self, slot: u32) -> Option<Cow<'_, [u8]>> {
         let offset = self.content.slot_offset(slot)?;
         if offset == 0 {
             return None;
@@ -1482,7 +1375,46 @@ impl ReplayedLibrary {
         let Found::Item { offset, len } = self.content.header(offset as usize) else {
             return None;
         };
-        Some((self.content.item(offset, len)?, self.contains(slot)))
+        self.content.item(offset, len)
+    }
+
+    /// The sum of the readable items' unigrams over the library's range, as
+    /// `FacadePhraseIndex::compact` rebuilds the total (074a2219
+    /// `phrase_index.cpp:648-675`): every slot in `get_range` is read and an
+    /// unreadable one adds nothing.
+    pub(crate) fn readable_unigram_sum(&self) -> u32 {
+        (1..self.range_end()).fold(0_u32, |sum, slot| {
+            sum.wrapping_add(self.unigram(slot).unwrap_or(0))
+        })
+    }
+
+    /// Whether the replay took an item the shipped chunk holds out of the
+    /// buffer.
+    pub(crate) fn has_removed(&self) -> bool {
+        self.removed
+    }
+
+    /// The slots the replay left touched.
+    #[cfg(test)]
+    pub(crate) fn slots(&self) -> impl DoubleEndedIterator<Item = u32> + '_ {
+        self.slots.iter().copied()
+    }
+
+    /// The touched slots of an ADD, for the replay's tests.
+    #[cfg(test)]
+    pub(crate) fn add_candidates(&self) -> impl Iterator<Item = u32> + '_ {
+        let slots = if self.has_added_items {
+            self.slots.as_slice()
+        } else {
+            &[]
+        };
+        slots.iter().copied()
+    }
+
+    /// Whether the replay left `slot` touched.
+    #[cfg(test)]
+    pub(crate) fn contains(&self, slot: u32) -> bool {
+        self.slots.binary_search(&slot).is_ok()
     }
 }
 
@@ -1742,15 +1674,20 @@ impl<'a> Merge<'a, '_> {
         }
         self.touched.shrink_to_fit();
         let total = self.has_original.then_some(self.content.total);
-        let retained =
-            (!self.touched.is_empty() || self.content.total != self.initial_total).then(|| {
-                let slots = std::mem::take(&mut self.touched);
-                ReplayedLibrary {
-                    content: self.content,
-                    slots,
-                    has_added_items: self.has_added_items,
-                    training_disjoint: None,
-                }
+        // A buffer is kept when the replay left anything in it: a slot, a
+        // total that moved, or an item of the chunk taken out.
+        let removed = typed
+            .iter()
+            .any(|(&slot, item)| item.is_none() && self.original_item(slot).is_some());
+        let retained = (!self.touched.is_empty()
+            || self.content.total != self.initial_total
+            || removed)
+            .then(|| ReplayedLibrary {
+                content: self.content,
+                #[cfg(test)]
+                slots: std::mem::take(&mut self.touched),
+                has_added_items: self.has_added_items,
+                removed,
             });
         (total, typed, retained)
     }
@@ -2414,17 +2351,13 @@ mod tests {
         assert_eq!(retained.item(2), eager_items[&2]);
 
         let token = (1 << 24) | 1;
-        let live =
-            crate::system_items::SystemItems::new(BTreeMap::new(), BTreeMap::from([(1, retained)]));
+        let live = crate::system_items::SystemItems::new(BTreeMap::from([(1, retained)]));
         assert!(live.get(&token).is_none());
         let eager_visible = eager_items
             .get(&1)
             .cloned()
             .unwrap_or_else(|| original.item(1));
-        let lazy_visible = live
-            .get(&token)
-            .map(std::borrow::Cow::into_owned)
-            .or_else(|| original.item(1));
+        let lazy_visible = live.get(&token).or_else(|| original.item(1));
         assert_eq!(lazy_visible, eager_visible);
         assert_eq!(lazy_visible, original.item(1));
     }
@@ -3030,28 +2963,9 @@ mod tests {
                         Some(expected),
                         "prons {prons:?} readings {readings:?} delta {delta}"
                     );
-                    assert!(buffer.contains(1), "a trained slot is a touched slot");
                 }
             }
         }
-    }
-
-    #[test]
-    fn training_proves_disjoint_items_before_skipping_overlap_scan() {
-        let original = library();
-        let mut ordinary = ReplayedLibrary::pristine(original.view());
-        assert!(ordinary.training_is_disjoint());
-        assert_eq!(ordinary.training_disjoint, Some(true));
-        let mut merge = Merge::new(Some(original.view()));
-        assert!(
-            merge
-                .apply_owned(modify(1, one(), bytes_with(&[2, 2], 200)))
-                .is_ok()
-        );
-        let (_, _, view) = merge.finish_lazy(&mut Vec::new(), &"test");
-        let mut overlapping = view.expect("retained library");
-        assert!(!overlapping.training_is_disjoint());
-        assert_eq!(overlapping.training_disjoint, Some(false));
     }
 
     #[test]

@@ -336,7 +336,9 @@ def case(name, *args, **kwargs):
     or `libzhuyin` for the zhuyin facade; level 16). `crash=<fields>` marks a
     class (b) site: the pin must die of SIGSEGV (after the stderr it wrote
     up to then), and the subject must exit normally, write the same stderr
-    bytes and answer `<fields>` (a dict of result fields). `userdir=True`
+    bytes and answer `<fields>` (a dict of result fields). An optional
+    `crash_stderr_pattern` also requires a matching pin stderr line on the
+    SIGSEGV arm. `userdir=True`
     also compares the normalized user-directory listings, for an
     abort that comes after the pin has written some of its profile.
     `abort_logs=<list>` overrides the expected subject `logs` list when the

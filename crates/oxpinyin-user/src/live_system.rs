@@ -15,7 +15,6 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use oxpinyin_core::PhraseText;
-use oxpinyin_data::chunk_write::ChunkItem;
 use oxpinyin_data::phrase_libraries::PhraseLibraries;
 use oxpinyin_data::phrase_library::PhraseItemView;
 
@@ -24,10 +23,10 @@ use crate::store::{Token, UserStore, UserStoreError};
 /// Where a [`SystemItem`] lives.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ItemOrigin {
-    /// The shipped chunk's item, untouched by the session.
+    /// The shipped chunk's item: the library has no live buffer.
     Shipped,
-    /// An item the session holds in place of, or beside, the chunk's: an
-    /// import, a replayed journal record, or a trained item.
+    /// An item read from the library's live buffer, which a replay, an import,
+    /// a training or an increment made from the chunk.
     Overlay,
 }
 
@@ -36,30 +35,26 @@ pub enum ItemOrigin {
 pub enum SystemItem<'a> {
     /// The item as the shipped chunk stores it.
     Shipped(PhraseItemView<'a>),
-    /// An item a journal replay wrote, read from the library's live buffer.
+    /// An item read from the library's live buffer.
     Replayed(PhraseItemView<'a>),
-    /// A session item held decoded. Its `unigram` field is stale; read the
-    /// live count through [`LiveSystemItems::effective_unigram`].
-    Overlay(&'a ChunkItem),
 }
 
-/// The keys of one reading, in the chunk's packed `u16` form.
+/// The keys of one reading, in the chunk's packed `u16` form: little-endian
+/// `u16` pairs, as the mapped chunk holds them.
 #[derive(Clone, Copy)]
-pub enum ReadingKeys<'a> {
-    /// Little-endian `u16` pairs, as the mapped chunk holds them.
-    Packed(&'a [u8]),
-    /// The words of a decoded item.
-    Words(&'a [u16]),
-}
+pub struct ReadingKeys<'a>(&'a [u8]);
 
-impl ReadingKeys<'_> {
+impl<'a> ReadingKeys<'a> {
+    /// The keys of a reading as the chunk stores them.
+    #[must_use]
+    pub fn packed(bytes: &'a [u8]) -> Self {
+        Self(bytes)
+    }
+
     /// The number of keys.
     #[must_use]
     pub fn len(&self) -> usize {
-        match self {
-            Self::Packed(bytes) => bytes.len() / 2,
-            Self::Words(words) => words.len(),
-        }
+        self.0.len() / 2
     }
 
     /// Whether the reading has no keys.
@@ -70,16 +65,11 @@ impl ReadingKeys<'_> {
 
     /// The packed keys in stored order.
     pub fn iter(&self) -> impl Iterator<Item = u16> + '_ {
-        let (packed, words) = match self {
-            Self::Packed(bytes) => (*bytes, &[][..]),
-            Self::Words(words) => (&[][..], *words),
-        };
-        packed
+        self.0
             .as_chunks::<2>()
             .0
             .iter()
             .map(|pair| u16::from_le_bytes(*pair))
-            .chain(words.iter().copied())
     }
 }
 
@@ -92,62 +82,49 @@ pub struct Reading<'a> {
     pub frequency: u32,
 }
 
-impl SystemItem<'_> {
-    /// Whether the item is the shipped chunk's own or a session item.
+impl<'a> SystemItem<'a> {
+    fn view(&self) -> PhraseItemView<'a> {
+        match self {
+            Self::Shipped(item) | Self::Replayed(item) => *item,
+        }
+    }
+
+    /// Whether the item is the shipped chunk's own or a live buffer's.
     #[must_use]
     pub fn origin(&self) -> ItemOrigin {
         match self {
             Self::Shipped(_) => ItemOrigin::Shipped,
-            Self::Replayed(_) | Self::Overlay(_) => ItemOrigin::Overlay,
+            Self::Replayed(_) => ItemOrigin::Overlay,
         }
     }
 
     /// The phrase length in characters.
     #[must_use]
     pub fn phrase_length(&self) -> usize {
-        match self {
-            Self::Shipped(item) | Self::Replayed(item) => item.phrase_length(),
-            Self::Overlay(item) => item.phrase.len(),
-        }
+        self.view().phrase_length()
     }
 
     /// The number of stored readings.
     #[must_use]
     pub fn n_pronunciations(&self) -> usize {
-        match self {
-            Self::Shipped(item) | Self::Replayed(item) => item.n_pronunciations(),
-            Self::Overlay(item) => item.prons.len(),
-        }
+        self.view().n_pronunciations()
     }
 
     /// The phrase text, `None` where a character is not a scalar value.
     #[must_use]
     pub fn phrase_text(&self) -> Option<PhraseText> {
-        match self {
-            Self::Shipped(item) | Self::Replayed(item) => item.phrase_text(),
-            Self::Overlay(item) => PhraseText::from_words(item.phrase.iter().copied()),
-        }
+        self.view().phrase_text()
     }
 
     /// Reading `nth` in stored order.
     #[must_use]
     pub fn pronunciation(&self, nth: usize) -> Option<Reading<'_>> {
-        match self {
-            Self::Shipped(item) | Self::Replayed(item) => {
-                let reading = item.pronunciation(nth)?;
-                Some(Reading {
-                    keys: ReadingKeys::Packed(reading.keys),
-                    frequency: reading.freq,
-                })
-            }
-            Self::Overlay(item) => {
-                let (keys, frequency) = item.prons.get(nth)?;
-                Some(Reading {
-                    keys: ReadingKeys::Words(keys),
-                    frequency: *frequency,
-                })
-            }
-        }
+        let (Self::Shipped(item) | Self::Replayed(item)) = self;
+        let reading = item.pronunciation(nth)?;
+        Some(Reading {
+            keys: ReadingKeys::packed(reading.keys),
+            frequency: reading.freq,
+        })
     }
 
     /// Every stored reading in stored order.
@@ -253,13 +230,12 @@ impl<'a> LiveSystemItems<'a> {
     /// Reads the effective item behind `token` of libraries `1..=4`; any
     /// other library answers [`Lookup::Absent`].
     ///
-    /// The session's item wins over the shipped one: a decoded item, else the
-    /// library's live buffer. `read` runs at most once, inside the borrow.
-    /// For a decoded or live-buffer item, the callback runs while a store
-    /// mutex is held. Do not call store accessors from the callback; copy out
-    /// what is needed and query the store after it returns. A callback borrowing
-    /// the shipped chunk directly runs after those locks are released.
-    /// Consumers: pricing
+    /// The session's item wins over the shipped one: the library's live
+    /// buffer holds it. `read` runs at most once, inside the borrow. For a
+    /// live-buffer item, the callback runs while a store mutex is held. Do
+    /// not call store accessors from the callback; copy out what is needed
+    /// and query the store after it returns. A callback borrowing the shipped
+    /// chunk directly runs after those locks are released. Consumers: pricing
     /// (`effective_possibility`), `token_text`, `token_nth_pronunciation`,
     /// the export probe and row reads.
     pub fn read<R>(&self, token: Token, read: impl FnOnce(SystemItem<'_>) -> R) -> Lookup<R> {
@@ -274,25 +250,13 @@ impl<'a> LiveSystemItems<'a> {
             if store.system_item_removed(token) {
                 return Lookup::Removed;
             }
+            // The library's live buffer holds the session's item, or the
+            // shipped one it was made from.
             if let Some(found) = store
-                .with_overlay_item(token, |item| {
-                    read.take().map(|f| f(SystemItem::Overlay(item)))
-                })
-                .flatten()
-            {
-                return Lookup::Found(found);
-            }
-            // The library's live replay buffer: an untouched slot reads as the
-            // shipped item it is, a touched one as the item the replay wrote.
-            if let Some(found) = store
-                .with_live_item(token, |bytes, touched| {
+                .with_live_item(token, |bytes| {
                     let view = PhraseItemView::from_bytes(bytes)?;
                     let f = read.take()?;
-                    Some(f(if touched {
-                        SystemItem::Replayed(view)
-                    } else {
-                        SystemItem::Shipped(view)
-                    }))
+                    Some(f(SystemItem::Replayed(view)))
                 })
                 .flatten()
             {
@@ -330,15 +294,9 @@ impl<'a> LiveSystemItems<'a> {
                 return Lookup::Removed;
             }
             let count = |len: usize| u32::try_from(len).unwrap_or(u32::MAX);
-            if let Some(found) = store.with_overlay_item(token, |item| count(item.prons.len())) {
-                return Lookup::Found(found);
-            }
             if let Some(found) = store
-                .with_live_item(token, |bytes, touched| {
-                    touched
-                        .then(|| PhraseItemView::from_bytes(bytes))
-                        .flatten()
-                        .map(|view| count(view.n_pronunciations()))
+                .with_live_item(token, |bytes| {
+                    PhraseItemView::from_bytes(bytes).map(|view| count(view.n_pronunciations()))
                 })
                 .flatten()
             {
@@ -387,9 +345,9 @@ impl<'a> LiveSystemItems<'a> {
         self.read(token, |_| ()).found().map(|()| delta())
     }
 
-    /// Whether the session holds an item for `token`, in its arena or among
-    /// its decoded items, whatever the mask or a removal says: an item the
-    /// shipped chunk may lack. The store's unigram delta of a held item is
+    /// Whether the session holds an item for `token`, in its arena or its
+    /// library's live buffer, whatever the mask or a removal says: an item the
+    /// shipped chunk lacks. The store's unigram delta of a held item is
     /// read as well, only for its error, because the check this replaces built
     /// the item with its live count and failed when that read did.
     /// Consumer: the n-best step's imported-item flag, `RuntimeLm`.
@@ -404,13 +362,7 @@ impl<'a> LiveSystemItems<'a> {
         if !(1..=4).contains(&(token >> 24)) {
             return Ok(false);
         }
-        let held = store.with_user_item(token, |_| ()).is_some()
-            || store.with_overlay_item(token, |_| ()).is_some()
-            || store
-                .with_live_item(token, |bytes, touched| {
-                    touched && PhraseItemView::from_bytes(bytes).is_some()
-                })
-                .unwrap_or(false);
+        let held = store.with_user_item(token, |_| ()).is_some();
         if held {
             store.unigram_delta(token)?;
         }
