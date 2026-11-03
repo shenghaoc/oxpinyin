@@ -91,6 +91,31 @@
       "stdin": {
         "text": ""
       }
+    },
+    {
+      "utility": "import_k_mixture_model",
+      "files": {
+        "empty.db": {
+          "hex": ""
+        }
+      },
+      "source": "utils/training/import_k_mixture_model.cpp:292-316 at 074a2219",
+      "id": "kmm-import-existing-empty",
+      "args": [
+        "--k-mixture-model-file",
+        "empty.db"
+      ],
+      "fixture_dir": "fixtures/w3",
+      "stdin": {
+        "text": "\\data model \"k mixture model\" count 3 N 1 total_freq 3\n\\1-gram\n\\item 1 <start> count 2 freq 0\n\\item 16817937 中国 count 1 freq 1\n\\item 16802309 你好 count 0 freq 2\n\\2-gram\n\\item 1 <start> 16817937 中国 count 1 T 1 N_n_0 1 n_1 1 Mr 1\n\\item 1 <start> 16802309 你好 count 1 T 1 N_n_0 1 n_1 1 Mr 1\n\\item 16817937 中国 16802309 你好 count 1 T 1 N_n_0 1 n_1 1 Mr 1\n\\end\n"
+      },
+      "dbm_rows": [
+        "empty.db"
+      ],
+      "dbm_rows_cells": [
+        "bdb",
+        "tkrzw"
+      ]
     }
   ]
 }

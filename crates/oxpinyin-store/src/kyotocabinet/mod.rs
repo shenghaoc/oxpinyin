@@ -146,6 +146,15 @@ impl KcUnopenedHandle {
 }
 
 impl KcStore {
+    /// A test tool's plain native set without a transaction or synchronization.
+    ///
+    /// # Errors
+    /// Returns the native write error.
+    #[cfg(feature = "tools")]
+    pub fn tool_set(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
+        self.db.set(key, value)
+    }
+
     /// Ends the open transaction by committing it. Not generic, so the many
     /// `write` closures share one copy of it.
     #[inline(never)]
@@ -381,6 +390,10 @@ impl ReadStore for KcStore {
 }
 
 impl crate::RawReadStore for KcStore {
+    fn get_raw_bounded(&self, key: &[u8], value: &mut [u8]) -> Result<Option<usize>, StoreError> {
+        self.db.get_bounded(key, value)
+    }
+
     fn get_raw(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, crate::StoreError> {
         self.db.get(key, value)
     }
@@ -852,10 +865,25 @@ impl crate::UserBigramDb for KcUserBigramDb {
     }
 
     fn save_db(&self, path: &Path) -> Result<(), StoreError> {
-        // `Bigram::save_db` (`ngram_kyotodb.cpp:82-101`): unlink, then
-        // `dump_snapshot`.
-        crate::remove_if_present(path)?;
-        self.db.dump_snapshot(path)
+        save_bigram_db(&self.db, path)
+    }
+}
+
+fn save_bigram_db(db: &Db, path: &Path) -> Result<(), StoreError> {
+    // `Bigram::save_db` (`ngram_kyotodb.cpp:82-101`): unlink, then
+    // `dump_snapshot`.
+    crate::remove_if_present(path)?;
+    db.dump_snapshot(path)
+}
+
+impl KcStore {
+    /// Save an attached bigram using the same implementation as the
+    /// in-memory user bigram (`ngram_{tkrzwdb,kyotodb,bdb}.cpp` at 074a2219).
+    ///
+    /// # Errors
+    /// Returns the existing save operation's file or backend error.
+    pub fn save_bigram_db(&self, path: &Path) -> Result<(), StoreError> {
+        save_bigram_db(&self.db, path)
     }
 }
 

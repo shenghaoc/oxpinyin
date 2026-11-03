@@ -75,6 +75,8 @@ version = "0"
 # "default" means here — select any peer explicitly with
 # `--no-default-features --features {kyotocabinet|tkrzw|bdb}`.
 default = ["tkrzw"]
+# Nonshipping tool calls; never enabled by the C libraries.
+tools = []
 # tkrzw binds the pin's concrete classes through cxx; it needs a C++17
 # compiler and tkrzw's headers, not libclang; `cc` is named for the compiler probe.
 tkrzw = ["dep:cc", "dep:cxx", "dep:cxx-build", "dep:system-deps"]

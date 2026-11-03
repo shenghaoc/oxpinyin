@@ -2529,3 +2529,113 @@ pub mod table_info {
         unsafe { libc::printf(c"user file:%s.\n".as_ptr(), pointer(user)) };
     }
 }
+
+/// Exact stdout formats of the three DBM test programs at 074a2219.
+pub mod dbm_tests {
+    use std::ffi::{CStr, c_int};
+
+    /// Fixed progress lines from tests/storage/test_{ngram,flexible_ngram,punct_table}.cpp.
+    pub enum Message {
+        /// A single-gram section.
+        Separator,
+        /// The ordinary bigram's key walk.
+        System,
+        /// The flexible bigram's key walk.
+        Items,
+        /// The flexible magic-header section.
+        Magic,
+        /// The flexible array-header section.
+        Array,
+        /// Punctuation attachment.
+        Created,
+        /// Punctuation insertion.
+        Inserted,
+        /// Punctuation removal.
+        Removed,
+        /// Punctuation snapshot round trip.
+        Reloaded,
+    }
+
+    /// Print the pin's literal, including its newline.
+    pub fn message(message: Message) {
+        let format = match message {
+            Message::Separator => c"--------------------------------------------------------\n",
+            Message::System => c"----------------------system----------------------------\n",
+            Message::Items => c"-----------------------items----------------------------\n",
+            Message::Magic => c"-----------------------magic header---------------------\n",
+            Message::Array => c"-----------------------array header---------------------\n",
+            Message::Created => c"created table.\n",
+            Message::Inserted => c"insert some punctuations.\n",
+            Message::Removed => c"remove some punctuations.\n",
+            Message::Reloaded => c"after save and load table.\n",
+        };
+        // SAFETY: every format is a static NUL-terminated literal without conversions.
+        unsafe { libc::printf(format.as_ptr()) };
+    }
+
+    /// test_ngram.cpp:33,59: gfloat promoted to double.
+    pub fn probability(token: u32, probability: f32) {
+        // SAFETY: the fixed format matches the promoted arguments.
+        unsafe {
+            libc::printf(
+                c"item:%d:%f\n".as_ptr(),
+                token as c_int,
+                f64::from(probability),
+            )
+        };
+    }
+
+    /// test_flexible_ngram.cpp:53,79,121.
+    pub fn item(token: u32, item: u32) {
+        // SAFETY: the fixed format matches the two 32-bit arguments.
+        unsafe { libc::printf(c"item:%d:%d\n".as_ptr(), token as c_int, item as c_int) };
+    }
+
+    /// Both bigram programs' get_all_items output.
+    pub fn token(token: u32) {
+        // SAFETY: the fixed format matches its 32-bit argument.
+        unsafe { libc::printf(c"item:%d\n".as_ptr(), token as c_int) };
+    }
+
+    /// test_ngram.cpp:67.
+    pub fn total(freq: u32) {
+        // SAFETY: the fixed format matches its 32-bit argument.
+        unsafe { libc::printf(c"total_freq:%d\n".as_ptr(), freq as c_int) };
+    }
+
+    /// test_flexible_ngram.cpp:67.
+    pub fn new_header(freq: u32) {
+        // SAFETY: the fixed format matches its 32-bit argument.
+        unsafe { libc::printf(c"new array header:%d\n".as_ptr(), freq as c_int) };
+    }
+
+    /// test_flexible_ngram.cpp:97.
+    pub fn magic(freq: u32) {
+        // SAFETY: the fixed format matches its 32-bit argument.
+        unsafe { libc::printf(c"magic header:%d\n".as_ptr(), freq as c_int) };
+    }
+
+    /// test_flexible_ngram.cpp:102,110.
+    pub fn header(token: u32, freq: u32) {
+        // SAFETY: the fixed format matches the two 32-bit arguments.
+        unsafe {
+            libc::printf(
+                c"single gram: %d, freq:%d\n".as_ptr(),
+                token as c_int,
+                freq as c_int,
+            )
+        };
+    }
+
+    /// test_punct_table.cpp:32.
+    pub fn punct_token(token: u32) {
+        // SAFETY: the fixed format matches its 32-bit argument.
+        unsafe { libc::printf(c"token: %d\n".as_ptr(), token as c_int) };
+    }
+
+    /// test_punct_table.cpp:37.
+    pub fn punctuations(line: &CStr) {
+        // SAFETY: the NUL-terminated string outlives printf and matches %s.
+        unsafe { libc::printf(c"Punctuations: %s\n".as_ptr(), line.as_ptr()) };
+    }
+}

@@ -45,7 +45,9 @@
     {
       "id": "kmm-export-absent-file",
       "policy_record": "bdb-failed-handle.md",
-      "policy_cells": ["bdb"],
+      "policy_cells": [
+        "bdb"
+      ],
       "utility": "export_k_mixture_model",
       "source": "utils/training/export_k_mixture_model.cpp at 074a2219: 112-155, 35-110; src/storage/tag_utility.cpp:360-417",
       "args": [
@@ -87,6 +89,23 @@
       "stdin": {
         "text": ""
       }
+    },
+    {
+      "utility": "export_k_mixture_model",
+      "files": {
+        "empty.db": {
+          "hex": ""
+        }
+      },
+      "source": "utils/training/export_k_mixture_model.cpp:142-150 at 074a2219",
+      "id": "kmm-export-existing-empty",
+      "policy_record": "bdb-failed-handle.md",
+      "policy_cells": ["bdb"],
+      "args": [
+        "--k-mixture-model-file",
+        "empty.db"
+      ],
+      "fixture_dir": "fixtures/w3"
     }
   ]
 }

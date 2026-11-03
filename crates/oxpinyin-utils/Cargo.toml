@@ -44,6 +44,7 @@ tkrzw = [
 workspace = true
 
 [dependencies]
+oxpinyin-capi-marshal = { path = "../oxpinyin-capi-marshal" }
 # The test drivers exercise the existing C facades through safe ownership
 # adapters. These tools and adapters are absent from shipping builds.
 oxpinyin-capi = { path = "../oxpinyin-capi", default-features = false, features = ["tools"] }
@@ -54,7 +55,7 @@ oxpinyin-engine = { workspace = true, features = ["tools"] }
 oxpinyin-data = { workspace = true }
 # The pin's DBM files, written and read through the backend seam the data
 # layer and datagen share.
-oxpinyin-store = { workspace = true }
+oxpinyin-store = { workspace = true, features = ["tools"] }
 # The storage text importer reuses the user store's pin-exact pronunciation
 # count handling.
 oxpinyin-user = { workspace = true }

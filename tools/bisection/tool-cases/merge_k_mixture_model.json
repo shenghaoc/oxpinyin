@@ -37,6 +37,27 @@
       "pin_signal": -6,
       "reproduces_signal": true,
       "policy_record": "eio-kmm-tools.md"
+    },
+    {
+      "utility": "merge_k_mixture_model",
+      "files": {
+        "empty.db": {
+          "hex": ""
+        }
+      },
+      "source": "utils/training/merge_k_mixture_model.cpp:225-237 at 074a2219",
+      "id": "kmm-merge-existing-empty",
+      "args": [
+        "--result-file",
+        "empty.db"
+      ],
+      "dbm_rows": [
+        "empty.db"
+      ],
+      "dbm_rows_cells": [
+        "bdb",
+        "tkrzw"
+      ]
     }
   ]
 }

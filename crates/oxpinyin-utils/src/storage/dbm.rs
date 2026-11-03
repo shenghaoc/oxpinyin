@@ -19,6 +19,7 @@ use oxpinyin_store::{
 /// One writable tree container.
 pub(crate) struct Tree {
     store: DefaultStore,
+    plain_set: bool,
 }
 
 impl Tree {
@@ -26,6 +27,50 @@ impl Tree {
     pub(crate) fn create(path: &Path) -> Result<Self, StoreError> {
         Ok(Self {
             store: <DefaultStore as WriteStore>::create(path)?,
+            plain_set: false,
+        })
+    }
+
+    /// The test driver's attach; its tkrzw mutations are plain `Set`s.
+    pub(crate) fn create_for_test(path: &Path) -> Result<Self, StoreError> {
+        let tree = Self::create(path)?;
+        let tree = Self {
+            plain_set: true,
+            ..tree
+        };
+        Ok(tree)
+    }
+
+    /// The pin's complete native key walk (`PunctTable::get_all_items`).
+    pub(crate) fn native_keys(&self) -> Result<Vec<Vec<u8>>, StoreError> {
+        self.store.native_keys()
+    }
+
+    /// Reuse the existing tree snapshot writer for `PunctTable::save_db`.
+    pub(crate) fn save_db(&self, path: &Path) -> Result<(), StoreError> {
+        use std::ops::Bound;
+        DefaultStore::write_user_index(path, |sink| {
+            self.store
+                .range_raw(Bound::Unbounded, Bound::Unbounded, sink)
+        })?;
+        // The BDB pin syncs its source handle after copying to the new file.
+        #[cfg(feature = "bdb")]
+        let _ = self.store.flush();
+        Ok(())
+    }
+
+    /// The pin's load into a fresh in-memory tree, using the existing
+    /// snapshot reader and raw store copy operations.
+    pub(crate) fn load_db(path: &Path) -> Result<Self, StoreError> {
+        use std::ops::Bound;
+        let source = DefaultStore::open_user_index(path)?;
+        let store = DefaultStore::create_in_memory()?;
+        source.range_raw(Bound::Unbounded, Bound::Unbounded, |key, value| {
+            store.write(|txn| txn.put_raw(key, value))
+        })?;
+        Ok(Self {
+            store,
+            plain_set: true,
         })
     }
 
@@ -33,6 +78,7 @@ impl Tree {
     pub(crate) fn open_read_only(path: &Path) -> Result<Self, StoreError> {
         Ok(Self {
             store: <DefaultStore as oxpinyin_store::ReadStore>::open_read_only(path)?,
+            plain_set: false,
         })
     }
 
@@ -45,6 +91,15 @@ impl Tree {
 
     /// `m_db->put(m_db, NULL, &key, &data, 0)`.
     pub(crate) fn put(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
+        if self.plain_set {
+            #[cfg(any(feature = "tkrzw", feature = "kyotocabinet"))]
+            return self.store.tool_set(key, value);
+            #[cfg(feature = "bdb")]
+            return self
+                .store
+                .write_deferred(|txn| txn.put_raw(key, value))
+                .map(|_| ());
+        }
         self.store.write(|txn| {
             txn.put_raw(key, value)?;
             Ok(())

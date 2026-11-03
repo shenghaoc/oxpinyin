@@ -1993,6 +1993,90 @@
           ]
         }
       }
+    },
+    "kmm-export-existing-empty": {
+      "cells": {
+        "bdb": {
+          "pin": {
+            "sha256": "84c2e56c89d7bcea20ec63e9086be49d47652bbea317d9a530bd340e087aa31a",
+            "fields": {
+              "exit": "d4735e3a265e16ee",
+              "files": "c68856244242f8f3",
+              "stderr": "0982acd5f4578582",
+              "stdout": "12ae32cb1ec02d01"
+            }
+          },
+          "subject": {
+            "sha256": "90ef810b2384775bd0274f80b25cf026d8572587278a356189fe6a02130027c6",
+            "fields": {
+              "exit": "d4735e3a265e16ee",
+              "files": "c68856244242f8f3",
+              "stderr": "1d5b3687c3773a37",
+              "stdout": "12ae32cb1ec02d01"
+            }
+          },
+          "divergence": [
+            "stderr: pin \"BDB0004 fop_read_meta: empty.db: unexpecte\" … (length 152); subject \"BDB0004 fop_read_meta: empty.db: unexpecte\" … (length 86)",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        }
+      }
+    },
+    "kmm-validate-existing-empty": {
+      "cells": {
+        "bdb": {
+          "pin": {
+            "sha256": "cddc0e0ba811642971dbf5470570c1cf2e63d0e807c17c1aed4b67fcc731b5b5",
+            "fields": {
+              "exit": "d029fa3a95e174a1",
+              "files": "0e66d39c1373af0c",
+              "stderr": "fdc4a496c8e555ec",
+              "stdout": "12ae32cb1ec02d01"
+            }
+          },
+          "subject": {
+            "sha256": "208934146e71feeb1db4565a836718d4d2962435b97ea53cf5a4b02cd4de7af1",
+            "fields": {
+              "exit": "d029fa3a95e174a1",
+              "files": "0e66d39c1373af0c",
+              "stderr": "d8683155bdd5da56",
+              "stdout": "12ae32cb1ec02d01"
+            }
+          },
+          "divergence": [
+            "stderr: pin \"BDB0004 fop_read_meta: empty.db: unexpecte\" … (length 267); subject \"BDB0004 fop_read_meta: empty.db: unexpecte\" … (length 135)",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        }
+      }
+    },
+    "kmm-estimate-existing-empty": {
+      "cells": {
+        "bdb": {
+          "pin": {
+            "sha256": "4d275889e8a184100d4b4b4692f8ef5d707eb8a58f9d13c072fa9f64166153b4",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "files": "0e66d39c1373af0c",
+              "stderr": "f747783f7a96ed72",
+              "stdout": "46b16e7ce12817cf"
+            }
+          },
+          "subject": {
+            "sha256": "a909546640a396df331fecad0f3c7c086341a94b77d2b23622292abd22c18682",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "files": "0e66d39c1373af0c",
+              "stderr": "feb49dc4a075271c",
+              "stdout": "46b16e7ce12817cf"
+            }
+          },
+          "divergence": [
+            "stderr: pin \"BDB0004 fop_read_meta: empty.db: unexpecte\" … (length 463); subject \"BDB0004 fop_read_meta: empty.db: unexpecte\" … (length 128)",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        }
+      }
     }
   }
 }

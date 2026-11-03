@@ -39,6 +39,7 @@ pub mod gen_binary_files;
 pub mod import_interpolation;
 pub mod libraries;
 pub mod pinyin;
+pub(crate) mod punctuation;
 pub mod table_text;
 
 /// `MAX_PHRASE_LENGTH` (`src/include/novel_types.h:119`), the largest

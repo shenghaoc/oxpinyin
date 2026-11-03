@@ -854,6 +854,7 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "oxpinyin-capi",
+ "oxpinyin-capi-marshal",
  "oxpinyin-core",
  "oxpinyin-data",
  "oxpinyin-engine",

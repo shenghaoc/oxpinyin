@@ -211,6 +211,27 @@ impl<H: FixedRecord, I: FixedRecord> SingleGram<H, I> {
         &self.items
     }
 
+    /// Append the stored items in [range_begin, range_end), starting at the
+    /// existing lower bound. Always succeeds; does not clear `array`
+    /// (`flexible_single_gram.h:118-139` at 074a2219).
+    ///
+    /// Unsorted records share the existing lower-bound precondition and
+    /// disposition in `eio-flexible-bigram-unsorted-records.md`.
+    pub fn search(
+        &self,
+        range_begin: u32,
+        range_end: u32,
+        array: &mut Vec<ArrayItemWithToken<I>>,
+    ) -> bool {
+        for item in &self.items[self.lower_bound(range_begin)..] {
+            if item.token >= range_end {
+                break;
+            }
+            array.push(item.clone());
+        }
+        true
+    }
+
     /// The item of `token`, or `None` when the gram has none.
     ///
     /// Rust's partition point uses the pin's token comparator, followed by
@@ -494,13 +515,39 @@ where
             }
             Ok(Some(S::MagicHeader::decode(&value)?))
         }
-        #[cfg(not(feature = "bdb"))]
+        #[cfg(feature = "kyotocabinet")]
+        {
+            let Some(db) = self.db.as_ref() else {
+                return Ok(None);
+            };
+            let mut value = vec![0; MAGIC_NUMBER_LEN + header_len];
+            let size = db
+                .get_raw_bounded(&MAGIC_KEY, &mut value)
+                .unwrap_or_else(|_| std::process::abort());
+            if size != Some(value.len()) {
+                if size != Some(MAGIC_NUMBER_LEN) {
+                    std::process::abort();
+                }
+                return Ok(None);
+            }
+            if !self.matches_magic(&value) {
+                std::process::abort();
+            }
+            Ok(Some(S::MagicHeader::decode(&value[MAGIC_NUMBER_LEN..])?))
+        }
+        #[cfg(feature = "tkrzw")]
         {
             let Some(value) = self.read_value(&MAGIC_KEY)? else {
                 return Ok(None);
             };
             if value.len() != MAGIC_NUMBER_LEN + header_len {
+                if value.len() != MAGIC_NUMBER_LEN {
+                    std::process::abort();
+                }
                 return Ok(None);
+            }
+            if !self.matches_magic(&value) {
+                std::process::abort();
             }
             Ok(Some(S::MagicHeader::decode(&value[MAGIC_NUMBER_LEN..])?))
         }
@@ -775,6 +822,57 @@ mod tests {
     #[derive(Clone, Debug, Default, PartialEq, Eq)]
     struct Item(u32, u32, u32, u32);
 
+    #[test]
+    fn search_uses_the_pin_test_program_ranges_and_preserves_append_order() {
+        // test_flexible_ngram.cpp:47-50,74-75,116-117 at 074a2219:
+        // the same [0,8) range before and after insert/remove/header edits.
+        let mut gram = SingleGram::<Magic, Magic>::new();
+        gram.set_header(Magic(16));
+        for (token, value) in [(2, 1), (6, 2), (4, 4), (3, 8), (1, 16), (3, 32)] {
+            if gram.get_array_item(token).is_some() {
+                assert!(gram.set_array_item(token, Magic(value)));
+            } else {
+                assert!(gram.insert_array_item(token, Magic(value)));
+            }
+        }
+        let original = gram.clone();
+        assert!(gram.insert_array_item(5, Magic(8)));
+        assert_eq!(gram.remove_array_item(1), Some(Magic(16)));
+        gram.set_header(Magic(32));
+        for value in [&original, &gram] {
+            let mut array = vec![ArrayItemWithToken {
+                token: 99,
+                item: Magic(99),
+            }];
+            assert!(value.search(0, 8, &mut array));
+            assert_eq!(&array[1..], value.items());
+        }
+        let mut after_header = original.clone();
+        after_header.set_header(Magic(1));
+        for value in [&after_header, &gram] {
+            let mut array = Vec::new();
+            assert!(value.search(0, 8, &mut array));
+            assert_eq!(array, value.items());
+        }
+        let mut array = Vec::new();
+        assert!(gram.search(3, 5, &mut array));
+        assert_eq!(
+            array,
+            vec![
+                ArrayItemWithToken {
+                    token: 3,
+                    item: Magic(32)
+                },
+                ArrayItemWithToken {
+                    token: 4,
+                    item: Magic(4)
+                },
+            ]
+        );
+        assert!(gram.search(8, 8, &mut array));
+        assert_eq!(array.len(), 2);
+    }
+
     impl FixedRecord for Magic {
         const LEN: usize = 4;
 
@@ -851,6 +949,77 @@ mod tests {
         type MagicHeader = Magic;
         type ArrayHeader = Header;
         type ArrayItem = Item;
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn magic_header_reads_follow_backend_sizes() {
+        use crate::{AttachMode, WriteStore, WriteTxn};
+        use std::os::unix::process::ExitStatusExt;
+        use std::process::Command;
+
+        const MODE: &str = "OXPINYIN_MAGIC_READ_CASE";
+        const DIR: &str = "OXPINYIN_MAGIC_READ_DIR";
+        if let Ok(mode) = std::env::var(MODE) {
+            let path = std::path::PathBuf::from(std::env::var_os(DIR).unwrap()).join("model.db");
+            let model = super::DefaultFlexibleBigram::<Spec>::attach(
+                Some(&path),
+                AttachMode::ReadWriteCreate,
+            )
+            .unwrap();
+            assert!(model.attached());
+            // Change the already-attached record so attach's own signature
+            // check cannot hide the getter contract being tested.
+            let mut value = b"TEST".to_vec();
+            value.extend_from_slice(&7_u32.to_ne_bytes());
+            match mode.as_str() {
+                "signature" => value.truncate(4),
+                "short" => value.truncate(5),
+                "overlong" => value.push(0),
+                "wrong" => value[..4].copy_from_slice(b"FAIL"),
+                _ => {}
+            }
+            if mode == "missing" {
+                model
+                    .db
+                    .as_ref()
+                    .unwrap()
+                    .write_deferred(|txn| txn.remove_raw(&MAGIC_KEY))
+                    .unwrap();
+            } else {
+                model.write_value(&MAGIC_KEY, &value).unwrap();
+            }
+            let expected = if matches!(mode.as_str(), "missing" | "signature" | "short") {
+                None
+            } else {
+                Some(Magic(7))
+            };
+            assert_eq!(model.get_magic_header().unwrap(), expected);
+            return;
+        }
+        let root = std::env::temp_dir().join(format!("oxpinyin-magic-read-{}", std::process::id()));
+        for mode in ["missing", "signature", "short", "overlong", "wrong", "full"] {
+            let dir = root.join(mode);
+            std::fs::create_dir_all(&dir).unwrap();
+            let output = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "flexible_ngram::tests::magic_header_reads_follow_backend_sizes",
+                ])
+                .env(MODE, mode)
+                .env(DIR, &dir)
+                .output()
+                .unwrap();
+            let aborts = !cfg!(feature = "bdb")
+                && (matches!(mode, "short" | "overlong" | "wrong")
+                    || (cfg!(feature = "kyotocabinet") && mode == "missing"));
+            if aborts {
+                assert_eq!(output.status.signal(), Some(6), "{mode}: {output:?}");
+            } else {
+                assert!(output.status.success(), "{mode}: {output:?}");
+            }
+        }
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

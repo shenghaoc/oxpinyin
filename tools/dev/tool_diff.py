@@ -182,7 +182,7 @@ def load_cases(paths):
                     raise ValueError(f'{path}: pin_not_run requires a registered class (b) policy entry')
                 if any(field in case for field in ('pin_signal', 'reproduces_signal',
                         'mask_print_time', 'dbm_rows', 'dbm_rows_pinyin_index',
-                        'policy_cells', 'dbm_rows_cells', 'expected_failure')):
+                        'policy_cells', 'dbm_rows_cells', 'expected_failure', 'tkrzw_abort_timestamp')):
                     raise ValueError(f'{path}: pin_not_run cannot mask or reinterpret observations')
             for name in case.get('files', {}):
                 relative(name)
@@ -217,6 +217,14 @@ def load_cases(paths):
                     raise ValueError(f'{path}: dbm_rows must be a list of relative names')
                 for name in case['dbm_rows']:
                     relative(name)
+            if 'tkrzw_abort_timestamp' in case:
+                names = case['tkrzw_abort_timestamp']
+                if (case.get('pin_signal') != -6 or not case.get('reproduces_signal')
+                        or not isinstance(names, list) or not names
+                        or not all(isinstance(name, str) and name for name in names)):
+                    raise ValueError(f'{path}: tkrzw_abort_timestamp needs named files and a reproduced SIGABRT')
+                for name in names:
+                    relative(name)
             if case.get('fixture_dir') is not None:
                 if not isinstance(case['fixture_dir'], str):
                     raise ValueError(f'{path}: fixture_dir must be a string')
@@ -241,6 +249,26 @@ def snapshot(directory):
         else:
             raise ValueError(f'unsupported output file kind: {path}')
     return files
+
+
+def mask_tkrzw_abort_timestamps(files, names, cell):
+    """Only the named abort files' HashDBM clock field, never other bytes.
+
+    tkrzw_dbm_hash.cc:43,1143,1252 at 9ee84164: eight bytes at offset 48,
+    GetWallTime() * 1000000. TreeDBM's on-disk container is also HashDBM.
+    This is clock normalization, not a POLICY-ACCEPTED divergence.
+    """
+    if cell != 'tkrzw':
+        return
+    for name in names:
+        content = files.get(name, '')
+        if not content.startswith('hex:'):
+            continue
+        data = bytearray.fromhex(content[4:])
+        if len(data) < 128 or not data.startswith(b'TkrzwHDB\n'):
+            continue
+        data[48:56] = bytes(8)
+        files[name] = 'hex:' + data.hex()
 
 
 def pinyin_index_rows(output):
@@ -367,6 +395,8 @@ def observation(ctx, binary, case, directory, inputs, stdin, deadline, helper=No
             if files.get(name) == 'symlink:' + target:
                 size = os.fstat(fd).st_size
                 files[name] = 'hex:' + os.pread(fd, size, 0).hex()
+    if case.get('tkrzw_abort_timestamp') and result.status == case.get('pin_signal'):
+        mask_tkrzw_abort_timestamps(files, case['tkrzw_abort_timestamp'], ctx.settings.cell)
     if case.get('dbm_rows') and (case.get('dbm_rows_cells') is None
                                or ctx.settings.cell in case['dbm_rows_cells']):
         logical_dbm_rows(ctx, helper, directory, case['dbm_rows'], files)
@@ -439,7 +469,8 @@ def verdict(case, pin, subject, policy_root, cell):
                 return 'DIFFER', f'{side}: expected exit {expected["exit"]} and stderr {expected["stderr"]!r}; got {value["exit"]} and {value["stderr"]!r}'
     # `policy_cells` limits the record to the cells it names; on any other
     # cell the case compares as an ordinary case.
-    if case.get('policy_record') and cell in case.get('policy_cells', (cell,)):
+    scope = case.get('policy_cells')
+    if case.get('policy_record') and (scope is None or cell in scope):
         try:
             kept = contract_verdict.policy_expectations(
                 dict(policy_record=case['policy_record'], case_id=case['id'],

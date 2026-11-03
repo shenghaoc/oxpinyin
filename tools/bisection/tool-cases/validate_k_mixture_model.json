@@ -68,6 +68,21 @@
         "LC_ALL": "C"
       },
       "fixture_dir": "fixtures/w3"
+    },
+    {
+      "utility": "validate_k_mixture_model",
+      "files": {
+        "empty.db": {
+          "hex": ""
+        }
+      },
+      "source": "utils/training/validate_k_mixture_model.cpp:157-170 at 074a2219",
+      "id": "kmm-validate-existing-empty",
+      "policy_record": "bdb-failed-handle.md",
+      "policy_cells": ["bdb"],
+      "args": [
+        "empty.db"
+      ]
     }
   ]
 }

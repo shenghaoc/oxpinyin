@@ -1392,14 +1392,43 @@ impl crate::UserBigramDb for TkrzwUserBigramDb {
     }
 
     fn save_db(&self, path: &Path) -> Result<(), StoreError> {
-        // `Bigram::save_db` (`ngram_tkrzwdb.cpp:65-84`): remove the file,
-        // open a fresh `HashDBM` at its default tuning, copy this
-        // container into it in iterator order, synchronize, close.
-        crate::remove_if_present(path)?;
-        let file = open_hash_create(path)?;
-        // `copy_tkrzwdb`: one `Set` per record (`tkrzwdb_utils.h:48-74`).
-        visit_db(&self.db, |key, value| file.db.set(key, value))?;
-        file.db.synchronize(false)
+        save_bigram_db(&self.db, path)
+    }
+}
+
+fn save_bigram_db(db: &Db, path: &Path) -> Result<(), StoreError> {
+    // `Bigram::save_db` (`ngram_tkrzwdb.cpp:66-87`): remove the file,
+    // open a fresh `HashDBM` at its default tuning, copy this
+    // container into it in iterator order, synchronize, close.
+    crate::remove_if_present(path)?;
+    let file = open_hash_create(path)?;
+    // `copy_tkrzwdb`: one `Set` per record (`tkrzwdb_utils.h:48-74`).
+    visit_db(db, |key, value| file.db.set(key, value))?;
+    file.db.synchronize(false)
+}
+
+impl TkrzwStore {
+    /// The tools' plain native `Set`, without synchronizing. Matches
+    /// `ngram_tkrzwdb.cpp:124-132` and `punct_table_tkrzwdb.cpp:139-148`
+    /// at 074a2219. The shipping transaction and durability path is unchanged.
+    ///
+    /// # Errors
+    /// Returns the native write error, or an error for a read-only handle.
+    #[cfg(feature = "tools")]
+    pub fn tool_set(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
+        if self.read_only {
+            return Err(StoreError::ReadOnly);
+        }
+        self.db.set(key, value)
+    }
+
+    /// Save an attached bigram using the same implementation as the
+    /// in-memory user bigram (`ngram_{tkrzwdb,kyotodb,bdb}.cpp` at 074a2219).
+    ///
+    /// # Errors
+    /// Returns the existing save operation's file or backend error.
+    pub fn save_bigram_db(&self, path: &Path) -> Result<(), StoreError> {
+        save_bigram_db(&self.db, path)
     }
 }
 

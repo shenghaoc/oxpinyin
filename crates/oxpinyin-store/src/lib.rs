@@ -823,6 +823,21 @@ pub trait RawReadStore: ReadStore {
     /// Returns [`StoreError`] when the backend read fails.
     fn get_raw(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError>;
 
+    /// Read a raw value into a bounded buffer and return its full length.
+    ///
+    /// # Errors
+    /// Returns [`StoreError`] when the backend read fails.
+    #[cfg(feature = "kyotocabinet")]
+    fn get_raw_bounded(&self, key: &[u8], value: &mut [u8]) -> Result<Option<usize>, StoreError> {
+        let mut whole = Vec::new();
+        if !self.get_raw(key, &mut whole)? {
+            return Ok(None);
+        }
+        let count = value.len().min(whole.len());
+        value[..count].copy_from_slice(&whole[..count]);
+        Ok(Some(whole.len()))
+    }
+
     /// Reads at most `length` value bytes at `offset`. The default copies
     /// the whole value and slices it; Berkeley DB overrides it with the
     /// pin's `DB_DBT_PARTIAL` read, which never copies the rest of a

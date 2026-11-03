@@ -73,7 +73,7 @@ impl Database {
         self.inner.as_ref().is_some_and(KmmBigram::is_open)
     }
 
-    /// `get_magic_header`; `None` on a missing or short record.
+    /// `get_magic_header`, preserving the backend's missing/size assertions.
     #[must_use]
     pub fn get_magic_header(&self) -> Option<KMixtureModelMagicHeader> {
         self.inner.as_ref()?.get_magic_header().ok().flatten()

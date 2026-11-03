@@ -1,0 +1,10 @@
+--- a/crates/oxpinyin-utils/src/dbm_tests/ngram.rs
++++ b/crates/oxpinyin-utils/src/dbm_tests/ngram.rs
+@@ -10,6 +10,6 @@
+ fn print_gram(bytes: &[u8]) {
+     let total = present(gram::get_total_freq(bytes));
+     for (token, freq) in gram::search(bytes, 0, 8) {
+-        output::probability(token, freq as f32 / total as f32);
++        output::probability(token + 1, freq as f32 / total as f32);
+     }
+ }
