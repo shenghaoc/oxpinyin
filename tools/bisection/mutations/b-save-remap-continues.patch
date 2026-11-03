@@ -1,0 +1,13 @@
+--- a/crates/oxpinyin-user/src/persistence.rs
++++ b/crates/oxpinyin-user/src/persistence.rs
+@@ -2379,9 +2379,7 @@
+             }
+             // Register row 76: `MemoryChunk::mmap` refused the file. The save
+             // stops at this library with every earlier file as written.
+-            if matches!(baseline, Some(SaveBaseline::Unmappable)) {
+-                return Err(PersistenceError::SystemRemapFailed);
+-            }
++            // Mutation: continue after an unmappable save baseline.
+             // Register row 96: the pin's `MemoryChunk::mmap` asserts here,
+             // after the earlier libraries' files were written (libzhuyin
+             // renamed each as it went).

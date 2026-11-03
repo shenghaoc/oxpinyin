@@ -19,6 +19,23 @@ def declarations(chunk):
 
 
 class StoredCountHeadersTests(unittest.TestCase):
+    def test_truncated_count_fixture_uses_null_user_and_both_facades(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = Mock(user=tmp)
+            chunk = Mock(return_value=b'encoded')
+            def count(inst, token, out):
+                self.assertEqual(token, 0x01000001)
+                C.cast(out, C.POINTER(family.U))[0] = 17
+                return True
+            kit.fn.side_effect = lambda name, *types: (count if name == 'token_get_n_pronunciation'
+                                                       else Mock(return_value='handle'))
+            with patch.object(family, 'conf_system', return_value=tmp):
+                cases = declarations(chunk)
+                for mode in ('pinyin', 'zhuyin'):
+                    self.assertEqual(cases['untouched-truncated-count-' + mode][1](kit),
+                                     {'count': [True, 17]})
+                    kit.init.assert_called_with(system=tmp, user=None, literal=True)
+
     def test_system_and_user_fixtures_use_the_injected_chunk_writer(self):
         with tempfile.TemporaryDirectory() as tmp:
             kit = Mock(user=tmp)

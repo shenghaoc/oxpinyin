@@ -8,7 +8,7 @@ rust-version.workspace = true
 description = "oxpinyin internal crate — no stability promise; use oxpinyin-engine."
 
 [lints.rust]
-unsafe_code = "deny"
+unsafe_code = "forbid"
 unexpected_cfgs = "deny"
 missing_docs = "warn"
 unused_must_use = "deny"
@@ -29,9 +29,6 @@ oxpinyin-store = { workspace = true }
 # table.conf and user.conf go through the pin's own C library calls
 # (docs/findings/external-io-boundary.md, stage 1).
 oxpinyin-input = { workspace = true }
-
-# Map phrase-library chunks on all targets.
-memmap2 = { workspace = true }
 
 [dev-dependencies]
 tempfile.workspace = true

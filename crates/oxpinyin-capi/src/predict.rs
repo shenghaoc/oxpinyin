@@ -471,15 +471,12 @@ fn predicted_frequency(
         user.and_then(|store| store.unigram_delta(token).ok())
             .unwrap_or(0)
     };
-    // An imported system-library token missing from the immutable dictionary
-    // has a complete live count: the store's delta, added once. Existing
-    // immutable items need the chunk's stored count plus that delta. Runtime
-    // bumps are added below, once, for both.
-    let live = dict.live_items();
-    let item_count = match live.stored_unigram(token) {
-        Some(base) => base.wrapping_add(store_count()),
-        None => live.effective_unigram(token).unwrap_or_else(store_count),
-    };
+    // System items carry their full live count. User items without a live
+    // system chunk use the store's count; runtime bumps are added once.
+    let item_count = dict
+        .live_items()
+        .effective_unigram(token)
+        .unwrap_or_else(store_count);
     let unigram =
         item_count.wrapping_add(dict.unigram_delta(token).unwrap_or(0)) & u64::from(u32::MAX);
     // The pin's candidate `m_freq` for predicted rows is the same
@@ -492,7 +489,7 @@ pub(crate) fn phrase_text(dict: &SharedDict, store: &UserStore, token: u32) -> O
     if let Ok(Some(phrase)) = store.phrase(token) {
         return phrase.phrase_text();
     }
-    dict.system().phrase_text(token)
+    dict.token_text(token)
 }
 
 #[cfg(test)]

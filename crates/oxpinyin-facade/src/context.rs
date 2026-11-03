@@ -979,7 +979,7 @@ mod library_transition_tests {
     fn first_item(ctx: &ContextCore, library: u8) -> (u32, PhraseText) {
         let token = (u32::from(library) << 24) | 1;
         let dict = ctx.runtime.as_ref().expect("runtime").dict();
-        let text = dict.system().phrase_text(token).expect("text");
+        let text = dict.token_text(token).expect("text");
         (token, PhraseText::from(text.as_str().expect("scalar text")))
     }
 
@@ -1004,12 +1004,8 @@ mod library_transition_tests {
             .expect("runtime")
             .dict()
             .live_items()
-            .read(token, |item| {
-                (item.origin() == oxpinyin_user::ItemOrigin::Overlay)
-                    .then(|| item.n_pronunciations())
-            })
+            .read(token, |item| item.n_pronunciations())
             .found()
-            .flatten()
             .unwrap_or(0)
     }
 
@@ -1077,9 +1073,10 @@ mod library_transition_tests {
         let user = tempfile::tempdir().expect("user dir");
         let mut ctx = open(user.path());
         let (gbk, text) = first_item(&ctx, GBK);
+        let original_readings = readings(&ctx, gbk);
         import(&mut ctx, GBK, gbk, &text, 1);
         assert_eq!(ctx.save_user(), SaveOutcome::Saved);
-        assert!(readings(&ctx, gbk) > 0);
+        assert!(readings(&ctx, gbk) > original_readings);
         let log = user.path().join("gbk_char.dbin");
         for unreadable in [None, Some(&b"abc"[..])] {
             assert!(ctx.unload_phrase_library(GBK));
@@ -1090,7 +1087,11 @@ mod library_transition_tests {
                 Some(bytes) => std::fs::write(&log, bytes).expect("short log"),
             }
             assert_eq!(ctx.load_phrase_library(u32::from(GBK)), Ok(true));
-            assert_eq!(readings(&ctx, gbk), 0, "the system chunk alone");
+            assert_eq!(
+                readings(&ctx, gbk),
+                original_readings,
+                "the system chunk alone"
+            );
         }
     }
 }

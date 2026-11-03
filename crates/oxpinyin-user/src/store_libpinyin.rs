@@ -263,14 +263,17 @@ impl GenericUserStore<DefaultStore> {
 
         let profile = if let Some(dir) = user_dir {
             match checked {
-                Some(check) => persistence::load_session_checked(dir, originals, &check),
-                None => persistence::load_profile(dir, originals, &versions, law)?,
+                Some(check) => persistence::load_session_checked_live(dir, originals, &check),
+                None => persistence::load_profile_live(dir, originals, &versions, law)?,
             }
         } else {
             // Without a user dir the pin's `check_format` reads and writes
             // `""`, which the init runs where the pin does
             // ([`Self::check_profile_unnamed`]); there is no profile.
-            persistence::LoadedProfile::default()
+            persistence::LoadedProfile {
+                replayed: originals.take_live_libraries(),
+                ..Default::default()
+            }
         };
         // A system library's log replay reached a pin assertion (the
         // library loop's `merge`, rows 91 and 108): the session open
@@ -1297,6 +1300,144 @@ mod tests {
         dir
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn session_owns_one_writable_whole_file_mapping() {
+        let dir = tempdir("one-live-mapping");
+        let path = dir.join("whole-file.bin");
+        let file =
+            oxpinyin_data::chunk_write::build_chunk(&[(1, three_items()[0].clone())]).unwrap();
+        let mut payload = file[8..].to_vec();
+        payload.resize(16_451, 0);
+        let file = oxpinyin_data::chunk_format::build_memory_chunk(&payload).unwrap();
+        std::fs::write(&path, &file).unwrap();
+        let mapped = oxpinyin_data::phrase_library::PhraseLibrary::open(&path).unwrap();
+        let originals: SystemOriginals =
+            BTreeMap::from([(1, SystemLibrary::from_library(mapped))]).into();
+        let mut store =
+            UserStore::open_transient(originals, versions(), UserConfLaw::Pinyin).unwrap();
+        let maps = std::fs::read_to_string("/proc/self/maps").unwrap();
+        let rows: Vec<_> = maps
+            .lines()
+            .filter(|line| line.ends_with(path.to_str().unwrap()))
+            .collect();
+        assert_eq!(rows.len(), 1, "one persistent mapping: {rows:?}");
+        let fields: Vec<_> = rows[0].split_whitespace().collect();
+        assert_eq!(fields[1], "rw-p");
+        assert_eq!(fields[2], "00000000");
+        let (start, end) = fields[0].split_once('-').unwrap();
+        let extent =
+            usize::from_str_radix(end, 16).unwrap() - usize::from_str_radix(start, 16).unwrap();
+        assert!(extent >= file.len(), "whole file mapped");
+        let has_history = |store: &UserStore| {
+            store
+                .originals()
+                .phrase_libraries()
+                .library(0x0100_0001)
+                .unwrap()
+                .has_history()
+        };
+        assert!(!has_history(&store), "transfer allocates no history");
+        assert_eq!(store.system_unigram(0x0100_0001), Some(100));
+        assert!(!has_history(&store), "reads allocate no history");
+        assert!(
+            !store
+                .add_system_unigram_frequency(0x0100_0001, u32::MAX)
+                .unwrap()
+        );
+        assert!(!has_history(&store), "a refused write allocates no history");
+        assert!(store.add_system_unigram_frequency(0x0100_0001, 2).unwrap());
+        assert!(has_history(&store), "the first write captures history");
+        assert_eq!(store.system_unigram(0x0100_0001), Some(102));
+        drop(store);
+        assert!(
+            !std::fs::read_to_string("/proc/self/maps")
+                .unwrap()
+                .lines()
+                .any(|line| line.ends_with(path.to_str().unwrap()))
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn header_only_count_survives_session_transfer() {
+        use crate::live_system::{LiveSystemItems, Lookup};
+        let dir = tempdir("header-only-count");
+        let path = dir.join("count.bin");
+        let content = [vec![0; 8], vec![255, 17]].concat();
+        let offsets = [0_u32, 8, 9, 10, 0];
+        let index_two = 17 + offsets.len() as u32 * 4 + 1;
+        let mut payload = Vec::new();
+        for value in [0, 17, index_two, index_two + content.len() as u32 + 1] {
+            payload.extend_from_slice(&value.to_le_bytes());
+        }
+        payload.push(b'#');
+        for offset in offsets {
+            payload.extend_from_slice(&offset.to_le_bytes());
+        }
+        payload.push(b'#');
+        payload.extend_from_slice(&content);
+        payload.push(b'#');
+        std::fs::write(
+            &path,
+            oxpinyin_data::chunk_format::build_memory_chunk(&payload).unwrap(),
+        )
+        .unwrap();
+        let mapped = oxpinyin_data::phrase_library::PhraseLibrary::open(&path).unwrap();
+        assert_eq!(mapped.pronunciation_count(1), Some(17));
+        assert!(mapped.item(1).is_none());
+        let originals: SystemOriginals =
+            BTreeMap::from([(1, SystemLibrary::from_library(mapped))]).into();
+        let store = UserStore::open_transient(originals, versions(), UserConfLaw::Pinyin).unwrap();
+        let live = LiveSystemItems::unmasked(store.originals().phrase_libraries(), Some(&store));
+        assert_eq!(live.pronunciation_count(0x0100_0001), Lookup::Found(17));
+        assert!(live.read(0x0100_0001, |_| ()).found().is_none());
+        drop(store);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+    #[test]
+    fn layout_failed_sparse_library_keeps_and_releases_whole_mapping() {
+        let dir = tempdir("layout-failed-whole-map");
+        let path = dir.join("sparse.bin");
+        let file = std::fs::File::create(&path).unwrap();
+        let file_len = (1_u64 << 32) + 8;
+        file.set_len(file_len).unwrap();
+        drop(file);
+        let mapped =
+            oxpinyin_data::phrase_library::PhraseLibrary::open_retaining_layout(&path).unwrap();
+        assert!(mapped.is_layout_failed());
+        let originals: SystemOriginals =
+            BTreeMap::from([(1, SystemLibrary::from_library(mapped))]).into();
+        let store = UserStore::open_transient(originals, versions(), UserConfLaw::Pinyin).unwrap();
+        let maps = std::fs::read_to_string("/proc/self/maps").unwrap();
+        let rows: Vec<_> = maps
+            .lines()
+            .filter(|line| line.ends_with(path.to_str().unwrap()))
+            .collect();
+        assert_eq!(
+            rows.len(),
+            1,
+            "one mapping after the failed layout: {rows:?}"
+        );
+        let fields: Vec<_> = rows[0].split_whitespace().collect();
+        assert_eq!(fields[1], "rw-p");
+        let (start, end) = fields[0].split_once('-').unwrap();
+        let extent =
+            u64::from_str_radix(end, 16).unwrap() - u64::from_str_radix(start, 16).unwrap();
+        assert!(extent >= file_len, "whole sparse file is mapped");
+        assert_eq!(store.system_unigram(0x0100_0001), None);
+        drop(store);
+        assert!(
+            !std::fs::read_to_string("/proc/self/maps")
+                .unwrap()
+                .lines()
+                .any(|line| line.ends_with(path.to_str().unwrap()))
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     /// Opens a profile whose `gb_char.dbin` holds `records` over [`originals`].
     fn open_with_log(
         name: &str,
@@ -1710,6 +1851,7 @@ mod tests {
             .train_pronunciations(first, std::iter::once(reading), 7)
             .expect("train");
         assert_eq!(store.system_unigram(second), None);
+        assert!(store.system_item_removed(second));
         assert_eq!(store.system_library_total(1), total);
         store.mark_modified();
         assert!(store.save().expect("save"));

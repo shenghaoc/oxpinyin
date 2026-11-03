@@ -331,8 +331,9 @@ pub extern "C" fn zhuyin_token_get_unigram_frequency(
     // `false` (`get_phrase_item`'s `ERROR_NO_SUB_PHRASE_INDEX` /
     // `ERROR_NO_ITEM`).
     let nibble = token >> 24;
+    let is_system = u8::try_from(nibble).is_ok_and(|index| inst.core.dict.is_system_library(index));
     let base = match nibble {
-        1..=4 => {
+        _ if is_system => {
             if !inst.core.dict.token_exists(token) {
                 // Unloaded library or no such item — nothing is
                 // reported (matches the visibility filter every other
@@ -365,7 +366,7 @@ pub extern "C" fn zhuyin_token_get_unigram_frequency(
     };
     // A system item's frequency comes from the language model, which
     // already prices the overlay into it; the other libraries take it here.
-    let overlay = if (1..=4).contains(&nibble) {
+    let overlay = if is_system {
         0
     } else {
         inst.core.dict.unigram_delta(token).unwrap_or(0)

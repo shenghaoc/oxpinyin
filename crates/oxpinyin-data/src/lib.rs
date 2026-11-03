@@ -15,7 +15,7 @@
 //! `pinyin-dbm-format-2026-09-01.md`, `phrase-dbm-format-2026-09-01.md`,
 //! `bigram-punct-format-2026-09-01.md`; the custom-content loader follows
 //! `data-formats.md`.
-#![deny(unsafe_code)]
+#![forbid(unsafe_code)]
 #![warn(missing_docs)]
 // Constitution §4: keep these non-test denials. A permitted site needs the
 // narrowest justified #[expect], citing the pin's abort site or an invariant

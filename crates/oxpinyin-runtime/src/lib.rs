@@ -450,6 +450,11 @@ pub struct RuntimeDict<'a> {
     library_mask: &'a AtomicU32,
 }
 
+#[cfg(test)]
+thread_local! {
+    static PRICING_EVALUATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl<'a> RuntimeDict<'a> {
     /// Shared lookup keeps search side effects and visibility identical;
     /// candidate collection omits only the pronunciation prices it discards.
@@ -459,29 +464,45 @@ impl<'a> RuntimeDict<'a> {
         out: &mut Vec<PhraseEntry>,
         price: bool,
     ) -> Result<bool, DictError> {
-        let unreadable = if price {
-            self.system.lookup_into_flagged(syllables, out)?
-        } else {
-            self.system.lookup_candidates_into(syllables, out)?
-        };
+        let unreadable = self.system.lookup_with_live(
+            syllables,
+            out,
+            price,
+            |token| self.library_visible_token(token),
+            |token, keys| {
+                self.live_items()
+                    .read(token, |item| {
+                        let mut entry =
+                            PhraseEntry::new(PhraseToken::new(token), item.phrase_text()?);
+                        if let Some(keys) = keys {
+                            let (matched, total) = Self::item_possibility(item, keys);
+                            entry = entry.with_pronunciation_possibility(
+                                u64::from(matched),
+                                u64::from(total),
+                            );
+                        }
+                        Some(entry)
+                    })
+                    .found()
+                    .flatten()
+            },
+        )?;
         let user = self.user_lookup()?;
         #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
         self.note_user_search(syllables);
-        out.extend(user.lookup(syllables));
-        // 074a2219 phrase_index.h:136-163 uses wrapping guint32 sums;
-        // pinyin_lookup2.cpp:437-466 reads pronunciation possibility from
-        // the current item even when the match came from the shipped index.
-        if price && let Some(query) = self.effective_query(syllables) {
-            for entry in out.iter_mut() {
-                if let Some((matched, total)) =
-                    self.effective_possibility(&query, entry.token().value())
-                {
-                    *entry = entry
-                        .clone()
-                        .with_pronunciation_possibility(u64::from(matched), u64::from(total));
-                }
-            }
-        }
+        // System-index hits were already priced by the callback above. A
+        // user-index hit may name a system token too; price that result once
+        // from the same live item before appending it to the system results.
+        let query = price.then(|| self.effective_query(syllables)).flatten();
+        out.extend(user.lookup(syllables).into_iter().map(|entry| {
+            let Some((matched, total)) = query
+                .as_ref()
+                .and_then(|keys| self.effective_possibility(keys, entry.token().value()))
+            else {
+                return entry;
+            };
+            entry.with_pronunciation_possibility(u64::from(matched), u64::from(total))
+        }));
         if self.token_filter_active() {
             // An unloaded library's phrases leave every read: upstream
             // frees the sub-index (`phrase_index.cpp:260-268`), the
@@ -560,27 +581,37 @@ impl<'a> RuntimeDict<'a> {
                 if item.origin() != ItemOrigin::Overlay {
                     return None;
                 }
-                let mut total = 0_u32;
-                let mut matched = 0_u32;
-                for reading in item.pronunciations() {
-                    total = total.wrapping_add(reading.frequency);
-                    if query.len() == reading.keys.len()
-                        && query.iter().zip(reading.keys.iter()).all(|(q, bits)| {
-                            let s = oxpinyin_core::ChewingKey::from_packed(bits);
-                            q.initial == s.initial
-                                && ((q.middle == s.middle && q.final_ == s.final_)
-                                    || (q.middle == 0 && q.final_ == 0)
-                                    || (s.middle == 0 && s.final_ == 0))
-                                && (q.tone == s.tone || q.tone == 0 || s.tone == 0)
-                        })
-                    {
-                        matched = matched.wrapping_add(reading.frequency);
-                    }
-                }
+                let (matched, total) = Self::item_possibility(item, query);
                 Some((matched, total))
             })
             .found()
             .flatten()
+    }
+
+    fn item_possibility(
+        item: oxpinyin_user::SystemItem<'_>,
+        query: &[oxpinyin_core::ChewingKey],
+    ) -> (u32, u32) {
+        #[cfg(test)]
+        PRICING_EVALUATIONS.with(|count| count.set(count.get() + 1));
+        let mut total = 0_u32;
+        let mut matched = 0_u32;
+        for reading in item.pronunciations() {
+            total = total.wrapping_add(reading.frequency);
+            if query.len() == reading.keys.len()
+                && query.iter().zip(reading.keys.iter()).all(|(q, bits)| {
+                    let s = oxpinyin_core::ChewingKey::from_packed(bits);
+                    q.initial == s.initial
+                        && ((q.middle == s.middle && q.final_ == s.final_)
+                            || (q.middle == 0 && q.final_ == 0)
+                            || (s.middle == 0 && s.final_ == 0))
+                        && (q.tone == s.tone || q.tone == 0 || s.tone == 0)
+                })
+            {
+                matched = matched.wrapping_add(reading.frequency);
+            }
+        }
+        (matched, total)
     }
 
     /// What [`Self::priced_token`] reads of `syllables` whatever the
@@ -633,23 +664,27 @@ impl<'a> RuntimeDict<'a> {
                 text: want_text.then(|| entry.text().clone()),
             }
         } else {
-            let Some(item) = path
-                .keys
-                .as_deref()
-                .and_then(|keys| self.system.trellis_item_keys(keys, token))
+            let live = self.live_items();
+            let Some((chars, text)) = live
+                .read(token, |item| {
+                    (
+                        u32::try_from(item.phrase_length()).unwrap_or(u32::MAX),
+                        if want_text { item.phrase_text() } else { None },
+                    )
+                })
+                .found()
             else {
                 return Ok(None);
             };
+            if want_text && text.is_none() {
+                return Ok(None);
+            }
             PricedToken {
-                item,
-                text: if want_text {
-                    match self.system.phrase_text(token) {
-                        Some(text) => Some(text),
-                        None => return Ok(None),
-                    }
-                } else {
-                    None
+                item: TrellisItem {
+                    chars,
+                    pronunciation: None,
                 },
+                text,
             }
         };
         // The effective-item overlay prices against the same keys, when
@@ -792,6 +827,12 @@ impl<'a> RuntimeDict<'a> {
             .fetch_and(!(1u32 << index), Ordering::SeqCst)
             & (1u32 << index)
             != 0
+    }
+
+    /// Whether the configured default row is a system library.
+    #[must_use]
+    pub fn is_system_library(&self, index: u8) -> bool {
+        self.live_items().is_system_library(index)
     }
 
     /// Borrow the effective system items for one operation.
@@ -955,8 +996,13 @@ impl<'a> RuntimeDict<'a> {
     /// are tallied once and cached.
     #[must_use]
     pub fn visible_item_count(&self) -> u64 {
-        self.system
-            .item_count_where(|nibble| self.library_visible(u32::from(nibble)))
+        self.system.libraries().item_count_where_live(
+            |nibble| self.library_visible(u32::from(nibble)),
+            |nibble| {
+                self.user
+                    .and_then(|store| store.pristine_system_item_count(nibble))
+            },
+        )
     }
 
     /// Whether the token's item is readable, for entry-level filters: its
@@ -999,8 +1045,10 @@ impl<'a> RuntimeDict<'a> {
         // PHRASE_INDEX_LIBRARY_INDEX ignores the high four bits
         // (074a2219 novel_types.h:42-44).
         let token = token & (oxpinyin_user::PHRASE_INDEX_LIBRARY_MASK | oxpinyin_user::PHRASE_MASK);
+        if u8::try_from(token >> 24).is_ok_and(|index| self.is_system_library(index)) {
+            return self.live_items().pronunciation_count(token).found();
+        }
         match token >> 24 {
-            1..=4 => self.live_items().pronunciation_count(token).found(),
             5..=7 => {
                 if !self.library_visible(token >> 24) {
                     return None;
@@ -1016,12 +1064,14 @@ impl<'a> RuntimeDict<'a> {
     /// frequencies and the unigram do not participate in those checks.
     #[must_use]
     pub fn token_text(&self, token: u32) -> Option<PhraseText> {
-        match token >> 24 {
-            1..=4 => self
+        if u8::try_from(token >> 24).is_ok_and(|index| self.is_system_library(index)) {
+            return self
                 .live_items()
                 .read(token, |item| item.phrase_text())
                 .found()
-                .flatten(),
+                .flatten();
+        }
+        match token >> 24 {
             5..=7 => {
                 if !self.library_visible(token >> 24) {
                     return None;
@@ -1045,12 +1095,14 @@ impl<'a> RuntimeDict<'a> {
     /// No text or pronunciation payload is decoded.
     #[must_use]
     pub fn token_exists(&self, token: u32) -> bool {
-        match token >> 24 {
-            1..=4 => self
+        if u8::try_from(token >> 24).is_ok_and(|index| self.is_system_library(index)) {
+            return self
                 .live_items()
                 .pronunciation_count(token)
                 .found()
-                .is_some(),
+                .is_some();
+        }
+        match token >> 24 {
             5..=7 => {
                 self.library_visible(token >> 24)
                     && self
@@ -1068,8 +1120,8 @@ impl<'a> RuntimeDict<'a> {
     /// (074a2219 `pinyin.cpp:2801-2818`, `zhuyin.cpp:1793-1810`).
     #[must_use]
     pub fn token_nth_pronunciation(&self, token: u32, nth: usize) -> Option<TokenPronunciation> {
-        match token >> 24 {
-            1..=4 => self
+        if u8::try_from(token >> 24).is_ok_and(|index| self.is_system_library(index)) {
+            return self
                 .live_items()
                 .read(token, |item| TokenPronunciation {
                     phrase_length: item.phrase_length(),
@@ -1077,7 +1129,9 @@ impl<'a> RuntimeDict<'a> {
                         .pronunciation(nth)
                         .map(|reading| reading.keys.iter().collect()),
                 })
-                .found(),
+                .found();
+        }
+        match token >> 24 {
             5..=7 => {
                 if !self.library_visible(token >> 24) {
                     return None;
@@ -1336,6 +1390,15 @@ impl Dictionary for RuntimeDict<'_> {
             self.system
                 .phrase_prefix_exists_visible(syllables, |token| {
                     self.library_visible(token >> 24)
+                        && self
+                            .system
+                            .libraries()
+                            .library(token)
+                            .is_some_and(|library| {
+                                !library.is_detached()
+                                    || library.has_history()
+                                    || self.live_items().read(token, |_| ()).found().is_some()
+                            })
                 })?
         };
         #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
@@ -1552,7 +1615,10 @@ impl Dictionary for RuntimeDict<'_> {
         if !self.library_visible_token(token) {
             return None;
         }
-        if let Some(text) = self.system.phrase_text(token) {
+        if let Some(text) = self
+            .token_text(token)
+            .or_else(|| self.system.phrase_text(token))
+        {
             return Some(text);
         }
         let store = self.user?;
@@ -2361,7 +2427,7 @@ impl Runtime {
         if !self.dict().library_visible(token >> 24) {
             return false;
         }
-        if (1..=4).contains(&(token >> 24))
+        if u8::try_from(token >> 24).is_ok_and(|index| self.dict().is_system_library(index))
             && let Some(user) = self.user.as_mut()
         {
             let Ok(delta) = u32::try_from(delta) else {
@@ -2485,9 +2551,7 @@ impl Runtime {
     ///
     /// # Errors
     ///
-    /// Returns [`SaveRemapFault::Layout`] when the current chunk passed the
-    /// header and checksum but its sub-index layout is refused,
-    /// [`SaveRemapFault::Unmappable`] when `MemoryChunk::mmap` refuses it,
+    /// Returns [`SaveRemapFault::Unmappable`] when `MemoryChunk::mmap` refuses it,
     /// and [`SaveRemapFault::ChunkHeaderRead`] when it is a directory whose
     /// header read the pin asserts on (`memory_chunk.h:493`, register row
     /// 96): the save stops there.
@@ -2529,9 +2593,8 @@ impl Runtime {
         let Some((path, _)) = originals.phrase_libraries().loaded_path_library(nibble) else {
             return Ok(SaveBaseline::Keep);
         };
-        match oxpinyin_data::phrase_library::PhraseLibrary::open(path) {
+        match oxpinyin_data::phrase_library::PhraseLibrary::open_retaining_layout(path) {
             Ok(current) => Ok(SaveBaseline::Changed(SystemLibrary::from_library(current))),
-            Err(LibraryError::Layout(fault)) => Err(SaveRemapFault::Layout(fault)),
             Err(LibraryError::Row(RowFault::ChunkHeaderRead)) => {
                 Err(SaveRemapFault::ChunkHeaderRead)
             }
@@ -2600,17 +2663,12 @@ impl Runtime {
             let Some(name) = row.system.as_ref() else {
                 continue;
             };
-            let path = oxpinyin_input::path::build_path(dir, name.as_ref());
+            let path = oxpinyin_input::path::build_chunk_path(dir, name.as_ref());
             if !libraries.is_loaded(index) {
                 continue;
             }
-            match oxpinyin_data::phrase_library::PhraseLibrary::open(&path) {
+            match oxpinyin_data::phrase_library::PhraseLibrary::open_retaining_layout(&path) {
                 Ok(library) => remap.originals.insert_mapping(index, path, library),
-                Err(LibraryError::Layout(fault)) => remap.originals.insert_mapping(
-                    index,
-                    path,
-                    oxpinyin_data::phrase_library::PhraseLibrary::empty(fault.total_freq),
-                ),
                 Err(LibraryError::Row(RowFault::ChunkHeaderRead)) => {
                     remap.header_fault = Some(index);
                     break;
@@ -2677,12 +2735,37 @@ mod tests {
 
         let ni = SyllableKey::from_text("ni").unwrap();
         let token = runtime.dict().system().tokens_for_text("你").unwrap()[0];
+        assert!(
+            !runtime
+                .dict()
+                .system()
+                .libraries()
+                .library(token)
+                .unwrap()
+                .has_history()
+        );
+        assert!(
+            runtime
+                .dict()
+                .lookup(&[ni])
+                .unwrap()
+                .iter()
+                .any(|entry| entry.token().value() == token),
+            "a transferred chunk routes through its live owner before history exists"
+        );
 
         let keys = [oxpinyin_user::toned_key(ni.index(), 3).unwrap()];
         runtime
             .user_store_mut()
             .unwrap()
             .add_system_phrase_in(1, Some(token), &"你".into(), &keys, Some(5))
+            .unwrap();
+        // A newly appended system token is also indexed by the user table.
+        // It must be priced once when that table contributes it.
+        let indexed_system = runtime
+            .user_store_mut()
+            .unwrap()
+            .add_system_phrase_in(1, None, &"龘".into(), &keys, Some(5))
             .unwrap();
         let mut candidates = Vec::new();
         assert!(
@@ -2697,7 +2780,31 @@ mod tests {
                 .iter()
                 .all(|entry| entry.pronunciation_possibility().is_none())
         );
+        PRICING_EVALUATIONS.with(|count| count.set(0));
         let priced = runtime.dict().lookup(&[ni]).unwrap();
+        let evaluated = PRICING_EVALUATIONS.with(std::cell::Cell::get);
+        let priced_system_results = priced
+            .iter()
+            .filter(|entry| {
+                runtime
+                    .dict()
+                    .live_items()
+                    .is_system_library((entry.token().value() >> 24) as u8)
+                    && entry.pronunciation_possibility().is_some()
+            })
+            .count();
+        assert!(priced_system_results > 0);
+        assert!(
+            priced
+                .iter()
+                .any(|entry| entry.token().value() == indexed_system
+                    && entry.pronunciation_possibility().is_some()),
+            "the user-index result naming a system token is priced"
+        );
+        assert_eq!(
+            evaluated, priced_system_results,
+            "each system result is priced once"
+        );
         let rows = |entries: &[PhraseEntry]| {
             entries
                 .iter()

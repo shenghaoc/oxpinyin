@@ -179,173 +179,14 @@ fn u32_at(bytes: &[u8], offset: usize) -> Option<u32> {
     Some(u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
 }
 
-// ── mapped file ─────────────────────────────────────────────────────
-
-/// File mapping: the one place in this crate (and the shipping tree)
-/// with `unsafe`, under the constitution's documented mmap exception.
-mod map {
-    #![expect(
-        unsafe_code,
-        reason = "the constitution's documented mmap exception; see the module docs"
-    )]
-
-    use super::LibraryError;
-
-    /// Map the chunk extent as one immutable slice on all targets.
-    pub struct MappedFile {
-        bytes: Bytes,
-        file: Option<std::fs::File>,
-    }
-
-    /// Each variant owns its bytes. Both are `Send + Sync`.
-    enum Bytes {
-        /// A private mapping of the chunk extent at offset zero.
-        Mapped(memmap2::Mmap),
-        /// Empty bytes for a zero-length file or a refused sub-index.
-        Heap(Box<[u8]>),
-    }
-
-    impl MappedFile {
-        /// No bytes and no mapping: the payload of a chunk whose header was
-        /// accepted but whose sub-index layout the pin refused.
-        pub(crate) fn empty() -> Self {
-            Self {
-                bytes: Bytes::Heap(Box::new([])),
-                file: None,
-            }
-        }
-
-        /// Map the first `len` bytes of `file`.
-        /// This is the header plus data length used by `MemoryChunk::mmap`.
-        /// Do not map the rest of the file if the header has a shorter length.
-        pub(crate) fn open_len(file: std::fs::File, len: usize) -> Result<Self, LibraryError> {
-            Self::from_file(file, len)
-        }
-
-        fn from_file(file: std::fs::File, len: usize) -> Result<Self, LibraryError> {
-            if len == 0 {
-                // Keep an empty heap slice. Do not map a zero-length file.
-                return Ok(Self {
-                    bytes: Bytes::Heap(Box::new([])),
-                    file: None,
-                });
-            }
-            // SAFETY: The file is open. The offset is zero. The explicit
-            // length is the chunk extent checked by map_chunk. Mmap owns
-            // the mapping. Each returned slice borrows that owner. This
-            // code does not write through the mapping. Do not change a
-            // table file while it is mapped. These are system and addon
-            // libraries. This runtime does not write them.
-            // On Unix, map_copy_read_only uses PROT_READ and MAP_PRIVATE.
-            // A private mapping is not a snapshot. An in-place file write
-            // can change its bytes. Truncation can cause SIGBUS on a later
-            // read. A rename replacement leaves the view on the old file.
-            // On Windows, memmap2 uses FILE_MAP_COPY with PAGE_WRITECOPY
-            // or PAGE_EXECUTE_WRITECOPY. It can then reduce page access
-            // with VirtualProtect. The Mmap API gives this code no mutable
-            // slice. The OS view need not be read-only. On Windows CI,
-            // std::fs::write fails with error 1224 when it tries to
-            // truncate a mapped file for an in-place rewrite. Deletion
-            // through std::fs::remove_file succeeds in the addon test.
-            // Replacement by rename is not tested on Windows. These
-            // checks do not test a write without truncation on Windows.
-            // The truncation/SIGBUS case is Unix only.
-            // The pin maps these files on targets with mmap. Without mmap,
-            // the pin reads the file into the heap (memory_chunk.h:31-33,
-            // :446-452; CMakeLists.txt:64 at 074a2219). Thus, on Windows
-            // this is an internal storage change. The returned bytes are
-            // the same. The mapping keeps the file alive after this File
-            // is closed.
-            let mapped = unsafe {
-                memmap2::MmapOptions::new()
-                    .len(len)
-                    .map_copy_read_only(&file)
-            }
-            .map_err(LibraryError::Io)?;
-            Ok(Self {
-                bytes: Bytes::Mapped(mapped),
-                file: Some(file),
-            })
-        }
-
-        pub(super) fn private_copy(&self) -> Result<memmap2::MmapMut, LibraryError> {
-            let file = self
-                .file
-                .as_ref()
-                .ok_or_else(|| LibraryError::Io(std::io::Error::other("empty mapping")))?;
-            // SAFETY: This is the same retained file and checked extent as
-            // from_file. MAP_PRIVATE is copy-on-write: unwritten pages stay
-            // shared with the page cache; visibility of later file changes
-            // in those pages is unspecified. Writes create private copies.
-            // Mutable slices borrow this view, independently of the immutable
-            // view. Do not modify or truncate the mapped system file: the
-            // existing mutation/truncation precondition remains in force.
-            unsafe {
-                memmap2::MmapOptions::new()
-                    .len(self.as_slice().len())
-                    .map_copy(file)
-            }
-            .map_err(LibraryError::Io)
-        }
-
-        /// The mapped bytes. The slice borrows `self`, so the mapping
-        /// outlives every view taken over it.
-        pub(crate) fn as_slice(&self) -> &[u8] {
-            match &self.bytes {
-                Bytes::Mapped(mapped) => mapped,
-                Bytes::Heap(heap) => heap,
-            }
-        }
-    }
-
-    // `PhraseLibrary` shares one mapping across threads through an `Arc`;
-    // keep that a compile error to lose, now that the bounds are inferred.
-    const _: () = {
-        const fn send_sync<T: Send + Sync>() {}
-        send_sync::<MappedFile>();
-    };
-
-    #[cfg(test)]
-    mod tests {
-        use super::MappedFile;
-
-        /// The mapping hands out exactly the file's bytes: empty, one byte,
-        /// and lengths on and across page boundaries.
-        #[test]
-        fn maps_exactly_the_file_bytes() {
-            let dir = tempfile::Builder::new()
-                .prefix("oxpinyin-mapped-file-")
-                .tempdir()
-                .expect("tmpdir");
-            for len in [0_usize, 1, 7, 8, 4095, 4096, 4097, 3 * 4096 + 1] {
-                let path = dir.path().join(format!("len-{len}"));
-                let bytes: Vec<u8> = (0..len).map(|i| (i * 31 % 251) as u8).collect();
-                std::fs::write(&path, &bytes).unwrap();
-                let mapped =
-                    MappedFile::open_len(std::fs::File::open(&path).unwrap(), len).unwrap();
-                assert_eq!(mapped.as_slice(), std::fs::read(&path).unwrap(), "{len}");
-                // Reopening while the first mapping lives gives an
-                // independent mapping of the same bytes.
-                let again = MappedFile::open_len(std::fs::File::open(&path).unwrap(), len).unwrap();
-                assert_eq!(again.as_slice(), mapped.as_slice(), "{len}");
-            }
-        }
-    }
-}
-
 // ── phrase item view ────────────────────────────────────────────────
 
-/// One pronunciation of a phrase item.
-///
-/// The packed `ChewingKey` bytes (`2·phrase_length` of them — opaque at
-/// this layer; P2's chewing reader owns their bitfield semantics) and the
-/// pronunciation's frequency.
+/// One pronunciation of a phrase item: packed `ChewingKey` bytes and frequency.
 #[derive(Clone, Copy)]
 pub struct PronunciationView<'a> {
     /// The packed `ChewingKey[L]` bytes, in stored order.
     pub keys: &'a [u8],
-    /// This pronunciation's frequency (the `.table` count column
-    /// verbatim).
+    /// This pronunciation's frequency.
     pub freq: u32,
 }
 
@@ -480,104 +321,48 @@ impl PhraseItemView<'_> {
 /// that the header's length word is the payload length and that the
 /// checksum verifies. Every refusal is [`LibraryError::Unmappable`], the
 /// one error after which the pin writes `mmap %s failed!`.
-fn map_chunk(path: &Path) -> Result<map::MappedFile, LibraryError> {
+fn map_chunk(path: &Path) -> Result<oxpinyin_input::chunk::Mapping, LibraryError> {
+    use oxpinyin_input::chunk::MappingSource;
+
     let unmappable = |cause: LibraryError| LibraryError::Unmappable {
         path: path.to_path_buf(),
         cause: Box::new(cause),
     };
     let bad = |message: &str| unmappable(LibraryError::Format(message.to_owned()));
-    use std::io::{Read as _, Seek as _, SeekFrom};
-
-    // Opened first, then one `fstat` answers both questions below. A
-    // directory that does not open fails here with the same `Io` error
-    // `directory_chunk_fault`'s own open would report.
-    let file = std::fs::File::open(path).map_err(|error| unmappable(LibraryError::Io(error)))?;
-    let metadata = file
-        .metadata()
-        .map_err(|error| unmappable(LibraryError::Io(error)))?;
-    // The size probe is POSIX `lseek` behaviour; elsewhere a directory keeps
-    // failing in `MappedFile::open` as before.
-    #[cfg(unix)]
-    if metadata.is_dir() {
-        return Err(directory_chunk_fault(path));
-    }
-    let file_size = metadata.len();
+    let mut source =
+        MappingSource::open(path).map_err(|error| unmappable(LibraryError::Io(error)))?;
+    let file_size = source.file_size();
     if file_size < CHUNK_HEADER_SIZE as u64 {
         return Err(bad("chunk shorter than its header"));
     }
-    let payload_u64 = file_size - CHUNK_HEADER_SIZE as u64;
-    if payload_u64 <= u64::from(u32::MAX) {
-        // The common path — the whole file is the chunk, exactly as before
-        // this reader learned the pin's truncation. Map once and read the
-        // header and checksum out of the mapping; no extra syscall.
-        let len =
-            usize::try_from(file_size).map_err(|_| bad("file too large for this platform"))?;
-        let file = map::MappedFile::open_len(file, len).map_err(unmappable)?;
-        let bytes = file.as_slice();
-        let declared_len = u32_at(bytes, 0).ok_or_else(|| bad("chunk shorter than its header"))?;
-        if declared_len != payload_u64 as u32 {
-            return Err(bad("chunk length word does not match the file"));
-        }
-        let checksum = u32_at(bytes, 4).ok_or_else(|| bad("chunk checksum unreadable"))?;
-        if checksum != chunk_checksum(&bytes[CHUNK_HEADER_SIZE..]) {
-            return Err(bad("chunk checksum mismatch"));
-        }
-        return Ok(file);
-    }
-
-    // `MemoryChunk::mmap`: `guint32 data_len = file_size - header`
-    // (`memory_chunk.h:499`). The file is larger than the pin's chunk: the
-    // pin compares the truncated word and checksums exactly that many
-    // payload bytes, then `set_chunk`s `header + data_len` as the chunk.
-    // Read the header, then map only that extent — the sparse 2^32+8 case
-    // maps 8 bytes, not 4 GiB.
-    let mut file = file;
-    let mut header = [0u8; CHUNK_HEADER_SIZE];
-    file.read_exact(&mut header)
-        .map_err(|error| unmappable(LibraryError::Io(error)))?;
-    let declared_len = u32::from_le_bytes([header[0], header[1], header[2], header[3]]);
-    let payload_len = payload_u64 as u32;
-    if declared_len != payload_len {
+    let declared = u32::from_le_bytes(
+        source
+            .read_word()
+            .map_err(|_| LibraryError::Row(RowFault::ChunkHeaderRead))?,
+    );
+    let checksum = u32::from_le_bytes(
+        source
+            .read_word()
+            .map_err(|_| LibraryError::Row(RowFault::ChunkHeaderRead))?,
+    );
+    let payload_len = (file_size - CHUNK_HEADER_SIZE as u64) as u32;
+    if declared != payload_len {
         return Err(bad("chunk length word does not match the file"));
     }
-    let chunk_len = usize::try_from(u64::from(payload_len) + CHUNK_HEADER_SIZE as u64)
-        .map_err(|_| bad("file too large for this platform"))?;
-    file.seek(SeekFrom::Start(0))
+    let pending = source
+        .map()
         .map_err(|error| unmappable(LibraryError::Io(error)))?;
-    let file = map::MappedFile::open_len(file, chunk_len).map_err(unmappable)?;
-    let checksum = u32::from_le_bytes([header[4], header[5], header[6], header[7]]);
-    if checksum != chunk_checksum(&file.as_slice()[CHUNK_HEADER_SIZE..]) {
+    let end = CHUNK_HEADER_SIZE
+        .checked_add(payload_len as usize)
+        .ok_or_else(|| bad("chunk extent does not fit this platform"))?;
+    let payload = pending
+        .as_slice()
+        .get(CHUNK_HEADER_SIZE..end)
+        .ok_or_else(|| bad("chunk shorter than its declared extent"))?;
+    if checksum != chunk_checksum(payload) {
         return Err(bad("chunk checksum mismatch"));
     }
-    Ok(file)
-}
-
-/// What `MemoryChunk::mmap` does with a directory (`memory_chunk.h:479-493`):
-/// it opens it, takes `file_size = lseek(fd, 0, SEEK_END)` and refuses a size
-/// under the 8-byte header (an ordinary `false`, [`LibraryError::Unmappable`]);
-/// from 8 up the `read` of the length word fails with `EISDIR` and the
-/// `assert` at `:493` kills the pin ([`RowFault::ChunkHeaderRead`]). The size
-/// is the file system's: ext4 reports the htree end of file for any
-/// directory, btrfs twice the summed length of the entry names. A directory
-/// that cannot be opened or sought is the same `false`. Unix only: opening
-/// and seeking a directory is POSIX behaviour, and the pin is Linux-first.
-#[cfg(unix)]
-fn directory_chunk_fault(path: &Path) -> LibraryError {
-    match directory_end(path) {
-        Ok(size) if size >= CHUNK_HEADER_SIZE as u64 => {
-            LibraryError::Row(RowFault::ChunkHeaderRead)
-        }
-        Ok(_) => LibraryError::Unmappable {
-            path: path.to_path_buf(),
-            cause: Box::new(LibraryError::Format(
-                "directory shorter than the chunk header".to_owned(),
-            )),
-        },
-        Err(error) => LibraryError::Unmappable {
-            path: path.to_path_buf(),
-            cause: Box::new(LibraryError::Io(error)),
-        },
-    }
+    Ok(pending.finish())
 }
 
 /// `file_size = lseek(fd, 0, SEEK_END)` on a directory, as `MemoryChunk::load`
@@ -613,7 +398,7 @@ pub fn verify_chunk(path: &Path) -> Result<(), LibraryError> {
 /// A writable private view of one library's offset array and phrase-content
 /// area. Changes never reach the system file or other library views.
 pub struct PhraseContent {
-    mapping: memmap2::MmapMut,
+    mapping: oxpinyin_input::chunk::Mapping,
     offsets: Range<usize>,
     area: Range<usize>,
 }
@@ -622,23 +407,23 @@ impl PhraseContent {
     /// Borrow the current content bytes.
     #[must_use]
     pub fn as_slice(&self) -> &[u8] {
-        &self.mapping[self.area.clone()]
+        &self.mapping.as_slice()[self.area.clone()]
     }
 
     /// Borrow the content for an in-place journal write.
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
-        &mut self.mapping[self.area.clone()]
+        &mut self.mapping.as_mut_slice()[self.area.clone()]
     }
 
     /// Borrow the offset array: little-endian `u32` slots, in stored order.
     #[must_use]
     pub fn offsets(&self) -> &[u8] {
-        &self.mapping[self.offsets.clone()]
+        &self.mapping.as_slice()[self.offsets.clone()]
     }
 
     /// Borrow the offset array for an in-place journal write.
     pub fn offsets_mut(&mut self) -> &mut [u8] {
-        &mut self.mapping[self.offsets.clone()]
+        &mut self.mapping.as_mut_slice()[self.offsets.clone()]
     }
 }
 
@@ -646,7 +431,8 @@ impl PhraseContent {
 /// file — the `SubPhraseIndex` of `FacadePhraseIndex`, upstream's
 /// mmap-backed half of the system data.
 pub struct PhraseLibrary {
-    file: map::MappedFile,
+    file: Option<oxpinyin_input::chunk::Mapping>,
+    source_path: Option<PathBuf>,
     /// The payload after the 8-byte chunk header.
     payload: std::ops::Range<usize>,
     /// `SubPhraseIndex::m_total_freq`.
@@ -661,6 +447,23 @@ pub struct PhraseLibrary {
     layout_failed: bool,
     /// Immutable mapped item sum, filled at first compact.
     item_total: std::sync::OnceLock<u32>,
+    /// Transfer state is independent of optional first-write history.
+    detached_range_end: Option<u32>,
+    /// Populated only before the first live write.
+    history: std::sync::OnceLock<Box<LibraryHistory>>,
+}
+
+struct LibraryHistory {
+    present: Vec<u64>,
+    unigrams: Vec<u32>,
+}
+
+impl LibraryHistory {
+    fn contains(&self, slot: u32) -> bool {
+        self.present
+            .get(slot as usize / 64)
+            .is_some_and(|word| word & (1_u64 << (slot % 64)) != 0)
+    }
 }
 
 impl PhraseLibrary {
@@ -675,19 +478,23 @@ impl PhraseLibrary {
         })
     }
 
-    /// The pin's empty sub-index after `SubPhraseIndex::load` refused the
-    /// layout: no mapping, `total_freq` as the pin read it before the
-    /// failing check, and `get_range`'s `1..1`.
+    /// A fixture's empty sub-index after a refused layout: no mapping,
+    /// `total_freq` as read before the check, and `get_range`'s `1..1`.
+    /// A production layout refusal retains its mapping via
+    /// [`Self::open_retaining_layout`].
     #[must_use]
     pub fn empty(total_freq: u32) -> Self {
         Self {
-            file: map::MappedFile::empty(),
+            file: None,
+            source_path: None,
             payload: 0..0,
             total_freq,
             offsets: 0..0,
             content: 0..0,
             layout_failed: true,
             item_total: std::sync::OnceLock::new(),
+            detached_range_end: None,
+            history: std::sync::OnceLock::new(),
         }
     }
 
@@ -723,22 +530,49 @@ impl PhraseLibrary {
     /// the pin would expose as a huge/overlapping chunk, stays
     /// [`LibraryError::Format`] and is refused.
     pub fn open(path: &Path) -> Result<Self, LibraryError> {
+        let library = Self::open_retaining_layout(path)?;
+        if library.layout_failed {
+            return Err(LibraryError::Layout(LayoutFault {
+                total_freq: library.total_freq,
+            }));
+        }
+        Ok(library)
+    }
+
+    /// Map a chunk and retain its owner when `SubPhraseIndex::load` refuses
+    /// an in-bounds layout check, as the pin's empty sub-index does.
+    ///
+    /// # Errors
+    /// Returns the same mapping and out-of-bounds layout errors as [`Self::open`].
+    pub fn open_retaining_layout(path: &Path) -> Result<Self, LibraryError> {
         let file = map_chunk(path)?;
         let bytes = file.as_slice();
         let bad = |message: &str| LibraryError::Format(message.to_owned());
-        let payload = CHUNK_HEADER_SIZE..bytes.len();
+        let payload = CHUNK_HEADER_SIZE
+            ..CHUNK_HEADER_SIZE + ((bytes.len() - CHUNK_HEADER_SIZE) as u32 as usize);
         let payload_bytes = &bytes[payload.clone()];
         // The pin's `get_content` leaves a failed read's destination at 0;
         // `m_total_freq` is read before the layout checks.
         let total_freq = u32_at(payload_bytes, 0).unwrap_or(0);
-        let layout = || LibraryError::Layout(LayoutFault { total_freq });
+        let layout = |file, payload| Self {
+            file: Some(file),
+            source_path: Some(path.to_path_buf()),
+            payload,
+            total_freq,
+            offsets: 0..0,
+            content: 0..0,
+            layout_failed: true,
+            item_total: std::sync::OnceLock::new(),
+            detached_range_end: None,
+            history: std::sync::OnceLock::new(),
+        };
 
         // `SubPhraseIndex::load`: the four words, then the separator at
         // payload[16], then `index_two - 1`, then `index_three - 1`.
         // A payload of 16 bytes or fewer makes the first read leave the
         // chunk; the failure is the same one, reproduced without the read.
         if payload_bytes.len() < 17 || payload_bytes[16] != SEPARATOR {
-            return Err(layout());
+            return Ok(layout(file, payload));
         }
         let index_one = u32_at(payload_bytes, 4).ok_or_else(|| bad("payload too short"))? as usize;
         let index_two = u32_at(payload_bytes, 8).ok_or_else(|| bad("payload too short"))? as usize;
@@ -753,14 +587,14 @@ impl PhraseLibrary {
             .filter(|&at| at < payload_bytes.len())
             .ok_or_else(|| bad("sub-index offset-array separator out of bounds"))?;
         if payload_bytes[second] != SEPARATOR {
-            return Err(layout());
+            return Ok(layout(file, payload));
         }
         let third = index_three
             .checked_sub(1)
             .filter(|&at| at < payload_bytes.len())
             .ok_or_else(|| bad("sub-index entry-area separator out of bounds"))?;
         if payload_bytes[third] != SEPARATOR {
-            return Err(layout());
+            return Ok(layout(file, payload));
         }
         // The pin's fourth check (`index_three <= end`) is then true.
         // These guards cover the state the pin would expose as a
@@ -782,7 +616,8 @@ impl PhraseLibrary {
         }
 
         Ok(Self {
-            file,
+            file: Some(file),
+            source_path: Some(path.to_path_buf()),
             payload,
             total_freq,
             // load's sub-chunk views: the offset array runs to the
@@ -792,12 +627,18 @@ impl PhraseLibrary {
             content: index_two..index_three - 1,
             layout_failed: false,
             item_total: std::sync::OnceLock::new(),
+            detached_range_end: None,
+            history: std::sync::OnceLock::new(),
         })
     }
 
     /// The payload bytes this library covers (for tests and tooling).
     fn payload(&self) -> &[u8] {
-        &self.file.as_slice()[self.payload.clone()]
+        self.file
+            .as_ref()
+            .map_or(&[] as &[u8], |mapping| mapping.as_slice())
+            .get(self.payload.clone())
+            .unwrap_or(&[])
     }
 
     /// `SubPhraseIndex::get_phrase_index_total_freq`.
@@ -811,6 +652,9 @@ impl PhraseLibrary {
     /// an empty library.
     #[must_use]
     pub fn token_range(&self) -> Range<u32> {
+        if let Some(range_end) = self.detached_range_end {
+            return 1..range_end;
+        }
         let slots = (self.offsets.end - self.offsets.start) / 4;
         let mut end = slots;
         while end > 1 {
@@ -863,7 +707,7 @@ impl PhraseLibrary {
         if offset == 0 {
             return None;
         }
-        let content = &self.payload()[self.content.clone()];
+        let content = self.payload().get(self.content.clone())?;
         content.get(offset)?;
         content.get(offset.checked_add(1)?).copied().map(u32::from)
     }
@@ -875,7 +719,7 @@ impl PhraseLibrary {
         if offset == 0 {
             return None;
         }
-        let content = &self.payload()[self.content.clone()];
+        let content = self.payload().get(self.content.clone())?;
         // Offsets are 0-based into the entry area; the first item sits
         // at `FIRST_ITEM_OFFSET` (`SubPhraseIndex::add_phrase_item`
         // reserves those bytes so 0 stays the "no item" sentinel).
@@ -905,18 +749,116 @@ impl PhraseLibrary {
         &self.payload()[self.offsets.clone()]
     }
 
-    /// Map a separate writable private view for journal replay.
-    ///
-    /// # Errors
-    /// Returns the mapping error, including an empty/refused library.
-    pub fn private_content(&self) -> Result<PhraseContent, LibraryError> {
-        Ok(PhraseContent {
-            mapping: self.file.private_copy()?,
+    /// Path from which this chunk was mapped.
+    #[must_use]
+    pub fn source_path(&self) -> Option<&Path> {
+        self.source_path.as_deref()
+    }
+
+    /// Transfer the sole mapping to its live sub-index without allocating
+    /// per-slot history. The first actual write captures the baseline.
+    pub fn take_live_content(&mut self) -> Option<PhraseContent> {
+        if self.detached_range_end.is_some() {
+            return None;
+        }
+        let range_end = self.token_range().end;
+        let mapping = self.file.take()?;
+        self.detached_range_end = Some(range_end);
+        Some(PhraseContent {
+            mapping,
             offsets: (self.payload.start + self.offsets.start)
                 ..(self.payload.start + self.offsets.end),
             area: (self.payload.start + self.content.start)
                 ..(self.payload.start + self.content.end),
         })
+    }
+
+    /// Capture the unmodified live buffer immediately before its first write.
+    /// Presence is bit-packed; a complete item view makes its phrase words
+    /// readable, so no separate readability array is needed.
+    pub fn capture_history(&self, offsets: &[u8], content: &[u8]) {
+        self.history.get_or_init(|| {
+            let slots = offsets.len() / 4;
+            let mut present = vec![0_u64; slots.div_ceil(64)];
+            let mut unigrams = vec![0_u32; slots];
+            let mut total = 0_u32;
+            for slot in 0..slots {
+                let Some(offset) = u32_at(offsets, slot * 4).filter(|&offset| offset != 0) else {
+                    continue;
+                };
+                let Some(bytes) = content.get(offset as usize..) else {
+                    continue;
+                };
+                let view = PhraseItemView { bytes };
+                let Some(size) = view.total_size().filter(|&size| size <= bytes.len()) else {
+                    continue;
+                };
+                let item = PhraseItemView {
+                    bytes: &bytes[..size],
+                };
+                present[slot / 64] |= 1_u64 << (slot % 64);
+                unigrams[slot] = item.unigram();
+                if slot != 0 {
+                    total = total.wrapping_add(item.unigram());
+                }
+            }
+            let _ = self.item_total.set(total);
+            Box::new(LibraryHistory { present, unigrams })
+        });
+    }
+
+    /// Whether first-write history has been captured.
+    #[must_use]
+    pub fn has_history(&self) -> bool {
+        self.history.get().is_some()
+    }
+
+    /// Whether the loaded chunk originally held this slot. Detached chunks
+    /// without history have not been written; consult their live owner.
+    #[must_use]
+    pub fn originally_contains(&self, slot: u32) -> bool {
+        self.history.get().map_or_else(
+            || self.item(slot).is_some(),
+            |history| history.contains(slot),
+        )
+    }
+
+    /// Count of slots readable at load.
+    #[must_use]
+    pub fn original_item_count(&self) -> u64 {
+        self.history.get().map_or_else(
+            || self.items().count() as u64,
+            |history| {
+                history
+                    .present
+                    .iter()
+                    .map(|word| u64::from(word.count_ones()))
+                    .sum()
+            },
+        )
+    }
+
+    /// A complete item view has every declared phrase word; readability and
+    /// presence are identical for this value-model consumer.
+    #[must_use]
+    pub fn originally_readable(&self, slot: u32) -> bool {
+        self.originally_contains(slot)
+    }
+
+    /// Whether the chunk's mapping has moved to its live owner.
+    #[must_use]
+    pub const fn is_detached(&self) -> bool {
+        self.detached_range_end.is_some()
+    }
+
+    /// The loaded chunk's original unigram field for a readable slot.
+    #[must_use]
+    pub fn original_unigram(&self, slot: u32) -> Option<u32> {
+        match self.history.get() {
+            Some(history) if history.contains(slot) => history.unigrams.get(slot as usize).copied(),
+            Some(_) => None,
+            None => self.item(slot).map(|item| item.unigram()),
+        }
     }
 
     /// The raw entry-area offset of `token`'s slot, `None` when the slot has
@@ -935,7 +877,8 @@ impl PhraseLibrary {
     /// `pinyin.cpp:956`, `zhuyin.cpp:589`).
     #[must_use]
     pub fn byte_identical(&self, other: &Self) -> bool {
-        self.file.as_slice() == other.file.as_slice()
+        self.file.as_ref().map(|mapping| mapping.as_slice())
+            == other.file.as_ref().map(|mapping| mapping.as_slice())
     }
 
     /// Every `(slot, item)` pair with a resident item, slot order — a
@@ -959,17 +902,15 @@ impl fmt::Debug for PhraseLibrary {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(all(test, unix, target_pointer_width = "64"))]
 mod sparse_mapping_tests {
     use super::map_chunk;
     use std::io::Write;
 
     #[test]
-    fn a_sparse_chunk_maps_only_its_chunk_extent() {
-        // The pin maps the whole 2^32+8 file and retains it after fini; the
-        // subject's mapping layer takes only header + data_len (the 8-byte
-        // header for this header-only sparse chunk, the layout refusal
-        // happening only after the map).
+    fn a_sparse_chunk_maps_the_whole_file() {
+        // The pin maps the whole 2^32+8 file. Row 109 requires the crate
+        // mapping to release the whole extent when it is dropped.
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("merged.bin");
         let mut file = std::fs::File::create(&path).expect("create");
@@ -979,8 +920,8 @@ mod sparse_mapping_tests {
         let mapped = map_chunk(&path).expect("map");
         assert_eq!(
             mapped.as_slice().len(),
-            8,
-            "the sparse map is the chunk extent"
+            (1_usize << 32) + 8,
+            "the sparse mapping covers the whole file"
         );
     }
 }

@@ -2194,6 +2194,14 @@ impl<S: WriteStore> GenericUserStore<S> {
         } else if self.inner.libpinyin.is_none() && self.has_user_data() {
             self.with_count_cache(|cached, db| cached.unigram_delta(db, token))
         } else if let Some(live) = self.system_unigram(token) {
+            if self
+                .originals
+                .get(&phrase_index_library_index(token))
+                .and_then(|original| original.mapped)
+                .is_some_and(|library| library.is_detached() && !library.has_history())
+            {
+                return Ok(0);
+            }
             let slot = token & PHRASE_MASK;
             let base = self
                 .originals
@@ -2244,6 +2252,18 @@ impl<S: WriteStore> GenericUserStore<S> {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .unigram(token, Some(original))
+    }
+
+    /// Whether the session layout names a library as a system chunk.
+    #[must_use]
+    pub fn is_system_library(&self, library: u8) -> bool {
+        self.originals.get(&library).is_some()
+            || self
+                .originals
+                .layout()
+                .system_logs()
+                .iter()
+                .any(|(index, _)| *index == library)
     }
 
     /// `SubPhraseIndex::m_total_freq` of system library `library`, where the
@@ -3786,8 +3806,8 @@ impl<S: WriteStore> GenericUserStore<S> {
             return Ok(());
         };
         let (replayed, library_totals) = match target.dir.clone() {
-            Some(dir) => crate::persistence::load_masked_logs(&dir, originals, mask, value)?,
-            None => Default::default(),
+            Some(dir) => crate::persistence::load_masked_logs_live(&dir, originals, mask, value)?,
+            None => (originals.take_live_libraries(), Default::default()),
         };
         self.replace_system_libraries(originals.take(), replayed, &library_totals);
         Ok(())
@@ -3828,11 +3848,11 @@ impl<S: WriteStore> GenericUserStore<S> {
             return Ok(());
         };
         let (replayed, library_totals) = match &target.dir {
-            Some(dir) => crate::persistence::load_library_logs(dir, originals)?,
+            Some(dir) => crate::persistence::load_library_logs_live(dir, originals)?,
             // No user directory means no journal; the freshly mapped system
             // library still replaces the unloaded one (phrase_index.cpp:261,
             // pinyin.cpp:246-276 at 074a2219).
-            None => Default::default(),
+            None => (originals.take_live_libraries(), Default::default()),
         };
         self.replace_system_libraries(originals.take(), replayed, &library_totals);
         Ok(())
@@ -4479,8 +4499,7 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// The stored pronunciations of the item this store holds behind
     /// `token`, as `(keys, frequency)` rows in stored order (074a2219
     /// `phrase_index.h` `get_nth_pronunciation`): an imported or trained
-    /// system item (libraries 1..=4, `None` while the shipped item is
-    /// untouched), or a user-file library's phrase (libraries 5..=7).
+    /// system item, or a user-file library's phrase.
     ///
     /// # Errors
     ///
@@ -4508,8 +4527,8 @@ impl<S: WriteStore> GenericUserStore<S> {
         }) {
             return Ok(Some(readings));
         }
-        match token >> 24 {
-            1..=4 => Ok(self.with_effective_system_item(token, |item| {
+        if self.is_system_library(phrase_index_library_index(token)) {
+            return Ok(self.with_effective_system_item(token, |item| {
                 item.prons
                     .iter()
                     .map(|(packed, frequency)| {
@@ -4520,7 +4539,9 @@ impl<S: WriteStore> GenericUserStore<S> {
                         (keys, *frequency)
                     })
                     .collect()
-            })),
+            }));
+        }
+        match token >> 24 {
             5..=7 => Ok(self.phrase(token)?.map(|phrase| {
                 phrase
                     .pronunciations()
@@ -4543,7 +4564,7 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// cloning payloads for the streaming export's range probe.
     #[must_use]
     pub(crate) fn system_item_end(&self, library: u8) -> Option<Token> {
-        if !(1..=4).contains(&library) {
+        if !self.is_system_library(library) {
             return None;
         }
         let arena_end = self.inner.libpinyin.as_ref().and_then(|target| {
@@ -4576,7 +4597,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         token: Token,
         read: impl FnOnce(&oxpinyin_data::chunk_write::ChunkItem) -> R,
     ) -> Option<R> {
-        if !(1..=4).contains(&(token >> 24)) {
+        if !self.is_system_library(phrase_index_library_index(token)) {
             return None;
         }
         if let Some(item) = self
@@ -4587,7 +4608,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         {
             return Some(read(&item));
         }
-        if !self.has_system_items() || !(1..=4).contains(&(token >> 24)) {
+        if !self.has_system_items() {
             return None;
         }
         let items = self
@@ -4618,6 +4639,23 @@ impl<S: WriteStore> GenericUserStore<S> {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .with_live(token, read)
+    }
+
+    /// Count the pristine items held by one transferred library.
+    pub fn pristine_system_item_count(&self, nibble: u8) -> Option<u64> {
+        self.inner
+            .system_items
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .pristine_item_count(nibble)
+    }
+
+    pub(crate) fn live_pronunciation_count(&self, token: Token) -> Option<u32> {
+        self.inner
+            .system_items
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .live_pronunciation_count(token)
     }
 
     pub(crate) fn live_item_past_buffer(&self, token: Token) -> bool {
@@ -4683,7 +4721,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         count: Option<u64>,
     ) -> Result<Token, UserStoreError> {
         let words = phrase_words(text);
-        if !(1..=4).contains(&library) || !phrase_fits_keys(&words, keys) {
+        if !self.is_system_library(library) || !phrase_fits_keys(&words, keys) {
             return Err(UserStoreError::InvalidPhrase);
         }
         if self.inner.libpinyin.is_none() {

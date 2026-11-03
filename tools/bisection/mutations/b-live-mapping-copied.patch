@@ -1,0 +1,14 @@
+--- a/crates/oxpinyin-user/src/replay.rs
++++ b/crates/oxpinyin-user/src/replay.rs
+@@ -1177,7 +1177,10 @@
+         mapping: oxpinyin_data::phrase_library::PhraseContent,
+         total: u32,
+     ) -> Self {
+-        let mut content = Content::new(Backing::Mapped(mapping));
++        let mut content = Content::new(Backing::Inline {
++            offsets: mapping.offsets().to_vec(),
++            content: mapping.as_slice().to_vec(),
++        });
+         content.total = total;
+         Self {
+             content,

@@ -269,6 +269,11 @@ impl<S: WriteStore> GenericUserStore<S> {
             delta,
         ) {
             self.inner.has_system_items.store(true, Ordering::Relaxed);
+            // A trained count may overlap another item's header; the live
+            // per-token check decides whether that item is still readable.
+            self.inner
+                .has_removed_system_items
+                .store(true, Ordering::Relaxed);
         }
         drop(items);
         self.mark_committed_write(db, true);
@@ -299,7 +304,11 @@ impl<S: WriteStore> GenericUserStore<S> {
         read: impl FnOnce(PhraseItemView<'_>) -> R,
     ) -> Option<R> {
         let original = self.originals.get(&phrase_index_library_index(token))?;
-        if original.contains_item(token & PHRASE_MASK) {
+        if original.contains_item(token & PHRASE_MASK)
+            || original
+                .mapped
+                .is_some_and(|library| library.is_detached() && !library.has_history())
+        {
             return None;
         }
         self.with_live_item(token, |bytes| PhraseItemView::from_bytes(bytes).map(read))
@@ -487,7 +496,12 @@ impl<S: WriteStore> GenericUserStore<S> {
         if let Some(token) = existing {
             // The shipped chunk's own items are merged by the caller; only an
             // item the buffer added is held here.
-            if original.contains_item(token & PHRASE_MASK) {
+            if original.contains_item(token & PHRASE_MASK)
+                || (original
+                    .mapped
+                    .is_some_and(|library| library.is_detached() && !library.has_history())
+                    && items.with_live(token, |_| ()).is_some())
+            {
                 return Err(UserStoreError::InvalidPhrase);
             }
             let merged = items

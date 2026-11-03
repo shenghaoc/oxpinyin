@@ -1,4 +1,4 @@
-//! Borrowed access to the live system items of libraries `1..=4`.
+//! Borrowed access to live items of configured system libraries.
 //!
 //! A session's effective system item is the shipped chunk's item, or the
 //! item a journal replay, an import or training left in the session. The
@@ -96,6 +96,12 @@ impl<'a> SystemItem<'a> {
             Self::Shipped(_) => ItemOrigin::Shipped,
             Self::Replayed(_) => ItemOrigin::Overlay,
         }
+    }
+
+    /// The live item's stored unigram field.
+    #[must_use]
+    pub fn unigram(&self) -> u32 {
+        self.view().unigram()
     }
 
     /// The phrase length in characters.
@@ -200,6 +206,15 @@ impl<'a> LiveSystemItems<'a> {
         mask == 0 || nibble >= 32 || mask & (1 << nibble) == 0
     }
 
+    /// Whether the facade's table layout names this library as a system chunk.
+    #[must_use]
+    pub fn is_system_library(&self, library: u8) -> bool {
+        self.user.map_or_else(
+            || self.libraries.is_loaded(library),
+            |store| store.is_system_library(library),
+        )
+    }
+
     /// Whether the session holds items beyond the shipped chunks.
     /// Consumer: the pricing overlay gate, `RuntimeDict::effective_query`.
     #[must_use]
@@ -227,8 +242,8 @@ impl<'a> LiveSystemItems<'a> {
                 .is_some_and(|store| store.system_item_removed(token))
     }
 
-    /// Reads the effective item behind `token` of libraries `1..=4`; any
-    /// other library answers [`Lookup::Absent`].
+    /// Reads the effective item behind `token` in a configured system
+    /// library; other libraries answer [`Lookup::Absent`].
     ///
     /// The session's item wins over the shipped one: the library's live
     /// buffer holds it. `read` runs at most once, inside the borrow. For a
@@ -239,7 +254,7 @@ impl<'a> LiveSystemItems<'a> {
     /// (`effective_possibility`), `token_text`, `token_nth_pronunciation`,
     /// the export probe and row reads.
     pub fn read<R>(&self, token: Token, read: impl FnOnce(SystemItem<'_>) -> R) -> Lookup<R> {
-        if !(1..=4).contains(&(token >> 24)) {
+        if !u8::try_from(token >> 24).is_ok_and(|index| self.is_system_library(index)) {
             return Lookup::Absent;
         }
         if !self.library_loaded(token >> 24) {
@@ -283,7 +298,7 @@ impl<'a> LiveSystemItems<'a> {
     /// payload. Consumers: `token_pronunciation_count`, `token_exists`.
     #[must_use]
     pub fn pronunciation_count(&self, token: Token) -> Lookup<u32> {
-        if !(1..=4).contains(&(token >> 24)) {
+        if !u8::try_from(token >> 24).is_ok_and(|index| self.is_system_library(index)) {
             return Lookup::Absent;
         }
         if !self.library_loaded(token >> 24) {
@@ -293,13 +308,7 @@ impl<'a> LiveSystemItems<'a> {
             if store.system_item_removed(token) {
                 return Lookup::Removed;
             }
-            let count = |len: usize| u32::try_from(len).unwrap_or(u32::MAX);
-            if let Some(found) = store
-                .with_live_item(token, |bytes| {
-                    PhraseItemView::from_bytes(bytes).map(|view| count(view.n_pronunciations()))
-                })
-                .flatten()
-            {
+            if let Some(found) = store.live_pronunciation_count(token) {
                 return Lookup::Found(found);
             }
             if store.live_item_past_buffer(token) {
@@ -313,36 +322,36 @@ impl<'a> LiveSystemItems<'a> {
     }
 
     /// The stored unigram field of the shipped item, `gen_unigram`'s `+1`
-    /// included: the chunk's own value, with no session change applied and
-    /// no visibility check. Consumers: `predict.rs`'s `item_count` for an item
-    /// the chunk holds (its caller has gated visibility), the test that
-    /// restates that formula, and [`Self::effective_unigram`].
+    /// included: the chunk's own value, with no session change applied.
+    /// An unmodified transferred chunk answers from the live field; after a
+    /// write the captured baseline answers. Used by baseline-model tests.
     #[must_use]
     pub fn stored_unigram(&self, token: Token) -> Option<u64> {
-        self.libraries.unigram_count(token)
+        self.libraries.library(token).and_then(|library| {
+            if library.is_detached() && !library.has_history() {
+                self.user
+                    .and_then(|store| store.system_unigram(token))
+                    .map(u64::from)
+            } else if library.is_detached() {
+                library.original_unigram(token & 0x00ff_ffff).map(u64::from)
+            } else {
+                self.libraries.unigram_count(token)
+            }
+        })
     }
 
-    /// The live unigram of `token`'s effective item: the shipped stored value
-    /// plus the store's unigram delta, or, for an item the chunk lacks, the
-    /// store's delta alone. A delta the store cannot read counts as zero, as
-    /// the predicted-frequency path always has. Runtime bumps are not
-    /// included; a caller adds `RuntimeDict::unigram_delta` once. `None` when
-    /// the token is hidden or holds no item. Consumer: the predicted-candidate
-    /// frequency, `predict.rs`'s `item_count`.
+    /// The live unigram of `token`'s effective item. Runtime bumps are not
+    /// included; the caller adds `RuntimeDict::unigram_delta` once. `None`
+    /// when the token is hidden or holds no item. Consumer: predicted
+    /// candidate frequency in `predict.rs`.
     #[must_use]
     pub fn effective_unigram(&self, token: Token) -> Option<u64> {
-        if !(1..=4).contains(&(token >> 24)) || !self.is_visible(token) {
+        if !u8::try_from(token >> 24).is_ok_and(|index| self.is_system_library(index))
+            || !self.is_visible(token)
+        {
             return None;
         }
-        let delta = || {
-            self.user
-                .and_then(|store| store.unigram_delta(token).ok())
-                .unwrap_or(0)
-        };
-        if let Some(stored) = self.stored_unigram(token) {
-            return Some(stored.wrapping_add(delta()));
-        }
-        self.read(token, |_| ()).found().map(|()| delta())
+        self.read(token, |item| u64::from(item.unigram())).found()
     }
 
     /// Whether the session holds an item for `token`, in its arena or its
@@ -359,7 +368,7 @@ impl<'a> LiveSystemItems<'a> {
         let Some(store) = self.user else {
             return Ok(false);
         };
-        if !(1..=4).contains(&(token >> 24)) {
+        if !u8::try_from(token >> 24).is_ok_and(|index| self.is_system_library(index)) {
             return Ok(false);
         }
         let held = store.with_user_item(token, |_| ()).is_some();

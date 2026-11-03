@@ -169,9 +169,8 @@ pub extern "C" fn pinyin_begin_add_phrases(
 /// -1 is the default 5; any other value reaches the item as its `guint32`
 /// bit pattern (`-2` stores 4294967294 and exports as -2).
 ///
-/// Libraries: loaded system sub-indexes (1..=4) and the `USER_FILE`
-/// sub-indexes (5, 6, 7) take the phrase. Every other nibble has no sub-index
-/// (`get_range` → `ERROR_NO_SUB_PHRASE_INDEX`) and answers `false`, and
+/// Loaded system and `USER_FILE` sub-indexes take the phrase; a nibble
+/// without a sub-index answers `false` (`ERROR_NO_SUB_PHRASE_INDEX`), and
 /// 16..=255 — an out-of-bounds read of the pin's 16-slot array
 /// (`phrase_index.h:630`) — answer `false` without reproducing it.
 #[unsafe(no_mangle)]
@@ -215,7 +214,12 @@ pub extern "C" fn pinyin_iterator_add_phrase(
     };
     // SAFETY: the planning readers ended above; this call now owns the context mutation.
     let context = unsafe { owner_mut(&mut handle.owner) };
-    if (1..=4).contains(&handle.index)
+    let is_system = context
+        .core
+        .runtime
+        .as_ref()
+        .is_some_and(|runtime| runtime.dict().is_system_library(handle.index));
+    if is_system
         && !context
             .core
             .runtime
@@ -227,7 +231,7 @@ pub extern "C" fn pinyin_iterator_add_phrase(
     let Some(user) = context.core.user_store_mut() else {
         return false;
     };
-    if (1..=4).contains(&handle.index) {
+    if is_system {
         // The selected token comes from the combined phrase-table search,
         // including prior imported system-library items.
         user.add_system_phrase_in(handle.index, original, &phrase, &keys, count)
@@ -350,7 +354,7 @@ fn plan_import(
     // The pin walks the tokens and asserts for any library index
     // (`pinyin.cpp:544-571`); only then does `get_range` reject a library
     // that is not loaded (`:586-588`).
-    if !is_user_file_library(handle.index) && !(1..=4).contains(&handle.index) {
+    if !is_user_file_library(handle.index) && !user.is_system_library(handle.index) {
         return ImportPlan::Refuse;
     }
     ImportPlan::Add {
@@ -481,8 +485,8 @@ pub extern "C" fn pinyin_end_add_phrases(iter: *mut ImportIterator) {
 ///
 /// Every sub-index the pin's default facade holds exports its items — one
 /// row per pronunciation, `(phrase, `'`-joined pinyin, pronunciation
-/// count)`, token order (`pinyin.cpp:662-768`): the system libraries 1..=4
-/// from their chunk files, the `USER_FILE` libraries from the user store.
+/// count)`, token order (`pinyin.cpp:662-768`): configured system libraries
+/// use their live chunks, and `USER_FILE` libraries use the user store.
 /// A nibble without a sub-index exports nothing
 /// ([`oxpinyin_facade::ContextCore::phrase_export_cursor`]).
 #[unsafe(no_mangle)]
