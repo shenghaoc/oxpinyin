@@ -5,6 +5,47 @@
 //! order is never asserted, only the set of records it emits.
 
 use oxpinyin_input::tool;
+
+/// Format independently with libc's `%f`, as the utility's printf family does.
+#[allow(unsafe_code)]
+fn host_f(value: f64) -> String {
+    let mut buffer = [0_u8; 64];
+    // SAFETY: the buffer is writable and `%f` takes one double.
+    let length = unsafe {
+        libc::snprintf(
+            buffer.as_mut_ptr().cast(),
+            buffer.len(),
+            c"%f".as_ptr(),
+            value,
+        )
+    };
+    let length = usize::try_from(length).expect("snprintf failed");
+    assert!(length < buffer.len());
+    String::from_utf8(buffer[..length].to_vec()).expect("libc output is UTF-8")
+}
+
+fn host_zero_divided_by_zero() -> f64 {
+    let numerator = std::hint::black_box(0.0_f64);
+    let denominator = std::hint::black_box(0.0_f64);
+    numerator / denominator
+}
+
+/// The fixture's gamma produces 0/0, which the later mixture arithmetic propagates.
+fn prune_fixture_nan() -> f64 {
+    let n = std::hint::black_box(1.0_f64);
+    let n_0 = std::hint::black_box(1.0_f64);
+    let n_1 = std::hint::black_box(0.0_f64);
+    let t = std::hint::black_box(10.0_f64);
+    let alpha = 1.0 - n_0 / n;
+    let gamma = 1.0 - n_1 / (n - n_0);
+    let b = (t - n_1) / (n - n_0 - n_1);
+    let mut remained = 1.0;
+    remained -= 1.0 - alpha;
+    remained -= alpha * (1.0 - gamma);
+    remained -= (alpha * gamma / (b - 1.0)) * (1.0 - 1.0 / (b - 1.0)).powf(0.0);
+    remained
+}
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
@@ -466,8 +507,10 @@ fn prune_refuses_a_nan_probability_with_edom_and_leaves_the_file_alone() {
     assert_eq!(out.status.code(), Some(tool::EDOM), "EDOM");
     assert_eq!(
         text(&out.stderr),
-        "*some wrong possibility is encountered:-nan.\n\
-         k:3 N:1 WC:10 n_0:1 n_1:0\n"
+        format!(
+            "*some wrong possibility is encountered:{}.\nk:3 N:1 WC:10 n_0:1 n_1:0\n",
+            host_f(prune_fixture_nan())
+        )
     );
 }
 
@@ -485,14 +528,10 @@ fn estimate_with_no_models_divides_zero_by_zero() {
     // Both default filenames are non-null (`estimate:25-26`); both
     // attaches fail and leave no handle.
     assert_eq!(text(&out.stderr), "");
-    let stdout = text(&out.stdout);
-    assert_eq!(stdout.lines().count(), 1);
-    let value = stdout
-        .strip_prefix("average lambda:")
-        .and_then(|line| line.strip_suffix('\n'))
-        .expect("the pin's average line");
-    // `0.0 / 0` is NaN; the C library's `%f` spells its sign per host.
-    assert!(value.ends_with("nan"), "{value:?}");
+    assert_eq!(
+        text(&out.stdout),
+        format!("average lambda:{}\n", host_f(host_zero_divided_by_zero()))
+    );
 }
 
 #[test]
@@ -645,8 +684,10 @@ fn the_committed_kmm_fixtures_are_the_pin_records() {
     assert_eq!(out.status.code(), Some(tool::EDOM));
     assert_eq!(
         text(&out.stderr),
-        "*some wrong possibility is encountered:-nan.\n\
-         k:3 N:1 WC:10 n_0:1 n_1:0\n"
+        format!(
+            "*some wrong possibility is encountered:{}.\nk:3 N:1 WC:10 n_0:1 n_1:0\n",
+            host_f(prune_fixture_nan())
+        )
     );
 
     // The zero-total candidate aborts in `compute_interpolation`.
