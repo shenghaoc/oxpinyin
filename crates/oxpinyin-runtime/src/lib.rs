@@ -489,6 +489,15 @@ impl<'a> RuntimeDict<'a> {
         out: &mut Vec<PhraseEntry>,
         price: bool,
     ) -> Result<bool, DictError> {
+        // The ranking prices each row from `RuntimeLm::unigram_freq`, whose
+        // visible-live answer is `UserStore::system_unigram`: the libpinyin
+        // session's live-buffer item, the same bytes this read decodes for
+        // the text. Capture that field here, on exactly that branch (a
+        // session store, an `Overlay` item), so the ranking of this lookup
+        // does not read the item a second time. A removed item or a masked
+        // library leaves no entry; a shipped or user-table entry captures
+        // nothing and the ranking reads as before.
+        let capture = self.user.is_some_and(UserStore::is_libpinyin_session);
         let unreadable = self.system.lookup_with_live(
             syllables,
             out,
@@ -499,6 +508,9 @@ impl<'a> RuntimeDict<'a> {
                     .read(token, |item| {
                         let mut entry =
                             PhraseEntry::new(PhraseToken::new(token), item.phrase_text()?);
+                        if capture && item.origin() == ItemOrigin::Overlay {
+                            entry = entry.with_live_unigram(item.unigram());
+                        }
                         if let Some(keys) = keys {
                             let (matched, total) = Self::item_possibility(item, keys);
                             entry = entry.with_pronunciation_possibility(
@@ -2864,6 +2876,162 @@ mod tests {
         }
     }
 
+    /// `fill_lookup` on the candidate path, as the window scan calls it
+    /// (`Dictionary::lookup_candidates_into`).
+    fn candidate_entries(runtime: &Runtime, text: &str) -> Vec<PhraseEntry> {
+        let key = SyllableKey::from_text(text).unwrap();
+        let mut out = Vec::new();
+        runtime
+            .dict()
+            .lookup_candidates_into(&[key], &mut out)
+            .unwrap();
+        out
+    }
+
+    /// Every live unigram the lookup captured is what the model answers for
+    /// its token in the same state; returns how many entries captured one.
+    fn assert_captures_price_as_the_model(runtime: &Runtime, entries: &[PhraseEntry]) -> usize {
+        let mut captured = 0;
+        for entry in entries {
+            let model = runtime.lm().unigram_freq(&entry.token()).unwrap();
+            if let Some(live) = entry.live_unigram() {
+                captured += 1;
+                assert_eq!(Some(u64::from(live)), model, "token {}", entry.token());
+            }
+        }
+        captured
+    }
+
+    fn entry_for(entries: &[PhraseEntry], token: u32) -> Option<&PhraseEntry> {
+        entries.iter().find(|entry| entry.token().value() == token)
+    }
+
+    #[test]
+    fn candidate_lookup_captures_the_live_unigram_the_ranking_reads() {
+        let mut runtime = Runtime::open(&w3_dir(), None).unwrap();
+        let token = runtime.dict().system().tokens_for_text("你").unwrap()[0];
+        let library = runtime.libraries().library(token).unwrap();
+        assert!(library.is_detached() && !library.has_history());
+
+        // A pristine item of a detached library on the phrases path: the
+        // capture fires, and it is the live field the model prices with.
+        let entries = candidate_entries(&runtime, "ni");
+        let entry = entry_for(&entries, token).expect("你 is a ni candidate");
+        let live = runtime.user_store().unwrap().system_unigram(token).unwrap();
+        assert!(live > 0);
+        assert_eq!(
+            entry.live_unigram(),
+            Some(live),
+            "a pristine detached item captures its live unigram"
+        );
+        assert_eq!(
+            runtime.lm().unigram_freq(&PhraseToken::new(token)).unwrap(),
+            Some(u64::from(live))
+        );
+        assert!(assert_captures_price_as_the_model(&runtime, &entries) >= 1);
+
+        // A facade bump lands in the session store's live item; a window
+        // collected after it captures the moved field.
+        assert!(runtime.add_unigram_delta(token, 9));
+        let entries = candidate_entries(&runtime, "ni");
+        let bumped = entry_for(&entries, token).unwrap().live_unigram();
+        assert_eq!(bumped, Some(live + 9));
+        assert_captures_price_as_the_model(&runtime, &entries);
+
+        // A training write, then the window ranked again: the recapture is
+        // the trained field, not the capture the earlier window carried.
+        runtime
+            .user_store_mut()
+            .unwrap()
+            .observe_selection(oxpinyin_user::SENTENCE_START, token)
+            .unwrap();
+        let trained = runtime.user_store().unwrap().system_unigram(token).unwrap();
+        assert!(trained > live + 9, "training raises the live field");
+        let entries = candidate_entries(&runtime, "ni");
+        let recaptured = entry_for(&entries, token).unwrap().live_unigram();
+        assert_eq!(recaptured, Some(trained));
+        assert_ne!(recaptured, bumped);
+        assert_captures_price_as_the_model(&runtime, &entries);
+
+        // A masked library leaves no entry to capture, and the model's
+        // fallback answer for its token is untouched (the mask is set
+        // directly, as the bump test does, so the bump stays).
+        runtime
+            .library_mask
+            .store(1 << (token >> 24), Ordering::SeqCst);
+        let entries = candidate_entries(&runtime, "ni");
+        assert!(
+            entries
+                .iter()
+                .all(|entry| entry.token().value() >> 24 != token >> 24),
+            "a masked library's tokens leave the lookup"
+        );
+        assert_captures_price_as_the_model(&runtime, &entries);
+        let delta = runtime.user_store().unwrap().unigram_delta(token).unwrap();
+        assert_eq!(
+            runtime.lm().unigram_freq(&PhraseToken::new(token)).unwrap(),
+            Some(delta),
+            "the masked token still prices from its delta and bumps"
+        );
+        runtime.library_mask.store(0, Ordering::SeqCst);
+        let entries = candidate_entries(&runtime, "ni");
+        assert_eq!(
+            entry_for(&entries, token).unwrap().live_unigram(),
+            Some(trained)
+        );
+        assert_captures_price_as_the_model(&runtime, &entries);
+    }
+
+    #[test]
+    fn candidate_lookup_leaves_user_items_to_the_model() {
+        let mut runtime = Runtime::open(&w3_dir(), None).unwrap();
+        let ni = SyllableKey::from_text("ni").unwrap();
+        let keys = [oxpinyin_user::toned_key(ni.index(), 0).unwrap()];
+        // A user library's phrase arrives through the user table and
+        // captures nothing; the ranking reads the model for it as before.
+        let user = runtime
+            .user_store_mut()
+            .unwrap()
+            .add_phrase_in(5, &"鎄".into(), &keys, Some(5))
+            .unwrap();
+        assert_eq!(user >> 24, 5);
+        // An item appended to a system library is a user item for its
+        // token (`with_user_item` answers it first); captured or not, it
+        // prices as the model does.
+        let appended = runtime
+            .user_store_mut()
+            .unwrap()
+            .add_system_phrase_in(1, None, &"龘".into(), &keys, Some(0))
+            .unwrap();
+        assert_eq!(appended >> 24, 1);
+        assert_eq!(
+            runtime.user_store().unwrap().system_unigram(appended),
+            Some(0)
+        );
+
+        let entries = candidate_entries(&runtime, "ni");
+        let entry = entry_for(&entries, user).expect("the user library's phrase is a ni candidate");
+        assert_eq!(
+            entry.live_unigram(),
+            None,
+            "a user-table entry captures nothing"
+        );
+        assert_eq!(
+            runtime.lm().unigram_freq(&PhraseToken::new(user)).unwrap(),
+            Some(15)
+        );
+        assert!(assert_captures_price_as_the_model(&runtime, &entries) >= 1);
+        let entry = entry_for(&entries, appended)
+            .expect("the appended system token for 龘 is a ni candidate");
+        assert_eq!(
+            entry.live_unigram().map(u64::from).or(Some(0)),
+            runtime
+                .lm()
+                .unigram_freq(&PhraseToken::new(appended))
+                .unwrap()
+        );
+    }
+
     #[test]
     fn unigram_freq_preserves_user_library_counts_and_bumps() {
         let mut runtime = Runtime::open(&w3_dir(), None).unwrap();
@@ -2969,6 +3137,11 @@ mod tests {
             runtime.dict().live_items().read(token, |_| ()),
             oxpinyin_user::Lookup::Removed
         );
+        // The removed item leaves no entry, so nothing is captured for it;
+        // the other items of the window capture what the model answers.
+        let entries = candidate_entries(&runtime, "ni");
+        assert!(entry_for(&entries, token).is_none());
+        assert!(assert_captures_price_as_the_model(&runtime, &entries) >= 1);
         runtime.bumps.overlay().tokens.insert(token, 17);
         runtime.bumps.live.store(true, Ordering::SeqCst);
         assert_eq!(

@@ -356,6 +356,15 @@ pub struct PhraseEntry {
     /// counts (the candidate scan never reads it; only the sentence
     /// trellis does).
     pronunciation: Option<(u64, u64)>,
+    /// The stored unigram of the live system item the lookup read for this
+    /// entry (`PhraseItem::get_unigram_frequency`), when the backend read
+    /// one. It is the value the ranking's `unigram_freq` would answer for
+    /// the same token in the same state, so the ranking of the lookup that
+    /// produced the entry prices from it instead of reading the item again.
+    /// It is valid for that lookup only; a later window reads afresh. `None`
+    /// when the entry came from a shipped chunk, a user table or a backend
+    /// without live items.
+    live_unigram: Option<u32>,
 }
 
 impl PhraseEntry {
@@ -370,6 +379,7 @@ impl PhraseEntry {
             token,
             text: text.into(),
             pronunciation: None,
+            live_unigram: None,
         }
     }
 
@@ -418,6 +428,21 @@ impl PhraseEntry {
         self
     }
 
+    /// The live system item's stored unigram as the lookup read it, when it
+    /// read one (see the field).
+    #[must_use]
+    pub const fn live_unigram(&self) -> Option<u32> {
+        self.live_unigram
+    }
+
+    /// Records the live item's unigram the lookup read (builder;
+    /// [`PhraseEntry::new`] leaves it unset).
+    #[must_use]
+    pub const fn with_live_unigram(mut self, unigram: u32) -> Self {
+        self.live_unigram = Some(unigram);
+        self
+    }
+
     /// Consumes the entry and returns its phrase text.
     #[must_use]
     pub fn into_text(self) -> PhraseText {
@@ -433,6 +458,18 @@ mod tests {
     use crate::{
         Completeness, INCOMPLETE_PINYIN_KEYS, OPTION_ONLY_COMPLETE_SYLLABLES, full_pinyin_syllables,
     };
+
+    #[test]
+    fn live_unigram_is_unset_by_default_and_round_trips() {
+        let entry = PhraseEntry::new(PhraseToken::new(7), "词");
+        assert_eq!(entry.live_unigram(), None);
+        assert_eq!(entry.clone().with_live_unigram(0).live_unigram(), Some(0));
+        assert_eq!(
+            entry.with_live_unigram(u32::MAX).live_unigram(),
+            Some(u32::MAX),
+            "the field keeps the full guint32 range"
+        );
+    }
 
     #[test]
     fn every_frozen_key_round_trips_through_its_id() {
