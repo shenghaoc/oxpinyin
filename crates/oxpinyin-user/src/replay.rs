@@ -225,6 +225,15 @@ enum Stale {
     },
 }
 
+/// What an append did to the content buffer.
+struct Appended {
+    offset: u32,
+    /// The write landed over earlier bytes: the size did not grow.
+    in_place: bool,
+    /// The mapping's bytes the write replaced, for the rollback.
+    old: Option<Vec<u8>>,
+}
+
 /// The private mapping the pin edits, or inline byte buffers for a fixture.
 enum Backing {
     Mapped(oxpinyin_data::phrase_library::PhraseContent),
@@ -277,6 +286,12 @@ impl Chunk {
             data_end: len,
             capacity: len,
         }
+    }
+
+    /// The bytes a write of `len` at `offset` is about to replace in the
+    /// shipped mapping.
+    fn shipped_range(&self, shipped: &[u8], offset: usize, len: usize) -> Vec<u8> {
+        shipped[offset..offset + len].to_vec()
     }
 
     /// Whether a write of `len` bytes at `offset` lands in the mapping.
@@ -452,16 +467,27 @@ impl Content {
                 .get(offset..offset.checked_add(len)?)?,
         ))
     }
-    /// `add_phrase_item`'s `set_content(m_phrase_content.size(), ...)`.
-    fn append(&mut self, payload: &[u8]) -> u32 {
-        let offset = if self.data_len() == 0 {
-            FIRST_ITEM_OFFSET
-        } else {
-            self.data_len()
-        };
+    /// `add_phrase_item`'s `set_content(offset, ...)` at the content size
+    /// narrowed to `table_offset_t` (`phrase_index.cpp:208-217`): the wrapped
+    /// offset, 8 for zero. Once the size has passed 2^32 the write lands over
+    /// earlier bytes and the size does not grow.
+    fn append(&mut self, payload: &[u8]) -> Appended {
+        let offset = crate::user_library::append_offset(self.data_len());
+        let at = offset as usize;
+        let in_place = at
+            .checked_add(payload.len())
+            .is_some_and(|end| end <= self.data_len());
+        let old = (in_place && self.content_write_hits_mapping(at, payload.len())).then(|| {
+            self.items
+                .shipped_range(self.backing.bytes(Area::Content), at, payload.len())
+        });
         let shipped = self.backing.bytes_mut(Area::Content);
-        self.items.set_content(shipped, offset, payload);
-        u32::try_from(offset).unwrap_or(u32::MAX)
+        self.items.set_content(shipped, at, payload);
+        Appended {
+            offset,
+            in_place,
+            old,
+        }
     }
     /// Whether a content write of `len` bytes at `offset` lands in the mapping.
     fn content_write_hits_mapping(&self, offset: usize, len: usize) -> bool {
@@ -646,7 +672,10 @@ enum Undo<'l> {
     /// Content bytes the replay overwrote in the mapping. The old bytes are the
     /// checked old payload of the record that wrote them, borrowed from the
     /// journal; no payload is copied.
-    Content { offset: usize, old: &'l [u8] },
+    Content {
+        offset: usize,
+        old: std::borrow::Cow<'l, [u8]>,
+    },
 }
 
 pub(crate) struct Merge<'a, 'l> {
@@ -915,11 +944,29 @@ impl<'a, 'l> Merge<'a, 'l> {
         }
         let unigram = raw_unigram(payload);
         self.capture_history();
-        let offset = self.content.append(payload);
-        self.appends += 1;
+        let offset = self.append_logged(payload);
         self.set_offset(slot, offset);
         self.add_total(unigram);
         Ok(())
+    }
+
+    /// `add_phrase_item`'s content write with the replay's bookkeeping. A
+    /// write over earlier bytes moves no allocation; it can change any slot's
+    /// item, so the finished buffer is retained as the live owner of them.
+    fn append_logged(&mut self, payload: &[u8]) -> u32 {
+        let appended = self.content.append(payload);
+        if appended.in_place {
+            self.overreach = true;
+        } else {
+            self.appends += 1;
+        }
+        if let Some(old) = appended.old {
+            self.undo.push(Undo::Content {
+                offset: appended.offset as usize,
+                old: Cow::Owned(old),
+            });
+        }
+        appended.offset
     }
 
     fn remove(&mut self, token: u32, old_item: &'l [u8]) -> Result<(), Stop> {
@@ -989,8 +1036,7 @@ impl<'a, 'l> Merge<'a, 'l> {
                     let new_unigram = raw_unigram(new_item);
                     self.subtract_total(old_unigram);
                     self.add_total(new_unigram);
-                    let offset = self.content.append(new_item);
-                    self.appends += 1;
+                    let offset = self.append_logged(new_item);
                     self.set_offset(slot, offset);
                 } else {
                     // `memmove` over the stored bytes; the item keeps its
@@ -1007,7 +1053,10 @@ impl<'a, 'l> Merge<'a, 'l> {
                         .content_write_hits_mapping(offset, new_item.len())
                         && let Some(old) = old_item.get(..new_item.len())
                     {
-                        self.undo.push(Undo::Content { offset, old });
+                        self.undo.push(Undo::Content {
+                            offset,
+                            old: Cow::Borrowed(old),
+                        });
                     }
                     if !self.content.write(offset, new_item) {
                         return Err(mismatch());
@@ -1074,7 +1123,10 @@ impl<'a, 'l> Merge<'a, 'l> {
                 if self.content.shipped_has(offset, bytes.len())
                     && let Some(old) = old.get(..bytes.len())
                 {
-                    self.undo.push(Undo::Content { offset, old });
+                    self.undo.push(Undo::Content {
+                        offset,
+                        old: Cow::Borrowed(old),
+                    });
                 }
                 self.content.write_shipped(offset, bytes)
             }
@@ -1127,7 +1179,7 @@ impl<'a, 'l> Merge<'a, 'l> {
                 Undo::Offset { slot, old } => self.content.restore_slot(slot, old),
                 Undo::Total { old } => self.content.total = old,
                 Undo::Content { offset, old } => {
-                    self.content.write_shipped(offset, old);
+                    self.content.write_shipped(offset, &old);
                 }
             }
         }
@@ -1330,14 +1382,29 @@ impl ReplayedLibrary {
     /// the slot's offset word points at it, and the `guint32` total takes the
     /// payload's unigram. The slot becomes a touched slot, and the buffer holds
     /// an item the shipped chunk may lack.
-    pub(crate) fn add_item(&mut self, slot: u32, payload: &[u8], original: SystemLibraryRef<'_>) {
+    ///
+    /// Answers whether the write landed over earlier bytes, as a wrapped
+    /// offset does. That can make another slot's header unreadable, so the
+    /// library then keeps the per-token removal check active, as `train`
+    /// does for the same aliasing.
+    #[must_use]
+    pub(crate) fn add_item(
+        &mut self,
+        slot: u32,
+        payload: &[u8],
+        original: SystemLibraryRef<'_>,
+    ) -> bool {
         self.content.capture_history(original);
         self.rejected.retain(|&rejected| rejected != slot);
         let unigram = raw_unigram(payload);
-        let offset = self.content.append(payload);
-        self.content.set_slot_offset(slot, offset);
+        let appended = self.content.append(payload);
+        self.content.set_slot_offset(slot, appended.offset);
         self.content.total = self.content.total.wrapping_add(unigram);
         self.has_added_items = true;
+        if appended.in_place {
+            self.removed = true;
+        }
+        appended.in_place
     }
 
     /// `SubPhraseIndex::remove_phrase_item` over the buffer (`:219-236`): the
@@ -2234,7 +2301,7 @@ mod tests {
                 .apply_owned(modify(1, one(), bytes_with(&[2, 3], 200)))
                 .is_ok()
         );
-        merge.content.append(&[0; 8]);
+        let _ = merge.content.append(&[0; 8]);
         let mut changed = two();
         changed[2..6].copy_from_slice(&170_u32.to_le_bytes());
         assert!(merge.apply_owned(modify(2, two(), changed)).is_ok());
@@ -2243,6 +2310,73 @@ mod tests {
         let retained = retained.expect("the over-length item stays");
         assert!(retained.contains(2));
         assert_eq!(retained.item(2).expect("two").unigram, 170);
+    }
+
+    /// #1514 ruling 1 in the replay: an ADD after the content has reached the
+    /// modulus lands at the size modulo it, over the first item, and the
+    /// content does not grow. Slot 1 keeps its offset and reads the new item.
+    #[test]
+    fn an_add_past_the_boundary_overwrites_the_first_item() {
+        let original = library();
+        // 8 + 16 + 22 = 46 bytes of content.
+        let _limits = crate::user_library::TestLimits::set(46, 1 << 31);
+        let mut merge = Merge::new(Some(original.view()));
+        let size = merge.content.data_len();
+        assert_eq!(size, 46);
+        let added = journal_item_bytes(&item(&[0x4e00], 7, &[(vec![9], 8)]));
+        assert_eq!(added.len(), 16);
+        assert!(
+            merge
+                .apply_owned(LogRecord::Add {
+                    token: 3,
+                    new_item: added,
+                })
+                .is_ok()
+        );
+        assert_eq!(merge.content.data_len(), 46, "the size does not grow");
+        assert_eq!(merge.slot_offset(3), 8);
+        assert_eq!(merge.slot_offset(1), 8, "slot 1 is aliased, not moved");
+        assert!(merge.overreach);
+        let mut skipped = Vec::new();
+        let (total, _, retained) = merge.finish_views(&mut skipped, &"test");
+        assert_eq!(total, Some(157), "the total takes only the added unigram");
+        let retained = retained.expect("the overwritten buffer is retained");
+        assert_eq!(retained.item(1).expect("one").unigram, 7);
+        assert_eq!(retained.item(3).expect("three").unigram, 7);
+    }
+
+    /// A live-buffer import whose offset has wrapped writes over earlier
+    /// bytes. It can make another slot's header unreadable, so the library
+    /// must keep the per-token removal check active (`train` does the same).
+    #[test]
+    fn a_wrapped_import_that_corrupts_a_header_raises_the_removal_flag() {
+        let original = library();
+        let mut merge = Merge::new(Some(original.view()));
+        let added = journal_item_bytes(&item(&[0x4e00], 7, &[(vec![9], 8)]));
+        assert!(
+            merge
+                .apply_owned(LogRecord::Add {
+                    token: 3,
+                    new_item: added,
+                })
+                .is_ok()
+        );
+        let mut skipped = Vec::new();
+        let (_, _, retained) = merge.finish_views(&mut skipped, &"test");
+        let mut retained = retained.expect("the added item is retained");
+        assert!(!retained.has_removed());
+        assert!(retained.item(1).is_some());
+        // 8 + 16 + 22 + 16 = 62 bytes of content: the next import wraps to 8,
+        // over slot 1's item, whose header becomes 255 characters.
+        let _limits = crate::user_library::TestLimits::set(62, 1 << 31);
+        let mut corrupting = bytes_with(&[255, 255], 4);
+        corrupting.resize(16, 0);
+        assert!(retained.add_item(4, &corrupting, original.view()));
+        assert!(retained.has_removed(), "the removal check is on");
+        assert!(
+            retained.item(1).is_none(),
+            "slot 1 no longer reads as an item"
+        );
     }
 
     #[test]

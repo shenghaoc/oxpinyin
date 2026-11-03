@@ -151,6 +151,7 @@ impl From<PersistenceError> for UserStoreError {
             }
             PersistenceError::LibraryChunkHeaderRead => UserStoreError::LibraryChunkHeaderRead,
             PersistenceError::SystemRemapFailed => UserStoreError::SaveRemapFailed,
+            PersistenceError::SaveTooLarge => UserStoreError::SaveTooLarge,
             other => UserStoreError::Persistence(other.to_string()),
         }
     }
@@ -953,81 +954,335 @@ mod tests {
         }
     }
 
+    fn profile_snapshot(dir: &std::path::Path) -> BTreeMap<String, Vec<u8>> {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| {
+                let entry = entry.unwrap();
+                (
+                    entry.file_name().to_string_lossy().into_owned(),
+                    std::fs::read(entry.path()).unwrap_or_default(),
+                )
+            })
+            .collect()
+    }
+
+    /// The files of a profile other than the staged `.tmp` ones.
+    fn settled(snapshot: &BTreeMap<String, Vec<u8>>) -> BTreeMap<String, Vec<u8>> {
+        snapshot
+            .iter()
+            .filter(|(name, _)| !name.ends_with(".tmp"))
+            .map(|(name, bytes)| (name.clone(), bytes.clone()))
+            .collect()
+    }
+
+    fn open_law(name: &str, law: UserConfLaw) -> (PathBuf, UserStore) {
+        let dir = tempdir(name);
+        let store = UserStore::open_libpinyin(&dir, originals(), versions(), law).unwrap();
+        (dir, store)
+    }
+
+    /// Register row 112, `USER_FILE` (maintainer amendment): the compacted
+    /// content copy is checked where `SubPhraseIndex::store` makes it. The
+    /// save stops there with the earlier files as written (pinyin staged
+    /// them, zhuyin renamed them), writes and renames nothing later, leaves
+    /// the marker alone and the session dirty; a retry under the limit saves.
     #[test]
-    fn arena_insert_size_failure_keeps_metadata_and_items_unchanged() {
+    fn a_user_chunk_copy_at_the_limit_stops_the_save_where_it_is() {
+        use crate::user_library::TestLimits;
         let keys = |text: &str| {
             packed_to_pinyin_keys(&[ChewingKey::from_pinyin(text).unwrap().to_packed()]).unwrap()
         };
-        let mut outcomes = Vec::new();
-        for library in [crate::USER_DICTIONARY, crate::ADDON_DICTIONARY] {
-            let dir = tempdir("arena-insert-failure");
-            let mut store =
-                UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
-                    .unwrap();
-            if library == crate::USER_DICTIONARY {
-                store
-                    .add_phrase_in(library, &"你".into(), &keys("ni"), Some(5))
-                    .unwrap();
-            } else {
-                store
-                    .promote_addon_phrase("你", &[(keys("ni"), 5)], 5)
-                    .unwrap();
+        for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
+            let (dir, mut store) = open_law("save-limit-user", law);
+            let first = store
+                .add_phrase_in(crate::USER_DICTIONARY, &"你".into(), &keys("ni"), Some(5))
+                .unwrap();
+            store
+                .add_phrase_in(crate::USER_DICTIONARY, &"他".into(), &keys("ta"), Some(5))
+                .unwrap();
+            store.mark_modified();
+            let content = 8 + 2 * 16;
+            let before = profile_snapshot(&dir);
+            {
+                let _limits = TestLimits::set(1 << 32, content);
+                let result = store.save_reporting();
+                assert!(
+                    matches!(result, Err(UserStoreError::SaveTooLarge)),
+                    "{law:?}: {result:?}"
+                );
             }
-            // Force the real arena-size refusal without allocating four GiB.
+            assert!(store.is_modified(), "the session stays dirty");
+            let after = profile_snapshot(&dir);
+            // The libraries before the user dictionary were written.
+            if law == UserConfLaw::Pinyin {
+                assert!(after.contains_key("gb_char.dbin.tmp"), "staged");
+                assert_eq!(settled(&after), settled(&before), "no rename ran");
+            } else {
+                assert!(!after.contains_key("gb_char.dbin.tmp"));
+                assert!(after.contains_key("gb_char.dbin"), "renamed at once");
+            }
+            // Nothing after the stop: no later library, index or marker file
+            // was opened, staged or renamed.
+            let created: Vec<_> = after
+                .keys()
+                .filter(|name| !before.contains_key(*name))
+                .cloned()
+                .collect();
+            // Only the libraries before the user dictionary (nibbles 1 to 6).
+            let earlier = [
+                "gb_char.dbin",
+                "gbk_char.dbin",
+                "opengram.dbin",
+                "merged.dbin",
+                "addon.bin",
+                "network.bin",
+            ];
+            for name in &created {
+                let stem = name.strip_suffix(".tmp").unwrap_or(name);
+                assert!(
+                    earlier.contains(&stem),
+                    "{law:?}: later file {name} was touched"
+                );
+            }
+            assert_eq!(after.get("user.conf"), before.get("user.conf"));
+            // Under the limit the same session saves.
+            assert!(store.remove_user_phrase(first).unwrap());
+            {
+                let _limits = TestLimits::set(1 << 32, content);
+                store.mark_modified();
+                store.save_reporting().unwrap();
+            }
+            assert!(!store.is_modified());
+            drop(store);
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    fn largest_journal(dir: &std::path::Path) -> u64 {
+        profile_snapshot(dir)
+            .iter()
+            .filter(|(name, _)| name.ends_with(".dbin"))
+            .map(|(_, bytes)| bytes.len() as u64 - 8)
+            .max()
+            .unwrap()
+    }
+
+    fn trained(name: &str, law: UserConfLaw) -> (PathBuf, UserStore) {
+        let (dir, mut store) = open_law(name, law);
+        store
+            .train_pronunciations(
+                (1_u32 << 24) | 1,
+                std::iter::once(vec![ChewingKey::new(23, 0, 1, 0)]),
+                5,
+            )
+            .unwrap();
+        store.mark_modified();
+        (dir, store)
+    }
+
+    /// Register row 112, `SYSTEM_FILE`: the journal actually encoded is the
+    /// copy that is checked, at J >= the limit, and J + 1 saves.
+    #[test]
+    fn a_system_journal_copy_at_the_limit_stops_the_save_and_retries() {
+        use crate::user_library::TestLimits;
+        for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
+            let (probe_dir, mut probe) = trained("save-limit-probe", law);
+            probe.save_reporting().unwrap();
+            let journal = largest_journal(&probe_dir);
+            drop(probe);
+            std::fs::remove_dir_all(probe_dir).unwrap();
+
+            let (dir, mut store) = trained("save-limit-log", law);
+            let marker = profile_snapshot(&dir).get("user.conf").cloned();
+            {
+                let _limits = TestLimits::set(1 << 32, journal);
+                let result = store.save_reporting();
+                assert!(
+                    matches!(result, Err(UserStoreError::SaveTooLarge)),
+                    "{law:?}: {result:?}"
+                );
+            }
+            assert!(store.is_modified());
+            assert_eq!(
+                profile_snapshot(&dir).get("user.conf"),
+                marker.as_ref(),
+                "no marker was written"
+            );
+            {
+                let _limits = TestLimits::set(1 << 32, journal + 1);
+                store.save_reporting().unwrap();
+            }
+            assert!(!store.is_modified());
+            assert_eq!(largest_journal(&dir), journal);
+            drop(store);
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    /// The journal is encoded once, against the baseline the hook reports:
+    /// a changed file on disk whose journal fits saves although the journal
+    /// against the open-time original reaches the limit.
+    #[test]
+    fn the_actual_baseline_decides_the_journal_threshold() {
+        use crate::persistence::SaveBaseline;
+        use crate::user_library::TestLimits;
+        let live = || {
+            let mut library = originals().remove(&1).unwrap();
+            let item = library.items.get_mut(&1).unwrap();
+            item.prons[0].1 = 105;
+            library
+        };
+        let sizes = |changed: bool| {
+            let (dir, mut store) = trained("save-limit-baseline-probe", UserConfLaw::Pinyin);
+            store
+                .save_reporting_with_baseline(&[], |nibble, _| match (changed, nibble) {
+                    (true, 1) => SaveBaseline::Changed(live()),
+                    _ => SaveBaseline::Keep,
+                })
+                .unwrap();
+            let size = largest_journal(&dir);
+            drop(store);
+            std::fs::remove_dir_all(dir).unwrap();
+            size
+        };
+        let against_original = sizes(false);
+        let against_disk = sizes(true);
+        assert!(
+            against_disk < against_original,
+            "{against_disk} {against_original}"
+        );
+
+        let (dir, mut store) = trained("save-limit-baseline", UserConfLaw::Pinyin);
+        let _limits = TestLimits::set(1 << 32, against_original);
+        store
+            .save_reporting_with_baseline(&[], |nibble, _| match nibble {
+                1 => SaveBaseline::Changed(live()),
+                _ => SaveBaseline::Keep,
+            })
+            .unwrap();
+        assert!(!store.is_modified());
+        drop(store);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A valid empty user chunk keeps the total its header stores
+    /// (`phrase_index.cpp:237-248`), and the arena the first import creates
+    /// starts from it: with `u32::MAX - 20` left of room, an import of count 5
+    /// (unigram 15) fits, and the next is refused by the overflow check
+    /// (`add_unigram_frequency` answers `ERROR_INTEGER_OVERFLOW`), so its
+    /// item keeps unigram 0.
+    #[test]
+    fn the_first_import_into_an_empty_chunk_starts_from_its_stored_total() {
+        use oxpinyin_data::chunk_format::build_memory_chunk;
+        use oxpinyin_data::chunk_write::build_chunk;
+        use oxpinyin_data::user_files::read_chunk_payload;
+        let dir = tempdir("empty-chunk-total");
+        // A profile the library saved once, so the open reads its chunks.
+        let mut first =
+            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin).unwrap();
+        first.mark_modified();
+        first.save_reporting().unwrap();
+        drop(first);
+        let mut payload = read_chunk_payload(&build_chunk(&[]).unwrap())
+            .unwrap()
+            .to_vec();
+        payload[..4].copy_from_slice(&(u32::MAX - 20).to_le_bytes());
+        std::fs::write(dir.join("user.bin"), build_memory_chunk(&payload).unwrap()).unwrap();
+        let mut store =
+            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin).unwrap();
+        let keys = |text: &str| {
+            packed_to_pinyin_keys(&[ChewingKey::from_pinyin(text).unwrap().to_packed()]).unwrap()
+        };
+        assert_eq!(
+            store.unigram_library_total(crate::USER_DICTIONARY).unwrap(),
+            u32::MAX - 20
+        );
+        let unigram = |store: &UserStore, token: u32| {
+            store
+                .session_target()
+                .unwrap()
+                .phrases()
+                .item(token)
+                .unwrap()
+                .unigram()
+        };
+        let first = store
+            .add_phrase_in(crate::USER_DICTIONARY, &"你".into(), &keys("ni"), Some(5))
+            .unwrap();
+        assert_eq!(unigram(&store, first), 15, "the first import is accepted");
+        let second = store
+            .add_phrase_in(crate::USER_DICTIONARY, &"他".into(), &keys("ta"), Some(5))
+            .unwrap();
+        assert_eq!(unigram(&store, second), 0, "the second overflows the total");
+        assert_eq!(
+            store.unigram_library_total(crate::USER_DICTIONARY).unwrap(),
+            u32::MAX - 5
+        );
+        drop(store);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Ruling 3: a session's arena compacts at end-import, save and mask-out
+    /// only. Replacements between them append, so the content grows with the
+    /// history as the pin's does, and each point rebuilds it from the items.
+    #[test]
+    fn the_session_arena_compacts_only_at_the_pins_points() {
+        let dir = tempdir("compaction-points");
+        let mut store =
+            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin).unwrap();
+        let keys =
+            packed_to_pinyin_keys(&[ChewingKey::from_pinyin("ni").unwrap().to_packed()]).unwrap();
+        let length = |store: &UserStore| {
             store
                 .session_target()
                 .unwrap()
                 .phrases()
                 .libraries
-                .get_mut(&library)
-                .unwrap()
-                .max_content_len = Some(1);
-            let metadata = || {
-                let db = store.database();
-                [crate::phrase_table::TABLE, UNIGRAM_TOTAL].map(|table| {
-                    let mut rows = Vec::new();
-                    db.for_each(table, |key, value| {
-                        rows.push((key.to_vec(), value.to_vec()));
-                        Ok(())
-                    })
-                    .unwrap();
-                    rows
-                })
-            };
-            let before_metadata = metadata();
-            let before_items = format!("{:?}", store.session_target().unwrap().phrases());
-            let result = if library == crate::USER_DICTIONARY {
-                store.add_phrase_in(library, &"他".into(), &keys("ta"), Some(5))
-            } else {
-                store.promote_addon_phrase("他", &[(keys("ta"), 5)], 5)
-            };
-            let db = store.database();
-            let after_metadata = [crate::phrase_table::TABLE, UNIGRAM_TOTAL].map(|table| {
-                let mut rows = Vec::new();
-                db.for_each(table, |key, value| {
-                    rows.push((key.to_vec(), value.to_vec()));
-                    Ok(())
-                })
+                .get(&crate::USER_DICTIONARY)
+                .map_or(0, |library| library.content_len())
+        };
+        let token = store
+            .add_phrase_in(crate::USER_DICTIONARY, &"你".into(), &keys, Some(5))
+            .unwrap();
+        let other = |text: &str| {
+            packed_to_pinyin_keys(&[ChewingKey::from_pinyin(text).unwrap().to_packed()]).unwrap()
+        };
+        let readings = ["a", "e", "ba", "bi", "da", "de", "fa", "fu"];
+        for reading in readings {
+            store
+                .add_phrase_in(
+                    crate::USER_DICTIONARY,
+                    &"你".into(),
+                    &other(reading),
+                    Some(0),
+                )
                 .unwrap();
-                rows
-            });
-            drop(db);
-            outcomes.push((
-                library,
-                matches!(result, Err(UserStoreError::Persistence(_))),
-                before_metadata == after_metadata,
-                before_items == format!("{:?}", store.session_target().unwrap().phrases()),
-            ));
-            drop(store);
-            std::fs::remove_dir_all(dir).unwrap();
         }
-        assert_eq!(
-            outcomes,
-            vec![
-                (crate::USER_DICTIONARY, true, true, true),
-                (crate::ADDON_DICTIONARY, true, true, true),
-            ]
-        );
+        let _ = token;
+        let grown = length(&store);
+        // Each new reading appended a larger copy: 24 + 32 + ... bytes.
+        assert!(grown > 200, "dead bytes are not collected: {grown}");
+        store.compact_libraries();
+        let live = length(&store);
+        assert_eq!(live, 8 + 6 + 4 + 9 * 6, "end-import compacts to the item");
+        for reading in ["ga", "ge", "ha", "he", "ji", "ka", "ke", "la"] {
+            store
+                .add_phrase_in(
+                    crate::USER_DICTIONARY,
+                    &"你".into(),
+                    &other(reading),
+                    Some(0),
+                )
+                .unwrap();
+        }
+        let grown = length(&store);
+        assert!(grown > 2 * live);
+        store.mark_modified();
+        assert!(store.save().unwrap());
+        assert_eq!(length(&store), 8 + 6 + 4 + 17 * 6, "save compacts");
+        drop(store);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

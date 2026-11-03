@@ -33,14 +33,13 @@ impl<S: WriteStore> GenericUserStore<S> {
                 .library_total(library, Some(original))
                 .unwrap_or(original.total));
         }
-        Ok(
-            (txn_get_u64_or(txn, LIBRARY_OFFSET, &[library], 0)? as u32).wrapping_add(
-                phrases
-                    .libraries
-                    .get(&library)
-                    .map_or(0, UserLibrary::item_sum),
-            ),
-        )
+        // The library's own total is the pin's `m_total_freq`: it follows
+        // every add and remove, and not the bytes a wrapped add overwrote.
+        let offset = txn_get_u64_or(txn, LIBRARY_OFFSET, &[library], 0)? as u32;
+        Ok(phrases
+            .libraries
+            .get(&library)
+            .map_or(offset, UserLibrary::total))
     }
 
     /// `FacadePhraseIndex::add_phrase_item` for an item of `unigram` added to
@@ -210,7 +209,8 @@ impl<S: WriteStore> GenericUserStore<S> {
             .prepare_replace(slot, bytes)
             .map_err(UserStoreError::Persistence)?;
         self.take_item_in(ADDON_DICTIONARY, unigram, false);
-        replacement.apply(phrases.libraries.entry(ADDON_DICTIONARY).or_default());
+        let retained = get_u64_or(&*db, LIBRARY_OFFSET, &[ADDON_DICTIONARY], 0)? as u32;
+        replacement.apply(phrases.arena(ADDON_DICTIONARY, retained));
         phrases
             .phrase_table
             .add(&item.phrase, token)
@@ -417,7 +417,8 @@ impl<S: WriteStore> GenericUserStore<S> {
             Ok(Ok((token, true, Some(replacement))))
         })??;
         if let Some(replacement) = replacement {
-            replacement.apply(phrases.libraries.entry(library).or_default());
+            let retained = get_u64_or(&*db, LIBRARY_OFFSET, &[library], 0)? as u32;
+            replacement.apply(phrases.arena(library, retained));
             phrases
                 .phrase_table
                 .add(words, token)
@@ -518,10 +519,15 @@ impl<S: WriteStore> GenericUserStore<S> {
                 .ok_or(UserStoreError::InvalidPhrase)?
                 .map_err(UserStoreError::Persistence)?;
             items.remove_item(original, token);
-            items.add_item(original, token, &merged);
+            let overwrote = items.add_item(original, token, &merged);
             drop(items);
             drop(phrases);
             self.inner.has_system_items.store(true, Ordering::Relaxed);
+            if overwrote {
+                self.inner
+                    .has_removed_system_items
+                    .store(true, Ordering::Relaxed);
+            }
             self.mark_committed_import_write(db, false);
             return Ok(token);
         }
@@ -537,7 +543,11 @@ impl<S: WriteStore> GenericUserStore<S> {
             unigram: 0,
             prons: vec![(packed.clone(), delta)],
         })?;
-        items.add_item(original, token, &bytes);
+        if items.add_item(original, token, &bytes) {
+            self.inner
+                .has_removed_system_items
+                .store(true, Ordering::Relaxed);
+        }
         let increment = delta.wrapping_mul(ADD_PHRASE_UNIGRAM_FACTOR_U32);
         let outcome = items
             .add_unigram(Some(original), token, increment)
@@ -614,12 +624,11 @@ impl<S: WriteStore> GenericUserStore<S> {
         }
         items.add_facade_extra(u64::from(delta));
         drop(items);
-        let total = (txn_get_u64_or(txn, LIBRARY_OFFSET, &[library], 0)? as u32).wrapping_add(
-            phrases
-                .libraries
-                .get(&library)
-                .map_or(0, UserLibrary::item_sum),
-        );
+        let offset = txn_get_u64_or(txn, LIBRARY_OFFSET, &[library], 0)? as u32;
+        let total = phrases
+            .libraries
+            .get(&library)
+            .map_or(offset, UserLibrary::total);
         if total.checked_add(delta).is_none() {
             return Ok(UnigramAdd::Refused);
         }
@@ -729,9 +738,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             for unigram in removed {
                 self.take_item_out(nibble, unigram);
             }
-            library
-                .remove_matching(selected)
-                .map_err(UserStoreError::Persistence)?;
+            library.remove_matching(selected);
         }
         Ok(())
     }

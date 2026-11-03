@@ -1,7 +1,7 @@
 # User phrase content past 4 GiB (#1514, phase 1)
 
 Date: 2026-11-01 UTC, captured with `date -u`. Updated 2026-11-02 UTC against main `851a6304`; the update read `/private/tmp/oxpinyin-1514-pin` at `074a2219` and did not run the pin. The object inspection below is historical evidence, not a new disassembly.
-Status: maintainer ruling recorded 2026-11-02 UTC; implementation pending the mapping stack ([#1547](https://github.com/shenghaoc/oxpinyin/pull/1547) → [#1557](https://github.com/shenghaoc/oxpinyin/pull/1557)).
+Status: maintainer ruling recorded 2026-11-02 UTC; implemented 2026-11-03 UTC on the single-mapping stack. No runtime differential reaches the 4 GiB boundary; the wrap is derived from source and held by unit tests with a test-only modulus.
 
 The pin's first wrapped append is an **in-buffer overwrite, not inherently
 undefined behaviour**. It changes the bytes seen through other live slots without
@@ -463,8 +463,8 @@ after the 16:27 UTC #1514 comment and before the 16:44:02 UTC time observed
 while processing that turn. The exact receipt time was not captured. This review
 clarifies the read and save boundaries. Match the pin wherever its behavior is
 defined. For undefined behavior, use class (b) and the safe answers below.
-Implementation waits until the mapping stack ([#1547](https://github.com/shenghaoc/oxpinyin/pull/1547) → [#1557](https://github.com/shenghaoc/oxpinyin/pull/1557))
-has merged; it rewrites the same user-library replay and store files.
+The mapping stack ([#1547](https://github.com/shenghaoc/oxpinyin/pull/1547) → [#1557](https://github.com/shenghaoc/oxpinyin/pull/1557))
+that this waited on has merged; the implementation is on it.
 
 - Reproduce the defined content offset narrowing modulo 2^32, including
   zero → 8, the overwritten bytes, aliases and totals, with `wrapping_*`
@@ -483,14 +483,22 @@ has merged; it rewrites the same user-library replay and store files.
   option 1. Passing the logical content end is the ruled safe boundary; it is
   not necessarily C++ undefined if the owning allocation still contains the
   bytes. Other independently unsafe operations remain class (b).
-- Preflight all planned serializations and refuse before writing or removing
-  any file if one reaches the unsafe copy. Both facades compact first
-  (`src/pinyin.cpp:1132–1146`, `src/zhuyin.cpp:547–554`). For a USER_FILE,
-  the copy uses compacted content C, with B = 18 + I bytes already in the
-  fresh chunk: its growth threshold is C ≥ 2^31, destination end B+C.
-  SYSTEM_FILE and DICTIONARY diff journals have their separate fresh-chunk
-  copy threshold J ≥ 2^31 for the complete log J. Refusal answers `false`,
-  retains the dirty session and permits retry; see policy rows 111 and 112.
+- **Unsafe bulk copy; safe stop at the failure boundary (class (b)).**
+  Reproduce the pin's observable operations and filesystem effects up to the
+  oversized copy, including the library-write order, baseline reads, staged
+  temporary files and completed renames. Both facades compact first
+  (`src/pinyin.cpp:1132–1146`, `src/zhuyin.cpp:547–554`). When a `USER_FILE`
+  compacted-content copy reaches `C >= 2^31` (`SubPhraseIndex::store`,
+  `src/storage/phrase_index.cpp:365–390`, with B = 18 + I bytes already in the
+  fresh chunk and destination end B+C), or a journal copy reaches `J >= 2^31`
+  (`PhraseIndexLogger::store`, `src/storage/phrase_index_logger.h:115–117`),
+  refuse at that copy without performing the undefined memory operation:
+  stop the save, keep earlier filesystem changes, perform no later operation,
+  answer `false` and keep the session dirty for retry. If the pin crashes at
+  the overflowing copy before any further filesystem operation, the resulting
+  on-disk state is reproduced; the pin's behaviour after the undefined copy is
+  not otherwise claimed. Process survival and keeping unsaved session state
+  are deliberate class (b) departures. See policy rows 111 and 112.
 
 Between the pin's compaction points, content space grows with cumulative
 appended bytes, as at the pin; logical content space is the same for the same
@@ -502,8 +510,10 @@ this source-derived space trade-off. No measurement is needed.
 Use a small, test-only wrap modulus in the same offset computation as
 production; `max_content_len` alone only refuses growth. Exercise zero → 8,
 overwrites, aliases, totals and compaction at the pin's points, alongside
-REMOVE/MODIFY, replay, mask and diff. Target facade checks at preflight,
-false return, unchanged files, dirty state and retry/reload on both facades.
+REMOVE/MODIFY, replay, mask and diff. Target facade checks at the stop
+point: the false return, the kept earlier files (libpinyin's staged
+temporary files, libzhuyin's completed renames), nothing later touched, dirty
+state and retry/reload on both facades.
 A real-boundary contract differential is appropriate only if reachable in
 reasonable time. No oracle run is required for this documentation PR.
 
