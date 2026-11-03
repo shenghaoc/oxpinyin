@@ -1,0 +1,273 @@
+{
+  "base": "218f597a272dea4bc5c1bb56a3956c59ceb69b8d",
+  "values": {
+    "NUM_INITIALS": {
+      "source": "crates/oxpinyin-chewing/src/chewing_key_data.rs",
+      "sha256": "e3ad876b2aaefe28e508a9ae21dad2b546f19765c981a9c11d645e95ee742448"
+    },
+    "NUM_MIDDLES": {
+      "source": "crates/oxpinyin-chewing/src/chewing_key_data.rs",
+      "sha256": "f10ff3de52759047dad99c3374429d6cac3edd6b5c3652a0ce674073745d242f"
+    },
+    "NUM_FINALS": {
+      "source": "crates/oxpinyin-chewing/src/chewing_key_data.rs",
+      "sha256": "639297a344a884a7fd3a4db4cef52774a90a6a981b37beb436113b9e83163527"
+    },
+    "CHEWING_KEY_TABLE": {
+      "source": "crates/oxpinyin-chewing/src/chewing_key_data.rs",
+      "sha256": "a5f9e9bd55150787db5d172ddee6c5ae50564e9d405747d745b9440a60020e59"
+    },
+    "CONTENT_TABLE": {
+      "source": "crates/oxpinyin-chewing/src/content_table_source.rs",
+      "sha256": "4cd1627b16c3eee000d49cbd14866322343a1766db41bedbad68fe5aa9932afa"
+    },
+    "FULL_PINYIN_SYLLABLE_COUNT": {
+      "source": "crates/oxpinyin-core/src/syllables.rs",
+      "sha256": "0ee83ebc9f727c52770762f20434559ce7460a2d8027a291d256e5b9ef0bb03d"
+    },
+    "FULL_PINYIN_SYLLABLES": {
+      "source": "crates/oxpinyin-core/src/table_data/full_pinyin_syllables.rs",
+      "sha256": "9619e23bf27b708955cbff018312106418d79e97acfc7c06eeb8a08f56810b12"
+    },
+    "LUOMA_PINYIN_COUNT": {
+      "source": "crates/oxpinyin-core/src/table_data/full_pinyin_indexes.rs",
+      "sha256": "a3429fe928849c3bf799c539a38bdb4c81b1f47ac7d0c6d618cd00969ef40df7"
+    },
+    "LUOMA_PINYIN_INDEX": {
+      "source": "crates/oxpinyin-core/src/table_data/full_pinyin_indexes.rs",
+      "sha256": "875a7d32eb3202e6e95f0be7c2d93bf9564e27840779d28394f0ccd9f74e6932"
+    },
+    "SECONDARY_ZHUYIN_COUNT": {
+      "source": "crates/oxpinyin-core/src/table_data/full_pinyin_indexes.rs",
+      "sha256": "a3429fe928849c3bf799c539a38bdb4c81b1f47ac7d0c6d618cd00969ef40df7"
+    },
+    "SECONDARY_ZHUYIN_INDEX": {
+      "source": "crates/oxpinyin-core/src/table_data/full_pinyin_indexes.rs",
+      "sha256": "46f7a12725a2125ec45593a369def8dd5d54a25d09334f0f80163a91ba115e81"
+    },
+    "ZHUYIN_PINYIN_MAP": {
+      "source": "crates/oxpinyin-core/src/table_data/zhuyin_indexes.rs",
+      "sha256": "95a89fd1940c7e6068f6deb5f1a92b5bac8775e702eea22dadd52e249b466267"
+    },
+    "HSU_ZHUYIN_INDEX": {
+      "source": "crates/oxpinyin-core/src/table_data/zhuyin_indexes.rs",
+      "sha256": "a8fa79745fb8485de669d61c4f0b6fb77081bc3dbdaa5aab6ad2abe8ef4187b0"
+    },
+    "ETEN26_ZHUYIN_INDEX": {
+      "source": "crates/oxpinyin-core/src/table_data/zhuyin_indexes.rs",
+      "sha256": "f958d8501a80fb966a4f2606b989cbe9b23d07bb72d0f5ad227b6ae81d68938b"
+    },
+    "MAX_SYLLABLE_LEN": {
+      "source": "crates/oxpinyin-core/src/syllables.rs",
+      "sha256": "a78d2e425f51be4abed67c9b854af8aea03e87a002d45aae0f9badf29c7c8cad"
+    },
+    "INCOMPLETE_PINYIN_KEY_COUNT": {
+      "source": "crates/oxpinyin-core/src/syllables.rs",
+      "sha256": "a6ceecb7388ceb0f08cafdcce984c6e0cbc91487cc3d385074a0cc1c5d9099f6"
+    },
+    "INCOMPLETE_PINYIN_KEYS": {
+      "source": "crates/oxpinyin-core/src/syllables.rs",
+      "sha256": "ae75f1b2b8dd377ffe38eebd265d47c5fa63a1002567b3ae7cb05795ae659e5b"
+    },
+    "OPTION_ONLY_COMPLETE_SYLLABLE_COUNT": {
+      "source": "crates/oxpinyin-core/src/syllables.rs",
+      "sha256": "20a5faad9e76fd1d4237ae8057ba9f7688cfa75ccfe10f2d40340a707f880aa9"
+    },
+    "OPTION_ONLY_COMPLETE_SYLLABLES": {
+      "source": "crates/oxpinyin-core/src/syllables.rs",
+      "sha256": "a9c41872c721e0444992de47cbf57516f3ee5862031e488f7e366e94856a74a9"
+    },
+    "ZHUYIN_ONLY_COMPLETE_SYLLABLE_COUNT": {
+      "source": "crates/oxpinyin-core/src/syllables.rs",
+      "sha256": "2b6fae086a197f72c498b6d779204c4df1d00d8631b0f63f4c8284cf3e5e70c9"
+    },
+    "ZHUYIN_ONLY_COMPLETE_SYLLABLES": {
+      "source": "crates/oxpinyin-core/src/syllables.rs",
+      "sha256": "61cb04374afb80408a35d73f16365f9d194da46e6bac4fed1d675a0e6e89cd5c"
+    },
+    "MS_SHENG": {
+      "source": "crates/oxpinyin-core/src/scheme.rs",
+      "sha256": "816129426489b9a8fce494a5869d3169bedefef9107721821cd6fe03938c66ed"
+    },
+    "MS_YUN": {
+      "source": "crates/oxpinyin-core/src/scheme.rs",
+      "sha256": "ccd1fb643cfd1a180ab0293240ce1eca7e3e246b919a899c651c3135241a60a7"
+    },
+    "ZRM_SHENG": {
+      "source": "crates/oxpinyin-core/src/scheme.rs",
+      "sha256": "816129426489b9a8fce494a5869d3169bedefef9107721821cd6fe03938c66ed"
+    },
+    "ZRM_YUN": {
+      "source": "crates/oxpinyin-core/src/scheme.rs",
+      "sha256": "94169428183f3d9a1eed2c6e42059475997207db419166c3887b05be2e0bc957"
+    },
+    "ZRM_FALLBACK": {
+      "source": "crates/oxpinyin-core/src/scheme.rs",
+      "sha256": "14520091a643d31133202e46e15d11f975b1d0c2160b45917cab88d08100a1b4"
+    },
+    "ABC_SHENG": {
+      "source": "crates/oxpinyin-core/src/scheme.rs",
+      "sha256": "3331388a1a712766f1877c8cfe471071694b50a241b299d5c439758071d41fcb"
+    },
+    "ABC_YUN": {
+      "source": "crates/oxpinyin-core/src/scheme.rs",
+      "sha256": "0e436a2ea72acc42f9c22fa944aa9ca4427f30a5fdee2e7d953014ec2011aad9"
+    },
+    "ZG_SHENG": {
+      "source": "crates/oxpinyin-core/src/scheme.rs",
+      "sha256": "cae06275ff484f76e83ee921199f6e9e6029c35dbb1fe15bfe7861dd35d9887f"
+    },
+    "ZG_YUN": {
+      "source": "crates/oxpinyin-core/src/scheme.rs",
+      "sha256": "a6c3efa6fe6e8eaaa5db17952faa60a57659fb9059f2eea0619b64012c744a6e"
+    },
+    "PYJJ_SHENG": {
+      "source": "crates/oxpinyin-core/src/scheme.rs",
+      "sha256": "bbffdcf5f33a92f11133b892fb58c62e87654e04a33d6455ccdf56a21262647a"
+    },
+    "PYJJ_YUN": {
+      "source": "crates/oxpinyin-core/src/scheme.rs",
+      "sha256": "1cc97c383a71b80fdcd3b087fbf91663b56a2f0e43a24c83cd0d554423539bbf"
+    },
+    "PYJJ_FALLBACK": {
+      "source": "crates/oxpinyin-core/src/scheme.rs",
+      "sha256": "d1317868392529df283eb5844f72870b68c05b6a56dbaa400b6bdf0267fe13e4"
+    },
+    "XHE_SHENG": {
+      "source": "crates/oxpinyin-core/src/scheme.rs",
+      "sha256": "816129426489b9a8fce494a5869d3169bedefef9107721821cd6fe03938c66ed"
+    },
+    "XHE_YUN": {
+      "source": "crates/oxpinyin-core/src/scheme.rs",
+      "sha256": "41a28597f1376fde27147b23e22aeab9362748aa538858214ec680d47ec11e98"
+    },
+    "XHE_FALLBACK": {
+      "source": "crates/oxpinyin-core/src/scheme.rs",
+      "sha256": "14520091a643d31133202e46e15d11f975b1d0c2160b45917cab88d08100a1b4"
+    },
+    "STANDARD_SYMBOLS": {
+      "source": "crates/oxpinyin-core/src/scheme.rs",
+      "sha256": "6a2febc1d311307db4fc9cab2d9252e45ade58b85b131b8c25aab8f01c0f12d4"
+    },
+    "STANDARD_TONES": {
+      "source": "crates/oxpinyin-core/src/scheme.rs",
+      "sha256": "934561e1d772ad90b3f36c3e7124329aa2aad399b39afdb3aa7630c11f600fda"
+    },
+    "IBM_SYMBOLS": {
+      "source": "crates/oxpinyin-core/src/scheme.rs",
+      "sha256": "c001112ae56a759a25b64489d8ddc1fa1a9932f9943c691cb08d56a4d81bf6e3"
+    },
+    "IBM_TONES": {
+      "source": "crates/oxpinyin-core/src/scheme.rs",
+      "sha256": "580c0e53aa690be4e921b24b6e981608fa669a2326d529a9cfb0333230597e73"
+    },
+    "GINYIEH_SYMBOLS": {
+      "source": "crates/oxpinyin-core/src/scheme.rs",
+      "sha256": "fd1f6892b4d440d7bc9f9d73c728205766295bf99a2c9b4da8134851ddb96600"
+    },
+    "GINYIEH_TONES": {
+      "source": "crates/oxpinyin-core/src/scheme.rs",
+      "sha256": "d45fb4e079215b646276ab21faea44c6deacd89fff704b53188858c929019e01"
+    },
+    "ETEN_SYMBOLS": {
+      "source": "crates/oxpinyin-core/src/scheme.rs",
+      "sha256": "6ef99b4531df1f45b9dc7c1a02bd3d97df19bcdbc000ff77b8b6f2857f3233cf"
+    },
+    "ETEN_TONES": {
+      "source": "crates/oxpinyin-core/src/scheme.rs",
+      "sha256": "18ed263c4cadfa8315a736eff1c759069e7c8a8805e364b3f3e5df612f9f6936"
+    },
+    "HSU_INITIALS": {
+      "source": "crates/oxpinyin-core/src/scheme.rs",
+      "sha256": "e93da4535fa4d5fec33cd400dc935e14da6b091244993381ab671a450513e4ca"
+    },
+    "HSU_MIDDLES": {
+      "source": "crates/oxpinyin-core/src/scheme.rs",
+      "sha256": "e1555a1cffe09d9f3613476f086e8144501feb6ec9a993f04d0b6b90db62db58"
+    },
+    "HSU_FINALS": {
+      "source": "crates/oxpinyin-core/src/scheme.rs",
+      "sha256": "adc8b440a843b6bf6a993d5d0b527b66215ca5fe06e512ffb0419137520c96c2"
+    },
+    "HSU_TONES": {
+      "source": "crates/oxpinyin-core/src/scheme.rs",
+      "sha256": "62214d54a738d57703d33d246552188a842c018dc304db4d2667f6f9a6352324"
+    },
+    "ETEN26_INITIALS": {
+      "source": "crates/oxpinyin-core/src/scheme.rs",
+      "sha256": "aeb24e116904a1be579ace545437419225717f8542e815593f1bc0d3f75bb09a"
+    },
+    "ETEN26_MIDDLES": {
+      "source": "crates/oxpinyin-core/src/scheme.rs",
+      "sha256": "e1555a1cffe09d9f3613476f086e8144501feb6ec9a993f04d0b6b90db62db58"
+    },
+    "ETEN26_FINALS": {
+      "source": "crates/oxpinyin-core/src/scheme.rs",
+      "sha256": "81dd4b4e0af0aa080a9093aa3af861080a38ea6841c7553238b2a62336d15fc0"
+    },
+    "ETEN26_TONES": {
+      "source": "crates/oxpinyin-core/src/scheme.rs",
+      "sha256": "2ca78fb4846008140ba8161e80c49af327b42133771ccac1d23e7f070524cab6"
+    },
+    "HSU_DVORAK_INITIALS": {
+      "source": "crates/oxpinyin-core/src/scheme.rs",
+      "sha256": "e93da4535fa4d5fec33cd400dc935e14da6b091244993381ab671a450513e4ca"
+    },
+    "HSU_DVORAK_MIDDLES": {
+      "source": "crates/oxpinyin-core/src/scheme.rs",
+      "sha256": "e1555a1cffe09d9f3613476f086e8144501feb6ec9a993f04d0b6b90db62db58"
+    },
+    "HSU_DVORAK_FINALS": {
+      "source": "crates/oxpinyin-core/src/scheme.rs",
+      "sha256": "adc8b440a843b6bf6a993d5d0b527b66215ca5fe06e512ffb0419137520c96c2"
+    },
+    "HSU_DVORAK_TONES": {
+      "source": "crates/oxpinyin-core/src/scheme.rs",
+      "sha256": "62214d54a738d57703d33d246552188a842c018dc304db4d2667f6f9a6352324"
+    },
+    "CP26_INITIALS": {
+      "source": "crates/oxpinyin-core/src/scheme.rs",
+      "sha256": "8aef41f7bf9b83c4221262683ba3f7cfc0d73d8bff58525a5d982b97a6a00d37"
+    },
+    "CP26_MIDDLES": {
+      "source": "crates/oxpinyin-core/src/scheme.rs",
+      "sha256": "0a6e3d4e5a7a46b440cbb122daa89c18bea6cedb0be3e10070dba28b8264ded7"
+    },
+    "CP26_FINALS": {
+      "source": "crates/oxpinyin-core/src/scheme.rs",
+      "sha256": "8bbca1047da345c33584ecdb8978cfb37908fbab53791fd72648359d86cb3f55"
+    },
+    "CP26_TONES": {
+      "source": "crates/oxpinyin-core/src/scheme.rs",
+      "sha256": "ce76787e9c5d17a5ab6b97a6e5990d71853757db0e7dbe2933dd8129767a9ad1"
+    },
+    "ZHUYIN_PINYIN_COUNT": {
+      "source": "crates/oxpinyin-core/src/zhuyin_map.rs",
+      "sha256": "a0afc005fcd9e2a485db9aae5cdcfdc78ab42c869d9531268b1537d2d8ece3d4"
+    },
+    "VALID_ZHUYIN_TONES": {
+      "source": "crates/oxpinyin-core/src/zhuyin_map.rs",
+      "sha256": "3e0d6ec88d74a62d2726fdd7d33f67aaaf3b7ba650d1c8ccd32a91ee43e9c9f4"
+    },
+    "HSU_ZHUYIN_COUNT": {
+      "source": "crates/oxpinyin-core/src/zhuyin_map.rs",
+      "sha256": "5f6d8f115d839f8fcec4a0c4b9be0ee3393dd8553bf28e48c18cc9de4de60263"
+    },
+    "ETEN26_ZHUYIN_COUNT": {
+      "source": "crates/oxpinyin-core/src/zhuyin_map.rs",
+      "sha256": "c68156c9a7223e6242b5303e6e0931962612d09bc3d154a618346688147a57fa"
+    },
+    "RESPLIT_TABLE": {
+      "source": "crates/oxpinyin-engine/src/session/mod.rs",
+      "sha256": "b0097884479f0c341f64bbc6442584f15976c5a995cd0a4cfa07bf236df99e9f"
+    },
+    "DIVIDED_TABLE": {
+      "source": "crates/oxpinyin-engine/src/session/mod.rs",
+      "sha256": "abd247cef2c143d3a4aff62e5bbf44e93d76046e1743d3ac71c9c40efebb570f"
+    },
+    "CHEWING_ZERO_TONE": {
+      "source": "crates/oxpinyin-chewing/src/chewing_key.rs",
+      "sha256": "dd3ca569374f34487d1547056165edfe0395fefbf7c7ef04314feeb4c699bb3b"
+    }
+  }
+}

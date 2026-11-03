@@ -22,9 +22,6 @@ use crate::chewing_key_data::{
     spelling_key,
 };
 
-/// `CHEWING_ZERO_TONE` (`src/storage/chewing_enum.h:92`).
-pub const CHEWING_ZERO_TONE: u8 = 0;
-
 /// One pinyin key: the upstream `_ChewingKey` elements unpacked.
 ///
 /// The element values are the upstream `ChewingInitial` / `ChewingMiddle`
@@ -269,18 +266,7 @@ const fn digit(tone: u8) -> Option<char> {
     }
 }
 
-/// `chewing_tone_table` (`src/storage/zhuyin_table.h:12593-12600`), the
-/// zhuyin tone marks — the same table `crate::scheme` renders with.
-const fn tone_symbol(tone: u8) -> &'static str {
-    match tone {
-        1 => " ",
-        2 => "ˊ",
-        3 => "ˇ",
-        4 => "ˋ",
-        5 => "˙",
-        _ => "",
-    }
-}
+include!("tone_symbols.rs");
 
 #[cfg(test)]
 mod chewing_key_data_tests {

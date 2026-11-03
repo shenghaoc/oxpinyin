@@ -1,0 +1,65 @@
+rust_path	items	upstream_header	marker	upstream_function_or_data	notes
+crates/oxpinyin-chewing/src/chewing_key_data.rs	NUM_INITIALS	chewing_enum.h	@CHEWING_INITIAL@	chewing.gen_initials	enum count; key component numbers also use these enum rows
+crates/oxpinyin-chewing/src/chewing_key_data.rs	NUM_MIDDLES	chewing_enum.h	@CHEWING_MIDDLE@	chewing.gen_middles	enum count; key component numbers also use these enum rows
+crates/oxpinyin-chewing/src/chewing_key_data.rs	NUM_FINALS	chewing_enum.h	@CHEWING_FINAL@	chewing.gen_finals	enum count; key component numbers also use these enum rows
+crates/oxpinyin-chewing/src/chewing_key.rs	CHEWING_ZERO_TONE	chewing_enum.h	@CHEWING_TONE@	chewing.gen_tones	
+crates/oxpinyin-chewing/src/chewing_key_data.rs	CHEWING_KEY_TABLE	pinyin_parser_table.h	@TABLE_INDEX@	fullpinyintable.gen_table_index_for_chewing_key	1728 entries; mixed handwritten/generated file
+crates/oxpinyin-chewing/src/content_table_source.rs	CONTENT_TABLE	pinyin_parser_table.h	@CONTENT_TABLE@	fullpinyintable.gen_content_table	441 rows; enum-name to integer formatting; ContentItem type handwritten
+crates/oxpinyin-core/src/table_data/full_pinyin_indexes.rs	LUOMA_PINYIN_INDEX	pinyin_parser_table.h	@LUOMA_PINYIN_INDEX@ + @CONTENT_TABLE@	fullpinyintable.gen_luoma_pinyin_index + gen_content_table	406 rows each; includes counts; canonical spelling joined by upstream content index
+crates/oxpinyin-core/src/table_data/full_pinyin_indexes.rs	SECONDARY_ZHUYIN_INDEX	pinyin_parser_table.h	@SECONDARY_ZHUYIN_INDEX@ + @CONTENT_TABLE@	fullpinyintable.gen_secondary_zhuyin_index + gen_content_table	406 rows each; includes counts; canonical spelling joined by upstream content index
+crates/oxpinyin-core/src/full_pinyin_index.rs	LUOMA_PINYIN_COUNT; SECONDARY_ZHUYIN_COUNT	pinyin_parser_table.h	@LUOMA_PINYIN_INDEX@; @SECONDARY_ZHUYIN_INDEX@	fullpinyintable.gen_luoma_pinyin_index; gen_secondary_zhuyin_index	duplicate public counts and handwritten consumers
+crates/oxpinyin-core/src/table_data/zhuyin_indexes.rs	ZHUYIN_PINYIN_MAP	pinyin_parser_table.h	@ZHUYIN_INDEX@ + @CONTENT_TABLE@	fullpinyintable.gen_zhuyin_index + gen_content_table	1493 rows; canonical zhuyin/pinyin joined by content index; only consulted option flags retained
+crates/oxpinyin-core/src/table_data/zhuyin_indexes.rs	HSU_ZHUYIN_INDEX	pinyin_parser_table.h	@HSU_ZHUYIN_INDEX@ + @CONTENT_TABLE@	fullpinyintable.gen_hsu_zhuyin_index + gen_content_table	500 rows; canonical zhuyin/pinyin joined by content index; only consulted option flags retained
+crates/oxpinyin-core/src/table_data/zhuyin_indexes.rs	ETEN26_ZHUYIN_INDEX	pinyin_parser_table.h	@ETEN26_ZHUYIN_INDEX@ + @CONTENT_TABLE@	fullpinyintable.gen_eten26_zhuyin_index + gen_content_table	482 rows; canonical zhuyin/pinyin joined by content index; only consulted option flags retained
+crates/oxpinyin-core/src/zhuyin_map.rs	ZHUYIN_PINYIN_COUNT; HSU_ZHUYIN_COUNT; ETEN26_ZHUYIN_COUNT	pinyin_parser_table.h	@ZHUYIN_INDEX@; @HSU_ZHUYIN_INDEX@; @ETEN26_ZHUYIN_INDEX@	fullpinyintable.gen_zhuyin_index; gen_hsu_zhuyin_index; gen_eten26_zhuyin_index	public counts plus handwritten consumers
+crates/oxpinyin-core/src/scheme.rs	MS_SHENG	double_pinyin_table.h	@MSPY_SHENG@	doublepinyintable.gen_shengmu_table(MSPY)	27 entries; NULL to None
+crates/oxpinyin-core/src/scheme.rs	MS_YUN	double_pinyin_table.h	@MSPY_YUN@	doublepinyintable.gen_yunmu_table(MSPY)	27 entries; NULL to None
+crates/oxpinyin-core/src/scheme.rs	ZRM_SHENG	double_pinyin_table.h	@ZRM_SHENG@	doublepinyintable.gen_shengmu_table(ZRM)	27 entries; NULL to None
+crates/oxpinyin-core/src/scheme.rs	ZRM_YUN	double_pinyin_table.h	@ZRM_YUN@	doublepinyintable.gen_yunmu_table(ZRM)	27 entries; NULL to None
+crates/oxpinyin-core/src/scheme.rs	ABC_SHENG	double_pinyin_table.h	@ABC_SHENG@	doublepinyintable.gen_shengmu_table(ABC)	27 entries; NULL to None
+crates/oxpinyin-core/src/scheme.rs	ABC_YUN	double_pinyin_table.h	@ABC_YUN@	doublepinyintable.gen_yunmu_table(ABC)	27 entries; NULL to None
+crates/oxpinyin-core/src/scheme.rs	ZG_SHENG	double_pinyin_table.h	@ZGPY_SHENG@	doublepinyintable.gen_shengmu_table(ZGPY)	27 entries; NULL to None
+crates/oxpinyin-core/src/scheme.rs	ZG_YUN	double_pinyin_table.h	@ZGPY_YUN@	doublepinyintable.gen_yunmu_table(ZGPY)	27 entries; NULL to None
+crates/oxpinyin-core/src/scheme.rs	PYJJ_SHENG	double_pinyin_table.h	@PYJJ_SHENG@	doublepinyintable.gen_shengmu_table(PYJJ)	27 entries; NULL to None
+crates/oxpinyin-core/src/scheme.rs	PYJJ_YUN	double_pinyin_table.h	@PYJJ_YUN@	doublepinyintable.gen_yunmu_table(PYJJ)	27 entries; NULL to None
+crates/oxpinyin-core/src/scheme.rs	XHE_SHENG	double_pinyin_table.h	@XHE_SHENG@	doublepinyintable.gen_shengmu_table(XHE)	27 entries; NULL to None
+crates/oxpinyin-core/src/scheme.rs	XHE_YUN	double_pinyin_table.h	@XHE_YUN@	doublepinyintable.gen_yunmu_table(XHE)	27 entries; NULL to None
+crates/oxpinyin-core/src/scheme.rs	ZRM_FALLBACK	double_pinyin_table.h	@ZRM_FALLBACK3@	doublepinyintable.gen_fallback_table3(ZRM)	omit C sentinel; preserve row order
+crates/oxpinyin-core/src/scheme.rs	PYJJ_FALLBACK	double_pinyin_table.h	@PYJJ_FALLBACK2@	doublepinyintable.gen_fallback_table2(PYJJ)	omit C sentinel; preserve row order
+crates/oxpinyin-core/src/scheme.rs	XHE_FALLBACK	double_pinyin_table.h	@XHE_FALLBACK3@	doublepinyintable.gen_fallback_table3(XHE)	omit C sentinel; preserve row order
+crates/oxpinyin-core/src/scheme.rs	STANDARD_SYMBOLS	zhuyin_table.h	@STANDARD_SYMBOLS@	bopomofotable.gen_chewing_symbols(STANDARD)	omit C sentinel
+crates/oxpinyin-core/src/scheme.rs	STANDARD_TONES	zhuyin_table.h	@STANDARD_TONES@	bopomofotable.gen_chewing_tones(STANDARD)	omit C sentinel
+crates/oxpinyin-core/src/scheme.rs	IBM_SYMBOLS	zhuyin_table.h	@IBM_SYMBOLS@	bopomofotable.gen_chewing_symbols(IBM)	omit C sentinel
+crates/oxpinyin-core/src/scheme.rs	IBM_TONES	zhuyin_table.h	@IBM_TONES@	bopomofotable.gen_chewing_tones(IBM)	omit C sentinel
+crates/oxpinyin-core/src/scheme.rs	GINYIEH_SYMBOLS	zhuyin_table.h	@GINYIEH_SYMBOLS@	bopomofotable.gen_chewing_symbols(GINYIEH)	omit C sentinel
+crates/oxpinyin-core/src/scheme.rs	GINYIEH_TONES	zhuyin_table.h	@GINYIEH_TONES@	bopomofotable.gen_chewing_tones(GINYIEH)	omit C sentinel
+crates/oxpinyin-core/src/scheme.rs	ETEN_SYMBOLS	zhuyin_table.h	@ETEN_SYMBOLS@	bopomofotable.gen_chewing_symbols(ETEN)	omit C sentinel
+crates/oxpinyin-core/src/scheme.rs	ETEN_TONES	zhuyin_table.h	@ETEN_TONES@	bopomofotable.gen_chewing_tones(ETEN)	omit C sentinel
+crates/oxpinyin-core/src/scheme.rs	HSU_INITIALS	zhuyin_table.h	@HSU_INITIALS@	bopomofotable.gen_chewing_initials(HSU)	omit C sentinel; preserve duplicate-key row order
+crates/oxpinyin-core/src/scheme.rs	HSU_MIDDLES	zhuyin_table.h	@HSU_MIDDLES@	bopomofotable.gen_chewing_middles(HSU)	omit C sentinel; preserve duplicate-key row order
+crates/oxpinyin-core/src/scheme.rs	HSU_FINALS	zhuyin_table.h	@HSU_FINALS@	bopomofotable.gen_chewing_finals(HSU)	omit C sentinel; preserve duplicate-key row order
+crates/oxpinyin-core/src/scheme.rs	HSU_TONES	zhuyin_table.h	@HSU_TONES@	bopomofotable.gen_chewing_tones(HSU)	omit C sentinel; preserve duplicate-key row order
+crates/oxpinyin-core/src/scheme.rs	ETEN26_INITIALS	zhuyin_table.h	@ETEN26_INITIALS@	bopomofotable.gen_chewing_initials(ETEN26)	omit C sentinel; preserve duplicate-key row order
+crates/oxpinyin-core/src/scheme.rs	ETEN26_MIDDLES	zhuyin_table.h	@ETEN26_MIDDLES@	bopomofotable.gen_chewing_middles(ETEN26)	omit C sentinel; preserve duplicate-key row order
+crates/oxpinyin-core/src/scheme.rs	ETEN26_FINALS	zhuyin_table.h	@ETEN26_FINALS@	bopomofotable.gen_chewing_finals(ETEN26)	omit C sentinel; preserve duplicate-key row order
+crates/oxpinyin-core/src/scheme.rs	ETEN26_TONES	zhuyin_table.h	@ETEN26_TONES@	bopomofotable.gen_chewing_tones(ETEN26)	omit C sentinel; preserve duplicate-key row order
+crates/oxpinyin-core/src/scheme.rs	HSU_DVORAK_INITIALS	zhuyin_table.h	@DVORAK-HSU_INITIALS@	bopomofotable.gen_chewing_initials(DVORAK-HSU)	omit C sentinel; preserve duplicate-key row order
+crates/oxpinyin-core/src/scheme.rs	HSU_DVORAK_MIDDLES	zhuyin_table.h	@DVORAK-HSU_MIDDLES@	bopomofotable.gen_chewing_middles(DVORAK-HSU)	omit C sentinel; preserve duplicate-key row order
+crates/oxpinyin-core/src/scheme.rs	HSU_DVORAK_FINALS	zhuyin_table.h	@DVORAK-HSU_FINALS@	bopomofotable.gen_chewing_finals(DVORAK-HSU)	omit C sentinel; preserve duplicate-key row order
+crates/oxpinyin-core/src/scheme.rs	HSU_DVORAK_TONES	zhuyin_table.h	@DVORAK-HSU_TONES@	bopomofotable.gen_chewing_tones(DVORAK-HSU)	omit C sentinel; preserve duplicate-key row order
+crates/oxpinyin-core/src/scheme.rs	CP26_INITIALS	zhuyin_table.h	@DACHEN-CP26_INITIALS@	bopomofotable.gen_chewing_initials(DACHEN-CP26)	omit C sentinel; preserve duplicate-key row order
+crates/oxpinyin-core/src/scheme.rs	CP26_MIDDLES	zhuyin_table.h	@DACHEN-CP26_MIDDLES@	bopomofotable.gen_chewing_middles(DACHEN-CP26)	omit C sentinel; preserve duplicate-key row order
+crates/oxpinyin-core/src/scheme.rs	CP26_FINALS	zhuyin_table.h	@DACHEN-CP26_FINALS@	bopomofotable.gen_chewing_finals(DACHEN-CP26)	omit C sentinel; preserve duplicate-key row order
+crates/oxpinyin-core/src/scheme.rs	CP26_TONES	zhuyin_table.h	@DACHEN-CP26_TONES@	bopomofotable.gen_chewing_tones(DACHEN-CP26)	omit C sentinel; preserve duplicate-key row order
+crates/oxpinyin-core/src/zhuyin_map.rs	VALID_ZHUYIN_TONES	zhuyin_table.h	@VALID_ZHUYIN_TABLE@	zhuyin.gen_zhuyin_table	440 masks indexed by SyllableKey ID, via content triples; header fallback: upstream model9/13 reproduce header but lack redistribution licence evidence
+crates/oxpinyin-chewing/src/chewing_key.rs	tone_symbol match literals	zhuyin_table.h	no marker: literal chewing_tone_table in scripts2/templates/zhuyin_table.h.in	no gen function; equivalent data chewing.ASCII_CHEWING_TONE_LIST	6 literals implemented as handwritten match; include in provenance inventory
+crates/oxpinyin-core/src/scheme.rs	tone_symbol match literals	zhuyin_table.h	no marker: literal chewing_tone_table in scripts2/templates/zhuyin_table.h.in	no gen function; equivalent data chewing.ASCII_CHEWING_TONE_LIST	6 literals implemented as handwritten match; include in provenance inventory
+crates/oxpinyin-engine/src/session/mod.rs	DIVIDED_TABLE	special_table.h	@DIVIDED_TABLE@	specialtable.gen_divided_table	20 divided / 85 resplit rows; strings only; accepted model20-distilled pinyins.txt fixture; full special header byte-identical
+crates/oxpinyin-engine/src/session/mod.rs	RESPLIT_TABLE	special_table.h	@RESPLIT_TABLE@	specialtable.gen_resplit_table	20 divided / 85 resplit rows; strings only; accepted model20-distilled pinyins.txt fixture; full special header byte-identical
+crates/oxpinyin-core/src/table_data/full_pinyin_syllables.rs	FULL_PINYIN_SYLLABLES; FULL_PINYIN_SYLLABLE_COUNT	related direct scripts2 source, not header numeric ordering	@PINYIN_INDEX@ covers membership, not numeric-ID order	fullpinyin.PINYIN_DICT (active keys in numeric value order)	405 entries; retain ordering
+crates/oxpinyin-core/src/syllables.rs	INCOMPLETE_PINYIN_KEYS and count	pinyin_parser_table.h	@PINYIN_INDEX@ + @CONTENT_TABLE@	fullpinyintable.gen_pinyin_index + gen_content_table	23 / 2 / 10 entries; existing sorted membership projections; mixed handwritten code
+crates/oxpinyin-core/src/syllables.rs	OPTION_ONLY_COMPLETE_SYLLABLES and count	pinyin_parser_table.h	@PINYIN_INDEX@ + @CONTENT_TABLE@	fullpinyintable.gen_pinyin_index + gen_content_table	23 / 2 / 10 entries; existing sorted membership projections; mixed handwritten code
+crates/oxpinyin-core/src/syllables.rs	ZHUYIN_ONLY_COMPLETE_SYLLABLES and count	pinyin_parser_table.h	@PINYIN_INDEX@ + @CONTENT_TABLE@	fullpinyintable.gen_pinyin_index + gen_content_table	23 / 2 / 10 entries; existing sorted membership projections; mixed handwritten code
+crates/oxpinyin-core/src/syllables.rs; crates/oxpinyin-core/src/vocab.rs	option_alias_canonical; from_option_text_with_distance	pinyin_parser_table.h	@PINYIN_INDEX@	fullpinyintable.gen_pinyin_index	algorithmic consumers; no stored full pinyin index table on this base; distances implemented in code; family B changes only handwritten direct-parser interfaces, not these tables
+crates/oxpinyin-chewing/build.rs	OUT_DIR/content_table.rs	pinyin_parser_table.h	@CONTENT_TABLE@	existing Rust build-time StringPool and inline spelling packing	derived build artifact; consumes content_table_source.rs
+crates/oxpinyin-core/build.rs; tools/codegen/string_tables.rs	OUT_DIR/string_tables.rs; OUT_DIR/syllable_maps.rs	pinyin_parser_table.h	index/content markers and direct fullpinyin.PINYIN_DICT	existing Rust build-time StringPool and PHF maps	derived build artifacts; consumers of table_data and syllables literals

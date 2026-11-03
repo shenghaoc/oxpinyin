@@ -1,0 +1,128 @@
+#ifndef ZHUYIN_TABLE_H
+#define ZHUYIN_TABLE_H
+
+namespace pinyin{
+
+const zhuyin_symbol_item_t chewing_standard_symbols[] = {
+@STANDARD_SYMBOLS@
+};
+
+const zhuyin_tone_item_t chewing_standard_tones[] = {
+@STANDARD_TONES@
+};
+
+const zhuyin_symbol_item_t chewing_ginyieh_symbols[] = {
+@GINYIEH_SYMBOLS@
+};
+
+const zhuyin_tone_item_t chewing_ginyieh_tones[] = {
+@GINYIEH_TONES@
+};
+
+const zhuyin_symbol_item_t chewing_eten_symbols[] = {
+@ETEN_SYMBOLS@
+};
+
+const zhuyin_tone_item_t chewing_eten_tones[] = {
+@ETEN_TONES@
+};
+
+const zhuyin_symbol_item_t chewing_ibm_symbols[] = {
+@IBM_SYMBOLS@
+};
+
+const zhuyin_tone_item_t chewing_ibm_tones[] = {
+@IBM_TONES@
+};
+
+const zhuyin_symbol_item_t chewing_hsu_initials[] = {
+@HSU_INITIALS@
+};
+
+const zhuyin_symbol_item_t chewing_hsu_middles[] = {
+@HSU_MIDDLES@
+};
+
+const zhuyin_symbol_item_t chewing_hsu_finals[] = {
+@HSU_FINALS@
+};
+
+const zhuyin_tone_item_t chewing_hsu_tones[] = {
+@HSU_TONES@
+};
+
+const zhuyin_symbol_item_t chewing_eten26_initials[] = {
+@ETEN26_INITIALS@
+};
+
+const zhuyin_symbol_item_t chewing_eten26_middles[] = {
+@ETEN26_MIDDLES@
+};
+
+const zhuyin_symbol_item_t chewing_eten26_finals[] = {
+@ETEN26_FINALS@
+};
+
+const zhuyin_tone_item_t chewing_eten26_tones[] = {
+@ETEN26_TONES@
+};
+
+const zhuyin_symbol_item_t chewing_standard_dvorak_symbols[] = {
+@DVORAK-STANDARD_SYMBOLS@
+};
+
+const zhuyin_tone_item_t chewing_standard_dvorak_tones[] = {
+@DVORAK-STANDARD_TONES@
+};
+
+const zhuyin_symbol_item_t chewing_hsu_dvorak_initials[] = {
+@DVORAK-HSU_INITIALS@
+};
+
+const zhuyin_symbol_item_t chewing_hsu_dvorak_middles[] = {
+@DVORAK-HSU_MIDDLES@
+};
+
+const zhuyin_symbol_item_t chewing_hsu_dvorak_finals[] = {
+@DVORAK-HSU_FINALS@
+};
+
+const zhuyin_tone_item_t chewing_hsu_dvorak_tones[] = {
+@DVORAK-HSU_TONES@
+};
+
+const zhuyin_symbol_item_t chewing_dachen_cp26_initials[] = {
+@DACHEN-CP26_INITIALS@
+};
+
+const zhuyin_symbol_item_t chewing_dachen_cp26_middles[] = {
+@DACHEN-CP26_MIDDLES@
+};
+
+const zhuyin_symbol_item_t chewing_dachen_cp26_finals[] = {
+@DACHEN-CP26_FINALS@
+};
+
+const zhuyin_tone_item_t chewing_dachen_cp26_tones[] = {
+@DACHEN-CP26_TONES@
+};
+
+const bool valid_zhuyin_table[CHEWING_NUMBER_OF_INITIALS *
+                              CHEWING_NUMBER_OF_MIDDLES *
+                              CHEWING_NUMBER_OF_FINALS *
+                              CHEWING_NUMBER_OF_TONES] = {
+@VALID_ZHUYIN_TABLE@
+};
+
+static const char * chewing_tone_table[CHEWING_NUMBER_OF_TONES] = {
+"",
+" ",
+"ˊ",
+"ˇ",
+"ˋ",
+"˙"
+};
+
+};
+
+#endif

@@ -6,8 +6,7 @@ use crate::options::{
     PINYIN_CORRECT_UEN_UN, PINYIN_CORRECT_V_U,
 };
 
-/// Number of complete syllables in [`full_pinyin_syllables`].
-pub const FULL_PINYIN_SYLLABLE_COUNT: usize = 405;
+include!("table_data/syllable_inventory.rs");
 
 /// Complete full-pinyin syllables in pinned upstream numeric-ID order.
 pub fn full_pinyin_syllables()
@@ -22,64 +21,6 @@ pub fn full_pinyin_syllables()
 pub fn full_pinyin_syllable(index: usize) -> Option<&'static str> {
     crate::string_tables::full_pinyin_syllables().field(index, 0)
 }
-
-/// Longest complete syllable, in bytes.
-///
-/// A property of [`full_pinyin_syllables`], asserted by
-/// `frozen_inventory_has_expected_shape`. Both the parser and the segment
-/// graph bound their match length by it.
-///
-/// **Not constant across stages.** Six is the Stage 1 inventory's answer
-/// (`chuang`, `shuang`, `zhuang`). A Stage 3 inventory — fuzzy spellings,
-/// correction aliases, a second input scheme — may raise it, and the graph's
-/// edge count is `O(n × MAX_SYLLABLE_LEN × kinds)`, so raising it costs
-/// linearly. Read it; do not hard-code 6. The same warning applies to
-/// [`crate::SYLLABLE_KEY_COUNT`], whose ids Stage 3 extends rather than
-/// renumbers.
-pub const MAX_SYLLABLE_LEN: usize = 6;
-
-/// Number of initial-only keys in [`INCOMPLETE_PINYIN_KEYS`].
-pub const INCOMPLETE_PINYIN_KEY_COUNT: usize = 23;
-
-/// Initial-only pinyin keys, in ascending byte order.
-///
-/// An initial-only key is a non-empty proper prefix of a complete syllable
-/// that contains no vowel byte (`a`, `e`, `i`, `o`, `u`, `v`) and is not itself
-/// a complete syllable. Applied to [`full_pinyin_syllables`] that rule yields
-/// exactly these 23 keys, which `incomplete_keys_follow_the_frozen_rule`
-/// asserts.
-///
-/// These are the keys the pinned oracle admits at any cursor position when
-/// `PINYIN_INCOMPLETE` is set. `docs/findings/segment-graph.md` records the
-/// measured evidence and makes them graph edges.
-pub static INCOMPLETE_PINYIN_KEYS: [&str; INCOMPLETE_PINYIN_KEY_COUNT] = [
-    "b", "c", "ch", "d", "f", "g", "h", "j", "k", "l", "m", "n", "p", "q", "r", "s", "sh", "t",
-    "w", "x", "y", "z", "zh",
-];
-
-/// Number of option-only canonical syllables.
-///
-/// These are `content_table` spellings reachable only through a correction
-/// alias, never through raw input: `pinyin_index` has no `eng` or `nun`
-/// entry (`docs/findings/option-bits.md`).
-pub const OPTION_ONLY_COMPLETE_SYLLABLE_COUNT: usize = 2;
-
-/// Canonical option-only complete syllables, in ascending byte order.
-pub static OPTION_ONLY_COMPLETE_SYLLABLES: [&str; OPTION_ONLY_COMPLETE_SYLLABLE_COUNT] =
-    ["eng", "nun"];
-
-/// Number of zhuyin-only canonical syllables.
-///
-/// These are `content_table` spellings reachable through the zhuyin index
-/// but absent from `pinyin_index`, so the raw full-pinyin surface never
-/// sees them (`SyllableKey::from_text` deliberately omits them, mirroring
-/// upstream's index membership; `from_canonical_text` resolves them).
-pub const ZHUYIN_ONLY_COMPLETE_SYLLABLE_COUNT: usize = 10;
-
-/// Canonical zhuyin-only complete syllables, in ascending byte order.
-pub static ZHUYIN_ONLY_COMPLETE_SYLLABLES: [&str; ZHUYIN_ONLY_COMPLETE_SYLLABLE_COUNT] = [
-    "chua", "den", "din", "fe", "kei", "len", "nia", "rua", "yai", "zhei",
-];
 
 include!(concat!(env!("OUT_DIR"), "/syllable_maps.rs"));
 
