@@ -1163,6 +1163,7 @@ fn load_checked_impl(
                 None,
                 false,
                 Some(&mut profile.replayed),
+                None,
             )
             .err();
         } else {
@@ -1482,7 +1483,7 @@ fn load_libraries(
 /// keeps the partially-merged index); an assertion is recorded in
 /// [`Loaded::journal_fault`] and ends the replay.
 fn load_logs(dir: &Path, originals: &impl OriginalLibraries, loaded: &mut Loaded) {
-    loaded.journal_fault = replay_logs(dir, originals, loaded, None, false, None).err();
+    loaded.journal_fault = replay_logs(dir, originals, loaded, None, false, None, None).err();
 }
 
 /// A reload's result: the live buffer each replayed library keeps, and the
@@ -1505,7 +1506,15 @@ pub(crate) fn load_library_logs(
 ) -> Result<Reloaded, JournalFault> {
     let mut loaded = Loaded::default();
     let mut replayed = BTreeMap::new();
-    replay_logs(dir, originals, &mut loaded, None, true, Some(&mut replayed))?;
+    replay_logs(
+        dir,
+        originals,
+        &mut loaded,
+        None,
+        true,
+        Some(&mut replayed),
+        None,
+    )?;
     Ok((replayed, loaded.library_totals))
 }
 
@@ -1515,7 +1524,15 @@ pub(crate) fn load_library_logs_live(
 ) -> Result<Reloaded, JournalFault> {
     let mut loaded = Loaded::default();
     let mut replayed = originals.take_live_libraries();
-    replay_logs(dir, originals, &mut loaded, None, true, Some(&mut replayed))?;
+    replay_logs(
+        dir,
+        originals,
+        &mut loaded,
+        None,
+        true,
+        Some(&mut replayed),
+        None,
+    )?;
     Ok((replayed, loaded.library_totals))
 }
 
@@ -1567,6 +1584,7 @@ pub(crate) fn load_masked_logs(
         Some((mask, value)),
         false,
         Some(&mut replayed),
+        None,
     )?;
     Ok((replayed, loaded.library_totals))
 }
@@ -1576,6 +1594,7 @@ pub(crate) fn load_masked_logs_live(
     originals: &mut SystemOriginals,
     mask: u32,
     value: u32,
+    preread: &mut MaskLogs,
 ) -> Result<Reloaded, JournalFault> {
     let mut loaded = Loaded::default();
     let mut replayed = originals.take_live_libraries();
@@ -1586,8 +1605,52 @@ pub(crate) fn load_masked_logs_live(
         Some((mask, value)),
         false,
         Some(&mut replayed),
+        Some(preread),
     )?;
     Ok((replayed, loaded.library_totals))
+}
+
+/// The saved logs `mask_out`'s walk already read, by sub-index, so the
+/// replay that follows merges the bytes of that one read. A library absent
+/// here is read when the replay reaches it.
+///
+/// The walk stops at the first fault, so it holds the bytes of the journals
+/// it reached and no others: linear in their total size, over at most 15
+/// library slots (sub-index 0 is never remapped), one `Vec` each. The pin
+/// holds the same bytes, one library at a time, in `MemoryChunk::load`.
+#[derive(Default)]
+pub struct MaskLogs(BTreeMap<u8, std::io::Result<Vec<u8>>>);
+
+/// Read library `nibble`'s saved log once into `logs` and return the header
+/// fault `merge_with_mask` reaches in it, without touching any state:
+/// `_peek_header` asserts on a non-null header token (row 91) or on a second
+/// header (row 92), and the masked totals read a kept item shorter than its
+/// unigram. Nothing else (`None`): a library whose bits the mask does not
+/// select (not read, as the replay does not read it), an absent or unreadable
+/// log, a log with no header, and the merge faults that need the library's
+/// content.
+pub(crate) fn read_mask_log(
+    dir: &Path,
+    layout: &UserFileLayout,
+    logs: &mut MaskLogs,
+    nibble: u8,
+    mask: u32,
+    value: u32,
+) -> Option<JournalFault> {
+    let (_, file) = layout.system_logs().iter().find(|(n, _)| *n == nibble)?;
+    if (nibble & crate::phrase::phrase_index_library_index(mask))
+        != crate::phrase::phrase_index_library_index(value)
+    {
+        return None;
+    }
+    let read = std::fs::read(build_path(dir, file.as_ref()));
+    let fault = read
+        .as_ref()
+        .ok()
+        .and_then(|bytes| read_chunk_payload(bytes).ok())
+        .and_then(|payload| masked_log(payload, mask, value, nibble).err());
+    logs.0.insert(nibble, read);
+    fault
 }
 
 /// The replay of every `SYSTEM_FILE` library's log, in sub-index order: the
@@ -1600,6 +1663,7 @@ fn replay_logs(
     mask: Option<(u32, u32)>,
     only_originals: bool,
     mut replayed: Option<&mut BTreeMap<u8, ReplayedLibrary>>,
+    mut preread: Option<&mut MaskLogs>,
 ) -> Result<(), JournalFault> {
     for (nibble, file) in originals.layout().system_logs() {
         let nibble = *nibble;
@@ -1625,7 +1689,11 @@ fn replay_logs(
         let name = file.display();
         // An absent or unreadable `.dbin` is an empty log: `MemoryChunk::load`
         // fails and leaves the chunk empty, and the merge reads nothing.
-        let bytes = match std::fs::read(build_path(dir, file.as_ref())) {
+        let read = preread
+            .as_deref_mut()
+            .and_then(|logs| logs.0.remove(&nibble))
+            .unwrap_or_else(|| std::fs::read(build_path(dir, file.as_ref())));
+        let bytes = match read {
             Ok(bytes) => bytes,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
             Err(e) => {

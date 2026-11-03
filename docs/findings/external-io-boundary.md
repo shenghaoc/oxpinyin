@@ -94,6 +94,12 @@ whole-file writable private mapping to its live sub-index; an addon owns its
 one mapping directly. Data's mapper and memmap2 dependency are gone and data
 forbids unsafe code. Save, reload and mask may make operation-scoped fresh
 mappings. Row 109's wrapped residual remains POLICY-ACCEPTED.
+`mask_out` maps each system library and reads its journal once, one library at
+a time, and stops at the first fault (rows 76, 91, 92, 96, 97, 108). The walk's
+`masked_log` raises every journal fault the mask path has (`HeaderToken`,
+`MultipleHeaders`, `SurvivingRecord`, `ShortMaskedItem`); the records it hands to
+the merge are a header and MODIFYs, so `ShortAdd` cannot occur there and a
+mismatch only ends a merge. No later library is opened after a fault.
 
 The argument below is the historical source-derived proposal; it is not a
 measurement. The initial B implementation eagerly stored `present: Vec<bool>`,

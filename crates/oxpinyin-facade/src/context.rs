@@ -7,10 +7,32 @@ use std::sync::Arc;
 use oxpinyin_core::{DoublePinyinScheme, FullPinyinScheme, OptionBits, ZhuyinScheme};
 use oxpinyin_engine::{Config, ConfigValue};
 use oxpinyin_runtime::{
-    FileType, OpenError, RowFault, Runtime, TableConfError, directory_reads_as_a_chunk,
+    FileType, OpenError, RemapStep, RowFault, Runtime, TableConfError, directory_reads_as_a_chunk,
 };
 use oxpinyin_user::c_stderr;
-use oxpinyin_user::{ChunkHeaderField, JournalFault, UserConfLaw, UserStore, UserStoreError};
+use oxpinyin_user::{
+    ChunkHeaderField, JournalFault, MaskLogs, UserConfLaw, UserStore, UserStoreError,
+};
+
+/// Where `mask_out`'s remap walk ended before it finished.
+enum MaskStop {
+    /// A library's saved log reached a header assertion (rows 91, 92).
+    Journal(JournalFault),
+    /// A library is a directory the pin asserts on (row 96).
+    Directory,
+}
+
+/// The `mask_out` answer for a fault of the user tables.
+fn mask_error_outcome(error: &UserStoreError) -> MaskOutOutcome {
+    match error {
+        UserStoreError::OverlongIndexKey => MaskOutOutcome::OverlongIndexKey,
+        UserStoreError::NonTokenUserBigramKey => MaskOutOutcome::NonTokenUserBigramKey,
+        UserStoreError::ShortUserBigramValue => MaskOutOutcome::ShortUserBigramValue,
+        UserStoreError::PartialUserBigramTail => MaskOutOutcome::PartialUserBigramTail,
+        UserStoreError::ResidualUserBigramGram => MaskOutOutcome::ResidualUserBigramGram,
+        _ => MaskOutOutcome::Done(false),
+    }
+}
 
 /// What `save_user` did, for the C facades' `pinyin_save` / `zhuyin_save`
 /// and the `pinyin_end_add_phrases` import commit.
@@ -599,38 +621,53 @@ impl ContextCore {
             }
             return MaskOutOutcome::Done(false);
         }
-        // Row 76: a refused system remap leaves the entire call without
-        // effects. Check before touching the user tables or any live buffer.
-        if let Some(runtime) = &self.runtime {
-            let checked = runtime.check_system_libraries(None);
-            if !checked.unmappable.is_empty() {
-                for path in checked.unmappable {
-                    c_stderr::mmap_failed(&path);
+        // The user tables come first (`pinyin.cpp:1228-1230`,
+        // `zhuyin.cpp:763-765`): their faults precede any system library or
+        // journal, so find them before opening one. This changes no state.
+        if let Some(Err(error)) = self
+            .user_store()
+            .map(|store| store.check_mask_out(mask, value))
+        {
+            return mask_error_outcome(&error);
+        }
+        // Then the pin's loop (`pinyin.cpp:1260-1294`): it maps library i,
+        // reads its log once and checks its headers, then goes to library
+        // i+1, so the first fault in that order decides and no later library
+        // is opened. A refused remap (row 76) ends the call before any
+        // effect. A journal header fault (rows 91, 92) or a directory (row
+        // 96) ends the walk; the replay below then meets it in the recorded
+        // order, after the earlier libraries' own merges.
+        let mut logs = MaskLogs::default();
+        let mut walk = None;
+        let mut stop = None;
+        if let (Some(runtime), Some(store)) = (&self.runtime, self.user_store()) {
+            let mut remap = runtime.begin_system_remap();
+            while let Some(step) = runtime.remap_next(&mut remap) {
+                match step {
+                    RemapStep::Mapped(index) => {
+                        if let Some(fault) = store.read_mask_log(&mut logs, index, mask, value) {
+                            stop = Some(MaskStop::Journal(fault));
+                            break;
+                        }
+                    }
+                    RemapStep::Unmappable(_, path) => {
+                        c_stderr::mmap_failed(&path);
+                        return MaskOutOutcome::Done(true);
+                    }
+                    RemapStep::Directory(_) => {
+                        stop = Some(MaskStop::Directory);
+                        break;
+                    }
                 }
-                return MaskOutOutcome::Done(true);
             }
+            walk = Some(remap);
         }
         let Some(store) = self.user_store_mut() else {
             return MaskOutOutcome::Done(false);
         };
-        // The user tables first (`pinyin.cpp:1228-1230`,
-        // `zhuyin.cpp:763-765`).
-        match store.mask_out(mask, value) {
-            Ok(()) => {}
-            Err(UserStoreError::OverlongIndexKey) => return MaskOutOutcome::OverlongIndexKey,
-            Err(UserStoreError::NonTokenUserBigramKey) => {
-                return MaskOutOutcome::NonTokenUserBigramKey;
-            }
-            Err(UserStoreError::ShortUserBigramValue) => {
-                return MaskOutOutcome::ShortUserBigramValue;
-            }
-            Err(UserStoreError::PartialUserBigramTail) => {
-                return MaskOutOutcome::PartialUserBigramTail;
-            }
-            Err(UserStoreError::ResidualUserBigramGram) => {
-                return MaskOutOutcome::ResidualUserBigramGram;
-            }
-            Err(_) => return MaskOutOutcome::Done(false),
+        // The user tables masked (`pinyin.cpp:1228-1230`, `zhuyin.cpp:763-765`).
+        if let Err(error) = store.mask_out(mask, value) {
+            return mask_error_outcome(&error);
         }
         // Then the phrase index loop: each loaded system sub-index is
         // replaced before its disk log is replayed with the mask; the loop
@@ -643,31 +680,22 @@ impl ContextCore {
         // directory the pin asserts on (`memory_chunk.h:493`, register row
         // 96) ends the loop after the libraries before it were mapped and
         // merged, and a merge of theirs that asserts comes first.
-        if let Some(runtime) = self.runtime.as_mut() {
-            let mut remap = runtime.reload_system_libraries();
+        if let (Some(runtime), Some(remap)) = (self.runtime.as_mut(), walk) {
+            let mut originals = runtime.finish_system_remap(remap);
             let replay = self.user_store_mut().map_or(Ok(()), |store| {
-                store.reload_system_libraries_retaining(&mut remap.originals, mask, value)
+                store.reload_system_libraries_prefetched(&mut originals, mask, value, logs)
             });
             if let Some(runtime) = self.runtime.as_mut() {
-                runtime.install_baselines(remap.originals);
+                runtime.install_baselines(originals);
             }
-            // The loop writes each unmappable library's line when it reaches
-            // it, and dies at the first library whose merge asserts (through
-            // it) or that is a directory (before it).
-            let stop = match &replay {
-                Err(fault) => Some((fault.library(), true)),
-                Ok(()) => remap.header_fault.map(|index| (index, false)),
-            };
-            for (index, path) in &remap.unmappable {
-                if stop.is_none_or(|(at, through)| *index < at || (through && *index == at)) {
-                    c_stderr::mmap_failed(path);
+            // The replay stops at the first library whose merge asserts, so
+            // a fault the walk found comes after the merges before it.
+            match (replay, stop) {
+                (Err(fault), _) | (Ok(()), Some(MaskStop::Journal(fault))) => {
+                    return MaskOutOutcome::Journal(fault);
                 }
-            }
-            if let Err(fault) = replay {
-                return MaskOutOutcome::Journal(fault);
-            }
-            if remap.header_fault.is_some() {
-                return MaskOutOutcome::ChunkHeaderRead;
+                (Ok(()), Some(MaskStop::Directory)) => return MaskOutOutcome::ChunkHeaderRead,
+                (Ok(()), None) => {}
             }
             // The mask ends with a compact (`pinyin.cpp:1294`,
             // `zhuyin.cpp:829`); the failed empty sub-index's local

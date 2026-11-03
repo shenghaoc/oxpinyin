@@ -1,0 +1,20 @@
+diff --git a/crates/oxpinyin-facade/src/context.rs b/crates/oxpinyin-facade/src/context.rs
+index 516b2cf6..1567ec3b 100644
+--- a/crates/oxpinyin-facade/src/context.rs
++++ b/crates/oxpinyin-facade/src/context.rs
+@@ -637,6 +637,15 @@ impl ContextCore {
+         // effect. A journal header fault (rows 91, 92) or a directory (row
+         // 96) ends the walk; the replay below then meets it in the recorded
+         // order, after the earlier libraries' own merges.
++        if let Some(runtime) = &self.runtime {
++            let mut first = runtime.begin_system_remap();
++            while let Some(step) = runtime.remap_next(&mut first) {
++                if let RemapStep::Unmappable(_, path) = step {
++                    c_stderr::mmap_failed(&path);
++                    return MaskOutOutcome::Done(true);
++                }
++            }
++        }
+         let mut logs = MaskLogs::default();
+         let mut walk = None;
+         let mut stop = None;
