@@ -276,6 +276,18 @@ fn add_phrase_index(table: Option<&Tree>, phrase: &[u32], token: u32) {
 
 /// `FacadePhraseIndex::load_text` (`src/storage/phrase_index.cpp:522-596`).
 fn load_phrase_index(index: u8, file: &mut TableFile, libraries: &mut [Option<ChunkMap>; 16]) {
+    libraries[usize::from(index)] =
+        Some(read_phrase_items(index, file, PhoneticType::Pinyin, false));
+}
+
+/// The shared phrase-index text walk. Test programs select their source phonetic
+/// type and refuse an invalid conversion under the family E class (b) ruling.
+pub(crate) fn read_phrase_items(
+    index: u8,
+    file: &mut TableFile,
+    phonetic: PhoneticType,
+    refuse_invalid: bool,
+) -> BTreeMap<u32, ChunkItem> {
     let mut items: ChunkMap = BTreeMap::new();
     let mut cur_token = 0_u32;
     let mut item = fresh_item();
@@ -285,6 +297,9 @@ fn load_phrase_index(index: u8, file: &mut TableFile, libraries: &mut [Option<Ch
             tool::abort();
         }
         let (phrase, written) = tool::utf8_to_ucs4(&record.phrase);
+        if refuse_invalid && phrase.is_none() && (cur_token == 0 || cur_token != record.token) {
+            tool::exit(tool::EINVAL);
+        }
         let phrase = phrase.unwrap_or_default();
         // `set_phrase_string(written, phrase)`: the guint8 `written` field
         // and that many words.
@@ -300,7 +315,10 @@ fn load_phrase_index(index: u8, file: &mut TableFile, libraries: &mut [Option<Ch
             cur_token = record.token;
             item.phrase = phrase;
         }
-        let keys = pinyin::parse(&record.pinyin);
+        let keys = match phonetic {
+            PhoneticType::Pinyin => pinyin::parse(&record.pinyin),
+            PhoneticType::Zhuyin => pinyin::parse_zhuyin(&record.pinyin),
+        };
         if item.phrase.len() == keys.len() {
             add_pronunciation(&mut item, &keys, record.token, record.freq);
         } else {
@@ -308,7 +326,7 @@ fn load_phrase_index(index: u8, file: &mut TableFile, libraries: &mut [Option<Ch
         }
     }
     items.insert(cur_token & PHRASE_MASK, item);
-    libraries[usize::from(index)] = Some(items);
+    items
 }
 
 /// `FacadePhraseIndex::add_phrase_item`'s `PhraseItem`.

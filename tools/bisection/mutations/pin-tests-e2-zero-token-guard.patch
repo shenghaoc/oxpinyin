@@ -1,0 +1,5 @@
+--- a/crates/oxpinyin-utils/src/storage/gen_binary_files.rs
++++ b/crates/oxpinyin-utils/src/storage/gen_binary_files.rs
+@@ -300 +300 @@
+-        if refuse_invalid && phrase.is_none() && (cur_token == 0 || cur_token != record.token) {
++        if refuse_invalid && phrase.is_none() && cur_token != record.token {

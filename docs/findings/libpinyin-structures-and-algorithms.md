@@ -1181,3 +1181,29 @@ with geometric owned growth amortising appends; storage is O(n). Its fixed
 program prints capacities 4, 6, 12 and the source's integer rows. Save/load
 and optional map use the existing input boundary, O(n) checksum/read work.
 The existing isolated tool-diff runner compares all /tmp/test.bin bytes.
+
+## Family E2: phrase-index and logger programs
+
+`tests/storage/test_phrase_index.cpp:9-122` at 074a2219 checks the synthetic
+item, shared pronunciation mutation, text imports, compact, and store/load.
+`test_phrase_index_logger.cpp:26-65` increments the whole local range,
+stores without compacting, diffs, reloads and merges. The shared importer
+keeps its existing generator behavior and exposes the test programs' phonetic
+choice and approved invalid-UTF-8 guard. The user crate's tools feature
+exposes the existing ReplayedLibrary arena, add/train/compact operations,
+diff_live_records and Merge, with raw offset/content serialization.
+
+FacadePhraseIndex's cache takes a delta for every attempted range slot
+(`phrase_index.h:628-634`), even a hole or overflow refusal. Load subtracts
+the old local total unconditionally, adding the new total only if its layout
+is accepted (`phrase_index.cpp:237-248`);
+merge does the same around its record walk (`:291-296`). Keep that cache
+across both operations. The logger's ordinary sparse/overflow fixtures print
+the same cached total twice, while their stored totals and fields can differ.
+
+For range extent R and resident byte count B, compact and the native diff
+walk cost O(R + B); serialization and heap load cost O(B), with O(B) storage.
+Text import is one input pass with O(log n) map insertion per token group,
+then the native byte arena. Every get reads only the item it returns. The
+fixed 100000-call loop and the pin's basic f32 pronunciation ratios stay.
+No performance measurement is needed or made.

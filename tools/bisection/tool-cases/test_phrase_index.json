@@ -1,0 +1,127 @@
+{
+  "schema": 1,
+  "cases": [
+    {
+      "utility": "test_phrase_index",
+      "source": "tests/storage/test_phrase_index.cpp:9-122; tests/tests_helper.h:51-83; src/storage/phrase_index.cpp:56-143,335-389,522-674 at 074a2219",
+      "cwd": "tests/storage",
+      "mask_print_time": true,
+      "files": {
+        "data/table.conf": {
+          "text": "binary format version:7\nmodel data version:14\nlambda parameter:0.5\nsource table format:pinyin\ndatabase format:Tkrzw\ndefault GB_DICTIONARY gb.table gb_char.bin gb_char.dbin SYSTEM_FILE\ndefault GBK_DICTIONARY gbk.table gbk_char.bin gbk_char.dbin SYSTEM_FILE\n"
+        },
+        "data/gb.table": {
+          "text": "ni3 你 16777222 100\nni2 你 16777222 300\nyi1'yi1'yi1'yi1'yi1'yi1'yi1'yi1'yi1'yi1'yi1'yi1'yi1'yi1 一二三四五六七八九十一二三四 16870553 100\n"
+        },
+        "data/gbk.table": {
+          "text": "hao3 好 33554433 10\n"
+        }
+      },
+      "id": "phrase-index-roundtrip"
+    },
+    {
+      "utility": "test_phrase_index",
+      "source": "tests/storage/test_phrase_index.cpp:9-122; tests/tests_helper.h:51-83; src/storage/phrase_index.cpp:56-143,335-389,522-674 at 074a2219",
+      "cwd": "tests/storage",
+      "mask_print_time": true,
+      "files": {
+        "data/table.conf": {
+          "text": "binary format version:7\nmodel data version:14\nlambda parameter:0.5\nsource table format:pinyin\ndatabase format:Tkrzw\ndefault GB_DICTIONARY gb.table gb_char.bin gb_char.dbin SYSTEM_FILE\ndefault GBK_DICTIONARY gbk.table gbk_char.bin gbk_char.dbin SYSTEM_FILE\n"
+        },
+        "data/gb.table": {
+          "text": "ni3 你 16777222 100\nni2 你 16777222 300\nyi1'yi1'yi1'yi1'yi1'yi1'yi1'yi1'yi1'yi1'yi1'yi1'yi1'yi1 一二三四五六七八九十一二三四 16870553 100\n"
+        },
+        "data/gbk.table": {
+          "text": "hao3 好 33554433 10\n"
+        }
+      },
+      "id": "phrase-index-ignored-input",
+      "args": [
+        "--help",
+        "ignored"
+      ],
+      "stdin": {
+        "text": "ignored\n"
+      }
+    },
+    {
+      "id": "phrase-index-missing-config",
+      "utility": "test_phrase_index",
+      "source": "tests/storage/test_phrase_index.cpp:9-122; tests/tests_helper.h:51-83; src/storage/phrase_index.cpp:56-143,335-389,522-674 at 074a2219",
+      "cwd": "tests/storage",
+      "mask_print_time": true
+    },
+    {
+      "utility": "test_phrase_index",
+      "source": "tests/storage/test_phrase_index.cpp:9-122; tests/tests_helper.h:51-83; src/storage/phrase_index.cpp:56-143,335-389,522-674 at 074a2219",
+      "cwd": "tests/storage",
+      "mask_print_time": true,
+      "files": {
+        "data/table.conf": {
+          "text": "binary format version:7\nmodel data version:14\nlambda parameter:0.5\nsource table format:pinyin\ndatabase format:Tkrzw\ndefault GB_DICTIONARY gb.table gb_char.bin gb_char.dbin SYSTEM_FILE\ndefault GBK_DICTIONARY gbk.table gbk_char.bin gbk_char.dbin SYSTEM_FILE\n"
+        },
+        "data/gbk.table": {
+          "text": "hao3 好 33554433 10\n"
+        }
+      },
+      "id": "phrase-index-missing-text"
+    },
+    {
+      "utility": "test_phrase_index",
+      "source": "tests/storage/test_phrase_index.cpp:9-122; tests/tests_helper.h:51-83; src/storage/phrase_index.cpp:56-143,335-389,522-674 at 074a2219",
+      "cwd": "tests/storage",
+      "mask_print_time": true,
+      "files": {
+        "data/table.conf": {
+          "text": "binary format version:7\nmodel data version:14\nlambda parameter:0.5\nsource table format:pinyin\ndatabase format:Tkrzw\ndefault GB_DICTIONARY gb.table gb_char.bin gb_char.dbin SYSTEM_FILE\ndefault GBK_DICTIONARY gbk.table gbk_char.bin gbk_char.dbin SYSTEM_FILE\n"
+        },
+        "data/gb.table": {
+          "text": "ni3 你 16777222 100\nni2 你 16777222 300\nyi1'yi1'yi1'yi1'yi1'yi1'yi1'yi1'yi1'yi1'yi1'yi1'yi1'yi1 一二三四五六七八九十一二三 16870553 100\n"
+        },
+        "data/gbk.table": {
+          "text": "hao3 好 33554433 10\n"
+        }
+      },
+      "id": "phrase-index-wrong-long-length",
+      "pin_signal": -6,
+      "reproduces_signal": true,
+      "policy_record": "eio-tool-check-messages.md"
+    },
+    {
+      "utility": "test_phrase_index",
+      "source": "tests/storage/test_phrase_index.cpp:9-122; tests/tests_helper.h:51-83; src/storage/phrase_index.cpp:56-143,335-389,522-674 at 074a2219",
+      "cwd": "tests/storage",
+      "mask_print_time": true,
+      "files": {
+        "data/table.conf": {
+          "text": "binary format version:7\nmodel data version:14\nlambda parameter:0.5\nsource table format:pinyin\ndatabase format:Tkrzw\ndefault GB_DICTIONARY gb.table gb_char.bin gb_char.dbin SYSTEM_FILE\ndefault GBK_DICTIONARY gbk.table gbk_char.bin gbk_char.dbin SYSTEM_FILE\n"
+        },
+        "data/gb.table": {
+          "hex": "6e693320e4bda0203136373737323232203130300a6e693220ff203136373737323232203330300a7969312779693127796931277969312779693127796931277969312779693127796931277969312779693127796931277969312779693120e4b880e4ba8ce4b889e59b9be4ba94e585ade4b883e585abe4b99de58d81e4b880e4ba8ce4b889e59b9b203136383730353533203130300a"
+        },
+        "data/gbk.table": {
+          "text": "hao3 好 33554433 10\n"
+        }
+      },
+      "id": "phrase-index-same-token-invalid-utf8-reading"
+    },
+    {
+      "utility": "test_phrase_index",
+      "source": "tests/storage/test_phrase_index.cpp:9-122; tests/tests_helper.h:51-83; src/storage/phrase_index.cpp:56-143,335-389,522-674 at 074a2219",
+      "cwd": "tests/storage",
+      "mask_print_time": true,
+      "files": {
+        "data/table.conf": {
+          "text": "binary format version:7\nmodel data version:14\nlambda parameter:0.5\nsource table format:pinyin\ndatabase format:Tkrzw\ndefault GB_DICTIONARY gb.table gb_char.bin gb_char.dbin SYSTEM_FILE\ndefault GBK_DICTIONARY gbk.table gbk_char.bin gbk_char.dbin SYSTEM_FILE\n"
+        },
+        "data/gb.table": {
+          "hex": "6e693320e4bda0203136373737323232203130300a6e69322768616f3320ff203136373737323232203330300a6e693220e4bda0203136373737323232203330300a7969312779693127796931277969312779693127796931277969312779693127796931277969312779693127796931277969312779693120e4b880e4ba8ce4b889e59b9be4ba94e585ade4b883e585abe4b99de58d81e4b880e4ba8ce4b889e59b9b203136383730353533203130300a"
+        },
+        "data/gbk.table": {
+          "text": "hao3 好 33554433 10\n"
+        }
+      },
+      "id": "phrase-index-same-token-invalid-utf8-skip"
+    }
+  ]
+}

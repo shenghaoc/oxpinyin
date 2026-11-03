@@ -1,0 +1,5 @@
+--- a/crates/oxpinyin-utils/src/storage_tests/logger.rs
++++ b/crates/oxpinyin-utils/src/storage_tests/logger.rs
+@@ -18 +18 @@
+-    let delta = 1;
++    let delta = 2;
