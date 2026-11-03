@@ -79,7 +79,7 @@ bench runbook. No raw captures or verification logs are committed.
 
 ```contract-diff-policy
 {
-  "schema": 2,
+  "schema": 3,
   "record": "1297-gram-partition-segmentation",
   "status": "current",
   "disposition": "POLICY-ACCEPTED",
@@ -108,6 +108,9 @@ bench runbook. No raw captures or verification logs are committed.
           "divergence": [
             "result.今天天气很好 (list lengths pin 2, subject 2; first change [1]): pin [50356528, 0, 0] … (length 6); subject [16800245, 0, 16810538] … (length 6)",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "result.今天天气很好"
           ]
         },
         "kc": {
@@ -132,6 +135,9 @@ bench runbook. No raw captures or verification logs are committed.
           "divergence": [
             "result.今天天气很好 (list lengths pin 2, subject 2; first change [1]): pin [50356528, 0, 0] … (length 6); subject [16800245, 0, 16810538] … (length 6)",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "result.今天天气很好"
           ]
         },
         "tkrzw": {
@@ -156,6 +162,9 @@ bench runbook. No raw captures or verification logs are committed.
           "divergence": [
             "result.今天天气很好 (list lengths pin 2, subject 2; first change [1]): pin [50356528, 0, 0] … (length 6); subject [16800245, 0, 16810538] … (length 6)",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "result.今天天气很好"
           ]
         }
       }

@@ -398,7 +398,7 @@ class PolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'schema 1.*policy-record'):
             verdict.policy_expectations(self.spec, policy_root=self.root, cell='bdb')
         self.assertEqual(self.decide(), ('INVALID', False, False))
-        self.write_entry(contract_policy.entry(self.PIN, self.SUBJECT), schema=3)
+        self.write_entry(contract_policy.entry(self.PIN, self.SUBJECT), schema=4)
         self.assertEqual(self.decide(), ('INVALID', False, False))
 
     def test_a_malformed_entry_is_invalid(self):

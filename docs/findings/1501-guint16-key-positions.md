@@ -20,7 +20,7 @@
 
 ```contract-diff-policy
 {
-  "schema": 2,
+  "schema": 3,
   "record": "1501-guint16-key-positions",
   "status": "current",
   "disposition": "POLICY-ACCEPTED",
@@ -49,6 +49,9 @@
           "divergence": [
             "result.rest 65537[0:1]: pin [false]; subject [true, \"2b00\", true] … (length 7)",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "result.rest 65537"
           ]
         },
         "bdb": {
@@ -73,6 +76,9 @@
           "divergence": [
             "result.rest 65537[0:1]: pin [false]; subject [true, \"2b00\", true] … (length 7)",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "result.rest 65537"
           ]
         },
         "kc": {
@@ -97,6 +103,9 @@
           "divergence": [
             "result.rest 65537[0:1]: pin [false]; subject [true, \"2b00\", true] … (length 7)",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "result.rest 65537"
           ]
         }
       }
@@ -125,6 +134,9 @@
           "divergence": [
             "result.rest 65537[0:1]: pin [false]; subject [true, \"2b00\", true] … (length 7)",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "result.rest 65537"
           ]
         },
         "bdb": {
@@ -149,6 +161,9 @@
           "divergence": [
             "result.rest 65537[0:1]: pin [false]; subject [true, \"2b00\", true] … (length 7)",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "result.rest 65537"
           ]
         },
         "kc": {
@@ -173,6 +188,9 @@
           "divergence": [
             "result.rest 65537[0:1]: pin [false]; subject [true, \"2b00\", true] … (length 7)",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "result.rest 65537"
           ]
         }
       }

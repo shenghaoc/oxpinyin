@@ -22,7 +22,7 @@ this record. The record and its observations below remain historical.
 
 ```contract-diff-policy
 {
-  "schema": 2,
+  "schema": 3,
   "record": "1297-table-decimals",
   "status": "reverted",
   "disposition": "POLICY-ACCEPTED",
@@ -49,6 +49,10 @@ this record. The record and its observations below remain historical.
       "divergence": [
         "result.ctx: pin true; subject false",
         "stderr: pin \"\"; subject \"load SCRATCH/sys-X/table.conf failed!\\n\""
+      ],
+      "accepted": [
+        "result.ctx",
+        "stderr"
       ]
     },
     "table-conf-919-versions-positive-overflow-zhuyin": {
@@ -73,6 +77,10 @@ this record. The record and its observations below remain historical.
       "divergence": [
         "result.ctx: pin true; subject false",
         "stderr: pin \"\"; subject \"load SCRATCH/sys-X/table.conf failed!\\n\""
+      ],
+      "accepted": [
+        "result.ctx",
+        "stderr"
       ]
     },
     "table-conf-919-versions-int-wrap": {
@@ -97,6 +105,10 @@ this record. The record and its observations below remain historical.
       "divergence": [
         "result.ctx: pin true; subject false",
         "stderr: pin \"\"; subject \"load SCRATCH/sys-X/table.conf failed!\\n\""
+      ],
+      "accepted": [
+        "result.ctx",
+        "stderr"
       ]
     },
     "table-conf-919-versions-int-wrap-zhuyin": {
@@ -121,6 +133,10 @@ this record. The record and its observations below remain historical.
       "divergence": [
         "result.ctx: pin true; subject false",
         "stderr: pin \"\"; subject \"load SCRATCH/sys-X/table.conf failed!\\n\""
+      ],
+      "accepted": [
+        "result.ctx",
+        "stderr"
       ]
     }
   }

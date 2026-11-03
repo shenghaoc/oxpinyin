@@ -22,7 +22,7 @@ this record. The record and its observations below remain historical.
 
 ```contract-diff-policy
 {
-  "schema": 2,
+  "schema": 3,
   "record": "1297-user-decimals",
   "status": "reverted",
   "disposition": "POLICY-ACCEPTED",
@@ -53,6 +53,10 @@ this record. The record and its observations below remain historical.
       "divergence": [
         "result.import-retained: pin true; subject false",
         "result.trained-retained: pin true; subject false"
+      ],
+      "accepted": [
+        "result.import-retained",
+        "result.trained-retained"
       ]
     },
     "user-conf-920-version-overflow-conforms-zhuyin": {
@@ -81,6 +85,10 @@ this record. The record and its observations below remain historical.
       "divergence": [
         "result.import-retained: pin true; subject false",
         "result.trained-retained: pin true; subject false"
+      ],
+      "accepted": [
+        "result.import-retained",
+        "result.trained-retained"
       ]
     },
     "user-conf-920-counter-overflow-conforms": {
@@ -109,6 +117,10 @@ this record. The record and its observations below remain historical.
       "divergence": [
         "result.import-retained: pin true; subject false",
         "result.trained-retained: pin true; subject false"
+      ],
+      "accepted": [
+        "result.import-retained",
+        "result.trained-retained"
       ]
     },
     "user-conf-920-counter-overflow-conforms-zhuyin": {
@@ -137,6 +149,10 @@ this record. The record and its observations below remain historical.
       "divergence": [
         "result.import-retained: pin true; subject false",
         "result.trained-retained: pin true; subject false"
+      ],
+      "accepted": [
+        "result.import-retained",
+        "result.trained-retained"
       ]
     }
   }

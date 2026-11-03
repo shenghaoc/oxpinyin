@@ -20,7 +20,7 @@
 
 ```contract-diff-policy
 {
-  "schema": 2,
+  "schema": 3,
   "record": "1501-gint16-input-cap",
   "status": "current",
   "disposition": "POLICY-ACCEPTED",
@@ -48,6 +48,9 @@
           },
           "divergence": [
             "result.32768[0:2]: pin [32767, 32767]; subject [32768, 32768]"
+          ],
+          "accepted": [
+            "result.32768"
           ]
         },
         "bdb": {
@@ -71,6 +74,9 @@
           },
           "divergence": [
             "result.32768[0:2]: pin [32767, 32767]; subject [32768, 32768]"
+          ],
+          "accepted": [
+            "result.32768"
           ]
         },
         "kc": {
@@ -94,6 +100,9 @@
           },
           "divergence": [
             "result.32768[0:2]: pin [32767, 32767]; subject [32768, 32768]"
+          ],
+          "accepted": [
+            "result.32768"
           ]
         }
       }
@@ -121,6 +130,9 @@
           },
           "divergence": [
             "result.65536[0:2]: pin [32767, 32767]; subject [65536, 65536]"
+          ],
+          "accepted": [
+            "result.65536"
           ]
         },
         "bdb": {
@@ -144,6 +156,9 @@
           },
           "divergence": [
             "result.65536[0:2]: pin [32767, 32767]; subject [65536, 65536]"
+          ],
+          "accepted": [
+            "result.65536"
           ]
         },
         "kc": {
@@ -167,6 +182,9 @@
           },
           "divergence": [
             "result.65536[0:2]: pin [32767, 32767]; subject [65536, 65536]"
+          ],
+          "accepted": [
+            "result.65536"
           ]
         }
       }

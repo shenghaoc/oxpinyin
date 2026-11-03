@@ -59,7 +59,7 @@ facades.
 
 ```contract-diff-policy
 {
-  "schema": 2,
+  "schema": 3,
   "record": "1297-segment-critical",
   "status": "current",
   "disposition": "POLICY-ACCEPTED",
@@ -93,6 +93,10 @@ facades.
             "result.logs[0:1]: subject drops [[null, 8]]",
             "result.messages (list lengths pin 1, subject 0; first change [0]): subject drops \"bool pinyin_phrase_segment(pinyin_instance\" … (length 104)",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "result.logs",
+            "result.messages"
           ]
         },
         "bdb": {
@@ -122,6 +126,10 @@ facades.
             "result.logs[0:1]: subject drops [[null, 8]]",
             "result.messages (list lengths pin 1, subject 0; first change [0]): subject drops \"bool pinyin_phrase_segment(pinyin_instance\" … (length 104)",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "result.logs",
+            "result.messages"
           ]
         },
         "kc": {
@@ -151,6 +159,10 @@ facades.
             "result.logs[0:1]: subject drops [[null, 8]]",
             "result.messages (list lengths pin 1, subject 0; first change [0]): subject drops \"bool pinyin_phrase_segment(pinyin_instance\" … (length 104)",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "result.logs",
+            "result.messages"
           ]
         }
       }
@@ -184,6 +196,10 @@ facades.
             "result.logs[0:1]: subject drops [[null, 8]]",
             "result.messages (list lengths pin 1, subject 0; first change [0]): subject drops \"bool zhuyin_phrase_segment(zhuyin_instance\" … (length 104)",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "result.logs",
+            "result.messages"
           ]
         },
         "bdb": {
@@ -213,6 +229,10 @@ facades.
             "result.logs[0:1]: subject drops [[null, 8]]",
             "result.messages (list lengths pin 1, subject 0; first change [0]): subject drops \"bool zhuyin_phrase_segment(zhuyin_instance\" … (length 104)",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "result.logs",
+            "result.messages"
           ]
         },
         "kc": {
@@ -242,6 +262,10 @@ facades.
             "result.logs[0:1]: subject drops [[null, 8]]",
             "result.messages (list lengths pin 1, subject 0; first change [0]): subject drops \"bool zhuyin_phrase_segment(zhuyin_instance\" … (length 104)",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "result.logs",
+            "result.messages"
           ]
         }
       }
@@ -273,6 +297,15 @@ facades.
             "result: pin null; subject {\"l\" … (length 4): [], \"m\" … (length 8): [], \"r\" … (length 3): false} … (length 4)",
             "stderr: pin \"open SCRATCH/user-X/user.conf failed.\\n** C\" … (length 159); subject \"open SCRATCH/user-X/user.conf failed.\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "exit",
+            "result",
+            "result.logs",
+            "result.messages",
+            "result.ret",
+            "result.retained",
+            "stderr"
           ]
         },
         "bdb": {
@@ -300,6 +333,15 @@ facades.
             "result: pin null; subject {\"l\" … (length 4): [], \"m\" … (length 8): [], \"r\" … (length 3): false} … (length 4)",
             "stderr: pin \"open SCRATCH/user-X/user.conf failed.\\n** C\" … (length 159); subject \"open SCRATCH/user-X/user.conf failed.\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "exit",
+            "result",
+            "result.logs",
+            "result.messages",
+            "result.ret",
+            "result.retained",
+            "stderr"
           ]
         },
         "kc": {
@@ -327,6 +369,15 @@ facades.
             "result: pin null; subject {\"l\" … (length 4): [], \"m\" … (length 8): [], \"r\" … (length 3): false} … (length 4)",
             "stderr: pin \"open SCRATCH/user-X/user.conf failed.\\n** C\" … (length 159); subject \"open SCRATCH/user-X/user.conf failed.\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "exit",
+            "result",
+            "result.logs",
+            "result.messages",
+            "result.ret",
+            "result.retained",
+            "stderr"
           ]
         }
       }
@@ -358,6 +409,15 @@ facades.
             "result: pin null; subject {\"l\" … (length 4): [], \"m\" … (length 8): [], \"r\" … (length 3): false} … (length 4)",
             "stderr: pin \"open SCRATCH/user-X/user.conf failed.\\n** C\" … (length 159); subject \"open SCRATCH/user-X/user.conf failed.\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "exit",
+            "result",
+            "result.logs",
+            "result.messages",
+            "result.ret",
+            "result.retained",
+            "stderr"
           ]
         },
         "bdb": {
@@ -385,6 +445,15 @@ facades.
             "result: pin null; subject {\"l\" … (length 4): [], \"m\" … (length 8): [], \"r\" … (length 3): false} … (length 4)",
             "stderr: pin \"open SCRATCH/user-X/user.conf failed.\\n** C\" … (length 159); subject \"open SCRATCH/user-X/user.conf failed.\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "exit",
+            "result",
+            "result.logs",
+            "result.messages",
+            "result.ret",
+            "result.retained",
+            "stderr"
           ]
         },
         "kc": {
@@ -412,6 +481,15 @@ facades.
             "result: pin null; subject {\"l\" … (length 4): [], \"m\" … (length 8): [], \"r\" … (length 3): false} … (length 4)",
             "stderr: pin \"open SCRATCH/user-X/user.conf failed.\\n** C\" … (length 159); subject \"open SCRATCH/user-X/user.conf failed.\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "exit",
+            "result",
+            "result.logs",
+            "result.messages",
+            "result.ret",
+            "result.retained",
+            "stderr"
           ]
         }
       }
@@ -443,6 +521,10 @@ facades.
             "result.logs[0:1]: subject drops [[null, 8]]",
             "result.messages (list lengths pin 1, subject 0; first change [0]): subject drops \"bool pinyin_phrase_segment(pinyin_instance\" … (length 104)",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "result.logs",
+            "result.messages"
           ]
         },
         "bdb": {
@@ -470,6 +552,10 @@ facades.
             "result.logs[0:1]: subject drops [[null, 8]]",
             "result.messages (list lengths pin 1, subject 0; first change [0]): subject drops \"bool pinyin_phrase_segment(pinyin_instance\" … (length 104)",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "result.logs",
+            "result.messages"
           ]
         },
         "kc": {
@@ -497,6 +583,10 @@ facades.
             "result.logs[0:1]: subject drops [[null, 8]]",
             "result.messages (list lengths pin 1, subject 0; first change [0]): subject drops \"bool pinyin_phrase_segment(pinyin_instance\" … (length 104)",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "result.logs",
+            "result.messages"
           ]
         }
       }
@@ -528,6 +618,10 @@ facades.
             "result.logs[0:1]: subject drops [[null, 8]]",
             "result.messages (list lengths pin 1, subject 0; first change [0]): subject drops \"bool zhuyin_phrase_segment(zhuyin_instance\" … (length 104)",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "result.logs",
+            "result.messages"
           ]
         },
         "bdb": {
@@ -555,6 +649,10 @@ facades.
             "result.logs[0:1]: subject drops [[null, 8]]",
             "result.messages (list lengths pin 1, subject 0; first change [0]): subject drops \"bool zhuyin_phrase_segment(zhuyin_instance\" … (length 104)",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "result.logs",
+            "result.messages"
           ]
         },
         "kc": {
@@ -582,6 +680,10 @@ facades.
             "result.logs[0:1]: subject drops [[null, 8]]",
             "result.messages (list lengths pin 1, subject 0; first change [0]): subject drops \"bool zhuyin_phrase_segment(zhuyin_instance\" … (length 104)",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "result.logs",
+            "result.messages"
           ]
         }
       }

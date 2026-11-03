@@ -7,7 +7,7 @@
 
 ```contract-diff-policy
 {
-  "schema": 2,
+  "schema": 3,
   "record": "bdb-failed-handle",
   "status": "current",
   "disposition": "POLICY-ACCEPTED",
@@ -40,6 +40,9 @@
           "divergence": [
             "stderr: pin \"BDB1565 DB->sync: method not permitted bef\" … (length 67); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -104,6 +107,9 @@
           "divergence": [
             "stderr: pin \"BDB1565 DB->sync: method not permitted bef\" … (length 67); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -170,6 +176,9 @@
           "divergence": [
             "stderr: pin \"BDB1565 DB->sync: method not permitted bef\" … (length 67); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -202,6 +211,9 @@
           "divergence": [
             "stderr: pin \"BDB1565 DB->sync: method not permitted bef\" … (length 67); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -266,6 +278,9 @@
           "divergence": [
             "stderr: pin \"BDB1565 DB->get: method not permitted befo\" … (length 199); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -332,6 +347,9 @@
           "divergence": [
             "stderr: pin \"BDB1565 DB->get: method not permitted befo\" … (length 199); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -364,6 +382,9 @@
           "divergence": [
             "stderr: pin \"BDB1565 DB->sync: method not permitted bef\" … (length 67); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -428,6 +449,9 @@
           "divergence": [
             "stderr: pin \"BDB1565 DB->get: method not permitted befo\" … (length 7327); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -494,6 +518,9 @@
           "divergence": [
             "stderr: pin \"BDB1565 DB->get: method not permitted befo\" … (length 7459); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -526,6 +553,9 @@
           "divergence": [
             "stderr: pin \"BDB1565 DB->sync: method not permitted bef\" … (length 67); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -590,6 +620,9 @@
           "divergence": [
             "stderr: pin \"BDB1565 DB->get: method not permitted befo\" … (length 727); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -656,6 +689,9 @@
           "divergence": [
             "stderr: pin \"BDB1565 DB->get: method not permitted befo\" … (length 859); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -688,6 +724,9 @@
           "divergence": [
             "stderr: pin \"BDB1565 DB->sync: method not permitted bef\" … (length 67); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -752,6 +791,9 @@
           "divergence": [
             "stderr: pin \"BDB1565 DB->get: method not permitted befo\" … (length 466); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -818,6 +860,9 @@
           "divergence": [
             "stderr: pin \"BDB1565 DB->get: method not permitted befo\" … (length 664); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -884,6 +929,9 @@
           "divergence": [
             "stderr: pin \"BDB1565 DB->get: method not permitted befo\" … (length 466); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -916,6 +964,9 @@
           "divergence": [
             "stderr: pin \"BDB1565 DB->sync: method not permitted bef\" … (length 67); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -980,6 +1031,9 @@
           "divergence": [
             "stderr: pin \"BDB1565 DB->get: method not permitted befo\" … (length 199); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -1046,6 +1100,9 @@
           "divergence": [
             "stderr: pin \"BDB1565 DB->get: method not permitted befo\" … (length 199); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -1078,6 +1135,9 @@
           "divergence": [
             "stderr: pin \"BDB1565 DB->sync: method not permitted bef\" … (length 67); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -1134,6 +1194,9 @@
           "divergence": [
             "stderr: pin \"BDB1565 DB->get: method not permitted befo\" … (length 7327); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -1192,6 +1255,9 @@
           "divergence": [
             "stderr: pin \"BDB1565 DB->get: method not permitted befo\" … (length 7459); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -1224,6 +1290,9 @@
           "divergence": [
             "stderr: pin \"BDB1565 DB->sync: method not permitted bef\" … (length 67); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -1280,6 +1349,9 @@
           "divergence": [
             "stderr: pin \"BDB1565 DB->get: method not permitted befo\" … (length 463); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -1338,6 +1410,9 @@
           "divergence": [
             "stderr: pin \"BDB1565 DB->get: method not permitted befo\" … (length 595); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -1370,6 +1445,9 @@
           "divergence": [
             "stderr: pin \"BDB1565 DB->sync: method not permitted bef\" … (length 67); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -1426,6 +1504,9 @@
           "divergence": [
             "stderr: pin \"BDB1565 DB->get: method not permitted befo\" … (length 397); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -1484,6 +1565,9 @@
           "divergence": [
             "stderr: pin \"BDB1565 DB->get: method not permitted befo\" … (length 595); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -1542,6 +1626,9 @@
           "divergence": [
             "stderr: pin \"BDB1565 DB->get: method not permitted befo\" … (length 397); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -1570,6 +1657,9 @@
           "divergence": [
             "stderr: pin \"BDB0004 fop_read_meta: bigram.db: unexpect\" … (length 264); subject \"BDB0004 fop_read_meta: bigram.db: unexpect\" … (length 65)",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -1598,6 +1688,9 @@
           "divergence": [
             "stderr: pin \"BDB0004 fop_read_meta: deleted_bigram.db: \" … (length 209); subject \"BDB0004 fop_read_meta: deleted_bigram.db: \" … (length 73)",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -1626,6 +1719,9 @@
           "divergence": [
             "stderr: pin \"BDB1565 DB->get: method not permitted befo\" … (length 335); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -1654,6 +1750,9 @@
           "divergence": [
             "stderr: pin \"BDB0004 fop_read_meta: bigram.db: unexpect\" … (length 198); subject \"BDB0004 fop_read_meta: bigram.db: unexpect\" … (length 65)",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -1682,6 +1781,9 @@
           "divergence": [
             "stderr: pin \"BDB1565 DB->cursor: method not permitted b\" … (length 136); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -1710,6 +1812,9 @@
           "divergence": [
             "stderr: pin \"BDB1565 DB->get: method not permitted befo\" … (length 89); subject \"open absent.db failed.\\n\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -1738,6 +1843,9 @@
           "divergence": [
             "stderr: pin \"BDB1565 DB->sync: method not permitted bef\" … (length 67); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -1766,6 +1874,9 @@
           "divergence": [
             "stderr: pin \"BDB1565 DB->get: method not permitted befo\" … (length 199); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -1794,6 +1905,9 @@
           "divergence": [
             "stderr: pin \"BDB1565 DB->sync: method not permitted bef\" … (length 67); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -1822,6 +1936,9 @@
           "divergence": [
             "stderr: pin \"BDB1565 DB->get: method not permitted befo\" … (length 463); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -1850,6 +1967,9 @@
           "divergence": [
             "stderr: pin \"BDB1565 DB->sync: method not permitted bef\" … (length 67); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -1878,6 +1998,9 @@
           "divergence": [
             "stderr: pin \"BDB1565 DB->get: method not permitted befo\" … (length 199); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -1906,6 +2029,9 @@
           "divergence": [
             "stderr: pin \"BDB1565 DB->sync: method not permitted bef\" … (length 67); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -1934,6 +2060,9 @@
           "divergence": [
             "stderr: pin \"BDB1565 DB->get: method not permitted befo\" … (length 463); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -1962,6 +2091,9 @@
           "divergence": [
             "stderr: pin \"BDB1565 DB->get: method not permitted befo\" … (length 199); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -1990,6 +2122,9 @@
           "divergence": [
             "stderr: pin \"BDB1565 DB->get: method not permitted befo\" … (length 203); subject \"no magic header in k mixture model.\\nk mixt\" … (length 71)",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }

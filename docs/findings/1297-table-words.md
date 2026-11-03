@@ -26,7 +26,7 @@ this record. The record and its observations below remain historical.
 
 ```contract-diff-policy
 {
-  "schema": 2,
+  "schema": 3,
   "record": "1297-table-words",
   "status": "reverted",
   "disposition": "POLICY-ACCEPTED",
@@ -53,6 +53,10 @@ this record. The record and its observations below remain historical.
       "divergence": [
         "result.ctx: pin true; subject false",
         "result.logs[0]: subject inserts [[\"libpinyin\", 16]]"
+      ],
+      "accepted": [
+        "result.ctx",
+        "result.logs"
       ]
     },
     "table-conf-919-source-token-nul-zhuyin": {
@@ -77,6 +81,10 @@ this record. The record and its observations below remain historical.
       "divergence": [
         "result.ctx: pin true; subject false",
         "result.logs[0]: subject inserts [[\"libzhuyin\", 16]]"
+      ],
+      "accepted": [
+        "result.ctx",
+        "result.logs"
       ]
     },
     "table-conf-919-database-token-nul": {
@@ -101,6 +109,10 @@ this record. The record and its observations below remain historical.
       "divergence": [
         "result.ctx: pin true; subject false",
         "result.logs[0]: subject inserts [[\"libpinyin\", 16]]"
+      ],
+      "accepted": [
+        "result.ctx",
+        "result.logs"
       ]
     },
     "table-conf-919-database-token-nul-zhuyin": {
@@ -125,6 +137,10 @@ this record. The record and its observations below remain historical.
       "divergence": [
         "result.ctx: pin true; subject false",
         "result.logs[0]: subject inserts [[\"libzhuyin\", 16]]"
+      ],
+      "accepted": [
+        "result.ctx",
+        "result.logs"
       ]
     },
     "table-conf-abort-919-word-width-overlong": {
@@ -154,6 +170,14 @@ this record. The record and its observations below remain historical.
             "result: pin null; subject {\"ret\": true, \"logs\": []}",
             "stderr: pin \"\"; subject \"open SCRATCH/user-X/user.conf failed.\"",
             "userfiles.user.conf: subject only \"binary format version:7|model data version:14|database format:BerkeleyDB|open counter:1|\""
+          ],
+          "accepted": [
+            "exit",
+            "result",
+            "result.logs",
+            "result.ret",
+            "stderr",
+            "userfiles"
           ]
         },
         "kc": {
@@ -181,6 +205,14 @@ this record. The record and its observations below remain historical.
             "result: pin null; subject {\"ret\": true, \"logs\": []}",
             "stderr: pin \"\"; subject \"open SCRATCH/user-X/user.conf failed.\"",
             "userfiles.user.conf: subject only \"binary format version:7|model data version:14|database format:KyotoCabinet|open counter:1|\""
+          ],
+          "accepted": [
+            "exit",
+            "result",
+            "result.logs",
+            "result.ret",
+            "stderr",
+            "userfiles"
           ]
         },
         "tkrzw": {
@@ -208,6 +240,14 @@ this record. The record and its observations below remain historical.
             "result: pin null; subject {\"ret\": true, \"logs\": []}",
             "stderr: pin \"\"; subject \"open SCRATCH/user-X/user.conf failed.\"",
             "userfiles.user.conf: subject only \"binary format version:7|model data version:14|database format:Tkrzw|open counter:1|\""
+          ],
+          "accepted": [
+            "exit",
+            "result",
+            "result.logs",
+            "result.ret",
+            "stderr",
+            "userfiles"
           ]
         }
       }
@@ -236,6 +276,13 @@ this record. The record and its observations below remain historical.
         "exit: pin -6; subject 0",
         "result: pin null; subject {\"ret\": true, \"logs\": []}",
         "stderr: pin \"\"; subject \"open SCRATCH/user-X/user.conf failed.\""
+      ],
+      "accepted": [
+        "exit",
+        "result",
+        "result.logs",
+        "result.ret",
+        "stderr"
       ]
     }
   }

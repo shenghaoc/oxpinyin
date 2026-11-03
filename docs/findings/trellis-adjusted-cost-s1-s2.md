@@ -153,7 +153,7 @@ there is only one complete sentence path, so S2 cannot select a different text.
 
 ```contract-diff-policy
 {
-  "schema": 2,
+  "schema": 3,
   "record": "trellis-adjusted-cost-s1-s2",
   "status": "current",
   "disposition": "POLICY-ACCEPTED",
@@ -188,6 +188,9 @@ there is only one complete sentence path, so S2 cannot select a different text.
           "divergence": [
             "result.sentences[0]: subject inserts [[true, \"靐靐\"]]",
             "result.sentences[1:2]: subject drops [[true, \"靐靐\"]]"
+          ],
+          "accepted": [
+            "result.sentences"
           ]
         },
         "tkrzw": {
@@ -218,6 +221,9 @@ there is only one complete sentence path, so S2 cannot select a different text.
           "divergence": [
             "result.sentences[0]: subject inserts [[true, \"靐靐\"]]",
             "result.sentences[1:2]: subject drops [[true, \"靐靐\"]]"
+          ],
+          "accepted": [
+            "result.sentences"
           ]
         },
         "kc": {
@@ -248,6 +254,9 @@ there is only one complete sentence path, so S2 cannot select a different text.
           "divergence": [
             "result.sentences[0]: subject inserts [[true, \"靐靐\"]]",
             "result.sentences[1:2]: subject drops [[true, \"靐靐\"]]"
+          ],
+          "accepted": [
+            "result.sentences"
           ]
         }
       }
@@ -286,6 +295,9 @@ there is only one complete sentence path, so S2 cannot select a different text.
             "result.view.nihao[2:4]: pin [130, [\"鯓虠\", \"鯓号\", \"鯓嚆\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\"]]; subject [128, [\"你好\", \"拟好\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\", \"霓\"]]",
             "result.view.yishu[0:1]: pin [\"呭䜹\"]; subject [\"艺术\"]",
             "result.view.yishu[2:4]: pin [608, [\"呭䜹\", \"呭墅\", \"呭疋\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\"]]; subject [606, [\"艺术\", \"一书\", \"亦属\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\"]]"
+          ],
+          "accepted": [
+            "result.view"
           ]
         },
         "kc": {
@@ -320,6 +332,9 @@ there is only one complete sentence path, so S2 cannot select a different text.
             "result.view.nihao[2:4]: pin [130, [\"鯓虠\", \"鯓号\", \"鯓嚆\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\"]]; subject [128, [\"你好\", \"拟好\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\", \"霓\"]]",
             "result.view.yishu[0:1]: pin [\"呭䜹\"]; subject [\"艺术\"]",
             "result.view.yishu[2:4]: pin [608, [\"呭䜹\", \"呭墅\", \"呭疋\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\"]]; subject [606, [\"艺术\", \"一书\", \"亦属\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\"]]"
+          ],
+          "accepted": [
+            "result.view"
           ]
         },
         "tkrzw": {
@@ -354,6 +369,9 @@ there is only one complete sentence path, so S2 cannot select a different text.
             "result.view.nihao[2:4]: pin [130, [\"鯓虠\", \"鯓号\", \"鯓嚆\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\"]]; subject [128, [\"你好\", \"拟好\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\", \"霓\"]]",
             "result.view.yishu[0:1]: pin [\"呭䜹\"]; subject [\"艺术\"]",
             "result.view.yishu[2:4]: pin [608, [\"呭䜹\", \"呭墅\", \"呭疋\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\"]]; subject [606, [\"艺术\", \"一书\", \"亦属\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\"]]"
+          ],
+          "accepted": [
+            "result.view"
           ]
         }
       }
@@ -392,6 +410,9 @@ there is only one complete sentence path, so S2 cannot select a different text.
             "result.view.nihao[2:4]: pin [130, [\"鯓虠\", \"鯓号\", \"鯓嚆\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\"]]; subject [128, [\"你好\", \"拟好\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\", \"霓\"]]",
             "result.view.yishu[0:1]: pin [\"呭䜹\"]; subject [\"一书\"]",
             "result.view.yishu[2:4]: pin [608, [\"呭䜹\", \"呭墅\", \"呭疋\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\"]]; subject [606, [\"一书\", \"亦属\", \"医术\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\"]]"
+          ],
+          "accepted": [
+            "result.view"
           ]
         },
         "kc": {
@@ -426,6 +447,9 @@ there is only one complete sentence path, so S2 cannot select a different text.
             "result.view.nihao[2:4]: pin [130, [\"鯓虠\", \"鯓号\", \"鯓嚆\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\"]]; subject [128, [\"你好\", \"拟好\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\", \"霓\"]]",
             "result.view.yishu[0:1]: pin [\"呭䜹\"]; subject [\"一书\"]",
             "result.view.yishu[2:4]: pin [608, [\"呭䜹\", \"呭墅\", \"呭疋\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\"]]; subject [606, [\"一书\", \"亦属\", \"医术\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\"]]"
+          ],
+          "accepted": [
+            "result.view"
           ]
         },
         "tkrzw": {
@@ -460,6 +484,9 @@ there is only one complete sentence path, so S2 cannot select a different text.
             "result.view.nihao[2:4]: pin [130, [\"鯓虠\", \"鯓号\", \"鯓嚆\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\"]]; subject [128, [\"你好\", \"拟好\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\", \"霓\"]]",
             "result.view.yishu[0:1]: pin [\"呭䜹\"]; subject [\"一书\"]",
             "result.view.yishu[2:4]: pin [608, [\"呭䜹\", \"呭墅\", \"呭疋\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\"]]; subject [606, [\"一书\", \"亦属\", \"医术\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\"]]"
+          ],
+          "accepted": [
+            "result.view"
           ]
         }
       }
@@ -498,6 +525,9 @@ there is only one complete sentence path, so S2 cannot select a different text.
             "result.view.nihao[2:4]: pin [130, [\"鯓虠\", \"鯓号\", \"鯓嚆\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\"]]; subject [128, [\"拟好\", \"你好\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\", \"霓\"]]",
             "result.view.yishu[0:1]: pin [\"呭䜹\"]; subject [\"亦属\"]",
             "result.view.yishu[3][0:3]: pin [\"呭䜹\", \"呭墅\", \"呭疋\"]; subject [\"亦属\", \"亦舒\", \"忆述\"]"
+          ],
+          "accepted": [
+            "result.view"
           ]
         },
         "kc": {
@@ -532,6 +562,9 @@ there is only one complete sentence path, so S2 cannot select a different text.
             "result.view.nihao[2:4]: pin [130, [\"鯓虠\", \"鯓号\", \"鯓嚆\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\"]]; subject [128, [\"拟好\", \"你好\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\", \"霓\"]]",
             "result.view.yishu[0:1]: pin [\"呭䜹\"]; subject [\"亦属\"]",
             "result.view.yishu[3][0:3]: pin [\"呭䜹\", \"呭墅\", \"呭疋\"]; subject [\"亦属\", \"亦舒\", \"忆述\"]"
+          ],
+          "accepted": [
+            "result.view"
           ]
         },
         "tkrzw": {
@@ -566,6 +599,9 @@ there is only one complete sentence path, so S2 cannot select a different text.
             "result.view.nihao[2:4]: pin [130, [\"鯓虠\", \"鯓号\", \"鯓嚆\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\"]]; subject [128, [\"拟好\", \"你好\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\", \"霓\"]]",
             "result.view.yishu[0:1]: pin [\"呭䜹\"]; subject [\"亦属\"]",
             "result.view.yishu[3][0:3]: pin [\"呭䜹\", \"呭墅\", \"呭疋\"]; subject [\"亦属\", \"亦舒\", \"忆述\"]"
+          ],
+          "accepted": [
+            "result.view"
           ]
         }
       }
@@ -601,6 +637,9 @@ there is only one complete sentence path, so S2 cannot select a different text.
           },
           "divergence": [
             "result.view.nihao[3][2:3]: pin [\"抳獆\"]; subject [\"抳蠔\"]"
+          ],
+          "accepted": [
+            "result.view"
           ]
         },
         "kc": {
@@ -632,6 +671,9 @@ there is only one complete sentence path, so S2 cannot select a different text.
           },
           "divergence": [
             "result.view.nihao[3][2:3]: pin [\"抳獆\"]; subject [\"抳蠔\"]"
+          ],
+          "accepted": [
+            "result.view"
           ]
         },
         "tkrzw": {
@@ -663,6 +705,9 @@ there is only one complete sentence path, so S2 cannot select a different text.
           },
           "divergence": [
             "result.view.nihao[3][2:3]: pin [\"抳獆\"]; subject [\"抳蠔\"]"
+          ],
+          "accepted": [
+            "result.view"
           ]
         }
       }
@@ -698,6 +743,9 @@ there is only one complete sentence path, so S2 cannot select a different text.
           },
           "divergence": [
             "result.view.nihao[3][2:3]: pin [\"抳獆\"]; subject [\"抳蠔\"]"
+          ],
+          "accepted": [
+            "result.view"
           ]
         },
         "kc": {
@@ -729,6 +777,9 @@ there is only one complete sentence path, so S2 cannot select a different text.
           },
           "divergence": [
             "result.view.nihao[3][2:3]: pin [\"抳獆\"]; subject [\"抳蠔\"]"
+          ],
+          "accepted": [
+            "result.view"
           ]
         },
         "tkrzw": {
@@ -760,6 +811,9 @@ there is only one complete sentence path, so S2 cannot select a different text.
           },
           "divergence": [
             "result.view.nihao[3][2:3]: pin [\"抳獆\"]; subject [\"抳蠔\"]"
+          ],
+          "accepted": [
+            "result.view"
           ]
         }
       }
@@ -796,6 +850,9 @@ there is only one complete sentence path, so S2 cannot select a different text.
           "divergence": [
             "result.view.nihao[2:4]: pin [127, [\"你好\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\", \"霓\", \"儗\"]]; subject [128, [\"你好\", \"你号\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\", \"霓\"]]",
             "result.view.yishu[2:4]: pin [606, [\"艺术\", \"一数\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\", \"睪\"]]; subject [605, [\"艺术\", \"一书\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\", \"睪\"]]"
+          ],
+          "accepted": [
+            "result.view"
           ]
         },
         "kc": {
@@ -828,6 +885,9 @@ there is only one complete sentence path, so S2 cannot select a different text.
           "divergence": [
             "result.view.nihao[2:4]: pin [127, [\"你好\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\", \"霓\", \"儗\"]]; subject [128, [\"你好\", \"你号\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\", \"霓\"]]",
             "result.view.yishu[2:4]: pin [606, [\"艺术\", \"一数\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\", \"睪\"]]; subject [605, [\"艺术\", \"一书\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\", \"睪\"]]"
+          ],
+          "accepted": [
+            "result.view"
           ]
         },
         "tkrzw": {
@@ -860,6 +920,9 @@ there is only one complete sentence path, so S2 cannot select a different text.
           "divergence": [
             "result.view.nihao[2:4]: pin [127, [\"你好\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\", \"霓\", \"儗\"]]; subject [128, [\"你好\", \"你号\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\", \"霓\"]]",
             "result.view.yishu[2:4]: pin [606, [\"艺术\", \"一数\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\", \"睪\"]]; subject [605, [\"艺术\", \"一书\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\", \"睪\"]]"
+          ],
+          "accepted": [
+            "result.view"
           ]
         }
       }
@@ -896,6 +959,9 @@ there is only one complete sentence path, so S2 cannot select a different text.
           "divergence": [
             "result.view.nihao[3][1:2]: pin [\"你豪\"]; subject [\"你号\"]",
             "result.view.yishu[2:4]: pin [606, [\"艺术\", \"一数\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\", \"睪\"]]; subject [605, [\"艺术\", \"一书\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\", \"睪\"]]"
+          ],
+          "accepted": [
+            "result.view"
           ]
         },
         "kc": {
@@ -928,6 +994,9 @@ there is only one complete sentence path, so S2 cannot select a different text.
           "divergence": [
             "result.view.nihao[3][1:2]: pin [\"你豪\"]; subject [\"你号\"]",
             "result.view.yishu[2:4]: pin [606, [\"艺术\", \"一数\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\", \"睪\"]]; subject [605, [\"艺术\", \"一书\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\", \"睪\"]]"
+          ],
+          "accepted": [
+            "result.view"
           ]
         },
         "tkrzw": {
@@ -960,6 +1029,9 @@ there is only one complete sentence path, so S2 cannot select a different text.
           "divergence": [
             "result.view.nihao[3][1:2]: pin [\"你豪\"]; subject [\"你号\"]",
             "result.view.yishu[2:4]: pin [606, [\"艺术\", \"一数\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\", \"睪\"]]; subject [605, [\"艺术\", \"一书\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\", \"睪\"]]"
+          ],
+          "accepted": [
+            "result.view"
           ]
         }
       }
@@ -998,6 +1070,9 @@ there is only one complete sentence path, so S2 cannot select a different text.
           "divergence": [
             "result.with_sentence.rows (list lengths pin 757, subject 757; first change [0]): pin [1, \"县\"]; subject [1, \"甲乙\"]",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "result.with_sentence"
           ]
         }
       }

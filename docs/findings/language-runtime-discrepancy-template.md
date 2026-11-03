@@ -130,31 +130,26 @@ just runner contract-diff bdb "$PINYIN_ORACLE_PREFIX" <capi.so> <zhuyin.so> -- -
 just policy-record docs/findings/<record>.md obs.jsonl
 ```
 
-The block is part of the reviewed discrepancy record, but it holds no
-observation. Each side keeps the SHA-256 of its complete stable observation
-(exit, result with its logs, stderr in the driver's scratch-path
-normalization, and userfiles for a user-directory case), a 16-hex digest per
-top-level field for diagnosis, and the pin-to-subject divergence as text:
-one line per moved field, with list edits in the pin's indices. The serialized
-divergence field is limited to 4,096 UTF-8 bytes per case/backend pair,
-including JSON escaping, indentation and an omission marker. Bounded previews
-show affected paths, lengths and representative changes; rendering stops when
-the budget is exhausted. Full observations still determine acceptance. An entry
-escapes surrogate code points in values and paths for UTF-8 output while
-keeping ordinary non-ASCII text. Digests use a single canonical JSON encoding
-(sorted keys, no spaces, ASCII escapes), including invalid UTF-8 stderr bytes
-preserved by the driver's `surrogateescape` decoding. An entry
-under `cells` applies to that DBM cell; an entry without `cells` applies to
-every cell. A POLICY-ACCEPTED verdict needs both complete observations to
-digest to the recorded values: there are no wildcards, ignored `~` fields or
-partial matches. Both sides must terminate normally (or the pin as a
-registered abort) and match their recorded digests exactly; a mismatch is
-DIFFER and the report names the side and the fields whose digests moved. A
-missing, unregistered, superseded, schema-1 or malformed record is INVALID;
-an unexpected observation is DIFFER and fails even under `--expect-parent`.
-Equality cannot turn a marked case into MATCH. Record the case again with
-`just policy-record` when its accepted observation legitimately changes; the
-command replaces only that case's entry for the captured cell.
+The schema-3 block holds no complete observation. For each case and cell,
+`accepted` names exactly the fields whose stored pin and subject digests differ.
+The fields are top-level observation members, except a result document is split
+into its individual members. For each accepted field, each side must match its
+stored 16-hex SHA-256 digest, or its recorded absence. Every other field must
+be equal between the current pin and subject, including its presence and value
+type; it need not match the historical digest. The complete-observation hashes
+and other field digests are retained for diagnosis and do not decide the
+verdict. This applies also when every field is accepted. An observation must
+still satisfy the driver's validity rules. An unexpected pair is DIFFER, even
+under `--expect-parent`; a missing, unregistered, superseded or malformed
+record is INVALID. A marked case never becomes MATCH merely through equality.
+
+Digests use canonical JSON (sorted keys, no spaces, ASCII escapes), including
+surrogateescaped invalid UTF-8. Divergence text describes the recorded pair,
+with bounded previews and a 4,096-byte serialized limit. An entry under `cells`
+applies to that cell; `database_free` applies to every cell. Use `just
+policy-record --migrate` to derive schema 3 from schema 2's stored field
+digests without a new capture, or record a legitimate changed accepted pair
+from a capture.
 The accepted case reports its record and both observations, and contributes
 only to the separate POLICY-ACCEPTED count. An existing `abort=` case may
 retain its pin SIGABRT with a null result and exact stderr; the subject

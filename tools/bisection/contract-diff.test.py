@@ -152,7 +152,7 @@ class PolicyAcceptedTests(unittest.TestCase):
         self.assertEqual(self.verdict(), ('INVALID', False, False))
 
     def test_incorrect_or_stale_record_metadata_is_invalid(self):
-        for key, value in (('schema', 1), ('schema', 3), ('record', 'other'), ('status', 'superseded'),
+        for key, value in (('schema', 1), ('schema', 4), ('record', 'other'), ('status', 'superseded'),
                            ('disposition', 'MATCH'), ('cases', {})):
             with self.subTest(key=key):
                 record = copy.deepcopy(self.record)

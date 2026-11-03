@@ -21,7 +21,7 @@ No shipping library, C API or backend format changes.
 
 ```contract-diff-policy
 {
-  "schema": 2,
+  "schema": 3,
   "record": "eio-zhuyin-missing-frequency",
   "status": "current",
   "disposition": "POLICY-ACCEPTED",
@@ -49,6 +49,10 @@ No shipping library, C API or backend format changes.
         "divergence": [
           "exit: pin -11; subject 1",
           "stderr: pin \"\"; subject \"gen_zhuyin_table: missing frequency: 你好\\n\""
+        ],
+        "accepted": [
+          "exit",
+          "stderr"
         ]
       }
     }

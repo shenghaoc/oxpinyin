@@ -39,7 +39,7 @@ digests are as first recorded.
 
 ```contract-diff-policy
 {
-  "schema": 2,
+  "schema": 3,
   "record": "eio-kmm-tools",
   "status": "current",
   "disposition": "POLICY-ACCEPTED",
@@ -68,6 +68,9 @@ digests are as first recorded.
           "divergence": [
             "stderr: pin \"merge_k_mixture_model: merge_k_mixture_mod\" … (length 205); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         },
         "bdb": {
@@ -92,6 +95,9 @@ digests are as first recorded.
           "divergence": [
             "stderr: pin \"merge_k_mixture_model: merge_k_mixture_mod\" … (length 205); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         },
         "kc": {
@@ -116,6 +122,9 @@ digests are as first recorded.
           "divergence": [
             "stderr: pin \"merge_k_mixture_model: merge_k_mixture_mod\" … (length 205); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -144,6 +153,9 @@ digests are as first recorded.
           "divergence": [
             "stderr: pin \"estimate_k_mixture_model: estimate_k_mixtu\" … (length 243); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         },
         "bdb": {
@@ -168,6 +180,9 @@ digests are as first recorded.
           "divergence": [
             "stderr: pin \"estimate_k_mixture_model: estimate_k_mixtu\" … (length 243); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         },
         "kc": {
@@ -192,6 +207,9 @@ digests are as first recorded.
           "divergence": [
             "stderr: pin \"estimate_k_mixture_model: estimate_k_mixtu\" … (length 243); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }
@@ -220,6 +238,9 @@ digests are as first recorded.
           "divergence": [
             "stderr: pin \"gen_k_mixture_model: gen_k_mixture_model.c\" … (length 206); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         },
         "bdb": {
@@ -244,6 +265,9 @@ digests are as first recorded.
           "divergence": [
             "stderr: pin \"gen_k_mixture_model: gen_k_mixture_model.c\" … (length 206); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         },
         "kc": {
@@ -268,6 +292,9 @@ digests are as first recorded.
           "divergence": [
             "stderr: pin \"gen_k_mixture_model: gen_k_mixture_model.c\" … (length 206); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "stderr"
           ]
         }
       }

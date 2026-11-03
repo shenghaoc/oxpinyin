@@ -737,7 +737,7 @@ amd64 command; `oracle-arm64-1132.md` records the arm64 one and the
 
 ```contract-diff-policy
 {
-  "schema": 2,
+  "schema": 3,
   "record": "arm64-pin-portability-1137",
   "status": "current",
   "disposition": "POLICY-ACCEPTED",
@@ -768,6 +768,9 @@ amd64 command; `oracle-arm64-1132.md` records the arm64 one and the
           "divergence": [
             "result.prediction.rows (list lengths pin 169, subject 169; first change [0]): pin [5, \"甲甲\"]; subject [5, \"爱你\"]",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "result.prediction"
           ]
         },
         "kc": {
@@ -794,6 +797,9 @@ amd64 command; `oracle-arm64-1132.md` records the arm64 one and the
           "divergence": [
             "result.prediction.rows (list lengths pin 169, subject 169; first change [0]): pin [5, \"甲甲\"]; subject [5, \"爱你\"]",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "result.prediction"
           ]
         },
         "tkrzw": {
@@ -820,6 +826,9 @@ amd64 command; `oracle-arm64-1132.md` records the arm64 one and the
           "divergence": [
             "result.prediction.rows (list lengths pin 169, subject 169; first change [0]): pin [5, \"甲甲\"]; subject [5, \"爱你\"]",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "result.prediction"
           ]
         }
       }
@@ -850,6 +859,9 @@ amd64 command; `oracle-arm64-1132.md` records the arm64 one and the
           "divergence": [
             "result.prediction.rows (list lengths pin 169, subject 169; first change [0]): pin [5, \"甲甲\"]; subject [5, \"爱你\"]",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "result.prediction"
           ]
         },
         "kc": {
@@ -876,6 +888,9 @@ amd64 command; `oracle-arm64-1132.md` records the arm64 one and the
           "divergence": [
             "result.prediction.rows (list lengths pin 169, subject 169; first change [0]): pin [5, \"甲甲\"]; subject [5, \"爱你\"]",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "result.prediction"
           ]
         },
         "tkrzw": {
@@ -902,6 +917,9 @@ amd64 command; `oracle-arm64-1132.md` records the arm64 one and the
           "divergence": [
             "result.prediction.rows (list lengths pin 169, subject 169; first change [0]): pin [5, \"甲甲\"]; subject [5, \"爱你\"]",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "result.prediction"
           ]
         }
       }

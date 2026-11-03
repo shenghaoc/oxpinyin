@@ -71,8 +71,7 @@ just policy-record docs/findings/eio-table-generator-invalid-utf8.md /path/to/ob
   --cases pinyin-invalid-utf8,pinyin-invalid-utf8-after-row,zhuyin-invalid-utf8,zhuyin-invalid-utf8-after-row
 ```
 
-Every accepted pair binds both complete observations with the existing
-schema-2 record digests. A changed exit, stream or file fails the record.
+The [record rule](../findings/language-runtime-discrepancy-template.md) applies to each accepted pair.
 
 The registered table generators, `k_mixture_model_to_interpolation` and
 `gen_unigram` open no DBM: `DATABASE_FREE` in `tools/dev/tool_diff.py`

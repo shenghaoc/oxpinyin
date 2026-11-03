@@ -43,16 +43,8 @@ declared fields, the parts the pin's source defines.
 A policy-accepted language/runtime difference is neither MATCH nor an
 unclassified DIFFER. A current discrepancy record
 (`docs/findings/language-runtime-discrepancy-template.md`) names the case and
-its expected non-MATCH; the disposition is POLICY-ACCEPTED. The case keeps
-its pin and subject observations, and it is never deleted or relabelled
-MATCH. `policy_record=` links a registered, current record whose
-`contract-diff-policy` JSON block keeps, per case and cell, the SHA-256 of
-each side's complete stable observation, a digest per top-level field and
-the pin-to-subject divergence as text (`just policy-record` writes it from
-an `--observations` capture). The verdict compares the digests, so the
-accepted pair is still the complete observation on both sides, with no
-wildcard, ignored field or partial match; a pair that differs from the
-record is DIFFER, reported with the side and field that moved.
+its expected non-MATCH; the disposition is POLICY-ACCEPTED. The record format
+and verdict rule are in docs/findings/language-runtime-discrepancy-template.md.
 
 --expect-parent runs the same cases against a parent build: a case marked
 `control` must still match, every other case must differ.

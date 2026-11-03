@@ -106,7 +106,7 @@ not move. The difference is class (b) in
 
 ```contract-diff-policy
 {
-  "schema": 2,
+  "schema": 3,
   "record": "1378-zhuyin-selection",
   "status": "current",
   "disposition": "POLICY-ACCEPTED",
@@ -140,6 +140,9 @@ not move. The difference is class (b) in
           },
           "divergence": [
             "result.sentence[1:2]: pin [\"龘龘\"]; subject [\"靐靐\"]"
+          ],
+          "accepted": [
+            "result.sentence"
           ]
         },
         "tkrzw": {
@@ -169,6 +172,9 @@ not move. The difference is class (b) in
           },
           "divergence": [
             "result.sentence[1:2]: pin [\"龘龘\"]; subject [\"靐靐\"]"
+          ],
+          "accepted": [
+            "result.sentence"
           ]
         },
         "kc": {
@@ -198,6 +204,9 @@ not move. The difference is class (b) in
           },
           "divergence": [
             "result.sentence[1:2]: pin [\"龘龘\"]; subject [\"靐靐\"]"
+          ],
+          "accepted": [
+            "result.sentence"
           ]
         }
       }
@@ -235,6 +244,9 @@ not move. The difference is class (b) in
             "result.view.ni3hao3 (list lengths pin 4, subject 4; first change [0]): pin \"儞䝥\"; subject \"你好\"",
             "result.view.yi4shu4 (list lengths pin 4, subject 4; first change [0]): pin \"苅襩\"; subject \"亦舒\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "result.view"
           ]
         },
         "tkrzw": {
@@ -268,6 +280,9 @@ not move. The difference is class (b) in
             "result.view.ni3hao3 (list lengths pin 4, subject 4; first change [0]): pin \"儞䝥\"; subject \"你好\"",
             "result.view.yi4shu4 (list lengths pin 4, subject 4; first change [0]): pin \"苅襩\"; subject \"亦舒\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "result.view"
           ]
         },
         "kc": {
@@ -301,6 +316,9 @@ not move. The difference is class (b) in
             "result.view.ni3hao3 (list lengths pin 4, subject 4; first change [0]): pin \"儞䝥\"; subject \"你好\"",
             "result.view.yi4shu4 (list lengths pin 4, subject 4; first change [0]): pin \"苅襩\"; subject \"亦舒\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "result.view"
           ]
         }
       }
@@ -338,6 +356,9 @@ not move. The difference is class (b) in
             "result.view.ni3hao3 (list lengths pin 4, subject 4; first change [0]): pin \"儞䝥\"; subject \"你好\"",
             "result.view.yi4shu4 (list lengths pin 4, subject 4; first change [0]): pin \"苅襩\"; subject \"艺术\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "result.view"
           ]
         },
         "tkrzw": {
@@ -371,6 +392,9 @@ not move. The difference is class (b) in
             "result.view.ni3hao3 (list lengths pin 4, subject 4; first change [0]): pin \"儞䝥\"; subject \"你好\"",
             "result.view.yi4shu4 (list lengths pin 4, subject 4; first change [0]): pin \"苅襩\"; subject \"艺术\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "result.view"
           ]
         },
         "kc": {
@@ -404,6 +428,9 @@ not move. The difference is class (b) in
             "result.view.ni3hao3 (list lengths pin 4, subject 4; first change [0]): pin \"儞䝥\"; subject \"你好\"",
             "result.view.yi4shu4 (list lengths pin 4, subject 4; first change [0]): pin \"苅襩\"; subject \"艺术\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "result.view"
           ]
         }
       }
@@ -441,6 +468,9 @@ not move. The difference is class (b) in
             "result.view.ni3hao3 (list lengths pin 4, subject 4; first change [0]): pin \"儞䝥\"; subject \"你好\"",
             "result.view.yi4shu4 (list lengths pin 4, subject 4; first change [0]): pin \"苅襩\"; subject \"一书\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "result.view"
           ]
         },
         "tkrzw": {
@@ -474,6 +504,9 @@ not move. The difference is class (b) in
             "result.view.ni3hao3 (list lengths pin 4, subject 4; first change [0]): pin \"儞䝥\"; subject \"你好\"",
             "result.view.yi4shu4 (list lengths pin 4, subject 4; first change [0]): pin \"苅襩\"; subject \"一书\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "result.view"
           ]
         },
         "kc": {
@@ -507,6 +540,9 @@ not move. The difference is class (b) in
             "result.view.ni3hao3 (list lengths pin 4, subject 4; first change [0]): pin \"儞䝥\"; subject \"你好\"",
             "result.view.yi4shu4 (list lengths pin 4, subject 4; first change [0]): pin \"苅襩\"; subject \"一书\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "result.view"
           ]
         }
       }

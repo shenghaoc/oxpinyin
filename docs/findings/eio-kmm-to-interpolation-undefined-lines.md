@@ -23,7 +23,7 @@ oxpinyin makes the pin's calls up to that read, then writes
 
 ```contract-diff-policy
 {
-  "schema": 2,
+  "schema": 3,
   "record": "eio-kmm-to-interpolation-undefined-lines",
   "status": "current",
   "disposition": "POLICY-ACCEPTED",
@@ -52,6 +52,10 @@ oxpinyin makes the pin's calls up to that read, then writes
           "exit: pin -11; subject 1",
           "stderr: pin \"\"; subject \"k_mixture_model_to_interpolation: line wit\" … (length 57)",
           "… further divergence omitted (4096-byte budget)"
+        ],
+        "accepted": [
+          "exit",
+          "stderr"
         ]
       }
     },
@@ -79,6 +83,10 @@ oxpinyin makes the pin's calls up to that read, then writes
           "exit: pin -11; subject 1",
           "stderr: pin \"\"; subject \"k_mixture_model_to_interpolation: line wit\" … (length 57)",
           "… further divergence omitted (4096-byte budget)"
+        ],
+        "accepted": [
+          "exit",
+          "stderr"
         ]
       }
     },
@@ -106,6 +114,10 @@ oxpinyin makes the pin's calls up to that read, then writes
           "exit: pin -11; subject 1",
           "stderr: pin \"\\n** (process:PID): CRITICAL **: TIME: gcha\" … (length 196); subject \"\\n(process:PID): GLib-CRITICAL **: TIME: g_\" … (length 170)",
           "… further divergence omitted (4096-byte budget)"
+        ],
+        "accepted": [
+          "exit",
+          "stderr"
         ]
       }
     }

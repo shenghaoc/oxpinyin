@@ -1,15 +1,7 @@
 """Compact discrepancy-record entries for the contract differential (contract-diff.py).
 
-A record's `contract-diff-policy` block keeps, per case and cell, a SHA-256 of
-each side's complete stable observation, a short digest per top-level field,
-and the pin-to-subject divergence in plain text. The verdict compares the two
-SHA-256 digests, so a POLICY-ACCEPTED verdict still needs the complete
-observation (exit, result, stderr and, for a user-directory case, userfiles)
-to equal the recorded one on both sides, with no wildcards, ignored fields or
-partial matching. The field digests say which side and which field moved when
-it does not. The divergence is what a reviewer reads; it is written by
-`tools.dev policy-record` from contract-diff.py's `--observations` capture and
-never read by the verdict.
+The record format and verdict rule are documented in
+``docs/findings/language-runtime-discrepancy-template.md``.
 
 Standard library only. contract_verdict.py imports this module by its bare
 name beside the driver; tools/dev/policy.py imports it as
@@ -21,7 +13,7 @@ import itertools
 import json
 import signal
 
-SCHEMA = 2
+SCHEMA = 3
 FIELD_DIGEST_LENGTH = 16
 STABLE_KEYS = ('exit', 'result', 'stderr')
 SIDES = ('pin', 'subject')
@@ -51,7 +43,7 @@ def digest(value):
 def field_digests(observation):
     """A short digest per top-level field: `exit`, `stderr`, `userfiles` and
     each key of a result document as `result.<key>` (`result` itself when the
-    document is absent). Diagnostic only; the SHA-256 decides."""
+    document is absent). The first 16 hex digits of each SHA-256 bind accepted fields."""
     fields = {}
     for key, value in observation.items():
         if key == 'result' and isinstance(value, dict):
@@ -297,7 +289,7 @@ def divergence(pin, subject):
     member by member. The serialized divergence field (including JSON escapes,
     indentation and the omission marker) is bounded to 4096 UTF-8 bytes per
     case/cell pair. Previews are bounded before encoding; omitted text never
-    changes the complete-observation digests used for acceptance."""
+    changes the field digests used by the record rule."""
     lines = _Divergence()
     _divergence('', pin, subject, lines)
     return lines.finish()
@@ -307,7 +299,14 @@ def entry(pin, subject):
     """A record entry for one recorded pair of complete stable observations."""
     if canonical(pin) == canonical(subject):
         raise ValueError('policy case must record a difference, not parity')
-    return {'pin': side_entry(pin), 'subject': side_entry(subject), 'divergence': divergence(pin, subject)}
+    pin_entry, subject_entry = side_entry(pin), side_entry(subject)
+    fields = pin_entry['fields'].keys() | subject_entry['fields'].keys()
+    accepted_fields = sorted(name for name in fields
+                             if pin_entry['fields'].get(name) != subject_entry['fields'].get(name))
+    if not accepted_fields:
+        raise ValueError('policy difference is not represented by field digests')
+    return {'pin': pin_entry, 'subject': subject_entry, 'accepted': accepted_fields,
+            'divergence': divergence(pin, subject)}
 
 
 def _hex(value, length):
@@ -317,7 +316,7 @@ def _hex(value, length):
 def check_entry(value):
     """`value` as a complete entry: both sides with their SHA-256 and field
     digests, a divergence text, and a difference between the sides."""
-    if not isinstance(value, dict) or set(value) != {*SIDES, 'divergence'}:
+    if not isinstance(value, dict) or set(value) != {*SIDES, 'accepted', 'divergence'}:
         raise ValueError('policy case must specify both observations and their divergence')
     for side in SIDES:
         kept = value[side]
@@ -329,14 +328,43 @@ def check_entry(value):
     if not isinstance(value['divergence'], list) or not value['divergence'] \
             or any(not isinstance(line, str) for line in value['divergence']):
         raise ValueError('policy divergence must be lines of text')
-    if value['pin']['sha256'] == value['subject']['sha256']:
+    pin, subject = (value[side]['fields'] for side in SIDES)
+    different = sorted(name for name in pin.keys() | subject.keys() if pin.get(name) != subject.get(name))
+    if not different:
         raise ValueError('policy case must record a difference, not parity')
+    if value['accepted'] != different:
+        raise ValueError('accepted fields must name exactly the recorded differences')
     return value
 
 
+def fields_of(observation):
+    """Values at the same granularity as field_digests, retaining missing keys."""
+    fields = {}
+    for key, value in observation.items():
+        if key == 'result' and isinstance(value, dict):
+            fields.update((f'result.{name}', member) for name, member in value.items())
+        else:
+            fields[key] = value
+    return fields
+
+
 def accepted(kept, actual):
-    """Whether both actual stable observations digest to the recorded ones."""
-    return all(digest(actual[side]) == kept[side]['sha256'] for side in SIDES)
+    """Apply the policy record rule documented in the discrepancy template."""
+    allowed = set(kept['accepted'])
+    fields = {side: fields_of(actual[side]) for side in SIDES}
+    current = {side: field_digests(actual[side]) for side in SIDES}
+    for name in allowed:
+        for side in SIDES:
+            recorded = kept[side]['fields']
+            if (name in recorded) != (name in current[side]):
+                return False
+            if name in recorded and recorded[name] != current[side][name]:
+                return False
+    pin, subject = fields['pin'], fields['subject']
+    for name in (pin.keys() | subject.keys()) - allowed:
+        if name not in pin or name not in subject or not _same(pin[name], subject[name]):
+            return False
+    return True
 
 
 def diagnose(kept, actual):

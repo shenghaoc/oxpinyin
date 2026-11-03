@@ -33,7 +33,7 @@ precondition in `store_one_item` and is omitted with GLib's critical message.
 
 ```contract-diff-policy
 {
-  "schema": 2,
+  "schema": 3,
   "record": "eio-table-generator-invalid-utf8",
   "status": "current",
   "disposition": "POLICY-ACCEPTED",
@@ -62,6 +62,11 @@ precondition in `store_one_item` and is omitted with GLib's critical message.
           "exit: pin -11; subject 1",
           "stderr: pin \"\"; subject \"gen_pinyin_table: invalid UTF-8 phrase: \\udcff\\n\"",
           "stdout: pin \"\"; subject \"nnodes: 1\\n\""
+        ],
+        "accepted": [
+          "exit",
+          "stderr",
+          "stdout"
         ]
       }
     },
@@ -91,6 +96,12 @@ precondition in `store_one_item` and is omitted with GLib's critical message.
           "stderr: pin \"\"; subject \"gen_pinyin_table: invalid UTF-8 phrase: \\udcff\\udcff\" … (length 43)",
           "stdout: pin \"\"; subject \"nnodes: 2\\n\"",
           "… further divergence omitted (4096-byte budget)"
+        ],
+        "accepted": [
+          "exit",
+          "files",
+          "stderr",
+          "stdout"
         ]
       }
     },
@@ -118,6 +129,11 @@ precondition in `store_one_item` and is omitted with GLib's critical message.
           "exit: pin -11; subject 1",
           "stderr: pin \"\"; subject \"gen_zhuyin_table: invalid UTF-8 phrase: \\udcff\\n\"",
           "stdout: pin \"\"; subject \"nnodes: 1\\n\""
+        ],
+        "accepted": [
+          "exit",
+          "stderr",
+          "stdout"
         ]
       }
     },
@@ -147,6 +163,12 @@ precondition in `store_one_item` and is omitted with GLib's critical message.
           "stderr: pin \"\"; subject \"gen_zhuyin_table: invalid UTF-8 phrase: \\udcff\\udcff\" … (length 43)",
           "stdout: pin \"\"; subject \"nnodes: 2\\n\"",
           "… further divergence omitted (4096-byte budget)"
+        ],
+        "accepted": [
+          "exit",
+          "files",
+          "stderr",
+          "stdout"
         ]
       }
     }

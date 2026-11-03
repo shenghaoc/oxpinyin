@@ -84,7 +84,7 @@ bench runbook. No raw captures or verification logs are committed.
 
 ```contract-diff-policy
 {
-  "schema": 2,
+  "schema": 3,
   "record": "1297-gram-partition-training",
   "status": "current",
   "disposition": "POLICY-ACCEPTED",
@@ -114,6 +114,13 @@ bench runbook. No raw captures or verification logs are committed.
             "result: pin null; subject {\"logs\": [], \"ret\": true}",
             "stderr: pin \"open SCRATCH/user-X/user.conf failed.pytho\" … (length 351); subject \"open SCRATCH/user-X/user.conf failed.\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "exit",
+            "result",
+            "result.logs",
+            "result.ret",
+            "stderr"
           ]
         },
         "kc": {
@@ -139,6 +146,13 @@ bench runbook. No raw captures or verification logs are committed.
             "result: pin null; subject {\"logs\": [], \"ret\": true}",
             "stderr: pin \"open SCRATCH/user-X/user.conf failed.pytho\" … (length 351); subject \"open SCRATCH/user-X/user.conf failed.\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "exit",
+            "result",
+            "result.logs",
+            "result.ret",
+            "stderr"
           ]
         },
         "tkrzw": {
@@ -164,6 +178,13 @@ bench runbook. No raw captures or verification logs are committed.
             "result: pin null; subject {\"logs\": [], \"ret\": true}",
             "stderr: pin \"open SCRATCH/user-X/user.conf failed.pytho\" … (length 351); subject \"open SCRATCH/user-X/user.conf failed.\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "exit",
+            "result",
+            "result.logs",
+            "result.ret",
+            "stderr"
           ]
         }
       }
@@ -193,6 +214,13 @@ bench runbook. No raw captures or verification logs are committed.
             "result: pin null; subject {\"logs\": [], \"ret\": true}",
             "stderr: pin \"open SCRATCH/user-X/user.conf failed.pytho\" … (length 351); subject \"open SCRATCH/user-X/user.conf failed.\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "exit",
+            "result",
+            "result.logs",
+            "result.ret",
+            "stderr"
           ]
         },
         "kc": {
@@ -218,6 +246,13 @@ bench runbook. No raw captures or verification logs are committed.
             "result: pin null; subject {\"logs\": [], \"ret\": true}",
             "stderr: pin \"open SCRATCH/user-X/user.conf failed.pytho\" … (length 351); subject \"open SCRATCH/user-X/user.conf failed.\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "exit",
+            "result",
+            "result.logs",
+            "result.ret",
+            "stderr"
           ]
         },
         "tkrzw": {
@@ -243,6 +278,13 @@ bench runbook. No raw captures or verification logs are committed.
             "result: pin null; subject {\"logs\": [], \"ret\": true}",
             "stderr: pin \"open SCRATCH/user-X/user.conf failed.pytho\" … (length 351); subject \"open SCRATCH/user-X/user.conf failed.\"",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "exit",
+            "result",
+            "result.logs",
+            "result.ret",
+            "stderr"
           ]
         }
       }

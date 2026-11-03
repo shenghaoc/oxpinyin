@@ -86,16 +86,10 @@ def valid_parent_observations(spec, pin, subject, *, directory_probe):
 def policy_expectations(spec, *, policy_root, cell):
     """Read the current registered record, never a cached exemption.
 
-    Each case keeps, per cell or once for every cell, the SHA-256 of each
-    side's complete stable observation, a short digest per top-level field
-    and the pin-to-subject divergence as text (contract_policy). A
-    `database_free` entry, which tools/dev/policy.py writes for a tool-diff
-    case whose utility opens no DBM, is read only when the spec says the
-    case is database-free; any other case refuses it. The record
-    holds no observation and allows no wildcard, ignored result field or
-    partial-dict match: the digests decide. Rejected metadata is INVALID,
-    including under --expect-parent. A schema-1 record, which held the
-    complete observations, is refused by name.
+    The record format and verdict rule are in
+    docs/findings/language-runtime-discrepancy-template.md. A database-free
+    entry is read only when the spec declares the case database-free.
+    Rejected metadata is INVALID, including under --expect-parent.
 
     The record is read from policy_root. cell is the DBM cell whose entry
     a per-cell record supplies when CONTRACT_DIFF_CELL is unset.
@@ -148,7 +142,7 @@ def policy_diagnosis(spec, pin, subject, *, policy_root, cell):
     """Which side and which field moved against the record, from its field
     digests: per side `matches`, `moved`, `added` and `missing` fields and a
     one-line `summary`. None when the record cannot be read (the verdict is
-    INVALID) or when both sides digest to the record (POLICY-ACCEPTED)."""
+    INVALID) or when the record rule accepts the pair (POLICY-ACCEPTED)."""
     try:
         kept = policy_expectations(spec, policy_root=policy_root, cell=cell)
         actual = dict(pin=policy_observation(spec, pin), subject=policy_observation(spec, subject))
@@ -170,11 +164,8 @@ def verdict_for(spec, pin, subject, expect_parent, *, policy_root, cell, directo
     DIFFER by `matches`, and expected when it is what the mode asks for: a
     MATCH, or under --expect-parent a DIFFER from a non-control case.
 
-    A policy case is POLICY-ACCEPTED only when both complete stable
-    observations digest to the record's SHA-256 values and could have been
-    recorded (a normal termination with a complete document, or the pin of a
-    registered abort site); any other pair of valid observations is DIFFER,
-    and `policy_diagnosis` says which side and field moved.
+    A policy case follows the rule in the discrepancy-record template.
+    policy_diagnosis reports a rejected pair.
 
     policy_root and cell locate the discrepancy record (policy_expectations) and
     directory_probe is the host's directory-size probe (short_dir_chunk)."""

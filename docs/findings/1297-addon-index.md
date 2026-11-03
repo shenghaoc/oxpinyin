@@ -22,7 +22,7 @@ this record. The record and its observations below remain historical.
 
 ```contract-diff-policy
 {
-  "schema": 2,
+  "schema": 3,
   "record": "1297-addon-index",
   "status": "reverted",
   "disposition": "POLICY-ACCEPTED",
@@ -49,6 +49,10 @@ this record. The record and its observations below remain historical.
       "divergence": [
         "result.ctx: pin true; subject false",
         "result.logs[0]: subject inserts [[\"libpinyin\", 16]]"
+      ],
+      "accepted": [
+        "result.ctx",
+        "result.logs"
       ]
     },
     "table-conf-919-addon-atoi-nondigit": {
@@ -73,6 +77,10 @@ this record. The record and its observations below remain historical.
       "divergence": [
         "result.ctx: pin true; subject false",
         "result.logs[0]: subject inserts [[\"libpinyin\", 16]]"
+      ],
+      "accepted": [
+        "result.ctx",
+        "result.logs"
       ]
     }
   }

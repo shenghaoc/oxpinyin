@@ -94,6 +94,26 @@ class ToolDiffTests(unittest.TestCase):
             policy.entry_of('bad', dict(row, subject=dict(subject, exit=-11)))
         self.assertIsNotNone(contract_policy.tool_observation_problem(dict(pin, exit='TIMEOUT'), pin_signal=-11))
 
+    def test_policy_verdict_allows_equal_unaccepted_host_drift(self):
+        case = dict(id='nan', policy_record='record.md')
+        pin = dict(exit=0, stdout='average lambda:-nan\n', stderr='BDB1565', files={})
+        subject = dict(pin, stderr='')
+        capture = self.root / 'capture.jsonl'
+        row = dict(runner='tool-diff', case='nan', cell='bdb', userdir=False, abort=False,
+                   database_free=False, pin=pin, subject=subject)
+        capture.write_text(json.dumps(row) + '\n')
+        record = self.root / 'record.md'
+        record.write_text('# Record\n')
+        (self.root / 'upstream-divergences.md').write_text('[record](record.md)\n')
+        policy.record(record, [capture], out=lambda _: None)
+        self.assertEqual(tool_diff.verdict(case, pin, subject, self.root, 'bdb')[0], 'POLICY-ACCEPTED')
+        other_pin = dict(pin, stdout='average lambda:nan\n')
+        other_subject = dict(subject, stdout='average lambda:nan\n')
+        self.assertEqual(tool_diff.verdict(case, other_pin, other_subject, self.root, 'bdb')[0], 'POLICY-ACCEPTED')
+        self.assertEqual(tool_diff.verdict(case, pin, other_subject, self.root, 'bdb')[0], 'DIFFER')
+        self.assertEqual(tool_diff.verdict(case, other_pin, dict(other_subject, stderr='changed'),
+                                           self.root, 'bdb')[0], 'DIFFER')
+
     def test_policy_cells_limit_the_record_to_the_cells_they_name(self):
         case = dict(id='bdb-only', policy_record='absent.md', policy_cells=['bdb'])
         side = dict(exit=0, stdout='', stderr='', files={})

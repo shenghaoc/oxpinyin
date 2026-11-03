@@ -77,7 +77,7 @@ class ObservationProblemTests(unittest.TestCase):
 
 class DivergenceTests(unittest.TestCase):
     def assert_budget(self, lines):
-        # Match the deepest schema-2 case/backend field's actual indentation,
+        # Match the deepest schema-3 case/backend field's actual indentation,
         # including field name, JSON escaping, commas, newlines and the marker.
         nested = {'cases': {'case': {'cells': {'bdb': {'divergence': lines}}}}}
         serialized = policy.render(nested, indent=2)
@@ -186,7 +186,7 @@ class DivergenceTests(unittest.TestCase):
 class EntryTests(unittest.TestCase):
     def test_an_entry_holds_both_digests_their_fields_and_the_divergence(self):
         entry = policy.entry(PIN, SUBJECT)
-        self.assertEqual(set(entry), {'pin', 'subject', 'divergence'})
+        self.assertEqual(set(entry), {'pin', 'subject', 'accepted', 'divergence'})
         self.assertEqual(entry['pin'], {'sha256': policy.digest(PIN), 'fields': policy.field_digests(PIN)})
         self.assertEqual(entry['divergence'], policy.divergence(PIN, SUBJECT))
         self.assertIs(policy.check_entry(entry), entry)
@@ -196,7 +196,7 @@ class EntryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'difference, not parity'):
             policy.entry(PIN, dict(PIN))
         broken = policy.entry(PIN, SUBJECT)
-        broken['subject']['sha256'] = broken['pin']['sha256']
+        broken['subject']['fields'] = broken['pin']['fields'].copy()
         with self.assertRaisesRegex(ValueError, 'difference, not parity'):
             policy.check_entry(broken)
 
@@ -221,6 +221,30 @@ class EntryTests(unittest.TestCase):
                     policy.check_entry(broken)
         with self.assertRaises(ValueError):
             policy.check_entry('not an entry')
+
+    def test_record_binds_only_accepted_fields_and_requires_other_fields_equal(self):
+        pin = dict(exit=0, stdout='average lambda:-nan\n', stderr='BDB1565', files={})
+        subject = dict(pin, stderr='')
+        kept = policy.entry(pin, subject)
+        self.assertEqual(kept['accepted'], ['stderr'])
+        self.assertTrue(policy.accepted(kept, dict(pin=pin, subject=subject)))
+        self.assertFalse(policy.accepted(kept, dict(pin=pin, subject=dict(subject, stdout='different'))))
+        changed_pin = dict(pin, stdout='average lambda:nan\n')
+        changed_subject = dict(subject, stdout='average lambda:nan\n')
+        self.assertTrue(policy.accepted(kept, dict(pin=changed_pin, subject=changed_subject)))
+        self.assertFalse(policy.accepted(kept, dict(pin=changed_pin, subject=dict(changed_subject, stderr='moved'))))
+        self.assertFalse(policy.accepted(kept, dict(pin=dict(changed_pin, extra=True), subject=changed_subject)))
+        self.assertFalse(policy.accepted(kept, dict(pin=dict(changed_pin, exit=True), subject=changed_subject)))
+        self.assertFalse(policy.accepted(kept, dict(pin={k: v for k, v in changed_pin.items() if k != 'stderr'},
+                                                    subject=changed_subject)))
+
+    def test_missing_accepted_result_members_are_bound(self):
+        pin = dict(exit=-6, result=None, stderr='abort')
+        subject = dict(exit=0, result={'logs': [], 'ret': True}, stderr='')
+        kept = policy.entry(pin, subject)
+        self.assertTrue(policy.accepted(kept, dict(pin=pin, subject=subject)))
+        self.assertFalse(policy.accepted(kept, dict(pin=dict(pin, result={'logs': []}), subject=subject)))
+        self.assertFalse(policy.accepted(kept, dict(pin=pin, subject=dict(subject, result={'logs': []}))))
 
     def test_acceptance_needs_both_digests_and_the_diagnosis_names_the_moved_fields(self):
         entry = policy.entry(PIN, SUBJECT)

@@ -86,7 +86,7 @@ and `save-replacement-valid-to-different-valid*`.
 
 ```contract-diff-policy
 {
-  "schema": 2,
+  "schema": 3,
   "record": "1297-layout-criticals",
   "status": "current",
   "disposition": "POLICY-ACCEPTED",
@@ -118,6 +118,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "bdb": {
@@ -145,6 +148,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "kc": {
@@ -172,6 +178,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         }
       }
@@ -203,6 +212,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "bdb": {
@@ -230,6 +242,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "kc": {
@@ -257,6 +272,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         }
       }
@@ -286,6 +304,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "bdb": {
@@ -311,6 +332,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "kc": {
@@ -336,6 +360,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         }
       }
@@ -365,6 +392,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "bdb": {
@@ -390,6 +420,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "kc": {
@@ -415,6 +448,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         }
       }
@@ -452,6 +488,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:2]: subject drops [[null, 8], [null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "bdb": {
@@ -485,6 +524,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:2]: subject drops [[null, 8], [null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "kc": {
@@ -518,6 +560,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:2]: subject drops [[null, 8], [null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         }
       }
@@ -549,6 +594,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:2]: subject drops [[null, 8], [null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "bdb": {
@@ -576,6 +624,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:2]: subject drops [[null, 8], [null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "kc": {
@@ -603,6 +654,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:2]: subject drops [[null, 8], [null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         }
       }
@@ -634,6 +688,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:2]: subject drops [[null, 8], [null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "bdb": {
@@ -661,6 +718,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:2]: subject drops [[null, 8], [null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "kc": {
@@ -688,6 +748,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:2]: subject drops [[null, 8], [null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         }
       }
@@ -735,6 +798,17 @@ and `save-replacement-valid-to-different-valid*`.
             "userfiles.user_phrase_index.bin: subject only [529408]",
             "userfiles.user_pinyin_index.bin: subject only [529408]",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "exit",
+            "result",
+            "result.logs",
+            "result.merged",
+            "result.records",
+            "result.save",
+            "result.train",
+            "stderr",
+            "userfiles"
           ]
         },
         "bdb": {
@@ -778,6 +852,17 @@ and `save-replacement-valid-to-different-valid*`.
             "userfiles.user_phrase_index.bin: subject only [8192]",
             "userfiles.user_pinyin_index.bin: subject only [8192]",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "exit",
+            "result",
+            "result.logs",
+            "result.merged",
+            "result.records",
+            "result.save",
+            "result.train",
+            "stderr",
+            "userfiles"
           ]
         },
         "kc": {
@@ -821,6 +906,17 @@ and `save-replacement-valid-to-different-valid*`.
             "userfiles.user_phrase_index.bin: subject only [7]",
             "userfiles.user_pinyin_index.bin: subject only [7]",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "exit",
+            "result",
+            "result.logs",
+            "result.merged",
+            "result.records",
+            "result.save",
+            "result.train",
+            "stderr",
+            "userfiles"
           ]
         }
       }
@@ -863,6 +959,17 @@ and `save-replacement-valid-to-different-valid*`.
             "userfiles.user_phrase_index.bin: subject only [529408]",
             "userfiles.user_pinyin_index.bin: subject only [529408]",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "exit",
+            "result",
+            "result.logs",
+            "result.merged",
+            "result.records",
+            "result.save",
+            "result.train",
+            "stderr",
+            "userfiles"
           ]
         },
         "bdb": {
@@ -901,6 +1008,17 @@ and `save-replacement-valid-to-different-valid*`.
             "userfiles.user_phrase_index.bin: subject only [8192]",
             "userfiles.user_pinyin_index.bin: subject only [8192]",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "exit",
+            "result",
+            "result.logs",
+            "result.merged",
+            "result.records",
+            "result.save",
+            "result.train",
+            "stderr",
+            "userfiles"
           ]
         },
         "kc": {
@@ -939,6 +1057,17 @@ and `save-replacement-valid-to-different-valid*`.
             "userfiles.user_phrase_index.bin: subject only [7]",
             "userfiles.user_pinyin_index.bin: subject only [7]",
             "… further divergence omitted (4096-byte budget)"
+          ],
+          "accepted": [
+            "exit",
+            "result",
+            "result.logs",
+            "result.merged",
+            "result.records",
+            "result.save",
+            "result.train",
+            "stderr",
+            "userfiles"
           ]
         }
       }
@@ -974,6 +1103,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "bdb": {
@@ -1005,6 +1137,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "kc": {
@@ -1036,6 +1171,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         }
       }
@@ -1071,6 +1209,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "bdb": {
@@ -1102,6 +1243,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "kc": {
@@ -1133,6 +1277,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         }
       }
@@ -1168,6 +1315,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "bdb": {
@@ -1199,6 +1349,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "kc": {
@@ -1230,6 +1383,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         }
       }
@@ -1265,6 +1421,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "bdb": {
@@ -1296,6 +1455,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "kc": {
@@ -1327,6 +1489,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         }
       }
@@ -1362,6 +1527,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:2]: subject drops [[null, 8], [null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "bdb": {
@@ -1393,6 +1561,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:2]: subject drops [[null, 8], [null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "kc": {
@@ -1424,6 +1595,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:2]: subject drops [[null, 8], [null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         }
       }
@@ -1459,6 +1633,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:2]: subject drops [[null, 8], [null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "bdb": {
@@ -1490,6 +1667,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:2]: subject drops [[null, 8], [null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "kc": {
@@ -1521,6 +1701,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:2]: subject drops [[null, 8], [null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         }
       }
@@ -1552,6 +1735,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "bdb": {
@@ -1579,6 +1765,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "kc": {
@@ -1606,6 +1795,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         }
       }
@@ -1637,6 +1829,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "bdb": {
@@ -1664,6 +1859,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "kc": {
@@ -1691,6 +1889,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         }
       }
@@ -1718,6 +1919,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "bdb": {
@@ -1741,6 +1945,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "kc": {
@@ -1764,6 +1971,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         }
       }
@@ -1791,6 +2001,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "bdb": {
@@ -1814,6 +2027,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "kc": {
@@ -1837,6 +2053,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         }
       }
@@ -1868,6 +2087,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "bdb": {
@@ -1895,6 +2117,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "kc": {
@@ -1922,6 +2147,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         }
       }
@@ -1957,6 +2185,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:2]: subject drops [[null, 8], [null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "bdb": {
@@ -1988,6 +2219,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:2]: subject drops [[null, 8], [null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "kc": {
@@ -2019,6 +2253,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:2]: subject drops [[null, 8], [null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         }
       }
@@ -2056,6 +2293,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "bdb": {
@@ -2089,6 +2329,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "kc": {
@@ -2122,6 +2365,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         }
       }
@@ -2159,6 +2405,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "bdb": {
@@ -2192,6 +2441,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "kc": {
@@ -2225,6 +2477,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         }
       }
@@ -2256,6 +2511,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "bdb": {
@@ -2283,6 +2541,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "kc": {
@@ -2310,6 +2571,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         }
       }
@@ -2341,6 +2605,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "bdb": {
@@ -2368,6 +2635,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "kc": {
@@ -2395,6 +2665,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         }
       }
@@ -2426,6 +2699,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "bdb": {
@@ -2453,6 +2729,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "kc": {
@@ -2480,6 +2759,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         }
       }
@@ -2511,6 +2793,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "bdb": {
@@ -2538,6 +2823,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "kc": {
@@ -2565,6 +2853,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         }
       }
@@ -2594,6 +2885,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "bdb": {
@@ -2619,6 +2913,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "kc": {
@@ -2644,6 +2941,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         }
       }
@@ -2673,6 +2973,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "bdb": {
@@ -2698,6 +3001,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "kc": {
@@ -2723,6 +3029,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         }
       }
@@ -2760,6 +3069,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:2]: subject drops [[null, 8], [null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "bdb": {
@@ -2793,6 +3105,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:2]: subject drops [[null, 8], [null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "kc": {
@@ -2826,6 +3141,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:2]: subject drops [[null, 8], [null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         }
       }
@@ -2863,6 +3181,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:2]: subject drops [[null, 8], [null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "bdb": {
@@ -2896,6 +3217,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:2]: subject drops [[null, 8], [null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "kc": {
@@ -2929,6 +3253,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:2]: subject drops [[null, 8], [null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         }
       }
@@ -2960,6 +3287,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:2]: subject drops [[null, 8], [null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "bdb": {
@@ -2987,6 +3317,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:2]: subject drops [[null, 8], [null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "kc": {
@@ -3014,6 +3347,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:2]: subject drops [[null, 8], [null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         }
       }
@@ -3045,6 +3381,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:2]: subject drops [[null, 8], [null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "bdb": {
@@ -3072,6 +3411,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:2]: subject drops [[null, 8], [null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "kc": {
@@ -3099,6 +3441,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:2]: subject drops [[null, 8], [null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         }
       }
@@ -3136,6 +3481,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:2]: subject drops [[null, 8], [null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "bdb": {
@@ -3169,6 +3517,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:2]: subject drops [[null, 8], [null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "kc": {
@@ -3202,6 +3553,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:2]: subject drops [[null, 8], [null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         }
       }
@@ -3239,6 +3593,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:2]: subject drops [[null, 8], [null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "bdb": {
@@ -3272,6 +3629,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:2]: subject drops [[null, 8], [null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "kc": {
@@ -3305,6 +3665,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:2]: subject drops [[null, 8], [null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         }
       }
@@ -3338,6 +3701,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "bdb": {
@@ -3367,6 +3733,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "kc": {
@@ -3396,6 +3765,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         }
       }
@@ -3427,6 +3799,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "bdb": {
@@ -3454,6 +3829,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "kc": {
@@ -3481,6 +3859,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         }
       }
@@ -3512,6 +3893,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "bdb": {
@@ -3539,6 +3923,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "kc": {
@@ -3566,6 +3953,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         }
       }
@@ -3597,6 +3987,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "bdb": {
@@ -3624,6 +4017,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         },
         "kc": {
@@ -3651,6 +4047,9 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ],
+          "accepted": [
+            "result.logs"
           ]
         }
       }

@@ -4,9 +4,8 @@ One command over contract-diff.py's `--observations` captures: for each
 captured case, or a `--cases` selection of them, it writes or replaces the
 case's entry for the captured cell in the record's `contract-diff-policy`
 block, in the compact form tools/bisection/contract_policy.py defines (the
-SHA-256 of each side's complete stable observation, a digest per field and
-the divergence as text), and adds the block when the record has none. A
-record that still holds complete observations (schema 1) is converted with
+per-field digests and the divergence as text), and adds the block when the record has none. An
+older record (schema 1 or 2) is converted with
 `--migrate`. A tool-diff row marked `database_free` (its utility opens no
 DBM, tools/dev/tool_diff.py) is recorded once as the case's `database_free`
 entry, which the verdict reads on every cell; every captured cell of such a
@@ -109,24 +108,37 @@ def load_record(path):
         raise RecordError(f'{path}: the policy block is not JSON ({error})') from None
     if (not isinstance(record, dict) or record.get('record') != path.stem or record.get('status') != 'current'
             or record.get('disposition') != 'POLICY-ACCEPTED' or not isinstance(record.get('cases'), dict)
-            or record.get('schema') not in (1, contract_policy.SCHEMA)):
+            or record.get('schema') not in (1, 2, contract_policy.SCHEMA)):
         raise RecordError(f'{path}: the policy block is not a current POLICY-ACCEPTED record named {path.stem}')
     return text, record, found[0].span(1)
 
 
 def migrate(record):
-    """Convert a schema-1 block's complete observations to entries; return what was converted."""
-    if record.get('schema') != 1:
+    """Convert schema-1 observations or schema-2 digests to current entries."""
+    if record.get('schema') not in (1, 2):
         return []
+    schema = record['schema']
     converted = []
+
+    def convert(pair):
+        if schema == 1:
+            return contract_policy.entry(pair['pin'], pair['subject'])
+        pin, subject = (pair[side]['fields'] for side in contract_policy.SIDES)
+        pair['accepted'] = sorted(name for name in pin.keys() | subject.keys()
+                                  if pin.get(name) != subject.get(name))
+        return contract_policy.check_entry(pair)
+
     for case, kept in record['cases'].items():
         try:
             if isinstance(kept, dict) and set(kept) == {'cells'}:
                 for cell, pair in kept['cells'].items():
-                    kept['cells'][cell] = contract_policy.entry(pair['pin'], pair['subject'])
+                    kept['cells'][cell] = convert(pair)
                     converted.append(f'{case} [{cell}]')
+            elif isinstance(kept, dict) and set(kept) == {'database_free'}:
+                kept['database_free'] = convert(kept['database_free'])
+                converted.append(f'{case} [database_free]')
             else:
-                record['cases'][case] = contract_policy.entry(kept['pin'], kept['subject'])
+                record['cases'][case] = convert(kept)
                 converted.append(case)
         except (KeyError, TypeError, ValueError) as error:
             raise RecordError(f'{case}: cannot convert the recorded observations ({error})') from None
@@ -158,8 +170,8 @@ def record(path, captures, cases=None, *, migrate_schema_1=False, out=print):
     """Write the selected captures into the record; return the names recorded."""
     text, kept, span = load_record(path)
     converted = migrate(kept) if migrate_schema_1 else []
-    if kept.get('schema') == 1:
-        raise RecordError(f'{path}: schema 1 holds complete observations; pass --migrate to convert it')
+    if kept.get('schema') != contract_policy.SCHEMA:
+        raise RecordError(f'{path}: schema {kept["schema"]} needs conversion; pass --migrate')
     for name in converted:
         out(f'converted {name}')
     wanted = None if cases is None else list(dict.fromkeys(cases))
@@ -210,7 +222,7 @@ def main(argv=None):
     parser.add_argument('captures', type=Path, nargs='*', help='contract-diff.py --observations files')
     parser.add_argument('--cases', help='comma-separated case IDs to record; default: every captured case')
     parser.add_argument('--migrate', action='store_true',
-                        help='convert a schema-1 block, which holds complete observations, before recording')
+                        help='convert an older block before recording')
     args = parser.parse_args(argv)
     if not args.captures and not args.migrate:
         parser.error('at least one capture, or --migrate')

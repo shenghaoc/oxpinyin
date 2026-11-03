@@ -171,6 +171,21 @@ class PolicyRecordTests(unittest.TestCase):
                                                           policy_root=self.root, cell='bdb', directory_probe=None),
                              ('INVALID', False, False))
 
+    def test_schema_2_migration_uses_existing_field_digests(self):
+        pin = contract_policy.stable_observation(PIN, False)
+        subject = contract_policy.stable_observation(SUBJECT, False)
+        old_entry = contract_policy.entry(pin, subject)
+        del old_entry['accepted']
+        old = dict(schema=2, record='rec', status='current', disposition='POLICY-ACCEPTED',
+                   cases={'family/case': {'cells': {'bdb': old_entry}},
+                          'free': {'database_free': json.loads(json.dumps(old_entry))}})
+        self.record.write_text('# Record\n\n```contract-diff-policy\n' + json.dumps(old) + '\n```\n')
+        status, _, err = self.run_main('--migrate')
+        self.assertEqual((status, err), (0, ''))
+        migrated = self.block()['cases']['family/case']['cells']['bdb']
+        self.assertEqual(migrated, contract_policy.entry(pin, subject))
+        self.assertEqual(self.block()['cases']['free']['database_free'], contract_policy.entry(pin, subject))
+
     def test_a_schema_1_block_is_converted_only_on_request_and_bare_entries_stay_bare(self):
         pin = contract_policy.stable_observation(PIN, False)
         subject = contract_policy.stable_observation(SUBJECT, False)

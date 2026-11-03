@@ -15,7 +15,7 @@
 
 ```contract-diff-policy
 {
-  "schema": 2,
+  "schema": 3,
   "record": "1297-punct-words",
   "status": "current",
   "disposition": "POLICY-ACCEPTED",
@@ -43,6 +43,9 @@
       },
       "divergence": [
         "result.puncts[1:2]: subject drops [\"\"]"
+      ],
+      "accepted": [
+        "result.puncts"
       ]
     },
     "punct-decode/misaligned-short": {
@@ -68,6 +71,9 @@
       },
       "divergence": [
         "result.puncts[0:1]: subject drops [\"\"]"
+      ],
+      "accepted": [
+        "result.puncts"
       ]
     }
   }

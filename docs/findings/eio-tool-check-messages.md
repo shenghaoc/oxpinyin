@@ -26,7 +26,7 @@ warnings from the pin's own code stay. Stdout, files and SIGABRT match
 
 ```contract-diff-policy
 {
-  "schema": 2,
+  "schema": 3,
   "record": "eio-tool-check-messages",
   "status": "current",
   "disposition": "POLICY-ACCEPTED",
@@ -54,6 +54,9 @@ warnings from the pin's own code stay. Stdout, files and SIGABRT match
         "divergence": [
           "stderr: pin \"k_mixture_model_to_interpolation: k_mixtur\" … (length 188); subject \"\"",
           "… further divergence omitted (4096-byte budget)"
+        ],
+        "accepted": [
+          "stderr"
         ]
       }
     },
@@ -80,6 +83,9 @@ warnings from the pin's own code stay. Stdout, files and SIGABRT match
         "divergence": [
           "stderr: pin \"\\n** (process:PID): CRITICAL **: TIME: bool\" … (length 333); subject \"\"",
           "… further divergence omitted (4096-byte budget)"
+        ],
+        "accepted": [
+          "stderr"
         ]
       }
     },
@@ -106,6 +112,9 @@ warnings from the pin's own code stay. Stdout, files and SIGABRT match
         "divergence": [
           "stderr: pin \"\\n** (process:PID): WARNING **: TIME: misse\" … (length 254); subject \"\\n** (process:PID): WARNING **: TIME: misse\" … (length 67)",
           "… further divergence omitted (4096-byte budget)"
+        ],
+        "accepted": [
+          "stderr"
         ]
       }
     },
@@ -132,6 +141,9 @@ warnings from the pin's own code stay. Stdout, files and SIGABRT match
         "divergence": [
           "stderr: pin \"k_mixture_model_to_interpolation: k_mixtur\" … (length 184); subject \"\"",
           "… further divergence omitted (4096-byte budget)"
+        ],
+        "accepted": [
+          "stderr"
         ]
       }
     }
