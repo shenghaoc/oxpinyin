@@ -172,7 +172,32 @@ pin's coupling while preserving its behaviour.
 | Bigram row | `SingleGram` (`storage/ngram.h:59`): `MemoryChunk` of `{u32 total}` then sorted `SingleGramItem {token, freq}` (`storage/ngram.cpp:31`) | free functions over the same bytes in `oxpinyin-core/src/single_gram.rs` (`lower_bound`, `insert_freq`, `mask_out`, `merge_single_gram`) | same / follows |
 | System bigram | `Bigram::attach` read-only on the DBM (`storage/ngram_bdb.h:88`), one `load` per row | `BigramTable::load_raw_successors` (`oxpinyin-data/src/bigram_table.rs`) | same / follows |
 | User bigram | `Bigram::load_db` into the backend's in-memory container (`storage/ngram_bdb.h:67`) | `UserBigramDb` (`oxpinyin-store/src/lib.rs`): the pin's container per backend through the real library | same / follows |
-| Training-only n-grams | `FlexibleSingleGram` / `FlexibleBigram` on a DBM, used by `utils/training` only | in-memory ordered maps in `oxpinyin-kmm/src/model.rs` | different / off path — training tools only; their outputs are rows in §8 |
+| Training-only n-grams | `FlexibleSingleGram` / `FlexibleBigram` on a DBM, used by `utils/training` and `tests/storage/test_flexible_ngram.cpp` | `SingleGram` / `FlexibleBigram` in `oxpinyin-store/src/flexible_ngram.rs`, native DBM records consumed by nonshipping `oxpinyin-kmm` and `oxpinyin-utils` | same container layout; attach, magic-header reads and tools-only KC mutation follow backend twins ([source and verification](eio-test-flexible-attach-empty.md)) |
+
+Flexible attach follows `src/storage/flexible_ngram_tkrzwdb.h:128-187`,
+`flexible_ngram_kyotodb.h:129-179` and `flexible_ngram_bdb.h:94-152` at
+074a2219. Both implementations make at most two native open calls and
+one signature read or write. The wrapper's control work is bounded;
+native open costs remain the selected library's costs. Checking the
+signature copies O(v) bytes for a value of length v on KC/tkrzw, as the
+pin does, and at most four bytes through BDB's partial read. Retaining
+a refused handle adds no second live DBM. The old metadata freshness
+test is removed; no Rust-side record scan or additional index is added.
+The KC magic-header read uses the existing CXX `accept` visitor with a bounded sink, copying at most
+4 + H bytes for a header of size H and checking the native returned size
+(`flexible_ngram_kyotodb.h:282-308`). Its temporary space is O(H), as in
+the pin. BDB reads H bytes at offset four (`flexible_ngram_bdb.h:302-328`);
+tkrzw reads the whole value before checking its size
+(`flexible_ngram_tkrzwdb.h:292-323`). Tools-only KC writes call native
+`set` without transactions; reset synchronizes at
+`flexible_ngram_kyotodb.h:88`. Shipping store transactions are unchanged.
+
+
+`SingleGram::search` starts at the existing lower bound and appends in
+stored order until the range end (`flexible_single_gram.h:118-139`). For
+n stored items and k emitted items its time is O(log n + k), with O(k)
+output storage, matching the pin. Unsorted records use that same lower
+bound under [the existing record](eio-flexible-bigram-unsorted-records.md).
 
 ### User lookup ownership (#1515)
 

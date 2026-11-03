@@ -62,9 +62,9 @@ coverage and are superseded for these programs; no program is exempt.
 | A | `tests/test_chewing.cpp` / `test_chewing` | No | `../data`: Pinyin C API's chewing parse, sentence and auxiliary text, train/reset/save and teardown | **Ported** (2026-11-01 UTC) |
 | A | `tests/test_zhuyin.cpp` / `test_zhuyin` | No | `../data`: the separate `zhuyin_*` C API, chewing parse and sentence, train/reset/save and teardown | **Ported** (2026-11-01 UTC) |
 | B | `tests/storage/test_parser2.cpp` / `test_parser2` | No | GLib `--parser`, `--incomplete`, `--scheme`; stdin; every parser variant, consumed length and raw key spans; `timer.h` output | **Ported** — `test_parser2.json`, 26 tkrzw cases |
-| C | `tests/storage/test_ngram.cpp` / `test_ngram` | Yes | `SingleGram`/`Bigram` operations; `/tmp/test.db`, `/tmp/snapshot.db` | **GAP** |
-| C | `tests/storage/test_flexible_ngram.cpp` / `test_flexible_ngram` | Yes | Flexible single-gram range search and mutation, bigram storage; `/tmp/training.db` | **GAP** |
-| C | `tests/storage/test_punct_table.cpp` / `test_punct_table` | Yes | Punctuation append/remove and snapshot save/load; `/tmp/punct.bin`, `/tmp/snapshot.db` | **GAP** |
+| C | `tests/storage/test_ngram.cpp` / `test_ngram` | Yes | `SingleGram`/`Bigram` operations; `/tmp/test.db`, `/tmp/snapshot.db` | **Ported** — same-named tool case file, all three cells |
+| C | `tests/storage/test_flexible_ngram.cpp` / `test_flexible_ngram` | Yes | Flexible single-gram range search and mutation, bigram storage; `/tmp/training.db` | **Ported** — same-named tool case file, all three cells |
+| C | `tests/storage/test_punct_table.cpp` / `test_punct_table` | Yes | Punctuation append/remove and snapshot save/load; `/tmp/punct.bin`, `/tmp/snapshot.db` | **Ported** — same-named tool case file, all three cells |
 | D | `tests/storage/test_table_info.cpp` / `test_table_info` | Yes | System/user table configuration and conformance; `../../data/table.conf`, `/tmp/user.conf` | **Ported** — `test_table_info.json`, 11 MATCH and 3 POLICY-ACCEPTED on tkrzw |
 | E | `tests/include/test_memory_chunk.cpp` / `test_memory_chunk` | Yes | Chunk content, capacity, insert/remove, save/load/map; `/tmp/test.bin` | **GAP** |
 | E | `tests/storage/test_phrase_index.cpp` / `test_phrase_index` | No | Phrase-item/index mutation, frequency, compact and chunk round trips; `../../data/*` through `tests_helper.h` | **GAP** |
@@ -83,6 +83,18 @@ existing C facades. Its one-per-program case files are
 `pin-tests-a-prefix-prompt.patch` mutation is detected by
 `test-pinyin-quit` on tkrzw; reversing it and rebuilding restores MATCH.
 
+Family C ports `test_ngram`, `test_flexible_ngram` and `test_punct_table`
+with 14 source-derived cases in their three same-named case files. The
+fixed `/tmp` paths remain isolated per side. Combined with all 45 current
+K-mixture cases, the all-cell result is tkrzw 50 MATCH / 9 POLICY-ACCEPTED,
+BDB 44 / 15, and KC 48 / 11, with no DIFFER or INVALID. Policy records bind
+the existing assertion-text and BDB failed-handle diagnostic exceptions. The tkrzw abort files use
+only the approved eight-byte clock-field normalization. The named
+`pin-tests-c-ngram-token-plus-one.patch` mutation is detected by
+`ngram-fresh`; reverting and rebuilding restores the complete gate.
+[Shared attach and backend evidence](../findings/eio-test-flexible-attach-empty.md)
+records the native open, magic-header and mutation calls.
+
 The existing Rust Pinyin and Zhuyin C facades are separate implementations;
 raw-text phrase segmentation and phrase lookup exist. Those earlier N/A
 claims and the claim that Zhuyin is unified onto the Pinyin C API are stale.
@@ -98,9 +110,9 @@ paths are isolated across processes by the runner. Timing lines are the
 only clock-dependent test-program output; all other bytes remain compared
 under the existing external-I/O/check-message policies.
 
-Delivery order is A, B, D, C. Family E remains blocked until both external
-I/O stage 2 chunk mapping and `MemoryChunk::load` have merged; the current
-sequence stops before E.
+Delivery order is A, B, D, C. Family E is unblocked by the landed chunk
+mapping and `MemoryChunk::load` work (#1549, #1576 and #1579). Its eight
+programs are next as new members above #1528, outside this pass.
 
 ## libchewing tests
 
@@ -130,7 +142,7 @@ ABI behaviors are N/A by design rather than artificially reconstructed.
 ## Totals
 
 - **libpinyin**: 17 `noinst_PROGRAMS`, six also in automated `TESTS`;
-  **6 Ported, 11 GAP** after families A, B and D. Family PRs update their rows
+  **9 Ported, 8 GAP** after families A, B, D and C. Family PRs update their rows
   and this total when their drop-in verification passes.
 - The libchewing rows retain their separately audited behavior-coverage
   classifications. They do not count toward the libpinyin drop-in total.

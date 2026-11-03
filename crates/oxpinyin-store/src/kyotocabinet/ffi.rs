@@ -182,6 +182,12 @@ fn attach_mode(read_only: bool, create: bool) -> u32 {
 pub(super) enum Sink {
     /// A point read into the caller's buffer, which arrives cleared.
     Value { bytes: Vec<u8>, found: bool },
+    /// A bounded point read, retaining the complete record length.
+    Bounded {
+        bytes: Vec<u8>,
+        limit: usize,
+        size: Option<usize>,
+    },
     /// The record at a cursor, key then value, in a buffer the cursor
     /// reuses.
     Record {
@@ -207,6 +213,11 @@ impl Sink {
                 bytes.reserve_exact(value.len());
                 bytes.extend_from_slice(value);
                 *found = true;
+            }
+            Self::Bounded { bytes, limit, size } => {
+                let count = value.len().min(*limit);
+                bytes.extend_from_slice(&value[..count]);
+                *size = Some(value.len());
             }
             Self::Record {
                 bytes,
@@ -535,6 +546,31 @@ impl Db {
             return Err(self.error("kcdbget"));
         }
         Ok(found)
+    }
+
+    /// Bounded point read using the same read-only accept visitor as
+    /// BasicDB::get's bounded overload (KC 1.2.80 kcdb.h:1985-2012).
+    pub(crate) fn get_bounded(
+        &self,
+        key: &[u8],
+        value: &mut [u8],
+    ) -> Result<Option<usize>, StoreError> {
+        let key = region(key)?;
+        let mut sink = Sink::Bounded {
+            bytes: Vec::with_capacity(value.len()),
+            limit: value.len(),
+            size: None,
+        };
+        // SAFETY: `region` bounds the key by MEMMAXSIZ.
+        let ok = unsafe { sys::get(&self.db, key, &mut sink) };
+        let Sink::Bounded { bytes, size, .. } = sink else {
+            unreachable!("the visitor keeps the sink's kind");
+        };
+        if !ok {
+            return Err(self.error("kcdbget"));
+        }
+        value[..bytes.len()].copy_from_slice(&bytes);
+        Ok(size)
     }
 
     /// Whether `key` exists, an empty value included, copying nothing:

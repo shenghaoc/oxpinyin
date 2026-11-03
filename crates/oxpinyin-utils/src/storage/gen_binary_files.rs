@@ -27,6 +27,7 @@ use oxpinyin_input::tool::storage::TableFile;
 use crate::storage::dbm::Tree;
 use crate::storage::libraries::save_library;
 use crate::storage::pinyin;
+use crate::storage::punctuation::append_punctuation;
 use crate::storage::table_text::{read_pinyin_record, read_punct_record};
 use crate::storage::{
     gen_punct_entry, load_table_conf, name_c_string, parse_options, table_dir, table_dir_entry,
@@ -408,38 +409,4 @@ fn generate_punct_table(table_name: &CStr, directory: Option<&CStr>) {
     while let Some(record) = read_punct_record(&mut file) {
         append_punctuation(&table, record.token, &record.punctuation);
     }
-}
-
-/// `PunctTable::append_punctuation` / `PunctTableEntry::append_punctuation`
-/// (`src/storage/punct_table.cpp:97-115`, `:158-167`).
-fn append_punctuation(table: &Tree, token: u32, punctuation: &CStr) {
-    let key = token.to_le_bytes();
-    let (ucs4, _written) = tool::utf8_to_ucs4(punctuation);
-    let ucs4 = ucs4.unwrap_or_default();
-    let existing = table.get(&key).unwrap_or_default();
-    // `get_all_punctuations`: zero-terminated UCS-4 runs.
-    let mut runs: Vec<Vec<u32>> = Vec::new();
-    let mut current = Vec::new();
-    for word in existing
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .map(|word| u32::from_le_bytes([word[0], word[1], word[2], word[3]]))
-    {
-        if word == 0 {
-            runs.push(std::mem::take(&mut current));
-        } else {
-            current.push(word);
-        }
-    }
-    if runs.contains(&ucs4) {
-        tool::storage::report_duplicated_punctuation(punctuation);
-        return;
-    }
-    let mut value = existing;
-    for word in &ucs4 {
-        value.extend_from_slice(&word.to_le_bytes());
-    }
-    value.extend_from_slice(&0_u32.to_le_bytes());
-    let _ = table.put(&key, &value);
 }

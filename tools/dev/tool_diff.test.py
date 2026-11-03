@@ -25,6 +25,77 @@ class ToolDiffTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
 
+    def test_tkrzw_abort_timestamp_masks_the_whole_field_only(self):
+        original = bytearray(b'TkrzwHDB\n' + bytes(range(128)))
+        def observed(data):
+            files = {'tmp/test.db': 'hex:' + data.hex()}
+            tool_diff.mask_tkrzw_abort_timestamps(files, ['tmp/test.db'], 'tkrzw')
+            return dict(exit=-6, stdout='', stderr='', files=files)
+        expected = observed(original)
+        changed = original.copy()
+        changed[48:56] = bytes(value ^ 255 for value in changed[48:56])
+        case = dict(pin_signal=-6, reproduces_signal=True)
+        self.assertEqual(tool_diff.verdict(case, expected, observed(changed), self.root, 'tkrzw')[0], 'MATCH')
+        masked = bytes.fromhex(expected['files']['tmp/test.db'][4:])
+        self.assertEqual(masked, original[:48] + bytes(8) + original[56:])
+        for offset in (47, 56):
+            changed = original.copy()
+            changed[offset] ^= 255
+            self.assertEqual(tool_diff.verdict(case, expected, observed(changed), self.root, 'tkrzw')[0], 'DIFFER')
+
+    def test_tkrzw_timestamp_mask_requires_observed_abort(self):
+        original = b'TkrzwHDB\n' + bytes(range(128))
+        name = 'tmp/test.db'
+        case = dict(utility='test_ngram', pin_signal=-6, reproduces_signal=True,
+                    tkrzw_abort_timestamp=[name])
+        ctx = SimpleNamespace(env={}, settings=SimpleNamespace(cell='tkrzw'),
+            services=SimpleNamespace(context=pool.UnitContext('status', threading.Event())))
+        for index, status in enumerate((0, -11, -6)):
+            with patch.object(tool_diff, 'isolated_launch', return_value=pool.Completed(status, b'', b'')), \
+                    patch.object(tool_diff, 'snapshot', return_value={name: 'hex:' + original.hex()}):
+                result = tool_diff.observation(ctx, Path(sys.executable), case,
+                    self.root / str(index), {}, b'', time.monotonic() + 5)
+            actual = bytes.fromhex(result['files'][name][4:])
+            expected = original[:48] + bytes(8) + original[56:] if status == -6 else original
+            self.assertEqual(actual, expected)
+
+    def test_null_policy_cells_uses_default_scope(self):
+        case = dict(id='null-scope', utility='test_ngram', source='test_ngram.cpp:40',
+                    policy_record='absent.md', policy_cells=None)
+        path = self.root / 'null-policy.json'
+        path.write_text(json.dumps(dict(schema=1, cases=[case])))
+        self.assertEqual(tool_diff.load_cases([path]), [case])
+        side = dict(exit=0, stdout='', stderr='', files={})
+        self.assertEqual(tool_diff.verdict(case, side, side, self.root, 'bdb')[0], 'INVALID')
+        self.assertEqual(tool_diff.verdict(dict(case, policy_cells=[]), side, side, self.root, 'bdb')[0], 'MATCH')
+
+    def test_tkrzw_abort_timestamp_leaves_other_files_and_cells_alone(self):
+        for cell, data in (('kc', b'TkrzwHDB\n' + bytes(range(128))),
+                           ('bdb', b'TkrzwHDB\n' + bytes(range(128))),
+                           ('tkrzw', b'not-tkrzw' + bytes(range(128))),
+                           ('tkrzw', b'TkrzwHDB\n')):
+            files = {'named': 'hex:' + data.hex(), 'other': 'hex:' + data.hex()}
+            expected = files.copy()
+            tool_diff.mask_tkrzw_abort_timestamps(files, ['named'], cell)
+            self.assertEqual(files, expected)
+        files = {'other': 'hex:' + (b'TkrzwHDB\n' + bytes(range(128))).hex()}
+        expected = files.copy()
+        tool_diff.mask_tkrzw_abort_timestamps(files, ['named'], 'tkrzw')
+        self.assertEqual(files, expected)
+
+    def test_tkrzw_abort_timestamp_requires_named_reproduced_abort(self):
+        case = dict(id='abort', utility='test_ngram', source='test_ngram.cpp:78',
+                    pin_signal=-6, reproduces_signal=True, tkrzw_abort_timestamp=['tmp/test.db'])
+        path = self.root / 'case.json'
+        path.write_text(json.dumps(dict(schema=1, cases=[case])))
+        self.assertEqual(tool_diff.load_cases([path]), [case])
+        for fields in (dict(pin_signal=None), dict(reproduces_signal=False),
+                       dict(tkrzw_abort_timestamp=True), dict(tkrzw_abort_timestamp=[]),
+                       dict(tkrzw_abort_timestamp=['../escape'])):
+            path.write_text(json.dumps(dict(schema=1, cases=[dict(case, **fields)])))
+            with self.assertRaises(ValueError):
+                tool_diff.load_cases([path])
+
     def test_pinyin_index_mask_keeps_tokens_keys_order_and_even_items(self):
         # N=1: token + key + two padding bytes, with two items in stored order.
         original = b'0100 010000000100abcd0200000001001234\n'
@@ -387,6 +458,25 @@ class ToolDiffTests(unittest.TestCase):
             path.write_text(json.dumps(dict(schema=1, cases=[changed])))
             with self.assertRaises(ValueError):
                 tool_diff.load_cases([path])
+
+    def test_policy_record_is_not_applied_outside_its_named_cells(self):
+        case = dict(id='abort', policy_record='record.md', policy_cells=['bdb'],
+                    pin_signal=-6, reproduces_signal=True)
+        pin = dict(exit=-6, stdout='', stderr='assertion\n', files={})
+        subject = dict(pin, stderr='')
+        row = dict(runner='tool-diff', case='abort', cell='bdb', userdir=False, abort=False,
+                   pin_signal=-6, reproduces_signal=True, database_free=False, pin=pin, subject=subject)
+        self.database_free_record(row)
+        self.assertEqual(tool_diff.verdict(case, pin, subject, self.root, 'bdb')[0], 'POLICY-ACCEPTED')
+        self.assertEqual(tool_diff.verdict(case, pin, subject, self.root, 'kc')[0], 'DIFFER')
+
+    def test_a_cell_without_an_applicable_record_compares_as_plain_parity(self):
+        case = dict(id='empty', policy_record='absent.md', policy_cells=['kc', 'tkrzw'],
+                    pin_signal=-6, reproduces_signal=True)
+        side = dict(exit=0, stdout='complete\n', stderr='', files={'out': 'hex:01'})
+        self.assertEqual(tool_diff.verdict(case, side, side, self.root, 'bdb')[0], 'MATCH')
+        self.assertEqual(tool_diff.verdict(case, side, dict(side, stdout=''), self.root, 'bdb')[0], 'DIFFER')
+        self.assertEqual(tool_diff.verdict(case, side, side, self.root, 'kc')[0], 'INVALID')
 
     def test_a_reproduced_abort_compares_without_a_policy_record(self):
         case = dict(id='abort', pin_signal=-6, reproduces_signal=True)

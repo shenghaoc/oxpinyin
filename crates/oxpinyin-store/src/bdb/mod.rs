@@ -968,16 +968,31 @@ impl crate::UserBigramDb for BdbUserBigramDb {
     }
 
     fn save_db(&self, path: &Path) -> Result<(), StoreError> {
-        // `Bigram::save_db` (`ngram_bdb.cpp:81-108`): unlink, create a
-        // `DB_HASH` file (`DB_CREATE, 0600`), copy this container into it
-        // in cursor order, `tmp_db->sync(m_db, 0)` — a sync of this
-        // in-memory container, not of the file — then close the file.
-        crate::remove_if_present(path)?;
-        let file = Db::open(path, ffi::DB_HASH, false, true, ffi::USER_FILE_MODE)?;
-        visit_db(&self.db, |key, value| file.put(key, value))?;
-        // The pin discards this call's return code, and so does this.
-        let _sync = self.db.sync();
-        file.close_unsynced();
-        Ok(())
+        save_bigram_db(&self.db, path)
+    }
+}
+
+fn save_bigram_db(db: &Db, path: &Path) -> Result<(), StoreError> {
+    // `Bigram::save_db` (`ngram_bdb.cpp:81-108`): unlink, create a
+    // `DB_HASH` file (`DB_CREATE, 0600`), copy this container into it
+    // in cursor order, `tmp_db->sync(m_db, 0)` — a sync of this
+    // in-memory container, not of the file — then close the file.
+    crate::remove_if_present(path)?;
+    let file = Db::open(path, ffi::DB_HASH, false, true, ffi::USER_FILE_MODE)?;
+    visit_db(db, |key, value| file.put(key, value))?;
+    // The pin discards this call's return code, and so does this.
+    let _sync = db.sync();
+    file.close_unsynced();
+    Ok(())
+}
+
+impl BdbStore {
+    /// Save an attached bigram using the same implementation as the
+    /// in-memory user bigram (`ngram_{tkrzwdb,kyotodb,bdb}.cpp` at 074a2219).
+    ///
+    /// # Errors
+    /// Returns the existing save operation's file or backend error.
+    pub fn save_bigram_db(&self, path: &Path) -> Result<(), StoreError> {
+        save_bigram_db(&self.db, path)
     }
 }

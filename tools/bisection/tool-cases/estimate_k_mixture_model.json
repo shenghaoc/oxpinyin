@@ -67,6 +67,24 @@
       "pin_signal": -6,
       "reproduces_signal": true,
       "policy_record": "eio-kmm-tools.md"
+    },
+    {
+      "utility": "estimate_k_mixture_model",
+      "files": {
+        "empty.db": {
+          "hex": ""
+        }
+      },
+      "source": "utils/training/estimate_k_mixture_model.cpp:111-153 at 074a2219",
+      "id": "kmm-estimate-existing-empty",
+      "policy_record": "bdb-failed-handle.md",
+      "policy_cells": ["bdb"],
+      "args": [
+        "--bigram-file",
+        "empty.db",
+        "--deleted-bigram-file",
+        "empty.db"
+      ]
     }
   ]
 }

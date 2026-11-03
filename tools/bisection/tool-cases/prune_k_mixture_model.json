@@ -43,6 +43,32 @@
         "LC_ALL": "C"
       },
       "fixture_dir": "fixtures/w3"
+    },
+    {
+      "utility": "prune_k_mixture_model",
+      "files": {
+        "empty.db": {
+          "hex": ""
+        }
+      },
+      "source": "utils/training/prune_k_mixture_model.cpp:125-135 at 074a2219; src/storage/flexible_ngram_kyotodb.h:282-308 at 074a2219",
+      "id": "kmm-prune-existing-empty",
+      "args": [
+        "empty.db"
+      ],
+      "dbm_rows": [
+        "empty.db"
+      ],
+      "dbm_rows_cells": [
+        "tkrzw"
+      ],
+      "policy_cells": [
+        "bdb",
+        "kc"
+      ],
+      "pin_signal": -6,
+      "reproduces_signal": true,
+      "policy_record": "eio-tool-check-messages.md"
     }
   ]
 }

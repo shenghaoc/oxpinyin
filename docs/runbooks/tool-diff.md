@@ -45,6 +45,15 @@ time, and Berkeley DB writes page metadata, that differ between two runs
 of the pin on the same input. Every other byte of every other file is
 compared exactly. The helper is tooling only and is not a pin utility.
 
+For source-defined aborts leaving an unclosed tkrzw HashDBM container,
+`tkrzw_abort_timestamp` names the files whose eight-byte clock field at
+offset 48 is normalized. The case must register reproduced SIGABRT, and
+the individual observation must actually end in that signal. Only tkrzw
+files with the HashDBM header are eligible; all other bytes
+and files remain exact. This is clock metadata normalization, not a
+POLICY-ACCEPTED divergence. See
+[the source and named witnesses](../findings/eio-test-dbm-abort-timestamp.md).
+
 `dbm_rows_pinyin_index` compares the same complete rows after masking only
 `PinyinIndexItem2<N>` tail padding: two bytes per odd-N item, none for even
 N. Tokens, packed keys, item order, lengths and continuation rows remain
@@ -112,6 +121,11 @@ The six programs that call `tests/timer.h:36-44` may set
 exact `Spent ... us for ... operations, ... us/op, ... times/s.` stdout
 line. Operation counts, line counts, trailing blank lines, stderr and all
 other bytes remain compared. The flag is rejected for other programs.
+
+`policy_cells` selects the cells on which a named `policy_record` applies.
+On other cells the case uses ordinary complete-observation comparison;
+identical observations are MATCH, with no parity record. When omitted or
+null, the record applies on every cell. Signal validation is unchanged.
 
 `dbm_rows_cells` restricts logical-row comparison to the listed cells;
 the other cells retain complete file-byte comparison. Family A uses it

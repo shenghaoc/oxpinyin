@@ -6,6 +6,7 @@ Pin: libpinyin `074a2219c90feaf962d0d24f034514033ece5f99`, read with
 
 `SingleGram::lower_bound` in `crates/oxpinyin-store/src/flexible_ngram.rs`
 already calls Rust's `slice::partition_point` with `entry.token < token`.
+Range `search` (`flexible_single_gram.h:118-139`) shares that same lower bound.
 It does not transcribe libstdc++'s probes. The following linear scans are
 libpinyin's own logic (`src/storage/flexible_single_gram.h:151-181,
 193-221,232-257,268-290`), and the comparator is the pin's unsigned token
