@@ -30,6 +30,13 @@ block below binds the complete observations. These utilities open the
 working container, so the entries are per cell, unlike the database-free
 marker records.
 
+Refreshed 2026-11-03 UTC: the entries were first bound at `494766c3`,
+when each cell's `fixtures/w3` directory still held `datagen-manifest.txt`.
+`4d60c774` (#1500) deleted that file. The tool runner copies the whole
+cell directory into the case's working directory, so both sides' `files`
+listing lost one name. That is the only change: exit, stdout and stderr
+digests are as first recorded.
+
 ```contract-diff-policy
 {
   "schema": 2,
@@ -41,19 +48,19 @@ marker records.
       "cells": {
         "tkrzw": {
           "pin": {
-            "sha256": "28dc8597386374f2abc8a8555adc4aee03b0dc25fd68b551576b0715318c50a8",
+            "sha256": "39f4e388726e4802f1e136e6305bac3bd9fd5cd1b7d2e1d5e3f7bf293340eb95",
             "fields": {
               "exit": "03b26944890929ff",
-              "files": "f49181c1f1f35f9d",
+              "files": "29f52aace84acfc2",
               "stderr": "89d24dc9bf85f38a",
               "stdout": "12ae32cb1ec02d01"
             }
           },
           "subject": {
-            "sha256": "32fea30957831116d5bb3a2d4fe0eb310a9eeae531475f33c8e90c6700b6d827",
+            "sha256": "0c97adadd2952ac3cb53ba36767b6d89695b4eac96da1ca5f06d4002cae8d610",
             "fields": {
               "exit": "03b26944890929ff",
-              "files": "f49181c1f1f35f9d",
+              "files": "29f52aace84acfc2",
               "stderr": "12ae32cb1ec02d01",
               "stdout": "12ae32cb1ec02d01"
             }
@@ -65,19 +72,19 @@ marker records.
         },
         "bdb": {
           "pin": {
-            "sha256": "ad6225b68403761520a268ec2b346e5f0d503361f1fbdd6a9f0e49de47c2a67e",
+            "sha256": "8159fd605ab614f5e3e7ee8f7c83fcf7e88cbe6dd683cd726b8305bc16219a7d",
             "fields": {
               "exit": "03b26944890929ff",
-              "files": "d86c069c65882e81",
+              "files": "273a1168b384b60a",
               "stderr": "89d24dc9bf85f38a",
               "stdout": "12ae32cb1ec02d01"
             }
           },
           "subject": {
-            "sha256": "71f7edba1b1cb6c20f1be1563988ff5ec8c40562d917bd6932ffe7c5474a1828",
+            "sha256": "1b40257eb586b36d616a5b029f348bfa36ff474e81e46181ab47bbeef9fdafc5",
             "fields": {
               "exit": "03b26944890929ff",
-              "files": "d86c069c65882e81",
+              "files": "273a1168b384b60a",
               "stderr": "12ae32cb1ec02d01",
               "stdout": "12ae32cb1ec02d01"
             }
@@ -89,19 +96,19 @@ marker records.
         },
         "kc": {
           "pin": {
-            "sha256": "c9d0224189228501582f0937813055ae5c9755f5cf41bb5aae85cdb514612005",
+            "sha256": "4a9d7400a90b917efc8d4db707826a3327877ddb7ceac57372b718fefed60895",
             "fields": {
               "exit": "03b26944890929ff",
-              "files": "bdcbe4f8512d2844",
+              "files": "6444af0cb2c07e59",
               "stderr": "89d24dc9bf85f38a",
               "stdout": "12ae32cb1ec02d01"
             }
           },
           "subject": {
-            "sha256": "5f36c352d845932b7be884400e6e962accaa08dec3abf6ec1c3ecccef36e7346",
+            "sha256": "0d1353d6377dfec9e21255f146fd57f562785abd6ca29742572c45680d8a1210",
             "fields": {
               "exit": "03b26944890929ff",
-              "files": "bdcbe4f8512d2844",
+              "files": "6444af0cb2c07e59",
               "stderr": "12ae32cb1ec02d01",
               "stdout": "12ae32cb1ec02d01"
             }
@@ -117,19 +124,19 @@ marker records.
       "cells": {
         "tkrzw": {
           "pin": {
-            "sha256": "e6d464bf233b72518cc9341dede6bc8fcb13a1c092da492bb59889f00b996f93",
+            "sha256": "e955c0f9a429d4936ce623776b750008106b346edec1e03d7e4eed632f542888",
             "fields": {
               "exit": "03b26944890929ff",
-              "files": "f49181c1f1f35f9d",
+              "files": "29f52aace84acfc2",
               "stderr": "87946df291f6e0c9",
               "stdout": "12ae32cb1ec02d01"
             }
           },
           "subject": {
-            "sha256": "32fea30957831116d5bb3a2d4fe0eb310a9eeae531475f33c8e90c6700b6d827",
+            "sha256": "0c97adadd2952ac3cb53ba36767b6d89695b4eac96da1ca5f06d4002cae8d610",
             "fields": {
               "exit": "03b26944890929ff",
-              "files": "f49181c1f1f35f9d",
+              "files": "29f52aace84acfc2",
               "stderr": "12ae32cb1ec02d01",
               "stdout": "12ae32cb1ec02d01"
             }
@@ -141,19 +148,19 @@ marker records.
         },
         "bdb": {
           "pin": {
-            "sha256": "9d7ad4ccd2a3eeab6ef70995d26114ff47ce43d0ffeaaee2c6618a357163a7b7",
+            "sha256": "da78c956f2418915ca4d475e2e57d74105a95fe860f09e27f1729f77134b9dd8",
             "fields": {
               "exit": "03b26944890929ff",
-              "files": "d86c069c65882e81",
+              "files": "273a1168b384b60a",
               "stderr": "87946df291f6e0c9",
               "stdout": "12ae32cb1ec02d01"
             }
           },
           "subject": {
-            "sha256": "71f7edba1b1cb6c20f1be1563988ff5ec8c40562d917bd6932ffe7c5474a1828",
+            "sha256": "1b40257eb586b36d616a5b029f348bfa36ff474e81e46181ab47bbeef9fdafc5",
             "fields": {
               "exit": "03b26944890929ff",
-              "files": "d86c069c65882e81",
+              "files": "273a1168b384b60a",
               "stderr": "12ae32cb1ec02d01",
               "stdout": "12ae32cb1ec02d01"
             }
@@ -165,19 +172,19 @@ marker records.
         },
         "kc": {
           "pin": {
-            "sha256": "bc498a982967dc5fc7df810effd0fb085ccc4b5ce6d74277b266436155003d25",
+            "sha256": "65403bb1ba59326fe27d6e104466adacff3ca8cf18d515d990d74764c6480d8f",
             "fields": {
               "exit": "03b26944890929ff",
-              "files": "bdcbe4f8512d2844",
+              "files": "6444af0cb2c07e59",
               "stderr": "87946df291f6e0c9",
               "stdout": "12ae32cb1ec02d01"
             }
           },
           "subject": {
-            "sha256": "5f36c352d845932b7be884400e6e962accaa08dec3abf6ec1c3ecccef36e7346",
+            "sha256": "0d1353d6377dfec9e21255f146fd57f562785abd6ca29742572c45680d8a1210",
             "fields": {
               "exit": "03b26944890929ff",
-              "files": "bdcbe4f8512d2844",
+              "files": "6444af0cb2c07e59",
               "stderr": "12ae32cb1ec02d01",
               "stdout": "12ae32cb1ec02d01"
             }
@@ -193,19 +200,19 @@ marker records.
       "cells": {
         "tkrzw": {
           "pin": {
-            "sha256": "6fda64d7b41668f6327781ee631a4e3deb85fef85380acbdcb07f571fa9a247c",
+            "sha256": "d4b425a1c694603ec0410303f675c709b654e4d1b18c92c8728c6e1c46458c26",
             "fields": {
               "exit": "03b26944890929ff",
-              "files": "d160c4f519e8ace9",
+              "files": "dd97f3b63ba556e1",
               "stderr": "0ac8c84bca8ccfac",
               "stdout": "12ae32cb1ec02d01"
             }
           },
           "subject": {
-            "sha256": "24d7ef25c5ef9bb806d7e92bd136b3102a85242e08dea60ab6949f3eb8b19f54",
+            "sha256": "384057dc9a7c1b83d2ac2dce5bf001dac315b559881f7cc51dd101f4684f95ae",
             "fields": {
               "exit": "03b26944890929ff",
-              "files": "d160c4f519e8ace9",
+              "files": "dd97f3b63ba556e1",
               "stderr": "12ae32cb1ec02d01",
               "stdout": "12ae32cb1ec02d01"
             }
@@ -217,19 +224,19 @@ marker records.
         },
         "bdb": {
           "pin": {
-            "sha256": "0b14bfd3fc44df23b4d543a2fa4f3bfebf22e43056bb9a414d5de9be8d680fe1",
+            "sha256": "590b9859d1526bea185562feb9a1454fd85c191f04d4c4ffee72f08c72ef6ef0",
             "fields": {
               "exit": "03b26944890929ff",
-              "files": "a193f9cd07b74bc9",
+              "files": "af63951d78f8b129",
               "stderr": "0ac8c84bca8ccfac",
               "stdout": "12ae32cb1ec02d01"
             }
           },
           "subject": {
-            "sha256": "41c84ec728db5024cd375f0ff7be86c7ded676852baf3eb1b7758bbf67c493a2",
+            "sha256": "ca83ee76630db293eb34056ef05a065172429468a16f52b7e7d0b201ddc61776",
             "fields": {
               "exit": "03b26944890929ff",
-              "files": "a193f9cd07b74bc9",
+              "files": "af63951d78f8b129",
               "stderr": "12ae32cb1ec02d01",
               "stdout": "12ae32cb1ec02d01"
             }
@@ -241,19 +248,19 @@ marker records.
         },
         "kc": {
           "pin": {
-            "sha256": "f40f152d5031826b88d38e9940aecf505f064d589444e69316cefbc58b6849fc",
+            "sha256": "d623bdf659efe685623b2e6a0b0a32ca153e3ec80e480749d9d4d3c723f3a9b0",
             "fields": {
               "exit": "03b26944890929ff",
-              "files": "72e3c5e58e635963",
+              "files": "34f72ab6f1a37313",
               "stderr": "0ac8c84bca8ccfac",
               "stdout": "12ae32cb1ec02d01"
             }
           },
           "subject": {
-            "sha256": "fae38738a7d1def82a118d43244d5981ae72c93306886460933a4875708511f9",
+            "sha256": "07f89ae84cd5a9c9fbb958b26b3e130a63cc386a7af8f72eb8aa95bd7da37eac",
             "fields": {
               "exit": "03b26944890929ff",
-              "files": "72e3c5e58e635963",
+              "files": "34f72ab6f1a37313",
               "stderr": "12ae32cb1ec02d01",
               "stdout": "12ae32cb1ec02d01"
             }
