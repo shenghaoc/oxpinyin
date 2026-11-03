@@ -24,6 +24,8 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 # Declared so cargo-c identifies this crate as the workspace's zhuyin C-API
 # export target (the same mechanism oxpinyin-capi uses).
 capi = []
+# Safe ownership adapter for oxpinyin-utils' nonshipping test_zhuyin.
+tools = []
 # Backend selection (one backend per binary; see oxpinyin-store's
 # [features] for the model and precedence). Each peer feature forwards to
 # oxpinyin-facade, which carries it down facade -> runtime -> user -> data ->

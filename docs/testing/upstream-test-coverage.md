@@ -57,10 +57,10 @@ coverage and are superseded for these programs; no program is exempt.
 
 | Family | Pin source / binary | Automated `TESTS` | Program behavior and fixed inputs | Drop-in status |
 | --- | --- | --- | --- | --- |
-| A | `tests/test_pinyin.cpp` / `test_pinyin` | No | `../data`: full-pinyin parse, prefix guess, sorted candidates, auxiliary text at every offset, train/reset/save, then mask-out/save/fini | **GAP** |
-| A | `tests/test_phrase.cpp` / `test_phrase` | No | `../data`: raw Chinese phrase segmentation, token text, save and mask-out/save/fini | **GAP** |
-| A | `tests/test_chewing.cpp` / `test_chewing` | No | `../data`: Pinyin C API's chewing parse, sentence and auxiliary text, train/reset/save and teardown | **GAP** |
-| A | `tests/test_zhuyin.cpp` / `test_zhuyin` | No | `../data`: the separate `zhuyin_*` C API, chewing parse and sentence, train/reset/save and teardown | **GAP** |
+| A | `tests/test_pinyin.cpp` / `test_pinyin` | No | `../data`: full-pinyin parse, prefix guess, sorted candidates, auxiliary text at every offset, train/reset/save, then mask-out/save/fini | **Ported** (2026-11-01 UTC) |
+| A | `tests/test_phrase.cpp` / `test_phrase` | No | `../data`: raw Chinese phrase segmentation, token text, save and mask-out/save/fini | **Ported** (2026-11-01 UTC) |
+| A | `tests/test_chewing.cpp` / `test_chewing` | No | `../data`: Pinyin C API's chewing parse, sentence and auxiliary text, train/reset/save and teardown | **Ported** (2026-11-01 UTC) |
+| A | `tests/test_zhuyin.cpp` / `test_zhuyin` | No | `../data`: the separate `zhuyin_*` C API, chewing parse and sentence, train/reset/save and teardown | **Ported** (2026-11-01 UTC) |
 | B | `tests/storage/test_parser2.cpp` / `test_parser2` | No | GLib `--parser`, `--incomplete`, `--scheme`; stdin; every parser variant, consumed length and raw key spans; `timer.h` output | **GAP** |
 | C | `tests/storage/test_ngram.cpp` / `test_ngram` | Yes | `SingleGram`/`Bigram` operations; `/tmp/test.db`, `/tmp/snapshot.db` | **GAP** |
 | C | `tests/storage/test_flexible_ngram.cpp` / `test_flexible_ngram` | Yes | Flexible single-gram range search and mutation, bigram storage; `/tmp/training.db` | **GAP** |
@@ -75,13 +75,21 @@ coverage and are superseded for these programs; no program is exempt.
 | E | `tests/lookup/test_pinyin_lookup.cpp` / `test_pinyin_lookup` | No | Phonetic n-best lookup over parsed matrices, phrase chunks and `../../data/bigram.db` | **GAP** |
 | E | `tests/lookup/test_phrase_lookup.cpp` / `test_phrase_lookup` | No | Raw-text phrase lookup with phrase chunks and `../../data/bigram.db` | **GAP** |
 
+Family A is implemented by the four same-named `oxpinyin-utils` binaries
+and `src/pin_tests.rs`, using tool-gated ownership adapters in the two
+existing C facades. Its one-per-program case files are
+`tools/bisection/tool-cases/test_{pinyin,phrase,chewing,zhuyin}.json`:
+21 cases match on tkrzw, bdb and kc, including saved user files. The named
+`pin-tests-a-prefix-prompt.patch` mutation is detected by
+`test-pinyin-quit` on tkrzw; reversing it and rebuilding restores MATCH.
+
 The existing Rust Pinyin and Zhuyin C facades are separate implementations;
 raw-text phrase segmentation and phrase lookup exist. Those earlier N/A
 claims and the claim that Zhuyin is unified onto the Pinyin C API are stale.
 The direct parsers' complete key-rest and consumed-length interfaces must
 be checked separately from full/keyboard parser tests. Likewise, internal
 punctuation mutation and flexible n-gram operations are not replaced by
-training-utility coverage. The complete binaries remain GAP until ported.
+training-utility coverage. The remaining complete binaries stay GAP until ported.
 
 `tests/tests_helper.h` and `tests/timer.h` are shared source dependencies,
 not additional executables. Helper-loaded `../../data` trees and every
@@ -122,8 +130,8 @@ ABI behaviors are N/A by design rather than artificially reconstructed.
 ## Totals
 
 - **libpinyin**: 17 `noinst_PROGRAMS`, six also in automated `TESTS`;
-  **0 Ported, 17 GAP** at the runner prerequisite. Family PRs update their
-  rows and this total when their drop-in verification passes.
+  **4 Ported, 13 GAP** after family A. Family PRs update their rows
+  and this total when their drop-in verification passes.
 - The libchewing rows retain their separately audited behavior-coverage
   classifications. They do not count toward the libpinyin drop-in total.
 

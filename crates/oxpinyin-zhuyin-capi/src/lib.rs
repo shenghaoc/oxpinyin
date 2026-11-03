@@ -76,6 +76,9 @@ mod sentence;
 mod state;
 mod types;
 
+#[cfg(feature = "tools")]
+pub mod tool;
+
 // The pure-MIRROR and SHARED-CHEWING symbols are the public entry points;
 // the four enum-touching symbols + zhuyin_init live where the zhuyin-local
 // state is. Re-export for in-tree tooling.

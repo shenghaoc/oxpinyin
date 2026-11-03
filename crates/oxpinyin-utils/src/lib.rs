@@ -11,6 +11,8 @@
 
 pub mod gen_pinyin_table;
 
+pub mod pin_tests;
+
 pub mod estimate_k_mixture_model;
 
 pub mod export_k_mixture_model;

@@ -725,6 +725,58 @@ impl<R: BufRead> LineReader<R> {
     }
 }
 
+/// The C-API test programs' output calls at 074a2219.
+pub mod pin_tests {
+    use super::*;
+
+    fn text_pointer(text: Option<&CStr>) -> *const c_char {
+        text.map_or(std::ptr::null(), CStr::as_ptr)
+    }
+
+    /// test_pinyin.cpp:49-50: prompt and flush before reading a prefix.
+    pub fn prefix_prompt() {
+        // SAFETY: the host stdout object and literal format are valid.
+        unsafe {
+            libc::fprintf(c_stdout(), c"prefix:".as_ptr());
+            libc::fflush(c_stdout());
+        }
+    }
+
+    /// test_pinyin.cpp:55-56: prompt and flush before reading pinyin.
+    pub fn pinyin_prompt() {
+        // SAFETY: the host stdout object and literal format are valid.
+        unsafe {
+            libc::fprintf(c_stdout(), c"pinyin:".as_ptr());
+            libc::fflush(c_stdout());
+        }
+    }
+
+    /// test_pinyin.cpp:73 and test_chewing.cpp:57, including a null result.
+    pub fn auxiliary(text: Option<&CStr>) {
+        // SAFETY: the literal consumes one C string. A null result follows
+        // the same host printf call as the pin (the existing tools' rule).
+        unsafe { libc::printf(c"auxiliary text:%s\n".as_ptr(), text_pointer(text)) };
+    }
+
+    /// test_pinyin.cpp:86 and test_phrase.cpp:58.
+    pub fn word(text: Option<&CStr>) {
+        // SAFETY: the literal consumes one live C string, or the pin's null.
+        unsafe { libc::printf(c"%s\t".as_ptr(), text_pointer(text)) };
+    }
+
+    /// test_chewing.cpp:51 and test_zhuyin.cpp:52, after their null checks.
+    pub fn sentence(text: &CStr) {
+        // SAFETY: the literal consumes one live NUL-terminated C string.
+        unsafe { libc::printf(c"%s\n".as_ptr(), text.as_ptr()) };
+    }
+
+    /// test_pinyin.cpp:88 and test_phrase.cpp:61.
+    pub fn newline() {
+        // SAFETY: this literal format consumes no arguments.
+        unsafe { libc::printf(c"\n".as_ptr()) };
+    }
+}
+
 /// `gen_pinyin_table`'s calls (`utils/storage/gen_pinyin_table.cpp` at
 /// 074a2219).
 pub mod gen_pinyin_table {

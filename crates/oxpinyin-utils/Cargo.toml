@@ -13,6 +13,8 @@ description = "libpinyin's utilities under their own names and interfaces (exter
 # edge the utilities use.
 default = ["tkrzw"]
 kyotocabinet = [
+    "oxpinyin-capi/kyotocabinet",
+    "oxpinyin-zhuyin-capi/kyotocabinet",
     "oxpinyin-data/kyotocabinet",
     "oxpinyin-store/kyotocabinet",
     "oxpinyin-user/kyotocabinet",
@@ -20,6 +22,8 @@ kyotocabinet = [
     "oxpinyin-kmm/kyotocabinet",
 ]
 bdb = [
+    "oxpinyin-capi/bdb",
+    "oxpinyin-zhuyin-capi/bdb",
     "oxpinyin-data/bdb",
     "oxpinyin-store/bdb",
     "oxpinyin-user/bdb",
@@ -27,6 +31,8 @@ bdb = [
     "oxpinyin-kmm/bdb",
 ]
 tkrzw = [
+    "oxpinyin-capi/tkrzw",
+    "oxpinyin-zhuyin-capi/tkrzw",
     "oxpinyin-data/tkrzw",
     "oxpinyin-store/tkrzw",
     "oxpinyin-user/tkrzw",
@@ -38,6 +44,10 @@ tkrzw = [
 workspace = true
 
 [dependencies]
+# The test drivers exercise the existing C facades through safe ownership
+# adapters. These tools and adapters are absent from shipping builds.
+oxpinyin-capi = { path = "../oxpinyin-capi", default-features = false, features = ["tools"] }
+oxpinyin-zhuyin-capi = { path = "../oxpinyin-zhuyin-capi", default-features = false, features = ["tools"] }
 oxpinyin-core = { workspace = true }
 # pinyin_exact_compare2, shared with the table writers.
 oxpinyin-data = { workspace = true }
