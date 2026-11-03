@@ -1,0 +1,5 @@
+--- a/crates/oxpinyin-utils/src/chunk_tests.rs
++++ b/crates/oxpinyin-utils/src/chunk_tests.rs
+@@ -132 +132 @@
+-    buffer.remove(4, 4);
++    buffer.remove(8, 4);

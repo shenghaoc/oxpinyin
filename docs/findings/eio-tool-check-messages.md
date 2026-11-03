@@ -40,6 +40,11 @@ the separately accepted failed-open-handle diagnostic under
 [register row 113](compatibility-policy.md#bdb-failed-handles); its other
 output and files match.
 
+The family E1 `memory-chunk-save-directory` case reaches
+`tests/include/test_memory_chunk.cpp:61` (074a2219): `check_result(save(...))`
+asserts after opening `/tmp/test.bin` fails. Both sides abort, retain the
+input directory, and lose unflushed C stdout; only the assertion text differs.
+
 ```contract-diff-policy
 {
   "schema": 2,
@@ -686,6 +691,34 @@ output and files match.
           },
           "divergence": [
             "stderr: pin \"BDB0004 fop_read_meta: empty.db: unexpecte\" … (length 232); subject \"BDB0004 fop_read_meta: empty.db: unexpecte\" … (length 100)",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        }
+      }
+    },
+    "memory-chunk-save-directory": {
+      "cells": {
+        "tkrzw": {
+          "pin": {
+            "sha256": "6a968f8385c7dde3aaa99be38a6697135259ae2f4543aff65549d078cfa00a3b",
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "fd78820024278f7d",
+              "stderr": "72baaa962c0645db",
+              "stdout": "12ae32cb1ec02d01"
+            }
+          },
+          "subject": {
+            "sha256": "4762e9f653df46d1e48b75fb8a6cc08c71d022e5dafe50eddd19722e2cf1d815",
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "fd78820024278f7d",
+              "stderr": "12ae32cb1ec02d01",
+              "stdout": "12ae32cb1ec02d01"
+            }
+          },
+          "divergence": [
+            "stderr: pin \"test_memory_chunk: test_memory_chunk.cpp:6\" … (length 117); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
           ]
         }
