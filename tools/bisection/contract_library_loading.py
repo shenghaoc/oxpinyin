@@ -1173,6 +1173,25 @@ for _mode in ('pinyin', 'zhuyin'):
     case('high-system-library-' + _mode, mode=_mode, issues=('1549',))(high_system_library_probe)
 
 
+
+def chunk_frame_system(k, trailing):
+    """Load a private exact or one-byte-long copy of a system chunk."""
+    system = private_system(k)
+    path = Path(system, 'merged.bin')
+    data = path.read_bytes()
+    path.unlink()
+    path.write_bytes(data + (b'\x01' if trailing else b''))
+    _write_user_conf(k)
+    return {'ctx': bool(k.init(system=system))}
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    case(f'chunk-frame-system-exact-{_mode}', mode=_mode, control=True, issues=('1576',))(
+        lambda k: chunk_frame_system(k, False))
+    case(f'chunk-frame-system-trailing-{_mode}', mode=_mode,
+         crash=library_expected('init', 'bad-length', _mode), issues=('row:76', '1576'))(
+             lambda k: chunk_frame_system(k, True))
+
 def register(driver_case):
     """Register the declarations with the driver's current decorator, in their original order.
 

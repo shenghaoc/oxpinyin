@@ -15,6 +15,97 @@ use std::path::Path;
 use crate::native;
 use crate::path;
 
+/// The header and bytes returned by the single payload read.
+pub struct LoadedChunk {
+    /// The declared payload length, in the file's native header bytes.
+    pub length: [u8; 4],
+    /// The stored checksum, in the file's native header bytes.
+    pub checksum: [u8; 4],
+    /// The actual bytes returned by the one payload read.
+    pub payload: Vec<u8>,
+    /// The end-seek size before the header was read.
+    pub file_size: u64,
+    source: MappingSource,
+}
+
+impl LoadedChunk {
+    /// Check the returned bytes, close the descriptor, and return the payload.
+    /// A checksum mismatch rejects the chunk while its descriptor is still open.
+    #[must_use]
+    pub fn finish(self, checksum: impl FnOnce(&[u8]) -> u32) -> Option<Vec<u8>> {
+        if checksum(&self.payload) != u32::from_le_bytes(self.checksum) {
+            return None;
+        }
+        let Self {
+            payload, source, ..
+        } = self;
+        drop(source);
+        Some(payload)
+    }
+}
+
+/// A failure to obtain the bytes of a chunk.
+#[derive(Debug)]
+pub enum ChunkLoadError {
+    /// Open, seek, allocation or payload read failed.
+    Io(io::Error),
+    /// The file is shorter than its header.
+    ShortHeader,
+    /// One of the pin's two header read assertions failed.
+    Header(io::Error),
+}
+
+/// Read a chunk using the descriptor, seeks and single reads of
+/// `MemoryChunk::load` (074a2219 `memory_chunk.h:420-463`). Domain
+/// validation remains with the caller.
+///
+/// # Errors
+/// Returns the failed operation, including a short header read.
+pub fn load(path: &Path) -> Result<LoadedChunk, ChunkLoadError> {
+    load_with(path, native::ReadChunk::read_payload)
+}
+
+fn load_with(
+    path: &Path,
+    read_payload: impl FnOnce(&mut native::ReadChunk, &mut [u8]) -> io::Result<usize>,
+) -> Result<LoadedChunk, ChunkLoadError> {
+    let mut source = MappingSource::open(path).map_err(ChunkLoadError::Io)?;
+    let file_size = source.file_size();
+    if file_size < 8 {
+        return Err(ChunkLoadError::ShortHeader);
+    }
+    let length = source.read_word().map_err(ChunkLoadError::Header)?;
+    let checksum = source.read_word().map_err(ChunkLoadError::Header)?;
+    let available = available_payload_length(file_size);
+    let declared = u32::from_le_bytes(length);
+    if declared != available {
+        return Err(ChunkLoadError::Io(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "chunk length does not match file size",
+        )));
+    }
+    let mut payload = Vec::new();
+    payload
+        .try_reserve_exact(available as usize)
+        .map_err(|error| ChunkLoadError::Io(io::Error::other(error)))?;
+    payload.resize(available as usize, 0);
+    let count = read_payload(&mut source.source, &mut payload).map_err(ChunkLoadError::Io)?;
+    payload.truncate(count);
+    Ok(LoadedChunk {
+        length,
+        checksum,
+        payload,
+        file_size,
+        source,
+    })
+}
+
+// The caller has rejected a size below the header. C narrows the remainder
+// to guint32 before comparing it with the declared length.
+const fn available_payload_length(file_size: u64) -> u32 {
+    (file_size - 8) as u32
+}
+
 /// A chunk's open descriptor, used only while preparing its mapping.
 /// Dropping this owner closes it. Header interpretation and checksum
 /// validation belong to the caller in `oxpinyin-data`.
@@ -192,6 +283,68 @@ pub fn save(path: &Path, bytes: &[u8]) -> Result<(), ChunkSaveError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn short_payload_is_checksummed_at_the_returned_length() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("chunk");
+        // The checksum names the single returned byte, not the whole payload.
+        std::fs::write(&path, [4, 0, 0, 0, 1, 0, 0, 0, 1, 2, 3, 4]).unwrap();
+        let calls = std::cell::Cell::new(0);
+        let chunk = load_with(&path, |source, buffer| {
+            calls.set(calls.get() + 1);
+            source.read_payload(&mut buffer[..1])
+        })
+        .unwrap();
+        assert_eq!(calls.get(), 1);
+        assert_eq!(chunk.length, 4_u32.to_le_bytes());
+        assert_eq!(chunk.finish(|bytes| u32::from(bytes[0])), Some(vec![1]));
+
+        // The same short result against a different checksum is a refusal.
+        std::fs::write(&path, [4, 0, 0, 0, 2, 0, 0, 0, 1, 2, 3, 4]).unwrap();
+        let chunk = load_with(&path, |source, buffer| {
+            source.read_payload(&mut buffer[..1])
+        })
+        .unwrap();
+        assert_eq!(chunk.finish(|bytes| u32::from(bytes[0])), None);
+    }
+
+    #[test]
+    fn interrupted_payload_read_is_not_retried() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("chunk");
+        std::fs::write(&path, [4, 0, 0, 0, 1, 0, 0, 0, 1, 2, 3, 4]).unwrap();
+        let calls = std::cell::Cell::new(0);
+        let error = match load_with(&path, |_, _| {
+            calls.set(calls.get() + 1);
+            Err(io::ErrorKind::Interrupted.into())
+        }) {
+            Err(ChunkLoadError::Io(error)) => error,
+            _ => panic!("interrupted payload must fail"),
+        };
+        assert_eq!(error.kind(), io::ErrorKind::Interrupted);
+        assert_eq!(calls.get(), 1);
+    }
+
+    #[test]
+    fn file_size_is_narrowed_before_length_comparison() {
+        let declared = 4_u32;
+        assert_eq!(available_payload_length(8 + 4), declared);
+        assert_eq!(available_payload_length(8 + 4 + (1_u64 << 32)), declared);
+        assert_ne!(available_payload_length(8 + 5 + (1_u64 << 32)), declared);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("chunk");
+        std::fs::write(&path, [4, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5]).unwrap();
+        let called = std::cell::Cell::new(false);
+        assert!(matches!(
+            load_with(&path, |_, _| {
+                called.set(true);
+                Ok(0)
+            }),
+            Err(ChunkLoadError::Io(_))
+        ));
+        assert!(!called.get(), "framing fails before reading the payload");
+    }
 
     #[cfg(windows)]
     #[test]

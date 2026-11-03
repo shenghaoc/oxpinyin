@@ -1,0 +1,11 @@
+--- a/crates/oxpinyin-input/src/chunk.rs
++++ b/crates/oxpinyin-input/src/chunk.rs
+@@ -77,7 +77,7 @@
+     let checksum = source.read_word().map_err(ChunkLoadError::Header)?;
+     let available = available_payload_length(file_size);
+     let declared = u32::from_le_bytes(length);
+-    if declared != available {
++    if declared > available {
+         return Err(ChunkLoadError::Io(io::Error::new(
+             io::ErrorKind::UnexpectedEof,
+             "chunk length does not match file size",

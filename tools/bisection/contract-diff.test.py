@@ -1151,6 +1151,8 @@ class DirChunkTests(DriverFixtureCase):
 
     def test_registered_cases(self):
         self.assertEqual({name: spec['dir_chunk'] for name, spec in driver.CASES.items() if spec['dir_chunk']}, {
+            'chunk-frame-excluded-journal-header-pinyin': 'user',
+            'chunk-frame-excluded-journal-header-zhuyin': 'user',
             'table-conf-abort-system-file-without-chunk': 'system',
             'table-conf-abort-system-file-without-chunk-zhuyin': 'system',
             'table-conf-abort-load-addon-without-chunk': 'system',

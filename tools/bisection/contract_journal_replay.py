@@ -1543,6 +1543,45 @@ case('removed-predict-stale-skip-pinyin', stderr=True, cells=('bdb',),
      issues=('1231',))(_predicted_stale_skip)
 
 
+
+def chunk_frame_journal(k, trailing):
+    """Replay one matching MODIFY from an exact or one-byte-long frame."""
+    total, items, _ = _system_items(k)
+    slot = next(slot for slot, item in items.items() if item[0] == 1 and item[1] == 1)
+    token = 0x01000000 | slot
+    record = _log_record(_LOG_MODIFY, token, old=items[slot],
+                         new=_item_with(items[slot], unigram=42))
+    frame = _chunk(_modify_header(0, total, total) + record)
+    Path(k.user, 'gb_char.dbin').write_bytes(frame + (b'\x00' if trailing else b''))
+    _write_user_conf(k)
+    return {'ctx': bool(k.ctx), 'unigram': unigram_of(k, token)}
+
+
+def chunk_frame_user(k, trailing):
+    """Save a user item, alter only the frame's physical length, and reopen."""
+    reading = "da3'da3" if k.mode == 'pinyin' else 'ㄉㄚˇ ㄉㄚˇ'
+    phrase = '龘龘'
+    assert import_rows(k, 7, [(phrase, reading, 5)]) == [True]
+    token = next(token for token in tokens_of(k, phrase) if token >> 24 == 7)
+    assert k.fn('save', B, P)(k.ctx)
+    k.fn('free_instance', None, P)(k.inst)
+    k.fn('fini', None, P)(k.ctx)
+    k._ctx = k._inst = None
+    path = Path(k.user, 'user.bin')
+    if trailing:
+        with path.open('ab') as file:
+            file.write(b'\x00')
+    _write_user_conf(k)
+    return {'ctx': bool(k.ctx), 'unigram': unigram_of(k, token)}
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    for _kind, _probe in (('journal', chunk_frame_journal), ('user', chunk_frame_user)):
+        for _trailing in (False, True):
+            case(f'chunk-frame-{_kind}-{"trailing" if _trailing else "exact"}-{_mode}',
+                 mode=_mode, control=not _trailing, issues=('1576',))(
+                     lambda k, probe=_probe, trailing=_trailing: probe(k, trailing))
+
 def register(driver_case):
     """Register the declarations with the driver's current decorator, in their original order."""
     for name, args, kwargs, fn in _REGISTRATIONS:

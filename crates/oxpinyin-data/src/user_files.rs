@@ -36,7 +36,7 @@ use oxpinyin_store::DEFAULT_STORE_DB_FORMAT;
 pub enum ChunkReadError {
     /// Fewer bytes than the 8-byte header.
     ShortHeader,
-    /// The payload length runs past the file's end.
+    /// The declared length does not match the narrowed physical payload length.
     TruncatedPayload,
     /// The stored checksum does not match the payload.
     ChecksumMismatch,
@@ -46,7 +46,7 @@ impl std::fmt::Display for ChunkReadError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let message = match self {
             Self::ShortHeader => "shorter than the 8-byte header",
-            Self::TruncatedPayload => "payload length runs past the file end",
+            Self::TruncatedPayload => "payload length does not match the file size",
             Self::ChecksumMismatch => "checksum mismatch",
         };
         write!(f, "memory chunk: {message}")
@@ -64,22 +64,58 @@ impl std::error::Error for ChunkReadError {}
 ///
 /// # Errors
 ///
-/// Fails on a short header, a payload length past the file end, or a
-/// checksum mismatch. Trailing bytes beyond the framed payload are
-/// ignored, as upstream's reader does.
+/// Fails on a short header, a length mismatch, or a checksum mismatch.
+/// The physical payload size is narrowed to `u32` before the comparison,
+/// as in `MemoryChunk::load` and `::mmap`; a match exposes only the
+/// declared extent, even when the file is larger by a multiple of 2^32.
 pub fn read_chunk_payload(bytes: &[u8]) -> Result<&[u8], ChunkReadError> {
     let header = bytes
         .get(..CHUNK_HEADER_SIZE)
         .ok_or(ChunkReadError::ShortHeader)?;
     let length = u32::from_le_bytes([header[0], header[1], header[2], header[3]]) as usize;
     let checksum = u32::from_le_bytes([header[4], header[5], header[6], header[7]]);
+    if length as u32 != (bytes.len() - CHUNK_HEADER_SIZE) as u32 {
+        return Err(ChunkReadError::TruncatedPayload);
+    }
+    let end = CHUNK_HEADER_SIZE
+        .checked_add(length)
+        .ok_or(ChunkReadError::TruncatedPayload)?;
     let payload = bytes
-        .get(CHUNK_HEADER_SIZE..CHUNK_HEADER_SIZE + length)
+        .get(CHUNK_HEADER_SIZE..end)
         .ok_or(ChunkReadError::TruncatedPayload)?;
     if chunk_checksum(payload) != checksum {
         return Err(ChunkReadError::ChecksumMismatch);
     }
     Ok(payload)
+}
+
+/// Loads and validates a chunk through the pin's single-read boundary.
+/// A short payload is checked at the length actually read. Framing uses
+/// the physical end-seek length before the single payload read.
+///
+/// # Errors
+/// Returns an I/O error or an invalid-data error on a failed chunk load.
+pub fn load_chunk_payload(path: &std::path::Path) -> std::io::Result<Vec<u8>> {
+    use oxpinyin_input::chunk::{ChunkLoadError, load};
+    let chunk = match load(path) {
+        Ok(chunk) => chunk,
+        Err(ChunkLoadError::Io(error)) => return Err(error),
+        Err(ChunkLoadError::ShortHeader) => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                ChunkReadError::ShortHeader,
+            ));
+        }
+        // The pin asserts on either header word, including an interrupted
+        // read. Its assert is a process abort under the class (c) ruling.
+        Err(ChunkLoadError::Header(_)) => std::process::abort(),
+    };
+    chunk.finish(chunk_checksum).ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            ChunkReadError::ChecksumMismatch,
+        )
+    })
 }
 
 /// One of the three DBM files of a user directory.
@@ -974,6 +1010,12 @@ mod tests {
         truncated.truncate(framed.len() - 1);
         assert!(matches!(
             read_chunk_payload(&truncated),
+            Err(ChunkReadError::TruncatedPayload)
+        ));
+        let mut trailing = framed.clone();
+        trailing.push(0);
+        assert!(matches!(
+            read_chunk_payload(&trailing),
             Err(ChunkReadError::TruncatedPayload)
         ));
         let mut flipped = framed.clone();

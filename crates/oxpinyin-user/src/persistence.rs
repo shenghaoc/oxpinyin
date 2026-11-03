@@ -50,9 +50,11 @@ use oxpinyin_data::phrase_libraries::PhraseLibraries;
 use oxpinyin_data::row_format::pinyin_index::PinyinIndexItem;
 use oxpinyin_data::table_entries::pinyin_index_entries;
 use oxpinyin_data::table_info::FileName;
+#[cfg(test)]
+use oxpinyin_data::user_files::read_chunk_payload;
 use oxpinyin_data::user_files::{
     LogEnd, LogFault, LogRecord, SystemVersions, UserConfError, UserDbm, UserFileLayout,
-    UserTableInfo, encode_log_records, get_open_counter, log_records, read_chunk_payload,
+    UserTableInfo, encode_log_records, get_open_counter, load_chunk_payload, log_records,
 };
 use oxpinyin_input::path::{build_path, rename, unlink};
 use oxpinyin_store::{
@@ -1424,7 +1426,7 @@ fn load_libraries(
         }
         let name = file.display();
         let path = build_path(dir, file.as_ref());
-        let bytes = match std::fs::read(&path) {
+        let bytes = match load_chunk_payload(&path) {
             Ok(bytes) => bytes,
             // Absent is the normal fresh-profile case. Any other error
             // is an unreadable *existing* file: loading as if it were
@@ -1437,7 +1439,7 @@ fn load_libraries(
                 continue;
             }
         };
-        match UserLibrary::load(&bytes) {
+        match UserLibrary::load_payload(&bytes) {
             Ok(library) => {
                 loaded.library_totals.insert(nibble, library.total());
                 // An absent library and an empty one are the same state;
@@ -1466,7 +1468,7 @@ fn load_libraries(
             Err(error) => {
                 loaded.skipped.push(format!("{name}: {error}"));
                 if let Some(libraries) = libraries.as_deref_mut()
-                    && let Ok(headers) = UserLibrary::load_headers(&bytes)
+                    && let Ok(headers) = UserLibrary::load_headers_payload(&bytes)
                 {
                     libraries.insert(nibble, headers);
                 }
@@ -1557,9 +1559,9 @@ pub(crate) fn load_user_library(
     })
 }
 
-/// `mask_out`'s reload of each loaded system library: the library bits
-/// checked, then the log read from the user directory and filtered by
-/// `mask_out_phrase_index_logger`, then merged over the freshly mapped
+/// `mask_out`'s reload of each loaded system library: the log is read from
+/// the user directory before the library bits are checked, then selected
+/// records are filtered by `mask_out_phrase_index_logger` and merged over the freshly mapped
 /// original (074a2219 `phrase_index.cpp:301-330`, `:844-869`), library by
 /// library in the mask loop's order (`pinyin.cpp:1234-1291`,
 /// `zhuyin.cpp:769-826`).
@@ -1610,8 +1612,8 @@ pub(crate) fn load_masked_logs_live(
     Ok((replayed, loaded.library_totals))
 }
 
-/// The saved logs `mask_out`'s walk already read, by sub-index, so the
-/// replay that follows merges the bytes of that one read. A library absent
+/// The validated payloads (or failed loads) `mask_out`'s walk already read,
+/// by sub-index, so replay consumes the result of that one read. A library absent
 /// here is read when the replay reaches it.
 ///
 /// The walk stops at the first fault, so it holds the bytes of the journals
@@ -1625,10 +1627,10 @@ pub struct MaskLogs(BTreeMap<u8, std::io::Result<Vec<u8>>>);
 /// fault `merge_with_mask` reaches in it, without touching any state:
 /// `_peek_header` asserts on a non-null header token (row 91) or on a second
 /// header (row 92), and the masked totals read a kept item shorter than its
-/// unigram. Nothing else (`None`): a library whose bits the mask does not
-/// select (not read, as the replay does not read it), an absent or unreadable
-/// log, a log with no header, and the merge faults that need the library's
-/// content.
+/// unigram. `None` includes a successfully loaded library excluded by the
+/// mask (its records are not parsed), an absent or unreadable log, a log with
+/// no header, and merge faults that need the library's content. A failed chunk
+/// header read aborts during the load, including for an excluded library.
 pub(crate) fn read_mask_log(
     dir: &Path,
     layout: &UserFileLayout,
@@ -1638,17 +1640,16 @@ pub(crate) fn read_mask_log(
     value: u32,
 ) -> Option<JournalFault> {
     let (_, file) = layout.system_logs().iter().find(|(n, _)| *n == nibble)?;
-    if (nibble & crate::phrase::phrase_index_library_index(mask))
-        != crate::phrase::phrase_index_library_index(value)
-    {
-        return None;
-    }
-    let read = std::fs::read(build_path(dir, file.as_ref()));
-    let fault = read
-        .as_ref()
-        .ok()
-        .and_then(|bytes| read_chunk_payload(bytes).ok())
-        .and_then(|payload| masked_log(payload, mask, value, nibble).err());
+    let read = load_chunk_payload(&build_path(dir, file.as_ref()));
+    let selected = (nibble & crate::phrase::phrase_index_library_index(mask))
+        == crate::phrase::phrase_index_library_index(value);
+    let fault = if selected {
+        read.as_ref()
+            .ok()
+            .and_then(|payload| masked_log(payload, mask, value, nibble).err())
+    } else {
+        None
+    };
     logs.0.insert(nibble, read);
     fault
 }
@@ -1676,14 +1677,9 @@ fn replay_logs(
         if only_originals && !originals.contains_key(&nibble) {
             continue;
         }
-        // `merge_with_mask` returns before it reads the log when the
-        // library bits do not match (`phrase_index.cpp:309-313`); an
-        // unloaded library is skipped by the mask loop's `get_range`.
-        if mask.is_some_and(|(mask, value)| {
-            !originals.contains_key(&nibble)
-                || (nibble & crate::phrase::phrase_index_library_index(mask))
-                    != crate::phrase::phrase_index_library_index(value)
-        }) {
+        // The pin skips unloaded libraries, but loads each remaining log
+        // before merge_with_mask checks the library bits.
+        if mask.is_some() && !originals.contains_key(&nibble) {
             continue;
         }
         let name = file.display();
@@ -1692,7 +1688,7 @@ fn replay_logs(
         let read = preread
             .as_deref_mut()
             .and_then(|logs| logs.0.remove(&nibble))
-            .unwrap_or_else(|| std::fs::read(build_path(dir, file.as_ref())));
+            .unwrap_or_else(|| load_chunk_payload(&build_path(dir, file.as_ref())));
         let bytes = match read {
             Ok(bytes) => bytes,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
@@ -1701,13 +1697,13 @@ fn replay_logs(
                 continue;
             }
         };
-        let payload = match read_chunk_payload(&bytes) {
-            Ok(payload) => payload,
-            Err(error) => {
-                loaded.skipped.push(format!("{name}: {error}"));
-                continue;
-            }
-        };
+        if mask.is_some_and(|(mask, value)| {
+            (nibble & crate::phrase::phrase_index_library_index(mask))
+                != crate::phrase::phrase_index_library_index(value)
+        }) {
+            continue;
+        }
+        let payload = bytes.as_slice();
         // The pin emits local slots, but its reader masks high bits even
         // in hand-written records (074a2219 phrase_index.cpp:180-215, 219-232).
         // `SubPhraseIndex::merge` over the records, in the pin's own terms:
@@ -4581,6 +4577,76 @@ mod tests {
             ],
             new,
         )
+    }
+
+    #[test]
+    fn mask_log_cache_keeps_validated_payloads_and_failed_loads() {
+        let dir = tempdir("mask-log-cache");
+        let originals = originals();
+        let path = dir.join("gb_char.dbin");
+        let mut cached = MaskLogs::default();
+        // Even an excluded library is loaded; record parsing remains gated.
+        let payload = header_with_token(0x0100_0001);
+        std::fs::write(&path, build_memory_chunk(&payload).expect("frame")).expect("write");
+        assert_eq!(
+            read_mask_log(
+                &dir,
+                originals.layout(),
+                &mut cached,
+                1,
+                0x0f00_0000,
+                0x0200_0000
+            ),
+            None
+        );
+        assert_eq!(
+            cached.0.remove(&1).expect("cached").expect("loaded"),
+            payload
+        );
+
+        // A failed physical load remains failed if a file appears before replay.
+        std::fs::remove_file(&path).expect("remove");
+        assert_eq!(
+            read_mask_log(
+                &dir,
+                originals.layout(),
+                &mut cached,
+                1,
+                0x0f00_0000,
+                0x0100_0000
+            ),
+            None
+        );
+        std::fs::write(&path, build_memory_chunk(&payload).expect("frame")).expect("write");
+        let mut loaded = Loaded::default();
+        assert_eq!(
+            replay_logs(
+                &dir,
+                &originals,
+                &mut loaded,
+                Some((0x0f00_0000, 0x0100_0000)),
+                false,
+                None,
+                Some(&mut cached)
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            replay_logs(
+                &dir,
+                &originals,
+                &mut loaded,
+                Some((0x0f00_0000, 0x0100_0000)),
+                false,
+                None,
+                None
+            ),
+            Err(JournalFault::HeaderToken {
+                library: 1,
+                token: 0x0100_0001
+            })
+        );
+        std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 
     #[test]

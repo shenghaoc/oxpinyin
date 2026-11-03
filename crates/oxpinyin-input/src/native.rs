@@ -78,6 +78,17 @@ impl ReadChunk {
         }
     }
 
+    pub(crate) fn read_payload(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+        #[cfg(unix)]
+        let len = bytes.len();
+        #[cfg(windows)]
+        let len = u32::try_from(bytes.len()).map_err(std::io::Error::other)?;
+        // SAFETY: the descriptor is owned and bytes is writable for its full
+        // length. This is exactly one read, including for an empty payload.
+        let count = unsafe { libc::read(self.0, bytes.as_mut_ptr().cast(), len) };
+        usize::try_from(count).map_err(|_| std::io::Error::last_os_error())
+    }
+
     pub(crate) fn map_copy(&self, file_size: usize) -> std::io::Result<memmap2::MmapMut> {
         #[cfg(unix)]
         let descriptor = self.0;

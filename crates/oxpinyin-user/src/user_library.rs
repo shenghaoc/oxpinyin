@@ -550,9 +550,14 @@ impl UserLibrary {
         Ok(compacted)
     }
 
+    #[cfg(test)]
     pub(crate) fn load(file: &[u8]) -> Result<Self, String> {
         let payload =
             oxpinyin_data::user_files::read_chunk_payload(file).map_err(|e| e.to_string())?;
+        Self::load_payload(payload)
+    }
+
+    pub(crate) fn load_payload(payload: &[u8]) -> Result<Self, String> {
         let (total, offsets, content) =
             sub_phrase_index_sections(payload).map_err(|e| e.to_string())?;
         let mut live = 0_usize;
@@ -607,9 +612,7 @@ impl UserLibrary {
 
     /// A rejected body can still have the two bytes the pin's count getter
     /// reads (phrase_index.cpp:195-204). Retain those bytes, not a count map.
-    pub(crate) fn load_headers(file: &[u8]) -> Result<Self, String> {
-        let payload =
-            oxpinyin_data::user_files::read_chunk_payload(file).map_err(|e| e.to_string())?;
+    pub(crate) fn load_headers_payload(payload: &[u8]) -> Result<Self, String> {
         let (_, offsets, content) =
             sub_phrase_index_sections(payload).map_err(|e| e.to_string())?;
         Ok(Self {
