@@ -9,6 +9,31 @@
 //! with the pin-built binaries.
 
 use oxpinyin_input::tool;
+
+/// Format independently with libc's `%f`, as the utility's printf family does.
+#[allow(unsafe_code)]
+fn host_f(value: f64) -> String {
+    let mut buffer = [0_u8; 64];
+    // SAFETY: the buffer is writable and `%f` takes one double.
+    let length = unsafe {
+        libc::snprintf(
+            buffer.as_mut_ptr().cast(),
+            buffer.len(),
+            c"%f".as_ptr(),
+            value,
+        )
+    };
+    let length = usize::try_from(length).expect("snprintf failed");
+    assert!(length < buffer.len());
+    String::from_utf8(buffer[..length].to_vec()).expect("libc output is UTF-8")
+}
+
+fn host_zero_divided_by_zero() -> f64 {
+    let numerator = std::hint::black_box(0.0_f64);
+    let denominator = std::hint::black_box(0.0_f64);
+    numerator / denominator
+}
+
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -406,7 +431,10 @@ fn estimate_interpolation_prints_the_host_nan_without_a_deleted_bigram() {
     std::fs::remove_file(dir.path().join("deleted_bigram.db")).expect("remove deleted bigram");
     let outcome = run("estimate_interpolation", dir.path(), &[], b"");
     assert_eq!(exit_word(&outcome), 0);
-    assert_eq!(outcome.stdout, b"average lambda:-nan\n");
+    assert_eq!(
+        outcome.stdout,
+        format!("average lambda:{}\n", host_f(host_zero_divided_by_zero())).as_bytes()
+    );
     // `estimate_interpolation.cpp:111-114` keeps the failed attach's
     // handle, and the BDB pin's cursor and destructor sync on it print
     // libdb's `BDB1565` (`ngram_bdb.cpp:40-42,188`). Berkeley DB requires
@@ -447,7 +475,10 @@ fn eval_correction_rate_reports_the_correction_rate() {
     std::fs::write(&corpus, "").expect("corpus");
     let outcome = run("eval_correction_rate", dir.path(), &[], b"");
     assert_eq!(exit_word(&outcome), 0);
-    assert_eq!(outcome.stdout, b"correction rate:-nan\n");
+    assert_eq!(
+        outcome.stdout,
+        format!("correction rate:{}\n", host_f(host_zero_divided_by_zero())).as_bytes()
+    );
 }
 
 #[test]
