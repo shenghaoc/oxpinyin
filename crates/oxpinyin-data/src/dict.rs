@@ -322,6 +322,40 @@ impl<L, T: std::borrow::Borrow<SystemTables>> std::ops::Deref for SystemDictiona
 }
 
 impl SystemTables {
+    /// SEARCH_CONTINUED after decoding a physical-matrix path, including
+    /// the pin search's malformed-row checks.
+    ///
+    /// # Errors
+    /// Returns native table errors.
+    pub fn key_exists(&self, keys: &[ChewingKey]) -> Result<bool, DictError> {
+        self.pinyin
+            .search_continued(keys, &mut Vec::new())
+            .map(|(continued, _)| continued)
+    }
+
+    /// Attach the one index read by a standalone pin lookup program.
+    /// The other table is transient and is never read by that program.
+    ///
+    /// # Errors
+    /// Returns a native DBM construction error.
+    pub fn for_lookup(path: &Path, phonetic: bool) -> Result<Self, DictError> {
+        let attached = crate::chewing_table::DefaultDbm::attach(path, false)?;
+        let empty = crate::chewing_table::DefaultDbm::new(
+            <oxpinyin_store::DefaultStore as oxpinyin_store::WriteStore>::create_in_memory()
+                .map_err(|error| DictError::Table(error.into()))?,
+        );
+        let (pinyin, phrase) = if phonetic {
+            (attached, empty)
+        } else {
+            (empty, attached)
+        };
+        Ok(Self {
+            pinyin: ChewingTable::new(pinyin),
+            phrase: PhraseTable::new(phrase),
+            user_nibbles: 0,
+        })
+    }
+
     /// Whether the main pinyin-table attach failed.
     #[must_use]
     pub fn pinyin_attachment_failed(&self) -> bool {

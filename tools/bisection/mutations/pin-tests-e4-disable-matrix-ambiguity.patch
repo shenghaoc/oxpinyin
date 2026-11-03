@@ -1,0 +1,5 @@
+--- a/crates/oxpinyin-utils/src/storage_tests/lookup.rs
++++ b/crates/oxpinyin-utils/src/storage_tests/lookup.rs
+@@ -80 +80 @@
+-    let options = PINYIN_CORRECT_ALL | PINYIN_AMB_ALL | PINYIN_INCOMPLETE;
++    let options = PINYIN_CORRECT_ALL | (PINYIN_AMB_ALL & 0) | PINYIN_INCOMPLETE;

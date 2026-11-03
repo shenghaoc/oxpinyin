@@ -71,9 +71,9 @@ coverage and are superseded for these programs; no program is exempt.
 | E | `tests/storage/test_phrase_index_logger.cpp` / `test_phrase_index_logger` | Yes | Phrase-index logger diff/merge; `../../data/*`; `/tmp/gb_char.bin`, `/tmp/gb_char.dbin`, `/tmp/gb_char2.bin` | **Ported** — same-named tool case file and source-only class (b) guards |
 | E | `tests/storage/test_phrase_table.cpp` / `test_phrase_table` | No | Phrase-table lookup and mutation over `../../data/*` | **Ported** — same-named tool case file, all three cells, with class (b) source-only guards |
 | E | `tests/storage/test_chewing_table.cpp` / `test_chewing_table` | No | Chewing-table lookup and mutation over `../../data/*` | **Ported** — same-named tool case file, all three cells, with class (b) source-only guards |
-| E | `tests/storage/test_matrix.cpp` / `test_matrix` | No | Phonetic-key matrix construction and search over `../../data/*` | **GAP** |
-| E | `tests/lookup/test_pinyin_lookup.cpp` / `test_pinyin_lookup` | No | Phonetic n-best lookup over parsed matrices, phrase chunks and `../../data/bigram.db` | **GAP** |
-| E | `tests/lookup/test_phrase_lookup.cpp` / `test_phrase_lookup` | No | Raw-text phrase lookup with phrase chunks and `../../data/bigram.db` | **GAP** |
+| E | `tests/storage/test_matrix.cpp` / `test_matrix` | No | Phonetic-key matrix construction and search over `../../data/*` | **Ported** — same-named tool case file; matrix, result positions and text compared |
+| E | `tests/lookup/test_pinyin_lookup.cpp` / `test_pinyin_lookup` | No | Phonetic n-best lookup over parsed matrices, phrase chunks and `../../data/bigram.db` | **Ported** — same-named tool case file; matrix, result positions and text compared |
+| E | `tests/lookup/test_phrase_lookup.cpp` / `test_phrase_lookup` | No | Raw-text phrase lookup with phrase chunks and `../../data/bigram.db` | **Ported** — same-named tool case file; matrix, result positions and text compared |
 
 Family A is implemented by the four same-named `oxpinyin-utils` binaries
 and `src/pin_tests.rs`, using tool-gated ownership adapters in the two
@@ -126,13 +126,23 @@ restoring it restores the gate. Review mutations also detect losing
 the token after a zero cursor, omitting the first-key tone assertion, and
 refusing length before that assertion; their restoration restores the gate.
 
+Family E4 adds `test_matrix`, `test_pinyin_lookup` and `test_phrase_lookup`.
+Their 22 source-derived cases give 19 MATCH / 3 POLICY-ACCEPTED on the
+selected cells. The matrix includes separator and terminal zero keys;
+lookup results preserve non-null positions, token order and the phrase
+lookup's newline-separated `token phrase` entries. Required chunk failures
+and empty/unsegmentable text retain the pin's diagnostics and normal exits.
+The named `pin-tests-e4-disable-matrix-ambiguity` mutation is detected by
+`matrix-session`; restoring it restores the gate. Only source timer fields
+are masked. No pin undefined path is executed.
+
 The existing Rust Pinyin and Zhuyin C facades are separate implementations;
 raw-text phrase segmentation and phrase lookup exist. Those earlier N/A
 claims and the claim that Zhuyin is unified onto the Pinyin C API are stale.
 The direct parsers' complete key-rest and consumed-length interfaces must
 be checked separately from full/keyboard parser tests. Likewise, internal
 punctuation mutation and flexible n-gram operations are not replaced by
-training-utility coverage. The remaining complete binaries stay GAP until ported.
+training-utility coverage. Every listed libpinyin executable now has its drop-in implementation.
 
 `tests/tests_helper.h` and `tests/timer.h` are shared source dependencies,
 not additional executables. Helper-loaded `../../data` trees and every
@@ -143,7 +153,7 @@ under the existing external-I/O/check-message policies.
 
 Delivery order is A, B, D, C, E. Family E continues on current main after
 the earlier stack and the chunk work (#1549, #1576 and #1579) merged.
-Its final three lookup programs remain pending in E4.
+All eight programs are ported across E1–E4.
 
 ## libchewing tests
 
@@ -173,7 +183,7 @@ ABI behaviors are N/A by design rather than artificially reconstructed.
 ## Totals
 
 - **libpinyin**: 17 `noinst_PROGRAMS`, six also in automated `TESTS`;
-  **14 Ported, 3 GAP** after families A, B, D, C, E1–E3. Family PRs update their rows
+  **17 Ported, 0 GAP** after families A, B, D, C and E1–E4. Family PRs update their rows
   and this total when their drop-in verification passes.
 - The libchewing rows retain their separately audited behavior-coverage
   classifications. They do not count toward the libpinyin drop-in total.

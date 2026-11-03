@@ -44,6 +44,7 @@ tkrzw = [
 workspace = true
 
 [dependencies]
+oxpinyin-runtime = { workspace = true, features = ["tools"] }
 oxpinyin-capi-marshal = { path = "../oxpinyin-capi-marshal" }
 # The test drivers exercise the existing C facades through safe ownership
 # adapters. These tools and adapters are absent from shipping builds.

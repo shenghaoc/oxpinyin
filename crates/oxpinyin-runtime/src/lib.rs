@@ -3562,3 +3562,7 @@ mod tests {
         );
     }
 }
+
+/// The standalone pin test programs use the same data and model readers.
+#[cfg(feature = "tools")]
+pub mod tool;
