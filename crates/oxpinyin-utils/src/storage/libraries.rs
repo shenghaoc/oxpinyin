@@ -2,7 +2,7 @@
 //! `FacadePhraseIndex` loads and stores them (`utils/utils_helper.h:73-145`,
 //! `src/storage/phrase_index.cpp` at libpinyin 074a2219).
 //!
-//! `load_phrase_index` maps each `SYSTEM_FILE` row's `m_system_filename`
+//! `load_phrase_index` loads each `SYSTEM_FILE` row's `m_system_filename`
 //! in sub-index order; a chunk that does not load writes
 //! `load %s failed!` and ends the program. `save_phrase_index` stores the
 //! same rows with `SubPhraseIndex::store`, whose bytes
@@ -59,6 +59,8 @@ impl Library {
 /// The sixteen sub-index slots' loaded libraries.
 pub(crate) struct Libraries {
     by_index: [Option<Library>; 16],
+    /// Facade total, which excludes the initial total of a refused layout.
+    total: u32,
 }
 
 impl Libraries {
@@ -86,6 +88,7 @@ impl Libraries {
         failure_status: c_int,
     ) -> Self {
         let mut by_index: [Option<Library>; 16] = Default::default();
+        let mut total = 0_u32;
         for index in 0..16_u8 {
             let row = if addon {
                 conf.addon_row(index)
@@ -103,7 +106,7 @@ impl Libraries {
                 tool::abort();
             };
             let c_name = name_c_string(name.as_ref());
-            let library = match PhraseLibrary::open(Path::new(name.as_ref())) {
+            let library = match PhraseLibrary::load_heap(Path::new(name.as_ref())) {
                 Ok(library) => library,
                 Err(LibraryError::Row(_)) => tool::abort(),
                 Err(_) => {
@@ -111,6 +114,9 @@ impl Libraries {
                     tool::exit(failure_status);
                 }
             };
+            if !library.is_layout_failed() {
+                total = total.wrapping_add(library.total_freq());
+            }
             let Some(items) = items_of(&library) else {
                 tool::abort();
             };
@@ -120,17 +126,14 @@ impl Libraries {
                 total: library.total_freq(),
             });
         }
-        Self { by_index }
+        Self { by_index, total }
     }
 
     /// `FacadePhraseIndex::get_phrase_index_total_freq`
     /// (`src/storage/phrase_index.cpp:237-248`): the loaded libraries'
     /// stored totals added as each one loads, a `guint32` that wraps.
     pub(crate) fn total_freq(&self) -> u32 {
-        self.by_index
-            .iter()
-            .flatten()
-            .fold(0_u32, |total, library| total.wrapping_add(library.total))
+        self.total
     }
 
     /// `FacadePhraseIndex::add_unigram_frequency`
@@ -142,6 +145,7 @@ impl Libraries {
         else {
             return;
         };
+        self.total = self.total.wrapping_add(delta);
         let slot = token & PHRASE_MASK;
         let Some(item) = library.items.get_mut(&slot) else {
             return;
@@ -160,6 +164,9 @@ impl Libraries {
     /// last resident slot — exactly the resident items.
     pub(crate) fn add_unigram_to_every_item(&mut self) {
         for library in self.by_index.iter_mut().flatten() {
+            // The facade adds one for every token in the range, including gaps.
+            let range_count = library.items.keys().next_back().copied().unwrap_or(0);
+            self.total = self.total.wrapping_add(range_count);
             // `protect total_freq overflow`: once the stored total cannot
             // take another unit every remaining call returns the same
             // overflow without changing anything.
@@ -190,14 +197,14 @@ impl Libraries {
     /// `save_phrase_index(phrase_files, phrase_index)`: every `SYSTEM_FILE`
     /// row's chunk, overwritten with `MemoryChunk::save`. A save failure is
     /// the pin's `save %s failed.` and `exit(ENOENT)`.
-    pub(crate) fn save(&self, conf: &TableConf) {
+    pub(crate) fn save(&mut self, conf: &TableConf) {
         self.save_rows(conf, false, FileType::SystemFile);
     }
 
     /// The store loop of `save_phrase_index` (`utils/utils_helper.h:97-120`)
     /// or `save_dictionary` (`:122-145`) over one table array: every row of
     /// `file_type`, in sub-index order.
-    pub(crate) fn save_rows(&self, conf: &TableConf, addon: bool, file_type: FileType) {
+    pub(crate) fn save_rows(&mut self, conf: &TableConf, addon: bool, file_type: FileType) {
         for index in 0..16_u8 {
             let row = if addon {
                 conf.addon_row(index)
@@ -213,7 +220,22 @@ impl Libraries {
             let Some(library) = &self.by_index[usize::from(index)] else {
                 continue;
             };
-            save_library(&library.name, &library.chunk());
+            let name = library.name.clone();
+            let old_total = library.total;
+            let file = library.chunk();
+            save_library(&name, &file);
+            let reloaded =
+                PhraseLibrary::from_payload(file[8..].to_vec()).unwrap_or_else(|_| tool::abort());
+            let items = items_of(&reloaded).unwrap_or_else(|| tool::abort());
+            self.total = self.total.wrapping_sub(old_total);
+            if !reloaded.is_layout_failed() {
+                self.total = self.total.wrapping_add(reloaded.total_freq());
+            }
+            self.by_index[usize::from(index)] = Some(Library {
+                name,
+                items,
+                total: reloaded.total_freq(),
+            });
         }
     }
 }
@@ -240,9 +262,11 @@ pub(crate) fn token_to_string(libraries: &Libraries, token: u32) -> Option<CStri
 /// Saves one fully framed `MemoryChunk` through `MemoryChunk::save`'s
 /// calls.
 pub(crate) fn save_library(name: &CString, file: &[u8]) {
-    let length = u32::from_le_bytes([file[0], file[1], file[2], file[3]]);
-    let checksum = u32::from_le_bytes([file[4], file[5], file[6], file[7]]);
-    if !tool::storage::save_chunk(name, length, checksum, &file[8..]) {
+    let path = crate::training::path_of(name);
+    if let Err(error) = oxpinyin_input::chunk::save(&path, file) {
+        if matches!(error, oxpinyin_input::chunk::ChunkSaveError::Header { .. }) {
+            tool::abort();
+        }
         tool::storage::report_save_failed(name);
         tool::exit(tool::ENOENT);
     }
@@ -259,8 +283,8 @@ fn items_of(
     Some(items)
 }
 
-/// One mapped item as a chunk item.
-fn item_of(view: &PhraseItemView<'_>) -> Option<oxpinyin_data::chunk_write::ChunkItem> {
+/// One loaded item as a chunk item.
+pub(crate) fn item_of(view: &PhraseItemView<'_>) -> Option<oxpinyin_data::chunk_write::ChunkItem> {
     let phrase: Option<Vec<u32>> = view.phrase_codes().collect();
     let mut prons = Vec::new();
     for pronunciation in view.pronunciations() {

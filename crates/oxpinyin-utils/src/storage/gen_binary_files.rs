@@ -133,8 +133,8 @@ fn generate_binary_files(
     }
 
     compact(&mut libraries);
-    save_chunks(conf, addon, false, &libraries);
-    save_chunks(conf, addon, true, &libraries);
+    save_chunks(conf, addon, false, &mut libraries);
+    save_chunks(conf, addon, true, &mut libraries);
 }
 
 /// `ChewingLargeTable2::load_text` (`src/storage/chewing_large_table2.cpp:112-158`).
@@ -350,7 +350,7 @@ fn save_chunks(
     conf: &TableConf,
     addon: bool,
     dictionary: bool,
-    libraries: &[Option<ChunkMap>; 16],
+    libraries: &mut [Option<ChunkMap>; 16],
 ) {
     let wanted = if dictionary {
         FileType::Dictionary
@@ -379,6 +379,17 @@ fn save_chunks(
             None => vec![0; 8],
         };
         save_library(&name, &file);
+        let reloaded =
+            oxpinyin_data::phrase_library::PhraseLibrary::from_payload(file[8..].to_vec())
+                .unwrap_or_else(|_| tool::abort());
+        let mut items = ChunkMap::new();
+        for (slot, view) in reloaded.items() {
+            items.insert(
+                slot,
+                crate::storage::libraries::item_of(&view).unwrap_or_else(|| tool::abort()),
+            );
+        }
+        libraries[index] = Some(items);
     }
 }
 

@@ -55,6 +55,10 @@ compared. Malformed row lengths fail. `gbf-toned-model` uses this for
 Equal normalized observations report POLICY-ACCEPTED, not raw-byte MATCH;
 any other exit, stream or file difference fails.
 
+A case may list inputs in `sealed_inputs`. On Linux the runner exposes their
+bytes through sealed memory files: reads succeed and writes fail even as root.
+`expected_failure` asserts the exact exit and stderr for both observations.
+
 Each side gets identical inputs in a private working directory. The runner
 compares exit status, byte-preserving stdout/stderr and the complete file
 inventory (including empty files, modified inputs and directory entries).

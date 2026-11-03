@@ -62,6 +62,27 @@ class ToolDiffTests(unittest.TestCase):
         self.assertEqual(tool_diff.verdict({}, result, result, self.root, 'bdb')[0], 'MATCH')
         self.assertEqual(tool_diff.verdict({}, result, dict(result, stdout='stdin\ufffd'), self.root, 'bdb')[0], 'DIFFER')
 
+    @unittest.skipUnless(sys.platform == "linux", "Linux sealed memory files")
+    def test_sealed_input_can_be_read_but_not_truncated(self):
+        context = pool.UnitContext('sealed input', threading.Event())
+        ctx = SimpleNamespace(env={}, services=SimpleNamespace(context=context))
+        code = ("from pathlib import Path\nimport sys\np=Path('chunk')\n"
+                "assert p.read_bytes()==b'data'\ntry:\n p.write_bytes(b'changed')\n"
+                "except OSError:\n sys.exit(2)\n")
+        case = dict(args=['-c', code], sealed_inputs=['chunk'])
+        result = tool_diff.observation(ctx, Path(sys.executable), case, self.root / 'sealed',
+                                       {'chunk': b'data'}, b'', time.monotonic() + 5)
+        self.assertEqual(result['exit'], 2)
+        self.assertEqual(result['files']['chunk'], 'hex:64617461')
+
+    def test_expected_failure_rejects_two_successful_observations(self):
+        case = dict(expected_failure=dict(exit=2, stderr='save chunk failed.'))
+        success = dict(exit=0, stdout='', stderr='', files={})
+        failure = dict(exit=2, stdout='', stderr='save chunk failed.', files={})
+        self.assertEqual(tool_diff.verdict(case, success, success, self.root, 'tkrzw')[0], 'DIFFER')
+        self.assertEqual(tool_diff.verdict(case, failure, failure, self.root, 'tkrzw')[0], 'MATCH')
+        self.assertEqual(tool_diff.verdict(case, failure, success, self.root, 'tkrzw')[0], 'DIFFER')
+
     def test_masks_only_glib_pid_and_time(self):
         value = "\n** (process:123): CRITICAL **: 12:34:56.789: message 123\nfile:456 time 12:34:56.789\n"
         self.assertEqual(tool_diff.GLIB_PREFIX.sub(r'\1PID\2TIME: ', value),

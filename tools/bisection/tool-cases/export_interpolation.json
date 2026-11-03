@@ -68,6 +68,24 @@
           "file": "fixtures/w3/tkt/gb_char.bin"
         }
       }
+    },
+    {
+      "id": "export_interpolation-family-e-truncated-first-chunk",
+      "utility": "export_interpolation",
+      "source": "utils/storage/export_interpolation.cpp:60; utils/utils_helper.h:73-94; src/include/memory_chunk.h:420-463 at 074a2219",
+      "args": [],
+      "fixture_dir": "fixtures/w3",
+      "files": {
+        "gb_char.bin": {
+          "hex": "040000000000000001"
+        },
+        "gbk_char.bin": {
+          "hex": "00"
+        }
+      },
+      "stdin": {
+        "text": ""
+      }
     }
   ]
 }

@@ -5,6 +5,8 @@ No utility is executed to discover expected behavior. Cases cite source-derived
 contracts; policy observations bind through the existing policy-record machinery.
 """
 import argparse
+import contextlib
+import os
 from collections import Counter
 import hashlib
 import json
@@ -136,6 +138,15 @@ def load_cases(paths):
                 raise ValueError(f'{path}: a pin signal requires a named policy record')
             for name in case.get('files', {}):
                 relative(name)
+            if case.get('sealed_inputs') is not None:
+                if not isinstance(case['sealed_inputs'], list) or not all(isinstance(name, str) for name in case['sealed_inputs']):
+                    raise ValueError(f'{path}: sealed_inputs must be a list of relative names')
+                for name in case['sealed_inputs']:
+                    relative(name)
+            if 'expected_failure' in case:
+                expected = case['expected_failure']
+                if not isinstance(expected, dict) or set(expected) != {'exit', 'stderr'} or not isinstance(expected['exit'], int) or not isinstance(expected['stderr'], str):
+                    raise ValueError(f'{path}: expected_failure needs exit and stderr')
             if case.get('policy_cells') is not None:
                 if not isinstance(case['policy_cells'], list) or not all(
                         isinstance(name, str) and name in FIXTURE_DIRS for name in case['policy_cells']):
@@ -236,9 +247,31 @@ def observation(ctx, binary, case, directory, inputs, stdin, deadline, helper=No
     # utility, rather than libtool's lt-* executable in .libs.
     parent = ctx.services.context
     context = replace(parent, cancelled=lambda: (parent.check() or time.monotonic() >= deadline))
-    result = context.launch([str(binary), *case.get('args', [])], cwd=directory,
-                            env=environment, input=stdin)
-    files = snapshot(directory)
+    with contextlib.ExitStack() as stack:
+        sealed = {}
+        for name in case.get('sealed_inputs', []):
+            import fcntl  # Linux-only sealed-memory fixture.
+            path = directory / relative(name)
+            content = path.read_bytes()
+            fd = os.memfd_create('tool-diff-chunk', os.MFD_ALLOW_SEALING)
+            stack.callback(os.close, fd)
+            with os.fdopen(os.dup(fd), 'wb') as file:
+                file.write(content)
+            # Linux uapi/linux/fcntl.h: managed CPython may omit these names.
+            fcntl.fcntl(fd, 1033, 0x0001 | 0x0002 | 0x0004 | 0x0008)
+            target = f'/proc/self/fd/{fd}'
+            path.unlink()
+            path.symlink_to(target)
+            sealed[name] = (fd, target)
+        result = context.launch([str(binary), *case.get('args', [])], cwd=directory,
+                                env=environment, input=stdin,
+                                pass_fds=(*context.fds, *(fd for fd, _ in sealed.values())))
+        files = snapshot(directory)
+        for name, (fd, target) in sealed.items():
+            # Compare the input bytes while still detecting a replaced link.
+            if files.get(name) == 'symlink:' + target:
+                size = os.fstat(fd).st_size
+                files[name] = 'hex:' + os.pread(fd, size, 0).hex()
     if case.get('dbm_rows'):
         logical_dbm_rows(ctx, helper, directory, case['dbm_rows'], files)
     if case.get('dbm_rows_pinyin_index'):
@@ -254,6 +287,11 @@ def verdict(case, pin, subject, policy_root, cell):
             value, pin_signal=case.get('pin_signal') if side == 'pin' or case.get('reproduces_signal') else None)
         if problem:
             return 'INVALID', f'{side}: {problem}'
+    if 'expected_failure' in case:
+        expected = case['expected_failure']
+        for side, value in (('pin', pin), ('subject', subject)):
+            if value['exit'] != expected['exit'] or value['stderr'] != expected['stderr']:
+                return 'DIFFER', f'{side}: expected exit {expected["exit"]} and stderr {expected["stderr"]!r}; got {value["exit"]} and {value["stderr"]!r}'
     # `policy_cells` limits the record to the cells it names; on any other
     # cell the case compares as an ordinary case.
     if case.get('policy_record') and cell in case.get('policy_cells', (cell,)):

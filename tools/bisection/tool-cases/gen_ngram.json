@@ -79,6 +79,38 @@
       "args": ["--skip-pi-gram-training", "--bigram-file", "absent/bigram.db"],
       "fixture_dir": "fixtures/w3",
       "stdin": {"text": "16777219 阿\n16777220 啊\n"}
+    },
+    {
+      "id": "gen_ngram-family-e-truncated-first-chunk",
+      "utility": "gen_ngram",
+      "source": "utils/training/gen_ngram.cpp:71; utils/utils_helper.h:73-94; src/include/memory_chunk.h:420-463 at 074a2219",
+      "args": [],
+      "fixture_dir": "fixtures/w3",
+      "files": {
+        "gb_char.bin": {
+          "hex": "040000000000000001"
+        },
+        "gbk_char.bin": {
+          "hex": "00"
+        }
+      },
+      "stdin": {
+        "text": ""
+      }
+    },
+    {
+      "id": "gen_ngram-family-e-save-refused",
+      "utility": "gen_ngram",
+      "source": "utils/training/gen_ngram.cpp:120; utils/utils_helper.h:97-145 at 074a2219",
+      "args": [],
+      "fixture_dir": "fixtures/w3",
+      "expected_failure": {"exit": 2, "stderr": "save gb_char.bin failed."},
+      "sealed_inputs": [
+        "gb_char.bin"
+      ],
+      "stdin": {
+        "text": ""
+      }
     }
   ]
 }

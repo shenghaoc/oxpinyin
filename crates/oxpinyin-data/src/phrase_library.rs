@@ -427,11 +427,25 @@ impl PhraseContent {
     }
 }
 
+enum LibraryBytes {
+    Mapped(oxpinyin_input::chunk::Mapping),
+    Owned(Vec<u8>),
+}
+
+impl LibraryBytes {
+    fn as_slice(&self) -> &[u8] {
+        match self {
+            Self::Mapped(mapping) => mapping.as_slice(),
+            Self::Owned(payload) => payload,
+        }
+    }
+}
+
 /// One per-library phrase index over a mapped libpinyin `*.bin` chunk
 /// file — the `SubPhraseIndex` of `FacadePhraseIndex`, upstream's
 /// mmap-backed half of the system data.
 pub struct PhraseLibrary {
-    file: Option<oxpinyin_input::chunk::Mapping>,
+    file: Option<LibraryBytes>,
     source_path: Option<PathBuf>,
     /// The payload after the 8-byte chunk header.
     payload: std::ops::Range<usize>,
@@ -545,18 +559,56 @@ impl PhraseLibrary {
     /// # Errors
     /// Returns the same mapping and out-of-bounds layout errors as [`Self::open`].
     pub fn open_retaining_layout(path: &Path) -> Result<Self, LibraryError> {
-        let file = map_chunk(path)?;
+        let file = LibraryBytes::Mapped(map_chunk(path)?);
         let bytes = file.as_slice();
-        let bad = |message: &str| LibraryError::Format(message.to_owned());
         let payload = CHUNK_HEADER_SIZE
             ..CHUNK_HEADER_SIZE + ((bytes.len() - CHUNK_HEADER_SIZE) as u32 as usize);
+        Self::from_bytes(file, payload, Some(path.to_path_buf()))
+    }
+
+    /// Read and validate a utility chunk through `MemoryChunk::load`'s calls.
+    ///
+    /// # Errors
+    /// Returns a read, checksum, or layout error.
+    pub fn load_heap(path: &Path) -> Result<Self, LibraryError> {
+        let loaded = oxpinyin_input::chunk::load(path).map_err(|error| match error {
+            oxpinyin_input::chunk::ChunkLoadError::Header(_) => {
+                LibraryError::Row(RowFault::ChunkHeaderRead)
+            }
+            oxpinyin_input::chunk::ChunkLoadError::Io(error) => LibraryError::Io(error),
+            oxpinyin_input::chunk::ChunkLoadError::ShortHeader => {
+                LibraryError::Format("chunk shorter than its header".into())
+            }
+        })?;
+        let payload = loaded
+            .finish(chunk_checksum)
+            .ok_or_else(|| LibraryError::Format("chunk checksum mismatch".into()))?;
+        Self::from_payload(payload)
+    }
+
+    /// Construct a library from a validated, heap-owned chunk payload.
+    ///
+    /// # Errors
+    /// Returns an error when the sub-index layout cannot be represented safely.
+    pub fn from_payload(payload: Vec<u8>) -> Result<Self, LibraryError> {
+        let len = payload.len();
+        Self::from_bytes(LibraryBytes::Owned(payload), 0..len, None)
+    }
+
+    fn from_bytes(
+        file: LibraryBytes,
+        payload: Range<usize>,
+        source_path: Option<PathBuf>,
+    ) -> Result<Self, LibraryError> {
+        let bytes = file.as_slice();
+        let bad = |message: &str| LibraryError::Format(message.to_owned());
         let payload_bytes = &bytes[payload.clone()];
         // The pin's `get_content` leaves a failed read's destination at 0;
         // `m_total_freq` is read before the layout checks.
         let total_freq = u32_at(payload_bytes, 0).unwrap_or(0);
         let layout = |file, payload| Self {
             file: Some(file),
-            source_path: Some(path.to_path_buf()),
+            source_path: source_path.clone(),
             payload,
             total_freq,
             offsets: 0..0,
@@ -617,7 +669,7 @@ impl PhraseLibrary {
 
         Ok(Self {
             file: Some(file),
-            source_path: Some(path.to_path_buf()),
+            source_path,
             payload,
             total_freq,
             // load's sub-chunk views: the offset array runs to the
@@ -762,7 +814,12 @@ impl PhraseLibrary {
             return None;
         }
         let range_end = self.token_range().end;
-        let mapping = self.file.take()?;
+        let Some(LibraryBytes::Mapped(_)) = self.file.as_ref() else {
+            return None;
+        };
+        let LibraryBytes::Mapped(mapping) = self.file.take()? else {
+            return None;
+        };
         self.detached_range_end = Some(range_end);
         Some(PhraseContent {
             mapping,
@@ -899,6 +956,29 @@ impl fmt::Debug for PhraseLibrary {
             .field("total_freq", &self.total_freq)
             .field("token_range", &self.token_range())
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod heap_load_tests {
+    use super::PhraseLibrary;
+    use crate::chunk_write::{ChunkItem, build_chunk};
+
+    #[test]
+    fn heap_loaded_library_keeps_its_payload_after_file_changes() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("library.bin");
+        let item = ChunkItem {
+            phrase: vec![0x4f60],
+            unigram: 7,
+            prons: vec![],
+        };
+        let bytes = build_chunk(&[(1, item)]).expect("chunk");
+        std::fs::write(&path, bytes).expect("write");
+        let library = PhraseLibrary::load_heap(&path).expect("load");
+        std::fs::write(&path, []).expect("replace file");
+        assert_eq!(library.item(1).map(|item| item.unigram()), Some(7));
+        assert_eq!(library.total_freq(), 7);
     }
 }
 

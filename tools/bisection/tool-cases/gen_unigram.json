@@ -74,6 +74,38 @@
         "art.bin": {"file": "fixtures/w3/db/art.bin"}
       },
       "stdin": {"text": ""}
+    },
+    {
+      "id": "gen_unigram-family-e-truncated-first-chunk",
+      "utility": "gen_unigram",
+      "source": "utils/training/gen_unigram.cpp:53-58; utils/utils_helper.h:73-94; src/include/memory_chunk.h:420-463 at 074a2219",
+      "args": [],
+      "fixture_dir": "fixtures/w3",
+      "files": {
+        "gb_char.bin": {
+          "hex": "040000000000000001"
+        },
+        "gbk_char.bin": {
+          "hex": "00"
+        }
+      },
+      "stdin": {
+        "text": ""
+      }
+    },
+    {
+      "id": "gen_unigram-family-e-save-refused",
+      "utility": "gen_unigram",
+      "source": "utils/training/gen_unigram.cpp:72,75; utils/utils_helper.h:97-145 at 074a2219",
+      "args": [],
+      "fixture_dir": "fixtures/w3",
+      "expected_failure": {"exit": 2, "stderr": "save gb_char.bin failed."},
+      "sealed_inputs": [
+        "gb_char.bin"
+      ],
+      "stdin": {
+        "text": ""
+      }
     }
   ]
 }
