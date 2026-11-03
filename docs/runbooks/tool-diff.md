@@ -49,7 +49,9 @@ compared exactly. The helper is tooling only and is not a pin utility.
 `PinyinIndexItem2<N>` tail padding: two bytes per odd-N item, none for even
 N. Tokens, packed keys, item order, lengths and continuation rows remain
 compared. Malformed row lengths fail. `gbf-toned-model` uses this for
-`pinyin_index.bin` under [eio-pinyin-index-padding](../findings/eio-pinyin-index-padding.md).
+`pinyin_index.bin`, and `gbf-too-many-arguments` and
+`gbf-library-bits-are-masked` for `pinyin_index.bin` and
+`addon_pinyin_index.bin`, under [eio-pinyin-index-padding](../findings/eio-pinyin-index-padding.md).
 Equal normalized observations report POLICY-ACCEPTED, not raw-byte MATCH;
 any other exit, stream or file difference fails.
 

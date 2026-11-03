@@ -45,10 +45,12 @@
         }
       },
       "dbm_rows": [
-        "pinyin_index.bin",
         "phrase_index.bin",
-        "addon_pinyin_index.bin",
         "addon_phrase_index.bin"
+      ],
+      "dbm_rows_pinyin_index": [
+        "pinyin_index.bin",
+        "addon_pinyin_index.bin"
       ]
     },
     {
@@ -241,10 +243,12 @@
         }
       },
       "dbm_rows": [
-        "pinyin_index.bin",
         "phrase_index.bin",
-        "addon_pinyin_index.bin",
         "addon_phrase_index.bin"
+      ],
+      "dbm_rows_pinyin_index": [
+        "pinyin_index.bin",
+        "addon_pinyin_index.bin"
       ]
     },
     {
