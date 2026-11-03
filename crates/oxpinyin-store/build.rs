@@ -76,7 +76,8 @@ fn probe() -> system_deps::Dependencies {
 }
 
 /// What the two cxx bridges share: how a native library's include
-/// directories reach the C++ compiler, and the address-sanitizer flags.
+/// directories reach the C++ compiler, the address-sanitizer flags, and
+/// the link order after the bridge archive.
 #[cfg(any(feature = "tkrzw", feature = "kyotocabinet"))]
 mod native {
     /// The directories the configured C++ compiler searches for `<...>`
@@ -169,6 +170,20 @@ mod native {
                 .flag("-fno-omit-frame-pointer");
         }
     }
+
+    /// Names `library`'s libraries again; call it after the bridge's
+    /// `compile`. `system-deps` named them before `compile` named the
+    /// bridge archive, and rustc keeps that order. A linker that resolves
+    /// left to right and drops an `--as-needed` library nothing has yet
+    /// referenced (GNU ld) then discards the native library before the
+    /// archive that needs it, and every one of its symbols is undefined.
+    /// Naming the libraries again after the archive fixes the order; an
+    /// order-independent linker (ld64, lld) is unaffected.
+    pub fn link_after_archive(library: &system_deps::Library) {
+        for lib in &library.libs {
+            println!("cargo:rustc-link-lib={}", lib.name);
+        }
+    }
 }
 
 /// Kyoto Cabinet: the cxx bridge over the pin's concrete classes, plus the
@@ -245,17 +260,7 @@ mod kyotocabinet {
         super::native::configure(&mut bridge);
         super::native::add_includes(&mut bridge, &library.include_paths);
         bridge.compile("oxpinyin_kc_bridge");
-
-        // `system-deps` named Kyoto Cabinet before `compile` named the
-        // bridge archive, and rustc keeps that order. A linker that resolves
-        // left to right and drops an `--as-needed` library nothing has yet
-        // referenced (GNU ld) then discards libkyotocabinet before the
-        // archive that needs it, and every Kyoto Cabinet symbol is
-        // undefined. Naming the libraries again after the archive fixes the
-        // order; an order-independent linker (ld64, lld) is unaffected.
-        for lib in &library.libs {
-            println!("cargo:rustc-link-lib={}", lib.name);
-        }
+        super::native::link_after_archive(library);
     }
 }
 
@@ -310,6 +315,7 @@ mod tkrzw {
         super::native::configure(&mut bridge);
         super::native::add_includes(&mut bridge, &library.include_paths);
         bridge.compile("oxpinyin_tkrzw_bridge");
+        super::native::link_after_archive(library);
 
         // PE targets have no rpath, and link.exe reports the raw flag as
         // LNK4044, which the `linker_messages` lint turns into a failed
