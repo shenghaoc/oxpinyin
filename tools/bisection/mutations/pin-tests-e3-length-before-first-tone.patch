@@ -1,0 +1,12 @@
+--- a/crates/oxpinyin-utils/src/storage_tests/tables.rs
++++ b/crates/oxpinyin-utils/src/storage_tests/tables.rs
+@@ -49,0 +50,4 @@
++        // Approved row 116 refusal immediately before the would-be copy.
++        if keys.len() > 16 {
++            tool::exit(tool::EINVAL);
++        }
+@@ -56,4 +59,0 @@
+-        }
+-        // Approved row 116 refusal immediately before the would-be copy.
+-        if keys.len() > 16 {
+-            tool::exit(tool::EINVAL);

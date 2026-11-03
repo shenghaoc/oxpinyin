@@ -23,6 +23,24 @@ pub(crate) struct Tree {
 }
 
 impl Tree {
+    /// The pin's default in-memory table constructor.
+    pub(crate) fn memory() -> Result<Self, StoreError> {
+        Ok(Self {
+            store: DefaultStore::create_in_memory()?,
+            plain_set: true,
+        })
+    }
+
+    /// mask_out(0,0) leaves every key with an empty value, then synchronizes.
+    pub(crate) fn mask_all(&self) {
+        if let Ok(keys) = self.native_keys() {
+            for key in keys {
+                let _ = self.put(&key, &[]);
+            }
+        }
+        let _ = self.store.flush();
+    }
+
     /// `attach(filename, ATTACH_READWRITE|ATTACH_CREATE)`.
     pub(crate) fn create(path: &Path) -> Result<Self, StoreError> {
         Ok(Self {

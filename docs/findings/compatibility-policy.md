@@ -1304,6 +1304,7 @@ not proof that the current Rust parser follows the newly required call.
 | 113 | <a id="bdb-failed-handles"></a>Berkeley DB handles whose `DB->open` failed: the pin's later calls print `BDB1565` (#1516) | **POLICY-ACCEPTED** under the [external API misuse ruling](#external-api-misuse) | registered 2026-11-02 UTC. At `074a2219` the Berkeley DB build keeps a handle whose `DB->open` failed and calls it again. The system tables' `attach` returns false and keeps the handle ([chewing_large_table2_bdb.cpp:87-93](https://github.com/shenghaoc/libpinyin/blob/074a2219c90feaf962d0d24f034514033ece5f99/src/storage/chewing_large_table2_bdb.cpp#L87-L93), [phrase_large_table3_bdb.cpp:102-108](https://github.com/shenghaoc/libpinyin/blob/074a2219c90feaf962d0d24f034514033ece5f99/src/storage/phrase_large_table3_bdb.cpp#L102-L108), [punct_table_bdb.cpp:64-70](https://github.com/shenghaoc/libpinyin/blob/074a2219c90feaf962d0d24f034514033ece5f99/src/storage/punct_table_bdb.cpp#L64-L70), [ngram_bdb.cpp:110-124](https://github.com/shenghaoc/libpinyin/blob/074a2219c90feaf962d0d24f034514033ece5f99/src/storage/ngram_bdb.cpp#L110-L124)); the later reads, cursors and the `reset()` sync ([ngram_bdb.cpp:39-46](https://github.com/shenghaoc/libpinyin/blob/074a2219c90feaf962d0d24f034514033ece5f99/src/storage/ngram_bdb.cpp#L39-L46)) reach it. `FlexibleBigram::attach` retries `DB->open` on the failed handle and reads the signature through a handle whose open failed ([flexible_ngram_bdb.h:94-153](https://github.com/shenghaoc/libpinyin/blob/074a2219c90feaf962d0d24f034514033ece5f99/src/storage/flexible_ngram_bdb.h#L94-L153)). libdb answers each such call with `EINVAL` and the stderr line `BDB1565 DB-><method>: method not permitted before handle's open method` (`src/dbinc/db_int.in:902-904`, `src/env/env_method.c:1809-1817`, Berkeley DB 5.3.28). Berkeley DB requires `DB->close` after a failed `DB->open` and no later call on that handle (`docs/api_reference/C/dbopen.html`, `dbclose.html`). oxpinyin closes the handle when the open fails, opens a new handle for the CREATE retry, and keeps no failed handle (`crates/oxpinyin-store/src/bdb/mod.rs`: `BdbUnopenedHandle`, `open_pin`, `WriteStore::attach_hash`). This covers the system attachments, the utilities' `Bigram` (`crates/oxpinyin-utils/src/storage/dbm.rs`) and the K-mixture tools' `FlexibleBigram` (`crates/oxpinyin-kmm/src/database.rs`). Every answer stays the pin's (`false`, a miss, an empty walk); the only difference is the missing `BDB1565` lines. The affected cases are POLICY-ACCEPTED from [bdb-failed-handle](bdb-failed-handle.md): the 29 bdb `missing-system-dbm/bdb-*` contract cases, and 16 bdb tool-diff cases of `gen_ngram`, `gen_deleted_ngram`, `estimate_interpolation`, `eval_correction_rate`, `export_interpolation`, `estimate_k_mixture_model`, `export_k_mixture_model` and `validate_k_mixture_model` (`policy_cells: ["bdb"]`). |
 | 114 | Negative `MemoryChunk::load` payload read | **(b)** — out-of-bounds read | Maintainer ruling 2026-11-03 UTC: at `074a2219`, `src/include/memory_chunk.h:452-453` converts a negative `read` result, including `EINTR`, to `guint32` (`0xffffffff`) and checksums that length past an ordinary smaller allocation. The tkrzw object's `pinyin::MemoryChunk::load` at offsets `+0x116` to `+0x13b` performs the unchecked conversion and checksum loop. The result is undefined. oxpinyin takes the checksum-failure path, freeing the buffer, closing the descriptor and answering false without retrying. The negative-read path is `pin_not_run`; Rust-level single-read tests cover it and the defined nonnegative short-read result. |
 | 115 | Consumed invalid UTF-8 in family E text rows or phrase-table queries | **(b)** — NULL read with uninitialized length | Maintainer-approved safe outcome, recorded 2026-11-03 UTC, narrowed by review 2026-11-04 UTC: `tests/storage/test_phrase_table.cpp:45-59` passes failed `g_utf8_to_ucs4` output to search (`src/storage/phrase_large_table3_tkrzwdb.cpp:133-136`); phrase-table text loading also consumes it (`phrase_large_table3.cpp:131-135`). In `FacadePhraseIndex::load_text`, conversion returns NULL without setting the uninitialized `glong written` (`phrase_index.cpp:541-543`). Only `cur_token == 0` or a changed token consumes it in `set_phrase_string(written, NULL)` (`:545-556`), copying an uninitialized length from NULL: undefined behavior. Token 0 keeps `cur_token` at 0, so every token-0 row consumes its conversion. Stop those consuming failures with normal `exit(EINVAL)`, no added diagnostic, retaining earlier observable work. A same nonzero token never uses the failed conversion: it parses the reading, adds it when its key count matches, otherwise prints the source skip line (`:577-582`), then frees NULL (`:586`); that path is defined and continues. The two same-token cases compare against the pin. Undefined consuming paths never run the pin; the index's subject guard retains earlier timed output. E3 adds table cases using pin_not_run. |
+| 116 | More than sixteen keys passed directly to the chewing-table test search | **(b)** — stack-buffer write | Maintainer-approved safe outcome, recorded 2026-11-03 UTC: `tests/storage/test_chewing_table.cpp:71-86` passes all parsed keys to `src/storage/chewing_large_table2.cpp:161-172`, whose local `ChewingKey index[MAX_PHRASE_LENGTH]` has sixteen slots. `src/storage/pinyin_phrase3.h:160-177` writes phrase_length keys before search_internal's switch can abort. After checking only the first incomplete key's zero tone (`pinyin_phrase3.h:146-157`), stop immediately before the unsafe copy with normal `exit(EINVAL)`, no added diagnostic, keeping earlier observable work. This is separate from row 84's stored-key dispatch. `chewing-table-overlong-query` uses pin_not_run; the subject guard after a valid timed query verifies that earlier stdout is kept. |
 | 117 | Logger ignores a failed required phrase-chunk load | **(b)** — row 76's NULL read | Maintainer-approved safe outcome, recorded 2026-11-03 UTC; citation scope clarified 2026-11-04 UTC: the three required `../../data/gb_char.bin` loads at `tests/storage/test_phrase_index_logger.cpp:28-30,45-48,52-54` ignore MemoryChunk::load returning false. The first and third enter SubPhraseIndex::load directly; diff loads the second as its old sub-index (`phrase_index.cpp:271-282,335-354`), reaching row 76's NULL read. Stop a failed required phrase-chunk load with normal `exit(ENOENT)`, no added diagnostic, retaining earlier observable work. The separate journal reload at `test_phrase_index_logger.cpp:55-57` is defined on failure: PhraseIndexLogger::load retains the empty chunk and has_next_record finds nothing (`phrase_index_logger.h:94-133`), so nothing is merged. Do not apply this refusal to the journal. `phrase-index-logger-missing` and `phrase-index-logger-short` bind source-only complete observations; no undefined pin execution. |
 
 
@@ -1311,6 +1312,13 @@ not proof that the current Rust parser follows the newly required call.
 **2026-11-04 UTC family E2 recount:** class (b) has **24** physical rows,
 including row `106a`: the 21 listed in the dated 2026-10-31 count below,
 plus 114, 115 and 117. Dated historical counts remain as recorded.
+
+**2026-11-04 UTC family E3 recount:** class (b) has **25** physical rows,
+including row `106a`: E2's 24 rows plus row 116. The first incomplete-key
+assertion precedes row 116's refusal; a 17-key query starting with n4 aborts,
+while n followed by n4 reaches a defined table search. Historical counts
+below remain dated.
+
 
 Totals recounted 2026-10-18 UTC from the primary status in each class
 cell, including rows 98, 100, 101, 102, 103, 104, 105, 106, 107, 108 and 109; row 99 is folded into row 88:
@@ -1837,6 +1845,54 @@ or replayed pin result. Ordinary discrepancy pairs still reject parity.
         "fields": {
           "exit": "d4735e3a265e16ee",
           "files": "fc1d503c19c31bdc",
+          "stderr": "12ae32cb1ec02d01",
+          "stdout": "12ae32cb1ec02d01"
+        }
+      }
+    },
+    "phrase-table-invalid-text": {
+      "classification": "b",
+      "pin_not_run": {
+        "sha256": "7dcc2b046f73c4f1e93457ba0df4cb36c1bbc4ae9358d653f39e3662f9af0e9d",
+        "fields": {
+          "exit": "785f3ec7eb32f30b",
+          "files": "53ee76ed86fc4c3a",
+          "stderr": "12ae32cb1ec02d01",
+          "stdout": "12ae32cb1ec02d01"
+        }
+      }
+    },
+    "phrase-table-invalid-utf8": {
+      "classification": "b",
+      "pin_not_run": {
+        "sha256": "75042365c7a5e47095a8467ac84293d4b439c75b65d76c6b27d7ffa7eb0e405b",
+        "fields": {
+          "exit": "785f3ec7eb32f30b",
+          "files": "eb361d7975aa2e68",
+          "stderr": "12ae32cb1ec02d01",
+          "stdout": "12ae32cb1ec02d01"
+        }
+      }
+    },
+    "chewing-table-invalid-text": {
+      "classification": "b",
+      "pin_not_run": {
+        "sha256": "7dcc2b046f73c4f1e93457ba0df4cb36c1bbc4ae9358d653f39e3662f9af0e9d",
+        "fields": {
+          "exit": "785f3ec7eb32f30b",
+          "files": "53ee76ed86fc4c3a",
+          "stderr": "12ae32cb1ec02d01",
+          "stdout": "12ae32cb1ec02d01"
+        }
+      }
+    },
+    "chewing-table-overlong-query": {
+      "classification": "b",
+      "pin_not_run": {
+        "sha256": "75042365c7a5e47095a8467ac84293d4b439c75b65d76c6b27d7ffa7eb0e405b",
+        "fields": {
+          "exit": "785f3ec7eb32f30b",
+          "files": "eb361d7975aa2e68",
           "stderr": "12ae32cb1ec02d01",
           "stdout": "12ae32cb1ec02d01"
         }
