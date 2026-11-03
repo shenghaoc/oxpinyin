@@ -1955,6 +1955,129 @@ fn addon_candidates_rank_on_their_own_amplified_scale() {
     );
 }
 
+#[test]
+fn candidate_frequencies_price_a_captured_live_unigram_without_the_model() {
+    use super::CandidateKind;
+    use crate::candidate::Candidate;
+
+    // The model answers a count far above the captured one. A row carrying
+    // the lookup's live unigram 14 prices as 14 without asking the model
+    // (3 over 51,051,831, as the test above); a row without one reads the
+    // model as before; and a captured count runs through the same
+    // arithmetic as the model's answer would.
+    let session = Session::new(
+        &EmptyConfigSource,
+        Silent,
+        FixedUnigrams {
+            system: 999_999,
+            addon: 14,
+            total: 51_051_831,
+            addon_total: 25_525_916,
+        },
+    )
+    .expect("Session::new");
+    let row = |text: &str, token: u32, live: Option<u32>| {
+        Candidate::new(
+            compact_str::CompactString::from(text),
+            CandidateKind::Phrase,
+            1,
+            3,
+            0,
+            Some(PhraseToken::new(token)),
+            None,
+        )
+        .with_live_unigram(live)
+    };
+    let collected = vec![
+        row("股", 1, Some(14)),
+        row("附", 2, None),
+        row("零", 3, Some(0)),
+        row("同", 4, Some(999_999)),
+    ];
+    let mut frequencies = Vec::new();
+    session
+        .candidate_frequencies(&collected, None, true, &mut frequencies)
+        .expect("frequency reads cannot fail here");
+    assert_eq!(
+        frequencies[0], 3,
+        "the captured 14 prices as the model's 14 did"
+    );
+    assert_eq!(
+        frequencies[2], 0,
+        "a captured zero is a zero count, not a missing one"
+    );
+    assert!(
+        frequencies[1] > 3,
+        "an uncaptured row reads the model's 999_999"
+    );
+    assert_eq!(
+        frequencies[3], frequencies[1],
+        "a captured count and the model's equal count price identically"
+    );
+}
+
+/// Two one-key entries whose live unigrams come from a cell the test moves
+/// between scans: the next lookup reads what a training write left.
+struct LiveUnigramDict {
+    live: std::rc::Rc<std::cell::Cell<(u32, u32)>>,
+}
+
+impl Dictionary for LiveUnigramDict {
+    type Entry = PhraseEntry;
+    type Error = EngineError;
+    type PathMemo = ();
+    type Syllable = SyllableKey;
+
+    fn lookup(&self, _syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, EngineError> {
+        let (first, second) = self.live.get();
+        Ok(vec![
+            PhraseEntry::new(PhraseToken::new(0x0100_0001), "一".to_owned())
+                .with_live_unigram(first),
+            PhraseEntry::new(PhraseToken::new(0x0100_0002), "二".to_owned())
+                .with_live_unigram(second),
+        ])
+    }
+}
+
+#[test]
+fn a_window_ranked_after_a_training_write_prices_the_rewritten_item() {
+    fn texts(list: &crate::candidate::CandidateList) -> Vec<&str> {
+        list.iter()
+            .filter_map(crate::candidate::Candidate::text_str)
+            .collect()
+    }
+
+    let live = std::rc::Rc::new(std::cell::Cell::new((5_000_000, 10_000_000)));
+    let mut session = Session::new(
+        &EmptyConfigSource,
+        LiveUnigramDict {
+            live: std::rc::Rc::clone(&live),
+        },
+        FixedUnigrams {
+            system: 0,
+            addon: 0,
+            total: 51_051_831,
+            addon_total: 1,
+        },
+    )
+    .expect("Session::new");
+    session.type_pinyin("a").expect("typing cannot fail");
+    assert_eq!(
+        texts(session.candidates()),
+        ["二", "一"],
+        "the larger captured unigram ranks first"
+    );
+
+    // The training write: the second item's field falls below the first's.
+    live.set((5_000_000, 1));
+    // The retained list is not ranked again, so its order stands...
+    assert_eq!(texts(session.candidates()), ["二", "一"]);
+    // ...and a window ranked after the write reads the items afresh: its
+    // order follows the rewritten field, not the earlier capture.
+    let window = session.candidates_at(0).expect("window at 0");
+    assert_eq!(texts(&window), ["一", "二"]);
+}
+
 /// One entry per facade, so a scan's two batches are exactly one
 /// system and one addon candidate.
 struct TwoFacadeDict {

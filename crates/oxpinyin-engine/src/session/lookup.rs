@@ -573,22 +573,29 @@ where
                         ));
                     }
                 };
-                self.model
-                    .unigram_freq(&token)
-                    .map_err(|error| {
+                // The lookup that collected this row read its live item
+                // already and kept the item's unigram, the model's
+                // visible-live answer for the same state (no store, mask,
+                // option or training write runs between that lookup and
+                // this step; see `RuntimeDict::fill_lookup`). Price from
+                // it; a row without one reads the model as before.
+                let count = match candidate.live_unigram() {
+                    Some(live) => Some(u64::from(live)),
+                    None => self.model.unigram_freq(&token).map_err(|error| {
                         EngineError::Scoring(ScoringError::LanguageModel(error.to_string()))
-                    })?
-                    .map(|count| {
-                        if self.candidate_ranking == CandidateRanking::LengthThenFrequency {
-                            // zhuyin.cpp:1264-1268 has no libpinyin 0.1
-                            // discount (pinyin.cpp:33,1862 at 074a2219).
-                            let possibility = lambda * bigram
-                                + (1.0 - lambda) * count as f32 / default_total as f32;
-                            (possibility * AMPLIFY_SCALE_F32) as u32
-                        } else {
-                            amplified_frequency_with_bigram(count, default_total, bigram, lambda)
-                        }
-                    })
+                    })?,
+                };
+                count.map(|count| {
+                    if self.candidate_ranking == CandidateRanking::LengthThenFrequency {
+                        // zhuyin.cpp:1264-1268 has no libpinyin 0.1
+                        // discount (pinyin.cpp:33,1862 at 074a2219).
+                        let possibility =
+                            lambda * bigram + (1.0 - lambda) * count as f32 / default_total as f32;
+                        (possibility * AMPLIFY_SCALE_F32) as u32
+                    } else {
+                        amplified_frequency_with_bigram(count, default_total, bigram, lambda)
+                    }
+                })
             };
             if let Some(count) = count {
                 // Unigram term of candidate frequency: always on. Upstream

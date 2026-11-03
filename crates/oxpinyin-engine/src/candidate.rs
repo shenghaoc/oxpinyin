@@ -85,14 +85,16 @@ pub enum CandidateKind {
 
 /// One offered conversion.
 ///
-/// Sized to need (56 bytes): the three span counts are `u32`, the width of
+/// Sized to need (64 bytes): the three span counts are `u32`, the width of
 /// the segment graph's positions
 /// ([`MAX_GRAPH_POSITION`](oxpinyin_core::graph::MAX_GRAPH_POSITION)), since
-/// a key is at least one byte; and the n-best rank is a byte
+/// a key is at least one byte; the n-best rank is a byte
 /// with `NO_ROW` for "not a row", the pin's own `gint8 m_nbest_index`
-/// width (`pinyin.cpp:102` at 074a2219). A window of a hundred-odd rows
-/// is retained per instance, so each byte here is a hundred-odd bytes of
-/// instance heap.
+/// width (`pinyin.cpp:102` at 074a2219); and the live unigram the lookup
+/// read is an `Option<u32>`, the item field's own width plus its
+/// discriminant, which takes the row from 56 to 64 bytes. A window of a
+/// hundred-odd rows is retained per instance, so each byte here is a
+/// hundred-odd bytes of instance heap.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Candidate {
     text: PhraseText,
@@ -118,6 +120,14 @@ pub struct Candidate {
     /// fallbacks carry 0.
     span_start: u32,
     kind: CandidateKind,
+    /// The live system item's unigram the lookup that collected this row
+    /// read ([`PhraseEntry::live_unigram`](oxpinyin_core::PhraseEntry::live_unigram)).
+    /// Consumed by the frequency step of the scan that collected the row
+    /// and by nothing else: a retained list is never ranked again, a later
+    /// window reads its items afresh. `None` for a row the lookup did not
+    /// read a live item for, which the frequency step prices through the
+    /// model as before.
+    live_unigram: Option<u32>,
 }
 
 /// The `nbest_index` value of a candidate that is not an n-best row.
@@ -125,7 +135,7 @@ const NO_ROW: u8 = u8::MAX;
 
 // The row width the doc above claims; a field that grows it shows up here.
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::size_of::<Candidate>() == 56);
+const _: () = assert!(core::mem::size_of::<Candidate>() == 64);
 
 /// Narrows a byte or key count to the row's width. Every count the
 /// session produces is a position of its segment graph, at most
@@ -163,7 +173,20 @@ impl Candidate {
             },
             span_start: 0,
             kind,
+            live_unigram: None,
         }
+    }
+
+    /// Carries the lookup's live unigram onto the row (see the field).
+    pub(crate) const fn with_live_unigram(mut self, live_unigram: Option<u32>) -> Self {
+        self.live_unigram = live_unigram;
+        self
+    }
+
+    /// The live unigram the lookup that collected this row read, for the
+    /// frequency step of that scan only.
+    pub(crate) const fn live_unigram(&self) -> Option<u32> {
+        self.live_unigram
     }
 
     /// Records where this candidate's span starts (see [`Self::span_start`]).
