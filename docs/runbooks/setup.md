@@ -49,7 +49,7 @@ distribution targets:
 ```bash
 # Systems using apt:
 sudo apt-get update
-sudo apt-get install -y build-essential git curl ca-certificates pkg-config libclang-dev libtkrzw-dev tkrzw-utils libglib2.0-dev
+sudo apt-get install -y build-essential git curl ca-certificates pkg-config libclang-dev libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev tkrzw-utils libglib2.0-dev
 ```
 
 ```bash
@@ -58,8 +58,10 @@ sudo dnf install gcc gcc-c++ make git curl ca-certificates pkgconf-pkg-config cl
 ```
 
 The build finds tkrzw only through pkg-config (`pkg-config tkrzw`), as
-libpinyin's configure does, so a package installed this way needs nothing
-more. To use a tkrzw you built yourself instead, put its `lib/pkgconfig`
+libpinyin's configure does. Debian's `tkrzw.pc` names `-llzma -llz4 -lzstd
+-lz`, but `libtkrzw-dev` does not depend on their development packages, so
+the apt line installs them; without them every link fails with `cannot find
+-llzma`. To use a tkrzw you built yourself instead, put its `lib/pkgconfig`
 first on `PKG_CONFIG_PATH` and its `lib` on `LD_LIBRARY_PATH`;
 `just tkrzw-build DIR` builds the upstream revision CI uses into `DIR`.
 Some packaged libtkrzw builds are defective
