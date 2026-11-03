@@ -1801,16 +1801,23 @@ impl LanguageModel for RuntimeLm<'_> {
     }
 
     fn unigram_freq(&self, token: &Self::Token) -> Result<Option<u64>, Self::Error> {
-        let extra = match self.user {
-            None => 0,
-            Some(store) => store
-                .unigram_delta(token.value())
-                .map_err(|error| LmError::User(error.to_string()))?,
-        };
-        let extra = extra.saturating_add(self.bumps.token(token.value()));
         let live = self
             .user
             .and_then(|store| store.system_unigram(token.value()));
+        let extra = if live.is_some() && self.inner.is_visible((token.value() >> 24) as u8) {
+            // The model uses only the live field on this branch, ignoring even
+            // facade bumps. A live value also implies a libpinyin session,
+            // where unigram_delta is infallible: skipping it loses no error.
+            0
+        } else {
+            let delta = match self.user {
+                None => 0,
+                Some(store) => store
+                    .unigram_delta(token.value())
+                    .map_err(|error| LmError::User(error.to_string()))?,
+            };
+            delta.saturating_add(self.bumps.token(token.value()))
+        };
         Ok(self
             .inner
             .unigram_freq_with_user_delta(token.value(), live, extra))
@@ -2806,6 +2813,180 @@ mod tests {
             .join("fixtures")
             .join("w3")
             .join(oxpinyin_data::DEFAULT_STORE_EXT)
+    }
+
+    #[test]
+    fn unigram_freq_live_count_ignores_bumps_until_library_is_masked() {
+        let mut runtime = Runtime::open(&w3_dir(), None).unwrap();
+        let token = runtime.dict().system().tokens_for_text("你").unwrap()[0];
+        let library = runtime.libraries().library(token).unwrap();
+        assert!(library.is_detached() && !library.has_history());
+        assert_eq!(
+            runtime.user_store().unwrap().unigram_delta(token).unwrap(),
+            0
+        );
+        let initial = runtime.user_store().unwrap().system_unigram(token).unwrap();
+        assert!(initial > 0);
+
+        // Exercise an overlay alongside a live system item. Public system
+        // increments now belong to the store, so seed the older overlay here.
+        runtime.bumps.overlay().tokens.insert(token, 17);
+        runtime.bumps.live.store(true, Ordering::SeqCst);
+        for (increment, delta) in [(0, 0), (9, 9)] {
+            if increment != 0 {
+                assert!(runtime.add_unigram_delta(token, increment));
+            }
+            assert_eq!(runtime.bumps.token(token), 17);
+            assert_eq!(
+                runtime.user_store().unwrap().unigram_delta(token).unwrap(),
+                delta
+            );
+            assert_eq!(
+                runtime.lm().unigram_freq(&PhraseToken::new(token)).unwrap(),
+                Some(u64::from(initial) + delta),
+                "visible live count wins, including when the original is detached"
+            );
+
+            // Mask directly to retain the bump: public unload drops it.
+            runtime
+                .library_mask
+                .store(1 << (token >> 24), Ordering::SeqCst);
+            assert_eq!(
+                runtime.user_store().unwrap().system_unigram(token),
+                Some(initial + delta as u32)
+            );
+            assert_eq!(
+                runtime.lm().unigram_freq(&PhraseToken::new(token)).unwrap(),
+                Some(delta + 17),
+                "the same live token uses delta plus bump while masked"
+            );
+            runtime.library_mask.store(0, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn unigram_freq_preserves_user_library_counts_and_bumps() {
+        let mut runtime = Runtime::open(&w3_dir(), None).unwrap();
+        let ni = SyllableKey::from_text("ni").unwrap();
+        let keys = [oxpinyin_user::toned_key(ni.index(), 3).unwrap()];
+        for (text, count, expected) in [("鎄", 5, 15), ("龘", 0, 0)] {
+            let token = runtime
+                .user_store_mut()
+                .unwrap()
+                .add_phrase_in(5, &text.into(), &keys, Some(count))
+                .unwrap();
+            assert_eq!(token >> 24, 5);
+            assert_eq!(runtime.user_store().unwrap().system_unigram(token), None);
+            assert_eq!(
+                runtime.lm().unigram_freq(&PhraseToken::new(token)).unwrap(),
+                Some(expected)
+            );
+            assert!(runtime.add_unigram_delta(token, 7));
+            assert_eq!(
+                runtime.lm().unigram_freq(&PhraseToken::new(token)).unwrap(),
+                Some(expected + 7)
+            );
+        }
+    }
+
+    #[test]
+    fn unigram_freq_preserves_standalone_count_cache_reads() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = UserStore::create_standalone(&dir.path().join("user.db")).unwrap();
+        let token = store.add_phrase(&"词".into(), &[7], Some(5)).unwrap();
+        assert_eq!(store.system_unigram(token), None);
+        let mut runtime = Runtime::open(&w3_dir(), None).unwrap();
+        runtime.user = Some(store);
+        for _ in 0..2 {
+            assert_eq!(
+                runtime.lm().unigram_freq(&PhraseToken::new(token)).unwrap(),
+                Some(15)
+            );
+        }
+        runtime
+            .user_store_mut()
+            .unwrap()
+            .observe_selection(1, token)
+            .unwrap();
+        assert_eq!(
+            runtime.lm().unigram_freq(&PhraseToken::new(token)).unwrap(),
+            Some(15 + 483),
+            "a committed write invalidates the cached count"
+        );
+    }
+
+    #[test]
+    fn unigram_freq_preserves_removed_and_missing_item_fallbacks() {
+        let mut runtime = Runtime::open(&w3_dir(), None).unwrap();
+        let ni = SyllableKey::from_text("ni").unwrap();
+        let keys = [oxpinyin_user::toned_key(ni.index(), 3).unwrap()];
+        let token = runtime
+            .user_store_mut()
+            .unwrap()
+            .add_system_phrase_in(1, None, &"龘".into(), &keys, Some(0))
+            .unwrap();
+        assert_eq!(runtime.user_store().unwrap().system_unigram(token), Some(0));
+        assert_eq!(
+            runtime.lm().unigram_freq(&PhraseToken::new(token)).unwrap(),
+            Some(0)
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let token = runtime.dict().system().tokens_for_text("你").unwrap()[0];
+        assert_eq!(token >> 24, 1);
+        let old_item = runtime
+            .dict()
+            .live_items()
+            .read(token, |item| match item {
+                oxpinyin_user::SystemItem::Shipped(view)
+                | oxpinyin_user::SystemItem::Replayed(view) => view.as_bytes().to_vec(),
+            })
+            .found()
+            .unwrap();
+        let payload = oxpinyin_data::user_files::encode_log_records(&[
+            oxpinyin_data::user_files::LogRecord::Remove {
+                token: token & oxpinyin_user::PHRASE_MASK,
+                old_item,
+            },
+        ])
+        .unwrap();
+        std::fs::write(
+            dir.path().join("gb_char.dbin"),
+            oxpinyin_data::chunk_format::build_memory_chunk(&payload).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("user.conf"),
+            oxpinyin_data::user_files::UserTableInfo::conform_to(&SystemVersions::from_conf(
+                runtime.table_conf(),
+            ))
+            .to_text(),
+        )
+        .unwrap();
+        drop(runtime);
+        let mut runtime = Runtime::open(&w3_dir(), Some(dir.path())).unwrap();
+        assert_eq!(runtime.user_store().unwrap().system_unigram(token), None);
+        assert_eq!(
+            runtime.dict().live_items().read(token, |_| ()),
+            oxpinyin_user::Lookup::Removed
+        );
+        runtime.bumps.overlay().tokens.insert(token, 17);
+        runtime.bumps.live.store(true, Ordering::SeqCst);
+        assert_eq!(
+            runtime.lm().unigram_freq(&PhraseToken::new(token)).unwrap(),
+            Some(17)
+        );
+        runtime.user = None;
+        assert_eq!(
+            runtime.lm().unigram_freq(&PhraseToken::new(token)).unwrap(),
+            Some(17)
+        );
+        assert_eq!(
+            runtime
+                .lm()
+                .unigram_freq(&PhraseToken::new(u32::MAX))
+                .unwrap(),
+            Some(0)
+        );
     }
 
     #[test]
