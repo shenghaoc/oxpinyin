@@ -399,12 +399,6 @@ impl<S: WriteStore> WriteStore for SessionValues<S> {
         ))
     }
 
-    fn attach_bigram(_path: &Path, _read_only: bool) -> Result<Option<Self>, StoreError> {
-        Err(StoreError::InvalidInput(
-            "session values hold no bigram file",
-        ))
-    }
-
     fn write_deferred<R>(
         &self,
         _f: impl FnOnce(&mut SessionTxn<'_>) -> Result<R, StoreError>,

@@ -650,7 +650,8 @@ fn open(path: &Path, writable: bool) -> Result<TkrzwStore, StoreError> {
 // ── failed system attachments ─────────────────────────────────────
 
 /// The pin's system attach for one tkrzw table: the concrete object
-/// allocated and `Open`ed read-only without `ATTACH_CREATE`
+/// allocated and `Open`ed read-only without `ATTACH_CREATE`, or with
+/// `read_only` false the utilities' writable `OPEN_DEFAULT`
 /// (`attach_options`, `tkrzwdb_utils.h:32-46`; `ChewingLargeTable2::
 /// attach`, `chewing_large_table2_tkrzwdb.cpp:75-89`; `PhraseLargeTable3::
 /// attach`, `phrase_large_table3_tkrzwdb.cpp:65-80`; `PunctTable::attach`,
@@ -664,19 +665,22 @@ fn open(path: &Path, writable: bool) -> Result<TkrzwStore, StoreError> {
 pub(crate) fn open_system(
     path: &Path,
     hash: bool,
+    read_only: bool,
 ) -> Result<Result<TkrzwStore, TkrzwUnopenedHandle>, StoreError> {
     let class = if hash { Class::Hash } else { Class::Tree };
     let mut db = Db::new(class);
-    let status = db.open(path, false, OPEN_NO_CREATE)?;
+    let options = if read_only {
+        OPEN_NO_CREATE
+    } else {
+        OPEN_DEFAULT
+    };
+    let status = db.open(path, !read_only, options)?;
     Ok(if status.code == STATUS_SUCCESS {
         // The Tree owners' reset synchronizes before it closes; the
         // bigram's `HashDBM` is closed with no explicit sync
         // (`ngram_tkrzwdb.cpp:36-45`).
         db.sync_before_close = class == Class::Tree;
-        Ok(TkrzwStore {
-            db,
-            read_only: true,
-        })
+        Ok(TkrzwStore { db, read_only })
     } else {
         Err(TkrzwUnopenedHandle { db, class })
     })
@@ -709,6 +713,20 @@ impl TkrzwUnopenedHandle {
     /// `phrase_large_table3_tkrzwdb.cpp:166-167`).
     pub(crate) fn suggest(&self, key: &[u8]) {
         let _ = self.db.check(key);
+    }
+
+    /// `Bigram::store`'s `m_db->Set(key, value)` (`ngram_tkrzwdb.cpp:
+    /// 124-133`), which the unopened object refuses; that status is the
+    /// answer.
+    pub(crate) fn write(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
+        self.db.set(key, value)
+    }
+
+    /// `Bigram::get_all_items`' `m_db->ProcessEach(&processor, false)`
+    /// (`ngram_tkrzwdb.cpp:160-172`), which the unopened object refuses
+    /// with no key collected; the pin returns that status.
+    pub(crate) fn walk(&self) -> Result<(), StoreError> {
+        self.db.keys().map(drop)
     }
 }
 
@@ -961,20 +979,6 @@ impl WriteStore for TkrzwStore {
 
     fn create_hash(path: &Path) -> Result<Self, StoreError> {
         open_hash_create(path)
-    }
-
-    /// `Bigram::attach` (`ngram_tkrzwdb.cpp:86-99` at 074a2219): a `HashDBM`
-    /// opened with `attach_options`; a status other than success is `None`.
-    fn attach_bigram(path: &Path, read_only: bool) -> Result<Option<Self>, StoreError> {
-        let writable = !read_only;
-        let mut db = Db::new(Class::Hash);
-        let options = if writable {
-            OPEN_DEFAULT
-        } else {
-            OPEN_NO_CREATE
-        };
-        Ok((db.open(path, writable, options)?.code == STATUS_SUCCESS)
-            .then_some(TkrzwStore { db, read_only }))
     }
 
     /// `FlexibleBigram::attach` (`flexible_ngram_tkrzwdb.h:128-187` at
@@ -1555,7 +1559,7 @@ mod tests {
         // owners), closes and deletes it.
         let dir = TempDir::new("system-attach");
         for hash in [false, true] {
-            let handle = match open_system(&dir.0.join("missing"), hash).unwrap() {
+            let handle = match open_system(&dir.0.join("missing"), hash, true).unwrap() {
                 Err(handle) => handle,
                 Ok(_) => panic!("a missing file opened (hash: {hash})"),
             };
@@ -1574,9 +1578,47 @@ mod tests {
             store.db.synchronize(false).unwrap();
         }
         let mut value = Vec::new();
-        match open_system(&path, true).unwrap() {
+        match open_system(&path, true, true).unwrap() {
             Ok(store) => assert!(store.db.get(b"k", &mut value).unwrap()),
             Err(_) => panic!("a present file did not open"),
+        }
+    }
+
+    #[test]
+    fn a_failed_bigram_attach_keeps_its_hashdbm_until_reset() {
+        use crate::SystemAttachment;
+
+        // `Bigram::attach` makes one `Open` on a new `HashDBM`, with no
+        // CREATE retry and no signature check, and keeps the object when
+        // the open fails (ngram_tkrzwdb.cpp:86-99). `load`, `store` and
+        // `get_all_items` reach it (`Get`, `Set`, `ProcessEach`: :102-133,
+        // :160-172), and `reset()` closes and deletes it with no
+        // `Synchronize` (:40-46).
+        let dir = TempDir::new("failed-bigram");
+        let path = dir.0.join("missing").join("bigram.db");
+        for read_only in [true, false] {
+            let handle = match open_system(&path, true, read_only).unwrap() {
+                Err(handle) => handle,
+                Ok(_) => panic!("read only: {read_only}: a missing directory opened"),
+            };
+            assert!(handle.db.is_retained(), "read only: {read_only}");
+            assert!(!handle.db.is_open(), "read only: {read_only}");
+            handle.read(b"tkn\0");
+            // `store` and `get_all_items` return the refused statuses.
+            assert!(handle.write(b"tkn\0", b"gram").is_err());
+            assert!(handle.walk().is_err());
+            let before = reset_syncs();
+            drop(handle);
+            assert_eq!(reset_syncs(), before, "read only: {read_only}");
+
+            let SystemAttachment::Unopened(db) =
+                SystemAttachment::attach_bigram(&path, read_only).unwrap()
+            else {
+                panic!("read only: {read_only}: a missing directory opened");
+            };
+            assert!(!db.is_finished(), "read only: {read_only}");
+            db.finish();
+            assert!(!path.exists(), "no file was created");
         }
     }
 
@@ -1837,12 +1879,12 @@ mod tests {
         open_hash_create(&hash).unwrap();
 
         let before = reset_syncs();
-        drop(open_system(&tree, false).unwrap().ok().unwrap());
+        drop(open_system(&tree, false, true).unwrap().ok().unwrap());
         assert_eq!(reset_syncs(), before + 1);
-        drop(open_system(&hash, true).unwrap().ok().unwrap());
+        drop(open_system(&hash, true, true).unwrap().ok().unwrap());
         assert_eq!(reset_syncs(), before + 1);
         drop(
-            open_system(&dir.0.join("missing.bin"), false)
+            open_system(&dir.0.join("missing.bin"), false, true)
                 .unwrap()
                 .err()
                 .unwrap(),

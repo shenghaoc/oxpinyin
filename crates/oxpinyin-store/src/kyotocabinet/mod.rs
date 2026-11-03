@@ -100,7 +100,9 @@ pub(crate) struct KcUnopenedHandle {
 
 /// The pin's system attach (`chewing_large_table2_kyotodb.cpp:77-90`,
 /// `phrase_large_table3_kyotodb.cpp:92-105`, `punct_table_kyotodb.cpp:
-/// 52-65`, `ngram_kyotodb.cpp:110-120` at 074a2219). Whether the open
+/// 52-65`, `ngram_kyotodb.cpp:110-120` at 074a2219), `ATTACH_READONLY`, or
+/// with `read_only` false the utilities' `ATTACH_READWRITE | ATTACH_CREATE`
+/// (`kyotodb_utils.h:32-45`). Whether the open
 /// succeeds or not, the object's teardown is the owner's `reset()`:
 /// `synchronize()`, `close()`, then `delete` (`chewing_large_table2_kyotodb.
 /// cpp:65-74`, `phrase_large_table3_kyotodb.cpp:76-88`,
@@ -108,9 +110,10 @@ pub(crate) struct KcUnopenedHandle {
 pub(crate) fn open_system(
     path: &Path,
     hash: bool,
+    read_only: bool,
 ) -> Result<Result<KcStore, KcUnopenedHandle>, StoreError> {
     let kind = if hash { DbType::Hash } else { DbType::Tree };
-    let (db, opened) = Db::open_retained(path, kind, true, false)?;
+    let (db, opened) = Db::open_retained(path, kind, read_only, !read_only)?;
     let db = db.with_reset_sync();
     Ok(if opened {
         Ok(KcStore { db })
@@ -124,6 +127,21 @@ impl KcUnopenedHandle {
         // Every failed system read ends at check: no body get or cursor
         // follows (ngram_kyotodb.cpp:131-134 at 074a2219).
         let _ = self.db.check(key);
+    }
+
+    /// `Bigram::store`'s `m_db->set(...)` (`ngram_kyotodb.cpp:145-153`),
+    /// which the unopened object refuses with `INVALID`; that refusal is
+    /// the answer.
+    pub(crate) fn write(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
+        self.db.set(key, value)
+    }
+
+    /// `Bigram::get_all_items`' `iterate` (`ngram_kyotodb.cpp:186-196`):
+    /// the unopened object refuses it, the pin ignores the answer and
+    /// returns true, and no key is collected.
+    pub(crate) fn walk(&self) -> Result<(), StoreError> {
+        let _ = self.db.raw_keys();
+        Ok(())
     }
 }
 
@@ -414,15 +432,11 @@ impl crate::RawReadStore for KcStore {
         self.db.count()
     }
 
-    /// `Bigram::get_all_items`' `iterate` walk (`ngram_kyotodb.cpp:186-196`):
-    /// Kyoto Cabinet's own order, which for `HashDB` is bucket order.
+    /// `Bigram::get_all_items`' `iterate` walk (`ngram_kyotodb.cpp:186-196`),
+    /// its one native call: Kyoto Cabinet's own order, which for `HashDB`
+    /// is bucket order.
     fn native_keys(&self) -> Result<Vec<Vec<u8>>, crate::StoreError> {
-        Ok(self
-            .db
-            .records()?
-            .iter()
-            .map(|record| record.key().to_vec())
-            .collect())
+        self.db.raw_keys()
     }
 
     fn open_hash_read_only(path: &Path) -> Result<Self, crate::StoreError> {
@@ -475,16 +489,6 @@ impl WriteStore for KcStore {
         Ok(Self {
             db: Db::open(path, DbType::Hash, false, true)?,
         })
-    }
-
-    /// `Bigram::attach` (`ngram_kyotodb.cpp:110-120` at 074a2219): a `HashDB`
-    /// opened with the attach mode; a failed open is `None`. The owner's
-    /// `reset()` synchronizes before it closes (`ngram_kyotodb.cpp:43-50`).
-    fn attach_bigram(path: &Path, read_only: bool) -> Result<Option<Self>, StoreError> {
-        let (db, opened) = Db::open_retained(path, DbType::Hash, read_only, !read_only)?;
-        Ok(opened.then_some(Self {
-            db: db.with_reset_sync(),
-        }))
     }
 
     /// `FlexibleBigram::attach` (`flexible_ngram_kyotodb.h:129-180` at
@@ -975,9 +979,11 @@ mod tests {
         // attached (ngram_kyotodb.cpp:43-50, 110-120).
         let file = Temp::new("attached-bigram", "db");
         for read_only in [false, true] {
-            let store = KcStore::attach_bigram(&file.0, read_only)
-                .unwrap()
-                .expect("the bigram attaches");
+            let crate::SystemAttachment::Open(store) =
+                crate::SystemAttachment::attach_bigram(&file.0, read_only).unwrap()
+            else {
+                panic!("read only: {read_only}: the bigram did not attach");
+            };
             take_native_calls();
             let handle = store.db.address();
             drop(store);
@@ -990,6 +996,68 @@ mod tests {
                 ],
                 "read only: {read_only}"
             );
+        }
+    }
+
+    #[test]
+    fn a_failed_bigram_attach_keeps_its_hashdb_until_reset() {
+        use super::ffi::{NativeCall, OCREATE, OREADER, OWRITER, take_native_calls};
+        use crate::SystemAttachment;
+        use std::os::unix::ffi::OsStrExt as _;
+
+        // `Bigram::attach` makes one `open` on a new `HashDB`, with no
+        // CREATE retry and no signature check, and keeps the object when
+        // the open fails (ngram_kyotodb.cpp:110-120). `load`, `store` and
+        // `get_all_items` then reach it: `check`, `set`, and an `iterate`
+        // with no `count` before it (:124-153, :186-196). `reset()`
+        // synchronizes, closes and deletes it (:43-50).
+        let dir = Temp::new("failed-bigram", "missing");
+        let path = dir.0.join("bigram.db");
+        for read_only in [true, false] {
+            take_native_calls();
+            let SystemAttachment::Unopened(db) =
+                SystemAttachment::attach_bigram(&path, read_only).unwrap()
+            else {
+                panic!("read only: {read_only}: a missing directory opened");
+            };
+            let opened = take_native_calls();
+            let handle = opened.first().expect("native open").0;
+            let mode = if read_only {
+                OREADER
+            } else {
+                OREADER | OWRITER | OCREATE
+            };
+            assert_eq!(
+                opened,
+                [(
+                    handle,
+                    NativeCall::Open(path.as_os_str().as_bytes().to_vec(), mode)
+                )],
+                "read only: {read_only}: the object outlives the attach"
+            );
+            db.read(b"tkn\0");
+            // The utilities write only through the read-write attach. The
+            // refused `set` is `store`'s false; the refused `iterate` is
+            // ignored and `get_all_items` answers true.
+            if !read_only {
+                assert!(db.write(b"tkn\0", b"gram").is_err());
+            }
+            db.walk().expect("get_all_items answers true");
+            db.finish();
+            let mut expected = vec![(handle, NativeCall::Check)];
+            if !read_only {
+                expected.push((handle, NativeCall::Set));
+            }
+            expected.extend([
+                (handle, NativeCall::Iterate),
+                (handle, NativeCall::Synchronize(false)),
+                (handle, NativeCall::Close),
+                (handle, NativeCall::Delete),
+            ]);
+            assert_eq!(take_native_calls(), expected, "read only: {read_only}");
+            drop(db);
+            assert!(take_native_calls().is_empty(), "read only: {read_only}");
+            assert!(!path.exists(), "no file was created");
         }
     }
 
