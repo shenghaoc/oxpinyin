@@ -557,6 +557,9 @@ impl ContextCore {
             // Row 76: the save stopped at a library whose file cannot be
             // mapped again, with the session still dirty.
             Err(UserStoreError::SaveRemapFailed) => return SaveOutcome::NotSaved,
+            // Row 112: stop before the undefined copy, preserving earlier file
+            // effects and keeping the session dirty for retry.
+            Err(UserStoreError::SaveTooLarge) => return SaveOutcome::NotSaved,
             Err(_) => return SaveOutcome::NotSaved,
         };
         // Each failed rename's `rename %s to %s failed.` line and a failed

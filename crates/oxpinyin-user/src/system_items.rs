@@ -170,14 +170,14 @@ impl SystemItems {
         original: SystemLibraryRef<'_>,
         token: Token,
         payload: &[u8],
-    ) {
+    ) -> bool {
         library_of(
             &mut self.replayed,
             &mut self.totals,
             (token >> 24) as u8,
             original,
         )
-        .add_item(token & 0x00ff_ffff, payload, original);
+        .add_item(token & 0x00ff_ffff, payload, original)
     }
 
     /// `remove_phrase_item` over `token`'s library buffer: the item's bytes.

@@ -12,13 +12,71 @@ use crate::user_phrase_table::UserPhraseTable;
 #[derive(Clone, Debug, Default)]
 pub(crate) struct UserLibrary {
     total: u32,
-    sum: u32,
     slots: Slots,
     content: Vec<u8>,
-    live: usize,
     headers_only: bool,
+}
+
+/// `table_offset_t` is `guint32` (`novel_types.h:128` at 074a2219), so a
+/// content offset is the content size modulo 2^32.
+const OFFSET_MODULUS: u64 = 1 << 32;
+
+/// `MemoryChunk::ensure_has_space` narrows a growth to `int`
+/// (`memory_chunk.h:95-98`): a bulk copy that grows a fresh chunk by 2^31
+/// bytes or more allocates too little (#1514, register row 112).
+const COPY_LIMIT: u64 = 1 << 31;
+
+#[cfg(test)]
+thread_local! {
+    static TEST_LIMITS: std::cell::Cell<Option<(u64, u64)>> = const { std::cell::Cell::new(None) };
+}
+
+/// The modulus of a content offset: 2^32, or a test's small stand-in, so a
+/// test reaches the wrap without gigabytes. One code path serves both.
+pub(crate) fn offset_modulus() -> u64 {
     #[cfg(test)]
-    pub(crate) max_content_len: Option<u32>,
+    if let Some((modulus, _)) = TEST_LIMITS.with(std::cell::Cell::get) {
+        return modulus;
+    }
+    OFFSET_MODULUS
+}
+
+/// The growth at which a fresh chunk's bulk copy is unsafe in the pin.
+pub(crate) fn copy_limit() -> u64 {
+    #[cfg(test)]
+    if let Some((_, limit)) = TEST_LIMITS.with(std::cell::Cell::get) {
+        return limit;
+    }
+    COPY_LIMIT
+}
+
+/// Test-only: replace the offset modulus and the copy limit on this thread
+/// until the guard drops.
+#[cfg(test)]
+pub(crate) struct TestLimits;
+
+#[cfg(test)]
+impl TestLimits {
+    pub(crate) fn set(modulus: u64, copy_limit: u64) -> Self {
+        TEST_LIMITS.with(|limits| limits.set(Some((modulus, copy_limit))));
+        Self
+    }
+}
+
+#[cfg(test)]
+impl Drop for TestLimits {
+    fn drop(&mut self) {
+        TEST_LIMITS.with(|limits| limits.set(None));
+    }
+}
+
+/// `add_phrase_item`'s `table_offset_t offset = m_phrase_content.size()`
+/// (`phrase_index.cpp:208-210`): the size modulo 2^32, and 8 for zero.
+pub(crate) fn append_offset(content_len: usize) -> u32 {
+    match (content_len as u64 % offset_modulus()) as u32 {
+        0 => 8,
+        offset => offset,
+    }
 }
 
 /// A checked replacement, kept separate from publication of database metadata.
@@ -32,7 +90,6 @@ struct Replacement {
     offset: u32,
     length: usize,
     unigram: u32,
-    compacted: Option<UserLibrary>,
 }
 
 impl PreparedReplacement {
@@ -53,6 +110,17 @@ pub(crate) struct SessionPhrases {
 }
 
 impl SessionPhrases {
+    /// The arena of `nibble`, created if it is absent. A library with no
+    /// arena keeps the total its chunk stored (`phrase_index.cpp:237-248`
+    /// reads `m_total_freq` at load, items or none) as its retained offset;
+    /// the new arena starts from it, since its own total is authoritative
+    /// from then on and every later add and overflow check begins there.
+    pub(crate) fn arena(&mut self, nibble: u8, retained_total: u32) -> &mut UserLibrary {
+        self.libraries
+            .entry(nibble)
+            .or_insert_with(|| UserLibrary::empty_with_total(retained_total))
+    }
+
     pub(crate) fn item(&self, token: u32) -> Option<PhraseItemView<'_>> {
         self.libraries
             .get(&crate::phrase_index_library_index(token))?
@@ -193,18 +261,18 @@ impl UserLibrary {
         .map_or(1, |last| last.saturating_add(1).max(1))
     }
 
-    /// Replace one body; growth leaves the old body as bounded garbage.
+    /// Replace one body: the pin's remove and add (`pinyin.cpp:563-605`).
     pub(crate) fn replace(&mut self, slot: u32, bytes: &[u8]) -> Result<(), String> {
         let change = self.replacement(slot, bytes)?;
         self.apply_replacement(change, bytes);
         Ok(())
     }
 
-    /// Finish every fallible arena check before the caller commits its tables.
+    /// Finish every fallible check before the caller commits its tables.
     /// At 074a2219 pinyin.cpp:597-607 and :2542-2558 publish indexes then
-    /// append unconditionally (phrase_index.cpp:208-217). Our checked offset
-    /// limit and compaction can refuse, so prepare them before publication.
-    /// Applying the prepared bytes has no recoverable failure or ignored Result.
+    /// append unconditionally (phrase_index.cpp:208-217). Only a malformed
+    /// body or a slot past `PHRASE_MASK` can refuse; the offset wraps.
+    /// Applying the prepared bytes has no recoverable failure.
     pub(crate) fn prepare_replace(
         &self,
         slot: u32,
@@ -219,94 +287,66 @@ impl UserLibrary {
             return Err("user phrase slot exceeds PHRASE_MASK".into());
         }
         let view = PhraseItemView::from_bytes(bytes).ok_or("invalid user phrase body")?;
-        let bytes = view.as_bytes();
-        let offset = if self.headers_only {
-            8
-        } else {
-            u32::try_from(self.content.len().max(8)).map_err(|e| e.to_string())?
-        };
-        let end = offset
-            .checked_add(u32::try_from(bytes.len()).map_err(|e| e.to_string())?)
-            .ok_or("user phrase arena too large")?;
-        #[cfg(test)]
-        if self.max_content_len.is_some_and(|limit| end > limit) {
-            return Err("user phrase arena too large".into());
-        }
-        let old = self.item(slot);
-        let live = self
-            .live
-            .saturating_sub(old.as_ref().map_or(0, |item| item.as_bytes().len()))
-            .saturating_add(bytes.len());
-        let compacted = if (end as usize).saturating_sub(8).saturating_sub(live) > live {
-            let mut compacted = self.compacted(Some((slot, bytes)))?;
-            compacted.total = self
-                .total
-                .wrapping_sub(old.map_or(0, |item| item.unigram()))
-                .wrapping_add(view.unigram());
-            Some(compacted)
-        } else {
-            None
-        };
-        Ok(Replacement {
-            slot,
-            offset,
-            length: bytes.len(),
-            unigram: view.unigram(),
-            compacted,
-        })
+        Ok(self.placement(slot, view))
     }
 
-    fn apply_replacement(&mut self, change: Replacement, bytes: &[u8]) {
-        if let Some(compacted) = change.compacted {
-            *self = compacted;
-            return;
+    /// Where `add_phrase_item` writes `view`: at the content size narrowed
+    /// to `table_offset_t`, which is 8 for zero (`phrase_index.cpp:208-217`).
+    fn placement(&self, slot: u32, view: PhraseItemView<'_>) -> Replacement {
+        Replacement {
+            slot,
+            offset: if self.headers_only {
+                8
+            } else {
+                append_offset(self.content.len())
+            },
+            length: view.as_bytes().len(),
+            unigram: view.unigram(),
         }
+    }
+
+    /// `remove_phrase_item` then `add_phrase_item` (`phrase_index.cpp:
+    /// 208-234`). The write is `set_content` at the wrapped offset: over
+    /// earlier bytes without growing the size, or past the end as an append.
+    /// Nothing else is adjusted for the bytes it overwrites.
+    fn apply_replacement(&mut self, change: Replacement, bytes: &[u8]) {
         if self.headers_only {
             *self = Self::default();
         }
         let slot = change.slot;
         let bytes = &bytes[..change.length];
-        let old = self
-            .item(slot)
-            .map(|item| (item.as_bytes().len(), item.unigram()));
+        if let Some(unigram) = self.item(slot).map(|item| item.unigram()) {
+            self.slots.set(slot, 0);
+            self.total = self.total.wrapping_sub(unigram);
+        }
         if self.content.len() < 8 {
             self.content.resize(8, 0);
         }
-        self.content.extend_from_slice(bytes);
-        self.slots.set(slot, change.offset);
-        if let Some((len, unigram)) = old {
-            self.live -= len;
-            self.total = self.total.wrapping_sub(unigram);
-            self.sum = self.sum.wrapping_sub(unigram);
+        let start = change.offset as usize;
+        let end = start + bytes.len();
+        if end > self.content.len() {
+            self.content.resize(end, 0);
         }
-        self.live += bytes.len();
+        self.content[start..end].copy_from_slice(bytes);
+        self.slots.set(slot, change.offset);
         self.total = self.total.wrapping_add(change.unigram);
-        self.sum = self.sum.wrapping_add(change.unigram);
     }
 
     fn remove_body(&mut self, slot: u32) -> bool {
-        let Some(item) = self.item(slot) else {
+        let Some(unigram) = self.item(slot).map(|item| item.unigram()) else {
             return false;
         };
-        let (len, unigram) = (item.as_bytes().len(), item.unigram());
         self.slots.set(slot, 0);
-        self.live -= len;
         self.total = self.total.wrapping_sub(unigram);
-        self.sum = self.sum.wrapping_sub(unigram);
         true
     }
 
+    /// `remove_phrase_item` alone: the pin never compacts here.
     pub(crate) fn remove(&mut self, slot: u32) -> bool {
-        let removed = self.remove_body(slot);
-        // Existing offsets and bodies fit the same arena; compaction cannot
-        // fail its size check after a removal from a valid library.
-        if removed {
-            let _ = self.compact_garbage();
-        }
-        removed
+        self.remove_body(slot)
     }
 
-    pub(crate) fn remove_matching(&mut self, selected: impl Fn(u32) -> bool) -> Result<(), String> {
+    pub(crate) fn remove_matching(&mut self, selected: impl Fn(u32) -> bool) {
         let slots: Vec<_> = self
             .items()
             .filter_map(|(slot, _)| selected(slot).then_some(slot))
@@ -314,8 +354,6 @@ impl UserLibrary {
         for slot in slots {
             self.remove_body(slot);
         }
-        // A mask checks the garbage bound once after removing the batch.
-        self.compact_garbage()
     }
 
     #[cfg(test)]
@@ -339,7 +377,6 @@ impl UserLibrary {
         self.content[offset as usize + 2..offset as usize + 6]
             .copy_from_slice(&unigram.to_le_bytes());
         self.total = self.total.wrapping_add(delta);
-        self.sum = self.sum.wrapping_add(delta);
         true
     }
 
@@ -490,64 +527,26 @@ impl UserLibrary {
         }
     }
 
-    fn compact_garbage(&mut self) -> Result<(), String> {
-        if self
-            .content
-            .len()
-            .saturating_sub(8)
-            .saturating_sub(self.live)
-            > self.live
-        {
-            // An extra garbage-bound compaction must retain the loaded total;
-            // only the pin's explicit compact resets its bookkeeping.
-            let total = self.total;
-            self.compact()?;
-            self.total = total;
-        }
-        Ok(())
+    /// `SubPhraseIndex::compact` (`phrase_index.cpp:624-675`): a fresh
+    /// sub-index takes every readable slot in slot order through the same
+    /// add, so its content can wrap in turn and its total is the sum of the
+    /// items copied. The pin does this only at end-import, save and mask-out.
+    pub(crate) fn compact(&mut self) {
+        *self = self.compacted();
     }
 
-    pub(crate) fn compact(&mut self) -> Result<(), String> {
-        *self = self.compacted(None)?;
-        Ok(())
-    }
-
-    fn compacted(&self, replacement: Option<(u32, &[u8])>) -> Result<Self, String> {
-        let old_len = replacement
-            .and_then(|(slot, _)| self.item(slot))
-            .map_or(0, |item| item.as_bytes().len());
-        let live = self
-            .live
-            .saturating_sub(old_len)
-            .saturating_add(replacement.map_or(0, |(_, bytes)| bytes.len()));
-        let size = live.checked_add(8).ok_or("user phrase arena too large")?;
-        u32::try_from(size).map_err(|e| e.to_string())?;
-        let count = self.slots.entries().count()
-            + usize::from(replacement.is_some_and(|(slot, _)| self.item(slot).is_none()));
-        let end = self
-            .token_end()
-            .max(replacement.map_or(1, |(slot, _)| slot.saturating_add(1)));
+    fn compacted(&self) -> Self {
+        let count = self.slots.entries().count();
         let mut compacted = Self::default();
-        if end as usize > count.saturating_mul(4).saturating_add(256) {
+        if self.token_end() as usize > count.saturating_mul(4).saturating_add(256) {
             compacted.slots = Slots::Sparse(BTreeMap::new());
         }
-        compacted.content.reserve(size);
-        let mut pending = replacement;
         for (slot, item) in self.items() {
-            if let Some((changed, bytes)) = pending
-                && changed <= slot
-            {
-                compacted.replace(changed, bytes)?;
-                pending = None;
-            }
-            if !replacement.is_some_and(|(changed, _)| changed == slot) {
-                compacted.replace(slot, item.as_bytes())?;
-            }
+            let bytes = item.as_bytes();
+            let change = compacted.placement(slot, item);
+            compacted.apply_replacement(change, bytes);
         }
-        if let Some((slot, bytes)) = pending {
-            compacted.replace(slot, bytes)?;
-        }
-        Ok(compacted)
+        compacted
     }
 
     #[cfg(test)]
@@ -560,9 +559,7 @@ impl UserLibrary {
     pub(crate) fn load_payload(payload: &[u8]) -> Result<Self, String> {
         let (total, offsets, content) =
             sub_phrase_index_sections(payload).map_err(|e| e.to_string())?;
-        let mut live = 0_usize;
         let mut count = 0_usize;
-        let mut sum = 0_u32;
         // Retain the old decoder's all-or-nothing validation, including slot
         // zero, partial trailing offset words, and arbitrary text/key values.
         for (slot, bytes) in offsets.as_chunks::<4>().0.iter().enumerate() {
@@ -577,9 +574,8 @@ impl UserLibrary {
                 format!("chunk write error: sub phrase index: slot {slot}: {error}")
             })?;
             if let Some(view) = PhraseItemView::from_bytes(bytes) {
-                live = live.saturating_add(view.as_bytes().len());
+                let _ = view;
                 count += 1;
-                sum = sum.wrapping_add(view.unigram());
             }
         }
         let entries = offsets
@@ -600,13 +596,9 @@ impl UserLibrary {
         };
         Ok(Self {
             total,
-            sum,
             slots,
             content: content.to_vec(),
-            live,
             headers_only: false,
-            #[cfg(test)]
-            max_content_len: None,
         })
     }
 
@@ -617,7 +609,6 @@ impl UserLibrary {
             sub_phrase_index_sections(payload).map_err(|e| e.to_string())?;
         Ok(Self {
             total: 0,
-            sum: 0,
             slots: Slots::Dense(
                 offsets
                     .as_chunks::<4>()
@@ -627,10 +618,7 @@ impl UserLibrary {
                     .collect(),
             ),
             content: content.to_vec(),
-            live: 0,
             headers_only: true,
-            #[cfg(test)]
-            max_content_len: None,
         })
     }
 
@@ -642,11 +630,15 @@ impl UserLibrary {
     pub(crate) const fn total(&self) -> u32 {
         self.total
     }
-    pub(crate) const fn item_sum(&self) -> u32 {
-        self.sum
+    /// The content size `m_phrase_content.size()`.
+    #[cfg(test)]
+    pub(crate) fn content_len(&self) -> usize {
+        self.content.len()
     }
-    pub(crate) const fn is_empty(&self) -> bool {
-        self.live == 0
+
+    /// Whether no slot names an item: the pin's emptied sub-index.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.slots.entries().next().is_none()
     }
 
     pub(crate) fn item(&self, slot: u32) -> Option<PhraseItemView<'_>> {
@@ -661,6 +653,22 @@ impl UserLibrary {
         self.slots
             .entries()
             .filter_map(|(slot, _)| Some((slot, self.item(slot)?)))
+    }
+
+    /// The size of the content a compaction would leave: the first eight
+    /// bytes and every readable item once. This is the `C` that `store`
+    /// copies into a fresh chunk (`phrase_index.cpp:384`).
+    pub(crate) fn compacted_content_len(&self) -> usize {
+        self.items().fold(8, |len, (_, item)| {
+            len.saturating_add(item.as_bytes().len())
+        })
+    }
+
+    /// Whether `store`'s content copy grows a fresh chunk by `C` bytes, and
+    /// `ensure_has_space` narrows that growth to `int` (`memory_chunk.h:
+    /// 95-98`): the unsafe copy of register row 112, from 2^31 bytes.
+    pub(crate) fn store_copy_is_unsafe(&self) -> bool {
+        !self.is_empty() && self.compacted_content_len() as u64 >= copy_limit()
     }
 
     /// The pin's store layout after compaction (074a2219
@@ -679,7 +687,7 @@ impl UserLibrary {
         let content_len = if self.is_empty() {
             0
         } else {
-            self.live.saturating_add(8)
+            self.compacted_content_len()
         };
         let index_three = index_two
             .checked_add(u32::try_from(content_len).map_err(|e| e.to_string())?)
@@ -695,7 +703,11 @@ impl UserLibrary {
         if !self.is_empty() {
             payload.resize(payload.len() + 8, 0);
         }
-        let mut total = 0_u64;
+        // `m_total_freq` is a `guint32` that `add_phrase_item` adds to with
+        // no overflow check (`phrase_index.cpp:208-217`), and `store` writes
+        // it as it stands (`:367`): a journal ADD can wrap it, so the file
+        // holds the wrapped sum of the items a compaction copied.
+        let mut total = 0_u32;
         for (slot, view) in self.items() {
             if slot > oxpinyin_data::chunk_write::PHRASE_MASK {
                 return Err(format!(
@@ -707,10 +719,8 @@ impl UserLibrary {
             let at = 17 + slot as usize * 4;
             payload[at..at + 4].copy_from_slice(&offset.to_le_bytes());
             payload.extend_from_slice(view.as_bytes());
-            total += u64::from(view.unigram());
+            total = total.wrapping_add(view.unigram());
         }
-        let total = u32::try_from(total)
-            .map_err(|_| "chunk write error: chunk total_freq overflows u32".to_owned())?;
         payload[..4].copy_from_slice(&total.to_le_bytes());
         payload.push(b'#');
         oxpinyin_data::chunk_format::build_memory_chunk_owned(payload).map_err(|e| e.to_string())
@@ -767,11 +777,10 @@ mod tests {
         };
         let mut library = UserLibrary::load(&file(&body)).unwrap();
         assert_eq!(library.total(), 91, "load retains the header total");
-        assert_eq!(library.item_sum(), 37);
         assert!(!library.is_empty());
         assert!(library.item(1).is_none());
         assert_eq!(library.item(3).unwrap().as_bytes(), body);
-        library.compact().unwrap();
+        library.compact();
         assert_eq!(library.total(), 37, "compact rebuilds the item sum");
         let saved = library.store().unwrap();
         let loaded = UserLibrary::load(&saved).unwrap();
@@ -806,9 +815,9 @@ mod tests {
         assert!(library.remove(3));
         expected.pop();
         assert_eq!(library.token_end(), 2);
-        library.compact().unwrap();
+        library.compact();
         assert_eq!(library.store().unwrap(), build_chunk(&expected).unwrap());
-        assert_eq!(library.content.len(), library.live + 8);
+        assert_eq!(library.content.len(), library.compacted_content_len());
     }
 
     #[test]
@@ -836,19 +845,22 @@ mod tests {
     }
 
     #[test]
-    fn repeated_replacement_and_removal_bound_arena_garbage() {
+    fn repeated_replacement_grows_until_the_pins_compaction_points() {
         let bytes = oxpinyin_data::chunk_write::encode_phrase_item(&items().remove(0).1).unwrap();
         let mut library = UserLibrary::default();
         for _ in 0..100 {
             library.replace(1024, &bytes).unwrap();
-            assert!(library.content.len() <= 2 * library.live + 8);
         }
-        library.compact().unwrap();
+        // No dead-over-live trigger: the pin compacts only at end-import,
+        // save and mask-out, so every replacement appended.
+        assert_eq!(library.content.len(), 8 + 100 * bytes.len());
+        library.compact();
         assert!(matches!(library.slots, Slots::Sparse(_)));
         assert_eq!(library.token_end(), 1025);
         assert!(library.remove(1024));
         assert!(library.is_empty());
         assert_eq!(library.token_end(), 1);
+        library.compact();
         assert!(library.content.is_empty());
     }
 
@@ -877,27 +889,16 @@ mod tests {
                     // including slots, readings and the rebuilt total.
                     let total = items
                         .iter()
-                        .try_fold(0_u32, |sum, (_, item)| sum.checked_add(item.unigram));
-                    if let Some(total) = total {
-                        let saved = library.store().unwrap();
-                        let payload = read_chunk_payload(&saved).unwrap();
-                        assert_eq!(decode_sub_phrase_index(payload).unwrap(), (total, items));
-                    } else {
-                        assert!(library.store().is_err());
-                    }
+                        .fold(0_u32, |sum, (_, item)| sum.wrapping_add(item.unigram));
+                    let saved = library.store().unwrap();
+                    let payload = read_chunk_payload(&saved).unwrap();
+                    assert_eq!(decode_sub_phrase_index(payload).unwrap(), (total, items));
                 } else {
                     assert_eq!(
                         library.store(),
                         build_chunk(&items).map_err(|e| e.to_string())
                     );
                 }
-                assert_eq!(
-                    library.live,
-                    library
-                        .items()
-                        .map(|(_, item)| item.as_bytes().len())
-                        .sum::<usize>()
-                );
             }
             (Err(expected), Err(actual)) => assert_eq!(actual, expected),
             (expected, _) => panic!("loader disagrees with existing decoder: {expected:?}"),
@@ -948,5 +949,202 @@ mod tests {
             bytes[21..25].copy_from_slice(&offset.to_le_bytes());
             compare(&build_memory_chunk(&bytes).unwrap());
         }
+    }
+
+    /// A one-character, one-reading item: sixteen bytes.
+    fn small(unigram: u32) -> Vec<u8> {
+        oxpinyin_data::chunk_write::encode_phrase_item(&ChunkItem {
+            phrase: vec![0x4e00 + unigram],
+            unigram,
+            prons: vec![(vec![0x1234], unigram + 100)],
+        })
+        .unwrap()
+    }
+
+    fn fill(library: &mut UserLibrary, unigrams: &[u32]) {
+        for (slot, &unigram) in (1..).zip(unigrams) {
+            library.replace(slot, &small(unigram)).unwrap();
+        }
+    }
+
+    /// #1514 ruling 1 (`phrase_index.cpp:208-217`): once the size passes the
+    /// modulus the next add lands at the size modulo it, over earlier bytes,
+    /// and the size stays. The slot stores the wrapped offset and the total
+    /// takes only the added unigram.
+    #[test]
+    fn an_add_past_the_boundary_overwrites_earlier_bytes_and_aliases_slots() {
+        let _limits = TestLimits::set(64, 1 << 31);
+        let mut library = UserLibrary::default();
+        fill(&mut library, &[1, 2, 3, 4]);
+        // 8 + 4 * 16 = 72: past 64, nothing wrapped yet.
+        assert_eq!(library.content.len(), 72);
+        assert_eq!(library.slots.offset(4), Some(56));
+        assert_eq!(library.total(), 10);
+        library.replace(5, &small(50)).unwrap();
+        // 72 mod 64 = 8: over slot 1's item, size unchanged.
+        assert_eq!(library.content.len(), 72);
+        assert_eq!(library.slots.offset(5), Some(8));
+        assert_eq!(library.slots.offset(1), Some(8), "slot 1 keeps its offset");
+        assert_eq!(library.item(1).unwrap().unigram(), 50, "and reads slot 5's");
+        assert_eq!(library.item(1).unwrap().as_bytes(), small(50));
+        // The total takes +50 and loses nothing for slot 1's changed bytes.
+        assert_eq!(library.total(), 60);
+        assert_eq!(library.item(2).unwrap().unigram(), 2);
+        // The same size gives the same offset again: no advancing ring.
+        library.replace(6, &small(60)).unwrap();
+        assert_eq!(library.slots.offset(6), Some(8));
+        assert_eq!(library.item(5).unwrap().unigram(), 60);
+        assert_eq!(library.content.len(), 72);
+    }
+
+    /// Zero narrows to 8, as an empty content does.
+    #[test]
+    fn a_size_that_is_a_multiple_of_the_modulus_adds_at_eight() {
+        let _limits = TestLimits::set(56, 1 << 31);
+        let mut library = UserLibrary::default();
+        fill(&mut library, &[1, 2, 3]);
+        assert_eq!(library.content.len(), 56);
+        library.replace(4, &small(40)).unwrap();
+        assert_eq!(library.slots.offset(4), Some(8));
+        assert_eq!(library.content.len(), 56);
+        assert_eq!(append_offset(0), 8);
+    }
+
+    /// Remove and modify act on the bytes now stored (`phrase_index.cpp:
+    /// 219-234`): the unigram taken out is the overwritten item's.
+    #[test]
+    fn remove_and_modify_of_an_overwritten_item_use_its_current_bytes() {
+        let _limits = TestLimits::set(64, 1 << 31);
+        let mut library = UserLibrary::default();
+        fill(&mut library, &[1, 2, 3, 4]);
+        library.replace(5, &small(50)).unwrap();
+        assert_eq!(library.total(), 60);
+        // Slot 1 reads slot 5's item: removing it subtracts 50, not 1.
+        assert!(library.remove(1));
+        assert_eq!(library.total(), 10);
+        assert!(library.item(1).is_none());
+        assert_eq!(library.item(5).unwrap().unigram(), 50, "slot 5 stays live");
+        // Modify slot 5: remove its 50, add 70 at the same wrapped offset.
+        library.replace(5, &small(70)).unwrap();
+        assert_eq!(library.total(), 30);
+        assert_eq!(library.slots.offset(5), Some(8));
+        assert_eq!(library.item(5).unwrap().unigram(), 70);
+    }
+
+    /// Ruling 2 (row 111): a header-derived length that crosses the item's
+    /// original end but stays inside the content returns the following
+    /// bytes; one that passes the content end answers no item.
+    #[test]
+    fn a_read_crossing_the_item_end_returns_the_next_bytes_and_one_past_the_content_is_none() {
+        let mut library = UserLibrary::default();
+        fill(&mut library, &[1, 2]);
+        let offset = library.slots.offset(1).unwrap() as usize;
+        // Two readings: 6 + 4 + 2 * 6 = 22 bytes, six of them slot 2's.
+        library.content[offset + 1] = 2;
+        let view = library.item(1).unwrap();
+        assert_eq!(view.as_bytes().len(), 22);
+        assert_eq!(&view.as_bytes()[16..], &small(2)[..6]);
+        // 255 readings reach past the content end.
+        library.content[offset + 1] = 255;
+        assert!(library.item(1).is_none());
+        assert_eq!(library.item(2).unwrap().unigram(), 2, "others are kept");
+    }
+
+    /// Ruling 3: the arena grows with every replacement and compacts only
+    /// when asked, in slot order, with a total rebuilt from the items copied.
+    #[test]
+    fn compaction_runs_only_when_asked_and_wraps_like_any_add() {
+        let _limits = TestLimits::set(64, 1 << 31);
+        let mut library = UserLibrary::default();
+        for _ in 0..20 {
+            library.replace(1, &small(1)).unwrap();
+        }
+        assert!(library.content.len() >= 64, "no dead-over-live trigger");
+        fill(&mut library, &[1, 2, 3, 4, 5]);
+        let read: Vec<_> = library
+            .items()
+            .map(|(slot, item)| (slot, item.unigram()))
+            .collect();
+        library.compact();
+        // Four items reach 72 bytes; the fifth wraps to 8 and the size stays.
+        assert_eq!(library.content.len(), 72);
+        assert_eq!(library.slots.offset(5), Some(8));
+        assert_eq!(library.item(1).unwrap().unigram(), read[4].1);
+        // The total is the sum of the items read from the source, wrapped
+        // or not, and not the sum of what the compacted copy now reads.
+        let sum = read.iter().fold(0_u32, |sum, &(_, unigram)| sum + unigram);
+        assert_eq!(library.total(), sum);
+    }
+
+    /// Row 112: the save copies the compacted content into a fresh chunk;
+    /// from the limit on, the copy is unsafe.
+    #[test]
+    fn the_store_copy_threshold_follows_the_compacted_content() {
+        let _limits = TestLimits::set(1 << 32, 8 + 16 * 3);
+        let mut library = UserLibrary::default();
+        fill(&mut library, &[1, 2]);
+        assert!(!library.store_copy_is_unsafe());
+        library.replace(3, &small(3)).unwrap();
+        assert!(
+            library.store_copy_is_unsafe(),
+            "8 + 3 * 16 reaches the limit"
+        );
+        assert!(library.remove(3));
+        assert!(!library.store_copy_is_unsafe());
+        assert!(!UserLibrary::default().store_copy_is_unsafe());
+    }
+
+    /// Corruption by an overwrite is defined and survives a compaction, a
+    /// save and a reload as independent copies of the bytes now read.
+    #[test]
+    fn a_wrapped_state_survives_compaction_store_and_reload() {
+        let mut library = UserLibrary::default();
+        {
+            let _limits = TestLimits::set(64, 1 << 31);
+            fill(&mut library, &[1, 2, 3, 4]);
+            library.replace(5, &small(50)).unwrap();
+        }
+        // The modulus is back to 2^32: the compaction does not wrap again.
+        library.compact();
+        assert_eq!(library.content.len(), 8 + 5 * 16);
+        assert_eq!(library.total(), 50 + 2 + 3 + 4 + 50);
+        assert_ne!(library.slots.offset(1), library.slots.offset(5));
+        let saved = library.store().unwrap();
+        let loaded = UserLibrary::load(&saved).unwrap();
+        let read: Vec<_> = loaded
+            .items()
+            .map(|(slot, item)| (slot, item.unigram()))
+            .collect();
+        assert_eq!(read, [(1, 50), (2, 2), (3, 3), (4, 4), (5, 50)]);
+        assert_eq!(loaded.store().unwrap(), saved);
+    }
+
+    /// Mask-out removes slots and leaves the compaction to the pin's point.
+    #[test]
+    fn removing_a_batch_collects_nothing_until_the_compaction() {
+        let mut library = UserLibrary::default();
+        fill(&mut library, &[1, 2, 3, 4]);
+        let size = library.content.len();
+        library.remove_matching(|slot| slot != 4);
+        assert_eq!(library.content.len(), size);
+        assert_eq!(library.total(), 4);
+        library.compact();
+        assert_eq!(library.content.len(), 8 + 16);
+        assert_eq!(library.total(), 4);
+    }
+
+    /// `store` writes the pin's `guint32` `m_total_freq`, which a journal ADD
+    /// wraps (`phrase_index.cpp:208-217`, `:365-367`): the file carries the
+    /// wrapped sum and loads back.
+    #[test]
+    fn a_total_past_u32_is_stored_wrapped() {
+        let mut library = UserLibrary::default();
+        library.replace(1, &small(0x8000_0000)).unwrap();
+        library.replace(2, &small(0x8000_0005)).unwrap();
+        assert_eq!(library.total(), 5);
+        let saved = library.store().unwrap();
+        let payload = read_chunk_payload(&saved).unwrap();
+        assert_eq!(decode_sub_phrase_index(payload).unwrap().0, 5);
+        assert_eq!(UserLibrary::load(&saved).unwrap().total(), 5);
     }
 }

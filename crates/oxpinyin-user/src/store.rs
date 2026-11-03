@@ -173,6 +173,12 @@ pub enum UserStoreError {
     /// libraries' files stand as written, nothing later was written or
     /// renamed, no marker was written, and the session stays dirty.
     SaveRemapFailed,
+    /// A bulk copy of the save reaches the pin's unsafe size
+    /// (`memory_chunk.h:95-98`; register row 112, #1514). The save stops at
+    /// that copy: the earlier files stay as written (libpinyin's staged
+    /// `.tmp` files, libzhuyin's completed renames), nothing later happens,
+    /// no marker is written, the session stays dirty and a later save retries.
+    SaveTooLarge,
     /// The unigram add of an accepted predicted candidate overflowed its
     /// library's `guint32` total: `FacadePhraseIndex::add_unigram_frequency`
     /// answers `ERROR_INTEGER_OVERFLOW` and `pinyin_choose_predicted_candidate`
@@ -269,6 +275,10 @@ impl fmt::Display for UserStoreError {
                 f,
                 "a system library's file cannot be mapped again for the save (upstream: mmap failed!)"
             ),
+            Self::SaveTooLarge => write!(
+                f,
+                "a save copy reaches the pin's unsafe size (upstream memory_chunk.h:95-98)"
+            ),
             Self::UnigramTotalOverflow => write!(
                 f,
                 "unigram total overflow (upstream ERROR_INTEGER_OVERFLOW, pinyin.cpp:2609-2612)"
@@ -330,6 +340,7 @@ impl std::error::Error for UserStoreError {
             | Self::ChunkHeaderWrite(_)
             | Self::LibraryChunkHeaderRead
             | Self::SaveRemapFailed
+            | Self::SaveTooLarge
             | Self::UnigramTotalOverflow
             | Self::OverlongIndexKey
             | Self::NonTokenUserBigramKey
@@ -2389,13 +2400,11 @@ impl<S: WriteStore> GenericUserStore<S> {
         };
         let db = self.database();
         let offset = get_u64_or(&*db, LIBRARY_OFFSET, &codec::encode_u8(library), 0)? as u32;
-        Ok(offset.wrapping_add(
-            target
-                .phrases()
-                .libraries
-                .get(&library)
-                .map_or(0, crate::user_library::UserLibrary::item_sum),
-        ))
+        Ok(target
+            .phrases()
+            .libraries
+            .get(&library)
+            .map_or(offset, crate::user_library::UserLibrary::total))
     }
 
     /// How far `library`'s stored total lies from the sum of its items
@@ -2461,7 +2470,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         });
         if cleared.is_ok() {
             for library in target.phrases().libraries.values_mut() {
-                let _ = library.compact();
+                library.compact();
             }
             self.inner
                 .has_library_offsets
@@ -4845,7 +4854,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         let bytes = oxpinyin_data::chunk_write::encode_phrase_item(&item)
             .map_err(|error| UserStoreError::Persistence(error.to_string()))?;
         let removed = items.remove_item(original, token).is_some();
-        items.add_item(original, token, &bytes);
+        let _ = items.add_item(original, token, &bytes);
         if !removed {
             let library = phrase_index_library_index(token);
             let total = items

@@ -741,6 +741,10 @@ pub enum PersistenceError {
     /// open fails instead of the process dying, and nothing is cleaned or
     /// written.
     UnknownDatabaseFormat,
+    /// A bulk copy into a fresh chunk reaches the pin's unsafe threshold
+    /// (register row 112, #1514): the save stops there and answers `false`,
+    /// keeping the earlier files as written, and the session stays dirty.
+    SaveTooLarge,
 }
 
 impl std::fmt::Display for PersistenceError {
@@ -767,6 +771,10 @@ impl std::fmt::Display for PersistenceError {
                 f,
                 "user.conf: unknown database format (upstream aborts, \
                  table_info.cpp:122-133, so the open is refused)"
+            ),
+            Self::SaveTooLarge => write!(
+                f,
+                "a save copy reaches the pin's unsafe size (memory_chunk.h:95-98)"
             ),
         }
     }
@@ -2369,6 +2377,52 @@ fn tolerate<T>(
     }
 }
 
+/// One `SYSTEM_FILE` library's journal as `_write_files` frames it
+/// (`pinyin.cpp:944-975`): the live sub-index diffed against `baseline`'s
+/// chunk, or the open-time original where there is none.
+fn log_payload(
+    state: &UserState,
+    live: Option<&crate::system_items::SystemItems>,
+    nibble: u8,
+    original: SystemLibraryRef<'_>,
+    baseline: Option<&SaveBaseline>,
+    new_total: Option<u32>,
+) -> Result<Vec<u8>, PersistenceError> {
+    let records = match (live, baseline) {
+        // The pin's `_write_files`: the chunk on disk now is the old side,
+        // the live sub-index the new one.
+        (Some(items), baseline) => {
+            let disk = match baseline {
+                Some(SaveBaseline::Changed(disk)) => disk.view(),
+                _ => original,
+            };
+            diff_live_records(
+                items.live_library(nibble, original),
+                disk,
+                new_total
+                    .unwrap_or_else(|| items.library_total(nibble, Some(original)).unwrap_or(0)),
+            )
+        }
+        (None, Some(SaveBaseline::Changed(disk))) => {
+            let overrides = state
+                .system_overrides
+                .get(&nibble)
+                .cloned()
+                .unwrap_or_default();
+            diff_records_against(nibble, original, &overrides, disk.view(), new_total)?
+        }
+        (None, _) => {
+            let overrides = state
+                .system_overrides
+                .get(&nibble)
+                .cloned()
+                .unwrap_or_default();
+            diff_records_with_new_total(nibble, original, &overrides, new_total)?
+        }
+    };
+    encode_log_records(&records).map_err(|e| PersistenceError::Codec(e.to_string()))
+}
+
 /// Every file of the set but the user bigram, staged as `.tmp` siblings.
 fn stage_rest<B: FnMut(u8) -> SaveBaseline>(
     dir: &Path,
@@ -2466,12 +2520,16 @@ fn stage_rest<B: FnMut(u8) -> SaveBaseline>(
                                 .collect()
                         });
                     if let Some(phrases) = libraries {
-                        phrases
-                            .libraries
-                            .get(&nibble)
-                            .unwrap_or(&UserLibrary::default())
-                            .store()
-                            .map_err(PersistenceError::Codec)?
+                        let empty = UserLibrary::default();
+                        let library = phrases.libraries.get(&nibble).unwrap_or(&empty);
+                        // `SubPhraseIndex::store` copies the compacted
+                        // content into a fresh chunk in one call (register
+                        // row 112): the save stops here, after the earlier
+                        // files, as row 76's stop does.
+                        if library.store_copy_is_unsafe() {
+                            return Err(PersistenceError::SaveTooLarge);
+                        }
+                        library.store().map_err(PersistenceError::Codec)?
                     } else {
                         build_chunk(&pairs)?
                     }
@@ -2479,47 +2537,13 @@ fn stage_rest<B: FnMut(u8) -> SaveBaseline>(
                 LibraryFile::Log => {
                     let original = originals.get(&nibble).unwrap_or(empty_library.view());
                     let new_total = compacted.contains(&nibble).then_some(0);
-                    let records = match (live, baseline) {
-                        // The pin's `_write_files`: the chunk on disk now is
-                        // the old side, the live sub-index the new one.
-                        (Some(items), baseline) => {
-                            let disk = match &baseline {
-                                Some(SaveBaseline::Changed(disk)) => disk.view(),
-                                _ => original,
-                            };
-                            diff_live_records(
-                                items.live_library(nibble, original),
-                                disk,
-                                new_total.unwrap_or_else(|| {
-                                    items.library_total(nibble, Some(original)).unwrap_or(0)
-                                }),
-                            )
-                        }
-                        (None, Some(SaveBaseline::Changed(disk))) => {
-                            let overrides = state
-                                .system_overrides
-                                .get(&nibble)
-                                .cloned()
-                                .unwrap_or_default();
-                            diff_records_against(
-                                nibble,
-                                original,
-                                &overrides,
-                                disk.view(),
-                                new_total,
-                            )?
-                        }
-                        (None, _) => {
-                            let overrides = state
-                                .system_overrides
-                                .get(&nibble)
-                                .cloned()
-                                .unwrap_or_default();
-                            diff_records_with_new_total(nibble, original, &overrides, new_total)?
-                        }
-                    };
-                    let payload = encode_log_records(&records)
-                        .map_err(|e| PersistenceError::Codec(e.to_string()))?;
+                    let payload =
+                        log_payload(state, live, nibble, original, baseline.as_ref(), new_total)?;
+                    // `PhraseIndexLogger::store` copies the whole journal
+                    // into a fresh chunk in one call.
+                    if payload.len() as u64 >= crate::user_library::copy_limit() {
+                        return Err(PersistenceError::SaveTooLarge);
+                    }
                     build_memory_chunk(&payload).map_err(PersistenceError::from)?
                 }
             };
