@@ -944,6 +944,234 @@ continues to use the source-only row 116 refusal.
           ]
         }
       }
+    },
+    "matrix-chunk-directory": {
+      "cells": {
+        "tkrzw": {
+          "pin": {
+            "sha256": "2b0a1626806240014f2dcfe02554abb24e886c618824d7a997789b370aec67ab",
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "173622b432031202",
+              "stderr": "9c4599894172668d",
+              "stdout": "12ae32cb1ec02d01"
+            }
+          },
+          "subject": {
+            "sha256": "eaa8895b6a3cac36ae0cdf34def5e8298068a2ab453e383eaaea994f10d4a28d",
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "173622b432031202",
+              "stderr": "12ae32cb1ec02d01",
+              "stdout": "12ae32cb1ec02d01"
+            }
+          },
+          "divergence": [
+            "stderr: pin \"test_matrix: ../../src/include/memory_chun\" … (length 142); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        },
+        "bdb": {
+          "pin": {
+            "sha256": "d461266a6931c6324b2868ef20d60003ea9abce9b037d4cef117e333fd2c9f4b",
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "6c8ba2802093934f",
+              "stderr": "9c4599894172668d",
+              "stdout": "12ae32cb1ec02d01"
+            }
+          },
+          "subject": {
+            "sha256": "72e664ecc3f2299c31bdc6ae72b75b3a9ccf50abcd8f6884e40b30427ea90bea",
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "6c8ba2802093934f",
+              "stderr": "12ae32cb1ec02d01",
+              "stdout": "12ae32cb1ec02d01"
+            }
+          },
+          "divergence": [
+            "stderr: pin \"test_matrix: ../../src/include/memory_chun\" … (length 142); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        },
+        "kc": {
+          "pin": {
+            "sha256": "55c8cd97ce7b5ef46addcc984e557263be6c4533a469dbda53a9a06ca39f362f",
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "46a526e4ea5b544a",
+              "stderr": "9c4599894172668d",
+              "stdout": "12ae32cb1ec02d01"
+            }
+          },
+          "subject": {
+            "sha256": "66f036547d21d41653794aee144295cca79f2bce8d5c9983606f29f277eb02d2",
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "46a526e4ea5b544a",
+              "stderr": "12ae32cb1ec02d01",
+              "stdout": "12ae32cb1ec02d01"
+            }
+          },
+          "divergence": [
+            "stderr: pin \"test_matrix: ../../src/include/memory_chun\" … (length 142); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        }
+      }
+    },
+    "pinyin-lookup-chunk-directory": {
+      "cells": {
+        "tkrzw": {
+          "pin": {
+            "sha256": "4b73dd61392cdf86af9676621ebd6e0eb69326b63271471aeb5de8ecad894daf",
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "f9fd804e27d390b0",
+              "stderr": "c2d7e22e97c8008b",
+              "stdout": "12ae32cb1ec02d01"
+            }
+          },
+          "subject": {
+            "sha256": "7985a31338174b5736fff230e4814a1b5f7af2c244c87b349cce50d1547ee1aa",
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "f9fd804e27d390b0",
+              "stderr": "12ae32cb1ec02d01",
+              "stdout": "12ae32cb1ec02d01"
+            }
+          },
+          "divergence": [
+            "stderr: pin \"test_pinyin_lookup: ../../src/include/memo\" … (length 149); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        },
+        "bdb": {
+          "pin": {
+            "sha256": "f202851d62f1c97e1853c8d0d5a3e35a820add7144613d9b983c185626f227f0",
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "0ae12c1d34b60358",
+              "stderr": "c2d7e22e97c8008b",
+              "stdout": "12ae32cb1ec02d01"
+            }
+          },
+          "subject": {
+            "sha256": "2d984304534c0f4ab6f7e39a19fa6986afc2cecde02c6032daa75dcceeda2c40",
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "0ae12c1d34b60358",
+              "stderr": "12ae32cb1ec02d01",
+              "stdout": "12ae32cb1ec02d01"
+            }
+          },
+          "divergence": [
+            "stderr: pin \"test_pinyin_lookup: ../../src/include/memo\" … (length 149); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        },
+        "kc": {
+          "pin": {
+            "sha256": "93fff9d9fb312212da08fe3f56a7b16fff493b545cdbe83eb0ae0a97152ff662",
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "bbfa6f4975a94e3b",
+              "stderr": "c2d7e22e97c8008b",
+              "stdout": "12ae32cb1ec02d01"
+            }
+          },
+          "subject": {
+            "sha256": "7ce5352c473050634c11f4ba1f63a320ab83472b08053a8c0899e69f78bffbef",
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "bbfa6f4975a94e3b",
+              "stderr": "12ae32cb1ec02d01",
+              "stdout": "12ae32cb1ec02d01"
+            }
+          },
+          "divergence": [
+            "stderr: pin \"test_pinyin_lookup: ../../src/include/memo\" … (length 149); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        }
+      }
+    },
+    "phrase-lookup-chunk-directory": {
+      "cells": {
+        "tkrzw": {
+          "pin": {
+            "sha256": "b50afbfe537e8989ccfafa36040ef0aaa541267a8157641740580859e00dd6d4",
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "f9fd804e27d390b0",
+              "stderr": "f1c4fa6519f12290",
+              "stdout": "12ae32cb1ec02d01"
+            }
+          },
+          "subject": {
+            "sha256": "7985a31338174b5736fff230e4814a1b5f7af2c244c87b349cce50d1547ee1aa",
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "f9fd804e27d390b0",
+              "stderr": "12ae32cb1ec02d01",
+              "stdout": "12ae32cb1ec02d01"
+            }
+          },
+          "divergence": [
+            "stderr: pin \"test_phrase_lookup: ../../src/include/memo\" … (length 149); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        },
+        "bdb": {
+          "pin": {
+            "sha256": "4294260effb51231f54902e81e08b649098661932bfd87475bc5675df70bdc69",
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "0ae12c1d34b60358",
+              "stderr": "f1c4fa6519f12290",
+              "stdout": "12ae32cb1ec02d01"
+            }
+          },
+          "subject": {
+            "sha256": "2d984304534c0f4ab6f7e39a19fa6986afc2cecde02c6032daa75dcceeda2c40",
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "0ae12c1d34b60358",
+              "stderr": "12ae32cb1ec02d01",
+              "stdout": "12ae32cb1ec02d01"
+            }
+          },
+          "divergence": [
+            "stderr: pin \"test_phrase_lookup: ../../src/include/memo\" … (length 149); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        },
+        "kc": {
+          "pin": {
+            "sha256": "9edc2f1baf9f98dddbd333ef5a50fee221f64bb2e3eab4812790a1b434f29070",
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "bbfa6f4975a94e3b",
+              "stderr": "f1c4fa6519f12290",
+              "stdout": "12ae32cb1ec02d01"
+            }
+          },
+          "subject": {
+            "sha256": "7ce5352c473050634c11f4ba1f63a320ab83472b08053a8c0899e69f78bffbef",
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "bbfa6f4975a94e3b",
+              "stderr": "12ae32cb1ec02d01",
+              "stdout": "12ae32cb1ec02d01"
+            }
+          },
+          "divergence": [
+            "stderr: pin \"test_phrase_lookup: ../../src/include/memo\" … (length 149); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        }
+      }
     }
   }
 }

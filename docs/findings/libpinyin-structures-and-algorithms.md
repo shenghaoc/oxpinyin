@@ -1229,3 +1229,45 @@ queries first check the first incomplete key's tone, then those longer than
 16 keys exit EINVAL before the pin's out-of-bounds
 index write; invalid UTF-8 exits EINVAL before the invalid conversion read.
 Both approved class (b) outcomes retain preceding observable work.
+
+## Family E4: physical matrix and direct lookup programs
+
+`tests/storage/test_matrix.cpp:93-179` and
+`tests/lookup/test_pinyin_lookup.cpp:41-153` at 074a2219 enable neither
+resplit nor divided-table options. The physical dump uses fill's original
+keys, explicit gap/terminal zero keys, and the existing fuzzy-alternative
+order (`phonetic_key_matrix.cpp:29-84,226-347`). Matrix search recursively
+follows each span, returns continued for empty end columns, and retains
+longest-reach information (`:350-437`); its range/pronunciation dump is
+compiled out. The source's fixed 1000/100 timed loops remain. The pinyin lookup parses
+and builds its scan matrix once before timing, then passes the same prepared
+matrix into all 100 n-best calls (`test_pinyin_lookup.cpp:85-137`).
+
+The runtime tools assembly attaches only the requested index, heap-loads
+each configured SYSTEM_FILE library in order, then attaches the system
+bigram when needed. The pin's NULL user-bigram attach returns before native
+I/O. The existing native dictionary/model readers feed the existing
+PhoneticLookup<2,3> trellis with sentence_start and no constraints, and the
+existing PhraseLookup span DP. N-best output keeps phrase-start positions;
+phrase lookup joins token-prefixed entries with newlines
+(`phrase_lookup.h:131-135`, `lookup.cpp:31-66`). Empty results write the
+source diagnostic and still exit zero.
+
+`FullPinyinParser2::parse` duplicates its explicit-length bytes with
+`g_strndup` (`pinyin_parser2.cpp:233`); GLib's documented contract pads after the first NUL
+([g_strndup](https://docs.gtk.org/glib/func.strndup.html);
+`gstrfuncs.c:397-407` at 2.86.1).
+Each candidate span retains its explicit length, while the index's string
+comparison sees only the prefix (`:169-210`). Tools retain that padding,
+and the shared graph's spelling check truncates at NUL after tone scanning.
+A dedicated test covers the extended span and erased trailing apostrophe.
+
+For n input bytes and fixed spelling bound k, parsing remains O(n k) time
+and storage; physical fill is O(n + a), where a is the number of fuzzy
+alternates. Matrix path search has the pin's product-of-column-branching
+bound, restricted to at most 16 keys per table lookup; each leaf decodes and
+filters its R-item row in O(R L), as the pin search does. Decoders retain the
+existing beam/phrase-DP algorithms and bounds; no alternate lookup or
+performance measurement is introduced. Data loading is linear in chunk
+bytes and retains heap-owned payloads, as these programs' MemoryChunk::load
+calls do. The nonshipping adapters do not change the C ABI or file formats.

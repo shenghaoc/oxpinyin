@@ -11,6 +11,7 @@ use std::path::Path;
 
 pub mod index;
 pub mod logger;
+pub mod lookup;
 pub mod tables;
 
 pub(crate) fn present<T>(value: Option<T>) -> T {

@@ -656,15 +656,12 @@ fn emit_edges(
     edges: &mut Vec<Edge>,
 ) {
     let available = input.len() - syllable_start;
-    // The pin's window is `max_full_pinyin_length = 7`, whose own comment
-    // says "include tone" (`pinyin_parser2.cpp:82`): one byte beyond the
-    // longest 6-letter syllable, reachable only through the `USE_TONE`
-    // digit scan. With the bit clear the window stays 6 and no digit ever
-    // joins a span, so the toneless edge set is bit-identical to the
-    // frozen parser.
+    // The pin always tries max_full_pinyin_length = 7 (including tone),
+    // pinyin_parser2.cpp:82,269. A toneless span of seven bytes can still
+    // parse when strcmp stops at an embedded NUL before its explicit end.
     let use_tone = options.contains(USE_TONE);
     let force_tone = use_tone && options.contains(crate::FORCE_TONE);
-    let max_span = MAX_SYLLABLE_LEN + usize::from(use_tone);
+    let max_span = MAX_SYLLABLE_LEN + 1;
     // Resolve each bounded span once. Classification needs the longest
     // complete key before emission, but a second lookup would repeat UTF-8
     // validation, PHF hashing and option-alias work for the same spelling.
@@ -726,7 +723,7 @@ fn emit_edges(
 /// `FullPinyinParser2::parse_one_key`'s tone scan
 /// (`pinyin_parser2.cpp:176-190`): under `USE_TONE` a span whose last byte
 /// is an ASCII `1..=5` is that syllable's tone and is consumed with the
-/// span; every remaining byte must be a lowercase letter. The
+/// span; the remaining C-string prefix must be lowercase letters. The
 /// digit-stripped core then goes through the ordinary option-gated lookup —
 /// completeness is *not* a precondition, so an initial-only key carries a
 /// tone exactly like a complete one. Any other digit (`0`, `6`–`9`) stays
@@ -745,6 +742,12 @@ fn tone_split(text: &[u8], use_tone: bool, force_tone: bool) -> Option<(&[u8], u
     if force_tone && tone == 0 {
         return None;
     }
+    // parse_one_key's g_strndup keeps the explicit span, while the index
+    // lookup's strcmp stops at NUL (pinyin_parser2.cpp:169-210, 074a2219).
+    let core = &core[..core
+        .iter()
+        .position(|&byte| byte == 0)
+        .unwrap_or(core.len())];
     if !core.is_empty() && core.iter().all(u8::is_ascii_lowercase) {
         Some((core, tone))
     } else {

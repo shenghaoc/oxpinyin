@@ -2762,3 +2762,88 @@ pub mod table_tests {
         unsafe { libc::printf(c"\x08\t%d\t".as_ptr(), value as c_int) };
     }
 }
+
+/// Output of the pin's matrix and direct lookup test programs.
+pub mod lookup_tests {
+    use super::*;
+    /// Physical column label.
+    pub fn column(position: usize) {
+        // SAFETY: %ld receives the source's native long value.
+        unsafe { libc::printf(c"Column:%ld:\n".as_ptr(), position as libc::c_long) };
+    }
+    /// Matrix key and signed-short raw offsets.
+    pub fn key(text: &CStr, begin: u16, end: u16) {
+        // SAFETY: %s is live; promoted short arguments use native int.
+        unsafe {
+            libc::printf(
+                c"ChewingKey:%s\nChewingKeyRest:%hd\t%hd\n".as_ptr(),
+                text.as_ptr(),
+                begin as i16 as c_int,
+                end as i16 as c_int,
+            )
+        };
+    }
+    /// Parser's returned count and key count.
+    pub fn parsed(bytes: usize, keys: usize) {
+        // SAFETY: %d arguments are native ints.
+        unsafe {
+            libc::printf(
+                c"parsed %d chars, %d keys.\n".as_ptr(),
+                bytes as c_int,
+                keys as c_int,
+            )
+        };
+    }
+    /// Every search_matrix invocation, before its result is inspected.
+    pub fn search(start: usize, end: usize) {
+        // SAFETY: %ld arguments are native longs.
+        unsafe {
+            libc::printf(
+                c"search index: start %ld\t end %ld\n".as_ptr(),
+                start as libc::c_long,
+                end as libc::c_long,
+            )
+        };
+    }
+    /// Non-null MatchResult entry.
+    pub fn token(position: usize, token: u32) {
+        // SAFETY: %ld receives long and %d int.
+        unsafe {
+            libc::printf(
+                c"pos:%ld,token:%d\t".as_ptr(),
+                position as libc::c_long,
+                token as c_int,
+            )
+        };
+    }
+    /// Line separator.
+    pub fn newline() {
+        // SAFETY: constant format with no conversions.
+        unsafe { libc::printf(c"\n".as_ptr()) };
+    }
+    /// A converted result and terminating newline.
+    pub fn sentence(text: &CStr) {
+        // SAFETY: %s receives a live NUL-terminated result.
+        unsafe { libc::printf(c"%s\n".as_ptr(), text.as_ptr()) };
+    }
+    /// Failed GLib character-count check.
+    pub fn non_ucs4() {
+        // SAFETY: stderr is live; constant format has no conversions.
+        unsafe {
+            libc::fprintf(
+                super::c_stderr(),
+                c"non-ucs4 characters are not accepted.\n".as_ptr(),
+            )
+        };
+    }
+    /// NULL conversion result (including an empty sentence).
+    pub fn unsegmentable() {
+        // SAFETY: stderr is live; constant format has no conversions.
+        unsafe {
+            libc::fprintf(
+                super::c_stderr(),
+                c"Error: Un-segmentable sentence encountered!\n".as_ptr(),
+            )
+        };
+    }
+}

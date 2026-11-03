@@ -1,0 +1,5 @@
+--- a/crates/oxpinyin-engine/src/session/tool.rs
++++ b/crates/oxpinyin-engine/src/session/tool.rs
+@@ -129 +129 @@
+-            bound: prepared.parsed.consumed,
++            bound: 0,

@@ -25,6 +25,8 @@ oxpinyin-user.workspace = true
 tempfile.workspace = true
 
 [features]
+# Nonshipping pin lookup program assembly.
+tools = ["oxpinyin-engine/tools", "oxpinyin-input/tools"]
 # Backend selection, forwarded to oxpinyin-user, which carries it down
 # user -> data -> store (one backend per binary; see oxpinyin-store's
 # [features] for the peer model). tkrzw is the default selection.

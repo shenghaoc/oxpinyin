@@ -1,0 +1,107 @@
+{
+  "schema": 1,
+  "cases": [
+    {
+      "utility": "test_matrix",
+      "source": "tests/storage/test_matrix.cpp:93-179; src/storage/phonetic_key_matrix.cpp:29-84,226-437; tests/tests_helper.h:24-48 at 074a2219",
+      "cwd": "tests/storage",
+      "fixture_dir": "fixtures/w3",
+      "fixture_prefix": "data",
+      "mask_print_time": true,
+      "id": "matrix-session",
+      "stdin": {
+        "text": "'ni''hao'\nni\u0000'hao\nnihao\nni''hao\ncan\nxian\nbagn\nn\n\ninvalid\nquit\n"
+      }
+    },
+    {
+      "utility": "test_matrix",
+      "source": "tests/storage/test_matrix.cpp:93-179; src/storage/phonetic_key_matrix.cpp:29-84,226-437; tests/tests_helper.h:24-48 at 074a2219",
+      "cwd": "tests/storage",
+      "fixture_dir": "fixtures/w3",
+      "fixture_prefix": "data",
+      "mask_print_time": true,
+      "id": "matrix-quit",
+      "stdin": {
+        "text": "quit\nignored\n"
+      },
+      "args": [
+        "ignored",
+        "--help"
+      ]
+    },
+    {
+      "utility": "test_matrix",
+      "source": "tests/storage/test_matrix.cpp:93-179; src/storage/phonetic_key_matrix.cpp:29-84,226-437; tests/tests_helper.h:24-48 at 074a2219",
+      "cwd": "tests/storage",
+      "fixture_dir": "fixtures/w3",
+      "fixture_prefix": "data",
+      "mask_print_time": true,
+      "id": "matrix-final-line",
+      "stdin": {
+        "text": "nihao"
+      }
+    },
+    {
+      "utility": "test_matrix",
+      "source": "tests/storage/test_matrix.cpp:93-179; src/storage/phonetic_key_matrix.cpp:29-84,226-437; tests/tests_helper.h:24-48 at 074a2219",
+      "cwd": "tests/storage",
+      "fixture_dir": "fixtures/w3",
+      "fixture_prefix": "data",
+      "mask_print_time": true,
+      "id": "matrix-embedded-nul",
+      "stdin": {
+        "text": "ni\u0000hao\n"
+      }
+    },
+    {
+      "utility": "test_matrix",
+      "source": "tests/storage/test_matrix.cpp:93-179; src/storage/phonetic_key_matrix.cpp:29-84,226-437; tests/tests_helper.h:24-48 at 074a2219",
+      "cwd": "tests/storage",
+      "mask_print_time": true,
+      "id": "matrix-missing-config",
+      "stdin": {
+        "text": "quit\n"
+      }
+    },
+    {
+      "utility": "test_matrix",
+      "source": "tests/storage/test_matrix.cpp:93-179; src/storage/phonetic_key_matrix.cpp:29-84,226-437; tests/tests_helper.h:24-48 at 074a2219",
+      "cwd": "tests/storage",
+      "fixture_dir": "fixtures/w3",
+      "fixture_prefix": "data",
+      "mask_print_time": true,
+      "id": "matrix-missing-chunk",
+      "stdin": {
+        "text": "quit\n"
+      },
+      "files": {
+        "data/table.conf": {
+          "text": "binary format version:7\nmodel data version:14\nlambda parameter:0.312699\n\nsource table format:pinyin\ndatabase format:Tkrzw\n\ndefault RESERVED NULL NULL NULL NOT_USED\ndefault GB_DICTIONARY gb_char.table absent.bin gb_char.dbin SYSTEM_FILE\ndefault GBK_DICTIONARY gbk_char.table gbk_char.bin gbk_char.dbin SYSTEM_FILE\ndefault OPENGRAM_DICTIONARY opengram.table opengram.bin opengram.dbin SYSTEM_FILE\ndefault MERGED_DICTIONARY merged.table merged.bin merged.dbin SYSTEM_FILE\ndefault ADDON_DICTIONARY NULL NULL addon.bin USER_FILE\ndefault NETWORK_DICTIONARY NULL NULL network.bin USER_FILE\ndefault USER_DICTIONARY NULL NULL user.bin USER_FILE\n\naddon 4 art.table art.bin NULL DICTIONARY\naddon 5 culture.table culture.bin NULL DICTIONARY\naddon 6 economy.table economy.bin NULL DICTIONARY\naddon 7 geology.table geology.bin NULL DICTIONARY\naddon 8 history.table history.bin NULL DICTIONARY\n\naddon 9 life.table life.bin NULL DICTIONARY\naddon 10 nature.table nature.bin NULL DICTIONARY\naddon 11 people.table people.bin NULL DICTIONARY\naddon 12 science.table science.bin NULL DICTIONARY\naddon 13 society.table society.bin NULL DICTIONARY\naddon 14 sport.table sport.bin NULL DICTIONARY\naddon 15 technology.table technology.bin NULL DICTIONARY\n"
+        }
+      }
+    },
+    {
+      "utility": "test_matrix",
+      "source": "tests/storage/test_matrix.cpp:93-179; src/storage/phonetic_key_matrix.cpp:29-84,226-437; tests/tests_helper.h:24-48 at 074a2219",
+      "cwd": "tests/storage",
+      "fixture_dir": "fixtures/w3",
+      "fixture_prefix": "data",
+      "mask_print_time": true,
+      "id": "matrix-chunk-directory",
+      "stdin": {
+        "text": "quit\n"
+      },
+      "pin_signal": -6,
+      "reproduces_signal": true,
+      "policy_record": "eio-tool-check-messages.md",
+      "files": {
+        "data/table.conf": {
+          "text": "binary format version:7\nmodel data version:14\nlambda parameter:0.312699\n\nsource table format:pinyin\ndatabase format:Tkrzw\n\ndefault RESERVED NULL NULL NULL NOT_USED\ndefault GB_DICTIONARY gb_char.table absent.bin gb_char.dbin SYSTEM_FILE\ndefault GBK_DICTIONARY gbk_char.table gbk_char.bin gbk_char.dbin SYSTEM_FILE\ndefault OPENGRAM_DICTIONARY opengram.table opengram.bin opengram.dbin SYSTEM_FILE\ndefault MERGED_DICTIONARY merged.table merged.bin merged.dbin SYSTEM_FILE\ndefault ADDON_DICTIONARY NULL NULL addon.bin USER_FILE\ndefault NETWORK_DICTIONARY NULL NULL network.bin USER_FILE\ndefault USER_DICTIONARY NULL NULL user.bin USER_FILE\n\naddon 4 art.table art.bin NULL DICTIONARY\naddon 5 culture.table culture.bin NULL DICTIONARY\naddon 6 economy.table economy.bin NULL DICTIONARY\naddon 7 geology.table geology.bin NULL DICTIONARY\naddon 8 history.table history.bin NULL DICTIONARY\n\naddon 9 life.table life.bin NULL DICTIONARY\naddon 10 nature.table nature.bin NULL DICTIONARY\naddon 11 people.table people.bin NULL DICTIONARY\naddon 12 science.table science.bin NULL DICTIONARY\naddon 13 society.table society.bin NULL DICTIONARY\naddon 14 sport.table sport.bin NULL DICTIONARY\naddon 15 technology.table technology.bin NULL DICTIONARY\n"
+        },
+        "data/absent.bin/occupied": {
+          "text": "kept"
+        }
+      }
+    }
+  ]
+}
