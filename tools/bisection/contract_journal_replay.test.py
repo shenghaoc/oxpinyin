@@ -654,6 +654,13 @@ EXPECTED = [('replay-unigram-add-live-item-pinyin',
              {'cells': ('bdb',), 'issues': ('1231',), 'stderr': True})]
 
 
+for _mode in ('pinyin', 'zhuyin'):
+    for _kind in ('journal', 'user'):
+        for _trailing in (False, True):
+            EXPECTED.append((f'chunk-frame-{_kind}-{"trailing" if _trailing else "exact"}-{_mode}', (),
+                             {'mode': _mode, 'control': not _trailing, 'issues': ('1576',)}))
+
+
 def declarations():
     return collect_declarations(family.register)
 

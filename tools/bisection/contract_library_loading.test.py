@@ -512,6 +512,14 @@ EXPECTED = [('stderr-library-init-missing',
             ('high-system-library-zhuyin', (), {'mode': 'zhuyin', 'issues': ('1549',)})]
 
 
+for _mode in ('pinyin', 'zhuyin'):
+    EXPECTED.append((f'chunk-frame-system-exact-{_mode}', (),
+                     {'mode': _mode, 'control': True, 'issues': ('1576',)}))
+    EXPECTED.append((f'chunk-frame-system-trailing-{_mode}', (),
+                     {'mode': _mode, 'crash': {'ctx': False, 'logs': [[f'lib{_mode}', 16]]},
+                      'issues': ('row:76', '1576')}))
+
+
 def declarations():
     return collect_declarations(family.register)
 
