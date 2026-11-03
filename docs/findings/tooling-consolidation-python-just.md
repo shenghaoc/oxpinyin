@@ -1033,3 +1033,22 @@ fixes nor classifies it.
 - [GitHub stacked pull requests](https://docs.github.com/en/pull-requests/how-tos/stacked-pull-requests)
   and [creation guidance](https://docs.github.com/en/pull-requests/how-tos/create-pull-requests/creating-stacked-pull-requests),
   read on 2026-10-19 UTC. Each PR targets the branch immediately below it.
+
+## Pinned scripts2 Rust-table generator
+
+Maintainer authorization under constitution §7 adds `just rust-tables` and its
+check-by-default mode through `tools/dev/rust_tables.py`. This repository tool replaces
+hand-converted tables with reproducible Rust formatting of libpinyin `074a2219`'s
+unmodified scripts2 row logic. It is separate from scripts2 drop-in tools and does
+not change parser behaviour or the project C-header pipeline.
+
+The [source and input record](../../tools/scripts2/README.md) supplies the complete
+Rust-to-marker/function inventory, upstream git blob/SHA-256 checks, accepted
+model20-distilled pinyins fixture, per-output value identity and recorded local
+input validation command. `VALID_ZHUYIN_TONES` alone uses the authorized header
+fallback (`@VALID_ZHUYIN_TABLE@`): actual model9/model13 tsi inputs reproduce the
+header exactly, but their archives do not establish redistribution terms.
+`just rust-tables --write --from-pin PATH` records the local, hash-checked header refresh;
+the default check uses committed inputs only, writes a temporary tree and never downloads.
+Existing `just test-tools` discovers the offline/roundtrip/drift tests. No new CI
+job or broader tooling migration is introduced.

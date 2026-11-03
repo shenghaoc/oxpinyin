@@ -1,0 +1,123 @@
+{
+  "pin": "074a2219c90feaf962d0d24f034514033ece5f99",
+  "files": {
+    "scripts2/Makefile.data": {
+      "git_blob": "c60f42961ab012ff5ab7214b40437b076b3b0e57",
+      "sha256": "dcaecd998ee1ea26ed597f63e80485c168336f255a4e5172355935645f5d5e7e"
+    },
+    "scripts2/bopomofo.py": {
+      "git_blob": "fad33df0d7bf0ef1afddc3b344b5fa1a9f8a699d",
+      "sha256": "bca234472e7622a417d605d4700fe3510b3dde83ce0b61bc2d803930f891284c"
+    },
+    "scripts2/bopomofotable.py": {
+      "git_blob": "046a52d28a5933bda007aa3f09a8394f1bdb18e3",
+      "sha256": "c40cb8685eec4963a2fc4ecef0760403ad5dbfdbf7faf33b8e68a78c2da308a0"
+    },
+    "scripts2/chewing.py": {
+      "git_blob": "b92319d128ec45b9b0bf21170d9ddcf051938325",
+      "sha256": "e1a20f2d75b173e0416451d72831fcac67b67350373e3411ba2d1c4d644ef52e"
+    },
+    "scripts2/doublepinyin.py": {
+      "git_blob": "ad41d23ee8cf70850a8a1ecf6b410ae6f8d1cf25",
+      "sha256": "f4d06bbd54722bce0a7ea6defa39aa8a5700f52637dd3dbb63ea75df3275272a"
+    },
+    "scripts2/doublepinyintable.py": {
+      "git_blob": "444bf8918d122ababd0831189b6de9cd74bd8926",
+      "sha256": "cba1397a934887cdfc556e4001d4aa726a77b5f410212cf59664cb617e7e49df"
+    },
+    "scripts2/fullpinyin.py": {
+      "git_blob": "b5f1d2b339ff4547a45bdf85ceebf3a1e83b526d",
+      "sha256": "031ea2909fd94fdea1cdcedbabcde66e696ed14c0c6d30138af5c0bb2f9a48b4"
+    },
+    "scripts2/fullpinyintable.py": {
+      "git_blob": "6e5fdcbf22e34f6ae90bffcc0af9ee6572aee8c9",
+      "sha256": "0ae4d13ac7c9f0d3dc156ebca4229275cbdaa5b65e17f69ab751cb2debd3b47f"
+    },
+    "scripts2/generateheader.py": {
+      "git_blob": "59e7633283c31a69a1516575d80301799c3d3419",
+      "sha256": "b40fc3bcf232d9aa85b5f9408527c5946ab9f1be37911dc3afe057247f29f51a"
+    },
+    "scripts2/options.py": {
+      "git_blob": "2fce4bb80c61cd93796914c920f5f5679e749500",
+      "sha256": "d308bff85767eac828ce2b270715eda0dfd87bbffab7d7c8ee0a2f9ce6d58adc"
+    },
+    "scripts2/pyzymap.py": {
+      "git_blob": "444dd06024af1b6a915fb1844f31e43af0e1749c",
+      "sha256": "221693460bfc36e5f1e67d4fd84546807782898e5a795ce0b47585b177719597"
+    },
+    "scripts2/specials.txt": {
+      "git_blob": "387a384f0452a1092d2da03c0798d37b91b5868a",
+      "sha256": "72df899a4a335086f76e651e3686bba1e30de196ccd2165c8bc174de9d244e7c"
+    },
+    "scripts2/specialtable.py": {
+      "git_blob": "e0182b001ce28033a9fcaf69582507403165d98d",
+      "sha256": "45bcd9eca49bed5650fb827b780f46825fa05249dc6999b6ca89f3f633084f84"
+    },
+    "scripts2/templates/chewing_enum.h.in": {
+      "git_blob": "46072dffee26118cbc4411e13e6a168d045206ef",
+      "sha256": "a2fbe9625286e97db645c71034f32b54a9644616aec93aa1c23755c267c6514f"
+    },
+    "scripts2/templates/double_pinyin_table.h.in": {
+      "git_blob": "cb624cab79fe7f607258dfa3ec0c90a5136f51c2",
+      "sha256": "ddb532ab5d9c85f01090c63900e45bfc57264d14025b78bdc6284608393eea21"
+    },
+    "scripts2/templates/pinyin_parser_table.h.in": {
+      "git_blob": "a244a5596e92ed717e8b2b7daa8bb5c8a47627fc",
+      "sha256": "7c0dfb2f7947b52f1d9fef2e399bf418b91aa5975b8925dec3893735cc04609f"
+    },
+    "scripts2/templates/special_table.h.in": {
+      "git_blob": "a273b6289d90491bd39febafb3116bc07b8feb0a",
+      "sha256": "9bcdb8f02c5b77f3c5643016f4ead8a87f691cf1772df4ab2a231e2c6c0731a8"
+    },
+    "scripts2/templates/zhuyin_table.h.in": {
+      "git_blob": "4c1eec8fbefccb922274d0a0f1878ab2834fab69",
+      "sha256": "210ba23c1f18ad386003b822c3124a782b19d0832dd2f61e39c17f06e59b9f3d"
+    },
+    "scripts2/tools/distill.py": {
+      "git_blob": "fef40cd196e08b475c1d1cedb7670d128bef5067",
+      "sha256": "20c6749cde18861b81f2706e1be067754dc11489572399f56bd38ccc7f37648c"
+    },
+    "scripts2/utils.py": {
+      "git_blob": "767dfa3ca4459215c45274977ca30705829d826b",
+      "sha256": "32893934b1a9bfd794d51857a535eb10d2e004bda5cc53a875818bdd626e6ee0"
+    },
+    "scripts2/zhuyin.py": {
+      "git_blob": "fa5dbd91380c5363a1ea2b8b759126c2e01f3401",
+      "sha256": "7739848aacc914ee7f2fcf9c57594cb75c51b776a3be78acc4ea6e15f269c072"
+    },
+    "src/storage/chewing_enum.h": {
+      "git_blob": "e6d212d1791f8f8838d392e787c9782eac7ed04c",
+      "sha256": "d7654c7139e42009cd08487d76c878274affce0d59502c87758bc470b5541795"
+    },
+    "src/storage/double_pinyin_table.h": {
+      "git_blob": "7583a641ac8c7d937181cc781dd8c60bcda2cf42",
+      "sha256": "d9d62a2f9758fa2073c9ad33c9f31ea54552d4e01c767a03ba055ab022613bda"
+    },
+    "src/storage/pinyin_parser_table.h": {
+      "git_blob": "b1a5f9550e8f7376104c4782a979f42a9467fd2a",
+      "sha256": "088ccc1422cc761fedf8cd584b1d50a4b041f58e3b657aaeb97c3af142408c89"
+    },
+    "src/storage/special_table.h": {
+      "git_blob": "8263236a392ef7a836b00131ef5f8aaf84963713",
+      "sha256": "d7d4685e9b6e272acdb32685d3dfc451a1786ea18bcc85f795fb1d67eb33fdae"
+    },
+    "src/storage/zhuyin_table.h": {
+      "git_blob": "d096901adba1a0374be856460586f3ad181099ea",
+      "sha256": "eaf0bab71918570f64babefd082212f62907f518173e987396a235ed442821de"
+    },
+    "COPYING": {
+      "git_blob": "94a9ed024d3859793618152ea559a168bbcbb5e2",
+      "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
+    }
+  },
+  "inputs": {
+    "inputs/pinyins.txt": {
+      "sha256": "97d6cafcc6205e2d01b23fb1620105291a74105afb83b12160917ae34901ff8a",
+      "bytes": 295767,
+      "source": "model20.text.tar.gz: gb_char.table + gbk_char.table",
+      "archive_sha256": "59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155",
+      "generator": "scripts2/tools/distill.py",
+      "acceptance": "unmodified generateheader.py reproduces special_table.h byte for byte"
+    }
+  }
+}

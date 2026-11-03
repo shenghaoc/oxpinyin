@@ -292,6 +292,10 @@ def build_parser():
     p.add_argument('args', nargs=argparse.REMAINDER)
     p.set_defaults(func=lambda args: __import__('tools.dev.w3_fixtures', fromlist=['main']).main(args.args))
 
+    p = sub.add_parser('rust-tables', help='check the pinned scripts2 Rust tables offline, or regenerate with --write')
+    p.add_argument('args', nargs=argparse.REMAINDER)
+    p.set_defaults(func=lambda args: __import__('tools.dev.rust_tables', fromlist=['main']).main(args.args))
+
     p = sub.add_parser('fetch-model', help='fetch and verify the pinned model20 archive into a build cache')
     p.add_argument('args', nargs=argparse.REMAINDER)
     p.set_defaults(func=lambda args: __import__('tools.dev.model', fromlist=['main']).main(args.args))
@@ -350,6 +354,9 @@ def main(argv=None):
     to their runners; report registry selection errors on stderr with status 2.
     """
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:1] == ['rust-tables']:
+        from . import rust_tables
+        return rust_tables.main(argv[1:])
     if argv[:1] == ['provision']:
         from . import provision
         return provision.main(argv[1:])

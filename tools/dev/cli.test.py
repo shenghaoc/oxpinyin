@@ -49,7 +49,7 @@ class RealJustSmokeTests(unittest.TestCase):
                     self.assertEqual(json.loads(result.stdout), values)
                     self.assertFalse(marker.exists(), 'shell expanded a literal argument')
 
-    def test_every_uv_run_recipe_except_doctor_depends_on_python(self):
+    def test_bootstrapping_uv_recipes_depend_on_python(self):
         result = self.invoke('--dump', '--dump-format', 'json')
         self.assertEqual(result.returncode, 0, result.stderr)
         recipes = json.loads(result.stdout)['recipes']
@@ -57,12 +57,13 @@ class RealJustSmokeTests(unittest.TestCase):
                  if any('uv run' in fragment for line in recipe['body'] for fragment in line)}
         self.assertIn('check', users)
         self.assertIn('heavy', users)
-        for name in sorted(users - {'doctor'}):
+        for name in sorted(users - {'doctor', 'rust-tables'}):
             with self.subTest(recipe=name):
                 self.assertIn('python', [dependency['recipe'] for dependency in recipes[name]['dependencies']])
-        self.assertEqual(recipes['doctor']['dependencies'], [])
+        for name in ('doctor', 'rust-tables'):
+            self.assertEqual(recipes[name]['dependencies'], [])
 
-    def test_every_platform_variant_of_a_uv_run_recipe_depends_on_python(self):
+    def test_platform_variants_keep_bootstrap_or_offline_contract(self):
         header = re.compile(r'^(@?[A-Za-z_][\w-]*)(?: [^:]*)?:(.*)$')
         blocks = []
         for line in (ROOT / 'justfile').read_text().splitlines():
@@ -72,11 +73,30 @@ class RealJustSmokeTests(unittest.TestCase):
             elif blocks and line.startswith(' '):
                 blocks[-1][2].append(line)
         users = [(name, dependencies) for name, dependencies, body in blocks
-                 if name != 'doctor' and any('uv run' in line for line in body)]
+                 if name not in ('doctor', 'rust-tables') and any('uv run' in line for line in body)]
         self.assertGreaterEqual(len(users), 20)
+        for name, dependencies, body in blocks:
+            if name == 'rust-tables':
+                self.assertFalse(dependencies.strip())
+                self.assertTrue(any('uv run --offline --no-python-downloads' in line for line in body))
         for name, dependencies in users:
             with self.subTest(recipe=name):
                 self.assertIn('python', dependencies.split())
+
+    def test_table_recipe_disables_downloads_and_does_not_bootstrap_python(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / 'uv.log'
+            fake = Path(directory) / 'uv'
+            fake.write_text(f'#!/bin/sh\necho "$@" >> {log}\nexit 2\n')
+            fake.chmod(0o755)
+            env = {**os.environ, 'PATH': f'{directory}{os.pathsep}{os.environ["PATH"]}'}
+            result = subprocess.run(
+                ['just', '--justfile', str(ROOT / 'justfile'), 'rust-tables', '--check'],
+                cwd=ROOT, capture_output=True, text=True, timeout=30, env=env)
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(log.read_text().splitlines(), [
+                'run --offline --no-python-downloads --no-project --managed-python '
+                'python -X lazy_imports=normal -m tools.dev rust-tables --check'])
 
     def test_doctor_without_the_interpreter_names_just_python_and_installs_nothing(self):
         with tempfile.TemporaryDirectory() as directory:

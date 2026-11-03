@@ -10,6 +10,15 @@ set shell := ["powershell.exe", "-NoLogo", "-NoProfile", "-Command"]
 
 default: doctor
 
+# Compare scripts2-derived Rust tables offline; pass --write to regenerate.
+[unix]
+rust-tables *args:
+    @uv run --offline --no-python-downloads --no-project --managed-python python -X lazy_imports=normal -m tools.dev rust-tables "$@"
+
+[windows]
+rust-tables *args:
+    @uv run --offline --no-python-downloads --no-project --managed-python python -X lazy_imports=normal -m tools.dev rust-tables @args; exit $LASTEXITCODE
+
 # Data-only transport target for the real-just smoke tests; never starts work.
 [unix]
 [private]
