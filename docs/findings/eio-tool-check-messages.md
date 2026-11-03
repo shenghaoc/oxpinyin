@@ -45,6 +45,13 @@ The family E1 `memory-chunk-save-directory` case reaches
 asserts after opening `/tmp/test.bin` fails. Both sides abort, retain the
 input directory, and lose unflushed C stdout; only the assertion text differs.
 
+The family E2 `phrase-index-logger-refused-layout` case uses a valid
+27-byte frame whose payload separator is `!`, not `#`.
+`SubPhraseIndex::load` rejects it with `g_return_val_if_fail`
+(`phrase_index.cpp:354` at 074a2219). Both programs complete normally,
+printing cached totals 0 and -7; only that macro's critical messages differ.
+The source's separate stored local total stays 7 through the refused load.
+
 ```contract-diff-policy
 {
   "schema": 2,
@@ -719,6 +726,62 @@ input directory, and lose unflushed C stdout; only the assertion text differs.
           },
           "divergence": [
             "stderr: pin \"test_memory_chunk: test_memory_chunk.cpp:6\" … (length 117); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        }
+      }
+    },
+    "phrase-index-wrong-long-length": {
+      "cells": {
+        "tkrzw": {
+          "pin": {
+            "sha256": "e2b483e6df12ed1df5b9c7c47d4ef83d83be1f7878590328c95bf5cea08ae627",
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "c0c1c3bb999b449a",
+              "stderr": "045de632bd357968",
+              "stdout": "12ae32cb1ec02d01"
+            }
+          },
+          "subject": {
+            "sha256": "0ef832ee4b5d39a21703de24d264bb9a492bc674de0e48ad346fc60525b70e59",
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "c0c1c3bb999b449a",
+              "stderr": "6df573a4135e5947",
+              "stdout": "12ae32cb1ec02d01"
+            }
+          },
+          "divergence": [
+            "stderr: pin \"FacadePhraseIndex::load_text:yi1'yi1'yi1'y\" … (length 220); subject \"FacadePhraseIndex::load_text:yi1'yi1'yi1'y\" … (length 99)",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        }
+      }
+    },
+    "phrase-index-logger-refused-layout": {
+      "cells": {
+        "tkrzw": {
+          "pin": {
+            "sha256": "5eca72baccff282f190a2d665a1769dc67ddc210b655babd7bbb72f8a4eaf23e",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "files": "781c7817252ebbe2",
+              "stderr": "7e7d37f83866a912",
+              "stdout": "6fbbc3bfabedc351"
+            }
+          },
+          "subject": {
+            "sha256": "4253120477fd392bdb6ecca2a45ff9be2f0c6e37e698c78a02d6eeaf4d696947",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "files": "781c7817252ebbe2",
+              "stderr": "12ae32cb1ec02d01",
+              "stdout": "6fbbc3bfabedc351"
+            }
+          },
+          "divergence": [
+            "stderr: pin \"\\n** (process:PID): CRITICAL **: TIME: bool\" … (length 546); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
           ]
         }

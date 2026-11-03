@@ -77,3 +77,6 @@ pub use store::{
     ExportedPhrase, GenericUserStore, SENTENCE_START, SaveReport, Token, TrainingCheck,
     TrainingFault, UserStore, UserStoreError, add_system_reading,
 };
+
+#[cfg(feature = "tools")]
+pub use replay::tool;

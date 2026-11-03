@@ -49,3 +49,5 @@ pub mod test_table_info;
 pub mod dbm_tests;
 
 pub mod chunk_tests;
+
+pub mod storage_tests;

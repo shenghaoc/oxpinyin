@@ -2664,3 +2664,44 @@ pub mod memory_chunk {
         unsafe { libc::printf(c"%ld\n".as_ptr(), value as c_long) };
     }
 }
+
+/// Native output of the phrase-index tests at 074a2219.
+pub mod phrase_tests {
+    use core::ffi::c_int;
+    use std::ffi::CStr;
+
+    /// The deliberately different labels in test_phrase_index.cpp:32,69.
+    pub fn possibility(first: bool, value: f32) {
+        let format = if first {
+            c"pinyin possiblitiy:%f\n"
+        } else {
+            c"pinyin poss:%f\n"
+        };
+        // SAFETY: %f receives the promoted gfloat, a double.
+        unsafe { libc::printf(format.as_ptr(), f64::from(value)) };
+    }
+
+    /// One phrase or rendered result, including its trailing newline.
+    pub fn text(value: &CStr) {
+        // SAFETY: %s receives a live NUL-terminated string.
+        unsafe { libc::printf(c"%s\n".as_ptr(), value.as_ptr()) };
+    }
+
+    /// tests_helper.h:68, including the native NULL filename spelling.
+    pub fn open_failed(value: Option<&CStr>) {
+        // SAFETY: stderr is live and %s receives the pin's pointer, possibly NULL.
+        unsafe {
+            libc::fprintf(
+                super::c_stderr(),
+                c"open %s failed!\n".as_ptr(),
+                value.map_or(core::ptr::null::<core::ffi::c_char>(), CStr::as_ptr),
+            )
+        };
+    }
+
+    /// Logger totals are guint32 printed with the pin's signed %d.
+    pub fn total(value: u32) {
+        // SAFETY: %d receives a native int with the same bits.
+        unsafe { libc::printf(c"total freq:%d\n".as_ptr(), value as c_int) };
+    }
+}

@@ -3317,3 +3317,6 @@ mod tests {
         assert!(!buffer.contains(9));
     }
 }
+
+#[cfg(feature = "tools")]
+pub mod tool;

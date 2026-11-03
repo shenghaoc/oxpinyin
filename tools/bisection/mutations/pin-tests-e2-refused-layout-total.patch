@@ -1,0 +1,5 @@
+--- a/crates/oxpinyin-utils/src/storage_tests/logger.rs
++++ b/crates/oxpinyin-utils/src/storage_tests/logger.rs
+@@ -42 +42 @@
+-    if accepted {
++    if true {
