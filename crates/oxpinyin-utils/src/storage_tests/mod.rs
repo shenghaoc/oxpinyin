@@ -11,6 +11,7 @@ use std::path::Path;
 
 pub mod index;
 pub mod logger;
+pub mod tables;
 
 pub(crate) fn present<T>(value: Option<T>) -> T {
     value.unwrap_or_else(|| tool::abort())
@@ -56,6 +57,14 @@ pub(crate) fn save(path: &Path, bytes: &[u8]) {
 }
 
 pub(crate) fn load_text(conf: &TableConf) -> [Option<Index>; 16] {
+    load_text_tables(conf, None, None)
+}
+
+pub(crate) fn load_text_tables(
+    conf: &TableConf,
+    chewing: Option<&crate::storage::dbm::Tree>,
+    phrase: Option<&crate::storage::dbm::Tree>,
+) -> [Option<Index>; 16] {
     let mut indices = core::array::from_fn(|_| None);
     for slot in 0..16_u8 {
         let Some(row) = conf.default_row(slot) else {
@@ -78,8 +87,17 @@ pub(crate) fn load_text(conf: &TableConf) -> [Option<Index>; 16] {
             tool::phrase_tests::open_failed(name.as_deref());
             tool::exit(tool::ENOENT);
         };
-        // tests_helper.h:75,78 rewinds even when both table pointers are NULL.
+        if let Some(table) = chewing {
+            crate::storage::gen_binary_files::load_chewing(
+                Some(table),
+                &mut file,
+                conf.phonetic_type(),
+            );
+        }
         file.rewind();
+        if let Some(table) = phrase {
+            crate::storage::gen_binary_files::load_phrase_table(Some(table), &mut file, true);
+        }
         file.rewind();
         let items = crate::storage::gen_binary_files::read_phrase_items(
             slot,

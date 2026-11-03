@@ -69,8 +69,8 @@ coverage and are superseded for these programs; no program is exempt.
 | E | `tests/include/test_memory_chunk.cpp` / `test_memory_chunk` | Yes | Chunk content, capacity, insert/remove, save/load/map; `/tmp/test.bin` | **Ported** — `test_memory_chunk.json`, 3 MATCH and 1 POLICY-ACCEPTED on tkrzw |
 | E | `tests/storage/test_phrase_index.cpp` / `test_phrase_index` | No | Phrase-item/index mutation, frequency, compact and chunk round trips; `../../data/*` through `tests_helper.h` | **Ported** — same-named tool case file and source-only class (b) guards |
 | E | `tests/storage/test_phrase_index_logger.cpp` / `test_phrase_index_logger` | Yes | Phrase-index logger diff/merge; `../../data/*`; `/tmp/gb_char.bin`, `/tmp/gb_char.dbin`, `/tmp/gb_char2.bin` | **Ported** — same-named tool case file and source-only class (b) guards |
-| E | `tests/storage/test_phrase_table.cpp` / `test_phrase_table` | No | Phrase-table lookup and mutation over `../../data/*` | **GAP** |
-| E | `tests/storage/test_chewing_table.cpp` / `test_chewing_table` | No | Chewing-table lookup and mutation over `../../data/*` | **GAP** |
+| E | `tests/storage/test_phrase_table.cpp` / `test_phrase_table` | No | Phrase-table lookup and mutation over `../../data/*` | **Ported** — same-named tool case file, all three cells, with class (b) source-only guards |
+| E | `tests/storage/test_chewing_table.cpp` / `test_chewing_table` | No | Chewing-table lookup and mutation over `../../data/*` | **Ported** — same-named tool case file, all three cells, with class (b) source-only guards |
 | E | `tests/storage/test_matrix.cpp` / `test_matrix` | No | Phonetic-key matrix construction and search over `../../data/*` | **GAP** |
 | E | `tests/lookup/test_pinyin_lookup.cpp` / `test_pinyin_lookup` | No | Phonetic n-best lookup over parsed matrices, phrase chunks and `../../data/bigram.db` | **GAP** |
 | E | `tests/lookup/test_phrase_lookup.cpp` / `test_phrase_lookup` | No | Raw-text phrase lookup with phrase chunks and `../../data/bigram.db` | **GAP** |
@@ -113,6 +113,19 @@ refused load's total, rejecting defined same-token conversions, and omitting
 the token-zero conversion guard. All three consuming guard tests are
 subject-only and retain the preceding output.
 
+Family E3 adds the phrase-table and chewing-table executables. Their 21
+source-derived cases pass all three cells: 15 MATCH / 6 POLICY-ACCEPTED.
+Only timer fields are masked; token, range and pronunciation order and the
+literal backspace before frequencies remain exact. Token-zero cursors are
+empty before extending/flushing and at the final flush. Only the first
+incomplete key asserts its zero tone, before the overlong-query refusal. Invalid UTF-8 and the
+17-key direct search use source-only guards. Subject-only tests also check
+that EINVAL preserves earlier timed results. The named
+`pin-tests-e3-drop-continued` mutation is detected by `phrase-table-session`;
+restoring it restores the gate. Review mutations also detect losing
+the token after a zero cursor, omitting the first-key tone assertion, and
+refusing length before that assertion; their restoration restores the gate.
+
 The existing Rust Pinyin and Zhuyin C facades are separate implementations;
 raw-text phrase segmentation and phrase lookup exist. Those earlier N/A
 claims and the claim that Zhuyin is unified onto the Pinyin C API are stale.
@@ -128,9 +141,9 @@ paths are isolated across processes by the runner. Timing lines are the
 only clock-dependent test-program output; all other bytes remain compared
 under the existing external-I/O/check-message policies.
 
-Delivery order is A, B, D, C. Family E is unblocked by the landed chunk
-mapping and `MemoryChunk::load` work (#1549, #1576 and #1579). Its eight
-programs are next as new members above #1528, outside this pass.
+Delivery order is A, B, D, C, E. Family E continues on current main after
+the earlier stack and the chunk work (#1549, #1576 and #1579) merged.
+Its final three lookup programs remain pending in E4.
 
 ## libchewing tests
 
@@ -160,7 +173,7 @@ ABI behaviors are N/A by design rather than artificially reconstructed.
 ## Totals
 
 - **libpinyin**: 17 `noinst_PROGRAMS`, six also in automated `TESTS`;
-  **12 Ported, 5 GAP** after families A, B, D, C, E1 and E2. Family PRs update their rows
+  **14 Ported, 3 GAP** after families A, B, D, C, E1–E3. Family PRs update their rows
   and this total when their drop-in verification passes.
 - The libchewing rows retain their separately audited behavior-coverage
   classifications. They do not count toward the libpinyin drop-in total.

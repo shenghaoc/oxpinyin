@@ -1207,3 +1207,25 @@ Text import is one input pass with O(log n) map insertion per token group,
 then the native byte arena. Every get reads only the item it returns. The
 fixed 100000-call loop and the pin's basic f32 pronunciation ratios stay.
 No performance measurement is needed or made.
+
+## Family E3: in-memory phrase and chewing tables
+
+`tests/storage/test_phrase_table.cpp:36-125` and
+`test_chewing_table.cpp:36-126` at 074a2219 load text through
+`tests/tests_helper.h:51-83`, with both unconditional rewinds. The programs
+use the existing importers, a native in-memory DBM and the production row
+decoder. A present empty row is SEARCH_CONTINUED. Searches preserve stored
+item order, then emit libraries in slot order; contiguous matching tokens
+form ranges; a cursor starting at null_token is empty both before extending
+or flushing and at the final flush (`chewing_large_table2.h:90-132`). Range dumps use the native
+item pronunciations, including the literal backspace (`tests_helper.h:89-133`).
+The final mask retains keys and empties values, as the pin does.
+
+For a query of L keys and an R-item row, search costs the backend lookup
+plus O(R L) filtering and O(R L) decoded storage, as the existing reader
+does. Phrase lookup costs one native tree get plus O(R) token decoding.
+Range compression costs O(R). The source's 1000-call loops remain. Direct
+queries first check the first incomplete key's tone, then those longer than
+16 keys exit EINVAL before the pin's out-of-bounds
+index write; invalid UTF-8 exits EINVAL before the invalid conversion read.
+Both approved class (b) outcomes retain preceding observable work.

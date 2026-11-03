@@ -342,17 +342,8 @@ impl<D: ChewingDbm> ChewingTable<D> {
         if keys.is_empty() {
             return Ok((false, Vec::new()));
         }
-        if !self.dbm.get(&index_key(keys), value)? {
-            return Ok((false, Vec::new()));
-        }
-        if value.is_empty() {
-            return Ok((true, Vec::new()));
-        }
-        let items = decode_items(value, keys.len())?
-            .into_iter()
-            .filter(|item| keys_match(keys, &item.keys))
-            .collect();
-        Ok((true, items))
+        let present = self.dbm.get(&index_key(keys), value)?;
+        search_row(keys, present.then_some(value.as_slice()))
     }
 
     /// Whether the query's index key exists at all — `SEARCH_CONTINUED`
@@ -508,6 +499,32 @@ pub fn key_matches(q: &ChewingKey, s: &ChewingKey) -> bool {
             || (q.middle == 0 && q.final_ == 0)
             || (s.middle == 0 && s.final_ == 0))
         && (q.tone == s.tone || q.tone == 0 || s.tone == 0)
+}
+
+/// Decode the exact row that ChewingLargeTable2::search found, retaining stored
+/// order and SEARCH_CONTINUED even for an empty prefix marker. Shared by the
+/// production reader and the standalone in-memory test programs.
+///
+/// # Errors
+/// Returns DictError for a malformed item array.
+pub fn search_row(
+    keys: &[ChewingKey],
+    value: Option<&[u8]>,
+) -> Result<(bool, Vec<PinyinIndexItem>), DictError> {
+    if keys.is_empty() {
+        return Ok((false, Vec::new()));
+    }
+    let Some(value) = value else {
+        return Ok((false, Vec::new()));
+    };
+    if value.is_empty() {
+        return Ok((true, Vec::new()));
+    }
+    let items = decode_items(value, keys.len())?
+        .into_iter()
+        .filter(|item| keys_match(keys, &item.keys))
+        .collect();
+    Ok((true, items))
 }
 
 #[cfg(test)]

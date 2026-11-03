@@ -52,6 +52,12 @@ The family E2 `phrase-index-logger-refused-layout` case uses a valid
 printing cached totals 0 and -7; only that macro's critical messages differ.
 The source's separate stored local total stays 7 through the refused load.
 
+The E3 `chewing-table-overlong-toned-first` witness is defined: the first
+incomplete key's tone assertion (`pinyin_phrase3.h:146-157` at 074a2219)
+stops the 17-key query before either out-of-bounds index copy. Both sides
+abort there; only the assertion message differs. The plain 17-key query
+continues to use the source-only row 116 refusal.
+
 ```contract-diff-policy
 {
   "schema": 2,
@@ -782,6 +788,158 @@ The source's separate stored local total stays 7 through the refused load.
           },
           "divergence": [
             "stderr: pin \"\\n** (process:PID): CRITICAL **: TIME: bool\" … (length 546); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        }
+      }
+    },
+    "chewing-table-toned-initial": {
+      "cells": {
+        "tkrzw": {
+          "pin": {
+            "sha256": "65781efebc03cdde791055d1b24c13b89afafd957582618b2cc19374aafb34bb",
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "eb361d7975aa2e68",
+              "stderr": "5ece2448aed99397",
+              "stdout": "12ae32cb1ec02d01"
+            }
+          },
+          "subject": {
+            "sha256": "279eeeb6f1fdf5ac4d97663404d2b610234a2e69b0146f7bf7779b6a623921b1",
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "eb361d7975aa2e68",
+              "stderr": "12ae32cb1ec02d01",
+              "stdout": "12ae32cb1ec02d01"
+            }
+          },
+          "divergence": [
+            "stderr: pin \"test_chewing_table: pinyin_phrase3.h:152: \" … (length 159); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        },
+        "bdb": {
+          "pin": {
+            "sha256": "65781efebc03cdde791055d1b24c13b89afafd957582618b2cc19374aafb34bb",
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "eb361d7975aa2e68",
+              "stderr": "5ece2448aed99397",
+              "stdout": "12ae32cb1ec02d01"
+            }
+          },
+          "subject": {
+            "sha256": "279eeeb6f1fdf5ac4d97663404d2b610234a2e69b0146f7bf7779b6a623921b1",
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "eb361d7975aa2e68",
+              "stderr": "12ae32cb1ec02d01",
+              "stdout": "12ae32cb1ec02d01"
+            }
+          },
+          "divergence": [
+            "stderr: pin \"test_chewing_table: pinyin_phrase3.h:152: \" … (length 159); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        },
+        "kc": {
+          "pin": {
+            "sha256": "65781efebc03cdde791055d1b24c13b89afafd957582618b2cc19374aafb34bb",
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "eb361d7975aa2e68",
+              "stderr": "5ece2448aed99397",
+              "stdout": "12ae32cb1ec02d01"
+            }
+          },
+          "subject": {
+            "sha256": "279eeeb6f1fdf5ac4d97663404d2b610234a2e69b0146f7bf7779b6a623921b1",
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "eb361d7975aa2e68",
+              "stderr": "12ae32cb1ec02d01",
+              "stdout": "12ae32cb1ec02d01"
+            }
+          },
+          "divergence": [
+            "stderr: pin \"test_chewing_table: pinyin_phrase3.h:152: \" … (length 159); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        }
+      }
+    },
+    "chewing-table-overlong-toned-first": {
+      "cells": {
+        "bdb": {
+          "pin": {
+            "sha256": "65781efebc03cdde791055d1b24c13b89afafd957582618b2cc19374aafb34bb",
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "eb361d7975aa2e68",
+              "stderr": "5ece2448aed99397",
+              "stdout": "12ae32cb1ec02d01"
+            }
+          },
+          "subject": {
+            "sha256": "279eeeb6f1fdf5ac4d97663404d2b610234a2e69b0146f7bf7779b6a623921b1",
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "eb361d7975aa2e68",
+              "stderr": "12ae32cb1ec02d01",
+              "stdout": "12ae32cb1ec02d01"
+            }
+          },
+          "divergence": [
+            "stderr: pin \"test_chewing_table: pinyin_phrase3.h:152: \" … (length 159); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        },
+        "kc": {
+          "pin": {
+            "sha256": "65781efebc03cdde791055d1b24c13b89afafd957582618b2cc19374aafb34bb",
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "eb361d7975aa2e68",
+              "stderr": "5ece2448aed99397",
+              "stdout": "12ae32cb1ec02d01"
+            }
+          },
+          "subject": {
+            "sha256": "279eeeb6f1fdf5ac4d97663404d2b610234a2e69b0146f7bf7779b6a623921b1",
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "eb361d7975aa2e68",
+              "stderr": "12ae32cb1ec02d01",
+              "stdout": "12ae32cb1ec02d01"
+            }
+          },
+          "divergence": [
+            "stderr: pin \"test_chewing_table: pinyin_phrase3.h:152: \" … (length 159); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        },
+        "tkrzw": {
+          "pin": {
+            "sha256": "65781efebc03cdde791055d1b24c13b89afafd957582618b2cc19374aafb34bb",
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "eb361d7975aa2e68",
+              "stderr": "5ece2448aed99397",
+              "stdout": "12ae32cb1ec02d01"
+            }
+          },
+          "subject": {
+            "sha256": "279eeeb6f1fdf5ac4d97663404d2b610234a2e69b0146f7bf7779b6a623921b1",
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "eb361d7975aa2e68",
+              "stderr": "12ae32cb1ec02d01",
+              "stdout": "12ae32cb1ec02d01"
+            }
+          },
+          "divergence": [
+            "stderr: pin \"test_chewing_table: pinyin_phrase3.h:152: \" … (length 159); subject \"\"",
             "… further divergence omitted (4096-byte budget)"
           ]
         }

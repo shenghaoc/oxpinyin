@@ -128,7 +128,7 @@ fn generate_binary_files(
         };
         load_chewing(pinyin_table.as_ref(), &mut file, phonetic);
         file.rewind();
-        load_phrase_table(phrase_table.as_ref(), &mut file);
+        load_phrase_table(phrase_table.as_ref(), &mut file, false);
         file.rewind();
         load_phrase_index(index as u8, &mut file, &mut libraries);
     }
@@ -139,7 +139,7 @@ fn generate_binary_files(
 }
 
 /// `ChewingLargeTable2::load_text` (`src/storage/chewing_large_table2.cpp:112-158`).
-fn load_chewing(table: Option<&Tree>, file: &mut TableFile, phonetic: PhoneticType) {
+pub(crate) fn load_chewing(table: Option<&Tree>, file: &mut TableFile, phonetic: PhoneticType) {
     while let Some(record) = read_pinyin_record(file) {
         let len = tool::utf8_strlen(&record.phrase);
         let keys = match phonetic {
@@ -237,9 +237,12 @@ fn add_index_space(
 }
 
 /// `PhraseLargeTable3::load_text` (`src/storage/phrase_large_table3.cpp:125-140`).
-fn load_phrase_table(table: Option<&Tree>, file: &mut TableFile) {
+pub(crate) fn load_phrase_table(table: Option<&Tree>, file: &mut TableFile, refuse_invalid: bool) {
     while let Some(record) = read_pinyin_record(file) {
         let (phrase, _written) = tool::utf8_to_ucs4(&record.phrase);
+        if refuse_invalid && phrase.is_none() {
+            tool::exit(tool::EINVAL);
+        }
         let phrase = phrase.unwrap_or_default();
         add_phrase_index(table, &phrase, record.token);
     }

@@ -1,0 +1,7 @@
+--- a/crates/oxpinyin-utils/src/storage_tests/tables.rs
++++ b/crates/oxpinyin-utils/src/storage_tests/tables.rs
+@@ -69,0 +70,4 @@
++            if cursor.as_ref().is_some_and(|(_, range)| range.start == 0) {
++                cursor = None;
++                continue;
++            }

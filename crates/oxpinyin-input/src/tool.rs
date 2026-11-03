@@ -2705,3 +2705,60 @@ pub mod phrase_tests {
         unsafe { libc::printf(c"total freq:%d\n".as_ptr(), value as c_int) };
     }
 }
+
+/// Exact native formats from test_{phrase,chewing}_table.cpp and tests_helper.h.
+pub mod table_tests {
+    use core::ffi::{c_int, c_long};
+    use std::ffi::CStr;
+
+    /// SEARCH_CONTINUED prefix length.
+    pub fn continued(length: usize) {
+        // SAFETY: %ld receives a native long.
+        unsafe {
+            libc::printf(
+                c"return continued information with length:%ld\n".as_ptr(),
+                length as c_long,
+            )
+        };
+    }
+    /// One phrase-table token, with its trailing tab.
+    pub fn token(value: u32) {
+        // SAFETY: %d receives a native int.
+        unsafe { libc::printf(c"token:%d\t".as_ptr(), value as c_int) };
+    }
+    /// The range/row terminator, a separate printf in the source.
+    pub fn newline() {
+        // SAFETY: a literal with no conversions.
+        unsafe { libc::printf(c"\n".as_ptr()) };
+    }
+    /// Empty-key parse diagnostic.
+    pub fn invalid() {
+        // SAFETY: stderr is live; the literal has no conversions.
+        unsafe { libc::fprintf(super::c_stderr(), c"Invalid input.\n".as_ptr()) };
+    }
+    /// A library's range count.
+    pub fn range_count(value: usize) {
+        // SAFETY: %d receives a native int.
+        unsafe { libc::printf(c"range items number:%d\n".as_ptr(), value as c_int) };
+    }
+    /// Half-open token range.
+    pub fn range(begin: u32, end: u32) {
+        // SAFETY: both %d conversions receive native ints.
+        unsafe { libc::printf(c"start:%d\tend:%d\n".as_ptr(), begin as c_int, end as c_int) };
+    }
+    /// Phrase text followed by a tab.
+    pub fn phrase(text: &CStr) {
+        // SAFETY: %s receives a live NUL-terminated string.
+        unsafe { libc::printf(c"%s\t".as_ptr(), text.as_ptr()) };
+    }
+    /// Each pronunciation key retains the source's final apostrophe.
+    pub fn pronunciation(text: &CStr) {
+        // SAFETY: %s receives a live NUL-terminated string.
+        unsafe { libc::printf(c"%s'".as_ptr(), text.as_ptr()) };
+    }
+    /// The backspace is an output byte, not removal of the apostrophe.
+    pub fn frequency(value: u32) {
+        // SAFETY: %d receives a native int.
+        unsafe { libc::printf(c"\x08\t%d\t".as_ptr(), value as c_int) };
+    }
+}
