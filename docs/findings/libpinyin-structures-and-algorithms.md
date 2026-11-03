@@ -519,6 +519,26 @@ costs for inlined code and do not add a callee's inclusive cost again.
 | Dedup | `_remove_duplicated_items_by_phrase_string` (`:2058`, frequency rule `:2128-2138`); combined zhuyin slices (`zhuyin.cpp:1607-1630`) | `dedup_ranked_by_text` (`session/mod.rs`) includes LONGER and all before-cursor slices; `prepend_nbest_rows` keeps sentence precedence | same / follows for valid phrase text (#913); other text remains under #894/#927 |
 | Prediction | `pinyin_guess_predicted_candidates` (`:2413`), filter 10 (`:2313`) | `oxpinyin-capi/src/predict.rs` | same / follows |
 
+`order_window_tail` (`oxpinyin-engine/src/session/mod.rs`) skips its
+stable library sort and token-membership set only when every row has a
+token and the tokens are strictly increasing. This implies ascending
+library fields and no duplicate tokens, so both operations are identities.
+Otherwise it retains the existing stable sort and first-occurrence dedup.
+The pin groups ranges by library while searching
+(`chewing_large_table2.h:91-132` at `074a2219`) and appends libraries in
+ascending order, retaining each library's range encounter order
+(`pinyin.cpp:1769-1791`). The guard preserves that order, including ties
+and interleaved-library windows handled by the fallback.
+
+For a window of `n` rows, the guard takes O(n) time and O(1) space without
+allocation. A successful guard replaces the previous stable sort's
+O(n log n) worst-case time and O(n) auxiliary space and the membership
+set's expected O(n) time and O(n) space. A failed guard adds at most one
+linear pass to the unchanged fallback; its bounds remain the same.
+The pin's corresponding append traverses 16 library slots and their
+ranges in O(n + r + 16) time for `r` ranges, with O(n) output storage;
+neither implementation's output allocation is removed by this guard.
+
 ## 6. Training and user phrases
 
 | Item | Pin | oxpinyin | Mark |

@@ -1790,6 +1790,82 @@ fn window_flush_is_token_ascending_and_one_row_per_token() {
     );
 }
 
+fn window_row(text: &str, token: Option<u32>) -> crate::candidate::Candidate {
+    crate::candidate::Candidate::new(
+        text,
+        super::CandidateKind::Phrase,
+        1,
+        2,
+        0,
+        token.map(PhraseToken::new),
+        None,
+    )
+}
+
+#[test]
+fn ordered_window_skips_sort_and_dedup_with_identical_output() {
+    use super::{order_window_tail, sort_dedup_window_tail, window_tokens_are_strictly_increasing};
+
+    let mut rows = vec![
+        window_row("prefix", None),
+        window_row("first", Some(0x0100_0001)),
+        window_row("second", Some(0x0100_0002)),
+        window_row("third", Some(0x0200_0001)),
+    ];
+    let original = rows.clone();
+    let mut fallback = rows.clone();
+    assert!(window_tokens_are_strictly_increasing(&rows[1..]));
+    order_window_tail(&mut rows, 1);
+    sort_dedup_window_tail(&mut fallback, 1);
+    assert_eq!(rows, fallback);
+    assert_eq!(rows, original);
+
+    // Empty and single-token windows also need neither operation.
+    assert!(window_tokens_are_strictly_increasing(&[]));
+    assert!(window_tokens_are_strictly_increasing(&rows[1..2]));
+    let end = rows.len();
+    order_window_tail(&mut rows, end);
+    assert_eq!(rows, original);
+}
+
+#[test]
+fn unordered_windows_keep_the_existing_sort_and_dedup() {
+    use super::{order_window_tail, window_tokens_are_strictly_increasing};
+
+    let first = window_row("first", Some(0x0100_0002));
+    let smaller = window_row("smaller", Some(0x0100_0001));
+    let other_library = window_row("other library", Some(0x0200_0001));
+    let tokenless = window_row("tokenless", None);
+    let duplicate = window_row("later duplicate", Some(0x0100_0002));
+    for (name, window, expected) in [
+        (
+            "tokenless",
+            vec![tokenless.clone(), first.clone()],
+            vec![first.clone(), tokenless.clone()],
+        ),
+        ("single tokenless", vec![tokenless.clone()], vec![tokenless]),
+        ("equal", vec![first.clone(), duplicate], vec![first.clone()]),
+        (
+            "decreasing within one library",
+            vec![first.clone(), smaller.clone()],
+            vec![first.clone(), smaller.clone()],
+        ),
+        (
+            "interleaved libraries retain encounter order within each library",
+            vec![first.clone(), other_library.clone(), smaller.clone()],
+            vec![first, smaller, other_library],
+        ),
+    ] {
+        assert!(!window_tokens_are_strictly_increasing(&window), "{name}");
+        let prefix = window_row("prior window", Some(0x0100_0002));
+        let mut rows = vec![prefix.clone()];
+        rows.extend(window);
+        order_window_tail(&mut rows, 1);
+        assert_eq!(rows[0], prefix, "{name}: prefix must stay untouched");
+        assert_eq!(rows[1..], expected, "{name}");
+    }
+}
+
 /// A model with fixed facade answers, so the frequency table's
 /// per-branch inputs are visible without a real table.
 struct FixedUnigrams {
