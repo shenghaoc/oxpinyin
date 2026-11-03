@@ -2639,3 +2639,28 @@ pub mod dbm_tests {
         unsafe { libc::printf(c"Punctuations: %s\n".as_ptr(), line.as_ptr()) };
     }
 }
+
+/// Native formats of `tests/include/test_memory_chunk.cpp:13-59` (074a2219).
+pub mod memory_chunk {
+    use core::ffi::{c_int, c_long};
+
+    /// Print one complete integer row with the pin's single printf call.
+    pub fn integers(values: &[c_int]) {
+        // SAFETY: each fixed format matches its promoted c_int arguments.
+        unsafe {
+            match values {
+                [a] => libc::printf(c"%d\n".as_ptr(), *a),
+                [a, b] => libc::printf(c"%d\t%d\n".as_ptr(), *a, *b),
+                [a, b, c] => libc::printf(c"%d\t%d\t%d\n".as_ptr(), *a, *b, *c),
+                [a, b, c, d] => libc::printf(c"%d\t%d\t%d\t%d\n".as_ptr(), *a, *b, *c, *d),
+                _ => super::abort(),
+            };
+        }
+    }
+
+    /// Print the logical allocation extent, never the Vec allocator capacity.
+    pub fn capacity(value: usize) {
+        // SAFETY: the pin's %ld format is paired with its native long width.
+        unsafe { libc::printf(c"%ld\n".as_ptr(), value as c_long) };
+    }
+}

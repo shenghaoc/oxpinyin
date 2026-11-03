@@ -1167,3 +1167,17 @@ as for the pin (L < 16, R readings per phrase, N distinct phrases).
 The boundary keeps native options, C++ streams, GLib text calls and C
 formatted writes in their source order. Undefined reads follow the two
 registered class (b) records; no crash or lost buffered output is emulated.
+
+## Family E1: the memory-chunk program
+
+`tests/include/test_memory_chunk.cpp:5-69` at 074a2219 exercises the
+pin's own logical capacity algorithm (`src/include/memory_chunk.h:95-133`):
+borrowed storage copies to exactly size + growth; owned storage keeps its
+extent when sufficient, otherwise grows to max(2 * capacity, size + growth).
+New storage from the current size onward is zeroed. The tool-side Buffer
+uses safe bytes with independent logical size; Vec allocator capacity is
+never observed. Set/insert/remove cost O(n) worst-case for n resident bytes,
+with geometric owned growth amortising appends; storage is O(n). Its fixed
+program prints capacities 4, 6, 12 and the source's integer rows. Save/load
+and optional map use the existing input boundary, O(n) checksum/read work.
+The existing isolated tool-diff runner compares all /tmp/test.bin bytes.

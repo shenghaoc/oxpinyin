@@ -66,7 +66,7 @@ coverage and are superseded for these programs; no program is exempt.
 | C | `tests/storage/test_flexible_ngram.cpp` / `test_flexible_ngram` | Yes | Flexible single-gram range search and mutation, bigram storage; `/tmp/training.db` | **Ported** — same-named tool case file, all three cells |
 | C | `tests/storage/test_punct_table.cpp` / `test_punct_table` | Yes | Punctuation append/remove and snapshot save/load; `/tmp/punct.bin`, `/tmp/snapshot.db` | **Ported** — same-named tool case file, all three cells |
 | D | `tests/storage/test_table_info.cpp` / `test_table_info` | Yes | System/user table configuration and conformance; `../../data/table.conf`, `/tmp/user.conf` | **Ported** — `test_table_info.json`, 11 MATCH and 3 POLICY-ACCEPTED on tkrzw |
-| E | `tests/include/test_memory_chunk.cpp` / `test_memory_chunk` | Yes | Chunk content, capacity, insert/remove, save/load/map; `/tmp/test.bin` | **GAP** |
+| E | `tests/include/test_memory_chunk.cpp` / `test_memory_chunk` | Yes | Chunk content, capacity, insert/remove, save/load/map; `/tmp/test.bin` | **Ported** — `test_memory_chunk.json`, 3 MATCH and 1 POLICY-ACCEPTED on tkrzw |
 | E | `tests/storage/test_phrase_index.cpp` / `test_phrase_index` | No | Phrase-item/index mutation, frequency, compact and chunk round trips; `../../data/*` through `tests_helper.h` | **GAP** |
 | E | `tests/storage/test_phrase_index_logger.cpp` / `test_phrase_index_logger` | Yes | Phrase-index logger diff/merge; `../../data/*`; `/tmp/gb_char.bin`, `/tmp/gb_char.dbin`, `/tmp/gb_char2.bin` | **GAP** |
 | E | `tests/storage/test_phrase_table.cpp` / `test_phrase_table` | No | Phrase-table lookup and mutation over `../../data/*` | **GAP** |
@@ -94,6 +94,11 @@ only the approved eight-byte clock-field normalization. The named
 `ngram-fresh`; reverting and rebuilding restores the complete gate.
 [Shared attach and backend evidence](../findings/eio-test-flexible-attach-empty.md)
 records the native open, magic-header and mutation calls.
+
+Family E1 adds `test_memory_chunk` with the pin's logical capacity rule.
+Its four source-derived cases give 3 MATCH and 1 POLICY-ACCEPTED on tkrzw.
+The `pin-tests-e1-remove-wrong-integer` mutation makes `memory-chunk-fresh`
+DIFFER in stdout and the framed file; restoring it restores the gate.
 
 The existing Rust Pinyin and Zhuyin C facades are separate implementations;
 raw-text phrase segmentation and phrase lookup exist. Those earlier N/A
@@ -142,7 +147,7 @@ ABI behaviors are N/A by design rather than artificially reconstructed.
 ## Totals
 
 - **libpinyin**: 17 `noinst_PROGRAMS`, six also in automated `TESTS`;
-  **9 Ported, 8 GAP** after families A, B, D and C. Family PRs update their rows
+  **10 Ported, 7 GAP** after families A, B, D, C and E1. Family PRs update their rows
   and this total when their drop-in verification passes.
 - The libchewing rows retain their separately audited behavior-coverage
   classifications. They do not count toward the libpinyin drop-in total.
