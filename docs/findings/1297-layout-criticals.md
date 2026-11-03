@@ -75,6 +75,9 @@ differs from the pin only in the missing critical, or for
 `save-fatal-valid-to-invalid*` in the pin's SIGTRAP under the fatal mask):
 `header-only-library-init`, `header-only-library-init-zhuyin`, `header-only-library-load`, `header-only-library-load-zhuyin`, `header-only-library-save`, `nonzero-total-save`, `nonzero-total-save-zhuyin`, `save-fatal-valid-to-invalid`, `save-fatal-valid-to-invalid-zhuyin`, `save-replacement-invalid-to-valid`, `save-replacement-invalid-to-valid-zhuyin`, `save-replacement-valid-to-invalid`, `save-replacement-valid-to-invalid-zhuyin`, `save-unchanged-layout-failed`, `save-unchanged-layout-failed-zhuyin`, `second-separator-library-init`, `second-separator-library-init-zhuyin`, `short-chunk-layout`, `short-chunk-layout-zhuyin`, `sparse-library-addon`, `sparse-library-addon-reload`, `sparse-library-candidates`, `sparse-library-candidates-zhuyin`, `sparse-library-init`, `sparse-library-init-settled`, `sparse-library-init-settled-zhuyin`, `sparse-library-init-zhuyin`, `sparse-library-load`, `sparse-library-load-zhuyin`, `sparse-library-mask-out`, `sparse-library-mask-out-zhuyin`, `sparse-library-reinit`, `sparse-library-reinit-zhuyin`, `sparse-library-save`, `sparse-library-save-zhuyin`, `sparse-library-tokens`, `sparse-library-tokens-zhuyin`, `third-separator-library-init`, `third-separator-library-init-zhuyin`.
 The list is `LAYOUT_CRITICAL_CASES` in `tools/bisection/contract_library_loading.py`.
+The tkrzw tool case `estimate_interpolation-layout-refusal-total` also binds
+the missing critical: its refused library has a nonzero local total, which
+the facade excludes from the unigram denominator.
 Since class (c) was retired (2026-10-31 UTC), the
 `nonzero-total-candidates` case and its zhuyin twin abort on both sides at
 `pinyin.cpp:1859` and `zhuyin.cpp:1261`:
@@ -3651,6 +3654,34 @@ and `save-replacement-valid-to-different-valid*`.
           },
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]"
+          ]
+        }
+      }
+    },
+    "estimate_interpolation-layout-refusal-total": {
+      "cells": {
+        "tkrzw": {
+          "pin": {
+            "sha256": "4c5393ab83d33f8c25c2bec5fc098f4e73ee1cbd7f7aebb8fb565e62f9748473",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "files": "8f271658b38c4331",
+              "stderr": "4881e98f155df6c2",
+              "stdout": "8bfb553cdcf3a5d8"
+            }
+          },
+          "subject": {
+            "sha256": "94f40fdb44c8f4432a7b05fad5034dfdc84e9bb14b690405878e0148402eb8bf",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "files": "8f271658b38c4331",
+              "stderr": "12ae32cb1ec02d01",
+              "stdout": "8bfb553cdcf3a5d8"
+            }
+          },
+          "divergence": [
+            "stderr: pin \"\\n** (process:PID): CRITICAL **: TIME: bool\" … (length 182); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
           ]
         }
       }

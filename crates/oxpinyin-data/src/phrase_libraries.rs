@@ -304,6 +304,35 @@ impl PhraseLibraries {
         Ok(true)
     }
 
+    /// Load one utility library using `MemoryChunk::load` and owned payload bytes.
+    ///
+    /// # Errors
+    /// Returns a read, checksum, or layout error.
+    pub fn load_heap(&mut self, nibble: u8, path: &Path) -> Result<bool, LibraryError> {
+        let library = PhraseLibrary::load_heap(path)?;
+        let slot = self
+            .by_nibble
+            .get_mut(usize::from(nibble))
+            .ok_or_else(|| LibraryError::Format("library nibble out of range".into()))?;
+        if let Some(old) = slot.take() {
+            self.total = self.total.wrapping_sub(old.library.total_freq());
+        }
+        if !library.is_layout_failed() {
+            self.total = self.total.wrapping_add(library.total_freq());
+        }
+        if library.has_items() {
+            self.stocked |= 1 << nibble;
+        } else {
+            self.stocked &= !(1 << nibble);
+        }
+        *slot = Some(Loaded {
+            library,
+            path: path.to_path_buf(),
+            item_count: OnceLock::new(),
+        });
+        Ok(true)
+    }
+
     /// Replaces a loaded sub-index with a fresh mapping of its system
     /// chunk, as `mask_out` does at 074a2219 (`pinyin.cpp:1253-1273`,
     /// `zhuyin.cpp:788-808`). An unloaded library stays unloaded.

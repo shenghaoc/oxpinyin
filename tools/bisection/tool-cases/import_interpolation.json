@@ -114,6 +114,38 @@
       "dbm_rows": [
         "bigram.db"
       ]
+    },
+    {
+      "id": "import_interpolation-family-e-truncated-first-chunk",
+      "utility": "import_interpolation",
+      "source": "utils/storage/import_interpolation.cpp:272; utils/utils_helper.h:73-94; src/include/memory_chunk.h:420-463 at 074a2219",
+      "args": [],
+      "fixture_dir": "fixtures/w3",
+      "files": {
+        "gb_char.bin": {
+          "hex": "040000000000000001"
+        },
+        "gbk_char.bin": {
+          "hex": "00"
+        }
+      },
+      "stdin": {
+        "text": ""
+      }
+    },
+    {
+      "id": "import_interpolation-family-e-save-refused",
+      "utility": "import_interpolation",
+      "source": "utils/storage/import_interpolation.cpp:303; utils/utils_helper.h:97-145 at 074a2219",
+      "args": [],
+      "fixture_dir": "fixtures/w3",
+      "expected_failure": {"exit": 2, "stderr": "save gb_char.bin failed."},
+      "sealed_inputs": [
+        "gb_char.bin"
+      ],
+      "stdin": {
+        "text": "\\data model interpolation\n\\1-gram\n\\item 16777217 锕 count 5\n\\end\n"
+      }
     }
   ]
 }

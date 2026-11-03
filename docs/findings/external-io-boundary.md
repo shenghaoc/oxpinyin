@@ -754,9 +754,9 @@ specifications in advance of the stage that owns them.
    (`g_unichar_isspace`/`isgraph`, `g_log`), so the Windows lane keeps
    excluding `oxpinyin-training` until GLib-on-Windows. The DBM-attached KMM family
    (`estimate_`, `merge_`, `prune_`, `validate_k_mixture_model`) needs
-   neither stage 2 nor stage 3 and is the next stack. Utilities that
-   load chunks (`MemoryChunk::load`, e.g. `ngseg`, `gen_binary_files`)
-   can follow now that stage 2's chunk calls are implemented.
+   neither stage 2 nor stage 3 and is the next stack. The utilities that load phrase-library chunks use the stage 2
+   `MemoryChunk::load` boundary. Their chunk saves use the save boundary
+   and reload the newly stored chunk into the index.
 
 Each stage derives expected behavior from the pin and its native library
 sources before using a differential as a gate. The present docs-only

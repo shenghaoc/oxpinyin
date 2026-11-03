@@ -59,7 +59,7 @@ pub(crate) fn load(with_bigram: bool) -> Result<Tables, TablesError> {
             return Err(TablesError::Chunk(None));
         };
         let c_name = oxpinyin_input::c_path(Path::new(name.as_ref()));
-        match libraries.load(index, Path::new(name.as_ref())) {
+        match libraries.load_heap(index, Path::new(name.as_ref())) {
             // A second row for one nibble is the pin's
             // `ERROR_ALREADY_EXISTS`, whose answer the loop ignores.
             Ok(_) => {}

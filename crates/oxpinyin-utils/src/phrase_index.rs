@@ -75,9 +75,13 @@ pub fn load_phrase_index(conf: &TableConf) -> SystemPhraseIndex {
         // utils/utils_helper.h:82-85 at 074a2219 passes the configured
         // filename straight to MemoryChunk::load, without a directory join.
         let path = Path::new(system.as_ref());
-        if libraries.load(nibble, path).is_err() {
-            edge::report_chunk_load_failed(&c_name(system));
-            tool::exit(tool::ENOENT);
+        match libraries.load_heap(nibble, path) {
+            Ok(_) => {}
+            Err(oxpinyin_data::phrase_library::LibraryError::Row(_)) => tool::abort(),
+            Err(_) => {
+                edge::report_chunk_load_failed(&c_name(system));
+                tool::exit(tool::ENOENT);
+            }
         }
     }
     SystemPhraseIndex { libraries }

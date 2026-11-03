@@ -57,6 +57,43 @@
       "args": [],
       "fixture_dir": "fixtures/w3",
       "stdin": {"text": ""}
+    },
+    {
+      "id": "estimate_interpolation-family-e-truncated-first-chunk",
+      "utility": "estimate_interpolation",
+      "source": "utils/training/estimate_interpolation.cpp:104; utils/utils_helper.h:73-94; src/include/memory_chunk.h:420-463 at 074a2219",
+      "args": [],
+      "fixture_dir": "fixtures/w3",
+      "files": {
+        "gb_char.bin": {
+          "hex": "040000000000000001"
+        },
+        "gbk_char.bin": {
+          "hex": "00"
+        }
+      },
+      "stdin": {
+        "text": ""
+      }
+    },
+    {
+      "id": "estimate_interpolation-layout-refusal-total",
+      "utility": "estimate_interpolation",
+      "source": "src/storage/phrase_index.cpp:237-248,335-356; utils/training/estimate_interpolation.cpp:65-71,104 at 074a2219",
+      "policy_record": "1297-layout-criticals.md",
+      "policy_cells": [
+        "tkrzw"
+      ],
+      "args": [],
+      "fixture_dir": "fixtures/w3",
+      "files": {
+        "gbk_char.bin": {
+          "hex": "1100000048ca9a3b00ca9a3b11000000160000001700000058"
+        }
+      },
+      "stdin": {
+        "text": ""
+      }
     }
   ]
 }

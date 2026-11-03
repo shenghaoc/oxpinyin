@@ -115,7 +115,7 @@ fn load_libraries(conf: &oxpinyin_data::table_info::TableConf) -> PhraseLibrarie
             tool::abort();
         };
         let c_name = oxpinyin_input::c_path(Path::new(name.as_ref()));
-        match libraries.load(index, Path::new(name.as_ref())) {
+        match libraries.load_heap(index, Path::new(name.as_ref())) {
             Ok(_) => {}
             // `MemoryChunk::load`'s header `assert` on a directory named as
             // a chunk (`memory_chunk.h:429`).
