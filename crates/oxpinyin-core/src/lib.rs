@@ -16,6 +16,7 @@
 #![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
 
 pub mod cost;
+mod direct;
 mod full_pinyin_index;
 pub mod graph;
 pub mod kbest;
@@ -24,6 +25,8 @@ mod parser;
 mod scheme;
 pub mod scoring;
 pub mod single_gram;
+#[cfg(feature = "tools")]
+pub mod tool;
 pub mod ucs4;
 mod string_tables {
     use crate::options::{

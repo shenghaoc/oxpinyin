@@ -94,7 +94,7 @@ pub fn atol(str: &CStr) -> c_long {
 }
 
 /// One `GOptionEntry`'s argument: its `GOptionArg` and the value its static
-/// holds before parsing. The pin's utilities use these four.
+/// holds before parsing. The pin's utilities use these argument types.
 #[derive(Clone, Debug, PartialEq)]
 pub enum OptionArg {
     /// `G_OPTION_ARG_NONE` over a `gboolean`.
@@ -106,6 +106,8 @@ pub enum OptionArg {
     /// `G_OPTION_ARG_FILENAME` over a `gchar *` that starts at this
     /// string, or NULL.
     Filename(Option<&'static CStr>),
+    /// `G_OPTION_ARG_STRING`, converted by GLib to UTF-8.
+    String(Option<&'static CStr>),
 }
 
 /// The storage behind one entry's `arg_data`: the type its `GOptionArg`
@@ -125,13 +127,14 @@ impl OptionArg {
             Self::Flag(_) => glib_sys::G_OPTION_ARG_NONE,
             Self::Int(_) => glib_sys::G_OPTION_ARG_INT,
             Self::Filename(_) => glib_sys::G_OPTION_ARG_FILENAME,
+            Self::String(_) => glib_sys::G_OPTION_ARG_STRING,
             Self::Double(_) => glib_sys::G_OPTION_ARG_DOUBLE,
         }
     }
 
     fn default_string(&self) -> *mut c_char {
         match self {
-            Self::Filename(Some(text)) => text.as_ptr().cast_mut(),
+            Self::Filename(Some(text)) | Self::String(Some(text)) => text.as_ptr().cast_mut(),
             _ => core::ptr::null_mut(),
         }
     }
@@ -143,7 +146,7 @@ impl OptionArg {
             },
             Self::Int(integer) => RawValue { integer },
             Self::Double(number) => RawValue { number },
-            Self::Filename(_) => RawValue {
+            Self::Filename(_) | Self::String(_) => RawValue {
                 string: self.default_string(),
             },
         }
@@ -165,6 +168,11 @@ impl OptionArg {
                     )
                 }
                 Self::Filename(_) => OptionValue::Filename(take_glib_string(value.string)),
+                Self::String(_) if value.string == self.default_string() => OptionValue::String(
+                    (!value.string.is_null())
+                        .then(|| CStr::from_ptr(value.string).to_bytes().to_vec()),
+                ),
+                Self::String(_) => OptionValue::String(take_glib_string(value.string)),
             }
         }
     }
@@ -199,6 +207,8 @@ pub enum OptionValue {
     /// A filename's bytes: GLib's, or the default the entry started at;
     /// `None` for a NULL default left unset.
     Filename(Option<Vec<u8>>),
+    /// UTF-8 bytes from `G_OPTION_ARG_STRING`, or the original default.
+    String(Option<Vec<u8>>),
 }
 
 /// What the option sequence left: each entry's value, in entry order, and
@@ -2359,5 +2369,99 @@ mod tests {
         }
         assert_eq!(utf8_get_char_at(c"a\xe4\xbd\xa0", 1), Some(0x4F60));
         assert_eq!(utf8_get_char_at(c"a", 2), None);
+    }
+}
+
+/// The test programs' clock calls (`tests/timer.h:30-44` at 074a2219).
+pub mod timer {
+    /// The low 32 bits of `gettimeofday`'s microsecond count.
+    #[must_use]
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "timer.h:33 converts tv_sec to guint32 before wrapping arithmetic"
+    )]
+    pub fn record_time() -> u32 {
+        #[cfg(unix)]
+        {
+            let mut tv = libc::timeval {
+                tv_sec: 0,
+                tv_usec: 0,
+            };
+            // SAFETY: tv is writable; the unused timezone pointer is NULL.
+            unsafe { libc::gettimeofday(&raw mut tv, core::ptr::null_mut()) };
+            (tv.tv_sec as u32)
+                .wrapping_mul(1_000_000)
+                .wrapping_add(tv.tv_usec as u32)
+        }
+        #[cfg(not(unix))]
+        {
+            // The external-call contract is Linux-specific. Other hosts use
+            // their system clock through std; no Unix timeval ABI is assumed.
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |duration| duration.as_micros() as u32)
+        }
+    }
+
+    /// `print_time`'s exact printf format and unsigned elapsed arithmetic.
+    #[expect(clippy::cast_possible_wrap, reason = "timer.h prints guint32 with %d")]
+    pub fn print_time(old: u32, times: u32) {
+        let wasted = record_time().wrapping_sub(old);
+        // SAFETY: the constant format receives two promoted ints and doubles.
+        unsafe {
+            libc::printf(
+                c"Spent %d us for %d operations, %f us/op, %f times/s.\n\n".as_ptr(),
+                wasted as libc::c_int,
+                times as libc::c_int,
+                f64::from(wasted) / f64::from(times),
+                f64::from(times) * 1_000_000.0 / f64::from(wasted),
+            );
+        }
+    }
+}
+
+/// `tests/storage/test_parser2.cpp:130-147` printf calls at 074a2219.
+pub mod parser {
+    use super::*;
+
+    /// `printf("parsed %d chars, %d keys.\n", len, keys->len)`.
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_possible_wrap,
+        reason = "the pin's outward int/guint arguments to %d"
+    )]
+    pub fn print_counts(length: usize, keys: usize) {
+        // SAFETY: both arguments have the format's promoted int type.
+        unsafe {
+            libc::printf(
+                c"parsed %d chars, %d keys.\n".as_ptr(),
+                length as c_int,
+                keys as c_int,
+            )
+        };
+    }
+
+    /// The key's spelling and its `guint16` raw offsets, promoted to int.
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "ChewingKeyRest fields are guint16 at the outward boundary"
+    )]
+    pub fn print_key(pinyin: &CStr, begin: usize, end: usize) {
+        // SAFETY: the string lives through printf; the offsets are promoted ints.
+        unsafe {
+            libc::printf(
+                c"%s %d %d\t".as_ptr(),
+                pinyin.as_ptr(),
+                c_int::from(begin as u16),
+                c_int::from(end as u16),
+            )
+        };
+    }
+
+    /// The newline following the key/key-rest sequence.
+    pub fn print_newline() {
+        // SAFETY: the constant format has no arguments.
+        unsafe { libc::printf(c"\n".as_ptr()) };
     }
 }

@@ -48,7 +48,8 @@ workspace = true
 # adapters. These tools and adapters are absent from shipping builds.
 oxpinyin-capi = { path = "../oxpinyin-capi", default-features = false, features = ["tools"] }
 oxpinyin-zhuyin-capi = { path = "../oxpinyin-zhuyin-capi", default-features = false, features = ["tools"] }
-oxpinyin-core = { workspace = true }
+oxpinyin-core = { workspace = true, features = ["tools"] }
+oxpinyin-engine = { workspace = true, features = ["tools"] }
 # pinyin_exact_compare2, shared with the table writers.
 oxpinyin-data = { workspace = true }
 # The pin's DBM files, written and read through the backend seam the data
