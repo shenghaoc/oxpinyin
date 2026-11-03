@@ -746,20 +746,6 @@ pub trait WriteStore: ReadStore {
     where
         Self: Sized;
 
-    /// The pin's `Bigram::attach` of a hash file, `ATTACH_READONLY` or
-    /// `ATTACH_READWRITE | ATTACH_CREATE` (`ngram_bdb.cpp:110-124`,
-    /// `ngram_kyotodb.cpp:110-120`, `ngram_tkrzwdb.cpp:86-99` at 074a2219):
-    /// `Ok(None)` when the native open failed. An `Err` is a failure
-    /// before the open, such as an unsupported library or a path that
-    /// contains NUL, and never a failed open.
-    ///
-    /// # Errors
-    ///
-    /// As above.
-    fn attach_bigram(path: &Path, read_only: bool) -> Result<Option<Self>, StoreError>
-    where
-        Self: Sized;
-
     /// The pin's `FlexibleBigram` writes: the closure's puts and removes,
     /// applied as one native `set` or `remove` each when the closure
     /// returns `Ok`, with no transaction and no sync. An `Err` from the

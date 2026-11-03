@@ -122,6 +122,25 @@ pub struct BdbUnopenedHandle {
     _closed: (),
 }
 
+impl BdbUnopenedHandle {
+    /// `Bigram::store`'s answer on the failed handle: the pin's `DB->put`
+    /// gets `EINVAL` and `store` returns false (`ngram_bdb.cpp:148-163`).
+    pub(crate) fn write(&self, _key: &[u8], _value: &[u8]) -> Result<(), StoreError> {
+        Err(StoreError::Backend(
+            "DB->put: method not permitted before handle's open method".into(),
+        ))
+    }
+
+    /// `Bigram::get_all_items`' answer on the failed handle: the pin's
+    /// `DB->cursor` leaves no cursor and the walk returns false
+    /// (`ngram_bdb.cpp:178-191`).
+    pub(crate) fn walk(&self) -> Result<(), StoreError> {
+        Err(StoreError::Backend(
+            "DB->cursor: method not permitted before handle's open method".into(),
+        ))
+    }
+}
+
 /// The pin's `attach` answer: an opened store, or a failed open.
 pub enum BdbOpen {
     /// `DB->open` succeeded.
@@ -485,15 +504,6 @@ impl WriteStore for BdbStore {
     fn create_hash(path: &Path) -> Result<Self, StoreError> {
         Ok(Self {
             db: Db::open(path, ffi::DB_HASH, false, true, ffi::SYSTEM_FILE_MODE)?,
-        })
-    }
-
-    /// `Bigram::attach` (`ngram_bdb.cpp:110-124` at 074a2219) through
-    /// `open_pin`: a failed native `DB->open` closes its handle.
-    fn attach_bigram(path: &Path, read_only: bool) -> Result<Option<Self>, StoreError> {
-        Ok(match open_pin(path, true, read_only)? {
-            BdbOpen::Open(store) => Some(store),
-            BdbOpen::Unopened(_) => None,
         })
     }
 

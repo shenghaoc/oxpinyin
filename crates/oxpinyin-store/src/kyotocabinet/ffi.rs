@@ -194,6 +194,8 @@ pub(super) enum Sink {
     /// Every key, as the four-byte tokens the user bigram keys by; `None`
     /// for a key of any other length.
     Keys(Vec<Option<[u8; 4]>>),
+    /// Every key, byte for byte, as the attached bigram's walk collects it.
+    RawKeys(Vec<Vec<u8>>),
 }
 
 impl Sink {
@@ -229,6 +231,7 @@ impl Sink {
                 });
             }
             Self::Keys(keys) => keys.push(<[u8; 4]>::try_from(key).ok()),
+            Self::RawKeys(keys) => keys.push(key.to_vec()),
         }
     }
 }
@@ -293,6 +296,10 @@ impl Rows {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum NativeCall {
     Open(Vec<u8>, u32),
+    Check,
+    Set,
+    Count,
+    Iterate,
     Synchronize(bool),
     Close,
     Delete,
@@ -544,6 +551,8 @@ impl Db {
         let key = region(key)?;
         // SAFETY: `region` bounds the key by MEMMAXSIZ.
         let size = unsafe { sys::check(&self.db, key) };
+        #[cfg(test)]
+        record_native_call(self.address(), NativeCall::Check);
         if size >= 0 {
             return Ok(usize::try_from(size).ok());
         }
@@ -584,21 +593,31 @@ impl Db {
         Ok(records)
     }
 
-    /// Every key, in the class's walk order — `Bigram::get_all_items`'
-    /// `iterate(&visitor, false)` (`ngram_kyotodb.cpp:186-196`) — in one
-    /// vector reserved for `count` keys, as the pin appends them to one
-    /// `GArray`.
+    /// Every key, in the class's walk order: `Bigram::get_all_items`'
+    /// one native call, `iterate(&visitor, false)`, with no `count` before
+    /// it (`ngram_kyotodb.cpp:186-196`). The keys grow one vector, as the
+    /// pin appends them to one `GArray`.
     pub(crate) fn keys(&self) -> Result<Vec<Option<[u8; 4]>>, StoreError> {
-        let mut keys = Vec::new();
-        keys.reserve_exact(usize::try_from(self.count()?).unwrap_or(0));
-        let Sink::Keys(keys) = self.iterate(Sink::Keys(keys))? else {
+        let Sink::Keys(keys) = self.iterate(Sink::Keys(Vec::new()))? else {
+            unreachable!("the visitor keeps the sink's kind");
+        };
+        Ok(keys)
+    }
+
+    /// [`Self::keys`] with each key's own bytes, whatever its length: the
+    /// walk of an attached bigram, whose caller judges the key length.
+    pub(crate) fn raw_keys(&self) -> Result<Vec<Vec<u8>>, StoreError> {
+        let Sink::RawKeys(keys) = self.iterate(Sink::RawKeys(Vec::new()))? else {
             unreachable!("the visitor keeps the sink's kind");
         };
         Ok(keys)
     }
 
     fn iterate(&self, mut sink: Sink) -> Result<Sink, StoreError> {
-        if !sys::iterate(&self.db, &mut sink) {
+        let ok = sys::iterate(&self.db, &mut sink);
+        #[cfg(test)]
+        record_native_call(self.address(), NativeCall::Iterate);
+        if !ok {
             return Err(self.error("kcdbiterate"));
         }
         Ok(sink)
@@ -611,7 +630,10 @@ impl Db {
         }
         let (key, value) = (region(key)?, region(value)?);
         // SAFETY: `region` bounds the key and the value by MEMMAXSIZ.
-        if !unsafe { sys::set(&self.db, key, value) } {
+        let ok = unsafe { sys::set(&self.db, key, value) };
+        #[cfg(test)]
+        record_native_call(self.address(), NativeCall::Set);
+        if !ok {
             return Err(self.error("kcdbset"));
         }
         Ok(())
@@ -711,7 +733,10 @@ impl Db {
 
     /// The number of records — `count()`, -1 on failure.
     pub(crate) fn count(&self) -> Result<u64, StoreError> {
-        u64::try_from(sys::count(&self.db)).map_err(|_| self.error("kcdbcount"))
+        let count = sys::count(&self.db);
+        #[cfg(test)]
+        record_native_call(self.address(), NativeCall::Count);
+        u64::try_from(count).map_err(|_| self.error("kcdbcount"))
     }
 
     /// Begins a transaction.

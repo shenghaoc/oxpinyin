@@ -24,7 +24,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use oxpinyin_store::{
     ArrayItemWithToken, AttachMode, DefaultFlexibleBigram, DefaultStore, FixedRecord,
-    FlexibleGramSpec, MAGIC_KEY, RawReadStore, SingleGram, StoreError, WriteStore, WriteTxn,
+    FlexibleGramSpec, MAGIC_KEY, RawReadStore, SingleGram, StoreError, SystemAttachment,
+    WriteStore, WriteTxn,
 };
 
 // ── the k-mixture-model records ────────────────────────────────────
@@ -726,32 +727,29 @@ fn the_deferred_removal_flag_aggregates_every_removal() {
 
 #[test]
 fn attach_bigram_answers_a_failed_open_apart_from_an_earlier_failure() {
-    // `Bigram::attach`: a failed native open leaves no container; a failure
-    // before the open is an error on every backend.
+    // `Bigram::attach`: a failed native open is an unopened attachment,
+    // whose object Kyoto Cabinet and tkrzw keep; a failure before the open
+    // is an error on every backend.
+    let attach = |path: &Path, read_only| SystemAttachment::attach_bigram(path, read_only);
     let scratch = Scratch::new("attach-bigram");
     let missing = scratch.path().join("missing.db");
-    assert!(
-        DefaultStore::attach_bigram(&missing, true)
-            .expect("attach")
-            .is_none()
-    );
+    assert!(matches!(
+        attach(&missing, true).expect("attach"),
+        SystemAttachment::Unopened(_)
+    ));
     assert!(!missing.exists());
     let created = scratch.path().join("bigram.db");
-    assert!(
-        DefaultStore::attach_bigram(&created, false)
-            .expect("attach")
-            .is_some()
-    );
-    assert!(
-        DefaultStore::attach_bigram(&created, true)
-            .expect("attach")
-            .is_some()
-    );
+    for read_only in [false, true] {
+        assert!(
+            matches!(
+                attach(&created, read_only).expect("attach"),
+                SystemAttachment::Open(_)
+            ),
+            "read only: {read_only}"
+        );
+    }
     let nul = Path::new(std::ffi::OsStr::new("bad\0name.db"));
-    assert!(
-        DefaultStore::attach_bigram(nul, true).is_err(),
-        "a rejected path"
-    );
+    assert!(attach(nul, true).is_err(), "a rejected path");
 }
 
 #[test]
