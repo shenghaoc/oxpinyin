@@ -149,6 +149,31 @@ pub struct SystemRemap {
     pub header_fault: Option<u8>,
 }
 
+/// A mask loop's remap, advanced one library at a time by
+/// [`Runtime::remap_next`]: the libraries mapped so far, and the sub-indices
+/// still to visit. Nothing past a stop is opened.
+#[derive(Debug)]
+pub struct RemapWalk {
+    originals: oxpinyin_user::SystemOriginals,
+    indices: std::ops::Range<u8>,
+    include_unloaded: bool,
+}
+
+/// What [`Runtime::remap_next`] reached. A library the loop skips (not
+/// loaded, no user file, or a chunk that fails some other check) is not a
+/// step.
+#[derive(Debug)]
+pub enum RemapStep {
+    /// The library mapped and is in the walk's originals.
+    Mapped(u8),
+    /// `MemoryChunk::mmap` refuses the file (row 76): the `mmap %s failed!`
+    /// path.
+    Unmappable(u8, PathBuf),
+    /// A directory whose header read the pin asserts on (`memory_chunk.h:493`,
+    /// row 96). The walk is over.
+    Directory(u8),
+}
+
 /// Why [`Runtime::save_disk_baseline`] could not give a baseline for a
 /// system library the save maps again at its `_write_files` position
 /// (`pinyin.cpp:955`, `zhuyin.cpp:588`).
@@ -2635,28 +2660,46 @@ impl Runtime {
             .originals
     }
 
-    fn remap_system_libraries(
-        &mut self,
-        indices: std::ops::Range<u8>,
-        include_unloaded: bool,
-    ) -> SystemRemap {
+    /// Starts the mask loop's remap over every loaded SYSTEM_FILE/DICTIONARY
+    /// default library, in index order (074a2219 pinyin.cpp:1253-1273,
+    /// zhuyin.cpp:788-808). Advance it with [`Self::remap_next`] and end it
+    /// with [`Self::finish_system_remap`].
+    #[must_use]
+    pub fn begin_system_remap(&self) -> RemapWalk {
+        self.begin_remap(1..16, false)
+    }
+
+    fn begin_remap(&self, indices: std::ops::Range<u8>, include_unloaded: bool) -> RemapWalk {
         let layout = UserFileLayout::from_conf(&self.conf);
-        let mut remap = SystemRemap {
+        let indices = if self.paths.system_data_dirs().is_empty() {
+            0..0
+        } else {
+            indices
+        };
+        RemapWalk {
             originals: oxpinyin_user::SystemOriginals::new(Default::default(), layout),
-            unmappable: Vec::new(),
-            header_fault: None,
-        };
-        let Some(dir) = self.paths.system_data_dirs().first() else {
-            return remap;
-        };
+            indices,
+            include_unloaded,
+        }
+    }
+
+    /// Maps the walk's next library and says what it reached; `None` when
+    /// the walk is over. A directory ends it. Nothing after the library
+    /// returned is opened until the next call, so a caller that stops there
+    /// leaves every later library untouched.
+    pub fn remap_next(&self, walk: &mut RemapWalk) -> Option<RemapStep> {
+        let dir = self.paths.system_data_dirs().first()?;
         let libraries = self.libraries();
-        for index in indices.filter(|&index| (1..16).contains(&index)) {
+        while let Some(index) = walk.indices.next() {
+            if !(1..16).contains(&index) {
+                continue;
+            }
             let Some(row) = self.conf.default_row(index) else {
                 continue;
             };
             if !matches!(row.file_type, FileType::SystemFile | FileType::Dictionary)
                 || row.user.is_none()
-                || (!include_unloaded && !self.dict().library_visible(u32::from(index)))
+                || (!walk.include_unloaded && !self.dict().library_visible(u32::from(index)))
             {
                 continue;
             }
@@ -2668,23 +2711,59 @@ impl Runtime {
                 continue;
             }
             match oxpinyin_data::phrase_library::PhraseLibrary::open_retaining_layout(&path) {
-                Ok(library) => remap.originals.insert_mapping(index, path, library),
+                Ok(library) => {
+                    walk.originals.insert_mapping(index, path, library);
+                    return Some(RemapStep::Mapped(index));
+                }
                 Err(LibraryError::Row(RowFault::ChunkHeaderRead)) => {
-                    remap.header_fault = Some(index);
-                    break;
+                    walk.indices = 0..0;
+                    return Some(RemapStep::Directory(index));
                 }
                 Err(error) => {
                     if let Some(path) = error.unmappable_path() {
-                        remap.unmappable.push((index, path.to_path_buf()));
+                        return Some(RemapStep::Unmappable(index, path.to_path_buf()));
                     }
                 }
             }
         }
-        // add_unigram_frequency's accepted deltas belong to the replaced
-        // sub-index too. Keep overlays for every library we did not reload.
+        None
+    }
+
+    /// Ends a remap walk and returns the libraries it mapped.
+    /// add_unigram_frequency's accepted deltas belong to the replaced
+    /// sub-index too, so they go; overlays of every library the walk did not
+    /// map stay.
+    #[must_use]
+    pub fn finish_system_remap(&mut self, walk: RemapWalk) -> oxpinyin_user::SystemOriginals {
+        let RemapWalk { originals, .. } = walk;
         self.bumps
-            .drop_libraries(|nibble| remap.originals.contains_key(&(nibble as u8)));
-        remap
+            .drop_libraries(|nibble| originals.contains_key(&(nibble as u8)));
+        originals
+    }
+
+    fn remap_system_libraries(
+        &mut self,
+        indices: std::ops::Range<u8>,
+        include_unloaded: bool,
+    ) -> SystemRemap {
+        let mut walk = self.begin_remap(indices, include_unloaded);
+        let mut unmappable = Vec::new();
+        let mut header_fault = None;
+        while let Some(step) = self.remap_next(&mut walk) {
+            match step {
+                RemapStep::Mapped(_) => {}
+                RemapStep::Unmappable(index, path) => unmappable.push((index, path)),
+                RemapStep::Directory(index) => {
+                    header_fault = Some(index);
+                    break;
+                }
+            }
+        }
+        SystemRemap {
+            originals: self.finish_system_remap(walk),
+            unmappable,
+            header_fault,
+        }
     }
 
     /// Unloads addon library `index` from this runtime's dictionary.

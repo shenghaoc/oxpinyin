@@ -1,0 +1,14 @@
+diff --git a/crates/oxpinyin-facade/src/context.rs b/crates/oxpinyin-facade/src/context.rs
+index 516b2cf6..c4fcd6ef 100644
+--- a/crates/oxpinyin-facade/src/context.rs
++++ b/crates/oxpinyin-facade/src/context.rs
+@@ -646,8 +646,7 @@ impl ContextCore {
+                 match step {
+                     RemapStep::Mapped(index) => {
+                         if let Some(fault) = store.read_mask_log(&mut logs, index, mask, value) {
+-                            stop = Some(MaskStop::Journal(fault));
+-                            break;
++                            stop.get_or_insert(MaskStop::Journal(fault));
+                         }
+                     }
+                     RemapStep::Unmappable(_, path) => {

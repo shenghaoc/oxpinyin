@@ -1565,6 +1565,21 @@ impl<S: WriteStore> GenericUserStore<S> {
         &self.originals
     }
 
+    /// Read system library `nibble`'s saved log once into `logs` and return
+    /// the header fault `mask_out`'s reload would reach in it (rows 91 and
+    /// 92), found without changing any state; `None` when it reaches none.
+    /// [`Self::reload_system_libraries_prefetched`] merges the bytes read here.
+    pub fn read_mask_log(
+        &self,
+        logs: &mut crate::persistence::MaskLogs,
+        nibble: u8,
+        mask: Token,
+        value: Token,
+    ) -> Option<crate::JournalFault> {
+        let dir = self.inner.libpinyin.as_ref()?.dir.as_deref()?;
+        crate::persistence::read_mask_log(dir, self.originals.layout(), logs, nibble, mask, value)
+    }
+
     /// Borrow the init baselines exclusively for a library transition.
     pub fn originals_mut(&mut self) -> &mut crate::persistence::SystemOriginals {
         &mut self.originals
@@ -1759,9 +1774,7 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// run, so no other handle's `set_bigram_count` adds a gram the walk
     /// missed.
     fn container_keys(&self) -> Option<Result<Vec<Option<Token>>, StoreError>> {
-        let keys = self
-            .container()
-            .map(|container| ContainerGrams(&container).keys());
+        let keys = self.collect_container_keys();
         #[cfg(test)]
         AFTER_CONTAINER_KEYS.with(|hook| {
             if let Some(hook) = hook.borrow_mut().take() {
@@ -1769,6 +1782,11 @@ impl<S: WriteStore> GenericUserStore<S> {
             }
         });
         keys
+    }
+
+    fn collect_container_keys(&self) -> Option<Result<Vec<Option<Token>>, StoreError>> {
+        self.container()
+            .map(|container| ContainerGrams(&container).keys())
     }
 
     /// [`Self::bigram_mask_fault`] over the container keys
@@ -3802,11 +3820,34 @@ impl<S: WriteStore> GenericUserStore<S> {
         mask: Token,
         value: Token,
     ) -> Result<(), crate::JournalFault> {
+        self.reload_system_libraries_prefetched(
+            originals,
+            mask,
+            value,
+            crate::persistence::MaskLogs::default(),
+        )
+    }
+
+    /// [`Self::reload_system_libraries_retaining`] merging the logs `logs`
+    /// already holds ([`Self::read_mask_log`]) instead of reading them again;
+    /// a library not in `logs` is read when the replay reaches it.
+    ///
+    /// # Errors
+    /// The same journal fault as [`Self::reload_system_libraries`].
+    pub fn reload_system_libraries_prefetched(
+        &mut self,
+        originals: &mut crate::persistence::SystemOriginals,
+        mask: Token,
+        value: Token,
+        mut logs: crate::persistence::MaskLogs,
+    ) -> Result<(), crate::JournalFault> {
         let Some(target) = self.inner.libpinyin.as_ref() else {
             return Ok(());
         };
         let (replayed, library_totals) = match target.dir.clone() {
-            Some(dir) => crate::persistence::load_masked_logs_live(&dir, originals, mask, value)?,
+            Some(dir) => {
+                crate::persistence::load_masked_logs_live(&dir, originals, mask, value, &mut logs)?
+            }
             None => (originals.take_live_libraries(), Default::default()),
         };
         self.replace_system_libraries(originals.take(), replayed, &library_totals);
@@ -4038,6 +4079,37 @@ impl<S: WriteStore> GenericUserStore<S> {
         self.mark_committed_phrase_write(db, has_user_data || has_grams || arena_live);
     }
 
+    /// The faults [`Self::mask_out`] reaches before it changes anything, in
+    /// the pin's order (`pinyin.cpp:1228-1230`): an overlong user pinyin index
+    /// key (rows 84 and 94), a phrase-table record the mask would read past
+    /// (row 101), then the user bigram's non-token key, short value, partial
+    /// tail and residual gram (rows 86, 85, 98, 87). It changes no state, so a
+    /// caller can learn that the user tables fault before it opens any system
+    /// library or journal. The bigram keys are walked here and again by
+    /// [`Self::mask_out`]: time linear in the user bigram, nothing retained.
+    ///
+    /// # Errors
+    ///
+    /// The [`UserStoreError`] [`Self::mask_out`] would return.
+    pub fn check_mask_out(&self, mask: Token, value: Token) -> Result<(), UserStoreError> {
+        if self.has_overlong_index_key() {
+            return Err(UserStoreError::OverlongIndexKey);
+        }
+        if let Some(target) = self.inner.libpinyin.as_ref() {
+            target
+                .phrases()
+                .phrase_table
+                .check_mask()
+                .map_err(|error| UserStoreError::Persistence(error.to_string()))?;
+        }
+        let db = self.database();
+        let container_keys = self.collect_container_keys();
+        match self.bigram_mask_fault_over(&db, container_keys.as_ref(), mask, value) {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
+
     /// `pinyin_mask_out`'s store side.
     ///
     /// # Errors
@@ -4048,6 +4120,8 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// it (`chewing_large_table2_bdb.cpp:529`) — or [`UserStoreError`] when
     /// the mask cannot otherwise be written.
     pub fn mask_out(&mut self, mask: Token, value: Token) -> Result<(), UserStoreError> {
+        // The same checks [`Self::check_mask_out`] makes, under the guards
+        // the mask below keeps.
         if self.has_overlong_index_key() {
             return Err(UserStoreError::OverlongIndexKey);
         }

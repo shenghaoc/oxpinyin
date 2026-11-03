@@ -190,7 +190,7 @@ def register(case, *, _craft_db):
              stderr=True, issues=('920',))(_unwritable_marker)
 
 
-    def overlong_index_context(k, parse=None, rows=None, options=None):
+    def overlong_index_context(k, parse=None, rows=None, options=None, system=None):
         """A context whose user dir carries crafted `user_pinyin_index.bin` rows,
         by default the packed first syllable of `parse` and a 17-syllable key that
         extends it. The first init writes the conforming `user.conf`; the crafted
@@ -206,7 +206,7 @@ def register(case, *, _craft_db):
         rewrite the container and user.conf before reopening. Assert initialization
         and key extraction, but not option-setting success. The returned context
         is not cached on the kit and must be finalized separately."""
-        ctx = k.init()
+        ctx = k.init(system=system)
         assert ctx, 'the first init failed'
         if options is not None:
             k.fn('set_options', B, P, U)(ctx, options)
@@ -226,7 +226,7 @@ def register(case, *, _craft_db):
             rows = rows(first)
         _craft_btree(os.path.join(k.user, 'user_pinyin_index.bin'), rows)
         _write_user_conf(k)
-        ctx = k.init()
+        ctx = k.init(system=system)
         assert ctx, 'the reopen failed'
         if options is not None:
             k.fn('set_options', B, P, U)(ctx, options)
@@ -247,6 +247,23 @@ def register(case, *, _craft_db):
         # chewing table, so the same :529 walk aborts there.
         ctx = overlong_index_context(k)
         return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
+
+
+    # The pin masks the user pinyin table first (`pinyin.cpp:1228-1230`), so
+    # row 84's abort comes before the mask loop maps any system library. A
+    # later library whose chunk is gone after the init is never reached: the
+    # pin writes no `mmap %s failed!` line and the subject must write none.
+    def _overlong_index_later_unmappable(k):
+        """Mask a reopened profile with a 17-word user index key after library 4's chunk is removed."""
+        system = private_system(k)
+        ctx = overlong_index_context(k, system=system)
+        os.unlink(os.path.join(system, 'merged.bin'))
+        return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
+
+    case('abort-mask-out-overlong-index-key-later-unmappable', abort=False, sigabrt=True,
+         stderr=True, issues=('525', 'row:84', 'row:76'))(_overlong_index_later_unmappable)
+    case('abort-zhuyin-mask-out-overlong-index-key-later-unmappable', mode='zhuyin', abort=False,
+         sigabrt=True, stderr=True, issues=('525', 'row:84', 'row:76'))(_overlong_index_later_unmappable)
 
 
     # libzhuyin has no longer-candidate walk: `zhuyin_guess_candidates_*`
