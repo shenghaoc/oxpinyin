@@ -41,18 +41,38 @@ differences follow, both accepted:
 
 - The critical is missing: a caller's GLib log handler receives nothing,
   and GLib's default handler writes nothing to stderr.
-- Under GLib fatal-critical settings the pin aborts at the critical, for
-  example in the save after the earlier libraries' files are written.
-  oxpinyin does not abort; it completes the operation. **The
-  fatal-critical behaviour is lost.** This is an intentional observable
-  difference, not exact compatibility.
+- Under GLib fatal-critical settings the pin terminates with SIGTRAP at
+  the critical, for example in the save after the earlier libraries'
+  files are written. oxpinyin does not abort; it completes the operation.
+  **The fatal-critical behaviour is lost.** This is an intentional
+  observable difference, not exact compatibility.
+
+The pin's signal depends on the GLib it links. Debian 13's GLib 2.84.4
+ends a non-recursive fatal log message in `_g_log_abort` with
+`G_BREAKPOINT()` whenever a debugger might be attached, and on Unix it
+always assumes one is
+([gmessages.c:409-434](https://gitlab.gnome.org/GNOME/glib/-/blob/2.84.4/glib/gmessages.c#L409-L434),
+called at `:1287`). `G_BREAKPOINT()` is `int $03` on x86-64 and
+`raise (SIGTRAP)` on Linux aarch64
+([gbacktrace.h:58-70](https://gitlab.gnome.org/GNOME/glib/-/blob/2.84.4/glib/gbacktrace.h#L58-L70)),
+so both reference architectures observe SIGTRAP (exit `-5`). GLib
+`a184d5d3` (first released in 2.87.0, in Debian testing's 2.88 and 2.90)
+reads `TracerPid` from `/proc/self/status` and calls `g_abort()` when
+no tracer is attached
+([gmessages.c:408-455](https://gitlab.gnome.org/GNOME/glib/-/blob/2.87.0/glib/gmessages.c#L408-L455)),
+which is SIGABRT (`-6`). The `save-fatal-valid-to-invalid*` entries were
+first captured under that newer GLib (#1509), before the oracle images
+moved to Debian 13 (`d3457495`); they were recaptured on GLib 2.84.4 as
+[1297-segment-critical.md](1297-segment-critical.md)'s were (#1544).
+Only the pin's exit changed; its stderr, result and files and the
+subject's observation are unchanged, and the fixture is not involved.
 
 A layout the pin reaches only through an out-of-chunk read stays the
 existing class (b) refusal (policy row 76); it is not affected.
 
 Cases, bound below with `just policy-record` from tkrzw, bdb and kc captures (each
 differs from the pin only in the missing critical, or for
-`save-fatal-valid-to-invalid*` in the pin's SIGABRT under the fatal mask):
+`save-fatal-valid-to-invalid*` in the pin's SIGTRAP under the fatal mask):
 `header-only-library-init`, `header-only-library-init-zhuyin`, `header-only-library-load`, `header-only-library-load-zhuyin`, `header-only-library-save`, `nonzero-total-save`, `nonzero-total-save-zhuyin`, `save-fatal-valid-to-invalid`, `save-fatal-valid-to-invalid-zhuyin`, `save-replacement-invalid-to-valid`, `save-replacement-invalid-to-valid-zhuyin`, `save-replacement-valid-to-invalid`, `save-replacement-valid-to-invalid-zhuyin`, `save-unchanged-layout-failed`, `save-unchanged-layout-failed-zhuyin`, `second-separator-library-init`, `second-separator-library-init-zhuyin`, `short-chunk-layout`, `short-chunk-layout-zhuyin`, `sparse-library-addon`, `sparse-library-addon-reload`, `sparse-library-candidates`, `sparse-library-candidates-zhuyin`, `sparse-library-init`, `sparse-library-init-settled`, `sparse-library-init-settled-zhuyin`, `sparse-library-init-zhuyin`, `sparse-library-load`, `sparse-library-load-zhuyin`, `sparse-library-mask-out`, `sparse-library-mask-out-zhuyin`, `sparse-library-reinit`, `sparse-library-reinit-zhuyin`, `sparse-library-save`, `sparse-library-save-zhuyin`, `sparse-library-tokens`, `sparse-library-tokens-zhuyin`, `third-separator-library-init`, `third-separator-library-init-zhuyin`.
 The list is `LAYOUT_CRITICAL_CASES` in `tools/bisection/contract_library_loading.py`.
 Since class (c) was retired (2026-10-31 UTC), the
@@ -676,9 +696,9 @@ and `save-replacement-valid-to-different-valid*`.
       "cells": {
         "tkrzw": {
           "pin": {
-            "sha256": "9dccb5ee41c21aa14044d80a2ce0f4efd64a3cb16a3140f946ba088b17ec5466",
+            "sha256": "0651c7cb60f591d212748302c0bdff964e9e8a8261c3ba35570dbae1bbdb2788",
             "fields": {
-              "exit": "03b26944890929ff",
+              "exit": "37aa1ccf80e48183",
               "result": "74234e98afe7498f",
               "stderr": "38fda7ac81e31d08",
               "userfiles": "8cee4e15dbd7ce16"
@@ -698,7 +718,7 @@ and `save-replacement-valid-to-different-valid*`.
             }
           },
           "divergence": [
-            "exit: pin -6; subject 0",
+            "exit: pin -5; subject 0",
             "result: pin null; subject {\"l\" … (length 4): [], \"m\" … (length 6): <list length 3>, \"r\" … (length 7): <dict length 4>} … (length 5)",
             "stderr: pin \"open SCRATCH/user-X/user.conf failed.\\n** C\" … (length 205); subject \"open SCRATCH/user-X/user.conf failed.\"",
             "userfiles.addon.bin: subject only [27, \"4aeb3f46357bead\" … (length 64)]",
@@ -719,9 +739,9 @@ and `save-replacement-valid-to-different-valid*`.
         },
         "bdb": {
           "pin": {
-            "sha256": "fba053ede03b4389ea0c7e3609fa7867809d97eb5159cedb4bde77e35ff0f05e",
+            "sha256": "3ef93edf2341363be09f5a83b0db707e231f97b8ad40e4c47a3f9c06b781488a",
             "fields": {
-              "exit": "03b26944890929ff",
+              "exit": "37aa1ccf80e48183",
               "result": "74234e98afe7498f",
               "stderr": "38fda7ac81e31d08",
               "userfiles": "a0c9a73f3d638bb3"
@@ -741,7 +761,7 @@ and `save-replacement-valid-to-different-valid*`.
             }
           },
           "divergence": [
-            "exit: pin -6; subject 0",
+            "exit: pin -5; subject 0",
             "result: pin null; subject {\"l\" … (length 4): [], \"m\" … (length 6): <list length 3>, \"r\" … (length 7): <dict length 4>} … (length 5)",
             "stderr: pin \"open SCRATCH/user-X/user.conf failed.\\n** C\" … (length 205); subject \"open SCRATCH/user-X/user.conf failed.\"",
             "userfiles.addon.bin: subject only [27, \"4aeb3f46357bead\" … (length 64)]",
@@ -762,9 +782,9 @@ and `save-replacement-valid-to-different-valid*`.
         },
         "kc": {
           "pin": {
-            "sha256": "2f36ed493bec782f547bb6205f5b8330e1e6bb0d3bf1bb69d1aafb4573e6f793",
+            "sha256": "de9039386280f057a4677b7847902e0351c3ca7b2d8aae8a07eea345361040b3",
             "fields": {
-              "exit": "03b26944890929ff",
+              "exit": "37aa1ccf80e48183",
               "result": "74234e98afe7498f",
               "stderr": "38fda7ac81e31d08",
               "userfiles": "2be5bd8b027249a9"
@@ -784,7 +804,7 @@ and `save-replacement-valid-to-different-valid*`.
             }
           },
           "divergence": [
-            "exit: pin -6; subject 0",
+            "exit: pin -5; subject 0",
             "result: pin null; subject {\"l\" … (length 4): [], \"m\" … (length 6): <list length 3>, \"r\" … (length 7): <dict length 4>} … (length 5)",
             "stderr: pin \"open SCRATCH/user-X/user.conf failed.\\n** C\" … (length 205); subject \"open SCRATCH/user-X/user.conf failed.\"",
             "userfiles.addon.bin: subject only [27, \"4aeb3f46357bead\" … (length 64)]",
@@ -809,9 +829,9 @@ and `save-replacement-valid-to-different-valid*`.
       "cells": {
         "tkrzw": {
           "pin": {
-            "sha256": "80ce777a594f87f4c386bb38c8748949077ca95f89102abcdddd5e848b4e3ccb",
+            "sha256": "1c841d15148af82101fe250f72ac0bef6ac18a0ddf27ff723e820f47816d773c",
             "fields": {
-              "exit": "03b26944890929ff",
+              "exit": "37aa1ccf80e48183",
               "result": "74234e98afe7498f",
               "stderr": "38fda7ac81e31d08",
               "userfiles": "7820c8f31835e91d"
@@ -831,7 +851,7 @@ and `save-replacement-valid-to-different-valid*`.
             }
           },
           "divergence": [
-            "exit: pin -6; subject 0",
+            "exit: pin -5; subject 0",
             "result: pin null; subject {\"l\" … (length 4): [], \"m\" … (length 6): <list length 3>, \"r\" … (length 7): <dict length 4>} … (length 5)",
             "stderr: pin \"open SCRATCH/user-X/user.conf failed.\\n** C\" … (length 205); subject \"open SCRATCH/user-X/user.conf failed.\"",
             "userfiles.addon.bin: subject only [27, \"4aeb3f46357bead\" … (length 64)]",
@@ -847,9 +867,9 @@ and `save-replacement-valid-to-different-valid*`.
         },
         "bdb": {
           "pin": {
-            "sha256": "80ce777a594f87f4c386bb38c8748949077ca95f89102abcdddd5e848b4e3ccb",
+            "sha256": "1c841d15148af82101fe250f72ac0bef6ac18a0ddf27ff723e820f47816d773c",
             "fields": {
-              "exit": "03b26944890929ff",
+              "exit": "37aa1ccf80e48183",
               "result": "74234e98afe7498f",
               "stderr": "38fda7ac81e31d08",
               "userfiles": "7820c8f31835e91d"
@@ -869,7 +889,7 @@ and `save-replacement-valid-to-different-valid*`.
             }
           },
           "divergence": [
-            "exit: pin -6; subject 0",
+            "exit: pin -5; subject 0",
             "result: pin null; subject {\"l\" … (length 4): [], \"m\" … (length 6): <list length 3>, \"r\" … (length 7): <dict length 4>} … (length 5)",
             "stderr: pin \"open SCRATCH/user-X/user.conf failed.\\n** C\" … (length 205); subject \"open SCRATCH/user-X/user.conf failed.\"",
             "userfiles.addon.bin: subject only [27, \"4aeb3f46357bead\" … (length 64)]",
@@ -885,9 +905,9 @@ and `save-replacement-valid-to-different-valid*`.
         },
         "kc": {
           "pin": {
-            "sha256": "80ce777a594f87f4c386bb38c8748949077ca95f89102abcdddd5e848b4e3ccb",
+            "sha256": "1c841d15148af82101fe250f72ac0bef6ac18a0ddf27ff723e820f47816d773c",
             "fields": {
-              "exit": "03b26944890929ff",
+              "exit": "37aa1ccf80e48183",
               "result": "74234e98afe7498f",
               "stderr": "38fda7ac81e31d08",
               "userfiles": "7820c8f31835e91d"
@@ -907,7 +927,7 @@ and `save-replacement-valid-to-different-valid*`.
             }
           },
           "divergence": [
-            "exit: pin -6; subject 0",
+            "exit: pin -5; subject 0",
             "result: pin null; subject {\"l\" … (length 4): [], \"m\" … (length 6): <list length 3>, \"r\" … (length 7): <dict length 4>} … (length 5)",
             "stderr: pin \"open SCRATCH/user-X/user.conf failed.\\n** C\" … (length 205); subject \"open SCRATCH/user-X/user.conf failed.\"",
             "userfiles.addon.bin: subject only [27, \"4aeb3f46357bead\" … (length 64)]",
