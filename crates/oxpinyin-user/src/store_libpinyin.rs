@@ -150,6 +150,7 @@ impl From<PersistenceError> for UserStoreError {
                 UserStoreError::ChunkHeaderWrite(field)
             }
             PersistenceError::LibraryChunkHeaderRead => UserStoreError::LibraryChunkHeaderRead,
+            PersistenceError::SystemRemapFailed => UserStoreError::SaveRemapFailed,
             other => UserStoreError::Persistence(other.to_string()),
         }
     }
@@ -286,7 +287,7 @@ impl GenericUserStore<DefaultStore> {
             return Err(UserStoreError::LibraryChunkHeaderRead);
         }
         let persistence::LoadedProfile {
-            mut loaded,
+            loaded,
             replayed,
             user_libraries,
             overlong_index_keys,
@@ -375,14 +376,6 @@ impl GenericUserStore<DefaultStore> {
             || replayed
                 .values()
                 .any(crate::replay::ReplayedLibrary::has_added)
-            || loaded.state.system_overrides.iter().any(|(nibble, items)| {
-                items.iter().any(|(&slot, item)| {
-                    item.is_some()
-                        && originals
-                            .get(nibble)
-                            .is_some_and(|library| !library.contains_item(slot))
-                })
-            })
             || has_bigram_file
             || target
                 .phrases()
@@ -390,50 +383,21 @@ impl GenericUserStore<DefaultStore> {
                 .values()
                 .any(|library| !library.is_empty());
 
-        // The seed and the kept index are done with the loaded overrides, which
-        // the session now owns: move them into the live map rather than
-        // cloning every item and dropping the originals with `loaded`.
-        let has_system_items = !loaded.state.system_overrides.is_empty() || !replayed.is_empty();
-        // One pass over the replayed overrides: an item is kept, a removal has
-        // none to keep and the session records its token.
-        let mut kept_items = Vec::new();
-        let mut appended = Vec::new();
-        let mut removed_system_items = std::collections::BTreeSet::new();
-        for (nibble, items) in std::mem::take(&mut loaded.state.system_overrides) {
-            for (slot, item) in items {
-                let token = (u32::from(nibble) << 24) | slot;
-                match item {
-                    Some(item) => match originals.get(&nibble) {
-                        Some(original) if !original.contains_item(slot) => {
-                            appended.push((token, item));
-                        }
-                        _ => kept_items.push((token, item)),
-                    },
-                    None => {
-                        removed_system_items.insert(token);
-                    }
-                }
-            }
-        }
+        // The replay's buffers are the sub-indices' items from here on: the
+        // session owns them, and a removal is a slot the buffer holds no item
+        // at.
+        let has_system_items = !replayed.is_empty();
+        let has_removed_system_items = replayed
+            .values()
+            .any(crate::replay::ReplayedLibrary::has_removed);
         let library_offsets = seeded_totals.offsets;
-        let mut system_items =
-            crate::system_items::SystemItems::new(kept_items.into_iter().collect(), replayed)
-                .with_totals(seeded_totals.totals, seeded_totals.facade_extra);
-        for (token, item) in appended {
-            if let Some(original) = originals.get(&phrase_index_library_index(token)) {
-                let bytes = persistence::encode_persisted_item(&item)
-                    .map_err(|e| UserStoreError::Persistence(e.to_string()))?;
-                system_items.load_item(original, token, &bytes);
-            }
-        }
+        let system_items = crate::system_items::SystemItems::new(replayed)
+            .with_totals(seeded_totals.totals, seeded_totals.facade_extra);
 
         let inner = Arc::new(StoreInner {
             has_system_items: std::sync::atomic::AtomicBool::new(has_system_items),
             system_items: std::sync::Mutex::new(system_items),
-            has_removed_system_items: std::sync::atomic::AtomicBool::new(
-                !removed_system_items.is_empty(),
-            ),
-            removed_system_items: std::sync::Mutex::new(removed_system_items),
+            has_removed_system_items: std::sync::atomic::AtomicBool::new(has_removed_system_items),
             count_cache: std::sync::Mutex::new(None),
             standalone_lookup: std::sync::Mutex::new(None),
             db: std::sync::Mutex::new(db),
@@ -623,20 +587,6 @@ fn seed_txn_with_replay(
             seed(nibble, slot, SeedItem::View(item))?;
         }
     }
-    for (&nibble, library) in replayed {
-        for slot in library.add_candidates().filter(|slot| {
-            !originals
-                .get(&nibble)
-                .is_some_and(|original| original.contains_item(*slot))
-        }) {
-            if let Some(bytes) = library.bytes(slot)
-                && let Some(item) =
-                    oxpinyin_data::phrase_library::PhraseItemView::from_bytes(&bytes)
-            {
-                seed(nibble, slot, SeedItem::View(item))?;
-            }
-        }
-    }
 
     // load_db copies records without normalizing tokens or recreating prefixes.
     for (key, value) in &state.phrase_table {
@@ -743,8 +693,6 @@ fn export_session_state<S: WriteStore>(
         Ok(())
     })?;
 
-    let system_items = store.stored_system_items();
-    let removed_items = store.stored_removed_system_items();
     let session = store.session_target().is_some();
     let mut state = UserState::default();
     // A session save writes the index and phrase-table arenas directly; the
@@ -777,25 +725,18 @@ fn export_session_state<S: WriteStore>(
                 .insert(slot, Some(new_item));
         }
     }
-    // The live item is the authority for its unigram and its readings'
-    // counts, as it is for pricing: replay, an import and training each leave
-    // it holding what the save writes. Entries remain an ordered list, so a
-    // count is never rebuilt from a row found by keys.
-    for (token, mut item) in system_items {
-        let nibble = phrase_index_library_index(token);
-        let slot = token & crate::phrase::PHRASE_MASK;
-        if !session {
-            let base = originals
-                .get(&nibble)
-                .and_then(|original| original.unigram(slot))
-                .unwrap_or(0);
-            item.unigram = base.wrapping_add(unigrams.get(&token).copied().unwrap_or(0) as u32);
+    // A session's system items are its live buffers: a save diffs them
+    // against the file on disk (`persistence`), and only a test-facing export
+    // reads them as values.
+    #[cfg(test)]
+    if session && user_items {
+        for (token, item) in store.live_system_changes(originals) {
+            state
+                .system_overrides
+                .entry(phrase_index_library_index(token))
+                .or_default()
+                .insert(token & crate::phrase::PHRASE_MASK, item);
         }
-        state
-            .system_overrides
-            .entry(nibble)
-            .or_default()
-            .insert(slot, Some(item));
     }
     if let Some(target) = store.session_target() {
         let phrases = target.phrases();
@@ -821,15 +762,6 @@ fn export_session_state<S: WriteStore>(
                 }
             }
         }
-    }
-    // A removal is recorded last: it wins over any override a slot gathered
-    // from the rows, as the sub-index no longer holds the item to modify.
-    for token in removed_items {
-        state
-            .system_overrides
-            .entry(phrase_index_library_index(token))
-            .or_default()
-            .insert(token & crate::phrase::PHRASE_MASK, None);
     }
     state
         .libraries
@@ -1340,8 +1272,16 @@ mod tests {
         // A replayed library's total lives in its buffer, not in the map.
         assert_eq!(before_offsets.offsets, after_offsets.offsets);
         assert_eq!(before_offsets.facade_extra, after_offsets.facade_extra);
+        // The allocation cursor of a library with an original is not read: its
+        // items live in its buffer, and a view is not seeded.
         let snapshot = |db: &SessionValues<DefaultStore>| match db {
-            SessionValues::Memory(tables) => tables.borrow().clone(),
+            SessionValues::Memory(tables) => {
+                let mut tables = tables.borrow().clone();
+                if let Some(alloc) = tables.get_mut(ALLOC) {
+                    alloc.remove(&codec::encode_u8(1).to_vec());
+                }
+                tables
+            }
             SessionValues::Native(_) => panic!("test uses session rows"),
         };
         assert_eq!(snapshot(&before), snapshot(&after));
@@ -1581,7 +1521,7 @@ mod tests {
         ));
         assert_eq!(items.library_total(1, Some(original)), Some(saved_total));
         assert_eq!(
-            items.add_unigram(Some(original), token, 4, false),
+            items.add_unigram(Some(original), token, 4),
             Some(crate::replay::UnigramAdd::Refused)
         );
     }
@@ -1607,7 +1547,6 @@ mod tests {
             frequency_of(&store, token),
             Lookup::Found((ItemOrigin::Overlay, 105))
         );
-        assert!(!store.has_decoded_system_item(token));
         assert!(store.has_system_items());
         drop(store);
         std::fs::remove_dir_all(dir).expect("cleanup");
@@ -1817,14 +1756,15 @@ mod tests {
         let (dir, store) = open_with_payload("over-read-tail", three_item_originals(), &payload);
         let token = |slot: u32| (1_u32 << 24) | slot;
         // The library keeps its pre-replay content: the first record was
-        // applied before the walk reached the faulty one, then reversed.
+        // applied before the walk reached the faulty one, then reversed. The
+        // reversed buffer is the library's live buffer.
         assert_eq!(
             frequency_of(&store, token(1)),
-            Lookup::Found((ItemOrigin::Shipped, 100))
+            Lookup::Found((ItemOrigin::Overlay, 100))
         );
         assert_eq!(
             frequency_of(&store, token(3)),
-            Lookup::Found((ItemOrigin::Shipped, 30))
+            Lookup::Found((ItemOrigin::Overlay, 30))
         );
         drop(store);
         std::fs::remove_dir_all(dir).expect("cleanup");
@@ -1918,15 +1858,16 @@ mod tests {
                 reading.keys.iter().collect::<Vec<_>>(),
             )
         };
-        // A replayed item is the session's; an untouched one is the chunk's,
-        // read in place.
+        // Every item of a library with a live buffer is read from it: the
+        // replayed one as the replay wrote it, an untouched one as the chunk
+        // stored it.
         assert_eq!(
             live.read(replayed, summary),
             Lookup::Found((ItemOrigin::Overlay, 1, 1, 107, vec![ni]))
         );
         assert_eq!(
             live.read(untouched, summary),
-            Lookup::Found((ItemOrigin::Shipped, 1, 1, 30, vec![ni]))
+            Lookup::Found((ItemOrigin::Overlay, 1, 1, 30, vec![ni]))
         );
         assert_eq!(
             live.read(untouched, |item| item.phrase_text())
@@ -1967,9 +1908,10 @@ mod tests {
         assert_eq!(live.effective_unigram(absent), None);
         assert_eq!(live.overlay_end(1), store.system_item_end(1));
 
-        // The imported flag is the session's own item, whatever the mask or a
-        // removal says; the chunk's untouched item is not one.
-        assert!(live.is_imported(replayed).expect("imported"));
+        // The imported flag is an item the shipped chunk lacks, whatever the
+        // mask or a removal says; a chunk item the replay modified is not
+        // one.
+        assert!(!live.is_imported(replayed).expect("imported"));
         assert!(!live.is_imported(untouched).expect("imported"));
         assert!(!live.is_imported(removed).expect("imported"));
         assert!(!live.is_imported(absent).expect("imported"));
@@ -1998,7 +1940,7 @@ mod tests {
             assert_eq!(hidden.effective_unigram(token), None);
         }
 
-        assert!(hidden.is_imported(replayed).expect("imported"));
+        assert!(!hidden.is_imported(replayed).expect("imported"));
 
         drop(store);
         std::fs::remove_dir_all(dir).expect("cleanup");
@@ -2028,9 +1970,9 @@ mod tests {
         ];
         let (dir, mut store) = open_with_log("owned-overrides-modify", &modify);
         let token = (1_u32 << 24) | 1;
-        let live = store.stored_system_items();
+        let live = store.live_system_changes(&originals());
         assert_eq!(live.len(), 1);
-        assert_eq!(live.get(&token), Some(&modified));
+        assert_eq!(live.get(&token), Some(&Some(modified.clone())));
         assert!(store.has_system_items());
         // Saved (a clean session writes nothing) and reopened, the session
         // holds the same overrides.
@@ -2039,7 +1981,7 @@ mod tests {
         let reopened =
             UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
                 .expect("reopen");
-        assert_eq!(reopened.stored_system_items(), live);
+        assert_eq!(reopened.live_system_changes(&originals()), live);
         assert!(reopened.has_system_items());
         drop(reopened);
         std::fs::remove_dir_all(dir).expect("cleanup");
@@ -2057,7 +1999,10 @@ mod tests {
             },
         ];
         let (dir, store) = open_with_log("owned-overrides-remove", &remove);
-        assert!(store.stored_system_items().is_empty());
+        assert_eq!(
+            store.live_system_changes(&originals()),
+            BTreeMap::from([(token, None)])
+        );
         assert!(store.has_system_items());
         // The session remembers the removal: the shipped chunk still holds
         // the item, but `get_phrase_item` no longer finds it.
@@ -2079,7 +2024,7 @@ mod tests {
         .expect("write marker");
         let store = UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
             .expect("open");
-        assert!(store.stored_system_items().is_empty());
+        assert!(store.live_system_changes(&originals()).is_empty());
         assert!(!store.has_system_items());
         drop(store);
         std::fs::remove_dir_all(dir).expect("cleanup");

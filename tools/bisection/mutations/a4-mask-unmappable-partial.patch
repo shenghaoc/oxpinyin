@@ -1,0 +1,9 @@
+diff --git a/crates/oxpinyin-facade/src/context.rs b/crates/oxpinyin-facade/src/context.rs
+--- a/crates/oxpinyin-facade/src/context.rs
++++ b/crates/oxpinyin-facade/src/context.rs
+@@ -611,2 +611,5 @@
+                 }
++                if let Some(store) = self.user_store_mut() {
++                    let _ = store.mask_out(mask, value);
++                }
+                 return MaskOutOutcome::Done(true);

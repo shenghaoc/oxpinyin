@@ -1,0 +1,7 @@
+diff --git a/crates/oxpinyin-user/src/persistence.rs b/crates/oxpinyin-user/src/persistence.rs
+index c9ed1609..c2ccdc42 100644
+--- a/crates/oxpinyin-user/src/persistence.rs
++++ b/crates/oxpinyin-user/src/persistence.rs
+@@ -2319 +2319 @@ fn stage_rest<B: FnMut(u8) -> SaveBaseline>(
+-                                Some(SaveBaseline::Changed(disk)) => disk.view(),
++                                Some(SaveBaseline::Changed(_)) => original,

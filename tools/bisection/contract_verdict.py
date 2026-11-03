@@ -330,6 +330,8 @@ def matches(spec, pin, subject, *, directory_probe):
         shown = subject['result'] or {}
         same = pin['exit'] == -signal.SIGSEGV and subject['exit'] == 0 and \
             (spec['stderr_varies'] or pin['stderr'] == subject['stderr']) and \
+            (spec.get('crash_stderr_pattern') is None or
+             re.search(spec['crash_stderr_pattern'], pin['stderr'], re.MULTILINE) is not None) and \
             all(shown.get(key) == value for key, value in spec['crash'].items())
     elif as_abort and spec.get('sigabrt', False):
         same = sigabrt_reproduced(spec, pin, subject)

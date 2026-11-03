@@ -57,6 +57,8 @@ class RegisterTests(unittest.TestCase):
 
     def test_invalid_option_combinations_assert_with_the_id_and_store_nothing(self):
         invalid = (dict(either=True), dict(either=True, abort=0), dict(both_abort=True),
+                   dict(crash_stderr_pattern='mmap'),
+                   dict(crash={}, stderr_varies=True, crash_stderr_pattern='mmap'),
                    dict(dir_chunk='other', abort=0), dict(dir_chunk='user'),
                    dict(pin_not_run={}, stderr=True), dict(pin_not_run={}, policy_record='r.md'),
                    dict(policy_record='r.md', host_scanf=('1e',)), dict(policy_record='r.md', crash={}),
@@ -72,6 +74,7 @@ class RegisterTests(unittest.TestCase):
 
     def test_valid_exception_combinations_register(self):
         valid = (dict(either=True, abort=0, crash={}), dict(fatal=True, both_abort=True),
+                 dict(crash={}, crash_stderr_pattern='mmap'),
                  dict(dir_chunk='system', abort=0), dict(pin_not_run={'ret': 0}),
                  dict(policy_record='r.md', stderr=True, control=True),
                  dict(policy_record='r.md', abort=False), dict(policy_record='r.md', userdir=True),

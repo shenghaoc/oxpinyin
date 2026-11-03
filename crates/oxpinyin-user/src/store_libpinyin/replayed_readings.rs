@@ -424,6 +424,12 @@ fn a_mask_leaves_nothing_of_the_replayed_counts() {
     store
         .mask_out(0xff00_0000, LIBRARY)
         .expect("mask library 1");
+    // The pin's `mask_out` leaves a system sub-index to the reload, which maps
+    // the chunk again and merges the log without the masked records.
+    let mut remapped = base.fixture_copy();
+    store
+        .reload_system_libraries_retaining(&mut remapped, 0xff00_0000, LIBRARY)
+        .expect("reload");
     assert!(
         store
             .with_effective_system_item(LIBRARY | 1, |_| ())
@@ -875,7 +881,6 @@ fn a_replayed_add_and_the_imports_live_only_in_the_buffer() {
     // The replayed ADD: the buffer's item, no arena copy, no decoded copy.
     assert!(!arena_library(&store));
     assert!(store.with_user_item(appended, |_| ()).is_some());
-    assert!(!store.has_decoded_system_item(appended));
     assert_eq!(store.system_unigram(appended), Some(11));
     assert_eq!(store.system_library_total(1), Some(161));
 
@@ -887,7 +892,6 @@ fn a_replayed_add_and_the_imports_live_only_in_the_buffer() {
         .expect("import a new phrase");
     assert_eq!(new, LIBRARY | 6);
     assert!(!arena_library(&store));
-    assert!(!store.has_decoded_system_item(new));
     assert_eq!(store.system_unigram(new), Some(15));
     assert_eq!(store.system_library_total(1), Some(176));
     assert_eq!(store.unigram_total().expect("extra"), 0);
@@ -907,9 +911,6 @@ fn a_replayed_add_and_the_imports_live_only_in_the_buffer() {
     assert_eq!(counts(&store, 5), [54]);
     assert_eq!(counts(&store, 1), [17]);
     assert_eq!(counts(&store, 6), [8]);
-    for token in [appended, new, LIBRARY | 1] {
-        assert!(!store.has_decoded_system_item(token));
-    }
     assert!(!arena_library(&store));
     assert_eq!(store.system_library_total(1), Some(176));
     assert_eq!(store.system_unigram(LIBRARY | 1), Some(100));
@@ -928,7 +929,7 @@ fn a_replayed_add_and_the_imports_live_only_in_the_buffer() {
 }
 
 #[test]
-fn materialized_appended_item_keeps_its_lookup_text() {
+fn live_appended_item_keeps_its_lookup_text() {
     let base = library_of(vec![(1, item(0x4f60, 100, &[(tone("ni", 3), 10)]))]);
     let added = item(0x4e94, 11, &[(tone("wu", 3), 50)]);
     let (dir, mut store) = open_over(
@@ -941,7 +942,7 @@ fn materialized_appended_item_keeps_its_lookup_text() {
     );
     let token = LIBRARY | 5;
     store.mask_out(u32::MAX, 0).expect("mask other token");
-    assert!(store.has_decoded_system_item(token));
+    assert!(store.with_live_item(token, |_| ()).is_some());
     assert_eq!(
         store.lookup().expect("lookup").phrase_text(token),
         Some("五".into())
@@ -951,7 +952,7 @@ fn materialized_appended_item_keeps_its_lookup_text() {
 }
 
 #[test]
-fn materialized_appended_item_accepts_import_after_failed_mask() {
+fn live_appended_item_accepts_import_after_failed_mask() {
     let base = library_of(vec![(1, item(0x4f60, 100, &[(tone("ni", 3), 10)]))]);
     let added = item(0x4e94, 11, &[(tone("wu", 3), 50)]);
     let (dir, mut store) = open_over(
@@ -964,7 +965,7 @@ fn materialized_appended_item_accepts_import_after_failed_mask() {
     );
     let token = LIBRARY | 5;
     store.mask_out(u32::MAX, 0).expect("mask other token");
-    assert!(store.has_decoded_system_item(token));
+    assert!(store.with_live_item(token, |_| ()).is_some());
     store.plant_raw_bigram(1, &[0, 0, 0, 0, 1]);
     assert!(matches!(
         store.mask_out(u32::MAX, 0),
@@ -977,7 +978,7 @@ fn materialized_appended_item_accepts_import_after_failed_mask() {
             .expect("import existing"),
         token
     );
-    assert!(store.has_decoded_system_item(token));
+    assert!(store.with_live_item(token, |_| ()).is_some());
     assert_eq!(counts(&store, 5), [54]);
     assert_eq!(store.system_unigram(token), Some(11));
     assert_eq!(store.system_library_total(1), before);
@@ -986,14 +987,14 @@ fn materialized_appended_item_accepts_import_after_failed_mask() {
 }
 
 #[test]
-fn materialized_new_import_keeps_text_and_accepts_another_reading_after_failed_mask() {
+fn live_new_import_keeps_text_and_accepts_another_reading_after_failed_mask() {
     let base = library_of(vec![(1, item(0x4f60, 100, &[(tone("ni", 3), 10)]))]);
     let (dir, mut store) = open_over("materialized-new-import", &base, &[]);
     let token = store
         .add_system_phrase_in(1, None, &"五".into(), &dense("wu", 3), Some(5))
         .expect("import new");
     store.mask_out(u32::MAX, 0).expect("mask other token");
-    assert!(store.has_decoded_system_item(token));
+    assert!(store.with_live_item(token, |_| ()).is_some());
     assert_eq!(
         store.lookup().expect("lookup").phrase_text(token),
         Some("五".into())
@@ -1009,7 +1010,7 @@ fn materialized_new_import_keeps_text_and_accepts_another_reading_after_failed_m
             .expect("import existing"),
         token
     );
-    assert!(store.has_decoded_system_item(token));
+    assert!(store.with_live_item(token, |_| ()).is_some());
     assert_eq!(
         store.with_user_item(token, |item| item.pronunciation(0).expect("reading").freq),
         Some(9)

@@ -130,29 +130,28 @@ pub struct SystemLibrary<
 }
 
 /// What a save's current-on-disk remap says about one selected system
-/// library. `Keep` is the safe fallback for a failure that is not a
-/// header-accepted layout fault (the existing init-snapshot behavior);
-/// `Unchanged` means the current chunk is byte-identical to the loaded
-/// snapshot, so the authoritative fast path still applies; `Changed`
-/// carries the current on-disk sub-index to diff against the live state.
+/// library. The save always diffs the live sub-index against the file as it
+/// is on disk now, never against the chunk the session loaded.
 pub enum SaveBaseline {
-    /// A mapping failure that is not a header-accepted layout fault: keep
-    /// the existing init-snapshot behavior. This is the registered row 76
-    /// answer at the save site: the caller writes `mmap %s failed!`, the
-    /// save continues, and the pin's empty-chunk `SubPhraseIndex::load`
-    /// SIGSEGV is not reproduced.
+    /// There is no file to map again (a transient or fixture session): the
+    /// retained library stands for the file.
     Keep,
-    /// The current chunk is byte-identical to the loaded snapshot; the
-    /// authoritative override-only fast path applies.
-    Unchanged,
-    /// The current chunk differs and is the old side of the full union
-    /// diff against the live sub-index.
+    /// The chunk as it is on disk now, mapped again: the old side of the
+    /// diff against the live sub-index (`SubPhraseIndex::diff`).
     Changed(SystemLibrary),
     /// The library is unloaded: `get_range` answers
     /// `ERROR_NO_SUB_PHRASE_INDEX`, so `_write_files` and `_rename_files`
     /// skip it and its file on disk stays as it is (074a2219
     /// `pinyin.cpp:928-933`, `:1032-1035`; `zhuyin.cpp:563-568`).
     Unloaded,
+    /// `MemoryChunk::mmap` refuses the library's system file at this point of
+    /// the loop (`pinyin.cpp:956`, `zhuyin.cpp:589`; register row 76). The
+    /// pin writes `mmap %s failed!` and dies; the registered safe outcome
+    /// stops the save here: the earlier libraries' files stay as written
+    /// (libzhuyin has renamed them), nothing later is written or renamed, no
+    /// marker is written, the session stays dirty and the save answers
+    /// `false`.
+    Unmappable,
     /// The library's system file is a directory whose header read
     /// `MemoryChunk::mmap` asserts on at this point of the loop
     /// (`pinyin.cpp:955`, `zhuyin.cpp:588`, `memory_chunk.h:493`; register
@@ -325,7 +324,6 @@ impl<
     /// The item `get_phrase_item` finds at `slot` as bytes: the shipped
     /// chunk's header-length bytes, read in place from the mapping; an inline
     /// item (a fixture store) is serialised. `None` when there is no item.
-    #[cfg(test)]
     pub(crate) fn visible_bytes(&self, slot: u32) -> Option<std::borrow::Cow<'_, [u8]>> {
         if let Some(item) = self.items.borrow().get(&slot) {
             return Some(std::borrow::Cow::Owned(journal_item_bytes(item)));
@@ -713,6 +711,9 @@ pub enum PersistenceError {
     /// asserts on (`memory_chunk.h:493`, register row 96): the save stops
     /// there, as the pin dies there.
     LibraryChunkHeaderRead,
+    /// `MemoryChunk::mmap` refused a system library's file at the save's
+    /// remap (register row 76): the save stopped at that library.
+    SystemRemapFailed,
     /// `user.conf` names a database format upstream's
     /// `to_table_database_format_type` does not know, where that function
     /// `abort()`s (`table_info.cpp:122-133`). The class-(c) answer: the
@@ -736,6 +737,10 @@ impl std::fmt::Display for PersistenceError {
                 f,
                 "a system library is a directory whose chunk header cannot be read \
                  (upstream asserts, memory_chunk.h:493)"
+            ),
+            Self::SystemRemapFailed => write!(
+                f,
+                "a system library's file cannot be mapped again (upstream: mmap failed!)"
             ),
             Self::UnknownDatabaseFormat => write!(
                 f,
@@ -851,14 +856,12 @@ pub(crate) fn chewing_rows(
     state: &UserState,
     originals: &impl OriginalLibraries,
 ) -> Vec<PinyinIndexItem> {
-    chewing_rows_with_views(state, originals, &BTreeMap::new(), &BTreeMap::new())
+    chewing_rows_inner(state, originals)
 }
 
-fn chewing_rows_with_views(
+fn chewing_rows_inner(
     state: &UserState,
     originals: &impl OriginalLibraries,
-    libraries: &BTreeMap<u8, UserLibrary>,
-    replayed: &BTreeMap<u8, ReplayedLibrary>,
 ) -> Vec<PinyinIndexItem> {
     // The pinyin index holds the readings `add_index` saw. The phrase
     // index is independently stored and copied verbatim below.
@@ -904,44 +907,6 @@ fn chewing_rows_with_views(
                             .collect(),
                     });
                 }
-            }
-        }
-    }
-    let mut append_view =
-        |nibble, slot, item: oxpinyin_data::phrase_library::PhraseItemView<'_>| {
-            let token = token_of(nibble, slot);
-            for pron in item.pronunciations() {
-                let packed: Vec<_> = pron
-                    .keys
-                    .as_chunks::<2>()
-                    .0
-                    .iter()
-                    .map(|b| u16::from_le_bytes([b[0], b[1]]))
-                    .collect();
-                if state.indexed.contains(&(token, packed.clone())) {
-                    chewing_rows.push(PinyinIndexItem {
-                        token,
-                        keys: packed.into_iter().map(ChewingKey::from_packed).collect(),
-                    });
-                }
-            }
-        };
-    for (&nibble, library) in libraries {
-        for (slot, item) in library.items() {
-            append_view(nibble, slot, item);
-        }
-    }
-    for (&nibble, library) in replayed {
-        for slot in library.add_candidates().filter(|slot| {
-            !originals
-                .get(&nibble)
-                .is_some_and(|original| original.contains_item(*slot))
-        }) {
-            if let Some(bytes) = library.bytes(slot)
-                && let Some(item) =
-                    oxpinyin_data::phrase_library::PhraseItemView::from_bytes(&bytes)
-            {
-                append_view(nibble, slot, item);
             }
         }
     }
@@ -1479,6 +1444,10 @@ fn load_logs(dir: &Path, originals: &impl OriginalLibraries, loaded: &mut Loaded
     loaded.journal_fault = replay_logs(dir, originals, loaded, None, false, None).err();
 }
 
+/// A reload's result: the live buffer each replayed library keeps, and the
+/// total each library the profile filled holds.
+pub(crate) type Reloaded = (BTreeMap<u8, ReplayedLibrary>, BTreeMap<u8, u32>);
+
 /// One reloaded library's saved state: the `.dbin` log in the user
 /// directory replayed onto the freshly mapped system original —
 /// `_load_phrase_library`'s `load` then `merge` (074a2219
@@ -1491,10 +1460,11 @@ fn load_logs(dir: &Path, originals: &impl OriginalLibraries, loaded: &mut Loaded
 pub(crate) fn load_library_logs(
     dir: &Path,
     originals: &impl OriginalLibraries,
-) -> Result<(UserState, BTreeMap<u8, u32>), JournalFault> {
+) -> Result<Reloaded, JournalFault> {
     let mut loaded = Loaded::default();
-    replay_logs(dir, originals, &mut loaded, None, true, None)?;
-    Ok((loaded.state, loaded.library_totals))
+    let mut replayed = BTreeMap::new();
+    replay_logs(dir, originals, &mut loaded, None, true, Some(&mut replayed))?;
+    Ok((replayed, loaded.library_totals))
 }
 
 /// One reloaded `USER_FILE` library's saved state: its chunk in the user
@@ -1534,17 +1504,18 @@ pub(crate) fn load_masked_logs(
     originals: &impl OriginalLibraries,
     mask: u32,
     value: u32,
-) -> Result<(UserState, BTreeMap<u8, u32>), JournalFault> {
+) -> Result<Reloaded, JournalFault> {
     let mut loaded = Loaded::default();
+    let mut replayed = BTreeMap::new();
     replay_logs(
         dir,
         originals,
         &mut loaded,
         Some((mask, value)),
         false,
-        None,
+        Some(&mut replayed),
     )?;
-    Ok((loaded.state, loaded.library_totals))
+    Ok((replayed, loaded.library_totals))
 }
 
 /// The replay of every `SYSTEM_FILE` library's log, in sub-index order: the
@@ -1945,6 +1916,7 @@ pub fn save_with_bigram(
             index: &index,
             phrase_table: None,
             compacted: &[],
+            live: None,
         },
         originals,
         versions,
@@ -1965,6 +1937,10 @@ pub(crate) struct SaveSource<'a> {
     /// The nibbles whose live empty sub-index the pin's `compact` rebuilt
     /// from no items; their log header's new total is zero.
     pub(crate) compacted: &'a [u8],
+    /// A session's loaded system libraries: their live buffers and totals,
+    /// which the save diffs against the files on disk. `None` builds the
+    /// logs from `state`'s overrides.
+    pub(crate) live: Option<&'a crate::system_items::SystemItems>,
 }
 
 /// The save's I/O parameters and its optional current-on-disk baseline
@@ -2259,6 +2235,7 @@ fn stage_rest<B: FnMut(u8) -> SaveBaseline>(
         phrase_table,
         compacted,
         libraries,
+        live,
     } = source;
     // A session's index arena is authoritative. A value-only save derives
     // the table from the held state, as before, and keeps the caller's
@@ -2300,6 +2277,11 @@ fn stage_rest<B: FnMut(u8) -> SaveBaseline>(
                 staged.unloaded.push(nibble);
                 continue;
             }
+            // Register row 76: `MemoryChunk::mmap` refused the file. The save
+            // stops at this library with every earlier file as written.
+            if matches!(baseline, Some(SaveBaseline::Unmappable)) {
+                return Err(PersistenceError::SystemRemapFailed);
+            }
             // Register row 96: the pin's `MemoryChunk::mmap` asserts here,
             // after the earlier libraries' files were written (libzhuyin
             // renamed each as it went).
@@ -2328,25 +2310,45 @@ fn stage_rest<B: FnMut(u8) -> SaveBaseline>(
                 }
                 LibraryFile::Log => {
                     let original = originals.get(&nibble).unwrap_or(empty_library.view());
-                    let overrides = state
-                        .system_overrides
-                        .get(&nibble)
-                        .cloned()
-                        .unwrap_or_default();
-                    let records = match baseline {
-                        Some(SaveBaseline::Changed(disk)) => diff_records_against(
-                            nibble,
-                            original,
-                            &overrides,
-                            disk.view(),
-                            compacted.contains(&nibble).then_some(0),
-                        )?,
-                        _ => diff_records_with_new_total(
-                            nibble,
-                            original,
-                            &overrides,
-                            compacted.contains(&nibble).then_some(0),
-                        )?,
+                    let new_total = compacted.contains(&nibble).then_some(0);
+                    let records = match (live, baseline) {
+                        // The pin's `_write_files`: the chunk on disk now is
+                        // the old side, the live sub-index the new one.
+                        (Some(items), baseline) => {
+                            let disk = match &baseline {
+                                Some(SaveBaseline::Changed(disk)) => disk.view(),
+                                _ => original,
+                            };
+                            diff_live_records(
+                                items.live_library(nibble, original),
+                                disk,
+                                new_total.unwrap_or_else(|| {
+                                    items.library_total(nibble, Some(original)).unwrap_or(0)
+                                }),
+                            )
+                        }
+                        (None, Some(SaveBaseline::Changed(disk))) => {
+                            let overrides = state
+                                .system_overrides
+                                .get(&nibble)
+                                .cloned()
+                                .unwrap_or_default();
+                            diff_records_against(
+                                nibble,
+                                original,
+                                &overrides,
+                                disk.view(),
+                                new_total,
+                            )?
+                        }
+                        (None, _) => {
+                            let overrides = state
+                                .system_overrides
+                                .get(&nibble)
+                                .cloned()
+                                .unwrap_or_default();
+                            diff_records_with_new_total(nibble, original, &overrides, new_total)?
+                        }
                     };
                     let payload = encode_log_records(&records)
                         .map_err(|e| PersistenceError::Codec(e.to_string()))?;
@@ -2486,6 +2488,75 @@ fn diff_records_with_new_total(
         }
     }
     Ok(records)
+}
+
+/// The live side of a save's diff: a library's live buffer, or its shipped
+/// chunk where no write has made one.
+pub(crate) enum LiveSubIndex<'a> {
+    /// The library's live buffer.
+    Buffer(&'a crate::replay::ReplayedLibrary),
+    /// The chunk as shipped.
+    Chunk(SystemLibraryRef<'a>),
+}
+
+impl LiveSubIndex<'_> {
+    fn end(&self) -> u32 {
+        match self {
+            Self::Buffer(buffer) => buffer.range_end(),
+            Self::Chunk(chunk) => chunk.range_end,
+        }
+    }
+
+    fn item(&self, slot: u32) -> Option<std::borrow::Cow<'_, [u8]>> {
+        match self {
+            Self::Buffer(buffer) => buffer.item_bytes(slot),
+            Self::Chunk(chunk) => chunk.visible_bytes(slot),
+        }
+    }
+}
+
+/// `SubPhraseIndex::diff` (074a2219 `phrase_index.cpp:394-442`): the header
+/// from the old sub-index's total to the live one's, then, over the union of
+/// the two ranges in token order, an ADD where only the live side holds the
+/// item, a REMOVE where only the old side does, and a MODIFY where both hold
+/// it and the bytes differ. The old side is the chunk mapped again from disk
+/// (`pinyin.cpp:952-959`, `zhuyin.cpp:585-592`); the live side is read in
+/// place, an item as `get_phrase_item` finds it.
+pub(crate) fn diff_live_records(
+    live: LiveSubIndex<'_>,
+    disk: SystemLibraryRef<'_>,
+    new_total: u32,
+) -> Vec<LogRecord> {
+    let mut records = vec![LogRecord::ModifyHeader {
+        old_total: disk.total,
+        new_total,
+    }];
+    let end = live.end().max(disk.range_end);
+    for slot in 1..end {
+        let old = disk.visible_bytes(slot);
+        let new = live.item(slot);
+        match (old, new) {
+            (Some(old), Some(new)) => {
+                if old != new {
+                    records.push(LogRecord::Modify {
+                        token: slot,
+                        old_item: old.into_owned(),
+                        new_item: new.into_owned(),
+                    });
+                }
+            }
+            (Some(old), None) => records.push(LogRecord::Remove {
+                token: slot,
+                old_item: old.into_owned(),
+            }),
+            (None, Some(new)) => records.push(LogRecord::Add {
+                token: slot,
+                new_item: new.into_owned(),
+            }),
+            (None, None) => {}
+        }
+    }
+    records
 }
 
 /// [`diff_records`] against a changed on-disk sub-index: the pin's
@@ -2748,6 +2819,7 @@ mod tests {
             index: &index,
             phrase_table: None,
             compacted: &[],
+            live: None,
         };
         save_session(&dir, source, &originals, &versions(), 1, None).expect("save");
 
@@ -3791,6 +3863,7 @@ mod tests {
             index: &UserIndex::default(),
             phrase_table: None,
             compacted: &[],
+            live: None,
         };
         let error =
             save_with_bigram_reporting(&dir, source, &originals, &versions(), 0, None, false)
@@ -4439,10 +4512,22 @@ mod tests {
             build_memory_chunk(&payload).expect("frame"),
         )
         .expect("write");
-        let reload = load_library_logs(&dir, &originals()).map(|(state, library_totals)| Loaded {
-            state,
-            library_totals,
-            ..Loaded::default()
+        let reload = load_library_logs(&dir, &originals()).map(|(replayed, library_totals)| {
+            let mut state = UserState::default();
+            for (token, item) in
+                crate::system_items::SystemItems::new(replayed).changed_items(&originals())
+            {
+                state
+                    .system_overrides
+                    .entry(crate::phrase::phrase_index_library_index(token))
+                    .or_default()
+                    .insert(token & crate::phrase::PHRASE_MASK, item);
+            }
+            Loaded {
+                state,
+                library_totals,
+                ..Loaded::default()
+            }
         });
         std::fs::remove_dir_all(&dir).expect("cleanup");
         [init, reload]

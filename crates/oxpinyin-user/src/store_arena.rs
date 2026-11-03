@@ -238,9 +238,6 @@ impl<S: WriteStore> GenericUserStore<S> {
         readings: impl Iterator<Item = Vec<ChewingKey>>,
         delta: u32,
     ) -> Result<(), UserStoreError> {
-        if self.system_item_removed(token) {
-            return Ok(());
-        }
         let target = self
             .inner
             .libpinyin
@@ -258,45 +255,20 @@ impl<S: WriteStore> GenericUserStore<S> {
             return Ok(());
         }
         drop(phrases);
+        // Any system item is trained in place in its library's live buffer; a
+        // removed one answers no item there and is left alone.
         let mut items = self
             .inner
             .system_items
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        // A decoded item (an import, or one a mask or reload materialized) is
-        // the authoritative value and is trained as it is. Any other system
-        // item is trained in place in its library's live buffer.
-        if !items.has_decoded(&token) {
-            if items.train_live(
-                originals.get(&phrase_index_library_index(token)),
-                token,
-                readings,
-                delta,
-            ) {
-                self.inner.has_system_items.store(true, Ordering::Relaxed);
-            }
-            drop(items);
-            self.mark_committed_write(db, true);
-            return Ok(());
-        }
-        if let Some(item) = items.get_mut(&token) {
-            for reading in readings {
-                let mut total = 0_u32;
-                for (keys, frequency) in &mut item.prons {
-                    total = total.wrapping_add(*frequency);
-                    if !crate::store_libpinyin::pronunciation_matches(
-                        &reading,
-                        keys.iter().copied(),
-                    ) {
-                        continue;
-                    }
-                    let Some(next) = total.checked_add(delta) else {
-                        break;
-                    };
-                    total = next;
-                    *frequency = frequency.wrapping_add(delta);
-                }
-            }
+        if items.train_live(
+            originals.get(&phrase_index_library_index(token)),
+            token,
+            readings,
+            delta,
+        ) {
+            self.inner.has_system_items.store(true, Ordering::Relaxed);
         }
         drop(items);
         self.mark_committed_write(db, true);
@@ -330,21 +302,8 @@ impl<S: WriteStore> GenericUserStore<S> {
         if original.contains_item(token & PHRASE_MASK) {
             return None;
         }
-        let mut read = Some(read);
-        let live = self
-            .with_live_item(token, |bytes, _| {
-                PhraseItemView::from_bytes(bytes).and_then(|view| Some((read.take()?)(view)))
-            })
-            .flatten();
-        if live.is_some() {
-            return live;
-        }
-        // A mask or a reload of another library materialized the item; the
-        // decoded copy answers until the save and reload members move it.
-        let bytes = self.with_overlay_item(token, |item| {
-            crate::persistence::encode_persisted_item(item).ok()
-        })??;
-        PhraseItemView::from_bytes(&bytes).and_then(|view| Some((read.take()?)(view)))
+        self.with_live_item(token, |bytes| PhraseItemView::from_bytes(bytes).map(read))
+            .flatten()
     }
 
     pub(super) fn arena_add_phrase(
@@ -463,7 +422,6 @@ impl<S: WriteStore> GenericUserStore<S> {
         }
         drop(phrases);
         if (1..=4).contains(&library) {
-            self.revive_system_item(token);
             self.inner.has_system_items.store(true, Ordering::Relaxed);
         }
         self.mark_committed_import_write(db, new);
@@ -532,38 +490,23 @@ impl<S: WriteStore> GenericUserStore<S> {
             if original.contains_item(token & PHRASE_MASK) {
                 return Err(UserStoreError::InvalidPhrase);
             }
-            // A mask can have materialized the appended item. Keep the
-            // merged value in that overlay until the library is reloaded.
-            let overlay = items
-                .decoded(&token)
-                .map(crate::persistence::encode_persisted_item)
-                .transpose()
-                .map_err(|error| UserStoreError::Persistence(error.to_string()))?;
-            let merge = |bytes: &[u8]| {
-                let view = PhraseItemView::from_bytes(bytes)?;
-                if view.as_bytes()[6..6 + 4 * view.phrase_length()] != phrase_table::key_ucs4(words)
-                {
-                    return None;
-                }
-                Some(UserLibrary::merged_reading(view, &packed, delta))
-            };
-            let merged = match &overlay {
-                Some(bytes) => merge(bytes),
-                None => items.with_live(token, |bytes, _| merge(bytes)).flatten(),
-            }
-            .ok_or(UserStoreError::InvalidPhrase)?
-            .map_err(UserStoreError::Persistence)?;
-            if overlay.is_some() {
-                let item = oxpinyin_data::chunk_write::decode_phrase_item(&merged)
-                    .map_err(|error| UserStoreError::Persistence(error.to_string()))?;
-                items.insert(token, item);
-            } else {
-                items.remove_item(original, token);
-                items.add_item(original, token, &merged);
-            }
+            let merged = items
+                .with_live(token, |bytes| {
+                    let view = PhraseItemView::from_bytes(bytes)?;
+                    if view.as_bytes()[6..6 + 4 * view.phrase_length()]
+                        != phrase_table::key_ucs4(words)
+                    {
+                        return None;
+                    }
+                    Some(UserLibrary::merged_reading(view, &packed, delta))
+                })
+                .flatten()
+                .ok_or(UserStoreError::InvalidPhrase)?
+                .map_err(UserStoreError::Persistence)?;
+            items.remove_item(original, token);
+            items.add_item(original, token, &merged);
             drop(items);
             drop(phrases);
-            self.revive_system_item(token);
             self.inner.has_system_items.store(true, Ordering::Relaxed);
             self.mark_committed_import_write(db, false);
             return Ok(token);
@@ -583,7 +526,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         items.add_item(original, token, &bytes);
         let increment = delta.wrapping_mul(ADD_PHRASE_UNIGRAM_FACTOR_U32);
         let outcome = items
-            .add_unigram(Some(original), token, increment, false)
+            .add_unigram(Some(original), token, increment)
             .unwrap_or(UnigramAdd::Missing);
         if !outcome.is_accepted() {
             items.add_facade_extra(u64::from(increment));
@@ -600,7 +543,6 @@ impl<S: WriteStore> GenericUserStore<S> {
             .collect();
         phrases.index.add(&chewing, token);
         drop(phrases);
-        self.revive_system_item(token);
         self.inner.has_system_items.store(true, Ordering::Relaxed);
         self.mark_committed_import_write(db, true);
         Ok(token)
@@ -637,32 +579,20 @@ impl<S: WriteStore> GenericUserStore<S> {
         };
         let library = phrase_index_library_index(token);
         let original = self.originals.get(&library);
-        // Read and release the removed-set guard before taking the arena or
-        // items lock; nested acquisitions follow the order in `StoreInner`.
-        let removed = original.is_some() && self.system_item_removed(token);
         let mut phrases = target.phrases();
-        let arena = phrases.item(token).is_some();
         let mut items = self
             .inner
             .system_items
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if original.is_some() {
-            let outcome = if removed {
-                UnigramAdd::Missing
-            } else {
-                items
-                    .add_unigram(original, token, delta, arena)
-                    .unwrap_or(UnigramAdd::Missing)
-            };
+            // A slot the buffer holds no item at (a removed or absent one)
+            // answers `Missing`.
+            let outcome = items
+                .add_unigram(original, token, delta)
+                .unwrap_or(UnigramAdd::Missing);
             if outcome.is_accepted() {
-                if arena {
-                    if let Some(library) = phrases.item_mut(token) {
-                        library.increment_unigram(token & PHRASE_MASK, delta);
-                    }
-                } else {
-                    self.inner.has_system_items.store(true, Ordering::Relaxed);
-                }
+                self.inner.has_system_items.store(true, Ordering::Relaxed);
             } else {
                 items.add_facade_extra(u64::from(delta));
             }
@@ -790,46 +720,5 @@ impl<S: WriteStore> GenericUserStore<S> {
                 .map_err(UserStoreError::Persistence)?;
         }
         Ok(())
-    }
-
-    /// The arenas a system library transition installs: `state`'s items,
-    /// and its overrides of slots the mapped chunk does not hold. Persisted
-    /// empty phrases are retained within the current arena limits. An item
-    /// the arena cannot hold is still left out: the arena-limit skip is an
-    /// interim KNOWN DIVERGENCE from the pin's wrapped writes (#1514;
-    /// 074a2219 novel_types.h:128, phrase_index.cpp:208-217,
-    /// memory_chunk.h:290-296).
-    pub(super) fn arena_replacement(
-        &self,
-        originals: &impl crate::persistence::OriginalLibraries,
-        state: &crate::persistence::UserState,
-    ) -> std::collections::BTreeMap<u8, UserLibrary> {
-        let mut libraries = std::collections::BTreeMap::<u8, UserLibrary>::new();
-        let hold = |libraries: &mut std::collections::BTreeMap<u8, UserLibrary>,
-                    nibble: u8,
-                    slot: u32,
-                    item: &ChunkItem| {
-            if let Ok(bytes) = crate::persistence::encode_persisted_item(item) {
-                let _held = libraries.entry(nibble).or_default().replace(slot, &bytes);
-            }
-        };
-        for (&nibble, items) in &state.libraries {
-            libraries.entry(nibble).or_default();
-            for (&slot, item) in items {
-                hold(&mut libraries, nibble, slot, item);
-            }
-        }
-        for (&nibble, items) in &state.system_overrides {
-            for (&slot, item) in items {
-                // A library with an original keeps what the chunk lacks in its
-                // live buffer; only one with none holds it here.
-                if originals.get(&nibble).is_none()
-                    && let Some(item) = item
-                {
-                    hold(&mut libraries, nibble, slot, item);
-                }
-            }
-        }
-        libraries
     }
 }

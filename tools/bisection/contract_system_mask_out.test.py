@@ -39,7 +39,14 @@ EXPECTED = [('mask-out-system-unsaved-pinyin', (), {'issues': ('728',), 'mode': 
             ('mask-out-system-disk-replacement-pinyin', (), {'issues': ('728',), 'mode': 'pinyin'}),
             ('mask-out-system-modify-zhuyin', (), {'issues': ('728',), 'mode': 'zhuyin'}),
             ('mask-out-system-no-header-zhuyin', (), {'control': True, 'issues': ('728',), 'mode': 'zhuyin'}),
-            ('mask-out-system-disk-replacement-zhuyin', (), {'issues': ('728',), 'mode': 'zhuyin'})]
+            ('mask-out-system-disk-replacement-zhuyin', (), {'issues': ('728',), 'mode': 'zhuyin'}),
+            *[('mask-out-unmappable-no-change-' + mode, (),
+               {'mode': mode, 'issues': ('545', 'row:76'),
+                'pin_not_run': {'mask': True, 'line': True, 'files_unchanged': True,
+                                'live_count_unchanged': True, 'live_items_unchanged': True,
+                                'save': True, 'reopened_count_unchanged': True,
+                                'reopened_items_unchanged': True}})
+              for mode in ('pinyin', 'zhuyin')]]
 
 
 def declarations():

@@ -170,12 +170,6 @@ enum RowSource<'a> {
         keys: &'a [u8],
         count: u32,
     },
-    /// The session's replacement for a system item.
-    Override {
-        phrase: &'a [u32],
-        keys: &'a [u16],
-        count: u32,
-    },
     /// A `USER_FILE` item.
     User {
         text: &'a [u32],
@@ -189,7 +183,6 @@ enum RowSource<'a> {
 /// at 074a2219: the content table's pinyin, then `%d` of a non-zero tone).
 enum Syllables<'a> {
     Packed(std::slice::Iter<'a, [u8; 2]>),
-    Chewing(std::slice::Iter<'a, u16>),
     User(std::slice::Iter<'a, PinyinKey>),
 }
 
@@ -203,9 +196,6 @@ impl Iterator for Syllables<'_> {
                     pair[0], pair[1],
                 ])))
             }),
-            Self::Chewing(keys) => keys
-                .next()
-                .map(|&key| chewing_syllable(ChewingKey::from_packed(key))),
             Self::User(keys) => keys.next().map(|&key| user_syllable(key)),
         }
     }
@@ -254,7 +244,6 @@ impl ExportRow<'_> {
     fn phrase_text(&self) -> Option<PhraseText> {
         match &self.0 {
             RowSource::Mapped { item, .. } => item.phrase_text(),
-            RowSource::Override { phrase, .. } => PhraseText::from_words(phrase.iter().copied()),
             RowSource::User { text, .. } => {
                 PhraseText::from_stored_words(text.iter().copied().map(Some))
             }
@@ -284,7 +273,7 @@ impl ExportRow<'_> {
                 let key = ChewingKey::from_packed(u16::from_le_bytes([bytes[0], bytes[1]]));
                 (key.tone > MAX_KEY_TONE).then_some(ExportAssert::KeyTone)
             }),
-            RowSource::Mapped { .. } | RowSource::Override { .. } => None,
+            RowSource::Mapped { .. } => None,
         }
     }
 
@@ -313,9 +302,7 @@ impl ExportRow<'_> {
     #[must_use]
     pub fn count(&self) -> u64 {
         match &self.0 {
-            RowSource::Mapped { count, .. } | RowSource::Override { count, .. } => {
-                u64::from(*count)
-            }
+            RowSource::Mapped { count, .. } => u64::from(*count),
             RowSource::User { count, .. } => *count,
         }
     }
@@ -323,7 +310,6 @@ impl ExportRow<'_> {
     fn syllables(&self) -> Syllables<'_> {
         match &self.0 {
             RowSource::Mapped { keys, .. } => Syllables::Packed(keys.as_chunks::<2>().0.iter()),
-            RowSource::Override { keys, .. } => Syllables::Chewing(keys.iter()),
             RowSource::User { keys, .. } => Syllables::User(keys.iter()),
         }
     }
@@ -333,10 +319,6 @@ impl ExportRow<'_> {
 enum ItemRef<'a> {
     Mapped(PhraseItemView<'a>),
     Arena(PhraseItemView<'a>),
-    Override {
-        phrase: &'a [u32],
-        prons: &'a [(Vec<u16>, u32)],
-    },
     User(&'a UserPhrase),
 }
 
@@ -344,10 +326,6 @@ impl<'a> From<SystemItem<'a>> for ItemRef<'a> {
     fn from(item: SystemItem<'a>) -> Self {
         match item {
             SystemItem::Shipped(item) | SystemItem::Replayed(item) => Self::Mapped(item),
-            SystemItem::Overlay(item) => Self::Override {
-                phrase: &item.phrase,
-                prons: &item.prons,
-            },
         }
     }
 }
@@ -357,7 +335,6 @@ impl ItemRef<'_> {
     fn n_pronunciations(&self) -> usize {
         match self {
             Self::Mapped(item) | Self::Arena(item) => item.n_pronunciations(),
-            Self::Override { prons, .. } => prons.len(),
             Self::User(phrase) => phrase.pronunciations().len(),
         }
     }
@@ -387,14 +364,6 @@ impl ItemRef<'_> {
                     user: matches!(self, Self::Arena(_)),
                     keys: pronunciation.keys,
                     count: pronunciation.freq,
-                }
-            }
-            Self::Override { phrase, prons } => {
-                let (keys, count) = prons.get(nth)?;
-                RowSource::Override {
-                    phrase,
-                    keys: keys.as_slice(),
-                    count: *count,
                 }
             }
             Self::User(phrase) => {
