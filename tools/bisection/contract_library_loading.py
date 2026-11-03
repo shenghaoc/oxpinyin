@@ -223,8 +223,8 @@ def library_expected(site, how, mode, row76_stop=True):
     """What the subject answers at a site where the pin dies: its answers
     from before the lines were added, held unchanged, except the save of a
     library `MemoryChunk::mmap` refuses: the row 76 ruling stops that save and
-    answers `false` (`row76_stop`; only the short-directory save passes it
-    among the directory cases, for its row 76 SIGSEGV arm). An init that fails on a
+    answers `false` (`row76_stop`; the directory saves pass it, for their
+    row 76 SIGSEGV arm) An init that fails on a
     library logs one warning in its own domain and answers NULL.
 
     A missing-library init is the success-without-logs exception. Other init
@@ -287,10 +287,10 @@ for _mode in ('pinyin', 'zhuyin'):
         # libraries' `.tmp` files, renamed by libzhuyin). A pin SIGSEGV keeps
         # row 76's class (b) matcher.
         _userdir = {'userdir': True} if _site in ('init', 'save') else {}
+        _save_crash = {'crash_stderr_pattern': r'mmap .+ failed!$'} if _site == 'save' else {}
         case(f'abort-library-directory-long-entry-{_site}' + _suffix, mode=_mode,
-             abort=False, crash=library_expected(_site, 'short', _mode, row76_stop=False), either=True,
-             sigabrt=True, issues=('545',), **_userdir)(library_directory_probe(_site, 'dir-long'))
-        _save_crash = {'crash_stderr_pattern': r'^mmap .+ failed!$'} if _site == 'save' else {}
+             abort=False, crash=library_expected(_site, 'short', _mode, row76_stop=_site == 'save'), either=True,
+             sigabrt=True, issues=('545',), **_save_crash, **_userdir)(library_directory_probe(_site, 'dir-long'))
         case(f'library-directory-one-entry-{_site}' + _suffix, mode=_mode, abort=False,
              crash=library_expected(_site, 'short', _mode, row76_stop=_site == 'save'), either=True,
              sigabrt=True, issues=('545',), **_save_crash, **_userdir)(library_directory_probe(_site, 'dir-short'))
