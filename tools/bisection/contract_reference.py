@@ -355,6 +355,10 @@ def check_row(row, spec, cell, data_digest, NO_ABORT):
         raise ReferenceError(f'{case}: reference does not hold a pin observation')
     if case in REVERSE_CROSS_OPEN_CASES and (not isinstance(row.get('profile'), dict) or not row['profile']):
         raise ReferenceError(f'{case}: reference has no handoff profile')
+    if case in ('lazy-user-bigram-pinyin', 'lazy-user-bigram-zhuyin') and (
+            not isinstance(row.get('profile'), dict)
+            or set(row['profile']) != {'empty.db', 'trained.db'}):
+        raise ReferenceError(f'{case}: reference has no saved bigram snapshots')
 
 
 def lookup(root, cell, spec, data_digest, NO_ABORT, rows=None):

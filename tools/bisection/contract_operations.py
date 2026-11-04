@@ -206,6 +206,15 @@ def capture(driver, argv):
             stable = all(reference.comparable(spec, other, driver.observed, driver.fatal_stderr)
                          == reference.comparable(spec, first, driver.observed, driver.fatal_stderr)
                          for other in observations[1:])
+            if stable and name in ('lazy-user-bigram-pinyin', 'lazy-user-bigram-zhuyin'):
+                snapshots = []
+                for _, profile, _ in observations:
+                    with tempfile.TemporaryDirectory(prefix='snapshot-', dir=scratch) as decoded:
+                        reference.decode_profile(profile, decoded)
+                        snapshots.append(tuple(driver.tkrzw_saved_bigram_bytes(
+                            Path(decoded, filename).read_bytes())
+                            for filename in ('empty.db', 'trained.db')))
+                stable = all(saved == snapshots[0] for saved in snapshots[1:])
             verdict = 'CAPTURED'
             if not stable:
                 verdict = 'UNSTABLE'
