@@ -275,7 +275,12 @@ def register(case, *, AXIS_C_DEFINITION, AXIS_C_GROUPS, AXIS_C_LAYOUT_COVERED, W
     for _mode, _operation in AXIS_C_DEFINITION['encoding_operations']:
         for _input in AXIS_C_DEFINITION['encoding_inputs']:
             _name = f"axis-c-encoding-{_mode}-{_operation}-{_input['name']}"
-            case(_name, mode=_mode, stderr=True)(axis_c_encoding(_operation, bytes.fromhex(_input['hex'])))
+            # phrase_segment on malformed UTF-8: the pin logs GLib's assertion critical and oxpinyin
+            # logs none, a recorded language-runtime departure (docs/findings/1297-segment-critical.md,
+            # the same record as glib-924-segment-critical-*), so it is POLICY-ACCEPTED, never MATCH.
+            _policy = ({'policy_record': '1297-segment-critical.md'} if _operation == 'phrase_segment'
+                       and _input['name'].split('-')[0] in ('ff', 'overlong', 'truncated') else {})
+            case(_name, mode=_mode, stderr=True, **_policy)(axis_c_encoding(_operation, bytes.fromhex(_input['hex'])))
             AXIS_C_GROUPS['encoding'].append(_name)
     _covered_rows = {scheme: entry['row'] for entry in AXIS_C_DEFINITION['layout_covered']
                      for scheme in entry['schemes']}

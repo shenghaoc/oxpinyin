@@ -14,6 +14,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parents[1]))
 
+import contract_reference
 import contract_runner
 
 
@@ -101,6 +102,112 @@ class AdapterTests(unittest.TestCase):
                 self.assertEqual(list(results), [('only', 'pair')])
         run.assert_called_once_with(registry['only'], Path('/pin/lib/libpinyin.so'), Path('/subject'),
                                     '/data', 'only', '/isolated', 1)
+
+
+class ReferenceRunTests(unittest.TestCase):
+    """capture runs the pin only and verify the subject only; the pin side of verify is the stored row."""
+
+    def runner(self, worker):
+        driver = dict(WORKER_STATE=SimpleNamespace(), run_worker=worker, selected_cell=lambda: 'tkrzw',
+                      observed=lambda result: {k: v for k, v in result.items() if not k.startswith('~')},
+                      tkrzw_saved_bigram_bytes=lambda raw: raw)
+        return contract_runner.Runner(driver)
+
+    def observation(self, **result):
+        return dict(exit=0, result=result, userfiles={}, stderr_lines=0, stderr='')
+
+    def test_verify_runs_only_the_subject_and_returns_the_stored_pin_observation(self):
+        calls = []
+
+        def worker(mode, so, data, name, scratch, extra_env=None, timeout=None):
+            calls.append(Path(so).name)
+            return self.observation(ret=1)
+
+        spec = dict(mode='pinyin', fatal=False, pin_not_run=None)
+        row = dict(pin=self.observation(ret=1))
+        with tempfile_dir() as scratch:
+            pin, subject = self.runner(worker).verify_case(spec, row, Path('/subject/libpinyin.so'), '/data', 'plain', scratch, 30)
+        self.assertEqual(calls, ['libpinyin.so'])
+        for key in ('capture_glibc', 'capture_glib', 'capture_dir_read_verdict', 'capture_scanf'):
+            self.assertIsNone(pin.pop(key))
+        self.assertEqual((pin, subject), (row['pin'], self.observation(ret=1)))
+
+    def test_the_stored_pin_observation_carries_the_capture_glibc(self):
+        spec = dict(mode='pinyin', fatal=False, pin_not_run=None)
+        row = dict(pin=self.observation(ret=1), identity=dict(environment=dict(glibc='2.41')))
+        with tempfile_dir() as scratch:
+            pin, _ = self.runner(lambda *a, **k: self.observation(ret=1)).verify_case(
+                spec, row, Path('/s.so'), '/data', 'plain', scratch, 30)
+        self.assertEqual(pin['capture_glibc'], '2.41')
+
+    def test_pin_not_run_is_never_taken_from_the_row(self):
+        spec = dict(mode='pinyin', fatal=False, pin_not_run={'ret': 1})
+        with tempfile_dir() as scratch:
+            pin, _ = self.runner(lambda *a, **k: self.observation(ret=1)).verify_case(
+                spec, dict(pin=self.observation(ret=9)), Path('/s.so'), '/data', 'plain', scratch, 30)
+        self.assertEqual(pin['exit'], 'NOT-RUN')
+
+    def test_capture_stores_the_profile_before_the_pin_reloads_it(self):
+        # The stored profile is the one the pin wrote; the pin's own reload (which may rewrite the
+        # container's clock field) comes after it is encoded.
+        def worker(mode, so, data, name, scratch, extra_env=None, timeout=None):
+            file = Path(extra_env['CONTRACT_929_PROFILE'], 'user_bigram.db')
+            if extra_env.get('CONTRACT_929_RELOAD'):
+                file.write_bytes(b'reopened')
+            else:
+                file.write_bytes(b'written')
+            return self.observation(rows=[1])
+
+        spec = dict(mode='pinyin', fatal=False, pin_not_run=None)
+        with tempfile_dir() as scratch:
+            observation, profile, _ = self.runner(worker).capture_case(
+                spec, Path('/p.so'), '/data', 'save-929-logical-cross-open-pinyin', scratch, 30)
+        self.assertEqual(observation['exit'], 0)
+        with tempfile_dir() as out:
+            contract_reference.decode_profile(profile, out)
+            self.assertEqual(Path(out, 'user_bigram.db').read_bytes(), b'written')
+
+    def test_capture_of_a_pin_not_run_case_starts_no_worker(self):
+        def worker(*args, **kwargs):
+            raise AssertionError('the pin must not run')
+
+        spec = dict(mode='pinyin', fatal=False, pin_not_run={'ret': 1})
+        with tempfile_dir() as scratch:
+            observation, profile, used = self.runner(worker).capture_case(spec, Path('/p.so'), '/data', 'plain', scratch, 30)
+        self.assertEqual((observation['exit'], profile, used), ('NOT-RUN', None, True))
+
+    def test_a_handoff_case_lets_the_subject_read_the_pin_written_profile(self):
+        name = 'save-929-logical-cross-open-pinyin'
+        seen = []
+        with tempfile_dir() as source:
+            Path(source, 'user_bigram.db').write_bytes(b'pin-written')
+            profile = contract_reference.encode_profile(source)
+
+        def worker(mode, so, data, name, scratch, extra_env=None, timeout=None):
+            seen.append(dict(extra_env or {}))
+            if extra_env.get('CONTRACT_929_RELOAD') == '1':
+                self.assertEqual(Path(extra_env['CONTRACT_929_PROFILE'], 'user_bigram.db').read_bytes(), b'pin-written')
+                return self.observation(rows=[1])
+            return self.observation(rows=[1])
+
+        spec = dict(mode='pinyin', fatal=False, pin_not_run=None)
+        row = dict(pin=self.observation(rows=[1], cross_reload={'rows': [1]}), profile=profile)
+        with tempfile_dir() as scratch:
+            _, subject = self.runner(worker).verify_case(spec, row, Path('/s.so'), '/data', name, scratch, 30)
+        self.assertEqual(subject['result']['cross_reload'], {'rows': [1]})
+        self.assertEqual(len(seen), 2)
+        # A subject that reads the pin's profile differently fails the case.
+        reloads = iter([self.observation(rows=[1]), self.observation(rows=[2])])
+        with tempfile_dir() as scratch:
+            _, subject = self.runner(lambda *a, **k: next(reloads)).verify_case(spec, row, Path('/s.so'), '/data', name, scratch, 30)
+        self.assertEqual((subject['exit'], subject['result']), (1, {'error': 'cross-open changed logical records'}))
+
+
+@contextlib.contextmanager
+def tempfile_dir():
+    import tempfile
+    with tempfile.TemporaryDirectory() as directory:
+        yield directory
 
 
 if __name__ == '__main__':

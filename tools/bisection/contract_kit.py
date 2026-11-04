@@ -22,7 +22,7 @@ class Kit:
         handlers for both facade domains, GLib's own domain and the default domain, retaining
         the callback on this object. Create the profile under scratch; native
         context initialization is deferred until requested."""
-        self.mode, self.data, self.scratch = mode, data, scratch
+        self.mode, self._data, self.scratch = mode, data, scratch
         check_tkrzw(os.environ.get("CONTRACT_DIFF_CELL", cell), "contract-diff.py", os.environ.get("OXPINYIN_RUNTIME_SIDE", "subject"), so)
         self.lib = C.CDLL(so, use_errno=True)
         self.glib = C.CDLL('libglib-2.0.so.0')
@@ -48,6 +48,19 @@ class Kit:
         self._inst = None
         self.user = tempfile.mkdtemp(prefix='user-', dir=scratch)
         self.init_seconds = 0.0  # the facade `init` calls: fixture, not case work
+
+    @property
+    def data(self):
+        """The system data directory. Reading it marks the case as one that uses the
+        package data: CONTRACT_DATA_USE names a file `capture` looks for afterwards."""
+        marker = os.environ.get('CONTRACT_DATA_USE')
+        if marker:
+            open(marker, 'a').close()
+        return self._data
+
+    @data.setter
+    def data(self, value):
+        self._data = value
 
     def fn(self, name, res, *args):
         """Set a facade symbol's ctypes return and argument types, then return it.

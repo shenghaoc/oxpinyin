@@ -1,6 +1,12 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """Case-driven pin-against-subject contract differential (lane C).
 
+Operations (contract_operations; docs/runbooks/contract-references.md):
+       contract-diff.py verify  CELL PINYIN_SO [--zhuyin-so PATH] [--data DIR] [selectors] [--expect-parent]
+       contract-diff.py capture CELL PREFIX --data DIR [--out DIR] [selectors]
+`verify` runs oxpinyin only against the pin observations frozen in fixtures/contract-refs;
+`capture` writes them from the pin, in the Debian stable pin image.
+
 Usage: contract-diff.py CELL PREFIX PINYIN_SO [--zhuyin-so PATH]
                         [--cases a,b,...] [--issue N]... [--family F]... [--cases-prefix P,Q,...]
                         [--expect-parent] [--plan-only] [--case-timeout SECONDS] [--jobs N]
@@ -158,7 +164,8 @@ from contract_fixtures import (  # profile, system-directory and DBM-container f
 import contract_verdict
 from contract_verdict import (  # comparison and verdict rules
     META_OFFSET_TIMESTAMP, NO_ABORT, TKRZW_HASH_METADATA_SIZE, TKRZW_TIMESTAMP_WIDTH, WARNING_DOMAIN,
-    _FATAL_GLIB_PREFIX, abort_answered, directory_reads_as_a_chunk, fatal_stderr, host_scanf_accepts, observed,
+    _FATAL_GLIB_PREFIX, abort_answered, directory_read_verdict, directory_reads_as_a_chunk,
+    fatal_stderr, host_scanf_accepts, host_scanf_verdict, observed,
     pin_loaded_subject_refused_table_conf, policy_observation, policy_pin_abort, policy_side,
     registered_termination, strjoinv_fault, tkrzw_saved_bigram_bytes, tkrzw_saved_bigram_equal,
     valid_observation)
@@ -296,6 +303,8 @@ import contract_cell_fixtures
 import contract_sentence_ties
 import contract_kit
 import contract_runner
+import contract_reference
+import contract_operations
 from contract_runner import Cancelled
 import contract_execution
 from contract_execution import ordinary_jobs, positive_jobs, terminate_group, user_dir_listing  # worker and run-output helpers
@@ -380,8 +389,10 @@ def case(name, *args, **kwargs):
     (the class (c) site) only where `lseek(SEEK_END)` on it answers the
     8-byte header or more (`MemoryChunk::load` and `MemoryChunk::mmap` in
     `src/include/memory_chunk.h` at pin 074a2219), and the
-    file system of the scratch directory decides that:
-    `directory_reads_as_a_chunk` asks this host. Where it answers less
+    scratch directory's read behaviour decides that. Capture records the
+    size gate and directory-header read results; verify probes its own
+    scratch directory and reports `HOST-DEPENDENT` when those verdicts differ.
+    Where the size gate answers less
     (tmpfs refuses `SEEK_END` on a directory), the load is an ordinary
     `false`. For `'user'` the pin then carries on, and so does the
     subject, which asks the same question: the case is compared as an
@@ -1045,6 +1056,8 @@ AXIS_C_ABORT_ROW_FIELDS = contract_axis_c.AXIS_C_ABORT_ROW_FIELDS
 axis_c_live = contract_axis_c.axis_c_live
 axis_c_reproduced_abort = contract_axis_c.axis_c_reproduced_abort
 axis_c_first_difference = contract_axis_c.axis_c_first_difference
+axis_c_envelope = contract_axis_c.axis_c_envelope
+axis_c_verdict = contract_axis_c.axis_c_verdict
 
 
 def check_axis_c_snapshots(args):
@@ -1063,10 +1076,18 @@ POLICY_ROOT = Path(__file__).resolve().parents[2] / 'docs/findings'
 
 
 # Bind the verdict rules to this run's findings directory, cell and host probe.
+def chunk_probe(pin):
+    """Use the pin's recorded directory size gate for a frozen dir_chunk comparison."""
+    recorded = pin.get('capture_dir_read_verdict')
+    if recorded is not None:
+        recorded = recorded['size_at_least_header']
+    return directory_reads_as_a_chunk if recorded is None else (lambda: recorded)
+
+
 def verdict_for(spec, pin, subject, expect_parent):
     """The driver's decision for one case: (verdict, expected_ok, same) (contract_verdict)."""
     return contract_verdict.verdict_for(spec, pin, subject, expect_parent, policy_root=POLICY_ROOT, cell=selected_cell(),
-                                        directory_probe=directory_reads_as_a_chunk)
+                                        directory_probe=chunk_probe(pin))
 
 
 def policy_diagnosis(spec, pin, subject):
@@ -1076,7 +1097,7 @@ def policy_diagnosis(spec, pin, subject):
 
 def matches(spec, pin, subject):
     """The verdict predicate shared by the driver and gcov measurement tier (contract_verdict)."""
-    return contract_verdict.matches(spec, pin, subject, directory_probe=directory_reads_as_a_chunk)
+    return contract_verdict.matches(spec, pin, subject, directory_probe=chunk_probe(pin))
 
 
 # Per-call measurement lives in contract_measurement. The driver retains its
@@ -1165,6 +1186,30 @@ def platform_skips(spec):
     return bool(platforms) and HOST_ORACLE_PLATFORM is not None and HOST_ORACLE_PLATFORM not in platforms
 
 
+def run_capture(spec, pin_so, data, name, scratch, timeout, companion=None):
+    """One case on the pin alone: (observation, handoff profile, read the package data) (contract_runner)."""
+    return _RUNNER.capture_case(spec, pin_so, data, name, scratch, timeout, companion)
+
+
+def host_field_only(spec, case_id, pin, subject):
+    """Keep the GLib fatal-critical allowance limited to its termination signal."""
+    if spec['fatal']:
+        if pin['exit'] not in (-signal.SIGABRT, -signal.SIGTRAP) or subject['exit'] not in (-signal.SIGABRT, -signal.SIGTRAP):
+            return False
+        left, right = dict(pin), dict(subject)
+        for side in (left, right):
+            side.pop('capture_glibc', None)
+            side.pop('capture_glib', None)
+            side.pop('capture_reads_as_chunk', None)
+            side.pop('capture_scanf', None)
+            side.pop('measurement_roots', None)
+            side.pop('measurement_abort_flush', None)
+            side.pop('exit', None)
+            side['stderr'] = fatal_stderr(side['stderr'])
+        return left == right
+    return False
+
+
 def run_main():
     """Parse driver options and dispatch listing, planning or the requested execution mode.
 
@@ -1174,6 +1219,9 @@ def run_main():
     otherwise. Specialized modes return their own status; invalid arguments and
     input assertions abort before ordinary case execution.
     """
+    if sys.argv[1:2] in (['verify'], ['capture']):
+        operation = contract_operations.verify if sys.argv[1] == 'verify' else contract_operations.capture
+        return operation(sys.modules[__name__], sys.argv[2:])
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--teardown', action='store_true', help='native teardown measurement workload')
     parser.add_argument('--teardown-stage', choices=('provision', 'verify', 'pilot', 'confirm', 'repeat', 'multi', 'attribute', 'init-attribute', 'user-verify', 'user-phrase'), default='verify')
@@ -1316,12 +1364,30 @@ def run_main():
             'fixture regeneration cannot be combined with differential or capture modes'
         regenerate_sentence_ties(args.prefix, args.regenerate_sentence_ties)
         return 0
+    return run_cases(args, parser, data)
+
+
+def run_cases(args, parser, data, default_names=None, keep=None):
+    """Select, run and report ordinary cases, then return the exit status.
+
+    DEFAULT_NAMES replaces the whole registry as the unselected suite (verify)."""
     requested_jobs = ordinary_jobs(parser, args.jobs)
     # The whole set only when no selector is given: an explicit list that
     # names nothing (`--cases ,`), an unknown tag or a tag that matches
     # nothing is an error, never a request for everything.
     try:
-        names, reasons = select_cases(args.cases, args.issue, args.family, args.cases_prefix)
+        if default_names is not None and args.cases is None and not (args.issue or args.family or args.cases_prefix):
+            names = list(default_names)
+            reasons = {n: ['default suite'] for n in names}
+            if not names:
+                raise SelectionError('no cases selected')
+        else:
+            names, reasons = select_cases(args.cases, args.issue, args.family, args.cases_prefix)
+            if keep is not None:
+                names = keep(names)
+                reasons = {n: reasons[n] for n in names}
+                if not names:
+                    raise SelectionError('no cases selected')
     except SelectionError as error:
         parser.error(str(error))
     for line in plan_lines(names, reasons, args.pinyin_so, args.zhuyin_so, args.prefix, args.cell):
@@ -1358,8 +1424,30 @@ def run_main():
                                           expected_ok=True, exit=[0, 0], stderr_lines=[0, 0]),
                                      sort_keys=True), flush=True)
                     continue
+                if isinstance(pair, contract_reference.ReferenceError):
+                    verdict_counts['NO-REFERENCE'] = verdict_counts.get('NO-REFERENCE', 0) + 1
+                    failures += 1
+                    print(json.dumps(dict(cell=args.cell, case=n, verdict='NO-REFERENCE', expected_ok=False,
+                                          message=str(pair)), sort_keys=True), flush=True)
+                    continue
                 pin, subject = pair
                 check_cancelled()
+                spelling = contract_reference.scanner_spelling(spec)
+                if (spelling is not None and getattr(args, 'references', None) is not None
+                        and pin.get('capture_scanf') is None):
+                    verdict_counts['NO-REFERENCE'] = verdict_counts.get('NO-REFERENCE', 0) + 1
+                    failures += 1
+                    print(json.dumps(dict(cell=args.cell, case=n, verdict='NO-REFERENCE', expected_ok=False,
+                                          message=f'{n}: reference has no capture_scanf'), sort_keys=True), flush=True)
+                    continue
+                if (spec['dir_chunk'] and getattr(args, 'references', None) is not None
+                        and pin.get('capture_dir_read_verdict') is None):
+                    verdict_counts['NO-REFERENCE'] = verdict_counts.get('NO-REFERENCE', 0) + 1
+                    failures += 1
+                    print(json.dumps(dict(cell=args.cell, case=n, verdict='NO-REFERENCE', expected_ok=False,
+                                          message=f'{n}: reference has no directory_read_verdict'),
+                                     sort_keys=True), flush=True)
+                    continue
                 if args.observations:
                     with args.observations.open('a') as capture:
                         capture.write(json.dumps(dict(cell=args.cell, case=n, userdir=spec['userdir'],
@@ -1368,16 +1456,52 @@ def run_main():
                                                       subject=policy_side(spec, subject)),
                                                  ensure_ascii=True) + '\n')
                 compared = time.monotonic()
-                if (any(side['exit'] == 'TIMEOUT' for side in (pin, subject))
+                axis_c = (n.startswith('axis-c-') and getattr(args, 'references', None) is not None
+                          and spec['policy_record'] is None)
+                if axis_c and not any(side['exit'] == 'TIMEOUT' for side in (pin, subject)):
+                    verdict, differing = axis_c_verdict(n, axis_c_envelope(pin), axis_c_envelope(subject),
+                                                        AXIS_C_LAYOUT_COVERED.get(n))
+                    expected = (verdict == 'MATCH') != bool(args.expect_parent and not spec['control'])
+                    same = verdict == 'MATCH'
+                    if verdict == 'DIFFER' and not args.expect_parent:
+                        print(json.dumps(dict(case=n, first=axis_c_first_difference(axis_c_envelope(pin), axis_c_envelope(subject))),
+                                         ensure_ascii=True), flush=True)
+                elif (any(side['exit'] == 'TIMEOUT' for side in (pin, subject))
                         and (not args.expect_parent or not registered_termination(spec)
                              or spec.get('pin_not_run') is not None)):
                     verdict, expected, same = 'TIMEOUT', False, False
                 else:
                     verdict, expected, same = verdict_for(spec, pin, subject, args.expect_parent)
                 compare_seconds += time.monotonic() - compared
+                scanner_verdicts = None
+                if spelling is not None:
+                    host_scanner = host_scanf_verdict(spelling)
+                    capture_scanner = (pin['capture_scanf'] if getattr(args, 'references', None) is not None
+                                       else pin.get('capture_scanf') or host_scanner)
+                    scanner_verdicts = dict(capture=capture_scanner,
+                                            host=host_scanner)
+                directory_verdicts = None
+                if spec['dir_chunk']:
+                    host_directory = pin.get('host_dir_read_verdict') or directory_read_verdict()
+                    capture_directory = pin.get('capture_dir_read_verdict') or host_directory
+                    directory_verdicts = dict(capture=capture_directory, host=host_directory)
                 host_dependent = (verdict == 'DIFFER' and not args.expect_parent
-                                  and any(map(host_scanf_accepts, spec['host_scanf']))
-                                  and pin_loaded_subject_refused_table_conf(pin, subject))
+                                  and scanner_verdicts is not None
+                                  and scanner_verdicts['capture'] != scanner_verdicts['host'])
+                host_dependent = host_dependent or (
+                    directory_verdicts is not None and getattr(args, 'references', None) is not None
+                    and not args.expect_parent
+                    and directory_verdicts['capture'] != directory_verdicts['host'])
+                # A frozen reference holds on the libraries it was captured on. The comparison always
+                # comes first: equal observations are MATCH (or POLICY-ACCEPTED) on any host. Only a
+                # lambda scanner case whose captured and current libc scanner verdicts differ,
+                # or a GLib fatal-critical case whose registered signal changes, is
+                # HOST-DEPENDENT. A matching scanner verdict leaves the exact comparison intact.
+                host_dependent = host_dependent or (
+                    verdict == 'DIFFER' and not args.expect_parent and (
+                        spec['fatal']
+                        and pin.get('capture_glib') not in (None, contract_reference.glib_version()))
+                    and host_field_only(spec, n, pin, subject))
                 if host_dependent:
                     verdict = 'HOST-DEPENDENT'
                     expected = True
@@ -1385,6 +1509,10 @@ def run_main():
                 row = dict(cell=args.cell, case=n, verdict=verdict, expected_ok=expected,
                            exit=[pin['exit'], subject['exit']],
                            stderr_lines=[pin['stderr_lines'], subject['stderr_lines']])
+                if scanner_verdicts is not None:
+                    row['scanner_verdicts'] = scanner_verdicts
+                if directory_verdicts is not None:
+                    row['directory_verdicts'] = directory_verdicts
                 if spec['policy_record'] is not None:
                     row.update(record=spec['policy_record'], pin=pin, subject=subject)
                     if verdict == 'DIFFER':

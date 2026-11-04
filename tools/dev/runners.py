@@ -247,6 +247,27 @@ def python_script(ctx: Context, filename: str, argv: Sequence[str]) -> int:
     return status(ctx.command([sys.executable, '-X', 'lazy_imports=normal', ctx.here / filename, *argv]).returncode)
 
 
+def verify_contract(args: Sequence[str]) -> int:
+    """`contract-diff verify CELL PINYIN_SO [ZHUYIN_SO] [-- OPTIONS]`: the subject against the references.
+
+    The tkrzw cell reads the pinned libpinyin-data package; it is fetched into target/contract-data
+    when absent (`just fetch-contract-data`). Other options pass through to contract-diff.py."""
+    cell, pinyin, *tail = args
+    if cell not in ('bdb', 'kc', 'tkrzw'):
+        emit(f'unknown backend: {cell}', error=True)
+        return 1
+    forwarded = ['verify', cell, pinyin]
+    if tail and not tail[0].startswith('-'):
+        forwarded += ['--zhuyin-so', tail.pop(0)]
+    if tail[:1] == ['--']:
+        tail = tail[1:]
+    if cell == 'tkrzw' and '--data' not in tail:
+        from . import contract_data
+        forwarded += ['--data', str(contract_data.fetch(contract_data.DEFAULT_CACHE))]
+    os.execv(sys.executable, [sys.executable, '-X', 'lazy_imports=normal',
+                              str(ROOT / 'tools/bisection/contract-diff.py'), *forwarded, *tail])
+
+
 def main(argv: Sequence[str]) -> int:
     if not argv:
         emit('usage: runner RECIPE [ARG ...]', error=True)
@@ -264,6 +285,15 @@ def main(argv: Sequence[str]) -> int:
         if args in (['-h'], ['--help']):
             os.execv(sys.executable, [sys.executable, '-X', 'lazy_imports=normal',
                                      str(ROOT / 'tools/bisection/contract-diff.py'), *args])
+        operation = 'verify'
+        if args[:1] in (['verify'], ['capture']):
+            operation, *args = args
+        if operation == 'capture':
+            emit('capture runs in the Debian stable pin image: bash tools/oracle/capture-contract.sh CELL [options]',
+                 error=True)
+            return 1
+        if len(args) >= 2 and (args[1].endswith('.so') or Path(args[1]).is_file()):
+            return verify_contract(args)
         if len(args) < 3:
             emit('expected backend, oracle prefix and subject libpinyin', error=True)
             return 1

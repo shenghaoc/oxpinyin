@@ -58,6 +58,15 @@ provision *args: python
 fetch-model *args: python
     @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev fetch-model "$@"
 
+# Fetch, verify and extract the pinned libpinyin-data package (the contract system data) into target/contract-data.
+[unix]
+fetch-contract-data *args: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev fetch-contract-data "$@"
+
+[windows]
+fetch-contract-data *args: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev fetch-contract-data @args; exit $LASTEXITCODE
+
 # Regenerate (`generate`) or check (`check`) the committed fixtures/w3 data
 # sets from the model20 cache; `content` truncates the oracle's content tables.
 [unix]

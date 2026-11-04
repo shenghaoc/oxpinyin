@@ -293,6 +293,11 @@ def build_parser():
     p.add_argument('args', nargs=argparse.REMAINDER)
     p.set_defaults(func=lambda args: __import__('tools.dev.model', fromlist=['main']).main(args.args))
 
+    p = sub.add_parser('fetch-contract-data',
+                       help='fetch and verify the pinned libpinyin-data package: the contract differential system data')
+    p.add_argument('args', nargs=argparse.REMAINDER)
+    p.set_defaults(func=lambda args: __import__('tools.dev.contract_data', fromlist=['main']).main(args.args))
+
     p = sub.add_parser('provision', help='post-bootstrap cloud provisioning')
     p.add_argument('args', nargs=argparse.REMAINDER)
     p.set_defaults(func=lambda args: __import__('tools.dev.provision', fromlist=['main']).main(args.args))
@@ -356,6 +361,9 @@ def main(argv=None):
     if argv[:1] == ['fetch-model']:
         from . import model
         return model.main(argv[1:])
+    if argv[:1] == ['fetch-contract-data']:
+        from . import contract_data
+        return contract_data.main(argv[1:])
     if argv[:1] == ['compat']:
         from .compat import commands
         return commands.main(argv[1:])

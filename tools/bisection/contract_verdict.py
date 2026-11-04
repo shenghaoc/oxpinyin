@@ -16,6 +16,7 @@ import os
 from pathlib import Path
 import re
 import signal
+import sys
 import tempfile
 
 try:
@@ -360,23 +361,38 @@ def matches(spec, pin, subject, *, directory_probe):
 
 @functools.cache
 def directory_reads_as_a_chunk():
-    """Cache whether a temporary directory passes the pin's 8-byte size gate.
+    """Whether the pin reaches its directory-as-chunk header read on this host."""
+    return directory_read_verdict()['size_at_least_header']
 
-    Create a directory containing user.conf in the default temporary
-    directory, seek to its end, and remove it on exit. Return False if the
-    seek raises OSError; creation and open failures propagate. The cached
-    result is reused even if the temporary-directory setting later changes.
-    This reproduces only the size check in MemoryChunk::load and
-    MemoryChunk::mmap in src/include/memory_chunk.h at pin 074a2219, not
-    their subsequent reads. The single entry models the user.conf saved by
-    check_format in src/pinyin.cpp before the directory-chunk cases run."""
-    with tempfile.TemporaryDirectory(prefix='contract-dir-probe-') as probe:
+
+def directory_read_verdict(scratch=None):
+    """Reproduce MemoryChunk's directory size gate and header reads (pin memory_chunk.h:424-438).
+
+    Only the read counts and errnos matter: the pin asserts that each header read returns four.
+    Use a directory with user.conf, as the cases do, on the verification scratch file system."""
+    with tempfile.TemporaryDirectory(prefix='contract-dir-probe-', dir=scratch) as probe:
         Path(probe, 'user.conf').touch()
         fd = os.open(probe, os.O_RDONLY)
         try:
-            return os.lseek(fd, 0, os.SEEK_END) >= 8
-        except OSError:
-            return False
+            try:
+                reaches_read = os.lseek(fd, 0, os.SEEK_END) >= 8
+            except OSError:
+                reaches_read = False
+            reads = []
+            if reaches_read:
+                try:
+                    os.lseek(fd, 0, os.SEEK_SET)
+                except OSError:
+                    pass  # The pin ignores this seek's return value.
+                for _ in range(2):
+                    try:
+                        count, error = len(os.read(fd, 4)), None
+                    except OSError as exc:
+                        count, error = -1, exc.errno
+                    reads.append(dict(count=count, errno=error))
+                    if count != 4:
+                        break
+            return dict(size_at_least_header=reaches_read, reads=reads)
         finally:
             os.close(fd)
 
@@ -388,8 +404,16 @@ def host_scanf_accepts(spelling):
     the entire string to be consumed or changing the locale. This checks
     the conversion used by SystemTableInfo2::load in src/storage/table_info.cpp
     at pin 074a2219; that loader sets LC_NUMERIC to C before scanning."""
+    return host_scanf_verdict(spelling)['accepted']
+
+
+def host_scanf_verdict(spelling):
+    """One libc `%f` conversion, including the parsed float's exact 32-bit value."""
     scanned = C.c_float()
-    return C.CDLL(None).sscanf(spelling.encode(), b'%f', C.byref(scanned)) == 1
+    accepted = C.CDLL(None).sscanf(spelling.encode(), b'%f', C.byref(scanned)) == 1
+    bits = int.from_bytes(C.string_at(C.byref(scanned), C.sizeof(scanned)), sys.byteorder)
+    return dict(input=spelling, accepted=accepted,
+                value_bits=f'{bits:08x}' if accepted else None)
 
 
 def pin_loaded_subject_refused_table_conf(pin, subject):

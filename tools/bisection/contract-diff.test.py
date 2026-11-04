@@ -32,6 +32,20 @@ spec.loader.exec_module(driver)
 contract = vars(driver)
 
 
+class HostFieldTests(unittest.TestCase):
+    def test_glib_allows_only_termination_signal(self):
+        spec = driver.case_spec(case_id='glib-fatal', fatal=True)
+        pin = dict(exit=-signal.SIGABRT, result=None, stderr='critical', userfiles=[], stderr_lines=1,
+                   capture_reads_as_chunk=None)
+        subject = dict(pin, exit=-signal.SIGTRAP)
+        subject.pop('capture_reads_as_chunk')
+        subject['measurement_roots'] = []
+        subject['measurement_abort_flush'] = False
+        self.assertTrue(driver.host_field_only(spec, spec['case_id'], pin, subject))
+        subject['stderr'] = 'another critical'
+        self.assertFalse(driver.host_field_only(spec, spec['case_id'], pin, subject))
+
+
 class DriverFixtureCase(unittest.TestCase):
     # These worker/verdict fixtures deliberately use synthetic, non-ELF paths.
     # Loader enforcement has its own real-ELF fixtures in tkrzw/runtime.test.py.
@@ -1153,6 +1167,37 @@ class DriverInvalidTests(DriverFixtureCase):
             status, rows = self.invoke(False, [observation(exit=1), observation(exit=1)], host=True)
         self.assertEqual((status, rows[0]['verdict']), (1, 'INVALID'))
 
+    def test_scanner_verdict_controls_the_whole_observation_allowance(self):
+        name = 'table-conf-lambda-exponent-without-digits'
+        capture = dict(input='1e', accepted=False, value_bits=None)
+        parsed = dict(input='1e', accepted=True, value_bits='3f800000')
+        for host, expected_status, expected_verdict in ((capture, 1, 'DIFFER'),
+                                                        (parsed, 0, 'HOST-DEPENDENT')):
+            with self.subTest(host=host), patch.object(driver, 'host_scanf_verdict', return_value=host):
+                pin = dict(observation(result={'ctx': True}, userfiles={'user.conf': 'written'}),
+                           capture_scanf=capture, capture_glibc='different-version')
+                subject = observation(result={'ctx': False}, stderr='different', userfiles={})
+                status, rows = self.invoke(False, [pin, subject], case_name=name)
+            self.assertEqual((status, rows[0]['verdict']), (expected_status, expected_verdict))
+            self.assertEqual(rows[0]['scanner_verdicts'], dict(capture=capture, host=host))
+
+    def test_reference_without_capture_scanf_is_no_reference(self):
+        original = driver.run_cases
+        def with_reference(args, *a, **k):
+            args.references = object()
+            return original(args, *a, **k)
+        name = 'table-conf-lambda-exponent-without-digits'
+        @contextlib.contextmanager
+        def missing_reference(*args):
+            yield iter([(name, (observation(result={'ctx': True}),
+                                observation(result={'ctx': False})))])
+        with patch.object(driver, 'run_cases', side_effect=with_reference), \
+                patch.object(driver, 'case_results', side_effect=missing_reference), \
+                patch.object(driver, 'host_scanf_verdict', side_effect=AssertionError('must not scan')):
+            status, rows = self.invoke(False, [observation(result={'ctx': True}), observation(result={'ctx': False})], case_name=name)
+        self.assertEqual((status, rows[0]['verdict']), (1, 'NO-REFERENCE'))
+        self.assertIn('capture_scanf', rows[0]['message'])
+
 
 class DirChunkTests(DriverFixtureCase):
     """`dir_chunk`: the directory a NULL row makes the pin read is held to
@@ -1211,11 +1256,11 @@ class DirChunkTests(DriverFixtureCase):
             'table-conf-abort-user-file-without-user-file': 'user'})
 
     def test_probe_repeats_the_pin_size_check(self):
-        for sought, reads in ((OSError(22, 'Invalid argument'), False), (0, False), (7, False), (8, True),
-                              (2 ** 63 - 1, True)):
-            with self.subTest(sought=sought):
+        for reads in (False, True):
+            with self.subTest(reads=reads):
                 driver.directory_reads_as_a_chunk.cache_clear()
-                with patch.object(driver.os, 'lseek', side_effect=[sought]):
+                with patch.object(driver.contract_verdict, 'directory_read_verdict',
+                                  return_value=dict(size_at_least_header=reads, reads=[])):
                     self.assertIs(driver.directory_reads_as_a_chunk(), reads)
 
     def test_condition_absent_keeps_the_abort_matcher(self):
@@ -1995,8 +2040,8 @@ class ParallelCaseTests(DriverFixtureCase):
         serial = self.invoke_main(1)
         parallel = self.invoke_main(2)
         self.assertEqual(serial, parallel)
-        self.assertEqual(parallel[0], 0)
-        self.assertEqual([row['verdict'] for row in parallel[1]], ['HOST-DEPENDENT', 'SKIP', 'MATCH'])
+        self.assertEqual(parallel[0], 1)
+        self.assertEqual([row['verdict'] for row in parallel[1]], ['DIFFER', 'SKIP', 'MATCH'])
         self.assertEqual([json.loads(line)['case'] for line in parallel[2].splitlines()], ['first', 'third'])
 
     def test_parent_mode_remains_serial_equivalent(self):

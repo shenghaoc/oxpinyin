@@ -452,16 +452,20 @@ class HostTests(unittest.TestCase):
         for spelling, accepted in (('1.5', True), ('1e3xyz', True), ('abc', False), ('', False)):
             with self.subTest(spelling=spelling):
                 self.assertIs(verdict.host_scanf_accepts(spelling), accepted)
+        self.assertEqual(verdict.host_scanf_verdict('1.5'),
+                         dict(input='1.5', accepted=True, value_bits='3fc00000'))
+        self.assertEqual(verdict.host_scanf_verdict('abc'),
+                         dict(input='abc', accepted=False, value_bits=None))
 
-    def test_the_directory_probe_repeats_the_pins_eight_byte_size_gate_and_caches_its_answer(self):
-        probe = verdict.directory_reads_as_a_chunk
-        for sought, reads in ((OSError(22, 'Invalid argument'), False), (7, False), (8, True)):
-            with self.subTest(sought=sought):
-                probe.cache_clear()
-                with patch.object(verdict.os, 'lseek', side_effect=[sought]):
-                    self.assertIs(probe(), reads)
-                    self.assertIs(probe(), reads)
-        probe.cache_clear()
+    def test_the_directory_probe_repeats_the_pin_header_reads(self):
+        for size, reaches in ((7, False), (8, True)):
+            with self.subTest(size=size):
+                with patch.object(verdict.os, 'lseek', side_effect=lambda fd, offset, whence:
+                                                size if whence == os.SEEK_END else 0), \
+                     patch.object(verdict.os, 'read', side_effect=OSError(21, 'directory')):
+                    self.assertEqual(verdict.directory_read_verdict(),
+                                     dict(size_at_least_header=reaches,
+                                          reads=[dict(count=-1, errno=21)] if reaches else []))
 
     def test_the_saved_bigram_mask_covers_only_the_timestamp_bytes(self):
         raw = bytes(range(256))

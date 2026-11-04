@@ -128,11 +128,23 @@ def plan_lines(registry, names, reasons, pinyin_so, zhuyin_so, prefix, cell):
     if skipped:
         lines.append('  %d case%s skip on this cell (fixture in another backend\'s format)' % (
             skipped, '' if skipped == 1 else 's'))
+    if prefix is None:  # verify: the subject and the stored references only
+        artifacts = ['subject %s' % pinyin_so]
+        if 'zhuyin' in modes:
+            artifacts += ['subject %s' % (zhuyin_so or '--zhuyin-so (missing)')]
+        lines.append('  artifacts: ' + '; '.join(artifacts))
+        return lines + _explicit(registry, names, reasons, explicit)
     artifacts = ['subject %s' % pinyin_so, 'pin %s' % (prefix / 'lib/libpinyin.so'),
                  'system tables %s' % (prefix / 'lib/libpinyin/data')]
     if 'zhuyin' in modes:
         artifacts += ['subject %s' % (zhuyin_so or '--zhuyin-so (missing)'), 'pin %s' % (prefix / 'lib/libzhuyin.so')]
     lines.append('  artifacts: ' + '; '.join(artifacts))
+    return lines + _explicit(registry, names, reasons, explicit)
+
+
+def _explicit(registry, names, reasons, explicit):
+    """One line per case of an explicit selection."""
+    lines = []
     if explicit:
         width = max(len(name) for name in names)
         for name in names:

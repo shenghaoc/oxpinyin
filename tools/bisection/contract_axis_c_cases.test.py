@@ -19,7 +19,7 @@ import contract_axis_c_cases as family
 EXPECTED_COUNT = 888
 EXPECTED_FIRST = ('axis-c-export-user', (), {})
 EXPECTED_LAST = ('axis-c-layout-zhuyin-2147483647-e0000070', (), {'mode': 'zhuyin', 'stderr': True})
-EXPECTED_SHA256 = '5cbf8dc4d18bded7b9e90d763f03c614e29715b03e0ba58ee102ecf0eeeabdfe'
+EXPECTED_SHA256 = '719dcd4bb1086d75fac6f71b9a724d77cefd7f6b6b2b386de3582bc16a2e2a40'
 INJECTED = ('AXIS_C_DEFINITION', 'AXIS_C_GROUPS', 'AXIS_C_LAYOUT_COVERED', 'WORKER')
 
 
