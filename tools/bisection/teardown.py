@@ -544,6 +544,16 @@ def row_text(rows):
     return ''.join(f'{library}\t{phrase}\t{pinyin}\t{count}\n' for library, phrase, pinyin, count in rows)
 
 
+# Witness inputs a profile must not carry. On the phrases profile the third
+# n-best sentence of `neng` and of `nou` is an exact S2 final-tail tie that the
+# pin breaks by standard-library heap order and oxpinyin by earlier batch
+# position, a ruled POLICY-ACCEPTED difference recorded in
+# docs/findings/sentence-surface.md ("Phrases-profile S2 tail ties: `neng` and
+# `nou`"). The preflight compares complete observations and has no policy
+# verdict, so these inputs would report NOT COMPARABLE on every arm.
+WITNESS_EXCLUSIONS = {'phrases': frozenset(('neng', 'nou'))}
+
+
 def witness_inputs(rows):
     """Select up to 400 distinct tone-free readings of at most 24 encoded bytes."""
     found = []
@@ -2566,7 +2576,9 @@ def prepare_witnesses(campaign, pin, profiles):
     Probe candidate readings against empty and populated profiles, selecting
     up to forty sorted differing inputs. Reuse nonempty witness files, leave
     the empty-profile witness unchanged, and print identities; raise ValueError
-    if a populated profile changes no candidate answer. The populated profiles
+    if a populated profile changes no candidate answer. A profile's
+    WITNESS_EXCLUSIONS never enter its witness: the selection skips them and
+    a reused file loses them. The populated profiles
     are independent: each is a unit (fan_out) that keeps its own steps in
     order, and the witness records print in profile order.
     """
@@ -2577,6 +2589,11 @@ def prepare_witnesses(campaign, pin, profiles):
         path = profiles[name].parent / 'witness.txt'
 
         def prepare(unit):
+            excluded = WITNESS_EXCLUSIONS.get(name, frozenset())
+            reused = path.read_text().splitlines()
+            kept = [value for value in reused if value not in excluded]
+            if kept != reused:
+                path.write_text(''.join(value + '\n' for value in kept))
             if not path.read_text():
                 rows = []
                 for line in (path.parent / 'rows.tsv').read_text().splitlines():
@@ -2592,7 +2609,8 @@ def prepare_witnesses(campaign, pin, profiles):
                     return {value['transcript']: value for value in row['observation']['documents']
                             if value.get('parser') == 'full'}
                 a, b = by_input(empty), by_input(populated)
-                chosen = [value for value in sorted(candidates) if a.get(value) != b.get(value)][:40]
+                chosen = [value for value in sorted(candidates)
+                          if value not in excluded and a.get(value) != b.get(value)][:40]
                 if not chosen:
                     raise ValueError('populated profile changes no witness answer: ' + name)
                 path.write_text(''.join(value + '\n' for value in chosen))

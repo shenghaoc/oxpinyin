@@ -1233,3 +1233,100 @@ just heavy -- cargo test --locked -p pinyin-oracle --test sentence_surface_parit
 
 CI supplies the Rust tests, Clippy and rustdoc gate. No shipping scoring,
 pruning, admission or tie rule changes, and no performance measurement.
+
+### Phrases-profile S2 tail ties: `neng` and `nou` (2026-11-04 UTC)
+
+Recorded 2026-11-04T23:43:12Z (`date -u`). The pin was read from the
+`074a2219c90feaf962d0d24f034514033ece5f99` Git blobs and oxpinyin at
+`fedf2451`. Model inputs are the pinned model20 text tables.
+
+The teardown startup preflight (`tools/bisection/teardown.py`, tkrzw,
+pinyin facade, `phrases` profile, options `0x18a`, sort word `0x1e`)
+shows two complete-observation differences, identical on every oxpinyin
+arm. Each is the third n-best sentence, the `NBEST_MATCH_CANDIDATE` row
+with n-best index 2.
+
+| Input | Preflight document | Pin ordered sentences | Subject ordered sentences | Covering record |
+| --- | --- | --- | --- | --- |
+| `neng` | 33 | 能 → 能 → 䏻 | 能 → 能 → 㴰 | S2 earlier batch tie |
+| `nou` | 35 | 耨 → 耨 → 鐞 | 耨 → 耨 → 鎒 | S2 earlier batch tie |
+
+Both are POLICY-ACCEPTED under the existing S2 ruling, with the same
+disposition as `fupie` above. They exist only on the `phrases` profile,
+so the fresh-profile fixtures do not hold them and
+`fixtures/w4/sentence-surface-residuals.txt` is unchanged. The preflight
+compares complete observations and has no policy verdict, so its
+`phrases` witness leaves both inputs out (`WITNESS_EXCLUSIONS`).
+
+**Profile.** The profile imports 10,000 library-1 rows at count 20000.
+An import of a phrase already in that library adds the count to the
+named pronunciation only (`src/pinyin.cpp:563–583`); the unigram and the
+total do not move. The rows that matter are 能 `neng`, 儜 `neng`,
+竜 `long`, 螚 `nai`, 耨 `nou`, 獳 `nou`, 鎒 `nou` and 嬬 `xu`.
+
+**Tie groups.** Every member has a single reading, no interpolation
+unigram entry (compiled unigram 1, as for `fupie`) and no sentence-start
+bigram entry.
+
+| Input | Member | Token | Table | Reading count |
+| --- | --- | --- | --- | --- |
+| `neng` | 㴰 | 33561629 | `gbk_char.table` | 3 |
+| `neng` | 㲌 | 33561630 | `gbk_char.table` | 3 |
+| `neng` | 䏻 | 33561633 | `gbk_char.table` | 3 |
+| `nou` | 鎒 | 16781836 | `gb_char.table` | 3 + 20000 imported |
+| `nou` | 鐞 | 33561649 | `gbk_char.table` | 3 |
+| `nou` | 啂 | 33561653 | `gbk_char.table` | 3 |
+| `nou` | 譳 | 33561655 | `gbk_char.table` | 3 |
+| `nou` | 㝹 | 33561657 | `gbk_char.table` | 3 |
+| `nou` | 羺 | 33561658 | `gbk_char.table` | 3 |
+| `nou` | 槈 | 33561659 | `gbk_char.table` | 3 |
+
+Each member extends the sentence start by one unigram step of length 1
+with unigram 1 and pronunciation probability 1, so the pre-log expression
+and `m_poss` are identical within a group
+(`src/lookup/phonetic_lookup.h:650–663`). The first two tails are the two
+values of one node, its bigram step and its unigram step (`:670–698`,
+`phonetic_lookup_heap.h:56–81`): 能 (unigram 59704, sentence-start bigram
+9476) and 耨 (unigram 125, bigram 10). The nearest values below each group
+are 儜 at pronunciation 20003/20006 and 獳 at 20003/20053. The imports
+leave 竜 (unigram 80, bigram 69) at pronunciation 50/20053 and 嬬
+(unigram 6) at 50/20103, both below the group.
+
+**Batch.** The final-step batch walks nodes in creation order and physical
+slots (`:272–297`): the bigram pass first, then the unigram pass in
+library, range and token order (`:540–572,578–641`).
+
+| Input | Batch, positions from 0 | Tie positions |
+| --- | --- | --- |
+| `neng` | 能, 能, 竜, 竜, 螚, 儜, 䪏, 䘅, 㴰, 㲌, 薴, 濘, 䏻 | 8, 9, 12 |
+| `nou` | 耨, 耨, 獳, 鎒, 嬬, 檽, 䫖, 㕢, 䔈, 㜌, 㳶, 鐞, 䘫, 䰭, 䨲, 啂, 譨, 譳, 䅶, 㝹, 羺, 槈, 嗕, 搙 | 3, 11, 15, 17, 19, 20, 21 |
+
+**Pin.** `get_top_results<2>(3, …)` selects the tails with `make_heap`
+and `pop_heap` (`:142–171,331–335`), which `std_lite` takes from the
+C++ standard library (`src/include/stl_lite.h:38–44`). With equal lengths
+the comparator is `m_poss <` and supplies no tie key (`:81–90`). The
+third pop is position 12 (䏻) for `neng` and position 11 (鐞) for `nou`:
+libstdc++'s order among equal heap elements.
+
+**Oxpinyin.** `Trellis::candidates` builds the same batch
+(`crates/oxpinyin-engine/src/nbest.rs:427–445`) and `selection_compare`
+orders equal adjusted scores by earlier batch position (`:223–234`),
+selecting position 8 (㴰) and position 3 (鎒). S3 cannot change the
+selected set.
+
+**Ruling.** The S2 text of the
+[witnessed algorithm-precondition amendment](compatibility-policy.md#amendment--witnessed-algorithm-precondition-violations-2026-10-28-utc)
+says: "Selection uses the total key `(ordered S, batch_position)`, with
+earlier batch position first on equal S." The
+[source policy](../source-policy.md#internal-language-artefacts) says:
+"Equal heap-element order, search results on unsorted input and a float's
+last bit are not contract guarantees." The pin's choice inside each group
+is not reconstructed.
+
+**Candidate rows.** The sentence prepend and the phrase-string
+deduplication (`src/pinyin.cpp:1934–1947,2116–2125`) remove the selected
+character's NORMAL row on each side. The remaining NORMAL rows keep one
+relative order on both sides; no other row moves.
+
+No shipping code changes. `just test-tools tools/bisection/teardown.test.py`
+covers the witness exclusion.
