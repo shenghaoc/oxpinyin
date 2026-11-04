@@ -1055,4 +1055,200 @@ mod tests {
             Some(record(&[(2, &b)]).as_slice())
         );
     }
+
+    /// Two length-2 keys, `short` sorting first with one item and `long`
+    /// after it with two, as the Kyoto Cabinet and tkrzw mask walk visits
+    /// them (ascending key order).
+    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+    fn short_then_long() -> (Vec<ChewingKey>, Vec<ChewingKey>) {
+        let (x, y) = (pair(1, 1), pair(2, 2));
+        if encode_complete_key(&x) < encode_complete_key(&y) {
+            (x, y)
+        } else {
+            (y, x)
+        }
+    }
+
+    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+    fn long_record(long: &[ChewingKey]) -> Vec<u8> {
+        record(&[(2, long), (3, long)])
+    }
+
+    /// The short record after a mask that removes nothing, with `tail`
+    /// appended: the previous record's items beyond its length that a
+    /// reused chunk keeps.
+    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+    fn masked_short(short: &[ChewingKey], tail: &[u8]) -> Vec<u8> {
+        let mut expected = record(&[(1, short)]);
+        expected.extend_from_slice(tail);
+        expected
+    }
+
+    #[cfg(feature = "bdb")]
+    #[test]
+    fn a_mask_pass_starts_every_record_from_its_own_bytes() {
+        // `ChewingLargeTable2::mask_out` points the entry at each record's
+        // own data with `set_chunk(db_data.data, db_data.size, NULL)` and
+        // puts the entry back with `DB_CURRENT` (chewing_large_table2_bdb.cpp:
+        // 498-506 at 074a2219), so a longer record never leaves a tail behind
+        // a shorter one, in either walk order and over repeated passes.
+        let (x, y) = (pair(1, 1), pair(2, 2));
+        let (short, long) = if encode_complete_key(&x) < encode_complete_key(&y) {
+            (x, y)
+        } else {
+            (y, x)
+        };
+        let long_items = record(&[(2, &long), (3, &long)]);
+        let mut index = index(&[
+            (encode_complete_key(&short), record(&[(1, &short)])),
+            (encode_complete_key(&long), long_items.clone()),
+        ]);
+        for _ in 0..2 {
+            index.mask(0xffff_ffff, 99);
+            assert_eq!(
+                index.record(&encode_complete_key(&short)),
+                Some(record(&[(1, &short)]).as_slice())
+            );
+            assert_eq!(
+                index.record(&encode_complete_key(&long)),
+                Some(long_items.as_slice())
+            );
+        }
+        // The same walk also removes what the mask names, record by record.
+        index.mask(0xffff_ffff, 3);
+        assert_eq!(
+            index.record(&encode_complete_key(&long)),
+            Some(record(&[(2, &long)]).as_slice())
+        );
+        assert_eq!(
+            index.record(&encode_complete_key(&short)),
+            Some(record(&[(1, &short)]).as_slice())
+        );
+    }
+
+    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+    #[test]
+    fn a_search_hit_leaves_its_record_in_the_entry_the_next_mask_starts_from() {
+        // `search_internal` loads a non-empty record into the length's
+        // entry (chewing_large_table2_kyotodb.cpp:160-174 at 074a2219).
+        // `MaskOutVisitor2::visit_full` then writes each record over the
+        // start of that entry with `set_content(0, ...)` and returns the
+        // whole entry (:471-478); `set_content` keeps the larger of the old
+        // size and the new length (memory_chunk.h:290-296). The first record
+        // the walk visits is shorter than the searched one, so it leaves
+        // with the searched record's second item behind it.
+        let (short, long) = short_then_long();
+        let rows = [
+            (encode_complete_key(&short), record(&[(1, &short)])),
+            (encode_complete_key(&long), long_record(&long)),
+        ];
+
+        let mut searched = index(&rows);
+        searched.note_search(&long);
+        searched.mask(0xffff_ffff, 99);
+        let item_len = record(&[(2, &long)]).len();
+        assert_eq!(
+            searched.record(&encode_complete_key(&short)),
+            Some(masked_short(&short, &long_record(&long)[item_len..]).as_slice()),
+            "the searched record's tail follows the first record"
+        );
+        assert_eq!(
+            searched.record(&encode_complete_key(&long)),
+            Some(long_record(&long).as_slice()),
+            "the next record overwrites the whole entry"
+        );
+
+        // Without a search the entry starts empty and nothing is carried.
+        let mut fresh = index(&rows);
+        fresh.mask(0xffff_ffff, 99);
+        assert_eq!(
+            fresh.record(&encode_complete_key(&short)),
+            Some(record(&[(1, &short)]).as_slice())
+        );
+    }
+
+    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+    #[test]
+    fn a_second_mask_starts_from_the_chunks_the_first_left_in_the_entries() {
+        // `m_entries` outlives each `mask_out` call: the entry of a length
+        // keeps the last record's chunk when the walk ends
+        // (chewing_large_table2_kyotodb.cpp:459-479 at 074a2219 never
+        // resets it). The first pass ends on the long record, so the second
+        // pass's first (short) record is written over the start of that
+        // chunk and keeps its second item behind it (memory_chunk.h:290-296).
+        let (short, long) = short_then_long();
+        let mut index = index(&[
+            (encode_complete_key(&short), record(&[(1, &short)])),
+            (encode_complete_key(&long), long_record(&long)),
+        ]);
+        index.mask(0xffff_ffff, 99);
+        assert_eq!(
+            index.record(&encode_complete_key(&short)),
+            Some(record(&[(1, &short)]).as_slice()),
+            "the first pass starts from an empty entry"
+        );
+        index.mask(0xffff_ffff, 99);
+        let item_len = record(&[(2, &long)]).len();
+        assert_eq!(
+            index.record(&encode_complete_key(&short)),
+            Some(masked_short(&short, &long_record(&long)[item_len..]).as_slice()),
+            "the second pass starts from the long record's chunk"
+        );
+        assert_eq!(
+            index.record(&encode_complete_key(&long)),
+            Some(long_record(&long).as_slice())
+        );
+    }
+
+    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+    #[test]
+    fn a_suggestion_empties_the_entries_of_the_lengths_it_visits() {
+        // `search_suggestion` checks the prefix key, jumps to it, and steps
+        // through every longer key that extends it
+        // (chewing_large_table2_kyotodb.cpp:541-582, `kyotodb_chewing_
+        // continue_search` :34-50 at 074a2219). Each visit borrows the
+        // record into that length's entry and ends with `set_size(0)`
+        // (:229-233), so the entry the earlier search loaded is empty.
+        let (short, long) = short_then_long();
+        let prefix = &long[..1];
+        let mut index = index(&[
+            (encode_complete_key(prefix), Vec::new()),
+            (encode_complete_key(&short), record(&[(1, &short)])),
+            (encode_complete_key(&long), long_record(&long)),
+        ]);
+        index.note_search(&long);
+        index.note_suggestion(prefix);
+        index.mask(0xffff_ffff, 99);
+        assert_eq!(
+            index.record(&encode_complete_key(&short)),
+            Some(record(&[(1, &short)]).as_slice()),
+            "the visited length's entry was emptied"
+        );
+        assert_eq!(index.record(&encode_complete_key(prefix)), Some(&[][..]));
+    }
+
+    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+    #[test]
+    #[ignore = "FINDING: UserIndex::note_suggestion has no counterpart of the pin's \
+                check(prefix) == -1 early return (chewing_large_table2_kyotodb.cpp:541-544), \
+                so it empties the entry where the pin leaves it; run with --ignored"]
+    fn a_suggestion_on_an_absent_prefix_key_leaves_the_entries_alone() {
+        // The pin's first call is `m_db->check(prefix)`; `-1` returns before
+        // any cursor is made (chewing_large_table2_kyotodb.cpp:541-544 at
+        // 074a2219), so no longer key is visited and no entry is emptied,
+        // even though a longer key exists.
+        let (short, long) = short_then_long();
+        let mut index = index(&[
+            (encode_complete_key(&short), record(&[(1, &short)])),
+            (encode_complete_key(&long), long_record(&long)),
+        ]);
+        index.note_search(&long);
+        index.note_suggestion(&long[..1]);
+        index.mask(0xffff_ffff, 99);
+        let item_len = record(&[(2, &long)]).len();
+        assert_eq!(
+            index.record(&encode_complete_key(&short)),
+            Some(masked_short(&short, &long_record(&long)[item_len..]).as_slice()),
+        );
+    }
 }

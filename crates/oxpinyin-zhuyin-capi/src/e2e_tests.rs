@@ -944,3 +944,218 @@ fn reload_aborts_on_a_directory_library() {
         assert!(map_a_directory_library("reload"));
     }
 }
+
+// ---------------------------------------------------------------------
+// Ports of contract-diff cases whose pin side reads freed or
+// heap-dependent memory (undefined behaviour), so no frozen pin
+// reference can hold them. Each asserts oxpinyin's defined behaviour;
+// the expectations come from the pin's source at 074a2219 and the
+// project's rulings, not from running the pin.
+// ---------------------------------------------------------------------
+
+/// The `open <user dir>/user.conf failed.` line a fresh user directory
+/// makes `zhuyin_init` write: `UserTableInfo::load` prints it when the
+/// marker is missing, with no trailing newline (`table_info.cpp:332` at
+/// 074a2219).
+#[cfg(unix)]
+fn fresh_user_conf_line(user_dir: &std::path::Path) -> String {
+    format!("open {}/user.conf failed.", user_dir.display())
+}
+
+/// The zhuyin twin of audit D-06's row-42 witness
+/// (`zhuyin-instance_outlives_context`): the pin's `zhuyin_guess_sentence`
+/// hands the freed context to `get_nbest_match` (`zhuyin.cpp:895-909`) and
+/// returns its result, so no pin answer is defined; the ruled safe answer
+/// is `true`. A populated matrix reaches the lookup (`su3cl3` is 你好).
+#[cfg(unix)]
+#[test]
+fn instance_outlives_context_guesses_true() {
+    let run = crate::test_support::run_in_child(
+        "e2e_tests::instance_outlives_context_guesses_true",
+        |user| {
+            let (context, instance) = open_with_user(user);
+            assert_eq!(
+                zhuyin_parse_more_chewings(instance, cstr("su3cl3").as_ptr()),
+                6
+            );
+            zhuyin_fini(context);
+            assert!(zhuyin_guess_sentence(instance), "the ruled safe answer");
+            zhuyin_free_instance(instance);
+        },
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stderr),
+        fresh_user_conf_line(&run.user_dir)
+    );
+}
+
+/// A second `zhuyin_fini` on one context (#573, register row 105): the pin
+/// deletes the context twice (`zhuyin.cpp:741-757`) and dies of SIGSEGV;
+/// the ruling is a silent return.
+#[cfg(unix)]
+#[test]
+fn fini_twice_returns_silently() {
+    let run = crate::test_support::run_in_child("e2e_tests::fini_twice_returns_silently", |user| {
+        let (context, instance) = open_with_user(user);
+        zhuyin_free_instance(instance);
+        zhuyin_fini(context);
+        zhuyin_fini(context);
+    });
+    assert_eq!(
+        String::from_utf8_lossy(&run.stderr),
+        fresh_user_conf_line(&run.user_dir)
+    );
+}
+
+/// GLib log records the child's default handler collected:
+/// `(domain, level, message)`.
+#[cfg(unix)]
+static GLIB_LOG: std::sync::Mutex<Vec<(String, u32, String)>> = std::sync::Mutex::new(Vec::new());
+
+/// Collects every GLib log record instead of printing it, so the child's
+/// stderr holds only the library's raw `fprintf` lines.
+#[cfg(unix)]
+extern "C" fn collect_glib_log(
+    domain: *const c_char,
+    level: glib_sys::GLogLevelFlags,
+    message: *const c_char,
+    _data: glib_sys::gpointer,
+) {
+    let text = |ptr: *const c_char| {
+        if ptr.is_null() {
+            String::new()
+        } else {
+            // SAFETY: GLib hands NUL-terminated strings that outlive the call.
+            unsafe { std::ffi::CStr::from_ptr(ptr) }
+                .to_string_lossy()
+                .into_owned()
+        }
+    };
+    GLIB_LOG
+        .lock()
+        .expect("log lock")
+        .push((text(domain), level, text(message)));
+}
+
+/// `#919`, `table-conf-919-short-row-merged-zhuyin`: the five-word row
+/// `default GB_DICTIONARY gbk_char.table gbk_char.bin gbk_char.dbin` plus
+/// the next line's first word `SYSTEM_FILE` is one valid six-word row
+/// (`fscanf("%255s ... %255s\n")` skips white space across newlines and
+/// takes whole words, `table_info.cpp:254-258`), so GB_DICTIONARY is
+/// re-pointed at the GBK files; the trailing `default RESERVED NULL NULL
+/// NULL` is five words, `6 != num` drops it (`:260-261`). The library and
+/// table then disagree and the pin reads a NULL item (SIGSEGV, class (b)),
+/// so only oxpinyin's answer is defined. The session is the case's: look
+/// up, learn a sentence, import a phrase, save, finalise.
+///
+/// libzhuyin writes and renames each library's log in turn
+/// (`zhuyin.cpp:560-640`), so the second write over the shared
+/// `gbk_char.dbin` finds its own tmp file and no `rename ... failed.`
+/// line follows (the pinyin twin's save writes all logs first,
+/// `pinyin.cpp:925-1090`); the only raw stderr line is the init's
+/// missing-marker line (`table_info.cpp:332`).
+#[cfg(unix)]
+#[test]
+fn table_conf_919_short_row_merged() {
+    let run =
+        crate::test_support::run_in_child("e2e_tests::table_conf_919_short_row_merged", |user| {
+            let system = crate::test_support::private_system(user.parent().expect("scratch"));
+            let conf = system.join("table.conf");
+            let stock = std::fs::read_to_string(&conf).expect("stock table.conf");
+            std::fs::remove_file(&conf).expect("unlink the link");
+            std::fs::write(
+                &conf,
+                stock
+                    + "default GB_DICTIONARY gbk_char.table gbk_char.bin gbk_char.dbin\n"
+                    + "SYSTEM_FILE default RESERVED NULL NULL NULL\n",
+            )
+            .expect("crafted table.conf");
+            // SAFETY: the handler is a plain function and `user_data` is unused.
+            unsafe {
+                glib_sys::g_log_set_default_handler(Some(collect_glib_log), ptr::null_mut());
+            }
+            let system_c = cstr(system.to_str().expect("UTF-8 path"));
+            let user_c = cstr(user.to_str().expect("UTF-8 path"));
+            let context = zhuyin_init(system_c.as_ptr(), user_c.as_ptr());
+            assert!(!context.is_null());
+            for text in ["ni3hao3", "yi4shu4"] {
+                let inst = zhuyin_alloc_instance(context);
+                crate::parse::zhuyin_parse_more_full_pinyins(inst, cstr(text).as_ptr());
+                zhuyin_guess_sentence(inst);
+                let mut sentence: *mut c_char = ptr::null_mut();
+                zhuyin_get_sentence(inst, &raw mut sentence);
+                if !sentence.is_null() {
+                    take_sentence(sentence);
+                }
+                crate::sentence::zhuyin_guess_candidates_after_cursor(inst, 0);
+            }
+            let inst = zhuyin_alloc_instance(context);
+            crate::parse::zhuyin_parse_more_full_pinyins(inst, cstr("ni3hao3").as_ptr());
+            zhuyin_guess_sentence(inst);
+            let train = zhuyin_train(inst);
+            let it = zhuyin_begin_add_phrases(context, 7);
+            let add = zhuyin_iterator_add_phrase(
+                it,
+                cstr("测试词").as_ptr(),
+                cstr("ㄘㄜˋ ㄕˋ ㄘˊ").as_ptr(),
+                1,
+            );
+            zhuyin_end_add_phrases(it);
+            let save = zhuyin_save(context);
+            zhuyin_fini(context);
+            assert!(train && add && save, "train {train} add {add} save {save}");
+            let mut sizes = std::collections::BTreeMap::new();
+            let mut marker = String::new();
+            for entry in std::fs::read_dir(user).expect("user dir") {
+                let entry = entry.expect("entry");
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let bytes = std::fs::read(entry.path()).expect("read");
+                if name == "user.conf" {
+                    marker = String::from_utf8_lossy(&bytes).into_owned();
+                } else {
+                    sizes.insert(name, bytes.len());
+                }
+            }
+            let present: Vec<&str> = sizes.keys().map(String::as_str).collect();
+            assert_eq!(
+                present,
+                [
+                    "addon.bin",
+                    "gbk_char.dbin",
+                    "merged.dbin",
+                    "network.bin",
+                    "opengram.dbin",
+                    "user.bin",
+                    "user_bigram.db",
+                    "user_phrase_index.bin",
+                    "user_pinyin_index.bin",
+                ]
+            );
+            for (name, size) in [
+                ("addon.bin", 27),
+                ("gbk_char.dbin", 26),
+                ("merged.dbin", 26),
+                ("network.bin", 27),
+                ("opengram.dbin", 26),
+                ("user.bin", 71),
+            ] {
+                assert_eq!(sizes[name], size, "{name}");
+            }
+            assert!(
+                marker.starts_with("binary format version:7\nmodel data version:14\n")
+                    && marker.ends_with("\nopen counter:0\n"),
+                "{marker}"
+            );
+            let records = GLIB_LOG.lock().expect("log lock").clone();
+            let warning = (
+                "libzhuyin".to_owned(),
+                glib_sys::G_LOG_LEVEL_WARNING,
+                "zhuyin_guess_candidates: a candidate's phrase item cannot be read".to_owned(),
+            );
+            assert_eq!(records, [warning.clone(), warning]);
+        });
+    assert_eq!(
+        String::from_utf8_lossy(&run.stderr),
+        fresh_user_conf_line(&run.user_dir)
+    );
+}

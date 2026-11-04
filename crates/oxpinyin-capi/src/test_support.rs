@@ -153,6 +153,63 @@ pub fn assert_aborts(name: &str, body: impl FnOnce()) -> Vec<u8> {
     output.stderr
 }
 
+/// The environment variable that names the user directory a
+/// [`run_in_child`] child works in.
+#[cfg(unix)]
+const CHILD_DIR: &str = "OXPINYIN_CAPI_CHILD_DIR";
+
+/// What a [`run_in_child`] child left behind.
+#[cfg(unix)]
+pub struct ChildRun {
+    /// The child's fd 2, byte for byte: the C-style `fprintf(stderr, ...)`
+    /// lines and GLib's default log handler write there directly.
+    pub stderr: Vec<u8>,
+    /// The user directory the child was given, still on disk while the
+    /// parent holds this value.
+    pub user_dir: PathBuf,
+    _scratch: tempfile::TempDir,
+}
+
+/// Runs `body` in a child process that exits 0 when it returns, the way
+/// [`assert_aborts`] runs one that must abort, and answers the child's
+/// stderr. `body` gets a fresh, empty user directory the parent created, so
+/// the parent can name it in the expected text. `name` is the calling
+/// test's full path as libtest prints it (`module::test`). A child that
+/// panics or dies fails the parent's assertion on its exit status.
+#[cfg(unix)]
+pub fn run_in_child(name: &str, body: impl FnOnce(&std::path::Path)) -> ChildRun {
+    if std::env::var_os(DEATH_TEST).is_some_and(|value| value == name) {
+        let dir = std::env::var_os(CHILD_DIR).expect("the child's user directory");
+        body(std::path::Path::new(&dir));
+        std::process::exit(0);
+    }
+    let scratch = tempfile::tempdir().expect("child scratch");
+    let user_dir = scratch.path().join("user");
+    std::fs::create_dir(&user_dir).expect("child user directory");
+    let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+        .args(["--exact", name, "--test-threads=1"])
+        .env(DEATH_TEST, name)
+        .env(CHILD_DIR, &user_dir)
+        .env("TMPDIR", scratch.path())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .expect("re-run the test binary");
+    // libtest reports a child's panic on stdout.
+    assert!(
+        output.status.success(),
+        "{name} child failed ({:?}): {}{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    ChildRun {
+        stderr: output.stderr,
+        user_dir,
+        _scratch: scratch,
+    }
+}
+
 /// The environment variable that names the file [`assert_aborts_sharing`]
 /// maps in the child.
 #[cfg(unix)]

@@ -43,30 +43,10 @@ def _(k):
 
 
 
-def instance_outlives_context(k):
-    """Replay audit D-06's row-42 witness: allocate, fini, then guess.
-
-    The pin dereferences its freed context (pinyin.cpp:1373-1380 at
-    074a2219); the ruled safe answer is true. Use the existing driver's
-    isolated worker and class-(b) observation, including the zhuyin twin.
-    """
-    context = k.init()
-    instance = k.fn('alloc_instance', P, P)(context)
-    # A populated matrix reaches the freed lookup; an empty composition
-    # returns false before consulting it (phonetic_lookup.h get_nbest_match).
-    parse, text = (('parse_more_chewings', b'su3cl3') if k.mode == 'zhuyin'
-                   else ('parse_more_full_pinyins', b'nihao'))
-    k.fn(parse, Z, P, S)(instance, text)
-    k.fn('fini', None, P)(context)
-    answer = k.fn('guess_sentence', B, P)(instance)
-    k.fn('free_instance', None, P)(instance)
-    return {'guess': answer}
-
-
-case('instance_outlives_context', crash={'guess': True}, stderr_varies=True,
-     issues=('528',))(instance_outlives_context)
-case('zhuyin-instance_outlives_context', mode='zhuyin', crash={'guess': True},
-     stderr_varies=True, issues=('528',))(instance_outlives_context)
+# `instance_outlives_context` and its zhuyin twin are not contract cases: the pin dereferences its
+# freed context, so its stderr bytes come from freed memory and no frozen reference can hold them.
+# oxpinyin's defined behaviour is asserted by `e2e_tests::instance_outlives_context_guesses_true`
+# in crates/oxpinyin-capi and crates/oxpinyin-zhuyin-capi.
 
 
 def register(driver_case):

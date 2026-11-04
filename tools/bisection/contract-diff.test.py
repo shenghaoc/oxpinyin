@@ -1318,79 +1318,6 @@ class DirChunkTests(DriverFixtureCase):
             self.assertEqual(driver.verdict_for(spec, self.aborted(), self.aborted(), False)[0], 'MATCH')
 
 
-class StrjoinvOverReadTests(DriverFixtureCase):
-    """`strjoinv_over_read`: register row 1's unterminated join is held to
-    the class (b) fault, or compared exactly where the pin completes."""
-
-    NAMES = ('user-gram-unsorted-export', 'user-gram-duplicate-export')
-    STDERR = 'open SCRATCH/user-X/user.conf failed.\n'
-
-    def steps(self, reading="ni'da'da"):
-        return {'steps': [[True, '你龘龘', reading, 90], [True, '你号', "ni'hao", 80], 'no-next', 'no-next']}
-
-    def completed(self, reading="ni'da'da"):
-        return observation(result=self.steps(reading), stderr=self.STDERR)
-
-    def decide(self, pin, subject):
-        return [driver.verdict_for(driver.CASES[name], pin, subject, False)[0] for name in self.NAMES]
-
-    def test_registered_cases(self):
-        self.assertEqual(sorted(name for name, spec in driver.CASES.items() if spec['strjoinv_over_read']),
-                         sorted(self.NAMES))
-
-    def test_fault_after_the_same_stderr_is_held(self):
-        pin = observation(exit=-signal.SIGSEGV, stderr=self.STDERR)
-        self.assertEqual(self.decide(pin, self.completed()), ['MATCH', 'MATCH'])
-
-    def test_fault_after_different_stderr_is_invalid(self):
-        for stderr in ('', self.STDERR + 'more\n'):
-            with self.subTest(stderr=stderr):
-                pin = observation(exit=-signal.SIGSEGV, stderr=stderr)
-                self.assertEqual(self.decide(pin, self.completed()), ['INVALID', 'INVALID'])
-
-    def test_other_termination_is_invalid(self):
-        for exit in (-signal.SIGABRT, -signal.SIGBUS, -signal.SIGTRAP, 1):
-            with self.subTest(exit=exit):
-                pin = observation(exit=exit, stderr=self.STDERR)
-                self.assertEqual(self.decide(pin, self.completed()), ['INVALID', 'INVALID'])
-
-    def test_subject_must_complete(self):
-        pin = observation(exit=-signal.SIGSEGV, stderr=self.STDERR)
-        self.assertEqual(self.decide(pin, observation(exit=-signal.SIGSEGV, stderr=self.STDERR)),
-                         ['INVALID', 'INVALID'])
-        self.assertEqual(self.decide(self.completed(), observation(exit=0, stderr=self.STDERR)),
-                         ['INVALID', 'INVALID'])
-
-    def test_exact_completion_matches(self):
-        self.assertEqual(self.decide(self.completed(), self.completed()), ['MATCH', 'MATCH'])
-
-    def test_completed_reading_is_compared_exactly(self):
-        for reading in ("ni'da'da'junk", "ni'junk'da'da", "ni'da'da'", "ni'da", "ni'da'du", "nii'da'da",
-                        "ni'dada", None):
-            with self.subTest(reading=reading):
-                self.assertEqual(self.decide(self.completed(reading), self.completed()), ['DIFFER', 'DIFFER'])
-
-    def test_dropped_trailing_syllable_differs(self):
-        pin, subject = self.completed(), self.completed()
-        pin['result']['steps'][1][2], subject['result']['steps'][1][2] = "ni'hao'ma", "ni'hao"
-        self.assertEqual(self.decide(pin, subject), ['DIFFER', 'DIFFER'])
-
-    def test_other_fields_stay_exact(self):
-        for change in (lambda s: s[0].__setitem__(1, '你龘'), lambda s: s[0].__setitem__(3, 91),
-                       lambda s: s[0].__setitem__(0, False), lambda s: s.pop(), lambda s: s.insert(0, 'no-next')):
-            pin = self.completed()
-            change(pin['result']['steps'])
-            self.assertEqual(self.decide(pin, self.completed()), ['DIFFER', 'DIFFER'])
-
-    def test_other_cases_keep_their_matcher(self):
-        spec = driver.CASES['default-option-parse']
-        self.assertFalse(spec['strjoinv_over_read'])
-        pin = observation(exit=-signal.SIGSEGV, stderr='')
-        self.assertEqual(driver.verdict_for(spec, pin, observation(result={'ret': 1}), False)[0], 'INVALID')
-        self.assertFalse(driver.matches(spec, observation(result={'r': "ni'hao'x"}),
-                                        observation(result={'r': "ni'hao"})))
-
-
 class WorkerEntryTests(DriverFixtureCase):
     """Workers start from contract-worker.py, which loads the same driver."""
 
@@ -1495,8 +1422,8 @@ class SelectionTests(DriverFixtureCase):
             workers.assert_not_called()
 
     def test_explicit_cases_keep_their_order_and_combine(self):
-        names, reasons = contract['select_cases']('fini-twice,default-option-parse', issues=['532'])
-        self.assertEqual(names[:2], ['fini-twice', 'default-option-parse'])
+        names, reasons = contract['select_cases']('alloc-instance-after-fini,default-option-parse', issues=['532'])
+        self.assertEqual(names[:2], ['alloc-instance-after-fini', 'default-option-parse'])
         self.assertEqual(reasons['default-option-parse'], ['--cases', 'issue 532'])
 
     def test_unknown_or_empty_selection_is_an_error_naming_what_exists(self):
@@ -1744,8 +1671,8 @@ class DriverVerdictTests(DriverFixtureCase):
 class PlatformExclusionTests(DriverFixtureCase):
     """#1137: the arm64-only exclusions are registered, reasoned and skipped."""
 
-    def test_arm64_exclusions_are_thirteen_reasoned_cases(self):
-        self.assertEqual(len(contract['ARM64_EXCLUDED_CASES']), 13)
+    def test_arm64_exclusions_are_eleven_reasoned_cases(self):
+        self.assertEqual(len(contract["ARM64_EXCLUDED_CASES"]), 11)
         for name in contract['ARM64_EXCLUDED_CASES']:
             with self.subTest(name=name):
                 spec = contract['CASES'][name]

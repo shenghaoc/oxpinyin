@@ -73,8 +73,7 @@ conditions stand unchanged in default mode. Under --expect-parent the pin
 must satisfy its registered termination contract, and the subject must
 complete with a result or terminate as registered for the pin. Other
 signals, timeouts, loader failures and missing results are INVALID.
-The pin_not_run declaration and held strjoinv_over_read fault keep their
-existing classification.
+The pin_not_run declaration keeps its existing classification.
 
 Missing inputs and an empty case list fail. Scratch lives under TMPDIR and is
 removed even on failure.
@@ -167,7 +166,7 @@ from contract_verdict import (  # comparison and verdict rules
     _FATAL_GLIB_PREFIX, abort_answered, directory_read_verdict, directory_reads_as_a_chunk,
     fatal_stderr, host_scanf_accepts, host_scanf_verdict, observed,
     pin_loaded_subject_refused_table_conf, policy_observation, policy_pin_abort, policy_side,
-    registered_termination, strjoinv_fault, tkrzw_saved_bigram_bytes, tkrzw_saved_bigram_equal,
+    registered_termination, tkrzw_saved_bigram_bytes, tkrzw_saved_bigram_equal,
     valid_observation)
 import contract_selection
 from contract_selection import SelectionError, case_names, family_of, normal_tag  # case selection
@@ -181,7 +180,6 @@ import contract_invalid_input_bytes
 import contract_negative_remember
 import contract_input_length_cap
 import contract_key_positions_past_65535
-import contract_double_fini
 import contract_non_utf8_directories
 import contract_axis_j
 import contract_predicted_types
@@ -371,10 +369,6 @@ def case(name, *args, **kwargs):
     `either=True` (with both `abort=` and `crash=`) is for a fixture whose
     pin site depends on the file system: the pin's own signal picks the
     matcher, SIGABRT the class (c) one and anything else the class (b) one.
-    `stderr_varies=True` (with `crash=`) is for a site where the pin's raw
-    stderr is read from freed memory and so changes from run to run: the pin
-    must still die of SIGSEGV and the subject answer `<fields>`, but the
-    stderr bytes are not compared.
     `host_scanf=<spellings>` is legacy metadata for `%f` inputs whose pin
     acceptance varies by host libc. Current scanner cases use discrepancy
     records instead. The pin reads them with the host libc, so on a host whose scanner
@@ -412,14 +406,6 @@ def case(name, *args, **kwargs):
     keeps the pin's registered termination, so `either=` and `dir_chunk=`
     choose the matcher as before; under --expect-parent the parent's
     refusal is the expected difference.
-    `strjoinv_over_read=True` is for the bigram export iterator's join of
-    an unterminated `GPtrArray` (register row 1, class (b);
-    `strjoinv_fault`): whether the pin faults depends on heap layout. A pin
-    that dies of SIGSEGV after the stderr the subject wrote, byte for byte,
-    is held, and the subject need only exit normally with a result: its
-    rows are not compared with anything then. They are compared on the
-    cells where the pin completes, as an ordinary case's are, every field
-    exactly. Any other pin signal, or different stderr, is INVALID.
     `issues=<tags>` names the issues, register rows or lane tags the case
     guards (`'640'`, `'row:54'`, `'W11'`), the selectors of `--issue`; a
     case's family for `--family` is the text before the first `/` of its
@@ -631,8 +617,8 @@ contract_key_positions_past_65535.register(case)
 contract_alloc_after_fini.register(case)
 
 
-# The #573 double-fini cases stay at their original point in the registration sequence.
-contract_double_fini.register(case)
+# The #573 double-fini cases moved to Rust tests: crates/oxpinyin-capi and crates/oxpinyin-zhuyin-capi,
+# `e2e_tests::fini_twice_returns_silently` (the pin's stderr comes from freed memory).
 
 
 # batch2 group 11: the facade unigram total wraps like the pin's (PR 11, #540)
@@ -1155,8 +1141,6 @@ def run_per_call(args, parser):
 # Diagnosis: #1137. The contract gate excludes them on arm64 only.
 ARM64_DIAGNOSIS_ISSUE = 1137
 ARM64_EXCLUDED_CASES = (
-    'fini-twice',
-    'zhuyin-fini-twice',
     'replay-modify-header-overlong-pinyin',
     'replay-modify-header-overlong-zhuyin',
     'replay-touched-duplicate-invalid-pinyin',

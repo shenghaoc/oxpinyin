@@ -1391,6 +1391,58 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_suggestion_makes_only_the_check_call() {
+        use super::ffi::{NativeCall, take_native_calls};
+        use crate::SystemAttachment;
+
+        // `ChewingLargeTable2::search_suggestion` on a tree whose open
+        // failed: its first call is `m_db->check(akbuf, aksiz)` and the
+        // `-1` answer returns before any cursor is made
+        // (chewing_large_table2_kyotodb.cpp:539-544 at 074a2219), so no
+        // `jump`, `step` or `get` follows. After the owner's `reset()` the
+        // object is gone and the call reaches nothing.
+        let dir = Temp::new("failed-suggestion", "missing");
+        let path = dir.0.join("pinyin_index.bin");
+        take_native_calls();
+        let SystemAttachment::Unopened(db) = SystemAttachment::open(&path, false).unwrap() else {
+            panic!("a path in a missing directory opened");
+        };
+        let handle = take_native_calls().first().expect("native open").0;
+        db.suggest(&[1, 0, 2, 0]);
+        assert_eq!(take_native_calls(), [(handle, NativeCall::Check)]);
+        db.finish();
+        take_native_calls();
+        db.suggest(&[1, 0, 2, 0]);
+        db.read(&[1, 0, 2, 0]);
+        assert!(take_native_calls().is_empty(), "a finished object is inert");
+    }
+
+    #[test]
+    fn a_read_only_container_refuses_set_and_remove_before_any_native_call() {
+        use super::ffi::take_native_calls;
+        use crate::StoreError;
+
+        // A `Bigram`/`FlexibleBigram` attached `ATTACH_READONLY` is a KC
+        // `OREADER` database, so its `set` and `remove` answer false
+        // (ngram_kyotodb.cpp:152, :160; flexible_ngram_kyotodb.h:235, :251
+        // at 074a2219). The wrapper's answer is `ReadOnly`, and the
+        // refusal makes no native call.
+        let file = Temp::new("readonly-set", "kch");
+        let store = KcStore::create_hash(&file.0).unwrap();
+        store.write(|txn| txn.put_raw(b"k", b"v")).unwrap();
+        drop(store);
+        let store = KcStore::open_hash_read_only(&file.0).unwrap();
+        take_native_calls();
+        assert!(matches!(
+            store.db.set(b"k", b"w"),
+            Err(StoreError::ReadOnly)
+        ));
+        assert!(matches!(store.db.remove(b"k"), Err(StoreError::ReadOnly)));
+        assert!(take_native_calls().is_empty());
+        assert_eq!(store.read_raw(b"k").unwrap(), Some(b"v".to_vec()));
+    }
+
+    #[test]
     fn scan_raw_is_ascending_and_bounded_on_every_container() {
         let model = rows();
         let fill = |store: &KcStore| {

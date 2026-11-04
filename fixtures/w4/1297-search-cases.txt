@@ -22,7 +22,6 @@ parse-dynamic-adjust-short-user-gram-zhuyin
 system-gram-duplicate-guess
 system-gram-unsorted-guess
 user-gram-duplicate-dynamic-adjust
-user-gram-duplicate-export
 user-gram-duplicate-guess
 user-gram-duplicate-mask-save-pinyin
 user-gram-duplicate-mask-save-zhuyin
@@ -32,7 +31,6 @@ user-gram-duplicate-remove-candidate-save
 user-gram-duplicate-train-save-pinyin
 user-gram-duplicate-train-save-zhuyin
 user-gram-unsorted-dynamic-adjust
-user-gram-unsorted-export
 user-gram-unsorted-guess
 user-gram-unsorted-mask-save-pinyin
 user-gram-unsorted-mask-save-zhuyin

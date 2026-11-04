@@ -568,15 +568,10 @@ def register(case, *, CASES, WORKER):
                  issues=('919',), control=True)(
                      header_probe(('lambda parameter:0.312699', 'lambda parameter:' + _spelling)))
 
-    # The five-word row plus the next row's first word form a valid six-word
-    # row with a library/table mismatch; the pin then reads a NULL item and
-    # SIGSEGVs. The subject answers the same request without the invalid read:
-    # class (b), recorded as the declared result rather than reproduced.
-    conf_case('919-short-row-merged',
-              ('+', 'default GB_DICTIONARY gbk_char.table gbk_char.bin gbk_char.dbin'),
-              ('+', 'SYSTEM_FILE default RESERVED NULL NULL NULL'),
-              issues=('919',), control=True, crash={'train': True, 'save': True},
-              stderr_varies=True)
+    # The five-word row plus the next row's first word form a valid six-word row with a
+    # library/table mismatch; the pin then reads a NULL item and its stderr comes from freed
+    # memory. The `table-conf-919-short-row-merged` pair is therefore a Rust test:
+    # `e2e_tests::table_conf_919_short_row_merged` in crates/oxpinyin-capi and crates/oxpinyin-zhuyin-capi.
     conf_case('919-addon-atoi-nondigit',
               ('+', 'addon abc art.table art.bin NULL DICTIONARY'),
               modes=('pinyin',), session=addon_session, issues=('919',), control=True)

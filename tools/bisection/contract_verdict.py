@@ -166,8 +166,7 @@ def verdict_for(spec, pin, subject, expect_parent, *, policy_root, cell, directo
 
     INVALID when either side of an ordinary case produced no valid
     observation; it is never expected, in either mode. Under --expect-parent,
-    registered terminations also require valid_parent_observations. A `strjoinv_over_read`
-    case's held pin fault (`strjoinv_fault`) counts as valid. Otherwise MATCH or
+    registered terminations also require valid_parent_observations. Otherwise MATCH or
     DIFFER by `matches`, and expected when it is what the mode asks for: a
     MATCH, or under --expect-parent a DIFFER from a non-control case.
 
@@ -210,10 +209,9 @@ def verdict_for(spec, pin, subject, expect_parent, *, policy_root, cell, directo
         # A bad record observation is never an expected parent difference.
         return 'DIFFER', False, False
     same = matches(spec, pin, subject, directory_probe=directory_probe)
-    held_fault = spec['strjoinv_over_read'] and strjoinv_fault(pin, subject)
     valid = (valid_parent_observations(spec, pin, subject, directory_probe=directory_probe) if expect_parent
              else all(valid_observation(spec, side) for side in (pin, subject)))
-    if not held_fault and not valid:
+    if not valid:
         return 'INVALID', False, same
     expected = same if (not expect_parent or spec['control']) else not same
     if same and assert_line_only(spec, pin, subject):
@@ -277,30 +275,6 @@ def short_dir_chunk(spec, *, directory_probe):
     return spec['dir_chunk'] is not None and not directory_probe()
 
 
-# Register row 1 (class (b)): `pinyin_bigram_iterator_has_next_phrase` joins
-# each predecessor's and each successor's syllables from a `GPtrArray` made by
-# `g_ptr_array_new` and taken by `g_ptr_array_free(…, FALSE)`, never
-# terminated, with `g_strjoinv("'", …)` and frees it with `g_strfreev`
-# (`pinyin.cpp:844-850`, `:857-863` at 074a2219). At GLib 2.90.0 (the oracle
-# image) and 2.80.0, `g_ptr_array_maybe_expand` grows a non-terminated array,
-# one add at a time, to the power of two of bytes that holds its `len`
-# pointers, at least `MIN_ARRAY_SIZE` (16), with `g_realloc`, and clears the
-# new slots only under `g_mem_gc_friendly` (`garray.c:1893-1921` at 2.90.0);
-# `ptr_array_free` hands that buffer back as is (`:1845-1890`). So
-# `pdata[len]` is uninitialised heap (inside the 16-byte block for one
-# syllable, the word past it for two), and `g_strjoinv` walks to the first
-# NULL (`gstrfuncs.c:2661`, `:2672`). An unreadable word faults; a NULL word
-# gives the subject's reading. A readable non-NULL word would be joined and
-# then freed by `g_strfreev` (`pinyin.cpp:850`, `:863`), so a completed run
-# with such a tail is not probable, and a completed pin is compared exactly.
-def strjoinv_fault(pin, subject):
-    """Row 1's fault: the pin dies of SIGSEGV after the stderr the subject
-    wrote, byte for byte, and the subject completes. The subject's rows are
-    not compared with anything here."""
-    return pin['exit'] == -signal.SIGSEGV and pin['stderr'] == subject['stderr'] and \
-        subject['exit'] == 0 and subject['result'] is not None
-
-
 def matches(spec, pin, subject, *, directory_probe):
     """The verdict predicate shared by the driver and gcov measurement tier.
 
@@ -330,7 +304,7 @@ def matches(spec, pin, subject, *, directory_probe):
     elif spec['crash'] is not None and not as_abort:
         shown = subject['result'] or {}
         same = pin['exit'] == -signal.SIGSEGV and subject['exit'] == 0 and \
-            (spec['stderr_varies'] or pin['stderr'] == subject['stderr']) and \
+            pin['stderr'] == subject['stderr'] and \
             (spec.get('crash_stderr_pattern') is None or
              re.search(spec['crash_stderr_pattern'], pin['stderr'], re.MULTILINE) is not None) and \
             all(shown.get(key) == value for key, value in spec['crash'].items())
@@ -338,8 +312,6 @@ def matches(spec, pin, subject, *, directory_probe):
         same = sigabrt_reproduced(spec, pin, subject)
     elif as_abort:
         same = pin['exit'] == -6 and abort_answered(spec, pin, subject)
-    elif spec['strjoinv_over_read'] and pin['exit'] == -signal.SIGSEGV:
-        same = strjoinv_fault(pin, subject)
     elif short_dir and spec['dir_chunk'] == 'system':
         # Class (b): the pin dies of SIGSEGV after the stderr the subject
         # writes in full; the subject answers as the abort site registers.
