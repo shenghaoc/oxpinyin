@@ -2494,6 +2494,53 @@ class FixtureFlowTests(unittest.TestCase):
         self.assertEqual(serial[2]['phrases/witness.txt'], b'kept\n')
         self.assertEqual(serial[2]['empty/witness.txt'], b'')
 
+    def test_phrases_witness_never_carries_the_recorded_tie_inputs(self):
+        # docs/findings/sentence-surface.md, "Phrases-profile S2 tail ties".
+        self.assertEqual(td.WITNESS_EXCLUSIONS, {'phrases': frozenset(('neng', 'nou'))})
+        populated = td.PROFILES[1:]
+        self.assertGreaterEqual(len(populated), 3)
+        self.assertIn('phrases', populated)
+        reusing = next(name for name in populated if name != 'phrases')
+        profiles = {}
+        for profile in td.PROFILES:
+            directory = self.root / profile
+            (directory / 'user').mkdir(parents=True)
+            (directory / 'witness.txt').write_text('')
+            (directory / 'rows.tsv').write_text(td.row_text(
+                [] if profile == 'empty' else [(1, '能', 'neng2', 5), (1, '耨', 'nou4', 5), (1, '我', 'wo3', 5)]))
+            profiles[profile] = directory / 'user'
+        (self.root / reusing / 'witness.txt').write_text('neng\nkept\n')
+
+        def run(self_, facade, library, profile, *, mode='time', inputs=None, **kwargs):
+            return dict(observation=dict(documents=[
+                dict(parser='full', transcript=value, answer=value + profile.parent.name)
+                for value in inputs.read_text().split()]))
+        with patch.object(td.Campaign, 'run', run):
+            td.prepare_witnesses(self.campaign(1), Path('pin.so'), profiles)
+        written = {name: (self.root / name / 'witness.txt').read_text() for name in populated}
+        # The selection skips the exclusions for phrases alone; the full
+        # candidate list still reaches the pin.
+        self.assertEqual(written.pop('phrases'), 'wo\n')
+        self.assertEqual((self.root / 'phrases' / 'candidate-inputs.txt').read_text(), 'neng\nnou\nwo\n')
+        # Another profile's reused file is not rewritten.
+        self.assertEqual(written.pop(reusing), 'neng\nkept\n')
+        self.assertEqual(set(written.values()), {'neng\nnou\nwo\n'})
+
+        # A reused phrases witness loses the exclusions and keeps the rest.
+        (self.root / 'phrases' / 'witness.txt').write_text('beng\nneng\nnou\nzeng\n')
+        del self.records[:]
+        with patch.object(td.Campaign, 'run', run):
+            td.prepare_witnesses(self.campaign(1), Path('pin.so'), profiles)
+        self.assertEqual((self.root / 'phrases' / 'witness.txt').read_text(), 'beng\nzeng\n')
+        record = next(values for kind, values in self.records if values['profile'] == 'phrases')
+        self.assertEqual(record['inputs'], ['beng', 'zeng'])
+
+        # A reused phrases witness holding only exclusions is selected afresh.
+        (self.root / 'phrases' / 'witness.txt').write_text('neng\nnou\n')
+        with patch.object(td.Campaign, 'run', run):
+            td.prepare_witnesses(self.campaign(1), Path('pin.so'), profiles)
+        self.assertEqual((self.root / 'phrases' / 'witness.txt').read_text(), 'wo\n')
+
     def test_a_populated_profile_that_changes_no_answer_stops_the_witness_pool(self):
         profiles = {}
         for profile in td.PROFILES:
