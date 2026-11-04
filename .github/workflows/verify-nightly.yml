@@ -58,6 +58,37 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  contract-verify:
+    if: ${{ !inputs.windows_only && !inputs.macos_only }}
+    runs-on: ubuntu-26.04
+    container:
+      image: debian:testing # deliberately unpinned; see the workflow header
+    timeout-minutes: 75
+    steps:
+      - name: Bootstrap the bare runner essentials (apt)
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends bash python3 tar gzip zstd git ca-certificates curl
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/bootstrap
+        with:
+          safe-directory: 'true'
+          rustup: 'true'
+          rust-cache: 'true'
+          rust-cache-key: nightly-contract-verify
+          uv: 'true'
+          just: 'true'
+      - name: Install build dependencies (apt)
+        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libglib2.0-dev
+      - name: Provision tkrzw
+        uses: ./.github/actions/tkrzw
+      - name: Contract references (tkrzw verify)
+        uses: ./.github/actions/contract-verify
+        with:
+          cell: tkrzw
+
   # Every fuzz target, 3 minutes each, ASan+LSan on by default with
   # cargo-fuzz 0.13.2. The only fuzz lane: ci.yml's per-PR build and
   # smoke pass moved here on 2026-09-23, so a target that no longer

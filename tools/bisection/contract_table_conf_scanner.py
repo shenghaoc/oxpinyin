@@ -648,6 +648,14 @@ def register(case, *, CASES, WORKER):
         out = conf_session(k, conf_system(k, ('user.bin USER_FILE', nested + '/u.bin USER_FILE')))
         out['beside'] = user_listing(k, nested)
         out['beneath'] = user_listing(k, k.user + nested)
+        # `k.user + nested` makes the scratch path's first component appear in the user
+        # directory: its name is the harness's scratch location (`tmp` under /tmp, `__w` under
+        # a GitHub container), not behaviour. Only that one prefix is replaced; every other
+        # name stays as observed.
+        prefix = os.fsencode(k.user.split('/')[1]).decode('latin-1')
+        files = out.get('files')
+        if files is not None and prefix in files:
+            files['SCRATCH-PREFIX'] = files.pop(prefix)
         return out
 
 

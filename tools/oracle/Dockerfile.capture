@@ -1,0 +1,62 @@
+# The environment `contract-diff.py capture` runs in: Debian stable (trixie), the pin's
+# libraries from the published oracle image, and the managed Python. It holds no source,
+# no pin build and no model data. The interpreter is linked as python<major.minor>, the name a managed
+# interpreter has: the pin's assertion messages begin with the process name, and the recorded
+# observations hold `python3.15:`. (g++, pkg-config and the GLib headers build the OOM-injection
+# helper of the glib-924 cases); tools/oracle/capture-contract.sh mounts the checkout
+# read-only and the system data (libpinyin-data) beside it.
+#
+#   docker build -f tools/oracle/Dockerfile.capture \
+#     --build-arg REFERENCE_IMAGE=ghcr.io/shenghaoc/oxpinyin-oracle:<tag> -t oxpinyin-capture:<tag> .
+ARG REFERENCE_IMAGE
+FROM ${REFERENCE_IMAGE} AS reference
+FROM debian:trixie
+COPY tools/oracle/version-manifest.json /usr/local/share/oxpinyin/version-manifest.json
+COPY tools/oracle/versions.py /usr/local/bin/versions.py
+RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
+    set -eu; set --; \
+    if [ -s /run/secrets/cacert ]; then \
+      set -- -o Acquire::https::CaInfo=/run/secrets/cacert; \
+    fi; \
+    apt-get "$@" update; \
+    apt-get "$@" install -y --no-install-recommends \
+      ca-certificates curl python3 g++ libc6-dev pkg-config libglib2.0-dev libglib2.0-0t64 libdb5.3t64 libkyotocabinet16v5 libtkrzw1t64; \
+    rm -rf /var/lib/apt/lists/*; \
+    python3 /usr/local/bin/versions.py --print \
+      --manifest /usr/local/share/oxpinyin/version-manifest.json \
+      > /opt/oxpinyin-capture-versions.txt
+# The managed interpreter that .python-version names, from tools/install-python.sh as
+# Dockerfile.compat installs it (uv 0.13.1, archive checksummed).
+COPY .python-version /opt/python-pin/.python-version
+COPY tools/install-python.sh /opt/python-pin/tools/install-python.sh
+COPY tools/lib/bash-floor.sh /opt/python-pin/tools/lib/bash-floor.sh
+ENV UV_INSTALL_DIR=/opt/uv/bin UV_PYTHON_INSTALL_DIR=/opt/uv/python UV_CACHE_DIR=/opt/uv/cache
+RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
+    set -eu; \
+    if [ -s /run/secrets/cacert ]; then \
+      cp /run/secrets/cacert /usr/local/share/ca-certificates/capture-proxy.crt; \
+      update-ca-certificates; \
+      export UV_SYSTEM_CERTS=true; \
+    fi; \
+    case $(uname -m) in \
+      x86_64) uv_target=x86_64-unknown-linux-gnu; \
+              uv_sha256=eadd9d27c134ab5ac1ffd4473b97a741407f3ea238288f03121fc4deddf90220 ;; \
+      aarch64 | arm64) uv_target=aarch64-unknown-linux-gnu; \
+              uv_sha256=9041c73c99fdc5892cf128140beb354eca9231d502068cc36e6cb53a8e59ad14 ;; \
+      *) printf 'no uv target for architecture %s\n' "$(uname -m)" >&2; exit 1 ;; \
+    esac; \
+    uv_tmp=$(mktemp -d); \
+    curl --fail --location --retry 3 -o "$uv_tmp/uv.tar.gz" \
+      "https://github.com/astral-sh/uv/releases/download/0.13.1/uv-$uv_target.tar.gz"; \
+    printf '%s  %s\n' "$uv_sha256" "$uv_tmp/uv.tar.gz" | sha256sum --check -; \
+    tar -xz -C "$uv_tmp" -f "$uv_tmp/uv.tar.gz"; \
+    mkdir -p /opt/uv/bin; \
+    install -m755 "$uv_tmp/uv-$uv_target/uv" /opt/uv/bin/uv; \
+    rm -rf "$uv_tmp"; \
+    PATH="/opt/uv/bin:$PATH" /opt/python-pin/tools/install-python.sh; \
+    version=$(sed -n 's/^cpython@\([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' /opt/python-pin/.python-version); \
+    test -n "$version"; \
+    ln -s "$(PATH="/opt/uv/bin:$PATH" uv python find --managed-python --directory /opt/python-pin)" "/usr/local/bin/python$version"; \
+    rm -rf /opt/uv/cache; \
+    chmod -R a+rX /opt/uv/python
+COPY --from=reference /opt/pinyin-oracle /opt/reference

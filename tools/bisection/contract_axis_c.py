@@ -140,6 +140,34 @@ def axis_c_first_difference(left, right, path=''):
                 subject=right if len(repr(right)) < 300 else repr(right)[:300])
 
 
+def axis_c_envelope(observation):
+    """The part of a worker observation the battery compares: exit, result and stderr."""
+    return {key: observation[key] for key in ('exit', 'result', 'stderr')}
+
+
+def axis_c_verdict(name, pin, subject, covered_row):
+    """MATCH or DIFFER for one axis C case, and its differing rows as (key, pin row, subject row).
+
+    PIN is the stored pin observation of a reference, SUBJECT the subject's, both reduced to the
+    exit/result/stderr envelope. A row counts when both sides exited cleanly with a result and
+    are equal, or, on a register-covered scheme-setter case, when both abort alike. Two
+    identical failures are never a match."""
+    differing = []
+    pin_rows = (pin['result'] or {}).get('observations')
+    subject_rows = (subject['result'] or {}).get('observations')
+    if pin_rows is not None and subject_rows is not None:
+        for key in pin_rows:
+            left, right = pin_rows[key], subject_rows.get(key)
+            if axis_c_live(left) and axis_c_live(right) and left == right:
+                continue
+            if covered_row and axis_c_reproduced_abort(left, right):
+                continue
+            differing.append((key, left, right))
+    if differing or not (axis_c_live(pin) and axis_c_live(subject) and pin == subject):
+        return 'DIFFER', differing or [('case', pin, subject)]
+    return 'MATCH', []
+
+
 def run_axis_c(args, names, *, CASES, run_worker, AXIS_C_LAYOUT_COVERED, AXIS_C_DEFINITION):
     """Repeat and compare existing worker observations, with no saved output."""
     from collections import Counter

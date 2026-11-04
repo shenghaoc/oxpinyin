@@ -1,0 +1,20 @@
+{
+  "schema": "libpinyin-data-pin-v1",
+  "note": "The system data of every contract capture and verify run: Debian forky's libpinyin-data at one exact version, from snapshot.debian.org. It replaces model20-derived data. The files are identical on amd64 and arm64; content_sha256 is tools/bisection/contract_reference.data_identity over the extracted directory.",
+  "package": "libpinyin-data",
+  "version": "2.11.92-1",
+  "snapshot_first_seen": "20261010T023936Z",
+  "archives": {
+    "amd64": {
+      "snapshot_sha1": "7b20ab3eaa4cbe1dcb9c52172d9886048cdd676d",
+      "sha256": "e858a983b407dc4bb77d9af59bde005e7225d0154aae23419103e7bc9108b82e",
+      "data_dir": "usr/lib/x86_64-linux-gnu/libpinyin/data"
+    },
+    "arm64": {
+      "snapshot_sha1": "de7effe2d65450c56a4af652f345095b00bc5b72",
+      "sha256": "6e8c1df12349cd2ef2c2dd1d79bbfb22000704b1f561aecbe62a9f7119c7bdb9",
+      "data_dir": "usr/lib/aarch64-linux-gnu/libpinyin/data"
+    }
+  },
+  "content_sha256": "f838af1564dae09c89d3696a579fa0d33a8696d916ff8d913149731d51a8ec2f"
+}

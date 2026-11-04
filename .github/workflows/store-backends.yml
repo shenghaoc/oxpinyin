@@ -152,7 +152,7 @@ jobs:
           # in a changed non-Markdown file, or a Cargo.toml line naming a
           # backend. --also adds this workflow's own infrastructure: the
           # workflow, the backend provisioning under tools/bdb, tools/tkrzw and
-          # .github/actions/tkrzw,
+          # .github/actions/tkrzw, the contract-verify action,
           # service (tools/dev/test_runner.py), the toolchain pin and this
           # gate's own script.
           python3 tools/bisection/cells-for-diff.py --run-flag \
@@ -164,6 +164,7 @@ jobs:
             --also tools/bdb \
             --also tools/tkrzw \
             --also .github/actions/tkrzw \
+            --also .github/actions/contract-verify \
             --also tools/dev/check.py \
             --also tools/dev/test_runner.py \
             --also rust-toolchain.toml \
@@ -226,6 +227,8 @@ jobs:
           rustup-components: clippy rustfmt
           rust-cache: 'true'
           rust-cache-key: store-backend-${{ matrix.backend }}
+          # The KC and BDB children also run the contract references (contract-verify).
+          uv: ${{ matrix.backend != 'tkrzw' && needs.changes.outputs.reuse != 'true' }}
 
       - name: Install build dependencies (apt)
         # Every matrix child installs the full set so each lane is
@@ -319,6 +322,15 @@ jobs:
             ;;
           esac
           echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
+
+      # Backend database behaviour is verified by the native Rust tests above. The contract cases
+      # that read no system data also run here, against the frozen pin observations (the tkrzw
+      # cell verifies in ci.yml; nothing runs nightly for KC or BDB).
+      - name: Contract references (verify under this backend)
+        if: ${{ needs.changes.outputs.reuse != 'true' && matrix.backend != 'tkrzw' }}
+        uses: ./.github/actions/contract-verify
+        with:
+          cell: ${{ matrix.backend == 'kyotocabinet' && 'kc' || matrix.backend }}
 
       - name: Report
         if: ${{ !cancelled() && needs.changes.outputs.reuse != 'true' }}

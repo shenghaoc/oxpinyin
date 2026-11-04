@@ -317,7 +317,7 @@ jobs:
     runs-on: *ubuntu
     container:
       image: debian:testing # deliberately unpinned; see store-backends.yml header
-    timeout-minutes: 30
+    timeout-minutes: 75
     defaults:
       run:
         shell: bash

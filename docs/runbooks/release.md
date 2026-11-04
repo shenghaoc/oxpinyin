@@ -14,14 +14,16 @@ and attaches them with a `SHA256SUMS` to the release.
 ## Before tagging
 
 1. `main` green on `CI`, `Store backends` and the last `verify-nightly`.
-2. The ABI export gate passed on the tip (`just abi exports
+2. Manually dispatch `verify-nightly.yml` on the release commit. Publish only
+   if its tkrzw contract `verify` job passes.
+3. The ABI export gate passed on the tip (`just abi exports
    --shipped`; CI runs it on every change).
-3. The allocator-pairing gate passed on the tip
+4. The allocator-pairing gate passed on the tip
    (`just abi alloc-pairing`; CI runs it on every change).
    Linux only — `--static-only` is the portable half.
-4. Frozen pins unchanged since the last verified run, or re-verified
+5. Frozen pins unchanged since the last verified run, or re-verified
    (`goldens-and-pins.md`).
-5. Version streams agree (`docs/packaging.md`, "The four version
+6. Version streams agree (`docs/packaging.md`, "The four version
    streams"): the drop-in identity is the pin's libpinyin version
    (`just packaging pc-version`; CI's `python -m tools.dev packaging
    check-pc-version` holds the manifests to it); the crate version is the workspace's `0.x` lockstep.

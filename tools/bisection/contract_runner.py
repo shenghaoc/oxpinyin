@@ -16,6 +16,11 @@ import tempfile
 import threading
 import time
 
+try:
+    from . import contract_reference as reference
+except ImportError:  # standalone contract driver
+    import contract_reference as reference
+
 _UNSET = object()
 STATE_NAMES = {'WORKER_ENV': 'worker_env', 'WORKER_FDS': 'worker_fds', 'CANCELLED': 'cancelled'}
 
@@ -262,6 +267,125 @@ class Runner:
                         results[index]['result']['cross_reload'] = self.driver['observed'](reload['result'])
         return results
 
+    def _handoff(self, name):
+        """(is a handoff case, is the #929 logical one, profile env key, reload env key)."""
+        handoff_929 = name in ('save-929-logical-cross-open-pinyin', 'save-929-logical-cross-open-zhuyin')
+        handoff = handoff_929 or name in ('issue1114-collision-load-save-pinyin', 'issue1114-collision-load-save-zhuyin')
+        return (handoff, handoff_929, 'CONTRACT_929_PROFILE' if handoff_929 else 'CONTRACT_1114_PROFILE',
+                'CONTRACT_929_RELOAD' if handoff_929 else 'CONTRACT_1114_RELOAD')
+
+    def _one_side(self, side, spec, so, data, name, scratch, deadline, timeout, extra_env):
+        """One worker for SIDE under the case deadline; a timeout is an observation."""
+        previous_side = getattr(self.driver['WORKER_STATE'], 'side', None)
+        self.driver['WORKER_STATE'].side = side
+        try:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(str(so), timeout)
+            if self.driver['selected_cell']() == 'tkrzw':
+                extra_env = dict(extra_env or {}, OXPINYIN_RUNTIME_SIDE=side)
+            observation = self.driver['run_worker'](spec['mode'], so.resolve(), data, name, scratch,
+                                                    extra_env=extra_env, timeout=remaining)
+            # A handoff profile directory has a generated name, like the user and system ones.
+            observation['stderr'] = re.sub(r'handoff-(pin|subject)-[A-Za-z0-9_]+', r'handoff-\1-X',
+                                           observation['stderr'])
+            # So is any other mkdtemp name a case makes (`wrap-q83kle1_`): prefix, dash, eight characters.
+            observation['stderr'] = re.sub(r'(SCRATCH/[A-Za-z0-9_.]+-)[a-z0-9_]{8}(?![a-z0-9_])', r'\1X',
+                                           observation['stderr'])
+            return observation
+        except subprocess.TimeoutExpired as error:
+            return dict(exit='TIMEOUT', result=None, userfiles=[],
+                        stderr_lines=len((error.stderr or b'').splitlines()),
+                        stderr=(error.stderr or b'').decode('utf-8', 'surrogateescape'))
+        finally:
+            self.driver['WORKER_STATE'].side = previous_side
+
+    def capture_case(self, spec, pin_so, data, name, scratch, timeout, companion=None):
+        """Run one case on the pin alone and return (observation, profile, package_data).
+
+        PROFILE is the pin-written donor profile of a handoff case as {file: base64}, else
+        None. PACKAGE_DATA says the case read the system data directory. A pin_not_run case
+        does not run the pin. A handoff case then lets the pin read its own profile in a fresh
+        worker: `cross_reload` is that observation, which a verifying subject must reproduce
+        from the same file (the #929 case also requires it to equal the donor's own)."""
+        if spec.get('pin_not_run') is not None:
+            # No worker runs, so nothing shows whether the case reads the package data. Count it as
+            # reading it (tkrzw only): the conservative reading, checked by the subject at verify.
+            return dict(exit='NOT-RUN', result=None, userfiles=[], stderr_lines=0, stderr=''), None, True
+        deadline = time.monotonic() + timeout
+        fatal_env = {'G_DEBUG': 'fatal-criticals'} if spec['fatal'] else {}
+        handoff, handoff_929, profile_key, reload_key = self._handoff(name)
+        used = os.path.join(tempfile.mkdtemp(prefix='data-use-', dir=scratch), 'used')
+        env = dict(fatal_env, CONTRACT_DATA_USE=used)
+        if companion is not None:
+            env['AXIS_C_COMPANION_PINYIN'] = str(Path(companion).resolve())
+        profile = None
+        if handoff:
+            profile = tempfile.mkdtemp(prefix='handoff-pin-', dir=scratch)
+            env[profile_key] = profile
+        observation = self._one_side('pin', spec, pin_so, data, name, scratch, deadline, timeout, env)
+        package = os.path.exists(used)
+        # The stored profile is the one the pin wrote, taken before the pin's own reload below
+        # opens it (a reopen can rewrite the container's clock field).
+        encoded = reference.encode_profile(profile) if profile else None
+        if handoff and observation['exit'] == 0:
+            reload = self._one_side('pin', spec, pin_so, data, name, scratch, deadline, timeout,
+                                    {profile_key: profile, reload_key: '1'})
+            if reload['exit'] != 0 or reload['result'] is None:
+                observation.update(exit=reload['exit'] or 1, result=None, stderr=reload['stderr'],
+                                   stderr_lines=reload['stderr_lines'])
+            elif handoff_929 and self.driver['observed'](reload['result']) != self.driver['observed'](observation['result']):
+                observation.update(exit=1, result={'error': 'cross-open changed logical records'})
+            else:
+                observation['result']['cross_reload'] = self.driver['observed'](reload['result'])
+        return observation, encoded, package
+
+    def verify_case(self, spec, row, subject_so, data, name, scratch, timeout, companion=None):
+        """Run one case on the subject alone and return [stored pin observation, subject observation].
+
+        A handoff case also lets the subject read the pin-written profile the reference
+        holds, an ordinary fixture here, and attaches what it observed as `cross_reload`.
+        The #1114 case compares the saved bigram bytes with the pin's, timestamp masked."""
+        identity = row.get('identity', {})
+        pin = dict(row['pin'], capture_glibc=identity.get('environment', {}).get('glibc'),
+                   capture_glib=identity.get('environment', {}).get('glib'),
+                   capture_dir_read_verdict=identity.get('directory_read_verdict'),
+                   capture_scanf=row.get('scanner_verdict'))
+        if spec.get('dir_chunk'):
+            pin['host_dir_read_verdict'] = self.driver['directory_read_verdict'](scratch)
+        if spec.get('pin_not_run') is not None:
+            pin = dict(exit='NOT-RUN', result=None, userfiles=[], stderr_lines=0, stderr='')
+        deadline = time.monotonic() + timeout
+        handoff, handoff_929, profile_key, reload_key = self._handoff(name)
+        env = {'G_DEBUG': 'fatal-criticals'} if spec['fatal'] else {}
+        if companion is not None:
+            env['AXIS_C_COMPANION_PINYIN'] = str(Path(companion).resolve())
+        own = None
+        if handoff:
+            own = tempfile.mkdtemp(prefix='handoff-subject-', dir=scratch)
+            env[profile_key] = own
+        subject = self._one_side('subject', spec, subject_so, data, name, scratch, deadline, timeout, env or None)
+        if handoff and subject['exit'] == 0 and pin['exit'] == 0:
+            donor = tempfile.mkdtemp(prefix='handoff-pin-', dir=scratch)
+            reference.decode_profile(row['profile'], donor)
+            if not handoff_929:
+                masked = [self.driver['tkrzw_saved_bigram_bytes'](Path(directory, 'user_bigram.db').read_bytes())
+                          for directory in (donor, own)]
+                if masked[0] != masked[1]:
+                    subject.update(exit=1, result={'error': 'saved bytes differ outside META_OFFSET_TIMESTAMP'})
+                    return [pin, subject]
+            reload = self._one_side('subject', spec, subject_so, data, name, scratch, deadline, timeout,
+                                    {profile_key: donor, reload_key: '1'})
+            if reload['exit'] != 0 or reload['result'] is None:
+                subject.update(exit=reload['exit'] or 1, result=None, stderr=reload['stderr'],
+                               stderr_lines=reload['stderr_lines'])
+            elif handoff_929 and self.driver['observed'](reload['result']) != self.driver['observed'](
+                    {key: value for key, value in pin['result'].items() if key != 'cross_reload'}):
+                subject.update(exit=1, result={'error': 'cross-open changed logical records'})
+            else:
+                subject['result']['cross_reload'] = self.driver['observed'](reload['result'])
+        return [pin, subject]
+
     @contextlib.contextmanager
     def case_jobs(self, requested):
         """Admit the entire case pool before making scratch or starting workers.
@@ -315,7 +439,7 @@ class Runner:
         map; parallel execution schedules a thread pool. Each item is (name, result), with PLATFORM_SKIP for excluded platforms
         and None for excluded cells. On a parallel-body exception mark cancellation;
         always wait for pool shutdown and cancel pending futures on that path's exit."""
-        lib = args.prefix / 'lib'
+        lib = args.prefix / 'lib' if args.prefix is not None else None
         def observe(name):
             """Check case eligibility and run both libraries within a temporary per-case directory.
 
@@ -327,6 +451,24 @@ class Runner:
                 return name, self.driver['PLATFORM_SKIP']
             if args.cell not in spec['cells']:
                 return name, None
+            store = getattr(args, 'references', None)
+            if store is not None:
+                # verify: the subject alone, against the stored pin observation.
+                try:
+                    row = store.row(spec)
+                except reference.ReferenceError as error:
+                    return name, error
+                subject_so = args.zhuyin_so if spec['mode'] == 'zhuyin' else args.pinyin_so
+                assert subject_so and Path(subject_so).is_file(), '%s needs %s' % (
+                    name, '--zhuyin-so' if spec['mode'] == 'zhuyin' else 'PINYIN_SO')
+                with tempfile.TemporaryDirectory(prefix='case-', dir=scratch) as isolated:
+                    pair = self.verify_case(spec, row, Path(subject_so), data, name, isolated, args.case_timeout,
+                                            companion=args.pinyin_so)
+                    if name.startswith('axis-c-'):
+                        # The battery compares diagnostics with generated paths normalised.
+                        pair[1].update(self.driver['axis_c_normalize_diagnostics'](
+                            self.driver['axis_c_envelope'](pair[1]), isolated))
+                    return name, pair
             if spec['mode'] == 'zhuyin':
                 assert args.zhuyin_so and args.zhuyin_so.is_file() and (lib / 'libzhuyin.so').is_file(), \
                     'zhuyin case %s needs --zhuyin-so and the pin libzhuyin' % name
