@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 import resource
 
-from contract_abi import B, I, P, S, U, Z
+from contract_abi import B, I, P, S, U, UNTOUCHED, Z
 from contract_case_helpers import LIBRARY_FACADES, _chunk, _modify_header, _write_log, log_walk, train_once
 from contract_fixtures import _write_user_conf, private_system
 from contract_verdict import WARNING_DOMAIN
@@ -650,6 +650,81 @@ for _mode in ('pinyin', 'zhuyin'):
          userdir=True)(chunk_mask_probe('sparse'))
     case(f'sparse-library-reinit{_suffix}', mode=_mode, stderr=True)(chunk_reinit_probe())
     case(f'sparse-library-candidates{_suffix}', mode=_mode, stderr=True)(chunk_candidates_probe())
+
+
+def aliased_offset_chunk(data):
+    """A library-four chunk whose slots 1 and 2 share one offset.
+
+    Slot 1's and slot 3's items are the shipped merged.bin's own, so their
+    text and keys are real; slot 2's word repeats slot 1's. Both builders
+    emit distinct offsets (074a2219 `phrase_index.cpp:208-216`), so only a
+    crafted file holds the alias; neither loader rejects it (`:335-362`)."""
+    source = Path(data, 'merged.bin').read_bytes()
+    payload = source[8:8 + int.from_bytes(source[:4], 'little')]
+    one, two, three = (int.from_bytes(payload[4 + 4 * n:8 + 4 * n], 'little') for n in range(3))
+    offsets, content = payload[one:two - 1], payload[two:three - 1]
+
+    def item(slot):
+        at = int.from_bytes(offsets[4 * slot:4 * slot + 4], 'little')
+        length, prons = content[at], content[at + 1]
+        return content[at:at + 6 + 4 * length + prons * (2 * length + 4)]
+
+    first, third = item(1), item(3)
+    body = b'\0' * 8 + first + third
+    words = (0, 8, 8, 8 + len(first))
+    total = sum(int.from_bytes(it[2:6], 'little') for it in (first, third))
+    index_two = 17 + 4 * len(words) + 1
+    header = b''.join(value.to_bytes(4, 'little') for value in
+                      (total, 17, index_two, index_two + len(body) + 1))
+    return _chunk(header + b'#' + b''.join(word.to_bytes(4, 'little') for word in words)
+                  + b'#' + body + b'#')
+
+
+def aliased_offset_unigram(k):
+    """Add a unigram through slot 1 of the aliased pair, read slot 2, save, reinit, read.
+
+    The shared bytes make slot 2 show slot 1's delta at once (`phrase_index.cpp:150-178`,
+    `:180-205`). The save diffs the file on disk again and emits one MODIFY per
+    slot (`:392-437`, `pinyin.cpp:946-963`); the reinit applies slot 1's in place,
+    stops at slot 2's mismatch (`:487-493`, ignored at `pinyin.cpp:276`) and drops
+    slot 3's record, so slot 3 reads its shipped count again."""
+    system = private_system(k)
+    path = os.path.join(system, 'merged.bin')
+    os.unlink(path)
+    Path(path).write_bytes(aliased_offset_chunk(k.data))
+    tokens = (0x04000001, 0x04000002, 0x04000003)
+
+    def reads(inst):
+        rows = []
+        for token in tokens:
+            freq = U(UNTOUCHED)
+            ret = k.fn('token_get_unigram_frequency', B, P, U, C.POINTER(U))(inst, token, C.byref(freq))
+            rows.append([ret, freq.value])
+        return rows
+
+    add = k.fn('token_add_unigram_frequency', B, P, U, U)
+    ctx = k.init(system=system)
+    assert ctx, 'aliased fixture init'
+    inst = k.fn('alloc_instance', P, P)(ctx)
+    out = {'before': reads(inst)}
+    out['add-first'] = add(inst, tokens[0], 5)
+    out['after-first'] = reads(inst)
+    out['add-third'] = add(inst, tokens[2], 7)
+    out['after-third'] = reads(inst)
+    out['save'] = k.fn('save', B, P)(ctx)
+    k.fn('free_instance', None, P)(inst)
+    k.fn('fini', None, P)(ctx)
+    ctx = k.init(system=system)
+    assert ctx, 'aliased fixture reinit'
+    inst = k.fn('alloc_instance', P, P)(ctx)
+    out['reopened'] = reads(inst)
+    k.fn('free_instance', None, P)(inst)
+    k.fn('fini', None, P)(ctx)
+    return out
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    case('aliased-offset-unigram-' + _mode, mode=_mode, issues=('1031',))(aliased_offset_unigram)
 case('sparse-library-addon', stderr=True)(chunk_addon_probe('sparse', False))
 case('sparse-library-addon-reload', stderr=True)(chunk_addon_probe('sparse', True))
 case('sparse-library-tokens', stderr=True)(chunk_token_probe())

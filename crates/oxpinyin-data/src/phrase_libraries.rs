@@ -568,8 +568,8 @@ impl PhraseLibraries {
         self.sum_loaded(visible, Loaded::item_count)
     }
 
-    /// Count initial items, consulting the live owner before first-write
-    /// history exists. The scalar is cached just as in the direct reader.
+    /// Count live items through the detached owner. The scalar is cached just
+    /// as in the direct reader.
     pub fn item_count_where_live(
         &self,
         visible: impl Fn(u8) -> bool,
@@ -585,7 +585,7 @@ impl PhraseLibraries {
                 }
                 let loaded = slot.as_ref()?;
                 Some(*loaded.item_count.get_or_init(|| {
-                    if loaded.library.is_detached() && !loaded.library.has_history() {
+                    if loaded.library.is_detached() {
                         pristine(nibble).unwrap_or(0)
                     } else {
                         loaded.library.original_item_count()

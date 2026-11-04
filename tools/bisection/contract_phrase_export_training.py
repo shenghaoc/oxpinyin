@@ -222,6 +222,45 @@ case('issue790-export-override-only-system', issues=('790',))(issue790_imported)
 case('issue790-export-appended-system', issues=('790',))(lambda k: issue790_imported(k, appended=True))
 
 
+def appended_system_second_reading(k):
+    """Import two readings for one new system token, then save and reopen it."""
+    phrase = '龘龘'
+    readings = (["da3'da3", "da2'da2"] if k.mode == 'pinyin'
+                else ['ㄉㄚˇ ㄉㄚˇ', 'ㄉㄚˊ ㄉㄚˊ'])
+
+    def count(token):
+        value = U(UNTOUCHED)
+        ok = k.fn('token_get_n_pronunciation', B, P, U, C.POINTER(U))(
+            k.inst, token, C.byref(value))
+        return [ok, value.value]
+
+    out = {'first': import_rows(k, 1, [(phrase, readings[0], 5)])}
+    assert out['first'] == [True]
+    tokens = [token for token in tokens_of(k, phrase) if token >> 24 == 1]
+    assert len(tokens) == 1
+    out['tokens'] = tokens
+    token = tokens[0]
+    out['after-first'] = count(token)
+    assert out['after-first'] == [True, 1]
+    out['second'] = import_rows(k, 1, [(phrase, readings[1], 7)])
+    assert out['second'] == [True]
+    out['after-second'] = count(token)
+    assert out['after-second'] == [True, 2]
+    out['saved'] = k.fn('save', B, P)(k.ctx)
+    assert out['saved']
+    k.fn('free_instance', None, P)(k.inst)
+    k.fn('fini', None, P)(k.ctx)
+    k._ctx = k._inst = None
+    out['reopened'] = count(token)
+    assert out['reopened'] == [True, 2]
+    return out
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    case('appended-system-second-reading-' + _mode, mode=_mode, issues=('1031',))(
+        appended_system_second_reading)
+
+
 @case('issue790-guess-after-train-system', issues=('790',))
 def _(k):
     """Compare ni guesses before and after training a low-mass reading of 尼.

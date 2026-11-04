@@ -4018,6 +4018,230 @@ mod tests {
     }
 
     #[test]
+    fn mapped_system_append_accepts_second_reading_after_save_and_reopen() {
+        use oxpinyin_data::chunk_write::build_chunk;
+        use oxpinyin_data::phrase_library::PhraseLibrary;
+
+        let dir = tempdir("mapped-append-second-reading");
+        let shipped_dir = tempdir("mapped-append-shipped");
+        let path = shipped_dir.join("gb_char.bin");
+        let shipped = ChunkItem {
+            phrase: vec![0x4f60],
+            unigram: 100,
+            prons: vec![(
+                vec![ChewingKey::from_pinyin("ni").expect("ni").to_packed()],
+                100,
+            )],
+        };
+        std::fs::write(&path, build_chunk(&[(1, shipped)]).expect("chunk")).expect("write");
+        let originals = || {
+            BTreeMap::from([(
+                1_u8,
+                SystemLibrary::from_library(PhraseLibrary::open(&path).expect("map")),
+            )])
+        };
+        let first = packed_to_pinyin_keys(&[ChewingKey::from_pinyin("ni").unwrap().to_packed()])
+            .expect("first reading");
+        let second = packed_to_pinyin_keys(&[ChewingKey::from_pinyin("ni")
+            .unwrap()
+            .with_tone(2)
+            .to_packed()])
+        .expect("second reading");
+        let token;
+        {
+            let mut store =
+                UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                    .expect("open");
+            token = store
+                .add_system_phrase_in(1, None, &"拟".into(), &first, Some(5))
+                .expect("append");
+            assert_eq!(token & 0x00ff_ffff, 2, "beyond mapped offset table");
+            assert_eq!(
+                store
+                    .phrase(token)
+                    .expect("read appended")
+                    .unwrap()
+                    .pronunciations()
+                    .len(),
+                1
+            );
+            assert_eq!(
+                store
+                    .add_system_phrase_in(1, Some(token), &"拟".into(), &second, Some(7))
+                    .expect("second import"),
+                token
+            );
+            assert_eq!(
+                store
+                    .phrase(token)
+                    .expect("read merged")
+                    .unwrap()
+                    .pronunciations()
+                    .len(),
+                2
+            );
+            store.mark_modified();
+            assert!(store.save().expect("save"));
+        }
+        let store = UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+            .expect("reopen");
+        assert_eq!(
+            store
+                .phrase(token)
+                .expect("read reopened")
+                .unwrap()
+                .pronunciations()
+                .len(),
+            2
+        );
+        drop(store);
+        std::fs::remove_dir_all(dir).expect("cleanup");
+        std::fs::remove_dir_all(shipped_dir).expect("cleanup shipped");
+    }
+
+    /// Two loaded slots sharing one offset (a crafted chunk; both builders
+    /// emit distinct offsets). A unigram added through the first slot is
+    /// read through the second, as the pin's shared `m_phrase_content`
+    /// shows it (074a2219 `phrase_index.cpp:150-178`, `:180-205`); the
+    /// save diffs the file on disk again and emits a MODIFY for each slot
+    /// (`:392-437`); the reload applies the first MODIFY in place and stops
+    /// at the second's mismatch (`:487-493`, ignored at `pinyin.cpp:276`),
+    /// dropping every later record. The second slot's baseline is captured
+    /// after the first slot's write, which only the store's internal
+    /// `unigram_delta` sees.
+    #[test]
+    fn aliased_offset_slots_share_live_reads_and_the_reload_prefix() {
+        use oxpinyin_data::chunk_format::chunk_checksum;
+        use oxpinyin_data::chunk_write::build_chunk;
+        use oxpinyin_data::phrase_library::PhraseLibrary;
+        use oxpinyin_data::user_files::{LogRecord, load_chunk_payload, log_records};
+
+        let dir = tempdir("aliased-offset");
+        let shipped_dir = tempdir("aliased-offset-shipped");
+        let path = shipped_dir.join("gb_char.bin");
+        let item = |code: u32, pinyin: &str, unigram: u32| ChunkItem {
+            phrase: vec![code],
+            unigram,
+            prons: vec![(
+                vec![ChewingKey::from_pinyin(pinyin).expect("key").to_packed()],
+                unigram,
+            )],
+        };
+        let mut chunk = build_chunk(&[
+            (1, item(0x4f60, "ni", 100)),
+            (2, item(0x597d, "hao", 50)),
+            (3, item(0x6211, "wo", 70)),
+        ])
+        .expect("chunk");
+        // Alias slot 2 to slot 1: the offset word of slot `s` is at
+        // `8 + 17 + 4 * s` (chunk header, four words, separator), then
+        // reseal the payload checksum.
+        let word = |slot: usize| 8 + 17 + 4 * slot;
+        let first: [u8; 4] = chunk[word(1)..word(1) + 4].try_into().unwrap();
+        chunk[word(2)..word(2) + 4].copy_from_slice(&first);
+        let checksum = chunk_checksum(&chunk[8..]).to_le_bytes();
+        chunk[4..8].copy_from_slice(&checksum);
+        std::fs::write(&path, &chunk).expect("write");
+        let originals = || {
+            BTreeMap::from([(
+                1_u8,
+                SystemLibrary::from_library(PhraseLibrary::open(&path).expect("map")),
+            )])
+        };
+        let (a, b, c) = (0x0100_0001, 0x0100_0002, 0x0100_0003);
+        {
+            let mut store =
+                UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                    .expect("open");
+            assert_eq!(
+                (
+                    store.system_unigram(a),
+                    store.system_unigram(b),
+                    store.system_unigram(c)
+                ),
+                (Some(100), Some(100), Some(70))
+            );
+            assert!(
+                store
+                    .add_system_unigram_frequency(a, 5)
+                    .expect("add through a")
+            );
+            // Live reads: the second slot shows the first slot's write.
+            assert_eq!(
+                (
+                    store.system_unigram(a),
+                    store.system_unigram(b),
+                    store.system_unigram(c)
+                ),
+                (Some(105), Some(105), Some(70))
+            );
+            assert!(
+                store
+                    .add_system_unigram_frequency(c, 7)
+                    .expect("add through c")
+            );
+            assert_eq!(store.system_unigram(c), Some(77));
+            // The internal delta: slot 2 was never written, so it has no
+            // baseline and answers 0 where a full pre-write scan answered 5.
+            assert_eq!(store.unigram_delta(a).expect("delta a"), 5);
+            assert_eq!(store.unigram_delta(b).expect("delta b"), 0);
+            store.mark_modified();
+            assert!(store.save().expect("save"));
+        }
+        // Save output: the diff against the file on disk emits one MODIFY per
+        // slot, the aliased pair with identical bytes, then slot 3
+        // (`phrase_index.cpp:392-437`).
+        let payload = load_chunk_payload(&dir.join("gb_char.dbin")).expect("journal");
+        let records: Vec<LogRecord<Vec<u8>>> = log_records(&payload)
+            .map(|record| record.expect("record").into_owned())
+            .collect();
+        assert_eq!(records.len(), 4, "{records:?}");
+        let LogRecord::ModifyHeader {
+            old_total,
+            new_total,
+        } = &records[0]
+        else {
+            panic!("{:?}", records[0]);
+        };
+        // The pin compacts before it writes (`pinyin.cpp:1139-1141`), so the
+        // header's new total is the live items summed slot by slot, with the
+        // aliased pair counted twice: 105 + 105 + 77.
+        assert_eq!((*old_total, *new_total), (220, 287));
+        let modify = |record: &LogRecord<Vec<u8>>| match record {
+            LogRecord::Modify {
+                token,
+                old_item,
+                new_item,
+            } => (*token, old_item.clone(), new_item.clone()),
+            other => panic!("{other:?}"),
+        };
+        let (token_a, old_a, new_a) = modify(&records[1]);
+        let (token_b, old_b, new_b) = modify(&records[2]);
+        let (token_c, old_c, new_c) = modify(&records[3]);
+        assert_eq!((token_a, token_b, token_c), (1, 2, 3));
+        assert_eq!((old_a.clone(), new_a.clone()), (old_b, new_b));
+        assert_eq!(u32::from_le_bytes(old_a[2..6].try_into().unwrap()), 100);
+        assert_eq!(u32::from_le_bytes(new_a[2..6].try_into().unwrap()), 105);
+        assert_eq!(u32::from_le_bytes(old_c[2..6].try_into().unwrap()), 70);
+        assert_eq!(u32::from_le_bytes(new_c[2..6].try_into().unwrap()), 77);
+        // Reload prefix: the header and slot 1 apply, slot 2's old item no
+        // longer matches the shared bytes, and slot 3's record is dropped.
+        let store = UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+            .expect("reopen");
+        assert_eq!(
+            (
+                store.system_unigram(a),
+                store.system_unigram(b),
+                store.system_unigram(c)
+            ),
+            (Some(105), Some(105), Some(70))
+        );
+        drop(store);
+        std::fs::remove_dir_all(dir).expect("cleanup");
+        std::fs::remove_dir_all(shipped_dir).expect("cleanup shipped");
+    }
+
+    #[test]
     fn live_pronunciation_overflow_keeps_earlier_updates_and_stops_at_guard() {
         use oxpinyin_core::{PhraseToken, UserModel};
         let dir = tempdir("live-pronunciation-overflow");

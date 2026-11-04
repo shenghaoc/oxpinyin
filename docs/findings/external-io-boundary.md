@@ -113,25 +113,29 @@ measurement. The initial B implementation eagerly stored `present: Vec<bool>`,
 byte per element: their logical storage was `6S` bytes plus allocation
 overhead, not `4S` plus two packed bitmaps.
 
-The revised implementation transfers ownership independently of history and
-allocates no per-slot history before the first live write. That write scans
-`S` original slots once, retaining `4S + 8 ceil(S/64)` bytes plus allocation
-overhead: a `u32` unigram per slot and a bit-packed presence bitmap. Presence
-and readability coincide: `item_at_slot` first checks the entire size computed
-from the header, which includes all `4 * phrase_length` bytes that
-`phrase_codes` can read. A query for the initial item count can independently
-scan `S` slots on its first call and cache a scalar. Deferring the history scan
-therefore moves an `O(S)` cost to the first write; it does not remove that
-cost. The pin does not keep this history. The parent #1571 kept an original
-mapping and could also keep a replay mapping; B retains one mapping.
+Member 4 removed `LibraryHistory`'s first-write scan and its full presence
+bitmap and unigram array. A journal-addressed slot now saves only its offset,
+readability and unigram before that slot's first mutation. The sparse entries
+are accompanied by the loaded offset array's slot count: every later slot has
+an explicitly absent original even if the live array grows during an import.
+These entries serve replay's added/removed classification, original offsets on the exceptional
+overlong walk, and the internal `unigram_delta` reader. A detached library's
+item-count query takes one scalar from the live owner; candidate frequency
+reads the live item and total. Removal checks the live offset and item, using
+the sparse old offset for an addressed slot. Save still reloads its diff base
+for that operation. There is no persistent second mapping.
 
-Replay finalization uses a temporary `Vec<bool>`: `S_live` bytes plus
-allocation overhead, not a bit-packed bitmap, and `O(R + S_live)` time. The
-undo vector remains `O(R)` and borrows old journal bytes. These are
-source-derived bounds, not resident-memory measurements. The original
-proposal's statements that only the undo vector is extra and that no other
-heap metadata is needed describe the proposal, not this implementation.
-Actual RSS and page-cache sharing were not measured.
+The sparse entries are packed into 16 bytes each and appended during replay.
+The loaded journal's item-record count reserves their capacity; a stable slot
+sort at replay finish keeps each slot's first capture. Consecutive captures of
+one slot keep the first entry without growing the vector. Later writes insert
+into the sorted entries.
+
+Normal replay finalization sorts the journal-addressed slot list; it does not
+walk `S` offset slots. An overlong or wrapped write can reach the exceptional
+overlap walk, which reads offset words from the live mapping and the saved old
+offset for a journal-addressed slot. The replay undo vector remains `O(R)` and
+borrows old journal bytes. Actual RSS and page-cache sharing were not measured.
 
 #### Activation: complexity argument (member 3)
 

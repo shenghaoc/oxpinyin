@@ -213,8 +213,21 @@ impl SystemItems {
         self.replayed
             .get(&((token >> 24) as u8))
             .is_some_and(|library| {
-                original.is_some_and(|original| original.contains_item(slot))
-                    && library.item_bytes(slot).is_none()
+                let original_held = original.map_or_else(
+                    || library.slot_has_offset(slot),
+                    |original| {
+                        original.mapped.map_or_else(
+                            || original.contains_item(slot),
+                            |mapped| {
+                                mapped.original_slot(slot).map_or_else(
+                                    || library.slot_has_offset(slot),
+                                    |saved| saved.extent.is_some(),
+                                )
+                            },
+                        )
+                    },
+                );
+                original_held && library.item_bytes(slot).is_none()
             })
     }
 

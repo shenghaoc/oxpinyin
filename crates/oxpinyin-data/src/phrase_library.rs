@@ -459,30 +459,89 @@ pub struct PhraseLibrary {
     /// `SubPhraseIndex::load` refused the layout; the save path re-checks
     /// such a library exactly as the pin re-maps it.
     layout_failed: bool,
-    /// Immutable mapped item sum, filled at first compact.
+    /// Live mapped item sum, filled at first compact.
     item_total: std::sync::OnceLock<u32>,
-    /// Transfer state is independent of optional first-write history.
+    /// Transfer state is independent of sparse original slot snapshots.
     detached_range_end: Option<u32>,
-    /// Populated only before the first live write.
-    history: std::sync::OnceLock<Box<LibraryHistory>>,
+    /// Slot count in the loaded offset array, before live appends extend it.
+    original_offset_slots: usize,
+    /// Only slots addressed by a write need their old offset and item fields.
+    originals: std::sync::Mutex<OriginalSlots>,
 }
 
-struct LibraryHistory {
-    present: Vec<u64>,
-    unigrams: Vec<u32>,
+#[derive(Default, Debug)]
+struct OriginalSlots {
+    entries: Vec<PackedOriginalSlot>,
+    sorted: bool,
 }
 
-impl LibraryHistory {
-    fn contains(&self, slot: u32) -> bool {
-        self.present
-            .get(slot as usize / 64)
-            .is_some_and(|word| word & (1_u64 << (slot % 64)) != 0)
+/// A library's original-state lock held throughout one journal replay.
+pub struct OriginalCapture<'a> {
+    library: &'a PhraseLibrary,
+    slots: std::sync::MutexGuard<'a, OriginalSlots>,
+}
+
+impl OriginalCapture<'_> {
+    /// Save `slot`'s original fields from the live buffer before its first write.
+    pub fn capture(&mut self, slot: u32, offsets: &[u8], content: &[u8]) {
+        self.library
+            .capture_slot_locked(&mut self.slots, slot, offsets, content);
     }
+
+    /// Sort the captures by slot, keeping each slot's first capture.
+    pub fn finish(&mut self) {
+        self.library.finish_original_slots_locked(&mut self.slots);
+    }
+
+    /// Advance through sorted captures alongside ascending touched slots.
+    pub fn originally_contains_next(&self, slot: u32, cursor: &mut usize) -> bool {
+        if (slot as usize) >= self.library.original_offset_slots {
+            return false;
+        }
+        while self
+            .slots
+            .entries
+            .get(*cursor)
+            .is_some_and(|entry| entry.slot < slot)
+        {
+            *cursor += 1;
+        }
+        self.slots
+            .entries
+            .get(*cursor)
+            .filter(|entry| entry.slot == slot)
+            .map_or_else(
+                || self.library.item(slot).is_some(),
+                |entry| entry.extent != 0,
+            )
+    }
+}
+
+/// A captured slot and its original fields. Zero extent means unreadable.
+#[derive(Clone, Copy, Debug)]
+struct PackedOriginalSlot {
+    slot: u32,
+    offset: u32,
+    unigram: u32,
+    extent: u32,
+}
+
+const _: [(); 16] = [(); std::mem::size_of::<PackedOriginalSlot>()];
+
+/// A journal-addressed slot's fields before its own first mutation.
+#[derive(Clone, Copy, Debug)]
+pub struct OriginalSlot {
+    /// Offset word before this slot's first write.
+    pub offset: u32,
+    /// Original unigram if the original item was readable.
+    pub unigram: Option<u32>,
+    /// Original item extent if its header and body were readable.
+    pub extent: Option<usize>,
 }
 
 impl PhraseLibrary {
     /// The wrapping sum of mapped item frequencies, excluding slot zero.
-    /// The mapping is immutable, so repeated compaction shares one scan.
+    /// Compaction queries share one scan after the first request.
     #[must_use]
     pub fn item_total(&self) -> u32 {
         *self.item_total.get_or_init(|| {
@@ -508,7 +567,8 @@ impl PhraseLibrary {
             layout_failed: true,
             item_total: std::sync::OnceLock::new(),
             detached_range_end: None,
-            history: std::sync::OnceLock::new(),
+            original_offset_slots: 0,
+            originals: std::sync::Mutex::new(OriginalSlots::default()),
         }
     }
 
@@ -616,7 +676,8 @@ impl PhraseLibrary {
             layout_failed: true,
             item_total: std::sync::OnceLock::new(),
             detached_range_end: None,
-            history: std::sync::OnceLock::new(),
+            original_offset_slots: 0,
+            originals: std::sync::Mutex::new(OriginalSlots::default()),
         };
 
         // `SubPhraseIndex::load`: the four words, then the separator at
@@ -680,7 +741,8 @@ impl PhraseLibrary {
             layout_failed: false,
             item_total: std::sync::OnceLock::new(),
             detached_range_end: None,
-            history: std::sync::OnceLock::new(),
+            original_offset_slots: (index_two - index_one - 1) / 4,
+            originals: std::sync::Mutex::new(OriginalSlots::default()),
         })
     }
 
@@ -807,8 +869,8 @@ impl PhraseLibrary {
         self.source_path.as_deref()
     }
 
-    /// Transfer the sole mapping to its live sub-index without allocating
-    /// per-slot history. The first actual write captures the baseline.
+    /// Transfer the sole mapping to its live sub-index without scanning
+    /// slots. Each changed slot can retain its own original fields.
     pub fn take_live_content(&mut self) -> Option<PhraseContent> {
         if self.detached_range_end.is_some() {
             return None;
@@ -830,73 +892,184 @@ impl PhraseLibrary {
         })
     }
 
-    /// Capture the unmodified live buffer immediately before its first write.
-    /// Presence is bit-packed; a complete item view makes its phrase words
-    /// readable, so no separate readability array is needed.
-    pub fn capture_history(&self, offsets: &[u8], content: &[u8]) {
-        self.history.get_or_init(|| {
-            let slots = offsets.len() / 4;
-            let mut present = vec![0_u64; slots.div_ceil(64)];
-            let mut unigrams = vec![0_u32; slots];
-            let mut total = 0_u32;
-            for slot in 0..slots {
-                let Some(offset) = u32_at(offsets, slot * 4).filter(|&offset| offset != 0) else {
-                    continue;
-                };
-                let Some(bytes) = content.get(offset as usize..) else {
-                    continue;
-                };
-                let view = PhraseItemView { bytes };
-                let Some(size) = view.total_size().filter(|&size| size <= bytes.len()) else {
-                    continue;
-                };
-                let item = PhraseItemView {
-                    bytes: &bytes[..size],
-                };
-                present[slot / 64] |= 1_u64 << (slot % 64);
-                unigrams[slot] = item.unigram();
-                if slot != 0 {
-                    total = total.wrapping_add(item.unigram());
-                }
-            }
-            let _ = self.item_total.set(total);
-            Box::new(LibraryHistory { present, unigrams })
-        });
+    /// Reserve once from the loaded journal's item-record count before replay.
+    pub fn reserve_original_slots(&self, item_records: usize) {
+        let mut originals = self
+            .originals
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        originals.entries.reserve_exact(item_records);
     }
 
-    /// Whether first-write history has been captured.
+    /// Stable sort retains the earliest capture for each slot.
+    pub fn finish_original_slots(&self) {
+        let mut originals = self
+            .originals
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.finish_original_slots_locked(&mut originals);
+    }
+
+    fn finish_original_slots_locked(&self, originals: &mut OriginalSlots) {
+        if !originals.sorted {
+            originals.entries.sort_by_key(|entry| entry.slot);
+            originals.entries.dedup_by_key(|entry| entry.slot);
+            originals.sorted = true;
+        }
+    }
+
+    /// Snapshot only a slot addressed by a write, before its first mutation.
+    /// No write on the ordinary path walks the offset array.
+    pub fn capture_slot(&self, slot: u32, offsets: &[u8], content: &[u8]) {
+        let mut originals = self
+            .originals
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.capture_slot_locked(&mut originals, slot, offsets, content);
+    }
+
+    /// Replay keeps this guard while applying records, then sorts under it.
+    #[must_use]
+    pub fn begin_original_capture(&self) -> OriginalCapture<'_> {
+        OriginalCapture {
+            library: self,
+            slots: self
+                .originals
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        }
+    }
+
+    fn capture_slot_locked(
+        &self,
+        originals: &mut OriginalSlots,
+        slot: u32,
+        offsets: &[u8],
+        content: &[u8],
+    ) {
+        if (slot as usize) >= self.original_offset_slots {
+            return;
+        }
+        if !originals.sorted
+            && originals
+                .entries
+                .last()
+                .is_some_and(|last| last.slot == slot)
+        {
+            return;
+        }
+        if originals.sorted
+            && originals
+                .entries
+                .binary_search_by_key(&slot, |entry| entry.slot)
+                .is_ok()
+        {
+            return;
+        }
+        // The fields are read from the live buffer at the slot's first
+        // write. A slot that shares its offset with an earlier-written slot
+        // (a crafted chunk; both builders emit distinct offsets) therefore
+        // records its baseline after that write. The pin shares the bytes
+        // the same way, so every C-observable result equals the pin's:
+        // reads are live, save diffs the file on disk again, and reload
+        // stops at the second MODIFY's mismatch. Only the store's internal
+        // `unigram_delta` sees the difference, and no product path reads it
+        // for a system token: `predict.rs:470` takes the live count,
+        // `dict.rs:424` prices from the model, and `is_imported` only
+        // propagates its error.
+        let saved = {
+            let offset = (slot as usize)
+                .checked_mul(4)
+                .and_then(|at| u32_at(offsets, at))
+                .unwrap_or(0);
+            let item = content
+                .get(offset as usize..)
+                .filter(|_| offset != 0)
+                .and_then(|bytes| {
+                    let view = PhraseItemView { bytes };
+                    let size = view.total_size().filter(|&size| size <= bytes.len())?;
+                    Some((view.unigram(), size))
+                });
+            OriginalSlot {
+                offset,
+                unigram: item.map(|(unigram, _)| unigram),
+                extent: item.map(|(_, size)| size),
+            }
+        };
+        let entry = PackedOriginalSlot {
+            slot,
+            offset: saved.offset,
+            unigram: saved.unigram.unwrap_or(0),
+            extent: saved
+                .extent
+                .and_then(|len| u32::try_from(len).ok())
+                .unwrap_or(0),
+        };
+        if originals.sorted {
+            let index = originals
+                .entries
+                .partition_point(|current| current.slot < slot);
+            originals.entries.insert(index, entry);
+        } else {
+            originals.entries.push(entry);
+        }
+    }
+
+    /// The saved fields of a journal-addressed slot, if captured.
+    #[must_use]
+    pub fn original_slot(&self, slot: u32) -> Option<OriginalSlot> {
+        if (slot as usize) >= self.original_offset_slots {
+            return Some(OriginalSlot {
+                offset: 0,
+                unigram: None,
+                extent: None,
+            });
+        }
+        let originals = self
+            .originals
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let entry = if originals.sorted {
+            originals
+                .entries
+                .binary_search_by_key(&slot, |entry| entry.slot)
+                .ok()
+                .map(|index| &originals.entries[index])
+        } else {
+            originals.entries.iter().find(|entry| entry.slot == slot)
+        }?;
+        Some(OriginalSlot {
+            offset: entry.offset,
+            unigram: (entry.extent != 0).then_some(entry.unigram),
+            extent: (entry.extent != 0).then_some(entry.extent as usize),
+        })
+    }
+
+    /// Whether any addressed slot has a saved original.
     #[must_use]
     pub fn has_history(&self) -> bool {
-        self.history.get().is_some()
+        !self
+            .originals
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .entries
+            .is_empty()
     }
 
-    /// Whether the loaded chunk originally held this slot. Detached chunks
-    /// without history have not been written; consult their live owner.
+    /// Original presence for a slot saved before its own write.
     #[must_use]
     pub fn originally_contains(&self, slot: u32) -> bool {
-        self.history.get().map_or_else(
-            || self.item(slot).is_some(),
-            |history| history.contains(slot),
-        )
+        self.original_slot(slot)
+            .map_or_else(|| self.item(slot).is_some(), |saved| saved.extent.is_some())
     }
 
-    /// Count of slots readable at load.
+    /// Number of readable items in an attached mapping.
     #[must_use]
     pub fn original_item_count(&self) -> u64 {
-        self.history.get().map_or_else(
-            || self.items().count() as u64,
-            |history| {
-                history
-                    .present
-                    .iter()
-                    .map(|word| u64::from(word.count_ones()))
-                    .sum()
-            },
-        )
+        self.items().count() as u64
     }
 
-    /// A complete item view has every declared phrase word; readability and
-    /// presence are identical for this value-model consumer.
+    /// Original readability for a slot saved before its own write.
     #[must_use]
     pub fn originally_readable(&self, slot: u32) -> bool {
         self.originally_contains(slot)
@@ -911,11 +1084,10 @@ impl PhraseLibrary {
     /// The loaded chunk's original unigram field for a readable slot.
     #[must_use]
     pub fn original_unigram(&self, slot: u32) -> Option<u32> {
-        match self.history.get() {
-            Some(history) if history.contains(slot) => history.unigrams.get(slot as usize).copied(),
-            Some(_) => None,
-            None => self.item(slot).map(|item| item.unigram()),
-        }
+        self.original_slot(slot).map_or_else(
+            || self.item(slot).map(|item| item.unigram()),
+            |saved| saved.unigram,
+        )
     }
 
     /// The raw entry-area offset of `token`'s slot, `None` when the slot has
@@ -1038,6 +1210,41 @@ mod pronunciation_count_tests {
         assert!(library.item(1).is_none(), "the body is truncated");
         for token in [0, 2, 3, 4, 5, u32::MAX] {
             assert_eq!(library.pronunciation_count(token), None, "token {token}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod original_slot_tests {
+    use super::PhraseLibrary;
+    use crate::chunk_write::{ChunkItem, build_chunk};
+
+    #[test]
+    fn consecutive_add_and_modify_captures_keep_one_reserved_original() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("library.bin");
+        let item = ChunkItem {
+            phrase: vec![0x4f60],
+            unigram: 7,
+            prons: vec![],
+        };
+        std::fs::write(
+            &path,
+            build_chunk(&[(1, item.clone()), (3, item)]).expect("chunk"),
+        )
+        .expect("write");
+        for slot in [2, 1] {
+            let library = PhraseLibrary::open(&path).expect("open");
+            library.reserve_original_slots(1);
+            let capacity = library.originals.lock().unwrap().entries.capacity();
+            let offsets = library.offset_array();
+            let content = library.item_area();
+            library.capture_slot(slot, offsets, content);
+            library.capture_slot(slot, offsets, content);
+            let originals = library.originals.lock().unwrap();
+            assert_eq!(originals.entries.len(), 1, "ADD and MODIFY capture once");
+            assert_eq!(originals.entries.capacity(), capacity, "no regrowth");
+            assert_eq!(originals.entries[0].slot, slot);
         }
     }
 }

@@ -44,7 +44,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use oxpinyin_data::chunk_write::{
     ChunkItem, PHRASE_MASK, decode_phrase_item, validate_phrase_item,
 };
-use oxpinyin_data::phrase_library::PhraseLibrary;
+use oxpinyin_data::phrase_library::{OriginalCapture, PhraseLibrary};
 use oxpinyin_data::user_files::LogRecord;
 
 #[cfg(test)]
@@ -405,9 +405,10 @@ impl Content {
             item_override: None,
         }
     }
-    fn capture_history(&self, original: SystemLibraryRef<'_>) {
+    fn capture_slot(&self, original: SystemLibraryRef<'_>, slot: u32) {
         if let Some(library) = original.mapped {
-            library.capture_history(
+            library.capture_slot(
+                slot,
                 self.backing.bytes(Area::Offsets),
                 self.backing.bytes(Area::Content),
             );
@@ -680,6 +681,7 @@ enum Undo<'l> {
 
 pub(crate) struct Merge<'a, 'l> {
     origin: Origin<'a>,
+    capture: std::cell::RefCell<Option<OriginalCapture<'a>>>,
     content: Content,
     live_owner: bool,
     /// One entry per mutation of the mapping, in order. Dropped when the replay
@@ -709,8 +711,12 @@ pub(crate) struct Merge<'a, 'l> {
 impl<'a, 'l> Merge<'a, 'l> {
     pub(crate) fn new(original: Option<SystemLibraryRef<'a>>) -> Self {
         let (origin, content) = origin_and_content(original);
+        let capture = original
+            .and_then(|library| library.mapped)
+            .map(PhraseLibrary::begin_original_capture);
         Self {
             origin,
+            capture: std::cell::RefCell::new(capture),
             content,
             live_owner: false,
             undo: Vec::new(),
@@ -729,9 +735,13 @@ impl<'a, 'l> Merge<'a, 'l> {
         let origin = original
             .and_then(|library| library.mapped)
             .map_or(Origin::None, Origin::Mapped);
+        let capture = original
+            .and_then(|library| library.mapped)
+            .map(PhraseLibrary::begin_original_capture);
         let initial_total = live.content.total;
         Self {
             origin,
+            capture: std::cell::RefCell::new(capture),
             content: live.content,
             live_owner: true,
             undo: Vec::new(),
@@ -756,9 +766,12 @@ impl<'a, 'l> Merge<'a, 'l> {
     /// replay write. `None` for a slot the shipped chunk does not hold.
     fn original_item(&self, slot: u32) -> Option<(u32, usize)> {
         match &self.origin {
-            Origin::Mapped(library) => library
-                .item(slot)
-                .map(|item| (item.unigram(), item.as_bytes().len())),
+            Origin::Mapped(library) => match library.original_slot(slot) {
+                Some(saved) => Some((saved.unigram?, saved.extent?)),
+                None => library
+                    .item(slot)
+                    .map(|item| (item.unigram(), item.as_bytes().len())),
+            },
             Origin::Inline { offsets, .. } => offsets
                 .get(&slot)
                 .map(|item| (item.unigram, item.len as usize)),
@@ -831,9 +844,23 @@ impl<'a, 'l> Merge<'a, 'l> {
         };
         match &self.origin {
             Origin::Mapped(library) => {
-                for (slot, item) in library.items() {
-                    if let Some(start) = library.content_offset(slot) {
-                        consider(slot, start as usize, item.as_bytes().len());
+                // Exceptional overlong path only. A journal-addressed slot
+                // keeps its pre-write offset; all other offset words are
+                // still the originals in the one live mapping.
+                for index in 0..self.content.slots.data_end / 4 {
+                    let Ok(slot) = u32::try_from(index) else {
+                        break;
+                    };
+                    let saved = library.original_slot(slot);
+                    let start = saved.map_or_else(|| self.slot_offset(slot), |saved| saved.offset);
+                    if start == 0 {
+                        continue;
+                    }
+                    let len = saved
+                        .and_then(|saved| saved.extent)
+                        .or_else(|| library.item(slot).map(|item| item.as_bytes().len()));
+                    if let Some(len) = len {
+                        consider(slot, start as usize, len);
                     }
                 }
             }
@@ -853,9 +880,12 @@ impl<'a, 'l> Merge<'a, 'l> {
     fn relocated(&self, slot: u32) -> bool {
         let current = self.slot_offset(slot);
         match &self.origin {
-            Origin::Mapped(library) => library
-                .content_offset(slot)
-                .is_none_or(|offset| offset != current),
+            Origin::Mapped(library) => {
+                library.original_slot(slot).map_or_else(
+                    || library.content_offset(slot).unwrap_or(current),
+                    |saved| saved.offset,
+                ) != current
+            }
             Origin::Inline { offsets, .. } => {
                 offsets.get(&slot).is_none_or(|item| item.offset != current)
             }
@@ -863,16 +893,17 @@ impl<'a, 'l> Merge<'a, 'l> {
         }
     }
 
-    fn capture_history(&self) {
-        if let Origin::Mapped(library) = &self.origin {
-            library.capture_history(
+    fn capture_slot(&self, slot: u32) {
+        if let Some(capture) = self.capture.borrow_mut().as_mut() {
+            capture.capture(
+                slot,
                 self.content.backing.bytes(Area::Offsets),
                 self.content.backing.bytes(Area::Content),
             );
         }
     }
     fn set_offset(&mut self, slot: u32, offset: u32) {
-        self.capture_history();
+        self.capture_slot(slot);
         self.touched.push(slot);
         if self.content.slot_write_hits_mapping(slot)
             && let Some(old) = self.content.slot_offset(slot)
@@ -943,7 +974,7 @@ impl<'a, 'l> Merge<'a, 'l> {
             return Err(Stop::ShortAdd(token));
         }
         let unigram = raw_unigram(payload);
-        self.capture_history();
+        self.capture_slot(slot);
         let offset = self.append_logged(payload);
         self.set_offset(slot, offset);
         self.add_total(unigram);
@@ -1029,7 +1060,7 @@ impl<'a, 'l> Merge<'a, 'l> {
                 if bytes.as_ref() != old_item {
                     return Err(mismatch());
                 }
-                self.capture_history();
+                self.capture_slot(slot);
                 if new_item.len() > len {
                     // A remove and an add of the whole new payload.
                     let old_unigram = raw_unigram(&bytes);
@@ -1118,7 +1149,9 @@ impl<'a, 'l> Merge<'a, 'l> {
                 Stale::Shipped { .. } | Stale::Owned { .. } => false,
             },
             Place::Shipped { offset, .. } => {
-                self.capture_history();
+                if let Some(slot) = self.stale_slot {
+                    self.capture_slot(slot);
+                }
                 // The stale compare made `old` the bytes at this place.
                 if self.content.shipped_has(offset, bytes.len())
                     && let Some(old) = old.get(..bytes.len())
@@ -1131,7 +1164,9 @@ impl<'a, 'l> Merge<'a, 'l> {
                 self.content.write_shipped(offset, bytes)
             }
             Place::Owned { offset, .. } => {
-                self.capture_history();
+                if let Some(slot) = self.stale_slot {
+                    self.capture_slot(slot);
+                }
                 self.content.write(offset, bytes)
             }
         }
@@ -1174,6 +1209,7 @@ impl<'a, 'l> Merge<'a, 'l> {
     /// over-read calls this; a mismatch or an unknown-record stop keeps the
     /// applied prefix and drops the entries instead.
     pub(crate) fn rollback(mut self) -> ReplayedLibrary {
+        self.capture.get_mut().take();
         while let Some(entry) = self.undo.pop() {
             match entry {
                 Undo::Offset { slot, old } => self.content.restore_slot(slot, old),
@@ -1199,6 +1235,10 @@ impl<'a, 'l> Merge<'a, 'l> {
         skipped: &mut Vec<String>,
         name: &impl std::fmt::Display,
     ) -> (Option<u32>, BTreeMap<u32, Option<ChunkItem>>) {
+        self.capture.get_mut().take();
+        if let Origin::Mapped(library) = &self.origin {
+            library.finish_original_slots();
+        }
         self.sort_touched();
         self.expand_overlong();
         let mut typed = Vec::with_capacity(self.touched.len());
@@ -1369,7 +1409,7 @@ impl ReplayedLibrary {
         };
         let field = u32::from_le_bytes([b0, b1, b2, b3]);
         if let Some(original) = original {
-            self.content.capture_history(original);
+            self.content.capture_slot(original, slot);
         }
         self.content
             .write(at, &field.wrapping_add(delta).to_le_bytes());
@@ -1394,7 +1434,7 @@ impl ReplayedLibrary {
         payload: &[u8],
         original: SystemLibraryRef<'_>,
     ) -> bool {
-        self.content.capture_history(original);
+        self.content.capture_slot(original, slot);
         self.rejected.retain(|&rejected| rejected != slot);
         let unigram = raw_unigram(payload);
         let appended = self.content.append(payload);
@@ -1423,7 +1463,7 @@ impl ReplayedLibrary {
             return None;
         };
         let bytes = self.content.item(offset, len)?.into_owned();
-        self.content.capture_history(original);
+        self.content.capture_slot(original, slot);
         self.content.set_slot_offset(slot, 0);
         self.content.total = self.content.total.wrapping_sub(raw_unigram(&bytes));
         Some(bytes)
@@ -1523,7 +1563,7 @@ impl ReplayedLibrary {
                 };
                 total = next;
                 if let Some(original) = original {
-                    self.content.capture_history(original);
+                    self.content.capture_slot(original, slot);
                 }
                 self.content
                     .write(count_at, &count.wrapping_add(delta).to_le_bytes());
@@ -1546,6 +1586,12 @@ impl ReplayedLibrary {
             return None;
         };
         self.content.item(offset, len)
+    }
+
+    pub(crate) fn slot_has_offset(&self, slot: u32) -> bool {
+        self.content
+            .slot_offset(slot)
+            .is_some_and(|offset| offset != 0)
     }
 
     pub(crate) fn readable_item_count(&self) -> u64 {
@@ -1778,32 +1824,22 @@ impl<'a> Merge<'a, '_> {
         BTreeMap<u32, Option<ChunkItem>>,
         Option<ReplayedLibrary>,
     ) {
-        // Deduplicate in slot order without sorting the journal. Every
-        // addressed slot fits in the live offset array (or was rejected), so
-        // the bitmap and scan are bounded by that array's logical extent.
-        let slots = self.content.slots.data_end / 4;
-        let mut touched = vec![false; slots];
-        for &slot in &self.touched {
-            if let Some(mark) = touched.get_mut(slot as usize) {
-                *mark = true;
-            }
-        }
+        // Only journal-addressed slots need final classification on the
+        // ordinary path. Overlong writes use the separate overlap walk.
+        let mut touched = self.touched.clone();
+        touched.sort_unstable();
+        touched.dedup();
         let mut removed = self.overreach;
         let mut added = false;
         let mut rejected = Vec::new();
+        let mut capture_cursor = 0;
         #[cfg(test)]
         let mut retained_slots = Vec::new();
-        for (slot, &changed) in touched.iter().enumerate() {
-            if !changed {
-                continue;
-            }
-            let Ok(slot) = u32::try_from(slot) else {
-                continue;
-            };
-            let original = match &self.origin {
-                Origin::Mapped(library) => library.originally_contains(slot),
-                _ => false,
-            };
+        for slot in touched {
+            let original =
+                self.capture.borrow().as_ref().is_some_and(|capture| {
+                    capture.originally_contains_next(slot, &mut capture_cursor)
+                });
             let offset = self.content.slot_offset(slot).unwrap_or(0);
             if offset == 0 {
                 removed |= original;
@@ -1854,9 +1890,13 @@ impl<'a> Merge<'a, '_> {
         BTreeMap<u32, Option<ChunkItem>>,
         Option<ReplayedLibrary>,
     ) {
+        if let Some(capture) = self.capture.get_mut().as_mut() {
+            capture.finish();
+        }
         if self.live_owner {
             return self.finish_live_owner(skipped, name);
         }
+        self.capture.get_mut().take();
         self.sort_touched();
         let mut typed = BTreeMap::new();
         if !self.overreach {

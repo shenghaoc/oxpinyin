@@ -1433,7 +1433,6 @@ impl Dictionary for RuntimeDict<'_> {
                             .library(token)
                             .is_some_and(|library| {
                                 !library.is_detached()
-                                    || library.has_history()
                                     || self.live_items().read(token, |_| ()).found().is_some()
                             })
                 })?
