@@ -62,12 +62,12 @@ pub enum ChunkLoadError {
 /// # Errors
 /// Returns the failed operation, including a short header read.
 pub fn load(path: &Path) -> Result<LoadedChunk, ChunkLoadError> {
-    load_with(path, native::ReadChunk::read_payload)
+    load_with(path, |source, payload| source.read_payload(payload, None))
 }
 
 fn load_with(
     path: &Path,
-    read_payload: impl FnOnce(&mut native::ReadChunk, &mut [u8]) -> io::Result<usize>,
+    read_payload: impl FnOnce(&mut native::ReadChunk, &mut Vec<u8>) -> io::Result<usize>,
 ) -> Result<LoadedChunk, ChunkLoadError> {
     let mut source = MappingSource::open(path).map_err(ChunkLoadError::Io)?;
     let file_size = source.file_size();
@@ -88,9 +88,7 @@ fn load_with(
     payload
         .try_reserve_exact(available as usize)
         .map_err(|error| ChunkLoadError::Io(io::Error::other(error)))?;
-    payload.resize(available as usize, 0);
-    let count = read_payload(&mut source.source, &mut payload).map_err(ChunkLoadError::Io)?;
-    payload.truncate(count);
+    read_payload(&mut source.source, &mut payload).map_err(ChunkLoadError::Io)?;
     Ok(LoadedChunk {
         length,
         checksum,
@@ -293,7 +291,7 @@ mod tests {
         let calls = std::cell::Cell::new(0);
         let chunk = load_with(&path, |source, buffer| {
             calls.set(calls.get() + 1);
-            source.read_payload(&mut buffer[..1])
+            source.read_payload(buffer, Some(1))
         })
         .unwrap();
         assert_eq!(calls.get(), 1);
@@ -302,10 +300,8 @@ mod tests {
 
         // The same short result against a different checksum is a refusal.
         std::fs::write(&path, [4, 0, 0, 0, 2, 0, 0, 0, 1, 2, 3, 4]).unwrap();
-        let chunk = load_with(&path, |source, buffer| {
-            source.read_payload(&mut buffer[..1])
-        })
-        .unwrap();
+        let chunk =
+            load_with(&path, |source, buffer| source.read_payload(buffer, Some(1))).unwrap();
         assert_eq!(chunk.finish(|bytes| u32::from(bytes[0])), None);
     }
 

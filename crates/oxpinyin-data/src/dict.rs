@@ -186,8 +186,7 @@ fn visible_extension_exists(
             prefix_keys_match(keys, &item.keys)
                 && visible(item.token)
                 && libraries.library(item.token).is_some_and(|library| {
-                    (library.is_detached() && !library.has_history())
-                        || library.originally_contains(item.token & 0x00ff_ffff)
+                    library.is_detached() || library.item(item.token).is_some()
                 })
         }))
     })

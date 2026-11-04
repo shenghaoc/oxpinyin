@@ -321,19 +321,15 @@ impl<'a> LiveSystemItems<'a> {
             .map_or(Lookup::Absent, Lookup::Found)
     }
 
-    /// The stored unigram field of the shipped item, `gen_unigram`'s `+1`
-    /// included: the chunk's own value, with no session change applied.
-    /// An unmodified transferred chunk answers from the live field; after a
-    /// write the captured baseline answers. Used by baseline-model tests.
+    /// The stored unigram field in the live sub-index, `gen_unigram`'s `+1`
+    /// included. A transferred chunk answers from its sole live mapping.
     #[must_use]
     pub fn stored_unigram(&self, token: Token) -> Option<u64> {
         self.libraries.library(token).and_then(|library| {
-            if library.is_detached() && !library.has_history() {
+            if library.is_detached() {
                 self.user
                     .and_then(|store| store.system_unigram(token))
                     .map(u64::from)
-            } else if library.is_detached() {
-                library.original_unigram(token & 0x00ff_ffff).map(u64::from)
             } else {
                 self.libraries.unigram_count(token)
             }

@@ -78,15 +78,30 @@ impl ReadChunk {
         }
     }
 
-    pub(crate) fn read_payload(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+    pub(crate) fn read_payload(
+        &mut self,
+        payload: &mut Vec<u8>,
+        limit: Option<usize>,
+    ) -> std::io::Result<usize> {
+        let spare = payload.spare_capacity_mut();
+        let requested = limit.unwrap_or(spare.len()).min(spare.len());
         #[cfg(unix)]
-        let len = bytes.len();
+        let len = requested;
         #[cfg(windows)]
-        let len = u32::try_from(bytes.len()).map_err(std::io::Error::other)?;
-        // SAFETY: the descriptor is owned and bytes is writable for its full
-        // length. This is exactly one read, including for an empty payload.
-        let count = unsafe { libc::read(self.0, bytes.as_mut_ptr().cast(), len) };
-        usize::try_from(count).map_err(|_| std::io::Error::last_os_error())
+        let len = u32::try_from(requested).map_err(std::io::Error::other)?;
+        // SAFETY: the descriptor is owned and the spare allocation is writable
+        // for its full length. read initializes exactly the returned prefix.
+        let count = unsafe { libc::read(self.0, spare.as_mut_ptr().cast(), len) };
+        let count = usize::try_from(count).map_err(|_| std::io::Error::last_os_error())?;
+        if count > requested {
+            return Err(std::io::Error::other(
+                "payload read exceeded reserved capacity",
+            ));
+        }
+        // SAFETY: read initialized exactly `count` bytes of spare capacity.
+        // A failed read returns above with Vec length still zero.
+        unsafe { payload.set_len(count) };
+        Ok(count)
     }
 
     pub(crate) fn map_copy(&self, file_size: usize) -> std::io::Result<memmap2::MmapMut> {

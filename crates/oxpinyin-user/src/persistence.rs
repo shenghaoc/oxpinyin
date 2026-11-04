@@ -54,7 +54,8 @@ use oxpinyin_data::table_info::FileName;
 use oxpinyin_data::user_files::read_chunk_payload;
 use oxpinyin_data::user_files::{
     LogEnd, LogFault, LogRecord, SystemVersions, UserConfError, UserDbm, UserFileLayout,
-    UserTableInfo, encode_log_records, get_open_counter, load_chunk_payload, log_records,
+    UserTableInfo, count_log_item_records, encode_log_records, get_open_counter,
+    load_chunk_payload, log_records,
 };
 use oxpinyin_input::path::{build_path, rename, unlink};
 use oxpinyin_store::{
@@ -1728,6 +1729,18 @@ fn replay_logs(
         } else {
             None
         };
+        // Count records in the loaded log, never slots in the system chunk.
+        // Reserving before replay avoids Vec growth on the ordinary path.
+        let item_records = match &masked {
+            Some(records) => records
+                .iter()
+                .filter(|record| !matches!(record, LogRecord::ModifyHeader { .. }))
+                .count(),
+            None => count_log_item_records(payload),
+        };
+        if let Some(library) = originals.get(&nibble).and_then(|original| original.mapped) {
+            library.reserve_original_slots(item_records);
+        }
         let live = replayed
             .as_deref_mut()
             .and_then(|views| views.remove(&nibble));

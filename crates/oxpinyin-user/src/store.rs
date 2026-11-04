@@ -2223,21 +2223,17 @@ impl<S: WriteStore> GenericUserStore<S> {
         } else if self.inner.libpinyin.is_none() && self.has_user_data() {
             self.with_count_cache(|cached, db| cached.unigram_delta(db, token))
         } else if let Some(live) = self.system_unigram(token) {
-            if self
-                .originals
-                .get(&phrase_index_library_index(token))
-                .and_then(|original| original.mapped)
-                .is_some_and(|library| library.is_detached() && !library.has_history())
-            {
-                return Ok(0);
-            }
             let slot = token & PHRASE_MASK;
             let base = self
                 .originals
                 .get(&phrase_index_library_index(token))
-                .and_then(|original| original.unigram(slot))
-                .unwrap_or(0);
-            Ok(u64::from(live.wrapping_sub(base)))
+                .and_then(|original| match original.mapped {
+                    Some(library) if library.is_detached() => {
+                        library.original_slot(slot).and_then(|saved| saved.unigram)
+                    }
+                    _ => original.unigram(slot),
+                });
+            Ok(base.map_or(0, |base| u64::from(live.wrapping_sub(base))))
         } else {
             Ok(0)
         }
