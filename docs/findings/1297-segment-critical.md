@@ -48,12 +48,9 @@ Return values, the phrase result and every other state are the pin's.
 The NULL-sentence path is not covered by this record: it makes the pin's
 own `g_utf8_strlen` call, whose critical is GLib's.
 
-Cases, bound below with `just policy-record` from each cell's own capture
-(bdb, kc and tkrzw):
-`glib-924-segment-critical-{pinyin,zhuyin}`,
-`glib-924-segment-fatal-critical-{pinyin,zhuyin}` and
-`issue542-phrase-segment-invalid-utf8-{pinyin,zhuyin}`. Controls that
-still MATCH: `c-string-input/{pinyin,zhuyin}-segment-state-{null,valid}`.
+The `contract-diff-policy` block below lists every case this record covers,
+bound with `just policy-record` from each cell's own capture (bdb, kc and
+tkrzw). Matching controls are outside this policy record.
 Unit tests: `surrogate_segment_matches_pin_length_and_no_critical` in both
 facades.
 
@@ -581,6 +578,636 @@ facades.
           "divergence": [
             "result.logs[0:1]: subject drops [[null, 8]]",
             "result.messages (list lengths pin 1, subject 0; first change [0]): subject drops \"bool zhuyin_phrase_segment(zhuyin_instance\" … (length 104)",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        }
+      }
+    },
+    "axis-c-encoding-pinyin-phrase_segment-ff-start": {
+      "cells": {
+        "tkrzw": {
+          "pin": {
+            "sha256": "e96db87b37e822907961509357b7c7a3d0cd7e49d19c3332160c21ca00588499",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.count": "5feceb66ffc86f38",
+              "result.get_n_phrase": "b5bea41b6c623f7c",
+              "result.log_messages": "98f4eca89c3f5b4f",
+              "result.logs": "62273f5f9ce1ddac",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "82370086819f36cf495f605a65b831351cebf5ec13c4104c4ad0a35d2b0054a1",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.count": "5feceb66ffc86f38",
+              "result.get_n_phrase": "b5bea41b6c623f7c",
+              "result.log_messages": "4f53cda18c2baa0c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.log_messages (list lengths pin 1, subject 0; first change [0]): subject drops \"bool pinyin_phrase_segment(pinyin_instance\" … (length 104)",
+            "result.logs[0:1]: subject drops [[null, 8]]",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        }
+      }
+    },
+    "axis-c-encoding-pinyin-phrase_segment-ff-middle": {
+      "cells": {
+        "tkrzw": {
+          "pin": {
+            "sha256": "e96db87b37e822907961509357b7c7a3d0cd7e49d19c3332160c21ca00588499",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.count": "5feceb66ffc86f38",
+              "result.get_n_phrase": "b5bea41b6c623f7c",
+              "result.log_messages": "98f4eca89c3f5b4f",
+              "result.logs": "62273f5f9ce1ddac",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "82370086819f36cf495f605a65b831351cebf5ec13c4104c4ad0a35d2b0054a1",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.count": "5feceb66ffc86f38",
+              "result.get_n_phrase": "b5bea41b6c623f7c",
+              "result.log_messages": "4f53cda18c2baa0c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.log_messages (list lengths pin 1, subject 0; first change [0]): subject drops \"bool pinyin_phrase_segment(pinyin_instance\" … (length 104)",
+            "result.logs[0:1]: subject drops [[null, 8]]",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        }
+      }
+    },
+    "axis-c-encoding-pinyin-phrase_segment-ff-end": {
+      "cells": {
+        "tkrzw": {
+          "pin": {
+            "sha256": "e96db87b37e822907961509357b7c7a3d0cd7e49d19c3332160c21ca00588499",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.count": "5feceb66ffc86f38",
+              "result.get_n_phrase": "b5bea41b6c623f7c",
+              "result.log_messages": "98f4eca89c3f5b4f",
+              "result.logs": "62273f5f9ce1ddac",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "82370086819f36cf495f605a65b831351cebf5ec13c4104c4ad0a35d2b0054a1",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.count": "5feceb66ffc86f38",
+              "result.get_n_phrase": "b5bea41b6c623f7c",
+              "result.log_messages": "4f53cda18c2baa0c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.log_messages (list lengths pin 1, subject 0; first change [0]): subject drops \"bool pinyin_phrase_segment(pinyin_instance\" … (length 104)",
+            "result.logs[0:1]: subject drops [[null, 8]]",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        }
+      }
+    },
+    "axis-c-encoding-pinyin-phrase_segment-overlong-start": {
+      "cells": {
+        "tkrzw": {
+          "pin": {
+            "sha256": "e96db87b37e822907961509357b7c7a3d0cd7e49d19c3332160c21ca00588499",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.count": "5feceb66ffc86f38",
+              "result.get_n_phrase": "b5bea41b6c623f7c",
+              "result.log_messages": "98f4eca89c3f5b4f",
+              "result.logs": "62273f5f9ce1ddac",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "82370086819f36cf495f605a65b831351cebf5ec13c4104c4ad0a35d2b0054a1",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.count": "5feceb66ffc86f38",
+              "result.get_n_phrase": "b5bea41b6c623f7c",
+              "result.log_messages": "4f53cda18c2baa0c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.log_messages (list lengths pin 1, subject 0; first change [0]): subject drops \"bool pinyin_phrase_segment(pinyin_instance\" … (length 104)",
+            "result.logs[0:1]: subject drops [[null, 8]]",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        }
+      }
+    },
+    "axis-c-encoding-pinyin-phrase_segment-overlong-middle": {
+      "cells": {
+        "tkrzw": {
+          "pin": {
+            "sha256": "e96db87b37e822907961509357b7c7a3d0cd7e49d19c3332160c21ca00588499",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.count": "5feceb66ffc86f38",
+              "result.get_n_phrase": "b5bea41b6c623f7c",
+              "result.log_messages": "98f4eca89c3f5b4f",
+              "result.logs": "62273f5f9ce1ddac",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "82370086819f36cf495f605a65b831351cebf5ec13c4104c4ad0a35d2b0054a1",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.count": "5feceb66ffc86f38",
+              "result.get_n_phrase": "b5bea41b6c623f7c",
+              "result.log_messages": "4f53cda18c2baa0c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.log_messages (list lengths pin 1, subject 0; first change [0]): subject drops \"bool pinyin_phrase_segment(pinyin_instance\" … (length 104)",
+            "result.logs[0:1]: subject drops [[null, 8]]",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        }
+      }
+    },
+    "axis-c-encoding-pinyin-phrase_segment-overlong-end": {
+      "cells": {
+        "tkrzw": {
+          "pin": {
+            "sha256": "e96db87b37e822907961509357b7c7a3d0cd7e49d19c3332160c21ca00588499",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.count": "5feceb66ffc86f38",
+              "result.get_n_phrase": "b5bea41b6c623f7c",
+              "result.log_messages": "98f4eca89c3f5b4f",
+              "result.logs": "62273f5f9ce1ddac",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "82370086819f36cf495f605a65b831351cebf5ec13c4104c4ad0a35d2b0054a1",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.count": "5feceb66ffc86f38",
+              "result.get_n_phrase": "b5bea41b6c623f7c",
+              "result.log_messages": "4f53cda18c2baa0c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.log_messages (list lengths pin 1, subject 0; first change [0]): subject drops \"bool pinyin_phrase_segment(pinyin_instance\" … (length 104)",
+            "result.logs[0:1]: subject drops [[null, 8]]",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        }
+      }
+    },
+    "axis-c-encoding-pinyin-phrase_segment-truncated-start": {
+      "cells": {
+        "tkrzw": {
+          "pin": {
+            "sha256": "e96db87b37e822907961509357b7c7a3d0cd7e49d19c3332160c21ca00588499",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.count": "5feceb66ffc86f38",
+              "result.get_n_phrase": "b5bea41b6c623f7c",
+              "result.log_messages": "98f4eca89c3f5b4f",
+              "result.logs": "62273f5f9ce1ddac",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "82370086819f36cf495f605a65b831351cebf5ec13c4104c4ad0a35d2b0054a1",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.count": "5feceb66ffc86f38",
+              "result.get_n_phrase": "b5bea41b6c623f7c",
+              "result.log_messages": "4f53cda18c2baa0c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.log_messages (list lengths pin 1, subject 0; first change [0]): subject drops \"bool pinyin_phrase_segment(pinyin_instance\" … (length 104)",
+            "result.logs[0:1]: subject drops [[null, 8]]",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        }
+      }
+    },
+    "axis-c-encoding-pinyin-phrase_segment-truncated-middle": {
+      "cells": {
+        "tkrzw": {
+          "pin": {
+            "sha256": "e96db87b37e822907961509357b7c7a3d0cd7e49d19c3332160c21ca00588499",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.count": "5feceb66ffc86f38",
+              "result.get_n_phrase": "b5bea41b6c623f7c",
+              "result.log_messages": "98f4eca89c3f5b4f",
+              "result.logs": "62273f5f9ce1ddac",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "82370086819f36cf495f605a65b831351cebf5ec13c4104c4ad0a35d2b0054a1",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.count": "5feceb66ffc86f38",
+              "result.get_n_phrase": "b5bea41b6c623f7c",
+              "result.log_messages": "4f53cda18c2baa0c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.log_messages (list lengths pin 1, subject 0; first change [0]): subject drops \"bool pinyin_phrase_segment(pinyin_instance\" … (length 104)",
+            "result.logs[0:1]: subject drops [[null, 8]]",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        }
+      }
+    },
+    "axis-c-encoding-pinyin-phrase_segment-truncated-end": {
+      "cells": {
+        "tkrzw": {
+          "pin": {
+            "sha256": "e96db87b37e822907961509357b7c7a3d0cd7e49d19c3332160c21ca00588499",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.count": "5feceb66ffc86f38",
+              "result.get_n_phrase": "b5bea41b6c623f7c",
+              "result.log_messages": "98f4eca89c3f5b4f",
+              "result.logs": "62273f5f9ce1ddac",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "82370086819f36cf495f605a65b831351cebf5ec13c4104c4ad0a35d2b0054a1",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.count": "5feceb66ffc86f38",
+              "result.get_n_phrase": "b5bea41b6c623f7c",
+              "result.log_messages": "4f53cda18c2baa0c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.log_messages (list lengths pin 1, subject 0; first change [0]): subject drops \"bool pinyin_phrase_segment(pinyin_instance\" … (length 104)",
+            "result.logs[0:1]: subject drops [[null, 8]]",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        }
+      }
+    },
+    "axis-c-encoding-zhuyin-phrase_segment-ff-start": {
+      "cells": {
+        "tkrzw": {
+          "pin": {
+            "sha256": "90554abeb237384ddeccb91ab2174eb9f219fc1230a64a05d0ee61bdb51fb99e",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.count": "5feceb66ffc86f38",
+              "result.get_n_phrase": "b5bea41b6c623f7c",
+              "result.log_messages": "f60e3f18b53744ac",
+              "result.logs": "62273f5f9ce1ddac",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "82370086819f36cf495f605a65b831351cebf5ec13c4104c4ad0a35d2b0054a1",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.count": "5feceb66ffc86f38",
+              "result.get_n_phrase": "b5bea41b6c623f7c",
+              "result.log_messages": "4f53cda18c2baa0c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.log_messages (list lengths pin 1, subject 0; first change [0]): subject drops \"bool zhuyin_phrase_segment(zhuyin_instance\" … (length 104)",
+            "result.logs[0:1]: subject drops [[null, 8]]",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        }
+      }
+    },
+    "axis-c-encoding-zhuyin-phrase_segment-ff-middle": {
+      "cells": {
+        "tkrzw": {
+          "pin": {
+            "sha256": "90554abeb237384ddeccb91ab2174eb9f219fc1230a64a05d0ee61bdb51fb99e",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.count": "5feceb66ffc86f38",
+              "result.get_n_phrase": "b5bea41b6c623f7c",
+              "result.log_messages": "f60e3f18b53744ac",
+              "result.logs": "62273f5f9ce1ddac",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "82370086819f36cf495f605a65b831351cebf5ec13c4104c4ad0a35d2b0054a1",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.count": "5feceb66ffc86f38",
+              "result.get_n_phrase": "b5bea41b6c623f7c",
+              "result.log_messages": "4f53cda18c2baa0c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.log_messages (list lengths pin 1, subject 0; first change [0]): subject drops \"bool zhuyin_phrase_segment(zhuyin_instance\" … (length 104)",
+            "result.logs[0:1]: subject drops [[null, 8]]",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        }
+      }
+    },
+    "axis-c-encoding-zhuyin-phrase_segment-ff-end": {
+      "cells": {
+        "tkrzw": {
+          "pin": {
+            "sha256": "90554abeb237384ddeccb91ab2174eb9f219fc1230a64a05d0ee61bdb51fb99e",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.count": "5feceb66ffc86f38",
+              "result.get_n_phrase": "b5bea41b6c623f7c",
+              "result.log_messages": "f60e3f18b53744ac",
+              "result.logs": "62273f5f9ce1ddac",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "82370086819f36cf495f605a65b831351cebf5ec13c4104c4ad0a35d2b0054a1",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.count": "5feceb66ffc86f38",
+              "result.get_n_phrase": "b5bea41b6c623f7c",
+              "result.log_messages": "4f53cda18c2baa0c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.log_messages (list lengths pin 1, subject 0; first change [0]): subject drops \"bool zhuyin_phrase_segment(zhuyin_instance\" … (length 104)",
+            "result.logs[0:1]: subject drops [[null, 8]]",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        }
+      }
+    },
+    "axis-c-encoding-zhuyin-phrase_segment-overlong-start": {
+      "cells": {
+        "tkrzw": {
+          "pin": {
+            "sha256": "90554abeb237384ddeccb91ab2174eb9f219fc1230a64a05d0ee61bdb51fb99e",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.count": "5feceb66ffc86f38",
+              "result.get_n_phrase": "b5bea41b6c623f7c",
+              "result.log_messages": "f60e3f18b53744ac",
+              "result.logs": "62273f5f9ce1ddac",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "82370086819f36cf495f605a65b831351cebf5ec13c4104c4ad0a35d2b0054a1",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.count": "5feceb66ffc86f38",
+              "result.get_n_phrase": "b5bea41b6c623f7c",
+              "result.log_messages": "4f53cda18c2baa0c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.log_messages (list lengths pin 1, subject 0; first change [0]): subject drops \"bool zhuyin_phrase_segment(zhuyin_instance\" … (length 104)",
+            "result.logs[0:1]: subject drops [[null, 8]]",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        }
+      }
+    },
+    "axis-c-encoding-zhuyin-phrase_segment-overlong-middle": {
+      "cells": {
+        "tkrzw": {
+          "pin": {
+            "sha256": "90554abeb237384ddeccb91ab2174eb9f219fc1230a64a05d0ee61bdb51fb99e",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.count": "5feceb66ffc86f38",
+              "result.get_n_phrase": "b5bea41b6c623f7c",
+              "result.log_messages": "f60e3f18b53744ac",
+              "result.logs": "62273f5f9ce1ddac",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "82370086819f36cf495f605a65b831351cebf5ec13c4104c4ad0a35d2b0054a1",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.count": "5feceb66ffc86f38",
+              "result.get_n_phrase": "b5bea41b6c623f7c",
+              "result.log_messages": "4f53cda18c2baa0c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.log_messages (list lengths pin 1, subject 0; first change [0]): subject drops \"bool zhuyin_phrase_segment(zhuyin_instance\" … (length 104)",
+            "result.logs[0:1]: subject drops [[null, 8]]",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        }
+      }
+    },
+    "axis-c-encoding-zhuyin-phrase_segment-overlong-end": {
+      "cells": {
+        "tkrzw": {
+          "pin": {
+            "sha256": "90554abeb237384ddeccb91ab2174eb9f219fc1230a64a05d0ee61bdb51fb99e",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.count": "5feceb66ffc86f38",
+              "result.get_n_phrase": "b5bea41b6c623f7c",
+              "result.log_messages": "f60e3f18b53744ac",
+              "result.logs": "62273f5f9ce1ddac",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "82370086819f36cf495f605a65b831351cebf5ec13c4104c4ad0a35d2b0054a1",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.count": "5feceb66ffc86f38",
+              "result.get_n_phrase": "b5bea41b6c623f7c",
+              "result.log_messages": "4f53cda18c2baa0c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.log_messages (list lengths pin 1, subject 0; first change [0]): subject drops \"bool zhuyin_phrase_segment(zhuyin_instance\" … (length 104)",
+            "result.logs[0:1]: subject drops [[null, 8]]",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        }
+      }
+    },
+    "axis-c-encoding-zhuyin-phrase_segment-truncated-start": {
+      "cells": {
+        "tkrzw": {
+          "pin": {
+            "sha256": "90554abeb237384ddeccb91ab2174eb9f219fc1230a64a05d0ee61bdb51fb99e",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.count": "5feceb66ffc86f38",
+              "result.get_n_phrase": "b5bea41b6c623f7c",
+              "result.log_messages": "f60e3f18b53744ac",
+              "result.logs": "62273f5f9ce1ddac",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "82370086819f36cf495f605a65b831351cebf5ec13c4104c4ad0a35d2b0054a1",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.count": "5feceb66ffc86f38",
+              "result.get_n_phrase": "b5bea41b6c623f7c",
+              "result.log_messages": "4f53cda18c2baa0c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.log_messages (list lengths pin 1, subject 0; first change [0]): subject drops \"bool zhuyin_phrase_segment(zhuyin_instance\" … (length 104)",
+            "result.logs[0:1]: subject drops [[null, 8]]",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        }
+      }
+    },
+    "axis-c-encoding-zhuyin-phrase_segment-truncated-middle": {
+      "cells": {
+        "tkrzw": {
+          "pin": {
+            "sha256": "90554abeb237384ddeccb91ab2174eb9f219fc1230a64a05d0ee61bdb51fb99e",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.count": "5feceb66ffc86f38",
+              "result.get_n_phrase": "b5bea41b6c623f7c",
+              "result.log_messages": "f60e3f18b53744ac",
+              "result.logs": "62273f5f9ce1ddac",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "82370086819f36cf495f605a65b831351cebf5ec13c4104c4ad0a35d2b0054a1",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.count": "5feceb66ffc86f38",
+              "result.get_n_phrase": "b5bea41b6c623f7c",
+              "result.log_messages": "4f53cda18c2baa0c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.log_messages (list lengths pin 1, subject 0; first change [0]): subject drops \"bool zhuyin_phrase_segment(zhuyin_instance\" … (length 104)",
+            "result.logs[0:1]: subject drops [[null, 8]]",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        }
+      }
+    },
+    "axis-c-encoding-zhuyin-phrase_segment-truncated-end": {
+      "cells": {
+        "tkrzw": {
+          "pin": {
+            "sha256": "90554abeb237384ddeccb91ab2174eb9f219fc1230a64a05d0ee61bdb51fb99e",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.count": "5feceb66ffc86f38",
+              "result.get_n_phrase": "b5bea41b6c623f7c",
+              "result.log_messages": "f60e3f18b53744ac",
+              "result.logs": "62273f5f9ce1ddac",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "subject": {
+            "sha256": "82370086819f36cf495f605a65b831351cebf5ec13c4104c4ad0a35d2b0054a1",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.count": "5feceb66ffc86f38",
+              "result.get_n_phrase": "b5bea41b6c623f7c",
+              "result.log_messages": "4f53cda18c2baa0c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.ret": "fcbcf165908dd18a",
+              "stderr": "c48a0964ed0c5485"
+            }
+          },
+          "divergence": [
+            "result.log_messages (list lengths pin 1, subject 0; first change [0]): subject drops \"bool zhuyin_phrase_segment(zhuyin_instance\" … (length 104)",
+            "result.logs[0:1]: subject drops [[null, 8]]",
             "… further divergence omitted (4096-byte budget)"
           ]
         }
