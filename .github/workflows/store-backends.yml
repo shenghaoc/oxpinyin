@@ -325,7 +325,7 @@ jobs:
 
       # Backend database behaviour is verified by the native Rust tests above. The contract cases
       # that read no system data also run here, against the frozen pin observations (the tkrzw
-      # cell verifies in ci.yml; nothing runs nightly for KC or BDB).
+      # cell verifies in verify-nightly.yml; nothing runs nightly for KC or BDB).
       - name: Contract references (verify under this backend)
         if: ${{ needs.changes.outputs.reuse != 'true' && matrix.backend != 'tkrzw' }}
         uses: ./.github/actions/contract-verify

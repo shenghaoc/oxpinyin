@@ -170,8 +170,9 @@ for _kind in ('unsorted', 'duplicate'):
             case(f'user-gram-{_kind}-{_operation}-{_mode}', mode=_mode, issues=('757',))(
                 user_gram_layout(_kind, _operation))
     case(f'user-gram-{_kind}-remove-candidate-save', issues=('757',))(user_gram_layout(_kind, 'remove-candidate-save'))
-    case(f'user-gram-{_kind}-export', strjoinv_over_read=True, issues=('757', 'row:1'))(
-        user_gram_layout(_kind, 'export'))
+    # The export iterator cases (register row 1) are Rust tests, `e2e_tests::user_gram_unsorted_export_follows_the_stored_order`
+    # and `e2e_tests::user_gram_duplicate_export_lists_every_stored_item` in crates/oxpinyin-capi: the pin joins an
+    # unterminated GPtrArray, so whether it faults depends on heap layout and no frozen reference can hold it.
     case(f'user-gram-{_kind}-predicted', issues=('757',))(user_gram_predicted(_kind))
 
 

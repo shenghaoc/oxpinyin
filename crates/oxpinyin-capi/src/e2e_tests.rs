@@ -3445,3 +3445,402 @@ fn export_iterator_outlives_context() {
     crate::iterators::pinyin_end_get_phrases(phrases);
     crate::iterators::pinyin_end_get_bigram_phrases(bigrams);
 }
+
+// ---------------------------------------------------------------------
+// Ports of contract-diff cases whose pin side reads freed or
+// heap-dependent memory (undefined behaviour), so no frozen pin
+// reference can hold them. Each asserts oxpinyin's defined behaviour;
+// the expectations come from the pin's source at 074a2219 and the
+// project's rulings, not from running the pin.
+// ---------------------------------------------------------------------
+
+/// The `open <user dir>/user.conf failed.` line a fresh user directory
+/// makes `pinyin_init` write: `UserTableInfo::load` prints it when the
+/// marker is missing, with no trailing newline (`table_info.cpp:332` at
+/// 074a2219).
+#[cfg(unix)]
+fn fresh_user_conf_line(user_dir: &std::path::Path) -> String {
+    format!("open {}/user.conf failed.", user_dir.display())
+}
+
+/// Audit D-06's row-42 witness (`instance_outlives_context`): allocate an
+/// instance, parse a populated matrix, finalise the context, then guess.
+/// The pin's `pinyin_guess_sentence` reads `instance->m_context` and
+/// dereferences the freed context (`pinyin.cpp:1373-1380`), so no pin
+/// answer is defined; the ruled safe answer is `true`, the value the pin
+/// returns unconditionally (`pinyin.cpp:1381-1383`). A populated matrix
+/// reaches the lookup; an empty one returns before consulting the context.
+#[cfg(unix)]
+#[test]
+fn instance_outlives_context_guesses_true() {
+    let run = crate::test_support::run_in_child(
+        "e2e_tests::instance_outlives_context_guesses_true",
+        |user| {
+            let context = init_at(user);
+            assert!(!context.is_null());
+            let instance = pinyin_alloc_instance(context);
+            assert!(!instance.is_null());
+            assert_eq!(
+                pinyin_parse_more_full_pinyins(instance, cstr("nihao").as_ptr()),
+                5
+            );
+            crate::context::pinyin_fini(context);
+            assert!(pinyin_guess_sentence(instance), "the ruled safe answer");
+            crate::instance::pinyin_free_instance(instance);
+        },
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stderr),
+        fresh_user_conf_line(&run.user_dir)
+    );
+}
+
+/// A second `pinyin_fini` on one context (#573, register row 105): the pin
+/// deletes the context twice (`pinyin.cpp:1194-1222`) and dies of SIGSEGV;
+/// the ruling is a silent return. The init's own `user.conf` line is the
+/// only output.
+#[cfg(unix)]
+#[test]
+fn fini_twice_returns_silently() {
+    let run = crate::test_support::run_in_child("e2e_tests::fini_twice_returns_silently", |user| {
+        let context = init_at(user);
+        assert!(!context.is_null());
+        let instance = pinyin_alloc_instance(context);
+        crate::instance::pinyin_free_instance(instance);
+        crate::context::pinyin_fini(context);
+        crate::context::pinyin_fini(context);
+    });
+    assert_eq!(
+        String::from_utf8_lossy(&run.stderr),
+        fresh_user_conf_line(&run.user_dir)
+    );
+}
+
+/// GLib log records the child's default handler collected:
+/// `(domain, level, message)`.
+#[cfg(unix)]
+static GLIB_LOG: std::sync::Mutex<Vec<(String, u32, String)>> = std::sync::Mutex::new(Vec::new());
+
+/// Collects every GLib log record instead of printing it, so the child's
+/// stderr holds only the library's raw `fprintf` lines.
+#[cfg(unix)]
+extern "C" fn collect_glib_log(
+    domain: *const std::ffi::c_char,
+    level: glib_sys::GLogLevelFlags,
+    message: *const std::ffi::c_char,
+    _data: glib_sys::gpointer,
+) {
+    let text = |ptr: *const std::ffi::c_char| {
+        if ptr.is_null() {
+            String::new()
+        } else {
+            // SAFETY: GLib hands NUL-terminated strings that outlive the call.
+            unsafe { std::ffi::CStr::from_ptr(ptr) }
+                .to_string_lossy()
+                .into_owned()
+        }
+    };
+    GLIB_LOG
+        .lock()
+        .expect("log lock")
+        .push((text(domain), level, text(message)));
+}
+
+/// `#919`, `table-conf-919-short-row-merged`: the five-word row
+/// `default GB_DICTIONARY gbk_char.table gbk_char.bin gbk_char.dbin` plus
+/// the next line's first word `SYSTEM_FILE` is one valid six-word row
+/// (`fscanf("%255s ... %255s\n")` skips white space across newlines and
+/// takes whole words, `table_info.cpp:254-258`), so GB_DICTIONARY is
+/// re-pointed at the GBK files; the trailing `default RESERVED NULL NULL
+/// NULL` is five words, `6 != num` drops it (`:260-261`). The library and
+/// table then disagree and the pin reads a NULL item (SIGSEGV, class (b)),
+/// so only oxpinyin's answer is defined. The session is the case's:
+/// look up, learn a sentence, import a phrase, save, finalise.
+///
+/// The save writes every library's log to `<user file>.tmp` first and
+/// renames afterwards (`pinyin.cpp:925-1090`); libraries 1 and 2 now share
+/// `gbk_char.dbin`, so the second rename finds no tmp file and prints
+/// `rename ... failed.` (`pinyin.cpp:1059-1062`), the one raw stderr line
+/// beside the init's missing-marker line (`table_info.cpp:332`).
+#[cfg(unix)]
+#[test]
+fn table_conf_919_short_row_merged() {
+    let run =
+        crate::test_support::run_in_child("e2e_tests::table_conf_919_short_row_merged", |user| {
+            let system = crate::test_support::private_system(user.parent().expect("scratch"));
+            let conf = system.join("table.conf");
+            let stock = std::fs::read_to_string(&conf).expect("stock table.conf");
+            std::fs::remove_file(&conf).expect("unlink the link");
+            std::fs::write(
+                &conf,
+                stock
+                    + "default GB_DICTIONARY gbk_char.table gbk_char.bin gbk_char.dbin\n"
+                    + "SYSTEM_FILE default RESERVED NULL NULL NULL\n",
+            )
+            .expect("crafted table.conf");
+            // SAFETY: the handler is a plain function and `user_data` is unused.
+            unsafe {
+                glib_sys::g_log_set_default_handler(Some(collect_glib_log), ptr::null_mut());
+            }
+            let system_c = cstr(system.to_str().expect("UTF-8 path"));
+            let user_c = cstr(user.to_str().expect("UTF-8 path"));
+            let context = crate::context::pinyin_init(system_c.as_ptr(), user_c.as_ptr());
+            assert!(!context.is_null());
+            for text in ["nihao", "yishu"] {
+                let inst = pinyin_alloc_instance(context);
+                pinyin_parse_more_full_pinyins(inst, cstr(text).as_ptr());
+                pinyin_guess_sentence(inst);
+                let mut sentence: *mut std::ffi::c_char = ptr::null_mut();
+                pinyin_get_sentence(inst, 0, &raw mut sentence);
+                free_exported(sentence);
+                pinyin_guess_candidates(inst, 0, 0);
+            }
+            let inst = pinyin_alloc_instance(context);
+            pinyin_parse_more_full_pinyins(inst, cstr("nihao").as_ptr());
+            pinyin_guess_sentence(inst);
+            let train = pinyin_train(inst, 0);
+            let it = pinyin_begin_add_phrases(context, 7);
+            let add = pinyin_iterator_add_phrase(
+                it,
+                cstr("测试词").as_ptr(),
+                cstr("ce'shi'ci").as_ptr(),
+                1,
+            );
+            pinyin_end_add_phrases(it);
+            let save = pinyin_save(context);
+            crate::context::pinyin_fini(context);
+            assert!(train && add && save, "train {train} add {add} save {save}");
+            // The user files: GB_DICTIONARY's `gb_char.dbin` is gone, the
+            // GBK file name serves libraries 1 and 2 (each library's log is a
+            // 26-byte empty `MemoryChunk` here), the addon and network files
+            // are 27 bytes and the imported phrase makes `user.bin` 71.
+            let mut sizes = std::collections::BTreeMap::new();
+            let mut marker = String::new();
+            for entry in std::fs::read_dir(user).expect("user dir") {
+                let entry = entry.expect("entry");
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let bytes = std::fs::read(entry.path()).expect("read");
+                if name == "user.conf" {
+                    marker = String::from_utf8_lossy(&bytes).into_owned();
+                } else {
+                    sizes.insert(name, bytes.len());
+                }
+            }
+            // The index and bigram stores are written in the backend's own
+            // container format, so only their presence is fixed.
+            let present: Vec<&str> = sizes.keys().map(String::as_str).collect();
+            assert_eq!(
+                present,
+                [
+                    "addon.bin",
+                    "gbk_char.dbin",
+                    "merged.dbin",
+                    "network.bin",
+                    "opengram.dbin",
+                    "user.bin",
+                    "user_bigram.db",
+                    "user_phrase_index.bin",
+                    "user_pinyin_index.bin",
+                ]
+            );
+            for (name, size) in [
+                ("addon.bin", 27),
+                ("gbk_char.dbin", 26),
+                ("merged.dbin", 26),
+                ("network.bin", 27),
+                ("opengram.dbin", 26),
+                ("user.bin", 71),
+            ] {
+                assert_eq!(sizes[name], size, "{name}");
+            }
+            // The open counter the init raised, the fini lowered.
+            assert!(
+                marker.starts_with("binary format version:7\nmodel data version:14\n")
+                    && marker.ends_with("\nopen counter:0\n"),
+                "{marker}"
+            );
+            // Two lookups, two warnings: the merged row's library and table
+            // disagree, and the pin's NULL item read becomes one warning per
+            // candidate-list fill.
+            let records = GLIB_LOG.lock().expect("log lock").clone();
+            let warning = (
+                "libpinyin".to_owned(),
+                glib_sys::G_LOG_LEVEL_WARNING,
+                "pinyin_guess_candidates: a candidate's phrase item cannot be read".to_owned(),
+            );
+            assert_eq!(records, [warning.clone(), warning]);
+        });
+    let user = run.user_dir.display();
+    assert_eq!(
+        String::from_utf8_lossy(&run.stderr),
+        format!(
+            "open {user}/user.conf failed.\
+             rename {user}/gbk_char.dbin.tmp to {user}/gbk_char.dbin failed.\n"
+        )
+    );
+}
+
+/// One step of the bigram export walk: `has_next` answered false, or a
+/// row `get_next` handed out (`get_next`'s answer, phrase, pinyin, count).
+#[cfg(unix)]
+#[derive(Debug, PartialEq)]
+enum ExportStep {
+    NoNext,
+    Row(bool, String, String, i32),
+}
+
+/// Plants the user-gram layout of `contract_stored_user_gram.py`
+/// (`user_gram_layout`) and walks the bigram export at most sixteen steps,
+/// stopping after two consecutive `has_next` answers of false.
+///
+/// Session one adds the user phrase 龘龘 (`da2'da2`, count 5) to library 7
+/// and saves. The gram under 你 is then replaced, `total` first and the
+/// `(token, count)` items verbatim in the stored order the layout names,
+/// and a second session walks the export. Every count passes the export
+/// threshold (68); the walk doubles each count (register row 1).
+#[cfg(unix)]
+fn export_walk(tag: &str, items: impl FnOnce(u32, u32, u32) -> Vec<(u32, u32)>) -> Vec<ExportStep> {
+    let user_dir = TempUserDir::new(tag);
+    let path = user_dir.path.to_str().expect("UTF-8 path").to_owned();
+    let (context, instance) = open(&path);
+    let it = pinyin_begin_add_phrases(context, 7);
+    assert!(pinyin_iterator_add_phrase(
+        it,
+        cstr("龘龘").as_ptr(),
+        cstr("da2'da2").as_ptr(),
+        5
+    ));
+    pinyin_end_add_phrases(it);
+    let (ni, hao, hao_alt, dalong) = {
+        // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
+        let inst = unsafe { instance_ref(instance) };
+        let system = |text: &str| {
+            inst.core
+                .dict
+                .tokens_for_text(text)
+                .first()
+                .expect("the fixture holds the character")
+                .value()
+        };
+        let dalong = inst
+            .core
+            .user
+            .expect("instance carries a user store")
+            .token_for_phrase("龘龘")
+            .expect("readable store")
+            .expect("the imported phrase has a token");
+        (system("你"), system("好"), system("号"), dalong)
+    };
+    assert!(pinyin_save(context));
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+
+    let items = items(hao, hao_alt, dalong);
+    let total: u32 = items.iter().map(|&(_, count)| count).sum();
+    let mut gram = total.to_le_bytes().to_vec();
+    for (token, count) in items {
+        gram.extend_from_slice(&token.to_le_bytes());
+        gram.extend_from_slice(&count.to_le_bytes());
+    }
+    // `plant_bigram` writes a whole profile; only its `user_bigram.db` is
+    // wanted, laid over the session-one profile that holds the phrase.
+    let planted = TempUserDir::new("export-gram-plant");
+    crate::test_support::plant_bigram(&planted.path, vec![(ni.to_le_bytes().to_vec(), gram)]);
+    std::fs::copy(
+        planted.path.join("user_bigram.db"),
+        user_dir.path.join("user_bigram.db"),
+    )
+    .expect("lay the planted bigram over the profile");
+
+    let context = init_at(&user_dir.path);
+    assert!(!context.is_null());
+    let iter = crate::iterators::pinyin_begin_get_bigram_phrases(context);
+    let mut steps = Vec::new();
+    let mut falses = 0;
+    while falses < 2 && steps.len() < 16 {
+        if !crate::iterators::pinyin_bigram_iterator_has_next_phrase(iter) {
+            falses += 1;
+            steps.push(ExportStep::NoNext);
+            continue;
+        }
+        falses = 0;
+        let mut phrase: *mut crate::types::GChar = ptr::null_mut();
+        let mut pinyin: *mut crate::types::GChar = ptr::null_mut();
+        let mut count: std::os::raw::c_int = 0;
+        let ret = crate::iterators::pinyin_bigram_iterator_get_next_phrase(
+            iter,
+            &raw mut phrase,
+            &raw mut pinyin,
+            &raw mut count,
+        );
+        steps.push(ExportStep::Row(
+            ret,
+            take_exported(phrase),
+            take_exported(pinyin),
+            count,
+        ));
+    }
+    crate::iterators::pinyin_end_get_bigram_phrases(iter);
+    crate::context::pinyin_fini(context);
+    steps
+}
+
+/// `user-gram-unsorted-export`: 你's stored gram holds `[龘龘 90, 号 80,
+/// 好 70]`, descending by token, not the ascending order the pin writes.
+/// The pin's export reads `retrieve_all`, which appends the raw items in
+/// stored order (`ngram.cpp:133-151` at 074a2219), and the walk hands the
+/// array out in that order; the `std::lower_bound` over the raw array
+/// (`:86-99`) is a lookup and does not re-sort it. The walk's first
+/// `has_next` answers false (its do/while loads the last predecessor's gram
+/// on a false answer, register row 36); the last row's `get_next` answer is
+/// the walk's, `false` at the end of the gram.
+#[cfg(unix)]
+#[test]
+fn user_gram_unsorted_export_follows_the_stored_order() {
+    let steps = export_walk("export-unsorted", |hao, hao_alt, dalong| {
+        let mut items = vec![(dalong, 90), (hao_alt, 80), (hao, 70)];
+        items.sort_by(|a, b| b.cmp(a));
+        items
+    });
+    let row = |ok: bool, phrase: &str, pinyin: &str, count: i32| {
+        ExportStep::Row(ok, phrase.to_owned(), pinyin.to_owned(), count)
+    };
+    assert_eq!(
+        steps,
+        [
+            ExportStep::NoNext,
+            row(true, "你龘龘", "ni'da2'da2", 180),
+            row(true, "你号", "ni'hao", 160),
+            row(false, "你好", "ni'hao", 140),
+            ExportStep::NoNext,
+            ExportStep::NoNext,
+        ]
+    );
+}
+
+/// `user-gram-duplicate-export`: 你's stored gram holds 好 and 龘龘 twice,
+/// sorted: `[好 70, 好 80, 龘龘 90, 龘龘 100]`. `retrieve_all` appends
+/// every stored item, duplicates included (`ngram.cpp:133-151` at
+/// 074a2219), so the export lists each twice, in stored order.
+#[cfg(unix)]
+#[test]
+fn user_gram_duplicate_export_lists_every_stored_item() {
+    let steps = export_walk("export-duplicate", |hao, _, dalong| {
+        vec![(hao, 70), (hao, 80), (dalong, 90), (dalong, 100)]
+    });
+    let row = |ok: bool, phrase: &str, pinyin: &str, count: i32| {
+        ExportStep::Row(ok, phrase.to_owned(), pinyin.to_owned(), count)
+    };
+    assert_eq!(
+        steps,
+        [
+            ExportStep::NoNext,
+            row(true, "你好", "ni'hao", 140),
+            row(true, "你好", "ni'hao", 160),
+            row(true, "你龘龘", "ni'da2'da2", 180),
+            row(false, "你龘龘", "ni'da2'da2", 200),
+            ExportStep::NoNext,
+            ExportStep::NoNext,
+        ]
+    );
+}

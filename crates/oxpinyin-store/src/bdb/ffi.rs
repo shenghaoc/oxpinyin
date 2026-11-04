@@ -1362,6 +1362,37 @@ mod tests {
     }
 
     #[test]
+    fn a_read_only_handle_refuses_put_and_del() {
+        struct TempPath(std::path::PathBuf);
+        impl Drop for TempPath {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_file(&self.0);
+            }
+        }
+        // `Bigram::store` and `remove`, and the `FlexibleBigram` twins, are a
+        // bare `DB->put` / `DB->del` (ngram_bdb.cpp:161, :174;
+        // flexible_ngram_bdb.h:212, :233 at 074a2219); on a handle opened
+        // `DB_RDONLY` (bdb_utils.h:32-33) libdb refuses them and the method
+        // answers false. The wrapper's answer is `ReadOnly`, and the record
+        // is unchanged.
+        let path = TempPath(
+            std::env::temp_dir().join(format!("oxpinyin-read-only-{}.db", std::process::id())),
+        );
+        let db = SharedDb::open(&path.0, DB_HASH, false, true, USER_FILE_MODE).unwrap();
+        db.put(b"key", b"value").unwrap();
+        drop(db);
+        let db = SharedDb::open(&path.0, DB_HASH, true, false, USER_FILE_MODE).unwrap();
+        assert!(matches!(
+            db.put(b"key", b"other"),
+            Err(StoreError::ReadOnly)
+        ));
+        assert!(matches!(db.del(b"key"), Err(StoreError::ReadOnly)));
+        let mut value = Vec::new();
+        assert!(db.get(b"key", &mut value).unwrap());
+        assert_eq!(value, b"value");
+    }
+
+    #[test]
     fn unnamed_opens_use_the_pins_unthreaded_create_flags() {
         for db in [
             SharedDb::open_in_memory_tree().unwrap(),

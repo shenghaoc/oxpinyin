@@ -24,8 +24,8 @@ import contract_verdict as verdict
 def spec(**overrides):
     """A registration spec with the defaults of the driver's case_spec."""
     return dict(dict(mode='pinyin', control=False, abort=verdict.NO_ABORT, stderr=False, crash=None, userdir=False,
-                     cells=('bdb', 'kc', 'tkrzw'), either=False, host_scanf=(), dir_chunk=None, stderr_varies=False,
-                     abort_logs=None, fatal=False, both_abort=False, strjoinv_over_read=False, issues=(),
+                     cells=('bdb', 'kc', 'tkrzw'), either=False, host_scanf=(), dir_chunk=None,
+                     abort_logs=None, fatal=False, both_abort=False, issues=(),
                      policy_record=None, case_id='probe', pin_not_run=None, sigabrt=False), **overrides)
 
 
@@ -126,8 +126,6 @@ class MatchTests(unittest.TestCase):
         self.assertTrue(self.matches(case, pin, observation(result={'ret': False}, stderr='x\n')))
         self.assertFalse(self.matches(case, pin, observation(result={'ret': False}, stderr='y\n')))
         self.assertFalse(self.matches(case, pin, observation(result={'ret': True}, stderr='x\n')))
-        self.assertTrue(self.matches(spec(crash={'ret': False}, stderr_varies=True), pin,
-                                     observation(result={'ret': False}, stderr='anything')))
 
     def test_either_lets_the_pins_own_signal_choose_the_matcher(self):
         case = spec(abort=False, crash={'ret': False}, either=True, stderr=True)
@@ -160,16 +158,6 @@ class MatchTests(unittest.TestCase):
     def test_a_policy_record_never_counts_as_a_match(self):
         same = observation(result={'ret': 1})
         self.assertFalse(self.matches(spec(policy_record='r.md'), same, same))
-
-    def test_a_held_strjoinv_fault_is_a_match_and_a_completed_pin_is_compared_exactly(self):
-        case = spec(strjoinv_over_read=True)
-        pin = observation(exit=-signal.SIGSEGV, stderr='e\n')
-        done = observation(result={'rows': []}, stderr='e\n')
-        self.assertTrue(verdict.strjoinv_fault(pin, done))
-        self.assertTrue(self.matches(case, pin, done))
-        self.assertFalse(self.matches(case, pin, observation(result={'rows': []}, stderr='other\n')))
-        self.assertTrue(self.matches(case, done, done))
-        self.assertFalse(self.matches(case, done, observation(result={'rows': [1]}, stderr='e\n')))
 
     def test_the_directory_probe_is_asked_only_for_a_case_that_registers_a_dir_chunk(self):
         pin = observation(result={'ret': 1}, stderr='s', userfiles={'a': 1})
@@ -307,14 +295,6 @@ class VerdictTests(unittest.TestCase):
                 with self.subTest(subject=subject, parent=parent):
                     self.assertEqual(decide(case, pin, subject, parent),
                                      ('MATCH' if same else 'DIFFER', not same if parent else same, same))
-
-    def test_held_strjoinv_pin_fault_stays_valid_in_both_modes(self):
-        case = spec(strjoinv_over_read=True)
-        pin = observation(exit=-signal.SIGSEGV, stderr='e\n')
-        subject = observation(result={'rows': []}, stderr='e\n')
-        self.assertEqual(decide(case, pin, subject), ('MATCH', True, True))
-        self.assertEqual(decide(case, pin, subject, True), ('MATCH', False, True))
-        self.assertEqual(decide(case, pin, dict(subject, stderr='wrong'), True), ('INVALID', False, False))
 
 
 class PolicyTests(unittest.TestCase):
