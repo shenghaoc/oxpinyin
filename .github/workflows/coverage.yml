@@ -60,7 +60,7 @@ jobs:
       - name: Bootstrap the bare runner essentials (apt)
         run: |
           apt-get update -qq
-          apt-get install -y --no-install-recommends bash python3 tar gzip zstd git ca-certificates curl gcc g++ make libc6-dev pkg-config libclang-dev libglib2.0-dev
+          apt-get install -y --no-install-recommends bash python3 tar gzip zstd git ca-certificates curl jq gcc g++ make libc6-dev pkg-config libclang-dev libglib2.0-dev
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -69,19 +69,7 @@ jobs:
           safe-directory: 'true'
           rustup: 'true'
           rust-cache: 'true'
-      # cargo-llvm-cov is curl-pinned and checksum-verified like
-      # cargo-deny in ci.yml.
-      - name: Install pinned cargo-llvm-cov
-        run: |
-          # Exact on purpose (#1074): a checksum is only known for a known version.
-          ver=0.9.0
-          sum=bc2122fd7bd9b6d3eb371690ed085f82e5a8bf1851f4645ef521d12ed04b2616
-          curl -sSfL -o cargo-llvm-cov.tar.gz "https://github.com/taiki-e/cargo-llvm-cov/releases/download/v${ver}/cargo-llvm-cov-x86_64-unknown-linux-musl.tar.gz"
-          echo "${sum}  cargo-llvm-cov.tar.gz" | sha256sum -c -
-          tar xzf cargo-llvm-cov.tar.gz
-          mkdir -p ~/.local/bin
-          install -m755 cargo-llvm-cov ~/.local/bin
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          cargo-llvm-cov: 'true'
       - name: Provision tkrzw (built at the setup.sh revision and cached)
         uses: ./.github/actions/tkrzw
       - run: cargo llvm-cov --locked --workspace --lcov --output-path lcov.info

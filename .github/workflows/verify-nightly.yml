@@ -350,6 +350,7 @@ jobs:
         with:
           safe-directory: 'true'
           rustup: 'true'
+          uv: 'true'
       # The snapshot runs tkrzw (the w3 fixture directory its tooling
       # opens is the tkrzw one), the workspace default again since
       # 2026-10-30, from the tkrzw action below. valgrind supplies the instruction
@@ -393,29 +394,6 @@ jobs:
       - name: Set up pinned repository Python
         run: |
           set -euo pipefail
-          uv_install_dir="$HOME/.local/bin"
-          (
-            [[ $(uname -s)-$(uname -m) == Linux-x86_64 ]]
-            uv_target=x86_64-unknown-linux-gnu
-            # Published in https://github.com/astral-sh/uv/releases/download/0.13.1/sha256.sum.
-            # Exact on purpose (#1074): a checksum is only known for a known version.
-            uv_sha256=eadd9d27c134ab5ac1ffd4473b97a741407f3ea238288f03121fc4deddf90220
-            # Keep the archive in memory. Write only its verified executables.
-            uv_payload=$(curl --fail --location --retry 3 "https://github.com/astral-sh/uv/releases/download/0.13.1/uv-$uv_target.tar.gz" | base64)
-            uv_actual=$(printf '%s' "$uv_payload" | base64 -d | sha256sum)
-            [[ ${uv_actual%% *} == "$uv_sha256" ]] || { printf 'uv archive checksum mismatch\n' >&2; exit 1; }
-            uv_tmp=$(mktemp -d)
-            trap 'rm -rf "$uv_tmp"' EXIT
-            trap 'exit 1' HUP INT TERM
-            printf '%s' "$uv_payload" | base64 -d | tar -xz -C "$uv_tmp" "uv-$uv_target/uv" "uv-$uv_target/uvx"
-            mkdir -p "$uv_install_dir"
-            install -m755 "$uv_tmp/uv-$uv_target/uv" "$uv_tmp/uv-$uv_target/uvx" "$uv_install_dir/"
-            printf 'uv archive SHA-256 verified: %s\n' "$uv_sha256"
-          )
-          export PATH="$HOME/.local/bin:$PATH"
-          hash -r
-          printf '%s\n' "$HOME/.local/bin" >> "$GITHUB_PATH"
-          uv --version | grep -q '^uv 0\.13\.1 '
           tools/install-python.sh
           uv run --no-project --managed-python python -X lazy_imports=normal - <<'PYTHON'
           from pathlib import Path
@@ -540,6 +518,7 @@ jobs:
         with:
           rustup-components: clippy
           rust-cache: 'true'
+          cargo-nextest: 'true'
       - run: rustup show active-toolchain
       # vcpkg's binary cache, persisted across runs. vcpkg writes one zip per
       # built package, named by the package's ABI hash, to the files provider
@@ -628,23 +607,6 @@ jobs:
         run: |
           read -ra excludes <<< "$WINDOWS_EXCLUDES"
           cargo clippy --locked --workspace --all-targets "${excludes[@]}" -- -D warnings
-      # The same pinned cargo-nextest as ci.yml's Linux and macOS jobs, in
-      # its Windows build; the checksum is the release's published
-      # cargo-nextest-<ver>-x86_64-pc-windows-msvc.sha256. The binary goes
-      # to ~/.cargo/bin, which the bootstrap action already puts on PATH.
-      - name: Install pinned cargo-nextest
-        run: |
-          set -euo pipefail
-          # Exact on purpose (#1074): a checksum is only known for a known version.
-          ver=0.9.143
-          sum=c42a1dbde532da06dc9b4a43d44fd0ce668b836c2ab7388410f10ff9834476a2
-          curl -sSfL -o cargo-nextest.tar.gz "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-${ver}/cargo-nextest-${ver}-x86_64-pc-windows-msvc.tar.gz"
-          echo "${sum}  cargo-nextest.tar.gz" | sha256sum -c -
-          tar xzf cargo-nextest.tar.gz
-          mkdir -p ~/.cargo/bin
-          install -m755 cargo-nextest.exe ~/.cargo/bin
-          rm cargo-nextest.tar.gz cargo-nextest.exe
-          cargo nextest --version
       - run: |
           read -ra excludes <<< "$WINDOWS_EXCLUDES"
           cargo nextest run --locked --profile ci --status-level skip --workspace "${excludes[@]}"
@@ -684,44 +646,13 @@ jobs:
         with:
           rustup-components: clippy
           rust-cache: 'true'
+          uv: 'true'
+          just: 'true'
+          cargo-nextest: 'true'
       - run: rustup show active-toolchain
       - name: Set up pinned repository Python
         run: |
           set -euo pipefail
-          uv_install_dir="$HOME/.local/bin"
-          case "$(uname -m)" in
-            arm64)
-              uv_target=aarch64-apple-darwin
-              # Published in https://github.com/astral-sh/uv/releases/download/0.13.1/sha256.sum.
-              # Exact on purpose (#1074): a checksum is only known for a known version.
-              uv_sha256=cfe454573412ff7380d15fc7dae5997ab53ffce72fce0a78e91ddbc84001acd2
-              ;;
-            x86_64)
-              uv_target=x86_64-apple-darwin
-              # Published in https://github.com/astral-sh/uv/releases/download/0.13.1/sha256.sum.
-              # Exact on purpose (#1074): a checksum is only known for a known version.
-              uv_sha256=bb7b805bdcf3d0bc8c74ceb94569e6b3e8aa35bd492acdbb9d46bf46d9d4ff6b
-              ;;
-            *)
-              printf 'unsupported macOS architecture: %s\n' "$(uname -m)" >&2
-              exit 1
-              ;;
-          esac
-          uv_tmp=$(mktemp -d)
-          trap 'rm -rf "$uv_tmp"' EXIT
-          trap 'exit 1' HUP INT TERM
-          curl --fail --location --retry 3 -o "$uv_tmp/uv.tar.gz" \
-            "https://github.com/astral-sh/uv/releases/download/0.13.1/uv-$uv_target.tar.gz"
-          uv_actual=$(shasum -a 256 "$uv_tmp/uv.tar.gz")
-          [[ ${uv_actual%% *} == "$uv_sha256" ]] || { printf 'uv archive checksum mismatch\n' >&2; exit 1; }
-          tar -xzf "$uv_tmp/uv.tar.gz" -C "$uv_tmp" "uv-$uv_target/uv" "uv-$uv_target/uvx"
-          mkdir -p "$uv_install_dir"
-          install -m755 "$uv_tmp/uv-$uv_target/uv" "$uv_tmp/uv-$uv_target/uvx" "$uv_install_dir/"
-          printf 'uv archive SHA-256 verified: %s\n' "$uv_sha256"
-          export PATH="$HOME/.local/bin:$PATH"
-          hash -r
-          printf '%s\n' "$HOME/.local/bin" >> "$GITHUB_PATH"
-          uv --version | grep -q '^uv 0\.13\.1 '
           tools/install-python.sh
           uv run --no-project --managed-python python -X lazy_imports=normal - <<'PYTHON'
           from pathlib import Path
@@ -737,32 +668,6 @@ jobs:
               text=True).strip()
           assert Path(sys.executable).resolve() == Path(managed).resolve()
           PYTHON
-      - name: Install pinned just
-        run: |
-          # Exact on purpose (#1074): a checksum is only known for a known version.
-          ver=1.59.0
-          # Published in https://github.com/casey/just/releases/download/1.59.0/SHA256SUMS.
-          arch=$(uname -m)
-          case "$arch" in
-            arm64)
-              target=aarch64-apple-darwin
-              sum=6574cea774ed4cae12e24b6aa11857de33e80dab4667cf628fd5840df96a2a9d
-              ;;
-            x86_64)
-              target=x86_64-apple-darwin
-              sum=036ead9df9bc31dbae9934ae3b4236ed124d0bafcffd33439460ae084d5c9cb7
-              ;;
-            *) echo "unsupported macOS architecture: $arch" >&2; exit 1 ;;
-          esac
-          printf 'just runner architecture: %s; archive target: %s\n' "$arch" "$target"
-          curl -sSfL -o just.tar.gz "https://github.com/casey/just/releases/download/${ver}/just-${ver}-${target}.tar.gz"
-          echo "${sum}  just.tar.gz" | shasum -a 256 -c -
-          tar xzf just.tar.gz just
-          mkdir -p ~/.local/bin
-          install -m755 just ~/.local/bin
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          ~/.local/bin/just --version
-          test "$(~/.local/bin/just --version)" = "just ${ver}"
       - name: Run tools Python harness tests
         shell: bash
         run: just test-tools
@@ -794,17 +699,6 @@ jobs:
           --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
           --exclude oxpinyin-kmm
           -- -D warnings
-      - name: Install pinned cargo-nextest
-        run: |
-          # Exact on purpose (#1074): a checksum is only known for a known version.
-          ver=0.9.143
-          sum=4830d430411148d17602a75cc880bfb4dc8dac153dea59a48a2ef4cc93577f07
-          curl -sSfL -o cargo-nextest.tar.gz "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-${ver}/cargo-nextest-${ver}-universal-apple-darwin.tar.gz"
-          echo "${sum}  cargo-nextest.tar.gz" | shasum -a 256 -c -
-          tar xzf cargo-nextest.tar.gz
-          mkdir -p ~/.local/bin
-          install -m755 cargo-nextest ~/.local/bin
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - run: >
           cargo nextest run --locked --profile ci --status-level skip --workspace
           --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi

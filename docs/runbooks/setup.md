@@ -66,7 +66,7 @@ Some packaged libtkrzw builds are defective
 `tools/tkrzw/distro-probe.sh` checks the one on `PATH`.
 
 Repository Python uses uv and its managed CPython 3.15 series with the GIL.
-`uv.toml` sets uv's floor, 0.13.1; CI installs exactly that version.
+`uv.toml` sets uv's floor, 0.13.1; CI installs the newest uv that satisfies it.
 
 `just doctor` is the one check of every tool's minimum: Bash 5.0, uv,
 CPython, just, cargo-nextest, cargo-c, cargo-fuzz, cargo-llvm-cov, and

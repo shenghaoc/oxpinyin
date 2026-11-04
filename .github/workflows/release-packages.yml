@@ -151,16 +151,10 @@ jobs:
           rustup: 'true'
           rust-cache: 'true'
           rust-cache-key: release-${{ matrix.distro }}
+          uv: 'true'
       - name: Provision managed packaging Python
         shell: bash
         run: |
-          installer=$(mktemp)
-          trap 'rm -f "$installer"' EXIT
-          curl --fail --location --retry 3 https://github.com/astral-sh/uv/releases/download/0.13.1/uv-installer.sh -o "$installer"
-          printf '%s  %s\n' 7c482d409673a53f4d9bd34ae95c9166be3b8d89ca82f27dd7bca3cab457afff "$installer" | sha256sum -c -
-          sh "$installer"
-          export PATH="$HOME/.local/bin:$PATH"
-          printf '%s\n' "$HOME/.local/bin" >> "$GITHUB_PATH"
           tools/install-python.sh
       - run: rustup show active-toolchain
 

@@ -5,8 +5,10 @@ description: |-
   first), the checkout registered as a git safe.directory (container
   jobs run as root over a root-owned checkout), an optional
   pinned-rustup install (channel read from rust-toolchain.toml, minimal
-  profile), and an optional Swatinem/rust-cache restore/save (its post
-  step runs with the composite's completion).
+  profile), optional CI tools (uv through astral-sh/setup-uv; just,
+  cargo-nextest, cargo-llvm-cov and cargo-deny through
+  taiki-e/install-action), and an optional Swatinem/rust-cache
+  restore/save (its post step runs with the composite's completion).
 
   The actions/checkout step stays inline in every calling job. A local
   `./` action introduced by a PR cannot wrap the checkout that would
@@ -14,8 +16,8 @@ description: |-
   exists, so a bootstrap-owned checkout died at step 1 with "Can't find
   'action.yml'" in every job. Call this right after checkout instead.
 
-  The optional Rust steps default to off, so a bare call only installs
-  and checks Bash.
+  The optional Rust and tool steps default to off, so a bare call only
+  installs and checks Bash.
   Composite-action inputs are strings; the switches take 'true'/'false'.
 
 inputs:
@@ -37,6 +39,37 @@ inputs:
     description: 'Extra rustup components, space-separated (e.g. "clippy rustfmt").'
     required: false
     default: ''
+  uv:
+    description: >-
+      Install uv with astral-sh/setup-uv. It states no version: the action
+      reads required-version from uv.toml and installs the newest uv that
+      satisfies it. String 'true'/'false' (composite-action inputs are strings).
+    required: false
+    default: 'false'
+  just:
+    description: >-
+      Install just with taiki-e/install-action. String 'true'/'false'
+      (composite-action inputs are strings).
+    required: false
+    default: 'false'
+  cargo-nextest:
+    description: >-
+      Install cargo-nextest with taiki-e/install-action. String 'true'/'false'
+      (composite-action inputs are strings).
+    required: false
+    default: 'false'
+  cargo-llvm-cov:
+    description: >-
+      Install cargo-llvm-cov with taiki-e/install-action. String 'true'/'false'
+      (composite-action inputs are strings).
+    required: false
+    default: 'false'
+  cargo-deny:
+    description: >-
+      Install cargo-deny with taiki-e/install-action. String 'true'/'false'
+      (composite-action inputs are strings).
+    required: false
+    default: 'false'
   rust-cache:
     description: >-
       Run Swatinem/rust-cache as the final bootstrap step. String
@@ -99,6 +132,41 @@ runs:
         printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
         # Visible to THIS step too: GITHUB_PATH only applies to later steps.
         . "$HOME/.cargo/env"
+
+    # Pinned to the v10.3.3 tag commit. No version input: setup-uv reads
+    # required-version from uv.toml (the repository root) and, with the
+    # default highest resolution, installs the newest uv that satisfies it.
+    - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      if: inputs.uv == 'true'
+      with:
+        enable-cache: false
+
+    # install-action pins below: v2.90.0 tag commit. Each tool is written once,
+    # here. Checksum verification stays on (its default) and fallback is off, so
+    # a tool the action cannot install from a release fails the job.
+    - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+      if: inputs.just == 'true'
+      with:
+        tool: just@1
+        fallback: none
+
+    - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+      if: inputs.cargo-nextest == 'true'
+      with:
+        tool: cargo-nextest@0.9
+        fallback: none
+
+    - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+      if: inputs.cargo-llvm-cov == 'true'
+      with:
+        tool: cargo-llvm-cov@0.9
+        fallback: none
+
+    - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+      if: inputs.cargo-deny == 'true'
+      with:
+        tool: cargo-deny@0.20
+        fallback: none
 
     # Pinned to the v2.9.2 tag commit (do not bump without re-verifying).
     - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2

@@ -42,10 +42,8 @@ merge `96ca8c8e`), including the slot harness. It supplies no PowerShell or
 Windows acceptance. The sections below keep pending requirements.
 
 The approved T13N cutover covers only `ci.yml` test and test-macos.
-Both reuse verify-nightly's checksum-verified release-archive installation
-and version 0.9.143. Linux uses `x86_64-unknown-linux-musl`; macOS uses
-`universal-apple-darwin`, with its published SHA-256 from the
-[cargo-nextest 0.9.143 release](https://github.com/nextest-rs/nextest/releases/tag/cargo-nextest-0.9.143).
+Both install cargo-nextest 0.9 through `taiki-e/install-action`, from the
+bootstrap action: checksums stay on and no fallback is allowed.
 PR CI supplies the one-cycle comparison against main: compare complete
 crate/binary-qualified identities and verdicts, then separate doctest counts.
 Normalize nextest skipped to Cargo ignored only for the same ignored test.
