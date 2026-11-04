@@ -102,11 +102,9 @@ To check preparation natively without running the pin or collecting profiles:
 ```bash
 just heavy -- env RUSTFLAGS="-Cdebuginfo=1 -Cstrip=none" CARGO_TARGET_DIR=target/tkrzw \
   cargo cinstall -v --locked --release -p oxpinyin-capi \
-  --no-default-features --features tkrzw \
   --destdir=target/callgrind-tkrzw/profile --prefix=/usr
 just heavy -- env CARGO_TARGET_DIR=target/tkrzw \
   cargo cinstall -v --locked --release -p oxpinyin-capi \
-  --no-default-features --features tkrzw \
   --destdir=target/callgrind-tkrzw/control --prefix=/usr
 just measure callgrind-control target/callgrind-tkrzw/profile target/callgrind-tkrzw/control
 ```
@@ -991,7 +989,7 @@ Run one bench by name; without `--bench <name>` cargo also runs the lib
 under libtest, which rejects criterion flags:
 
 ```sh
-cargo bench -p oxpinyin-store --no-default-features --features tkrzw --bench backend_matrix_tkrzw
+cargo bench -p oxpinyin-store --bench backend_matrix_tkrzw
 cargo bench -p oxpinyin-capi --bench stage2 -- --profile-time 10
 ```
 
@@ -1028,10 +1026,10 @@ With the default features it skips these three targets:
 | package | bench | run it with |
 | --- | --- | --- |
 | oxpinyin-store | `backend_matrix_kyotocabinet` | `just heavy -- cargo bench -p oxpinyin-store --no-default-features --features kyotocabinet --bench backend_matrix_kyotocabinet` |
-| oxpinyin-store | `backend_matrix_tkrzw` | `just heavy -- cargo bench -p oxpinyin-store --no-default-features --features tkrzw --bench backend_matrix_tkrzw` |
+| oxpinyin-store | `backend_matrix_bdb` | `just heavy -- cargo bench -p oxpinyin-store --no-default-features --features bdb --bench backend_matrix_bdb` |
 | pinyin-oracle | `dbm_bench` | `just heavy -- cargo bench -p pinyin-oracle --features oracle-ffi --bench dbm_bench` (also needs the bench oracles) |
 
-`backend_matrix_bdb` needs `bdb`, which is a default feature, so it is
+`backend_matrix_tkrzw` needs the default backend feature, so it is
 selected.
 
 These default-feature benches load the model20 cache and panic when it is

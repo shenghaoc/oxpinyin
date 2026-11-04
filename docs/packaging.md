@@ -433,7 +433,7 @@ Tree reuse does not skip the job: a reused tree proves the tests, not the sizes 
 
 **What it builds.**
 For the PR head and for its base, the job exports the commit with `git archive`.
-It builds each facade with `just packaging install` and the release recipe on the reference cell (bdb, `--features bdb`, plus `shipped` on libpinyin).
+It builds each facade with `just packaging install` and the release recipe on the [default backend](runbooks/backends.md), plus `shipped` on libpinyin.
 It copies `libpinyin.so.15.0.0` and `libzhuyin.so.15.0.0`, strips each copy with `strip --strip-unneeded`, and counts its bytes.
 It then checks that the stripped library exports exactly the symbols of its version script, `libpinyin.ver` (79) or `libzhuyin.ver` (52), and no `oxpinyin_*` symbol.
 It writes a table to the job summary: base bytes, PR bytes, difference and ratio for each library.
@@ -450,7 +450,7 @@ A second full build on every PR is the largest cost, so the base result is cache
 The cache key is `ship-sizes-v1-` plus a hash of two things:
 
 - the Git tree ids of every input that can change a library byte;
-- the toolchain fingerprint: `rustc -vV`, the first line of `cc --version`, `strip --version` and `cargo cinstall --version`, and the versions of `binutils`, `gcc`, `g++`, `libc6`, `libdb-dev` and `libglib2.0-dev`.
+- the toolchain fingerprint: `rustc -vV`, the first line of `cc --version`, `strip --version` and `cargo cinstall --version`, and the versions of `binutils`, `gcc`, `g++`, `libc6`, `libglib2.0-dev` and the reference backend's packages (`BACKEND_PACKAGES` in `tools/dev/ship_sizes.py`).
 
 The key names no commit.
 Every main commit with the same inputs shares one result.

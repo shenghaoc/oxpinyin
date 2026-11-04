@@ -1,4 +1,4 @@
-"""Native setup, lint, backend-matrix and host-backend checks.
+"""Native setup, lint and host-backend checks.
 
 These are setup and gate checks, not oracle or pin comparisons. The old
 optional oracle-directory display is intentionally absent: the native boundary
@@ -11,23 +11,22 @@ import re
 import subprocess
 import sys
 
-from . import native
+from . import cell, native
 
 ROOT = Path(__file__).resolve().parents[2]
-BACKENDS = ('bdb', 'tkrzw', 'kyotocabinet')
-USAGE = 'usage: tools/dev/check.sh [bdb|tkrzw|kyotocabinet]'
+USAGE = 'usage: tools/dev/check.sh [' + '|'.join(cell.BACKENDS) + ']'
 
 
 def run(backend=None, out=sys.stdout, err=sys.stderr, env=None):
     """Check native prerequisites, then build and run the selected backend tests.
 
-    Default to tkrzw and include the C API tests on Linux. Print tool
+    Use the Cargo default and include the C API tests on Linux. Print tool
     and backend diagnostics; return 2 for an unknown backend, 1 for missing
     tools or slot errors, or the failing child status. The optional env is
     used only for the Cargo child admitted through the heavy slot.
     """
-    backend = backend or 'tkrzw'
-    if backend not in BACKENDS:
+    backend = backend or cell.declared_default()
+    if backend not in cell.BACKENDS:
         print(USAGE, file=err, flush=True)
         return 2
     tools = native.Tools()
@@ -78,7 +77,7 @@ def run(backend=None, out=sys.stdout, err=sys.stderr, env=None):
         if result.returncode:
             print(f'{backend}: pkg-config could not report a version', file=err, flush=True)
             return result.returncode
-    args = ['--locked', '--no-default-features', '--features', backend, '-p', 'oxpinyin-store']
+    args = ['--locked', *cell.feature_flags(backend), '-p', 'oxpinyin-store']
     if platform.system() == 'Linux':
         result = tools.run(['pkg-config', '--modversion', 'glib-2.0'])
         out.write(result.stdout)
@@ -173,91 +172,6 @@ def lint_crate_cfg_placement(argv, *, out=sys.stdout, err=sys.stderr, root=ROOT,
         return 1
     print(f'crate-cfg-placement: {checked} file(s) checked, no violations', file=out)
     return 0
-
-
-VALID_MATRIX = (
-    ('', 'default (bdb)'),
-    ('--no-default-features --features kyotocabinet', '--no-default-features --features kyotocabinet'),
-    ('--no-default-features --features tkrzw', '--no-default-features --features tkrzw'),
-    ('--no-default-features --features bdb', '--no-default-features --features bdb'),
-)
-INVALID_MATRIX = (
-    'kyotocabinet,tkrzw',
-    'kyotocabinet,bdb',
-    'tkrzw,bdb',
-    'kyotocabinet,tkrzw,bdb',
-)
-
-
-def _matrix_result(tools, args):
-    """Run one cargo check and return its merged output and status."""
-    argv = ['cargo', 'check', '--locked', '-p', 'oxpinyin-store', *args]
-    try:
-        result = tools.run(argv, stderr=subprocess.STDOUT, stdout=subprocess.PIPE)
-        return result.returncode, result.stdout or ''
-    except FileNotFoundError as error:
-        return native.launch_status(error), f'{argv[0]}: command not found\n'
-    except OSError as error:
-        return native.launch_status(error), f'{error}\n'
-
-
-def _indent(lines, width=5):
-    return ''.join(' ' * width + line + '\n' for line in lines)
-
-
-def backend_matrix(*, out=sys.stdout, err=sys.stderr, root=ROOT, tools=None):
-    """Prove the exactly-one-backend invariant and return 0 or 1.
-
-    Valid selections must compile; every multi-backend and zero-backend
-    selection must be refused by the store crate's own guard.
-    """
-    tools = native.Tools(root=root) if tools is None else tools
-    passed = failed = 0
-    for peer, label in VALID_MATRIX:
-        args = peer.split() if peer else []
-        print(f'\u2500\u2500 valid: {label}', file=out, flush=True)
-        code, log = _matrix_result(tools, args)
-        if code == 0:
-            print('   PASS', file=out, flush=True)
-            passed += 1
-        else:
-            print('   FAIL \u2014 expected a clean build; tail:', file=out, flush=True)
-            out.write(_indent(log.splitlines()[-20:]))
-            out.flush()
-            failed += 1
-    for combo in INVALID_MATRIX:
-        print(f'\u2500\u2500 invalid: --features {combo}', file=out, flush=True)
-        code, log = _matrix_result(tools, ['--no-default-features', '--features', combo])
-        if code == 0:
-            print('   FAIL \u2014 the guard did not fire, build succeeded', file=out, flush=True)
-            failed += 1
-        elif 'more than one store backend selected' in log:
-            print('   PASS (refused by the exactly-one-backend guard)', file=out, flush=True)
-            passed += 1
-        else:
-            print('   FAIL \u2014 build refused for another reason:', file=out, flush=True)
-            lines = [line for line in log.splitlines()
-                     if 'compile_error' in line or line.startswith('error')][:3]
-            out.write(_indent(lines))
-            out.flush()
-            failed += 1
-    print('\u2500\u2500 invalid: --no-default-features (zero backends)', file=out, flush=True)
-    code, log = _matrix_result(tools, ['--no-default-features'])
-    if code == 0:
-        print('   FAIL \u2014 the guard did not fire, build succeeded', file=out, flush=True)
-        failed += 1
-    elif 'no store backend selected' in log:
-        print('   PASS (refused by the exactly-one-backend guard)', file=out, flush=True)
-        passed += 1
-    else:
-        print('   FAIL \u2014 build refused for another reason:', file=out, flush=True)
-        lines = [line for line in log.splitlines()
-                 if 'compile_error' in line or line.startswith('error')][:3]
-        out.write(_indent(lines))
-        out.flush()
-        failed += 1
-    print(f'\nsummary: {passed} passed, {failed} failed', file=out, flush=True)
-    return 0 if failed == 0 else 1
 
 
 def _os_release(environment):

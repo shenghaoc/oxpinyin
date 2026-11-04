@@ -92,7 +92,7 @@ HASHES = ('bigram.db', 'deleted_bigram.db')
 # `import_k_mixture_model` (`fixtures/w3/README.md`); the recipe neither
 # writes nor checks them.
 PINNED = ('k_mixture_model.db', 'k_mixture_model_zero.db', 'k_mixture_model_edom.db')
-CELLS = ('bdb', 'kc', 'tkrzw')
+CELLS = cell.CELLS
 UTILITIES = ('gen_binary_files', 'import_interpolation', 'gen_unigram', 'gen_deleted_ngram')
 
 
@@ -555,7 +555,7 @@ def build_parser():
                        ('check', 'regenerate into a temporary directory and compare with the committed tree')):
         p = sub.add_parser(name, help=text)
         p.add_argument('--model-dir', help='the extracted model20 directory (default: $PINYIN_MODEL_DIR, then target/model20/extracted)')
-        p.add_argument('--cells', default=','.join(CELLS), help='comma-separated cells (default: bdb,kc,tkrzw)')
+        p.add_argument('--cells', default=','.join(CELLS), help='comma-separated cells (default: all)')
     p = sub.add_parser('content', help="truncate the oracle's content tables into the fixtures/w3 .bin files")
     p.add_argument('--data-dir', default=os.path.expanduser('~/.local/opt/pinyin-oracle/lib/libpinyin/data'),
                    help='oracle data directory')

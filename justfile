@@ -88,8 +88,7 @@ packaging *args: python
 trainer-layout target *args: python
     @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev packaging trainer-layout "$@"
 
-# Run one native setup check: tkrzw (default), bdb or kyotocabinet.
-check backend="tkrzw": python
+check backend="": python
     @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev check {{backend}}
 
 # A distro tkrzw is found through pkg-config with nothing more. To use this
@@ -223,8 +222,7 @@ profile-w8 *args:
 fuzz *args:
     @just heavy -- setarch "$(uname -m)" -R cargo +nightly-2026-08-01 fuzz run "$@"
 
-# cargo-fuzz supports Darwin. pkg-config finds the facade's GLib and the
-# default store backend, tkrzw. Homebrew's tkrzw.pc names its compression
+# cargo-fuzz supports Darwin. Homebrew's tkrzw.pc names its compression
 # libraries without their directory, so Homebrew's lib joins LIBRARY_PATH.
 [macos]
 fuzz *args:
@@ -247,17 +245,16 @@ coverage *args: python
 coverage *args: python
     @just heavy -- uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev coverage @args; exit $LASTEXITCODE
 
-# Run one store backend's sanitizer gate (tkrzw by default, bdb or kc), or all three,
-# with address (default), thread, leak or memory instrumentation.
+# Run a sanitizer gate with address, thread, leak or memory instrumentation.
 [linux]
-sanitize backend="tkrzw" sanitizer="address": python
+sanitize backend="" sanitizer="address": python
     @just heavy -- uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev sanitize "$1" "$2"
 
 # Darwin uses Homebrew's Berkeley DB 5.3, Kyoto Cabinet and tkrzw. The recipe
 # selects Darwin paths and omits Linux setarch. The tkrzw gate certifies the
 # host library through distro-probe.sh; put Homebrew's tkrzw_dbm_util on PATH.
 [macos]
-sanitize backend="tkrzw" sanitizer="address": python
+sanitize backend="" sanitizer="address": python
     @just heavy -- env \
         SYSTEM_DEPS_BDB_NO_PKG_CONFIG=1 \
         SYSTEM_DEPS_BDB_LIB=db \
@@ -271,7 +268,7 @@ sanitize backend="tkrzw" sanitizer="address": python
 
 # The gates are Linux/Darwin native builds; Windows transport is unverified (#950).
 [windows]
-sanitize backend="tkrzw" sanitizer="address":
+sanitize backend="" sanitizer="address":
     @echo "sanitize is unsupported on Windows: the sanitizer gates are Linux/Darwin native builds."
     @exit 1
 

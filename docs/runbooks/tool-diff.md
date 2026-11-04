@@ -277,7 +277,7 @@ relative names the pin opens. The complete file inventory still compares.
 
 On the BDB cell (pin build at the BDB configuration, subject built with
 `--features bdb`) and on the tkrzw reference cell (pin build at the
-tkrzw configuration, subject built with the default tkrzw features, the
+tkrzw configuration, subject built with the [default features](backends.md), the
 sound `libtkrzw` on `LD_LIBRARY_PATH`), all 29 cases reported MATCH.
 `ngseg` exercises the real `PhraseLookup::get_best_match` path over the
 committed bigram; `spseg`/`mergeseq` exercise the phrase table alone.

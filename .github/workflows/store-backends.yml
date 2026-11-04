@@ -2,18 +2,13 @@ name: Store backends
 
 # Backend coverage for the peer store backends on a rolling
 # toolchain. The peers (Kyoto Cabinet, tkrzw, Berkeley
-# DB) are equal implementations behind the store's trait surface;
-# tkrzw is the workspace's default selection since 2026-10-30 UTC
-# (maintainer decision: tkrzw is maintained upstream; Berkeley DB and Kyoto
-# Cabinet are not). Berkeley DB was the default from 2026-09-20 to then,
-# and tkrzw before that.
-# Exactly one peer is compiled per
-# build — the exactly-one-backend invariant is enforced at compile
+# DB) are equal implementations behind the store's trait surface.
+# Exactly one peer is compiled per build — the exactly-one-backend invariant is enforced at compile
 # time by two `compile_error!` guards in `crates/oxpinyin-store/src/lib.rs`
 # — so cross-peer equivalence is proven by running the SAME test
 # suite through separate builds, one per peer.
 #
-# Seven jobs:
+# Jobs:
 #   - changes is the path gate. It runs first when ci.yml calls this
 #     workflow and sets `run` when tools/bisection/cells-for-diff.py selects
 #     all three cells for the event's base...HEAD (docs/runbooks/verification.md,
@@ -26,29 +21,17 @@ name: Store backends
 #     lints all workspace targets and tests the workspace under exactly ONE peer, on its
 #     own runner, so the sweeps run in PARALLEL (fail-fast: false,
 #     max-parallel: 4) instead of sequentially inside one job. The tkrzw
-#     child repeats the default that ci.yml's Linux test job also runs; the
+#     child repeats the build that ci.yml's Linux test job also runs; the
 #     Berkeley DB and Kyoto Cabinet children are where those non-default
 #     backends' workspace suites run. Every pass
 #     decodes real queries through the fixture tables, not just the store's
 #     own unit tests. The matrix value only selects one of the fixed,
 #     repository-controlled cargo invocations (see the case in the test
 #     step); no command is built from untrusted event input.
-#   - backend-matrix is an INDEPENDENT job — it has no needs edge to the
-#     matrix, so it schedules concurrently with all the backend children.
-#     It runs `python -m tools.dev backend-matrix`, which proves the valid
-#     peer selections each `cargo check --workspace` cleanly AND that
-#     every one of the pairwise combinations plus the three-way
-#     combination plus the zero-backend build is refused by the
-#     exactly-one-backend `compile_error!` guards. This is what replaced
-#     the old "cross-backend conformance in one binary" job, which is
-#     architecturally impossible under exactly-one-backend. It then runs
-#     `cargo doc --no-deps --workspace` once per peer, rustdoc warnings
-#     denied.
 #   - store-backends-gate is this workflow's aggregate status check,
 #     required through ci-aggregate. It runs no tests; it
 #     fails when the changes job did not succeed, passes without running
 #     anything when the path gate says no relevant path changed, and
-#     otherwise fails unless every backend child, the backend-matrix job AND
 #     all three sanitizer jobs succeeded.
 #   - tkrzw-sanitizers, bdb-sanitizers and kc-sanitizers each run one
 #     backend's gate through `python -m tools.dev sanitize <backend>`, the command
@@ -63,7 +46,7 @@ name: Store backends
 #     not precautionary.
 #
 # ci.yml calls this workflow once and requires its result in ci-aggregate.
-# The backend, matrix and sanitizer jobs still do the work; this workflow's
+# The backend and sanitizer jobs still do the work; this workflow's
 # gate aggregates their results without a separate required-check setting.
 #
 # ROLLING TOOLCHAIN, deliberately unpinned: the jobs run inside
@@ -138,7 +121,7 @@ jobs:
         id: evidence
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 tools/dev/ci_tree.py evidence store
+        run: python3 -m tools.dev.ci_tree evidence store
       - name: Require the Bash floor
         shell: bash
         run: . tools/lib/bash-floor.sh
@@ -170,7 +153,6 @@ jobs:
           # backend. --also adds this workflow's own infrastructure: the
           # workflow, the backend provisioning under tools/bdb, tools/tkrzw and
           # .github/actions/tkrzw,
-          # the backend-matrix service (tools/dev/check.py), the sanitizer
           # service (tools/dev/test_runner.py), the toolchain pin and this
           # gate's own script.
           python3 tools/bisection/cells-for-diff.py --run-flag \
@@ -265,7 +247,21 @@ jobs:
         if: needs.changes.outputs.reuse != 'true'
         env:
           BACKEND: ${{ matrix.backend }}
-        run: cargo clippy --locked --workspace --all-targets --no-default-features --features "$BACKEND" -- -D warnings
+        run: |
+          if [ "$BACKEND" = tkrzw ]; then
+            cargo clippy --locked --workspace --all-targets -- -D warnings
+          else
+            cargo clippy --locked --workspace --all-targets --no-default-features --features "$BACKEND" -- -D warnings
+          fi
+
+      # Rustdoc for this backend, warnings denied, with the backend named
+      # explicitly.
+      - name: Rustdoc for this backend
+        if: needs.changes.outputs.reuse != 'true'
+        env:
+          BACKEND: ${{ matrix.backend }}
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --locked --no-deps --workspace --no-default-features --features "$BACKEND"
 
       # This child runs exactly one of the fixed cargo invocations, selected
       # by the matrix backend through a case over a closed set (fail-closed
@@ -304,8 +300,7 @@ jobs:
           # resolves to the peer. The bare-name form here is the
           # documented public interface — see
           # `docs/findings/backend-selection-audit.md`. The
-          # exactly-one-backend invariant is unchanged; the
-          # `backend-matrix` job proves it separately.
+          # exactly-one-backend invariant is unchanged.
           bdb)
             echo "--- bdb (explicit) ---"
             cargo test --locked --workspace --no-default-features --features bdb
@@ -315,8 +310,8 @@ jobs:
             cargo test --locked --workspace --no-default-features --features kyotocabinet
             ;;
           tkrzw)
-            echo "--- tkrzw (explicit) ---"
-            cargo test --locked --workspace --no-default-features --features tkrzw
+            echo "--- tkrzw ---"
+            cargo test --locked --workspace
             ;;
           *)
             echo "FAIL: unknown matrix.backend value '$BACKEND'" >&2
@@ -345,159 +340,7 @@ jobs:
         if: github.event_name == 'push' && needs.changes.outputs.reuse == 'true'
         env:
           BACKEND: ${{ matrix.backend }}
-        run: python3 tools/dev/ci_tree.py refresh store-features --backend "$BACKEND"
-
-  backend-matrix:
-    needs: changes
-    if: needs.changes.outputs.run == 'true' && (needs.changes.outputs.reuse != 'true' || github.event_name == 'push')
-    # Replaces the historical `store-conformance` job. Under
-    # exactly-one-backend the "one binary with three backends compiled
-    # in" build is architecturally impossible (a `compile_error!` in
-    # `crates/oxpinyin-store/src/lib.rs` refuses it), so the same
-    # `python -m tools.dev backend-matrix` service that developers run locally
-    # runs here instead: it proves the valid peer selections each
-    # `cargo check --workspace` cleanly AND that every pairwise
-    # combination, the all-peers combination, and the
-    # zero-backend build are refused by the guards.
-    #
-    # Independent job: no needs edge to store-features, so it runs
-    # concurrently with the backend children.
-    name: backend-matrix (exactly-one-backend gate)
-    runs-on: *ubuntu
-    container:
-      image: debian:testing # deliberately unpinned; see the header comment
-    timeout-minutes: 30
-    defaults:
-      run:
-        shell: bash
-
-    steps:
-      - name: Bootstrap the bare runner essentials (apt)
-        run: |
-          apt-get update -qq
-          apt-get install -y --no-install-recommends bash python3 tar gzip zstd git ca-certificates curl
-
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      # Same bootstrap cluster as the matrix children; the distinct cache
-      # key separates the exactly-one-backend matrix from every backend
-      # child's identity.
-      - uses: ./.github/actions/bootstrap
-        with:
-          safe-directory: 'true'
-          rustup: 'true'
-          rustup-components: clippy rustfmt
-          rust-cache: 'true'
-          rust-cache-key: backend-matrix
-
-      - name: Install build dependencies (apt)
-        # The matrix `cargo check`s the valid peer selections in
-        # turn, so it needs every peer's build-time C dependencies:
-        # libkyotocabinet-dev + libdb-dev here, tkrzw from the tkrzw
-        # action below, and libclang-dev for
-        # bindgen, which generates the Berkeley DB declarations.
-        # libglib2.0-dev is a Tier-C
-        # requirement: `pinyin_lookup_tokens` /
-        # `pinyin_token_get_nth_pronunciation` delegate to
-        # `g_array_append_vals` / `g_array_set_size`, so the shipped
-        # `.so` NEEDS `libglib-2.0`.
-        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libkyotocabinet-dev libdb-dev zlib1g-dev libglib2.0-dev
-
-      - name: Provision tkrzw (built at the setup.sh revision and cached)
-        uses: ./.github/actions/tkrzw
-
-      - name: Set up pinned repository Python
-        if: needs.changes.outputs.reuse != 'true'
-        run: |
-          set -euo pipefail
-          uv_install_dir="$HOME/.local/bin"
-          (
-            [[ $(uname -s)-$(uname -m) == Linux-x86_64 ]]
-            uv_target=x86_64-unknown-linux-gnu
-            # Published in https://github.com/astral-sh/uv/releases/download/0.13.1/sha256.sum.
-            # Exact on purpose (#1074): a checksum is only known for a known version.
-            uv_sha256=eadd9d27c134ab5ac1ffd4473b97a741407f3ea238288f03121fc4deddf90220
-            # Keep the archive in memory. Write only its verified executables.
-            uv_payload=$(curl --fail --location --retry 3 "https://github.com/astral-sh/uv/releases/download/0.13.1/uv-$uv_target.tar.gz" | base64)
-            uv_actual=$(printf '%s' "$uv_payload" | base64 -d | sha256sum)
-            [[ ${uv_actual%% *} == "$uv_sha256" ]] || { printf 'uv archive checksum mismatch\n' >&2; exit 1; }
-            uv_tmp=$(mktemp -d)
-            trap 'rm -rf "$uv_tmp"' EXIT
-            trap 'exit 1' HUP INT TERM
-            printf '%s' "$uv_payload" | base64 -d | tar -xz -C "$uv_tmp" "uv-$uv_target/uv" "uv-$uv_target/uvx"
-            mkdir -p "$uv_install_dir"
-            install -m755 "$uv_tmp/uv-$uv_target/uv" "$uv_tmp/uv-$uv_target/uvx" "$uv_install_dir/"
-            printf 'uv archive SHA-256 verified: %s\n' "$uv_sha256"
-          )
-          export PATH="$HOME/.local/bin:$PATH"
-          hash -r
-          printf '%s\n' "$HOME/.local/bin" >> "$GITHUB_PATH"
-          uv --version | grep -q '^uv 0\.13\.1 '
-          tools/install-python.sh
-          uv run --no-project --managed-python python -X lazy_imports=normal - <<'PYTHON'
-          from pathlib import Path
-          import subprocess
-          import sys
-          import sysconfig
-          assert sys.implementation.name == "cpython"
-          assert sys.version_info.releaselevel == "final" and (3, 15, 0) <= sys.version_info[:3] < (3, 16, 0)
-          assert sysconfig.get_config_var("Py_GIL_DISABLED") == 0
-          assert sys._is_gil_enabled()
-          managed = subprocess.check_output(
-              ["uv", "python", "find", "--managed-python"],
-              text=True).strip()
-          assert Path(sys.executable).resolve() == Path(managed).resolve()
-          PYTHON
-
-      - name: Exactly-one-backend invariant (backend-matrix pass)
-        if: needs.changes.outputs.reuse != 'true'
-        id: matrix-test
-        run: |
-          set -euo pipefail
-          start=$EPOCHSECONDS
-          uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev backend-matrix
-          echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
-
-      # Rustdoc for the whole workspace under each backend with every warning
-      # denied. The store's crate docs linked all three backend types, and
-      # each exists under only its own feature, so every build had two
-      # broken intra-doc links while no job built rustdoc with warnings
-      # denied (#1129). This job installs every peer's build-time C
-      # dependencies. The workspace's remaining diagnostics were fixed in
-      # #1136, so the step covers every crate, not just the store. The loop
-      # runs a closed set of repository-controlled feature names.
-      - name: Document the workspace under each backend (rustdoc warnings denied)
-        if: needs.changes.outputs.reuse != 'true'
-        env:
-          RUSTDOCFLAGS: -D warnings
-        run: |
-          set -euo pipefail
-          for backend in bdb kyotocabinet tkrzw; do
-            echo "--- cargo doc: ${backend} ---"
-            cargo doc --locked --no-deps --workspace --no-default-features --features "${backend}"
-          done
-
-      - name: Report
-        if: ${{ !cancelled() && needs.changes.outputs.reuse != 'true' }}
-        run: |
-          {
-            echo "## backend-matrix (exactly-one-backend gate)"
-            echo ""
-            echo "Result: **$([ '${{ job.status }}' = 'success' ] && echo 'passed' || echo 'FAILED')**"
-            echo ""
-            echo "\`python -m tools.dev backend-matrix\` — proves the valid"
-            echo "peer selections each \`cargo check --workspace\` cleanly and"
-            echo "that every multi-peer combination plus the zero-backend"
-            echo "build is refused by the exactly-one-backend guards."
-            echo ""
-            echo "| Phase | Wall clock |"
-            echo "|---|---:|"
-            echo "| backend-matrix (workspace-check pass) | ${{ steps.matrix-test.outputs.elapsed || '—' }}s |"
-          } >> "$GITHUB_STEP_SUMMARY"
-      - name: Refresh the main Rust cache using the lane's compile mode
-        if: github.event_name == 'push' && needs.changes.outputs.reuse == 'true'
-        run: python3 tools/dev/ci_tree.py refresh backend-matrix
+        run: python3 -m tools.dev.ci_tree refresh store-features --backend "$BACKEND"
 
   store-backends-gate:
     # Aggregate checked by the caller's required ci-aggregate. It builds and
@@ -506,7 +349,7 @@ jobs:
     # the path gate says no relevant path changed; and otherwise green only
     # when every upstream job succeeded. Via needs.<job>.result, a matrix
     # upstream is success only when EVERY matrix child succeeded, and a
-    # skipped upstream is not success, so a skipped backend, matrix or
+    # skipped upstream is not success, so a skipped backend or
     # sanitizer job fails the gate.
     name: store backends (kyotocabinet / tkrzw / bdb)
     runs-on: *ubuntu
@@ -514,7 +357,6 @@ jobs:
     needs:
       - changes
       - store-features
-      - backend-matrix
       - tkrzw-sanitizers
       - bdb-sanitizers
       - kc-sanitizers
@@ -529,7 +371,7 @@ jobs:
         env:
           NEEDS: ${{ toJSON(needs) }}
           EVENT_NAME: ${{ github.event_name }}
-        run: python3 tools/dev/ci_tree.py aggregate store
+        run: python3 -m tools.dev.ci_tree aggregate store
 
   tkrzw-sanitizers:
     needs: changes
@@ -922,8 +764,8 @@ jobs:
 
   tree-evidence:
     name: tested tree ${{ needs.changes.outputs.tree }}
-    needs: [changes, store-backends-gate, store-features, backend-matrix, tkrzw-sanitizers, bdb-sanitizers, kc-sanitizers]
-    if: ${{ needs.changes.outputs.run == 'true' && needs.changes.outputs.reuse == 'false' && needs.changes.result == 'success' && needs.store-backends-gate.result == 'success' && needs.store-features.result == 'success' && needs.backend-matrix.result == 'success' && needs.tkrzw-sanitizers.result == 'success' && needs.bdb-sanitizers.result == 'success' && needs.kc-sanitizers.result == 'success' }}
+    needs: [changes, store-backends-gate, store-features, tkrzw-sanitizers, bdb-sanitizers, kc-sanitizers]
+    if: ${{ needs.changes.outputs.run == 'true' && needs.changes.outputs.reuse == 'false' && needs.changes.result == 'success' && needs.store-backends-gate.result == 'success' && needs.store-features.result == 'success' && needs.tkrzw-sanitizers.result == 'success' && needs.bdb-sanitizers.result == 'success' && needs.kc-sanitizers.result == 'success' }}
     runs-on: *ubuntu
     steps:
       - run: echo 'All concrete verification lanes passed for this checkout tree.'

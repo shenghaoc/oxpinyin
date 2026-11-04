@@ -27,7 +27,7 @@ It depends on core, engine, runtime and user.
 It holds runtime's concrete dictionary, language-model and user handles by value.
 It therefore forwards the complete backend feature matrix instead of staying generic over engine traits.
 
-tkrzw has been the default backend since 2026-10-30 (maintainer decision 2026-10-30 UTC).
+See [backend selection](runbooks/backends.md) for the Cargo default.
 The store backends are system native-library dependencies, verified on Linux and buildable on macOS through Homebrew.
 CI's Linux, macOS and Windows lanes build tkrzw with `.github/actions/tkrzw`.
 The peer matrix remains on Linux.

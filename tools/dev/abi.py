@@ -80,7 +80,7 @@ def check_exports(settings: Settings, argv: Sequence[str], facts: HostFacts) -> 
         return 2
     shipped = bool(argv) and argv[0] == '--shipped'
     extension = 'so' if facts.system == 'Linux' else 'dylib'
-    pinyin = replace(settings, feature=settings.feature + ',shipped') if shipped else settings
+    pinyin = replace(settings, extra_features=('shipped',)) if shipped else settings
     libraries = [('libpinyin', pinyin.artifact('OXPINYIN_CAPI_SO', f'libpinyin_capi.{extension}', 'oxpinyin-capi'),
                   settings.root / 'crates/oxpinyin-capi/libpinyin.ver', 'pinyin',
                   set() if shipped else {'oxpinyin_init_for_fixtures', 'oxpinyin_test_set_user_bigram'}),

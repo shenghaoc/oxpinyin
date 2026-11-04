@@ -32,8 +32,22 @@ spec.loader.exec_module(driver)
 contract = vars(driver)
 
 
-class PolicyAcceptedTests(unittest.TestCase):
+class DriverFixtureCase(unittest.TestCase):
+    # These worker/verdict fixtures deliberately use synthetic, non-ELF paths.
+    # Loader enforcement has its own real-ELF fixtures in tkrzw/runtime.test.py.
     def setUp(self):
+        super().setUp()
+        cell = patch.dict(driver.os.environ, CONTRACT_DIFF_CELL='bdb')
+        cell.start()
+        self.addCleanup(cell.stop)
+        guard = patch.object(driver, 'check_tkrzw')
+        self.runtime_guard = guard.start()
+        self.addCleanup(guard.stop)
+
+
+class PolicyAcceptedTests(DriverFixtureCase):
+    def setUp(self):
+        super().setUp()
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
@@ -213,7 +227,7 @@ class PolicyAcceptedTests(unittest.TestCase):
         self.assertEqual(self.verdict(), ('INVALID', False, False))
 
 
-class FixtureCrafterTests(unittest.TestCase):
+class FixtureCrafterTests(DriverFixtureCase):
     def test_kc_system_index_replaces_file_with_native_tree_not_snapshot(self):
         with tempfile.TemporaryDirectory() as scratch:
             path = Path(scratch, 'pinyin_index.bin')
@@ -226,7 +240,7 @@ class FixtureCrafterTests(unittest.TestCase):
                 return True
 
             kc.kcdbopen.side_effect = open_fresh
-            with patch.object(driver, 'CELL', 'kc'), patch.object(driver.C, 'CDLL', return_value=kc):
+            with patch.dict(driver.os.environ, CONTRACT_DIFF_CELL='kc'), patch.object(driver.C, 'CDLL', return_value=kc):
                 driver._craft_db(str(path), [(b'key', b'value')], 1, system_index=True)
             kc.kcdbopen.assert_called_once_with(123, (str(path) + '#type=kct').encode(), 6)
             kc.kcdbset.assert_called_once_with(123, b'key', 3, b'value', 5)
@@ -241,7 +255,7 @@ class FixtureCrafterTests(unittest.TestCase):
                 path.write_bytes(b'existing file')
                 kc = MagicMock()
                 kc.kcdbnew.return_value = 123
-                with patch.object(driver, 'CELL', 'kc'), patch.object(driver.C, 'CDLL', return_value=kc):
+                with patch.dict(driver.os.environ, CONTRACT_DIFF_CELL='kc'), patch.object(driver.C, 'CDLL', return_value=kc):
                     driver._craft_db(str(path), [], 1, keep=keep)
                 self.assertEqual(path.exists(), keep)
                 if keep:
@@ -254,7 +268,7 @@ class FixtureCrafterTests(unittest.TestCase):
     def test_system_index_keeps_bdb_and_tkrzw_crafter_arguments(self):
         for cell in ('bdb', 'tkrzw'):
             for keep in (False, True):
-                with self.subTest(cell=cell, keep=keep), patch.object(driver, 'CELL', cell), \
+                with self.subTest(cell=cell, keep=keep), patch.dict(driver.os.environ, CONTRACT_DIFF_CELL=cell), \
                         patch.object(driver, '_craft_bdb') as bdb, patch.object(driver, '_craft_kc') as kc, \
                         patch.object(driver, '_craft_tkrzw') as tkrzw:
                     driver._craft_db('probe', [(b'key', b'value')], 1, keep=keep, system_index=True)
@@ -267,7 +281,7 @@ class FixtureCrafterTests(unittest.TestCase):
                     kc.assert_not_called()
 
 
-class PhraseTextRecordTests(unittest.TestCase):
+class PhraseTextRecordTests(DriverFixtureCase):
     def test_all_stored_text_cases_are_ordinary_parity_cases(self):
         names, _ = driver.select_cases(None, ['894'], [])
         self.assertEqual(len(names), 32)
@@ -281,8 +295,9 @@ class PhraseTextRecordTests(unittest.TestCase):
                 self.assertFalse(controls, name)
 
 
-class TkrzwSavedBigramTests(unittest.TestCase):
+class TkrzwSavedBigramTests(DriverFixtureCase):
     def setUp(self):
+        super().setUp()
         # Synthetic bytes, never a generated oracle file. The comparator
         # must preserve even invalid metadata/payload mutations as differences.
         self.raw = bytes(range(256)) * 2
@@ -337,7 +352,7 @@ class TkrzwSavedBigramTests(unittest.TestCase):
         self.assertFalse(self.matches(self.raw, ((bucket + 1, chain),)))
 
 
-class TkrzwHandoffTests(unittest.TestCase):
+class TkrzwHandoffTests(DriverFixtureCase):
     def run_handoff(self, replies, changed_offset=None):
         replies = iter(replies)
 
@@ -412,14 +427,6 @@ def worker_process(stdout=b'{}\n', stderr=b''):
     return MagicMock(returncode=0, communicate=MagicMock(return_value=(stdout, stderr)))
 
 
-class DriverFixtureCase(unittest.TestCase):
-    # These worker/verdict fixtures deliberately use synthetic, non-ELF paths.
-    # Loader enforcement has its own real-ELF fixtures in tkrzw/runtime.test.py.
-    def setUp(self):
-        super().setUp()
-        guard = patch.object(driver, 'check_tkrzw')
-        self.runtime_guard = guard.start()
-        self.addCleanup(guard.stop)
 
 
 class PolicyReportingTests(DriverFixtureCase):
@@ -572,7 +579,7 @@ class HashPathFixtureTests(DriverFixtureCase):
             self.assertTrue(driver.CASES[name]['stderr'])
 
 
-class Save929HandoffTests(unittest.TestCase):
+class Save929HandoffTests(DriverFixtureCase):
     def run_handoff(self, replies):
         with tempfile.TemporaryDirectory() as scratch, \
                 patch.object(driver, 'run_worker', side_effect=replies) as worker:
@@ -673,7 +680,7 @@ class ProfileRowsTests(DriverFixtureCase):
 
     def test_tkrzw_profile_worker_requires_an_actual_tkrzw_anchor(self):
         self.runtime_guard.return_value = None
-        with patch.object(driver, 'CELL', 'tkrzw'), patch.object(driver, 'index_file_rows') as read:
+        with patch.dict(driver.os.environ, CONTRACT_DIFF_CELL='tkrzw'), patch.object(driver, 'index_file_rows') as read:
             with self.assertRaisesRegex(ValueError, 'no certified libtkrzw dependency'):
                 driver.worker('profile-rows', '/bdb/subject.so', '/profile/db', 'tree')
         read.assert_not_called()
@@ -693,7 +700,7 @@ class ProfileRowsTests(DriverFixtureCase):
         for kind, params in (('tree', b'dbm=TreeDBM'), ('hash', b'dbm=HashDBM')):
             for first in (True, False):
                 tk = self.tkrzw(first=first)
-                with self.subTest(kind=kind, first=first), patch.object(driver, 'CELL', 'tkrzw'), \
+                with self.subTest(kind=kind, first=first), patch.dict(driver.os.environ, CONTRACT_DIFF_CELL='tkrzw'), \
                         patch.object(driver.C, 'CDLL', side_effect=[tk, MagicMock()]) as load:
                     self.assertEqual(driver.index_file_rows('/profile/db', kind=kind, allow_empty=True,
                                                             library=Path('/verified/tkrzw.so')), [])
@@ -703,7 +710,7 @@ class ProfileRowsTests(DriverFixtureCase):
                 tk.tkrzw_dbm_close.assert_called_once_with(123)
         for first in (True, False):
             tk = self.tkrzw(first=first, code=11)
-            with patch.object(driver, 'CELL', 'tkrzw'), patch.object(driver.C, 'CDLL', side_effect=[tk, MagicMock()]):
+            with patch.dict(driver.os.environ, CONTRACT_DIFF_CELL='tkrzw'), patch.object(driver.C, 'CDLL', side_effect=[tk, MagicMock()]):
                 with self.assertRaisesRegex(ValueError, 'iterator (first|read) failed'):
                     driver.index_file_rows('/profile/db', allow_empty=True)
             tk.tkrzw_dbm_iter_free.assert_called_once()
@@ -718,7 +725,7 @@ class ProfileRowsTests(DriverFixtureCase):
                 value._obj.value, value_size._obj.value = 2000, 0
                 return True
             tk.tkrzw_dbm_iter_get.side_effect = row
-            with patch.object(driver, 'CELL', 'tkrzw'), patch.object(driver.C, 'CDLL', side_effect=[tk, libc]), \
+            with patch.dict(driver.os.environ, CONTRACT_DIFF_CELL='tkrzw'), patch.object(driver.C, 'CDLL', side_effect=[tk, libc]), \
                     patch.object(driver.C, 'string_at', side_effect=[b'k', b'']):
                 if code == 7:
                     self.assertEqual(driver.index_file_rows('/profile/db', kind='hash', allow_empty=True), [['6b', '']])
@@ -736,7 +743,7 @@ class ProfileRowsTests(DriverFixtureCase):
             kc.kcdbopen.return_value = kc.kcdbloadsnap.return_value = kc.kcdbclose.return_value = True
             kc.kccurjump.return_value, kc.kccurget.return_value = jump, None
             kc.kccurecode.return_value = code
-            with self.subTest(jump=jump, code=code), patch.object(driver, 'CELL', 'kc'), \
+            with self.subTest(jump=jump, code=code), patch.dict(driver.os.environ, CONTRACT_DIFF_CELL='kc'), \
                     patch.object(driver.C, 'CDLL', return_value=kc):
                 if fails:
                     with self.assertRaisesRegex(ValueError, 'cursor (first|read) failed'):
@@ -751,7 +758,7 @@ class ProfileRowsTests(DriverFixtureCase):
     def test_corrupt_kc_snapshot_and_tkrzw_open_failure_are_not_empty_databases(self):
         kc = MagicMock()
         kc.kcdbloadsnap.return_value = False
-        with patch.object(driver, 'CELL', 'kc'), patch.object(driver.C, 'CDLL', return_value=kc):
+        with patch.dict(driver.os.environ, CONTRACT_DIFF_CELL='kc'), patch.object(driver.C, 'CDLL', return_value=kc):
             with self.assertRaisesRegex(ValueError, 'snapshot load failed'):
                 driver.index_file_rows('/profile/broken', kind='hash', allow_empty=True)
         kc.kcdbcursor.assert_not_called()
@@ -759,7 +766,7 @@ class ProfileRowsTests(DriverFixtureCase):
         kc.kcdbdel.assert_called_once()
         tk = self.tkrzw()
         tk.tkrzw_dbm_open.return_value = None
-        with patch.object(driver, 'CELL', 'tkrzw'), patch.object(driver.C, 'CDLL', side_effect=[tk, MagicMock()]):
+        with patch.dict(driver.os.environ, CONTRACT_DIFF_CELL='tkrzw'), patch.object(driver.C, 'CDLL', side_effect=[tk, MagicMock()]):
             with self.assertRaisesRegex(ValueError, 'read-only open failed'):
                 driver.index_file_rows('/profile/broken', allow_empty=True)
         tk.tkrzw_dbm_make_iterator.assert_not_called()
@@ -768,6 +775,7 @@ class ProfileRowsTests(DriverFixtureCase):
 
 class FatalLogTests(DriverFixtureCase):
     def setUp(self):
+        super().setUp()
         # A save that both sides abort under the fatal log mask.
         self.spec = driver.case_spec(case_id='fatal-log', fatal=True, both_abort=True,
                                      stderr=True, userdir=True)
@@ -991,7 +999,7 @@ class VerdictTests(DriverFixtureCase):
         self.assertEqual(self.decide(spec, pin, survivor, False), ('DIFFER', False, False))
 
 
-class RegisteredTerminationDefaultTests(unittest.TestCase):
+class RegisteredTerminationDefaultTests(DriverFixtureCase):
     def test_every_registered_termination_keeps_the_legacy_default_verdict(self):
         """Freeze the pre-fix default rule over the full registry, using fake workers.
 
@@ -2471,7 +2479,7 @@ totals: 5
                                     for op in ('add', 'count', 'lookup')])
 
 
-class AllocationFailure924Tests(unittest.TestCase):
+class AllocationFailure924Tests(DriverFixtureCase):
     """Do not let a helper's successful exit substitute for failure evidence."""
 
     def test_array_cases_are_default_members(self):
@@ -2512,7 +2520,7 @@ class AllocationFailure924Tests(unittest.TestCase):
         self.assertEqual(calls[1][1:], ['subject.so', '/tmp/data', 'pinyin', 'pin', '', 'array-only'])
 
 
-class GLibDomainCaptureTests(unittest.TestCase):
+class GLibDomainCaptureTests(DriverFixtureCase):
     """A GLib-domain critical is captured by the kit and compared (#1279)."""
 
     def critical(self):

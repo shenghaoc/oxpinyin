@@ -342,6 +342,9 @@ class EntrypointTests(unittest.TestCase):
         shutil.copytree(ROOT / 'tools', self.root / 'tools', ignore=shutil.ignore_patterns('__pycache__'))
         for name in ('.python-version', 'rust-toolchain.toml'):
             shutil.copyfile(ROOT / name, self.root / name)
+        # A multi-cell provision resolves the default backend from the store manifest.
+        (self.root / 'crates/oxpinyin-store').mkdir(parents=True)
+        shutil.copyfile(ROOT / 'crates/oxpinyin-store/Cargo.toml', self.root / 'crates/oxpinyin-store/Cargo.toml')
         self.bin = self.work / 'bin'
         self.bin.mkdir()
         self.calls = self.work / 'calls'
@@ -388,8 +391,10 @@ elif name in ('curl','apt-get','sudo'):
                         OXPINYIN_SYSTEM_CA_BUNDLES=str(self.work / 'no-system-ca'), OXPINYIN_CONTAINER='podman',
                         PINYIN_MODEL_CACHE=str(self.work / 'model20'), CALLS=str(self.calls))
         # Keep host executables isolated; cargo and dump utilities never execute.
-        for name in ('cargo', 'db5.3_dump'):
-            (self.bin / name).symlink_to('/bin/true')
+        (self.bin / 'db5.3_dump').symlink_to('/bin/true')
+        cargo = self.bin / 'cargo'
+        cargo.write_text('#!/bin/sh\nexit 0\n')
+        cargo.chmod(0o755)
 
     def run_entry(self, args):
         return subprocess.run(['bash', str(self.root / 'tools/cloud/setup.sh'), *args],

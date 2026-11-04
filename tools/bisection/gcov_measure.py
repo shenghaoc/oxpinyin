@@ -26,8 +26,12 @@ import socket
 import re
 import runpy
 
+
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
+from tools.dev import cell as backend_cell
 check_tkrzw = runpy.run_path(str(REPO / "tools/tkrzw/runtime.py"))["check"]
 PIN = "074a2219c90feaf962d0d24f034514033ece5f99"
 WORKER_TIMEOUT = 60
@@ -972,9 +976,7 @@ if __name__ == '__main__':
         parser.add_argument('--config', type=Path, required=True)
         parser.add_argument('--oracle', type=Path, required=True)
         parser.add_argument('--build', type=Path, required=True)
-        # bdb on purpose, not the reference cell: the axis-J ledgers are
-        # measured on bdb, the base the kc and tkrzw delta ledgers inherit from
-        # (docs/runbooks/axis-j-ledgers.md).
-        parser.add_argument('--cell', choices=sorted(CELLS), default='bdb')
+        parser.add_argument('--cell', choices=sorted(CELLS),
+                            default=backend_cell.default_cell())
         args = parser.parse_args()
         print(build(args.pin.resolve(), args.config.resolve(), args.build.resolve(), args.oracle.resolve(), args.cell))

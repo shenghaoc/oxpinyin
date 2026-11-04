@@ -324,7 +324,7 @@ Tooling stage T6 in Layer 5 owns the handoff. Layer 5 §5.4 permits script
 retirement in the replacement PR after proof, consumer migration and named
 maintainer approval. T14 keeps final repository-wide reconciliation.
 
-Keep BDB as the default comparison cell. Use all three cells only when
+Use the [Cargo default](../runbooks/backends.md) as the comparison cell. Use all three cells only when
 the contributor rules' mechanical path check selects them. Keep the start-of-sweep and
 pre-release cross-cell obligations. Use sound tkrzw only. Report suspected
 backend dependence without a path trigger as a finding, not permission to

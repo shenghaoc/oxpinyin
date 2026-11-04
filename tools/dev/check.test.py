@@ -13,11 +13,12 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tools.dev import check, host, native
+from tools.dev import cell, check, host, native
 
 
 class CheckTests(unittest.TestCase):
     def setUp(self):
+        cell.declared_default()
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         script = '''#!/bin/sh

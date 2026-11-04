@@ -370,7 +370,7 @@ class WiringTests(unittest.TestCase):
         self.assertRegex(job, r'just packaging sizes key --commit')
         self.assertIn('actions/cache/restore@', job)
         self.assertIn('actions/cache/save@', job)
-        self.assertIn("python3 tools/dev/ship_sizes.py gate", text)
+        self.assertIn("python3 -m tools.dev.ship_sizes gate", text)
 
 
 if __name__ == '__main__':

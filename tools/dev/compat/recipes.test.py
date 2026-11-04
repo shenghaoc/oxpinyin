@@ -400,7 +400,7 @@ if 'OX_PIN_DIR' in os.environ: assert (pathlib.Path(os.environ['OX_PIN_DIR'])/'t
             path.write_text('#!/bin/sh\nexit 0\n')
             path.chmod(0o755)
         cargo=self.directory / 'cargo'
-        cargo.write_text(f"#!{sys.executable}\nimport os,sys\nprint('not in the report')\nprint('live parity: '+sys.argv[sys.argv.index('--test')+1])\nprint('test result: fixture',file=sys.stderr)\nif os.environ.get('FAKE_SUITE_FAILURE')==sys.argv[sys.argv.index('--test')+1]: raise SystemExit(7)\n")
+        cargo.write_text(f"#!{sys.executable}\nimport os,sys,json\nif sys.argv[1:2] == ['metadata']:\n print(json.dumps({{'packages':[{{'name':'oxpinyin-store','features':{{'default':['tkrzw']}}}}]}})); raise SystemExit(0)\nprint('not in the report')\nprint('live parity: '+sys.argv[sys.argv.index('--test')+1])\nprint('test result: fixture',file=sys.stderr)\nif os.environ.get('FAKE_SUITE_FAILURE')==sys.argv[sys.argv.index('--test')+1]: raise SystemExit(7)\n")
         cargo.chmod(0o755)
         self.env['FAKE_CAMPAIGN']='1'
         args=['--libpinyin',str(library),'--data',str(data),'--export',str(exported),'--model',str(model)]

@@ -159,24 +159,6 @@ class EvidenceTests(unittest.TestCase):
             job['conclusion'] = 'skipped'
         self.assertIsNone(ci_tree.full_source(api, api.run, jobs, PROFILE, TREE, 1, 2, 200, now=NOW))
 
-    def test_skipped_backend_matrix_uses_githubs_unexpanded_name(self):
-        api = API()
-        profile = ci_tree.WORKFLOWS['store']
-        latest = run_fixture()
-        latest.update(id=101, path=profile.caller)
-        jobs = [dict(name=profile.job_prefix + name, status='completed', conclusion='skipped') for name in profile.skipped_lanes]
-        jobs += [dict(name=profile.job_prefix + profile.aggregate, status='completed', conclusion='success'),
-                 dict(name=profile.job_prefix + 'reused tree ' + TREE + ' from run 100', status='completed', conclusion='success')]
-        source = run_fixture()
-        source['path'] = profile.caller
-        original_get = api.get
-        api.get = lambda path: source if path == '/actions/runs/100' else original_get(path)
-        api.jobs = [successful_job(profile.job_prefix + name)
-                    for name in (*profile.lanes, profile.aggregate, 'tested tree ' + TREE)]
-        self.assertEqual(ci_tree.full_source(api, latest, jobs, profile, TREE, 1, 2, 200, now=NOW), 100)
-        jobs[0]['conclusion'] = 'failure'
-        self.assertIsNone(ci_tree.full_source(api, latest, jobs, profile, TREE, 1, 2, 200, now=NOW))
-
     def test_called_backend_evidence_uses_caller_run_and_only_its_own_jobs(self):
         profile = ci_tree.WORKFLOWS['store']
         api = API()
@@ -380,34 +362,6 @@ class RefreshTests(unittest.TestCase):
         commands = ci_tree.refresh_commands('lint')
         self.assertEqual([command.argv for command in commands], [
             ('cargo', 'clippy', '--locked', '--workspace', '--all-targets', '--', '-D', 'warnings')])
-
-    def test_matrix_refresh_checks_valid_package_selections_and_documents_workspace(self):
-        commands = ci_tree.refresh_commands('backend-matrix')
-        self.assertEqual([command.argv for command in commands[:4]], [
-            ('cargo', 'check', '--locked', '-p', 'oxpinyin-store'),
-            ('cargo', 'check', '--locked', '-p', 'oxpinyin-store', '--no-default-features', '--features', 'kyotocabinet'),
-            ('cargo', 'check', '--locked', '-p', 'oxpinyin-store', '--no-default-features', '--features', 'tkrzw'),
-            ('cargo', 'check', '--locked', '-p', 'oxpinyin-store', '--no-default-features', '--features', 'bdb')])
-        self.assertEqual(len(commands), 7)
-        for command, backend in zip(commands[4:], ('bdb', 'kyotocabinet', 'tkrzw')):
-            self.assertEqual(command.argv, ('cargo', 'doc', '--locked', '--no-deps', '--workspace',
-                                           '--no-default-features', '--features', backend))
-            self.assertEqual(dict(command.environment), {'RUSTDOCFLAGS': '-D warnings'})
-
-    def test_refresh_preserves_lane_environment_and_stops_on_compiler_failure(self):
-        with mock.patch.dict(ci_tree.os.environ, {'RUSTFLAGS': '-D warnings'}, clear=True), \
-                mock.patch.object(ci_tree.subprocess, 'run') as execute:
-            ci_tree.refresh_cache('backend-matrix')
-            self.assertEqual(execute.call_count, 7)
-            for call in execute.call_args_list:
-                self.assertEqual(call.kwargs['env']['RUSTFLAGS'], '-D warnings')
-                self.assertTrue(call.kwargs['check'])
-            self.assertEqual(execute.call_args_list[-1].kwargs['env']['RUSTDOCFLAGS'], '-D warnings')
-            execute.reset_mock()
-            execute.side_effect = subprocess.CalledProcessError(1, ['cargo', 'check'])
-            with self.assertRaises(subprocess.CalledProcessError):
-                ci_tree.refresh_cache('backend-matrix')
-            self.assertEqual(execute.call_count, 1)
 
     def test_other_cache_lanes_keep_their_test_compile_selections(self):
         self.assertEqual(ci_tree.refresh_commands('test')[0].argv,

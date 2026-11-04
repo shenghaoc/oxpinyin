@@ -84,11 +84,6 @@ def lint_command(args):
     return check.lint_crate_cfg_placement(args.files)
 
 
-def backend_matrix_command(args):
-    """Prove the exactly-one-backend invariant and return 0 or 1."""
-    return check.backend_matrix()
-
-
 def backend_probe_command(args):
     """Identify the system libpinyin's DBM and return its probe status."""
     return check.backend_probe()
@@ -231,7 +226,7 @@ def build_parser():
     p.set_defaults(func=host_command)
 
     p = sub.add_parser('check', help='run one native setup check')
-    p.add_argument('backend', nargs='?', default='tkrzw')
+    p.add_argument('backend', nargs='?')
     p.set_defaults(func=check_command)
 
     p = sub.add_parser('lint-crate-cfg-placement',
@@ -239,8 +234,6 @@ def build_parser():
     p.add_argument('files', nargs='*')
     p.set_defaults(func=lint_command)
 
-    p = sub.add_parser('backend-matrix', help='prove the exactly-one-backend invariant')
-    p.set_defaults(func=backend_matrix_command)
 
     p = sub.add_parser('backend-probe', help='identify the system libpinyin backend')
     p.set_defaults(func=backend_probe_command)
@@ -380,8 +373,6 @@ def main(argv=None):
         return coverage.run(argv[1:])
     if argv[:1] == ['lint-crate-cfg-placement']:
         return check.lint_crate_cfg_placement(argv[1:])
-    if argv[:1] == ['backend-matrix']:
-        return check.backend_matrix()
     if argv[:1] == ['backend-probe']:
         return check.backend_probe()
     if argv[:1] == ['sanitize']:

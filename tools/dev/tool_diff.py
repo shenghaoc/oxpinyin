@@ -20,7 +20,7 @@ import time
 from dataclasses import replace
 
 from tools.bisection import contract_policy, contract_verdict
-from . import policy, pool
+from . import cell, policy, pool
 
 # Each program's directory in the pin's build tree (utils/ and tests/ Makefile.am).
 PIN_UTILITIES = {'gen_pinyin_table': 'utils/storage', 'gen_zhuyin_table': 'utils/storage',
@@ -80,7 +80,7 @@ DATABASE_FREE = frozenset({'gen_pinyin_table', 'gen_zhuyin_table', 'k_mixture_mo
                            'gen_unigram'})
 # The committed W3 data directories, one per storage backend, and the cell
 # each belongs to (`fixtures/w3/README.md`).
-FIXTURE_DIRS = {'bdb': 'db', 'kc': 'kct', 'tkrzw': 'tkt'}
+FIXTURE_DIRS = {name: cell.BACKEND_EXTENSIONS[backend] for name, backend in cell.CELL_TO_BACKEND.items()}
 GLIB_PREFIX = re.compile(r'(?m)^((?:\*\* )?\([^():\n]+:)\d+(\): (?:[A-Za-z0-9_.-]+-)?(?:CRITICAL|WARNING|MESSAGE|ERROR|DEBUG|INFO) \*\*: )'
                          r'\d\d:\d\d:\d\d\.\d+: ')
 

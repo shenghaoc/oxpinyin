@@ -8,6 +8,7 @@ import shutil
 import sys
 
 from tools.tkrzw import runtime
+from .. import cell
 from . import images
 from .process import ROOT, PYTHON, fail, run, text
 
@@ -24,7 +25,6 @@ TOOLS = {
     'PINYIN_GEN_BINARY_FILES': 'utils/storage/gen_binary_files',
     'PINYIN_EXPORT_INTERPOLATION': 'utils/storage/export_interpolation',
 }
-FEATURES = ['--no-default-features', '--features', 'tkrzw']
 
 
 def run_pin_sequence(root, model, out, table_conf):
@@ -39,7 +39,7 @@ def run_pin_sequence(root, model, out, table_conf):
     out.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(table_conf, out / 'table.conf')
     base = ['cargo', 'run', '--locked', '-q', '--manifest-path', str(Path(root) / 'Cargo.toml'),
-            '-p', 'oxpinyin-utils', *FEATURES, '--bin']
+            '-p', 'oxpinyin-utils', *cell.feature_flags('tkrzw'), '--bin']
     run([*base, 'gen_binary_files', '--', '--gen-punct-table', '--table-dir', str(model)], cwd=out, heavy=True)
     with (Path(model) / 'interpolation2.text').open('rb') as source:
         run([*base, 'import_interpolation', '--', '--table-dir', str(model)], cwd=out, stdin=source)
@@ -50,7 +50,7 @@ REPORT = re.compile(r'live parity|parity:|value-identical|skipping|test result|d
 def cargo_test(package, target, filters=(), *, locked=False, quiet=False, features=True, nocapture=False):
     """The existing ignored-test grammar, with explicit matching backend features."""
     return ['cargo', 'test', *(['--locked'] if locked else []), *(['-q'] if quiet else []),
-            '-p', package, *(FEATURES if features else []), '--test', target, '--', '--include-ignored',
+            '-p', package, *(cell.feature_flags('tkrzw') if features else []), '--test', target, '--', '--include-ignored',
             *(['--nocapture'] if nocapture else []), *filters]
 
 
@@ -338,9 +338,9 @@ def run_fixtures(work, *, root=ROOT):
     interpolation = cargo_test('oxpinyin-utils', 'k_mixture_model_to_interpolation', ['rust_kmm_matches_pin_to_interpolation'],
                                locked=True, quiet=True)
     spseg = cargo_test('oxpinyin-training', 'segment-spseg-mergeseq', ['rust_matches_live_spseg'], locked=True, quiet=True)
-    datagen = ['cargo', 'build', '--locked', '-q', '-p', 'oxpinyin-datagen', *FEATURES]
+    datagen = ['cargo', 'build', '--locked', '-q', '-p', 'oxpinyin-datagen', *cell.feature_flags('tkrzw')]
     # The drop-in runner's parity test (fixtures.drop_in), built here only to be checked.
-    parity = ['cargo', 'test', '--locked', '-p', 'oxpinyin-datagen', *FEATURES, '--test', 'libpinyin_parity']
+    parity = ['cargo', 'test', '--locked', '-p', 'oxpinyin-datagen', *cell.feature_flags('tkrzw'), '--test', 'libpinyin_parity']
     certify_tkrzw(src, prefix, env, subject_executables([datagen, ngseg, *kmm.values(), interpolation, spseg, parity], root=root, env=env))
     exported = work / 'export-tkrzw'
     if not (exported / 'table.conf').is_file():

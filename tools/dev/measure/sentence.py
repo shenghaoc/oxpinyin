@@ -15,7 +15,7 @@ from pathlib import Path
 import re
 import shutil
 
-from .. import slot
+from .. import cell, slot
 from ..runners import emit
 from ...bisection.teardown import callgrind_costs
 from . import bench, identity, instructions, neutrality, stats
@@ -40,7 +40,7 @@ def positive(text):
 def arguments(argv):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--workload', required=True, choices=ANCHORS)
-    parser.add_argument('--cell', required=True, choices=('bdb', 'kc', 'tkrzw'))
+    parser.add_argument('--cell', required=True, choices=cell.CELLS)
     for name in ('main', 'pr', 'pin', 'main-shipping', 'pr-shipping', 'system-dir', 'out'):
         parser.add_argument('--' + name, required=True, type=Path)
     parser.add_argument('--input', default='nihaozhongguo')

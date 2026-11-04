@@ -17,7 +17,7 @@ import subprocess
 import sys
 import tempfile
 
-from . import host, pool, slot
+from . import cell as backend_cell, host, pool, slot
 from .cell import CellError, ROOT, Settings, library_path
 from .drivers import DriverServices
 from .system_data import SystemData
@@ -268,7 +268,7 @@ def main(argv: Sequence[str]) -> int:
             emit('expected backend, oracle prefix and subject libpinyin', error=True)
             return 1
         cell, prefix, pinyin, *tail = args
-        if cell not in ('bdb', 'kc', 'tkrzw'):
+        if cell not in backend_cell.CELLS:
             emit(f'unknown backend: {cell}', error=True)
             return 1
         forwarded = [cell, prefix, pinyin]

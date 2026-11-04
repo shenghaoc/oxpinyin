@@ -4,6 +4,7 @@ The shell entry point owns only uv/interpreter bootstrap. Compatibility identity
 loader, cancellable process and bounded pool services remain their sole owners.
 Reference images receive build-oracle.sh and pin inputs, never tools.dev.
 """
+from . import cell as backend_cell
 from contextlib import ExitStack
 import hashlib
 import os
@@ -24,7 +25,7 @@ from .runners import Finished
 from tools.tkrzw import runtime
 from tools.tkrzw.build import TKRZW_REV
 
-CELLS = ('bdb', 'kc', 'tkrzw')
+CELLS = backend_cell.CELLS
 SELECT = '''case $_oxp_provisioned in
     *" $PINYIN_ORACLE_DBM "*) ;;
     *) echo "cell $PINYIN_ORACLE_DBM was not provisioned by this environment file" >&2; unset _oxp_provisioned; return 1 ;;
@@ -396,7 +397,11 @@ class Provision:
                             taking = False
                     kept_paths = '\n'.join(lines)
                     kept_library = assignments(path, ['OXPINYIN_TKRZW_LIBRARY']).get('OXPINYIN_TKRZW_LIBRARY', '')
-        default = 'tkrzw' if 'tkrzw' in env_cells else env_cells[0]
+        if len(env_cells) == 1:
+            default = env_cells[0]
+        else:
+            preferred = backend_cell.default_cell()
+            default = preferred if preferred in env_cells else env_cells[0]
         runtime_prefix = str(self.tkrzw_prefix) if self.tkrzw_local else ''
         library = self.tkrzw_host_library
         if not runtime_prefix and not library and kept_paths:

@@ -42,7 +42,7 @@ Build dependencies: autotools, a C/C++ toolchain, pkg-config, gettext,
 gnome-common, curl, python3, and the dev headers for GLib 2.0, IBus 1.0,
 SQLite 3 and the DBM (a sound tkrzw that pkg-config finds for the default
 tkrzw cell, [verification rule 9](verification.md#9-sound-tkrzw-library); `--dbm bdb` needs `libdb-dev`, `--dbm kc`
-needs `libkyotocabinet-dev`). The parity oracle defaults to tkrzw
+needs `libkyotocabinet-dev`). The parity oracle uses the [reference cell](backends.md)
 (maintainer decision 2026-10-30 UTC: tkrzw is maintained upstream; it supersedes the 2026-09-27 UTC ruling that
 made Berkeley DB the default); differentials pick the cell with
 `PINYIN_ORACLE_DBM`. The capture goldens and the `pinyin-oracle` crate's
@@ -208,11 +208,11 @@ so start from an installed `data/table.conf` for the same backend:
 ```sh
 mkdir -p /tmp/oxpinyin-export && cd /tmp/oxpinyin-export
 cp "$PINYIN_DATA_DIR/table.conf" .
-cargo run -p oxpinyin-utils --no-default-features --features tkrzw \
+cargo run -p oxpinyin-utils \
     --bin gen_binary_files -- --gen-punct-table --table-dir "$PINYIN_MODEL_DIR"
-cargo run -p oxpinyin-utils --no-default-features --features tkrzw \
+cargo run -p oxpinyin-utils \
     --bin import_interpolation -- --table-dir "$PINYIN_MODEL_DIR" < "$PINYIN_MODEL_DIR/interpolation2.text"
-cargo run -p oxpinyin-utils --no-default-features --features tkrzw \
+cargo run -p oxpinyin-utils \
     --bin gen_unigram -- --table-dir "$PINYIN_MODEL_DIR"
 export PINYIN_EXPORT_DIR=/tmp/oxpinyin-export
 ```
@@ -348,7 +348,7 @@ on its own with the same inputs, after loading setup's tkrzw environment:
 export PINYIN_MODEL_DIR="$HOME/.cache/oxpinyin/model20/extracted"
 export OXPINYIN_LIBPINYIN_DATA_DIR="$PINYIN_ORACLE_PREFIX/lib/libpinyin/data"
 export CARGO_TARGET_DIR="$PWD/target/real-installation/tkrzw"
-just heavy -- cargo test -p oxpinyin-runtime --no-default-features --features tkrzw \
+just heavy -- cargo test -p oxpinyin-runtime \
     --test libpinyin_data_dir -- --include-ignored --nocapture
 ```
 

@@ -302,7 +302,15 @@ from contract_execution import ordinary_jobs, positive_jobs, terminate_group, us
 
 # The DBM cell the run is for (set by `main`, inherited by every worker):
 # fixtures that craft a user table write it in that backend's own format.
-CELL = os.environ.get('CONTRACT_DIFF_CELL', 'bdb')
+_ROOT = str(Path(__file__).resolve().parents[2])
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+from tools.dev import cell
+
+
+def selected_cell():
+    """Resolve the run's cell only when a reader needs it."""
+    return os.environ.get('CONTRACT_DIFF_CELL') or cell.default_cell()
 check_tkrzw = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'tkrzw/runtime.py'))['check']
 
 
@@ -443,7 +451,7 @@ class Kit(contract_kit.Kit):
     """Keep the driver class and method patch points for workers and PerCallKit."""
 
     def __init__(self, mode, so, data, scratch):
-        super().__init__(mode, so, data, scratch, cell=CELL, check_tkrzw=check_tkrzw)
+        super().__init__(mode, so, data, scratch, cell=selected_cell(), check_tkrzw=check_tkrzw)
 
 
 def worker(mode, so, data, name):
@@ -468,8 +476,8 @@ def worker(mode, so, data, name):
     if mode == 'profile-rows':
         # Untimed teardown comparison in this existing isolated worker. Do not
         # retain a backend CDLL in the measurement controller between samples.
-        runtime = check_tkrzw(CELL, 'contract-diff.py/profile-rows', 'reader', so)
-        if CELL == 'tkrzw' and runtime is None:
+        runtime = check_tkrzw(selected_cell(), 'contract-diff.py/profile-rows', 'reader', so)
+        if selected_cell() == 'tkrzw' and runtime is None:
             raise ValueError('tkrzw profile reader anchor has no certified libtkrzw dependency')
         rows = index_file_rows(data, kind=name, allow_empty=True, library=runtime)
         print(json.dumps(dict(rows=rows)), flush=True)
@@ -506,7 +514,7 @@ def worker(mode, so, data, name):
 
 def _craft_db(path, rows, dbtype, keep=False, *, system_index=False):
     """Pass the driver's current CELL, _craft_bdb, _craft_kc, _craft_tkrzw on every call (contract_cell_fixtures)."""
-    return contract_cell_fixtures._craft_db(path, rows, dbtype, keep, system_index=system_index, CELL=CELL,
+    return contract_cell_fixtures._craft_db(path, rows, dbtype, keep, system_index=system_index, CELL=selected_cell(),
                                             _craft_bdb=_craft_bdb, _craft_kc=_craft_kc, _craft_tkrzw=_craft_tkrzw)
 
 
@@ -534,12 +542,12 @@ def token_reuse_sequence(k, steps, bigram_rows=None, library=7):
 
 def index_file_rows(path, *, kind='tree', allow_empty=False, library=None):
     """Every key/value of a user container, sorted, in this run's cell (contract_fixtures.index_file_rows)."""
-    return contract_fixtures.index_file_rows(path, cell=CELL, kind=kind, allow_empty=allow_empty, library=library)
+    return contract_fixtures.index_file_rows(path, cell=selected_cell(), kind=kind, allow_empty=allow_empty, library=library)
 
 
 def token_reuse_files(k):
     """Pass the driver's current CELL, index_file_rows on every call (contract_cell_fixtures)."""
-    return contract_cell_fixtures.token_reuse_files(k, CELL=CELL, index_file_rows=index_file_rows)
+    return contract_cell_fixtures.token_reuse_files(k, CELL=selected_cell(), index_file_rows=index_file_rows)
 
 
 def addon_promote_sequence(k, mask_value):
@@ -779,6 +787,8 @@ PLATFORM_SKIP = _RUNNER.platform_skip
 
 def __getattr__(name):
     """Expose the runner's legacy state names without duplicate driver globals."""
+    if name == 'CELL':
+        return selected_cell()
     if name in contract_runner.STATE_NAMES:
         return _RUNNER.setting(name)
     raise AttributeError(name)
@@ -1054,13 +1064,13 @@ POLICY_ROOT = Path(__file__).resolve().parents[2] / 'docs/findings'
 # Bind the verdict rules to this run's findings directory, cell and host probe.
 def verdict_for(spec, pin, subject, expect_parent):
     """The driver's decision for one case: (verdict, expected_ok, same) (contract_verdict)."""
-    return contract_verdict.verdict_for(spec, pin, subject, expect_parent, policy_root=POLICY_ROOT, cell=CELL,
+    return contract_verdict.verdict_for(spec, pin, subject, expect_parent, policy_root=POLICY_ROOT, cell=selected_cell(),
                                         directory_probe=directory_reads_as_a_chunk)
 
 
 def policy_diagnosis(spec, pin, subject):
     """Which side and field moved against the case's record, or None (contract_verdict)."""
-    return contract_verdict.policy_diagnosis(spec, pin, subject, policy_root=POLICY_ROOT, cell=CELL)
+    return contract_verdict.policy_diagnosis(spec, pin, subject, policy_root=POLICY_ROOT, cell=selected_cell())
 
 
 def matches(spec, pin, subject):
@@ -1099,7 +1109,7 @@ def per_call_worker(mode, so, data, name, library, metric, operations):
 def per_call_run(mode, so, data, name, helper, metric, operations, scratch, cpu, attribution=False):
     """Run a sample using the driver's current worker path and callbacks."""
     return contract_measurement.per_call_run(mode, so, data, name, helper, metric, operations, scratch, cpu,
-                                             attribution, driver_file=__file__, CELL=CELL, check_tkrzw=check_tkrzw,
+                                             attribution, driver_file=__file__, CELL=selected_cell(), check_tkrzw=check_tkrzw,
                                              check_cancelled=check_cancelled, terminate_group=terminate_group,
                                              user_dir_listing=user_dir_listing, per_call_ir=per_call_ir,
                                              per_call_profile=per_call_profile)
@@ -1185,7 +1195,7 @@ def run_main():
     parser.add_argument('--teardown-facades', choices=('both', 'pinyin', 'zhuyin'), default='both')
     parser.add_argument('--teardown-cpu', type=int)
     parser.add_argument('--teardown-attribution-case', choices=('empty', 'modest', 'phrases', 'journals', 'modest-unsaved', 'modest-saved'), default='journals')
-    parser.add_argument('cell', nargs='?', choices=['bdb', 'kc', 'tkrzw'])
+    parser.add_argument('cell', nargs='?', choices=cell.CELLS)
     parser.add_argument('prefix', nargs='?', type=Path)
     parser.add_argument('pinyin_so', nargs='?', type=Path)
     parser.add_argument('--zhuyin-so', type=Path)

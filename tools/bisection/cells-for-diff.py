@@ -42,9 +42,13 @@ import subprocess
 import sys
 
 # The backends as the checks name them, and the cells a differential runs.
-BACKENDS = ('bdb', 'tkrzw', 'kyotocabinet')
-CELLS = ('bdb', 'kc', 'tkrzw')
-REFERENCE_CELL = 'tkrzw'
+from pathlib import Path
+_ROOT = str(Path(__file__).resolve().parents[2])
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+from tools.dev import cell
+BACKENDS = cell.BACKENDS
+CELLS = cell.CELLS
 STORE_DIR = 'crates/oxpinyin-store/'
 # Rule 2's grep -E pattern as written; git grep -E reads the same syntax.
 FEATURE_GATE = 'feature *= *"(' + '|'.join(BACKENDS) + ')"'
@@ -177,7 +181,7 @@ def report(base, merge_base, head, results, limit):
         noun = 'check' if len(fired) == 1 else 'checks'
         lines.append(f"Cells: {','.join(CELLS)} ({noun} {', '.join(fired)} fired).")
     else:
-        lines.append(f'Cells: {REFERENCE_CELL} (the reference cell; no check fired).')
+        lines.append(f'Cells: {cell.default_cell()} (the reference cell; no check fired).')
     lines.append('')
     for number, title, matches in results:
         lines.append(f"Check {number}, {title}: {'fired' if matches else 'not fired'}")

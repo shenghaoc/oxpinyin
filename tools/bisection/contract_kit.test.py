@@ -20,12 +20,11 @@ def load_driver():
 
 
 class KitBoundaryTests(unittest.TestCase):
-    def test_constructor_reads_patched_cell_and_guard_at_call_time_and_environment_still_wins(self):
+    def test_constructor_reads_selected_cell_and_patched_guard_at_call_time_and_environment_still_wins(self):
         driver = load_driver()
         with tempfile.TemporaryDirectory() as scratch, patch.object(driver.C, 'CDLL', return_value=MagicMock()), \
-                patch.object(driver, 'check_tkrzw') as guard, patch.object(driver, 'CELL', 'kc'), \
-                patch.dict(os.environ, OXPINYIN_RUNTIME_SIDE='pin'):
-            os.environ.pop('CONTRACT_DIFF_CELL', None)
+                patch.object(driver, 'check_tkrzw') as guard, \
+                patch.dict(os.environ, OXPINYIN_RUNTIME_SIDE='pin', CONTRACT_DIFF_CELL='kc'):
             kit = driver.Kit('pinyin', '/subject.so', '/data', scratch)
             guard.assert_called_once_with('kc', 'contract-diff.py', 'pin', '/subject.so')
             self.assertEqual((kit.mode, kit.data, kit.scratch), ('pinyin', '/data', scratch))
