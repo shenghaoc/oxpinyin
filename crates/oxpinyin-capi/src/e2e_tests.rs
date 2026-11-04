@@ -3454,6 +3454,49 @@ fn export_iterator_outlives_context() {
 // project's rulings, not from running the pin.
 // ---------------------------------------------------------------------
 
+/// The pin's candidate getter lends `m_phrase_string` (`pinyin.cpp:2873-2877`),
+/// then prediction frees it before `_compute_prefixes` reads the argument
+/// (`:1335-1342`, `:2420-2424`). The pin result is undefined. Oxpinyin
+/// recognizes the alias by pointer identity and returns a stable empty
+/// prediction; caller-owned text still predicts normally afterward.
+#[test]
+fn borrowed_prediction_prefix_clears_candidates_and_owned_text_recovers() {
+    let user = TempUserDir::new("borrowed-prediction-prefix");
+    let (context, instance) = open(user.path.to_str().expect("UTF-8 path"));
+    let borrowed_candidate = candidate(instance, "nihao", 0);
+    let mut borrowed_text = std::ptr::null();
+    assert!(crate::candidates::pinyin_get_candidate_string(
+        instance,
+        borrowed_candidate,
+        &raw mut borrowed_text,
+    ));
+    assert!(!borrowed_text.is_null());
+    assert!(!crate::predict::pinyin_guess_predicted_candidates(
+        instance,
+        borrowed_text,
+    ));
+    let mut count = u32::MAX;
+    assert!(crate::candidates::pinyin_get_n_candidate(
+        instance,
+        &raw mut count
+    ));
+    assert_eq!(count, 0);
+    assert!(crate::predict::pinyin_guess_predicted_candidates(
+        instance,
+        cstr("你好").as_ptr(),
+    ));
+    assert!(crate::candidates::pinyin_get_n_candidate(
+        instance,
+        &raw mut count
+    ));
+    assert_eq!(
+        count, 0,
+        "the mini fixture has no predicted suggestion rows"
+    );
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
 /// The `open <user dir>/user.conf failed.` line a fresh user directory
 /// makes `pinyin_init` write: `UserTableInfo::load` prints it when the
 /// marker is missing, with no trailing newline (`table_info.cpp:332` at

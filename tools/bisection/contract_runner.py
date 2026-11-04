@@ -320,10 +320,16 @@ class Runner:
         if companion is not None:
             env['AXIS_C_COMPANION_PINYIN'] = str(Path(companion).resolve())
         profile = None
-        if handoff:
+        lazy_bigram = name in ('lazy-user-bigram-pinyin', 'lazy-user-bigram-zhuyin')
+        if handoff or lazy_bigram:
             profile = tempfile.mkdtemp(prefix='handoff-pin-', dir=scratch)
-            env[profile_key] = profile
+            if handoff:
+                env[profile_key] = profile
+            else:
+                env['CONTRACT_BIGRAM_SNAPSHOTS'] = profile
         observation = self._one_side('pin', spec, pin_so, data, name, scratch, deadline, timeout, env)
+        if lazy_bigram and observation['exit'] == 0:
+            observation['result']['saved_byte_comparisons'] = ['empty.db', 'trained.db']
         package = os.path.exists(used)
         # The stored profile is the one the pin wrote, taken before the pin's own reload below
         # opens it (a reopen can rewrite the container's clock field).
@@ -361,10 +367,24 @@ class Runner:
         if companion is not None:
             env['AXIS_C_COMPANION_PINYIN'] = str(Path(companion).resolve())
         own = None
-        if handoff:
+        lazy_bigram = name in ('lazy-user-bigram-pinyin', 'lazy-user-bigram-zhuyin')
+        if handoff or lazy_bigram:
             own = tempfile.mkdtemp(prefix='handoff-subject-', dir=scratch)
-            env[profile_key] = own
+            if handoff:
+                env[profile_key] = own
+            else:
+                env['CONTRACT_BIGRAM_SNAPSHOTS'] = own
         subject = self._one_side('subject', spec, subject_so, data, name, scratch, deadline, timeout, env or None)
+        if lazy_bigram and subject['exit'] == 0 and pin['exit'] == 0:
+            donor = tempfile.mkdtemp(prefix='handoff-pin-', dir=scratch)
+            reference.decode_profile(row['profile'], donor)
+            for filename in ('empty.db', 'trained.db'):
+                saved = [self.driver['tkrzw_saved_bigram_bytes'](Path(directory, filename).read_bytes())
+                         for directory in (donor, own)]
+                if saved[0] != saved[1]:
+                    subject.update(exit=1, result={'error': filename + ' differs outside META_OFFSET_TIMESTAMP'})
+                    return [pin, subject]
+            subject['result']['saved_byte_comparisons'] = ['empty.db', 'trained.db']
         if handoff and subject['exit'] == 0 and pin['exit'] == 0:
             donor = tempfile.mkdtemp(prefix='handoff-pin-', dir=scratch)
             reference.decode_profile(row['profile'], donor)

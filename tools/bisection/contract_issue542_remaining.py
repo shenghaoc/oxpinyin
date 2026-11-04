@@ -51,36 +51,25 @@ for _mode in ('pinyin', 'zhuyin'):
 
 @case('issue542-alias-prefix-borrowed', issues=('542',))
 def _(k):
-    """Reuse a borrowed candidate string as a guess prefix and record subsequent outputs.
+    """Freeze the defined prefix path and caller-owned prediction recovery.
 
-    For each prefix API, allocate a nihao instance and borrow its first candidate's
-    text. Record three sentence ranks and, for prediction, candidate counts
-    before and after retrying with caller-owned 你好 bytes. Assert candidate
-    getters; leave the allocated instances live."""
+    The borrowed prediction path is tested only on oxpinyin in Rust: the pin frees
+    the candidate string before reading that input (`pinyin.cpp:2420-2424`)."""
     out = {}
-    for predicted_call in (False, True):
-        inst = full_inst(k, b'nihao')
-        k.fn('guess_sentence', B, P)(inst)
-        k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0x1E)
-        cand, text = P(UNTOUCHED), P(UNTOUCHED)
-        assert k.fn('get_candidate', B, P, U, C.POINTER(P))(inst, 0, C.byref(cand))
-        assert k.fn('get_candidate_string', B, P, P, C.POINTER(P))(inst, cand, C.byref(text))
-        label = 'predicted' if predicted_call else 'with-prefix'
-        out[label + ' borrowed text'] = C.string_at(text.value).decode()
-        name = 'guess_predicted_candidates' if predicted_call else 'guess_sentence_with_prefix'
-        out[label] = k.fn(name, B, P, P)(inst, text)
-        if not predicted_call:
-            out['sentences'] = [sentence_out(k, inst, i) for i in range(3)]
-        else:
-            count = U(UNTOUCHED)
-            assert k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
-            out['predicted candidate count'] = count.value
-            out['predicted sentences'] = [sentence_out(k, inst, i) for i in range(3)]
-            # The same text at caller-owned storage must still predict.
-            out['owned prefix recovery'] = k.fn('guess_predicted_candidates', B, P, S)(
-                inst, '你好'.encode())
-            assert k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
-            out['owned prefix candidate count'] = count.value
+    inst = full_inst(k, b'nihao')
+    k.fn('guess_sentence', B, P)(inst)
+    k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0x1E)
+    cand, text = P(UNTOUCHED), P(UNTOUCHED)
+    assert k.fn('get_candidate', B, P, U, C.POINTER(P))(inst, 0, C.byref(cand))
+    assert k.fn('get_candidate_string', B, P, P, C.POINTER(P))(inst, cand, C.byref(text))
+    out['with-prefix borrowed text'] = C.string_at(text.value).decode()
+    out['with-prefix'] = k.fn('guess_sentence_with_prefix', B, P, P)(inst, text)
+    out['sentences'] = [sentence_out(k, inst, i) for i in range(3)]
+    owned = full_inst(k, b'nihao')
+    out['owned prefix recovery'] = k.fn('guess_predicted_candidates', B, P, S)(owned, '你好'.encode())
+    count = U(UNTOUCHED)
+    assert k.fn('get_n_candidate', B, P, C.POINTER(U))(owned, C.byref(count))
+    out['owned prefix candidate count'] = count.value
     return out
 
 

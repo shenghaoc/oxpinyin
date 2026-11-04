@@ -176,6 +176,35 @@ class ReferenceRunTests(unittest.TestCase):
             observation, profile, used = self.runner(worker).capture_case(spec, Path('/p.so'), '/data', 'plain', scratch, 30)
         self.assertEqual((observation['exit'], profile, used), ('NOT-RUN', None, True))
 
+    def test_lazy_bigram_capture_and_verify_compare_both_saved_snapshots(self):
+        name = 'lazy-user-bigram-pinyin'
+        spec = dict(mode='pinyin', fatal=False, pin_not_run=None)
+
+        def writing(empty, trained):
+            def worker(mode, so, data, case, scratch, extra_env=None, timeout=None):
+                directory = Path(extra_env['CONTRACT_BIGRAM_SNAPSHOTS'])
+                (directory / 'empty.db').write_bytes(empty)
+                (directory / 'trained.db').write_bytes(trained)
+                return self.observation(saved=True)
+            return worker
+
+        with tempfile_dir() as scratch:
+            pin, profile, _ = self.runner(writing(b'empty', b'trained')).capture_case(
+                spec, Path('/p.so'), '/data', name, scratch, 30)
+        self.assertEqual(pin['result']['saved_byte_comparisons'], ['empty.db', 'trained.db'])
+        row = dict(pin=pin, profile=profile)
+        with tempfile_dir() as scratch:
+            _, subject = self.runner(writing(b'empty', b'trained')).verify_case(
+                spec, row, Path('/s.so'), '/data', name, scratch, 30)
+        self.assertEqual(subject['result']['saved_byte_comparisons'], ['empty.db', 'trained.db'])
+        for empty, trained, filename in ((b'changed', b'trained', 'empty.db'),
+                                         (b'empty', b'changed', 'trained.db')):
+            with self.subTest(filename=filename), tempfile_dir() as scratch:
+                _, subject = self.runner(writing(empty, trained)).verify_case(
+                    spec, row, Path('/s.so'), '/data', name, scratch, 30)
+            self.assertEqual((subject['exit'], subject['result']),
+                             (1, {'error': filename + ' differs outside META_OFFSET_TIMESTAMP'}))
+
     def test_a_handoff_case_lets_the_subject_read_the_pin_written_profile(self):
         name = 'save-929-logical-cross-open-pinyin'
         seen = []
