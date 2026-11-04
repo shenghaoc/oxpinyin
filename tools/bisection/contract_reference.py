@@ -406,16 +406,7 @@ class Store:
         return lookup(self.root, self.cell, spec, self.data_digest, self.no_abort, self.modules[module])
 
 
-def captured_cases(root, cell):
-    """Case IDs that have a reference row for CELL.
+# Not cases of their own: the nested worker the axis C import cases start.
+HELPER_CASES = ('axis-c-export-user',)
 
-    Transitional: while the families migrate, the unselected `verify` suite is the cases
-    captured so far. The last commit of the migration makes it every registered case."""
-    directory = Path(root) / cell
-    names = []
-    if directory.is_dir():
-        for path in sorted(directory.glob('*.jsonl')):
-            names.extend(load_rows(root, cell, path.stem))
-    return names
-
-
+# The handoff case IDs are declared above for reference validation.

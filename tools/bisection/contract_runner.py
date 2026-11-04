@@ -166,7 +166,10 @@ class Runner:
             self.driver['TIMINGS'].append(timing)
 
     def run_case(self, spec, pin_so, subject_so, data, name, scratch, timeout):
-        """One deadline for both sides; incomplete observations cannot be a match.
+        """The local-only live handoff: one deadline for both sides; incomplete observations cannot be a match.
+
+        Kept for `verify --reverse-cross-open` (docs/runbooks/contract-references.md): the pin reads
+        what oxpinyin wrote, which the frozen references cannot check.
 
         Run pin before subject and return both observations; timeout is in seconds.
         Pass fatal-criticals when requested and track the worker side per thread.
@@ -459,46 +462,33 @@ class Runner:
         map; parallel execution schedules a thread pool. Each item is (name, result), with PLATFORM_SKIP for excluded platforms
         and None for excluded cells. On a parallel-body exception mark cancellation;
         always wait for pool shutdown and cancel pending futures on that path's exit."""
-        lib = args.prefix / 'lib' if args.prefix is not None else None
         def observe(name):
-            """Check case eligibility and run both libraries within a temporary per-case directory.
+            """Check case eligibility, look up its reference and run the subject in a per-case directory.
 
-            Honor run_platform_excluded, assert zhuyin library availability when needed,
-            and remove the isolated directory on exit. Propagate run_case failures."""
+            A missing or incompatible reference is returned as the result, not raised."""
             self.driver['check_cancelled']()
             spec = self.driver['CASES'][name]
             if self.driver['platform_skips'](spec) and not getattr(args, 'run_platform_excluded', False):
                 return name, self.driver['PLATFORM_SKIP']
             if args.cell not in spec['cells']:
                 return name, None
-            store = getattr(args, 'references', None)
-            if store is not None:
-                # verify: the subject alone, against the stored pin observation.
-                try:
-                    row = store.row(spec)
-                except reference.ReferenceError as error:
-                    return name, error
-                subject_so = args.zhuyin_so if spec['mode'] == 'zhuyin' else args.pinyin_so
-                assert subject_so and Path(subject_so).is_file(), '%s needs %s' % (
-                    name, '--zhuyin-so' if spec['mode'] == 'zhuyin' else 'PINYIN_SO')
-                with tempfile.TemporaryDirectory(prefix='case-', dir=scratch) as isolated:
-                    pair = self.verify_case(spec, row, Path(subject_so), data, name, isolated, args.case_timeout,
-                                            companion=args.pinyin_so)
-                    if name.startswith('axis-c-'):
-                        # The battery compares diagnostics with generated paths normalised.
-                        pair[1].update(self.driver['axis_c_normalize_diagnostics'](
-                            self.driver['axis_c_envelope'](pair[1]), isolated))
-                    return name, pair
-            if spec['mode'] == 'zhuyin':
-                assert args.zhuyin_so and args.zhuyin_so.is_file() and (lib / 'libzhuyin.so').is_file(), \
-                    'zhuyin case %s needs --zhuyin-so and the pin libzhuyin' % name
-                pin_so, subject_so = lib / 'libzhuyin.so', args.zhuyin_so
-            else:
-                pin_so, subject_so = lib / 'libpinyin.so', args.pinyin_so
-            # user_dir_listing removes profiles it discovers. Sharing this directory
-            # across active cases would let one worker remove another's live files.
+            store = args.references
+            # The subject alone, against the stored pin observation.
+            try:
+                row = store.row(spec)
+            except reference.ReferenceError as error:
+                return name, error
+            subject_so = args.zhuyin_so if spec['mode'] == 'zhuyin' else args.pinyin_so
+            assert subject_so and Path(subject_so).is_file(), '%s needs %s' % (
+                name, '--zhuyin-so' if spec['mode'] == 'zhuyin' else 'PINYIN_SO')
             with tempfile.TemporaryDirectory(prefix='case-', dir=scratch) as isolated:
-                return name, self.driver['run_case'](spec, pin_so, subject_so, data, name, isolated, args.case_timeout)
+                pair = self.verify_case(spec, row, Path(subject_so), data, name, isolated, args.case_timeout,
+                                        companion=args.pinyin_so)
+                if name.startswith('axis-c-'):
+                    # The battery compares diagnostics with generated paths normalised.
+                    pair[1].update(self.driver['axis_c_normalize_diagnostics'](
+                        self.driver['axis_c_envelope'](pair[1]), isolated))
+                return name, pair
         if jobs == 1:
             yield map(observe, names)
             return

@@ -1532,7 +1532,7 @@ def run(args, driver, parser):
     Build the worker and record provenance; provision-only returns zero,
     otherwise return the selected campaign stage's status.
     """
-    if args.per_call or args.cases or args.issue or args.family or args.expect_parent or args.observations or args.plan_only or args.axis_c_replacement or args.axis_c_mutation or args.axis_c_snapshot_check or args.regenerate_sentence_ties:
+    if args.per_call or args.axis_c_mutation or args.axis_c_snapshot_check or args.regenerate_sentence_ties:
         parser.error('--teardown is a separate workload; contract/profiler modes cannot be combined')
     cache = getattr(args, 'teardown_cache', 'warm')
     user_stages, user_read_only = user_selection(args, parser)

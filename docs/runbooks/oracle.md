@@ -97,7 +97,7 @@ commit and the base image codename (both from `oracle-pin.txt`) and a hash
 of `Dockerfile.oracle`, `build-oracle.sh`, the Bash floor, the version-check inputs and
 `oracle-pin.txt` itself, so it changes whenever the library hashes or their
 record can. The arm64 contract gate
-excludes the 13 cases diagnosed in #1137 and reports 0 DIFFER; amd64 still
+excludes the cases diagnosed in #1137; amd64 still
 runs them. See [the arm64 finding](../findings/oracle-arm64-1132.md). A published tag is
 immutable (the workflow never overwrites one), and `tools/cloud/setup.sh`
 and the commands below derive it the same way. The hashes are also in the
@@ -351,29 +351,31 @@ just heavy -- cargo test -p oxpinyin-runtime \
 
 ### The full default contract selection
 
-"The full default contract selection" is the contract driver run with no
-`--cases`, `--issue`, `--family` or `--cases-prefix`, on one cell:
+"The full default contract selection" is `verify` with no `--cases`, `--issue`,
+`--family` or `--cases-prefix`, on one cell. It runs the subject only, against
+the pin observations frozen in `fixtures/contract-refs` (see
+[contract references](contract-references.md)); no pin prefix, pin library or
+container is involved:
 
 ```sh
-just heavy -- just runner contract-diff bdb "$PINYIN_ORACLE_PREFIX" \
-    <target>/debug/libpinyin_capi.so <target>/debug/libzhuyin_capi.so
+just heavy -- just runner contract-diff verify tkrzw \
+    <target>/debug/libpinyin_capi.so <target>/debug/libzhuyin_capi.so -- --jobs 4
 ```
 
-It runs every registered case except the axis C battery (`axis-c-*`), in
-sorted order. At `5decad77` that is 2,889 cases (pinyin 1,734, zhuyin
-1,155), and one of them is a SKIP on the BDB cell. The count changes
-whenever a case is registered, so report the count from the run. Add
-`-- --plan-only` to print it without running a case: the first line is
-`plan: <N> cases (default suite: every registered non-axis-C case)`. Two
-runs that report different counts ran different registries. For example,
-2,865 is the registry at `b587d599`, before `074f0b36` added cases.
+It runs the registered default suite in sorted order. Print the current case count
+without running cases by adding `-- --plan-only` to the command above. Run the
+command without that option to print the current `verdict_counts` summary.
+The KC and BDB cells run only cases that read no system data; the package data's
+`bigram.db` is a tkrzw file. Select the Axis C battery with
+`-- --cases-prefix axis-c-`; add `--plan-only` to print its current count.
 
 For a smaller selection, `--cases-prefix P,Q,...` selects literal ID prefixes
-from the full registry, including untagged cases and IDs without `/`:
+from the full registry, including untagged cases and IDs without `/`, and
+`--cases @FILE` reads the IDs one per line:
 
 ```sh
-just runner contract-diff bdb "$PINYIN_ORACLE_PREFIX" \
-    <target>/debug/libpinyin_capi.so <target>/debug/libzhuyin_capi.so -- \
+just runner contract-diff verify tkrzw <target>/debug/libpinyin_capi.so \
+    <target>/debug/libzhuyin_capi.so -- \
     --cases-prefix table-conf-,user-conf-,glib-922-save-,stderr-save-,stderr-fini- --plan-only
 ```
 
@@ -382,74 +384,52 @@ error, even alongside another selector. The driver unions explicit `--cases`
 IDs, repeatable `--issue` tags, repeatable `--family F` selections (`F/` IDs),
 then prefixes, in that order. Each issue, family and prefix contributes
 sorted IDs; overlapping selections keep the first position and all reasons
-in the plan. `just runner contract-diff --help` exposes the driver flags.
-`just runner run-all --runners contract-diff --cases-prefix table-conf- --list`
-lists the resolved command without building or running cases; the same flag
-is supported by `tools/oracle/compat.sh`.
+in the plan.
 
 Ordinary cases remain serial by default. Add `-- --jobs N` to request
-at most N active cases in the existing contract driver. Each case has its
-own scratch directory, its pin and subject share the same deadline, and
-verdicts and `--observations` remain in selection order. Parallel calls
+at most N active cases. Each case has its own scratch directory and deadline,
+and verdicts and `--observations` remain in selection order. Parallel calls
 use the existing heavy slot, including validated slot inheritance from
 `just heavy`. Admission charges 1,024 MiB per active case, or the larger
 build estimate, and reduces the requested case count when memory is short.
-If one case cannot fit, admission waits or fails before starting workers.
 Admission limits workers by memory, not CPU, so a `--jobs` well above the
 host's CPU count can make a case hit its wall-clock deadline and report
 TIMEOUT; keep `--jobs` at or below the CPU count.
-The deadline starts when the case starts, after admission and queueing.
 
-The aggregate runner already schedules cells independently, with private
-oracle environments and cell targets. Select `--contract-jobs N` for its
-per-cell case maximum. Its `--jobs` still counts concurrent runner rows;
-the host's heavy slots and memory reservations also limit concurrent cells.
-An explicit three-slot example, using already built cell artifacts, is:
+`--expect-parent` verifies a parent build against the same references: a case
+marked `control` must still pass and every other case must fail
+(revert-and-check).
 
-```sh
-OXPINYIN_HEAVY_SLOTS=3 tools/bisection/run-all.py \
-    --runners contract-diff --cells bdb,kc,tkrzw --no-build \
-    --jobs 3 --contract-jobs 4 --runner-timeout contract-diff=7200 \
-    --oracle-root "$OXPINYIN_CLOUD_CACHE/oracle"
-```
+Three kinds of case follow the host, and the references record what they
+depended on at capture:
 
-With no `--contract-jobs` and no `OXPINYIN_CONTRACT_JOBS`, `run-all.py` and
-`compat.sh` give each contract-diff run its share of the CPUs as the case
-maximum: the CPU count divided by the contract-diff runs that can be live
-together, at least one. Admission then reduces it to the cases that fit in
-memory, and the log shows the choice as `effective defaults:
-OXPINYIN_CONTRACT_JOBS=N (default maximum ...)`. Inside the compatibility
-container the CPU count and memory are the container's own (`--jobs`
-CPUs, `--memory-mib`). `--contract-jobs 1` runs the cases serially. A direct
-`contract-diff.py` call, `--expect-parent`, `--teardown` and `--per-call` keep
-their serial default; the host's slot count does not change.
-The final timing record reports the effective per-cell case count as `jobs`.
+- A `fatal=True` case (GLib's fatal critical) records the capture GLib. The
+  comparison always comes first: an equal result is `MATCH` on any host. Only
+  when the comparison `DIFFER`s and the host GLib differs from the capture's is
+  the case reported as `HOST-DEPENDENT`, the documented cross-host difference.
+- The lambda scanner cases (`table-conf-lambda-*`, `table-conf-919-lambda-*`)
+  read `%f` with the host's libc and record the capture glibc, with the same
+  rule: compare first, `HOST-DEPENDENT` only for a mismatch on another glibc.
+  Every other mismatch, and every mismatch of any other case, is `DIFFER`.
+  `HOST-DEPENDENT` is counted apart from `MATCH` and never added to it.
+- The `dir_chunk` cases (`table-conf-abort-*`, `chunk-frame-excluded-*`) take a
+  different pin path depending on the file system of their scratch directory.
+  The reference records that file system and verify creates its scratch on the
+  same type, or fails naming the types it tried. The capture runs on the host
+  disk (`target/capture-scratch`), so the recorded type is the capturing host's
+  disk, `ext2/ext3` for ext4.
 
-Five `table-conf-abort-*` cases (`dir_chunk` in `contract-diff.py`, #1011)
-take a different pin path depending on the file system of `TMPDIR`, where
-the harness makes its scratch. On a file system whose directories answer
-`lseek(SEEK_END)` with 8 or more (ext4, for example), the pin dies of
-SIGABRT. On tmpfs, the default `/tmp` of many desktop hosts, it survives
-the two user-directory cases and dies of SIGSEGV in the three
-system-directory cases. The subject follows the file system in all five,
-and the harness probes it, so all five MATCH on both.
-
-`user-gram-unsorted-export` and `user-gram-duplicate-export`
-(`strjoinv_over_read` in `contract-diff.py`, register row 1) take a
-different pin path depending on heap layout: the pin's bigram export joins
-an unterminated `GPtrArray`. Where the pin completes, the subject's rows are
-compared exactly and an equal result MATCHes. Where the pin dies of SIGSEGV
-after the same stderr as the subject, and the subject exits normally with a
-result, the case MATCHes without comparing rows. Any other pin signal, or
-different stderr, is INVALID. The kc cell has faulted on a host provisioned
-with `tools/cloud/setup.sh`; bdb and tkrzw completed there.
+The two bigram-export cases (`user-gram-*-export`) and the six cases whose pin
+stderr came from freed memory are Rust tests, because no frozen reference can
+hold them: see `e2e_tests` in `crates/oxpinyin-capi` and
+`crates/oxpinyin-zhuyin-capi`.
 
 ### Contract differentials in a macOS-hosted Linux container
 
 Keep the contract harness's scratch directory and generated user directories
 on the container's local filesystem, outside macOS bind mounts. Create the
 directory and export `TMPDIR` **inside the Linux container** before starting
-`just runner contract-diff`:
+`just runner contract-diff verify`:
 
 ```sh
 mkdir -p /var/tmp/lane-c-contract
@@ -457,7 +437,7 @@ export TMPDIR=/var/tmp/lane-c-contract
 ```
 
 The harness creates its per-run scratch under `TMPDIR` and passes that path
-to both workers, which create their fresh user directories beneath it. The
+to the workers, which create their fresh user directories beneath it. The
 non-UTF-8 pathname cases need this: in the amd64/Rosetta macOS session, a
 `mkdir` containing byte `0xFF` under the Mac-mounted `/lane/tmp` failed with
 `EPERM`, while the same operation under container-local `/var/tmp` succeeded.

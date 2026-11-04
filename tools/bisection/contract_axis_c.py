@@ -213,14 +213,10 @@ def run_axis_c(args, names, *, CASES, run_worker, AXIS_C_LAYOUT_COVERED, AXIS_C_
     with tempfile.TemporaryDirectory(prefix='contract-diff-') as scratch, ThreadPoolExecutor(max_workers=2) as pool:
         for ordinal, name in enumerate(names, 1):
             mode = CASES[name]['mode']
-            if args.axis_c_mutation:
-                pin_so = args.pinyin_so if mode == 'pinyin' else args.zhuyin_so
-                subject_so = args.axis_c_mutant_pinyin_so if mode == 'pinyin' else args.axis_c_mutant_zhuyin_so
-                pin_companion, subject_companion = args.pinyin_so, args.axis_c_mutant_pinyin_so
-            else:
-                pin_so = args.prefix / ('lib/libpinyin.so' if mode == 'pinyin' else 'lib/libzhuyin.so')
-                subject_so = args.pinyin_so if mode == 'pinyin' else args.zhuyin_so
-                pin_companion, subject_companion = args.prefix / 'lib/libpinyin.so', args.pinyin_so
+            # The mutation battery runs the base subject against a mutant of it; no pin is involved.
+            pin_so = args.pinyin_so if mode == 'pinyin' else args.zhuyin_so
+            subject_so = args.axis_c_mutant_pinyin_so if mode == 'pinyin' else args.axis_c_mutant_zhuyin_so
+            pin_companion, subject_companion = args.pinyin_so, args.axis_c_mutant_pinyin_so
             assert pin_so and subject_so and pin_so.is_file() and subject_so.is_file(), name
             futures = [pool.submit(observe, name, so.resolve(), companion.resolve())
                        for so, companion in ((pin_so, pin_companion), (subject_so, subject_companion),
@@ -281,16 +277,14 @@ def run_axis_c(args, names, *, CASES, run_worker, AXIS_C_LAYOUT_COVERED, AXIS_C_
     for signature in sorted(differences):
         print(json.dumps(dict(difference_signature=json.loads(signature), count=differences[signature],
                               example=examples[signature]), ensure_ascii=True), flush=True)
-    print(json.dumps(dict(battery=args.axis_c_replacement, mutation=args.axis_c_mutation,
+    print(json.dumps(dict(mutation=args.axis_c_mutation,
                           counts=dict(totals), repeats='identical', suspend_delta=elapsed_suspend,
                           hashes={side: h.hexdigest() for side, h in fingerprints.items()}), sort_keys=True), flush=True)
-    if args.axis_c_mutation:
-        controls = AXIS_C_DEFINITION['mutations'][args.axis_c_mutation]['controls']
-        for control in controls:
-            print(json.dumps(dict(mutation=args.axis_c_mutation, control=control,
-                                  verdict=case_verdicts.get(control)), ensure_ascii=True), flush=True)
-        undetected = [control for control in controls if case_verdicts.get(control) != 'DIFFER']
-        assert not undetected, ('NOT-ESTABLISHED: %s control(s) not detected: %s'
-                                % (args.axis_c_mutation, ', '.join(undetected)))
-        return 0
-    return 1 if totals['case_differ'] else 0
+    controls = AXIS_C_DEFINITION['mutations'][args.axis_c_mutation]['controls']
+    for control in controls:
+        print(json.dumps(dict(mutation=args.axis_c_mutation, control=control,
+                              verdict=case_verdicts.get(control)), ensure_ascii=True), flush=True)
+    undetected = [control for control in controls if case_verdicts.get(control) != 'DIFFER']
+    assert not undetected, ('NOT-ESTABLISHED: %s control(s) not detected: %s'
+                            % (args.axis_c_mutation, ', '.join(undetected)))
+    return 0

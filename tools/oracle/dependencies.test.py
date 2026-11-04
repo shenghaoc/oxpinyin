@@ -22,10 +22,11 @@ class OracleDependenciesTests(unittest.TestCase):
         self.assertEqual(actual, expected)
         self.assertTrue(set(groups['full']).isdisjoint(actual))
 
-    def test_workflow_accepts_exact_reference_stage_copies(self):
-        workflow = (ROOT / '.github/workflows/oracle-image.yml').read_text()
+    def test_local_build_accepts_exact_reference_stage_copies(self):
+        build = (ROOT / 'tools/oracle/build-contract-image.sh').read_text()
+        self.assertIn('-f tools/oracle/Dockerfile.oracle', build)
+        self.assertIn('compat verify-image', build)
         pattern = r'^COPY tools/(oracle/(version-manifest.json|versions.py)|tkrzw/distro-probe.sh|lib/bash-floor.sh) '
-        self.assertEqual(workflow.count(pattern), 2)
         docker = (ROOT / 'tools/oracle/Dockerfile.oracle').read_text().split('FROM deps AS build', 1)[0]
         copies = [line for line in docker.splitlines() if line.startswith('COPY ')]
         self.assertTrue(copies)

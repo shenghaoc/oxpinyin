@@ -285,12 +285,11 @@
       "zhuyin-capi"
     ],
     "required_inputs": [
-      "pin-built oracle at the selected cell",
       "uv 0.13.1 or newer, the managed interpreter in .python-version and libglib-2.0.so.0",
       "prebuilt dev libpinyin and libzhuyin for the cell",
-      "matching PREFIX/oracle-pin.txt and pin-built pinyin/zhuyin system tables"
+      "fixtures/contract-refs, and for the tkrzw cell the pinned libpinyin-data package (just fetch-contract-data)"
     ],
-    "timeout": 900,
+    "timeout": 3600,
     "heavy": true,
     "exclusive_resources": [],
     "command": [
@@ -305,16 +304,15 @@
       "tools.dev",
       "runner",
       "contract-diff",
+      "verify",
       "{cell}",
-      "{prefix}",
       "{capi}",
       "{zhuyin}"
     ],
     "env": {},
     "input_paths": [
       "{capi}",
-      "{zhuyin}",
-      "{prefix}/lib/libzhuyin.so"
+      "{zhuyin}"
     ]
   },
   {

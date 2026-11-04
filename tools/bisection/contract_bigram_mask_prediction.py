@@ -30,7 +30,7 @@ def register(case, *, _craft_hash, crafted_bigram_context, index_file_rows):
                 item.to_bytes(4, 'little') + (69).to_bytes(4, 'little')
                 for item in range(0x01000001, 0x01000001 + degree))
             rows.append((token.to_bytes(4, 'little'), value))
-        # run_case supplies one donor directory per direction. The receiver
+        # The runner supplies one donor directory (the pin-written profile in a reference). The receiver
         # must open that exact profile, without crafting a replacement file.
         handoff = os.environ.get('CONTRACT_1114_PROFILE')
         if handoff:

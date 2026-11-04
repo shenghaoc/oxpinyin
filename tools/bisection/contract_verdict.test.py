@@ -414,24 +414,8 @@ class PolicyTests(unittest.TestCase):
 
 
 class HostTests(unittest.TestCase):
-    def test_a_pin_that_loaded_beside_a_subject_that_refused_table_conf_is_recognised_exactly(self):
-        pin = observation(result={'ctx': True}, stderr='open /s/user-X/user.conf failed.')
-        subject = observation(result={'ctx': False}, stderr='load /s/sys-X/table.conf failed!\n')
-        self.assertTrue(verdict.pin_loaded_subject_refused_table_conf(pin, subject))
-        for pin_change, subject_change in ((dict(exit=1), {}), ({}, dict(exit=1)),
-                                           (dict(result={'ctx': False}), {}), ({}, dict(result={'ctx': True})),
-                                           (dict(stderr='open /s/user.conf failed.\n'), {}),
-                                           ({}, dict(stderr='load /s/table.conf failed!')),
-                                           ({}, dict(stderr='load /s/table.conf failed!\nmore'))):
-            with self.subTest(pin=pin_change, subject=subject_change):
-                self.assertFalse(verdict.pin_loaded_subject_refused_table_conf(
-                    dict(pin, **pin_change), dict(subject, **subject_change)))
-
     @unittest.skipUnless(sys.platform.startswith('linux'), 'the probe calls the host libc sscanf through ctypes')
-    def test_host_scanf_accepts_a_float_prefix(self):
-        for spelling, accepted in (('1.5', True), ('1e3xyz', True), ('abc', False), ('', False)):
-            with self.subTest(spelling=spelling):
-                self.assertIs(verdict.host_scanf_accepts(spelling), accepted)
+    def test_host_scanf_verdict_records_acceptance_and_bits(self):
         self.assertEqual(verdict.host_scanf_verdict('1.5'),
                          dict(input='1.5', accepted=True, value_bits='3fc00000'))
         self.assertEqual(verdict.host_scanf_verdict('abc'),
