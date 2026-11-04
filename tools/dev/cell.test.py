@@ -4,6 +4,7 @@ import contextlib
 import io
 import json
 import os
+from dataclasses import replace
 from pathlib import Path
 import signal
 import subprocess
@@ -14,7 +15,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from tools.dev import host, slot, test_support
+from tools.dev import cell as backend_cell, host, slot, test_support
 from tools.dev.cell import CellError, ROOT, Settings, library_path
 from tools.dev.cell import main as cell_main
 
@@ -24,6 +25,27 @@ def snapshot():
 
 
 class SettingsTests(unittest.TestCase):
+    def test_default_cell_maps_declared_backend(self):
+        with mock.patch.object(backend_cell, 'declared_default', return_value='kyotocabinet'):
+            self.assertEqual(backend_cell.default_cell(), 'kc')
+
+    def test_feature_flags_name_every_backend_including_the_default(self):
+        self.assertEqual(backend_cell.feature_flags(), [])
+        for backend in backend_cell.BACKENDS:
+            self.assertEqual(backend_cell.feature_flags(backend), ['--no-default-features', '--features', backend])
+        default = backend_cell.declared_default()
+        self.assertEqual(backend_cell.feature_flags(default), ['--no-default-features', '--features', default])
+        with self.assertRaises(ValueError):
+            backend_cell.feature_flags('sqlite')
+
+    def test_extra_features_follow_exactly_one_backend(self):
+        settings = replace(Settings.read({'PINYIN_ORACLE_DBM': 'tkrzw'}), extra_features=('shipped',))
+        self.assertEqual(settings.feature, 'tkrzw')
+        self.assertEqual(settings.feature_args(), ['--no-default-features', '--features', 'tkrzw',
+                                                   '--features', 'shipped'])
+        self.assertEqual(Settings.read({'PINYIN_ORACLE_DBM': 'tkrzw'}).feature_args(),
+                         ['--no-default-features', '--features', 'tkrzw'])
+
     def test_cells_are_explicit_and_preserve_overrides(self):
         for cell, feature, extension in [('bdb', 'bdb', 'db'), ('kc', 'kyotocabinet', 'kct'),
                                           ('tkrzw', 'tkrzw', 'tkt')]:
@@ -94,6 +116,7 @@ class HeavyLaunchTests(unittest.TestCase):
                      'OXPINYIN_CAPI_SO', 'OXPINYIN_ZHUYIN_SO'):
             env.pop(name, None)
         self.env, self.out, self.calls = env, io.StringIO(), []
+        backend_cell.declared_default()
         self.enterContext(mock.patch.dict(os.environ, env, clear=True))
         self.enterContext(mock.patch.object(host, 'resource_snapshot', side_effect=snapshot))
         self.enterContext(contextlib.redirect_stderr(self.out))
@@ -204,7 +227,8 @@ class HeavyLaunchTests(unittest.TestCase):
 import json, os, sys
 from unittest import mock
 from tools.dev import host, slot
-from tools.dev.cell import Settings
+from tools.dev.cell import Settings, declared_default
+declared_default()
 seen = []
 def popen(argv, *, env, pass_fds, **options):
     os.fstat(pass_fds[0])

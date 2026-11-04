@@ -300,7 +300,7 @@ class DebugInfoProbeTests(unittest.TestCase):
         text_digest = {tag: hashlib.sha256(content).hexdigest()[:16] for tag, content in
                        (('stock', b'plain-build'), ('rustflags', b'plain-build'), ('profile', b'profile-build'))}
         self.assertEqual(self.streams.stdout,
-                         '=== debug-info neutrality: oxpinyin-capi, backend bdb ===\n'
+                         '=== debug-info neutrality: oxpinyin-capi, backend tkrzw ===\n'
                          'captured_utc: 2026-10-27T01:02:03Z\n'
                          'rustc: rustc 1.97.1 (stub 2026-10-27)\n'
                          '\n'
@@ -345,7 +345,7 @@ class DebugInfoProbeTests(unittest.TestCase):
 
     def test_an_empty_backend_argument_is_the_default(self):
         self.probe([''])
-        self.assertIn('backend bdb ===', self.streams.stdout)
+        self.assertIn('backend tkrzw ===', self.streams.stdout)
 
     def test_pkg_names_the_crate(self):
         other = self.root / 'crates/other'
@@ -354,8 +354,8 @@ class DebugInfoProbeTests(unittest.TestCase):
         (other / 'src/lib.rs').write_text('')
         status = self.probe(PKG='other', STUB_ARTIFACT='libother.so')
         self.assertEqual(status, 0)
-        self.assertIn('=== debug-info neutrality: other, backend bdb ===', self.streams.stdout)
-        self.assertIn('-p other ', self.log.read_text())
+        self.assertIn('=== debug-info neutrality: other, backend tkrzw ===', self.streams.stdout)
+        self.assertIn('-p other --no-default-features --features tkrzw\n', self.log.read_text())
 
     def test_a_crate_without_a_library_section_names_its_file_after_the_package(self):
         (self.root / 'crates/oxpinyin-capi/Cargo.toml').write_text('[package]\nname = "oxpinyin-capi"\n')

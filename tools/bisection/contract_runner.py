@@ -103,7 +103,7 @@ class Runner:
         # per call so a patched WORKER takes effect.
         command = [sys.executable, *map(str, entry or (self.driver['WORKER'],)), mode, str(so), str(data), name]
         self.driver['check_cancelled']()
-        self.driver['check_tkrzw'](env.get('CONTRACT_DIFF_CELL', self.driver['CELL']), 'contract-diff.py',
+        self.driver['check_tkrzw'](self.driver['selected_cell'](), 'contract-diff.py',
                     env.get('OXPINYIN_RUNTIME_SIDE', 'subject'), so, env=env)
         proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 env=env, start_new_session=True, pass_fds=self.setting('WORKER_FDS'))
@@ -197,7 +197,7 @@ class Runner:
                 if remaining <= 0:
                     raise subprocess.TimeoutExpired(str(so), timeout)
                 extra_env = (dict(fatal_env or {}, OXPINYIN_RUNTIME_SIDE=side)
-                             if os.environ.get('CONTRACT_DIFF_CELL', self.driver['CELL']) == 'tkrzw' else fatal_env)
+                             if self.driver['selected_cell']() == 'tkrzw' else fatal_env)
                 if handoff:
                     extra_env = dict(extra_env or {}, **{profile_key: profiles[side]})
                 result = self.driver['run_worker'](spec['mode'], so.resolve(), data, name, scratch,

@@ -23,8 +23,8 @@ oracle or model download is required for ordinary work.
 
 A Rust **crate** is a package. A storage **backend** is the native DBM
 library that storage-dependent crates are built against; the
-[setup guide](docs/runbooks/setup.md#storage-backend) names the default and
-how each platform installs it.
+[backend guide](docs/runbooks/backends.md) names the default; the
+[setup guide](docs/runbooks/setup.md#storage-backend) covers each platform.
 
 When a change needs **compatibility verification**, compare it with the
 **oracle** (the fixed upstream libpinyin implementation). A

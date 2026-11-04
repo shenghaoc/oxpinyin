@@ -9,9 +9,8 @@ probe-debuginfo-neutrality: is a debug-info build the same code as the shipped
 one? Profilers need symbols and the release profile ships without them, so any
 profile-vs-timing comparison rests on an assumption, that adding debug info
 changed only debug info, which is both testable and, on this workspace, false in
-a way worth knowing. The default backend is Berkeley DB (since 2026-09-20; tkrzw
-2026-09-05 to then), which needs libdb-dev; pass a peer feature to probe another
-backend (tkrzw on a host with only libtkrzw, say). PKG in the environment names
+a way worth knowing. The default backend is selected by Cargo; pass a peer feature to probe another
+backend. PKG in the environment names
 the crate (default oxpinyin-capi).
 
 The comparison itself is neutrality.compare, shared with the differential
@@ -64,6 +63,7 @@ import shutil
 import tempfile
 from collections.abc import Mapping, Sequence
 
+from .. import cell
 from ..runners import Finished, emit, write
 from . import bench, neutrality
 
@@ -158,7 +158,7 @@ def build_variant(tag: str, assignments: Mapping[str, str], *, package: str, bac
     if shutil.which('cargo', path=env.get('PATH')) is None:
         raise Finished(127)
     done = bench.capture(['cargo', 'build', '--locked', '--release', '-p', package,
-                          '--no-default-features', '--features', backend], env={**env, **assignments})
+                          *cell.feature_flags(backend)], env={**env, **assignments})
     if done.status:
         raise Finished(done.status)
     kept = work / f'{tag}.so'
@@ -175,7 +175,7 @@ def build_variant(tag: str, assignments: Mapping[str, str], *, package: str, bac
 
 def probe_debuginfo_neutrality(argv: Sequence[str], env: Mapping[str, str]) -> int:
     """Build the crate stock, with RUSTFLAGS debug info and with profile debug info, and classify the pair that matters."""
-    backend = argv[0] if argv and argv[0] else 'bdb'
+    backend = argv[0] if argv and argv[0] else cell.declared_default()
     package = env.get('PKG') or 'oxpinyin-capi'
     with tempfile.TemporaryDirectory() as directory, bench.working_directory(ROOT):
         work = Path(directory)

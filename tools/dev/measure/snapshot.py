@@ -27,6 +27,7 @@ import sys
 import tempfile
 from collections.abc import Mapping, Sequence
 
+from .. import cell
 from ..runners import Finished, emit, write
 from . import bench
 
@@ -55,7 +56,7 @@ HELP = '''# snapshot — measure the tree once and emit one perf snapshot as JSO
 
 '''
 # Backend name to the extension of its committed w3 fixture directory.
-BACKENDS = {'tkrzw': 'tkt', 'kyotocabinet': 'kct'}
+BACKENDS = {backend: cell.BACKEND_EXTENSIONS[backend] for backend in cell.BACKENDS if backend != 'bdb'}
 # What the run needs on PATH, checked in this order before anything is built.
 REQUIRED_TOOLS = ('cargo', 'gcc', 'readelf', 'strip', 'nm')
 INSTALL = [sys.executable, '-X', 'lazy_imports=normal', str(bench.ROOT / 'tools/dev/__main__.py'), 'packaging', 'install']
@@ -87,7 +88,7 @@ def parse_options(argv: Sequence[str]) -> Options:
     `--out` and `--backend` take the next word (empty when there is none, which
     the later checks then refuse); `-h` prints the header and ends the run with 0.
     """
-    out, backend, rest = '', 'tkrzw', list(argv)
+    out, backend, rest = '', cell.declared_default(), list(argv)
     while rest:
         flag = rest.pop(0)
         if flag == '--out':
@@ -201,8 +202,8 @@ def document(tools: 'Tools', env: Mapping[str, str], *, backend: str, pinned: bo
         },
         'artifacts': {
             'shipped_libpinyin': {
-                'recipe': ('just packaging install libpinyin --prefix=/usr --destdir=<stage> -- '
-                           f'--no-default-features --features {backend},shipped'),
+                'recipe': ('just packaging install libpinyin --prefix=/usr --destdir=<stage> -- ' +
+                           ' '.join([*cell.feature_flags(backend), '--features', 'shipped'])),
                 'sha256': hashlib.sha256(Path(shipped).read_bytes()).hexdigest(),
                 'bytes': os.path.getsize(shipped),
             },
@@ -250,7 +251,7 @@ def build_shipped(tools: Tools, env: Mapping[str, str], options: Options, work: 
     emit('==> building the shipped artifact (cinstall, the product path)')
     stage = work / 'stage'
     tools.run([*INSTALL, 'libpinyin', '--prefix=/usr', f'--destdir={stage}', '--',
-               '--no-default-features', '--features', f'{options.backend},shipped',
+               *cell.feature_flags(options.backend), '--features', 'shipped',
                '--target-dir', str(work / 'target-shipped')], env=env, stdout=sys.stderr)
     shipped = bench.find_named(stage, SHIPPED_NAME, any_type=True)
     if shipped is None:
@@ -268,8 +269,8 @@ def build_shipped(tools: Tools, env: Mapping[str, str], options: Options, work: 
 def build_fixture(tools: Tools, env: Mapping[str, str], backend: str, work: Path) -> tuple[Path, str]:
     """Build the alloc-count cdylib, a fixture nothing installs; return it and the recipe that built it."""
     emit('==> building the alloc-count artifact (a fixture; nothing installs it)')
-    recipe = ('cargo build --locked --release -p oxpinyin-capi --no-default-features '
-              f'--features {backend},alloc-count')
+    recipe = ' '.join(['cargo', 'build', '--locked', '--release', '-p', 'oxpinyin-capi',
+                       *cell.feature_flags(backend), '--features', 'alloc-count'])
     tools.run(recipe.split(), env=dict(env, CARGO_TARGET_DIR=str(work / 'target-alloc')), stdout=sys.stderr)
     cdylib = work / 'target-alloc/release/libpinyin_capi.so'
     if not cdylib.is_file():

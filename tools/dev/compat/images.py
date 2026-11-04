@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 import sys
 
-from .. import pool, slot
+from .. import cell, pool, slot
 from ..runners import Finished
 from .identity import digest_file
 from .process import ROOT, capture, fail, run, text
@@ -144,7 +144,7 @@ def verify_image(argv, *, root=ROOT):
                 raise Finished(created.status)
             run([engine, 'cp', f'{cid}:/opt/pinyin-oracle', f'{scratch}/oracle'], stdout=subprocess.DEVNULL)
             status = 0
-            for dbm in ('bdb', 'kc', 'tkrzw'):
+            for dbm in cell.CELLS:
                 for library in ('libpinyin', 'libzhuyin'):
                     path = Path(scratch) / 'oracle' / dbm / 'lib' / (library + '.so')
                     try:
@@ -216,7 +216,7 @@ def reproducible(argv, *, root=ROOT):
         run([engine, 'build', '--platform', platform, *extra, *build_flags, '--target', 'deps',
              '-f', Path(root) / 'tools/oracle/Dockerfile.oracle', '-t', image, root], heavy=True, stdout=sys.stderr)
     status = 0
-    for dbm in ('bdb', 'kc', 'tkrzw'):
+    for dbm in cell.CELLS:
         # Only this invocation's cidfile and token can authorize cleanup.
         def build(tag, work, prefix):
             def unit(context):

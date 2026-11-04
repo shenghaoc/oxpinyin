@@ -200,7 +200,8 @@ class SelectionTests(unittest.TestCase):
     def test_the_cells_are_the_ones_run_all_runs(self):
         run_all = runpy.run_path(str(SCRIPT.with_name('run-all.py')))
         self.assertEqual(cells_for_diff['CELLS'], run_all['CELLS'])
-        self.assertIn(cells_for_diff['REFERENCE_CELL'], cells_for_diff['CELLS'])
+        self.assertIn(cells_for_diff['cell'].default_cell(),
+                      cells_for_diff['CELLS'])
 
 
 class DirectoryTests(unittest.TestCase):

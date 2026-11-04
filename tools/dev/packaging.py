@@ -14,7 +14,7 @@ import shutil
 import sys
 import tempfile
 
-from . import pool, slot
+from . import cell, pool, slot
 from .runners import Finished, emit, guarded, status, write
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -350,6 +350,8 @@ def install_library(argv, tools):
     pc = layout.pcdir / (layout.library + '.pc')
     pc.write_bytes(data)
     emit(f'installed complete pkg-config file: {pc}')
+    selected = next((peer for peer in cell.BACKENDS if peer in layout.features().replace(',', ' ').split()),
+                    None) or cell.declared_default(tools.root)
     features = ['--features', layout.features()] if layout.features() else []
     if system == 'Linux':
         with directory(tools.root):
@@ -357,10 +359,10 @@ def install_library(argv, tools):
                     '--ver', str(crate / (layout.library + '.ver')),
                     '--soname', layout.library + '.so.15',
                     '--dest', layout.destdir + layout.libdir + '/' + layout.library + '.so.15.0.0',
-                    *features], tools)
+                    '--backend', selected, *features], tools)
     if system == 'Darwin' and layout.triple.endswith('-apple-darwin'):
         dylib = Path(layout.destdir + layout.libdir) / (layout.library + '.15.0.0.dylib')
-        relink_darwin(layout, dylib, tools)
+        relink_darwin(layout, dylib, tools, selected)
         host = '\n'.join(re.findall(r'^host: (.*)$', tools.text(['rustc', '-vV']), re.M))
         if layout.triple.split('-')[0] != host.split('-')[0]:
             emit(f'load check skipped: target {layout.triple} is not the running architecture ({host}); '
@@ -408,7 +410,7 @@ class DarwinIdentity:
                    field(identity, 'current version'), architecture[0], minimum)
 
 
-def relink_darwin(layout, destination, tools):
+def relink_darwin(layout, destination, tools, backend):
     """Link once under our allowlist, outside rustc's additive export lists."""
     from .abi import HostFacts, darwin_export_trie, exported_symbols, version_globals
 
@@ -420,10 +422,6 @@ def relink_darwin(layout, destination, tools):
     if not archive.is_file():
         fail(f'error: staticlib not found: {archive}')
     identity = DarwinIdentity.read(destination, tools)
-    backend = 'tkrzw'
-    for feature in layout.features().replace(',', ' ').split():
-        if feature in ('bdb', 'kyotocabinet', 'tkrzw'):
-            backend = feature
     glib = optional_pkg_config(['--libs', 'glib-2.0', 'gobject-2.0'], tools)
     flags = glib.stdout.decode().split() if not glib.status else ['-lglib-2.0', '-lgobject-2.0']
     flags += backend_flags(backend, tools, '-lc++')
@@ -470,11 +468,11 @@ def backend_flags(backend, tools, cxx):
 
 
 def relink(argv, tools):
-    values = dict(staticlib='', ver='', soname='', dest='', features=tools.env.get('OXPINYIN_RELINK_FEATURES') or '',
+    values = dict(staticlib='', ver='', soname='', dest='', backend='', features=tools.env.get('OXPINYIN_RELINK_FEATURES') or '',
                   cc=tools.env.get('CC') or 'cc')
     index = 0
     usage = ('usage: tools/packaging/relink-versioned.sh --staticlib PATH --ver PATH --soname NAME '
-             '--dest PATH [--features LIST] [--cc CC]')
+             '--dest PATH [--backend BACKEND] [--features LIST] [--cc CC]')
     while index < len(argv):
         key, value, index = option(argv, index)
         name = key.removeprefix('--').replace('-', '_')
@@ -493,10 +491,14 @@ def relink(argv, tools):
     for path, label in ((archive, 'staticlib'), (ver, 'version script'), (dest, 'installed object')):
         if not Path(path).is_file():
             fail(f'error: {label} not found: {path}')
-    backend = 'bdb'
-    for feature in values['features'].replace(',', ' ').split():
-        if feature in ('tkrzw', 'kyotocabinet', 'bdb'):
-            backend = feature
+    explicit = [peer for peer in cell.BACKENDS if peer in values['features'].replace(',', ' ').split()]
+    parts = Path(archive).parts
+    artifact_cell = next((parts[index + 1] for index, part in enumerate(parts[:-1]) if part == 'cells'), '')
+    artifact_backend = cell.CELL_TO_BACKEND.get(artifact_cell, '')
+    backend = values['backend'] or (explicit[0] if len(explicit) == 1 else '') or artifact_backend
+    if (backend not in cell.BACKENDS or (explicit and explicit != [backend])
+            or (artifact_backend and artifact_backend != backend)):
+        fail('error: relink needs exactly one selected backend from its build', 2)
     glib = optional_pkg_config(['--libs', 'glib-2.0', 'gobject-2.0'], tools)
     flags = glib.stdout.decode().split() if not glib.status else ['-lglib-2.0', '-lgobject-2.0']
     flags += backend_flags(backend, tools, '-lstdc++')
@@ -788,8 +790,8 @@ def release_stage(argv, tools):
     from . import packaging_templates as templates
     from tools.tkrzw.runtime import RuntimeRefused, check
     pcver = version(tools.root)
-    usage = 'usage: tools/packaging/release-stage.sh <kyotocabinet|tkrzw|bdb> --prefix=DIR --libdir=DIR [--dest=DIR]'
-    if not argv or argv[0] not in ('kyotocabinet', 'tkrzw', 'bdb'):
+    usage = 'usage: tools/packaging/release-stage.sh <' + '|'.join(cell.BACKENDS) + '> --prefix=DIR --libdir=DIR [--dest=DIR]'
+    if not argv or argv[0] not in cell.BACKENDS:
         fail(usage, 2)
     backend, values, index = argv[0], dict(prefix='', libdir='', dest=''), 1
     while index < len(argv):
@@ -818,8 +820,8 @@ def release_stage(argv, tools):
             suffix = ', features: shipped' if library == 'libpinyin' else ''
             emit(f'== installing {library} into {dest} (backend: {backend}{suffix}) ==')
             install([library, f'--prefix={prefix}', f'--libdir={libdir}', f'--destdir={dest}', '--',
-                     '--release', '--locked', '--no-default-features', '--features',
-                     backend + (',shipped' if library == 'libpinyin' else '')], tools)
+                     '--release', '--locked', *cell.feature_flags(backend),
+                     *(['--features', 'shipped'] if library == 'libpinyin' else [])], tools)
         lib, inc = Path(dest + libdir), Path(dest + prefix) / 'include' / ('libpinyin-' + pcver)
         pc = lib / 'pkgconfig'
         expected = [lib / (library + extension) for library in LIBRARIES
@@ -914,7 +916,7 @@ def metadata(argv, tools):
     from .cell import Settings
     backend = values['build_subject']
     environment = dict(tools.env)
-    if backend in ('bdb', 'tkrzw', 'kyotocabinet'):
+    if backend in cell.BACKENDS:
         environment.setdefault('PINYIN_ORACLE_DBM', 'kc' if backend == 'kyotocabinet' else backend)
     try:
         settings = Settings.read(environment, tools.root)

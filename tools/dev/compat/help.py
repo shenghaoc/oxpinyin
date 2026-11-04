@@ -44,7 +44,7 @@ run-differentials.sh — run the oxpinyin↔libpinyin oracle differentials
 against a built pinned oracle (libpinyin 2.11.92, Tkrzw backend, verified
 model20 data). Wires the PINYIN_* env vars the env-gated differential tests
 read, then runs them with the tkrzw backend EXPLICITLY — the flavour the
-pin-built oracle itself is (the workspace default moved to Berkeley DB on
+pin-built oracle itself is (the workspace default changed on
 2026-09-20, so this is now a pin, not a ride). Every side of these
 differentials is tkrzw: the oracle, the oxpinyin export below, and the
 backend-forwarding crates.
@@ -70,11 +70,11 @@ below):
      from data/table.conf.in, so the export starts from the pin's own
      data/table.conf (an installed one, or fixtures/w3/tkt/table.conf):
        cd <export dir> && cp <pin data>/table.conf .
-       cargo run -p oxpinyin-utils --no-default-features --features tkrzw \
+       cargo run -p oxpinyin-utils \
            --bin gen_binary_files -- --gen-punct-table --table-dir <model20 dir>
-       cargo run -p oxpinyin-utils --no-default-features --features tkrzw \
+       cargo run -p oxpinyin-utils \
            --bin import_interpolation -- --table-dir <model20 dir> < <model20 dir>/interpolation2.text
-       cargo run -p oxpinyin-utils --no-default-features --features tkrzw \
+       cargo run -p oxpinyin-utils \
            --bin gen_unigram -- --table-dir <model20 dir>
   4. The extracted model20 directory (--model), also used by the
      cross_backend read-back test. The runtime data-directory test reads

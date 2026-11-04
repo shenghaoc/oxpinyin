@@ -28,7 +28,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-from tools.dev import host, mman
+from tools.dev import cell as backend_cell, host, mman
 from tools.dev.measure import pages as page_map
 from tools.dev.measure.stats import (
     CONTROL_INTERVAL, RESIDENCY_FLOOR_KIB, RESIDENCY_FRACTION, percentile, summary,
@@ -139,8 +139,9 @@ def profile_contents(driver, directory, *, library=None, cell=None):
     so backend CDLLs do not stay mapped in the controller. Raw input identities
     stay separate. The registered padding/timestamp rules still apply.
     """
-    cell = cell or os.environ.get('CONTRACT_DIFF_CELL', getattr(driver, 'CELL', 'bdb'))
-    if cell not in ('bdb', 'kc', 'tkrzw'):
+    cell = (cell or os.environ.get('CONTRACT_DIFF_CELL') or getattr(driver, 'CELL', None)
+            or backend_cell.default_cell())
+    if cell not in backend_cell.CELLS:
         raise ValueError('unknown profile cell: ' + cell)
     result = {}
     for path in sorted(Path(directory).rglob('*')):
@@ -1193,7 +1194,7 @@ class Campaign:
         files = None
         self.driver.check_cancelled()
         try:
-            self.driver.check_tkrzw(os.environ.get('CONTRACT_DIFF_CELL', 'bdb'),
+            self.driver.check_tkrzw(os.environ.get('CONTRACT_DIFF_CELL') or backend_cell.default_cell(),
                                     'teardown.py', facade, library, env=env)
             cold_set = None
             if cold or mode == 'init':
@@ -1491,7 +1492,7 @@ def populate_user(campaign, pin, user, rows, *, sparse=False):
     if sparse:
         env['OXPINYIN_TEARDOWN_SPARSE'] = '1'
     campaign.driver.check_cancelled()
-    campaign.driver.check_tkrzw(os.environ.get('CONTRACT_DIFF_CELL', 'bdb'),
+    campaign.driver.check_tkrzw(os.environ.get('CONTRACT_DIFF_CELL') or backend_cell.default_cell(),
                                'teardown.py/populate', 'pin', pin, env=env)
     with subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                           text=True, start_new_session=True, pass_fds=campaign.fds) as process:
@@ -1827,7 +1828,7 @@ def init_attribute(campaign, subjects, profiles, cases, facades, references, dir
     change. The `pages` probe (Lackey) maps the facade pages init reads, runs
     and touches onto the object's section and symbol layout.
     """
-    cell = os.environ.get('CONTRACT_DIFF_CELL', 'bdb')
+    cell = os.environ.get('CONTRACT_DIFF_CELL') or backend_cell.default_cell()
     probes = getattr(campaign, 'init_probes', list(INIT_PROBE_ROUNDS))
     if 'trace' in probes and shutil.which('strace') is None:
         raise ValueError('init-attribute traces syscalls with strace; none is on PATH')

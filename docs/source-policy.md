@@ -368,7 +368,7 @@ Derive behaviour by reading the pin, never by running experiments:
 2. Read the relevant pin-built object's disassembly when source does not settle the question.
    This includes unresolved macros, templates, inline helpers, implementation-defined behaviour, undefined behaviour and compiler-selected evaluation order.
    Use objects from [`tools/oracle/build-oracle.sh`](../tools/oracle/build-oracle.sh).
-   Use the tkrzw reference-cell build by default.
+   Use the [default reference-cell build](runbooks/backends.md).
    Use `--dbm bdb|kc` for backend-specific code compiled only into that backend's build.
    Use `libzhuyin.so.15` from an `--enable-libzhuyin` build for the Zhuyin facade.
    Autoconf's default `-g -O2` retains line tables.
@@ -415,8 +415,8 @@ The default build remains bug-for-bug compatible under the recorded exceptions.
 The drop-in goal is `libpinyin.so.15` on the library path with unmodified consumers and existing system data, on Linux ([platform scope](#platform-scope-of-pinned-behaviour)).
 Build with exactly one of Berkeley DB, Kyoto Cabinet or tkrzw.
 Handle that backend's system and user files natively, as a same-backend libpinyin build does.
-tkrzw is the default backend and the reference cell.
-Berkeley DB and Kyoto Cabinet are non-default backends with the same drop-in compatibility.
+The [default backend](runbooks/backends.md) is the reference cell.
+Berkeley DB and Kyoto Cabinet are separate build variants with the same drop-in compatibility.
 The maintainer decision of 2026-10-30 UTC chose tkrzw because it is maintained upstream and they are not.
 Switching backend starts fresh for both implementations (maintainer ruling 2026-09-09).
 Do not reopen either decision as an unresolved trade-off.

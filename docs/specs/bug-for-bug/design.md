@@ -18,7 +18,7 @@ Stop at the first step that settles the behaviour:
    Use GLib `g_*`, libc and DBM C/C++ sources at the reference container's versions.
    Identify product behaviour and artefacts, rather than reproducing library internals.
 3. Read disassembly of the relevant object from `tools/oracle/build-oracle.sh`.
-   Use the tkrzw reference build by default.
+   Use the [default reference build](../../runbooks/backends.md).
    Use `--dbm bdb|kc` for backend-specific code, such as `chewing_large_table2_kyotodb.cpp`.
    That code exists only in its own build.
    Use `libzhuyin.so.15` from an `--enable-libzhuyin` build for Zhuyin.

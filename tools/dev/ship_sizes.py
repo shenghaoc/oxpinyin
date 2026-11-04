@@ -27,6 +27,8 @@ import subprocess
 import sys
 from typing import Sequence
 
+from . import cell
+
 ROOT = Path(__file__).resolve().parents[2]
 LIBRARIES = {'libpinyin': ('oxpinyin-capi', 'pinyin'), 'libzhuyin': ('oxpinyin-zhuyin-capi', 'zhuyin')}
 SCHEMA = 1
@@ -94,8 +96,7 @@ def first_line(argv: Sequence[str], root: Path) -> str:
 
 def reference_cell(root: Path = ROOT):
     """The reference cell, from the one place that defines its default."""
-    from .cell import Settings
-    return Settings.read({}, root)
+    return cell.Settings.read({}, root)
 
 
 def backend_packages(root: Path = ROOT) -> tuple[str, ...]:

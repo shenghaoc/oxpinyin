@@ -97,7 +97,6 @@ jobs:
       - uses: ./.github/actions/bootstrap
         with:
           safe-directory: 'true'
-      # The fuzz targets build the workspace default backend, tkrzw.
       - name: Provision tkrzw (built at the setup.sh revision and cached)
         uses: ./.github/actions/tkrzw
       # One nightly toolchain serves both cargo-fuzz's build and the runs
@@ -484,8 +483,8 @@ jobs:
           if-no-files-found: ignore
 
   # The full Windows workspace: clippy and the tests over the workspace
-  # less WINDOWS_EXCLUDES on the default backend, tkrzw, built with MSVC
-  # by the tkrzw action, and GLib from vcpkg. Moved here from
+  # less WINDOWS_EXCLUDES, built with MSVC
+  # and the tkrzw action, and GLib from vcpkg. Moved here from
   # ci.yml on 2026-10-22: it runs every night and on manual dispatch, not on
   # every PR. Dispatch it on the branch (windows_only: true) before merging
   # changes to Windows-sensitive storage, filesystem or native-build code,
@@ -654,8 +653,8 @@ jobs:
           read -ra excludes <<< "$WINDOWS_EXCLUDES"
           cargo test --locked --doc --workspace "${excludes[@]}"
 
-  # macOS links the default store backend, tkrzw, from the tkrzw action,
-  # selected explicitly so pinyin-oracle's oracle-ffi stays off. The
+  # macOS links tkrzw from the tkrzw action,
+  # with pinyin-oracle's oracle-ffi off. The
   # workspace tests exclude the two C-ABI crates (their facade tests are
   # Linux-first) and the backend-independent KMM tool. Their shipped macOS
   # libraries are built and checked separately below. The training package remains
@@ -768,8 +767,7 @@ jobs:
         shell: bash
         run: just test-tools
       # GLib and pkg-config from Homebrew; tkrzw from the tkrzw action, which
-      # puts its build first on PKG_CONFIG_PATH. `--no-default-features
-      # --features tkrzw` keeps pinyin-oracle's Linux-only `oracle-ffi` off.
+      # puts its build first on PKG_CONFIG_PATH.
       - name: Install GLib and pkg-config (Homebrew)
         run: brew install glib pkgconf
       - name: Provision tkrzw (built at the setup.sh revision and cached)
@@ -783,8 +781,8 @@ jobs:
       - name: Check shipped macOS library exports
         run: |
           stage="$RUNNER_TEMP/macos-shipped"
-          just packaging install libpinyin --prefix=/usr/local --destdir="$stage" -- --release --locked --no-default-features --features tkrzw,shipped
-          just packaging install libzhuyin --prefix=/usr/local --destdir="$stage" -- --release --locked --no-default-features --features tkrzw
+          just packaging install libpinyin --prefix=/usr/local --destdir="$stage" -- --release --locked --features shipped
+          just packaging install libzhuyin --prefix=/usr/local --destdir="$stage" -- --release --locked
           OXPINYIN_CAPI_SO="$stage/usr/local/lib/libpinyin.15.0.0.dylib" \
           OXPINYIN_ZHUYIN_SO="$stage/usr/local/lib/libzhuyin.15.0.0.dylib" \
             just abi exports --shipped
@@ -792,7 +790,7 @@ jobs:
       # macOS-only code fails here rather than nowhere.
       - name: Clippy (macOS)
         run: >
-          cargo clippy --locked --workspace --all-targets --no-default-features --features tkrzw
+          cargo clippy --locked --workspace --all-targets
           --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
           --exclude oxpinyin-kmm
           -- -D warnings
@@ -808,11 +806,11 @@ jobs:
           install -m755 cargo-nextest ~/.local/bin
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - run: >
-          cargo nextest run --locked --profile ci --status-level skip --workspace --no-default-features --features tkrzw
+          cargo nextest run --locked --profile ci --status-level skip --workspace
           --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
           --exclude oxpinyin-kmm
       # nextest does not run doctests; keep the same features and exclusions.
       - run: >
-          cargo test --locked --doc --workspace --no-default-features --features tkrzw
+          cargo test --locked --doc --workspace
           --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
           --exclude oxpinyin-kmm

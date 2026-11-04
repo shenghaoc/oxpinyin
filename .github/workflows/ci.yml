@@ -154,7 +154,7 @@ jobs:
         id: evidence
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 tools/dev/ci_tree.py evidence ci
+        run: python3 -m tools.dev.ci_tree evidence ci
       - name: Require the Bash floor
         shell: bash
         run: . tools/lib/bash-floor.sh
@@ -189,7 +189,7 @@ jobs:
           else
             base='${{ github.event.before }}'
           fi
-          python3 tools/dev/ship_sizes.py gate "$base"
+          python3 -m tools.dev.ship_sizes gate "$base"
 
   lint:
     needs: changes
@@ -222,8 +222,7 @@ jobs:
           rust-cache-key: lint-job
       - run: rustup show active-toolchain
       - name: Install build dependencies (apt)
-        # tkrzw is the default store backend (maintainer decision 2026-10-30
-        # UTC); the tkrzw action builds it, with this g++ and make, and
+        # The tkrzw action builds it with this g++ and make, and
         # points pkg-config at it. The tkrzw cxx bridge compiles with g++;
         # bindgen (libclang) serves the Berkeley DB lanes.
         run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libglib2.0-dev
@@ -332,7 +331,7 @@ jobs:
         if: needs.changes.outputs.reuse != 'true'
       - name: Refresh the main Rust cache using the lane's compile mode
         if: github.event_name == 'push' && needs.changes.outputs.reuse == 'true'
-        run: python3 tools/dev/ci_tree.py refresh lint
+        run: python3 -m tools.dev.ci_tree refresh lint
 
   test:
     needs: changes
@@ -364,8 +363,7 @@ jobs:
           rust-cache-key: test-job
       - run: rustup show active-toolchain
       - name: Install build dependencies (apt)
-        # tkrzw is the default store backend (maintainer decision 2026-10-30
-        # UTC); the tkrzw action builds it, with this g++ and make, and
+        # The tkrzw action builds it with this g++ and make, and
         # points pkg-config at it. The tkrzw cxx bridge compiles with g++;
         # bindgen (libclang) serves the Berkeley DB lanes.
         run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libglib2.0-dev
@@ -445,6 +443,13 @@ jobs:
       # PATH reach only the builds; before the cache refresh too.
       - name: Provision tkrzw (built at the setup.sh revision and cached)
         uses: ./.github/actions/tkrzw
+      # Default-backend rustdoc, warnings denied; the peers' rustdoc runs in
+      # store-backends.yml.
+      - name: Rustdoc for the default backend
+        if: needs.changes.outputs.reuse != 'true'
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --locked --no-deps --workspace
       - name: Install pinned cargo-nextest
         if: needs.changes.outputs.reuse != 'true'
         run: |
@@ -495,7 +500,7 @@ jobs:
 
       - name: Refresh the main Rust cache using the lane's compile mode
         if: github.event_name == 'push' && needs.changes.outputs.reuse == 'true'
-        run: python3 tools/dev/ci_tree.py refresh test
+        run: python3 -m tools.dev.ci_tree refresh test
 
   # Supply-chain gate. cargo-deny's advisories check consumes the same
   # RustSec DB cargo-audit uses, so this one job replaces both tools; the
@@ -565,7 +570,7 @@ jobs:
 
   # Stripped shipping-library sizes (constitution section 2). Builds both
   # facades with the release recipe (`just packaging install`) on the
-  # reference cell (bdb), strips them, checks their exports and writes the
+  # reference cell, strips them, checks their exports and writes the
   # base / PR table to the job summary. A failed build, install or export
   # check fails the job; a size increase does not.
   #
@@ -726,7 +731,7 @@ jobs:
         env:
           NEEDS: ${{ toJSON(needs) }}
           EVENT_NAME: ${{ github.event_name }}
-        run: python3 tools/dev/ci_tree.py aggregate ci
+        run: python3 -m tools.dev.ci_tree aggregate ci
 
 
   tree-evidence:

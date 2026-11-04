@@ -2,6 +2,7 @@
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 import datetime
+import functools
 import hashlib
 import json
 import os
@@ -11,10 +12,47 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import tomllib
 
 from . import slot
 
 ROOT = Path(__file__).resolve().parents[2]
+BACKENDS = ('bdb', 'kyotocabinet', 'tkrzw')
+CELL_TO_BACKEND = {'bdb': 'bdb', 'kc': 'kyotocabinet', 'tkrzw': 'tkrzw'}
+BACKEND_TO_CELL = {backend: cell for cell, backend in CELL_TO_BACKEND.items()}
+CELLS = tuple(CELL_TO_BACKEND)
+BACKEND_FORMATS = {'bdb': 'BerkeleyDB', 'kyotocabinet': 'KyotoCabinet', 'tkrzw': 'Tkrzw'}
+BACKEND_EXTENSIONS = {'bdb': 'db', 'kyotocabinet': 'kct', 'tkrzw': 'tkt'}
+
+
+@functools.cache
+def _declared_default(root: Path) -> str:
+    # [features] cannot be inherited from the workspace, so this file is the exact declaration.
+    manifest = root / 'crates/oxpinyin-store/Cargo.toml'
+    with manifest.open('rb') as file:
+        defaults = tomllib.load(file).get('features', {}).get('default')
+    if not isinstance(defaults, list) or len(defaults) != 1 or defaults[0] not in BACKENDS:
+        raise ValueError(f'oxpinyin-store needs one backend default: {defaults}')
+    return defaults[0]
+
+
+def declared_default(root: Path = ROOT) -> str:
+    """Read the one declared backend default, once per resolved checkout."""
+    return _declared_default(root.resolve())
+
+
+def default_cell() -> str:
+    """Return the cell name for Cargo's declared default backend."""
+    return BACKEND_TO_CELL[declared_default()]
+
+
+def feature_flags(backend: str | None = None) -> list[str]:
+    """Name every explicit backend; with none selected, leave the choice to Cargo."""
+    if backend is None:
+        return []
+    if backend not in BACKENDS:
+        raise ValueError(f'unknown backend: {backend}')
+    return ['--no-default-features', '--features', backend]
 
 
 def patch_digest(directory: Path) -> str:
@@ -120,14 +158,20 @@ class Settings:
     expected_pin: str
     target: Path
     environment: Mapping[str, str]
+    # Cargo features beside the one backend that `feature` names.
+    extra_features: tuple[str, ...] = ()
+
+    def feature_args(self) -> list[str]:
+        """The backend's explicit flags, then any extra Cargo features."""
+        extra = ['--features', ','.join(self.extra_features)] if self.extra_features else []
+        return [*feature_flags(self.feature), *extra]
 
     @classmethod
     def read(cls, environment: Mapping[str, str], root: Path = ROOT) -> 'Settings':
         root = root.resolve()
-        cell = environment.get('PINYIN_ORACLE_DBM') or 'tkrzw'
-        choices = {'bdb': ('bdb', 'db', 'BerkeleyDB'),
-                   'kc': ('kyotocabinet', 'kct', 'KyotoCabinet'),
-                   'tkrzw': ('tkrzw', 'tkt', 'Tkrzw')}
+        cell = environment.get('PINYIN_ORACLE_DBM') or BACKEND_TO_CELL[declared_default(root)]
+        choices = {cell: (backend, BACKEND_EXTENSIONS[backend], BACKEND_FORMATS[backend])
+                   for cell, backend in CELL_TO_BACKEND.items()}
         if cell not in choices:
             raise CellError(f'fatal: PINYIN_ORACLE_DBM={bash_word(cell)} is not one of: bdb kc tkrzw', 3)
         feature, extension, name = choices[cell]
@@ -177,8 +221,7 @@ class Settings:
                 artifact = self.root / artifact
         else:
             command = ['cargo', 'build', '--locked', '--manifest-path',
-                       str(self.root / 'Cargo.toml'), '-p', package, '--no-default-features',
-                       '--features', self.feature]
+                       str(self.root / 'Cargo.toml'), '-p', package, *self.feature_args()]
             if slot.run_command(command, env=self.environment, out=sys.stderr, cwd=self.root, stdout=2):
                 raise CellError(f'FAIL: building {package}', 1)
             artifact = self.target / 'debug' / filename
@@ -230,7 +273,7 @@ class Settings:
             return 0
         self.claim()
         common = ['--locked', '--manifest-path', str(self.root / 'Cargo.toml')]
-        features = ['--no-default-features', '--features', self.feature]
+        features = self.feature_args()
         selected = [part for package in dict.fromkeys(packages[item] for item in wanted if item in packages)
                     for part in ('-p', package)]
         if selected:

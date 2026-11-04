@@ -12,6 +12,7 @@ DBM, tools/dev/tool_diff.py) is recorded once as the case's `database_free`
 entry, which the verdict reads on every cell; every captured cell of such a
 case must digest the same. Nothing is spliced by hand.
 """
+from . import cell
 import argparse
 import json
 import re
@@ -21,7 +22,7 @@ from pathlib import Path
 from tools.bisection import contract_policy
 
 BLOCK = re.compile(r'^```contract-diff-policy\n(.*?)\n```$', re.M | re.S)
-CELLS = ('bdb', 'kc', 'tkrzw')
+CELLS = cell.CELLS
 REQUIRED = ('cell', 'case', 'userdir', 'abort', 'pin', 'subject')
 
 

@@ -3,6 +3,7 @@
 The just recipes stay thin. Resolve nextest's concurrency before admission,
 then pass its final budget through the same slot implementation as just heavy.
 """
+from . import cell
 from collections.abc import Mapping
 from dataclasses import dataclass
 import fnmatch
@@ -357,7 +358,7 @@ def run_tools(files=(), pattern=None, changed=None):
 SANITIZER_TOOLCHAIN = 'nightly-2026-09-07'
 SANITIZER_ALIASES = {'asan': 'address', 'tsan': 'thread', 'lsan': 'leak', 'msan': 'memory'}
 SANITIZER_NAMES = ('address', 'thread', 'leak', 'memory')
-SANITIZER_BACKENDS = ('bdb', 'kc', 'tkrzw')
+SANITIZER_BACKENDS = cell.CELLS
 SANITIZE_USAGE = ('usage: sanitize.sh [--check] <bdb|kc|tkrzw|all> '
                   '[address|thread|leak|memory]\n')
 
@@ -726,7 +727,7 @@ def sanitize(argv=None, *, out=sys.stdout, err=sys.stderr, environment=None, too
     if not 1 <= len(arguments) <= 2:
         err.write(SANITIZE_USAGE)
         return 2
-    backend_name = arguments[0]
+    backend_name = arguments[0] or cell.default_cell()
     sanitizer = arguments[1] if len(arguments) > 1 else 'address'
     sanitizer = SANITIZER_ALIASES.get(sanitizer, sanitizer)
     if backend_name not in (*SANITIZER_BACKENDS, 'all'):

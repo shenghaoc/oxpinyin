@@ -11,6 +11,7 @@ import shutil
 import sys
 import tempfile
 
+from .. import cell as backend_cell
 from ..cell import Settings
 from ..measure import bench
 from ..runners import Finished
@@ -138,12 +139,13 @@ def round_trip(argv, *, root=ROOT):
         for name in ('pin', 'ox'):
             (work / name).mkdir()
         dbm = fields(prefix / 'oracle-pin.txt').get('dbm')
-        cell = {'BerkeleyDB': 'bdb', 'KyotoCabinet': 'kc', 'Tkrzw': 'tkrzw'}.get(dbm)
+        cell = next((backend_cell.BACKEND_TO_CELL[backend] for backend, name in backend_cell.BACKEND_FORMATS.items()
+                     if name == dbm), None)
         if cell is None:
             fail(f'fatal: {prefix}/oracle-pin.txt names no known dbm (BerkeleyDB, KyotoCabinet, Tkrzw)')
         settings = Settings.read(dict(os.environ, PINYIN_ORACLE_DBM=os.environ.get('PINYIN_ORACLE_DBM') or cell), Path(root))
         env = dict(settings.environment)
-        feature_flags = words(env.get('OX_CARGO_FEATURES') or '--no-default-features --features ' + settings.feature)
+        feature_flags = words(env['OX_CARGO_FEATURES']) if env.get('OX_CARGO_FEATURES') else backend_cell.feature_flags(settings.feature)
         def pin(action, profile, *, output=None):
             command = [str(driver), action, str(data), str(work / profile), *(inputs if action == 'train' else [])]
             if output is None:
@@ -232,7 +234,7 @@ def drop_in(argv):
         fail(f'unknown backend {backend} (kc or tkrzw)', 2)
     work = Path(argv[2] if len(argv) > 2 else '/tmp/drop-in-' + backend)
     prefix = Path('/opt/libpinyin-' + backend)
-    features = [] if backend == 'kc' else ['--no-default-features', '--features', 'tkrzw']
+    features = backend_cell.feature_flags(backend_cell.CELL_TO_BACKEND[backend])
     theirs, ours = work / 'libpinyin', work / 'oxpinyin'
     shutil.rmtree(work, ignore_errors=True)
     theirs.mkdir(parents=True)

@@ -60,7 +60,7 @@ jobs:
       - name: Bootstrap the bare runner essentials (apt)
         run: |
           apt-get update -qq
-          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl gcc g++ make libc6-dev pkg-config libclang-dev libkyotocabinet-dev libglib2.0-dev
+          apt-get install -y --no-install-recommends bash python3 tar gzip zstd git ca-certificates curl gcc g++ make libc6-dev pkg-config libclang-dev libglib2.0-dev
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -82,18 +82,11 @@ jobs:
           mkdir -p ~/.local/bin
           install -m755 cargo-llvm-cov ~/.local/bin
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      - run: cargo llvm-cov --locked --workspace --no-default-features --features kyotocabinet --lcov --output-path lcov.info
-      # Coverage floor (2026-09-08): line coverage below the floor fails
-      # this lane. The lane is advisory (see the header), so the floor is
-      # enforced by review, not by branch protection. The report step reuses the profile data the
-      # lcov run collected, prints the per-crate table so the number is in
-      # the log (the lcov run prints nothing, and the first floored run
-      # failed without saying by how much), then applies the floor.
-      # Measured 2026-09-08 on this build: 77.33% lines (78.38% regions,
-      # 77.00% functions); the 81.92% recorded on 2026-08-29 was not
-      # cargo-llvm-cov's line figure. Floor 77 = the measured number.
-      # Raise it when the number rises, never lower it to pass.
-      - run: cargo llvm-cov report --summary-only --fail-under-lines 77
+      - name: Provision tkrzw (built at the setup.sh revision and cached)
+        uses: ./.github/actions/tkrzw
+      - run: cargo llvm-cov --locked --workspace --lcov --output-path lcov.info
+      # Default-backend run measured 85.83% lines on 2026-11-04.
+      - run: cargo llvm-cov report --summary-only --fail-under-lines 85
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-lcov

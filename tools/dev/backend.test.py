@@ -1,5 +1,5 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
-"""Backend-matrix and host-backend-probe fixtures with fake host tools."""
+"""Host-backend-probe fixtures with fake host tools."""
 import io
 import os
 from pathlib import Path
@@ -32,119 +32,6 @@ class FakeTools:
     def environment(self, **values):
         # Only the fakes: a removed fake must leave its tool absent, not expose the host's.
         return dict(os.environ, PATH=str(self.bin), **values)
-
-
-MATRIX_CARGO = '''#!/bin/sh
-case "$*" in
-  *"kyotocabinet,tkrzw"*|*"kyotocabinet,bdb"*|*"tkrzw,bdb"*|*"kyotocabinet,tkrzw,bdb"*)
-    echo "error: more than one store backend selected" >&2; exit 1 ;;
-esac
-case "$*" in
-  *"--no-default-features"*)
-    case "$*" in *"--features"*) ;; *) echo "error: no store backend selected" >&2; exit 1 ;; esac ;;
-esac
-exit 0
-'''
-
-
-class BackendMatrixTests(unittest.TestCase):
-    def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temp.cleanup)
-        self.tools = FakeTools(self.temp.name)
-        self.tools.add('cargo', MATRIX_CARGO)
-
-    def matrix(self, **values):
-        out, err = io.StringIO(), io.StringIO()
-        tools = check.native.Tools(environment=self.tools.environment(**values))
-        with mock.patch.object(tools, 'run', wraps=tools.run) as run:
-            status = check.backend_matrix(out=out, err=err, tools=tools)
-        prefix = ['cargo', 'check', '--locked', '-p', 'oxpinyin-store']
-        selections = [[], ['--no-default-features', '--features', 'kyotocabinet'],
-                      ['--no-default-features', '--features', 'tkrzw'],
-                      ['--no-default-features', '--features', 'bdb'],
-                      ['--no-default-features', '--features', 'kyotocabinet,tkrzw'],
-                      ['--no-default-features', '--features', 'kyotocabinet,bdb'],
-                      ['--no-default-features', '--features', 'tkrzw,bdb'],
-                      ['--no-default-features', '--features', 'kyotocabinet,tkrzw,bdb'],
-                      ['--no-default-features']]
-        self.assertEqual([call.args[0] for call in run.call_args_list],
-                         [prefix + args for args in selections])
-        return status, out.getvalue(), err.getvalue()
-
-    def test_valid_and_invalid_selections_report_nine_passes(self):
-        status, out, err = self.matrix()
-        self.assertEqual((status, err), (0, ''))
-        self.assertEqual([line.strip() for line in out.splitlines()
-                          if line.lstrip().startswith(('PASS', 'FAIL'))],
-                         ['PASS'] * 4 + ['PASS (refused by the exactly-one-backend guard)'] * 5)
-        self.assertIn('summary: 9 passed, 0 failed', out)
-
-    def test_a_failing_valid_build_prints_the_tail_and_fails(self):
-        cargo = '''#!/bin/sh
-case "$*" in
-  *"--features"*)
-    case "$*" in
-      *","*) echo "error: more than one store backend selected" >&2; exit 1 ;;
-      *) exit 0 ;;
-    esac ;;
-  *"--no-default-features"*) echo "error: no store backend selected" >&2; exit 1 ;;
-  *) printf 'one\\ntwo\\nthree\\n' >&2; exit 5 ;;
-esac
-'''
-        self.tools.add('cargo', cargo)
-        status, out, err = self.matrix()
-        self.assertEqual((status, err), (1, ''))
-        self.assertIn('   FAIL — expected a clean build; tail:\n', out)
-        self.assertIn('     three\n', out)
-        self.assertIn('summary: 8 passed, 1 failed', out)
-
-    def test_a_guard_that_does_not_fire_and_an_unrelated_refusal_are_failures(self):
-        cargo = '''#!/bin/sh
-case "$*" in
-  *"--features kyotocabinet,tkrzw,bdb"*|*"--features tkrzw,bdb"*)
-    echo "error: more than one store backend selected" >&2; exit 1 ;;
-  *"--features kyotocabinet,tkrzw"*) echo ok; exit 0 ;;
-  *"--features kyotocabinet,bdb"*)
-    echo "error: something else" >&2; exit 1 ;;
-  *"--features kyotocabinet"*|*"--features tkrzw"*|*"--features bdb"*) exit 0 ;;
-  *"--no-default-features"*)
-    echo "error: something else" >&2; exit 1 ;;
-  *) exit 0 ;;
-esac
-'''
-        self.tools.add('cargo', cargo)
-        status, out, err = self.matrix()
-        self.assertEqual((status, err), (1, ''))
-        self.assertIn('   FAIL — the guard did not fire, build succeeded', out)
-        self.assertIn('   FAIL — build refused for another reason:', out)
-        self.assertIn('     error: something else', out)
-        self.assertIn('summary: 6 passed, 3 failed', out)
-
-    def test_a_missing_cargo_is_named_for_every_valid_selection(self):
-        (self.tools.bin / 'cargo').unlink()
-        tools = check.native.Tools(environment=self.tools.environment())
-        for peer, label in check.VALID_MATRIX:
-            with self.subTest(selection=label):
-                self.assertEqual(check._matrix_result(tools, peer.split()),
-                                 (127, 'cargo: command not found\n'))
-        status, out, err = self.matrix()
-        self.assertEqual((status, err), (1, ''))
-        self.assertEqual([line.strip() for line in out.splitlines()
-                          if line.lstrip().startswith(('PASS', 'FAIL'))],
-                         ['FAIL — expected a clean build; tail:'] * 4
-                         + ['FAIL — build refused for another reason:'] * 5)
-        self.assertEqual(out.count('cargo: command not found'), 4)
-        self.assertIn('summary: 0 passed, 9 failed', out)
-
-    def test_a_non_executable_cargo_is_status_126_for_every_valid_selection(self):
-        self.tools.add('cargo', '#!/bin/sh\nexit 0\n').chmod(0o644)
-        tools = check.native.Tools(environment=self.tools.environment())
-        for peer, label in check.VALID_MATRIX:
-            with self.subTest(selection=label):
-                self.assertEqual(check._matrix_result(tools, peer.split())[0], 126)
-        status, _, err = self.matrix()
-        self.assertEqual((status, err), (1, ''))
 
 
 PROBE_BASE = '''#!/bin/sh

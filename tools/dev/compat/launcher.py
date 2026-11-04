@@ -9,7 +9,7 @@ import sys
 import tempfile
 import time
 
-from .. import slot
+from .. import cell, slot
 from ..native import shell_status
 from ..runners import Finished
 from . import boundary, identity, images, memory
@@ -30,7 +30,7 @@ def usage(error=False):
 def arguments(argv):
     """Keep the shell's first validation pass and diagnostic/status precedence."""
     args = list(argv)
-    values = dict(runtime=os.environ.get('OXPINYIN_CONTAINER', ''), platform='', cell='tkrzw',
+    values = dict(runtime=os.environ.get('OXPINYIN_CONTAINER', ''), platform='', cell=cell.default_cell(),
                   archive='', jobs='2', memory_mib=os.environ.get('OXPINYIN_CONTAINER_MEMORY_MIB', '2560'))
     selection = []
     selected = smoke = listing = False
@@ -63,7 +63,7 @@ def arguments(argv):
             values[option[2:].replace('-', '_')] = value
         else:
             selection += [option, value]
-    if values['cell'] not in ('bdb', 'kc', 'tkrzw'):
+    if values['cell'] not in cell.CELLS:
         fail('cell must be bdb, kc or tkrzw', 2)
     if not values['platform']:
         arch = text(['uname', '-m'])

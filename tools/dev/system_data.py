@@ -5,10 +5,11 @@ import re
 import shutil
 import sys
 
+from . import cell
 from .cell import CellError, Settings
 
 NAMES = {'db': 'Berkeley DB', 'kct': 'Kyoto Cabinet', 'tkt': 'tkrzw'}
-FEATURES = {'db': 'bdb', 'kct': 'kyotocabinet', 'tkt': 'tkrzw'}
+FEATURES = {extension: backend for backend, extension in cell.BACKEND_EXTENSIONS.items()}
 CORE = ('pinyin_index', 'phrase_index', 'bigram')
 NATIVE = ('pinyin_index.bin', 'phrase_index.bin', 'bigram.db')
 
@@ -19,7 +20,7 @@ def data_extension(directory: Path) -> str | None:
     value = ''
     if config.is_file():
         match = re.search(r'^database format:\s*([^\n]*)', config.read_text(), re.M)
-        value = {'BerkeleyDB': 'db', 'KyotoCabinet': 'kct', 'Tkrzw': 'tkt'}.get(
+        value = {cell.BACKEND_FORMATS[backend]: extension for backend, extension in cell.BACKEND_EXTENSIONS.items()}.get(
             ''.join(match[1].split()) if match else '', '')
     return value if value in NAMES else None
 

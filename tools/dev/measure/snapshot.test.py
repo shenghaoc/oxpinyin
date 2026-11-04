@@ -403,11 +403,12 @@ class RunTests(Scratch):
                      harness, '--perf', shipped, data]
         self.assertEqual(steps, [
             ['run', [*snapshot.INSTALL, 'libpinyin', '--prefix=/usr', f'--destdir={stage}', '--',
-                     '--no-default-features', '--features', 'tkrzw,shipped', '--target-dir', f'{work}/target-shipped']],
+                     '--no-default-features', '--features', 'tkrzw', '--features', 'shipped',
+                     '--target-dir', f'{work}/target-shipped']],
             ['run', ['strip', '--strip-all', shipped]],
             ['capture', ['nm', '-D', shipped]],
-            ['run', ['cargo', 'build', '--locked', '--release', '-p', 'oxpinyin-capi', '--no-default-features',
-                     '--features', 'tkrzw,alloc-count']],
+            ['run', ['cargo', 'build', '--locked', '--release', '-p', 'oxpinyin-capi',
+                     '--no-default-features', '--features', 'tkrzw', '--features', 'alloc-count']],
             ['run', ['gcc', '-std=gnu11', '-O2', '-o', harness, 'tools/bisection/bisect.c', '-ldl']],
             ['capture', ['readelf', '-S', '-W', shipped]],
             ['capture', [*pin, harness, '--perf', alloc, data]],
@@ -494,11 +495,11 @@ class RunTests(Scratch):
             'artifacts': {
                 'shipped_libpinyin': {
                     'recipe': 'just packaging install libpinyin --prefix=/usr --destdir=<stage> -- '
-                              '--no-default-features --features tkrzw,shipped',
+                              '--no-default-features --features tkrzw --features shipped',
                     'sha256': hashlib.sha256(b'stripped').hexdigest(), 'bytes': 8},
                 'alloccount_libpinyin': {
-                    'recipe': 'cargo build --locked --release -p oxpinyin-capi --no-default-features '
-                              '--features tkrzw,alloc-count'}},
+                    'recipe': 'cargo build --locked --release -p oxpinyin-capi '
+                              '--no-default-features --features tkrzw --features alloc-count'}},
             'metrics': {'section_sum': SECTION_SUM, 'stripped_size': 8,
                         'alloc_count_per_cycle': 25, 'alloc_bytes_per_cycle': 1024,
                         'rss_first_cycle_kib': 100, 'rss_last_cycle_kib': 200,
@@ -512,10 +513,12 @@ class RunTests(Scratch):
         self.assertEqual(doc['environment']['backend'], 'kyotocabinet')
         self.assertEqual(doc['environment']['fixture_sha256'],
                          hashlib.sha256(b'two.bin' + b'two' + b'one.bin' + b'kct').hexdigest())
-        self.assertIn('kyotocabinet,shipped', tools.commands('run')[0])
-        self.assertIn('kyotocabinet,alloc-count', tools.commands('run')[2])
+        self.assertIn('kyotocabinet', tools.commands('run')[0])
+        self.assertIn('shipped', tools.commands('run')[0])
+        self.assertIn('kyotocabinet', tools.commands('run')[2])
+        self.assertIn('alloc-count', tools.commands('run')[2])
         self.assertEqual(doc['artifacts']['alloccount_libpinyin']['recipe'].rsplit(' ', 1)[1],
-                         'kyotocabinet,alloc-count')
+                         'alloc-count')
 
     def test_the_provenance_defaults_apply_when_the_ci_variables_are_absent(self):
         self.environment = {'PATH': '/usr/bin'}

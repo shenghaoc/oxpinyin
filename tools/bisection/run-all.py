@@ -25,6 +25,7 @@ if str(ROOT) not in sys.path:
 from tools.dev import host as _host
 from tools.dev import registry as _registry
 from tools.dev import slot as _slot
+from tools.dev import cell as backend_cell
 from tools.dev.cell import Settings as CellSettings
 from tools.bisection.contract_selection import prefix_matches
 
@@ -89,7 +90,7 @@ class HeavyAdmission(_slot.HeavyAdmission):
         super().__init__(*args, **kwargs)
 
 
-CELLS = ('bdb', 'kc', 'tkrzw')
+CELLS = backend_cell.CELLS
 # The results table. build_seconds is the cell's one build, shared by every row
 # of that cell; lock_wait_seconds is the runner's wait for its exclusive
 # resources (#899); slot_wait_seconds is the runner's wait for the heavy slot,
@@ -452,7 +453,7 @@ def run_main():
     parser.add_argument('--cases-prefix', metavar='P[,P...]',
                         help='union of contract case ID prefixes from the full registry, including untagged '
                              'cases; every prefix must match (requires contract-diff)')
-    parser.add_argument('--cells', default='tkrzw', help='comma-separated bdb,kc,tkrzw')
+    parser.add_argument('--cells', help='comma-separated cells')
     parser.add_argument('--issue', action='append', default=[],
                         help='issue number, W tag, or row:N; selects the runners and the exact '
                              'contract-diff cases registered under it')
@@ -503,9 +504,9 @@ def run_main():
     unknown = selected - names
     if unknown:
         parser.error('unknown runners: ' + ', '.join(sorted(unknown)))
-    cells = list(dict.fromkeys(args.cells.split(',')))
+    cells = list(dict.fromkeys((args.cells if args.cells is not None else backend_cell.default_cell()).split(',')))
     if not cells or set(cells) - set(CELLS):
-        parser.error('--cells must select bdb,kc,tkrzw')
+        parser.error('--cells must select ' + ','.join(CELLS))
     # An issue tag also resolves to the exact contract cases registered under
     # it; those run through the contract-diff runner with --cases. Nothing
     # matching anywhere is an error that names what exists, never the suite.

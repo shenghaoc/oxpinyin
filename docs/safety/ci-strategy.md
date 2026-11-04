@@ -35,7 +35,7 @@ Doctest step only if nextest lands. Gates: all hard.
 
 ## Tier 2 — EXTENDED QUALITY (path-filtered / nightly-lite, ~+5–8 min)
 
-- `cargo llvm-cov` report artifact with a 77% line-coverage floor (runs on PR when
+- `cargo llvm-cov` report artifact with an 85% line-coverage floor, which applies to the default backend (runs on PR when
   library-path crates change).
 - `cargo geiger` report artifact (unsafe-in-deps diff vs main). *(Retired 2026-09-01 — see `docs/findings/verify-nightly.md`.)*
 - Lizard report with CCN capped at 40 (`lizard crates/ -l rust -C 40`;
@@ -52,7 +52,7 @@ Doctest step only if nextest lands. Gates: all hard.
 > supported external interfaces. geiger was retired 2026-09-01.
 - macOS keeps its portable PR test job; the Windows one runs nightly and
   on dispatch (`verify-nightly.yml` `test-windows`); `store-backends.yml`
-  (`store-features`, `backend-matrix`, `store-backends-gate`,
+  (`store-features`, `store-backends-gate`,
   `tkrzw-sanitizers`) proves every backend selection compiles and runs
   the C-backed ones under ASan/UBSan.
 
@@ -116,7 +116,7 @@ libchewing convention), they do not auto-block unless a ratchet exists
 | overflow release lane | | | ✔ | |
 | Kani | | | dropped | |
 | cargo-mutants | | | retired 2026-09-01 | |
-| llvm-cov floor (77% lines) | | ✔ path-filtered (core/engine/user/data/facade/segment/chewing/capi-marshal/store/runtime/capi/zhuyin-capi) | ✔ | planned (T4 not built) |
+| llvm-cov floor (85% lines, default backend) | | ✔ path-filtered (core/engine/user/data/facade/segment/chewing/capi-marshal/store/runtime/capi/zhuyin-capi) | ✔ | planned (T4 not built) |
 | geiger | | planned (T2 not built) | retired 2026-09-01 | |
 | Lizard ratchet | ✔ (lint job) | | | |
 | cargo-public-api snapshot (engine) | | | retired 2026-10-18 | |

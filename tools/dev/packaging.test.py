@@ -251,6 +251,9 @@ class PackagingTests(unittest.TestCase):
                 if source.is_file():
                     shutil.copyfile(source, self.root / 'crates' / crate / source.name)
         shutil.copyfile(ROOT / 'tools/oracle/oracle-pin.txt', self.root / 'tools/oracle/oracle-pin.txt')
+        # declared_default() reads the store manifest's [features].default from the checkout.
+        (self.root / 'crates/oxpinyin-store').mkdir(parents=True)
+        shutil.copyfile(ROOT / 'crates/oxpinyin-store/Cargo.toml', self.root / 'crates/oxpinyin-store/Cargo.toml')
         self.bin = self.work / 'bin'
         self.bin.mkdir()
         self.env = {**os.environ, 'PATH': str(self.bin) + os.pathsep + os.environ['PATH'],
@@ -746,6 +749,28 @@ if os.environ.get('EXTRA_EXPORT'): print('00000002 T leak@@LIBPINYIN')
                 self.assertIn('-lstdc++', args)
                 self.assertEqual(list(self.work.glob('*.relink.*')), [])
 
+    def test_relink_derives_the_backend_from_a_cells_archive_path(self):
+        self.fake('uname', "print('Linux')")
+        self.fake('cc', r"""import json,os,sys
+from pathlib import Path
+args=sys.argv[1:]
+Path(os.environ['CALLS']).write_text(json.dumps(args))
+Path(args[args.index('-o')+1]).write_bytes(b'linked')
+""")
+        self.fake('nm', "print('00000000 A LIBPINYIN'); print('00000001 T pinyin_init@@LIBPINYIN')")
+        self.fake('readelf', "print('(SONAME) [libpinyin.so.15]')")
+        cell_dir = self.work / 'target/cells/bdb/release'
+        cell_dir.mkdir(parents=True)
+        archive, ver, dest = cell_dir / 'library.a', self.work / 'library.ver', self.work / 'libpinyin.so.15.0.0'
+        archive.write_bytes(b'archive')
+        ver.write_text('LIBPINYIN {\n global:\n pinyin_init;\n local:\n *;\n};\n')
+        dest.write_bytes(b'original')
+        result = self.invoke('relink-versioned', ['--staticlib', archive, '--ver', ver, '--soname', 'libpinyin.so.15',
+                                                  '--dest', dest, '--cc', self.bin / 'cc'])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(dest.read_bytes(), b'linked')
+        self.assertIn('-ldb', json.loads((self.work / 'calls').read_text()))
+
     def test_relink_cancellation_status_original_file_and_cleanup(self):
         self.fake('uname', "print('Linux')")
         archive, ver, dest = [self.work / name for name in ('library.a','library.ver','libpinyin.so.15.0.0')]
@@ -753,7 +778,7 @@ if os.environ.get('EXTRA_EXPORT'): print('00000002 T leak@@LIBPINYIN')
         ver.write_text('LIBPINYIN {\n global:\n pinyin_init;\n local:\n *;\n};\n')
         ready = self.work / 'ready'
         self.fake('cc', "import os,time; from pathlib import Path; Path(os.environ['READY']).write_text('ready'); time.sleep(.8)")
-        arguments = ['--staticlib',str(archive),'--ver',str(ver),'--soname','libpinyin.so.15','--dest',str(dest)]
+        arguments = ['--staticlib',str(archive),'--ver',str(ver),'--soname','libpinyin.so.15','--dest',str(dest),'--backend','bdb']
         for sig in (signal.SIGINT, signal.SIGTERM):
             dest.write_bytes(b'original')
             ready.unlink(missing_ok=True)

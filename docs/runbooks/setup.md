@@ -11,9 +11,7 @@ requires no container, oracle or model20 (upstream reference model data).
 ## Storage backend
 
 Storage-dependent crates build against one DBM backend per build. The
-default is tkrzw, the reference cell, on Linux, macOS and Windows alike
-(maintainer decision 2026-10-30 UTC: tkrzw is maintained upstream; Berkeley
-DB and Kyoto Cabinet are not). The build finds tkrzw through pkg-config;
+[default backend](backends.md) is the reference cell on every platform. The build finds tkrzw through pkg-config;
 the platform sections below install it. Berkeley DB 5.3 and Kyoto Cabinet
 are non-default backends ([backends](backends.md)).
 
@@ -31,8 +29,7 @@ The **linker** connects compiled code into executables and native libraries.
 
 Use Bash 5.0 or newer. Linux is one native platform target. You need Git,
 curl and CA certificates, a C/C++ compiler and linker, Make, pkg-config,
-libclang, tkrzw development files (the default store backend, maintainer
-decision 2026-10-30 UTC: tkrzw is maintained upstream) and GLib development
+libclang, tkrzw development files (the [default store backend](backends.md)) and GLib development
 files. Berkeley DB **5.3** and Kyoto Cabinet are needed only to build those
 non-default backends.
 A development package supplies the headers and libraries needed to
@@ -430,7 +427,7 @@ The native Rust test entry point uses cargo-nextest at or above the
 needs it); `just doctor` reports it. Install it with
 `cargo install cargo-nextest --locked` (or the prebuilt release). `just test` calls `slot.run_command` directly through
 `tools.dev.test_runner` with the local profile. Pass the same crate and
-feature selection as cargo test (the default workspace feature is tkrzw). Set `NEXTEST_PROFILE=ci` for the CI limits. `just test-doc` runs
+feature selection as cargo test (see [backend selection](backends.md)). Set `NEXTEST_PROFILE=ci` for the CI limits. `just test-doc` runs
 `cargo test --doc` under heavy-slot admission.
 
 Use your system's official package documentation if names or enabled
@@ -549,7 +546,7 @@ just check
 ```
 
 `export` sets a setting inherited by commands in this terminal. pkg-config
-finds Homebrew's tkrzw, the default backend on every OS; its `tkrzw.pc` names
+finds Homebrew's tkrzw, the selected backend; its `tkrzw.pc` names
 the lz4, lzma and zstd libraries without their directory, which
 `LIBRARY_PATH` supplies. To use a tkrzw you built yourself (`just tkrzw-build
 DIR`), put `DIR/lib/pkgconfig` first on `PKG_CONFIG_PATH` and `DIR/lib` on
@@ -562,7 +559,7 @@ differentials are separate evidence, not permanent restrictions on portability.
 The nightly macOS CI job uses this broader portable scope:
 
 ```bash
-cargo test --locked --workspace --no-default-features --features tkrzw \
+cargo test --locked --workspace \
   --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi \
   --exclude oxpinyin-kmm
 ```
@@ -655,7 +652,7 @@ MSVC environment and toolchain; no project-specific IDE is required.
 
 **Storage-dependent native Windows scope:** the Windows CI job runs clippy,
 `cargo nextest run --profile ci` and the doctests over the portable
-workspace on the default backend, tkrzw. `.github/actions/tkrzw` builds the
+workspace on the [default backend](backends.md). `.github/actions/tkrzw` builds the
 upstream revision `tools/cloud/setup.sh` provisions with `nmake -f
 VCMakefile` in the Visual Studio developer environment (a static
 `tkrzw.lib` with the DLL C runtime that Rust's MSVC targets link) and
@@ -770,7 +767,7 @@ just clippy --locked -p oxpinyin-store --all-targets --no-default-features --fea
 just heavy -- cargo test --locked -p oxpinyin-store --no-default-features --features bdb
 ```
 
-`--no-default-features` turns off the default tkrzw selection;
+`--no-default-features` turns off the [default selection](backends.md);
 `--features bdb` selects Berkeley DB explicitly (exactly one backend is allowed).
 Clippy's `--` separates Cargo options from the lint options that follow.
 Use your preferred native editor/debugger with this same toolchain and
@@ -832,7 +829,7 @@ of completing a contribution.
 - Native Windows: the maintained CI scope passed at `56618e7f`.
   No local Windows storage installation was executed.
   That run used vcpkg's Berkeley DB 4.8, then the default; since 2026-10-30
-  the job runs the default tkrzw built with MSVC by `.github/actions/tkrzw`.
+  the job runs the [default backend](backends.md) built with MSVC by `.github/actions/tkrzw`.
 - Canonical Debian/Linux amd64 compatibility environment: BDB `same-data-dir-diff` and cache/
   environment-isolation resume passed on rootless Podman. Other runtime
   interoperability was not executed. Apple's volume-reader result retrieval

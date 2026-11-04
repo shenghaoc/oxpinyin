@@ -27,7 +27,7 @@ import tempfile
 from collections.abc import Mapping, Sequence
 
 from ..runners import Finished, emit, write
-from .. import slot
+from .. import cell, slot
 from . import bench, identity, reports
 from .bench import Arm, Bench, fail, setting
 
@@ -247,8 +247,8 @@ def perf_matrix(argv: Sequence[str], env: Mapping[str, str]) -> int:
         arms = [Arm(name, so, data, so.parent) for name, so, data in cells]
         a, b, c, d = arms
         worker = measured(env, label, bench.BISECT / 'bisect', cpu)
-        worker.standalone('pin', a, 'tkrzw')
-        worker.standalone('subject', c, 'tkrzw')
+        worker.standalone('pin', a, cell.default_cell())
+        worker.standalone('subject', c, cell.default_cell())
 
         emit('=== Matrix Configuration ===')
         for arm in arms:
@@ -372,8 +372,8 @@ def perf_same_data(argv: Sequence[str], env: Mapping[str, str]) -> int:
                 Arm('oxpinyin-tkrzw', tkrzw_so, a_data, tkrzw_so.parent),
                 Arm('oxpinyin-kc', kc_so, b_data, kc_so.parent)]
         worker = measured(env, label, harness, cpu)
-        worker.standalone('pin', arms[0], 'tkrzw')
-        worker.standalone('subject', arms[2], 'tkrzw')
+        worker.standalone('pin', arms[0], cell.default_cell())
+        worker.standalone('subject', arms[2], cell.default_cell())
 
         emit('=== Same-data matrix configuration ===')
         for arm in arms:
@@ -825,7 +825,7 @@ def steady_comparison_inner(argv: Sequence[str], env: Mapping[str, str]) -> int:
     if sys.platform != 'linux':
         fail('steady-comparison requires Linux, ext4 and Valgrind', 2)
     parser = argparse.ArgumentParser(description=steady_comparison_inner.__doc__)
-    parser.add_argument('--cell', required=True, choices=('bdb', 'kc', 'tkrzw'))
+    parser.add_argument('--cell', required=True, choices=cell.CELLS)
     for name in ('base', 'pr', 'pin', 'base-alloc', 'pr-alloc', 'system-dir', 'out'):
         parser.add_argument('--' + name, required=True, type=Path)
     parser.add_argument('--user-dir', type=Path, help='starting profile, copied privately for every launch')
@@ -1003,7 +1003,7 @@ def stack_comparison_inner(argv: Sequence[str], env: Mapping[str, str]) -> int:
     provisioned. Each workload's records go to WORK/<workload>.log.
     """
     parser = argparse.ArgumentParser(description=stack_comparison_inner.__doc__)
-    parser.add_argument('--cell', required=True, choices=('bdb', 'kc', 'tkrzw'))
+    parser.add_argument('--cell', required=True, choices=cell.CELLS)
     for name in ('pin-prefix', 'base-prefix', 'pr-prefix', 'base-alloc', 'pr-alloc', 'work'):
         parser.add_argument('--' + name, required=True, type=Path)
     parser.add_argument('--arm', action='append', default=[], metavar='NAME=PREFIX',

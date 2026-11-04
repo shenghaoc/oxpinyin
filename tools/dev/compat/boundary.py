@@ -11,7 +11,7 @@ import re
 import subprocess
 import sys
 
-from .. import doctor, host, registry
+from .. import cell, doctor, host, registry
 from .identity import digest_file, unredirected
 
 HOST_SETTINGS = frozenset({
@@ -92,7 +92,7 @@ def validate(argv, environ=None):
     parser = argparse.ArgumentParser(prog=str(Path(__file__)), allow_abbrev=False)
     parser.add_argument('--runtime')
     parser.add_argument('--platform', choices=('linux/amd64', 'linux/arm64'))
-    parser.add_argument('--cell', choices=('bdb', 'kc', 'tkrzw'), default='tkrzw')
+    parser.add_argument('--cell', choices=cell.CELLS, default=cell.default_cell())
     parser.add_argument('--archive', type=Path)
     parser.add_argument('--jobs', type=positive, default=2)
     parser.add_argument('--memory-mib', type=positive,

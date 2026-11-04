@@ -667,14 +667,14 @@ class PureTests(unittest.TestCase):
             db.write_bytes(b'A' * 12 + b'\x62\x31\x05\x00' + b'arbitrary')
             (root / 'unexpected.tmp').write_bytes(b'kept')
             driver = SimpleNamespace(index_file_rows=lambda _: [['01', ''], ['02', '03']])
-            a = td.profile_contents(driver, root)
+            a = td.profile_contents(driver, root, cell='bdb')
             db.write_bytes(b'B' * 12 + b'\x62\x31\x05\x00' + b'changed metadata')
-            b = td.profile_contents(driver, root)
+            b = td.profile_contents(driver, root, cell='bdb')
             self.assertEqual(a, b)
             self.assertEqual(a['user_bigram.db']['rows'][0], ['01', ''])
             self.assertIn('unexpected.tmp', a)
             driver.index_file_rows = lambda _: [['01', ''], ['02', '04']]
-            self.assertNotEqual(a, td.profile_contents(driver, root))
+            self.assertNotEqual(a, td.profile_contents(driver, root, cell='bdb'))
 
 
     def peer_driver(self, rows):
