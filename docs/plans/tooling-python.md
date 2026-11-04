@@ -48,8 +48,10 @@ Each remaining implementation PR needs its own approval.
 Use uv-managed CPython of the 3.15 series only: 3.15.0 or newer, below 3.16
 (maintainer ruling 2026-10-23 UTC, #1074). Use the standard library only.
 Require uv 0.13.1 or newer (maintainer ruling 2026-10-22 UTC). This floor
-replaces the earlier exact uv 0.13.1 pin. CI installs exactly uv 0.13.1 from
-the checksummed release. Hosts may use any later uv.
+replaces the earlier exact uv 0.13.1 pin. CI installs the newest uv that
+satisfies that floor through `astral-sh/setup-uv`, which reads
+`required-version` from `uv.toml`; no workflow states a uv version. Hosts may
+use any later uv.
 Use the GIL-enabled CPython request that `.python-version` states, the one place
 the interpreter version is written (#1246).
 uv 0.13.1 documents the implementation/version and `+gil` request forms in

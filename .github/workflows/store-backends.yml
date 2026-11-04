@@ -425,6 +425,7 @@ jobs:
       - uses: ./.github/actions/bootstrap
         with:
           safe-directory: 'true'
+          uv: 'true'
 
       # The sanitizer nightly is declared once in tools/dev/test_runner.py and
       # read through `tools.dev sanitize-toolchain`. RUSTUP_TOOLCHAIN beats
@@ -432,29 +433,6 @@ jobs:
       - name: Set up pinned repository Python
         run: |
           set -euo pipefail
-          uv_install_dir="$HOME/.local/bin"
-          (
-            [[ $(uname -s)-$(uname -m) == Linux-x86_64 ]]
-            uv_target=x86_64-unknown-linux-gnu
-            # Published in https://github.com/astral-sh/uv/releases/download/0.13.1/sha256.sum.
-            # Exact on purpose (#1074): a checksum is only known for a known version.
-            uv_sha256=eadd9d27c134ab5ac1ffd4473b97a741407f3ea238288f03121fc4deddf90220
-            # Keep the archive in memory. Write only its verified executables.
-            uv_payload=$(curl --fail --location --retry 3 "https://github.com/astral-sh/uv/releases/download/0.13.1/uv-$uv_target.tar.gz" | base64)
-            uv_actual=$(printf '%s' "$uv_payload" | base64 -d | sha256sum)
-            [[ ${uv_actual%% *} == "$uv_sha256" ]] || { printf 'uv archive checksum mismatch\n' >&2; exit 1; }
-            uv_tmp=$(mktemp -d)
-            trap 'rm -rf "$uv_tmp"' EXIT
-            trap 'exit 1' HUP INT TERM
-            printf '%s' "$uv_payload" | base64 -d | tar -xz -C "$uv_tmp" "uv-$uv_target/uv" "uv-$uv_target/uvx"
-            mkdir -p "$uv_install_dir"
-            install -m755 "$uv_tmp/uv-$uv_target/uv" "$uv_tmp/uv-$uv_target/uvx" "$uv_install_dir/"
-            printf 'uv archive SHA-256 verified: %s\n' "$uv_sha256"
-          )
-          export PATH="$HOME/.local/bin:$PATH"
-          hash -r
-          printf '%s\n' "$HOME/.local/bin" >> "$GITHUB_PATH"
-          uv --version | grep -q '^uv 0\.13\.1 '
           tools/install-python.sh
           uv run --no-project --managed-python python -X lazy_imports=normal - <<'PYTHON'
           from pathlib import Path
@@ -562,34 +540,12 @@ jobs:
       - uses: ./.github/actions/bootstrap
         with:
           safe-directory: 'true'
+          uv: 'true'
 
       # Same nightly source as the tkrzw lane above.
       - name: Set up pinned repository Python
         run: |
           set -euo pipefail
-          uv_install_dir="$HOME/.local/bin"
-          (
-            [[ $(uname -s)-$(uname -m) == Linux-x86_64 ]]
-            uv_target=x86_64-unknown-linux-gnu
-            # Published in https://github.com/astral-sh/uv/releases/download/0.13.1/sha256.sum.
-            # Exact on purpose (#1074): a checksum is only known for a known version.
-            uv_sha256=eadd9d27c134ab5ac1ffd4473b97a741407f3ea238288f03121fc4deddf90220
-            # Keep the archive in memory. Write only its verified executables.
-            uv_payload=$(curl --fail --location --retry 3 "https://github.com/astral-sh/uv/releases/download/0.13.1/uv-$uv_target.tar.gz" | base64)
-            uv_actual=$(printf '%s' "$uv_payload" | base64 -d | sha256sum)
-            [[ ${uv_actual%% *} == "$uv_sha256" ]] || { printf 'uv archive checksum mismatch\n' >&2; exit 1; }
-            uv_tmp=$(mktemp -d)
-            trap 'rm -rf "$uv_tmp"' EXIT
-            trap 'exit 1' HUP INT TERM
-            printf '%s' "$uv_payload" | base64 -d | tar -xz -C "$uv_tmp" "uv-$uv_target/uv" "uv-$uv_target/uvx"
-            mkdir -p "$uv_install_dir"
-            install -m755 "$uv_tmp/uv-$uv_target/uv" "$uv_tmp/uv-$uv_target/uvx" "$uv_install_dir/"
-            printf 'uv archive SHA-256 verified: %s\n' "$uv_sha256"
-          )
-          export PATH="$HOME/.local/bin:$PATH"
-          hash -r
-          printf '%s\n' "$HOME/.local/bin" >> "$GITHUB_PATH"
-          uv --version | grep -q '^uv 0\.13\.1 '
           tools/install-python.sh
           uv run --no-project --managed-python python -X lazy_imports=normal - <<'PYTHON'
           from pathlib import Path
@@ -679,34 +635,12 @@ jobs:
       - uses: ./.github/actions/bootstrap
         with:
           safe-directory: 'true'
+          uv: 'true'
 
       # Same nightly source as the tkrzw lane above.
       - name: Set up pinned repository Python
         run: |
           set -euo pipefail
-          uv_install_dir="$HOME/.local/bin"
-          (
-            [[ $(uname -s)-$(uname -m) == Linux-x86_64 ]]
-            uv_target=x86_64-unknown-linux-gnu
-            # Published in https://github.com/astral-sh/uv/releases/download/0.13.1/sha256.sum.
-            # Exact on purpose (#1074): a checksum is only known for a known version.
-            uv_sha256=eadd9d27c134ab5ac1ffd4473b97a741407f3ea238288f03121fc4deddf90220
-            # Keep the archive in memory. Write only its verified executables.
-            uv_payload=$(curl --fail --location --retry 3 "https://github.com/astral-sh/uv/releases/download/0.13.1/uv-$uv_target.tar.gz" | base64)
-            uv_actual=$(printf '%s' "$uv_payload" | base64 -d | sha256sum)
-            [[ ${uv_actual%% *} == "$uv_sha256" ]] || { printf 'uv archive checksum mismatch\n' >&2; exit 1; }
-            uv_tmp=$(mktemp -d)
-            trap 'rm -rf "$uv_tmp"' EXIT
-            trap 'exit 1' HUP INT TERM
-            printf '%s' "$uv_payload" | base64 -d | tar -xz -C "$uv_tmp" "uv-$uv_target/uv" "uv-$uv_target/uvx"
-            mkdir -p "$uv_install_dir"
-            install -m755 "$uv_tmp/uv-$uv_target/uv" "$uv_tmp/uv-$uv_target/uvx" "$uv_install_dir/"
-            printf 'uv archive SHA-256 verified: %s\n' "$uv_sha256"
-          )
-          export PATH="$HOME/.local/bin:$PATH"
-          hash -r
-          printf '%s\n' "$HOME/.local/bin" >> "$GITHUB_PATH"
-          uv --version | grep -q '^uv 0\.13\.1 '
           tools/install-python.sh
           uv run --no-project --managed-python python -X lazy_imports=normal - <<'PYTHON'
           from pathlib import Path

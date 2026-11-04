@@ -220,6 +220,7 @@ jobs:
           rustup-components: clippy rustfmt
           rust-cache: 'true'
           rust-cache-key: lint-job
+          uv: ${{ needs.changes.outputs.reuse != 'true' }}
       - run: rustup show active-toolchain
       - name: Install build dependencies (apt)
         # The tkrzw action builds it with this g++ and make, and
@@ -257,29 +258,6 @@ jobs:
         if: needs.changes.outputs.reuse != 'true'
         run: |
           set -euo pipefail
-          uv_install_dir="$HOME/.local/bin"
-          (
-            [[ $(uname -s)-$(uname -m) == Linux-x86_64 ]]
-            uv_target=x86_64-unknown-linux-gnu
-            # Published in https://github.com/astral-sh/uv/releases/download/0.13.1/sha256.sum.
-            # Exact on purpose (#1074): a checksum is only known for a known version.
-            uv_sha256=eadd9d27c134ab5ac1ffd4473b97a741407f3ea238288f03121fc4deddf90220
-            # Keep the archive in memory. Write only its verified executables.
-            uv_payload=$(curl --fail --location --retry 3 "https://github.com/astral-sh/uv/releases/download/0.13.1/uv-$uv_target.tar.gz" | base64)
-            uv_actual=$(printf '%s' "$uv_payload" | base64 -d | sha256sum)
-            [[ ${uv_actual%% *} == "$uv_sha256" ]] || { printf 'uv archive checksum mismatch\n' >&2; exit 1; }
-            uv_tmp=$(mktemp -d)
-            trap 'rm -rf "$uv_tmp"' EXIT
-            trap 'exit 1' HUP INT TERM
-            printf '%s' "$uv_payload" | base64 -d | tar -xz -C "$uv_tmp" "uv-$uv_target/uv" "uv-$uv_target/uvx"
-            mkdir -p "$uv_install_dir"
-            install -m755 "$uv_tmp/uv-$uv_target/uv" "$uv_tmp/uv-$uv_target/uvx" "$uv_install_dir/"
-            printf 'uv archive SHA-256 verified: %s\n' "$uv_sha256"
-          )
-          export PATH="$HOME/.local/bin:$PATH"
-          hash -r
-          printf '%s\n' "$HOME/.local/bin" >> "$GITHUB_PATH"
-          uv --version | grep -q '^uv 0\.13\.1 '
           tools/install-python.sh
           uv run --no-project --managed-python python -X lazy_imports=normal - <<'PYTHON'
           from pathlib import Path
@@ -351,7 +329,7 @@ jobs:
       - name: Bootstrap the bare runner essentials (apt)
         run: |
           apt-get update -qq
-          apt-get install -y --no-install-recommends bash python3 tar gzip zstd git ca-certificates curl
+          apt-get install -y --no-install-recommends bash python3 tar gzip zstd git ca-certificates curl jq
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -361,6 +339,9 @@ jobs:
           rustup: 'true'
           rust-cache: 'true'
           rust-cache-key: test-job
+          uv: ${{ needs.changes.outputs.reuse != 'true' }}
+          just: ${{ needs.changes.outputs.reuse != 'true' }}
+          cargo-nextest: ${{ needs.changes.outputs.reuse != 'true' }}
       - run: rustup show active-toolchain
       - name: Install build dependencies (apt)
         # The tkrzw action builds it with this g++ and make, and
@@ -371,29 +352,6 @@ jobs:
         if: needs.changes.outputs.reuse != 'true'
         run: |
           set -euo pipefail
-          uv_install_dir="$HOME/.local/bin"
-          (
-            [[ $(uname -s)-$(uname -m) == Linux-x86_64 ]]
-            uv_target=x86_64-unknown-linux-gnu
-            # Published in https://github.com/astral-sh/uv/releases/download/0.13.1/sha256.sum.
-            # Exact on purpose (#1074): a checksum is only known for a known version.
-            uv_sha256=eadd9d27c134ab5ac1ffd4473b97a741407f3ea238288f03121fc4deddf90220
-            # Keep the archive in memory. Write only its verified executables.
-            uv_payload=$(curl --fail --location --retry 3 "https://github.com/astral-sh/uv/releases/download/0.13.1/uv-$uv_target.tar.gz" | base64)
-            uv_actual=$(printf '%s' "$uv_payload" | base64 -d | sha256sum)
-            [[ ${uv_actual%% *} == "$uv_sha256" ]] || { printf 'uv archive checksum mismatch\n' >&2; exit 1; }
-            uv_tmp=$(mktemp -d)
-            trap 'rm -rf "$uv_tmp"' EXIT
-            trap 'exit 1' HUP INT TERM
-            printf '%s' "$uv_payload" | base64 -d | tar -xz -C "$uv_tmp" "uv-$uv_target/uv" "uv-$uv_target/uvx"
-            mkdir -p "$uv_install_dir"
-            install -m755 "$uv_tmp/uv-$uv_target/uv" "$uv_tmp/uv-$uv_target/uvx" "$uv_install_dir/"
-            printf 'uv archive SHA-256 verified: %s\n' "$uv_sha256"
-          )
-          export PATH="$HOME/.local/bin:$PATH"
-          hash -r
-          printf '%s\n' "$HOME/.local/bin" >> "$GITHUB_PATH"
-          uv --version | grep -q '^uv 0\.13\.1 '
           tools/install-python.sh
           uv run --no-project --managed-python python -X lazy_imports=normal - <<'PYTHON'
           from pathlib import Path
@@ -409,22 +367,6 @@ jobs:
               text=True).strip()
           assert Path(sys.executable).resolve() == Path(managed).resolve()
           PYTHON
-      - name: Install pinned just
-        if: needs.changes.outputs.reuse != 'true'
-        run: |
-          # Exact on purpose (#1074): a checksum is only known for a known version.
-          ver=1.59.0
-          # Published in https://github.com/casey/just/releases/download/1.59.0/SHA256SUMS.
-          target=x86_64-unknown-linux-musl
-          sum=409044617b6f06517c1035e55ca38c8c856ff8b650e41bc2aa1ef82d5903a23e
-          curl -sSfL -o just.tar.gz "https://github.com/casey/just/releases/download/${ver}/just-${ver}-${target}.tar.gz"
-          echo "${sum}  just.tar.gz" | sha256sum -c -
-          tar xzf just.tar.gz just
-          mkdir -p ~/.local/bin
-          install -m755 just ~/.local/bin
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          ~/.local/bin/just --version
-          test "$(~/.local/bin/just --version)" = "just ${ver}"
       - name: Run tools Python harness tests
         if: needs.changes.outputs.reuse != 'true'
         shell: bash
@@ -450,18 +392,6 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --locked --no-deps --workspace
-      - name: Install pinned cargo-nextest
-        if: needs.changes.outputs.reuse != 'true'
-        run: |
-          # Exact on purpose (#1074): a checksum is only known for a known version.
-          ver=0.9.143
-          sum=6d891c18105ec2d33f6e441a4f92b7ccab47ba263e22055c8bb66884243f3389
-          curl -sSfL -o cargo-nextest.tar.gz "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-${ver}/cargo-nextest-${ver}-x86_64-unknown-linux-musl.tar.gz"
-          echo "${sum}  cargo-nextest.tar.gz" | sha256sum -c -
-          tar xzf cargo-nextest.tar.gz
-          mkdir -p ~/.local/bin
-          install -m755 cargo-nextest ~/.local/bin
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - run: cargo nextest run --locked --profile ci --status-level skip --workspace
         if: needs.changes.outputs.reuse != 'true'
       # nextest does not run doctests; keep the same workspace selection.
@@ -527,7 +457,7 @@ jobs:
       - name: Bootstrap the bare runner essentials (apt)
         run: |
           apt-get update -qq
-          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl
+          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl jq
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -537,19 +467,7 @@ jobs:
         with:
           safe-directory: 'true'
           rustup: 'true'
-      - name: Install pinned cargo-deny
-        run: |
-          # Exact on purpose (#1074): a checksum is only known for a known version.
-          ver=0.20.2
-          # Verify the release archive before executing anything from it:
-          # pin the expected digest and fail the job on mismatch.
-          sum=9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f
-          curl -sSfL -o cargo-deny.tar.gz "https://github.com/EmbarkStudios/cargo-deny/releases/download/${ver}/cargo-deny-${ver}-x86_64-unknown-linux-musl.tar.gz"
-          echo "${sum}  cargo-deny.tar.gz" | sha256sum -c -
-          tar xzf cargo-deny.tar.gz
-          mkdir -p ~/.local/bin
-          install -m755 "cargo-deny-${ver}-x86_64-unknown-linux-musl/cargo-deny" ~/.local/bin
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          cargo-deny: 'true'
       # Default-feature tree first, then the feature-gated dependency
       # subtrees (tkrzw, oracle-ffi). --locked pins both root graphs
       # to the committed Cargo.lock, which Dependabot maintains. The fuzz
@@ -602,7 +520,7 @@ jobs:
       - name: Bootstrap the bare runner essentials (apt)
         run: |
           apt-get update -qq
-          apt-get install -y --no-install-recommends bash python3 tar gzip zstd git ca-certificates curl
+          apt-get install -y --no-install-recommends bash python3 tar gzip zstd git ca-certificates curl jq
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -616,33 +534,12 @@ jobs:
           rust-cache: 'true'
           rust-cache-key: shipping-sizes-job
           rust-cache-save-if: ${{ github.event_name == 'push' }}
+          uv: 'true'
+          just: 'true'
       - run: rustup show active-toolchain
       - name: Set up pinned repository Python
         run: |
           set -euo pipefail
-          uv_install_dir="$HOME/.local/bin"
-          (
-            [[ $(uname -s)-$(uname -m) == Linux-x86_64 ]]
-            uv_target=x86_64-unknown-linux-gnu
-            # Published in https://github.com/astral-sh/uv/releases/download/0.13.1/sha256.sum.
-            # Exact on purpose (#1074): a checksum is only known for a known version.
-            uv_sha256=eadd9d27c134ab5ac1ffd4473b97a741407f3ea238288f03121fc4deddf90220
-            # Keep the archive in memory. Write only its verified executables.
-            uv_payload=$(curl --fail --location --retry 3 "https://github.com/astral-sh/uv/releases/download/0.13.1/uv-$uv_target.tar.gz" | base64)
-            uv_actual=$(printf '%s' "$uv_payload" | base64 -d | sha256sum)
-            [[ ${uv_actual%% *} == "$uv_sha256" ]] || { printf 'uv archive checksum mismatch\n' >&2; exit 1; }
-            uv_tmp=$(mktemp -d)
-            trap 'rm -rf "$uv_tmp"' EXIT
-            trap 'exit 1' HUP INT TERM
-            printf '%s' "$uv_payload" | base64 -d | tar -xz -C "$uv_tmp" "uv-$uv_target/uv" "uv-$uv_target/uvx"
-            mkdir -p "$uv_install_dir"
-            install -m755 "$uv_tmp/uv-$uv_target/uv" "$uv_tmp/uv-$uv_target/uvx" "$uv_install_dir/"
-            printf 'uv archive SHA-256 verified: %s\n' "$uv_sha256"
-          )
-          export PATH="$HOME/.local/bin:$PATH"
-          hash -r
-          printf '%s\n' "$HOME/.local/bin" >> "$GITHUB_PATH"
-          uv --version | grep -q '^uv 0\.13\.1 '
           tools/install-python.sh
           uv run --no-project --managed-python python -X lazy_imports=normal - <<'PYTHON'
           from pathlib import Path
@@ -658,21 +555,6 @@ jobs:
               text=True).strip()
           assert Path(sys.executable).resolve() == Path(managed).resolve()
           PYTHON
-      - name: Install pinned just
-        run: |
-          # Exact on purpose (#1074): a checksum is only known for a known version.
-          ver=1.59.0
-          # Published in https://github.com/casey/just/releases/download/1.59.0/SHA256SUMS.
-          target=x86_64-unknown-linux-musl
-          sum=409044617b6f06517c1035e55ca38c8c856ff8b650e41bc2aa1ef82d5903a23e
-          curl -sSfL -o just.tar.gz "https://github.com/casey/just/releases/download/${ver}/just-${ver}-${target}.tar.gz"
-          echo "${sum}  just.tar.gz" | sha256sum -c -
-          tar xzf just.tar.gz just
-          mkdir -p ~/.local/bin
-          install -m755 just ~/.local/bin
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          ~/.local/bin/just --version
-          test "$(~/.local/bin/just --version)" = "just ${ver}"
       # cargo-c is the distribution's own package, as in release-packages.yml.
       # The backend packages follow the reference cell (tools/dev/cell.py).
       - name: Install build dependencies (apt)
