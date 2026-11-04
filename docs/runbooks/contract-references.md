@@ -35,7 +35,7 @@ effects), never a verdict, and the identity that makes it valid:
 
 | identity | content |
 | --- | --- |
-| case and inputs | the case ID and a digest of the case function's source and registration |
+| case and inputs | the case ID and a digest of the case function's source, bound arguments and closure values, and registration |
 | pin | commit `074a2219…` and the SHA-256 of the pin library captured from |
 | backend | `bdb`, `kc` or `tkrzw` |
 | system data | `package` with the digest of the data directory, or `synthetic` |
@@ -49,9 +49,28 @@ its source-derived expectation, with `provenance: pin_not_run`.
 
 A handoff case (`save-929-logical-cross-open-*`, `issue1114-collision-load-save-*`) also
 stores the profile the pin wrote, compressed. Verification opens it with oxpinyin as an
-ordinary fixture. The profile oxpinyin writes is compared exactly where the format is
-deterministic. Whether the pin can read a file oxpinyin wrote is not a routine check; see
-the change-triggered list in the pull request that introduced these references.
+ordinary fixture, so pin -> oxpinyin is checked on every run. The profile oxpinyin writes is
+compared exactly where the format is deterministic. The other direction, whether the pin can
+read a file oxpinyin wrote, cannot come from a frozen reference; see the next section.
+
+## Reverse cross-open (local only)
+
+```sh
+just runner contract-diff verify tkrzw target/debug/libpinyin_capi.so target/debug/libzhuyin_capi.so \
+    -- --reverse-cross-open PIN_PREFIX
+```
+
+`PIN_PREFIX` is a pin build for the cell (`PREFIX/lib/libpinyin.so` and `libzhuyin.so`, as for
+`capture`). It runs these four cases live, pin and oxpinyin, each saving a profile that the other
+library then reads, and prints one row per case:
+
+- `issue1114-collision-load-save-pinyin` and `-zhuyin`
+- `save-929-logical-cross-open-pinyin` and `-zhuyin`
+
+Run it after any change to a persistence writer, to serialisation or to a database format. It
+uses the same implementation as the earlier live comparison (`Runner.run_case`); it is not a
+third operation and adds no runner or test interface. It starts the pin, so it refuses to run
+when `GITHUB_ACTIONS` is set and no workflow calls it.
 
 ## Backend coverage
 
@@ -95,10 +114,22 @@ bash tools/oracle/capture-contract.sh tkrzw                       # the default 
 bash tools/oracle/capture-contract.sh kc --cases NAME[,NAME]
 ```
 
-It pulls the published oracle image (`just compat image-tag`), builds the small capture image
+On x86_64 it uses the oracle tag from `just compat image-tag`; on aarch64 it uses that tag
+with `-arm64`. It refuses other architectures and runs no image under emulation. If the
+expected image exists locally, it uses it; otherwise it pulls the published image. If neither
+is available, build the image locally with:
+
+```sh
+bash tools/oracle/build-contract-image.sh
+```
+
+The local command builds `tools/oracle/Dockerfile.oracle` for the host architecture and
+checks the resulting libraries against `tools/oracle/oracle-pin.txt` using `compat verify-image`.
+The Dockerfile runs the existing `build-oracle.sh`. No GitHub Actions job participates in
+this path. Capture builds the small capture image
 on Debian stable (`Dockerfile.capture`: the pin's libraries, GLib, the DBM libraries and the
 managed Python), mounts the checkout read-only and the data, and runs
-`contract-diff.py capture` inside. The pin is not built and the checkout is not changed
+`contract-diff.py capture` inside. The checkout is not changed
 except for `fixtures/contract-refs/`. Each case is captured twice and a case whose two
 captures differ is refused (`UNSTABLE`). Capture tkrzw before KC and BDB, which read its
 references to know which cases to run.

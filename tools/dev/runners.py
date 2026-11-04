@@ -292,22 +292,10 @@ def main(argv: Sequence[str]) -> int:
             emit('capture runs in the Debian stable pin image: bash tools/oracle/capture-contract.sh CELL [options]',
                  error=True)
             return 1
-        if len(args) >= 2 and (args[1].endswith('.so') or Path(args[1]).is_file()):
-            return verify_contract(args)
-        if len(args) < 3:
-            emit('expected backend, oracle prefix and subject libpinyin', error=True)
-            return 1
-        cell, prefix, pinyin, *tail = args
-        if cell not in backend_cell.CELLS:
-            emit(f'unknown backend: {cell}', error=True)
-            return 1
-        forwarded = [cell, prefix, pinyin]
-        if tail and not tail[0].startswith('-'):
-            forwarded += ['--zhuyin-so', tail.pop(0)]
-        if tail[:1] == ['--']:
-            tail = tail[1:]
-        os.execv(sys.executable, [sys.executable, '-X', 'lazy_imports=normal',
-                                str(ROOT / 'tools/bisection/contract-diff.py'), *forwarded, *tail])
+        if len(args) < 2:
+            emit('usage: runner contract-diff [verify] CELL PINYIN_SO [ZHUYIN_SO] [-- OPTIONS]', error=True)
+            return 2
+        return verify_contract(args)
     if recipe not in RECIPES:
         emit(f'unknown runner recipe: {recipe}', error=True)
         return 2

@@ -92,16 +92,19 @@ class StateTests(unittest.TestCase):
 
 
 class AdapterTests(unittest.TestCase):
-    def test_case_results_uses_a_new_driver_registry_and_run_case_patch_at_call_time(self):
+    def test_case_results_uses_a_new_driver_registry_and_the_reference_store_at_call_time(self):
         driver = load_driver()
-        arguments = SimpleNamespace(prefix=Path('/pin'), cell='bdb', pinyin_so=Path('/subject'), case_timeout=1)
-        registry = {'only': dict(mode='pinyin', cells=('bdb',))}
-        with patch.object(driver, 'CASES', registry), patch.object(driver, 'run_case', return_value='pair') as run, \
+        store = SimpleNamespace(row=Mock(return_value={'pin': 'row'}))
+        arguments = SimpleNamespace(cell='bdb', pinyin_so=Path(__file__), zhuyin_so=None, case_timeout=1, references=store)
+        registry = {'only': dict(mode='pinyin', cells=('bdb',), dir_chunk=None)}
+        with patch.object(driver, 'CASES', registry), \
+                patch.object(contract_runner.Runner, 'verify_case', return_value='pair') as verify, \
                 patch.object(contract_runner.tempfile, 'TemporaryDirectory', return_value=contextlib.nullcontext('/isolated')):
             with driver.case_results(arguments, ['only'], '/data', '/scratch', 1) as results:
                 self.assertEqual(list(results), [('only', 'pair')])
-        run.assert_called_once_with(registry['only'], Path('/pin/lib/libpinyin.so'), Path('/subject'),
-                                    '/data', 'only', '/isolated', 1)
+        store.row.assert_called_once_with(registry['only'])
+        verify.assert_called_once_with(registry['only'], {'pin': 'row'}, Path(__file__), '/data', 'only', '/isolated', 1,
+                                       companion=Path(__file__))
 
 
 class ReferenceRunTests(unittest.TestCase):
@@ -230,6 +233,119 @@ class ReferenceRunTests(unittest.TestCase):
         with tempfile_dir() as scratch:
             _, subject = self.runner(lambda *a, **k: next(reloads)).verify_case(spec, row, Path('/s.so'), '/data', name, scratch, 30)
         self.assertEqual((subject['exit'], subject['result']), (1, {'error': 'cross-open changed logical records'}))
+
+    def handoff_1114(self, worker, donor=b'pin-written'):
+        name = 'issue1114-collision-load-save-pinyin'
+        with tempfile_dir() as source:
+            Path(source, 'user_bigram.db').write_bytes(donor)
+            profile = contract_reference.encode_profile(source)
+        spec = dict(mode='pinyin', fatal=False, pin_not_run=None)
+        row = dict(pin=self.observation(saved=1), profile=profile)
+        with tempfile_dir() as scratch:
+            return self.runner(worker).verify_case(spec, row, Path('/s.so'), '/data', name, scratch, 30)[1]
+
+    def test_the_1114_handoff_compares_the_saved_bytes_with_the_pins_outside_the_timestamp(self):
+        def writing(content):
+            def worker(mode, so, data, name, scratch, extra_env=None, timeout=None):
+                if extra_env.get('CONTRACT_1114_RELOAD') != '1':
+                    Path(extra_env['CONTRACT_1114_PROFILE'], 'user_bigram.db').write_bytes(content)
+                return self.observation(saved=1)
+            return worker
+
+        subject = self.handoff_1114(writing(b'pin-written'))
+        self.assertEqual((subject['exit'], subject['result']), (0, {'saved': 1, 'cross_reload': {'saved': 1}}))
+        subject = self.handoff_1114(writing(b'pin-WRITTEN'))
+        self.assertEqual((subject['exit'], subject['result']),
+                         (1, {'error': 'saved bytes differ outside META_OFFSET_TIMESTAMP'}))
+
+    def test_the_1114_byte_mismatch_launches_no_reload(self):
+        calls = []
+
+        def worker(mode, so, data, name, scratch, extra_env=None, timeout=None):
+            calls.append(extra_env)
+            Path(extra_env['CONTRACT_1114_PROFILE'], 'user_bigram.db').write_bytes(b'other')
+            return self.observation(saved=1)
+
+        self.handoff_1114(worker)
+        self.assertEqual(len(calls), 1)
+
+    def test_a_receiver_that_fails_the_reload_fails_the_case_with_its_diagnostics(self):
+        def worker(mode, so, data, name, scratch, extra_env=None, timeout=None):
+            if extra_env.get('CONTRACT_929_RELOAD') == '1':
+                return dict(exit=134, result=None, userfiles={}, stderr_lines=2, stderr='aborted')
+            return self.observation(rows=[1])
+
+        spec = dict(mode='pinyin', fatal=False, pin_not_run=None)
+        with tempfile_dir() as source:
+            Path(source, 'user_bigram.db').write_bytes(b'x')
+            row = dict(pin=self.observation(rows=[1]), profile=contract_reference.encode_profile(source))
+        with tempfile_dir() as scratch:
+            _, subject = self.runner(worker).verify_case(spec, row, Path('/s.so'), '/data',
+                                                         'save-929-logical-cross-open-zhuyin', scratch, 30)
+        self.assertEqual((subject['exit'], subject['result'], subject['stderr'], subject['stderr_lines']),
+                         (134, None, 'aborted', 2))
+
+    def test_a_receiver_that_times_out_is_a_timeout_and_the_case_deadline_is_shared(self):
+        import subprocess
+        timeouts = []
+
+        def worker(mode, so, data, name, scratch, extra_env=None, timeout=None):
+            timeouts.append(timeout)
+            if extra_env.get('CONTRACT_929_RELOAD') == '1':
+                raise subprocess.TimeoutExpired(str(so), timeout, stderr=b'slow\n')
+            return self.observation(rows=[1])
+
+        spec = dict(mode='pinyin', fatal=False, pin_not_run=None)
+        with tempfile_dir() as source:
+            Path(source, 'user_bigram.db').write_bytes(b'x')
+            row = dict(pin=self.observation(rows=[1]), profile=contract_reference.encode_profile(source))
+        with tempfile_dir() as scratch:
+            _, subject = self.runner(worker).verify_case(spec, row, Path('/s.so'), '/data',
+                                                         'save-929-logical-cross-open-pinyin', scratch, 30)
+        self.assertEqual((subject['exit'], subject['result'], subject['stderr']), ('TIMEOUT', None, 'slow\n'))
+        self.assertEqual(len(timeouts), 2)
+        self.assertTrue(all(0 < value <= 30 for value in timeouts))
+        self.assertLessEqual(timeouts[1], timeouts[0])
+
+    def test_a_subject_that_times_out_never_starts_the_reload(self):
+        import subprocess
+        calls = []
+
+        def worker(mode, so, data, name, scratch, extra_env=None, timeout=None):
+            calls.append(timeout)
+            raise subprocess.TimeoutExpired(str(so), timeout)
+
+        spec = dict(mode='pinyin', fatal=False, pin_not_run=None)
+        with tempfile_dir() as source:
+            Path(source, 'user_bigram.db').write_bytes(b'x')
+            row = dict(pin=self.observation(rows=[1]), profile=contract_reference.encode_profile(source))
+        with tempfile_dir() as scratch:
+            _, subject = self.runner(worker).verify_case(spec, row, Path('/s.so'), '/data',
+                                                         'save-929-logical-cross-open-pinyin', scratch, 30)
+        self.assertEqual((subject['exit'], len(calls)), ('TIMEOUT', 1))
+
+    def test_an_exhausted_deadline_is_a_timeout_without_a_worker(self):
+        def worker(*args, **kwargs):
+            raise AssertionError('no time is left')
+
+        spec = dict(mode='pinyin', fatal=False, pin_not_run=None)
+        with tempfile_dir() as scratch:
+            _, subject = self.runner(worker).verify_case(spec, dict(pin=self.observation(ret=1)), Path('/s.so'),
+                                                         '/data', 'plain', scratch, 0)
+        self.assertEqual(subject['exit'], 'TIMEOUT')
+
+    def test_a_pin_not_run_case_launches_only_the_subject(self):
+        calls = []
+
+        def worker(mode, so, data, name, scratch, extra_env=None, timeout=None):
+            calls.append(Path(so).name)
+            return self.observation(ret=1)
+
+        spec = dict(mode='pinyin', fatal=False, pin_not_run={'ret': 1})
+        with tempfile_dir() as scratch:
+            pin, subject = self.runner(worker).verify_case(spec, dict(pin=self.observation(ret=9)), Path('/x/subject.so'),
+                                                           '/data', 'plain', scratch, 30)
+        self.assertEqual((calls, pin['exit'], subject['exit']), (['subject.so'], 'NOT-RUN', 0))
 
 
 @contextlib.contextmanager

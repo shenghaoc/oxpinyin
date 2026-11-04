@@ -3,7 +3,7 @@
 Stop a worker's whole process group, list what a run left in the user
 directories it made, read the case-pool size from --jobs or the environment,
 and total the workers' phase timings. None reads the driver's per-run state;
-the timings are a parameter. The runner itself (run_worker, run_case, case_jobs,
+the timings are a parameter. The runner itself (run_worker, case_jobs,
 case_results and the cancellation flag) stays in contract-diff.py, where it
 rebinds module state that its tests and the other tools patch.
 """

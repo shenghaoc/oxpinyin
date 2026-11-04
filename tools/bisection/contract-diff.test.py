@@ -25,8 +25,9 @@ if str(ROOT) not in sys.path:
 from tools.dev import test_support
 from tools.dev import policy as policy_command
 import contract_policy
+import contract_reference as reference
 
-spec = importlib.util.spec_from_file_location('contract_diff', Path(__file__).with_name('contract-diff.py'))
+spec =importlib.util.spec_from_file_location('contract_diff', Path(__file__).with_name('contract-diff.py'))
 driver = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(driver)
 contract = vars(driver)
@@ -57,6 +58,106 @@ class DriverFixtureCase(unittest.TestCase):
         guard = patch.object(driver, 'check_tkrzw')
         self.runtime_guard = guard.start()
         self.addCleanup(guard.stop)
+
+
+def stub_case(kit):
+    """A registered function for synthetic cases: the reference digest needs a source to hash."""
+    return {}
+
+
+def freeze(root, cell, spec, pin, *, glibc=None, glib=None, directory_read=None, profile=None,
+           scanner_verdict=None):
+    """Write the reference row of SPEC holding the pin observation PIN, the way capture does."""
+    pinned = spec.get('pin_not_run') is not None
+    environment = dict(image='sha256:test', arch='x86_64',
+                       glib=reference.glib_version() if glib is None else glib,
+                       glibc=reference.glibc_version() if glibc is None else glibc)
+    identity = dict(inputs=reference.inputs_digest(spec, driver.NO_ABORT),
+                    pin=dict(commit=reference.PIN_COMMIT, library_sha256=None), backend=cell,
+                    system_data=dict(kind=reference.SYNTHETIC), environment=environment)
+    if directory_read is not None:
+        identity['directory_read_verdict'] = directory_read
+    row = dict(schema=reference.SCHEMA, case=spec['case_id'], cell=cell, mode=spec['mode'],
+               provenance='pin_not_run' if pinned else 'pin', identity=identity,
+               pin=reference.stable_pin(reference.NOT_RUN if pinned else pin))
+    if profile is not None:
+        row['profile'] = profile
+    spelling = reference.scanner_spelling(spec)
+    if spelling is not None:
+        row['scanner_verdict'] = scanner_verdict or driver.host_scanf_verdict(spelling)
+    reference.write_rows(root, cell, reference.module_of(spec), {spec['case_id']: row})
+    return row
+
+
+class VerifyCase(DriverFixtureCase):
+    """Drive `contract-diff.py verify` with a temporary references directory and a fake worker.
+
+    The pin side of a case is the stored row (`freeze`); only the subject's worker runs, so a fake
+    worker is called once per case (twice for a handoff case)."""
+    CELL = 'tkrzw'
+
+    def setUp(self):
+        super().setUp()
+        # main() hands verify its own module by name; this file loads the driver without registering it.
+        modules = patch.dict(sys.modules, {driver.__name__: driver})
+        modules.start()
+        self.addCleanup(modules.stop)
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.references = self.root / 'refs'
+        self.data = self.root / 'data'
+        self.data.mkdir()
+        (self.data / 'table.conf').write_text('x')
+        self.subject, self.zhuyin = self.root / 'subject.so', self.root / 'zsubject.so'
+        self.subject.touch()
+        self.zhuyin.touch()
+
+    def freeze(self, spec, pin, **identity):
+        return freeze(self.references, self.CELL, spec, pin, **identity)
+
+    def synthetic(self, name, pin=None, **options):
+        """A registered synthetic case and its frozen pin observation (a plain `ret` answer by default)."""
+        spec = driver.case_spec(fn=stub_case, case_id=name, control=True, **options)
+        self.freeze(spec, observation(result={'ret': True}) if pin is None else pin)
+        return spec
+
+    def verify(self, cases, worker, *options, platform=None):
+        """Run verify over CASES; WORKER is a callable, or the one observation every worker returns.
+
+        Returns the status (SystemExit codes included), the per-case rows, stdout, stderr and the
+        mocked run_worker."""
+        argv = ['driver', 'verify', self.CELL, str(self.subject), '--zhuyin-so', str(self.zhuyin),
+                '--data', str(self.data), '--references', str(self.references), *map(str, options)]
+        stdout, stderr = io.StringIO(), io.StringIO()
+        fake = dict(side_effect=worker) if callable(worker) else dict(return_value=worker)
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(patch.object(driver, 'CASES', cases))
+            stack.enter_context(patch.object(driver.sys, 'argv', argv))
+            run = stack.enter_context(patch.object(driver, 'run_worker', **fake))
+            if platform is not None:
+                stack.enter_context(patch.object(driver, 'HOST_ORACLE_PLATFORM', platform))
+            stack.enter_context(contextlib.redirect_stdout(stdout))
+            stack.enter_context(contextlib.redirect_stderr(stderr))
+            try:
+                status = driver.main()
+            except SystemExit as error:
+                status = error.code
+        rows = [row for row in (json.loads(line) for line in stdout.getvalue().splitlines()
+                                if line.startswith('{')) if 'case' in row]
+        return SimpleNamespace(status=status, rows=rows, stdout=stdout.getvalue(), stderr=stderr.getvalue(), run=run)
+
+    def verify_exit(self, *options):
+        """Run `verify tkrzw /unused OPTIONS` to its argparse exit: (code, stderr), with no worker started."""
+        error = io.StringIO()
+        with patch.object(sys, 'argv', ['driver', 'verify', 'tkrzw', '/unused', *options]), \
+                patch.dict(sys.modules, {driver.__name__: driver}), \
+                patch.object(driver, 'case_results') as workers, patch.object(driver, 'run_worker') as worker, \
+                contextlib.redirect_stderr(error), self.assertRaises(SystemExit) as caught:
+            driver.main()
+        workers.assert_not_called()
+        worker.assert_not_called()
+        return caught.exception.code, error.getvalue()
 
 
 class PolicyAcceptedTests(DriverFixtureCase):
@@ -408,76 +509,86 @@ class LazyBigramSaveTests(DriverFixtureCase):
                         self.assertEqual(result['result'].get('saved_byte_comparisons'),
                                          ['empty.db', 'trained.db'] if 48 <= offset < 56 else None)
 
+def handoff_row(donor, observation_, name):
+    """The reference row of a handoff case: the pin's observation and the profile the pin wrote."""
+    with tempfile.TemporaryDirectory() as source:
+        Path(source, 'user_bigram.db').write_bytes(donor)
+        return dict(pin=observation_, profile=reference.encode_profile(source))
+
 
 class TkrzwHandoffTests(DriverFixtureCase):
+    """The issue1114 handoff in verify: the subject saves its own profile, whose bytes must equal the
+    pin-written one outside the timestamp, then reads the pin's profile in a fresh worker."""
+    NAME = 'issue1114-collision-load-save-pinyin'
+    DONOR = bytes(range(256)) * 2
+
     def run_handoff(self, replies, changed_offset=None):
         replies = iter(replies)
+        reloaded = []
 
         def worker(*args, **kwargs):
             env = kwargs['extra_env']
             if 'CONTRACT_1114_RELOAD' not in env:
-                raw = bytearray(bytes(range(256)) * 2)
-                if changed_offset is not None and args[1] == Path('/pr'):
+                raw = bytearray(self.DONOR)
+                if changed_offset is not None:
                     raw[changed_offset] ^= 1
                 Path(env['CONTRACT_1114_PROFILE'], 'user_bigram.db').write_bytes(raw)
+            else:
+                reloaded.append(Path(env['CONTRACT_1114_PROFILE'], 'user_bigram.db').read_bytes())
             reply = next(replies)
             if isinstance(reply, Exception):
                 raise reply
             return reply
 
+        row = handoff_row(self.DONOR, observation(result={'saved_bigram': [1]}), self.NAME)
         with tempfile.TemporaryDirectory() as scratch, \
              patch.object(driver, 'run_worker', side_effect=worker) as run:
-            results = driver.run_case(dict(mode='pinyin', fatal=False), Path('/pin'), Path('/pr'),
-                                      Path('/data'), 'issue1114-collision-load-save-pinyin', scratch, 20)
-        return results, run.call_args_list
+            pin, subject = driver._RUNNER.verify_case(dict(mode='pinyin', fatal=False, pin_not_run=None), row,
+                                                      Path('/pr'), Path('/data'), self.NAME, scratch, 20)
+        self.assertEqual(pin['result'], {'saved_bigram': [1]})
+        return subject, run.call_args_list, reloaded
 
-    def test_both_directions_reopen_the_donors_exact_directory(self):
-        replies = [observation(result={'saved_bigram': [1]}) for _ in range(4)]
-        results, calls = self.run_handoff(replies)
-        self.assertEqual([call.args[1] for call in calls], list(map(Path, ('/pin', '/pr', '/pr', '/pin'))))
+    def test_the_subject_reopens_the_pin_written_profile(self):
+        subject, calls, reloaded = self.run_handoff([observation(result={'saved_bigram': [1]}) for _ in range(2)])
+        self.assertEqual([call.args[1] for call in calls], [Path('/pr'), Path('/pr')])
         environments = [call.kwargs['extra_env'] for call in calls]
-        for donor, receiver in ((0, 2), (1, 3)):
-            self.assertEqual(environments[donor]['CONTRACT_1114_PROFILE'],
-                             environments[receiver]['CONTRACT_1114_PROFILE'])
-            self.assertIsNone(environments[donor].get('CONTRACT_1114_RELOAD'))
-            self.assertEqual(environments[receiver]['CONTRACT_1114_RELOAD'], '1')
+        self.assertIsNone(environments[0].get('CONTRACT_1114_RELOAD'))
+        self.assertEqual(environments[1]['CONTRACT_1114_RELOAD'], '1')
+        # The receiver opens the donor's directory, not the one the subject itself saved.
         self.assertNotEqual(environments[0]['CONTRACT_1114_PROFILE'], environments[1]['CONTRACT_1114_PROFILE'])
-        self.assertEqual(results[0]['result'], results[1]['result'])
-        self.assertIn('cross_reload', results[0]['result'])
+        self.assertEqual(reloaded, [self.DONOR])
+        self.assertEqual(subject['exit'], 0)
+        self.assertIn('cross_reload', subject['result'])
 
     def test_donor_byte_difference_is_rejected_before_handoff(self):
         for offset in (0, 47, 56, 127, 511):
             with self.subTest(offset=offset):
-                replies = [observation(result={'saved_bigram': [1]}) for _ in range(2)]
-                results, calls = self.run_handoff(replies, changed_offset=offset)
-                self.assertEqual(len(calls), 2)
-                self.assertEqual(results[0]['exit'], 1)
-                self.assertIn('META_OFFSET_TIMESTAMP', results[0]['result']['error'])
+                replies = [observation(result={'saved_bigram': [1]})]
+                subject, calls, _ = self.run_handoff(replies, changed_offset=offset)
+                self.assertEqual(len(calls), 1)
+                self.assertEqual(subject['exit'], 1)
+                self.assertIn('META_OFFSET_TIMESTAMP', subject['result']['error'])
 
-    def test_donor_timestamp_difference_allows_both_handoffs(self):
+    def test_donor_timestamp_difference_allows_the_handoff(self):
         for offset in (48, 55):
             with self.subTest(offset=offset):
-                replies = [observation(result={'saved_bigram': [1]}) for _ in range(4)]
-                results, calls = self.run_handoff(replies, changed_offset=offset)
-                self.assertEqual(len(calls), 4)
-                self.assertEqual([result['exit'] for result in results], [0, 0])
+                replies = [observation(result={'saved_bigram': [1]}) for _ in range(2)]
+                subject, calls, _ = self.run_handoff(replies, changed_offset=offset)
+                self.assertEqual(len(calls), 2)
+                self.assertEqual(subject['exit'], 0)
 
     def test_receiver_failure_cannot_be_a_match(self):
-        for failed in (2, 3):
-            with self.subTest(failed=failed):
-                replies = [observation(result={'saved_bigram': [1]}) for _ in range(4)]
-                replies[failed] = observation(exit=1, result=None)
-                results, calls = self.run_handoff(replies)
-                self.assertEqual(len(calls), 4)
-                self.assertEqual(results[failed - 2]['exit'], 1)
-                self.assertIsNone(results[failed - 2]['result'])
+        replies = [observation(result={'saved_bigram': [1]}), observation(exit=1, result=None)]
+        subject, calls, _ = self.run_handoff(replies)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(subject['exit'], 1)
+        self.assertIsNone(subject['result'])
 
     def test_cross_reload_timeout_cannot_be_a_match(self):
-        replies = [observation(result={'saved_bigram': [1]}) for _ in range(2)]
-        replies.append(subprocess.TimeoutExpired('receiver', 20))
-        results, calls = self.run_handoff(replies)
-        self.assertEqual(len(calls), 3)
-        self.assertEqual(results[0]['exit'], 'TIMEOUT')
+        replies = [observation(result={'saved_bigram': [1]}), subprocess.TimeoutExpired('receiver', 20)]
+        subject, calls, _ = self.run_handoff(replies)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(subject['exit'], 'TIMEOUT')
 
 
 def worker_process(stdout=b'{}\n', stderr=b''):
@@ -486,64 +597,55 @@ def worker_process(stdout=b'{}\n', stderr=b''):
 
 
 
-class PolicyReportingTests(DriverFixtureCase):
+class PolicyReportingTests(VerifyCase):
     def test_invalid_utf8_worker_stderr_survives_capture_record_and_exact_verdict(self):
         name = 'synthetic/surrogate-stderr'
-        with tempfile.TemporaryDirectory() as scratch:
-            root = Path(scratch)
-            (root / 'lib/libpinyin/data').mkdir(parents=True)
-            (root / 'lib/libpinyin.so').touch()
-            (root / 'lib/subject.so').touch()
-            (root / 'lib/libpinyin/data/bigram.db').touch()
-            (root / 'oracle-pin.txt').write_text(
-                'libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99+dbm-bdb\n')
-            record = root / 'synthetic-record.md'
-            record.write_text('# Synthetic record\n')
-            (root / 'upstream-divergences.md').write_text('[record](synthetic-record.md)\n')
-            capture = root / 'observations.jsonl'
-            args = ['driver', 'bdb', str(root), str(root / 'lib/subject.so'),
-                    '--cases', name, '--observations', str(capture)]
-            spec = driver.case_spec(policy_record=record.name, case_id=name, stderr=True)
-            document = json.dumps({'logs': [], '甲\udcff': '乙'}).encode('ascii')
-            pin_bytes = '甲'.encode() + b'\xff\n'
-            subject_bytes = '乙'.encode() + b'\xfe\n'
-            (root / 'document').write_bytes(document)
-            (root / 'pin-stderr').write_bytes(pin_bytes)
-            worker = root / 'worker.py'
-            worker.write_text(
-                'from pathlib import Path\nimport sys\n'
-                'root = Path(__file__).parent\n'
-                'side = "subject" if Path(sys.argv[2]).name == "subject.so" else "pin"\n'
-                'sys.stdout.buffer.write((root / "document").read_bytes() + b"\\n")\n'
-                'sys.stderr.buffer.write((root / (side + "-stderr")).read_bytes())\n')
+        record = self.root / 'synthetic-record.md'
+        record.write_text('# Synthetic record\n')
+        (self.root / 'upstream-divergences.md').write_text('[record](synthetic-record.md)\n')
+        capture = self.root / 'observations.jsonl'
+        spec = driver.case_spec(fn=stub_case, policy_record=record.name, case_id=name, stderr=True)
+        document = json.dumps({'logs': [], '甲\udcff': '乙'}).encode('ascii')
+        # The stored pin observation holds the invalid byte as the surrogate the driver decodes it to.
+        self.freeze(spec, observation(result=json.loads(document), stderr='甲\udcff\n'))
+        subject_bytes = '乙'.encode() + b'\xfe\n'
+        (self.root / 'document').write_bytes(document)
+        worker = self.root / 'worker.py'
+        worker.write_text(
+            'from pathlib import Path\nimport sys\n'
+            'root = Path(__file__).parent\n'
+            'sys.stdout.buffer.write((root / "document").read_bytes() + b"\\n")\n'
+            'sys.stderr.buffer.write((root / "subject-stderr").read_bytes())\n')
 
-            def run(stderr):
-                (root / 'subject-stderr').write_bytes(stderr)
-                output = io.StringIO()
-                with patch.object(driver, 'POLICY_ROOT', root), patch.dict(driver.CASES, {name: spec}), \
-                        patch.object(driver.sys, 'argv', args), \
-                        patch.object(driver, 'WORKER', worker), \
-                        contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
-                    status = driver.main()
-                rows = [json.loads(line) for line in output.getvalue().splitlines() if line.startswith('{')]
-                return status, next(row for row in rows if 'case' in row)
+        def run(stderr):
+            (self.root / 'subject-stderr').write_bytes(stderr)
+            args = ['driver', 'verify', self.CELL, str(self.subject), '--data', str(self.data),
+                    '--references', str(self.references), '--cases', name, '--observations', str(capture)]
+            output = io.StringIO()
+            with patch.object(driver, 'POLICY_ROOT', self.root), patch.dict(driver.CASES, {name: spec}), \
+                    patch.object(driver.sys, 'argv', args), \
+                    patch.object(driver, 'WORKER', worker), \
+                    contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
+                status = driver.main()
+            rows = [json.loads(line) for line in output.getvalue().splitlines() if line.startswith('{')]
+            return status, next(row for row in rows if 'case' in row)
 
-            self.assertEqual(run(subject_bytes)[0], 1)
-            captured = json.loads(capture.read_text(encoding='utf-8'))
-            self.assertEqual(captured['pin']['stderr'], '甲\udcff\n')
-            self.assertEqual(captured['subject']['stderr'], '乙\udcfe\n')
-            with contextlib.redirect_stdout(io.StringIO()):
-                self.assertEqual(policy_command.main([str(record), str(capture)]), 0)
-            text = record.read_text(encoding='utf-8')
-            self.assertIn('甲', text)
-            self.assertIn('乙', text)
-            self.assertIn('\\udcff', text)
-            status, accepted = run(subject_bytes)
-            self.assertEqual((status, accepted['verdict']), (0, 'POLICY-ACCEPTED'))
-            for changed in (subject_bytes.replace(b'\xfe', b'\xff'), '乙\ufffd\n'.encode()):
-                status, mismatch = run(changed)
-                self.assertEqual((status, mismatch['verdict']), (1, 'DIFFER'))
-                self.assertEqual(mismatch['policy']['summary'], 'pin matches; subject moved in stderr')
+        self.assertEqual(run(subject_bytes)[0], 1)
+        captured = json.loads(capture.read_text(encoding='utf-8'))
+        self.assertEqual(captured['pin']['stderr'], '甲\udcff\n')
+        self.assertEqual(captured['subject']['stderr'], '乙\udcfe\n')
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(policy_command.main([str(record), str(capture)]), 0)
+        text = record.read_text(encoding='utf-8')
+        self.assertIn('甲', text)
+        self.assertIn('乙', text)
+        self.assertIn('\\udcff', text)
+        status, accepted = run(subject_bytes)
+        self.assertEqual((status, accepted['verdict']), (0, 'POLICY-ACCEPTED'))
+        for changed in (subject_bytes.replace(b'\xfe', b'\xff'), '乙\ufffd\n'.encode()):
+            status, mismatch = run(changed)
+            self.assertEqual((status, mismatch['verdict']), (1, 'DIFFER'))
+            self.assertEqual(mismatch['policy']['summary'], 'pin matches; subject moved in stderr')
 
     def test_main_retains_observations_and_counts_policy_separately(self):
         name = 'synthetic/policy-reporting'
@@ -553,49 +655,42 @@ class PolicyReportingTests(DriverFixtureCase):
                       disposition='POLICY-ACCEPTED',
                       cases={name: contract_policy.entry(*({key: value[key] for key in ('exit', 'result', 'stderr')}
                                                            for value in (pin, subject)))})
-        with tempfile.TemporaryDirectory() as findings:
-            root = Path(findings)
-            (root / 'synthetic-record.md').write_text(
-                '# Synthetic record\n\n```contract-diff-policy\n' + json.dumps(record) + '\n```\n')
-            (root / 'upstream-divergences.md').write_text('[record](synthetic-record.md)\n')
-            spec = driver.case_spec(policy_record='synthetic-record.md', case_id=name)
-            with patch.object(driver, 'POLICY_ROOT', root), patch.dict(driver.CASES, {name: spec}):
-                kept = driver.contract_verdict.policy_expectations(spec, policy_root=driver.POLICY_ROOT, cell=driver.CELL)
-                self.assertEqual(kept['pin']['sha256'],
-                                 contract_policy.digest({key: pin[key] for key in ('exit', 'result', 'stderr')}))
-                for broken in (False, True):
-                    with self.subTest(broken=broken), tempfile.TemporaryDirectory() as scratch:
-                        prefix = Path(scratch)
-                        (prefix / 'lib/libpinyin/data').mkdir(parents=True)
-                        (prefix / 'lib/libpinyin.so').touch()
-                        (prefix / 'lib/libpinyin/data/bigram.db').touch()
-                        (prefix / 'oracle-pin.txt').write_text(
-                            'libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99+dbm-bdb\n')
-                        args = ['driver', 'bdb', str(prefix), str(prefix / 'lib/libpinyin.so'),
-                                '--cases', name]
-                        actual_subject = copy.deepcopy(subject)
-                        if broken:
-                            actual_subject['result']['ret'] = False
-                        output = io.StringIO()
-                        with patch.object(driver, 'run_case', return_value=(pin, actual_subject)), \
-                                patch.object(driver.sys, 'argv', args), \
-                                contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
-                            status = driver.main()
-                        rows = [json.loads(line) for line in output.getvalue().splitlines() if line.startswith('{')]
-                        verdict = 'DIFFER' if broken else 'POLICY-ACCEPTED'
-                        self.assertEqual(status, int(broken))
-                        self.assertEqual(rows[0]['verdict'], verdict)
-                        self.assertEqual(rows[0]['record'], spec['policy_record'])
-                        self.assertEqual(rows[0]['pin'], pin)
-                        self.assertEqual(rows[0]['subject'], actual_subject)
-                        if broken:
-                            self.assertEqual(rows[0]['policy']['summary'], 'pin matches; subject moved in result.ret')
-                            self.assertIn('  policy synthetic-record.md: pin matches; subject moved in result.ret\n',
-                                          output.getvalue())
-                        else:
-                            self.assertNotIn('policy', rows[0])
-                        self.assertEqual(next(row['verdict_counts'] for row in rows if 'verdict_counts' in row),
-                                         {verdict: 1})
+        (self.root / 'synthetic-record.md').write_text(
+            '# Synthetic record\n\n```contract-diff-policy\n' + json.dumps(record) + '\n```\n')
+        (self.root / 'upstream-divergences.md').write_text('[record](synthetic-record.md)\n')
+        spec = driver.case_spec(fn=stub_case, policy_record='synthetic-record.md', case_id=name)
+        self.freeze(spec, pin)
+        capture = self.root / 'observations.jsonl'
+        with patch.object(driver, 'POLICY_ROOT', self.root):
+            kept = driver.contract_verdict.policy_expectations(spec, policy_root=driver.POLICY_ROOT, cell=driver.CELL)
+            self.assertEqual(kept['pin']['sha256'],
+                             contract_policy.digest({key: pin[key] for key in ('exit', 'result', 'stderr')}))
+            for broken in (False, True):
+                with self.subTest(broken=broken):
+                    actual_subject = copy.deepcopy(subject)
+                    if broken:
+                        actual_subject['result']['ret'] = False
+                    result = self.verify({name: spec}, actual_subject, '--cases', name, '--observations', capture)
+                    verdict = 'DIFFER' if broken else 'POLICY-ACCEPTED'
+                    self.assertEqual(result.status, int(broken))
+                    self.assertEqual(result.rows[0]['verdict'], verdict)
+                    self.assertEqual(result.rows[0]['record'], spec['policy_record'])
+                    # The stored pin observation carries what the reference recorded of its capture.
+                    self.assertEqual({key: value for key, value in result.rows[0]['pin'].items()
+                                      if not key.startswith('capture_')}, pin)
+                    self.assertEqual(result.rows[0]['subject'], actual_subject)
+                    retained = [json.loads(line) for line in capture.read_text().splitlines()]
+                    self.assertEqual([(line['case'], line['policy_record']) for line in retained],
+                                     [(name, spec['policy_record'])])
+                    if broken:
+                        self.assertEqual(result.rows[0]['policy']['summary'], 'pin matches; subject moved in result.ret')
+                        self.assertIn('  policy synthetic-record.md: pin matches; subject moved in result.ret\n',
+                                      result.stdout)
+                    else:
+                        self.assertNotIn('policy', result.rows[0])
+                    self.assertEqual(next(row['verdict_counts'] for row in
+                                          (json.loads(line) for line in result.stdout.splitlines() if line.startswith('{'))
+                                          if 'verdict_counts' in row), {verdict: 1})
 
 
 class HashPathFixtureTests(DriverFixtureCase):
@@ -637,38 +732,51 @@ class HashPathFixtureTests(DriverFixtureCase):
 
 
 class Save929HandoffTests(DriverFixtureCase):
-    def run_handoff(self, replies):
+    """The #929 handoff in verify: the subject reads the profile the pin wrote and must find the logical
+    rows the pin's own save holds."""
+    DONOR = b'pin-written'
+
+    def run_handoff(self, replies, pin_result, name='save-929-logical-cross-open-pinyin'):
+        row = handoff_row(self.DONOR, observation(result=pin_result), name)
+        mode = 'zhuyin' if name.endswith('zhuyin') else 'pinyin'
         with tempfile.TemporaryDirectory() as scratch, \
                 patch.object(driver, 'run_worker', side_effect=replies) as worker:
-            results = driver.run_case(dict(mode='pinyin', fatal=False), Path('/pin'), Path('/pr'),
-                                      Path('/data'), 'save-929-logical-cross-open-pinyin', scratch, 20)
-        return results, worker.call_args_list
+            _, subject = driver._RUNNER.verify_case(dict(mode=mode, fatal=False, pin_not_run=None), row,
+                                                    Path('/pr'), Path('/data'), name, scratch, 20)
+        return subject, worker.call_args_list
 
-    def test_both_facades_open_the_exact_other_profile(self):
-        results, calls = self.run_handoff([
-            observation(result={'rows': {'db': [['00', '']]}, 'tokens': [[1]]}) for _ in range(4)])
-        self.assertEqual([c.args[1] for c in calls], list(map(Path, ('/pin', '/pr', '/pr', '/pin'))))
-        environments = [c.kwargs['extra_env'] for c in calls]
-        for donor, receiver in ((0, 2), (1, 3)):
-            self.assertEqual(environments[donor]['CONTRACT_929_PROFILE'],
-                             environments[receiver]['CONTRACT_929_PROFILE'])
-            self.assertEqual(environments[receiver]['CONTRACT_929_RELOAD'], '1')
-        self.assertNotEqual(environments[0]['CONTRACT_929_PROFILE'], environments[1]['CONTRACT_929_PROFILE'])
-        self.assertEqual(results[0]['result'], results[1]['result'])
-        self.assertIn('cross_reload', results[0]['result'])
+    def test_both_facades_open_the_pin_written_profile(self):
+        rows = {'rows': {'db': [['00', '']]}, 'tokens': [[1]]}
+        for mode in ('pinyin', 'zhuyin'):
+            with self.subTest(mode=mode):
+                seen = []
 
-    def test_equal_corruption_in_both_receivers_is_rejected_against_donors(self):
-        replies = [observation(result={'rows': [['00', '01']]}) for _ in range(2)]
-        replies += [observation(result={'rows': [['00', '02']]}) for _ in range(2)]
-        results, _ = self.run_handoff(replies)
-        self.assertEqual([r['exit'] for r in results], [1, 1])
+                def worker(*args, **kwargs):
+                    env = kwargs['extra_env']
+                    if env.get('CONTRACT_929_RELOAD') == '1':
+                        seen.append(Path(env['CONTRACT_929_PROFILE'], 'user_bigram.db').read_bytes())
+                    return observation(result=copy.deepcopy(rows))
+
+                subject, calls = self.run_handoff(worker, copy.deepcopy(rows), 'save-929-logical-cross-open-' + mode)
+                self.assertEqual([c.args[0] for c in calls], [mode, mode])
+                self.assertEqual([c.args[1] for c in calls], [Path('/pr'), Path('/pr')])
+                environments = [c.kwargs['extra_env'] for c in calls]
+                self.assertNotEqual(environments[0]['CONTRACT_929_PROFILE'], environments[1]['CONTRACT_929_PROFILE'])
+                self.assertEqual(environments[1]['CONTRACT_929_RELOAD'], '1')
+                self.assertEqual(seen, [self.DONOR])
+                self.assertEqual(subject['exit'], 0)
+                self.assertIn('cross_reload', subject['result'])
+
+    def test_equal_corruption_in_the_receiver_is_rejected_against_the_pin(self):
+        replies = [observation(result={'rows': [['00', '01']]}), observation(result={'rows': [['00', '02']]})]
+        subject, _ = self.run_handoff(replies, {'rows': [['00', '01']]})
+        self.assertEqual((subject['exit'], subject['result']), (1, {'error': 'cross-open changed logical records'}))
 
     def test_receiver_failure_or_timeout_is_not_a_match(self):
         for failure in (observation(exit=1, result=None), subprocess.TimeoutExpired('receiver', 20)):
-            replies = [observation(result={'rows': []}) for _ in range(2)]
-            replies += [failure, observation(result={'rows': []})]
-            results, _ = self.run_handoff(replies)
-            self.assertNotEqual(results[0]['exit'], 0)
+            replies = [observation(result={'rows': []}), failure]
+            subject, _ = self.run_handoff(replies, {'rows': []})
+            self.assertNotEqual(subject['exit'], 0)
 
     def test_default_selection_replaces_byte_cases_without_hiding_logical_cases(self):
         names, _ = driver.select_cases()
@@ -1105,37 +1213,19 @@ class RegisteredTerminationDefaultTests(DriverFixtureCase):
                                 self.assertEqual(driver.verdict_for(case, pin, subject, False), legacy)
 
 
-class DriverInvalidTests(DriverFixtureCase):
-    """main(): two failed workers under --expect-parent exit 1 with INVALID."""
+class DriverInvalidTests(VerifyCase):
+    """verify: a failed worker on either side is INVALID and exits 1, and is never HOST-DEPENDENT."""
 
-    def invoke(self, parent, workers, plan=False, host=False, case_name='default-option-parse'):
-        import contextlib
-        import io
-        with tempfile.TemporaryDirectory() as scratch:
-            prefix = Path(scratch)
-            (prefix / 'lib/libpinyin/data').mkdir(parents=True)
-            (prefix / 'lib/libpinyin.so').touch()
-            (prefix / 'lib/libpinyin/data/bigram.db').touch()
-            (prefix / 'oracle-pin.txt').write_text(
-                'libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99+dbm-bdb\n')
-            argv = ['driver', 'bdb', str(prefix), str(prefix / 'lib/libpinyin.so'),
-                    '--cases', case_name] + (['--expect-parent'] if parent else [])
-            if plan:
-                argv.append('--plan-only')
-            output = io.StringIO()
-            cases = {case_name: dict(contract['CASES'][case_name], host_scanf=('1e',) if host else ())}
-            with patch.dict(contract['main'].__globals__, CASES=cases), \
-                    patch.object(contract['sys'], 'argv', argv), \
-                    patch.dict(contract['main'].__globals__, run_worker=lambda *a, **k: workers.pop(0)), \
-                    contextlib.redirect_stdout(output):
-                status = contract['main']()
-        # The case rows; the run's trailing timing line is not one.
-        rows = [row for row in (json.loads(line) for line in output.getvalue().splitlines()
-                                if line.startswith('{')) if 'case' in row]
-        return status, rows
+    def invoke(self, parent, pin, subject, case_name='default-option-parse', glibc=None, glib=None,
+               scanner_verdict=None):
+        spec = contract['CASES'][case_name]
+        self.freeze(spec, pin, glibc=glibc, glib=glib, scanner_verdict=scanner_verdict)
+        options = ['--cases', case_name] + (['--expect-parent'] if parent else [])
+        result = self.verify({case_name: spec}, subject, *options)
+        return result.status, result.rows
 
     def test_two_failed_workers_fail_under_expect_parent(self):
-        status, rows = self.invoke(True, [observation(exit=1), observation(exit=1)])
+        status, rows = self.invoke(True, observation(exit=1), observation(exit=1))
         self.assertEqual(status, 1)
         self.assertEqual([(r['verdict'], r['expected_ok'], r['exit']) for r in rows], [('INVALID', False, [1, 1])])
 
@@ -1143,29 +1233,79 @@ class DriverInvalidTests(DriverFixtureCase):
         for bad in (observation(exit=-signal.SIGSEGV), observation(exit='TIMEOUT'),
                     observation(exit=127), observation()):
             with self.subTest(bad=bad):
-                status, rows = self.invoke(True, [observation(exit=-signal.SIGABRT), bad],
+                status, rows = self.invoke(True, observation(exit=-signal.SIGABRT), bad,
                                            case_name='abort-train-index-past-results')
                 self.assertEqual((status, rows[0]['verdict'], rows[0]['expected_ok']), (1, 'INVALID', False))
 
     def test_two_failed_workers_fail_in_normal_mode(self):
-        status, rows = self.invoke(False, [observation(exit=-signal.SIGSEGV), observation(exit=0)])
+        status, rows = self.invoke(False, observation(exit=-signal.SIGSEGV), observation(exit=0))
         self.assertEqual(status, 1)
         self.assertEqual(rows[0]['verdict'], 'INVALID')
 
     def test_valid_parent_difference_still_passes(self):
-        status, rows = self.invoke(True, [observation(result={'a': 1}), observation(result={'a': 2})])
+        status, rows = self.invoke(True, observation(result={'a': 1}), observation(result={'a': 2}))
         self.assertEqual((status, rows[0]['verdict'], rows[0]['expected_ok']), (0, 'DIFFER', True))
 
     def test_plan_only_never_runs_a_case(self):
-        with patch.object(driver, 'run_case', side_effect=AssertionError('plan executed a case')):
-            status, rows = self.invoke(False, [], plan=True)
-        self.assertEqual((status, rows), (0, []))
+        spec = contract['CASES']['default-option-parse']
+        self.freeze(spec, observation(result={'a': 1}))
+
+        def worker(*args, **kwargs):
+            raise AssertionError('plan executed a case')
+        result = self.verify({'default-option-parse': spec}, worker, '--cases', 'default-option-parse', '--plan-only')
+        self.assertEqual((result.status, result.rows), (0, []))
+        self.assertIn('plan: 1 case;', result.stderr)
 
     def test_invalid_observations_cannot_be_host_dependent(self):
-        with patch.object(driver, 'host_scanf_accepts', return_value=True), \
-                patch.object(driver, 'pin_loaded_subject_refused_table_conf', return_value=True):
-            status, rows = self.invoke(False, [observation(exit=1), observation(exit=1)], host=True)
+        # The lambda scanner cases read `%f` with the host libc; a reference from another glibc reports the
+        # result as HOST-DEPENDENT, but never a failed worker.
+        name = 'table-conf-lambda-hex'
+        self.assertTrue(reference.host_libc_sensitive(name))
+        status, rows = self.invoke(False, observation(result={'ctx': True}), observation(exit=1), case_name=name,
+                                   glibc='0.0')
         self.assertEqual((status, rows[0]['verdict']), (1, 'INVALID'))
+        status, rows = self.invoke(False, observation(result={'ctx': True}), observation(result={'ctx': False}),
+                                   case_name=name, glibc='0.0')
+        self.assertEqual((status, rows[0]['verdict'], rows[0]['expected_ok']), (1, 'DIFFER', False))
+        self.assertNotIn('compared', rows[0])
+        # The comparison comes first: on another glibc, equal observations are MATCH.
+        status, rows = self.invoke(False, observation(result={'ctx': True}), observation(result={'ctx': True}),
+                                   case_name=name, glibc='0.0')
+        self.assertEqual((status, rows[0]['verdict']), (0, 'MATCH'))
+        # A case not registered as host-sensitive never becomes HOST-DEPENDENT: a mismatch is DIFFER.
+        self.assertFalse(reference.host_libc_sensitive('default-option-parse'))
+        status, rows = self.invoke(False, observation(result={'ctx': True}), observation(result={'ctx': False}),
+                                   glibc='0.0')
+        self.assertEqual((status, rows[0]['verdict']), (1, 'DIFFER'))
+        # The glibc the reference was captured on: the same one compares exactly.
+        status, rows = self.invoke(False, observation(result={'ctx': True}), observation(result={'ctx': False}),
+                                   case_name=name)
+        self.assertEqual((status, rows[0]['verdict']), (1, 'DIFFER'))
+        status, rows = self.invoke(False, observation(result={'ctx': True}), observation(result={'ctx': True}),
+                                   case_name=name)
+        self.assertEqual((status, rows[0]['verdict']), (0, 'MATCH'))
+        # A mismatch in expect-parent mode is the expected difference, never host-dependent.
+        status, rows = self.invoke(True, observation(result={'ctx': True}), observation(result={'ctx': False}),
+                                   case_name=name, glibc='0.0')
+        self.assertEqual(rows[0]['verdict'], 'DIFFER')
+
+    def test_a_fatal_case_from_another_glib_is_host_dependent_and_from_the_same_glib_exact(self):
+        good = observation(result={'ret': True})
+        spec = driver.case_spec(fn=stub_case, case_id='synthetic-fatal', control=True, fatal=True)
+        trapped = observation(exit=-signal.SIGTRAP)
+        # Compared first. Another GLib: equal is MATCH, a mismatch is the documented difference
+        # (HOST-DEPENDENT), and a failed worker is still INVALID. The same GLib: a mismatch is DIFFER.
+        differing = observation(result={'ret': False})
+        for glib, subject, verdict, status in (('0.0', trapped, 'INVALID', 1),
+                                               ('0.0', good, 'MATCH', 0),
+                                               ('0.0', differing, 'DIFFER', 1),
+                                               (None, differing, 'DIFFER', 1),
+                                               (None, trapped, 'INVALID', 1), (None, good, 'MATCH', 0)):
+            with self.subTest(glib=glib, verdict=verdict):
+                self.freeze(spec, good, glib=glib)
+                result = self.verify({spec['case_id']: spec}, subject)
+                self.assertEqual((result.rows[0]['verdict'], result.status), (verdict, status))
+                self.assertNotIn('compared', result.rows[0])
 
     def test_scanner_verdict_controls_the_whole_observation_allowance(self):
         name = 'table-conf-lambda-exponent-without-digits'
@@ -1174,32 +1314,118 @@ class DriverInvalidTests(DriverFixtureCase):
         for host, expected_status, expected_verdict in ((capture, 1, 'DIFFER'),
                                                         (parsed, 0, 'HOST-DEPENDENT')):
             with self.subTest(host=host), patch.object(driver, 'host_scanf_verdict', return_value=host):
-                pin = dict(observation(result={'ctx': True}, userfiles={'user.conf': 'written'}),
-                           capture_scanf=capture, capture_glibc='different-version')
+                pin = observation(result={'ctx': True}, userfiles={'user.conf': 'written'})
                 subject = observation(result={'ctx': False}, stderr='different', userfiles={})
-                status, rows = self.invoke(False, [pin, subject], case_name=name)
+                status, rows = self.invoke(False, pin, subject, case_name=name,
+                                           scanner_verdict=capture, glibc='different-version')
             self.assertEqual((status, rows[0]['verdict']), (expected_status, expected_verdict))
             self.assertEqual(rows[0]['scanner_verdicts'], dict(capture=capture, host=host))
 
     def test_reference_without_capture_scanf_is_no_reference(self):
-        original = driver.run_cases
-        def with_reference(args, *a, **k):
-            args.references = object()
-            return original(args, *a, **k)
         name = 'table-conf-lambda-exponent-without-digits'
         @contextlib.contextmanager
         def missing_reference(*args):
             yield iter([(name, (observation(result={'ctx': True}),
                                 observation(result={'ctx': False})))])
-        with patch.object(driver, 'run_cases', side_effect=with_reference), \
-                patch.object(driver, 'case_results', side_effect=missing_reference), \
+        with patch.object(driver, 'case_results', side_effect=missing_reference), \
                 patch.object(driver, 'host_scanf_verdict', side_effect=AssertionError('must not scan')):
-            status, rows = self.invoke(False, [observation(result={'ctx': True}), observation(result={'ctx': False})], case_name=name)
+            status, rows = self.invoke(False, observation(result={'ctx': True}), observation(result={'ctx': False}), case_name=name,
+                                       scanner_verdict=dict(input='1e', accepted=False, value_bits=None))
         self.assertEqual((status, rows[0]['verdict']), (1, 'NO-REFERENCE'))
         self.assertIn('capture_scanf', rows[0]['message'])
 
 
-class DirChunkTests(DriverFixtureCase):
+class ReverseCrossOpenTests(VerifyCase):
+    """`verify --reverse-cross-open PIN_PREFIX`: the local-only direction, oxpinyin writes and the pin reads."""
+    NAME = 'save-929-logical-cross-open-pinyin'
+
+    def pin_prefix(self):
+        lib = self.root / 'pin' / 'lib'
+        lib.mkdir(parents=True)
+        (lib / 'libpinyin.so').touch()
+        (lib / 'libzhuyin.so').touch()
+        (self.root / 'pin/oracle-pin.txt').write_text(
+            'libpinyin-2.11.92-' + reference.PIN_COMMIT + '+dbm-tkrzw\n')
+        return self.root / 'pin'
+
+    def test_reverse_cross_open_reuses_the_capture_manifest_check(self):
+        prefix = self.pin_prefix()
+        (prefix / 'oracle-pin.txt').write_text('wrong pin and cell\n')
+        with patch.dict(driver.os.environ, {}, clear=False):
+            driver.os.environ.pop('GITHUB_ACTIONS', None)
+            with self.assertRaisesRegex(AssertionError, 'pinned commit and cell'):
+                self.verify({self.NAME: contract['CASES'][self.NAME]},
+                            observation(result={'rows': 1}), '--reverse-cross-open', prefix,
+                            '--cases', self.NAME)
+
+    def test_the_four_cases_are_the_handoff_cases(self):
+        self.assertEqual(set(reference.REVERSE_CROSS_OPEN_CASES), {
+            'issue1114-collision-load-save-pinyin', 'issue1114-collision-load-save-zhuyin',
+            'save-929-logical-cross-open-pinyin', 'save-929-logical-cross-open-zhuyin'})
+        for name in reference.REVERSE_CROSS_OPEN_CASES:
+            self.assertIn(name, contract['CASES'])
+
+    def test_the_pin_reads_the_profile_the_subject_wrote(self):
+        spec = contract['CASES'][self.NAME]
+        self.freeze(spec, observation(result={'rows': 1}))
+        prefix = self.pin_prefix()
+        with patch.dict(driver.os.environ, {}, clear=False):
+            driver.os.environ.pop('GITHUB_ACTIONS', None)
+            result = self.verify({self.NAME: spec}, observation(result={'rows': 1}),
+                                 '--reverse-cross-open', prefix, '--cases', self.NAME)
+        self.assertEqual((result.status, [row['verdict'] for row in result.rows]), (0, ['MATCH']))
+        calls = result.run.call_args_list
+        # pin, subject, then both donor -> receiver reloads: the pin (receiver) reads the subject's profile.
+        self.assertEqual([call.args[1] for call in calls],
+                         [prefix / 'lib/libpinyin.so', self.subject, self.subject, prefix / 'lib/libpinyin.so'])
+        environments = [call.kwargs['extra_env'] for call in calls]
+        self.assertEqual([('CONTRACT_929_RELOAD' in env) for env in environments], [False, False, True, True])
+        self.assertEqual(environments[3]['CONTRACT_929_PROFILE'], environments[1]['CONTRACT_929_PROFILE'])
+
+    def test_issue1114_pin_reads_the_subject_profile(self):
+        spec = contract['CASES']['issue1114-collision-load-save-pinyin']
+        self.freeze(spec, observation(result={'rows': 1}))
+        prefix = self.pin_prefix()
+        def worker(*args, **kwargs):
+            Path(kwargs['extra_env']['CONTRACT_1114_PROFILE'], 'user_bigram.db').write_bytes(bytes(256))
+            return observation(result={'rows': 1})
+        with patch.dict(driver.os.environ, {}, clear=False):
+            driver.os.environ.pop('GITHUB_ACTIONS', None)
+            result = self.verify({'issue1114-collision-load-save-pinyin': spec}, worker,
+                                 '--reverse-cross-open', prefix, '--cases', 'issue1114-collision-load-save-pinyin')
+        self.assertEqual((result.status, [row['verdict'] for row in result.rows]), (0, ['MATCH']))
+        calls = result.run.call_args_list
+        # pin, subject, then both donor -> receiver reloads: the pin (receiver) reads the subject's profile.
+        self.assertEqual([call.args[1] for call in calls],
+                         [prefix / 'lib/libpinyin.so', self.subject, self.subject, prefix / 'lib/libpinyin.so'])
+        environments = [call.kwargs['extra_env'] for call in calls]
+        self.assertEqual([('CONTRACT_1114_RELOAD' in env) for env in environments], [False, False, True, True])
+        self.assertEqual(environments[3]['CONTRACT_1114_PROFILE'], environments[1]['CONTRACT_1114_PROFILE'])
+
+    def test_a_pin_that_cannot_read_the_subject_profile_fails(self):
+        spec = contract['CASES'][self.NAME]
+        self.freeze(spec, observation(result={'rows': 1}))
+        prefix = self.pin_prefix()
+
+        def worker(*args, **kwargs):
+            if kwargs['extra_env'].get('CONTRACT_929_RELOAD') and kwargs['extra_env']['OXPINYIN_RUNTIME_SIDE'] == 'pin':
+                return observation(result={'rows': 2})
+            return observation(result={'rows': 1})
+        with patch.dict(driver.os.environ, {}, clear=False):
+            driver.os.environ.pop('GITHUB_ACTIONS', None)
+            result = self.verify({self.NAME: spec}, worker, '--reverse-cross-open', prefix, '--cases', self.NAME)
+        # run_case marks the observation whose cross-open changed the records as failed.
+        self.assertEqual((result.status, result.rows[0]['verdict']), (1, 'INVALID'))
+
+    def test_it_never_runs_in_github_actions(self):
+        prefix = self.pin_prefix()
+        with patch.dict(driver.os.environ, {'GITHUB_ACTIONS': 'true'}):
+            code, stderr = self.verify_exit('--reverse-cross-open', str(prefix))
+        self.assertEqual(code, 2)
+        self.assertIn('never run in GitHub Actions', stderr)
+
+
+class DirChunkTests(VerifyCase):
     """`dir_chunk`: the directory a NULL row makes the pin read is held to
     the side of `directory_reads_as_a_chunk` this host is on (#1011)."""
 
@@ -1225,25 +1451,19 @@ class DirChunkTests(DriverFixtureCase):
         with patch.object(driver, 'directory_reads_as_a_chunk', return_value=reads):
             return driver.verdict_for(driver.CASES[name], pin, subject, False)[0]
 
-    def run_driver(self, name, pin, subject, reads):
-        with tempfile.TemporaryDirectory() as scratch:
-            prefix = Path(scratch)
-            (prefix / 'lib/libpinyin/data').mkdir(parents=True)
-            (prefix / 'lib/libpinyin.so').touch()
-            (prefix / 'lib/libpinyin/data/bigram.db').touch()
-            (prefix / 'oracle-pin.txt').write_text(
-                'libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99+dbm-bdb\n')
-            argv = ['driver', 'bdb', str(prefix), str(prefix / 'lib/libpinyin.so'), '--cases', name]
-            workers = [pin, subject]
-            output = io.StringIO()
-            with patch.object(driver.sys, 'argv', argv), \
-                    patch.object(driver, 'run_worker', side_effect=lambda *a, **k: workers.pop(0)), \
-                    patch.object(driver, 'directory_reads_as_a_chunk', return_value=reads), \
-                    contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
-                status = driver.main()
-        rows = [row for row in (json.loads(line) for line in output.getvalue().splitlines()
-                                if line.startswith('{')) if 'case' in row]
-        return status, rows[0]['verdict'], rows[0]['expected_ok']
+    @staticmethod
+    def directory_verdict(reaches_read):
+        return dict(size_at_least_header=reaches_read,
+                    reads=[dict(count=-1, errno=21)] if reaches_read else [])
+
+    def run_driver(self, name, pin, subject, reads, directory_read=None, host=None):
+        spec = driver.CASES[name]
+        captured = self.directory_verdict(reads) if directory_read is None else directory_read
+        self.freeze(spec, pin, directory_read=captured)
+        host_verdict = captured if host is None else host
+        with patch.object(driver, 'directory_read_verdict', return_value=host_verdict):
+            result = self.verify({name: spec}, subject, '--cases', name)
+        return result.status, result.rows[0]['verdict'], result.rows[0]['expected_ok']
 
     def test_registered_cases(self):
         self.assertEqual({name: spec['dir_chunk'] for name, spec in driver.CASES.items() if spec['dir_chunk']}, {
@@ -1312,6 +1532,33 @@ class DirChunkTests(DriverFixtureCase):
                 self.assertEqual(self.run_driver(self.SYSTEM, pin, subject, False), (1, 'DIFFER', False))
                 self.assertNotEqual(self.decide(self.SYSTEM, pin, subject, False), 'MATCH')
 
+    def test_the_pins_recorded_probe_wins_over_this_hosts(self):
+        survivor = self.answered(True, ())
+        with patch.object(driver, 'directory_reads_as_a_chunk', side_effect=AssertionError('host probed')):
+            self.assertEqual(self.run_driver(self.USER, survivor, copy.deepcopy(survivor), False),
+                             (0, 'MATCH', True))
+            self.assertEqual(self.run_driver(self.USER, self.aborted(), self.aborted(), True), (0, 'MATCH', True))
+
+    def test_a_reference_without_directory_read_verdict_is_no_reference(self):
+        for recorded in (None, {}, dict(size_at_least_header=True, reads=[])):
+            with self.subTest(recorded=recorded):
+                spec = driver.CASES[self.USER]
+                self.freeze(spec, self.aborted(), directory_read=recorded)
+                result = self.verify({self.USER: spec}, self.aborted(), '--cases', self.USER)
+                self.assertEqual((result.status, result.rows[0]['verdict']), (1, 'NO-REFERENCE'))
+                self.assertIn('directory_read_verdict', result.rows[0]['message'])
+
+    def test_directory_verdict_controls_exact_match_and_host_dependence(self):
+        pin, subject = self.aborted(), self.answered()
+        captured = self.directory_verdict(True)
+        different = self.directory_verdict(False)
+        self.assertEqual(self.run_driver(self.USER, pin, subject, True, host=captured),
+                         (1, 'DIFFER', False))
+        self.assertEqual(self.run_driver(self.USER, pin, pin, True, host=captured),
+                         (0, 'MATCH', True))
+        self.assertEqual(self.run_driver(self.USER, pin, subject, True, host=different),
+                         (0, 'HOST-DEPENDENT', True))
+
     def test_other_cases_ignore_the_probe(self):
         spec = driver.CASES['table-conf-abort-default-dictionary']
         with patch.object(driver, 'directory_reads_as_a_chunk', side_effect=AssertionError('probed')):
@@ -1368,7 +1615,7 @@ class WorkerEntryTests(DriverFixtureCase):
         self.assertIn("_module.worker(*sys.argv[1:])", source)
 
 
-class SelectionTests(DriverFixtureCase):
+class SelectionTests(VerifyCase):
     """--cases, --issue and --family resolve to exact case IDs; nothing falls
     back to the default suite."""
 
@@ -1412,14 +1659,11 @@ class SelectionTests(DriverFixtureCase):
 
     def test_bad_prefix_cli_exits_two_before_inputs_or_workers(self):
         for value in ('', 'table-conf-,', 'table-conf-,no-such-case-prefix'):
-            with self.subTest(value=value), patch.object(sys, 'argv', ['driver', '--cases-prefix', value]), \
-                    patch.object(driver, 'case_results') as workers, \
-                    contextlib.redirect_stderr(io.StringIO()) as error, self.assertRaises(SystemExit) as caught:
-                driver.main()
-            self.assertEqual(caught.exception.code, 2)
-            self.assertIn('--cases-prefix', error.getvalue())
-            self.assertNotIn('unrecognized arguments', error.getvalue())
-            workers.assert_not_called()
+            with self.subTest(value=value):
+                code, error = self.verify_exit('--cases-prefix', value)
+                self.assertEqual(code, 2)
+                self.assertIn('--cases-prefix', error)
+                self.assertNotIn('unrecognized arguments', error)
 
     def test_explicit_cases_keep_their_order_and_combine(self):
         names, reasons = contract['select_cases']('alloc-instance-after-fini,default-option-parse', issues=['532'])
@@ -1457,16 +1701,52 @@ class SelectionTests(DriverFixtureCase):
 
     def test_empty_cases_cli_exits_two_before_inputs_or_workers(self):
         for value in ('', ' ', ',', 'default-option-parse,'):
-            for extra in ([], ['--issue', '532'], ['--family', 'zero-key'], ['--list-tags']):
+            for extra in ([], ['--issue', '532'], ['--family', 'zero-key']):
                 with self.subTest(value=value, extra=extra):
-                    error = io.StringIO()
-                    with patch.object(sys, 'argv', ['driver', '--cases', value, *extra]), \
-                            patch.object(driver, 'case_results') as workers, \
-                            contextlib.redirect_stderr(error), self.assertRaises(SystemExit) as caught:
-                        driver.main()
-                    self.assertEqual(caught.exception.code, 2)
-                    self.assertIn('--cases must not contain an empty value', error.getvalue())
-                    workers.assert_not_called()
+                    code, error = self.verify_exit('--cases', value, *extra)
+                    self.assertEqual(code, 2)
+                    self.assertIn('--cases must not contain an empty value', error)
+
+    def test_cases_from_a_file_are_read_before_validation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            listing = Path(directory, 'cases')
+            listing.write_text('\n  \n')
+            code, error = self.verify_exit('--cases', '@' + str(listing))
+            self.assertEqual(code, 2)
+            self.assertIn('--cases must not contain an empty value', error)
+            code, error = self.verify_exit('--cases', '@' + str(listing) + '.missing')
+            self.assertEqual(code, 2)
+            self.assertIn('.missing', error)
+
+    def test_the_selectors_are_options_of_the_operations_and_not_of_the_top_level_parser(self):
+        for option in (['--cases', 'x'], ['--cases-prefix', 'x'], ['--issue', '1'], ['--family', 'f'], ['--plan-only'],
+                       ['--jobs', '2'], ['--case-timeout', '5'], ['--expect-parent'], ['--observations', 'o'],
+                       ['--run-platform-excluded'], ['--axis-c-replacement', 'all']):
+            with self.subTest(option=option):
+                error = io.StringIO()
+                with patch.object(sys, 'argv', ['driver', 'bdb', '/pin', '/subject', *option]), \
+                        contextlib.redirect_stderr(error), self.assertRaises(SystemExit) as caught:
+                    driver.main()
+                self.assertEqual(caught.exception.code, 2)
+                self.assertIn('unrecognized arguments: ' + option[0], error.getvalue())
+
+    def test_verify_takes_no_other_workload_options(self):
+        for option in (['--teardown'], ['--per-call', 'wrap'], ['--axis-c-snapshot-check'], ['--list-tags']):
+            with self.subTest(option=option):
+                code, error = self.verify_exit(*option)
+                self.assertEqual(code, 2)
+                self.assertIn('unrecognized arguments: ' + option[0], error)
+
+    def test_the_old_bare_invocation_has_nothing_to_do(self):
+        error = io.StringIO()
+        with patch.object(sys, 'argv', ['driver', 'bdb', '/pin', '/subject']), \
+                patch.object(driver, 'check_tkrzw'), contextlib.redirect_stderr(error), \
+                patch.object(Path, 'is_file', return_value=True), \
+                patch.object(Path, 'read_text', return_value='libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99+dbm-bdb\n'), \
+                self.assertRaises(SystemExit) as caught:
+            driver.main()
+        self.assertEqual(caught.exception.code, 2)
+        self.assertIn('the operations are `verify` and `capture`', error.getvalue())
 
     def test_duplicate_registration_preserves_original_case(self):
         with patch.object(driver, 'CASES', {}):
@@ -1546,45 +1826,60 @@ class TimingTests(DriverFixtureCase):
 
 
 class DeadlineTests(DriverFixtureCase):
-    def test_shared_budget_and_fatal_environment(self):
-        spec = dict(mode='pinyin', fatal=True)
+    """verify_case: one deadline for the subject's worker and, for a handoff case, its reload."""
+
+    def verify_case(self, spec, row, name='case', timeout=20):
+        with tempfile.TemporaryDirectory() as scratch:
+            return driver._RUNNER.verify_case(spec, row, Path('/subject'), Path('/data'), name, scratch, timeout)
+
+    def test_shared_budget_across_the_subject_and_its_reload(self):
+        row = handoff_row(b'pin-written', observation(result={'rows': []}), 'save-929-logical-cross-open-pinyin')
         with patch.object(driver.time, 'monotonic', side_effect=[10, 11, 17]), \
-             patch.object(driver, 'run_worker', side_effect=[observation(result={'ret': True}), observation(result={'ret': True})]) as run:
-            pin, subject = driver.run_case(spec, Path('/pin'), Path('/subject'), Path('/data'), 'case', '/tmp', 20)
+             patch.object(driver, 'run_worker', side_effect=[observation(result={'rows': []}),
+                                                             observation(result={'rows': []})]) as run:
+            _, subject = self.verify_case(dict(mode='pinyin', fatal=False, pin_not_run=None), row,
+                                          'save-929-logical-cross-open-pinyin')
         self.assertEqual([call.kwargs['timeout'] for call in run.call_args_list], [19, 13])
-        test_support.assert_same_environment(self, run.call_args.kwargs['extra_env'], {'G_DEBUG': 'fatal-criticals'})
-        self.assertEqual(pin, subject)
+        self.assertEqual(subject['exit'], 0)
 
-    def test_pin_not_run_launches_only_the_subject(self):
-        good = observation(result={'ret': True})
-        with patch.object(driver, 'run_worker', return_value=good) as run:
-            results = driver.run_case(dict(mode='pinyin', fatal=False, pin_not_run={'ret': True}),
-                                      Path('/p'), Path('/s'), '/data', 'case', '/tmp', 3)
-        self.assertEqual(run.call_count, 1)
-        self.assertEqual(run.call_args.args[1], Path('/s').resolve())
-        self.assertEqual([r['exit'] for r in results], ['NOT-RUN', 0])
-
-    def test_pin_timeout_does_not_launch_subject(self):
-        with patch.object(driver, 'run_worker', side_effect=subprocess.TimeoutExpired('worker', 1)) as run:
-            results = driver.run_case(dict(mode='pinyin', fatal=False), Path('/p'), Path('/s'), '/data', 'case', '/tmp', 1)
-        self.assertEqual([r['exit'] for r in results], ['TIMEOUT', 'NOT-RUN'])
-        self.assertEqual(run.call_count, 1)
-
-    def test_subject_timeout_preserves_completed_pin(self):
-        good = observation(result={'ret': True})
-        with patch.object(driver, 'run_worker', side_effect=[good, subprocess.TimeoutExpired('worker', 1, stderr=b'partial\n')]):
-            results = driver.run_case(dict(mode='pinyin', fatal=False), Path('/p'), Path('/s'), '/data', 'case', '/tmp', 1)
-        self.assertIs(results[0], good)
-        self.assertEqual(results[1]['exit'], 'TIMEOUT')
-        self.assertEqual(results[1]['stderr_lines'], 1)
-        self.assertIsNone(results[1]['result'])
-
-    def test_expired_budget_does_not_start_another_worker(self):
-        with patch.object(driver.time, 'monotonic', side_effect=[0, 1, 4]), \
+    def test_fatal_environment_reaches_the_subject_worker(self):
+        with patch.object(driver.time, 'monotonic', side_effect=[10, 11]), \
              patch.object(driver, 'run_worker', return_value=observation(result={'ret': True})) as run:
-            results = driver.run_case(dict(mode='pinyin', fatal=False), Path('/p'), Path('/s'), '/data', 'case', '/tmp', 3)
+            pin, subject = self.verify_case(dict(mode='pinyin', fatal=True, pin_not_run=None),
+                                            dict(pin=observation(result={'ret': True})))
+        self.assertEqual(run.call_args.kwargs['timeout'], 19)
+        test_support.assert_same_environment(self, run.call_args.kwargs['extra_env'], {'G_DEBUG': 'fatal-criticals'})
         self.assertEqual(run.call_count, 1)
-        self.assertEqual(results[1]['exit'], 'TIMEOUT')
+        self.assertEqual(pin['result'], subject['result'])
+
+    def test_subject_timeout_preserves_the_stored_pin_observation(self):
+        stored = observation(result={'ret': True})
+        with patch.object(driver, 'run_worker', side_effect=subprocess.TimeoutExpired('worker', 1, stderr=b'partial\n')):
+            pin, subject = self.verify_case(dict(mode='pinyin', fatal=False, pin_not_run=None), dict(pin=stored),
+                                            timeout=1)
+        self.assertEqual({key: pin[key] for key in stored}, stored)
+        self.assertEqual(subject['exit'], 'TIMEOUT')
+        self.assertEqual(subject['stderr_lines'], 1)
+        self.assertIsNone(subject['result'])
+
+    def test_expired_budget_does_not_start_the_reload(self):
+        row = handoff_row(b'pin-written', observation(result={'rows': []}), 'save-929-logical-cross-open-pinyin')
+        with patch.object(driver.time, 'monotonic', side_effect=[0, 1, 4]), \
+             patch.object(driver, 'run_worker', return_value=observation(result={'rows': []})) as run:
+            _, subject = self.verify_case(dict(mode='pinyin', fatal=False, pin_not_run=None), row,
+                                          'save-929-logical-cross-open-pinyin', timeout=3)
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(subject['exit'], 'TIMEOUT')
+
+    def test_capture_of_a_pin_that_times_out_starts_no_reload(self):
+        # What the removed "a pin timeout never launches the subject" guarded, for the one run that remains.
+        with patch.object(driver, 'run_worker', side_effect=subprocess.TimeoutExpired('worker', 1)) as run, \
+                tempfile.TemporaryDirectory() as scratch:
+            observation_, profile, _ = driver._RUNNER.capture_case(
+                dict(mode='pinyin', fatal=False, pin_not_run=None), Path('/pin'), Path('/data'),
+                'save-929-logical-cross-open-pinyin', scratch, 1)
+        self.assertEqual(observation_['exit'], 'TIMEOUT')
+        self.assertEqual(run.call_count, 1)
 
     def test_timeout_kills_descendants_holding_output_pipes(self):
         with tempfile.TemporaryDirectory() as scratch:
@@ -1608,46 +1903,35 @@ class DeadlineTests(DriverFixtureCase):
             self.assertLess(time.monotonic() - start, 3)
 
 
-class DriverVerdictTests(DriverFixtureCase):
+class DriverVerdictTests(VerifyCase):
     def invoke(self, parent=False, timeout=None, timeout_side=0):
-        with tempfile.TemporaryDirectory() as scratch:
-            prefix = Path(scratch)
-            (prefix / 'lib/libpinyin/data').mkdir(parents=True)
-            (prefix / 'lib/libpinyin.so').touch()
-            (prefix / 'lib/libpinyin/data/bigram.db').touch()
-            (prefix / 'oracle-pin.txt').write_text('libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99+dbm-bdb\n')
-            args = ['driver', 'bdb', str(prefix), str(prefix / 'lib/libpinyin.so'), '--cases', 'slow,next']
-            if parent:
-                args.append('--expect-parent')
-            if timeout is not None:
-                args.extend(['--case-timeout', str(timeout)])
-            cases = {name: dict(driver.CASES['default-option-parse'], control=True) for name in ('slow', 'next')}
-            cases['slow'].update(control=False, host_scanf=('1e',))
-            calls = []
-            def worker(*args, **kwargs):
-                calls.append(kwargs)
-                if len(calls) == timeout_side + 1:
-                    raise subprocess.TimeoutExpired('worker', kwargs['timeout'])
-                return observation(result={'ret': True})
-            output = io.StringIO()
-            with patch.object(driver.sys, 'argv', args), patch.object(driver, 'CASES', cases), \
-                 patch.object(driver, 'run_worker', side_effect=worker), contextlib.redirect_stdout(output):
-                status = driver.main()
-            rows = [json.loads(line) for line in output.getvalue().splitlines() if line.startswith('{') and 'case' in json.loads(line)]
-            return status, rows, calls
+        options = ['--cases', 'slow,next'] + (['--expect-parent'] if parent else [])
+        if timeout is not None:
+            options.extend(['--case-timeout', str(timeout)])
+        cases = {name: dict(driver.CASES['default-option-parse'], control=True) for name in ('slow', 'next')}
+        cases['slow'].update(control=False)
+        self.freeze(cases['slow'], observation(result={'ret': True}))
+        calls = []
 
-    def test_pin_timeout_is_failure_and_next_case_runs(self):
-        with patch.object(driver, 'host_scanf_accepts', return_value=True), \
-                patch.object(driver, 'pin_loaded_subject_refused_table_conf', return_value=True):
-            status, rows, calls = self.invoke()
+        def worker(*args, **kwargs):
+            calls.append(kwargs)
+            if len(calls) == timeout_side + 1:
+                raise subprocess.TimeoutExpired('worker', kwargs['timeout'])
+            return observation(result={'ret': True})
+        result = self.verify(cases, worker, *options)
+        return result.status, result.rows, calls
+
+    def test_subject_timeout_is_failure_and_next_case_runs(self):
+        status, rows, calls = self.invoke()
         self.assertEqual(status, 1)
         self.assertEqual([r['verdict'] for r in rows], ['TIMEOUT', 'MATCH'])
         self.assertFalse(rows[0]['expected_ok'])
-        self.assertEqual(rows[0]['exit'], ['TIMEOUT', 'NOT-RUN'])
+        self.assertEqual(rows[0]['exit'], [0, 'TIMEOUT'])
+        self.assertEqual(len(calls), 2)
         self.assertTrue(299 < calls[0]['timeout'] <= 300)
 
     def test_subject_timeout_is_failure_in_parent_mode(self):
-        status, rows, calls = self.invoke(parent=True, timeout=7, timeout_side=1)
+        status, rows, calls = self.invoke(parent=True, timeout=7, timeout_side=0)
         self.assertEqual(status, 1)
         self.assertEqual([r['verdict'] for r in rows], ['TIMEOUT', 'MATCH'])
         self.assertFalse(rows[0]['expected_ok'])
@@ -1661,14 +1945,13 @@ class DriverVerdictTests(DriverFixtureCase):
 
     def test_invalid_limits_are_rejected(self):
         for value in ('0', '-1', 'nan', 'inf'):
-            with self.subTest(value=value), contextlib.redirect_stderr(io.StringIO()), \
-                 patch.object(driver.sys, 'argv', ['driver', 'bdb', '/unused', '/unused', '--case-timeout', value]), \
-                 self.assertRaises(SystemExit) as caught:
-                driver.main()
-            self.assertEqual(caught.exception.code, 2)
+            with self.subTest(value=value):
+                code, error = self.verify_exit('--case-timeout', value)
+                self.assertEqual(code, 2)
+                self.assertIn('--case-timeout must be a positive finite number of seconds', error)
 
 
-class PlatformExclusionTests(DriverFixtureCase):
+class PlatformExclusionTests(VerifyCase):
     """#1137: the arm64-only exclusions are registered, reasoned and skipped."""
 
     def test_arm64_exclusions_are_eleven_reasoned_cases(self):
@@ -1681,37 +1964,22 @@ class PlatformExclusionTests(DriverFixtureCase):
         self.assertIn('#1137', contract['ARM64_EXCLUSION_REASON'])
 
     def invoke(self, host_platform, extra_args=(), cells=None, observations=False):
-        with tempfile.TemporaryDirectory() as scratch:
-            prefix = Path(scratch)
-            (prefix / 'lib/libpinyin/data').mkdir(parents=True)
-            (prefix / 'lib/libpinyin.so').touch()
-            (prefix / 'lib/libpinyin/data/bigram.db').touch()
-            (prefix / 'oracle-pin.txt').write_text(
-                'libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99+dbm-bdb\n')
-            cases = {name: dict(driver.CASES['default-option-parse'], control=True,
-                                platforms=('linux/amd64',),
-                                platform_skip_reason='#1137: arm64 exclusion')
-                     for name in ('slow', 'next')}
-            for name, allowed in (cells or {}).items():
-                cases[name]['cells'] = allowed
-            args = ['driver', 'bdb', str(prefix), str(prefix / 'lib/libpinyin.so'),
-                    '--cases', 'slow,next', *extra_args]
-            capture = Path(scratch, 'observations.jsonl')
-            if observations:
-                args += ['--observations', str(capture)]
-            output, errors = io.StringIO(), io.StringIO()
-            with patch.object(driver, 'HOST_ORACLE_PLATFORM', host_platform), \
-                    patch.object(driver, 'CASES', cases), \
-                    patch.object(driver, 'run_worker', return_value=observation(result={'ret': True})) as run, \
-                    patch.object(driver.sys, 'argv', args), contextlib.redirect_stdout(output), \
-                    contextlib.redirect_stderr(errors):
-                status = driver.main()
-            rows = [json.loads(line) for line in output.getvalue().splitlines()
-                    if line.startswith('{') and 'case' in json.loads(line)]
-            overrides = [json.loads(line) for line in errors.getvalue().splitlines()
-                         if line.startswith('{') and 'override' in json.loads(line)]
-            captured = capture.read_text() if observations else None
-            return status, rows, run, overrides, captured
+        cases = {name: dict(driver.CASES['default-option-parse'], control=True,
+                            platforms=('linux/amd64',),
+                            platform_skip_reason='#1137: arm64 exclusion')
+                 for name in ('slow', 'next')}
+        for name, allowed in (cells or {}).items():
+            cases[name]['cells'] = allowed
+        self.freeze(cases['next'], observation(result={'ret': True}))
+        capture = self.root / 'observations.jsonl'
+        options = ['--cases', 'slow,next', *extra_args]
+        if observations:
+            options += ['--observations', capture]
+        result = self.verify(cases, observation(result={'ret': True}), *options, platform=host_platform)
+        overrides = [json.loads(line) for line in result.stderr.splitlines()
+                     if line.startswith('{') and 'override' in json.loads(line)]
+        captured = capture.read_text() if observations else None
+        return result.status, result.rows, result.run, overrides, captured
 
     def test_arm64_verdict_is_skip_with_reason_and_starts_no_worker(self):
         status, rows, run, overrides, captured = self.invoke('linux/arm64')
@@ -1727,7 +1995,7 @@ class PlatformExclusionTests(DriverFixtureCase):
         self.assertEqual(status, 0)
         self.assertEqual([row['verdict'] for row in rows], ['MATCH', 'MATCH'])
         self.assertNotIn('reason', rows[0])
-        self.assertEqual(run.call_count, 4)
+        self.assertEqual(run.call_count, 2)
         self.assertEqual(overrides, [])
         self.assertIsNone(captured)
 
@@ -1736,52 +2004,58 @@ class PlatformExclusionTests(DriverFixtureCase):
             'linux/arm64', ['--run-platform-excluded'], observations=True)
         self.assertEqual(status, 0)
         self.assertEqual([row['verdict'] for row in rows], ['MATCH', 'MATCH'])
-        self.assertEqual(run.call_count, 4)
+        self.assertEqual(run.call_count, 2)
         self.assertEqual({item['case'] for item in overrides}, {'slow', 'next'})
         self.assertEqual({item['reason'] for item in overrides}, {'#1137: arm64 exclusion'})
         self.assertTrue(all(item['override'] == 'platform-excluded' for item in overrides))
         self.assertTrue(all(item['note'] == 'not an ordinary gate' for item in overrides))
         observations = [json.loads(line) for line in captured.splitlines()]
         self.assertEqual([item['case'] for item in observations], ['slow', 'next'])
-        self.assertEqual({item['cell'] for item in observations}, {'bdb'})
+        self.assertEqual({item['cell'] for item in observations}, {self.CELL})
 
     def test_override_flag_changes_nothing_on_amd64(self):
         status, rows, run, overrides, captured = self.invoke(
             'linux/amd64', ['--run-platform-excluded'])
         self.assertEqual(status, 0)
         self.assertEqual([row['verdict'] for row in rows], ['MATCH', 'MATCH'])
-        self.assertEqual(run.call_count, 4)
+        self.assertEqual(run.call_count, 2)
         self.assertEqual(overrides, [])
         self.assertIsNone(captured)
 
     def test_override_flag_does_not_bypass_cell_skip(self):
+        # verify drops a case the cell excludes from its selection: it is neither run nor overridden.
         status, rows, run, overrides, captured = self.invoke(
             'linux/arm64', ['--run-platform-excluded'],
             cells={'slow': ('kc',), 'next': ('bdb', 'kc', 'tkrzw')})
         self.assertEqual(status, 0)
-        self.assertEqual([row['verdict'] for row in rows], ['SKIP', 'MATCH'])
-        self.assertNotIn('reason', rows[0])
-        self.assertEqual(run.call_count, 2)
-        self.assertEqual({item['case'] for item in overrides}, {'slow', 'next'})
+        self.assertEqual([(row['case'], row['verdict']) for row in rows], [('next', 'MATCH')])
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual({item['case'] for item in overrides}, {'next'})
         self.assertIsNone(captured)
 
 
-class ParallelCaseTests(DriverFixtureCase):
+class ParallelCaseTests(VerifyCase):
+    CELL = 'bdb'
+
     def setUp(self):
         super().setUp()
-        temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name)
+        self.references = self.root / 'refs'
         (self.root / 'lib').mkdir()
         for name in ('libpinyin.so', 'libzhuyin.so', 'subject.so'):
             (self.root / 'lib' / name).touch()
         self.scratch = self.root / 'scratch'
         self.scratch.mkdir()
-        self.args = SimpleNamespace(cell='bdb', prefix=self.root,
-                                    pinyin_so=self.root / 'lib/subject.so',
-                                    zhuyin_so=self.root / 'lib/subject.so', case_timeout=2)
-        self.cases = {name: driver.case_spec(control=True) for name in ('first', 'second', 'third')}
+        self.cases = {name: driver.case_spec(fn=stub_case, case_id=name, control=True)
+                      for name in ('first', 'second', 'third')}
         self.names = list(self.cases)
+        self.args = SimpleNamespace(cell='bdb', pinyin_so=self.root / 'lib/subject.so',
+                                    zhuyin_so=self.root / 'lib/subject.so', case_timeout=2,
+                                    references=reference.Store(self.references, 'bdb', None, driver.NO_ABORT))
+
+    def freeze_all(self, **results):
+        for name, spec in self.cases.items():
+            if 'cells' not in spec or 'bdb' in spec['cells']:
+                self.freeze(spec, observation(result=results.get(name, {'ret': name})))
 
     def results(self, jobs):
         with patch.object(driver, 'CASES', self.cases), \
@@ -1789,11 +2063,12 @@ class ParallelCaseTests(DriverFixtureCase):
             return list(results)
 
     def test_out_of_order_completion_retains_order_and_isolates_case_scratch(self):
+        self.freeze_all()
         completed, paths = [], []
         active = peak = 0
         lock = threading.Lock()
         barrier = threading.Barrier(2)
-        def run(spec, pin, subject, data, name, scratch, timeout):
+        def run(spec, row, subject, data, name, scratch, timeout, companion=None):
             nonlocal active, peak
             with lock:
                 active += 1
@@ -1809,11 +2084,11 @@ class ParallelCaseTests(DriverFixtureCase):
                 if name == 'first':
                     time.sleep(.05)
                 completed.append(name)
-                return [observation(result={'ret': name})] * 2
+                return [row['pin'], observation(result={'ret': name})]
             finally:
                 with lock:
                     active -= 1
-        with patch.object(driver, 'run_case', side_effect=run):
+        with patch.object(driver._RUNNER, 'verify_case', side_effect=run):
             results = self.results(2)
         self.assertEqual([name for name, _ in results], self.names)
         self.assertEqual(completed[0], 'second')
@@ -1822,6 +2097,7 @@ class ParallelCaseTests(DriverFixtureCase):
         self.assertEqual(list(self.scratch.iterdir()), [])
 
     def test_real_workers_keep_profiles_and_side_timings_separate(self):
+        self.freeze_all()
         worker = self.root / 'worker.py'
         worker.write_text(
             'import json, os, sys, time\nfrom pathlib import Path\n'
@@ -1838,17 +2114,18 @@ class ParallelCaseTests(DriverFixtureCase):
             timings = list(driver.TIMINGS)
         self.assertEqual(serial, parallel)
         for name, pair in parallel:
+            # The pin side is the stored row; only the subject ran.
             self.assertEqual(pair[0]['result'], {'ret': name})
-            self.assertEqual(pair[0], pair[1])
-            self.assertEqual(set(pair[0]['userfiles']), {'profile.bin'})
-        self.assertEqual(len(timings), 12)
+            self.assertEqual(pair[1]['result'], {'ret': name})
+            self.assertEqual(set(pair[1]['userfiles']), {'profile.bin'})
+        self.assertEqual(len(timings), 6)
         for timing in timings:
-            expected = ('subject' if Path(timing['so']).resolve() == self.args.pinyin_so.resolve()
-                        else 'pin')
-            self.assertEqual(timing['side'], expected)
+            self.assertEqual(timing['side'], 'subject')
+            self.assertEqual(Path(timing['so']).resolve(), self.args.pinyin_so.resolve())
         self.assertEqual(list(self.scratch.iterdir()), [])
 
     def test_parallel_timeout_preserves_later_cases_and_cleans_scratch(self):
+        self.freeze_all()
         worker = self.root / 'timeout-worker.py'
         worker.write_text(
             'import json, sys, threading\n'
@@ -1859,34 +2136,48 @@ class ParallelCaseTests(DriverFixtureCase):
         # deadline, and a short one is enough. Every other case gets a long
         # deadline, so a loaded host cannot turn a healthy case into a TIMEOUT.
         self.args.case_timeout = 30
-        run_case = driver.run_case
-        def run(spec, pin, subject, data, name, scratch, timeout):
-            return run_case(spec, pin, subject, data, name, scratch, .05 if name == 'first' else timeout)
+        verify_case = driver._RUNNER.verify_case
+        def run(spec, row, subject, data, name, scratch, timeout, companion=None):
+            return verify_case(spec, row, subject, data, name, scratch, .05 if name == 'first' else timeout,
+                               companion=companion)
         with patch.object(driver, 'WORKER', worker), patch.object(driver, 'TIMINGS', []), \
-                patch.object(driver, 'run_case', run):
+                patch.object(driver._RUNNER, 'verify_case', run):
             results = self.results(2)
-        self.assertEqual([side['exit'] for side in results[0][1]], ['TIMEOUT', 'NOT-RUN'])
+        self.assertEqual(results[0][1][1]['exit'], 'TIMEOUT')
+        self.assertEqual(results[0][1][0]['exit'], 0)
         for name, pair in results[1:]:
             self.assertEqual(pair[0]['result'], {'ret': name})
             self.assertEqual(pair[0]['exit'], 0)
+            self.assertEqual(pair[1]['result'], {'ret': name})
             self.assertEqual(pair[1]['exit'], 0)
         self.assertEqual(list(self.scratch.iterdir()), [])
 
-    def test_skip_does_not_start_either_side(self):
+    def test_skip_does_not_start_the_worker_or_look_up_the_reference(self):
         self.cases['second']['cells'] = ('kc',)
-        with patch.object(driver, 'run_case', return_value=[observation(result={'ret': True})] * 2) as run:
+        self.freeze_all()
+        with patch.object(driver._RUNNER, 'verify_case', side_effect=lambda spec, row, *a, **k: [
+                row['pin'], observation(result={'ret': True})]) as run:
             results = self.results(2)
         self.assertIsNone(results[1][1])
         self.assertEqual(run.call_count, 2)
         self.assertEqual([name for name, _ in results], self.names)
 
+    def test_a_missing_reference_is_the_case_result_and_later_cases_still_run(self):
+        self.freeze(self.cases['first'], observation(result={'ret': 'first'}))
+        self.freeze(self.cases['third'], observation(result={'ret': 'third'}))
+        with patch.object(driver._RUNNER, 'verify_case', side_effect=lambda spec, row, *a, **k: [
+                row['pin'], observation(result={'ret': True})]) as run:
+            results = self.results(2)
+        self.assertIsInstance(results[1][1], reference.ReferenceError)
+        self.assertIn('no reference', str(results[1][1]))
+        self.assertEqual(run.call_count, 2)
+
     def test_invalid_jobs_fail_before_any_input_is_opened(self):
         for value in ('0', '-1', '1.5', 'nan'):
-            with self.subTest(value=value), contextlib.redirect_stderr(io.StringIO()), \
-                    patch.object(sys, 'argv', ['driver', '--jobs', value]), \
-                    self.assertRaises(SystemExit) as error:
-                driver.main()
-            self.assertEqual(error.exception.code, 2)
+            with self.subTest(value=value):
+                code, error = self.verify_exit('--jobs', value)
+                self.assertEqual(code, 2)
+                self.assertIn('--jobs', error)
 
     def run_main(self, argv, environment, **patches):
         data = self.root / 'lib/libpinyin/data'
@@ -1895,7 +2186,7 @@ class ParallelCaseTests(DriverFixtureCase):
         (self.root / 'oracle-pin.txt').write_text(
             'libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99+dbm-bdb\n')
         args = ['driver', *argv]
-        if '--list-tags' not in argv:
+        if '--list-tags' not in argv and argv[:1] != ['verify']:
             args[1:1] = ['bdb', str(self.root), str(self.args.pinyin_so)]
         stdout, stderr = io.StringIO(), io.StringIO()
         with patch.dict(os.environ, environment), patch.object(sys, 'argv', args), \
@@ -1922,61 +2213,58 @@ class ParallelCaseTests(DriverFixtureCase):
                 status, output, stderr = self.run_main(['--list-tags'], dict(OXPINYIN_CONTRACT_JOBS=value))
                 self.assertEqual(status, 0, stderr)
                 self.assertIn('"tags"', output)
-                status, _, stderr = self.run_main(['--cases', 'default-option-parse'],
-                                                  dict(OXPINYIN_CONTRACT_JOBS=value))
+                status, _, stderr = self.run_main(
+                    ['verify', 'tkrzw', str(self.subject), '--data', str(self.data),
+                     '--references', str(self.references), '--cases', 'default-option-parse'],
+                    dict(OXPINYIN_CONTRACT_JOBS=value), run_worker=lambda *a, **k: self.fail('a case ran'))
                 self.assertEqual(status, 2)
                 self.assertIn('Invalid OXPINYIN_CONTRACT_JOBS: use a positive integer', stderr)
 
-    def test_explicit_jobs_are_refused_for_serial_only_modes(self):
+    def test_jobs_belong_to_verify_and_the_serial_only_modes_do_not_take_them(self):
+        # `--jobs` is gone from the top-level parser, so --teardown and --per-call cannot be combined with it.
         for argv in (['--jobs', '4', '--teardown'], ['--jobs', '4', '--per-call', 'lookup-only']):
             with self.subTest(argv=argv):
                 status, _, stderr = self.run_main(argv, {})
                 self.assertEqual(status, 2)
-                self.assertIn('--jobs applies to ordinary contract cases only', stderr)
+                self.assertIn('unrecognized arguments: --jobs 4', stderr)
 
     def invoke_main(self, jobs, parent=False):
-        data = self.root / 'lib/libpinyin/data'
-        data.mkdir(parents=True, exist_ok=True)
-        (data / 'bigram.db').touch()
-        (self.root / 'oracle-pin.txt').write_text(
-            'libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99+dbm-bdb\n')
-        self.cases['first'].update(control=False, host_scanf=('1e',))
-        self.cases['second']['cells'] = ('kc',)
-        def run(spec, pin, subject, data, name, scratch, timeout):
+        self.CELL = 'tkrzw'
+        # The first case differs; the second is excluded by its cell.
+        cases = {'first': driver.case_spec(fn=stub_case, case_id='first'),
+                 'second': driver.case_spec(fn=stub_case, case_id='second', control=True, cells=('kc',)),
+                 'third': driver.case_spec(fn=stub_case, case_id='third', control=True)}
+        self.freeze(cases['first'], observation(result={'ret': 'pin'}), glibc='0.0')
+        self.freeze(cases['third'], observation(result={'ret': 'third'}))
+
+        def worker(mode, so, data, name, scratch, extra_env=None, timeout=None):
             if name == 'first':
                 time.sleep(.03)
-                return [observation(result={'ret': 'pin'}), observation(result={'ret': 'subject'})]
-            return [observation(result={'ret': name})] * 2
+                return observation(result={'ret': 'subject'})
+            return observation(result={'ret': name})
         capture = self.root / 'observations.jsonl'
-        args = ['driver', 'bdb', str(self.root), str(self.args.pinyin_so),
-                '--jobs', str(jobs), '--cases', ','.join(self.names), '--observations', str(capture)]
+        options = ['--jobs', str(jobs), '--cases', ','.join(cases), '--observations', capture]
         if parent:
-            args.append('--expect-parent')
-        output = io.StringIO()
-        with patch.object(driver, 'CASES', self.cases), patch.object(sys, 'argv', args), \
-                patch.object(driver, 'run_case', side_effect=run), \
-                patch.object(driver, 'case_jobs', return_value=contextlib.nullcontext(jobs)), \
-                patch.object(driver, 'host_scanf_accepts', return_value=True), \
-                patch.object(driver, 'pin_loaded_subject_refused_table_conf', return_value=True), \
-                contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
-            status = driver.main()
-        rows = [json.loads(line) for line in output.getvalue().splitlines() if line.startswith('{')]
-        return status, [row for row in rows if 'case' in row], capture.read_text()
+            options.append('--expect-parent')
+        with patch.object(driver, 'case_jobs', return_value=contextlib.nullcontext(jobs)):
+            result = self.verify(cases, worker, *options)
+        return result.status, result.rows, capture.read_text()
 
     def test_observation_order_skip_and_host_dependent_are_serial_equivalent(self):
         serial = self.invoke_main(1)
         parallel = self.invoke_main(2)
         self.assertEqual(serial, parallel)
         self.assertEqual(parallel[0], 1)
-        self.assertEqual([row['verdict'] for row in parallel[1]], ['DIFFER', 'SKIP', 'MATCH'])
-        self.assertEqual([json.loads(line)['case'] for line in parallel[2].splitlines()], ['first', 'third'])
+        self.assertEqual([row['verdict'] for row in parallel[1]], ['DIFFER', 'MATCH'])
+        self.assertEqual([json.loads(line)['case'] for line in parallel[2].splitlines()],
+                         ['first', 'third'])
 
     def test_parent_mode_remains_serial_equivalent(self):
         serial = self.invoke_main(1, parent=True)
         parallel = self.invoke_main(2, parent=True)
         self.assertEqual(serial, parallel)
         self.assertEqual(parallel[0], 0)
-        self.assertEqual([row['verdict'] for row in parallel[1]], ['DIFFER', 'SKIP', 'MATCH'])
+        self.assertEqual([row['verdict'] for row in parallel[1]], ['DIFFER', 'MATCH'])
 
 
 class CancellationTests(DriverFixtureCase):
@@ -2062,14 +2350,25 @@ class CancellationTests(DriverFixtureCase):
                          "module.per_call_run = lambda *a, **kw: run(*(*a[:5], 'wall', *a[6:]), **kw); ")
             code = ("import importlib.util, pathlib, sys; "
                     "spec = importlib.util.spec_from_file_location('contract', sys.argv[1]); "
-                    "module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module); "
+                    "module = importlib.util.module_from_spec(spec); sys.modules['contract'] = module; "
+                    "spec.loader.exec_module(module); "
                     + setup + "module.check_tkrzw = lambda *a, **kw: None; sys.argv.pop(0); "
                     "sys.exit(module.main())")
+            if per_call:
+                operation = ['bdb', str(prefix), str(prefix / 'lib/libpinyin.so'),
+                             '--per-call', 'lookup-only', '--per-call-facades', 'pinyin']
+            else:
+                # verify: the subject (the hanging worker) against references the test freezes for the cases.
+                data = prefix / 'package-data'
+                data.mkdir()
+                (data / 'table.conf').write_text('x')
+                names = ['default-option-parse'] + (['explicit-use-tone-parse'] if jobs > 1 else [])
+                for name in names:
+                    freeze(prefix / 'refs', 'tkrzw', driver.CASES[name], observation(result={'ret': True}))
+                operation = ['verify', 'tkrzw', str(prefix / 'lib/libpinyin.so'), '--data', str(data),
+                             '--references', str(prefix / 'refs'), '--cases', ','.join(names), '--jobs', str(jobs)]
             command = [sys.executable, '-c', code, str(Path(driver.__file__).resolve()),
-                       str(worker), 'bdb', str(prefix), str(prefix / 'lib/libpinyin.so'),
-                       *(['--per-call', 'lookup-only', '--per-call-facades', 'pinyin'] if per_call else
-                         ['--cases', 'default-option-parse' + (',explicit-use-tone-parse' if jobs > 1 else ''),
-                          '--jobs', str(jobs)])]
+                       str(worker), *operation]
             env = os.environ.copy()
             owned_scratch = prefix / 'scratch'
             owned_scratch.mkdir()

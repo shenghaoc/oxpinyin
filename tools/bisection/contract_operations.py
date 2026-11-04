@@ -4,6 +4,7 @@
                              [--references DIR] [--cases ...] [--issue N]... [--family F]...
                              [--cases-prefix P,...] [--expect-parent] [--plan-only]
                              [--case-timeout SECONDS] [--jobs N] [--observations FILE]
+                             [--reverse-cross-open PIN_PREFIX]
     contract-diff.py capture CELL PREFIX --data DIR [--out DIR] [--references DIR]
                              [--cases ...] [--issue N]... [--family F]... [--cases-prefix P,...]
                              [--runs N] [--case-timeout SECONDS]
@@ -13,6 +14,10 @@ observation (contract_reference). It needs no pin prefix, pin library or contain
 never captures: a missing, incomplete or incompatible reference fails the case with a message
 that names the reason. `--expect-parent` runs the same cases against a parent build: a case
 marked `control` must still match and every other case must differ.
+
+`verify --reverse-cross-open PIN_PREFIX` is the one local-only check: for the four handoff cases it
+lets the pin read the profile oxpinyin wrote (the direction no frozen reference can check). It
+needs a pin build, so it refuses to run in GitHub Actions; see docs/runbooks/contract-references.md.
 
 `capture` runs the selected cases on the pin, inside the Debian stable pin image
 (tools/oracle/capture-contract.sh), and writes the references. An investigative live
@@ -34,6 +39,12 @@ import time
 
 import contract_reference as reference
 from contract_selection import SelectionError
+
+
+def require_pin_build(prefix, cell):
+    manifest = (prefix / 'oracle-pin.txt').read_text()
+    assert 'libpinyin-2.11.92-' + reference.PIN_COMMIT in manifest and '+dbm-' + cell + '\n' in manifest, \
+        'the pin build does not match the pinned commit and cell'
 
 
 def _selectors(parser):
@@ -71,13 +82,10 @@ def _without_package_data(driver, names, cell, references):
     return [name for name in names if name in free], [name for name in names if name not in free]
 
 
-def default_suite(driver, root, cell):
-    """The unselected suite: the registered cases that have a reference row for CELL (transitional).
-
-    Axis C stays outside it, as in the final suite: it is the opt-in battery (`--cases-prefix axis-c-`)."""
-    default, _ = driver.select_cases(None, (), (), None)
-    default = set(default)
-    return [name for name in reference.captured_cases(root, cell) if name in driver.CASES and name in default]
+def default_suite(driver):
+    """The unselected suite: every registered case but axis C (the opt-in battery) and its helper."""
+    names, _ = driver.select_cases(None, (), (), None)
+    return [name for name in names if name not in reference.HELPER_CASES]
 
 
 def case_list(parser, value):
@@ -105,9 +113,16 @@ def verify(driver, argv):
     parser.add_argument('--plan-only', action='store_true')
     parser.add_argument('--observations', type=Path, help='retain both complete observations as JSONL')
     parser.add_argument('--run-platform-excluded', action='store_true')
+    parser.add_argument('--reverse-cross-open', type=Path, metavar='PIN_PREFIX',
+                        help='local only: also let the pin read what oxpinyin wrote (the four handoff cases)')
     args = parser.parse_args(argv)
     args.cases = case_list(parser, args.cases)
     _check_selectors(parser, args, driver)
+    if args.reverse_cross_open is not None:
+        if driver.os.environ.get('GITHUB_ACTIONS'):
+            parser.error('--reverse-cross-open runs the pin and is never run in GitHub Actions')
+        if args.expect_parent or args.plan_only or args.observations:
+            parser.error('--reverse-cross-open takes no --expect-parent, --plan-only or --observations')
     driver.os.environ['CONTRACT_DIFF_CELL'] = args.cell
     if not args.pinyin_so.is_file():
         parser.error(f'missing input: {args.pinyin_so}')
@@ -124,18 +139,59 @@ def verify(driver, argv):
     args.references = reference.Store(args.references, args.cell, digest, driver.NO_ABORT)
 
     def keep(names):
-        names = _in_cell(driver, names, args.cell)
+        names = [name for name in _in_cell(driver, names, args.cell) if name not in reference.HELPER_CASES]
         names, package = _without_package_data(driver, names, args.cell, args.references.root)
         if package:
             print('%d case%s read the package data and run on the tkrzw cell only' % (
                 len(package), '' if len(package) == 1 else 's'), file=sys.stderr)
         return names
 
+    if args.reverse_cross_open is not None:
+        return reverse_cross_open(driver, parser, args)
     try:
         return driver.run_cases(args, parser, args.data or Path('/nonexistent-contract-data'),
-                                default_names=keep(default_suite(driver, args.references.root, args.cell)), keep=keep)
+                                default_names=keep(default_suite(driver)), keep=keep)
     except reference.ReferenceError as error:
         parser.error(str(error))
+
+
+def reverse_cross_open(driver, parser, args):
+    """Run the four handoff cases live, pin and oxpinyin, in both directions (local only).
+
+    This reuses `Runner.run_case`: each side saves a profile, then the other library reads it. The
+    pin is the build at PIN_PREFIX (as for `capture`); the verdict is the ordinary one, from the two
+    live observations. Run it after any change to a persistence writer, to serialisation or to a
+    database format."""
+    names = list(reference.REVERSE_CROSS_OPEN_CASES)
+    if args.cases is not None or args.issue or args.family or args.cases_prefix:
+        selected, _ = driver.select_cases(args.cases, args.issue, args.family, args.cases_prefix)
+        names = [name for name in names if name in selected]
+    names = _in_cell(driver, names, args.cell)
+    if not names:
+        parser.error('no handoff case is selected on this cell: %s' % ', '.join(reference.REVERSE_CROSS_OPEN_CASES))
+    require_pin_build(args.reverse_cross_open, args.cell)
+    lib = args.reverse_cross_open / 'lib'
+    pins = {'pinyin': lib / 'libpinyin.so', 'zhuyin': lib / 'libzhuyin.so'}
+    for library in pins.values():
+        if not library.is_file():
+            parser.error(f'missing input: {library}')
+        driver.check_tkrzw(args.cell, 'contract-diff.py', 'pin', library)
+    failures = 0
+    with tempfile.TemporaryDirectory(prefix='reverse-cross-open-') as scratch:
+        for name in names:
+            driver.check_cancelled()
+            spec = driver.CASES[name]
+            subject_so = args.zhuyin_so if spec['mode'] == 'zhuyin' else args.pinyin_so
+            if subject_so is None:
+                parser.error('%s needs %s' % (name, '--zhuyin-so' if spec['mode'] == 'zhuyin' else 'PINYIN_SO'))
+            with tempfile.TemporaryDirectory(prefix='case-', dir=scratch) as isolated:
+                pin, subject = driver.run_case(spec, pins[spec['mode']], subject_so, args.data or Path('/nonexistent-contract-data'), name, isolated,
+                                               args.case_timeout)
+            verdict, expected, _ = driver.verdict_for(spec, pin, subject, False)
+            failures += not expected
+            print(json.dumps(dict(case=name, cell=args.cell, verdict=verdict, expected_ok=expected,
+                                  exit=[pin['exit'], subject['exit']], direction='both'), sort_keys=True), flush=True)
+    return 1 if failures else 0
 
 
 def capture(driver, argv):
@@ -162,19 +218,17 @@ def capture(driver, argv):
         parser.error(str(error))
     driver.os.environ['CONTRACT_DIFF_CELL'] = args.cell
     lib = args.prefix / 'lib'
-    manifest = (args.prefix / 'oracle-pin.txt').read_text()
-    assert 'libpinyin-2.11.92-' + reference.PIN_COMMIT in manifest and '+dbm-' + args.cell + '\n' in manifest, \
-        'the pin build does not match the pinned commit and cell'
+    require_pin_build(args.prefix, args.cell)
     libraries = {'pinyin': lib / 'libpinyin.so', 'zhuyin': lib / 'libzhuyin.so'}
     for library in libraries.values():
         assert library.is_file(), 'missing input: %s' % library
         driver.check_tkrzw(args.cell, 'contract-diff.py', 'pin', library)
     try:
         if args.cases is None and not (args.issue or args.family or args.cases_prefix):
-            names, _ = driver.select_cases(None, (), (), None)  # every registered non-axis-C case
+            names = default_suite(driver)
         else:
             names, _ = driver.select_cases(args.cases, args.issue, args.family, args.cases_prefix)
-        names = _in_cell(driver, names, args.cell)
+        names = [name for name in _in_cell(driver, names, args.cell) if name not in reference.HELPER_CASES]
         names, package = _without_package_data(driver, names, args.cell, args.references or args.out)
     except (SelectionError, reference.ReferenceError) as error:
         parser.error(str(error))

@@ -449,9 +449,8 @@ def run_per_call(args, parser, *, CASES, per_call_helper, per_call_run,
     instructions per call, ratios to the pin and optional attribution; return
     zero on success and propagate measurement failures.
     """
-    if args.cases or args.issue or args.family or args.expect_parent or args.observations or args.plan_only or \
-            args.regenerate_sentence_ties or args.axis_c_replacement or args.axis_c_mutation or args.axis_c_snapshot_check:
-        parser.error('--per-call cannot be combined with contract selectors, captures or other modes')
+    if args.regenerate_sentence_ties or args.axis_c_mutation or args.axis_c_snapshot_check:
+        parser.error('--per-call cannot be combined with other modes')
     operations = tuple(args.per_call_operations.split(',')) if args.per_call_operations else (
         PER_CALL_OPS if args.per_call == 'wrap' else ('lookup',))
     if not operations or len(set(operations)) != len(operations) or any(op not in PER_CALL_OPS for op in operations):

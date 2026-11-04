@@ -369,38 +369,17 @@ def directory_read_verdict(scratch=None):
             os.close(fd)
 
 
-def host_scanf_accepts(spelling):
-    """Test whether the host libc converts one float from the spelling's prefix.
-
-    Call sscanf with %f in the current numeric locale, without requiring
-    the entire string to be consumed or changing the locale. This checks
-    the conversion used by SystemTableInfo2::load in src/storage/table_info.cpp
-    at pin 074a2219; that loader sets LC_NUMERIC to C before scanning."""
-    return host_scanf_verdict(spelling)['accepted']
-
-
 def host_scanf_verdict(spelling):
-    """One libc `%f` conversion, including the parsed float's exact 32-bit value."""
+    """One libc `%f` conversion, including the parsed float's exact 32-bit value.
+
+    Use the current numeric locale without requiring the whole input to be consumed.
+    SystemTableInfo2::load sets LC_NUMERIC to C before scanning at the pin.
+    """
     scanned = C.c_float()
     accepted = C.CDLL(None).sscanf(spelling.encode(), b'%f', C.byref(scanned)) == 1
     bits = int.from_bytes(C.string_at(C.byref(scanned), C.sizeof(scanned)), sys.byteorder)
     return dict(input=spelling, accepted=accepted,
                 value_bits=f'{bits:08x}' if accepted else None)
-
-
-def pin_loaded_subject_refused_table_conf(pin, subject):
-    """Recognize successful pin initialization paired with subject table refusal.
-
-    Require zero exits, ctx exactly True for the pin and False for the
-    subject, and only the expected user.conf-open and table.conf-load
-    diagnostics. Other result fields are not checked. The pin diagnostic
-    has no trailing newline, as emitted by UserTableInfo::load in
-    src/storage/table_info.cpp at pin 074a2219."""
-    return (pin['exit'] == 0 and subject['exit'] == 0
-            and (pin['result'] or {}).get('ctx') is True
-            and (subject['result'] or {}).get('ctx') is False
-            and re.fullmatch(r'open \S*/user\.conf failed\.', pin['stderr']) is not None
-            and re.fullmatch(r'load \S*table\.conf failed!\n', subject['stderr']) is not None)
 
 
 _FATAL_GLIB_PREFIX = re.compile(

@@ -121,22 +121,24 @@ class SnapshotTests(unittest.TestCase):
 
 
 class BatteryTests(unittest.TestCase):
+    """The battery now only runs the mutation check: the base subject ('subject') against its mutant ('mutant').
+
+    Its comparison rules (match, differ, reproduced abort, failed rows) are the ones verify applies to a
+    reference; contract-diff.test.py drives them through verify."""
     CASES = {'plain': dict(mode='pinyin'), 'rows': dict(mode='pinyin'), 'covered': dict(mode='zhuyin'),
              'gone': dict(mode='pinyin'), 'reproduced': dict(mode='pinyin'),
              'zhuyin-reproduced': dict(mode='zhuyin')}
 
-    def battery(self, answers, names, mutation=None, controls=()):
+    def battery(self, answers, names, mutation='C-m1-r', controls=()):
         """Run the battery with each (side, name) answered from `answers`; return status and output rows."""
         calls = []
         with tempfile.TemporaryDirectory() as prefix:
             root = Path(prefix)
-            for name in ('lib/libpinyin.so', 'lib/libzhuyin.so', 'subject.so', 'zsubject.so', 'mutant.so',
-                         'zmutant.so'):
-                (root / name).parent.mkdir(parents=True, exist_ok=True)
+            for name in ('subject.so', 'zsubject.so', 'mutant.so', 'zmutant.so'):
                 (root / name).touch()
             side = {(root / name).resolve(): kind for name, kind in (
-                ('lib/libpinyin.so', 'pin'), ('lib/libzhuyin.so', 'pin'), ('subject.so', 'subject'),
-                ('zsubject.so', 'subject'), ('mutant.so', 'mutant'), ('zmutant.so', 'mutant'))}
+                ('subject.so', 'subject'), ('zsubject.so', 'subject'), ('mutant.so', 'mutant'),
+                ('zmutant.so', 'mutant'))}
 
             def worker(mode, so, data, name, scratch, extra_env):
                 calls.append((name, mode, side[so], side[Path(extra_env['AXIS_C_COMPANION_PINYIN'])]))
@@ -144,7 +146,7 @@ class BatteryTests(unittest.TestCase):
                 return dict(answers[side[so], name], userfiles={'ignored': len(calls)})
 
             args = Namespace(prefix=root, pinyin_so=root / 'subject.so', zhuyin_so=root / 'zsubject.so',
-                             axis_c_mutation=mutation, axis_c_replacement=None if mutation else 'all',
+                             axis_c_mutation=mutation,
                              axis_c_mutant_pinyin_so=root / 'mutant.so', axis_c_mutant_zhuyin_so=root / 'zmutant.so')
             output = io.StringIO()
             with patch.object(axis_c, 'time', CLOCK), contextlib.redirect_stdout(output):
@@ -155,25 +157,30 @@ class BatteryTests(unittest.TestCase):
         rows = [json.loads(line) for line in output.getvalue().splitlines() if line.startswith('{')]
         return status, rows, calls
 
-    def test_match_and_differ_verdicts_counts_and_exit_status(self):
+    @staticmethod
+    def summary(rows):
+        return next(row for row in rows if 'counts' in row)
+
+    def test_match_and_differ_verdicts_and_counts(self):
         observed = live(dict(observations={'a': live(1), 'b': ABORTED}))
-        answers = {('pin', 'plain'): live({'v': 1}), ('subject', 'plain'): live({'v': 1}),
-                   ('pin', 'rows'): live(dict(observations={'a': live(1), 'b': live(2)})),
-                   ('subject', 'rows'): live(dict(observations={'a': live(1), 'b': live(3)})),
-                   ('pin', 'covered'): observed, ('subject', 'covered'): observed}
-        status, rows, calls = self.battery(answers, ['plain', 'rows', 'covered'])
-        self.assertEqual(status, 1)
+        answers = {('subject', 'plain'): live({'v': 1}), ('mutant', 'plain'): live({'v': 1}),
+                   ('subject', 'rows'): live(dict(observations={'a': live(1), 'b': live(2)})),
+                   ('mutant', 'rows'): live(dict(observations={'a': live(1), 'b': live(3)})),
+                   ('subject', 'covered'): observed, ('mutant', 'covered'): observed}
+        status, rows, calls = self.battery(answers, ['plain', 'rows', 'covered'], controls=['rows'])
+        self.assertEqual(status, 0)
         self.assertEqual(len(calls), 12)
         self.assertEqual({(mode, kind, companion) for name, mode, kind, companion in calls if name == 'covered'},
-                         {('zhuyin', 'pin', 'pin'), ('zhuyin', 'subject', 'subject')})
+                         {('zhuyin', 'subject', 'subject'), ('zhuyin', 'mutant', 'mutant')})
         self.assertEqual(rows[0], dict(case='rows', verdict='DIFFER',
                                        first=dict(field='.result.observations.b.result', pin=2, subject=3)))
-        summary = rows[-1]
+        summary = self.summary(rows)
         self.assertEqual(summary['counts'], dict(cases=3, diagnostics_match=3, observations=5, payload_match=3,
                                                  payload_reproduced_abort=1, payload_differ=1, case_match=2,
                                                  case_differ=1))
-        self.assertEqual((summary['battery'], summary['mutation'], summary['repeats']), ('all', None, 'identical'))
-        self.assertEqual(rows[-2]['count'], 1)
+        self.assertEqual((summary['mutation'], summary['repeats']), ('C-m1-r', 'identical'))
+        self.assertEqual(rows[rows.index(summary) - 1]['count'], 1)
+        self.assertEqual(rows[-1], dict(mutation='C-m1-r', control='rows', verdict='DIFFER'))
 
     def test_a_covered_refusal_is_a_difference_on_both_facades(self):
         # Class (c) is retired (2026-10-31 UTC): the refusal the setters used
@@ -181,39 +188,42 @@ class BatteryTests(unittest.TestCase):
         observed = live(dict(observations={'b': ABORTED}))
         for name, mode in (('covered', 'zhuyin'), ('reproduced', 'pinyin')):
             with self.subTest(mode=mode):
-                answers = {('pin', name): observed,
-                           ('subject', name): live(dict(observations={'b': refused(mode)}))}
-                status, rows, _ = self.battery(answers, [name])
-                self.assertEqual((status, rows[0]['verdict']), (1, 'DIFFER'))
+                answers = {('subject', name): observed,
+                           ('mutant', name): live(dict(observations={'b': refused(mode)}))}
+                status, rows, _ = self.battery(answers, [name], controls=[name])
+                self.assertEqual((status, rows[0]['verdict']), (0, 'DIFFER'))
 
     def test_a_covered_row_both_sides_abort_alike_matches(self):
         # Rows 5c/5d on the pinyin facade: the setter reproduces the pin's
         # abort(), and the refusal it used to answer is a difference.
         observed = live(dict(observations={'a': live(1), 'b': ABORTED}))
-        status, rows, _ = self.battery({('pin', 'reproduced'): observed, ('subject', 'reproduced'): observed},
+        status, rows, _ = self.battery({('subject', 'reproduced'): observed, ('mutant', 'reproduced'): observed},
                                        ['reproduced'])
         self.assertEqual(status, 0)
-        self.assertEqual(rows[-1]['counts'], dict(cases=1, diagnostics_match=1, observations=2, payload_match=1,
-                                                  payload_reproduced_abort=1, case_match=1))
+        self.assertEqual(self.summary(rows)['counts'], dict(cases=1, diagnostics_match=1, observations=2,
+                                                            payload_match=1, payload_reproduced_abort=1,
+                                                            case_match=1))
         refusing = live(dict(observations={'a': live(1), 'b': refused('pinyin')}))
-        status, rows, _ = self.battery({('pin', 'reproduced'): observed, ('subject', 'reproduced'): refusing},
-                                       ['reproduced'])
-        self.assertEqual((status, rows[0]['verdict']), (1, 'DIFFER'))
+        status, rows, _ = self.battery({('subject', 'reproduced'): observed, ('mutant', 'reproduced'): refusing},
+                                       ['reproduced'], controls=['reproduced'])
+        self.assertEqual((status, rows[0]['verdict']), (0, 'DIFFER'))
 
     def test_a_zhuyin_abort_on_a_covered_row_matches_too(self):
         # The zhuyin facade reproduces rows 5c/5d as well, so both modes
         # count the abort both sides share.
         observed = live(dict(observations={'a': live(1), 'b': ABORTED}))
-        status, rows, _ = self.battery({('pin', 'zhuyin-reproduced'): observed,
-                                        ('subject', 'zhuyin-reproduced'): observed}, ['zhuyin-reproduced'])
+        status, rows, _ = self.battery({('subject', 'zhuyin-reproduced'): observed,
+                                        ('mutant', 'zhuyin-reproduced'): observed}, ['zhuyin-reproduced'])
         self.assertEqual(status, 0)
-        self.assertEqual(rows[-1]['counts'], dict(cases=1, diagnostics_match=1, observations=2, payload_match=1,
-                                                  payload_reproduced_abort=1, case_match=1))
+        self.assertEqual(self.summary(rows)['counts'], dict(cases=1, diagnostics_match=1, observations=2,
+                                                            payload_match=1, payload_reproduced_abort=1,
+                                                            case_match=1))
 
     def test_identical_failed_rows_never_match(self):
         dead = dict(exit=1, result=None, stderr='same')
-        status, rows, _ = self.battery({('pin', 'gone'): dead, ('subject', 'gone'): dead}, ['gone'])
-        self.assertEqual((status, rows[0]['verdict']), (1, 'DIFFER'))
+        status, rows, _ = self.battery({('subject', 'gone'): dead, ('mutant', 'gone'): dead}, ['gone'],
+                                       controls=['gone'])
+        self.assertEqual((status, rows[0]['verdict']), (0, 'DIFFER'))
 
     def test_a_mutation_compares_the_pin_build_with_the_mutant_and_requires_every_control_to_differ(self):
         answers = {('subject', 'plain'): live({'v': 1}), ('mutant', 'plain'): live({'v': 2}),

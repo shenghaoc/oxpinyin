@@ -12,7 +12,7 @@ name: verify-nightly
 # No trial lanes remain: the Miri, cargo-mutants and cargo-geiger jobs
 # were retired on 2026-09-01 (docs/findings/verify-nightly.md). There are
 # no continue-on-error lanes; every job in this workflow must be green.
-# Surviving lanes: fuzz-soak, oracle and differentials, overflow-lane, coverage (via
+# Surviving lanes: fuzz-soak, overflow-lane, coverage (via
 # coverage.yml, also an advisory path-filtered PR check), perf-snapshot,
 # test-windows (moved from ci.yml
 # on 2026-10-22), test-macos (moved from ci.yml on 2026-10-31).
@@ -24,8 +24,7 @@ name: verify-nightly
 #
 # Every Linux job runs in a debian:testing container in the
 # store-backends.yml style (test-windows runs on windows-latest,
-# test-macos on macos-latest, and the oracle job on the runner, where its
-# trixie build container runs): the nightly lanes exist to surface drift early, and the rolling
+# test-macos on macos-latest): the nightly lanes exist to surface drift early, and the rolling
 # distro toolchain is part of what they exercise. The image is
 # deliberately unpinned — do not "stabilise" it.
 
@@ -200,100 +199,6 @@ jobs:
         with:
           name: fuzz-crash-artifacts
           path: fuzz/artifacts/
-
-  # The fixture tier of the oracle differentials: build the pinned
-  # libpinyin (public source, SHA read from tools/oracle/build-oracle.sh
-  # and verified) and run, nightly, every differential gate COMMITTED
-  # fixtures can carry — the tkrzw drop-in (the pin's three programs and
-  # oxpinyin-utils' ports over the toned mini-model, chunk files
-  # byte-exact), ngseg live parity (toned tables), and
-  # the KMM gen/export/merge/validate + spseg live gates (committed w3
-  # tables, whose token space matches those gates' corpora). This
-  # honors the no-model20-in-CI policy (store-backends.yml header)
-  # while turning part of the manual evidence into a drift alarm. What
-  # committed data cannot carry stays on developer machines, each
-  # exclusion recorded by mechanism in the script header: the
-  # model20-token-space goldens and corpora (lambda, counter, ngseg
-  # goldens), mergeseq live (the pin emits a token outside the w3 phrase
-  # table), KMM prune (the pin SIGSEGVs on that gate's fixture input), and
-  # eval (no interpolation2.text consistent with w3).
-  oracle:
-    # Skipped by a windows_only or macos_only dispatch; runs on the schedule.
-    if: ${{ !inputs.windows_only && !inputs.macos_only }}
-    runs-on: *ubuntu
-    timeout-minutes: 60
-    env:
-      # The runner's rootful daemon; the build keeps the runner user's
-      # ownership through --user (campaigns.py, deps_container).
-      OXPINYIN_CONTAINER: docker
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Provision managed Python
-        run: |
-          bash tools/cloud/setup.sh --python-only
-          # setup.sh's PATH export is local to its child shell.
-          printf '%s\n' "${UV_INSTALL_DIR:-$HOME/.local/bin}" >> "$GITHUB_PATH"
-      # The install prefix is fixed (campaigns.py, NIGHTLY_PREFIX) and is
-      # mounted into the deps container at the same path.
-      - name: Create the install prefix
-        run: sudo install -d -o "$(id -u)" -g "$(id -g)" /opt/libpinyin-tkrzw
-      - name: Build the pin in the trixie deps image
-        run: uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev compat nightly-fixtures build --deps-image
-      # tar keeps the modes and symlinks the artifact store does not; -C /
-      # keeps the absolute paths the differentials job restores.
-      - name: Pack the build tree and prefix
-        run: tar -C / -cf - tmp/oxpinyin-fixture-differentials opt/libpinyin-tkrzw | zstd -T0 -q -o "$RUNNER_TEMP/pin-oracle.tar.zst"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: pin-oracle
-          path: ${{ runner.temp }}/pin-oracle.tar.zst
-          compression-level: 0
-          retention-days: 3
-          if-no-files-found: error
-
-  differentials:
-    needs: oracle
-    runs-on: *ubuntu
-    container:
-      image: debian:testing # deliberately unpinned; see the header comment
-    timeout-minutes: 60
-    defaults:
-      run:
-        shell: bash
-    steps:
-      # No autotools: this job builds none of the pin. The pin's programs
-      # need GLib and libstdc++ at run time, and libtkrzw from the action.
-      - name: Bootstrap the runner essentials (apt)
-        run: |
-          apt-get update -qq
-          apt-get install -y --no-install-recommends bash python3 tar gzip zstd git ca-certificates curl gcc g++ make pkg-config libglib2.0-dev libclang-dev
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/bootstrap
-        with:
-          safe-directory: 'true'
-          rustup: 'true'
-          rust-cache: 'true'
-      # The subject builds against this tkrzw, and the oracle loads it at
-      # run time (LD_LIBRARY_PATH, OXPINYIN_TKRZW_PREFIX).
-      - name: Provision tkrzw (built at the setup.sh revision and cached)
-        uses: ./.github/actions/tkrzw
-      - name: Provision managed Python
-        run: |
-          bash tools/cloud/setup.sh --python-only
-          # setup.sh's PATH export is local to its child shell.
-          printf '%s\n' "${UV_INSTALL_DIR:-$HOME/.local/bin}" >> "$GITHUB_PATH"
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: pin-oracle
-          path: ${{ runner.temp }}/pin-oracle
-      - name: Restore the pin build at its own paths
-        run: zstd -dc "$RUNNER_TEMP/pin-oracle/pin-oracle.tar.zst" | tar -C / -xf -
-      - name: Run the fixture-tier differentials
-        run: uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev compat nightly-fixtures run
 
   # Latent-overflow lane: the releaseoptimized codepath with overflow
   # checks and debug assertions forced on (docs/safety/

@@ -113,7 +113,7 @@ def verify_image(argv, *, root=ROOT):
     cid = ''
     with tempfile.TemporaryDirectory() as scratch:
         try:
-            created = capture([engine, 'create', '--platform', platform, image, '/none'], check=False)
+            created = capture([engine, 'create', '--pull=never', '--platform', platform, image, '/none'], check=False)
             cid = created.stdout.decode().rstrip('\n')
             if created.status:
                 raise Finished(created.status)

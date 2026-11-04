@@ -121,7 +121,7 @@ Between completion gates, use iteration feedback while the fix is taking shape:
 2. Select a small, explicit set of differential cases that reaches the changed behaviour.
 3. Name the defect's witness case and its neighbours by case ID.
 
-For example, use `just runner contract-diff ... -- --cases default-option-parse,default-option-single-key`.
+For example, use `just runner contract-diff verify tkrzw ... -- --cases default-option-parse,default-option-single-key`.
 Do not use the default differential suite for iteration feedback.
 Iteration feedback is not a gate result.
 Do not report it as one.
@@ -157,7 +157,7 @@ Start other heavy work with `just heavy -- <command>`.
 Light work includes:
 
 - `cargo fmt`, plans, listings and harness tests.
-- `contract-diff.py --cases` against built artifacts.
+- `contract-diff.py verify --cases` against built artifacts.
 - Registry runners that are not marked heavy.
 
 Run light work without resource admission.

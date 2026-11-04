@@ -163,9 +163,9 @@ from contract_fixtures import (  # profile, system-directory and DBM-container f
 import contract_verdict
 from contract_verdict import (  # comparison and verdict rules
     META_OFFSET_TIMESTAMP, NO_ABORT, TKRZW_HASH_METADATA_SIZE, TKRZW_TIMESTAMP_WIDTH, WARNING_DOMAIN,
-    _FATAL_GLIB_PREFIX, abort_answered, directory_read_verdict, directory_reads_as_a_chunk,
-    fatal_stderr, host_scanf_accepts, host_scanf_verdict, observed,
-    pin_loaded_subject_refused_table_conf, policy_observation, policy_pin_abort, policy_side,
+    _FATAL_GLIB_PREFIX, abort_answered, directory_read_verdict, directory_reads_as_a_chunk, fatal_stderr,
+    host_scanf_verdict, observed, policy_observation, policy_pin_abort, policy_side,
+
     registered_termination, tkrzw_saved_bigram_bytes, tkrzw_saved_bigram_equal,
     valid_observation)
 import contract_selection
@@ -1243,53 +1243,15 @@ def run_main():
     parser.add_argument('--teardown-arm', action='append', default=[], metavar='NAME=PINYIN_SO[:ZHUYIN_SO]',
                         help='an additional measured arm for confirm, init-attribute and user stages; '
                              'reported against the base and pin arms (repeatable)')
-    parser.add_argument('--cases')
-    parser.add_argument('--cases-prefix', metavar='P[,P...]',
-                        help='union of ID prefixes from the full registry, including untagged cases; '
-                             'every prefix must match')
-    parser.add_argument('--issue', action='append', default=[], metavar='TAG',
-                        help='select every case registered with this issue, row or lane tag')
-    parser.add_argument('--family', action='append', default=[], metavar='F',
-                        help='select every case whose ID starts with F/')
     parser.add_argument('--list-tags', action='store_true', help='print the tag index as JSON and exit')
-    parser.add_argument('--plan-only', action='store_true', help='print the selection plan and exit')
-    parser.add_argument('--case-timeout', type=float, default=300,
-                        help='wall-clock seconds per ordinary case, pin and subject combined (default: 300)')
-    parser.add_argument('--jobs', type=positive_jobs,
-                        help='maximum concurrent ordinary cases, reduced by memory admission '
-                             '(default: OXPINYIN_CONTRACT_JOBS, else serial)')
-    parser.add_argument('--expect-parent', action='store_true')
     parser.add_argument('--regenerate-sentence-ties', type=Path,
                         help='regenerate pin expectations in the supplementary #747 source fixture')
-    parser.add_argument('--observations', type=Path, default=os.environ.get('CONTRACT_DIFF_OBSERVATIONS'),
-                        help='retain both complete observations as JSONL (also CONTRACT_DIFF_OBSERVATIONS)')
-    parser.add_argument('--run-platform-excluded', action='store_true',
-                        help='run cases whose registered platform excludes this host; each '
-                             'override reason is printed to stderr (not an ordinary gate)')
     axis_c_mode = parser.add_mutually_exclusive_group()
-    axis_c_mode.add_argument('--axis-c-replacement', choices=['options', 'encoding', 'layouts', 'all'])
     axis_c_mode.add_argument('--axis-c-mutation', choices=['C-m1-r', 'C-m3-r'])
     axis_c_mode.add_argument('--axis-c-snapshot-check', action='store_true')
     parser.add_argument('--axis-c-mutant-pinyin-so', type=Path)
     parser.add_argument('--axis-c-mutant-zhuyin-so', type=Path)
     args = parser.parse_args()
-    if args.cases is not None:
-        try:
-            case_names(args.cases)
-        except SelectionError as error:
-            parser.error(str(error))
-    try:
-        contract_selection.prefix_matches(CASES, args.cases_prefix)
-    except SelectionError as error:
-        parser.error(str(error))
-    if args.cases_prefix is not None and (args.teardown or args.per_call or args.axis_c_replacement or
-            args.axis_c_mutation or args.axis_c_snapshot_check or args.regenerate_sentence_ties):
-        parser.error('--cases-prefix selects ordinary cases only')
-    if not 0 < args.case_timeout < float('inf'):
-        parser.error('--case-timeout must be a positive finite number of seconds')
-    if args.jobs not in (None, 1) and (args.teardown or args.per_call or args.axis_c_replacement or
-                           args.axis_c_mutation or args.axis_c_snapshot_check or args.regenerate_sentence_ties):
-        parser.error('--jobs applies to ordinary contract cases only')
     if args.list_tags:
         print(json.dumps(dict(tags=tag_index(), modes={name: spec['mode'] for name, spec in CASES.items()}), indent=1))
         return 0
@@ -1297,10 +1259,6 @@ def run_main():
         parser.error('CELL, PREFIX and PINYIN_SO are required')
     if (args.axis_c_mutant_pinyin_so or args.axis_c_mutant_zhuyin_so) and not args.axis_c_mutation:
         parser.error('--axis-c-mutant-pinyin-so/--axis-c-mutant-zhuyin-so require --axis-c-mutation')
-    if (args.issue or args.family or args.plan_only) and (
-            args.axis_c_replacement or args.axis_c_mutation or args.axis_c_snapshot_check or
-            args.regenerate_sentence_ties):
-        parser.error('--issue/--family/--plan-only select ordinary cases only')
     os.environ['CONTRACT_DIFF_CELL'] = args.cell
     lib = args.prefix / 'lib'
     data = lib / 'libpinyin/data'
@@ -1310,12 +1268,11 @@ def run_main():
     manifest = (args.prefix / 'oracle-pin.txt').read_text()
     assert 'libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99' in manifest
     assert '+dbm-' + args.cell + '\n' in manifest
-    if not args.plan_only:
-        for side, library in (("pin", lib / 'libpinyin.so'), ("subject", args.pinyin_so),
-                              ("pin", lib / 'libzhuyin.so' if args.zhuyin_so else None),
-                              ("subject", args.zhuyin_so)):
-            if library is not None:
-                check_tkrzw(args.cell, 'contract-diff.py', side, library)
+    for side, library in (("pin", lib / 'libpinyin.so'), ("subject", args.pinyin_so),
+                          ("pin", lib / 'libzhuyin.so' if args.zhuyin_so else None),
+                          ("subject", args.zhuyin_so)):
+        if library is not None:
+            check_tkrzw(args.cell, 'contract-diff.py', side, library)
     if args.teardown:
         import teardown
         return teardown.run(args, sys.modules[__name__], parser)
@@ -1323,9 +1280,8 @@ def run_main():
         return run_per_call(args, parser)
     if args.base_pinyin_so or args.base_zhuyin_so or args.per_call_attribution or args.per_call_operations:
         parser.error('base paths, attribution and operation selection require --per-call')
-    if args.axis_c_replacement or args.axis_c_mutation or args.axis_c_snapshot_check:
-        assert not (args.observations or args.cases or args.expect_parent or args.regenerate_sentence_ties), \
-            'axis C replacement cannot be combined with capture, regeneration or parent modes'
+    if args.axis_c_mutation or args.axis_c_snapshot_check:
+        assert not args.regenerate_sentence_ties, 'axis C modes cannot be combined with regeneration'
         # Hash the committed source fixtures once, here, before any Axis C
         # worker is launched; the loader no longer does it at import.
         axis_c_definition(verify_sources=True)
@@ -1335,20 +1291,15 @@ def run_main():
         # AXIS_C_ALLOCATE_EACH must never silently switch the battery over to
         # per-child allocation (that is the snapshot check's private half).
         os.environ.pop('AXIS_C_ALLOCATE_EACH', None)
-        names = (AXIS_C_DEFINITION['mutations'][args.axis_c_mutation]['controls']
-                 if args.axis_c_mutation else
-                 sum(AXIS_C_GROUPS.values(), []) if args.axis_c_replacement == 'all' else
-                 AXIS_C_GROUPS[args.axis_c_replacement])
-        return run_axis_c(args, names)
+        return run_axis_c(args, AXIS_C_DEFINITION['mutations'][args.axis_c_mutation]['controls'])
     if args.regenerate_sentence_ties:
         assert args.cell == 'bdb', '#747 fixture regeneration is bdb only'
         assert args.pinyin_so.resolve() == (lib / 'libpinyin.so').resolve(), \
             'fixture expectations must come from the pin, never the subject'
-        assert not (args.cases or args.expect_parent or args.zhuyin_so or args.observations), \
-            'fixture regeneration cannot be combined with differential or capture modes'
+        assert not args.zhuyin_so, 'fixture regeneration takes the pinyin library only'
         regenerate_sentence_ties(args.prefix, args.regenerate_sentence_ties)
         return 0
-    return run_cases(args, parser, data)
+    parser.error('nothing to do: the operations are `verify` and `capture` (docs/runbooks/contract-references.md)')
 
 
 def run_cases(args, parser, data, default_names=None, keep=None):

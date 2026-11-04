@@ -325,7 +325,7 @@ toolchain/runtime, even when its driver is Python. No runners other than
 | bisect | B, V | P, S, W3; explicit LD_PRELOAD integration is optional | V absent → added; optional engine check remains opt-in |
 | callgrind-differential | B, V, util-linux (`taskset`) | Four installed measurement arms, pin data, anchored harness | Native/measurement recipe; caller prepares arms |
 | candidate-assembly-diff | B | P+Z, S | Provided |
-| contract-diff | B, D | P+Z, S, registered cases and policy records | Provided |
+| contract-diff | B, D | S, frozen references and policy records (no pin) | Provided |
 | cpp-smoke | B (`g++`, `readelf`, `ldd`) | S, W3 | Provided |
 | dict-surface-diff | B | P, S, full tables + `interpolation2.text` | Model fetched but not passed with tables → added |
 | dynamic-adjust-diff | B | P, S, full system tables | Provided |

@@ -64,8 +64,7 @@ class PureTests(unittest.TestCase):
     def refusal(self, **overrides):
         """What `run` refuses with. The defaults pass every scope check, so the
         refusal is then the missing work directory."""
-        values = dict(cell='bdb', teardown_stage='provision', per_call=None, cases='', issue=[], family=[],
-                      expect_parent=False, observations=None, plan_only=False, axis_c_replacement=None,
+        values = dict(cell='bdb', teardown_stage='provision', per_call=None,
                       axis_c_mutation=None, axis_c_snapshot_check=False, regenerate_sentence_ties=None,
                       teardown_work_dir=None)
         values.update(overrides)
@@ -115,9 +114,11 @@ class PureTests(unittest.TestCase):
                     self.assertIn('--teardown-work-dir', self.refusal(cell=cell, teardown_stage=stage))
 
     def test_contract_and_profiler_modes_are_refused_on_every_cell(self):
-        modes = dict(per_call='wrap', cases='default-option-parse', issue=['1'], family=['f'],
-                     expect_parent=True, observations=Path('observations'), plan_only=True,
-                     axis_c_replacement='r', axis_c_mutation='m', axis_c_snapshot_check=True,
+        # The selector options (--cases, --issue, --family, --expect-parent, --observations, --plan-only,
+        # --axis-c-replacement) are no longer options of the top-level parser; verify takes them, and
+        # contract-diff.test.py (SelectionTests) checks that the top-level parser rejects them and
+        # that verify takes no --teardown.
+        modes = dict(per_call='wrap', axis_c_mutation='m', axis_c_snapshot_check=True,
                      regenerate_sentence_ties='t')
         for cell in ('bdb', 'kc', 'tkrzw'):
             for mode, value in modes.items():
