@@ -30,6 +30,10 @@ oxpinyin-runtime.workspace = true
 oxpinyin-user.workspace = true
 
 [dev-dependencies]
+# Fixture directory names: the store's extension, through the data crate
+# the dependency chain already carries (the backend features reach it
+# through oxpinyin-runtime).
+oxpinyin-data.workspace = true
 tempfile.workspace = true
 
 [features]

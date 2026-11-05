@@ -2,16 +2,19 @@
 //! libpinyin data directory** opens through `Runtime::open` and decodes.
 //!
 //! Requires `OXPINYIN_LIBPINYIN_DATA_DIR`, a pin-built libpinyin install's
-//! `data/` with the same DBM as this crate's selected backend (Kyoto
-//! Cabinet or tkrzw). Ordinary `cargo test` leaves the test ignored;
-//! explicitly selecting it fails on a missing input, as
-//! `docs/testing/README.md` requires. With the matching cell's environment
-//! loaded and a separate target directory per cell, run from the root:
+//! `data/` with the same DBM as this crate's selected backend; the test's
+//! own `table.conf` check decides whether the directory matches. Ordinary
+//! `cargo test` leaves the test ignored; explicitly selecting it fails on
+//! a missing input, as `docs/testing/README.md` requires. With the
+//! matching cell's environment loaded and a separate target directory per
+//! cell, run from the root:
 //!
 //! ```text
-//! just heavy -- cargo test --locked -p oxpinyin-runtime --no-default-features --features kyotocabinet --test libpinyin_data_dir -- --include-ignored
-//! just heavy -- cargo test --locked -p oxpinyin-runtime --no-default-features --features tkrzw --test libpinyin_data_dir -- --include-ignored
+//! just heavy -- cargo test --locked -p oxpinyin-runtime --no-default-features --features <backend> --test libpinyin_data_dir -- --include-ignored
 //! ```
+//!
+//! The oracle runbook's pre-release checks name the cells this test is
+//! owned on.
 //!
 //! The C-ABI half of the invariant — libpinyin.so and `libpinyin_capi.so`
 //! on the same directory, every driver's log identical — is
@@ -22,8 +25,6 @@
 //!
 //! See the [oracle runbook](../../../docs/runbooks/oracle.md#pre-release-real-installation-checks)
 //! for execution owners and pre-release input identities.
-#![cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
-
 use std::path::PathBuf;
 
 use oxpinyin_core::{Dictionary, LanguageModel, PhraseToken, SyllableKey};
@@ -47,11 +48,13 @@ fn an_unmodified_libpinyin_data_directory_opens_and_decodes() {
         panic!("OXPINYIN_LIBPINYIN_DATA_DIR unset")
     };
     // The directory is libpinyin's own: its table.conf names the DBM the
-    // install was built with, and every file keeps libpinyin's name.
+    // install was built with, which must be this build's, and every file
+    // keeps libpinyin's name.
     let conf = std::fs::read_to_string(dir.join("table.conf")).expect("table.conf");
+    let format = format!("database format:{}", oxpinyin_data::DEFAULT_STORE_DB_FORMAT);
     assert!(
-        conf.contains("database format:KyotoCabinet") || conf.contains("database format:Tkrzw"),
-        "not a libpinyin data dir: {conf}"
+        conf.contains(&format),
+        "not a libpinyin data dir for this build's backend ({format}): {conf}"
     );
     for name in [
         "pinyin_index.bin",

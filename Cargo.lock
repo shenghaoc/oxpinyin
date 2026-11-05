@@ -766,6 +766,7 @@ version = "0.1.0"
 dependencies = [
  "oxpinyin-capi-marshal",
  "oxpinyin-core",
+ "oxpinyin-data",
  "oxpinyin-engine",
  "oxpinyin-runtime",
  "oxpinyin-user",

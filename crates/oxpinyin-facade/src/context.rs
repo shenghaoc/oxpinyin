@@ -995,13 +995,7 @@ mod library_transition_tests {
     /// with a user directory of its own.
     fn open(user: &Path) -> ContextCore {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/w3");
-        let extension = if cfg!(feature = "bdb") {
-            "db"
-        } else if cfg!(feature = "kyotocabinet") {
-            "kct"
-        } else {
-            "tkt"
-        };
+        let extension = oxpinyin_data::DEFAULT_STORE_EXT;
         ContextCore::open(&root.join(extension), Some(user), WORD, UserConfLaw::Pinyin)
             .expect("committed backend fixtures")
     }

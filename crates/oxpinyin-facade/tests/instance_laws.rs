@@ -385,13 +385,7 @@ fn one_key_probes_follow_the_live_schemes() {
 
 /// The committed fixture directory the compiled backend opens.
 fn fixture_dir() -> PathBuf {
-    let extension = if cfg!(feature = "bdb") {
-        "db"
-    } else if cfg!(feature = "kyotocabinet") {
-        "kct"
-    } else {
-        "tkt"
-    };
+    let extension = oxpinyin_data::DEFAULT_STORE_EXT;
     fixture_root().join(extension)
 }
 
