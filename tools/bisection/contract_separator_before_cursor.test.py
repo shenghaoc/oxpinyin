@@ -14,10 +14,10 @@ import contract_separator_before_cursor as family
 
 # (case ID, positional options, keyword options) in registration order: the count, the
 # first and last entries, and the SHA-256 of the repr of the whole ordered list.
-EXPECTED_COUNT = 1360
-EXPECTED_FIRST = ('separator/pinyin/0/parse/0', (), {'mode': 'pinyin', 'control': True, 'issues': ('640',)})
+EXPECTED_COUNT = 156
+EXPECTED_FIRST = ('separator/pinyin/0/right/3', (), {'mode': 'pinyin', 'control': False, 'abort': False, 'sigabrt': True, 'issues': ('640',)})
 EXPECTED_LAST = ("allocator-zero/zhuyin/xi1'an1/key/4", (), {'mode': 'zhuyin', 'abort': False, 'sigabrt': True, 'issues': ('681',)})
-EXPECTED_SHA256 = '5ebe7d51002cd8c07d766454c48b978a4053fe3ea6dd4fa65ac9d962af77a7e3'
+EXPECTED_SHA256 = 'abfb508dbc9ccb7de752c1e031c2947bee97b16c4e739cc30ecb52d1402f2ee2'
 
 
 def declarations():
