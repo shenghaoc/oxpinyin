@@ -101,7 +101,8 @@ class SlotTests(unittest.TestCase):
         self.assertTrue(admission.env is None, 'the admission kept an environment')
         self.assertEqual((Path(self.temp.name) / 'heavy-slot-0').read_text(), '')
 
-    def test_deadline_is_rechecked_after_mutex_acquisition(self):
+    def acquire_with_clock_after_lock(self, overshoot):
+        """Take the mutex on a fresh admission, with the clock at started + limit + overshoot then."""
         admission, read = self.mutex_admission(1)
         original = slot.lock_file
         clock = [10.0]
@@ -109,15 +110,38 @@ class SlotTests(unittest.TestCase):
             original(file, operation)
             if Path(file.name).name == 'heavy-admission':
                 self.assertTrue(operation & slot.LOCK_NB)
-                clock[0] = 12.0
+                clock[0] = 11.0 + overshoot
         with mock.patch.object(slot.time, 'monotonic', side_effect=lambda: clock[0]), \
-                mock.patch.object(slot, 'lock_file', side_effect=acquire), \
-                self.assertRaises(slot.AdmissionWaitExpired):
-            admission.try_acquire()
-        self.assertEqual(read.call_count, 1)
-        self.assertEqual((Path(self.temp.name) / 'heavy-slot-0').read_text(), '')
-        # The acquired mutex descriptor was closed on expiry.
-        self.hold_mutex()
+                mock.patch.object(slot, 'lock_file', side_effect=acquire):
+            self.assertTrue(admission.try_acquire())
+        try:
+            self.assertEqual(read.call_count, 2)  # provisional + the admitted decision
+            self.assertFalse(admission.env is None)
+        finally:
+            admission.close()
+
+    def test_acquisition_at_the_deadline_proceeds(self):
+        self.acquire_with_clock_after_lock(0)
+
+    def test_acquisition_after_the_deadline_proceeds(self):
+        self.acquire_with_clock_after_lock(0.1)
+
+    def test_retry_after_the_deadline_names_the_last_memory_refusal(self):
+        for available, reason in ((None, 'available memory unknown'),
+                                  (0, '600 MiB needed, 0 MiB available')):
+            with self.subTest(available=available):
+                admission, read = self.mutex_admission(1)
+                read.return_value = dict(available_mib=available, total_mib=16384,
+                                         cpus=4, cargo_cpus=4, notes=[])
+                clock = [10.0]
+                with mock.patch.object(slot.time, 'monotonic', side_effect=lambda: clock[0]):
+                    self.assertFalse(admission.try_acquire())  # the memory refusal
+                    clock[0] = 12.0  # the limit passes before the next retry
+                    with self.assertRaisesRegex(host.ResourceBlocked, '^resource-blocked: ' + reason + '$'):
+                        admission.try_acquire()
+                self.assertEqual(read.call_count, 2)  # no decision after the limit passed
+                self.assertTrue(admission.env is None, 'the admission kept an environment')
+                self.assertEqual((Path(self.temp.name) / 'heavy-slot-0').read_text(), '')
 
     def test_busy_mutex_releases_slot_and_allows_a_later_attempt(self):
         admission, read = self.mutex_admission(5)
@@ -131,29 +155,6 @@ class SlotTests(unittest.TestCase):
             self.assertEqual(read.call_count, 2)
         finally:
             admission.close()
-
-    def test_uncontended_expired_retry_preserves_the_last_memory_refusal(self):
-        for available, reason in ((None, 'available memory unknown'),
-                                  (0, '600 MiB needed, 0 MiB available')):
-            with self.subTest(available=available):
-                admission, read = self.mutex_admission(1)
-                read.return_value = dict(available_mib=available, total_mib=16384,
-                                         cpus=4, cargo_cpus=4, notes=[])
-                clock = [10.0]
-                original = slot.lock_file
-                def acquire(file, operation):
-                    original(file, operation)
-                    if Path(file.name).name == 'heavy-admission':
-                        clock[0] = 12.0  # uncontended acquisition crossed the deadline
-                with mock.patch.object(slot.time, 'monotonic', side_effect=lambda: clock[0]):
-                    self.assertFalse(admission.try_acquire())
-                    clock[0] = 10.5
-                    with mock.patch.object(slot, 'lock_file', side_effect=acquire), \
-                            self.assertRaisesRegex(host.ResourceBlocked, '^resource-blocked: ' + reason + '$'):
-                        admission.try_acquire()
-                self.assertEqual(read.call_count, 2)  # provisional + first memory decision
-                self.assertTrue(admission.env is None, 'the admission kept an environment')
-                self.assertEqual((Path(self.temp.name) / 'heavy-slot-0').read_text(), '')
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
