@@ -22,6 +22,8 @@
 | oxpinyin-testsupport | Shared fixture Dictionary/LanguageModel doubles, model20 cache locator and scorer suites. See test-support dependencies below. | forbid | yes | never |
 | oxpinyin-kmm | K-mixture-model operations on the pin's `FlexibleBigram` container: generate, estimate, merge, validate, prune, export and import; `oxpinyin-utils` carries the seven pin-named binaries. | forbid | yes | never |
 
+`oxpinyin-core`, `oxpinyin-chewing` and `oxpinyin-engine` never depend on storage (`oxpinyin-store`, `cxx`, `bindgen` or a backend binding), including through dev and build dependencies; `cargo deny check` enforces it through the `[bans] deny` wrappers in `deny.toml`.
+
 Both C-ABI facades consume `oxpinyin-facade`.
 It depends on core, engine, runtime and user.
 It holds runtime's concrete dictionary, language-model and user handles by value.
