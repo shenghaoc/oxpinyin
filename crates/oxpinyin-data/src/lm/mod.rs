@@ -45,7 +45,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use oxpinyin_core::cost::{UNKNOWN_COST, cost_of_probability, reduce_ratio, surprisal};
 use oxpinyin_core::{Cost, LanguageModel, PhraseToken, UserCountDelta, single_gram};
 
-use crate::bigram_table::BigramTable;
+use crate::bigram_table::{BigramTable, SystemGram};
 use crate::dict::DictError;
 use crate::phrase_libraries::PhraseLibraries;
 use crate::table::TableError;
@@ -564,11 +564,12 @@ impl<
     /// row as the pin walks it, from `lower_bound`. A stored zero-count
     /// record is still a hit (`074a2219 ngram.cpp:231-250`).
     fn transition(&self, prev: u32, next: u32) -> Result<Option<(u32, u32, bool)>, LmError> {
-        let Some(row) = self.bigram.load_raw_successors(prev)? else {
+        let Some(row) = self.bigram.load_gram(prev)? else {
             return Ok(None);
         };
-        let count = single_gram::get_freq(&row, next);
-        let total = single_gram::get_total_freq(&row).unwrap_or(0);
+        let row = row.as_bytes();
+        let count = single_gram::get_freq(row, next);
+        let total = single_gram::get_total_freq(row).unwrap_or(0);
         Ok(Some((count.unwrap_or(0), total, count.is_some())))
     }
 
@@ -599,7 +600,9 @@ impl<
     /// `phrase_lookup.cpp:268-276` at `074a2219`): `None` when both are
     /// absent, the present gram's own bytes when one is, and
     /// `merge_single_gram` otherwise ([`oxpinyin_core::MergedGram::merge`]).
-    /// The system value enters the merge as stored.
+    /// The system value enters the merge as stored. `sentence_start`'s is
+    /// the table's one shared value ([`BigramTable::load_gram`]), merged
+    /// without a copy ([`oxpinyin_core::MergedGram::merge_shared`]).
     ///
     /// # Errors
     /// Propagates DBM read and schema errors, including a present empty value.
@@ -608,8 +611,13 @@ impl<
         prev: u32,
         user: Option<Vec<u8>>,
     ) -> Result<Option<oxpinyin_core::MergedGram>, LmError> {
-        let system = self.bigram.load_raw_successors(prev)?;
-        Ok(oxpinyin_core::MergedGram::merge(system, user))
+        Ok(match self.bigram.load_gram(prev)? {
+            None => oxpinyin_core::MergedGram::merge(None, user),
+            Some(SystemGram::Owned(system)) => oxpinyin_core::MergedGram::merge(Some(system), user),
+            Some(SystemGram::Shared(system)) => {
+                Some(oxpinyin_core::MergedGram::merge_shared(&system, user))
+            }
+        })
     }
 
     /// Interpolated model cost of `token` after `history`, without `edge_cost`.
@@ -1043,7 +1051,7 @@ mod merge_tests {
     }
 
     fn merged(system: Option<Vec<u8>>, user: Option<Vec<u8>>) -> Option<Vec<u8>> {
-        MergedGram::merge(system, user).map(|row| row.as_bytes().to_vec())
+        MergedGram::merge(system, user).map(|row| row.to_bytes())
     }
 
     /// `merge_single_gram`'s loop (`ngram.cpp:308-349` at `074a2219`),

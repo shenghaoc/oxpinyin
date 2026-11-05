@@ -280,7 +280,7 @@ fn a_merged_row_answers_as_the_pins_merged_chunk() {
         .unwrap()
         .unwrap();
     assert_eq!(
-        gram.as_bytes(),
+        gram.to_bytes(),
         chunk(0, &[(2, 7), (3, u32::MAX), (1, 4), (3, 9)])
     );
     assert_eq!(gram.total(), Ok(0));
@@ -343,7 +343,7 @@ fn a_merge_the_pin_cannot_read_answers_its_fault() {
     // No system gram: the user value itself, read as the pin reads it.
     let alone = MergedGram::merge(None, Some(vec![1, 2])).unwrap();
     assert_eq!(alone.fault(), None);
-    assert_eq!(alone.as_bytes(), [1, 2]);
+    assert_eq!(alone.to_bytes(), [1, 2]);
     assert_eq!(alone.total(), Err(GramFault::Short));
     assert_eq!(alone.get_freq(2), Err(GramFault::OverRead));
     assert_eq!(alone.search_into(0, 9, &mut items), Err(GramFault::Short));
@@ -354,7 +354,7 @@ fn a_merge_the_pin_cannot_read_answers_its_fault() {
     assert_eq!(
         MergedGram::merge(Some(system.clone()), None)
             .unwrap()
-            .as_bytes(),
+            .to_bytes(),
         system
     );
 }
