@@ -243,9 +243,17 @@ impl<S: WriteStore> GenericUserStore<S> {
             .libpinyin
             .as_ref()
             .ok_or(UserStoreError::InvalidPhrase)?;
-        let originals = &self.originals;
         let db = self.database();
         let mut phrases = target.phrases();
+        // The unloaded sub-index owns no item. The pin instead uses its
+        // stale context cache here (phonetic_lookup.h:924-927); the
+        // unloaded-cache ruling in compatibility-policy.md skips that write.
+        if phrases
+            .unloaded
+            .contains(&phrase_index_library_index(token))
+        {
+            return Ok(());
+        }
         if phrases.item(token).is_some() {
             if let Some(library) = phrases.item_mut(token) {
                 library.train(token & PHRASE_MASK, readings, delta);
@@ -263,7 +271,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if items.train_live(
-            originals.get(&phrase_index_library_index(token)),
+            self.originals.get(&phrase_index_library_index(token)),
             token,
             readings,
             delta,
@@ -616,8 +624,12 @@ impl<S: WriteStore> GenericUserStore<S> {
             return Ok(UnigramAdd::Missing);
         };
         let library = phrase_index_library_index(token);
-        let original = self.originals.get(&library);
         let mut phrases = target.phrases();
+        // phrase_index.h:631-632 returns before the facade total changes.
+        if phrases.unloaded.contains(&library) {
+            return Ok(UnigramAdd::Missing);
+        }
+        let original = self.originals.get(&library);
         let mut items = self
             .inner
             .system_items

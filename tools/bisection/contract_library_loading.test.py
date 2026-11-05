@@ -526,6 +526,19 @@ for _mode in ('pinyin', 'zhuyin'):
                       'issues': ('row:76', '1576')}))
 
 
+for _mode in ('pinyin', 'zhuyin'):
+    EXPECTED.append((f'unloaded-cached-pronunciation-{_mode}', (),
+                     {'mode': _mode, 'policy_record': 'compatibility-policy.md'}))
+for _mode in ('pinyin', 'zhuyin'):
+    _variants = ['train', 'train-journal', 'train-before', 'train-mixed', 'token', 'import']
+    _variants += (['train-user'] if _mode == 'zhuyin' else
+                  ['longer', 'without', 'longer-missing', 'without-missing',
+                   'longer-overflow', 'without-overflow', 'predicted-prefix',
+                   'predicted-bigram', 'predicted-bigram-predecessor'])
+    for _variant in _variants:
+        EXPECTED.append((f'unloaded-library-{_variant}-{_mode}', (), {'mode': _mode}))
+
+
 def declarations():
     return collect_declarations(family.register)
 
