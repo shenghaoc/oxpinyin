@@ -25,10 +25,35 @@ ARMS = ('main', 'pr__', 'pin_', 'mctl', 'pctl')
 # Std HashSet/HashMap with the default RandomState (per-process SipHash keys)
 # in these engine functions change probe and group-tag collision counts, hence
 # their own Ir and the equality memcmp calls they make (PhraseText::eq).
+#
+# prepend_nbest_rows has no hash container of its own. Packaged builds (just
+# packaging install: release profile, fat LTO, one codegen unit) inline
+# dedup_by_text_keep_first, which it alone calls, into it, so that
+# function's HashSet<&PhraseText> (std RandomState) probes inside
+# prepend_nbest_rows and the profile carries no dedup_by_text_keep_first
+# symbol. The set is insert-only and never iterated: the hash keys change
+# probe length and equality memcmp calls, never which rows survive. This is
+# the production RandomState variation the 2026-10-23 ruling accepts.
+# dedup_by_text_keep_first stays listed for builds that keep it out of line
+# (plain cargo build without the packaging route).
 RANDOMSTATE_TYPING = frozenset((
     'dedup_by_text_keep_first', 'dedup_ranked_by_text', 'order_window_tail',
-    '__memcmp_avx2_movbe',
+    'prepend_nbest_rows', '__memcmp_avx2_movbe',
 ))
+# A Session method demangles as <oxpinyin_engine::session::Session<D, L, S>>::name.
+SESSION_METHOD = re.compile(r'<oxpinyin_engine::session::Session<[^<>]*>>::([a-z_0-9]+)')
+
+
+def randomstate_scope(function):
+    """Reduce a profiled name to its RANDOMSTATE_TYPING form, exactly.
+
+    Remove a trailing legacy Rust hash, then either the engine session module
+    prefix or the complete Session<...> receiver of an inherent method. Clone
+    suffixes, other modules and other receivers keep their full names.
+    """
+    name = re.sub(r'::h[0-9a-f]{16}$', '', function)
+    method = SESSION_METHOD.fullmatch(name)
+    return method[1] if method else name.removeprefix('oxpinyin_engine::session::')
 
 
 def positive(text):
@@ -134,9 +159,8 @@ def randomstate_scopes(profiles):
         tables = [table for arm in arms for table in profiles[arm]]
         by_pair[pair] = sorted(name for name in set().union(*tables)
                                if len({table.get(name, 0) for table in tables}) > 1)
-    base = lambda name: re.sub(r'::h[0-9a-f]{16}$', '', name).removeprefix('oxpinyin_engine::session::')
     outside = [dict(pair=pair, function=name) for pair, names in by_pair.items() for name in names
-               if base(name) not in RANDOMSTATE_TYPING]
+               if randomstate_scope(name) not in RANDOMSTATE_TYPING]
     return by_pair, outside
 
 

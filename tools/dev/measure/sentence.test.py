@@ -410,15 +410,22 @@ class CampaignTests(unittest.TestCase):
                 self.assertNotIn('Ir_per_invocation', result)
 
     def test_randomstate_scopes_make_a_typing_control_diagnostic_only(self):
+        # The packaged fat-LTO build reports the inlined keep-first dedup under this receiver.
+        session = ('<oxpinyin_engine::session::Session<oxpinyin_runtime::RuntimeDict, '
+                   'oxpinyin_runtime::RuntimeLm, &mut oxpinyin_engine::session::SessionState>>::')
         for name in ('oxpinyin_engine::session::order_window_tail', 'dedup_by_text_keep_first',
-                     'oxpinyin_engine::session::dedup_ranked_by_text', '__memcmp_avx2_movbe'):
+                     'oxpinyin_engine::session::dedup_ranked_by_text', '__memcmp_avx2_movbe',
+                     session + 'prepend_nbest_rows', 'prepend_nbest_rows'):
             with self.subTest(name=name):
                 code, result = self.fake_campaign(varying_control=True, vary=name)
                 self.assertEqual((code, result['verdict'], result['rule']), (0, 'DIAGNOSTIC', 'randomstate'))
                 self.assertEqual(result['outside_allowlist'], [])
                 self.assertEqual(result['Ir_ranges']['pctl'], [101, 101])
                 self.assertFalse(result['controls']['pr__']['valid'])
-        for name in ('f', 'dedup_by_text_keep_first_clone', 'oxpinyin_engine::nbest::order_window_tail'):
+        for name in ('f', 'dedup_by_text_keep_first_clone', 'oxpinyin_engine::nbest::order_window_tail',
+                     session + 'prepend_longer_row', session + 'prepend_nbest_rows_clone',
+                     session.replace('session::Session<', 'other::Session<') + 'prepend_nbest_rows',
+                     'x' + session + 'prepend_nbest_rows'):
             with self.subTest(name=name):
                 code, result = self.fake_campaign(varying_control=True, vary=name)
                 self.assertEqual((code, result['verdict']), (3, 'INVALID'))
