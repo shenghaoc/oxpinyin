@@ -117,6 +117,20 @@ impl SystemItems {
         self.facade_extra = self.facade_extra.wrapping_sub(delta);
     }
 
+    /// Whether system library `nibble` has no sub-index: its baseline gave its
+    /// mapping to a live buffer, and no buffer holds it now. An unload drops
+    /// the buffer, and a reload that mapped nothing never makes another. The
+    /// pin has no `SubPhraseIndex` there: `add_unigram_frequency` answers
+    /// `ERROR_NO_SUB_PHRASE_INDEX` before it moves the facade total
+    /// (`phrase_index.h:631-633`), `_add_phrase`'s `get_range` fails
+    /// (`pinyin.cpp:589-591`) and `compact` skips the library
+    /// (`phrase_index.cpp:651-652`). A buffer made from the emptied baseline
+    /// would read arrays it no longer holds ([`library_of`]).
+    pub(crate) fn lacks_sub_index(&self, nibble: u8, original: SystemLibraryRef<'_>) -> bool {
+        !self.replayed.contains_key(&nibble)
+            && original.mapped.is_some_and(|library| library.is_detached())
+    }
+
     /// `FacadePhraseIndex::compact`'s sub-index total (074a2219
     /// `phrase_index.cpp:648-675`): the sum of the readable items the library
     /// holds. A library with a live buffer is walked, as the pin's compact

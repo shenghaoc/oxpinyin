@@ -4812,3 +4812,5 @@ mod tests {
 mod provenance;
 #[cfg(test)]
 mod replayed_readings;
+#[cfg(test)]
+mod unloaded;

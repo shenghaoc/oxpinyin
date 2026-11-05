@@ -504,6 +504,11 @@ impl<S: WriteStore> GenericUserStore<S> {
             .system_items
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // An unloaded library has no sub-index: `get_range` fails and
+        // `_add_phrase` adds nothing (`pinyin.cpp:589-591`).
+        if items.lacks_sub_index(library, original) {
+            return Err(UserStoreError::InvalidPhrase);
+        }
         if let Some(token) = existing {
             // The shipped chunk's own items are merged by the caller; only an
             // item the buffer added is held here.
@@ -619,6 +624,12 @@ impl<S: WriteStore> GenericUserStore<S> {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if original.is_some() {
+            // An unloaded library has no sub-index: the pin answers
+            // `ERROR_NO_SUB_PHRASE_INDEX` before the facade total moves
+            // (`phrase_index.h:631-633`), so nothing moves here either.
+            if original.is_some_and(|original| items.lacks_sub_index(library, original)) {
+                return Ok(UnigramAdd::Missing);
+            }
             // A slot the buffer holds no item at (a removed or absent one)
             // answers `Missing`.
             let outcome = items
