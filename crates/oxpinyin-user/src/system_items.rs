@@ -177,7 +177,7 @@ impl SystemItems {
             (token >> 24) as u8,
             original,
         )
-        .add_item(token & 0x00ff_ffff, payload, original)
+        .add_item(token & 0x00ff_ffff, payload)
     }
 
     /// `remove_phrase_item` over `token`'s library buffer: the item's bytes.
@@ -192,7 +192,7 @@ impl SystemItems {
             (token >> 24) as u8,
             original,
         )
-        .remove_item(token & 0x00ff_ffff, original)
+        .remove_item(token & 0x00ff_ffff)
     }
 
     /// Whether any live buffer holds an item its original lacks.
@@ -213,18 +213,14 @@ impl SystemItems {
         self.replayed
             .get(&((token >> 24) as u8))
             .is_some_and(|library| {
+                // A mapped original's bytes are the buffer's own: what the
+                // chunk held is the buffer's record of its slots' first
+                // writes. A fixture's inline items answer for themselves.
                 let original_held = original.map_or_else(
                     || library.slot_has_offset(slot),
-                    |original| {
-                        original.mapped.map_or_else(
-                            || original.contains_item(slot),
-                            |mapped| {
-                                mapped.original_slot(slot).map_or_else(
-                                    || library.slot_has_offset(slot),
-                                    |saved| saved.extent.is_some(),
-                                )
-                            },
-                        )
+                    |original| match original.mapped {
+                        Some(_) => library.originally_held(slot),
+                        None => original.contains_item(slot),
                     },
                 );
                 original_held && library.item_bytes(slot).is_none()
@@ -245,7 +241,7 @@ impl SystemItems {
         let nibble = (token >> 24) as u8;
         let slot = token & 0x00ff_ffff;
         let library = library_of(&mut self.replayed, &mut self.totals, nibble, original);
-        Some(library.add_unigram(slot, delta, Some(original)))
+        Some(library.add_unigram(slot, delta))
     }
 
     /// The item held under `token`, decoded for this call only. Nothing is
@@ -307,7 +303,28 @@ impl SystemItems {
                 vacant.insert(library)
             }
         };
-        library.train(slot, readings, delta, original)
+        library.train(slot, readings, delta)
+    }
+
+    /// Whether `token`'s library has a live buffer whose item under the
+    /// token's slot, if any, is one its loaded chunk lacked: an import's or a
+    /// replayed ADD's.
+    pub(crate) fn is_added(&self, token: Token) -> bool {
+        self.replayed
+            .get(&((token >> 24) as u8))
+            .is_some_and(|library| library.is_added_slot(token & 0x00ff_ffff))
+    }
+
+    /// Reads the item under `token` where it is one its library's loaded
+    /// chunk lacked ([`Self::is_added`]).
+    pub(crate) fn with_added<R>(&self, token: Token, read: impl FnOnce(&[u8]) -> R) -> Option<R> {
+        let library = self.replayed.get(&((token >> 24) as u8))?;
+        let slot = token & 0x00ff_ffff;
+        if !library.is_added_slot(slot) {
+            return None;
+        }
+        let bytes = library.item_bytes(slot)?;
+        Some(read(&bytes))
     }
 
     /// Exclusive token end of the items one library's buffer added, for the
@@ -317,6 +334,14 @@ impl SystemItems {
         buffer
             .has_added()
             .then(|| (u32::from(library) << 24) | buffer.range_end())
+    }
+
+    /// Whether library `nibble`'s live buffer records any slot's provenance.
+    #[cfg(test)]
+    pub(crate) fn has_provenance(&self, nibble: u8) -> bool {
+        self.replayed
+            .get(&nibble)
+            .is_some_and(ReplayedLibrary::has_provenance)
     }
 
     /// The items each live buffer holds that differ from its original's, as

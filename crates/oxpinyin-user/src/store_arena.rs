@@ -304,13 +304,21 @@ impl<S: WriteStore> GenericUserStore<S> {
         read: impl FnOnce(PhraseItemView<'_>) -> R,
     ) -> Option<R> {
         let original = self.originals.get(&phrase_index_library_index(token))?;
-        if original.mapped.is_some_and(|library| {
-            library.is_detached()
-                && library
-                    .original_slot(token & PHRASE_MASK)
-                    .is_none_or(|slot| slot.extent.is_some())
-        }) || original.contains_item(token & PHRASE_MASK)
-        {
+        if original.mapped.is_some_and(|library| library.is_detached()) {
+            // The chunk's bytes are the live buffer's: it alone knows which
+            // of its slots the chunk did not hold.
+            if !self.has_system_items() {
+                return None;
+            }
+            return self
+                .inner
+                .system_items
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .with_added(token, |bytes| PhraseItemView::from_bytes(bytes).map(read))
+                .flatten();
+        }
+        if original.contains_item(token & PHRASE_MASK) {
             return None;
         }
         self.with_live_item(token, |bytes| PhraseItemView::from_bytes(bytes).map(read))
@@ -500,12 +508,9 @@ impl<S: WriteStore> GenericUserStore<S> {
             // The shipped chunk's own items are merged by the caller; only an
             // item the buffer added is held here.
             if original.contains_item(token & PHRASE_MASK)
-                || (original.mapped.is_some_and(|library| {
-                    library.is_detached()
-                        && library
-                            .original_slot(token & PHRASE_MASK)
-                            .is_none_or(|slot| slot.extent.is_some())
-                }) && items.with_live(token, |_| ()).is_some())
+                || (original.mapped.is_some_and(|library| library.is_detached())
+                    && !items.is_added(token)
+                    && items.with_live(token, |_| ()).is_some())
             {
                 return Err(UserStoreError::InvalidPhrase);
             }

@@ -1584,25 +1584,21 @@ mod tests {
         let extent =
             usize::from_str_radix(end, 16).unwrap() - usize::from_str_radix(start, 16).unwrap();
         assert!(extent >= file.len(), "whole file mapped");
-        let has_history = |store: &UserStore| {
-            store
-                .originals()
-                .phrase_libraries()
-                .library(0x0100_0001)
-                .unwrap()
-                .has_history()
-        };
-        assert!(!has_history(&store), "transfer allocates no history");
+        let has_provenance = |store: &UserStore| store.system_provenance_recorded(1);
+        assert!(!has_provenance(&store), "transfer records no provenance");
         assert_eq!(store.system_unigram(0x0100_0001), Some(100));
-        assert!(!has_history(&store), "reads allocate no history");
+        assert!(!has_provenance(&store), "reads record no provenance");
         assert!(
             !store
                 .add_system_unigram_frequency(0x0100_0001, u32::MAX)
                 .unwrap()
         );
-        assert!(!has_history(&store), "a refused write allocates no history");
+        assert!(!has_provenance(&store), "a refused write records none");
         assert!(store.add_system_unigram_frequency(0x0100_0001, 2).unwrap());
-        assert!(has_history(&store), "the first write captures history");
+        assert!(
+            !has_provenance(&store),
+            "a write into a present item's field records none"
+        );
         assert_eq!(store.system_unigram(0x0100_0001), Some(102));
         drop(store);
         assert!(
@@ -2593,14 +2589,14 @@ mod tests {
             Err(UserStoreError::ShortUserBigramValue)
         ));
         assert_eq!(store.generation(), generation, "training wrote nothing");
-        assert_eq!(store.unigram_delta(0x0100_0001).expect("delta"), 0);
+        assert_eq!(store.system_unigram(0x0100_0001), Some(100));
         assert!(matches!(
             store.observe_predicted(1, 0x0100_0001),
             Err(UserStoreError::ShortUserBigramValue)
         ));
         assert_eq!(
-            store.unigram_delta(0x0100_0001).expect("delta"),
-            483,
+            store.system_unigram(0x0100_0001),
+            Some(100 + 483),
             "the predicted unigram add precedes the bigram load"
         );
         assert_eq!(store.bigram_row(1).expect("row"), Some(short));
@@ -2632,7 +2628,7 @@ mod tests {
         store
             .reload_system_libraries(originals(), 0xffff_ffff, 0x0100_0002)
             .expect("reload");
-        assert_eq!(store.unigram_delta(0x0100_0001).expect("delta"), 0);
+        assert_eq!(store.system_unigram(0x0100_0001), Some(100));
         assert_eq!(store.bigram_row(1).expect("row"), gram);
         assert_eq!(store.bigram_count(1, 0x0100_0001).expect("count"), 69);
         drop(store);
@@ -2679,7 +2675,8 @@ mod tests {
         );
         assert_eq!(store.generation(), generation, "preflight writes nothing");
         assert_eq!(store.bigram_row(2).expect("row"), Some(gram.clone()));
-        assert_eq!(store.unigram_delta(token(5)).expect("delta"), 0);
+        assert_eq!(store.system_unigram(token(1)), Some(100));
+        assert_eq!(store.system_unigram(token(5)), None);
         assert!(!store.is_modified());
         store.begin_training_steps();
         let applied = store.observe_selection(2, token(5));
@@ -2687,7 +2684,8 @@ mod tests {
         if refused {
             assert!(matches!(applied, Err(UserStoreError::TrainingSetFreqMiss)));
             assert_eq!(store.generation(), generation, "a refusal writes nothing");
-            assert_eq!(store.unigram_delta(token(5)).expect("delta"), 0);
+            assert_eq!(store.system_unigram(token(1)), Some(100));
+            assert_eq!(store.system_unigram(token(5)), None);
             assert_eq!(store.bigram_row(2).expect("row"), Some(gram));
             assert!(!store.is_modified());
         } else {
@@ -4181,10 +4179,9 @@ mod tests {
                     .expect("add through c")
             );
             assert_eq!(store.system_unigram(c), Some(77));
-            // The internal delta: slot 2 was never written, so it has no
-            // baseline and answers 0 where a full pre-write scan answered 5.
-            assert_eq!(store.unigram_delta(a).expect("delta a"), 5);
-            assert_eq!(store.unigram_delta(b).expect("delta b"), 0);
+            // Field writes into present items record no provenance, shared
+            // offset or not.
+            assert!(!store.system_provenance_recorded(1));
             store.mark_modified();
             assert!(store.save().expect("save"));
         }
@@ -4392,8 +4389,8 @@ mod tests {
             // First training: seed 69 on the pair and the total.
             assert_eq!(store.bigram_count(1, 0x0100_0001).expect("count"), 69);
             assert_eq!(store.bigram_total(1).expect("total"), 69);
-            // seed * 7 on the system token's unigram delta.
-            assert_eq!(store.unigram_delta(0x0100_0001).expect("delta"), 69 * 7);
+            // seed * 7 on the system token's live unigram.
+            assert_eq!(store.system_unigram(0x0100_0001), Some(100 + 69 * 7));
 
             // The user phrase round-trips with its reading and base
             // count (DEFAULT_PHRASE_COUNT * ADD_PHRASE_UNIGRAM_FACTOR).
@@ -4811,5 +4808,7 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+mod provenance;
 #[cfg(test)]
 mod replayed_readings;

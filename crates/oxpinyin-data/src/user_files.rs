@@ -738,55 +738,6 @@ pub fn log_records(bytes: &[u8]) -> LogReader<'_> {
     }
 }
 
-/// Count item records for an exact replay reservation. Read framing fields
-/// only; item bodies are skipped without constructing records.
-#[must_use]
-#[inline(never)]
-pub fn count_log_item_records(bytes: &[u8]) -> usize {
-    let mut at = 0usize;
-    let mut count = 0usize;
-    while at < bytes.len() {
-        let Some(kind) = bytes
-            .get(at..at.saturating_add(4))
-            .and_then(|word| word.try_into().ok())
-            .map(u32::from_le_bytes)
-        else {
-            break;
-        };
-        let token = bytes
-            .get(at.saturating_add(4)..at.saturating_add(8))
-            .and_then(|word| word.try_into().ok())
-            .map_or(0, u32::from_le_bytes);
-        at = at.saturating_add(8);
-        let len = |at: usize| {
-            bytes
-                .get(at..at.saturating_add(2))
-                .and_then(|word| word.try_into().ok())
-                .map_or(0, u16::from_le_bytes) as usize
-        };
-        let (first, second, fields) = match kind {
-            1 | 2 => (len(at), 0, 2),
-            3 => (len(at), len(at.saturating_add(2)), 4),
-            4 if token == 0 => {
-                let length = len(at);
-                (length, length, 2)
-            }
-            _ => break,
-        };
-        at = at.saturating_add(fields);
-        if (first != 0 && at.saturating_add(first) > bytes.len())
-            || (second != 0 && at.saturating_add(first).saturating_add(second) > bytes.len())
-        {
-            break;
-        }
-        at = at.saturating_add(first).saturating_add(second);
-        if kind != 4 {
-            count += 1;
-        }
-    }
-    count
-}
-
 impl LogReader<'_> {
     /// Why the walk ended, once it has: `None` while it can still yield, and
     /// after a [`LogFault::HeaderToken`] (the pin's assert).

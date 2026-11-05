@@ -169,9 +169,9 @@ fn per_slot_seeding_keeps_mixed_restored_added_removed_and_header_counts() {
             },
         ],
     );
-    assert_eq!(store.unigram_delta(LIBRARY | 1).expect("unchanged"), 0);
-    assert_eq!(store.unigram_delta(LIBRARY | 2).expect("changed"), 20);
-    assert_eq!(store.unigram_delta(LIBRARY | 3).expect("restored"), 0);
+    assert_eq!(store.system_unigram(LIBRARY | 1), Some(100), "unchanged");
+    assert_eq!(store.system_unigram(LIBRARY | 2), Some(70), "changed");
+    assert_eq!(store.system_unigram(LIBRARY | 3), Some(25), "restored");
     assert_eq!(store.unigram_delta(LIBRARY | 5).expect("added"), 11);
     assert_eq!(store.system_library_total(1), Some(971));
     assert_eq!(counts(&store, 1), [77]);
@@ -315,8 +315,8 @@ fn an_unrecorded_overlapped_slot_is_visible_seeded_and_saved() {
         store.with_effective_system_item(LIBRARY | 2, |item| item.unigram),
         Some(170)
     );
-    assert_eq!(store.unigram_delta(LIBRARY | 1).expect("slot 1 delta"), 100);
-    assert_eq!(store.unigram_delta(LIBRARY | 2).expect("slot 2 delta"), 120);
+    assert_eq!(store.system_unigram(LIBRARY | 1), Some(200), "slot 1");
+    assert_eq!(store.system_unigram(LIBRARY | 2), Some(170), "slot 2");
     assert_eq!(counts(&store, 2), [30, 20]);
     // The over-length item's raw words are the borrowed bytes.
     let rows = store
@@ -664,8 +664,8 @@ fn a_mixed_profile_keeps_shipped_appended_and_user_state_apart() {
     assert_eq!(counts(&store, 1), [107]);
     assert_eq!(counts(&store, 2), [50]);
     assert_eq!(counts(&store, 3), [33]);
-    assert_eq!(store.unigram_delta(LIBRARY | 1).expect("delta"), 20);
-    assert_eq!(store.unigram_delta(LIBRARY | 2).expect("delta"), 27);
+    assert_eq!(store.system_unigram(LIBRARY | 1), Some(120));
+    assert_eq!(store.system_unigram(LIBRARY | 2), Some(77));
     assert_eq!(store.unigram_delta(LIBRARY | 3).expect("delta"), 33);
 
     // A user library with a removed phrase, grams over the three items, and

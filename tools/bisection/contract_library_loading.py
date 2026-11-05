@@ -2,13 +2,14 @@
 """
 import ctypes as C
 import hashlib
+from functools import partial
 import os
 from pathlib import Path
 import re
 import resource
 
 from contract_abi import B, I, P, S, U, UNTOUCHED, Z
-from contract_case_helpers import LIBRARY_FACADES, _chunk, _modify_header, _write_log, log_walk, train_once
+from contract_case_helpers import LIBRARY_FACADES, _chunk, _modify_header, _write_log, log_walk, token_phrase_of, train_once
 from contract_fixtures import _write_user_conf, private_system
 from contract_verdict import WARNING_DOMAIN
 
@@ -725,6 +726,135 @@ def aliased_offset_unigram(k):
 
 for _mode in ('pinyin', 'zhuyin'):
     case('aliased-offset-unigram-' + _mode, mode=_mode, issues=('1031',))(aliased_offset_unigram)
+
+
+def internally_overlapping_modify(k):
+    """Replay through A with B ten bytes inside it, then save and reopen.
+
+    At 074a2219, phrase_index.cpp:180-205 derives each extent from its
+    header; :500-508 writes through A, so B changes too. A stays 22 bytes
+    (L=1, P=2); B grows from 10 to 16 bytes, still inside the content buffer.
+    This is row 107's defined in-buffer overlap, not an out-of-buffer read.
+    The ascending save (:403-434) records both; reinit writes A, then stops
+    on B's already-changed old-item comparison (:487-493).
+    """
+    system = private_system(k)
+    k.data = system
+    # B occupies A's pronunciation bytes; its enlarged extent remains in bounds.
+    old = bytes((1, 2)) + (100).to_bytes(4, 'little') + (0x4f60).to_bytes(4, 'little')
+    old += bytes((1, 0)) + (50).to_bytes(4, 'little') + (0x597d).to_bytes(4, 'little') + b'\0\0'
+    new = bytearray(old)
+    new[11] = 1
+    new[12:16] = (77).to_bytes(4, 'little')
+    body = b'\0' * 8 + old + (7).to_bytes(4, 'little')
+    offsets = b''.join(n.to_bytes(4, 'little') for n in (0, 8, 18))
+    content = 17 + len(offsets) + 1
+    head = b''.join(n.to_bytes(4, 'little') for n in (150, 17, content, content + len(body) + 1))
+    path = Path(system, 'gb_char.bin')
+    path.unlink()
+    path.write_bytes(_chunk(head + b'#' + offsets + b'#' + body + b'#'))
+    _write_user_conf(k)
+    record = (3).to_bytes(4, 'little') + (1).to_bytes(4, 'little')
+    record += len(old).to_bytes(2, 'little') * 2 + old + new
+    _write_log(k, _modify_header(0, 150, 150) + record)
+
+    def reads():
+        rows = []
+        for token in (0x01000001, 0x01000002):
+            value = U(UNTOUCHED)
+            ret = k.fn('token_get_unigram_frequency', B, P, U, C.POINTER(U))(
+                k.inst, token, C.byref(value))
+            count = U(UNTOUCHED)
+            count_ret = k.fn('token_get_n_pronunciation', B, P, U, C.POINTER(U))(
+                k.inst, token, C.byref(count))
+            rows.append({'unigram': [ret, value.value],
+                         'phrase': token_phrase_of(k, token),
+                         'readings': [count_ret, count.value]})
+        return rows
+
+    out = {'after-modify': reads()}
+    # Mark dirty without changing A or B, so save actually diffs the library.
+    reading = b"ni3'hao3" if k.mode == 'pinyin' else 'ㄋㄧˇ ㄏㄠˇ'.encode()
+    it = k.fn('begin_add_phrases', P, P, U)(k.ctx, 7)
+    assert k.fn('iterator_add_phrase', B, P, S, S, I)(it, '你好'.encode(), reading, 1)
+    k.fn('end_add_phrases', None, P)(it)
+    out['save'] = k.fn('save', B, P)(k.ctx)
+    out['journal'] = Path(k.user, 'gb_char.dbin').read_bytes().hex()
+    k.fn('free_instance', None, P)(k.inst)
+    k.fn('fini', None, P)(k.ctx)
+    k._ctx = k._inst = None
+    out['reopened'] = reads()
+    return out
+
+
+def overlapping_modify_before_add(k, *, items_system):
+    """B's first MODIFY precedes A's in-place corruption and a replacing ADD.
+
+    The ADD does not read the overreaching item (074a2219
+    phrase_index.cpp:453-459). B's longer replacement relocates on reopen
+    before A's saved MODIFY, because diff visits B (slot 1) before A (slot 2).
+    No operation reads the malformed intermediate extent (row 107).
+    """
+    items_system(k, [((0x4e59,), (0x1081,), 50),
+                     ((0x4e19,), (0x1084,), 100)], total=150, isolated=True)
+    b = bytes((1, 1)) + (50).to_bytes(4, 'little') + (0x4e59).to_bytes(4, 'little')
+    b += (0x1081).to_bytes(2, 'little') + (10).to_bytes(4, 'little')
+    modified_b = b[:2] + (77).to_bytes(4, 'little') + b[6:]
+    a = bytes((1, 3)) + (100).to_bytes(4, 'little') + (0x4e19).to_bytes(4, 'little') + b + b'\0\0'
+    old_a = a[:10] + modified_b + a[26:]
+    new_a = old_a[:10] + bytes((255, 255)) + old_a[12:]
+    added_b = bytes((1, 2)) + modified_b[2:] + (0x2081).to_bytes(2, 'little') + (10).to_bytes(4, 'little')
+    body = b'\0' * 8 + a
+    head = b''.join(n.to_bytes(4, 'little') for n in (150, 17, 30, 31 + len(body)))
+    offsets = b''.join(n.to_bytes(4, 'little') for n in (0, 18, 8))
+    Path(k.data, 'gb_char.bin').write_bytes(_chunk(head + b'#' + offsets + b'#' + body + b'#'))
+
+    def modify(slot, old, new):
+        return ((3).to_bytes(4, 'little') + slot.to_bytes(4, 'little')
+                + len(old).to_bytes(2, 'little') + len(new).to_bytes(2, 'little') + old + new)
+
+    add = ((1).to_bytes(4, 'little') + (1).to_bytes(4, 'little')
+           + len(added_b).to_bytes(2, 'little') + added_b)
+    _write_log(k, _modify_header(0, 150, 150) + modify(1, b, modified_b)
+               + modify(2, old_a, new_a) + add)
+
+    def observe():
+        from contract_abi import sentence_out, zhuyin_sentence_out
+        value, count = U(UNTOUCHED), U(UNTOUCHED)
+        token = 0x01000001
+        freq = k.fn('token_get_unigram_frequency', B, P, U, C.POINTER(U))(k.inst, token, C.byref(value))
+        prons = k.fn('token_get_n_pronunciation', B, P, U, C.POINTER(U))(k.inst, token, C.byref(count))
+        parse = 'parse_more_full_pinyins' if k.mode == 'pinyin' else 'parse_more_chewings'
+        reading = b'ba1' if k.mode == 'pinyin' else b'18 '
+        parsed = k.fn(parse, Z, P, S)(k.inst, reading)
+        guessed = k.fn('guess_sentence', B, P)(k.inst)
+        sentence = sentence_out(k, k.inst, 0) if k.mode == 'pinyin' else zhuyin_sentence_out(k, k.inst)
+        return {'unigram': [freq, value.value], 'readings': [prons, count.value],
+                'parse': parsed, 'guess': guessed, 'sentence': sentence}
+
+    out = {'replayed': observe()}
+    # Import an unrelated phrase to make save diff the replayed library.
+    it = k.fn('begin_add_phrases', P, P, U)(k.ctx, 1)
+    reading = b'jia3' if k.mode == 'pinyin' else 'ㄐㄧㄚˇ'.encode()
+    out['dirty'] = k.fn('iterator_add_phrase', B, P, S, S, I)(it, '甲'.encode(), reading, 1)
+    k.fn('end_add_phrases', None, P)(it)
+    out['save'] = k.fn('save', B, P)(k.ctx)
+    out['journal'] = Path(k.user, 'gb_char.dbin').read_bytes().hex()
+    k.fn('free_instance', None, P)(k.inst)
+    k.fn('fini', None, P)(k.ctx)
+    k._ctx = k._inst = None
+    out['reopened'] = observe()
+    return out
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    case('overlapping-modify-before-add-' + _mode, mode=_mode, issues=('row:107', '1604'))(
+        overlapping_modify_before_add)
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    case('internally-overlapping-modify-' + _mode, mode=_mode, issues=('row:107', '1604'))(
+        internally_overlapping_modify)
 case('sparse-library-addon', stderr=True)(chunk_addon_probe('sparse', False))
 case('sparse-library-addon-reload', stderr=True)(chunk_addon_probe('sparse', True))
 case('sparse-library-tokens', stderr=True)(chunk_token_probe())
@@ -1267,11 +1397,13 @@ for _mode in ('pinyin', 'zhuyin'):
          crash=library_expected('init', 'bad-length', _mode), issues=('row:76', '1576'))(
              lambda k: chunk_frame_system(k, True))
 
-def register(driver_case):
+def register(driver_case, *, items_system=None):
     """Register the declarations with the driver's current decorator, in their original order.
 
     A case in LAYOUT_CRITICAL_CASES is bound to LAYOUT_CRITICAL_RECORD."""
     for name, args, kwargs, fn in _REGISTRATIONS:
         if name in LAYOUT_CRITICAL_CASES:
             kwargs = dict(kwargs, policy_record=LAYOUT_CRITICAL_RECORD)
+        if fn is overlapping_modify_before_add:
+            fn = partial(fn, items_system=items_system)
         driver_case(name, *args, **kwargs)(fn)
