@@ -1253,13 +1253,7 @@ mod phrase_cursor_tests {
     /// store is in memory, #642).
     fn open() -> ContextCore {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/w3");
-        let extension = if cfg!(feature = "bdb") {
-            "db"
-        } else if cfg!(feature = "kyotocabinet") {
-            "kct"
-        } else {
-            "tkt"
-        };
+        let extension = oxpinyin_data::DEFAULT_STORE_EXT;
         ContextCore::open(
             &root.join(extension),
             None,

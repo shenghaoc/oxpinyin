@@ -8,13 +8,7 @@ use oxpinyin_facade::{ContextCore, PINYIN_DEFAULT_OPTION_WORD};
 use oxpinyin_user::UserConfLaw;
 
 fn fixture_dir() -> PathBuf {
-    let extension = if cfg!(feature = "bdb") {
-        "db"
-    } else if cfg!(feature = "kyotocabinet") {
-        "kct"
-    } else {
-        "tkt"
-    };
+    let extension = oxpinyin_data::DEFAULT_STORE_EXT;
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("..")

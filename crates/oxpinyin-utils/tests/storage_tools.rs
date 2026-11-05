@@ -10,13 +10,7 @@ use std::process::{Command, Output};
 use oxpinyin_input::tool;
 
 fn fixture() -> tempfile::TempDir {
-    let backend = if cfg!(feature = "bdb") {
-        "db"
-    } else if cfg!(feature = "kyotocabinet") {
-        "kct"
-    } else {
-        "tkt"
-    };
+    let backend = oxpinyin_data::DEFAULT_STORE_EXT;
     let src = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/w3")
         .join(backend);
@@ -66,19 +60,17 @@ fn import_bin() -> &'static str {
 }
 
 /// The minimal `table.conf` these tests use: one system library and no
-/// addon rows, so the run touches only the files the case names.
-const TABLE_CONF: &str = "binary format version:7\n\
-model data version:14\n\
-lambda parameter:0.312699\n\
-\n\
-source table format:pinyin\n\
-database format:Tkrzw\n\
-\n\
-default RESERVED NULL NULL NULL NOT_USED\n\
+/// addon rows, so the run touches only the files the case names. Its
+/// `database format:` is this build's backend.
+fn table_conf() -> String {
+    conf_with(
+        "default RESERVED NULL NULL NULL NOT_USED\n\
 default GB_DICTIONARY gb_char.table gb_char.bin gb_char.dbin SYSTEM_FILE\n\
 default GBK_DICTIONARY NULL NULL gbk_char.dbin USER_FILE\n\
 default OPENGRAM_DICTIONARY NULL NULL opengram.dbin USER_FILE\n\
-default MERGED_DICTIONARY NULL NULL merged.dbin USER_FILE\n";
+default MERGED_DICTIONARY NULL NULL merged.dbin USER_FILE",
+    )
+}
 
 const GB_CHAR: &str = "a\t吖\t16777217\t104\na\t啊\t16777218\t5\n\
 ni\t你\t16777219\t7\nni'hao\t你好\t16777220\t9\n\
@@ -161,7 +153,7 @@ fn import_bad_header_is_enodata() {
 #[test]
 fn import_missing_phrase_index_is_enoent() {
     let dir = tempfile::tempdir().expect("scratch");
-    fs::write(dir.path().join("table.conf"), TABLE_CONF).expect("write conf");
+    fs::write(dir.path().join("table.conf"), table_conf()).expect("write conf");
     let output = run(import_bin(), dir.path(), &[], b"");
     assert_eq!(output.status.code(), Some(tool::ENOENT));
     assert_eq!(output.stderr, b"open phrase_index.bin failed!\n");
@@ -199,7 +191,7 @@ fn import_applies_unigram_and_bigram() {
 #[test]
 fn gen_binary_files_builds_the_indexes_and_chunks() {
     let dir = tempfile::tempdir().expect("scratch");
-    fs::write(dir.path().join("table.conf"), TABLE_CONF).expect("write conf");
+    fs::write(dir.path().join("table.conf"), table_conf()).expect("write conf");
     fs::write(dir.path().join("gb_char.table"), GB_CHAR).expect("write table");
     let output = run(gen_bin(), dir.path(), &[], b"");
     assert_eq!(output.status.code(), Some(0));
@@ -271,7 +263,7 @@ fn gen_binary_files_builds_the_indexes_and_chunks() {
 #[test]
 fn gen_missing_table_file_is_enoent() {
     let dir = tempfile::tempdir().expect("scratch");
-    fs::write(dir.path().join("table.conf"), TABLE_CONF).expect("write conf");
+    fs::write(dir.path().join("table.conf"), table_conf()).expect("write conf");
     let output = run(gen_bin(), dir.path(), &[], b"");
     assert_eq!(output.status.code(), Some(tool::ENOENT));
     assert_eq!(output.stderr, b"open gb_char.table failed!\n");
@@ -307,10 +299,13 @@ fn chunk_files(dir: &Path) -> Vec<(PathBuf, Vec<u8>)> {
     files
 }
 
+/// A `table.conf` with `row` as its only table rows, for this build's
+/// backend.
 fn conf_with(row: &str) -> String {
     format!(
         "binary format version:7\nmodel data version:14\nlambda parameter:0.312699\n\n\
-source table format:pinyin\ndatabase format:Tkrzw\n\n{row}\n"
+source table format:pinyin\ndatabase format:{}\n\n{row}\n",
+        oxpinyin_data::DEFAULT_STORE_DB_FORMAT
     )
 }
 

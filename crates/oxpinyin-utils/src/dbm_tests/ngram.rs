@@ -1,8 +1,6 @@
 //! tests/storage/test_ngram.cpp:5-95 at 074a2219.
 use super::*;
 use oxpinyin_core::single_gram as gram;
-#[cfg(feature = "bdb")]
-use oxpinyin_store::WriteTxn;
 use oxpinyin_store::{DefaultUserBigramDb, UserBigramDb, WriteStore};
 use std::path::Path;
 
@@ -13,11 +11,10 @@ fn print_gram(bytes: &[u8]) {
     }
 }
 
+/// `bigram.store(token, &single_gram)`, whose answer the program ignores
+/// (`tests/storage/test_ngram.cpp:41, 46` at 074a2219).
 fn store_gram(bigram: &DefaultStore, token: u32, single: &[u8]) {
-    #[cfg(any(feature = "tkrzw", feature = "kyotocabinet"))]
     let _ = bigram.tool_set(&token.to_ne_bytes(), single);
-    #[cfg(feature = "bdb")]
-    let _ = bigram.write_deferred(|txn| txn.put_raw(&token.to_ne_bytes(), single));
 }
 
 /// Execute the program under its fixed /tmp names.

@@ -7,14 +7,14 @@
 //! custom prefix) would link here and then fail to start. This package does
 //! not discover Kyoto Cabinet: oxpinyin-store's build script publishes the
 //! directories it resolved as `lib_dir` links metadata, and this script
-//! repeats them as an rpath for the binaries this package links. With the
-//! `kyotocabinet` feature off it emits nothing. As in the store, the rpath
+//! repeats them as an rpath for the binaries this package links. Only the
+//! store's Kyoto Cabinet build publishes that metadata, so under the other
+//! backends the variable is absent and this emits nothing. As in the store, the rpath
 //! is a convenience, not the contract: an artifact built without it must
 //! still find the library via `LD_LIBRARY_PATH` or its own rpath setting.
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
-    #[cfg(feature = "kyotocabinet")]
     emit_kc_rpath();
 }
 
@@ -22,9 +22,9 @@ fn main() {
 /// the store resolved. Link search and library names stay the store's job
 /// (those propagate graph-wide); only the package-scoped rpath has to be
 /// repeated here.
-#[cfg(feature = "kyotocabinet")]
 fn emit_kc_rpath() {
-    // Absent when every directory is a system one: no rpath names one.
+    // Absent under every other backend, and under Kyoto Cabinet when every
+    // directory is a system one: no rpath names one.
     let Some(dirs) = std::env::var_os("DEP_OXPINYIN_STORE_LIB_DIR") else {
         return;
     };

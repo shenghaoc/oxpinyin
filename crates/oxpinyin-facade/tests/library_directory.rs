@@ -19,13 +19,7 @@ use oxpinyin_user::{SystemVersions, UserConfLaw, persistence};
 /// The committed fixture set the compiled backend opens.
 fn fixture_dir() -> PathBuf {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/w3");
-    let extension = if cfg!(feature = "bdb") {
-        "db"
-    } else if cfg!(feature = "kyotocabinet") {
-        "kct"
-    } else {
-        "tkt"
-    };
+    let extension = oxpinyin_data::DEFAULT_STORE_EXT;
     root.join(extension)
 }
 

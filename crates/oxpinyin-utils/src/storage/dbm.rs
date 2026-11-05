@@ -110,13 +110,7 @@ impl Tree {
     /// `m_db->put(m_db, NULL, &key, &data, 0)`.
     pub(crate) fn put(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
         if self.plain_set {
-            #[cfg(any(feature = "tkrzw", feature = "kyotocabinet"))]
             return self.store.tool_set(key, value);
-            #[cfg(feature = "bdb")]
-            return self
-                .store
-                .write_deferred(|txn| txn.put_raw(key, value))
-                .map(|_| ());
         }
         self.store.write(|txn| {
             txn.put_raw(key, value)?;

@@ -64,11 +64,12 @@ pub use lm::{
     BigramLanguageModel, BigramRow, LmError, library_visible, merge_bigram, merge_counts,
 };
 pub use oxpinyin_core::UserCountDelta;
-// The compiled-in backend's native-table extension, re-exported so
-// consumers above this crate (runtime, capi, tests, fuzz) name fixture
-// directories consistently with the backend the build selected —
-// oxpinyin-runtime has no direct store edge.
-pub use oxpinyin_store::DEFAULT_STORE_EXT;
+// The compiled-in backend's native-table extension and `database format:`
+// token, re-exported so consumers above this crate (runtime, capi, tests,
+// fuzz) name fixture directories and check `table.conf` consistently with
+// the backend the build selected — oxpinyin-runtime has no direct store
+// edge.
+pub use oxpinyin_store::{DEFAULT_STORE_DB_FORMAT, DEFAULT_STORE_EXT};
 pub use phrase_libraries::PhraseLibraries;
 pub use punct::PunctTable;
 pub use system_files::{

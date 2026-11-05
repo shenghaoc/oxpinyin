@@ -164,6 +164,22 @@ pub(crate) fn open_pin(
 }
 
 impl BdbStore {
+    /// The tools' plain native `DB->put`, without syncing. Matches
+    /// `ngram_bdb.cpp:161` and `punct_table_bdb.cpp:176` at 074a2219, the
+    /// peers' `KcStore::tool_set` and `TkrzwStore::tool_set` (each exists
+    /// only under its own feature, so neither is linked, #1129). The shipping
+    /// transaction and durability path is unchanged.
+    ///
+    /// # Errors
+    /// Returns the native write error, or an error for a read-only handle.
+    #[cfg(feature = "tools")]
+    pub fn tool_set(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
+        if self.db.is_read_only() {
+            return Err(StoreError::ReadOnly);
+        }
+        self.db.put(key, value)
+    }
+
     /// Applies a finished transaction's buffer and syncs. Not generic, so
     /// the many `write` closures share one copy of it.
     #[inline(never)]
@@ -994,5 +1010,84 @@ impl BdbStore {
     /// Returns the existing save operation's file or backend error.
     pub fn save_bigram_db(&self, path: &Path) -> Result<(), StoreError> {
         save_bigram_db(&self.db, path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BdbStore;
+    use crate::{RawReadStore as _, ReadStore as _, WriteStore as _, WriteTxn as _};
+    use std::ops::{Bound, ControlFlow};
+    use std::sync::{Arc, Barrier};
+
+    // Berkeley DB's unthreaded native handles require the shared owner to
+    // serialize both ordered-tree and unordered-hash readers; the raw tier
+    // is what the data crate's shared chewing, phrase, bigram, addon and
+    // punctuation readers go through.
+    #[test]
+    fn shared_raw_readers_keep_rows_valid_during_concurrent_and_reentrant_reads() {
+        let dir = std::env::temp_dir().join(format!(
+            "oxpinyin-bdb-shared-raw-readers-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos())
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        for hash in [false, true] {
+            let path = dir.join(if hash { "hash.db" } else { "tree.db" });
+            let store = if hash {
+                BdbStore::create_hash(&path).unwrap()
+            } else {
+                BdbStore::create(&path).unwrap()
+            };
+            store
+                .write(|txn| {
+                    for key in 0_u8..8 {
+                        txn.put_raw(&[key], &vec![key; if key == 3 { 9000 } else { 20 }])?;
+                    }
+                    Ok(())
+                })
+                .unwrap();
+            drop(store);
+            let store = Arc::new(if hash {
+                BdbStore::open_hash_read_only(&path).unwrap()
+            } else {
+                BdbStore::open_read_only(&path).unwrap()
+            });
+            let barrier = Arc::new(Barrier::new(4));
+            std::thread::scope(|scope| {
+                for _ in 0..4 {
+                    let store = Arc::clone(&store);
+                    let barrier = Arc::clone(&barrier);
+                    scope.spawn(move || {
+                        barrier.wait();
+                        let mut read = Vec::new();
+                        for _ in 0..20 {
+                            assert!(store.get_raw(&[3], &mut read).unwrap());
+                            assert_eq!(read, [3; 9000]);
+                            assert!(store.contains_raw(&[3]).unwrap());
+                            let mut keys = Vec::new();
+                            store
+                                .scan_raw(
+                                    Bound::Included(&[2]),
+                                    Bound::Excluded(&[6]),
+                                    |key, value| {
+                                        assert!(store.get_raw(key, &mut read).unwrap());
+                                        assert_eq!(read, value);
+                                        assert!(value.iter().all(|byte| *byte == key[0]));
+                                        keys.push(key[0]);
+                                        Ok(ControlFlow::Continue(()))
+                                    },
+                                )
+                                .unwrap();
+                            assert_eq!(keys, [2, 3, 4, 5]);
+                        }
+                    });
+                }
+            });
+            drop(store);
+        }
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

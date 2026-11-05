@@ -4903,7 +4903,7 @@ mod tests {
     }
 
     macro_rules! user_store_tests {
-        ($mod:ident, $backend:ty, $ext:literal) => {
+        ($mod:ident, $backend:ty, $ext:expr) => {
             mod $mod {
                 use super::super::*;
                 use crate::{
@@ -6315,15 +6315,14 @@ mod tests {
     }
 
     // Exactly-one-backend: the store's compile-time guards refuse
-    // combined builds, so at most one of these peer test suites
-    // is compiled per build; each peer's own suite exercises the
-    // generic user store's contract over that peer.
-    #[cfg(feature = "tkrzw")]
-    user_store_tests!(tkrzw, oxpinyin_store::TkrzwStore, "tkrzw");
-    #[cfg(feature = "kyotocabinet")]
-    user_store_tests!(kc, oxpinyin_store::KcStore, "kc");
-    #[cfg(feature = "bdb")]
-    user_store_tests!(bdb, oxpinyin_store::BdbStore, "db");
+    // combined builds, so `DefaultStore` is the one peer this build
+    // links, and this suite exercises the generic user store's contract
+    // over it; CI runs every peer build.
+    user_store_tests!(
+        default_store,
+        oxpinyin_store::DefaultStore,
+        oxpinyin_store::DEFAULT_STORE_EXT
+    );
 
     // ── Cross-backend equivalence (one peer per build, all peers in CI) ──
 
