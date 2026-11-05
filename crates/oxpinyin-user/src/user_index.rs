@@ -31,6 +31,15 @@ use crate::phrase::MAX_PHRASE_LENGTH;
 /// Record header: key length and value length, both little-endian `u32`.
 const HEADER: usize = 8;
 
+/// Whether the table keeps one entry per key length between operations,
+/// as the Kyoto Cabinet and tkrzw `ChewingLargeTable2` do: `search` loads
+/// the record into it (`chewing_large_table2_kyotodb.cpp:170`,
+/// `chewing_large_table2_tkrzwdb.cpp:156` at 074a2219), `search_suggestion`
+/// empties it (`:233`, `:216`) and the mask walk stores its whole chunk
+/// back (`:471`, `:439`). Berkeley DB points the entry at each record
+/// (`chewing_large_table2_bdb.cpp:189, 498`), so nothing carries over.
+pub(crate) const ENTRY_PER_LENGTH: bool = cfg!(any(feature = "kyotocabinet", feature = "tkrzw"));
+
 /// What one key length's table entry holds between operations.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) enum Slot {
@@ -382,10 +391,9 @@ impl UserIndex {
 
     /// `ChewingLargeTable2::search`'s entry side: a hit on a non-empty
     /// record loads it into the length's slot.
-    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
     pub(crate) fn note_search(&mut self, keys: &[ChewingKey]) {
         let len = keys.len();
-        if len == 0 || len > MAX_PHRASE_LENGTH {
+        if !ENTRY_PER_LENGTH || len == 0 || len > MAX_PHRASE_LENGTH {
             return;
         }
         let key = query_key(keys);
@@ -396,10 +404,9 @@ impl UserIndex {
     }
 
     /// `search_suggestion` empties every longer length it visits.
-    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
     pub(crate) fn note_suggestion(&mut self, keys: &[ChewingKey]) {
         let prefix_len = keys.len();
-        if prefix_len == 0 || prefix_len > MAX_PHRASE_LENGTH {
+        if !ENTRY_PER_LENGTH || prefix_len == 0 || prefix_len > MAX_PHRASE_LENGTH {
             return;
         }
         let prefix = query_key(keys);
