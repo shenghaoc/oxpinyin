@@ -85,7 +85,7 @@ to print the selected case count; a completed verify prints `verdict_counts`.
 
 `verify` compares first. An equal observation is `MATCH` (or `POLICY-ACCEPTED`) on any host.
 For each lambda `%f` input, capture stores whether libc accepts it and the parsed float's
-32-bit value. Verification calls the host libc's `sscanf` once for the same text and reports
+32-bit value. Verification calls the host libc's `fscanf` once, on a stream holding the same text as oxpinyin's `table.conf` read does, and reports
 both verdicts. If they agree, the complete observation must compare normally, regardless of
 glibc version. If they differ, any changed observation field is `HOST-DEPENDENT`. The two
 cases that remove the lambda line have no scanner input and compare normally. GLib

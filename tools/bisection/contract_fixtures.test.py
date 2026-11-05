@@ -154,8 +154,12 @@ class ContainerTests(unittest.TestCase):
                 fixtures.index_file_rows('x.bin', cell='tkrzw', library=Path('/anchor/libtkrzw.so.1'))
             self.assertEqual(load.call_args_list[0].args, ('/anchor/libtkrzw.so.1',))
             self.assertEqual(library.tkrzw_dbm_open.call_args.args[2], b'dbm=TreeDBM')
-            with self.assertRaisesRegex(ValueError, 'tkrzw profile read-only open failed'):
+            # Without a certified library, tkrzw resolves through the facade under test.
+            load.reset_mock()
+            with patch.object(fixtures, 'FACADE', '/facade.so'), \
+                    self.assertRaisesRegex(ValueError, 'tkrzw profile read-only open failed'):
                 fixtures.index_file_rows('x.bin', cell='tkrzw', kind='hash')
+            self.assertEqual(load.call_args_list[0].args, ('/facade.so',))
             self.assertEqual(library.tkrzw_dbm_open.call_args.args[2], b'dbm=HashDBM')
 
     def test_an_unknown_container_kind_is_refused_before_any_reader_opens(self):
@@ -188,14 +192,16 @@ class ContainerTests(unittest.TestCase):
             library.tkrzw_dbm_open.return_value = 99
             library.tkrzw_dbm_set.return_value = True
             library.tkrzw_dbm_close.return_value = True
-            with patch.object(fixtures.C, 'CDLL', return_value=library):
+            with patch.object(fixtures, 'FACADE', '/facade.so'), \
+                    patch.object(fixtures.C, 'CDLL', return_value=library) as load:
                 fixtures._craft_tkrzw(str(path), [(b'k', b'v')], 'TreeDBM')
+            load.assert_called_once_with('/facade.so')
             self.assertFalse(path.exists())
             library.tkrzw_dbm_open.assert_called_once_with(str(path).encode(), True, b'dbm=TreeDBM')
             library.tkrzw_dbm_set.assert_called_once_with(99, b'k', 1, b'v', 1, True)
             library.tkrzw_dbm_close.assert_called_once_with(99)
             path.write_bytes(b'kept')
-            with patch.object(fixtures.C, 'CDLL', return_value=library):
+            with patch.object(fixtures, 'FACADE', '/facade.so'), patch.object(fixtures.C, 'CDLL', return_value=library):
                 fixtures._craft_tkrzw(str(path), [], 'HashDBM', keep=True)
             self.assertEqual(path.read_bytes(), b'kept')
 

@@ -377,7 +377,6 @@ class PolicyTests(unittest.TestCase):
 
 
 class HostTests(unittest.TestCase):
-    @unittest.skipUnless(sys.platform.startswith('linux'), 'the probe calls the host libc sscanf through ctypes')
     def test_host_scanf_verdict_records_acceptance_and_bits(self):
         self.assertEqual(verdict.host_scanf_verdict('1.5'),
                          dict(input='1.5', accepted=True, value_bits='3fc00000'))

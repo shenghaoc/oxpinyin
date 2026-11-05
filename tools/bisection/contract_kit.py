@@ -25,7 +25,9 @@ class Kit:
         self.mode, self._data, self.scratch = mode, data, scratch
         check_tkrzw(os.environ.get("CONTRACT_DIFF_CELL", cell), "contract-diff.py", os.environ.get("OXPINYIN_RUNTIME_SIDE", "subject"), so)
         self.lib = C.CDLL(so, use_errno=True)
-        self.glib = C.CDLL('libglib-2.0.so.0')
+        # GLib's functions resolve through the facade's handle: dlsym searches the library and
+        # the libraries it depends on, so the kit always uses the GLib the facade is linked against.
+        self.glib = C.CDLL(so)
         self.glib.g_free.argtypes = [P]
         self.glib.g_free.restype = None
         self.logs = []

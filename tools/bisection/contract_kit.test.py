@@ -35,6 +35,14 @@ class KitBoundaryTests(unittest.TestCase):
                 driver.Kit('zhuyin', '/other.so', '/data', scratch)
             guard.assert_called_once_with('tkrzw', 'contract-diff.py', 'pin', '/other.so')
 
+    def test_glib_resolves_through_the_facade_handle_not_a_hard_coded_library_name(self):
+        driver = load_driver()
+        with tempfile.TemporaryDirectory() as scratch, patch.object(driver.C, 'CDLL', return_value=MagicMock()) as cdll, \
+                patch.object(driver, 'check_tkrzw'):
+            kit = driver.Kit('pinyin', '/subject.so', '/data', scratch)
+        self.assertEqual([call.args for call in cdll.call_args_list], [('/subject.so',), ('/subject.so',)])
+        self.assertIsNot(kit.glib, None)
+
     def test_inherited_alloc_still_reaches_a_patch_on_the_driver_class_method(self):
         driver = load_driver()
         kit = object.__new__(driver.Kit)

@@ -160,6 +160,21 @@ def _craft_kc(path, rows, keep=False, *, system_index=False):
     kc.kcdbdel(db)
 
 
+FACADE = None  # the facade library being verified; the worker sets it before any case runs
+
+
+def tkrzw_handle(library=None):
+    """The handle tkrzw's C API resolves through.
+
+    LIBRARY is a tkrzw path certified against the worker's anchor object. Without it the verified
+    facade's own handle is used: dlsym searches the library and the libraries it depends on, so the
+    tkrzw it links is the one used, on every platform."""
+    target = library if library is not None else FACADE
+    if target is None:
+        raise RuntimeError('no facade library to resolve tkrzw through')
+    return C.CDLL(str(target))
+
+
 def _craft_tkrzw(path, rows, kind, keep=False):
     """A tkrzw `kind` file (`TreeDBM` for the chewing and phrase tables,
     `HashDBM` for the bigram, as each pin `load_db` opens it) of the records,
@@ -172,7 +187,7 @@ def _craft_tkrzw(path, rows, kind, keep=False):
     src/storage/chewing_large_table2_tkrzwdb.cpp:92-130, PhraseLargeTable3 at
     src/storage/phrase_large_table3_tkrzwdb.cpp:83-121 and Bigram at
     src/storage/ngram_tkrzwdb.cpp:48-83 (pin 074a2219)."""
-    tk = C.CDLL('libtkrzw.so.1')
+    tk = tkrzw_handle()
     tk.tkrzw_dbm_open.restype = C.c_void_p
     tk.tkrzw_dbm_open.argtypes = [C.c_char_p, C.c_bool, C.c_char_p]
     tk.tkrzw_dbm_set.restype = C.c_bool
@@ -332,7 +347,7 @@ def index_file_rows(path, *, cell, kind='tree', allow_empty=False, library=None)
             finally:
                 kc.kcdbdel(db)
     elif cell == 'tkrzw':
-        tk = C.CDLL(str(library) if library is not None else 'libtkrzw.so.1')
+        tk = tkrzw_handle(library)
         libc = C.CDLL(None)
         libc.free.argtypes = [P]
         tk.tkrzw_dbm_open.restype, tk.tkrzw_dbm_open.argtypes = P, [S, B, S]

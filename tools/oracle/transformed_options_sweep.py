@@ -64,7 +64,7 @@ def observe(library, data, word, cases):
     text_get = bind("get_candidate_string", boolean, ptr, ptr, c.POINTER(c.c_char_p))
     type_get = bind("get_candidate_type", boolean, ptr, ptr, c.POINTER(c.c_int))
     rank_get = bind("get_candidate_nbest_index", boolean, ptr, ptr, c.POINTER(c.c_uint8))
-    glib = c.CDLL("libglib-2.0.so.0")
+    glib = lib  # GLib resolves through the facade's own dependencies
     glib.g_free.argtypes, glib.g_free.restype = [ptr], None
     records = []
     with tempfile.TemporaryDirectory(prefix="lane-j-sweep-") as user:

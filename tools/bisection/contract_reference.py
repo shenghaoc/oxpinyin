@@ -161,9 +161,12 @@ def data_identity(directory):
     return sha256_text(rows)
 
 
-def glib_version():
-    """The GLib this process loads, as `major.minor.micro`."""
-    glib = C.CDLL('libglib-2.0.so.0')
+def glib_version(library):
+    """The GLib the facade LIBRARY is linked against, as `major.minor.micro`.
+
+    The version variables resolve through the facade's handle, which dlsym searches together with
+    the libraries it depends on."""
+    glib = C.CDLL(str(library))
     return '.'.join(str(C.c_uint.in_dll(glib, name).value)
                     for name in ('glib_major_version', 'glib_minor_version', 'glib_micro_version'))
 
@@ -174,9 +177,9 @@ def glibc_version():
     return libc.gnu_get_libc_version().decode()
 
 
-def environment():
-    """The environment a row was captured in, or the host's when verifying."""
-    return dict(glib=glib_version(), glibc=glibc_version(), arch=platform.machine(),
+def environment(library):
+    """The environment a row was captured in, or the host's when verifying; LIBRARY is a facade."""
+    return dict(glib=glib_version(library), glibc=glibc_version(), arch=platform.machine(),
                 image=os.environ.get('OXPINYIN_CAPTURE_IMAGE'))
 
 
