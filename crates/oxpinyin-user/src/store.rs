@@ -2440,6 +2440,12 @@ impl<S: WriteStore> GenericUserStore<S> {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             for (&library, original) in self.originals.iter() {
+                // An unloaded library has no sub-index to compact: the pin's
+                // loop skips it (`phrase_index.cpp:651-652`) and its total
+                // stays as the unload left it.
+                if items.lacks_sub_index(library, original) {
+                    continue;
+                }
                 let old = items
                     .library_total(library, Some(original))
                     .unwrap_or(original.total);
