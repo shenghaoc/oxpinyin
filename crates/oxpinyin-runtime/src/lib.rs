@@ -2805,7 +2805,13 @@ impl Runtime {
     /// unload; `false` when already visible.
     #[must_use]
     pub fn load_library(&mut self, index: u32) -> bool {
-        self.dict().load_library(index)
+        let changed = self.dict().load_library(index);
+        if index < PHRASE_INDEX_LIBRARY_COUNT
+            && let Some(store) = self.user.as_mut()
+        {
+            store.set_library_loaded(index as u8, true);
+        }
+        changed
     }
 
     /// Unloads default library `index`; `false` only outside the sixteen
@@ -2814,7 +2820,11 @@ impl Runtime {
     /// through is the C ABI's rule.
     #[must_use]
     pub fn unload_library(&mut self, index: u32) -> bool {
-        self.dict().unload_library(index)
+        let accepted = self.dict().unload_library(index);
+        if accepted && let Some(store) = self.user.as_mut() {
+            store.set_library_loaded(index as u8, false);
+        }
+        accepted
     }
 }
 
@@ -2832,6 +2842,112 @@ mod tests {
             .join("fixtures")
             .join("w3")
             .join(oxpinyin_data::DEFAULT_STORE_EXT)
+    }
+
+    #[test]
+    fn direct_library_visibility_also_guards_session_mutations() {
+        for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
+            let mut runtime = Runtime::open_with_law(&w3_dir(), None, law).unwrap();
+            let token = runtime.dict().system().tokens_for_text("你").unwrap()[0];
+            let library = token >> 24;
+            assert!(runtime.unload_library(library));
+            assert!(runtime.unload_library(library));
+            let store = runtime.user_store_mut().unwrap();
+            let total = store.unigram_total().unwrap();
+            assert!(!store.add_system_unigram_frequency(token, 7).unwrap());
+            assert_eq!(
+                store.add_system_unigram_outcome(token, 7).unwrap(),
+                UnigramAdd::Missing
+            );
+            assert_eq!(store.unigram_total().unwrap(), total);
+            assert!(runtime.load_library(library));
+            assert!(!runtime.load_library(library));
+            assert!(
+                runtime
+                    .user_store_mut()
+                    .unwrap()
+                    .add_system_unigram_frequency(token, 7)
+                    .unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn runtime_visibility_preserves_user_library_save_state() {
+        for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
+            let dir = tempfile::tempdir().unwrap();
+            let mut runtime = Runtime::open_with_law(&w3_dir(), Some(dir.path()), law).unwrap();
+            let library = oxpinyin_user::USER_DICTIONARY;
+            let chunk = dir.path().join("user.bin");
+            let ni = SyllableKey::from_text("ni").unwrap();
+            let keys = [oxpinyin_user::toned_key(ni.index(), 3).unwrap()];
+            let store = runtime.user_store_mut().unwrap();
+            assert!(!store.is_system_library(library));
+            let saved = store
+                .add_phrase_in(library, &"龘".into(), &keys, Some(20))
+                .unwrap();
+            store.mark_modified();
+            assert!(store.save().unwrap());
+            let original = std::fs::read(&chunk).unwrap();
+            // Only the store's own unload drops the items and arms save's
+            // skip. A runtime unload/load pair must not clear that marker
+            // and overwrite the saved chunk with an empty loaded library.
+            runtime
+                .user_store_mut()
+                .unwrap()
+                .unload_user_library(library);
+            assert!(runtime.unload_library(u32::from(library)));
+            assert!(runtime.load_library(u32::from(library)));
+            let store = runtime.user_store_mut().unwrap();
+            assert!(store.phrase(saved).unwrap().is_none());
+            store.mark_modified();
+            assert!(store.save().unwrap());
+            assert_eq!(std::fs::read(&chunk).unwrap(), original);
+            assert!(!dir.path().join("user.bin.tmp").exists());
+
+            store.load_user_library(library);
+            assert!(store.phrase(saved).unwrap().is_some());
+            let added = store
+                .add_phrase_in(library, &"鱻".into(), &keys, Some(30))
+                .unwrap();
+
+            // Runtime visibility alone must not insert the store's unloaded
+            // marker: the store still owns its items and must save them.
+            assert!(runtime.unload_library(u32::from(library)));
+            let store = runtime.user_store_mut().unwrap();
+            assert!(store.phrase(added).unwrap().is_some());
+            store.mark_modified();
+            assert!(store.save().unwrap());
+            let updated = std::fs::read(&chunk).unwrap();
+            assert_ne!(updated, original, "the loaded store saves its new item");
+            assert!(runtime.load_library(u32::from(library)));
+            let store = runtime.user_store_mut().unwrap();
+            store.mark_modified();
+            assert!(store.save().unwrap());
+            assert_eq!(std::fs::read(&chunk).unwrap(), updated);
+        }
+    }
+
+    #[test]
+    fn unloading_an_absent_system_chunk_still_guards_the_session() {
+        let system = tempfile::tempdir().unwrap();
+        for entry in std::fs::read_dir(w3_dir()).unwrap() {
+            let path = entry.unwrap().path();
+            std::fs::copy(&path, system.path().join(path.file_name().unwrap())).unwrap();
+        }
+        std::fs::remove_file(system.path().join("gb_char.bin")).unwrap();
+        for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
+            let mut runtime = Runtime::open_with_law(system.path(), None, law).unwrap();
+            assert!(!runtime.libraries().is_loaded(1));
+            assert!(runtime.unload_library(1));
+            let store = runtime.user_store_mut().unwrap();
+            let total = store.unigram_total().unwrap();
+            assert_eq!(
+                store.add_system_unigram_outcome(0x0100_0001, 7).unwrap(),
+                UnigramAdd::Missing
+            );
+            assert_eq!(store.unigram_total().unwrap(), total);
+        }
     }
 
     #[test]
@@ -2872,6 +2988,10 @@ mod tests {
             runtime
                 .library_mask
                 .store(1 << (token >> 24), Ordering::SeqCst);
+            runtime
+                .user_store_mut()
+                .unwrap()
+                .set_library_loaded((token >> 24) as u8, false);
             assert_eq!(
                 runtime.user_store().unwrap().system_unigram(token),
                 Some(initial + delta as u32)
@@ -2885,6 +3005,10 @@ mod tests {
                 "the masked token uses the bump alone"
             );
             runtime.library_mask.store(0, Ordering::SeqCst);
+            runtime
+                .user_store_mut()
+                .unwrap()
+                .set_library_loaded((token >> 24) as u8, true);
         }
     }
 
@@ -2971,6 +3095,10 @@ mod tests {
         runtime
             .library_mask
             .store(1 << (token >> 24), Ordering::SeqCst);
+        runtime
+            .user_store_mut()
+            .unwrap()
+            .set_library_loaded((token >> 24) as u8, false);
         let entries = candidate_entries(&runtime, "ni");
         assert!(
             entries
@@ -2986,6 +3114,10 @@ mod tests {
             "the masked token still prices from its delta and bumps"
         );
         runtime.library_mask.store(0, Ordering::SeqCst);
+        runtime
+            .user_store_mut()
+            .unwrap()
+            .set_library_loaded((token >> 24) as u8, true);
         let entries = candidate_entries(&runtime, "ni");
         assert_eq!(
             entry_for(&entries, token).unwrap().live_unigram(),

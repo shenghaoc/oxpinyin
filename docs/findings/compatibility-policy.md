@@ -1306,7 +1306,7 @@ not proof that the current Rust parser follows the newly required call.
 | 115 | Consumed invalid UTF-8 in family E text rows or phrase-table queries | **(b)** — NULL read with uninitialized length | Maintainer-approved safe outcome, recorded 2026-11-03 UTC, narrowed by review 2026-11-04 UTC: `tests/storage/test_phrase_table.cpp:45-59` passes failed `g_utf8_to_ucs4` output to search (`src/storage/phrase_large_table3_tkrzwdb.cpp:133-136`); phrase-table text loading also consumes it (`phrase_large_table3.cpp:131-135`). In `FacadePhraseIndex::load_text`, conversion returns NULL without setting the uninitialized `glong written` (`phrase_index.cpp:541-543`). Only `cur_token == 0` or a changed token consumes it in `set_phrase_string(written, NULL)` (`:545-556`), copying an uninitialized length from NULL: undefined behavior. Token 0 keeps `cur_token` at 0, so every token-0 row consumes its conversion. Stop those consuming failures with normal `exit(EINVAL)`, no added diagnostic, retaining earlier observable work. A same nonzero token never uses the failed conversion: it parses the reading, adds it when its key count matches, otherwise prints the source skip line (`:577-582`), then frees NULL (`:586`); that path is defined and continues. The two same-token cases compare against the pin. Undefined consuming paths never run the pin; the index's subject guard retains earlier timed output. E3 adds table cases using pin_not_run. |
 | 116 | More than sixteen keys passed directly to the chewing-table test search | **(b)** — stack-buffer write | Maintainer-approved safe outcome, recorded 2026-11-03 UTC: `tests/storage/test_chewing_table.cpp:71-86` passes all parsed keys to `src/storage/chewing_large_table2.cpp:161-172`, whose local `ChewingKey index[MAX_PHRASE_LENGTH]` has sixteen slots. `src/storage/pinyin_phrase3.h:160-177` writes phrase_length keys before search_internal's switch can abort. After checking only the first incomplete key's zero tone (`pinyin_phrase3.h:146-157`), stop immediately before the unsafe copy with normal `exit(EINVAL)`, no added diagnostic, keeping earlier observable work. This is separate from row 84's stored-key dispatch. `chewing-table-overlong-query` uses pin_not_run; the subject guard after a valid timed query verifies that earlier stdout is kept. |
 | 117 | Logger ignores a failed required phrase-chunk load | **(b)** — row 76's NULL read | Maintainer-approved safe outcome, recorded 2026-11-03 UTC; citation scope clarified 2026-11-04 UTC: the three required `../../data/gb_char.bin` loads at `tests/storage/test_phrase_index_logger.cpp:28-30,45-48,52-54` ignore MemoryChunk::load returning false. The first and third enter SubPhraseIndex::load directly; diff loads the second as its old sub-index (`phrase_index.cpp:271-282,335-354`), reaching row 76's NULL read. Stop a failed required phrase-chunk load with normal `exit(ENOENT)`, no added diagnostic, retaining earlier observable work. The separate journal reload at `test_phrase_index_logger.cpp:55-57` is defined on failure: PhraseIndexLogger::load retains the empty chunk and has_next_record finds nothing (`phrase_index_logger.h:94-133`), so nothing is merged. Do not apply this refusal to the journal. `phrase-index-logger-missing` and `phrase-index-logger-short` bind source-only complete observations; no undefined pin execution. |
-| 118 | Training a token whose library is unloaded: the pin raises the reading counts of a stale cached item | **(b)** for a write into the unloaded library's freed chunk; approved divergence for a write into a library still loaded | Maintainer ruling 2026-11-05 UTC. After `pinyin_unload_phrase_library` (GBK, 2) or `zhuyin_unload_phrase_library` (any library but TSI, 1) deletes a sub-index (`phrase_index.cpp:261-269`), a sentence that holds a token of it still trains. `train_result3` reads the item unchecked (`phonetic_lookup.h:924`): `FacadePhraseIndex::get_phrase_item` answers `ERROR_NO_SUB_PHRASE_INDEX` and leaves `m_cached_phrase_item` as the last successful read left it (`phrase_index.h:649-650`). The call then raises that item's reading counts (`:925-927`). The cached chunk is non-owning (`phrase_index.cpp:204`), so the write lands wherever that read pointed. **When it points into the unloaded library's freed chunk,** the write is a use-after-free, so class (b): no safe construction reproduces it, and oxpinyin trains no reading. **When it points into another library that is still loaded,** the pin defines the result: it raises that live item's reading counts. oxpinyin deliberately declines that write too; this is an approved divergence, recorded separately with its own witness cases. **In both cases oxpinyin** trains no reading of a token whose library has no live buffer, as `arena_train` leaves a journal-removed item alone, and keeps what the pin defines: the bigram trains (`:875-909`), the unigram add finds no sub-index and moves no total (`phrase_index.h:631-632`), and `pinyin_train` and `zhuyin_train` answer `true`. A predicted bigram or prefix row of the unloaded library does the same (`pinyin.cpp:2609-2639`). `_add_phrase` finds no range (`pinyin.cpp:589-591`) and `compact` skips the library (`phrase_index.cpp:651-652`), so its total stays as the unload left it. Held by `unloaded_library_tests` (`crates/oxpinyin-capi/src/candidates.rs`) and `unloaded` (`crates/oxpinyin-user/src/store_libpinyin/unloaded.rs`). No contract case for the freed chunk: the pin's write there is undefined. |
+| 118 | Training a token whose library is unloaded: the pin raises the reading counts of a stale cached item | **(b)** for a write into the unloaded library's freed chunk; approved divergence for a write into a library still loaded | Maintainer ruling 2026-11-05 UTC. After `pinyin_unload_phrase_library` (GBK, 2) or `zhuyin_unload_phrase_library` (any library but TSI, 1) deletes a sub-index (`phrase_index.cpp:261-269`), a sentence that holds a token of it still trains. `train_result3` reads the item unchecked (`phonetic_lookup.h:924`): `FacadePhraseIndex::get_phrase_item` answers `ERROR_NO_SUB_PHRASE_INDEX` and leaves `m_cached_phrase_item` as the last successful read left it (`phrase_index.h:649-650`). The call then raises that item's reading counts (`:925-927`). The cached chunk is non-owning (`phrase_index.cpp:204`), so the write lands wherever that read pointed. **When it points into the unloaded library's freed chunk,** the write is a use-after-free, so class (b): no safe construction reproduces it, and oxpinyin trains no reading. **When it points into another library that is still loaded,** the pin defines the result: it raises that live item's reading counts. oxpinyin deliberately declines that write too; this is the approved divergence in [the unloaded-token pronunciation amendment](#amendment--unloaded-token-pronunciation-cache-2026-11-05-utc), held by `unloaded-cached-pronunciation-pinyin` and `unloaded-cached-pronunciation-zhuyin`. **In both cases oxpinyin** trains no reading of a token whose library has no live buffer, as `arena_train` leaves a journal-removed item alone, and keeps what the pin defines: the bigram trains (`:875-909`), the unigram add finds no sub-index and moves no total (`phrase_index.h:631-632`), and `pinyin_train` and `zhuyin_train` answer `true`. A predicted bigram or prefix row of the unloaded library does the same (`pinyin.cpp:2609-2639`). `_add_phrase` finds no range (`pinyin.cpp:589-591`) and `compact` skips the library (`phrase_index.cpp:651-652`), so its total stays as the unload left it. Held by `unloaded_library_tests` (`crates/oxpinyin-capi/src/candidates.rs`) and `unloaded` (`crates/oxpinyin-user/src/store_libpinyin/unloaded.rs`). No contract case for the freed chunk: the pin's write there is undefined. |
 
 
 
@@ -1771,6 +1771,38 @@ former POLICY-ACCEPTED cases are ordinary MATCH cases, and the register
 and the GLib/libc ledger carry the closure. `LC_NUMERIC` (row 39) remains
 ruled bug-for-bug; #923 is unchanged.
 
+## Amendment — unloaded-token pronunciation cache (2026-11-05 UTC)
+
+Maintainer ruling, recorded 2026-11-05 UTC (`date -u`). For an unloaded
+token in training, oxpinyin skips the pronunciation step and writes into
+no item. Bigram training, the constraint walk, the modified flag and the
+true result remain the pin's. This is an explicit approved divergence,
+including the defined stale-cache write; it does not authorize departures
+for other missing-item paths.
+
+At `074a2219`, after a failed `get_phrase_item`, `train_result3` applies the
+pronunciation helper to `m_cached_phrase_item` (`phonetic_lookup.h:924-929`).
+The cache belongs to the context's one `PhoneticLookup`, shared by every
+instance of that context (`pinyin.cpp:39-75,406-409`;
+`zhuyin.cpp:34-62,348-351`; member `phonetic_lookup.h:523`). Every successful
+trellis fetch replaces it, including candidates the decoder later rejects
+(`phonetic_lookup.h:646,674`). The written item therefore depends on hidden
+context fetch history. If the cached item belongs to the library just
+unloaded, unload frees its bytes without clearing the cache
+(`phrase_index.cpp:261-268`), and the later read and possible write are a
+use-after-free (`phonetic_key_matrix.cpp:603-620`,
+`phrase_index.cpp:114-140`). The safe answer writes into no item.
+
+`unloaded-cached-pronunciation-pinyin` retains the defined witness: library
+1 holds 甲 and library 2 holds 乙, both pronounced ba1 with pronunciation
+count 10. Choose 乙 and guess its sentence, unload library 2, then guess ba1
+on another instance of the same context. Training the first instance makes
+the pin write 甲's pronunciation count from 10 to 79, saved in
+`gb_char.dbin`, while its unigram stays 100. Oxpinyin leaves the count at
+10. The corresponding zhuyin case covers the shared implementation.
+These cases are **POLICY-ACCEPTED**, never MATCH. Their complete pin and
+subject observations are bound in this document's contract policy block.
+
 ## Amendment — fresh UserTableInfo with zero versions (2026-11-01 UTC)
 
 Maintainer ruling, recorded at 2026-11-01T17:43:32Z (`date -u`).
@@ -1900,6 +1932,230 @@ or replayed pin result. Ordinary discrepancy pairs still reject parity.
           "files": "eb361d7975aa2e68",
           "stderr": "12ae32cb1ec02d01",
           "stdout": "12ae32cb1ec02d01"
+        }
+      }
+    },
+    "unloaded-cached-pronunciation-pinyin": {
+      "cells": {
+        "tkrzw": {
+          "pin": {
+            "sha256": "b845dfc64468d8a2de351d8531faef41624fa2ab904e1ffd5db3ddde15794b9f",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.journals": "535e8bb91374c5c0",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.pronunciations-before": "b08cd50b25ebfe48",
+              "result.save": "b5bea41b6c623f7c",
+              "result.train": "b5bea41b6c623f7c",
+              "result.unigrams-after": "73908e93390814de",
+              "result.unigrams-before": "0f96b3bfbc3b2238",
+              "result.unload": "b5bea41b6c623f7c",
+              "stderr": "12ae32cb1ec02d01"
+            }
+          },
+          "subject": {
+            "sha256": "109d9bbf4e3f9acda31e73c654948443c02a73dcf217ed9f8113b3688470211f",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.journals": "e8e069df3c010dca",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.pronunciations-before": "b08cd50b25ebfe48",
+              "result.save": "b5bea41b6c623f7c",
+              "result.train": "b5bea41b6c623f7c",
+              "result.unigrams-after": "73908e93390814de",
+              "result.unigrams-before": "0f96b3bfbc3b2238",
+              "result.unload": "b5bea41b6c623f7c",
+              "stderr": "12ae32cb1ec02d01"
+            }
+          },
+          "divergence": [
+            "result.journals.gb_char.dbin: pin \"3e0000001000570004000000000000000400640000\" … (length 140); subject \"120000000000000004000000000000000400640000\" … (length 52)",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        },
+        "bdb": {
+          "pin": {
+            "sha256": "b845dfc64468d8a2de351d8531faef41624fa2ab904e1ffd5db3ddde15794b9f",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.journals": "535e8bb91374c5c0",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.pronunciations-before": "b08cd50b25ebfe48",
+              "result.save": "b5bea41b6c623f7c",
+              "result.train": "b5bea41b6c623f7c",
+              "result.unigrams-after": "73908e93390814de",
+              "result.unigrams-before": "0f96b3bfbc3b2238",
+              "result.unload": "b5bea41b6c623f7c",
+              "stderr": "12ae32cb1ec02d01"
+            }
+          },
+          "subject": {
+            "sha256": "109d9bbf4e3f9acda31e73c654948443c02a73dcf217ed9f8113b3688470211f",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.journals": "e8e069df3c010dca",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.pronunciations-before": "b08cd50b25ebfe48",
+              "result.save": "b5bea41b6c623f7c",
+              "result.train": "b5bea41b6c623f7c",
+              "result.unigrams-after": "73908e93390814de",
+              "result.unigrams-before": "0f96b3bfbc3b2238",
+              "result.unload": "b5bea41b6c623f7c",
+              "stderr": "12ae32cb1ec02d01"
+            }
+          },
+          "divergence": [
+            "result.journals.gb_char.dbin: pin \"3e0000001000570004000000000000000400640000\" … (length 140); subject \"120000000000000004000000000000000400640000\" … (length 52)",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        },
+        "kc": {
+          "pin": {
+            "sha256": "b845dfc64468d8a2de351d8531faef41624fa2ab904e1ffd5db3ddde15794b9f",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.journals": "535e8bb91374c5c0",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.pronunciations-before": "b08cd50b25ebfe48",
+              "result.save": "b5bea41b6c623f7c",
+              "result.train": "b5bea41b6c623f7c",
+              "result.unigrams-after": "73908e93390814de",
+              "result.unigrams-before": "0f96b3bfbc3b2238",
+              "result.unload": "b5bea41b6c623f7c",
+              "stderr": "12ae32cb1ec02d01"
+            }
+          },
+          "subject": {
+            "sha256": "109d9bbf4e3f9acda31e73c654948443c02a73dcf217ed9f8113b3688470211f",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.journals": "e8e069df3c010dca",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.pronunciations-before": "b08cd50b25ebfe48",
+              "result.save": "b5bea41b6c623f7c",
+              "result.train": "b5bea41b6c623f7c",
+              "result.unigrams-after": "73908e93390814de",
+              "result.unigrams-before": "0f96b3bfbc3b2238",
+              "result.unload": "b5bea41b6c623f7c",
+              "stderr": "12ae32cb1ec02d01"
+            }
+          },
+          "divergence": [
+            "result.journals.gb_char.dbin: pin \"3e0000001000570004000000000000000400640000\" … (length 140); subject \"120000000000000004000000000000000400640000\" … (length 52)",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        }
+      }
+    },
+    "unloaded-cached-pronunciation-zhuyin": {
+      "cells": {
+        "tkrzw": {
+          "pin": {
+            "sha256": "b845dfc64468d8a2de351d8531faef41624fa2ab904e1ffd5db3ddde15794b9f",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.journals": "535e8bb91374c5c0",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.pronunciations-before": "b08cd50b25ebfe48",
+              "result.save": "b5bea41b6c623f7c",
+              "result.train": "b5bea41b6c623f7c",
+              "result.unigrams-after": "73908e93390814de",
+              "result.unigrams-before": "0f96b3bfbc3b2238",
+              "result.unload": "b5bea41b6c623f7c",
+              "stderr": "12ae32cb1ec02d01"
+            }
+          },
+          "subject": {
+            "sha256": "109d9bbf4e3f9acda31e73c654948443c02a73dcf217ed9f8113b3688470211f",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.journals": "e8e069df3c010dca",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.pronunciations-before": "b08cd50b25ebfe48",
+              "result.save": "b5bea41b6c623f7c",
+              "result.train": "b5bea41b6c623f7c",
+              "result.unigrams-after": "73908e93390814de",
+              "result.unigrams-before": "0f96b3bfbc3b2238",
+              "result.unload": "b5bea41b6c623f7c",
+              "stderr": "12ae32cb1ec02d01"
+            }
+          },
+          "divergence": [
+            "result.journals.gb_char.dbin: pin \"3e0000001000570004000000000000000400640000\" … (length 140); subject \"120000000000000004000000000000000400640000\" … (length 52)",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        },
+        "bdb": {
+          "pin": {
+            "sha256": "b845dfc64468d8a2de351d8531faef41624fa2ab904e1ffd5db3ddde15794b9f",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.journals": "535e8bb91374c5c0",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.pronunciations-before": "b08cd50b25ebfe48",
+              "result.save": "b5bea41b6c623f7c",
+              "result.train": "b5bea41b6c623f7c",
+              "result.unigrams-after": "73908e93390814de",
+              "result.unigrams-before": "0f96b3bfbc3b2238",
+              "result.unload": "b5bea41b6c623f7c",
+              "stderr": "12ae32cb1ec02d01"
+            }
+          },
+          "subject": {
+            "sha256": "109d9bbf4e3f9acda31e73c654948443c02a73dcf217ed9f8113b3688470211f",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.journals": "e8e069df3c010dca",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.pronunciations-before": "b08cd50b25ebfe48",
+              "result.save": "b5bea41b6c623f7c",
+              "result.train": "b5bea41b6c623f7c",
+              "result.unigrams-after": "73908e93390814de",
+              "result.unigrams-before": "0f96b3bfbc3b2238",
+              "result.unload": "b5bea41b6c623f7c",
+              "stderr": "12ae32cb1ec02d01"
+            }
+          },
+          "divergence": [
+            "result.journals.gb_char.dbin: pin \"3e0000001000570004000000000000000400640000\" … (length 140); subject \"120000000000000004000000000000000400640000\" … (length 52)",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        },
+        "kc": {
+          "pin": {
+            "sha256": "b845dfc64468d8a2de351d8531faef41624fa2ab904e1ffd5db3ddde15794b9f",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.journals": "535e8bb91374c5c0",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.pronunciations-before": "b08cd50b25ebfe48",
+              "result.save": "b5bea41b6c623f7c",
+              "result.train": "b5bea41b6c623f7c",
+              "result.unigrams-after": "73908e93390814de",
+              "result.unigrams-before": "0f96b3bfbc3b2238",
+              "result.unload": "b5bea41b6c623f7c",
+              "stderr": "12ae32cb1ec02d01"
+            }
+          },
+          "subject": {
+            "sha256": "109d9bbf4e3f9acda31e73c654948443c02a73dcf217ed9f8113b3688470211f",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.journals": "e8e069df3c010dca",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.pronunciations-before": "b08cd50b25ebfe48",
+              "result.save": "b5bea41b6c623f7c",
+              "result.train": "b5bea41b6c623f7c",
+              "result.unigrams-after": "73908e93390814de",
+              "result.unigrams-before": "0f96b3bfbc3b2238",
+              "result.unload": "b5bea41b6c623f7c",
+              "stderr": "12ae32cb1ec02d01"
+            }
+          },
+          "divergence": [
+            "result.journals.gb_char.dbin: pin \"3e0000001000570004000000000000000400640000\" … (length 140); subject \"120000000000000004000000000000000400640000\" … (length 52)",
+            "… further divergence omitted (4096-byte budget)"
+          ]
         }
       }
     }

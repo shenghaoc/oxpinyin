@@ -1,0 +1,15 @@
+--- a/crates/oxpinyin-user/src/store_arena.rs
++++ b/crates/oxpinyin-user/src/store_arena.rs
+@@ -248,12 +248,6 @@
+         // The unloaded sub-index owns no item. The pin instead uses its
+         // stale context cache here (phonetic_lookup.h:924-927); the
+         // unloaded-cache ruling in compatibility-policy.md skips that write.
+-        if phrases
+-            .unloaded
+-            .contains(&phrase_index_library_index(token))
+-        {
+-            return Ok(());
+-        }
+         if phrases.item(token).is_some() {
+             if let Some(library) = phrases.item_mut(token) {
+                 library.train(token & PHRASE_MASK, readings, delta);

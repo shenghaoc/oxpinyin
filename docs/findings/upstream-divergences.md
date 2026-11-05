@@ -34,6 +34,20 @@ what used to differ.
 
 ## Register
 
+### Unloaded-token pronunciation uses no cached item
+
+- **Upstream source cite:** `phonetic_lookup.h:924–929` at `074a2219`.
+- **Mechanism:** a failed item fetch leaves the context's shared lookup cache
+  in place; training can mutate a different loaded item or access freed bytes.
+- **What oxpinyin does instead:** skips the unloaded token's pronunciation
+  step, preserving bigram training, the constraint walk, modified flag and result.
+- **Externally observable:** yes; the defined witness saves 甲's pronunciation
+  count as 79 in the pin and leaves it at 10 in oxpinyin.
+- **Record and disposition:** [compatibility policy](compatibility-policy.md),
+  amendment “Unloaded-token pronunciation cache”, ruling 2026-11-05 UTC;
+  `unloaded-cached-pronunciation-pinyin` and
+  `unloaded-cached-pronunciation-zhuyin`, `POLICY-ACCEPTED`.
+
 ### Non-scalar stored phrase text — CLOSED, ordinary MATCH (#894)
 
 - **Record:** [894-non-scalar-phrase-text](894-non-scalar-phrase-text.md)
