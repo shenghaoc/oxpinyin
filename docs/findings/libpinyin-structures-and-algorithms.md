@@ -420,6 +420,29 @@ performance measurement campaign.
 | Phrase segmentation | `PhraseLookup` (`lookup/phrase_lookup.cpp:119`), one value per (step, token), `save_next_step` (`:348`) replaces on strictly better, `final_step` (`:382`) | `phrase_segment`, `Step::relax`, `Step::best` (`oxpinyin-engine/src/phrase.rs`) | same / class (a) — fixed-point scores |
 | Per-keystroke work | trellis rebuilt and bigram rows reloaded and merged for each predecessor and span | trellis rebuilt; merged rows cached per predecessor and step (`NbestStepRow`), parse graph cached | different / unverified — caching only |
 
+### Guess-local ordinary-item facts
+
+`SentenceFacts` (`oxpinyin-core/src/sentence_facts.rs`) shares one ordinary
+live-overlay item read between runtime sentence pricing and scoring. The pin
+reads length, unigram and pronunciation through one `PhraseItem`
+(`lookup/phonetic_lookup.h:643–697` at 074a2219). The memo uses the trellis's
+multiplicative u32 hasher, for probes only; range traversal and tie order do
+not depend on it. User/imported, hidden, unreadable and non-overlay items
+retain the existing resolution. A changed write generation clears the memo
+and disables it for the rest of the guess; existing prices and trellis nodes
+are not rebuilt.
+
+For U eligible distinct tokens, eligible item resolution becomes O(U), with
+expected O(1) probes, instead of repeated resolution during pricing and each
+expansion. Pronunciation matching remains per path and scoring remains per
+occurrence. The memo adds O(T + B) temporary space: T counts all distinct tokens
+entered into the memo, including fallback classifications stored as `None`,
+and B counts the copied item-body bytes. It adds one item-byte copy per eligible
+token, using offsets into one owned buffer. It owns no pronunciation paths and
+survives no sentence invocation.
+The facade total adjustment is computed lazily once per stable guess. The
+existing S1/S2/S3, NaN, arithmetic and malformed-row rules are unchanged.
+
 ### Heap-port optimisation assessment — 2026-10-28 UTC
 
 **Not pursued (2026-10-28 UTC).** The estimated 0.2–0.5% keystroke

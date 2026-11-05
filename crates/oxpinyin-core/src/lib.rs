@@ -24,6 +24,7 @@ pub mod options;
 mod parser;
 mod scheme;
 pub mod scoring;
+pub mod sentence_facts;
 pub mod single_gram;
 #[cfg(feature = "tools")]
 pub mod tool;
@@ -280,6 +281,39 @@ pub trait Dictionary {
     {
         let _ = memo;
         self.trellis_item(syllables, tones, token)
+    }
+
+    /// Sentence-only pricing with a guess-local token memo.
+    /// # Errors
+    /// Preserves the dictionary's pricing errors.
+    fn trellis_item_with_facts(
+        &self,
+        syllables: &[Self::Syllable],
+        tones: &[u8],
+        token: u32,
+        memo: &Self::PathMemo,
+        _facts: &mut sentence_facts::SentenceFacts,
+    ) -> Result<Option<TrellisItem>, Self::Error>
+    where
+        Self::Entry: PhraseIndexToken,
+    {
+        self.trellis_item_on_path(syllables, tones, token, memo)
+    }
+
+    /// Sentence-only final text read using the same token memo.
+    /// # Errors
+    /// Preserves the dictionary's text errors.
+    fn trellis_text_with_facts(
+        &self,
+        syllables: &[Self::Syllable],
+        tones: &[u8],
+        token: u32,
+        _facts: &mut sentence_facts::SentenceFacts,
+    ) -> Result<Option<PhraseText>, Self::Error>
+    where
+        Self::Entry: PhraseIndexToken,
+    {
+        self.trellis_text(syllables, tones, token)
     }
 
     /// The phrase text [`Self::trellis_item`] priced, read when a result
@@ -727,6 +761,31 @@ impl<D: Dictionary + ?Sized> Dictionary for &D {
         (**self).trellis_item_on_path(syllables, tones, token, memo)
     }
 
+    fn trellis_item_with_facts(
+        &self,
+        syllables: &[Self::Syllable],
+        tones: &[u8],
+        token: u32,
+        memo: &Self::PathMemo,
+        facts: &mut sentence_facts::SentenceFacts,
+    ) -> Result<Option<TrellisItem>, Self::Error>
+    where
+        Self::Entry: PhraseIndexToken,
+    {
+        (**self).trellis_item_with_facts(syllables, tones, token, memo, facts)
+    }
+    fn trellis_text_with_facts(
+        &self,
+        syllables: &[Self::Syllable],
+        tones: &[u8],
+        token: u32,
+        facts: &mut sentence_facts::SentenceFacts,
+    ) -> Result<Option<PhraseText>, Self::Error>
+    where
+        Self::Entry: PhraseIndexToken,
+    {
+        (**self).trellis_text_with_facts(syllables, tones, token, facts)
+    }
     fn trellis_text(
         &self,
         syllables: &[Self::Syllable],
@@ -1580,6 +1639,20 @@ pub trait LanguageModel {
         self.nbest_step_costs(prev, token)
     }
 
+    /// Score an occurrence with facts already read by sentence pricing.
+    /// # Errors
+    /// Preserves the model's occurrence-scoring errors.
+    fn nbest_item_costs_with_facts(
+        &self,
+        prev: &Self::Token,
+        token: &Self::Token,
+        item: Option<(u32, u32)>,
+        row: &mut NbestStepRow,
+        _facts: &mut sentence_facts::SentenceFacts,
+    ) -> Result<NbestStepCosts, Self::Error> {
+        self.nbest_item_costs_in_row(prev, token, item, row)
+    }
+
     /// Step costs for one item the caller read from this predecessor's
     /// merged row: `item` is the item's `(freq, total)`, the pin's
     /// `bigram_poss = freq / total` (`phonetic_lookup.h:606-608`, `:629`;
@@ -1730,6 +1803,16 @@ impl<L: LanguageModel + ?Sized> LanguageModel for &L {
         (**self).nbest_step_costs_in_row(prev, token, row)
     }
 
+    fn nbest_item_costs_with_facts(
+        &self,
+        prev: &Self::Token,
+        token: &Self::Token,
+        item: Option<(u32, u32)>,
+        row: &mut NbestStepRow,
+        facts: &mut sentence_facts::SentenceFacts,
+    ) -> Result<NbestStepCosts, Self::Error> {
+        (**self).nbest_item_costs_with_facts(prev, token, item, row, facts)
+    }
     fn nbest_item_costs_in_row(
         &self,
         prev: &Self::Token,
