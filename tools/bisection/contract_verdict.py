@@ -16,6 +16,7 @@ from pathlib import Path
 import re
 import signal
 import sys
+import tempfile
 
 try:
     from . import contract_policy
@@ -313,11 +314,28 @@ def matches(spec, pin, subject):
 def host_scanf_verdict(spelling):
     """One libc `%f` conversion, including the parsed float's exact 32-bit value.
 
-    Use the current numeric locale without requiring the whole input to be consumed.
+    Make the call oxpinyin makes: `fscanf(input, "lambda parameter:%f\n", &lambda)` on a stream
+    holding the case's `lambda parameter:` line (`oxpinyin-input/src/native.rs`), not `sscanf`
+    on a string; a stream's pushback can differ from a string's. Use the current numeric locale
+    without requiring the whole input to be consumed.
     SystemTableInfo2::load sets LC_NUMERIC to C before scanning at the pin.
     """
+    libc = C.CDLL(None, use_errno=True)
+    libc.fopen.restype, libc.fopen.argtypes = C.c_void_p, [C.c_char_p, C.c_char_p]
+    libc.fclose.argtypes = [C.c_void_p]
+    # fscanf is variadic: ctypes needs the fixed arguments declared (on arm64 macOS the variadic
+    # arguments are passed differently, and an undeclared call is undefined behaviour).
+    libc.fscanf.argtypes = [C.c_void_p, C.c_char_p]
     scanned = C.c_float()
-    accepted = C.CDLL(None).sscanf(spelling.encode(), b'%f', C.byref(scanned)) == 1
+    with tempfile.TemporaryDirectory(prefix='scanf-') as directory:
+        path = Path(directory, 'table.conf')
+        path.write_bytes(b'lambda parameter:' + spelling.encode() + b'\n')
+        stream = libc.fopen(str(path).encode(), b'r')
+        assert stream, 'fopen failed: ' + str(path)
+        try:
+            accepted = libc.fscanf(stream, b'lambda parameter:%f\n', C.byref(scanned)) == 1
+        finally:
+            libc.fclose(stream)
     bits = int.from_bytes(C.string_at(C.byref(scanned), C.sizeof(scanned)), sys.byteorder)
     return dict(input=spelling, accepted=accepted,
                 value_bits=f'{bits:08x}' if accepted else None)

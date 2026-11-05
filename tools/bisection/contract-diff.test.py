@@ -58,6 +58,14 @@ class DriverFixtureCase(unittest.TestCase):
         guard = patch.object(driver, 'check_tkrzw')
         self.runtime_guard = guard.start()
         self.addCleanup(guard.stop)
+        # The fixtures' libraries are synthetic paths, so the facade's GLib version is supplied.
+        version = patch.object(reference, 'glib_version', return_value=HOST_GLIB)
+        version.start()
+        self.addCleanup(version.stop)
+
+
+HOST_GLIB = '2.84.4'  # what the patched reference.glib_version reports in these fixtures
+HOST_GLIBC = '2.41'  # the glibc these fixtures record; the real one exists only on glibc hosts
 
 
 def stub_case(kit):
@@ -70,8 +78,8 @@ def freeze(root, cell, spec, pin, *, glibc=None, glib=None, profile=None,
     """Write the reference row of SPEC holding the pin observation PIN, the way capture does."""
     pinned = spec.get('pin_not_run') is not None
     environment = dict(image='sha256:test', arch='x86_64',
-                       glib=reference.glib_version() if glib is None else glib,
-                       glibc=reference.glibc_version() if glibc is None else glibc)
+                       glib=HOST_GLIB if glib is None else glib,
+                       glibc=HOST_GLIBC if glibc is None else glibc)
     identity = dict(inputs=reference.inputs_digest(spec, driver.NO_ABORT),
                     pin=dict(commit=reference.PIN_COMMIT, library_sha256=None), backend=cell,
                     system_data=dict(kind=reference.SYNTHETIC), environment=environment)
@@ -102,7 +110,8 @@ class VerifyCase(DriverFixtureCase):
         self.addCleanup(modules.stop)
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name) / 'docs/findings'
+        # Resolved: the driver resolves its paths, and macOS's /var is a symlink to /private/var.
+        self.root = Path(temporary.name).resolve() / 'docs/findings'
         self.root.mkdir(parents=True)
         (self.root.parent.parent / 'fixtures/contract-policy').mkdir(parents=True)
         self.references = self.root / 'refs'
@@ -931,11 +940,22 @@ class ProfileRowsTests(DriverFixtureCase):
         kc.kcdbdel.assert_called_once()
         tk = self.tkrzw()
         tk.tkrzw_dbm_open.return_value = None
-        with patch.dict(driver.os.environ, CONTRACT_DIFF_CELL='tkrzw'), patch.object(driver.C, 'CDLL', side_effect=[tk, MagicMock()]):
+        with patch.dict(driver.os.environ, CONTRACT_DIFF_CELL='tkrzw'), \
+                patch.object(driver.contract_fixtures, 'FACADE', '/facade.so'), \
+                patch.object(driver.C, 'CDLL', side_effect=[tk, MagicMock()]) as cdll:
             with self.assertRaisesRegex(ValueError, 'read-only open failed'):
                 driver.index_file_rows('/profile/broken', allow_empty=True)
+        self.assertEqual(cdll.call_args_list[0].args, ('/facade.so',))
         tk.tkrzw_dbm_make_iterator.assert_not_called()
         tk.tkrzw_dbm_close.assert_not_called()
+
+    def test_tkrzw_resolves_through_the_facade_not_a_library_name(self):
+        with patch.object(driver.contract_fixtures, 'FACADE', None):
+            with self.assertRaisesRegex(RuntimeError, 'no facade library'):
+                driver.contract_fixtures.tkrzw_handle()
+            with patch.object(driver.C, 'CDLL') as cdll:
+                driver.contract_fixtures.tkrzw_handle('/certified/libtkrzw.so')
+            cdll.assert_called_once_with('/certified/libtkrzw.so')
 
 
 class FatalLogTests(DriverFixtureCase):
@@ -2694,20 +2714,12 @@ class AllocationFailure924Tests(DriverFixtureCase):
 
 
 class GLibDomainCaptureTests(DriverFixtureCase):
-    """A GLib-domain critical is captured by the kit and compared (#1279)."""
+    """A GLib-domain critical is compared (#1279).
 
-    def critical(self):
-        with tempfile.TemporaryDirectory() as scratch, \
-             patch.object(driver, 'check_tkrzw'):
-            kit = driver.Kit('pinyin', 'libglib-2.0.so.0', scratch, scratch)
-            # g_utf8_strlen's own precondition critical (gutf8.c:240).
-            kit.glib.g_return_if_fail_warning.argtypes = [driver.S, driver.S, driver.S]
-            kit.glib.g_return_if_fail_warning(b'GLib', b'g_utf8_strlen', b'p != NULL || max == 0')
-            return kit.logs
-
-    @unittest.skipUnless(sys.platform.startswith('linux'), 'needs Linux libglib-2.0.so.0 (g_log_set_handler on the "GLib" domain)')
-    def test_glib_domain_critical_is_recorded(self):
-        self.assertEqual(self.critical(), [['GLib', 8]])
+    That the kit records a GLib-domain critical through the facade-resolved GLib is covered end to
+    end by `verify`: glib-924-null-array-lookup-{pinyin,zhuyin} and
+    glib-924-null-array-pronunciation-{pinyin,zhuyin} freeze eight `['GLib', 8]` records each and
+    compare them with what the kit captures from the real facades."""
 
     def test_a_missing_glib_critical_makes_the_verdict_differ(self):
         spec = driver.case_spec(case_id='c-string-input/pinyin-segment-state-null')

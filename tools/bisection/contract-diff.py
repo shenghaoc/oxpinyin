@@ -451,6 +451,7 @@ def worker(mode, so, data, name):
     spawned = os.environ.pop('CONTRACT_DIFF_SPAWNED', None)
     entered = time.monotonic()
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    contract_fixtures.FACADE = so
     if mode == 'profile-rows':
         # Untimed teardown comparison in this existing isolated worker. Do not
         # retain a backend CDLL in the measurement controller between samples.
@@ -1390,7 +1391,7 @@ def run_cases(args, parser, data, default_names=None, keep=None):
                 host_dependent = host_dependent or (
                     verdict == 'DIFFER' and not args.expect_parent and (
                         spec['fatal']
-                        and pin.get('capture_glib') not in (None, contract_reference.glib_version()))
+                        and pin.get('capture_glib') not in (None, contract_reference.glib_version(args.pinyin_so)))
                     and host_field_only(spec, n, pin, subject))
                 if host_dependent:
                     verdict = 'HOST-DEPENDENT'

@@ -232,7 +232,7 @@ def capture(driver, argv):
         names, package = _without_package_data(driver, names, args.cell, args.references or args.out)
     except (SelectionError, reference.ReferenceError) as error:
         parser.error(str(error))
-    environment = reference.environment()
+    environment = reference.environment(libraries['pinyin'])
     failures = 0
     written = {}
     started = time.monotonic()

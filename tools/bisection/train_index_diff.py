@@ -54,7 +54,7 @@ def worker(mode, so, data, profile, case):
         print(json.dumps(record), file=sys.stderr, flush=True)
 
     callback = callback_type(warning)
-    glib = C.CDLL('libglib-2.0.so.0')
+    glib = lib  # GLib resolves through the facade's own dependencies (dlsym searches them)
     glib.g_log_set_handler.argtypes = [C.c_char_p, uint, callback_type, ptr]
     glib.g_log_set_handler.restype = uint
     glib.g_log_set_handler(b'libpinyin', 16, callback, None)
