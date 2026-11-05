@@ -1352,7 +1352,7 @@ fn dynamic_adjust_folds_the_bigram_term_only_with_the_bit_and_a_gram() {
         super::dynamic_adjust_bigram_possibility(set, Some(&short), 42),
         Err(oxpinyin_core::GramFault::Short)
     );
-    let mut tailed_value = MergedGram::new(4, vec![(7, 4)]).as_bytes().to_vec();
+    let mut tailed_value = MergedGram::new(4, vec![(7, 4)]).to_bytes();
     tailed_value.push(1);
     let tailed = MergedGram::merge(None, Some(tailed_value)).expect("a user gram");
     assert_eq!(

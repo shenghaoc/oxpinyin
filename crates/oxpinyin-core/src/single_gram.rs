@@ -363,6 +363,81 @@ pub fn merge_single_gram(merged: &mut Vec<u8>, system: Option<&[u8]>, user: Opti
     true
 }
 
+/// Whether the whole items' tokens strictly increase: the one shape on
+/// which a row's own order, its `lower_bound` and its merge with another
+/// such row are all determined by token alone.
+#[must_use]
+pub fn is_strictly_ordered(gram: &[u8]) -> bool {
+    records(gram).is_none_or(|(records, _)| {
+        records
+            .windows(2)
+            .all(|pair| record_token(&pair[0]) < record_token(&pair[1]))
+    })
+}
+
+/// [`get_freq`] over the row `merge_single_gram(system, user)` would
+/// build, without building it. Both rows must be whole and strictly
+/// ordered ([`is_strictly_ordered`]): the merged row then holds each
+/// token once, with the wrapped sum of the two sides' frequencies
+/// (`ngram.cpp:308-349`), and `lower_bound` on it finds exactly that item.
+#[must_use]
+pub fn get_freq_merged(system: &[u8], user: &[u8], token: u32) -> Option<u32> {
+    match (get_freq(system, token), get_freq(user, token)) {
+        (Some(system), Some(user)) => Some(system.wrapping_add(user)),
+        (freq, None) | (None, freq) => freq,
+    }
+}
+
+/// [`checked_search`] over the row `merge_single_gram(system, user)`
+/// would build, without building it: from `lower_bound(begin)` on each
+/// side, the two sides' items in token order, equal tokens summed, until
+/// the first at or past `end`. Both rows must be whole and strictly
+/// ordered ([`is_strictly_ordered`]), so the merged row's items from its
+/// own `lower_bound(begin)` are these, in this order.
+pub fn search_merged(system: &[u8], user: &[u8], begin: u32, end: u32, out: &mut Vec<(u32, u32)>) {
+    let side = |gram| {
+        let records = records(gram).map_or(&[][..], |(records, _)| records);
+        records
+            .iter()
+            .skip(lower_bound_records(records, begin))
+            .map(|record| (record_token(record), record_freq(record)))
+            .peekable()
+    };
+    let (mut system, mut user) = (side(system), side(user));
+    loop {
+        let (token, freq) = match (system.peek().copied(), user.peek().copied()) {
+            (None, None) => return,
+            (Some(item), None) => {
+                system.next();
+                item
+            }
+            (None, Some(item)) => {
+                user.next();
+                item
+            }
+            (Some(left), Some(right)) => match left.0.cmp(&right.0) {
+                core::cmp::Ordering::Less => {
+                    system.next();
+                    left
+                }
+                core::cmp::Ordering::Greater => {
+                    user.next();
+                    right
+                }
+                core::cmp::Ordering::Equal => {
+                    system.next();
+                    user.next();
+                    (left.0, left.1.wrapping_add(right.1))
+                }
+            },
+        };
+        if token >= end {
+            return;
+        }
+        out.push((token, freq));
+    }
+}
+
 /// A fresh `SingleGram`: the four zero bytes of an empty total
 /// (`ngram.cpp:36-39`).
 #[must_use]

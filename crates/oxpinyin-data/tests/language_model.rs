@@ -228,9 +228,7 @@ fn merged_row_costs(
     user_gram: (u64, Vec<(u32, u64)>),
 ) -> oxpinyin_core::NbestStepCosts {
     use oxpinyin_core::{MergedGram, NbestStepRow};
-    let bytes = MergedGram::new(user_gram.0, user_gram.1)
-        .as_bytes()
-        .to_vec();
+    let bytes = MergedGram::new(user_gram.0, user_gram.1).to_bytes();
     let mut row = NbestStepRow::default();
     let gram = row
         .get_or_try_init(|| lm.load_merged_row(prev, Some(bytes)))
@@ -549,9 +547,7 @@ fn merged_row_items_price_as_the_pair_overlay_at_wrap_presence_and_lambda_edges(
         lm.set_lambda_from_conf(&conf);
         for prev in [NI, HAO] {
             for total in [0, u64::from(u32::MAX - 6), u64::from(u32::MAX), 17] {
-                let user_gram = MergedGram::new(total, user_rows.to_vec())
-                    .as_bytes()
-                    .to_vec();
+                let user_gram = MergedGram::new(total, user_rows.to_vec()).to_bytes();
                 let mut row = NbestStepRow::default();
                 let mut loads = 0;
                 for (token, bigram_count) in user_rows.into_iter().chain([(GBK, 0)]) {
@@ -667,7 +663,7 @@ fn row_and_pair_read_a_stored_unsorted_row_through_the_pins_lower_bound() {
     for (token, freq) in [(HAO, Some(99)), (NIHAO, None), (NI, None), (GBK, None)] {
         let item = match lm.nbest_successors_in_row(&prev, &mut row).unwrap() {
             Some(NbestSuccessors::Row(gram)) => {
-                assert_eq!(gram.as_bytes(), value.as_slice(), "stored, not sorted");
+                assert_eq!(gram.to_bytes(), value.as_slice(), "stored, not sorted");
                 assert_eq!(gram.get_freq(token).unwrap(), freq, "token {token:#x}");
                 gram.get_freq(token)
                     .unwrap()

@@ -1803,6 +1803,44 @@ the pin write 甲's pronunciation count from 10 to 79, saved in
 These cases are **POLICY-ACCEPTED**, never MATCH. Their complete pin and
 subject observations are bound in this document's contract policy block.
 
+<a id="sentence-start-bigram-caching"></a>
+
+## Amendment — sentence-start system bigram caching (2026-11-06)
+
+Maintainer ruling, 2026-11-06 — sentence-start system bigram caching. For
+one attachment of the system `bigram.db`, oxpinyin may retain and reuse the
+successfully read and validated `sentence_start` value without repeating
+native DBM reads of that value. External in-place modification of that
+attached database is outside the supported contract for the cached value.
+Reuse after a successful load also means that failures which would arise
+only from an omitted later native read are not observed on a cache hit;
+this is an explicit consequence of the approved caching behaviour, not a
+general relaxation of I/O-error handling. Attachment failures, misses, read
+failures and validation failures before successful caching retain their
+existing behaviour. Mutable user data is not covered. The cache belongs to
+that database attachment; a fresh attachment must not inherit it. This
+ruling does not apply to other system files and does not remove any
+required reopen, remap, reload or save-baseline read; those operations
+retain their existing pin-compatible behaviour.
+
+At `074a2219` the pin reads the system bigram through the one handle
+`Bigram::attach` opened, on every backend: `m_db->get`
+(`ngram_bdb.cpp:110-125`, `:140`), `m_db->check` then `m_db->get`
+(`ngram_kyotodb.cpp:110-120`, `:131`, `:138`) and `m_db->Get`
+(`ngram_tkrzwdb.cpp:86-99`, `:111`). It attaches once per context,
+`ATTACH_READONLY` (`pinyin.cpp:394-396`, `zhuyin.cpp:336-338`), and closes
+the handle only when the context is freed (`pinyin.cpp:1208`,
+`zhuyin.cpp:747`). A package upgrade that replaces the file by rename is
+therefore invisible to the pin too: it keeps reading the file it opened.
+The pin still performs the native read on every load, which is what the
+ruling lets oxpinyin omit for this one value.
+
+The cache is the `sentence_start` slot of `BigramTable`
+(`crates/oxpinyin-data/src/bigram_table.rs`), the object that owns the
+attached handle. `BigramTable::load_gram` fills it from the first read that
+finds and validates the value, and it is dropped with the table. Each
+attachment builds a new table with an empty slot.
+
 ## Amendment — fresh UserTableInfo with zero versions (2026-11-01 UTC)
 
 Maintainer ruling, recorded at 2026-11-01T17:43:32Z (`date -u`).
