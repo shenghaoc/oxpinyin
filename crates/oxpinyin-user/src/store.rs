@@ -2039,8 +2039,10 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// (`ChewingLargeTable2::search`): a hit on a non-empty record loads it
     /// into the length's table entry, which the next `mask_out` walk starts
     /// from (#785). Read that record under the canonical table's guard.
-    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
     pub fn note_pinyin_search(&self, keys: impl FnOnce() -> Option<Vec<ChewingKey>>) {
+        if !crate::user_index::ENTRY_PER_LENGTH {
+            return;
+        }
         if let Some(target) = self.inner.libpinyin.as_ref()
             && let Some(keys) = keys()
         {
@@ -2050,8 +2052,10 @@ impl<S: WriteStore> GenericUserStore<S> {
 
     /// A `search_suggestion` of the user pinyin table for the prefix `keys`
     /// makes (#785): every longer key it visits empties its length's entry.
-    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
     pub fn note_pinyin_suggestion(&self, keys: impl FnOnce() -> Option<Vec<ChewingKey>>) {
+        if !crate::user_index::ENTRY_PER_LENGTH {
+            return;
+        }
         if let Some(target) = self.inner.libpinyin.as_ref()
             && let Some(keys) = keys()
         {

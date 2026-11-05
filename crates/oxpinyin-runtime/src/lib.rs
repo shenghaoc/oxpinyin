@@ -372,7 +372,6 @@ pub struct TokenPronunciation {
 }
 
 /// The pin's query keys for `syllables`.
-#[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
 fn chewing_query(syllables: &[SyllableKey]) -> Option<Vec<oxpinyin_core::ChewingKey>> {
     Some(syllables.iter().map(|key| key.chewing_key()).collect())
 }
@@ -525,7 +524,6 @@ impl<'a> RuntimeDict<'a> {
             },
         )?;
         let user = self.user_lookup()?;
-        #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
         self.note_user_search(syllables);
         // System-index hits were already priced by the callback above. A
         // user-index hit may name a system token too; price that result once
@@ -552,7 +550,6 @@ impl<'a> RuntimeDict<'a> {
     /// The user pinyin table's search for `syllables`, as the pin's
     /// `ChewingLargeTable2::search` runs it: the table entry it leaves
     /// behind is what a later `mask_out` walk starts from (#785).
-    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
     fn note_user_search(&self, syllables: &[SyllableKey]) {
         if let Some(store) = self.user {
             store.note_pinyin_search(|| chewing_query(syllables));
@@ -1277,7 +1274,6 @@ impl Dictionary for RuntimeDict<'_> {
         };
         // The user table's search of this path (#785); the pin makes one
         // per `FacadeChewingTable2::search`, and a repeat is idempotent.
-        #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
         self.note_user_search(syllables);
         let loaded = |token: u32| self.token_ranged(token);
         self.system
@@ -1310,7 +1306,6 @@ impl Dictionary for RuntimeDict<'_> {
             .trellis_ranges_continued_with(syllables, tones, ranges, loaded, scratch)?;
         self.user_trellis_ranges(&query, ranges)?;
         let user = self.user_lookup()?;
-        #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
         self.note_user_search(syllables);
         if system_extends {
             return Ok(true);
@@ -1437,22 +1432,15 @@ impl Dictionary for RuntimeDict<'_> {
                             })
                 })?
         };
-        #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
-        {
-            let user = self.user_lookup()?;
-            self.note_user_search(syllables);
-            if system_extends {
-                return Ok(true);
-            }
-            Ok(user.phrase_prefix_exists(syllables))
+        // The pin searches the system table and then the user table with no
+        // early return (`facade_chewing_table2.h:120-126` at 074a2219), so
+        // the user lookup and its search note come before the answer.
+        let user = self.user_lookup()?;
+        self.note_user_search(syllables);
+        if system_extends {
+            return Ok(true);
         }
-        #[cfg(not(any(feature = "kyotocabinet", feature = "tkrzw")))]
-        {
-            if system_extends {
-                return Ok(true);
-            }
-            Ok(self.user_lookup()?.phrase_prefix_exists(syllables))
-        }
+        Ok(user.phrase_prefix_exists(syllables))
     }
 
     /// Exact-text token lookup across the system and user seams, in that
@@ -1618,7 +1606,6 @@ impl Dictionary for RuntimeDict<'_> {
             return Ok(None);
         }
         let user = self.user_lookup()?;
-        #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
         if let Some(store) = self.user {
             store.note_pinyin_suggestion(|| chewing_query(syllables));
         }
