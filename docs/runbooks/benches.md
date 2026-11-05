@@ -180,9 +180,11 @@ and suppress the per-invocation comparison. The startup RandomState range
 exception is not extended to the sentence workload. The typing sequence
 alone reports a varying control as `DIAGNOSTIC` (rule `randomstate`, ranges,
 no tolerance) when every varying function is `dedup_by_text_keep_first`,
-`dedup_ranked_by_text`, `order_window_tail` (std `HashSet`/`HashMap` with
-the per-process `RandomState` SipHash-1-3 keys) or `memcmp`, their equality
-callee; any other varying function is `INVALID`.
+`prepend_nbest_rows` (packaged fat-LTO builds inline
+`dedup_by_text_keep_first` into it), `dedup_ranked_by_text`,
+`order_window_tail` (std `HashSet`/`HashMap` with the per-process
+`RandomState` SipHash-1-3 keys) or `memcmp`, their equality callee; any
+other varying function is `INVALID`.
 
 The output directory must be new. `result.json` reports raw counts, control
 spread and Ir per sentence/complete typing sequence; `environment.json`
