@@ -104,7 +104,9 @@ class VerifyCase(DriverFixtureCase):
         self.addCleanup(modules.stop)
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name)
+        self.root = Path(temporary.name) / 'docs/findings'
+        self.root.mkdir(parents=True)
+        (self.root.parent.parent / 'fixtures/contract-policy').mkdir(parents=True)
         self.references = self.root / 'refs'
         self.data = self.root / 'data'
         self.data.mkdir()
@@ -165,7 +167,9 @@ class PolicyAcceptedTests(DriverFixtureCase):
         super().setUp()
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
+        self.root = Path(self.tmp.name) / 'docs/findings'
+        self.root.mkdir(parents=True)
+        (self.root.parent.parent / 'fixtures/contract-policy').mkdir(parents=True)
         self.patch = patch.object(driver, 'POLICY_ROOT', self.root)
         self.patch.start()
         self.addCleanup(self.patch.stop)
@@ -183,8 +187,7 @@ class PolicyAcceptedTests(DriverFixtureCase):
         return contract_policy.entry(self.pin if pin is None else pin, self.subject if subject is None else subject)
 
     def write_record(self):
-        (self.root / 'test-record.md').write_text(
-            '# Test record\n\n```contract-diff-policy\n' + json.dumps(self.record) + '\n```\n')
+        driver.contract_verdict.policy_json_path(self.root, 'test-record.md').write_text(json.dumps(self.record))
 
     def verdict(self, pin=None, subject=None, parent=False):
         return driver.verdict_for(self.spec, self.pin if pin is None else pin,
@@ -274,7 +277,7 @@ class PolicyAcceptedTests(DriverFixtureCase):
             self.assertEqual(self.verdict(), ('INVALID', False, False))
 
     def test_missing_record_or_registration_is_invalid(self):
-        (self.root / 'test-record.md').unlink()
+        driver.contract_verdict.policy_json_path(self.root, 'test-record.md').unlink()
         self.assertEqual(self.verdict(), ('INVALID', False, False))
         self.write_record()
         (self.root / 'upstream-divergences.md').write_text('')
@@ -337,7 +340,7 @@ class PolicyAcceptedTests(DriverFixtureCase):
         self.spec['policy_record'] = '../test-record.md'
         self.assertEqual(self.verdict(), ('INVALID', False, False))
         self.spec['policy_record'] = 'test-record.md'
-        path = self.root / 'test-record.md'
+        path = driver.contract_verdict.policy_json_path(self.root, 'test-record.md')
         path.write_text(path.read_text() * 2)
         self.assertEqual(self.verdict(), ('INVALID', False, False))
 
@@ -636,7 +639,7 @@ class PolicyReportingTests(VerifyCase):
         self.assertEqual(captured['subject']['stderr'], '乙\udcfe\n')
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(policy_command.main([str(record), str(capture)]), 0)
-        text = record.read_text(encoding='utf-8')
+        text = driver.contract_verdict.policy_json_path(self.root, record.name).read_text(encoding='utf-8')
         self.assertIn('甲', text)
         self.assertIn('乙', text)
         self.assertIn('\\udcff', text)
@@ -655,8 +658,7 @@ class PolicyReportingTests(VerifyCase):
                       disposition='POLICY-ACCEPTED',
                       cases={name: contract_policy.entry(*({key: value[key] for key in ('exit', 'result', 'stderr')}
                                                            for value in (pin, subject)))})
-        (self.root / 'synthetic-record.md').write_text(
-            '# Synthetic record\n\n```contract-diff-policy\n' + json.dumps(record) + '\n```\n')
+        driver.contract_verdict.policy_json_path(self.root, 'synthetic-record.md').write_text(json.dumps(record))
         (self.root / 'upstream-divergences.md').write_text('[record](synthetic-record.md)\n')
         spec = driver.case_spec(fn=stub_case, policy_record='synthetic-record.md', case_id=name)
         self.freeze(spec, pin)

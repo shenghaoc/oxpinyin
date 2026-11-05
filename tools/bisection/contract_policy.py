@@ -1,6 +1,6 @@
 """Compact discrepancy-record entries for the contract differential (contract-diff.py).
 
-A record's `contract-diff-policy` block keeps, per case and cell, a SHA-256 of
+A record's policy JSON file keeps, per case and cell, a SHA-256 of
 each side's complete stable observation, a short digest per top-level field,
 and the pin-to-subject divergence in plain text. The verdict compares the two
 SHA-256 digests, so a POLICY-ACCEPTED verdict still needs the complete

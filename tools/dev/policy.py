@@ -2,10 +2,10 @@
 
 One command over contract-diff.py's `--observations` captures: for each
 captured case, or a `--cases` selection of them, it writes or replaces the
-case's entry for the captured cell in the record's `contract-diff-policy`
-block, in the compact form tools/bisection/contract_policy.py defines (the
+case's entry for the captured cell in its JSON file, in the compact form
+tools/bisection/contract_policy.py defines (the
 SHA-256 of each side's complete stable observation, a digest per field and
-the divergence as text), and adds the block when the record has none. A
+the divergence as text), and creates the file when it does not exist. A
 record that still holds complete observations (schema 1) is converted with
 `--migrate`. A tool-diff row marked `database_free` (its utility opens no
 DBM, tools/dev/tool_diff.py) is recorded once as the case's `database_free`
@@ -15,13 +15,11 @@ case must digest the same. Nothing is spliced by hand.
 from . import cell
 import argparse
 import json
-import re
 import sys
 from pathlib import Path
 
-from tools.bisection import contract_policy
+from tools.bisection import contract_policy, contract_verdict
 
-BLOCK = re.compile(r'^```contract-diff-policy\n(.*?)\n```$', re.M | re.S)
 CELLS = cell.CELLS
 REQUIRED = ('cell', 'case', 'userdir', 'abort', 'pin', 'subject')
 
@@ -93,30 +91,23 @@ def entry_of(where, row):
 
 
 def load_record(path):
-    """The record's text, its block as JSON (a new block when it has none) and the block's span."""
+    """Load a JSON record, or initialize one for a new findings record."""
+    if not path.exists():
+        return dict(schema=contract_policy.SCHEMA, record=path.stem, status='current',
+                    disposition='POLICY-ACCEPTED', cases={})
     try:
-        text = path.read_text(encoding='utf-8')
-    except OSError as error:
-        raise RecordError(f'{path}: {error.strerror}') from None
-    found = list(BLOCK.finditer(text))
-    if len(found) > 1:
-        raise RecordError(f'{path}: more than one contract-diff-policy block')
-    if not found:
-        return text, dict(schema=contract_policy.SCHEMA, record=path.stem, status='current',
-                          disposition='POLICY-ACCEPTED', cases={}), None
-    try:
-        record = json.loads(found[0].group(1))
-    except ValueError as error:
-        raise RecordError(f'{path}: the policy block is not JSON ({error})') from None
+        record = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, ValueError) as error:
+        raise RecordError(f'{path}: cannot read policy JSON ({error})') from None
     if (not isinstance(record, dict) or record.get('record') != path.stem or record.get('status') != 'current'
             or record.get('disposition') != 'POLICY-ACCEPTED' or not isinstance(record.get('cases'), dict)
             or record.get('schema') not in (1, contract_policy.SCHEMA)):
-        raise RecordError(f'{path}: the policy block is not a current POLICY-ACCEPTED record named {path.stem}')
-    return text, record, found[0].span(1)
+        raise RecordError(f'{path}: not a current POLICY-ACCEPTED record named {path.stem}')
+    return record
 
 
 def migrate(record):
-    """Convert a schema-1 block's complete observations to entries; return what was converted."""
+    """Convert a schema-1 record's complete observations to entries; return what was converted."""
     if record.get('schema') != 1:
         return []
     converted = []
@@ -136,17 +127,14 @@ def migrate(record):
 
 
 def render(record):
-    return contract_policy.render(record, indent=2)
+    return contract_policy.render(record, indent=2, sort_keys=True)
 
 
-def write(path, text, record, span):
-    """Replace the block, or append one to a record without it."""
+def write(path, record):
+    """Write only the machine evidence."""
     block = render(record)
-    if span is None:
-        text = text.rstrip('\n') + '\n\n```contract-diff-policy\n' + block + '\n```\n'
-    else:
-        text = text[:span[0]] + block + text[span[1]:]
-    path.write_text(text, encoding='utf-8')
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(block + '\n', encoding='utf-8')
     return block
 
 
@@ -157,7 +145,10 @@ def registered(path):
 
 def record(path, captures, cases=None, *, migrate_schema_1=False, out=print):
     """Write the selected captures into the record; return the names recorded."""
-    text, kept, span = load_record(path)
+    if not path.is_file() or path.suffix != '.md':
+        raise RecordError(f'{path}: findings Markdown record does not exist')
+    evidence = contract_verdict.policy_json_path(path.parent, path.name)
+    kept = load_record(evidence)
     converted = migrate(kept) if migrate_schema_1 else []
     if kept.get('schema') == 1:
         raise RecordError(f'{path}: schema 1 holds complete observations; pass --migrate to convert it')
@@ -198,8 +189,8 @@ def record(path, captures, cases=None, *, migrate_schema_1=False, out=print):
             raise RecordError(f'no capture row for {", ".join(missing)}')
     if not recorded and not converted:
         raise RecordError('nothing to record: the captures hold no selected case')
-    block = write(path, text, kept, span)
-    out(f'{path}: {path.stat().st_size} bytes, block {block.count(chr(10)) + 1} lines')
+    block = write(evidence, kept)
+    out(f'{evidence}: {evidence.stat().st_size} bytes, record {block.count(chr(10)) + 1} lines')
     if not registered(path):
         out(f'notice: {path.name} is not linked from upstream-divergences.md; the verdict reads it as INVALID until it is')
     return recorded
@@ -211,7 +202,7 @@ def main(argv=None):
     parser.add_argument('captures', type=Path, nargs='*', help='contract-diff.py --observations files')
     parser.add_argument('--cases', help='comma-separated case IDs to record; default: every captured case')
     parser.add_argument('--migrate', action='store_true',
-                        help='convert a schema-1 block, which holds complete observations, before recording')
+                        help='convert a schema-1 record, which holds complete observations, before recording')
     args = parser.parse_args(argv)
     if not args.captures and not args.migrate:
         parser.error('at least one capture, or --migrate')

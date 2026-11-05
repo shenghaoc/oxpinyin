@@ -23,7 +23,9 @@ class ToolDiffTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name)
+        self.root = Path(temporary.name) / 'docs/findings'
+        self.root.mkdir(parents=True)
+        (self.root.parent.parent / 'fixtures/contract-policy').mkdir(parents=True)
 
     def test_tkrzw_abort_timestamp_masks_the_whole_field_only(self):
         original = bytearray(b'TkrzwHDB\n' + bytes(range(128)))
@@ -395,9 +397,8 @@ class ToolDiffTests(unittest.TestCase):
         record = dict(schema=contract_policy.SCHEMA, record='compatibility-policy',
                       status='current', disposition='POLICY-ACCEPTED', cases={case['id']:
                           dict(classification='b', pin_not_run=contract_policy.side_entry(case['pin_not_run']))})
-        path = self.root / 'compatibility-policy.md'
-        path.write_text('# Registered class (b)\n\n```contract-diff-policy\n'
-                        + json.dumps(record) + '\n```\n')
+        path = contract_verdict.policy_json_path(self.root, 'compatibility-policy.md')
+        path.write_text(json.dumps(record))
         return path, record
 
     def test_registered_pin_not_run_binds_every_subject_byte_and_never_launches_pin(self):
@@ -429,7 +430,7 @@ class ToolDiffTests(unittest.TestCase):
             self.assertEqual(tool_diff.verdict(changed, None, expected, self.root, 'tkrzw')[0], 'INVALID')
         path, record = self.class_b_record(case)
         record['cases']['safe']['classification'] = 'a'
-        path.write_text('```contract-diff-policy\n' + json.dumps(record) + '\n```\n')
+        path.write_text(json.dumps(record))
         self.assertEqual(tool_diff.verdict(case, None, expected, self.root, 'tkrzw')[0], 'INVALID')
 
     def test_pin_not_run_does_not_admit_parity_records_or_pin_captures(self):
@@ -443,7 +444,7 @@ class ToolDiffTests(unittest.TestCase):
         case = dict(id='safe', policy_record='compatibility-policy.md', pin_not_run=expected)
         path, record = self.class_b_record(case)
         record['cases']['safe'] = pair
-        path.write_text('```contract-diff-policy\n' + json.dumps(record) + '\n```\n')
+        path.write_text(json.dumps(record))
         self.assertEqual(tool_diff.verdict(case, None, expected, self.root, 'tkrzw')[0], 'INVALID')
 
     def test_pin_not_run_rejects_incomplete_or_masked_declarations(self):
@@ -523,7 +524,7 @@ class ToolDiffTests(unittest.TestCase):
                    reproduces_signal=False, database_free=True, pin=pin, subject=subject)
         record, lines = self.database_free_record(*(dict(row, cell=cell) for cell in ('bdb', 'kc', 'tkrzw')))
         self.assertIn('recorded invalid [every cell, from kc]: pin', '\n'.join(lines))
-        block = json.loads(record.read_text().split('```contract-diff-policy\n')[1].split('\n```')[0])
+        block = json.loads(contract_verdict.policy_json_path(self.root, record.name).read_text())
         self.assertEqual(block['cases'], {'invalid': {'database_free': contract_policy.entry(pin, subject)}})
         for cell in ('bdb', 'kc', 'tkrzw'):
             self.assertEqual(tool_diff.verdict(case, pin, subject, self.root, cell)[0], 'POLICY-ACCEPTED')
@@ -544,15 +545,16 @@ class ToolDiffTests(unittest.TestCase):
                    reproduces_signal=False, pin=pin, subject=subject)
         record, _ = self.database_free_record(dict(row, cell='bdb', database_free=False),
                                               dict(row, cell='kc', database_free=False))
-        before = record.read_text()
+        evidence = contract_verdict.policy_json_path(self.root, record.name)
+        before = evidence.read_text()
         self.assertIn('"cells"', before)
         with self.assertRaisesRegex(policy.RecordError, r'invalid \[kc\] digests differently from its \[bdb\] row'):
             self.database_free_record(dict(row, cell='bdb', database_free=True),
                                       dict(row, cell='kc', database_free=True, subject=dict(subject, stderr='')))
-        self.assertEqual(record.read_text(), before)
+        self.assertEqual(evidence.read_text(), before)
         _, lines = self.database_free_record(dict(row, cell='bdb', database_free=True))
         self.assertIn('notice: invalid had per-cell or bare entries; one database-free entry replaces them', lines)
-        self.assertNotIn('"cells"', record.read_text())
+        self.assertNotIn('"cells"', evidence.read_text())
         for bad in (dict(row, cell='bdb'), dict(row, cell='bdb', database_free='yes')):
             with self.assertRaisesRegex(policy.RecordError, 'needs a boolean database_free'):
                 policy.entry_of('bad', bad)

@@ -304,7 +304,9 @@ class PolicyTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name)
+        self.root = Path(temporary.name) / 'docs/findings'
+        self.root.mkdir(parents=True)
+        (self.root.parent.parent / 'fixtures/contract-policy').mkdir(parents=True)
         (self.root / 'upstream-divergences.md').write_text('[record](rec.md)\n')
         self.spec = spec(policy_record='rec.md', case_id='family/case')
         self.write(dict(pin=self.PIN, subject=self.SUBJECT))
@@ -320,7 +322,7 @@ class PolicyTests(unittest.TestCase):
     def write_entry(self, kept, schema=contract_policy.SCHEMA, **metadata):
         record = dict(schema=schema, record='rec', status='current', disposition='POLICY-ACCEPTED',
                       cases={'family/case': kept}, **metadata)
-        (self.root / 'rec.md').write_text('# Record\n\n```contract-diff-policy\n' + json.dumps(record) + '\n```\n')
+        verdict.policy_json_path(self.root, 'rec.md').write_text(json.dumps(record))
 
     def decide(self, pin=None, subject=None, parent=False, **state):
         return decide(self.spec, pin or dict(self.PIN, stderr_lines=0, userfiles={}),
@@ -330,6 +332,11 @@ class PolicyTests(unittest.TestCase):
     def test_both_recorded_observations_are_accepted_in_either_mode(self):
         for parent in (False, True):
             self.assertEqual(self.decide(parent=parent), ('POLICY-ACCEPTED', True, False))
+
+    def test_changed_oxpinyin_observation_is_rejected_against_json(self):
+        self.assertEqual(self.decide(), ('POLICY-ACCEPTED', True, False))
+        changed = dict(self.SUBJECT, result=dict(self.SUBJECT['result'], ret=False))
+        self.assertEqual(self.decide(subject=changed), ('DIFFER', False, False))
 
     def test_a_registered_policy_abort_does_not_exempt_invalid_parent_workers(self):
         self.spec['abort'] = False

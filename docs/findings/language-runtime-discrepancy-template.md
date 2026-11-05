@@ -98,29 +98,9 @@ settle it).
 
 Register an ordinary surviving case with `policy_record="<record>.md"`
 in `tools/bisection/contract-diff.py`. The filename is relative to
-`docs/findings`; the register must link it. The record contains exactly
-one `contract-diff-policy` fenced JSON block, which `just policy-record`
-writes from the differential's `--observations` capture:
-
-```json
-{
-  "schema": 2,
-  "record": "<record>",
-  "status": "current",
-  "disposition": "POLICY-ACCEPTED",
-  "cases": {
-    "<exact case ID>": {
-      "cells": {
-        "bdb": {
-          "pin": {"sha256": "<64 hex>", "fields": {"exit": "<16 hex>", "result.logs": "<16 hex>", "result.ret": "<16 hex>", "stderr": "<16 hex>"}},
-          "subject": {"sha256": "<64 hex>", "fields": {"exit": "<16 hex>", "result.logs": "<16 hex>", "result.ret": "<16 hex>", "stderr": "<16 hex>"}},
-          "divergence": ["result.ret: pin true; subject false"]
-        }
-      }
-    }
-  }
-}
-```
+`docs/findings`; the register must link it. The machine evidence is in `fixtures/contract-policy/<record>.json`,
+which `just policy-record` writes from the differential's `--observations` capture.
+The JSON has the existing policy schema and is formatted with sorted keys.
 
 Derive the complete observations from source before executing the case,
 then record the capture:
@@ -130,7 +110,7 @@ just runner contract-diff bdb "$PINYIN_ORACLE_PREFIX" <capi.so> <zhuyin.so> -- -
 just policy-record docs/findings/<record>.md obs.jsonl
 ```
 
-The block is part of the reviewed discrepancy record, but it holds no
+The JSON file is part of the reviewed discrepancy record, but it holds no
 observation. Each side keeps the SHA-256 of its complete stable observation
 (exit, result with its logs, stderr in the driver's scratch-path
 normalization, and userfiles for a user-directory case), a 16-hex digest per

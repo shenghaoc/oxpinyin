@@ -427,7 +427,7 @@ def not_run_expected(case, policy_root):
     problem = contract_policy.tool_observation_problem(expected)
     if problem:
         raise ValueError(f'pin_not_run {problem}')
-    _, record, _ = policy.load_record(path)
+    record = policy.load_record(contract_verdict.policy_json_path(policy_root, path.name))
     if record['schema'] != contract_policy.SCHEMA:
         raise ValueError('pin_not_run needs the current record schema')
     kept = record['cases'].get(case['id'])

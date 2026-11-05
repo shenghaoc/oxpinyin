@@ -1,0 +1,64 @@
+{
+  "cases": {
+    "user-conf-920-nul-database-token": {
+      "divergence": [
+        "result.import-retained: pin true; subject false",
+        "result.trained-retained: pin true; subject false"
+      ],
+      "pin": {
+        "fields": {
+          "exit": "5feceb66ffc86f38",
+          "result.import-retained": "b5bea41b6c623f7c",
+          "result.logs": "4f53cda18c2baa0c",
+          "result.reopen": "b5bea41b6c623f7c",
+          "result.trained-retained": "b5bea41b6c623f7c",
+          "stderr": "12ae32cb1ec02d01"
+        },
+        "sha256": "249a1d365fcb33cd660be5ccb26cc109fc64b9a8465c939ffd0aeba6d5d651d0"
+      },
+      "subject": {
+        "fields": {
+          "exit": "5feceb66ffc86f38",
+          "result.import-retained": "fcbcf165908dd18a",
+          "result.logs": "4f53cda18c2baa0c",
+          "result.reopen": "b5bea41b6c623f7c",
+          "result.trained-retained": "fcbcf165908dd18a",
+          "stderr": "12ae32cb1ec02d01"
+        },
+        "sha256": "231ad5fe14c54bf5e71458f116064788245c8c8212c22adc407dba126f6418a4"
+      }
+    },
+    "user-conf-920-nul-database-token-zhuyin": {
+      "divergence": [
+        "result.import-retained: pin true; subject false",
+        "result.trained-retained: pin true; subject false"
+      ],
+      "pin": {
+        "fields": {
+          "exit": "5feceb66ffc86f38",
+          "result.import-retained": "b5bea41b6c623f7c",
+          "result.logs": "4f53cda18c2baa0c",
+          "result.reopen": "b5bea41b6c623f7c",
+          "result.trained-retained": "b5bea41b6c623f7c",
+          "stderr": "12ae32cb1ec02d01"
+        },
+        "sha256": "249a1d365fcb33cd660be5ccb26cc109fc64b9a8465c939ffd0aeba6d5d651d0"
+      },
+      "subject": {
+        "fields": {
+          "exit": "5feceb66ffc86f38",
+          "result.import-retained": "fcbcf165908dd18a",
+          "result.logs": "4f53cda18c2baa0c",
+          "result.reopen": "b5bea41b6c623f7c",
+          "result.trained-retained": "fcbcf165908dd18a",
+          "stderr": "12ae32cb1ec02d01"
+        },
+        "sha256": "231ad5fe14c54bf5e71458f116064788245c8c8212c22adc407dba126f6418a4"
+      }
+    }
+  },
+  "disposition": "POLICY-ACCEPTED",
+  "record": "1297-user-token",
+  "schema": 2,
+  "status": "reverted"
+}

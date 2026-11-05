@@ -41,7 +41,9 @@ class PolicyRecordTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name)
+        self.root = Path(temporary.name) / 'docs/findings'
+        self.root.mkdir(parents=True)
+        (self.root.parent.parent / 'fixtures/contract-policy').mkdir(parents=True)
         self.record = self.root / 'rec.md'
         self.record.write_text('# Record\n\nProse.\n')
         (self.root / 'upstream-divergences.md').write_text('[record](rec.md)\n')
@@ -59,9 +61,7 @@ class PolicyRecordTests(unittest.TestCase):
         return status, out.getvalue(), err.getvalue()
 
     def block(self):
-        blocks = re.findall(r'^```contract-diff-policy\n(.*?)\n```$', self.record.read_text(), re.M | re.S)
-        self.assertEqual(len(blocks), 1)
-        return json.loads(blocks[0])
+        return json.loads(contract_verdict.policy_json_path(self.root, self.record.name).read_text())
 
     def test_a_capture_is_recorded_into_a_new_block_the_verdict_accepts(self):
         self.write_rows(row(), row(cell='kc'))
@@ -70,7 +70,7 @@ class PolicyRecordTests(unittest.TestCase):
         self.assertIn('recorded family/case [bdb]: pin', out)
         self.assertIn('recorded family/case [kc]:', out)
         self.assertIn('1 divergence line(s)', out)
-        self.assertIn('rec.md: ', out)
+        self.assertIn('rec.json: ', out)
         self.assertNotIn('notice', out)
         record = self.block()
         self.assertEqual(record['schema'], contract_policy.SCHEMA)
@@ -78,7 +78,7 @@ class PolicyRecordTests(unittest.TestCase):
         self.assertEqual(list(record['cases']['family/case']['cells']), ['bdb', 'kc'])
         self.assertEqual(record['cases']['family/case']['cells']['bdb']['divergence'],
                          ['result.rows[0:1]: subject drops [[2, "a"]]'])
-        self.assertTrue(self.record.read_text().startswith('# Record\n\nProse.\n\n```contract-diff-policy\n'))
+        self.assertEqual(self.record.read_text(), '# Record\n\nProse.\n')
         for cell in ('bdb', 'kc'):
             self.assertEqual(contract_verdict.verdict_for(spec(), PIN, SUBJECT, False, policy_root=self.root, cell=cell,
                                                           directory_probe=None), ('POLICY-ACCEPTED', True, False))
@@ -102,7 +102,7 @@ class PolicyRecordTests(unittest.TestCase):
         self.assertEqual(cells['kc'], contract_policy.entry(contract_policy.stable_observation(PIN, False),
                                                            contract_policy.stable_observation(SUBJECT, False)))
         self.assertIn('Prose, edited.', self.record.read_text())
-        self.assertEqual(self.record.read_text().count('```contract-diff-policy'), 1)
+        self.assertEqual(self.record.read_text(), '# Record\n\nProse, edited.\n')
 
     def test_a_selection_records_those_cases_and_names_a_case_without_a_row(self):
         self.write_rows(row(), row(case='family/other'))
@@ -177,7 +177,7 @@ class PolicyRecordTests(unittest.TestCase):
         old = dict(schema=1, record='rec', status='current', disposition='POLICY-ACCEPTED',
                    cases={'family/case': dict(pin=pin, subject=subject),
                           'family/cells': {'cells': {'kc': dict(pin=pin, subject=subject)}}})
-        self.record.write_text('# Record\n\n```contract-diff-policy\n' + json.dumps(old) + '\n```\n\nTail.\n')
+        contract_verdict.policy_json_path(self.root, self.record.name).write_text(json.dumps(old))
         self.write_rows(row(case='family/new'))
         status, _, err = self.run_main(str(self.capture))
         self.assertEqual(status, 1)
@@ -190,7 +190,7 @@ class PolicyRecordTests(unittest.TestCase):
         self.assertEqual(record['schema'], contract_policy.SCHEMA)
         self.assertEqual(record['cases']['family/case'], contract_policy.entry(pin, subject))
         self.assertEqual(record['cases']['family/cells'], {'cells': {'kc': contract_policy.entry(pin, subject)}})
-        self.assertTrue(self.record.read_text().endswith('\n```\n\nTail.\n'))
+        self.assertEqual(self.record.read_text(), '# Record\n\nProse.\n')
         for cell in ('bdb', 'kc', 'tkrzw'):
             self.assertEqual(contract_verdict.verdict_for(spec(), PIN, SUBJECT, False, policy_root=self.root, cell=cell,
                                                           directory_probe=None), ('POLICY-ACCEPTED', True, False))
