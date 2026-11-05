@@ -337,12 +337,13 @@ def lock_file(file, operation):
 
 
 @contextlib.contextmanager
-def admission_lock(directory, *, blocking=True, deadline=None):
+def admission_lock(directory, *, blocking=True):
     """Hold the directory's heavy-admission lock until the context exits.
 
     Default to blocking ownership for existing record operations. Admission
-    attempts use non-blocking ownership and recheck cancellation and their
-    monotonic deadline before entering the body. Closing releases ownership.
+    attempts use non-blocking ownership and recheck cancellation before
+    entering the body. A successful acquisition always proceeds, however late;
+    only a failure to acquire raises. Closing releases ownership.
     """
     with (directory / 'heavy-admission').open('a+') as file:
         try:
@@ -351,8 +352,6 @@ def admission_lock(directory, *, blocking=True, deadline=None):
             raise AdmissionMutexBusy from error
         if not blocking:
             check_cancelled()
-            if deadline is not None and time.monotonic() >= deadline:
-                raise AdmissionWaitExpired('admission-wait-expired: heavy-admission mutex; no process started')
         yield
         # Closing this unshared descriptor releases the admission lock.
 
@@ -854,7 +853,6 @@ def reserve_heavy_env(slot: HeavySlot, env: dict[str, str], *, runner: bool = Fa
                       prepare_heavy_env: Callable[..., tuple[dict[str, str],
                                                               dict[str, tuple[int | str, str, bool]],
                                                               MiB]] | None = None,
-                      deadline: float | None = None
                       ) -> tuple[BudgetedResources, dict[str, str],
                                  dict[str, tuple[int | str, str, bool]], MiB, bool]:
     """Serialize the resource read, reservation check, and holder estimate update.
@@ -862,12 +860,11 @@ def reserve_heavy_env(slot: HeavySlot, env: dict[str, str], *, runner: bool = Fa
     Return resources, child environment, chosen budgets, estimate in MiB,
     and the admission boolean. Update the holder only when admitted; an
     inherited holder retains the larger of its previous and new estimates.
-    A busy mutex raises BlockingIOError; an elapsed deadline or cancellation
-    raises before reading resources or changing the holder estimate.
+    A busy mutex raises BlockingIOError; cancellation raises before reading resources or changing the holder estimate.
     """
     read = resource_snapshot or host.resource_snapshot
     prepare = prepare_heavy_env or host.prepare_heavy_env
-    with admission_lock(slot.lock_dir, blocking=False, deadline=deadline):
+    with admission_lock(slot.lock_dir, blocking=False):
         resources = budget_resources(slot.lock_dir, slot.slot, read=read)
         extra = dict(contract_rows=contract_rows) if contract_rows else {}
         child, chosen, estimate = prepare(env, resources, runner=runner, **extra)
@@ -1009,9 +1006,7 @@ class HeavyAdmission:
                 self.slot, self.base_env, runner=self.runner,
                 contract_rows=self.contract_rows,
                 resource_snapshot=self.resource_snapshot,
-                prepare_heavy_env=self.prepare_heavy_env,
-                # Zero wait permits one immediate attempt, never a blocking wait.
-                deadline=self.started + self.limit if self.limit > 0 else None)
+                prepare_heavy_env=self.prepare_heavy_env)
             self.available = resources['available_mib']
             self.headroom = host.memory_headroom(self.base_env, resources)
             self.reservations = (resources.get('slot_reserved_mib'), resources.get('container_reserved_mib'))
@@ -1042,13 +1037,6 @@ class HeavyAdmission:
             host.plan_defaults(chosen, self.out, 'effective defaults')
             self.env = self.slot.child_env(child)
             return True
-        except AdmissionWaitExpired:
-            # No new resource decision was made. Preserve the last obstacle
-            # when an uncontended retry crosses the deadline during acquisition.
-            self.close()
-            if self.blocked_by is not None:
-                raise self._expired(time.monotonic()) from None
-            raise
         except AdmissionMutexBusy:
             self.blocked_by = 'admission'
             self.close()
