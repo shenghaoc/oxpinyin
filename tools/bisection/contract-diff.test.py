@@ -352,6 +352,49 @@ class TkrzwSavedBigramTests(DriverFixtureCase):
         self.assertFalse(self.matches(self.raw, ((bucket + 1, chain),)))
 
 
+class LazyBigramSaveTests(DriverFixtureCase):
+    def test_worker_failures_cannot_pass_or_compare_snapshots(self):
+        for mode in ('pinyin', 'zhuyin'):
+            name = 'lazy-user-bigram-' + mode
+            spec = driver.CASES[name]
+            for exits in ((1, 1), (1, 0), (0, 1)):
+                with self.subTest(mode=mode, exits=exits):
+                    replies = [observation(exit=code, result=None if code else {'saved': True})
+                               for code in exits]
+                    with tempfile.TemporaryDirectory() as scratch, \
+                         patch.object(driver, 'run_worker', side_effect=replies), \
+                         patch.object(driver, 'tkrzw_saved_bigram_bytes') as compare:
+                        pin, subject = driver.run_case(spec, Path('/pin'), Path('/pr'),
+                                                       Path('/data'), name, scratch, 20)
+                    compare.assert_not_called()
+                    for parent in (False, True):
+                        self.assertEqual(driver.verdict_for(spec, pin, subject, parent),
+                                         ('INVALID', False, False))
+
+    def test_both_snapshots_compare_every_byte_except_the_timestamp(self):
+        for filename in ('empty.db', 'trained.db'):
+            for offset in (0, 47, 48, 55, 56, 511):
+                with self.subTest(filename=filename, offset=offset):
+                    def worker(*args, **kwargs):
+                        directory = Path(kwargs['extra_env']['CONTRACT_BIGRAM_SNAPSHOTS'])
+                        for name in ('empty.db', 'trained.db'):
+                            raw = bytearray(bytes(range(256)) * 2)
+                            if args[1] == Path('/pr') and name == filename:
+                                raw[offset] ^= 1
+                            (directory / name).write_bytes(raw)
+                        return observation(result={'saved': True})
+
+                    with tempfile.TemporaryDirectory() as scratch, \
+                         patch.object(driver, 'run_worker', side_effect=worker):
+                        results = driver.run_case(dict(mode='pinyin', fatal=False), Path('/pin'), Path('/pr'),
+                                                  Path('/data'), 'lazy-user-bigram-pinyin', scratch, 20)
+                    self.assertEqual(results[0]['exit'], 0 if 48 <= offset < 56 else 1)
+                    self.assertEqual(results[1]['exit'], 0)
+                    for result in results:
+                        self.assertEqual(result['result'].get('saved_byte_comparisons'),
+                                         ['empty.db', 'trained.db'] if 48 <= offset < 56 else None)
+
+
 class TkrzwHandoffTests(DriverFixtureCase):
     def run_handoff(self, replies, changed_offset=None):
         replies = iter(replies)

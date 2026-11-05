@@ -1309,8 +1309,12 @@ impl WriteTxn for TkrzwTxn<'_> {
 /// in-memory `TinyDBM` (`ngram_tkrzwdb.cpp:48-63`) at its default bucket
 /// count, filled from the `HashDBM` file by `copy_tkrzwdb`'s
 /// iterator walk (`tkrzwdb_utils.h`), so its bucket walk is the pin's.
+/// A known-empty container defers native construction until its first store.
 pub struct TkrzwUserBigramDb {
-    db: Db,
+    // Uninitialized means known-empty, not a failed native handle. Keep the
+    // default TinyDBM once a load or the first Set constructs it. Allocation
+    // failure moving from init to the first write is maintainer-accepted.
+    db: std::sync::OnceLock<Db>,
 }
 
 /// Visits one borrowed record at a time in the database's native order.
@@ -1326,10 +1330,10 @@ fn visit_db(
 
 impl crate::UserBigramDb for TkrzwUserBigramDb {
     fn empty() -> Result<Self, StoreError> {
-        // `m_db = new TinyDBM;` (`ngram_tkrzwdb.cpp:52`) — an in-memory
-        // database at the default bucket count, never opened.
+        // Defer `new TinyDBM` (`ngram_tkrzwdb.cpp:52`): it opens no file.
+        // Empty reads and walks have no native state to preserve.
         Ok(Self {
-            db: Db::new(Class::Tiny),
+            db: std::sync::OnceLock::new(),
         })
     }
 
@@ -1354,8 +1358,9 @@ impl crate::UserBigramDb for TkrzwUserBigramDb {
             if holds_no_record(&file, path) {
                 return Ok(this);
             }
+            let db = this.db.get_or_init(|| Db::new(Class::Tiny));
             // A failed source walk must not discard unrelated learned data.
-            if let Err(error) = visit_db(&file, |key, value| this.db.set(key, value)) {
+            if let Err(error) = visit_db(&file, |key, value| db.set(key, value)) {
                 eprintln!("user-bigram load {}: {error}", path.display());
             }
         }
@@ -1363,24 +1368,33 @@ impl crate::UserBigramDb for TkrzwUserBigramDb {
     }
 
     fn get(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> {
-        self.db.get(key, value)
+        if let Some(db) = self.db.get() {
+            return db.get(key, value);
+        }
+        value.clear();
+        Ok(false)
     }
 
     fn store(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
-        self.db.set(key, value)
+        self.db.get_or_init(|| Db::new(Class::Tiny)).set(key, value)
     }
 
     fn remove(&self, key: &[u8]) -> Result<(), StoreError> {
         // The trait's removal of an absent record is a no-op.
-        self.db.remove(key).map(|_removed| ())
+        if let Some(db) = self.db.get() {
+            db.remove(key)?;
+        }
+        Ok(())
     }
 
     fn keys(&self) -> Result<Vec<Option<[u8; 4]>>, StoreError> {
         // `get_all_items`: one read-only `ProcessEach` whose processor
         // appends each key as a token (`ngram_tkrzwdb.cpp:143-172` at
         // 074a2219); a key of another length is `None` for the upper gate.
-        Ok(self
-            .db
+        let Some(db) = self.db.get() else {
+            return Ok(Vec::new());
+        };
+        Ok(db
             .keys()?
             .into_iter()
             .map(|key| <[u8; 4]>::try_from(key).ok())
@@ -1388,22 +1402,26 @@ impl crate::UserBigramDb for TkrzwUserBigramDb {
     }
 
     fn is_empty(&self) -> Result<bool, StoreError> {
-        Ok(self.db.count()? == 0)
+        self.db.get().map_or(Ok(true), |db| Ok(db.count()? == 0))
     }
 
     fn save_db(&self, path: &Path) -> Result<(), StoreError> {
-        save_bigram_db(&self.db, path)
+        save_bigram_db(self.db.get(), path)
     }
 }
 
-fn save_bigram_db(db: &Db, path: &Path) -> Result<(), StoreError> {
+fn save_bigram_db(db: Option<&Db>, path: &Path) -> Result<(), StoreError> {
     // `Bigram::save_db` (`ngram_tkrzwdb.cpp:66-87`): remove the file,
     // open a fresh `HashDBM` at its default tuning, copy this
     // container into it in iterator order, synchronize, close.
     crate::remove_if_present(path)?;
     let file = open_hash_create(path)?;
     // `copy_tkrzwdb`: one `Set` per record (`tkrzwdb_utils.h:48-74`).
-    visit_db(db, |key, value| file.db.set(key, value))?;
+    // An empty source contributes no Set and no destination metadata. Keep
+    // the native destination sequence, including its empty file and timestamp.
+    if let Some(db) = db {
+        visit_db(db, |key, value| file.db.set(key, value))?;
+    }
     file.db.synchronize(false)
 }
 
@@ -1428,7 +1446,7 @@ impl TkrzwStore {
     /// # Errors
     /// Returns the existing save operation's file or backend error.
     pub fn save_bigram_db(&self, path: &Path) -> Result<(), StoreError> {
-        save_bigram_db(&self.db, path)
+        save_bigram_db(Some(&self.db), path)
     }
 }
 
@@ -1676,6 +1694,60 @@ mod tests {
     }
 
     #[test]
+    fn known_empty_operations_do_not_construct_the_native_container() {
+        let dir = TempDir::new("lazy-empty");
+        let missing = dir.0.join("missing.db");
+        for db in [
+            TkrzwUserBigramDb::empty().unwrap(),
+            TkrzwUserBigramDb::load_db(&missing).unwrap(),
+        ] {
+            let mut value = vec![1, 2, 3];
+            assert!(!db.get(b"absent", &mut value).unwrap());
+            assert!(value.is_empty(), "a miss clears the caller's buffer");
+            assert!(db.keys().unwrap().is_empty());
+            assert!(db.is_empty().unwrap());
+            db.remove(b"absent").unwrap();
+            assert!(db.db.get().is_none());
+
+            let lazy_path = dir.0.join("lazy.db");
+            db.save_db(&lazy_path).unwrap();
+            assert!(db.db.get().is_none(), "save must not construct TinyDBM");
+            let native_path = dir.0.join("native.db");
+            let native = super::Db::new(super::Class::Tiny);
+            super::save_bigram_db(Some(&native), &native_path).unwrap();
+            let mut lazy = std::fs::read(&lazy_path).unwrap();
+            let mut eager = std::fs::read(&native_path).unwrap();
+            lazy[48..56].fill(0);
+            eager[48..56].fill(0);
+            assert_eq!(lazy, eager, "only the timestamp may differ");
+            let loaded = TkrzwUserBigramDb::load_db(&lazy_path).unwrap();
+            assert!(loaded.db.get().is_none(), "proven-empty file stays lazy");
+        }
+        assert!(
+            !missing.exists(),
+            "the missing-file open must not create it"
+        );
+    }
+
+    #[test]
+    fn first_set_constructs_once_even_for_an_empty_record() {
+        let db = TkrzwUserBigramDb::empty().unwrap();
+        let before = db.keys().unwrap();
+        db.store(b"", b"").unwrap();
+        let native = db.db.get().unwrap();
+        assert_eq!(native.count().unwrap(), 1);
+        assert!(!db.is_empty().unwrap());
+        let mut value = vec![1];
+        assert!(db.get(b"", &mut value).unwrap());
+        assert!(value.is_empty());
+        assert!(before.is_empty(), "an earlier key snapshot stays empty");
+        db.remove(b"").unwrap();
+        assert!(db.is_empty().unwrap());
+        db.store(b"next", b"value").unwrap();
+        assert!(std::ptr::eq(native, db.db.get().unwrap()));
+    }
+
+    #[test]
     fn a_file_saved_with_no_rows_holds_no_record_and_loads_empty() {
         // What every profile the pin saves before learning a bigram holds:
         // 1,048,583 buckets and nothing after them, 4,198,400 bytes
@@ -1769,12 +1841,12 @@ mod tests {
         drop(file);
 
         let file = open_hash(&path).unwrap();
-        let reference = TkrzwUserBigramDb::empty().unwrap();
+        let reference = super::Db::new(super::Class::Tiny);
         let mut source_keys = Vec::new();
         visit_db(&file.db, |key, value| {
             source_keys.push(key.to_vec());
             // The previous path, retained as an independent reference.
-            reference.db.set(key, value)
+            reference.set(key, value)
         })
         .unwrap();
         assert_eq!(source_keys, [b.to_vec(), a.to_vec(), c.to_vec()]);
@@ -1782,9 +1854,9 @@ mod tests {
 
         let loaded = TkrzwUserBigramDb::load_db(&path).unwrap();
         let expected = vec![rows[2].clone(), rows[0].clone(), rows[1].clone()];
-        for db in [&reference, &loaded] {
+        for db in [&reference, loaded.db.get().unwrap()] {
             let mut actual = Vec::new();
-            visit_db(&db.db, |key, value| {
+            visit_db(db, |key, value| {
                 actual.push((key.to_vec(), value.to_vec()));
                 Ok(())
             })
@@ -1799,9 +1871,9 @@ mod tests {
     #[test]
     fn single_record_set_copies_empty_binary_and_replacement_values() {
         let db = TkrzwUserBigramDb::empty().unwrap();
-        db.db.set(b"", b"").unwrap();
-        db.db.set(b"\0k\xff!", b"\0value\xff").unwrap();
-        assert_eq!(db.db.count().unwrap(), 2);
+        db.store(b"", b"").unwrap();
+        db.store(b"\0k\xff!", b"\0value\xff").unwrap();
+        assert_eq!(db.db.get().unwrap().count().unwrap(), 2);
         let mut value = Vec::new();
         assert!(db.get(b"", &mut value).unwrap());
         assert!(value.is_empty());
@@ -1809,10 +1881,10 @@ mod tests {
         assert_eq!(value, b"\0value\xff");
 
         let before = db.keys().unwrap();
-        db.db.set(b"\0k\xff!", b"").unwrap();
+        db.store(b"\0k\xff!", b"").unwrap();
         assert!(db.get(b"\0k\xff!", &mut value).unwrap());
         assert!(value.is_empty());
-        assert_eq!(db.db.count().unwrap(), 2);
+        assert_eq!(db.db.get().unwrap().count().unwrap(), 2);
         assert_eq!(
             db.keys().unwrap(),
             before,
@@ -1826,12 +1898,14 @@ mod tests {
         // (`ngram_tkrzwdb.cpp:140`); the status comes back as `Ok(false)`
         // for the caller's rule, and the trait's `remove` makes it a no-op.
         let db = TkrzwUserBigramDb::empty().unwrap();
-        assert!(!db.db.remove(b"absent").unwrap());
-        db.store(b"here", b"v").unwrap();
-        assert!(db.db.remove(b"here").unwrap());
-        assert!(!db.db.remove(b"here").unwrap());
         db.remove(b"absent").unwrap();
-        assert_eq!(db.db.count().unwrap(), 0);
+        db.store(b"here", b"v").unwrap();
+        let native = db.db.get().unwrap();
+        assert!(!native.remove(b"absent").unwrap());
+        assert!(native.remove(b"here").unwrap());
+        assert!(!native.remove(b"here").unwrap());
+        db.remove(b"absent").unwrap();
+        assert_eq!(native.count().unwrap(), 0);
     }
 
     #[test]

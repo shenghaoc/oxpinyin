@@ -1263,6 +1263,31 @@ mod phrase_cursor_tests {
         .expect("committed backend fixtures")
     }
 
+    #[test]
+    fn an_empty_bigram_export_stays_empty_after_the_first_write() {
+        let mut ctx = open();
+        let store = ctx.user_store_mut().unwrap();
+        assert_eq!(store.bigram_row(1).unwrap(), None);
+        assert_eq!(store.bigram_count(1, 2).unwrap(), 0);
+        assert_eq!(store.bigram_total(1).unwrap(), 0);
+        assert!(store.bigram_successors(1).unwrap().is_empty());
+        assert!(store.bigram_predecessors().unwrap().is_empty());
+        assert!(store.export_bigrams().unwrap().is_empty());
+        store.mask_out(u32::MAX, 0x0700_0001).unwrap();
+        let mut walk = ctx.bigram_export_walk().unwrap();
+        assert!(!walk.has_next(Some(&ctx)).unwrap());
+        ctx.user_store_mut()
+            .unwrap()
+            .set_bigram_count(1, 2, 69)
+            .unwrap();
+        assert_eq!(ctx.user_store().unwrap().bigram_count(1, 2).unwrap(), 69);
+        assert_eq!(
+            ctx.user_store().unwrap().bigram_predecessors().unwrap(),
+            [1]
+        );
+        assert!(!walk.has_next(Some(&ctx)).unwrap());
+    }
+
     fn user_keys(spellings: &[&str], tone: u8) -> Vec<oxpinyin_user::PinyinKey> {
         spellings
             .iter()

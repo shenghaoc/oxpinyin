@@ -5,8 +5,9 @@ import hashlib
 import os
 from pathlib import Path
 
-from contract_abi import Arr, B, I, P, S, U, Z, row_of, tokens_of
-from contract_case_helpers import _gram_bytes, _plant_user_grams, d18_bigram_db, d18_gram
+from contract_abi import Arr, B, I, P, S, U, Z, row_of, sentence_out, tokens_of, zhuyin_sentence_out
+from contract_case_helpers import (_gram_bytes, _plant_user_grams, d18_bigram_db, d18_gram,
+                                   predicted_rows, token_unigram_trained, token_unigram_user)
 from contract_fixtures import _write_user_conf
 from contract_verdict import tkrzw_saved_bigram_bytes
 
@@ -70,6 +71,83 @@ def register(case, *, _craft_hash, crafted_bigram_context, index_file_rows):
         case('issue1114-collision-load-save-' + _issue1114_mode, mode=_issue1114_mode,
              cells=('tkrzw',), issues=('1114',))(issue1114_collision_saves)
 
+
+    def lazy_user_bigram(k):
+        """Exercise missing/known-empty profiles, then one constrained training write.
+
+        Save snapshots for the parent runner's direct byte comparison, masking
+        only timestamp bytes 48–55. Reopen each save. Pinyin additionally checks
+        prediction and an empty export iterator retained across the first write;
+        the pinned zhuyin facade exposes neither API.
+        """
+        snapshots = Path(os.environ['CONTRACT_BIGRAM_SNAPSHOTS'])
+
+        def reopen():
+            if k._inst:
+                k.fn('free_instance', None, P)(k._inst)
+                k._inst = None
+            k.fn('fini', None, P)(k._ctx)
+            k._ctx = None
+            assert k.ctx
+
+        def reads():
+            parse = 'parse_more_full_pinyins' if k.mode == 'pinyin' else 'parse_more_chewings'
+            text = b'dian4xian4' if k.mode == 'pinyin' else b'2u04vu04'
+            assert k.fn(parse, Z, P, S)(k.inst, text) == len(text)
+            guessed = k.fn('guess_sentence', B, P)(k.inst)
+            assert guessed
+            sentence = sentence_out(k, k.inst, 0) if k.mode == 'pinyin' else zhuyin_sentence_out(k, k.inst)
+            out = dict(tokens=tokens_of(k, '癫痫'), guessed=guessed, sentence=sentence)
+            if k.mode == 'pinyin':
+                out['predictions'] = predicted_rows(k, k.inst, '我')
+            return out
+
+        def empty_export():
+            if k.mode != 'pinyin':
+                return None
+            iterator = k.fn('begin_get_bigram_phrases', P, P)(k.ctx)
+            assert iterator
+            assert not k.fn('bigram_iterator_has_next_phrase', B, P)(iterator)
+            return iterator
+
+        def finish_export(iterator):
+            if iterator:
+                assert not k.fn('bigram_iterator_has_next_phrase', B, P)(iterator)
+                k.fn('end_get_bigram_phrases', None, P)(iterator)
+
+        path = Path(k.user, 'user_bigram.db')
+        assert not path.exists()
+        out = dict(fresh=reads())
+        finish_export(empty_export())
+        out['mask'] = k.fn('mask_out', B, P, U, U)(k.ctx, 0xffffffff, 0xff123456)
+        # Dirty the phrase index without creating any user bigram records.
+        out['import'] = token_unigram_user(k, add_frequency=False)
+        assert k.fn('save', B, P)(k.ctx)
+        raw = path.read_bytes()
+        assert index_file_rows(path, kind='hash', allow_empty=True) == []
+        (snapshots / 'empty.db').write_bytes(raw)
+        out['empty_bytes'] = len(raw)
+        reopen()
+        out['reopened_empty'] = reads()
+        iterator = empty_export()
+        # Discard the read probe's n-best list so normal selection installs a
+        # constraint rather than finding the same phrase already promoted.
+        k.fn('reset', None, P)(k.inst)
+        out['training'] = token_unigram_trained(k)
+        finish_export(iterator)
+        assert k.fn('save', B, P)(k.ctx)
+        rows = index_file_rows(path, kind='hash')
+        assert rows, 'one training must write a user bigram'
+        (snapshots / 'trained.db').write_bytes(path.read_bytes())
+        out['trained_rows'] = rows
+        reopen()
+        out['reopened_trained'] = reads()
+        assert index_file_rows(path, kind='hash') == rows
+        return out
+
+    for _lazy_mode in ('pinyin', 'zhuyin'):
+        case('lazy-user-bigram-' + _lazy_mode, mode=_lazy_mode,
+             cells=('tkrzw',))(lazy_user_bigram)
 
     def predicted_bigram_row_context(k, phrase, successor, count=20):
         """A context whose user bigram lists `successor` after `phrase` with
