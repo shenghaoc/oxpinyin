@@ -72,7 +72,7 @@ pub use phrase::{
     key_pinyin_string, key_syllable, key_tone, phrase_index_library_index, phrase_index_make_token,
     toned_key,
 };
-pub use replay::JournalFault;
+pub use replay::{JournalFault, UnigramAdd};
 pub use store::{
     ExportedPhrase, GenericUserStore, SENTENCE_START, SaveReport, Token, TrainingCheck,
     TrainingFault, UserStore, UserStoreError, add_system_reading,

@@ -243,9 +243,17 @@ impl<S: WriteStore> GenericUserStore<S> {
             .libpinyin
             .as_ref()
             .ok_or(UserStoreError::InvalidPhrase)?;
-        let originals = &self.originals;
         let db = self.database();
         let mut phrases = target.phrases();
+        // The unloaded sub-index owns no item. The pin instead uses its
+        // stale context cache here (phonetic_lookup.h:924-927); the
+        // unloaded-cache ruling in compatibility-policy.md skips that write.
+        if phrases
+            .unloaded
+            .contains(&phrase_index_library_index(token))
+        {
+            return Ok(());
+        }
         if phrases.item(token).is_some() {
             if let Some(library) = phrases.item_mut(token) {
                 library.train(token & PHRASE_MASK, readings, delta);
@@ -263,7 +271,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if items.train_live(
-            originals.get(&phrase_index_library_index(token)),
+            self.originals.get(&phrase_index_library_index(token)),
             token,
             readings,
             delta,
@@ -504,6 +512,11 @@ impl<S: WriteStore> GenericUserStore<S> {
             .system_items
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // An unloaded library has no sub-index: `get_range` fails and
+        // `_add_phrase` adds nothing (`pinyin.cpp:589-591`).
+        if items.lacks_sub_index(library, original) {
+            return Err(UserStoreError::InvalidPhrase);
+        }
         if let Some(token) = existing {
             // The shipped chunk's own items are merged by the caller; only an
             // item the buffer added is held here.
@@ -611,14 +624,24 @@ impl<S: WriteStore> GenericUserStore<S> {
             return Ok(UnigramAdd::Missing);
         };
         let library = phrase_index_library_index(token);
-        let original = self.originals.get(&library);
         let mut phrases = target.phrases();
+        // phrase_index.h:631-632 returns before the facade total changes.
+        if phrases.unloaded.contains(&library) {
+            return Ok(UnigramAdd::Missing);
+        }
+        let original = self.originals.get(&library);
         let mut items = self
             .inner
             .system_items
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if original.is_some() {
+            // An unloaded library has no sub-index: the pin answers
+            // `ERROR_NO_SUB_PHRASE_INDEX` before the facade total moves
+            // (`phrase_index.h:631-633`), so nothing moves here either.
+            if original.is_some_and(|original| items.lacks_sub_index(library, original)) {
+                return Ok(UnigramAdd::Missing);
+            }
             // A slot the buffer holds no item at (a removed or absent one)
             // answers `Missing`.
             let outcome = items

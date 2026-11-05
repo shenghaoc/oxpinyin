@@ -40,6 +40,7 @@ use crate::phrase::{
 };
 use crate::phrase_table;
 use crate::registry::{self, CountCache, RegistryLease, StandaloneLease, StoreInner};
+use crate::replay::UnigramAdd;
 use crate::seed;
 use crate::session_values::SessionValues;
 use crate::store_libpinyin::FiniGuard;
@@ -2315,16 +2316,26 @@ impl<S: WriteStore> GenericUserStore<S> {
         token: Token,
         delta: u32,
     ) -> Result<bool, UserStoreError> {
+        Ok(self.add_system_unigram_outcome(token, delta)?.is_accepted())
+    }
+
+    /// [`Self::add_system_unigram_frequency`] with the sub-index's answer in
+    /// the pin's terms: only [`UnigramAdd::Refused`] is
+    /// `ERROR_INTEGER_OVERFLOW`, the one error a caller can act on
+    /// (`pinyin.cpp:2528`).
+    ///
+    /// # Errors
+    /// Returns the store error if the in-memory transaction fails.
+    pub fn add_system_unigram_outcome(
+        &mut self,
+        token: Token,
+        delta: u32,
+    ) -> Result<UnigramAdd, UserStoreError> {
         if self.inner.libpinyin.is_none() {
-            return Ok(false);
+            return Ok(UnigramAdd::Missing);
         }
         let db = self.database();
-        let accepted = db.write(|txn| {
-            Ok(self
-                .arena_add_unigram_outcome(txn, token, delta)?
-                .is_accepted())
-        })?;
-        Ok(accepted)
+        Ok(db.write(|txn| self.arena_add_unigram_outcome(txn, token, delta))?)
     }
 
     /// What the user side adds to the facade's unigram total: for a session
@@ -2440,6 +2451,12 @@ impl<S: WriteStore> GenericUserStore<S> {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             for (&library, original) in self.originals.iter() {
+                // An unloaded library has no sub-index to compact: the pin's
+                // loop skips it (`phrase_index.cpp:651-652`) and its total
+                // stays as the unload left it.
+                if items.lacks_sub_index(library, original) {
+                    continue;
+                }
                 let old = items
                     .library_total(library, Some(original))
                     .unwrap_or(original.total);
@@ -3907,11 +3924,15 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// entries. In memory, as the pin's: nothing is written to disk, and a
     /// save skips the library while it is unloaded (`pinyin.cpp:928-933`).
     pub fn unload_system_libraries(&mut self, originals: crate::persistence::SystemOriginals) {
+        let unloaded: Vec<_> = originals.keys().copied().collect();
         self.replace_system_libraries(
             originals,
             std::collections::BTreeMap::new(),
             &std::collections::BTreeMap::new(),
         );
+        if let Some(target) = &self.inner.libpinyin {
+            target.phrases().unloaded.extend(unloaded);
+        }
     }
 
     /// `_load_phrase_library`'s `USER_FILE` branch for `library`: its
@@ -3974,7 +3995,30 @@ impl<S: WriteStore> GenericUserStore<S> {
         library_totals: &std::collections::BTreeMap<u8, u32>,
     ) {
         self.apply_system_libraries(&originals, replayed, library_totals);
+        if let Some(target) = &self.inner.libpinyin {
+            let mut phrases = target.phrases();
+            for nibble in originals.keys() {
+                phrases.unloaded.remove(nibble);
+            }
+        }
         self.originals.append(originals);
+    }
+
+    /// Synchronize a system library's mutation guard with runtime visibility.
+    /// This does not replace its items or reset its training state. USER_FILE
+    /// markers belong exclusively to the store's own item load/unload.
+    pub fn set_library_loaded(&mut self, nibble: u8, loaded: bool) {
+        if nibble >= 16 || !self.is_system_library(nibble) {
+            return;
+        }
+        if let Some(target) = &self.inner.libpinyin {
+            let mut phrases = target.phrases();
+            if loaded {
+                phrases.unloaded.remove(&nibble);
+            } else {
+                phrases.unloaded.insert(nibble);
+            }
+        }
     }
 
     /// Reset one loaded baseline's replay and training state at unload.
@@ -3987,6 +4031,9 @@ impl<S: WriteStore> GenericUserStore<S> {
             std::collections::BTreeMap::new(),
             &Default::default(),
         );
+        if let Some(target) = &self.inner.libpinyin {
+            target.phrases().unloaded.insert(nibble);
+        }
     }
 
     fn apply_system_libraries(

@@ -105,6 +105,8 @@ impl PreparedReplacement {
 pub(crate) struct SessionPhrases {
     pub(crate) libraries: BTreeMap<u8, UserLibrary>,
     pub(crate) index: UserIndex,
+    /// Explicitly unloaded system and user sub-indices; a successful load
+    /// clears the entry. Originals metadata alone does not imply visibility.
     pub(crate) unloaded: BTreeSet<u8>,
     pub(crate) phrase_table: UserPhraseTable,
 }

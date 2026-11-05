@@ -1264,7 +1264,7 @@ not proof that the current Rust parser follows the newly required call.
 | 73 | NULL user directory retains in-memory user state (#642) | **CLOSED** in code (2026-10-08 UTC) | Pin init creates user tables even with NULL userdir; imports and lookup work, but train/save refuse. Runtime formerly omitted the UserStore. A transient store now retains system originals and mutable indexes without a filesystem target. Existing contract driver covers both facades, each library 1–7 in a fresh context, exact stderr and cwd/TMPDIR snapshots through fini. Plain match. |
 | 74 | Import with five existing same-text tokens (#525) | **pin behaviour reproduced** (members 3–4, 2026-10-31 UTC; records [pinyin](pin-aborts-pinyin-facade.md), [zhuyin](pin-aborts-zhuyin-facade.md)) (class (c) retired 2026-10-31 UTC; was: **(c)**, both halves met (2026-10-08 UTC)) | `phrase_large_table3.h:95` at 074a2219 asserts `0 <= num && num <= 4` during the sixth iterator add after additions to libraries 1–5. Both facades refuse before mutation with exactly one domain warning. The fifth add remains successful. Existing `combined-library-sixth-add-*` cases prove SIGABRT versus false and unchanged state; `combined-library-fifth-add-*` controls match. |
 | 75 | `pinyin_bigram_iterator_get_next_phrase` after a walk that ends on a real predecessor | **(b)** | the other outcome of row 62's bigram call. `get_next` answers `has_next` after taking a row (`pinyin.cpp:910`), and `has_next` empties `m_pinyins` before it looks for the next row (`:798-801`) and leaves `m_index_token` at the predecessor it loaded last (`:885-886`). When that is a real phrase token the `:902` assert passes, so a `get_next` called after the walk's `false` row, with no `has_next` in between, indexes the empty array at `:905`: on GLib 2.90 the array has no storage, and the pin dies of SIGSEGV at fault address 0. Measured on bdb (amd64 under Rosetta; native amd64 not run) after training 你→好 and 世→界: one row (`你好`, `get=false`), then the call faults at `pinyin_bigram_iterator_get_next_phrase+0x38`, offset `0x97748` of the prefix's `libpinyin.so.15.0.0`, which `addr2line` maps to `pinyin.cpp:905`; the pin built with row 1's `bigram-export-strjoinv` patch faults at the same statement (its `:907`). Undefined behaviour, not an assert: no safe construction reproduces the read. oxpinyin already answered `false` with the three out-params untouched and no warning (`crates/oxpinyin-capi/src/iterators.rs:641`, `crates/oxpinyin-facade/src/export_rows.rs:1036-1038`). No `contract-diff.py` case: the predecessors come in the user bigram's hash order (`pinyin.cpp:779`; `storage/ngram_bdb.cpp:178-200`, `DB_HASH`), so whether a given training reaches this read or row 62's assert depends on the backend. Entry in `docs/findings/upstream-divergences.md`, with the commands. |
-| 76 | `mmap %s failed!`: a system library the pin cannot map, and the empty chunk it dies on (#545) | **(b)**; the line itself **CLOSED** in code (#545) | `MemoryChunk::mmap` answers `false` for a file that cannot be opened, is shorter than the 8-byte header, whose length word is not the payload length, or whose checksum does not verify (`memory_chunk.h:470-520`). Every caller prints `mmap %s failed!` and goes on with the chunk it just reset, which is **empty**: `SubPhraseIndex::load` then reads `*(buf_begin + 16)` through a NULL base (`phrase_index.cpp:354`), and the pin dies of SIGSEGV. The `open %s failed!` branches next to each line are `#else` of `LIBPINYIN_USE_MMAP`, which `memory_chunk.h:31-34` defines whenever `HAVE_MMAP` is, and the oracle's `config.h:42` has `#define HAVE_MMAP 1`: they are not compiled. **Sites, and the public calls that reach each** (pin `074a2219`): `pinyin.cpp:256` (a `SYSTEM_FILE` library) by `pinyin_init` for each default library in index order, and by `pinyin_load_phrase_library` for one `pinyin_unload_phrase_library` let go (only GBK, 2); `zhuyin.cpp:200` by `zhuyin_init` and `zhuyin_load_phrase_library` (any library but TSI, 1); `pinyin.cpp:290` (a `DICTIONARY` library) by `pinyin_load_addon_phrase_library` alone; `pinyin.cpp:956` and `zhuyin.cpp:589` by a modified `pinyin_save` / `zhuyin_save`, which maps each loaded system library again to `diff` it against the live one (`phrase_index.cpp:278`, the same `load` on the old chunk); `pinyin.cpp:1265` and `zhuyin.cpp:800` by `pinyin_mask_out` / `zhuyin_mask_out`, which reload each loaded system library. **Guards where the pin stays silent** (the controls): a library or addon already loaded (`get_range` answers before any `mmap`, `pinyin.cpp:242-244`, `zhuyin.cpp:186`), a library unloaded (the save and mask-out loops skip a missing sub-index), a save with nothing modified, and a reload of a whole file. **Not reachable by any public call:** `zhuyin.cpp:234` — the zhuyin facade has no addon entry point, `zhuyin_init` and `zhuyin_load_phrase_library` `assert` the default table is not `DICTIONARY` (`:330`, `:372`; the pin is built without `NDEBUG`), so no call reaches the `DICTIONARY` branch; and `facade_chewing_table.h:115` / `facade_phrase_table2.h:96` — `FacadeChewingTable` and `FacadePhraseTable2` are included by `pinyin_internal.cpp` into the uninstalled `libpinyin_internal.a` and instantiated nowhere in `src/`, `tests/` or `utils/` (the library uses `FacadeChewingTable2` and `FacadePhraseTable3`); the oracle's `libpinyin.so.15` and `libzhuyin.so.15` define no symbol of either class. Both are unreachable by argument, not by case. **Measured** on bdb (`stderr-library-*` of `contract-diff.py`, 39 crash cases and 11 controls): with `merged.bin` (or `gbk_char.bin`, `art.bin`) absent, cut to four bytes, or with its last payload byte flipped in a private copy of the system directory, the pin writes its line and dies of SIGSEGV at every site, pinyin and zhuyin, at fault address `0x10` (an `LD_PRELOAD` handler printing `si_addr`; no case reproduces the read). Undefined behaviour, so class (b): no safe construction reads through a NULL chunk. **oxpinyin** writes the pin's bytes at each of these sites (one shared writer, `oxpinyin_data::c_stderr`, which makes the pin's `fprintf(stderr, …)` through the `oxpinyin-input` shim since stage 4 of `external-io-boundary.md`; the failure is the typed `LibraryError::Unmappable` the chunk reader raises for exactly what `MemoryChunk::mmap` refuses — a separator or index outside the payload is `LibraryError::Format` and has no line; a payload shorter than 17 bytes is `LibraryError::Layout`, and the caller loads the empty sub-index and logs one critical (none since #1297 decision D1, 2026-10-31 UTC: [1297-layout-criticals](1297-layout-criticals.md)), as `SubPhraseIndex::load`'s `g_return_val_if_fail` does) and **keeps every answer it had**: `pinyin_init` / `zhuyin_init` answer NULL with one GLib warning for a short or corrupt library and non-NULL for an absent one (the library stays unloaded); a reload answers `true`; a modified save answers `true` and a mask-out `true`; `pinyin_load_addon_phrase_library` answers `false`. The save, mask-out and reload now map and checksum each loaded system library once more, as the pin does (about 4 MB for the model20 set, held only for the check, nothing kept): time, not space. The pin dies after its first line, so with several libraries broken oxpinyin writes one line for each, in library order, and the pin's bytes are a prefix. An init that fails on a library judges the user profile first, as the pin does: `check_format` now runs right after `table.conf` is read, before any table or library, so the pin's `open <user>/user.conf failed.`, the wipe of a non-conforming profile and the marker write all happen before the init answers NULL; the user dir the failing init leaves is the pin's (checked file by file, pin against subject, for a conforming, a fresh and a non-conforming dir on both facades). The cases use all three user dirs. A directory in a library's place is row 96 when its reported size is 8 bytes or more (`memory_chunk.h:493`); below that it is this row. **Extended 2026-10-18 UTC (#865):** the same `SubPhraseIndex::load` reads at `phrase_index.cpp:354-356` also run past the chunk for an in-bounds header whose separator/index lies outside the payload, or for a payload shorter than the four-word header. The pin reads the separator/index outside the mapped chunk (SIGSEGV on the out-of-payload shape); oxpinyin's `PhraseLibrary::open` refuses a separator or index outside the payload as `LibraryError::Format` without the read and without a critical, and a payload shorter than 17 bytes as `LibraryError::Layout`; the caller loads the empty sub-index and logs one critical (none since #1297 decision D1, 2026-10-31 UTC: [1297-layout-criticals](1297-layout-criticals.md)). Class (b), the same site as row 76; held by `crash-oob-layout-{pinyin,zhuyin}` (pin SIGSEGV, subject `init` false; no critical) and `short-chunk-layout-{pinyin,zhuyin}` (the pin's empty sub-index + one critical matched by the subject's Layout empty sub-index + one critical; the out-of-object read itself is not performed), all MATCH on bdb. **Maintainer ruling 2026-11-01 UTC — explicit class (b) safe outcome, not parity; implemented by the live-library save (member A4 of the stage 2 mapping stack):** when a save cannot map a loaded system library again, write `mmap %s failed!` and stop at that library. For libpinyin, earlier libraries' `.tmp` files remain and the rename pass has not started (`src/pinyin.cpp:922-1147` at `074a2219`). For libzhuyin, earlier libraries may already have been renamed because writes and renames are interleaved (`src/zhuyin.cpp:547-703`). Keep every filesystem change already made; perform no later write, rename or `user.conf` marker update, rollback or cleanup. Keep the session alive, its unsaved changes intact and its dirty flag set. `pinyin_save` and `zhuyin_save` return `false`. A later save retries normally after the system file is repaired, with no special retry mechanism. This supersedes the retained-original fallback for that save failure; the pin crashes. Required transition regressions cover both facades: a live edit, stale `.tmp`, failed remap, exact preceding files, false return and a usable dirty session, then repair, save and reopen. Held by `crash-save-missing-system{,-zhuyin}` (the answer is `false`) and `crash-save-remap-failed-retry{,-zhuyin}` (stale `.tmp` untouched, marker kept, a second edit trains, the repaired file saves and the log carries the edit). The save now diffs each library's live buffer against the file mapped again at that point of the loop, so a failed remap stops it there; the session keeps the dirty flag. **Maintainer ruling 2026-11-03 UTC — `mask_out` remap failure, class (b):** check the user tables first (`pinyin.cpp:1228-1230`: rows 84 to 87, 94, 98 and 101), without changing state and before opening any system library or journal. Then walk the selected system libraries in index order, as the pin's loop does (`pinyin.cpp:1260-1294`, `zhuyin.cpp:795-829`): map library i, read its saved log once, check the header rules of rows 91 and 92, then go to library i+1. The first fault decides, and no later library is opened, mapped or read. If a library cannot be mapped, write its `mmap %s failed!` line and return `true` without masking any system or user library or writing any file; retain all live buffers and unsaved changes. A directory (row 96) or a log header fault (rows 91, 92) reached first is the recorded abort, and a library after it writes no line. This matches the pin’s post-restart state for saved data: the pin crashes before a save, losing every in-memory change of the call. Keeping the pre-call unsaved changes is the deliberate safe difference. |
+| 76 | `mmap %s failed!`: a system library the pin cannot map, and the empty chunk it dies on (#545) | **(b)**; the line itself **CLOSED** in code (#545) | `MemoryChunk::mmap` answers `false` for a file that cannot be opened, is shorter than the 8-byte header, whose length word is not the payload length, or whose checksum does not verify (`memory_chunk.h:470-520`). Every caller prints `mmap %s failed!` and goes on with the chunk it just reset, which is **empty**: `SubPhraseIndex::load` then reads `*(buf_begin + 16)` through a NULL base (`phrase_index.cpp:354`), and the pin dies of SIGSEGV. The `open %s failed!` branches next to each line are `#else` of `LIBPINYIN_USE_MMAP`, which `memory_chunk.h:31-34` defines whenever `HAVE_MMAP` is, and the oracle's `config.h:42` has `#define HAVE_MMAP 1`: they are not compiled. **Sites, and the public calls that reach each** (pin `074a2219`): `pinyin.cpp:256` (a `SYSTEM_FILE` library) by `pinyin_init` for each default library in index order, and by `pinyin_load_phrase_library` for one `pinyin_unload_phrase_library` let go (only GBK, 2); `zhuyin.cpp:200` by `zhuyin_init` and `zhuyin_load_phrase_library` (any library but TSI, 1); `pinyin.cpp:290` (a `DICTIONARY` library) by `pinyin_load_addon_phrase_library` alone; `pinyin.cpp:956` and `zhuyin.cpp:589` by a modified `pinyin_save` / `zhuyin_save`, which maps each loaded system library again to `diff` it against the live one (`phrase_index.cpp:278`, the same `load` on the old chunk); `pinyin.cpp:1265` and `zhuyin.cpp:800` by `pinyin_mask_out` / `zhuyin_mask_out`, which reload each loaded system library. **Guards where the pin stays silent** (the controls): a library or addon already loaded (`get_range` answers before any `mmap`, `pinyin.cpp:242-244`, `zhuyin.cpp:186`), a library unloaded (the save and mask-out loops skip a missing sub-index), a save with nothing modified, and a reload of a whole file. **Not reachable by any public call:** `zhuyin.cpp:234` — the zhuyin facade has no addon entry point, `zhuyin_init` and `zhuyin_load_phrase_library` `assert` the default table is not `DICTIONARY` (`:330`, `:372`; the pin is built without `NDEBUG`), so no call reaches the `DICTIONARY` branch; and `facade_chewing_table.h:115` / `facade_phrase_table2.h:96` — `FacadeChewingTable` and `FacadePhraseTable2` are included by `pinyin_internal.cpp` into the uninstalled `libpinyin_internal.a` and instantiated nowhere in `src/`, `tests/` or `utils/` (the library uses `FacadeChewingTable2` and `FacadePhraseTable3`); the oracle's `libpinyin.so.15` and `libzhuyin.so.15` define no symbol of either class. Both are unreachable by argument, not by case. **Measured** on bdb (`stderr-library-*` of `contract-diff.py`, 39 crash cases and 11 controls): with `merged.bin` (or `gbk_char.bin`, `art.bin`) absent, cut to four bytes, or with its last payload byte flipped in a private copy of the system directory, the pin writes its line and dies of SIGSEGV at every site, pinyin and zhuyin, at fault address `0x10` (an `LD_PRELOAD` handler printing `si_addr`; no case reproduces the read). Undefined behaviour, so class (b): no safe construction reads through a NULL chunk. **oxpinyin** writes the pin's bytes at each of these sites (one shared writer, `oxpinyin_data::c_stderr`, which makes the pin's `fprintf(stderr, …)` through the `oxpinyin-input` shim since stage 4 of `external-io-boundary.md`; the failure is the typed `LibraryError::Unmappable` the chunk reader raises for exactly what `MemoryChunk::mmap` refuses — a separator or index outside the payload is `LibraryError::Format` and has no line; a payload shorter than 17 bytes is `LibraryError::Layout`, and the caller loads the empty sub-index and logs one critical (none since #1297 decision D1, 2026-10-31 UTC: [1297-layout-criticals](1297-layout-criticals.md)), as `SubPhraseIndex::load`'s `g_return_val_if_fail` does) and **keeps every answer it had**: `pinyin_init` / `zhuyin_init` answer NULL with one GLib warning for a short or corrupt library and non-NULL for an absent one (the library stays unloaded); a reload answers `true`; a modified save answers `true` and a mask-out `true`; `pinyin_load_addon_phrase_library` answers `false`. The save, mask-out and reload now map and checksum each loaded system library once more, as the pin does (about 4 MB for the model20 set, held only for the check, nothing kept): time, not space. The pin dies after its first line, so with several libraries broken oxpinyin writes one line for each, in library order, and the pin's bytes are a prefix. An init that fails on a library judges the user profile first, as the pin does: `check_format` now runs right after `table.conf` is read, before any table or library, so the pin's `open <user>/user.conf failed.`, the wipe of a non-conforming profile and the marker write all happen before the init answers NULL; the user dir the failing init leaves is the pin's (checked file by file, pin against subject, for a conforming, a fresh and a non-conforming dir on both facades). The cases use all three user dirs. A directory in a library's place is row 96 when its reported size is 8 bytes or more (`memory_chunk.h:493`); below that it is this row. **Extended 2026-10-18 UTC (#865):** the same `SubPhraseIndex::load` reads at `phrase_index.cpp:354-356` also run past the chunk for an in-bounds header whose separator/index lies outside the payload, or for a payload shorter than the four-word header. The pin reads the separator/index outside the mapped chunk (SIGSEGV on the out-of-payload shape); oxpinyin's `PhraseLibrary::open` refuses a separator or index outside the payload as `LibraryError::Format` without the read and without a critical, and a payload shorter than 17 bytes as `LibraryError::Layout`; the caller loads the empty sub-index and logs one critical (none since #1297 decision D1, 2026-10-31 UTC: [1297-layout-criticals](1297-layout-criticals.md)). Class (b), the same site as row 76; held by `crash-oob-layout-{pinyin,zhuyin}` (pin SIGSEGV, subject `init` false; no critical) and `short-chunk-layout-{pinyin,zhuyin}` (the pin's empty sub-index + one critical matched by the subject's Layout empty sub-index + one critical; the out-of-object read itself is not performed), all MATCH on bdb. **Maintainer ruling 2026-11-01 UTC — explicit class (b) safe outcome, not parity; implemented by the live-library save (member A4 of the stage 2 mapping stack):** when a save cannot map a loaded system library again, write `mmap %s failed!` and stop at that library. For libpinyin, earlier libraries' `.tmp` files remain and the rename pass has not started (`src/pinyin.cpp:922-1147` at `074a2219`). For libzhuyin, earlier libraries may already have been renamed because writes and renames are interleaved (`src/zhuyin.cpp:547-703`). Keep every filesystem change already made; perform no later write, rename or `user.conf` marker update, rollback or cleanup. Keep the session alive, its unsaved changes intact and its dirty flag set. `pinyin_save` and `zhuyin_save` return `false`. A later save retries normally after the system file is repaired, with no special retry mechanism. This supersedes the retained-original fallback for that save failure; the pin crashes. Required transition regressions cover both facades: a live edit, stale `.tmp`, failed remap, exact preceding files, false return and a usable dirty session, then repair, save and reopen. Held by `crash-save-missing-system{,-zhuyin}` (the answer is `false`) and `crash-save-remap-failed-retry{,-zhuyin}` (stale `.tmp` untouched, marker kept, a second edit trains, the repaired file saves and the log carries the edit). The save now diffs each library's live buffer against the file mapped again at that point of the loop, so a failed remap stops it there; the session keeps the dirty flag. **Maintainer ruling 2026-11-03 UTC — `mask_out` remap failure, class (b):** check the user tables first (`pinyin.cpp:1228-1230`: rows 84 to 87, 94, 98 and 101), without changing state and before opening any system library or journal. Then walk the selected system libraries in index order, as the pin's loop does (`pinyin.cpp:1260-1294`, `zhuyin.cpp:795-829`): map library i, read its saved log once, check the header rules of rows 91 and 92, then go to library i+1. The first fault decides, and no later library is opened, mapped or read. If a library cannot be mapped, write its `mmap %s failed!` line and return `true` without masking any system or user library or writing any file; retain all live buffers and unsaved changes. A directory (row 96) or a log header fault (rows 91, 92) reached first is the recorded abort, and a library after it writes no line. This matches the pin’s post-restart state for saved data: the pin crashes before a save, losing every in-memory change of the call. Keeping the pre-call unsaved changes is the deliberate safe difference. **Maintainer ruling 2026-11-05 UTC — reload remap failure, class (b):** when `pinyin_load_phrase_library` or `zhuyin_load_phrase_library` cannot map the library's system file again, the library stays unloaded: the visibility mask is not cleared. The call keeps the answer `true` that this row fixes, and a later load tries the file again. The mask clears only for a library the remap mapped, and a `SYSTEM_FILE` row is mapped whether or not it names a user file (`pinyin.cpp:246-264`; only the mask-out loop skips such a row, `:1250-1251`). No reader meets a library whose bytes the session no longer holds (row 118). Held by `a_failed_reload_keeps_the_library_unloaded_until_the_next_load` (`crates/oxpinyin-capi/src/candidates.rs`) and `a_reload_maps_a_system_row_that_names_no_user_file` (`crates/oxpinyin-facade/src/context.rs`). |
 | 77 | Chunk header write failure during save (`memory_chunk.h:543`/`:547`, #525) | **pin behaviour reproduced** (members 3–4, 2026-10-31 UTC; records [pinyin](pin-aborts-pinyin-facade.md), [zhuyin](pin-aborts-zhuyin-facade.md)) (class (c) retired 2026-10-31 UTC; was: **(c)**, both halves met (2026-10-10 UTC)) | `MemoryChunk::save` writes the 4-byte length word then the 4-byte checksum, each `assert`ing the `write` returned the whole word (`memory_chunk.h:543`, `:547` at 074a2219); a filesystem that refuses the write (`/dev/full`, `RLIMIT_FSIZE`, a full disk) aborts the pin on `pinyin_save`/`zhuyin_save` of a dirty context. Before this change the header write was an ordinary `Io` error, which oxpinyin's reporting save tolerated like any other per-file write failure and carried past into its rename pass; it now stops at the header write, answering `false` naming the word, and both C facades emit exactly one `g_warning` in their own domain — `libpinyin` for `pinyin_save`, `libzhuyin` for `zhuyin_save`. The soft chunk payload writes stay the per-file I/O failures row 69 tolerates: a refused payload write is ignored, the save continues and reports the renames and the marker. Held by `abort-save-chunk-header-length`, `-checksum` and their `abort-zhuyin-save-chunk-header-` twins of `contract-diff.py`, MATCH on bdb, kc and tkrzw (pin SIGABRT -6, subject `false` with one warning); all four DIFFER against the parent build. |
 | 78 | `table.conf` rows decide the library set (#694) | **CLOSED** in code (2026-10-10 UTC) | `SystemTableInfo2::load` (`table_info.cpp:194-294`, `074a2219`) reads the header with five `fscanf`s and the rows as words in groups of six (`default <enum name>` or `addon <number>`, then the table, system and user file names, then the file type). `pinyin_init`/`zhuyin_init` (`pinyin.cpp:377-392`, `zhuyin.cpp:318-334`) load every default row that is not `NOT_USED` through `_load_phrase_library` (`SYSTEM_FILE`: the system chunk plus the `.dbin` diff log; `USER_FILE`: the user chunk; `DICTIONARY`: system chunk only, addon rows), `pinyin_load_addon_phrase_library` loads an addon row on demand, and `_write_files`/`_rename_files`/`_clean_user_files` (`:915-1130`, `:150-170`) write, rename and unlink the files the rows name. oxpinyin read only the lambda and version lines and hard-coded the layout (`system_files.rs`, `user_files.rs`, `dict.rs`). **Now:** one reader, `oxpinyin_data::table_info::TableConf::parse`, follows the pin's `fscanf` stream (a directive's space matches any run of white space, `%255s` crosses newlines and takes 255 bytes, a short last row is dropped, an addon index goes through `atoi` and a `guint8`) and drives the system libraries (`SystemDictionary::open_with`), the addon rows (`AddonDictionary::open_with`), the user dir's file names (`UserFileLayout`, carried by `oxpinyin_user::SystemOriginals`), the `USER_FILE` libraries a phrase can be added to (`UserStore::has_user_library`), the versions and database format the user marker conforms against (`SystemVersions::from_conf`) and the prediction λ. A `NOT_USED` row loads and writes nothing; a removed row is `NOT_USED`. Held by 88 `table-conf-*` valid-file cases (29 of the 141 table-conf cases are controls the parent already answers like the pin) of `contract-diff.py` on both facades (rows removed or `NOT_USED`, renamed `.dbin`/user files, a `TSI_DICTIONARY` alias, a later row replacing an earlier one, a library retyped, λ spelled `0`, `0.5`, `1`, `5e-1`, `1e-30` (libzhuyin: `0.5` and `5e-1` only, see below), another database format, other versions, `source table format:zhuyin`, short/comment/seventh-word rows, and for libpinyin the addon rows moved, swapped, removed, `NOT_USED`, duplicated and wrapped through the `guint8`). File names are the raw bytes of the word (a name need not be UTF-8) and are joined to their directory as `g_build_filename` joins them: a name that starts with a separator stays beneath the directory (`<user dir>/tmp/x`), an empty directory leaves it as it is. The `%f` scanner takes every spelling glibc does (hexadecimal floats, `nan(...)`) and, unlike `strtod`, does not back up from an `e`, `p` or `0x` with no digit; `%d` and `atoi` saturate at `LONG_MIN`. `_write_files` writes the library files by sub-index, then the user pinyin index, the phrase index and the bigram, and `_rename_files` renames in that order, so a name two roles share ends with the later writer's contents under the first rename (the second rename fails and is reported); `zhuyin_save` renames each file as it writes it, so the later rename wins and nothing fails. **Boundary:** the roles of sub-indices 5, 6 and 7 (addon/network/user dictionary), the token space they allocate from and the promotion paths stay the fixed constants the pin's code also hard-codes; the rows decide whether each exists and what its files are called. A default row retyped across those roles (for example `NETWORK_DICTIONARY` as `SYSTEM_FILE`) loads and saves as the pin's does in the cases measured, but is not held beyond them. **Host libc (2026-10-17 UTC):** the pin reads the λ line with `fscanf(input, "lambda parameter:%f\n", &lambda)` and refuses the file only when that does not return 1 (`SystemTableInfo2::load`, `table_info.cpp:220-224`, blob `07b20e4e` read from the tree at `074a2219`), so what it accepts is its run-time libc's `%f`. oxpinyin's scanner is fixed to the oracle image's: glibc 2.43-3 (`debian:testing`, the image `tools/oracle/Dockerfile.oracle` builds) rejects `1e`, `0x1p`, `0x` and `infin`, and a host whose glibc backs up from a bare exponent mark accepts the first two (Ubuntu 24.04, glibc 2.39: `sscanf("1e", "%f")` and `sscanf("0x1p", "%f")` return 1 with 1.0; `0x` and `infin` return 0). Measured on bdb: the four `table-conf-lambda-{exponent,hex-exponent}-without-digits` cases (pinyin and zhuyin) MATCH in the oracle image and DIFFER on the 2.39 host. Not a divergence from the reference and no class applies; the subject's parser is unchanged. The reference libc is the oracle image's, and `contract-diff.py` marks those four cases `host_scanf` so a host whose scanner accepts the spelling reports `HOST-DEPENDENT` instead of `DIFFER` (human approval, 2026-10-17: "I would strongly prefer one. Since this is a language quirk"). **trixie reference (2026-10-25 UTC):** the pin-reference image now builds on `debian:trixie`, whose glibc is 2.41-12+deb13u4. Re-read from that source, 2.41 does not clear `got_digit` at an `%f` exponent mark and its conversion check does not require a digit after it (`stdio-common/vfscanf-internal.c:2196-2201`, `:2545-2549`), so it accepts `1e`, `1e+`, `0x1p`, `0x1p+` and `0x1p-` (value 1.0, consuming `1`/`0x1`) where 2.43-3 rejects them (`:2218-2219`, `:2571-2576`); `0x` and `infin` still fail. The subject still follows 2.43-3, so the affected cases are `table-conf-lambda-{exponent,hex-exponent}-without-digits` and `table-conf-919-lambda-{exponent-sign,hex-exponent-sign,hex-exponent-minus}-without-digits`, on both facades. The pin loads and the subject refuses in the trixie container, so the existing `host_scanf` marker reports them HOST-DEPENDENT. A separate spelling, `0x.`, has the prefix and no digit; 2.41's `%f` reaches `strtof("0x.")`, which treats it as 0 and returns with the read pointer after `0` (`stdlib/strtod_l.c:690-700`, `:732-768`, `:1044-1048`), so the pin loads, while 2.43 and the subject reject it (`vfscanf-internal.c:2571-2576`). At `8ba13c53` (preserved on wip/1229-pre-squash), before `0x.` was registered, `table-conf-919-lambda-hex-dot-without-digits` and its zhuyin twin reported DIFFER. Both facades now register `host_scanf=('0x.',)` (maintainer ruling, 2026-10-25), so on a host whose scanner accepts `0x.` the pin-loads/subject-refuses result reports HOST-DEPENDENT; any other difference stays DIFFER. This is a reference-version difference, recorded rather than tuned away. |
 | 79 | Malformed `table.conf` aborts the pin; oxpinyin fails the triggering call (#525 batch B) | **pin behaviour reproduced** (members 3–4, 2026-10-31 UTC; records [pinyin](pin-aborts-pinyin-facade.md), [zhuyin](pin-aborts-zhuyin-facade.md)) (class (c) retired 2026-10-31 UTC; was: **(c)** — both halves met (2026-10-10 UTC)) | Sites at `074a2219`: `table_info.cpp:119` (`source table format:`), `:132` (`database format:`, the `table.conf` half; the `user.conf` half is row 44), `:142` (row target), `:156` (default name), `:175` (file type) — all `abort()`; `:276` (`assert`, addon index outside 0..15 after the `guint8` cut); `pinyin.cpp:388` and `zhuyin.cpp:330` (`assert(DICTIONARY != m_file_type)` in the init loop); `pinyin.cpp:491` (`assert(DICTIONARY == m_file_type)` in `pinyin_load_addon_phrase_library`); and `pinyin.cpp:457`/`zhuyin.cpp:372` (`SYSTEM_FILE`/`USER_FILE` assert in `*_load_phrase_library`, whose rows were fixed at the stock holes 0 and 8–15 until now). **Triggering call:** `table_info.cpp` sites die inside `SystemTableInfo2::load`, before `check_format`, so the user dir is untouched (verified: empty after the abort on both facades); `:388`/`:330` die after `check_format` (`user.conf` written, open counter 1, verified for libpinyin; libzhuyin writes none at init); `:491` and `:457`/`:372` die in their load call. **oxpinyin:** `*_init` answers NULL with exactly one GLib warning in the facade's domain (`TableConfSite::warning`, a fixed text per site) and, for `:388`/`:330`, after the profile judgement, leaving `user.conf` written as the pin does; the load calls answer `false` with one warning, driven by the rows. Two more sites found on the way, both `MemoryChunk` reading a directory because a `NULL` name makes `g_build_filename` return the directory: `memory_chunk.h:493` (`mmap`, a `SYSTEM_FILE`/`DICTIONARY` row without a system file) and `:434` (`load`, a row without a user file). Both assert only where `lseek(SEEK_END)` on the directory answers 8 or more, which the file system decides (btrfs: 2 × the names in it, so an empty directory is 0; ext4: at least 4096, `LLONG_MAX` on the #1011 host; tmpfs: `EINVAL`, so `file_size` is −1; #1011): `TableConf::check_default_rows` asks the file system the same question for `:434`, and only libpinyin (which has written `user.conf` by then) is held. For `:493`, where the directory answers less, `mmap` is an ordinary `false` (`:486-489`), the pin writes `mmap <dir> failed!` (`pinyin.cpp:256`, `:290`, `zhuyin.cpp:200`) and dies of SIGSEGV on the empty chunk in `SubPhraseIndex::load` (`phrase_index.cpp:354`), a class (b) site; oxpinyin writes the same line (`ContextCore::try_open` and `load_addon_phrase_library`, from `phrase_library::directory_reads_as_a_chunk`, the test `check_default_rows` uses) and gives the abort site's answer. The three cases hold that line byte for byte on such a file system (`dir_chunk` in `contract-diff.py`). Held by 37 `table-conf-abort-*` cases of `contract-diff.py`. Where the directory reads as a chunk (ext4, for example), the pin dies of SIGABRT in all 37, the subject answers the declared value with one warning, and for the init sites the user directory each side leaves is compared file by file. Where it does not (tmpfs), 32 of the 37 are unchanged; the other five are the `dir_chunk` cases. In the three system-directory ones, the pin writes `mmap <dir> failed!` and dies of SIGSEGV; the subject writes the same line and answers as at a class (b) site, with the declared value and the one warning. In the two user-directory ones, both sides return normally with the same answer, stderr and user directory. |
@@ -1306,6 +1306,7 @@ not proof that the current Rust parser follows the newly required call.
 | 115 | Consumed invalid UTF-8 in family E text rows or phrase-table queries | **(b)** — NULL read with uninitialized length | Maintainer-approved safe outcome, recorded 2026-11-03 UTC, narrowed by review 2026-11-04 UTC: `tests/storage/test_phrase_table.cpp:45-59` passes failed `g_utf8_to_ucs4` output to search (`src/storage/phrase_large_table3_tkrzwdb.cpp:133-136`); phrase-table text loading also consumes it (`phrase_large_table3.cpp:131-135`). In `FacadePhraseIndex::load_text`, conversion returns NULL without setting the uninitialized `glong written` (`phrase_index.cpp:541-543`). Only `cur_token == 0` or a changed token consumes it in `set_phrase_string(written, NULL)` (`:545-556`), copying an uninitialized length from NULL: undefined behavior. Token 0 keeps `cur_token` at 0, so every token-0 row consumes its conversion. Stop those consuming failures with normal `exit(EINVAL)`, no added diagnostic, retaining earlier observable work. A same nonzero token never uses the failed conversion: it parses the reading, adds it when its key count matches, otherwise prints the source skip line (`:577-582`), then frees NULL (`:586`); that path is defined and continues. The two same-token cases compare against the pin. Undefined consuming paths never run the pin; the index's subject guard retains earlier timed output. E3 adds table cases using pin_not_run. |
 | 116 | More than sixteen keys passed directly to the chewing-table test search | **(b)** — stack-buffer write | Maintainer-approved safe outcome, recorded 2026-11-03 UTC: `tests/storage/test_chewing_table.cpp:71-86` passes all parsed keys to `src/storage/chewing_large_table2.cpp:161-172`, whose local `ChewingKey index[MAX_PHRASE_LENGTH]` has sixteen slots. `src/storage/pinyin_phrase3.h:160-177` writes phrase_length keys before search_internal's switch can abort. After checking only the first incomplete key's zero tone (`pinyin_phrase3.h:146-157`), stop immediately before the unsafe copy with normal `exit(EINVAL)`, no added diagnostic, keeping earlier observable work. This is separate from row 84's stored-key dispatch. `chewing-table-overlong-query` uses pin_not_run; the subject guard after a valid timed query verifies that earlier stdout is kept. |
 | 117 | Logger ignores a failed required phrase-chunk load | **(b)** — row 76's NULL read | Maintainer-approved safe outcome, recorded 2026-11-03 UTC; citation scope clarified 2026-11-04 UTC: the three required `../../data/gb_char.bin` loads at `tests/storage/test_phrase_index_logger.cpp:28-30,45-48,52-54` ignore MemoryChunk::load returning false. The first and third enter SubPhraseIndex::load directly; diff loads the second as its old sub-index (`phrase_index.cpp:271-282,335-354`), reaching row 76's NULL read. Stop a failed required phrase-chunk load with normal `exit(ENOENT)`, no added diagnostic, retaining earlier observable work. The separate journal reload at `test_phrase_index_logger.cpp:55-57` is defined on failure: PhraseIndexLogger::load retains the empty chunk and has_next_record finds nothing (`phrase_index_logger.h:94-133`), so nothing is merged. Do not apply this refusal to the journal. `phrase-index-logger-missing` and `phrase-index-logger-short` bind source-only complete observations; no undefined pin execution. |
+| 118 | Training a token whose library is unloaded: the pin raises the reading counts of a stale cached item | **(b)** for a write into the unloaded library's freed chunk; approved divergence for a write into a library still loaded | Maintainer ruling 2026-11-05 UTC. After `pinyin_unload_phrase_library` (GBK, 2) or `zhuyin_unload_phrase_library` (any library but TSI, 1) deletes a sub-index (`phrase_index.cpp:261-269`), a sentence that holds a token of it still trains. `train_result3` reads the item unchecked (`phonetic_lookup.h:924`): `FacadePhraseIndex::get_phrase_item` answers `ERROR_NO_SUB_PHRASE_INDEX` and leaves `m_cached_phrase_item` as the last successful read left it (`phrase_index.h:649-650`). The call then raises that item's reading counts (`:925-927`). The cached chunk is non-owning (`phrase_index.cpp:204`), so the write lands wherever that read pointed. **When it points into the unloaded library's freed chunk,** the write is a use-after-free, so class (b): no safe construction reproduces it, and oxpinyin trains no reading. **When it points into another library that is still loaded,** the pin defines the result: it raises that live item's reading counts. oxpinyin deliberately declines that write too; this is the approved divergence in [the unloaded-token pronunciation amendment](#amendment--unloaded-token-pronunciation-cache-2026-11-05-utc), held by `unloaded-cached-pronunciation-pinyin` and `unloaded-cached-pronunciation-zhuyin`. **In both cases oxpinyin** trains no reading of a token whose library has no live buffer, as `arena_train` leaves a journal-removed item alone, and keeps what the pin defines: the bigram trains (`:875-909`), the unigram add finds no sub-index and moves no total (`phrase_index.h:631-632`), and `pinyin_train` and `zhuyin_train` answer `true`. A predicted bigram or prefix row of the unloaded library does the same (`pinyin.cpp:2609-2639`). `_add_phrase` finds no range (`pinyin.cpp:589-591`) and `compact` skips the library (`phrase_index.cpp:651-652`), so its total stays as the unload left it. Held by `unloaded_library_tests` (`crates/oxpinyin-capi/src/candidates.rs`) and `unloaded` (`crates/oxpinyin-user/src/store_libpinyin/unloaded.rs`). No contract case for the freed chunk: the pin's write there is undefined. |
 
 
 
@@ -1318,6 +1319,10 @@ including row `106a`: E2's 24 rows plus row 116. The first incomplete-key
 assertion precedes row 116's refusal; a 17-key query starting with n4 aborts,
 while n followed by n4 reaches a defined table search. Historical counts
 below remain dated.
+
+**2026-11-05 UTC unloaded-library recount:** class (b) has **26** physical rows,
+including row `106a`: E3's 25 rows plus row 118. Historical counts below remain
+dated.
 
 
 Totals recounted 2026-10-18 UTC from the primary status in each class
@@ -1766,6 +1771,38 @@ former POLICY-ACCEPTED cases are ordinary MATCH cases, and the register
 and the GLib/libc ledger carry the closure. `LC_NUMERIC` (row 39) remains
 ruled bug-for-bug; #923 is unchanged.
 
+## Amendment — unloaded-token pronunciation cache (2026-11-05 UTC)
+
+Maintainer ruling, recorded 2026-11-05 UTC (`date -u`). For an unloaded
+token in training, oxpinyin skips the pronunciation step and writes into
+no item. Bigram training, the constraint walk, the modified flag and the
+true result remain the pin's. This is an explicit approved divergence,
+including the defined stale-cache write; it does not authorize departures
+for other missing-item paths.
+
+At `074a2219`, after a failed `get_phrase_item`, `train_result3` applies the
+pronunciation helper to `m_cached_phrase_item` (`phonetic_lookup.h:924-929`).
+The cache belongs to the context's one `PhoneticLookup`, shared by every
+instance of that context (`pinyin.cpp:39-75,406-409`;
+`zhuyin.cpp:34-62,348-351`; member `phonetic_lookup.h:523`). Every successful
+trellis fetch replaces it, including candidates the decoder later rejects
+(`phonetic_lookup.h:646,674`). The written item therefore depends on hidden
+context fetch history. If the cached item belongs to the library just
+unloaded, unload frees its bytes without clearing the cache
+(`phrase_index.cpp:261-268`), and the later read and possible write are a
+use-after-free (`phonetic_key_matrix.cpp:603-620`,
+`phrase_index.cpp:114-140`). The safe answer writes into no item.
+
+`unloaded-cached-pronunciation-pinyin` retains the defined witness: library
+1 holds 甲 and library 2 holds 乙, both pronounced ba1 with pronunciation
+count 10. Choose 乙 and guess its sentence, unload library 2, then guess ba1
+on another instance of the same context. Training the first instance makes
+the pin write 甲's pronunciation count from 10 to 79, saved in
+`gb_char.dbin`, while its unigram stays 100. Oxpinyin leaves the count at
+10. The corresponding zhuyin case covers the shared implementation.
+These cases are **POLICY-ACCEPTED**, never MATCH. Their complete pin and
+subject observations are bound in this document's contract policy block.
+
 ## Amendment — fresh UserTableInfo with zero versions (2026-11-01 UTC)
 
 Maintainer ruling, recorded at 2026-11-01T17:43:32Z (`date -u`).
@@ -1895,6 +1932,230 @@ or replayed pin result. Ordinary discrepancy pairs still reject parity.
           "files": "eb361d7975aa2e68",
           "stderr": "12ae32cb1ec02d01",
           "stdout": "12ae32cb1ec02d01"
+        }
+      }
+    },
+    "unloaded-cached-pronunciation-pinyin": {
+      "cells": {
+        "tkrzw": {
+          "pin": {
+            "sha256": "b845dfc64468d8a2de351d8531faef41624fa2ab904e1ffd5db3ddde15794b9f",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.journals": "535e8bb91374c5c0",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.pronunciations-before": "b08cd50b25ebfe48",
+              "result.save": "b5bea41b6c623f7c",
+              "result.train": "b5bea41b6c623f7c",
+              "result.unigrams-after": "73908e93390814de",
+              "result.unigrams-before": "0f96b3bfbc3b2238",
+              "result.unload": "b5bea41b6c623f7c",
+              "stderr": "12ae32cb1ec02d01"
+            }
+          },
+          "subject": {
+            "sha256": "109d9bbf4e3f9acda31e73c654948443c02a73dcf217ed9f8113b3688470211f",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.journals": "e8e069df3c010dca",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.pronunciations-before": "b08cd50b25ebfe48",
+              "result.save": "b5bea41b6c623f7c",
+              "result.train": "b5bea41b6c623f7c",
+              "result.unigrams-after": "73908e93390814de",
+              "result.unigrams-before": "0f96b3bfbc3b2238",
+              "result.unload": "b5bea41b6c623f7c",
+              "stderr": "12ae32cb1ec02d01"
+            }
+          },
+          "divergence": [
+            "result.journals.gb_char.dbin: pin \"3e0000001000570004000000000000000400640000\" … (length 140); subject \"120000000000000004000000000000000400640000\" … (length 52)",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        },
+        "bdb": {
+          "pin": {
+            "sha256": "b845dfc64468d8a2de351d8531faef41624fa2ab904e1ffd5db3ddde15794b9f",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.journals": "535e8bb91374c5c0",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.pronunciations-before": "b08cd50b25ebfe48",
+              "result.save": "b5bea41b6c623f7c",
+              "result.train": "b5bea41b6c623f7c",
+              "result.unigrams-after": "73908e93390814de",
+              "result.unigrams-before": "0f96b3bfbc3b2238",
+              "result.unload": "b5bea41b6c623f7c",
+              "stderr": "12ae32cb1ec02d01"
+            }
+          },
+          "subject": {
+            "sha256": "109d9bbf4e3f9acda31e73c654948443c02a73dcf217ed9f8113b3688470211f",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.journals": "e8e069df3c010dca",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.pronunciations-before": "b08cd50b25ebfe48",
+              "result.save": "b5bea41b6c623f7c",
+              "result.train": "b5bea41b6c623f7c",
+              "result.unigrams-after": "73908e93390814de",
+              "result.unigrams-before": "0f96b3bfbc3b2238",
+              "result.unload": "b5bea41b6c623f7c",
+              "stderr": "12ae32cb1ec02d01"
+            }
+          },
+          "divergence": [
+            "result.journals.gb_char.dbin: pin \"3e0000001000570004000000000000000400640000\" … (length 140); subject \"120000000000000004000000000000000400640000\" … (length 52)",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        },
+        "kc": {
+          "pin": {
+            "sha256": "b845dfc64468d8a2de351d8531faef41624fa2ab904e1ffd5db3ddde15794b9f",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.journals": "535e8bb91374c5c0",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.pronunciations-before": "b08cd50b25ebfe48",
+              "result.save": "b5bea41b6c623f7c",
+              "result.train": "b5bea41b6c623f7c",
+              "result.unigrams-after": "73908e93390814de",
+              "result.unigrams-before": "0f96b3bfbc3b2238",
+              "result.unload": "b5bea41b6c623f7c",
+              "stderr": "12ae32cb1ec02d01"
+            }
+          },
+          "subject": {
+            "sha256": "109d9bbf4e3f9acda31e73c654948443c02a73dcf217ed9f8113b3688470211f",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.journals": "e8e069df3c010dca",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.pronunciations-before": "b08cd50b25ebfe48",
+              "result.save": "b5bea41b6c623f7c",
+              "result.train": "b5bea41b6c623f7c",
+              "result.unigrams-after": "73908e93390814de",
+              "result.unigrams-before": "0f96b3bfbc3b2238",
+              "result.unload": "b5bea41b6c623f7c",
+              "stderr": "12ae32cb1ec02d01"
+            }
+          },
+          "divergence": [
+            "result.journals.gb_char.dbin: pin \"3e0000001000570004000000000000000400640000\" … (length 140); subject \"120000000000000004000000000000000400640000\" … (length 52)",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        }
+      }
+    },
+    "unloaded-cached-pronunciation-zhuyin": {
+      "cells": {
+        "tkrzw": {
+          "pin": {
+            "sha256": "b845dfc64468d8a2de351d8531faef41624fa2ab904e1ffd5db3ddde15794b9f",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.journals": "535e8bb91374c5c0",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.pronunciations-before": "b08cd50b25ebfe48",
+              "result.save": "b5bea41b6c623f7c",
+              "result.train": "b5bea41b6c623f7c",
+              "result.unigrams-after": "73908e93390814de",
+              "result.unigrams-before": "0f96b3bfbc3b2238",
+              "result.unload": "b5bea41b6c623f7c",
+              "stderr": "12ae32cb1ec02d01"
+            }
+          },
+          "subject": {
+            "sha256": "109d9bbf4e3f9acda31e73c654948443c02a73dcf217ed9f8113b3688470211f",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.journals": "e8e069df3c010dca",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.pronunciations-before": "b08cd50b25ebfe48",
+              "result.save": "b5bea41b6c623f7c",
+              "result.train": "b5bea41b6c623f7c",
+              "result.unigrams-after": "73908e93390814de",
+              "result.unigrams-before": "0f96b3bfbc3b2238",
+              "result.unload": "b5bea41b6c623f7c",
+              "stderr": "12ae32cb1ec02d01"
+            }
+          },
+          "divergence": [
+            "result.journals.gb_char.dbin: pin \"3e0000001000570004000000000000000400640000\" … (length 140); subject \"120000000000000004000000000000000400640000\" … (length 52)",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        },
+        "bdb": {
+          "pin": {
+            "sha256": "b845dfc64468d8a2de351d8531faef41624fa2ab904e1ffd5db3ddde15794b9f",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.journals": "535e8bb91374c5c0",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.pronunciations-before": "b08cd50b25ebfe48",
+              "result.save": "b5bea41b6c623f7c",
+              "result.train": "b5bea41b6c623f7c",
+              "result.unigrams-after": "73908e93390814de",
+              "result.unigrams-before": "0f96b3bfbc3b2238",
+              "result.unload": "b5bea41b6c623f7c",
+              "stderr": "12ae32cb1ec02d01"
+            }
+          },
+          "subject": {
+            "sha256": "109d9bbf4e3f9acda31e73c654948443c02a73dcf217ed9f8113b3688470211f",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.journals": "e8e069df3c010dca",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.pronunciations-before": "b08cd50b25ebfe48",
+              "result.save": "b5bea41b6c623f7c",
+              "result.train": "b5bea41b6c623f7c",
+              "result.unigrams-after": "73908e93390814de",
+              "result.unigrams-before": "0f96b3bfbc3b2238",
+              "result.unload": "b5bea41b6c623f7c",
+              "stderr": "12ae32cb1ec02d01"
+            }
+          },
+          "divergence": [
+            "result.journals.gb_char.dbin: pin \"3e0000001000570004000000000000000400640000\" … (length 140); subject \"120000000000000004000000000000000400640000\" … (length 52)",
+            "… further divergence omitted (4096-byte budget)"
+          ]
+        },
+        "kc": {
+          "pin": {
+            "sha256": "b845dfc64468d8a2de351d8531faef41624fa2ab904e1ffd5db3ddde15794b9f",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.journals": "535e8bb91374c5c0",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.pronunciations-before": "b08cd50b25ebfe48",
+              "result.save": "b5bea41b6c623f7c",
+              "result.train": "b5bea41b6c623f7c",
+              "result.unigrams-after": "73908e93390814de",
+              "result.unigrams-before": "0f96b3bfbc3b2238",
+              "result.unload": "b5bea41b6c623f7c",
+              "stderr": "12ae32cb1ec02d01"
+            }
+          },
+          "subject": {
+            "sha256": "109d9bbf4e3f9acda31e73c654948443c02a73dcf217ed9f8113b3688470211f",
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.journals": "e8e069df3c010dca",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.pronunciations-before": "b08cd50b25ebfe48",
+              "result.save": "b5bea41b6c623f7c",
+              "result.train": "b5bea41b6c623f7c",
+              "result.unigrams-after": "73908e93390814de",
+              "result.unigrams-before": "0f96b3bfbc3b2238",
+              "result.unload": "b5bea41b6c623f7c",
+              "stderr": "12ae32cb1ec02d01"
+            }
+          },
+          "divergence": [
+            "result.journals.gb_char.dbin: pin \"3e0000001000570004000000000000000400640000\" … (length 140); subject \"120000000000000004000000000000000400640000\" … (length 52)",
+            "… further divergence omitted (4096-byte budget)"
+          ]
         }
       }
     }

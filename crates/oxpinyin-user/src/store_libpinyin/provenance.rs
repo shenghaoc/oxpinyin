@@ -22,7 +22,7 @@ use oxpinyin_data::user_files::{LogRecord, SystemVersions, encode_log_records};
 use crate::persistence::{SystemLibrary, SystemOriginals, UserConfLaw};
 use crate::store::UserStore;
 
-const LIBRARY: u32 = 0x0100_0000;
+pub(super) const LIBRARY: u32 = 0x0100_0000;
 
 fn versions() -> SystemVersions {
     SystemVersions::for_this_build(7, 14)
@@ -84,7 +84,7 @@ fn shipped() -> [(u32, ChunkItem); 4] {
     ]
 }
 
-struct Profile {
+pub(super) struct Profile {
     dir: PathBuf,
     chunk: PathBuf,
 }
@@ -110,7 +110,7 @@ impl Profile {
         Self { dir, chunk }
     }
 
-    fn records(name: &str, records: &[LogRecord]) -> Self {
+    pub(super) fn records(name: &str, records: &[LogRecord]) -> Self {
         Self::new(name, &encode_log_records(records).expect("log"))
     }
 
@@ -122,7 +122,7 @@ impl Profile {
         .into()
     }
 
-    fn open(&self) -> UserStore {
+    pub(super) fn open(&self) -> UserStore {
         UserStore::open_libpinyin(&self.dir, self.originals(), versions(), UserConfLaw::Pinyin)
             .expect("open")
     }
@@ -137,7 +137,7 @@ impl Drop for Profile {
     }
 }
 
-fn header(old_total: u32, new_total: u32) -> LogRecord {
+pub(super) fn header(old_total: u32, new_total: u32) -> LogRecord {
     LogRecord::ModifyHeader {
         old_total,
         new_total,

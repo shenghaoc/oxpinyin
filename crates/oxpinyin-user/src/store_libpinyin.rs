@@ -1446,6 +1446,72 @@ mod tests {
     }
 
     #[test]
+    fn unloaded_training_keeps_bigram_but_never_materializes_an_item() {
+        for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
+            let dir = tempdir("unloaded-training");
+            let mut store =
+                UserStore::open_libpinyin(&dir, originals(), versions(), law).expect("session");
+            let token = 0x0100_0001;
+            store.reset_system_library(1);
+            let before = store.unigram_total().expect("facade extra");
+            assert!(!store.add_system_unigram_frequency(token, 7).unwrap());
+            assert_eq!(
+                store.add_system_unigram_outcome(token, 483).unwrap(),
+                crate::UnigramAdd::Missing
+            );
+            assert_eq!(store.observe_selection(1, token).unwrap(), 69);
+            store
+                .train_pronunciations(
+                    token,
+                    std::iter::from_fn(|| panic!("unloaded pronunciation step consumed a reading")),
+                    69,
+                )
+                .unwrap();
+            assert_eq!(store.unigram_total().unwrap(), before);
+            assert!(!store.has_system_items());
+            assert_eq!(store.count_delta(Some(1), token).unwrap().bigram_count, 69);
+            assert!(store.is_modified());
+            store.load_system_libraries(originals()).unwrap();
+            assert!(store.add_system_unigram_frequency(token, 7).unwrap());
+            assert_eq!(store.system_unigram(token), Some(107));
+            drop(store);
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    #[test]
+    fn failed_system_reload_keeps_the_unloaded_guard() {
+        use oxpinyin_data::chunk_format::build_memory_chunk;
+        use oxpinyin_data::user_files::{LogRecord, encode_log_records};
+
+        let dir = tempdir("unloaded-failed-reload");
+        let mut store =
+            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin).unwrap();
+        store.reset_system_library(1);
+        let mut log = encode_log_records(&[LogRecord::ModifyHeader {
+            old_total: 100,
+            new_total: 100,
+        }])
+        .unwrap();
+        log[4..8].copy_from_slice(&1_u32.to_le_bytes());
+        std::fs::write(dir.join("gb_char.dbin"), build_memory_chunk(&log).unwrap()).unwrap();
+        assert!(matches!(
+            store.load_system_libraries(originals()),
+            Err(crate::JournalFault::HeaderToken {
+                library: 1,
+                token: 1
+            })
+        ));
+        assert!(!store.add_system_unigram_frequency(0x0100_0001, 7).unwrap());
+        assert!(!store.has_system_items());
+        std::fs::remove_file(dir.join("gb_char.dbin")).unwrap();
+        store.load_system_libraries(originals()).unwrap();
+        assert!(store.add_system_unigram_frequency(0x0100_0001, 7).unwrap());
+        drop(store);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn user_library_and_add_views_seed_identical_rows_to_owned_items() {
         use crate::session_values::SessionValues;
         use crate::user_library::UserLibrary;
@@ -4812,3 +4878,5 @@ mod tests {
 mod provenance;
 #[cfg(test)]
 mod replayed_readings;
+#[cfg(test)]
+mod unloaded;

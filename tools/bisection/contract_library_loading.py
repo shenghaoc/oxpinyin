@@ -1397,7 +1397,288 @@ for _mode in ('pinyin', 'zhuyin'):
          crash=library_expected('init', 'bad-length', _mode), issues=('row:76', '1576'))(
              lambda k: chunk_frame_system(k, True))
 
-def register(driver_case, *, items_system=None):
+def unloaded_cached_pronunciation(k, *, items_system, craft_db):
+    """Two one-reading items expose train_result3's stale cached PhraseItem.
+
+    Choose library two, unload it, then guess on a second instance so the
+    context's lookup caches library one's item. Train the first instance's
+    still-valid result. Pin phonetic_lookup.h:924 ignores the failed fetch;
+    :925-927 can consequently train the cached, still-loaded item instead.
+    Save exposes every fixture item's pronunciation count on both facades.
+    """
+    from contract_abi import unigram_of
+
+    items_system(k, [((ord('甲'),), (0x1081,), 100),
+                     ((ord('乙'),), (0x1081,), 100)], isolated=True)
+    system = Path(k.data)
+    original = bytearray((system / 'gb_char.bin').read_bytes()[8:])
+    # Each library owns just one of the two slots; the bodies stay tiny.
+    for name, absent in (('gb_char.bin', 2), ('gbk_char.bin', 1)):
+        payload = original.copy()
+        payload[:4] = (100).to_bytes(4, 'little')
+        payload[17 + absent * 4:21 + absent * 4] = bytes(4)
+        path = system / name
+        path.unlink()
+        path.write_bytes(_chunk(payload))
+    conf = system / 'table.conf'
+    conf.write_text(conf.read_text() +
+                    'default GBK_DICTIONARY gbk_char.table gbk_char.bin gbk_char.dbin SYSTEM_FILE\n')
+    tokens = (0x01000001, 0x02000002)
+    key = (0x1081).to_bytes(2, 'little')
+    phonetic = b''.join(token.to_bytes(4, 'little') + key + bytes(2) for token in tokens)
+    craft_db(str(system / 'pinyin_index.bin'), [(b'\x81\x00', phonetic)], 1,
+             system_index=True)
+    craft_db(str(system / 'phrase_index.bin'),
+             [(ord(word).to_bytes(4, 'little'), token.to_bytes(4, 'little'))
+              for word, token in zip('甲乙', tokens)], 1, system_index=True)
+    inst = k.inst
+    parse = 'parse_more_full_pinyins' if k.mode == 'pinyin' else 'parse_more_chewings'
+    text = b'ba1' if k.mode == 'pinyin' else b'18 '
+    assert k.fn(parse, Z, P, S)(inst, text) == len(text)
+    if k.mode == 'pinyin':
+        assert k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0x1e)
+    else:
+        assert k.fn('guess_candidates_after_cursor', B, P, Z)(inst, 0)
+    count = U()
+    assert k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
+    chosen = None
+    for index in range(count.value):
+        candidate, phrase, kind = P(), S(), I()
+        assert k.fn('get_candidate', B, P, U, C.POINTER(P))(inst, index, C.byref(candidate))
+        assert k.fn('get_candidate_string', B, P, P, C.POINTER(S))(inst, candidate, C.byref(phrase))
+        assert k.fn('get_candidate_type', B, P, P, C.POINTER(I))(inst, candidate, C.byref(kind))
+        if phrase.value == '乙'.encode() and kind.value == 2:
+            chosen = candidate
+            break
+    assert chosen, 'missing library-two normal candidate'
+    assert k.fn('choose_candidate', I, P, Z, P)(inst, 0, chosen) > 0
+    assert k.fn('guess_sentence', B, P)(inst)
+    out = {'unigrams-before': [unigram_of(k, token) for token in tokens],
+           'pronunciations-before': [10, 10]}
+    out['unload'] = k.fn('unload_phrase_library', B, P, C.c_ubyte)(k.ctx, 2)
+    other = k.alloc()
+    assert k.fn(parse, Z, P, S)(other, text) == len(text)
+    assert k.fn('guess_sentence', B, P)(other)
+    out['train'] = (k.fn('train', B, P, C.c_ubyte)(inst, 0) if k.mode == 'pinyin'
+                    else k.fn('train', B, P)(inst))
+    out['unigrams-after'] = [unigram_of(k, token) for token in tokens]
+    out['save'] = k.fn('save', B, P)(k.ctx)
+    # Record every MODIFY payload, including the pronunciation of the loaded
+    # item. The unloaded library must have no journal written by this save.
+    out['journals'] = {name: (Path(k.user, name).read_bytes().hex()
+                              if Path(k.user, name).exists() else None)
+                       for name in ('gb_char.dbin', 'gbk_char.dbin')}
+    k.fn('free_instance', None, P)(other)
+    return out
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    case(f'unloaded-cached-pronunciation-{_mode}', mode=_mode,
+         policy_record='compatibility-policy.md')(unloaded_cached_pronunciation)
+
+
+def unloaded_fixture(k, *, items_system, craft_db, longer=False, library=2, overflow=False):
+    """Two distinct readings keep ordinary unloaded training free of stale writes.
+
+    Library one has 甲/da1; the target library has 乙/ba1 (甲乙/ba1ba1
+    for longer/prefix selection). Only these two items and empty bigrams load.
+    """
+    target_text = '甲乙' if longer else '乙'
+    readings = ((0x1084,), (0x1081,) * len(target_text))
+    texts = ('甲', target_text)
+    items_system(k, [(tuple(map(ord, text)), keys, 100)
+                     for text, keys in zip(texts, readings)], isolated=True)
+    system = Path(k.data)
+    original = bytearray((system / 'gb_char.bin').read_bytes()[8:])
+    for name, absent, total in (('gb_char.bin', 2, 100),
+                                ('gbk_char.bin', 1, 0xfffffffe if overflow else 100)):
+        payload = original.copy()
+        payload[:4] = total.to_bytes(4, 'little')
+        payload[17 + absent * 4:21 + absent * 4] = bytes(4)
+        path = system / name
+        path.unlink()
+        path.write_bytes(_chunk(payload))
+    conf = system / 'table.conf'
+    if library == 7:
+        conf.write_text(conf.read_text() + 'default USER_DICTIONARY NULL NULL user.bin USER_FILE\n')
+        Path(k.user, 'user.bin').write_bytes((system / 'gbk_char.bin').read_bytes())
+    else:
+        conf.write_text(conf.read_text() +
+                        'default GBK_DICTIONARY gbk_char.table gbk_char.bin gbk_char.dbin SYSTEM_FILE\n')
+    tokens = (0x01000001, (library << 24) | 2)
+    phonetic, phrases = {}, {}
+    for text, keys, token in zip(texts, readings, tokens):
+        raw_keys = b''.join(key.to_bytes(2, 'little') for key in keys)
+        index = b''.join((key & 0xfff).to_bytes(2, 'little') for key in keys)
+        raw_text = b''.join(ord(char).to_bytes(4, 'little') for char in text)
+        for end in range(2, len(index), 2):
+            phonetic.setdefault(index[:end], b'')
+        item = token.to_bytes(4, 'little') + raw_keys
+        phonetic[index] = item + bytes((-len(item)) % 4)
+        for end in range(4, len(raw_text), 4):
+            phrases.setdefault(raw_text[:end], b'')
+        phrases[raw_text] = token.to_bytes(4, 'little')
+    for name, rows in (('pinyin_index.bin', phonetic), ('phrase_index.bin', phrases)):
+        if library == 7:
+            # User-file tokens belong to the mutable user indexes, as import
+            # writes them, rather than a synthetic shipped-system row.
+            loaded_key = next(iter(rows))
+            craft_db(str(system / name), [(loaded_key, rows[loaded_key])], 1,
+                     system_index=True)
+            craft_db(str(Path(k.user, 'user_' + name)),
+                     [(key, value) for key, value in rows.items() if key != loaded_key], 1)
+        else:
+            craft_db(str(system / name), list(rows.items()), 1, system_index=True)
+    return tokens, target_text
+
+
+def unloaded_candidate(k, inst, wanted, kind):
+    """Find an asserted candidate type in the current snapshot."""
+    count = U()
+    assert k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
+    rows = []
+    for index in range(count.value):
+        candidate, phrase, actual = P(), S(), I()
+        assert k.fn('get_candidate', B, P, U, C.POINTER(P))(inst, index, C.byref(candidate))
+        assert k.fn('get_candidate_string', B, P, P, C.POINTER(S))(inst, candidate, C.byref(phrase))
+        assert k.fn('get_candidate_type', B, P, P, C.POINTER(I))(inst, candidate, C.byref(actual))
+        rows.append((phrase.value, actual.value))
+        if phrase.value == wanted.encode() and actual.value == kind:
+            return candidate
+    raise AssertionError((wanted, kind, rows))
+
+
+def unloaded_parse(k, inst, mixed=False, loaded=False):
+    """Parse ba1, ba1da1, or da1 with the facade's standard keyboard."""
+    if k.mode == 'pinyin':
+        text = b'da1' if loaded else b'ba1da1' if mixed else b'ba1'
+        name = 'parse_more_full_pinyins'
+    else:
+        text = b'28 ' if loaded else b'18 28 ' if mixed else b'18 '
+        name = 'parse_more_chewings'
+    assert k.fn(name, Z, P, S)(inst, text) == len(text)
+
+
+def unloaded_operation(k, *, variant, items_system, craft_db, index_file_rows):
+    """Exercise unload mutations and controls; save observes every fixture item.
+
+    Ordinary training caches 甲/da1 before training 乙/ba1, so the pin's
+    stale pronunciation call matches no reading. The separate policy witness
+    intentionally uses the same reading. Raw journal payloads cover all
+    pronunciation fields, including loaded items, on both facades.
+    """
+    from contract_abi import unigram_of
+    from contract_case_helpers import _gram_bytes, phrase_table_reopen
+    from contract_journal_replay import _system_items, _log_record, _item_with
+
+    library = 7 if variant == 'train-user' else 2
+    longer = variant.startswith(('longer', 'predicted-prefix'))
+    tokens, target = unloaded_fixture(k, items_system=items_system, craft_db=craft_db,
+                                      longer=longer, library=library,
+                                      overflow=variant.endswith('overflow'))
+    total, items, _ = _system_items(k, 'gbk_char.bin')
+    if variant == 'train-journal':
+        _write_log(k, _modify_header(0, total, total) +
+                   _log_record(3, 2, items[2], _item_with(items[2], freq=17)),
+                   'gbk_char.dbin')
+    predicted = variant.startswith('predicted')
+    if variant.startswith('predicted-bigram'):
+        predecessor = tokens[1] if variant.endswith('predecessor') else tokens[0]
+        craft_db(str(Path(k.user, 'user_bigram.db')),
+                 [(predecessor.to_bytes(4, 'little'), _gram_bytes(100, [(tokens[1], 100)]))], 2)
+    inst = k.inst
+    out = {'tokens': list(tokens), 'before': [unigram_of(k, token) for token in tokens]}
+    if variant.startswith(('train', 'longer', 'without')):
+        unloaded_parse(k, inst, mixed=variant == 'train-mixed')
+        if k.mode == 'pinyin':
+            sort = 0x1c if longer else 0x1f if variant.startswith('without') else 0x1e
+            assert k.fn('guess_candidates', B, P, Z, U)(inst, 0, sort)
+        else:
+            assert k.fn('guess_candidates_after_cursor', B, P, Z)(inst, 0)
+        candidate = unloaded_candidate(k, inst, target, 7 if longer else 2)
+        if variant.startswith('train'):
+            assert k.fn('choose_candidate', I, P, Z, P)(inst, 0, candidate) > 0
+            assert k.fn('guess_sentence', B, P)(inst)
+    elif predicted:
+        prefix = '乙' if variant.endswith('predecessor') else '甲'
+        assert k.fn('guess_predicted_candidates', B, P, S)(inst, prefix.encode())
+        candidate = unloaded_candidate(k, inst, '乙' if longer else target, 5 if longer else 4)
+    elif variant == 'import':
+        iterator = k.fn('begin_add_phrases', P, P, U)(k.ctx, library)
+        assert iterator
+    if variant == 'train-before':
+        out['earlier-train'] = (k.fn('train', B, P, C.c_ubyte)(inst, 0) if k.mode == 'pinyin'
+                                else k.fn('train', B, P)(inst))
+    if not variant.endswith('overflow'):
+        out['unload'] = k.fn('unload_phrase_library', B, P, C.c_ubyte)(k.ctx, library)
+        out['repeat-unload'] = k.fn('unload_phrase_library', B, P, C.c_ubyte)(k.ctx, library)
+    if variant.endswith('missing'):
+        _write_log(k, _modify_header(0, total, 0) + _log_record(2, 2, items[2]), 'gbk_char.dbin')
+        out['reload-missing'] = k.fn('load_phrase_library', B, P, C.c_ubyte)(k.ctx, library)
+    if variant.startswith('train'):
+        # Leave a live, different-reading cache. No undefined pin read.
+        other = k.alloc()
+        unloaded_parse(k, other, loaded=True)
+        assert k.fn('guess_sentence', B, P)(other)
+        train = (lambda: k.fn('train', B, P, C.c_ubyte)(inst, 0)) if k.mode == 'pinyin' else (
+            lambda: k.fn('train', B, P)(inst))
+        out['train'] = [train(), train()]
+        k.fn('free_instance', None, P)(other)
+    elif predicted:
+        out['choose'] = k.fn('choose_predicted_candidate', B, P, P)(inst, candidate)
+    elif variant.startswith(('longer', 'without')):
+        out['choose'] = k.fn('choose_candidate', I, P, Z, P)(inst, 0, candidate)
+    elif variant == 'import':
+        reading = b'ba1' if k.mode == 'pinyin' else 'ㄅㄚ'.encode()
+        out['add'] = k.fn('iterator_add_phrase', B, P, S, S, I)(iterator, '乙'.encode(), reading, 7)
+        k.fn('end_add_phrases', None, P)(iterator)
+    else:
+        out['add'] = k.fn('token_add_unigram_frequency', B, P, U, U)(inst, tokens[1], 7)
+    out['after'] = [unigram_of(k, token) for token in tokens]
+    out['save'] = k.fn('save', B, P)(k.ctx)
+    if predicted:
+        # Prediction does not mark the context modified. A separate loaded
+        # training operation then makes the in-memory predicted bigram visible
+        # on disk, without rewriting it or reusing the prediction snapshot.
+        flush = k.alloc()
+        unloaded_parse(k, flush, loaded=True)
+        assert k.fn('guess_candidates', B, P, Z, U)(flush, 0, 0x1e)
+        row = unloaded_candidate(k, flush, '甲', 2)
+        assert k.fn('choose_candidate', I, P, Z, P)(flush, 0, row) > 0
+        assert k.fn('guess_sentence', B, P)(flush)
+        assert k.fn('train', B, P, C.c_ubyte)(flush, 0)
+        out['flush-save'] = k.fn('save', B, P)(k.ctx)
+        k.fn('free_instance', None, P)(flush)
+    out['journals'] = {name: (Path(k.user, name).read_bytes().hex()
+                              if Path(k.user, name).exists() else None)
+                       for name in ('gb_char.dbin', 'gbk_char.dbin', 'user.bin')}
+    gram = Path(k.user, 'user_bigram.db')
+    out['bigram'] = index_file_rows(gram, kind='hash', allow_empty=True) if gram.exists() else []
+    if not variant.endswith(('missing', 'overflow')):
+        out['reload'] = k.fn('load_phrase_library', B, P, C.c_ubyte)(k.ctx, library)
+        out['restored'] = [unigram_of(k, token) for token in tokens]
+        out['loaded-add'] = k.fn('token_add_unigram_frequency', B, P, U, U)(inst, tokens[1], 7)
+        out['loaded-after'] = unigram_of(k, tokens[1])
+    phrase_table_reopen(k)
+    out['reopened'] = [unigram_of(k, token) for token in tokens]
+    out['reopened-bigram'] = index_file_rows(gram, kind='hash', allow_empty=True) if gram.exists() else []
+    return out
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    _variants = ['train', 'train-journal', 'train-before', 'train-mixed', 'token', 'import']
+    if _mode == 'zhuyin':
+        _variants.append('train-user')
+    else:
+        _variants += ['longer', 'without', 'longer-missing', 'without-missing',
+                      'longer-overflow', 'without-overflow', 'predicted-prefix',
+                      'predicted-bigram', 'predicted-bigram-predecessor']
+    for _variant in _variants:
+        case(f'unloaded-library-{_variant}-{_mode}', mode=_mode)(
+            partial(unloaded_operation, variant=_variant))
+
+
+def register(driver_case, *, items_system=None, craft_db=None, index_file_rows=None):
     """Register the declarations with the driver's current decorator, in their original order.
 
     A case in LAYOUT_CRITICAL_CASES is bound to LAYOUT_CRITICAL_RECORD."""
@@ -1406,4 +1687,9 @@ def register(driver_case, *, items_system=None):
             kwargs = dict(kwargs, policy_record=LAYOUT_CRITICAL_RECORD)
         if fn is overlapping_modify_before_add:
             fn = partial(fn, items_system=items_system)
+        if fn is unloaded_cached_pronunciation:
+            fn = partial(fn, items_system=items_system, craft_db=craft_db)
+        if isinstance(fn, partial) and fn.func is unloaded_operation:
+            fn = partial(fn, items_system=items_system, craft_db=craft_db,
+                         index_file_rows=index_file_rows)
         driver_case(name, *args, **kwargs)(fn)

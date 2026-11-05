@@ -61,8 +61,8 @@ use oxpinyin_data::{
 };
 use oxpinyin_engine::{ConfigSource, EngineError, Session, StoragePaths};
 use oxpinyin_user::{
-    ItemOrigin, LiveSystemItems, PinyinKey, SaveBaseline, SystemLibrary, UserConfLaw, UserLookup,
-    UserStore, UserStoreError,
+    ItemOrigin, LiveSystemItems, PinyinKey, SaveBaseline, SystemLibrary, UnigramAdd, UserConfLaw,
+    UserLookup, UserStore, UserStoreError,
 };
 
 /// Orders the system and user phrase-table suggestion tokens the way
@@ -158,12 +158,14 @@ pub struct SystemRemap {
 pub struct RemapWalk {
     originals: oxpinyin_user::SystemOriginals,
     indices: std::ops::Range<u8>,
-    include_unloaded: bool,
+    /// One library's `_load_phrase_library`, not the mask loop: it maps an
+    /// unloaded library, and a row whether or not the row names a user file.
+    reload: bool,
 }
 
-/// What [`Runtime::remap_next`] reached. A library the loop skips (not
-/// loaded, no user file, or a chunk that fails some other check) is not a
-/// step.
+/// What [`Runtime::remap_next`] reached. A library the walk skips (in the
+/// mask loop one that is not loaded or names no user file; in either a chunk
+/// that fails some other check) is not a step.
 #[derive(Debug)]
 pub enum RemapStep {
     /// The library mapped and is in the walk's originals.
@@ -914,15 +916,17 @@ impl<'a> RuntimeDict<'a> {
     /// the facade-total bump is unconditional (`phrase_index.h:632`,
     /// before the item dispatch — an absent-token add still moves the
     /// amplified-law denominator), and the item delta lands only when
-    /// the token exists and its library total accepts the addition. Returns
-    /// whether the item update succeeded. A token
+    /// the token exists and its library total accepts the addition. Answers
+    /// what the pin's `add_unigram_frequency` does: [`UnigramAdd::Refused`] is
+    /// its `ERROR_INTEGER_OVERFLOW`, [`UnigramAdd::Missing`] every other
+    /// refusal. A token
     /// whose library is unloaded is invisible on both edges: neither
     /// the total nor the overlay moves, matching the visibility filter
     /// the rest of the surface honours.
     #[must_use]
-    fn add_unigram_delta(&self, token: u32, delta: u64) -> bool {
+    fn add_unigram_delta(&self, token: u32, delta: u64) -> UnigramAdd {
         if !self.library_visible(token >> 24) {
-            return false;
+            return UnigramAdd::Missing;
         }
         let found = {
             let system_found = self.live_items().read(token, |_| ()).found().is_some();
@@ -945,11 +949,11 @@ impl<'a> RuntimeDict<'a> {
         // (c)) instead of dividing by it. `fetch_add` wraps in debug and
         // release alike.
         let Ok(delta) = u32::try_from(delta) else {
-            return false;
+            return UnigramAdd::Missing;
         };
         self.bumps.total.fetch_add(delta, Ordering::SeqCst);
         if !found {
-            return false;
+            return UnigramAdd::Missing;
         }
         let mut overlay = self.bumps.overlay();
         let library = token >> 24;
@@ -961,7 +965,7 @@ impl<'a> RuntimeDict<'a> {
         let accepted = overlay.libraries.get(&library).copied().unwrap_or(0);
         let user_bound = match self.user.map(|user| user.unigram_total()).transpose() {
             Ok(total) => total.unwrap_or(0),
-            Err(_) => return false,
+            Err(_) => return UnigramAdd::Missing,
         };
         // Ordinary additions need only the cached/global bound. Scan the
         // user library only at the overflow edge, not on every training bump.
@@ -975,7 +979,7 @@ impl<'a> RuntimeDict<'a> {
             .transpose()
         {
             Ok(offset) => offset.unwrap_or(0),
-            Err(_) => return false,
+            Err(_) => return UnigramAdd::Missing,
         };
         let bound = u64::from(base) + u64::from(accepted);
         if offset != 0
@@ -990,14 +994,14 @@ impl<'a> RuntimeDict<'a> {
                 .transpose()
             {
                 Ok(total) => total.unwrap_or(0),
-                Err(_) => return false,
+                Err(_) => return UnigramAdd::Missing,
             };
             let total = base
                 .wrapping_add(accepted)
                 .wrapping_add(user_total)
                 .wrapping_add(offset);
             if total.checked_add(delta).is_none() {
-                return false;
+                return UnigramAdd::Refused;
             }
         }
         overlay
@@ -1006,7 +1010,7 @@ impl<'a> RuntimeDict<'a> {
         let entry = overlay.tokens.entry(token).or_insert(0);
         *entry = entry.saturating_add(u64::from(delta));
         self.bumps.live.store(true, Ordering::SeqCst);
-        true
+        UnigramAdd::Accepted
     }
 
     /// The overlay total — the amplified-law denominator's live shift
@@ -2503,18 +2507,28 @@ impl Runtime {
     /// Apply a unigram increment with exclusive access to the storage owner.
     #[must_use]
     pub fn add_unigram_delta(&mut self, token: u32, delta: u64) -> bool {
+        self.add_unigram_outcome(token, delta).is_accepted()
+    }
+
+    /// [`Self::add_unigram_delta`] with the answer in the pin's terms. A
+    /// caller that acts on `ERROR_INTEGER_OVERFLOW` alone, as the choose legs
+    /// do (`pinyin.cpp:2527-2531`, `:2567-2575`), tells [`UnigramAdd::Refused`]
+    /// from an unloaded library or a missing item, which are
+    /// [`UnigramAdd::Missing`].
+    #[must_use]
+    pub fn add_unigram_outcome(&mut self, token: u32, delta: u64) -> UnigramAdd {
         if !self.dict().library_visible(token >> 24) {
-            return false;
+            return UnigramAdd::Missing;
         }
         if u8::try_from(token >> 24).is_ok_and(|index| self.dict().is_system_library(index))
             && let Some(user) = self.user.as_mut()
         {
             let Ok(delta) = u32::try_from(delta) else {
-                return false;
+                return UnigramAdd::Missing;
             };
             return user
-                .add_system_unigram_frequency(token, delta)
-                .unwrap_or(false);
+                .add_system_unigram_outcome(token, delta)
+                .unwrap_or(UnigramAdd::Missing);
         }
         self.dict().add_unigram_delta(token, delta)
     }
@@ -2704,8 +2718,11 @@ impl Runtime {
     /// Maps the unloaded SYSTEM_FILE/DICTIONARY default library `index`
     /// again, as `_load_phrase_library` does before it merges the saved
     /// `.dbin` (074a2219 `pinyin.cpp:246-264`, `zhuyin.cpp:298-312`). The
-    /// result is empty for a row with no system chunk and no user file
-    /// (the `USER_FILE` row, the unused rows) and for an unreadable file.
+    /// result is empty for a row with no system chunk (the `USER_FILE` row,
+    /// the unused rows) and for an unreadable file. A row that names no user
+    /// file is mapped like any other: `_load_phrase_library` reads the user
+    /// name only after it has mapped the chunk (`pinyin.cpp:266`), where the
+    /// mask loop skips such a row (`:1250-1251`).
     /// Call it before [`Runtime::load_library`] makes the library visible,
     /// so no reader sees the session's state of the freed sub-index.
     #[must_use]
@@ -2723,7 +2740,7 @@ impl Runtime {
         self.begin_remap(1..16, false)
     }
 
-    fn begin_remap(&self, indices: std::ops::Range<u8>, include_unloaded: bool) -> RemapWalk {
+    fn begin_remap(&self, indices: std::ops::Range<u8>, reload: bool) -> RemapWalk {
         let layout = UserFileLayout::from_conf(&self.conf);
         let indices = if self.paths.system_data_dirs().is_empty() {
             0..0
@@ -2733,7 +2750,7 @@ impl Runtime {
         RemapWalk {
             originals: oxpinyin_user::SystemOriginals::new(Default::default(), layout),
             indices,
-            include_unloaded,
+            reload,
         }
     }
 
@@ -2751,9 +2768,13 @@ impl Runtime {
             let Some(row) = self.conf.default_row(index) else {
                 continue;
             };
+            // The mask loop skips a library that is not loaded
+            // (`pinyin.cpp:1240-1241`) and a row that names no user file
+            // (`:1250-1251`). A reload does neither: it maps the unloaded
+            // library, and the user name is not read until it has.
             if !matches!(row.file_type, FileType::SystemFile | FileType::Dictionary)
-                || row.user.is_none()
-                || (!walk.include_unloaded && !self.dict().library_visible(u32::from(index)))
+                || (!walk.reload
+                    && (row.user.is_none() || !self.dict().library_visible(u32::from(index))))
             {
                 continue;
             }
@@ -2798,9 +2819,9 @@ impl Runtime {
     fn remap_system_libraries(
         &mut self,
         indices: std::ops::Range<u8>,
-        include_unloaded: bool,
+        reload: bool,
     ) -> SystemRemap {
-        let mut walk = self.begin_remap(indices, include_unloaded);
+        let mut walk = self.begin_remap(indices, reload);
         let mut unmappable = Vec::new();
         let mut header_fault = None;
         while let Some(step) = self.remap_next(&mut walk) {
@@ -2833,7 +2854,13 @@ impl Runtime {
     /// unload; `false` when already visible.
     #[must_use]
     pub fn load_library(&mut self, index: u32) -> bool {
-        self.dict().load_library(index)
+        let changed = self.dict().load_library(index);
+        if index < PHRASE_INDEX_LIBRARY_COUNT
+            && let Some(store) = self.user.as_mut()
+        {
+            store.set_library_loaded(index as u8, true);
+        }
+        changed
     }
 
     /// Unloads default library `index`; `false` only outside the sixteen
@@ -2842,7 +2869,11 @@ impl Runtime {
     /// through is the C ABI's rule.
     #[must_use]
     pub fn unload_library(&mut self, index: u32) -> bool {
-        self.dict().unload_library(index)
+        let accepted = self.dict().unload_library(index);
+        if accepted && let Some(store) = self.user.as_mut() {
+            store.set_library_loaded(index as u8, false);
+        }
+        accepted
     }
 }
 
@@ -2860,6 +2891,112 @@ mod tests {
             .join("fixtures")
             .join("w3")
             .join(oxpinyin_data::DEFAULT_STORE_EXT)
+    }
+
+    #[test]
+    fn direct_library_visibility_also_guards_session_mutations() {
+        for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
+            let mut runtime = Runtime::open_with_law(&w3_dir(), None, law).unwrap();
+            let token = runtime.dict().system().tokens_for_text("你").unwrap()[0];
+            let library = token >> 24;
+            assert!(runtime.unload_library(library));
+            assert!(runtime.unload_library(library));
+            let store = runtime.user_store_mut().unwrap();
+            let total = store.unigram_total().unwrap();
+            assert!(!store.add_system_unigram_frequency(token, 7).unwrap());
+            assert_eq!(
+                store.add_system_unigram_outcome(token, 7).unwrap(),
+                UnigramAdd::Missing
+            );
+            assert_eq!(store.unigram_total().unwrap(), total);
+            assert!(runtime.load_library(library));
+            assert!(!runtime.load_library(library));
+            assert!(
+                runtime
+                    .user_store_mut()
+                    .unwrap()
+                    .add_system_unigram_frequency(token, 7)
+                    .unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn runtime_visibility_preserves_user_library_save_state() {
+        for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
+            let dir = tempfile::tempdir().unwrap();
+            let mut runtime = Runtime::open_with_law(&w3_dir(), Some(dir.path()), law).unwrap();
+            let library = oxpinyin_user::USER_DICTIONARY;
+            let chunk = dir.path().join("user.bin");
+            let ni = SyllableKey::from_text("ni").unwrap();
+            let keys = [oxpinyin_user::toned_key(ni.index(), 3).unwrap()];
+            let store = runtime.user_store_mut().unwrap();
+            assert!(!store.is_system_library(library));
+            let saved = store
+                .add_phrase_in(library, &"龘".into(), &keys, Some(20))
+                .unwrap();
+            store.mark_modified();
+            assert!(store.save().unwrap());
+            let original = std::fs::read(&chunk).unwrap();
+            // Only the store's own unload drops the items and arms save's
+            // skip. A runtime unload/load pair must not clear that marker
+            // and overwrite the saved chunk with an empty loaded library.
+            runtime
+                .user_store_mut()
+                .unwrap()
+                .unload_user_library(library);
+            assert!(runtime.unload_library(u32::from(library)));
+            assert!(runtime.load_library(u32::from(library)));
+            let store = runtime.user_store_mut().unwrap();
+            assert!(store.phrase(saved).unwrap().is_none());
+            store.mark_modified();
+            assert!(store.save().unwrap());
+            assert_eq!(std::fs::read(&chunk).unwrap(), original);
+            assert!(!dir.path().join("user.bin.tmp").exists());
+
+            store.load_user_library(library);
+            assert!(store.phrase(saved).unwrap().is_some());
+            let added = store
+                .add_phrase_in(library, &"鱻".into(), &keys, Some(30))
+                .unwrap();
+
+            // Runtime visibility alone must not insert the store's unloaded
+            // marker: the store still owns its items and must save them.
+            assert!(runtime.unload_library(u32::from(library)));
+            let store = runtime.user_store_mut().unwrap();
+            assert!(store.phrase(added).unwrap().is_some());
+            store.mark_modified();
+            assert!(store.save().unwrap());
+            let updated = std::fs::read(&chunk).unwrap();
+            assert_ne!(updated, original, "the loaded store saves its new item");
+            assert!(runtime.load_library(u32::from(library)));
+            let store = runtime.user_store_mut().unwrap();
+            store.mark_modified();
+            assert!(store.save().unwrap());
+            assert_eq!(std::fs::read(&chunk).unwrap(), updated);
+        }
+    }
+
+    #[test]
+    fn unloading_an_absent_system_chunk_still_guards_the_session() {
+        let system = tempfile::tempdir().unwrap();
+        for entry in std::fs::read_dir(w3_dir()).unwrap() {
+            let path = entry.unwrap().path();
+            std::fs::copy(&path, system.path().join(path.file_name().unwrap())).unwrap();
+        }
+        std::fs::remove_file(system.path().join("gb_char.bin")).unwrap();
+        for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
+            let mut runtime = Runtime::open_with_law(system.path(), None, law).unwrap();
+            assert!(!runtime.libraries().is_loaded(1));
+            assert!(runtime.unload_library(1));
+            let store = runtime.user_store_mut().unwrap();
+            let total = store.unigram_total().unwrap();
+            assert_eq!(
+                store.add_system_unigram_outcome(0x0100_0001, 7).unwrap(),
+                UnigramAdd::Missing
+            );
+            assert_eq!(store.unigram_total().unwrap(), total);
+        }
     }
 
     #[test]
@@ -2900,6 +3037,10 @@ mod tests {
             runtime
                 .library_mask
                 .store(1 << (token >> 24), Ordering::SeqCst);
+            runtime
+                .user_store_mut()
+                .unwrap()
+                .set_library_loaded((token >> 24) as u8, false);
             assert_eq!(
                 runtime.user_store().unwrap().system_unigram(token),
                 Some(initial + delta as u32)
@@ -2913,6 +3054,10 @@ mod tests {
                 "the masked token uses the bump alone"
             );
             runtime.library_mask.store(0, Ordering::SeqCst);
+            runtime
+                .user_store_mut()
+                .unwrap()
+                .set_library_loaded((token >> 24) as u8, true);
         }
     }
 
@@ -2999,6 +3144,10 @@ mod tests {
         runtime
             .library_mask
             .store(1 << (token >> 24), Ordering::SeqCst);
+        runtime
+            .user_store_mut()
+            .unwrap()
+            .set_library_loaded((token >> 24) as u8, false);
         let entries = candidate_entries(&runtime, "ni");
         assert!(
             entries
@@ -3014,6 +3163,10 @@ mod tests {
             "the masked token still prices from its delta and bumps"
         );
         runtime.library_mask.store(0, Ordering::SeqCst);
+        runtime
+            .user_store_mut()
+            .unwrap()
+            .set_library_loaded((token >> 24) as u8, true);
         let entries = candidate_entries(&runtime, "ni");
         assert_eq!(
             entry_for(&entries, token).unwrap().live_unigram(),

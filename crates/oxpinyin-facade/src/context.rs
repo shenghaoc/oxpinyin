@@ -725,13 +725,16 @@ impl ContextCore {
     /// `_load_phrase_library` `:234-322`; `zhuyin.cpp:361-375`, `:178-266`):
     /// an in-memory transition of the session, as the pin's. A library that
     /// is loaded answers `false` (`get_range` found its sub-index,
-    /// `:242-244`). An unloaded system library is mapped again and only its
-    /// saved `.dbin` is merged, an unreadable one being an empty log; an
-    /// unloaded `USER_FILE` library comes back from its saved chunk, or empty
+    /// `:242-244`). An unloaded system library is mapped again, whether or not
+    /// its row names a user file (`:246-264`), and only its saved `.dbin` is
+    /// merged, an unreadable one being an empty log; an unloaded `USER_FILE`
+    /// library comes back from its saved chunk, or empty
     /// (`:303-321`). The runtime's visibility mask then clears and the call
-    /// answers `true`. Nothing is written to disk, and nothing that can fail
-    /// is: the pin has no failing site here (policy row 103). `false`
-    /// without a runtime.
+    /// answers `true`. A system file that cannot be mapped again is the pin's
+    /// SIGSEGV (policy row 76): the library stays unloaded behind its mask,
+    /// the call answers `true`, and the next load maps the file again.
+    /// Nothing is written to disk, and nothing that can fail is: the pin has
+    /// no failing site here (policy row 103). `false` without a runtime.
     ///
     /// # Errors
     ///
@@ -788,13 +791,25 @@ impl ContextCore {
             return Ok(false);
         };
         let mut originals = runtime.reload_system_library(row_index);
+        // The mask clears only for a library the remap mapped. A system row
+        // is mapped again whether or not it names a user file
+        // (`pinyin.cpp:246-264`); a file that cannot be mapped is the pin's
+        // SIGSEGV (row 76). The library then keeps its mask and the call its
+        // answer, and the next load tries again, so no reader meets a
+        // library whose bytes the session no longer holds.
+        if !user_file && !originals.contains_key(&row_index) {
+            return Ok(true);
+        }
         let replay = if let Some(store) = self.user_store_mut() {
             if user_file {
                 store.load_user_library(row_index);
                 Ok(())
-            } else if !originals.is_empty() {
+            } else if store.is_system_library(row_index) {
                 store.load_system_libraries_retaining(&mut originals)
             } else {
+                // A row that names no user file has no journal in the
+                // session: its new mapping, published below, is all there is
+                // to replace.
                 Ok(())
             }
         } else {
@@ -982,9 +997,11 @@ mod open_failure_tests {
 /// unloaded library (`pinyin.cpp:928-933`).
 #[cfg(test)]
 mod library_transition_tests {
-    use super::{ContextCore, SaveOutcome};
+    use super::{ContextCore, RemapStep, SaveOutcome};
     use crate::PINYIN_DEFAULT_OPTION_WORD as WORD;
-    use oxpinyin_core::{PhraseText, SyllableKey};
+    use oxpinyin_core::{ChewingKey, PhraseText, SyllableKey};
+    use oxpinyin_data::chunk_write::{ChunkItem, build_chunk};
+    use oxpinyin_data::phrase_library::PhraseLibrary;
     use oxpinyin_user::{UserConfLaw, toned_key};
     use std::path::Path;
 
@@ -1118,5 +1135,98 @@ mod library_transition_tests {
                 "the system chunk alone"
             );
         }
+    }
+
+    /// The committed mini tables, copied, with the GBK row naming no user
+    /// file: `default GBK_DICTIONARY gbk_char.table gbk_char.bin NULL
+    /// SYSTEM_FILE`.
+    fn system_with_gbk_naming_no_user_file(scratch: &Path) -> std::path::PathBuf {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/w3");
+        let committed = root.join(oxpinyin_data::DEFAULT_STORE_EXT);
+        let system = scratch.join("system");
+        std::fs::create_dir_all(&system).expect("system dir");
+        for entry in std::fs::read_dir(committed).expect("committed fixtures") {
+            let entry = entry.expect("fixture entry");
+            if entry.file_type().expect("file type").is_file() {
+                std::fs::copy(entry.path(), system.join(entry.file_name()))
+                    .expect("copy a fixture file");
+            }
+        }
+        let conf = system.join("table.conf");
+        let text = std::fs::read_to_string(&conf).expect("table.conf");
+        let row = "gbk_char.bin gbk_char.dbin SYSTEM_FILE";
+        assert!(text.contains(row), "the committed GBK row");
+        std::fs::write(&conf, text.replace(row, "gbk_char.bin NULL SYSTEM_FILE"))
+            .expect("write table.conf");
+        system
+    }
+
+    /// `_load_phrase_library` maps a `SYSTEM_FILE` row's chunk whether or not
+    /// the row names a user file (`pinyin.cpp:246-264`); only the mask-out
+    /// loop skips such a row (`:1250-1251`). The mask clears for a library
+    /// the remap mapped, and only for it. A file the remap cannot map is the
+    /// pin's SIGSEGV (row 76): the library stays unloaded, the call answers
+    /// `true`, and the next load maps the repaired file. The context has no
+    /// user directory: with one, the pin reads the directory itself as the
+    /// row's log, and on a file system where that asserts the init dies.
+    #[test]
+    fn a_reload_maps_a_system_row_that_names_no_user_file() {
+        let scratch = tempfile::tempdir().expect("scratch");
+        let system = system_with_gbk_naming_no_user_file(scratch.path());
+        let mut ctx = ContextCore::open(&system, None, WORD, UserConfLaw::Pinyin).expect("opens");
+        let visible = |ctx: &ContextCore| {
+            ctx.runtime
+                .as_ref()
+                .expect("runtime")
+                .dict()
+                .library_visible(u32::from(GBK))
+        };
+        // The total of the chunk the library is mapped from: another file's
+        // mapping changes it.
+        let mapped_total = |ctx: &ContextCore| {
+            ctx.runtime
+                .as_ref()
+                .expect("runtime")
+                .dict()
+                .system()
+                .libraries()
+                .library(u32::from(GBK) << 24)
+                .map(PhraseLibrary::total_freq)
+        };
+        let shipped = mapped_total(&ctx).expect("the GBK library is mapped");
+        assert_ne!(shipped, 7);
+
+        // The mask-out loop still skips the row, and maps the others.
+        let runtime = ctx.runtime.as_ref().expect("runtime");
+        let mut walk = runtime.begin_system_remap();
+        let mut mask_loop = Vec::new();
+        while let Some(step) = runtime.remap_next(&mut walk) {
+            if let RemapStep::Mapped(index) = step {
+                mask_loop.push(index);
+            }
+        }
+        assert!(mask_loop.contains(&GB) && !mask_loop.contains(&GBK));
+
+        assert!(ctx.unload_phrase_library(GBK));
+        assert!(!visible(&ctx));
+
+        let chunk = system.join("gbk_char.bin");
+        std::fs::remove_file(&chunk).expect("remove the system file");
+        assert_eq!(ctx.load_phrase_library(u32::from(GBK)), Ok(true));
+        assert!(!visible(&ctx), "the remap mapped nothing, so nothing shows");
+        assert_eq!(mapped_total(&ctx), Some(shipped));
+
+        let item = ChunkItem {
+            phrase: vec![0x4f60],
+            unigram: 7,
+            prons: vec![(
+                vec![ChewingKey::from_pinyin("ni").expect("key").to_packed()],
+                7,
+            )],
+        };
+        std::fs::write(&chunk, build_chunk(&[(1, item)]).expect("chunk")).expect("repair");
+        assert_eq!(ctx.load_phrase_library(u32::from(GBK)), Ok(true));
+        assert!(visible(&ctx));
+        assert_eq!(mapped_total(&ctx), Some(7), "the repaired chunk was mapped");
     }
 }
