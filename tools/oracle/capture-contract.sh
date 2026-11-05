@@ -67,13 +67,9 @@ actual_arch=$("$runtime" image inspect --format '{{.Architecture}}' "$capture")
 data=$(py fetch-contract-data | tail -n 1)
 image=$("$runtime" image inspect --format '{{.Id}}' "$capture")
 mkdir -p "$out"
-# The scratch directory is on the host disk, not the container overlay: a few cases (dir_chunk) follow
-# the file system their scratch lives on, and the reference records which one.
-scratch="$repo/target/capture-scratch"
-mkdir -p "$scratch"
 exec "$runtime" run --rm --platform "$platform" --network none "${run_user[@]}" \
-    -e HOME=/tmp -e TMPDIR=/scratch -e PYTHONPYCACHEPREFIX=/tmp/pyc \
+    -e HOME=/tmp -e TMPDIR=/tmp -e PYTHONPYCACHEPREFIX=/tmp/pyc \
     -e "OXPINYIN_CAPTURE_IMAGE=$image" -e "OXPINYIN_TKRZW_LIBRARY=/usr/lib/$multiarch/libtkrzw.so.1" \
-    -v "$repo:/work:ro" -v "$repo/$out:/work/$out:rw" -v "$data:/data:ro" -v "$scratch:/scratch:rw" -w /work \
+    -v "$repo:/work:ro" -v "$repo/$out:/work/$out:rw" -v "$data:/data:ro" -w /work \
     "$capture" "python$(sed -n 's/^cpython@\([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' .python-version)" -X lazy_imports=normal tools/bisection/contract-diff.py capture "$cell" \
     "/opt/reference/$cell" --data /data --out "/work/$out" "${args[@]}"

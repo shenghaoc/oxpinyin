@@ -49,11 +49,6 @@ EXPECTED = [
 ]
 
 
-for _mode in ('pinyin', 'zhuyin'):
-    EXPECTED.append(('chunk-frame-excluded-journal-header-' + _mode, (),
-                     {'mode': _mode, 'abort': False, 'sigabrt': True, 'dir_chunk': 'user', 'issues': ('1576',)}))
-
-
 def declarations():
     return collect_declarations(family.register)
 

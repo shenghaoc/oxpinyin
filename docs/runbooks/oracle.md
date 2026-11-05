@@ -412,12 +412,6 @@ depended on at capture:
   rule: compare first, `HOST-DEPENDENT` only for a mismatch on another glibc.
   Every other mismatch, and every mismatch of any other case, is `DIFFER`.
   `HOST-DEPENDENT` is counted apart from `MATCH` and never added to it.
-- The `dir_chunk` cases (`table-conf-abort-*`, `chunk-frame-excluded-*`) take a
-  different pin path depending on the file system of their scratch directory.
-  The reference records that file system and verify creates its scratch on the
-  same type, or fails naming the types it tried. The capture runs on the host
-  disk (`target/capture-scratch`), so the recorded type is the capturing host's
-  disk, `ext2/ext3` for ext4.
 
 The two bigram-export cases (`user-gram-*-export`) and the six cases whose pin
 stderr came from freed memory are Rust tests, because no frozen reference can

@@ -1407,6 +1407,18 @@ mod tests {
 
     #[test]
     fn a_header_token_faults_where_the_header_is_read() {
+        // Pin phrase_index_logger.h:202 checks the header token before its payload.
+        assert!(matches!(
+            owned(&record(4, 0, &[4, 0, 1, 0, 0, 0, 2, 0, 0, 0])).as_slice(),
+            [Ok(LogRecord::ModifyHeader {
+                old_total: 1,
+                new_total: 2
+            })]
+        ));
+        assert_eq!(
+            owned(&record(4, 1, &[])),
+            vec![Err(LogFault::HeaderToken(1))]
+        );
         let mut header = encode_log_records(&[
             LogRecord::Remove {
                 token: 1,
