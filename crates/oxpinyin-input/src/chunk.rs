@@ -71,11 +71,7 @@ fn load_with(
 ) -> Result<LoadedChunk, ChunkLoadError> {
     let mut source = MappingSource::open(path).map_err(ChunkLoadError::Io)?;
     let file_size = source.file_size();
-    if file_size < 8 {
-        return Err(ChunkLoadError::ShortHeader);
-    }
-    let length = source.read_word().map_err(ChunkLoadError::Header)?;
-    let checksum = source.read_word().map_err(ChunkLoadError::Header)?;
+    let (length, checksum) = load_header(file_size, || source.read_word())?;
     let available = available_payload_length(file_size);
     let declared = u32::from_le_bytes(length);
     if declared != available {
@@ -96,6 +92,18 @@ fn load_with(
         file_size,
         source,
     })
+}
+
+fn load_header(
+    file_size: u64,
+    mut read_word: impl FnMut() -> io::Result<[u8; 4]>,
+) -> Result<([u8; 4], [u8; 4]), ChunkLoadError> {
+    if file_size < 8 {
+        return Err(ChunkLoadError::ShortHeader);
+    }
+    let length = read_word().map_err(ChunkLoadError::Header)?;
+    let checksum = read_word().map_err(ChunkLoadError::Header)?;
+    Ok((length, checksum))
 }
 
 // The caller has rejected a size below the header. C narrows the remainder
@@ -281,6 +289,40 @@ pub fn save(path: &Path, bytes: &[u8]) -> Result<(), ChunkSaveError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Pin memory_chunk.h:424-438: reject a short header before reading either word.
+    #[test]
+    fn header_size_and_read_failure_follow_pin_load() {
+        let calls = std::cell::Cell::new(0);
+        let read = || {
+            calls.set(calls.get() + 1);
+            Err(io::ErrorKind::Other.into())
+        };
+        assert!(matches!(
+            load_header(7, read),
+            Err(ChunkLoadError::ShortHeader)
+        ));
+        assert_eq!(calls.get(), 0);
+        assert!(matches!(
+            load_header(8, read),
+            Err(ChunkLoadError::Header(_))
+        ));
+        assert_eq!(calls.get(), 1);
+        let mut reads = 0;
+        assert!(matches!(
+            load_header(8, || {
+                reads += 1;
+                if reads == 1 {
+                    Ok([0; 4])
+                } else {
+                    Err(io::ErrorKind::Other.into())
+                }
+            }),
+            Err(ChunkLoadError::Header(_))
+        ));
+        assert_eq!(reads, 2);
+        assert!(load_header(8, || Ok([0; 4])).is_ok());
+    }
 
     #[test]
     fn short_payload_is_checksummed_at_the_returned_length() {

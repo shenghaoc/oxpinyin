@@ -315,12 +315,12 @@ def register(case, *, CASES, WORKER):
     # The rows the pin dies on. Both facades die there too (`sigabrt`).
     # `userdir` holds the profile the pin has written by then.
     def conf_abort(name, *edits, call='init', userdir=True, modes=('pinyin', 'zhuyin'), ret=False,
-                   dir_chunk=None, control=False, issues=('694', '525'), reproduced=True):
+                   control=False, issues=('694', '525'), reproduced=True):
         """Register expected-abort config cases for initialization or a library load.
 
         call='init' tests initialization; otherwise unpack (kind, index), using
         'load' for a normal library and any other kind for an addon. Forward expected
-        ret, userdir, directory-chunk and control metadata to case registration.
+        ret, userdir, control metadata to case registration.
         Both facades reproduce the pin's abort (`sigabrt`) unless
         `reproduced` is false (a class (b) site)."""
         for mode in modes:
@@ -340,7 +340,7 @@ def register(case, *, CASES, WORKER):
                 return {'ret': k.fn('load_addon_phrase_library', B, P, C.c_ubyte)(ctx, index)}
             sigabrt = reproduced
             case('table-conf-abort-' + name + ('-zhuyin' if mode == 'zhuyin' else ''), mode=mode,
-                 abort=ret, **({'sigabrt': True} if sigabrt else {}), userdir=userdir, dir_chunk=dir_chunk,
+                 abort=ret, **({'sigabrt': True} if sigabrt else {}), userdir=userdir,
                  control=control and not sigabrt, issues=issues)(probe)
 
 
@@ -384,31 +384,6 @@ def register(case, *, CASES, WORKER):
     # is judged and `user.conf` written when it dies.
     conf_abort('default-dictionary', (_STOCK_DBIN, 'gb_char.dbin DICTIONARY'))
     conf_abort('default-dictionary-gbk', ('gbk_char.dbin SYSTEM_FILE', 'gbk_char.dbin DICTIONARY'))
-    # A row without a file name makes the pin read that directory as a chunk
-    # (`g_build_filename` stops at the NULL). `MemoryChunk` asserts on the
-    # `read` of a directory (`memory_chunk.h:434` for `load`, `:493` for `mmap`)
-    # only where `lseek(SEEK_END)` on it answers 8 or more, which the file system
-    # of the scratch directory decides (#1011): ext4, fuse-overlayfs and a new
-    # directory in an overlay answer more, tmpfs refuses `SEEK_END` on a
-    # directory. `dir_chunk` holds each case to the side of that condition the
-    # host is on (`case`, `directory_reads_as_a_chunk`). Without a system chunk
-    # the pin reads the system directory: on tmpfs `mmap` refuses it
-    # (`memory_chunk.h:486-489`), the pin writes `mmap <dir> failed!`
-    # (`pinyin.cpp:255-256`, `:289-290`, `zhuyin.cpp:199-200`) and dies of
-    # SIGSEGV on the empty chunk in `SubPhraseIndex::load` (`phrase_index.cpp:354`);
-    # the subject writes the same line and gives the abort site's answer.
-    conf_abort('system-file-without-chunk', ('opengram.table opengram.bin opengram.dbin SYSTEM_FILE',
-                                             'opengram.table NULL opengram.dbin SYSTEM_FILE'), dir_chunk='system')
-    # Without a user file the pin reads the user directory, which holds the
-    # `user.conf` libpinyin saved in `check_format` (`pinyin.cpp:187`); on tmpfs
-    # the read is an ordinary `false`, and the pin and the subject both carry
-    # on. The zhuyin facade writes nothing at init, and an empty directory is 0
-    # bytes on some file systems, so it is not held.
-    conf_abort('system-file-without-user-file', ('merged.table merged.bin merged.dbin SYSTEM_FILE',
-                                                 'merged.table merged.bin NULL SYSTEM_FILE'), modes=('pinyin',),
-               dir_chunk='user')
-    conf_abort('user-file-without-user-file', ('user.bin USER_FILE', 'NULL USER_FILE'), modes=('pinyin',),
-               dir_chunk='user')
     # A library call on a row the pin asserts on (`pinyin.cpp:457`, `:491`).
     conf_abort('load-library-not-used', ('opengram.dbin SYSTEM_FILE', 'opengram.dbin NOT_USED'),
                call=('load', 3), userdir=False)
@@ -420,8 +395,6 @@ def register(case, *, CASES, WORKER):
                call=('addon', 4), userdir=False, modes=('pinyin',))
     conf_abort('load-addon-user-file', ('art.bin NULL DICTIONARY', 'art.bin NULL USER_FILE'),
                call=('addon', 4), userdir=False, modes=('pinyin',))
-    conf_abort('load-addon-without-chunk', ('art.table art.bin NULL DICTIONARY', 'art.table NULL NULL DICTIONARY'),
-               call=('addon', 4), userdir=False, modes=('pinyin',), dir_chunk='system')
     # Class (b): the header's `source table format:` line is missing, and the pin
     # compares a buffer it never wrote (undefined behaviour).
     conf_abort('source-format-line-missing', ('-', 'source table format'), reproduced=False)

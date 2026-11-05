@@ -295,8 +295,6 @@ def capture(driver, argv):
                 spelling = reference.scanner_spelling(spec)
                 if spelling is not None:
                     row['scanner_verdict'] = driver.host_scanf_verdict(spelling)
-                if spec['dir_chunk']:
-                    row['identity']['directory_read_verdict'] = driver.directory_read_verdict(scratch)
                 written.setdefault(reference.module_of(spec), {})[name] = row
             else:
                 failures += 1

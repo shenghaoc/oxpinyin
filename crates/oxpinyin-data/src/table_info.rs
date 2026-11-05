@@ -561,7 +561,10 @@ impl TableConf {
     ///
     /// The sub-index and [`TableConfSite`] of the first fatal row.
     pub fn check_default_rows(&self, user_dir: Option<&Path>) -> Result<(), (u8, TableConfSite)> {
-        let has_user_dir = user_dir.is_some_and(directory_reads_as_a_chunk);
+        self.check_default_rows_with(user_dir.is_some_and(directory_reads_as_a_chunk))
+    }
+
+    fn check_default_rows_with(&self, has_user_dir: bool) -> Result<(), (u8, TableConfSite)> {
         for (index, row) in (0_u8..).zip(&self.default) {
             let site = match row.file_type {
                 FileType::NotUsed => None,
@@ -661,6 +664,40 @@ mod tests {
 
     fn parse(text: &str) -> Result<TableConf, TableConfError> {
         parse_bytes(text.as_bytes())
+    }
+
+    // Pin memory_chunk.h:424-434: a null user filename reads the user directory.
+    #[test]
+    fn null_chunk_names_follow_directory_size_decision() {
+        let user = parse(&STOCK.replace("gb_char.dbin SYSTEM_FILE", "NULL SYSTEM_FILE")).unwrap();
+        use crate::phrase_library::directory_size_reads_as_a_chunk;
+        for size in [Ok(7), Err(std::io::ErrorKind::Other.into())] {
+            assert_eq!(
+                user.check_default_rows_with(directory_size_reads_as_a_chunk(size)),
+                Ok(())
+            );
+        }
+        assert_eq!(
+            user.check_default_rows_with(directory_size_reads_as_a_chunk(Ok(8))),
+            Err((1, TableConfSite::NullUserFile))
+        );
+        let user_file = parse(&STOCK.replace("user.bin USER_FILE", "NULL USER_FILE")).unwrap();
+        assert_eq!(
+            user_file.check_default_rows_with(directory_size_reads_as_a_chunk(Ok(7))),
+            Ok(())
+        );
+        assert_eq!(
+            user_file.check_default_rows_with(directory_size_reads_as_a_chunk(Ok(8))),
+            Err((7, TableConfSite::NullUserFile))
+        );
+        let system =
+            parse(&STOCK.replace("gb_char.bin gb_char.dbin", "NULL gb_char.dbin")).unwrap();
+        for reads in [false, true] {
+            assert_eq!(
+                system.check_default_rows_with(reads),
+                Err((1, TableConfSite::NullSystemFile))
+            );
+        }
     }
 
     #[test]

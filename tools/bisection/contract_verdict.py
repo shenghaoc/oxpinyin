@@ -5,19 +5,17 @@ MATCH, DIFFER, INVALID or POLICY-ACCEPTED: the exit and stderr conditions of
 the class (b) and (c) sites, the `~` fields left out of the comparison, the
 discrepancy-record digests (contract_policy), the host-dependent table.conf
 refusal and the #1114 saved-bigram mask. What the rules read from the driver's per-run state, the
-findings directory, the DBM cell and the directory-size probe, is a keyword
+findings directory, and the DBM cell, is a keyword
 argument: contract-diff.py passes its own globals at call time, which is where
 its tests patch them. The driver re-exports every name.
 """
 import ctypes as C
-import functools
 import json
 import os
 from pathlib import Path
 import re
 import signal
 import sys
-import tempfile
 
 try:
     from . import contract_policy
@@ -58,7 +56,7 @@ def valid_observation(spec, side):
     return registered_termination(spec) or (side['exit'] == 0 and side['result'] is not None)
 
 
-def valid_parent_observations(spec, pin, subject, *, directory_probe):
+def valid_parent_observations(spec, pin, subject):
     """A parent difference needs a pin satisfying its termination contract.
 
     The subject must complete with a result, or terminate as registered for
@@ -71,10 +69,6 @@ def valid_parent_observations(spec, pin, subject, *, directory_probe):
         return all(valid_observation(spec, side) for side in (pin, subject))
     if spec['both_abort']:
         signals = (-signal.SIGABRT, -signal.SIGTRAP)
-    elif short_dir_chunk(spec, directory_probe=directory_probe):
-        signals = (-signal.SIGSEGV,) if spec['dir_chunk'] == 'system' else ()
-        if not signals:
-            return all(side['exit'] == 0 and side['result'] is not None for side in (pin, subject))
     else:
         signals = ((-signal.SIGABRT,) if spec['abort'] is not NO_ABORT else ()) + \
             ((-signal.SIGSEGV,) if spec['crash'] is not None
@@ -165,7 +159,7 @@ def policy_diagnosis(spec, pin, subject, *, policy_root, cell):
     return dict(report, summary=contract_policy.describe(report))
 
 
-def verdict_for(spec, pin, subject, expect_parent, *, policy_root, cell, directory_probe):
+def verdict_for(spec, pin, subject, expect_parent, *, policy_root, cell):
     """The driver's decision for one case: (verdict, expected_ok, same).
 
     INVALID when either side of an ordinary case produced no valid
@@ -180,8 +174,8 @@ def verdict_for(spec, pin, subject, expect_parent, *, policy_root, cell, directo
     registered abort site); any other pair of valid observations is DIFFER,
     and `policy_diagnosis` says which side and field moved.
 
-    policy_root and cell locate the discrepancy record (policy_expectations) and
-    directory_probe is the host's directory-size probe (short_dir_chunk)."""
+    policy_root and cell locate the discrepancy record (policy_expectations).
+    """
     if spec['policy_record'] is not None:
         try:
             kept = policy_expectations(spec, policy_root=policy_root, cell=cell)
@@ -197,7 +191,7 @@ def verdict_for(spec, pin, subject, expect_parent, *, policy_root, cell, directo
         if fatal_pin:
             valid = valid_observation(spec, subject) or (expect_parent and subject['exit'] == pin['exit'])
         elif expect_parent:
-            valid = valid_parent_observations(spec, pin, subject, directory_probe=directory_probe)
+            valid = valid_parent_observations(spec, pin, subject)
         else:
             valid = all(valid_observation(spec, side) for side in (pin, subject))
         if not valid:
@@ -212,8 +206,8 @@ def verdict_for(spec, pin, subject, expect_parent, *, policy_root, cell, directo
             return 'POLICY-ACCEPTED', True, False
         # A bad record observation is never an expected parent difference.
         return 'DIFFER', False, False
-    same = matches(spec, pin, subject, directory_probe=directory_probe)
-    valid = (valid_parent_observations(spec, pin, subject, directory_probe=directory_probe) if expect_parent
+    same = matches(spec, pin, subject)
+    valid = (valid_parent_observations(spec, pin, subject) if expect_parent
              else all(valid_observation(spec, side) for side in (pin, subject)))
     if not valid:
         return 'INVALID', False, same
@@ -271,22 +265,11 @@ def assert_line_only(spec, pin, subject):
     return spec.get('sigabrt', False) and pin['stderr'] != subject['stderr']
 
 
-def short_dir_chunk(spec, *, directory_probe):
-    """A `dir_chunk` case on a host where the pin does not reach its assert.
-
-    directory_probe is `directory_reads_as_a_chunk`; it is called only for a
-    case that registers a `dir_chunk`."""
-    return spec['dir_chunk'] is not None and not directory_probe()
-
-
-def matches(spec, pin, subject, *, directory_probe):
-    """The verdict predicate shared by the driver and gcov measurement tier.
-
-    directory_probe is the host's directory-size probe (short_dir_chunk)."""
+def matches(spec, pin, subject):
+    """The verdict predicate shared by the driver and gcov measurement tier."""
     if spec['policy_record'] is not None:
         return False  # accepted differences must never enter MATCH totals
-    short_dir = short_dir_chunk(spec, directory_probe=directory_probe)
-    as_abort = spec['abort'] is not NO_ABORT and not short_dir and (not spec['either'] or pin['exit'] == -6)
+    as_abort = spec['abort'] is not NO_ABORT and (not spec['either'] or pin['exit'] == -6)
     if spec['both_abort']:
         # GLib's _g_log_abort can use g_abort or G_BREAKPOINT (gmessages.c
         # at GLib 2.80.0 / 2.89.4). Require the same fatal-log signal;
@@ -316,61 +299,15 @@ def matches(spec, pin, subject, *, directory_probe):
         same = sigabrt_reproduced(spec, pin, subject)
     elif as_abort:
         same = pin['exit'] == -6 and abort_answered(spec, pin, subject)
-    elif short_dir and spec['dir_chunk'] == 'system':
-        # Class (b): the pin dies of SIGSEGV after the stderr the subject
-        # writes in full; the subject answers as the abort site registers.
-        same = pin['exit'] == -signal.SIGSEGV and pin['stderr'] == subject['stderr'] and \
-            abort_answered(spec, pin, subject)
     else:
         # A side that died or printed nothing observed nothing: two
         # identical failures must not read as a match (nor satisfy
         # --expect-parent as a difference).
         same = all(r['exit'] == 0 and r['result'] is not None for r in (pin, subject)) and \
             observed(pin['result']) == observed(subject['result'])
-        if spec['stderr'] or short_dir:
+        if spec['stderr']:
             same = same and pin['stderr'] == subject['stderr']
-        if short_dir:
-            # `dir_chunk='user'`: both sides carry on past an ordinary false.
-            same = same and pin['userfiles'] == subject['userfiles']
     return same
-
-
-@functools.cache
-def directory_reads_as_a_chunk():
-    """Whether the pin reaches its directory-as-chunk header read on this host."""
-    return directory_read_verdict()['size_at_least_header']
-
-
-def directory_read_verdict(scratch=None):
-    """Reproduce MemoryChunk's directory size gate and header reads (pin memory_chunk.h:424-438).
-
-    Only the read counts and errnos matter: the pin asserts that each header read returns four.
-    Use a directory with user.conf, as the cases do, on the verification scratch file system."""
-    with tempfile.TemporaryDirectory(prefix='contract-dir-probe-', dir=scratch) as probe:
-        Path(probe, 'user.conf').touch()
-        fd = os.open(probe, os.O_RDONLY)
-        try:
-            try:
-                reaches_read = os.lseek(fd, 0, os.SEEK_END) >= 8
-            except OSError:
-                reaches_read = False
-            reads = []
-            if reaches_read:
-                try:
-                    os.lseek(fd, 0, os.SEEK_SET)
-                except OSError:
-                    pass  # The pin ignores this seek's return value.
-                for _ in range(2):
-                    try:
-                        count, error = len(os.read(fd, 4)), None
-                    except OSError as exc:
-                        count, error = -1, exc.errno
-                    reads.append(dict(count=count, errno=error))
-                    if count != 4:
-                        break
-            return dict(size_at_least_header=reaches_read, reads=reads)
-        finally:
-            os.close(fd)
 
 
 def host_scanf_verdict(spelling):

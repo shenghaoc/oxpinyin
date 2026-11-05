@@ -358,10 +358,7 @@ class Runner:
         identity = row.get('identity', {})
         pin = dict(row['pin'], capture_glibc=identity.get('environment', {}).get('glibc'),
                    capture_glib=identity.get('environment', {}).get('glib'),
-                   capture_dir_read_verdict=identity.get('directory_read_verdict'),
                    capture_scanf=row.get('scanner_verdict'))
-        if spec.get('dir_chunk'):
-            pin['host_dir_read_verdict'] = self.driver['directory_read_verdict'](scratch)
         if spec.get('pin_not_run') is not None:
             pin = dict(exit='NOT-RUN', result=None, userfiles=[], stderr_lines=0, stderr='')
         deadline = time.monotonic() + timeout

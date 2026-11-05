@@ -332,19 +332,9 @@ fn map_chunk(path: &Path) -> Result<oxpinyin_input::chunk::Mapping, LibraryError
     let mut source =
         MappingSource::open(path).map_err(|error| unmappable(LibraryError::Io(error)))?;
     let file_size = source.file_size();
-    if file_size < CHUNK_HEADER_SIZE as u64 {
-        return Err(bad("chunk shorter than its header"));
-    }
-    let declared = u32::from_le_bytes(
-        source
-            .read_word()
-            .map_err(|_| LibraryError::Row(RowFault::ChunkHeaderRead))?,
-    );
-    let checksum = u32::from_le_bytes(
-        source
-            .read_word()
-            .map_err(|_| LibraryError::Row(RowFault::ChunkHeaderRead))?,
-    );
+    let (length, checksum) = map_header(path, file_size, || source.read_word())?;
+    let declared = u32::from_le_bytes(length);
+    let checksum = u32::from_le_bytes(checksum);
     let payload_len = (file_size - CHUNK_HEADER_SIZE as u64) as u32;
     if declared != payload_len {
         return Err(bad("chunk length word does not match the file"));
@@ -365,6 +355,24 @@ fn map_chunk(path: &Path) -> Result<oxpinyin_input::chunk::Mapping, LibraryError
     Ok(pending.finish())
 }
 
+fn map_header(
+    path: &Path,
+    file_size: u64,
+    mut read_word: impl FnMut() -> std::io::Result<[u8; 4]>,
+) -> Result<([u8; 4], [u8; 4]), LibraryError> {
+    if file_size < CHUNK_HEADER_SIZE as u64 {
+        return Err(LibraryError::Unmappable {
+            path: path.to_path_buf(),
+            cause: Box::new(LibraryError::Format(
+                "chunk shorter than its header".to_owned(),
+            )),
+        });
+    }
+    let length = read_word().map_err(|_| LibraryError::Row(RowFault::ChunkHeaderRead))?;
+    let checksum = read_word().map_err(|_| LibraryError::Row(RowFault::ChunkHeaderRead))?;
+    Ok((length, checksum))
+}
+
 /// `file_size = lseek(fd, 0, SEEK_END)` on a directory, as `MemoryChunk::load`
 /// and `::mmap` take it (`memory_chunk.h:420-427`, `:479-486`): the one
 /// file-system question every directory-as-chunk site asks.
@@ -381,7 +389,11 @@ fn directory_end(dir: &Path) -> std::io::Result<u64> {
 /// instead (`:427-430`, `:486-489`).
 #[must_use]
 pub fn directory_reads_as_a_chunk(dir: &Path) -> bool {
-    directory_end(dir).is_ok_and(|size| size >= CHUNK_HEADER_SIZE as u64)
+    directory_size_reads_as_a_chunk(directory_end(dir))
+}
+
+pub(crate) fn directory_size_reads_as_a_chunk(size: std::io::Result<u64>) -> bool {
+    size.is_ok_and(|size| size >= CHUNK_HEADER_SIZE as u64)
 }
 
 /// Whether `MemoryChunk::mmap` accepts the file at `path` now, keeping
@@ -893,6 +905,47 @@ mod heap_load_tests {
         std::fs::write(&path, []).expect("replace file");
         assert_eq!(library.item(1).map(|item| item.unigram()), Some(7));
         assert_eq!(library.total_freq(), 7);
+    }
+}
+
+#[cfg(test)]
+mod header_tests {
+    use super::{LibraryError, RowFault, map_header};
+    use std::path::Path;
+
+    // Pin memory_chunk.h:479-497: a failed header read follows the eight-byte gate.
+    #[test]
+    fn mapping_header_size_and_read_failure_follow_pin() {
+        let path = Path::new("chunk");
+        let calls = std::cell::Cell::new(0);
+        let read = || {
+            calls.set(calls.get() + 1);
+            Err(std::io::ErrorKind::Other.into())
+        };
+        assert!(matches!(
+            map_header(path, 7, read),
+            Err(LibraryError::Unmappable { .. })
+        ));
+        assert_eq!(calls.get(), 0);
+        assert!(matches!(
+            map_header(path, 8, read),
+            Err(LibraryError::Row(RowFault::ChunkHeaderRead))
+        ));
+        assert_eq!(calls.get(), 1);
+        let mut reads = 0;
+        assert!(matches!(
+            map_header(path, 8, || {
+                reads += 1;
+                if reads == 1 {
+                    Ok([0; 4])
+                } else {
+                    Err(std::io::ErrorKind::Other.into())
+                }
+            }),
+            Err(LibraryError::Row(RowFault::ChunkHeaderRead))
+        ));
+        assert_eq!(reads, 2);
+        assert!(map_header(path, 8, || Ok([0; 4])).is_ok());
     }
 }
 

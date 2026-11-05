@@ -32,7 +32,7 @@ def row(case='family/case', cell='bdb', pin=PIN, subject=SUBJECT, userdir=False,
 
 def spec(**overrides):
     return dict(dict(mode='pinyin', control=False, abort=contract_verdict.NO_ABORT, stderr=True, crash=None,
-                     userdir=False, cells=('bdb', 'kc', 'tkrzw'), either=False, host_scanf=(), dir_chunk=None,
+                     userdir=False, cells=('bdb', 'kc', 'tkrzw'), either=False, host_scanf=(),
                      abort_logs=None, fatal=False, both_abort=False,
                      issues=(), policy_record='rec.md', case_id='family/case', pin_not_run=None), **overrides)
 
@@ -80,11 +80,9 @@ class PolicyRecordTests(unittest.TestCase):
                          ['result.rows[0:1]: subject drops [[2, "a"]]'])
         self.assertEqual(self.record.read_text(), '# Record\n\nProse.\n')
         for cell in ('bdb', 'kc'):
-            self.assertEqual(contract_verdict.verdict_for(spec(), PIN, SUBJECT, False, policy_root=self.root, cell=cell,
-                                                          directory_probe=None), ('POLICY-ACCEPTED', True, False))
+            self.assertEqual(contract_verdict.verdict_for(spec(), PIN, SUBJECT, False, policy_root=self.root, cell=cell), ('POLICY-ACCEPTED', True, False))
         moved = dict(SUBJECT, result=dict(SUBJECT['result'], ret=False))
-        self.assertEqual(contract_verdict.verdict_for(spec(), PIN, moved, False, policy_root=self.root, cell='bdb',
-                                                      directory_probe=None), ('DIFFER', False, False))
+        self.assertEqual(contract_verdict.verdict_for(spec(), PIN, moved, False, policy_root=self.root, cell='bdb'), ('DIFFER', False, False))
         self.assertEqual(contract_verdict.policy_diagnosis(spec(), PIN, moved, policy_root=self.root, cell='bdb')['summary'],
                          'pin matches; subject moved in result.ret')
 
@@ -120,7 +118,7 @@ class PolicyRecordTests(unittest.TestCase):
         entry = self.block()['cases']['family/case']['cells']['bdb']
         self.assertEqual(sorted(entry['pin']['fields']), ['exit', 'result', 'stderr', 'userfiles'])
         self.assertEqual(contract_verdict.verdict_for(spec(userdir=True, abort=False), aborted, SUBJECT, False,
-                                                      policy_root=self.root, cell='bdb', directory_probe=None),
+                                                      policy_root=self.root, cell='bdb'),
                          ('POLICY-ACCEPTED', True, False))
         self.write_rows(row(pin=aborted, userdir=True, abort=False))
         status, _, err = self.run_main(str(self.capture))
@@ -150,7 +148,7 @@ class PolicyRecordTests(unittest.TestCase):
         self.assertEqual(self.run_main(str(self.capture))[0], 0)
         for parent in (False, True):
             self.assertEqual(contract_verdict.verdict_for(spec(fatal=True), trapped, SUBJECT, parent,
-                                                          policy_root=self.root, cell='bdb', directory_probe=None),
+                                                          policy_root=self.root, cell='bdb'),
                              ('POLICY-ACCEPTED', True, False))
         before = self.record.read_text()
         aborted = dict(trapped, exit=-signal.SIGABRT)
@@ -168,7 +166,7 @@ class PolicyRecordTests(unittest.TestCase):
         self.assertEqual(self.run_main(str(self.capture))[0], 0)
         for parent in (False, True):
             self.assertEqual(contract_verdict.verdict_for(spec(fatal=True), aborted, SUBJECT, parent,
-                                                          policy_root=self.root, cell='bdb', directory_probe=None),
+                                                          policy_root=self.root, cell='bdb'),
                              ('INVALID', False, False))
 
     def test_a_schema_1_block_is_converted_only_on_request_and_bare_entries_stay_bare(self):
@@ -192,8 +190,7 @@ class PolicyRecordTests(unittest.TestCase):
         self.assertEqual(record['cases']['family/cells'], {'cells': {'kc': contract_policy.entry(pin, subject)}})
         self.assertEqual(self.record.read_text(), '# Record\n\nProse.\n')
         for cell in ('bdb', 'kc', 'tkrzw'):
-            self.assertEqual(contract_verdict.verdict_for(spec(), PIN, SUBJECT, False, policy_root=self.root, cell=cell,
-                                                          directory_probe=None), ('POLICY-ACCEPTED', True, False))
+            self.assertEqual(contract_verdict.verdict_for(spec(), PIN, SUBJECT, False, policy_root=self.root, cell=cell), ('POLICY-ACCEPTED', True, False))
         self.write_rows(row(cell='tkrzw'))
         status, out, _ = self.run_main(str(self.capture))
         self.assertEqual(status, 0)
