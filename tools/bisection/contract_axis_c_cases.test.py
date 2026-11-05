@@ -19,7 +19,7 @@ import contract_axis_c_cases as family
 EXPECTED_COUNT = 888
 EXPECTED_FIRST = ('axis-c-export-user', (), {})
 EXPECTED_LAST = ('axis-c-layout-zhuyin-2147483647-e0000070', (), {'mode': 'zhuyin', 'stderr': True})
-EXPECTED_SHA256 = '719dcd4bb1086d75fac6f71b9a724d77cefd7f6b6b2b386de3582bc16a2e2a40'
+EXPECTED_SHA256 = 'c3614461562c4d2d5c97b2ed0c68d169449ae3f509fd4e6e2d54f180dfb45770'
 INJECTED = ('AXIS_C_DEFINITION', 'AXIS_C_GROUPS', 'AXIS_C_LAYOUT_COVERED', 'WORKER')
 
 
@@ -44,6 +44,15 @@ class AxisCCasesTests(unittest.TestCase):
         self.assertEqual((meta[0], meta[-1]), (EXPECTED_FIRST, EXPECTED_LAST))
         self.assertEqual(len({name for name, _, _ in meta}), EXPECTED_COUNT)
         self.assertEqual(hashlib.sha256(repr(meta).encode()).hexdigest(), EXPECTED_SHA256)
+
+    def test_only_the_ri_layout_ties_are_policy_accepted(self):
+        meta = {name: kwargs for name, _, kwargs, _ in declarations({n: stub(n) for n in INJECTED})}
+        recorded = {name for name, kwargs in meta.items() if 'policy_record' in kwargs}
+        tied = {'axis-c-layout-pinyin-3-00000000', 'axis-c-layout-pinyin-4-00000000'}
+        # Encoding cases with their own record are not layout cases.
+        self.assertEqual({name for name in recorded if name.startswith('axis-c-layout-')}, tied)
+        for name in tied:
+            self.assertEqual(meta[name]['policy_record'], 'trellis-adjusted-cost-s1-s2.md')
 
 
 if __name__ == '__main__':

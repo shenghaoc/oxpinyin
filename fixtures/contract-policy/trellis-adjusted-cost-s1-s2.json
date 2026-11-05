@@ -1,11 +1,80 @@
 {
   "cases": {
+    "axis-c-layout-pinyin-3-00000000": {
+      "cells": {
+        "tkrzw": {
+          "divergence": [
+            "result.observations.input-11.result.observation.candidate_multiset[1][1:2]: pin [\"鈤\"]; subject [\"馹\"]",
+            "result.observations.input-11.result.observation.candidate_multiset[7][1:2]: pin [\"馹\"]; subject [\"鈤\"]",
+            "result.observations.input-11.result.observation.candidates[1][1:2]: pin [\"鈤\"]; subject [\"馹\"]",
+            "result.observations.input-11.result.observation.candidates[3:4]: subject drops [[2, \"馹\"]]",
+            "result.observations.input-11.result.observation.candidates[6]: subject inserts [[2, \"鈤\"]]"
+          ],
+          "pin": {
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.log_messages": "4f53cda18c2baa0c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.observations": "5e0a65f96eb37eb2",
+              "stderr": "c48a0964ed0c5485"
+            },
+            "sha256": "02ca6a6ba3d707911ace3c125657f8a395b06744c5f24e0e901683779646df6a"
+          },
+          "subject": {
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.log_messages": "4f53cda18c2baa0c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.observations": "0b49213b9ee83c8d",
+              "stderr": "c48a0964ed0c5485"
+            },
+            "sha256": "382941edb8795f44c83fc3a8b46a3d76026614012d41541fb629f5cbbabc8c16"
+          }
+        }
+      }
+    },
+    "axis-c-layout-pinyin-4-00000000": {
+      "cells": {
+        "tkrzw": {
+          "divergence": [
+            "result.observations.input-10.result.observation.candidate_multiset[1][1:2]: pin [\"鈤\"]; subject [\"馹\"]",
+            "result.observations.input-10.result.observation.candidate_multiset[7][1:2]: pin [\"馹\"]; subject [\"鈤\"]",
+            "result.observations.input-10.result.observation.candidates[1][1:2]: pin [\"鈤\"]; subject [\"馹\"]",
+            "result.observations.input-10.result.observation.candidates[3:4]: subject drops [[2, \"馹\"]]",
+            "result.observations.input-10.result.observation.candidates[6]: subject inserts [[2, \"鈤\"]]",
+            "result.observations.input-14.result.observation.candidate_multiset (list lengths pin 79, subject 79; first change [1]): pin [1, \"如鈤\"]; subject [1, \"如馹\"]",
+            "result.observations.input-14.result.observation.candidates (list lengths pin 79, subject 79; first change [1]): pin [1, \"如鈤\"]; subject [1, \"如馹\"]",
+            "… further divergence omitted (4096-byte budget)"
+          ],
+          "pin": {
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.log_messages": "4f53cda18c2baa0c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.observations": "a0c51c7291d5e741",
+              "stderr": "c48a0964ed0c5485"
+            },
+            "sha256": "eef6e311c1f89fc01a58af3908e21c91ba85b1ca14ec05de5529fa96e5311ef9"
+          },
+          "subject": {
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.log_messages": "4f53cda18c2baa0c",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.observations": "915e47923d700541",
+              "stderr": "c48a0964ed0c5485"
+            },
+            "sha256": "3b5b89083d5f26b0e6cfc17185ad5ac66c04e874eb6d51fe2744d7030277b96b"
+          }
+        }
+      }
+    },
     "nbest-user-table-order-pinyin": {
       "cells": {
         "bdb": {
           "divergence": [
-            "result.sentences[0]: subject inserts [[true, \"\u9750\u9750\"]]",
-            "result.sentences[1:2]: subject drops [[true, \"\u9750\u9750\"]]"
+            "result.sentences[0]: subject inserts [[true, \"靐靐\"]]",
+            "result.sentences[1:2]: subject drops [[true, \"靐靐\"]]"
           ],
           "pin": {
             "fields": {
@@ -34,8 +103,8 @@
         },
         "kc": {
           "divergence": [
-            "result.sentences[0]: subject inserts [[true, \"\u9750\u9750\"]]",
-            "result.sentences[1:2]: subject drops [[true, \"\u9750\u9750\"]]"
+            "result.sentences[0]: subject inserts [[true, \"靐靐\"]]",
+            "result.sentences[1:2]: subject drops [[true, \"靐靐\"]]"
           ],
           "pin": {
             "fields": {
@@ -64,8 +133,8 @@
         },
         "tkrzw": {
           "divergence": [
-            "result.sentences[0]: subject inserts [[true, \"\u9750\u9750\"]]",
-            "result.sentences[1:2]: subject drops [[true, \"\u9750\u9750\"]]"
+            "result.sentences[0]: subject inserts [[true, \"靐靐\"]]",
+            "result.sentences[1:2]: subject drops [[true, \"靐靐\"]]"
           ],
           "pin": {
             "fields": {
@@ -98,8 +167,8 @@
       "cells": {
         "bdb": {
           "divergence": [
-            "result.with_sentence.rows (list lengths pin 757, subject 757; first change [0]): pin [1, \"\u53bf\"]; subject [1, \"\u7532\u4e59\"]",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "result.with_sentence.rows (list lengths pin 757, subject 757; first change [0]): pin [1, \"县\"]; subject [1, \"甲乙\"]",
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -136,10 +205,10 @@
       "cells": {
         "bdb": {
           "divergence": [
-            "result.view.nihao[0:1]: pin [\"\u9bd3\u8660\"]; subject [\"\u62df\u597d\"]",
-            "result.view.nihao[2:4]: pin [130, [\"\u9bd3\u8660\", \"\u9bd3\u53f7\", \"\u9bd3\u5686\", \"\u4f60\u597d\u5417\", \"\u7592\", \"\u7962\", \"\u79b0\", \"\u59b3\", \"\u5462\", \"\u5804\", \"\u9006\", \"\u730a\"]]; subject [128, [\"\u62df\u597d\", \"\u4f60\u597d\", \"\u4f60\u597d\u5417\", \"\u7592\", \"\u7962\", \"\u79b0\", \"\u59b3\", \"\u5462\", \"\u5804\", \"\u9006\", \"\u730a\", \"\u9713\"]]",
-            "result.view.yishu[0:1]: pin [\"\u546d\u4739\"]; subject [\"\u4ea6\u5c5e\"]",
-            "result.view.yishu[3][0:3]: pin [\"\u546d\u4739\", \"\u546d\u5885\", \"\u546d\u758b\"]; subject [\"\u4ea6\u5c5e\", \"\u4ea6\u8212\", \"\u5fc6\u8ff0\"]"
+            "result.view.nihao[0:1]: pin [\"鯓虠\"]; subject [\"拟好\"]",
+            "result.view.nihao[2:4]: pin [130, [\"鯓虠\", \"鯓号\", \"鯓嚆\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\"]]; subject [128, [\"拟好\", \"你好\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\", \"霓\"]]",
+            "result.view.yishu[0:1]: pin [\"呭䜹\"]; subject [\"亦属\"]",
+            "result.view.yishu[3][0:3]: pin [\"呭䜹\", \"呭墅\", \"呭疋\"]; subject [\"亦属\", \"亦舒\", \"忆述\"]"
           ],
           "pin": {
             "fields": {
@@ -170,10 +239,10 @@
         },
         "kc": {
           "divergence": [
-            "result.view.nihao[0:1]: pin [\"\u9bd3\u8660\"]; subject [\"\u62df\u597d\"]",
-            "result.view.nihao[2:4]: pin [130, [\"\u9bd3\u8660\", \"\u9bd3\u53f7\", \"\u9bd3\u5686\", \"\u4f60\u597d\u5417\", \"\u7592\", \"\u7962\", \"\u79b0\", \"\u59b3\", \"\u5462\", \"\u5804\", \"\u9006\", \"\u730a\"]]; subject [128, [\"\u62df\u597d\", \"\u4f60\u597d\", \"\u4f60\u597d\u5417\", \"\u7592\", \"\u7962\", \"\u79b0\", \"\u59b3\", \"\u5462\", \"\u5804\", \"\u9006\", \"\u730a\", \"\u9713\"]]",
-            "result.view.yishu[0:1]: pin [\"\u546d\u4739\"]; subject [\"\u4ea6\u5c5e\"]",
-            "result.view.yishu[3][0:3]: pin [\"\u546d\u4739\", \"\u546d\u5885\", \"\u546d\u758b\"]; subject [\"\u4ea6\u5c5e\", \"\u4ea6\u8212\", \"\u5fc6\u8ff0\"]"
+            "result.view.nihao[0:1]: pin [\"鯓虠\"]; subject [\"拟好\"]",
+            "result.view.nihao[2:4]: pin [130, [\"鯓虠\", \"鯓号\", \"鯓嚆\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\"]]; subject [128, [\"拟好\", \"你好\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\", \"霓\"]]",
+            "result.view.yishu[0:1]: pin [\"呭䜹\"]; subject [\"亦属\"]",
+            "result.view.yishu[3][0:3]: pin [\"呭䜹\", \"呭墅\", \"呭疋\"]; subject [\"亦属\", \"亦舒\", \"忆述\"]"
           ],
           "pin": {
             "fields": {
@@ -204,10 +273,10 @@
         },
         "tkrzw": {
           "divergence": [
-            "result.view.nihao[0:1]: pin [\"\u9bd3\u8660\"]; subject [\"\u62df\u597d\"]",
-            "result.view.nihao[2:4]: pin [130, [\"\u9bd3\u8660\", \"\u9bd3\u53f7\", \"\u9bd3\u5686\", \"\u4f60\u597d\u5417\", \"\u7592\", \"\u7962\", \"\u79b0\", \"\u59b3\", \"\u5462\", \"\u5804\", \"\u9006\", \"\u730a\"]]; subject [128, [\"\u62df\u597d\", \"\u4f60\u597d\", \"\u4f60\u597d\u5417\", \"\u7592\", \"\u7962\", \"\u79b0\", \"\u59b3\", \"\u5462\", \"\u5804\", \"\u9006\", \"\u730a\", \"\u9713\"]]",
-            "result.view.yishu[0:1]: pin [\"\u546d\u4739\"]; subject [\"\u4ea6\u5c5e\"]",
-            "result.view.yishu[3][0:3]: pin [\"\u546d\u4739\", \"\u546d\u5885\", \"\u546d\u758b\"]; subject [\"\u4ea6\u5c5e\", \"\u4ea6\u8212\", \"\u5fc6\u8ff0\"]"
+            "result.view.nihao[0:1]: pin [\"鯓虠\"]; subject [\"拟好\"]",
+            "result.view.nihao[2:4]: pin [130, [\"鯓虠\", \"鯓号\", \"鯓嚆\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\"]]; subject [128, [\"拟好\", \"你好\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\", \"霓\"]]",
+            "result.view.yishu[0:1]: pin [\"呭䜹\"]; subject [\"亦属\"]",
+            "result.view.yishu[3][0:3]: pin [\"呭䜹\", \"呭墅\", \"呭疋\"]; subject [\"亦属\", \"亦舒\", \"忆述\"]"
           ],
           "pin": {
             "fields": {
@@ -242,8 +311,8 @@
       "cells": {
         "bdb": {
           "divergence": [
-            "result.view.nihao[2:4]: pin [127, [\"\u4f60\u597d\", \"\u4f60\u597d\u5417\", \"\u7592\", \"\u7962\", \"\u79b0\", \"\u59b3\", \"\u5462\", \"\u5804\", \"\u9006\", \"\u730a\", \"\u9713\", \"\u5117\"]]; subject [128, [\"\u4f60\u597d\", \"\u4f60\u53f7\", \"\u4f60\u597d\u5417\", \"\u7592\", \"\u7962\", \"\u79b0\", \"\u59b3\", \"\u5462\", \"\u5804\", \"\u9006\", \"\u730a\", \"\u9713\"]]",
-            "result.view.yishu[2:4]: pin [606, [\"\u827a\u672f\", \"\u4e00\u6570\", \"\u827a\u672f\u5bb6\", \"\u827e\", \"\u994e\", \"\u640b\", \"\u7719\", \"\u6261\", \"\u8a83\", \"\u6633\", \"\u6581\", \"\u776a\"]]; subject [605, [\"\u827a\u672f\", \"\u4e00\u4e66\", \"\u827a\u672f\u5bb6\", \"\u827e\", \"\u994e\", \"\u640b\", \"\u7719\", \"\u6261\", \"\u8a83\", \"\u6633\", \"\u6581\", \"\u776a\"]]"
+            "result.view.nihao[2:4]: pin [127, [\"你好\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\", \"霓\", \"儗\"]]; subject [128, [\"你好\", \"你号\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\", \"霓\"]]",
+            "result.view.yishu[2:4]: pin [606, [\"艺术\", \"一数\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\", \"睪\"]]; subject [605, [\"艺术\", \"一书\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\", \"睪\"]]"
           ],
           "pin": {
             "fields": {
@@ -274,8 +343,8 @@
         },
         "kc": {
           "divergence": [
-            "result.view.nihao[2:4]: pin [127, [\"\u4f60\u597d\", \"\u4f60\u597d\u5417\", \"\u7592\", \"\u7962\", \"\u79b0\", \"\u59b3\", \"\u5462\", \"\u5804\", \"\u9006\", \"\u730a\", \"\u9713\", \"\u5117\"]]; subject [128, [\"\u4f60\u597d\", \"\u4f60\u53f7\", \"\u4f60\u597d\u5417\", \"\u7592\", \"\u7962\", \"\u79b0\", \"\u59b3\", \"\u5462\", \"\u5804\", \"\u9006\", \"\u730a\", \"\u9713\"]]",
-            "result.view.yishu[2:4]: pin [606, [\"\u827a\u672f\", \"\u4e00\u6570\", \"\u827a\u672f\u5bb6\", \"\u827e\", \"\u994e\", \"\u640b\", \"\u7719\", \"\u6261\", \"\u8a83\", \"\u6633\", \"\u6581\", \"\u776a\"]]; subject [605, [\"\u827a\u672f\", \"\u4e00\u4e66\", \"\u827a\u672f\u5bb6\", \"\u827e\", \"\u994e\", \"\u640b\", \"\u7719\", \"\u6261\", \"\u8a83\", \"\u6633\", \"\u6581\", \"\u776a\"]]"
+            "result.view.nihao[2:4]: pin [127, [\"你好\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\", \"霓\", \"儗\"]]; subject [128, [\"你好\", \"你号\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\", \"霓\"]]",
+            "result.view.yishu[2:4]: pin [606, [\"艺术\", \"一数\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\", \"睪\"]]; subject [605, [\"艺术\", \"一书\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\", \"睪\"]]"
           ],
           "pin": {
             "fields": {
@@ -306,8 +375,8 @@
         },
         "tkrzw": {
           "divergence": [
-            "result.view.nihao[2:4]: pin [127, [\"\u4f60\u597d\", \"\u4f60\u597d\u5417\", \"\u7592\", \"\u7962\", \"\u79b0\", \"\u59b3\", \"\u5462\", \"\u5804\", \"\u9006\", \"\u730a\", \"\u9713\", \"\u5117\"]]; subject [128, [\"\u4f60\u597d\", \"\u4f60\u53f7\", \"\u4f60\u597d\u5417\", \"\u7592\", \"\u7962\", \"\u79b0\", \"\u59b3\", \"\u5462\", \"\u5804\", \"\u9006\", \"\u730a\", \"\u9713\"]]",
-            "result.view.yishu[2:4]: pin [606, [\"\u827a\u672f\", \"\u4e00\u6570\", \"\u827a\u672f\u5bb6\", \"\u827e\", \"\u994e\", \"\u640b\", \"\u7719\", \"\u6261\", \"\u8a83\", \"\u6633\", \"\u6581\", \"\u776a\"]]; subject [605, [\"\u827a\u672f\", \"\u4e00\u4e66\", \"\u827a\u672f\u5bb6\", \"\u827e\", \"\u994e\", \"\u640b\", \"\u7719\", \"\u6261\", \"\u8a83\", \"\u6633\", \"\u6581\", \"\u776a\"]]"
+            "result.view.nihao[2:4]: pin [127, [\"你好\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\", \"霓\", \"儗\"]]; subject [128, [\"你好\", \"你号\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\", \"霓\"]]",
+            "result.view.yishu[2:4]: pin [606, [\"艺术\", \"一数\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\", \"睪\"]]; subject [605, [\"艺术\", \"一书\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\", \"睪\"]]"
           ],
           "pin": {
             "fields": {
@@ -342,8 +411,8 @@
       "cells": {
         "bdb": {
           "divergence": [
-            "result.view.nihao[3][1:2]: pin [\"\u4f60\u8c6a\"]; subject [\"\u4f60\u53f7\"]",
-            "result.view.yishu[2:4]: pin [606, [\"\u827a\u672f\", \"\u4e00\u6570\", \"\u827a\u672f\u5bb6\", \"\u827e\", \"\u994e\", \"\u640b\", \"\u7719\", \"\u6261\", \"\u8a83\", \"\u6633\", \"\u6581\", \"\u776a\"]]; subject [605, [\"\u827a\u672f\", \"\u4e00\u4e66\", \"\u827a\u672f\u5bb6\", \"\u827e\", \"\u994e\", \"\u640b\", \"\u7719\", \"\u6261\", \"\u8a83\", \"\u6633\", \"\u6581\", \"\u776a\"]]"
+            "result.view.nihao[3][1:2]: pin [\"你豪\"]; subject [\"你号\"]",
+            "result.view.yishu[2:4]: pin [606, [\"艺术\", \"一数\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\", \"睪\"]]; subject [605, [\"艺术\", \"一书\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\", \"睪\"]]"
           ],
           "pin": {
             "fields": {
@@ -374,8 +443,8 @@
         },
         "kc": {
           "divergence": [
-            "result.view.nihao[3][1:2]: pin [\"\u4f60\u8c6a\"]; subject [\"\u4f60\u53f7\"]",
-            "result.view.yishu[2:4]: pin [606, [\"\u827a\u672f\", \"\u4e00\u6570\", \"\u827a\u672f\u5bb6\", \"\u827e\", \"\u994e\", \"\u640b\", \"\u7719\", \"\u6261\", \"\u8a83\", \"\u6633\", \"\u6581\", \"\u776a\"]]; subject [605, [\"\u827a\u672f\", \"\u4e00\u4e66\", \"\u827a\u672f\u5bb6\", \"\u827e\", \"\u994e\", \"\u640b\", \"\u7719\", \"\u6261\", \"\u8a83\", \"\u6633\", \"\u6581\", \"\u776a\"]]"
+            "result.view.nihao[3][1:2]: pin [\"你豪\"]; subject [\"你号\"]",
+            "result.view.yishu[2:4]: pin [606, [\"艺术\", \"一数\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\", \"睪\"]]; subject [605, [\"艺术\", \"一书\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\", \"睪\"]]"
           ],
           "pin": {
             "fields": {
@@ -406,8 +475,8 @@
         },
         "tkrzw": {
           "divergence": [
-            "result.view.nihao[3][1:2]: pin [\"\u4f60\u8c6a\"]; subject [\"\u4f60\u53f7\"]",
-            "result.view.yishu[2:4]: pin [606, [\"\u827a\u672f\", \"\u4e00\u6570\", \"\u827a\u672f\u5bb6\", \"\u827e\", \"\u994e\", \"\u640b\", \"\u7719\", \"\u6261\", \"\u8a83\", \"\u6633\", \"\u6581\", \"\u776a\"]]; subject [605, [\"\u827a\u672f\", \"\u4e00\u4e66\", \"\u827a\u672f\u5bb6\", \"\u827e\", \"\u994e\", \"\u640b\", \"\u7719\", \"\u6261\", \"\u8a83\", \"\u6633\", \"\u6581\", \"\u776a\"]]"
+            "result.view.nihao[3][1:2]: pin [\"你豪\"]; subject [\"你号\"]",
+            "result.view.yishu[2:4]: pin [606, [\"艺术\", \"一数\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\", \"睪\"]]; subject [605, [\"艺术\", \"一书\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\", \"睪\"]]"
           ],
           "pin": {
             "fields": {
@@ -442,10 +511,10 @@
       "cells": {
         "bdb": {
           "divergence": [
-            "result.view.nihao[0:1]: pin [\"\u9bd3\u8660\"]; subject [\"\u4f60\u597d\"]",
-            "result.view.nihao[2:4]: pin [130, [\"\u9bd3\u8660\", \"\u9bd3\u53f7\", \"\u9bd3\u5686\", \"\u4f60\u597d\u5417\", \"\u7592\", \"\u7962\", \"\u79b0\", \"\u59b3\", \"\u5462\", \"\u5804\", \"\u9006\", \"\u730a\"]]; subject [128, [\"\u4f60\u597d\", \"\u62df\u597d\", \"\u4f60\u597d\u5417\", \"\u7592\", \"\u7962\", \"\u79b0\", \"\u59b3\", \"\u5462\", \"\u5804\", \"\u9006\", \"\u730a\", \"\u9713\"]]",
-            "result.view.yishu[0:1]: pin [\"\u546d\u4739\"]; subject [\"\u827a\u672f\"]",
-            "result.view.yishu[2:4]: pin [608, [\"\u546d\u4739\", \"\u546d\u5885\", \"\u546d\u758b\", \"\u827a\u672f\u5bb6\", \"\u827e\", \"\u994e\", \"\u640b\", \"\u7719\", \"\u6261\", \"\u8a83\", \"\u6633\", \"\u6581\"]]; subject [606, [\"\u827a\u672f\", \"\u4e00\u4e66\", \"\u4ea6\u5c5e\", \"\u827a\u672f\u5bb6\", \"\u827e\", \"\u994e\", \"\u640b\", \"\u7719\", \"\u6261\", \"\u8a83\", \"\u6633\", \"\u6581\"]]"
+            "result.view.nihao[0:1]: pin [\"鯓虠\"]; subject [\"你好\"]",
+            "result.view.nihao[2:4]: pin [130, [\"鯓虠\", \"鯓号\", \"鯓嚆\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\"]]; subject [128, [\"你好\", \"拟好\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\", \"霓\"]]",
+            "result.view.yishu[0:1]: pin [\"呭䜹\"]; subject [\"艺术\"]",
+            "result.view.yishu[2:4]: pin [608, [\"呭䜹\", \"呭墅\", \"呭疋\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\"]]; subject [606, [\"艺术\", \"一书\", \"亦属\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\"]]"
           ],
           "pin": {
             "fields": {
@@ -476,10 +545,10 @@
         },
         "kc": {
           "divergence": [
-            "result.view.nihao[0:1]: pin [\"\u9bd3\u8660\"]; subject [\"\u4f60\u597d\"]",
-            "result.view.nihao[2:4]: pin [130, [\"\u9bd3\u8660\", \"\u9bd3\u53f7\", \"\u9bd3\u5686\", \"\u4f60\u597d\u5417\", \"\u7592\", \"\u7962\", \"\u79b0\", \"\u59b3\", \"\u5462\", \"\u5804\", \"\u9006\", \"\u730a\"]]; subject [128, [\"\u4f60\u597d\", \"\u62df\u597d\", \"\u4f60\u597d\u5417\", \"\u7592\", \"\u7962\", \"\u79b0\", \"\u59b3\", \"\u5462\", \"\u5804\", \"\u9006\", \"\u730a\", \"\u9713\"]]",
-            "result.view.yishu[0:1]: pin [\"\u546d\u4739\"]; subject [\"\u827a\u672f\"]",
-            "result.view.yishu[2:4]: pin [608, [\"\u546d\u4739\", \"\u546d\u5885\", \"\u546d\u758b\", \"\u827a\u672f\u5bb6\", \"\u827e\", \"\u994e\", \"\u640b\", \"\u7719\", \"\u6261\", \"\u8a83\", \"\u6633\", \"\u6581\"]]; subject [606, [\"\u827a\u672f\", \"\u4e00\u4e66\", \"\u4ea6\u5c5e\", \"\u827a\u672f\u5bb6\", \"\u827e\", \"\u994e\", \"\u640b\", \"\u7719\", \"\u6261\", \"\u8a83\", \"\u6633\", \"\u6581\"]]"
+            "result.view.nihao[0:1]: pin [\"鯓虠\"]; subject [\"你好\"]",
+            "result.view.nihao[2:4]: pin [130, [\"鯓虠\", \"鯓号\", \"鯓嚆\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\"]]; subject [128, [\"你好\", \"拟好\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\", \"霓\"]]",
+            "result.view.yishu[0:1]: pin [\"呭䜹\"]; subject [\"艺术\"]",
+            "result.view.yishu[2:4]: pin [608, [\"呭䜹\", \"呭墅\", \"呭疋\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\"]]; subject [606, [\"艺术\", \"一书\", \"亦属\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\"]]"
           ],
           "pin": {
             "fields": {
@@ -510,10 +579,10 @@
         },
         "tkrzw": {
           "divergence": [
-            "result.view.nihao[0:1]: pin [\"\u9bd3\u8660\"]; subject [\"\u4f60\u597d\"]",
-            "result.view.nihao[2:4]: pin [130, [\"\u9bd3\u8660\", \"\u9bd3\u53f7\", \"\u9bd3\u5686\", \"\u4f60\u597d\u5417\", \"\u7592\", \"\u7962\", \"\u79b0\", \"\u59b3\", \"\u5462\", \"\u5804\", \"\u9006\", \"\u730a\"]]; subject [128, [\"\u4f60\u597d\", \"\u62df\u597d\", \"\u4f60\u597d\u5417\", \"\u7592\", \"\u7962\", \"\u79b0\", \"\u59b3\", \"\u5462\", \"\u5804\", \"\u9006\", \"\u730a\", \"\u9713\"]]",
-            "result.view.yishu[0:1]: pin [\"\u546d\u4739\"]; subject [\"\u827a\u672f\"]",
-            "result.view.yishu[2:4]: pin [608, [\"\u546d\u4739\", \"\u546d\u5885\", \"\u546d\u758b\", \"\u827a\u672f\u5bb6\", \"\u827e\", \"\u994e\", \"\u640b\", \"\u7719\", \"\u6261\", \"\u8a83\", \"\u6633\", \"\u6581\"]]; subject [606, [\"\u827a\u672f\", \"\u4e00\u4e66\", \"\u4ea6\u5c5e\", \"\u827a\u672f\u5bb6\", \"\u827e\", \"\u994e\", \"\u640b\", \"\u7719\", \"\u6261\", \"\u8a83\", \"\u6633\", \"\u6581\"]]"
+            "result.view.nihao[0:1]: pin [\"鯓虠\"]; subject [\"你好\"]",
+            "result.view.nihao[2:4]: pin [130, [\"鯓虠\", \"鯓号\", \"鯓嚆\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\"]]; subject [128, [\"你好\", \"拟好\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\", \"霓\"]]",
+            "result.view.yishu[0:1]: pin [\"呭䜹\"]; subject [\"艺术\"]",
+            "result.view.yishu[2:4]: pin [608, [\"呭䜹\", \"呭墅\", \"呭疋\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\"]]; subject [606, [\"艺术\", \"一书\", \"亦属\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\"]]"
           ],
           "pin": {
             "fields": {
@@ -548,10 +617,10 @@
       "cells": {
         "bdb": {
           "divergence": [
-            "result.view.nihao[0:1]: pin [\"\u9bd3\u8660\"]; subject [\"\u4f60\u597d\"]",
-            "result.view.nihao[2:4]: pin [130, [\"\u9bd3\u8660\", \"\u9bd3\u53f7\", \"\u9bd3\u5686\", \"\u4f60\u597d\u5417\", \"\u7592\", \"\u7962\", \"\u79b0\", \"\u59b3\", \"\u5462\", \"\u5804\", \"\u9006\", \"\u730a\"]]; subject [128, [\"\u4f60\u597d\", \"\u62df\u597d\", \"\u4f60\u597d\u5417\", \"\u7592\", \"\u7962\", \"\u79b0\", \"\u59b3\", \"\u5462\", \"\u5804\", \"\u9006\", \"\u730a\", \"\u9713\"]]",
-            "result.view.yishu[0:1]: pin [\"\u546d\u4739\"]; subject [\"\u4e00\u4e66\"]",
-            "result.view.yishu[2:4]: pin [608, [\"\u546d\u4739\", \"\u546d\u5885\", \"\u546d\u758b\", \"\u827a\u672f\u5bb6\", \"\u827e\", \"\u994e\", \"\u640b\", \"\u7719\", \"\u6261\", \"\u8a83\", \"\u6633\", \"\u6581\"]]; subject [606, [\"\u4e00\u4e66\", \"\u4ea6\u5c5e\", \"\u533b\u672f\", \"\u827a\u672f\u5bb6\", \"\u827e\", \"\u994e\", \"\u640b\", \"\u7719\", \"\u6261\", \"\u8a83\", \"\u6633\", \"\u6581\"]]"
+            "result.view.nihao[0:1]: pin [\"鯓虠\"]; subject [\"你好\"]",
+            "result.view.nihao[2:4]: pin [130, [\"鯓虠\", \"鯓号\", \"鯓嚆\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\"]]; subject [128, [\"你好\", \"拟好\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\", \"霓\"]]",
+            "result.view.yishu[0:1]: pin [\"呭䜹\"]; subject [\"一书\"]",
+            "result.view.yishu[2:4]: pin [608, [\"呭䜹\", \"呭墅\", \"呭疋\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\"]]; subject [606, [\"一书\", \"亦属\", \"医术\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\"]]"
           ],
           "pin": {
             "fields": {
@@ -582,10 +651,10 @@
         },
         "kc": {
           "divergence": [
-            "result.view.nihao[0:1]: pin [\"\u9bd3\u8660\"]; subject [\"\u4f60\u597d\"]",
-            "result.view.nihao[2:4]: pin [130, [\"\u9bd3\u8660\", \"\u9bd3\u53f7\", \"\u9bd3\u5686\", \"\u4f60\u597d\u5417\", \"\u7592\", \"\u7962\", \"\u79b0\", \"\u59b3\", \"\u5462\", \"\u5804\", \"\u9006\", \"\u730a\"]]; subject [128, [\"\u4f60\u597d\", \"\u62df\u597d\", \"\u4f60\u597d\u5417\", \"\u7592\", \"\u7962\", \"\u79b0\", \"\u59b3\", \"\u5462\", \"\u5804\", \"\u9006\", \"\u730a\", \"\u9713\"]]",
-            "result.view.yishu[0:1]: pin [\"\u546d\u4739\"]; subject [\"\u4e00\u4e66\"]",
-            "result.view.yishu[2:4]: pin [608, [\"\u546d\u4739\", \"\u546d\u5885\", \"\u546d\u758b\", \"\u827a\u672f\u5bb6\", \"\u827e\", \"\u994e\", \"\u640b\", \"\u7719\", \"\u6261\", \"\u8a83\", \"\u6633\", \"\u6581\"]]; subject [606, [\"\u4e00\u4e66\", \"\u4ea6\u5c5e\", \"\u533b\u672f\", \"\u827a\u672f\u5bb6\", \"\u827e\", \"\u994e\", \"\u640b\", \"\u7719\", \"\u6261\", \"\u8a83\", \"\u6633\", \"\u6581\"]]"
+            "result.view.nihao[0:1]: pin [\"鯓虠\"]; subject [\"你好\"]",
+            "result.view.nihao[2:4]: pin [130, [\"鯓虠\", \"鯓号\", \"鯓嚆\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\"]]; subject [128, [\"你好\", \"拟好\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\", \"霓\"]]",
+            "result.view.yishu[0:1]: pin [\"呭䜹\"]; subject [\"一书\"]",
+            "result.view.yishu[2:4]: pin [608, [\"呭䜹\", \"呭墅\", \"呭疋\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\"]]; subject [606, [\"一书\", \"亦属\", \"医术\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\"]]"
           ],
           "pin": {
             "fields": {
@@ -616,10 +685,10 @@
         },
         "tkrzw": {
           "divergence": [
-            "result.view.nihao[0:1]: pin [\"\u9bd3\u8660\"]; subject [\"\u4f60\u597d\"]",
-            "result.view.nihao[2:4]: pin [130, [\"\u9bd3\u8660\", \"\u9bd3\u53f7\", \"\u9bd3\u5686\", \"\u4f60\u597d\u5417\", \"\u7592\", \"\u7962\", \"\u79b0\", \"\u59b3\", \"\u5462\", \"\u5804\", \"\u9006\", \"\u730a\"]]; subject [128, [\"\u4f60\u597d\", \"\u62df\u597d\", \"\u4f60\u597d\u5417\", \"\u7592\", \"\u7962\", \"\u79b0\", \"\u59b3\", \"\u5462\", \"\u5804\", \"\u9006\", \"\u730a\", \"\u9713\"]]",
-            "result.view.yishu[0:1]: pin [\"\u546d\u4739\"]; subject [\"\u4e00\u4e66\"]",
-            "result.view.yishu[2:4]: pin [608, [\"\u546d\u4739\", \"\u546d\u5885\", \"\u546d\u758b\", \"\u827a\u672f\u5bb6\", \"\u827e\", \"\u994e\", \"\u640b\", \"\u7719\", \"\u6261\", \"\u8a83\", \"\u6633\", \"\u6581\"]]; subject [606, [\"\u4e00\u4e66\", \"\u4ea6\u5c5e\", \"\u533b\u672f\", \"\u827a\u672f\u5bb6\", \"\u827e\", \"\u994e\", \"\u640b\", \"\u7719\", \"\u6261\", \"\u8a83\", \"\u6633\", \"\u6581\"]]"
+            "result.view.nihao[0:1]: pin [\"鯓虠\"]; subject [\"你好\"]",
+            "result.view.nihao[2:4]: pin [130, [\"鯓虠\", \"鯓号\", \"鯓嚆\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\"]]; subject [128, [\"你好\", \"拟好\", \"你好吗\", \"疒\", \"祢\", \"禰\", \"妳\", \"呢\", \"堄\", \"逆\", \"猊\", \"霓\"]]",
+            "result.view.yishu[0:1]: pin [\"呭䜹\"]; subject [\"一书\"]",
+            "result.view.yishu[2:4]: pin [608, [\"呭䜹\", \"呭墅\", \"呭疋\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\"]]; subject [606, [\"一书\", \"亦属\", \"医术\", \"艺术家\", \"艾\", \"饎\", \"搋\", \"眙\", \"扡\", \"誃\", \"昳\", \"斁\"]]"
           ],
           "pin": {
             "fields": {
@@ -654,7 +723,7 @@
       "cells": {
         "bdb": {
           "divergence": [
-            "result.view.nihao[3][2:3]: pin [\"\u62b3\u7346\"]; subject [\"\u62b3\u8814\"]"
+            "result.view.nihao[3][2:3]: pin [\"抳獆\"]; subject [\"抳蠔\"]"
           ],
           "pin": {
             "fields": {
@@ -685,7 +754,7 @@
         },
         "kc": {
           "divergence": [
-            "result.view.nihao[3][2:3]: pin [\"\u62b3\u7346\"]; subject [\"\u62b3\u8814\"]"
+            "result.view.nihao[3][2:3]: pin [\"抳獆\"]; subject [\"抳蠔\"]"
           ],
           "pin": {
             "fields": {
@@ -716,7 +785,7 @@
         },
         "tkrzw": {
           "divergence": [
-            "result.view.nihao[3][2:3]: pin [\"\u62b3\u7346\"]; subject [\"\u62b3\u8814\"]"
+            "result.view.nihao[3][2:3]: pin [\"抳獆\"]; subject [\"抳蠔\"]"
           ],
           "pin": {
             "fields": {
@@ -751,7 +820,7 @@
       "cells": {
         "bdb": {
           "divergence": [
-            "result.view.nihao[3][2:3]: pin [\"\u62b3\u7346\"]; subject [\"\u62b3\u8814\"]"
+            "result.view.nihao[3][2:3]: pin [\"抳獆\"]; subject [\"抳蠔\"]"
           ],
           "pin": {
             "fields": {
@@ -782,7 +851,7 @@
         },
         "kc": {
           "divergence": [
-            "result.view.nihao[3][2:3]: pin [\"\u62b3\u7346\"]; subject [\"\u62b3\u8814\"]"
+            "result.view.nihao[3][2:3]: pin [\"抳獆\"]; subject [\"抳蠔\"]"
           ],
           "pin": {
             "fields": {
@@ -813,7 +882,7 @@
         },
         "tkrzw": {
           "divergence": [
-            "result.view.nihao[3][2:3]: pin [\"\u62b3\u7346\"]; subject [\"\u62b3\u8814\"]"
+            "result.view.nihao[3][2:3]: pin [\"抳獆\"]; subject [\"抳蠔\"]"
           ],
           "pin": {
             "fields": {
