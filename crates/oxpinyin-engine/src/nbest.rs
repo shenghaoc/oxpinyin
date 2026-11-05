@@ -28,11 +28,10 @@
 //! `docs/findings/sentence-surface.md` §3 for the recorded divergences
 //! (first-path-only pronunciation).
 
+use oxpinyin_core::sentence_facts::{SentenceFacts, TokenMap};
 use std::cell::{OnceCell, RefCell};
 use std::cmp::Ordering;
-use std::collections::HashMap;
 use std::collections::hash_map::Entry;
-use std::hash::{BuildHasherDefault, Hasher};
 
 use oxpinyin_core::PhraseText;
 use oxpinyin_core::graph::{GraphError, MAX_GRAPH_POSITION};
@@ -258,36 +257,6 @@ fn tail_merge(values: &mut [Value]) {
     values.sort_by(|left, right| ordered_poss_compare(left.poss, right.poss));
 }
 
-/// A multiplicative hasher for the trellis's `u32` token keys.
-///
-/// These maps are only probed (`get`, `entry`), never iterated: the order of
-/// a position's nodes is its [`Step`]'s node vector, so the hash function
-/// cannot reach the output. SipHash's per-lookup cost dominated the step expansion.
-#[derive(Default, Clone, Copy)]
-struct TokenHasher(u64);
-
-impl Hasher for TokenHasher {
-    fn write(&mut self, bytes: &[u8]) {
-        for &byte in bytes {
-            self.write_u64(u64::from(byte));
-        }
-    }
-
-    fn write_u32(&mut self, value: u32) {
-        self.write_u64(u64::from(value));
-    }
-
-    fn write_u64(&mut self, value: u64) {
-        self.0 = (self.0.rotate_left(5) ^ value).wrapping_mul(0x517c_c1b7_2722_0a95);
-    }
-
-    fn finish(&self) -> u64 {
-        self.0
-    }
-}
-
-type TokenMap<V> = HashMap<u32, V, BuildHasherDefault<TokenHasher>>;
-
 /// One `(position, token)` node: the pin's `trellis_node<nstore>`
 /// (074a2219 phonetic_lookup_heap.h:31-82), a fixed array whose first
 /// `len` values occupy their physical backtracking slots. The rest are unused.
@@ -495,6 +464,7 @@ impl Trellis {
         dictionary: &D,
         cache: &mut TokenMap<Option<PhraseText>>,
         token: u32,
+        facts: &RefCell<SentenceFacts>,
     ) -> Result<Option<PhraseText>, EngineError>
     where
         D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
@@ -511,7 +481,7 @@ impl Trellis {
                     self.text_tones.get(range),
                 ) {
                     (Some(keys), Some(tones)) => dictionary
-                        .trellis_text(keys, tones, token)
+                        .trellis_text_with_facts(keys, tones, token, &mut facts.borrow_mut())
                         .map_err(|error| {
                             EngineError::Scoring(ScoringError::Dictionary(error.to_string()))
                         })?,
@@ -529,6 +499,7 @@ impl Trellis {
         dictionary: &D,
         cache: &mut TokenMap<Option<PhraseText>>,
         spans: &[(usize, u32)],
+        facts: &RefCell<SentenceFacts>,
     ) -> Result<Option<PhraseText>, EngineError>
     where
         D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
@@ -536,7 +507,7 @@ impl Trellis {
     {
         let mut text = oxpinyin_core::PhraseTextConcat::new();
         for (_, token) in spans {
-            let Some(part) = self.token_text(dictionary, cache, *token)? else {
+            let Some(part) = self.token_text(dictionary, cache, *token, facts)? else {
                 return Ok(None);
             };
             text.push(&part);
@@ -656,6 +627,7 @@ struct Pricing<'a, D: Dictionary> {
     paths: &'a SpanPaths,
     /// The dictionary's memo of each path, indexed like `paths`.
     memos: &'a [D::PathMemo],
+    facts: &'a RefCell<SentenceFacts>,
 }
 
 impl<'a, D> Pricing<'a, D>
@@ -675,9 +647,13 @@ where
         }
         let (keys, tones) = self.paths.path(slot.path);
         let item = match self.memos.get(slot.path as usize) {
-            Some(memo) => self
-                .dictionary
-                .trellis_item_on_path(keys, tones, token, memo),
+            Some(memo) => self.dictionary.trellis_item_with_facts(
+                keys,
+                tones,
+                token,
+                memo,
+                &mut self.facts.borrow_mut(),
+            ),
             None => self.dictionary.trellis_item(keys, tones, token),
         }
         .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?;
@@ -831,6 +807,7 @@ where
     let mut trellis = Trellis::with_seeds(bound, &seed_values, shape);
     // One path scratch for every span search of the call.
     let mut scratch = GenerationPath::default();
+    let facts = RefCell::new(SentenceFacts::default());
     let cell_at = |position: usize| constraints.and_then(|store| store.cell(position));
 
     let mut position = 0_usize;
@@ -862,6 +839,7 @@ where
                     dictionary,
                     paths: &found.paths,
                     memos: &found.memos,
+                    facts: &facts,
                 };
                 let mut forced = PhraseIndexRanges::new();
                 forced.convert(pricing.first_priced(token.value())?.map(|entry| {
@@ -891,6 +869,7 @@ where
 
         let env = NbestEnv {
             generation: &generation,
+            facts: &facts,
             bound,
             dictionary,
             model,
@@ -912,7 +891,7 @@ where
     let mut texts = TokenMap::default();
     for tail in trellis.tails() {
         let spans = trellis.extract(&tail);
-        let Some(text) = trellis.text(dictionary, &mut texts, &spans)? else {
+        let Some(text) = trellis.text(dictionary, &mut texts, &spans, &facts)? else {
             continue;
         };
         if text.is_empty() {
@@ -1084,6 +1063,7 @@ impl GenerationView<'_> {
 struct NbestEnv<'a, D, L> {
     /// The scan matrix columns.
     generation: &'a GenerationView<'a>,
+    facts: &'a RefCell<SentenceFacts>,
     /// The walk's one-past-end column.
     bound: usize,
     /// The lexicon dictionary.
@@ -1131,6 +1111,7 @@ where
             dictionary: env.dictionary,
             paths: &found.paths,
             memos: &found.memos,
+            facts: env.facts,
         };
         expand_entries(
             &pricing,
@@ -1462,7 +1443,12 @@ where
                 let branch = Branch::Bigram(Some(item));
                 expand_one(
                     entry,
-                    StepCtx::new(pricing.paths, span.clone(), model),
+                    StepCtx {
+                        paths: pricing.paths,
+                        span: span.clone(),
+                        model,
+                        facts: pricing.facts,
+                    },
                     predecessor,
                     row,
                     trellis,
@@ -1479,7 +1465,12 @@ where
                 let branch = Branch::Bigram(None);
                 expand_one(
                     entry,
-                    StepCtx::new(pricing.paths, span.clone(), model),
+                    StepCtx {
+                        paths: pricing.paths,
+                        span: span.clone(),
+                        model,
+                        facts: pricing.facts,
+                    },
                     predecessor,
                     row,
                     trellis,
@@ -1499,7 +1490,12 @@ where
             let branch = Branch::Unigram;
             expand_one(
                 entry,
-                StepCtx::new(pricing.paths, span.clone(), model),
+                StepCtx {
+                    paths: pricing.paths,
+                    span: span.clone(),
+                    model,
+                    facts: pricing.facts,
+                },
                 predecessor,
                 row,
                 trellis,
@@ -1522,15 +1518,10 @@ enum Branch {
 
 /// What a trellis step reads besides its entry and predecessor.
 struct StepCtx<'a, L> {
+    facts: &'a RefCell<SentenceFacts>,
     paths: &'a SpanPaths,
     span: std::ops::Range<usize>,
     model: &'a L,
-}
-
-impl<'a, L> StepCtx<'a, L> {
-    const fn new(paths: &'a SpanPaths, span: std::ops::Range<usize>, model: &'a L) -> Self {
-        Self { paths, span, model }
-    }
 }
 
 /// One trellis step on `branch`.
@@ -1545,10 +1536,15 @@ fn expand_one<L: LanguageModel<Token = PhraseToken>>(
 where
     L::Error: core::fmt::Display,
 {
-    let StepCtx { paths, span, model } = ctx;
+    let StepCtx {
+        paths,
+        span,
+        model,
+        facts,
+    } = ctx;
     let prev = predecessor.value.token;
     let step = model
-        .nbest_item_costs_in_row(
+        .nbest_item_costs_with_facts(
             &PhraseToken::new(prev),
             &PhraseToken::new(entry.token),
             match branch {
@@ -1556,6 +1552,7 @@ where
                 Branch::Unigram => None,
             },
             row,
+            &mut facts.borrow_mut(),
         )
         .map_err(|error| EngineError::row_read(model, prev, &error))?;
     let pronunciation = entry.pronunciation.map_or(1.0, |(matched, total)| {
@@ -1621,6 +1618,7 @@ mod tests {
         SyllableKey,
     };
     use oxpinyin_testsupport::{FixtureDictionary, FixtureLanguageModel};
+    use std::cell::RefCell;
 
     use crate::config::EmptyConfigSource;
     use crate::error::EngineError;
@@ -1660,7 +1658,7 @@ mod tests {
         trellis.text_tones.push(0);
         let mut cache = super::TokenMap::default();
         let text = trellis
-            .text(&TextDictionary, &mut cache, &[(0, 1)])
+            .text(&TextDictionary, &mut cache, &[(0, 1)], &RefCell::default())
             .expect("trellis text")
             .expect("present");
         assert!(text.is_inline(), "short sentence is inline");
@@ -1688,6 +1686,7 @@ mod tests {
         static DICTIONARY: std::sync::OnceLock<FixtureDictionary> = std::sync::OnceLock::new();
         // The paths are leaked rather than held in a static.
         super::Pricing {
+            facts: Box::leak(Box::default()),
             ranges,
             dictionary: DICTIONARY.get_or_init(FixtureDictionary::default),
             paths: Box::leak(Box::default()),
@@ -2147,7 +2146,12 @@ mod tests {
                 chars: 1,
                 pronunciation: None,
             },
-            super::StepCtx::new(&paths, 2..3, &model),
+            super::StepCtx {
+                paths: &paths,
+                span: 2..3,
+                model: &model,
+                facts: &RefCell::default(),
+            },
             predecessor,
             &mut oxpinyin_core::NbestStepRow::default(),
             &mut trellis,

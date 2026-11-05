@@ -34,6 +34,8 @@
 #![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
 #![warn(missing_docs)]
 
+mod sentence_facts;
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -1342,6 +1344,39 @@ impl Dictionary for RuntimeDict<'_> {
             .map(|priced| priced.item))
     }
 
+    fn trellis_item_with_facts(
+        &self,
+        syllables: &[Self::Syllable],
+        tones: &[u8],
+        token: u32,
+        memo: &Self::PathMemo,
+        facts: &mut oxpinyin_core::sentence_facts::SentenceFacts,
+    ) -> Result<Option<TrellisItem>, Self::Error> {
+        if syllables.is_empty() {
+            return Ok(None);
+        }
+        let path = memo.get_or_try_init(|| self.path_pricing(syllables))?;
+        let _ = tones; // The existing path memo deliberately uses tone-less keys.
+        Ok(self
+            .priced_with_facts(path, token, false, facts)?
+            .map(|priced| priced.item))
+    }
+
+    fn trellis_text_with_facts(
+        &self,
+        syllables: &[Self::Syllable],
+        _tones: &[u8],
+        token: u32,
+        facts: &mut oxpinyin_core::sentence_facts::SentenceFacts,
+    ) -> Result<Option<PhraseText>, Self::Error> {
+        if syllables.is_empty() {
+            return Ok(None);
+        }
+        Ok(self
+            .priced_with_facts(&self.path_pricing(syllables)?, token, true, facts)?
+            .and_then(|priced| priced.text))
+    }
+
     fn trellis_text(
         &self,
         syllables: &[Self::Syllable],
@@ -1872,6 +1907,20 @@ impl LanguageModel for RuntimeLm<'_> {
         let imported = self.imported_item(token.value())?;
         self.inner
             .nbest_step_costs_with_imported_item(prev, token, extra, imported)
+    }
+
+    fn nbest_item_costs_with_facts(
+        &self,
+        prev: &Self::Token,
+        token: &Self::Token,
+        item: Option<(u32, u32)>,
+        row: &mut oxpinyin_core::NbestStepRow,
+        facts: &mut oxpinyin_core::sentence_facts::SentenceFacts,
+    ) -> Result<NbestStepCosts, Self::Error> {
+        if let Some(costs) = self.costs_with_facts(token, item, facts) {
+            return costs;
+        }
+        self.nbest_item_costs_in_row(prev, token, item, row)
     }
 
     fn nbest_item_costs_in_row(

@@ -98,6 +98,12 @@ impl<'a> SystemItem<'a> {
         }
     }
 
+    /// Validated item bytes, borrowed only for this callback.
+    #[must_use]
+    pub fn as_bytes(&self) -> &'a [u8] {
+        self.view().as_bytes()
+    }
+
     /// The live item's stored unigram field.
     #[must_use]
     pub fn unigram(&self) -> u32 {
