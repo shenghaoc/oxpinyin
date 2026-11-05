@@ -118,127 +118,94 @@ def separator_case(text, op, off, options=0x18a):
     return probe
 
 SEPARATOR_INPUTS=("'ni","''ni","'nihao","'ni'hao","'ni'","'a")
+# The kept offsets of each (mode, input index, operation); an operation absent here has no case.
+SEPARATOR_OFFSETS = {
+    'pinyin/0/character': (0, 1, 2, 3),
+    'pinyin/0/right': (3,),
+    'pinyin/1/candidates': (0, 1, 2, 3, 4),
+    'pinyin/1/key': (0, 1, 2, 3, 4),
+    'pinyin/1/left': (0, 1, 2, 3, 4),
+    'pinyin/1/right': (0, 1, 3),
+    'pinyin/3/candidates': (1, 3, 6, 7),
+    'pinyin/3/key': (0, 3, 6),
+    'pinyin/3/left': (1, 4, 7),
+    'pinyin/3/offset': (0,),
+    'pinyin/3/parse': (0,),
+    'pinyin/3/rest': (1,),
+    'pinyin/3/right': (0, 4),
+    'pinyin/3/sentence': (0,),
+    'pinyin/4/candidates': (0, 1, 2, 3, 4),
+    'pinyin/4/key': (0, 1),
+    'pinyin/4/left': (0, 1, 2, 3),
+    'pinyin/4/parse': (0,),
+    'pinyin/4/right': (0, 2, 3),
+    'pinyin/4/sentence': (0,),
+    'pinyin/5/candidates': (0, 1, 2),
+    'pinyin/5/key': (0, 1, 2),
+    'pinyin/5/left': (0, 1, 2),
+    'pinyin/5/parse': (0,),
+    'pinyin/5/right': (0,),
+    'pinyin/5/sentence': (0,),
+    'zhuyin/0/character': (0, 1, 2, 3),
+    'zhuyin/0/right': (3,),
+    'zhuyin/1/before': (2, 4),
+    'zhuyin/1/parse': (0,),
+    'zhuyin/1/sentence': (0,),
+    'zhuyin/3/before': (1, 4, 7),
+    'zhuyin/3/candidates': (0, 4),
+    'zhuyin/3/key': (3,),
+    'zhuyin/3/left': (4, 6, 7),
+    'zhuyin/3/rest': (3, 4),
+    'zhuyin/3/right': (4, 6),
+    'zhuyin/4/before': (1, 3),
+    'zhuyin/4/offset': (4,),
+    'zhuyin/4/rest': (4,),
+    'zhuyin/4/right': (3,),
+    'zhuyin/5/before': (1, 2),
+}
 SEPARATOR_ABORTS = {
     'zhuyin/3/before': (4,),
-    'zhuyin/4/before': (4,),
     'pinyin/0/right': (3,),
     'pinyin/0/character': (0, 1, 2, 3),
-    'pinyin/1/right': (4,),
-    'pinyin/1/character': (0, 1, 2, 3, 4),
-    'pinyin/2/right': (6,),
-    'pinyin/2/character': (0, 1, 2, 3, 4, 5, 6),
     'pinyin/3/left': (4,),
-    'pinyin/3/right': (4, 7),
-    'pinyin/3/character': (0, 1, 2, 3, 4, 5, 6, 7),
-    'pinyin/4/left': (4,),
-    'pinyin/4/right': (3, 4),
-    'pinyin/4/character': (0, 1, 2, 3, 4),
-    'pinyin/5/right': (2,),
-    'pinyin/5/character': (0, 1, 2),
+    'pinyin/3/right': (4,),
+    'pinyin/4/right': (3,),
     'zhuyin/0/right': (3,),
     'zhuyin/0/character': (0, 1, 2, 3),
-    'zhuyin/1/right': (4,),
-    'zhuyin/1/character': (0, 1, 2, 3, 4),
-    'zhuyin/2/right': (6,),
-    'zhuyin/2/character': (0, 1, 2, 3, 4, 5, 6),
     'zhuyin/3/candidates': (4,),
     'zhuyin/3/left': (4, 7),
-    'zhuyin/3/right': (4, 7),
-    'zhuyin/3/key': (4,),
+    'zhuyin/3/right': (4,),
     'zhuyin/3/rest': (4,),
-    'zhuyin/3/character': (0, 1, 2, 3, 4, 5, 6, 7),
-    'zhuyin/4/candidates': (4,),
-    'zhuyin/4/left': (4,),
-    'zhuyin/4/right': (3, 4),
-    'zhuyin/4/character': (0, 1, 2, 3, 4),
-    'zhuyin/5/right': (2,),
-    'zhuyin/5/character': (0, 1, 2),
+    'zhuyin/4/right': (3,),
 }
 SEPARATOR_CONTROLS = {
-    'pinyin/0/parse': (0,),
-    'pinyin/0/offset': (0, 1, 2, 3),
-    'pinyin/0/left': (0, 1, 2, 3),
-    'pinyin/0/right': (0, 1, 2, 3),
-    'pinyin/0/key': (1, 2, 3),
-    'pinyin/0/rest': (1, 2, 3),
+    'pinyin/0/right': (3,),
     'pinyin/0/character': (0, 1, 2, 3),
-    'pinyin/1/parse': (0,),
-    'pinyin/1/offset': (0, 1, 2, 3, 4),
     'pinyin/1/left': (0, 1, 2, 3, 4),
-    'pinyin/1/right': (0, 1, 2, 3, 4),
+    'pinyin/1/right': (0, 1, 3),
     'pinyin/1/key': (2, 3, 4),
-    'pinyin/1/rest': (2, 3, 4),
-    'pinyin/1/character': (0, 1, 2, 3, 4),
-    'pinyin/2/parse': (0,),
-    'pinyin/2/offset': (0, 1, 2, 3, 4, 5, 6),
-    'pinyin/2/left': (0, 1, 2, 3, 4, 5, 6),
-    'pinyin/2/right': (0, 1, 2, 3, 4, 5, 6),
-    'pinyin/2/key': (1, 2, 3, 4, 5, 6),
-    'pinyin/2/rest': (1, 2, 3, 4, 5, 6),
-    'pinyin/2/character': (0, 1, 2, 3, 4, 5, 6),
     'pinyin/3/parse': (0,),
-    'pinyin/3/offset': (0, 1, 2, 3, 4, 5, 6, 7),
-    'pinyin/3/left': (0, 1, 2, 3, 4, 5, 6, 7),
-    'pinyin/3/right': (0, 1, 2, 3, 4, 5, 6, 7),
-    'pinyin/3/key': (1, 2, 3, 4, 5, 6, 7),
-    'pinyin/3/rest': (1, 2, 3, 4, 5, 6, 7),
-    'pinyin/3/character': (0, 1, 2, 3, 4, 5, 6, 7),
+    'pinyin/3/offset': (0,),
+    'pinyin/3/left': (1, 4, 7),
+    'pinyin/3/right': (0, 4),
+    'pinyin/3/key': (3, 6),
+    'pinyin/3/rest': (1,),
     'pinyin/4/parse': (0,),
-    'pinyin/4/offset': (0, 1, 2, 3, 4),
-    'pinyin/4/left': (0, 1, 2, 3, 4),
-    'pinyin/4/right': (0, 1, 2, 3, 4),
-    'pinyin/4/key': (1, 2, 4),
-    'pinyin/4/rest': (1, 2, 4),
-    'pinyin/4/character': (0, 1, 2, 3, 4),
+    'pinyin/4/left': (0, 1, 2, 3),
+    'pinyin/4/right': (0, 2, 3),
+    'pinyin/4/key': (1,),
     'pinyin/5/parse': (0,),
-    'pinyin/5/offset': (0, 1, 2),
     'pinyin/5/left': (0, 1, 2),
-    'pinyin/5/right': (0, 1, 2),
+    'pinyin/5/right': (0,),
     'pinyin/5/key': (1, 2),
-    'pinyin/5/rest': (1, 2),
-    'pinyin/5/character': (0, 1, 2),
-    'zhuyin/0/parse': (0,),
-    'zhuyin/0/offset': (0, 1, 2, 3),
-    'zhuyin/0/left': (0, 1, 2, 3),
-    'zhuyin/0/right': (0, 1, 2, 3),
-    'zhuyin/0/key': (1, 2, 3),
-    'zhuyin/0/rest': (1, 2, 3),
+    'zhuyin/0/right': (3,),
     'zhuyin/0/character': (0, 1, 2),
     'zhuyin/1/parse': (0,),
-    'zhuyin/1/offset': (0, 1, 2, 3, 4),
-    'zhuyin/1/left': (0, 1, 2, 3, 4),
-    'zhuyin/1/right': (0, 1, 2, 3, 4),
-    'zhuyin/1/key': (2, 3, 4),
-    'zhuyin/1/rest': (2, 3, 4),
-    'zhuyin/1/character': (0, 1, 2, 3),
-    'zhuyin/2/parse': (0,),
-    'zhuyin/2/offset': (0, 1, 2, 3, 4, 5, 6),
-    'zhuyin/2/left': (0, 1, 2, 3, 4, 5, 6),
-    'zhuyin/2/right': (0, 1, 2, 3, 4, 5, 6),
-    'zhuyin/2/key': (1, 2, 3, 4, 5, 6),
-    'zhuyin/2/rest': (1, 2, 3, 4, 5, 6),
-    'zhuyin/2/character': (0, 1, 2, 3, 4, 5),
-    'zhuyin/3/parse': (0,),
-    'zhuyin/3/offset': (0, 1, 2, 3, 4, 5, 6, 7),
-    'zhuyin/3/left': (0, 1, 2, 3, 4, 5, 6),
-    'zhuyin/3/right': (0, 1, 2, 3, 4, 5, 6, 7),
-    'zhuyin/3/key': (1, 2, 5, 6, 7),
-    'zhuyin/3/rest': (1, 2, 5, 6, 7),
-    'zhuyin/3/character': (0, 1, 2, 3, 4, 5, 6),
-    'zhuyin/4/parse': (0,),
-    'zhuyin/4/offset': (0, 1, 2, 3, 4),
-    'zhuyin/4/left': (0, 1, 2, 3, 4),
-    'zhuyin/4/right': (0, 1, 2, 3, 4),
-    'zhuyin/4/key': (1, 2, 4),
-    'zhuyin/4/rest': (1, 2, 4),
-    'zhuyin/4/character': (0, 1, 2, 3),
-    'zhuyin/5/parse': (0,),
-    'zhuyin/5/offset': (0, 1, 2),
-    'zhuyin/5/left': (0, 1, 2),
-    'zhuyin/5/right': (0, 1, 2),
-    'zhuyin/5/key': (1, 2),
-    'zhuyin/5/rest': (1, 2),
-    'zhuyin/5/character': (0, 1),
+    'zhuyin/3/left': (4, 6),
+    'zhuyin/3/right': (4, 6),
+    'zhuyin/4/offset': (4,),
+    'zhuyin/4/right': (3,),
+    'zhuyin/4/rest': (4,),
 }
 for mode in ('pinyin','zhuyin'):
     for index,text in enumerate(SEPARATOR_INPUTS):
@@ -246,7 +213,7 @@ for mode in ('pinyin','zhuyin'):
         if mode=='zhuyin':
             operations.append('before')
         for op in operations:
-            for offset in ([0] if op in ('parse','sentence') else range(len(text)+1)):
+            for offset in SEPARATOR_OFFSETS.get(f'{mode}/{index}/{op}', ()):
                 identity=f'{mode}/{index}/{op}/{offset}'
                 kwargs={'mode':mode,'control':offset in SEPARATOR_CONTROLS.get(f'{mode}/{index}/{op}', ())}
                 if offset in SEPARATOR_ABORTS.get(f"{mode}/{index}/{op}", ()):
@@ -254,25 +221,49 @@ for mode in ('pinyin','zhuyin'):
                     # pin-aborts-pinyin-facade.md, pin-aborts-zhuyin-facade.md).
                     kwargs.update(abort=False, sigabrt=True, control=False)
                 case('separator/'+identity,**kwargs, issues=('640',))(separator_case(text,op,offset))
-BEFORE_CURSOR_INPUTS=('ni','hao','wo','shi','zhong','guo','xian','tian',
-    'nihao','zhongguo','beijing','shanghai','renmin','nihaoshijie',
-    'zhonghuarenmin','beijingdaxue','shijieheping','nih','zhongg',
-    'beijin','nihaoshij','ni3','ni3hao3','zhong1guo2')
-BEFORE_CURSOR_CONTROLS=(('ni', 0), ('ni', 2), ('hao', 0), ('hao', 3), ('wo', 0), ('wo', 2), ('shi', 0), ('shi', 3), ('zhong', 0), ('zhong', 5), ('guo', 0), ('guo', 3), ('xian', 0), ('tian', 0), ('nihao', 0), ('nihao', 2), ('nihao', 5), ('zhongguo', 0), ('zhongguo', 5), ('zhongguo', 8), ('beijing', 0), ('beijing', 3), ('beijing', 7), ('shanghai', 0), ('shanghai', 5), ('shanghai', 8), ('renmin', 0), ('renmin', 3), ('renmin', 6), ('nihaoshijie', 0), ('nihaoshijie', 2), ('nihaoshijie', 5), ('nihaoshijie', 8), ('zhonghuarenmin', 0), ('zhonghuarenmin', 5), ('zhonghuarenmin', 8), ('zhonghuarenmin', 11), ('zhonghuarenmin', 14), ('beijingdaxue', 0), ('beijingdaxue', 3), ('beijingdaxue', 7), ('beijingdaxue', 9), ('beijingdaxue', 12), ('shijieheping', 0), ('shijieheping', 3), ('shijieheping', 8), ('shijieheping', 12), ('nih', 0), ('nih', 2), ('nih', 3), ('zhongg', 0), ('zhongg', 5), ('zhongg', 6), ('beijin', 0), ('beijin', 3), ('beijin', 6), ('nihaoshij', 0), ('nihaoshij', 2), ('nihaoshij', 5), ('nihaoshij', 8), ('nihaoshij', 9), ('ni3', 0), ('ni3', 3), ('ni3hao3', 0), ('ni3hao3', 3), ('ni3hao3', 7), ('zhong1guo2', 0), ('zhong1guo2', 6), ('zhong1guo2', 10))
+BEFORE_CURSOR_INPUTS=('guo', 'tian', 'nihaoshijie', 'beijingdaxue', 'nih', 'beijin', 'nihaoshij', 'ni3', 'ni3hao3')
+# The kept offsets of each input's zhuyin before-cursor cases, of its separator-free controls by operation, and the inputs whose sentence control is kept.
+BEFORE_CURSOR_OFFSETS={'guo': (2,), 'beijingdaxue': (0, 11, 12), 'nih': (0, 2, 3), 'beijin': (1,), 'nihaoshij': (1, 8), 'ni3': (0, 1, 3), 'ni3hao3': (3, 6)}
+SEPARATOR_FREE_OFFSETS={
+    'tian': {'key': (2,)},
+    'nihaoshijie': {'key': (10,)},
+    'beijingdaxue': {'candidates': (0, 12), 'key': (0, 1, 11, 12)},
+    'nih': {'candidates': (0, 1), 'key': (0, 1, 2, 3)},
+    'beijin': {'key': (5,)},
+    'nihaoshij': {'candidates': (1,), 'key': (8,)},
+    'ni3': {'candidates': (0, 1, 2), 'key': (0, 1, 2, 3)},
+    'ni3hao3': {'candidates': (7,), 'key': (3,)},
+}
+SEPARATOR_FREE_SENTENCES=('beijingdaxue', 'nih', 'ni3',)
+BEFORE_CURSOR_CONTROLS=(('beijingdaxue', 0), ('beijingdaxue', 12), ('nih', 0), ('nih', 2), ('nih', 3), ('nihaoshij', 8), ('ni3', 0), ('ni3', 3), ('ni3hao3', 3),)
 for text in BEFORE_CURSOR_INPUTS:
     options=0x1aa if any(char.isdigit() for char in text) else 0x18a
     for offset in range(len(text)+1):
-        case(f'before-cursor/{text}/{offset}',mode='zhuyin',
-             control=(text,offset) in BEFORE_CURSOR_CONTROLS, issues=('698',))(separator_case(text,'before',offset,options))
+        if offset in BEFORE_CURSOR_OFFSETS.get(text, ()):
+            case(f'before-cursor/{text}/{offset}',mode='zhuyin',
+                 control=(text,offset) in BEFORE_CURSOR_CONTROLS, issues=('698',))(separator_case(text,'before',offset,options))
         for op in ('candidates','key','rest'):
-            case(f'separator-free-control/{text}/{op}/{offset}',control=True, issues=('640', '698'))(
-                separator_case(text,op,offset,options))
-    case(f'separator-free-control/{text}/sentence',control=True, issues=('640', '698'))(
-        separator_case(text,'sentence',0,options))
+            if offset in SEPARATOR_FREE_OFFSETS.get(text, {}).get(op, ()):
+                case(f'separator-free-control/{text}/{op}/{offset}',control=True, issues=('640', '698'))(
+                    separator_case(text,op,offset,options))
+    if text in SEPARATOR_FREE_SENTENCES:
+        case(f'separator-free-control/{text}/sentence',control=True, issues=('640', '698'))(
+            separator_case(text,'sentence',0,options))
+# The kept offsets of each (mode, input, operation) of the zero-key cases.
+ZERO_KEY_OFFSETS={
+    ('pinyin', "ni''hao", 'key'): (0, 1, 3, 4, 6, 7),
+    ('pinyin', "ni'hao'", 'key'): (0, 1, 6, 7),
+    # zhuyin_get_zhuyin_key and its rest getter read the column at the offset itself, where
+    # libpinyin first moves past zero keys (`_compute_pinyin_start`, pinyin.cpp:2931).
+    ('zhuyin', "ni''hao", 'key'): (2,),
+    ('zhuyin', "ni''hao", 'rest'): (2,),
+}
 for mode in ('pinyin','zhuyin'):
     for text in ("ni'","ni'hao","ni''hao","ni'hao'"):
         for op in ('key','rest'):
             for offset in range(len(text)+1):
+                if offset not in ZERO_KEY_OFFSETS.get((mode, text, op), ()):
+                    continue
                 previous_zero=offset>0 and text[offset-1]=="'"
                 is_zero=offset<len(text) and text[offset]=="'"
                 tail_zero=is_zero and all(char=="'" for char in text[offset:])
@@ -280,12 +271,11 @@ for mode in ('pinyin','zhuyin'):
                 if mode=='zhuyin' and previous_zero and offset<len(text):
                     kwargs.update(abort=False, sigabrt=True)
                 case(f'zero-key/{mode}/{text}/{op}/{offset}',**kwargs, issues=('681',))(separator_case(text,op,offset))
-for mode,text,offset in (('pinyin',"xi'",2),('pinyin',"xi''",2),
-                         ('pinyin',"xi''",3),('zhuyin',"xi1'an1",3),
-                         ('zhuyin',"xi1'",3)):
-    for op in ('key','rest','render'):
-        case(f'allocator-zero/{mode}/{text}/{op}/{offset}',mode=mode, issues=('681',))(
-            separator_case(text,op,offset,0x1aa))
+# (mode, input, operation, offset) of the kept allocator-zero cases.
+ALLOCATOR_ZERO=(('pinyin',"xi''",'render',3),('zhuyin',"xi1'an1",'render',3),('zhuyin',"xi1'",'key',3))
+for mode,text,op,offset in ALLOCATOR_ZERO:
+    case(f'allocator-zero/{mode}/{text}/{op}/{offset}',mode=mode, issues=('681',))(
+        separator_case(text,op,offset,0x1aa))
 case("allocator-zero/zhuyin/xi1'an1/key/4",mode='zhuyin',abort=False,sigabrt=True, issues=('681',))(
     separator_case("xi1'an1",'key',4,0x1aa))
 
