@@ -13,65 +13,6 @@
 
 **Conclusion:** accepted under the merged policy. Valid product grammar, ABI and persistent contracts remain. Runtime is linear in the input; parsing keeps borrowed header/row slices and removes the hex conversion/word-copy machinery.
 
-```contract-diff-policy
-{
-  "schema": 2,
-  "record": "1297-punct-words",
-  "status": "current",
-  "disposition": "POLICY-ACCEPTED",
-  "cases": {
-    "punct-decode/misaligned-terminated": {
-      "pin": {
-        "sha256": "5db4978593c6727f3b7acf17a2a1fdb84231f458a03a2c659bb4ffeb0b859cae",
-        "fields": {
-          "exit": "5feceb66ffc86f38",
-          "result.logs": "4f53cda18c2baa0c",
-          "result.puncts": "cd2313461356b4cc",
-          "result.ret": "b5bea41b6c623f7c",
-          "stderr": "12ae32cb1ec02d01"
-        }
-      },
-      "subject": {
-        "sha256": "df958b1ec943d41ea08a0fadb59bb793a750d00a92bad3036fdc65d22dfbfb06",
-        "fields": {
-          "exit": "5feceb66ffc86f38",
-          "result.logs": "4f53cda18c2baa0c",
-          "result.puncts": "53f8b1f94edd3d2a",
-          "result.ret": "b5bea41b6c623f7c",
-          "stderr": "12ae32cb1ec02d01"
-        }
-      },
-      "divergence": [
-        "result.puncts[1:2]: subject drops [\"\"]"
-      ]
-    },
-    "punct-decode/misaligned-short": {
-      "pin": {
-        "sha256": "740ceb7b715fa9442ced83ac3ba56e4f0700269df73818914cf6e2722dd6f42b",
-        "fields": {
-          "exit": "5feceb66ffc86f38",
-          "result.logs": "4f53cda18c2baa0c",
-          "result.puncts": "055539df4a0b804c",
-          "result.ret": "b5bea41b6c623f7c",
-          "stderr": "12ae32cb1ec02d01"
-        }
-      },
-      "subject": {
-        "sha256": "8a4aef0cf40281c803b2777c95a491887ab9bf6d7b84b2a2407c304f9233288f",
-        "fields": {
-          "exit": "5feceb66ffc86f38",
-          "result.logs": "4f53cda18c2baa0c",
-          "result.puncts": "4f53cda18c2baa0c",
-          "result.ret": "b5bea41b6c623f7c",
-          "stderr": "12ae32cb1ec02d01"
-        }
-      },
-      "divergence": [
-        "result.puncts[0:1]: subject drops [\"\"]"
-      ]
-    }
-  }
-}
-```
+Policy evidence is in [1297-punct-words.json](../../fixtures/contract-policy/1297-punct-words.json).
 
 **Named mutation (2026-10-26 UTC):** `M1297-byte-tail` — restore the byte-length loop condition; `punct-decode/misaligned-terminated` detects it (DIFFER, exit 1). Every mutated source was restored byte-for-byte. Rebuild with `just cell-artifacts --artifacts pinyin-capi,zhuyin-capi` for C-facing witnesses, then run the existing contract driver with the named `--cases`; tool and sink witnesses use `just heavy -- cargo test` with their existing test target. The restored touched-crate gate passes, and the three C-facing mutation witnesses return to their declared MATCH/POLICY-ACCEPTED outcomes.

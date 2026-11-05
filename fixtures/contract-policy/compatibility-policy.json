@@ -1,0 +1,328 @@
+{
+  "cases": {
+    "chewing-table-invalid-text": {
+      "classification": "b",
+      "pin_not_run": {
+        "fields": {
+          "exit": "785f3ec7eb32f30b",
+          "files": "53ee76ed86fc4c3a",
+          "stderr": "12ae32cb1ec02d01",
+          "stdout": "12ae32cb1ec02d01"
+        },
+        "sha256": "7dcc2b046f73c4f1e93457ba0df4cb36c1bbc4ae9358d653f39e3662f9af0e9d"
+      }
+    },
+    "chewing-table-overlong-query": {
+      "classification": "b",
+      "pin_not_run": {
+        "fields": {
+          "exit": "785f3ec7eb32f30b",
+          "files": "eb361d7975aa2e68",
+          "stderr": "12ae32cb1ec02d01",
+          "stdout": "12ae32cb1ec02d01"
+        },
+        "sha256": "75042365c7a5e47095a8467ac84293d4b439c75b65d76c6b27d7ffa7eb0e405b"
+      }
+    },
+    "phrase-index-logger-missing": {
+      "classification": "b",
+      "pin_not_run": {
+        "fields": {
+          "exit": "d4735e3a265e16ee",
+          "files": "9ae832204319a114",
+          "stderr": "12ae32cb1ec02d01",
+          "stdout": "12ae32cb1ec02d01"
+        },
+        "sha256": "86f8986d7fc2cc4497c2ebd3ceed8618b356f0cd55347c73e5bbb3ce016575e2"
+      }
+    },
+    "phrase-index-logger-short": {
+      "classification": "b",
+      "pin_not_run": {
+        "fields": {
+          "exit": "d4735e3a265e16ee",
+          "files": "fc1d503c19c31bdc",
+          "stderr": "12ae32cb1ec02d01",
+          "stdout": "12ae32cb1ec02d01"
+        },
+        "sha256": "fc8d94e7dc36bc59bfc93aad5ae95c217c1dc785f0aca08970837225537a6f00"
+      }
+    },
+    "phrase-table-invalid-text": {
+      "classification": "b",
+      "pin_not_run": {
+        "fields": {
+          "exit": "785f3ec7eb32f30b",
+          "files": "53ee76ed86fc4c3a",
+          "stderr": "12ae32cb1ec02d01",
+          "stdout": "12ae32cb1ec02d01"
+        },
+        "sha256": "7dcc2b046f73c4f1e93457ba0df4cb36c1bbc4ae9358d653f39e3662f9af0e9d"
+      }
+    },
+    "phrase-table-invalid-utf8": {
+      "classification": "b",
+      "pin_not_run": {
+        "fields": {
+          "exit": "785f3ec7eb32f30b",
+          "files": "eb361d7975aa2e68",
+          "stderr": "12ae32cb1ec02d01",
+          "stdout": "12ae32cb1ec02d01"
+        },
+        "sha256": "75042365c7a5e47095a8467ac84293d4b439c75b65d76c6b27d7ffa7eb0e405b"
+      }
+    },
+    "table-info-zero-versions-pinyin": {
+      "classification": "b",
+      "pin_not_run": {
+        "fields": {
+          "exit": "5feceb66ffc86f38",
+          "files": "57dc0f9e66c025b2",
+          "stderr": "12ae32cb1ec02d01",
+          "stdout": "883be77e6465ec63"
+        },
+        "sha256": "23371a0fe33212dc708805cc737d53e2fb5d242cc6aa64687c526f9744edd156"
+      }
+    },
+    "table-info-zero-versions-zhuyin": {
+      "classification": "b",
+      "pin_not_run": {
+        "fields": {
+          "exit": "5feceb66ffc86f38",
+          "files": "54f6b6518815c8eb",
+          "stderr": "12ae32cb1ec02d01",
+          "stdout": "883be77e6465ec63"
+        },
+        "sha256": "14feae538442ded3d8b890420959f48a488b0ba67ec969d9d909c7f68e2a9989"
+      }
+    },
+    "unloaded-cached-pronunciation-pinyin": {
+      "cells": {
+        "bdb": {
+          "divergence": [
+            "result.journals.gb_char.dbin: pin \"3e0000001000570004000000000000000400640000\" \u2026 (length 140); subject \"120000000000000004000000000000000400640000\" \u2026 (length 52)",
+            "\u2026 further divergence omitted (4096-byte budget)"
+          ],
+          "pin": {
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.journals": "535e8bb91374c5c0",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.pronunciations-before": "b08cd50b25ebfe48",
+              "result.save": "b5bea41b6c623f7c",
+              "result.train": "b5bea41b6c623f7c",
+              "result.unigrams-after": "73908e93390814de",
+              "result.unigrams-before": "0f96b3bfbc3b2238",
+              "result.unload": "b5bea41b6c623f7c",
+              "stderr": "12ae32cb1ec02d01"
+            },
+            "sha256": "b845dfc64468d8a2de351d8531faef41624fa2ab904e1ffd5db3ddde15794b9f"
+          },
+          "subject": {
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.journals": "e8e069df3c010dca",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.pronunciations-before": "b08cd50b25ebfe48",
+              "result.save": "b5bea41b6c623f7c",
+              "result.train": "b5bea41b6c623f7c",
+              "result.unigrams-after": "73908e93390814de",
+              "result.unigrams-before": "0f96b3bfbc3b2238",
+              "result.unload": "b5bea41b6c623f7c",
+              "stderr": "12ae32cb1ec02d01"
+            },
+            "sha256": "109d9bbf4e3f9acda31e73c654948443c02a73dcf217ed9f8113b3688470211f"
+          }
+        },
+        "kc": {
+          "divergence": [
+            "result.journals.gb_char.dbin: pin \"3e0000001000570004000000000000000400640000\" \u2026 (length 140); subject \"120000000000000004000000000000000400640000\" \u2026 (length 52)",
+            "\u2026 further divergence omitted (4096-byte budget)"
+          ],
+          "pin": {
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.journals": "535e8bb91374c5c0",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.pronunciations-before": "b08cd50b25ebfe48",
+              "result.save": "b5bea41b6c623f7c",
+              "result.train": "b5bea41b6c623f7c",
+              "result.unigrams-after": "73908e93390814de",
+              "result.unigrams-before": "0f96b3bfbc3b2238",
+              "result.unload": "b5bea41b6c623f7c",
+              "stderr": "12ae32cb1ec02d01"
+            },
+            "sha256": "b845dfc64468d8a2de351d8531faef41624fa2ab904e1ffd5db3ddde15794b9f"
+          },
+          "subject": {
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.journals": "e8e069df3c010dca",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.pronunciations-before": "b08cd50b25ebfe48",
+              "result.save": "b5bea41b6c623f7c",
+              "result.train": "b5bea41b6c623f7c",
+              "result.unigrams-after": "73908e93390814de",
+              "result.unigrams-before": "0f96b3bfbc3b2238",
+              "result.unload": "b5bea41b6c623f7c",
+              "stderr": "12ae32cb1ec02d01"
+            },
+            "sha256": "109d9bbf4e3f9acda31e73c654948443c02a73dcf217ed9f8113b3688470211f"
+          }
+        },
+        "tkrzw": {
+          "divergence": [
+            "result.journals.gb_char.dbin: pin \"3e0000001000570004000000000000000400640000\" \u2026 (length 140); subject \"120000000000000004000000000000000400640000\" \u2026 (length 52)",
+            "\u2026 further divergence omitted (4096-byte budget)"
+          ],
+          "pin": {
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.journals": "535e8bb91374c5c0",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.pronunciations-before": "b08cd50b25ebfe48",
+              "result.save": "b5bea41b6c623f7c",
+              "result.train": "b5bea41b6c623f7c",
+              "result.unigrams-after": "73908e93390814de",
+              "result.unigrams-before": "0f96b3bfbc3b2238",
+              "result.unload": "b5bea41b6c623f7c",
+              "stderr": "12ae32cb1ec02d01"
+            },
+            "sha256": "b845dfc64468d8a2de351d8531faef41624fa2ab904e1ffd5db3ddde15794b9f"
+          },
+          "subject": {
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.journals": "e8e069df3c010dca",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.pronunciations-before": "b08cd50b25ebfe48",
+              "result.save": "b5bea41b6c623f7c",
+              "result.train": "b5bea41b6c623f7c",
+              "result.unigrams-after": "73908e93390814de",
+              "result.unigrams-before": "0f96b3bfbc3b2238",
+              "result.unload": "b5bea41b6c623f7c",
+              "stderr": "12ae32cb1ec02d01"
+            },
+            "sha256": "109d9bbf4e3f9acda31e73c654948443c02a73dcf217ed9f8113b3688470211f"
+          }
+        }
+      }
+    },
+    "unloaded-cached-pronunciation-zhuyin": {
+      "cells": {
+        "bdb": {
+          "divergence": [
+            "result.journals.gb_char.dbin: pin \"3e0000001000570004000000000000000400640000\" \u2026 (length 140); subject \"120000000000000004000000000000000400640000\" \u2026 (length 52)",
+            "\u2026 further divergence omitted (4096-byte budget)"
+          ],
+          "pin": {
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.journals": "535e8bb91374c5c0",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.pronunciations-before": "b08cd50b25ebfe48",
+              "result.save": "b5bea41b6c623f7c",
+              "result.train": "b5bea41b6c623f7c",
+              "result.unigrams-after": "73908e93390814de",
+              "result.unigrams-before": "0f96b3bfbc3b2238",
+              "result.unload": "b5bea41b6c623f7c",
+              "stderr": "12ae32cb1ec02d01"
+            },
+            "sha256": "b845dfc64468d8a2de351d8531faef41624fa2ab904e1ffd5db3ddde15794b9f"
+          },
+          "subject": {
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.journals": "e8e069df3c010dca",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.pronunciations-before": "b08cd50b25ebfe48",
+              "result.save": "b5bea41b6c623f7c",
+              "result.train": "b5bea41b6c623f7c",
+              "result.unigrams-after": "73908e93390814de",
+              "result.unigrams-before": "0f96b3bfbc3b2238",
+              "result.unload": "b5bea41b6c623f7c",
+              "stderr": "12ae32cb1ec02d01"
+            },
+            "sha256": "109d9bbf4e3f9acda31e73c654948443c02a73dcf217ed9f8113b3688470211f"
+          }
+        },
+        "kc": {
+          "divergence": [
+            "result.journals.gb_char.dbin: pin \"3e0000001000570004000000000000000400640000\" \u2026 (length 140); subject \"120000000000000004000000000000000400640000\" \u2026 (length 52)",
+            "\u2026 further divergence omitted (4096-byte budget)"
+          ],
+          "pin": {
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.journals": "535e8bb91374c5c0",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.pronunciations-before": "b08cd50b25ebfe48",
+              "result.save": "b5bea41b6c623f7c",
+              "result.train": "b5bea41b6c623f7c",
+              "result.unigrams-after": "73908e93390814de",
+              "result.unigrams-before": "0f96b3bfbc3b2238",
+              "result.unload": "b5bea41b6c623f7c",
+              "stderr": "12ae32cb1ec02d01"
+            },
+            "sha256": "b845dfc64468d8a2de351d8531faef41624fa2ab904e1ffd5db3ddde15794b9f"
+          },
+          "subject": {
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.journals": "e8e069df3c010dca",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.pronunciations-before": "b08cd50b25ebfe48",
+              "result.save": "b5bea41b6c623f7c",
+              "result.train": "b5bea41b6c623f7c",
+              "result.unigrams-after": "73908e93390814de",
+              "result.unigrams-before": "0f96b3bfbc3b2238",
+              "result.unload": "b5bea41b6c623f7c",
+              "stderr": "12ae32cb1ec02d01"
+            },
+            "sha256": "109d9bbf4e3f9acda31e73c654948443c02a73dcf217ed9f8113b3688470211f"
+          }
+        },
+        "tkrzw": {
+          "divergence": [
+            "result.journals.gb_char.dbin: pin \"3e0000001000570004000000000000000400640000\" \u2026 (length 140); subject \"120000000000000004000000000000000400640000\" \u2026 (length 52)",
+            "\u2026 further divergence omitted (4096-byte budget)"
+          ],
+          "pin": {
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.journals": "535e8bb91374c5c0",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.pronunciations-before": "b08cd50b25ebfe48",
+              "result.save": "b5bea41b6c623f7c",
+              "result.train": "b5bea41b6c623f7c",
+              "result.unigrams-after": "73908e93390814de",
+              "result.unigrams-before": "0f96b3bfbc3b2238",
+              "result.unload": "b5bea41b6c623f7c",
+              "stderr": "12ae32cb1ec02d01"
+            },
+            "sha256": "b845dfc64468d8a2de351d8531faef41624fa2ab904e1ffd5db3ddde15794b9f"
+          },
+          "subject": {
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.journals": "e8e069df3c010dca",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.pronunciations-before": "b08cd50b25ebfe48",
+              "result.save": "b5bea41b6c623f7c",
+              "result.train": "b5bea41b6c623f7c",
+              "result.unigrams-after": "73908e93390814de",
+              "result.unigrams-before": "0f96b3bfbc3b2238",
+              "result.unload": "b5bea41b6c623f7c",
+              "stderr": "12ae32cb1ec02d01"
+            },
+            "sha256": "109d9bbf4e3f9acda31e73c654948443c02a73dcf217ed9f8113b3688470211f"
+          }
+        }
+      }
+    }
+  },
+  "disposition": "POLICY-ACCEPTED",
+  "record": "compatibility-policy",
+  "schema": 2,
+  "status": "current"
+}

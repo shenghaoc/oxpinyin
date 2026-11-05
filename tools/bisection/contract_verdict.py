@@ -84,6 +84,15 @@ def valid_parent_observations(spec, pin, subject, *, directory_probe):
         or subject['exit'] in ((pin['exit'],) if spec['both_abort'] else signals))
 
 
+def policy_json_path(policy_root, name):
+    """Locate the evidence associated with a findings record."""
+    directory = policy_root.parent.parent / 'fixtures/contract-policy'
+    path = directory / (Path(name).stem + '.json')
+    if path.resolve().parent != directory.resolve():
+        raise ValueError('policy record escapes evidence directory')
+    return path
+
+
 def policy_expectations(spec, *, policy_root, cell):
     """Read the current registered record, never a cached exemption.
 
@@ -104,16 +113,11 @@ def policy_expectations(spec, *, policy_root, cell):
     name = spec['policy_record']
     if not isinstance(name, str) or Path(name).name != name or not name.endswith('.md'):
         raise ValueError('policy_record must name a findings Markdown record')
-    path = policy_root / name
-    if path.resolve().parent != policy_root.resolve():
-        raise ValueError('policy record escapes findings directory')
+    path = policy_json_path(policy_root, name)
     register = (policy_root / 'upstream-divergences.md').read_text()
     if f']({name})' not in register:
         raise ValueError('policy record is not registered')
-    blocks = re.findall(r'^```contract-diff-policy\n(.*?)\n```$', path.read_text(), re.M | re.S)
-    if len(blocks) != 1:
-        raise ValueError('policy record needs exactly one observations block')
-    record = json.loads(blocks[0])
+    record = json.loads(path.read_text(encoding='utf-8'))
     if isinstance(record, dict) and record.get('schema') == 1:
         raise ValueError('policy record holds complete observations (schema 1); '
                          'record its cases again with just policy-record')

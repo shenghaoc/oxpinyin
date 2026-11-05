@@ -52,7 +52,7 @@ unclassified DIFFER. A current discrepancy record
 its expected non-MATCH; the disposition is POLICY-ACCEPTED. The case keeps
 its pin and subject observations, and it is never deleted or relabelled
 MATCH. `policy_record=` links a registered, current record whose
-`contract-diff-policy` JSON block keeps, per case and cell, the SHA-256 of
+policy JSON file keeps, per case and cell, the SHA-256 of
 each side's complete stable observation, a digest per top-level field and
 the pin-to-subject divergence as text (`just policy-record` writes it from
 an `--observations` capture). The verdict compares the digests, so the

@@ -1,0 +1,160 @@
+{
+  "cases": {
+    "key-position-past-65535/chewing-zhuyin-past-key": {
+      "cells": {
+        "bdb": {
+          "divergence": [
+            "result.rest 65537[0:1]: pin [false]; subject [true, \"2b00\", true] \u2026 (length 7)",
+            "\u2026 further divergence omitted (4096-byte budget)"
+          ],
+          "pin": {
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.rest 65537": "456e2e3fa05ee1e2",
+              "stderr": "c48a0964ed0c5485"
+            },
+            "sha256": "29a61f6185339afada06ac9a00d4a3e25ed6c94128215aae077a9c72c4bdfaa9"
+          },
+          "subject": {
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.rest 65537": "5c53850023b08bdc",
+              "stderr": "c48a0964ed0c5485"
+            },
+            "sha256": "c8bb3574bf974050e6d0ed1a90ce6197a78f5a8d530d325792abbf06bff932a0"
+          }
+        },
+        "kc": {
+          "divergence": [
+            "result.rest 65537[0:1]: pin [false]; subject [true, \"2b00\", true] \u2026 (length 7)",
+            "\u2026 further divergence omitted (4096-byte budget)"
+          ],
+          "pin": {
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.rest 65537": "456e2e3fa05ee1e2",
+              "stderr": "c48a0964ed0c5485"
+            },
+            "sha256": "29a61f6185339afada06ac9a00d4a3e25ed6c94128215aae077a9c72c4bdfaa9"
+          },
+          "subject": {
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.rest 65537": "5c53850023b08bdc",
+              "stderr": "c48a0964ed0c5485"
+            },
+            "sha256": "c8bb3574bf974050e6d0ed1a90ce6197a78f5a8d530d325792abbf06bff932a0"
+          }
+        },
+        "tkrzw": {
+          "divergence": [
+            "result.rest 65537[0:1]: pin [false]; subject [true, \"2b00\", true] \u2026 (length 7)",
+            "\u2026 further divergence omitted (4096-byte budget)"
+          ],
+          "pin": {
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.rest 65537": "456e2e3fa05ee1e2",
+              "stderr": "c48a0964ed0c5485"
+            },
+            "sha256": "29a61f6185339afada06ac9a00d4a3e25ed6c94128215aae077a9c72c4bdfaa9"
+          },
+          "subject": {
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.rest 65537": "5c53850023b08bdc",
+              "stderr": "c48a0964ed0c5485"
+            },
+            "sha256": "c8bb3574bf974050e6d0ed1a90ce6197a78f5a8d530d325792abbf06bff932a0"
+          }
+        }
+      }
+    },
+    "key-position-past-65535/double-pinyin-past-key": {
+      "cells": {
+        "bdb": {
+          "divergence": [
+            "result.rest 65537[0:1]: pin [false]; subject [true, \"2b00\", true] \u2026 (length 7)",
+            "\u2026 further divergence omitted (4096-byte budget)"
+          ],
+          "pin": {
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.rest 65537": "456e2e3fa05ee1e2",
+              "stderr": "c48a0964ed0c5485"
+            },
+            "sha256": "29a61f6185339afada06ac9a00d4a3e25ed6c94128215aae077a9c72c4bdfaa9"
+          },
+          "subject": {
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.rest 65537": "5c53850023b08bdc",
+              "stderr": "c48a0964ed0c5485"
+            },
+            "sha256": "c8bb3574bf974050e6d0ed1a90ce6197a78f5a8d530d325792abbf06bff932a0"
+          }
+        },
+        "kc": {
+          "divergence": [
+            "result.rest 65537[0:1]: pin [false]; subject [true, \"2b00\", true] \u2026 (length 7)",
+            "\u2026 further divergence omitted (4096-byte budget)"
+          ],
+          "pin": {
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.rest 65537": "456e2e3fa05ee1e2",
+              "stderr": "c48a0964ed0c5485"
+            },
+            "sha256": "29a61f6185339afada06ac9a00d4a3e25ed6c94128215aae077a9c72c4bdfaa9"
+          },
+          "subject": {
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.rest 65537": "5c53850023b08bdc",
+              "stderr": "c48a0964ed0c5485"
+            },
+            "sha256": "c8bb3574bf974050e6d0ed1a90ce6197a78f5a8d530d325792abbf06bff932a0"
+          }
+        },
+        "tkrzw": {
+          "divergence": [
+            "result.rest 65537[0:1]: pin [false]; subject [true, \"2b00\", true] \u2026 (length 7)",
+            "\u2026 further divergence omitted (4096-byte budget)"
+          ],
+          "pin": {
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.rest 65537": "456e2e3fa05ee1e2",
+              "stderr": "c48a0964ed0c5485"
+            },
+            "sha256": "29a61f6185339afada06ac9a00d4a3e25ed6c94128215aae077a9c72c4bdfaa9"
+          },
+          "subject": {
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "result.logs": "4f53cda18c2baa0c",
+              "result.rest 65537": "5c53850023b08bdc",
+              "stderr": "c48a0964ed0c5485"
+            },
+            "sha256": "c8bb3574bf974050e6d0ed1a90ce6197a78f5a8d530d325792abbf06bff932a0"
+          }
+        }
+      }
+    }
+  },
+  "disposition": "POLICY-ACCEPTED",
+  "record": "1501-guint16-key-positions",
+  "schema": 2,
+  "status": "current"
+}
