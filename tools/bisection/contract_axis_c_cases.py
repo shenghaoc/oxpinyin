@@ -288,7 +288,14 @@ def register(case, *, AXIS_C_DEFINITION, AXIS_C_GROUPS, AXIS_C_LAYOUT_COVERED, W
         for _scheme in AXIS_C_DEFINITION['layout_schemes']:
             for _word in AXIS_C_DEFINITION['layout_words']:
                 _name = f'axis-c-layout-{_mode}-{_scheme}-{int(_word, 16):08x}'
-                case(_name, mode=_mode, stderr=True)(axis_c_layout(_scheme, int(_word, 16), AXIS_C_DEFINITION))
+                # Scheme 3 (`u`) and 4 (`n`) type the one syllable ri, whose 鈤 and 馹 tie in the final
+                # n-best tails (unigram 1, pronunciation 3/3, no sentence-start bigram). The pin picks by
+                # heap pop order and the ruled S2 key by earlier batch position, so these two cases are
+                # POLICY-ACCEPTED under the S2 tie rule (docs/findings/trellis-adjusted-cost-s1-s2.md).
+                _policy = ({'policy_record': 'trellis-adjusted-cost-s1-s2.md'}
+                           if (_mode, _scheme, int(_word, 16)) in (('pinyin', 3, 0), ('pinyin', 4, 0)) else {})
+                case(_name, mode=_mode, stderr=True, **_policy)(
+                    axis_c_layout(_scheme, int(_word, 16), AXIS_C_DEFINITION))
                 AXIS_C_GROUPS['layouts'].append(_name)
                 if _scheme in _covered_rows:
                     AXIS_C_LAYOUT_COVERED[_name] = _covered_rows[_scheme]
