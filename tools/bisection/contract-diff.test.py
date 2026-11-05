@@ -65,7 +65,7 @@ def stub_case(kit):
     return {}
 
 
-def freeze(root, cell, spec, pin, *, glibc=None, glib=None, directory_read=None, profile=None,
+def freeze(root, cell, spec, pin, *, glibc=None, glib=None, profile=None,
            scanner_verdict=None):
     """Write the reference row of SPEC holding the pin observation PIN, the way capture does."""
     pinned = spec.get('pin_not_run') is not None
@@ -75,8 +75,6 @@ def freeze(root, cell, spec, pin, *, glibc=None, glib=None, directory_read=None,
     identity = dict(inputs=reference.inputs_digest(spec, driver.NO_ABORT),
                     pin=dict(commit=reference.PIN_COMMIT, library_sha256=None), backend=cell,
                     system_data=dict(kind=reference.SYNTHETIC), environment=environment)
-    if directory_read is not None:
-        identity['directory_read_verdict'] = directory_read
     row = dict(schema=reference.SCHEMA, case=spec['case_id'], cell=cell, mode=spec['mode'],
                provenance='pin_not_run' if pinned else 'pin', identity=identity,
                pin=reference.stable_pin(reference.NOT_RUN if pinned else pin))
@@ -1198,21 +1196,19 @@ class RegisteredTerminationDefaultTests(DriverFixtureCase):
                              for side in observations[-2:]]
             # A record keeps digests, not observations, so the accepted pair cannot be
             # rebuilt here; PolicyAcceptedTests covers acceptance with synthetic records.
-            for reads in (False, True):
-                with patch.object(driver, 'directory_reads_as_a_chunk', return_value=reads):
-                    for pin in observations:
-                        for subject in observations:
-                            with self.subTest(case=name, reads=reads, pin=pin, subject=subject):
-                                same = driver.matches(case, pin, subject)
-                                legacy = ('MATCH' if same else 'DIFFER', same, same)
-                                if case['policy_record'] is not None:
-                                    actual = dict(pin=driver.policy_observation(case, pin),
-                                                  subject=driver.policy_observation(case, subject))
-                                    legacy = (('INVALID', False, False) if policy_invalid else
-                                              ('POLICY-ACCEPTED', True, False)
-                                              if contract_policy.accepted(policy_kept, actual)
-                                              else ('DIFFER', False, False))
-                                self.assertEqual(driver.verdict_for(case, pin, subject, False), legacy)
+            for pin in observations:
+                for subject in observations:
+                    with self.subTest(case=name, pin=pin, subject=subject):
+                        same = driver.matches(case, pin, subject)
+                        legacy = ('MATCH' if same else 'DIFFER', same, same)
+                        if case['policy_record'] is not None:
+                            actual = dict(pin=driver.policy_observation(case, pin),
+                                          subject=driver.policy_observation(case, subject))
+                            legacy = (('INVALID', False, False) if policy_invalid else
+                                      ('POLICY-ACCEPTED', True, False)
+                                      if contract_policy.accepted(policy_kept, actual)
+                                      else ('DIFFER', False, False))
+                        self.assertEqual(driver.verdict_for(case, pin, subject, False), legacy)
 
 
 class DriverInvalidTests(VerifyCase):
@@ -1426,145 +1422,6 @@ class ReverseCrossOpenTests(VerifyCase):
         self.assertEqual(code, 2)
         self.assertIn('never run in GitHub Actions', stderr)
 
-
-class DirChunkTests(VerifyCase):
-    """`dir_chunk`: the directory a NULL row makes the pin read is held to
-    the side of `directory_reads_as_a_chunk` this host is on (#1011)."""
-
-    USER = 'table-conf-abort-system-file-without-user-file'
-    SYSTEM = 'table-conf-abort-system-file-without-chunk'
-    FRESH = 'open SCRATCH/user-X/user.conf failed.'
-    UNMAPPABLE = 'mmap SCRATCH/sys-X failed!\n'
-
-    def tearDown(self):
-        driver.directory_reads_as_a_chunk.cache_clear()
-
-    def aborted(self):
-        return observation(exit=-signal.SIGABRT, stderr=self.FRESH + 'assert\n', userfiles={'user.conf': [1, 'd']})
-
-    def answered(self, ret=False, logs=(('libpinyin', 16),), stderr=FRESH):
-        return observation(result={'ret': ret, 'logs': [list(log) for log in logs]}, stderr=stderr,
-                           userfiles={'user.conf': [1, 'd']})
-
-    def segv(self, stderr=FRESH + UNMAPPABLE):
-        return observation(exit=-signal.SIGSEGV, stderr=stderr, userfiles={'user.conf': [1, 'd']})
-
-    def decide(self, name, pin, subject, reads):
-        with patch.object(driver, 'directory_reads_as_a_chunk', return_value=reads):
-            return driver.verdict_for(driver.CASES[name], pin, subject, False)[0]
-
-    @staticmethod
-    def directory_verdict(reaches_read):
-        return dict(size_at_least_header=reaches_read,
-                    reads=[dict(count=-1, errno=21)] if reaches_read else [])
-
-    def run_driver(self, name, pin, subject, reads, directory_read=None, host=None):
-        spec = driver.CASES[name]
-        captured = self.directory_verdict(reads) if directory_read is None else directory_read
-        self.freeze(spec, pin, directory_read=captured)
-        host_verdict = captured if host is None else host
-        with patch.object(driver, 'directory_read_verdict', return_value=host_verdict):
-            result = self.verify({name: spec}, subject, '--cases', name)
-        return result.status, result.rows[0]['verdict'], result.rows[0]['expected_ok']
-
-    def test_registered_cases(self):
-        self.assertEqual({name: spec['dir_chunk'] for name, spec in driver.CASES.items() if spec['dir_chunk']}, {
-            'chunk-frame-excluded-journal-header-pinyin': 'user',
-            'chunk-frame-excluded-journal-header-zhuyin': 'user',
-            'table-conf-abort-system-file-without-chunk': 'system',
-            'table-conf-abort-system-file-without-chunk-zhuyin': 'system',
-            'table-conf-abort-load-addon-without-chunk': 'system',
-            'table-conf-abort-system-file-without-user-file': 'user',
-            'table-conf-abort-user-file-without-user-file': 'user'})
-
-    def test_probe_repeats_the_pin_size_check(self):
-        for reads in (False, True):
-            with self.subTest(reads=reads):
-                driver.directory_reads_as_a_chunk.cache_clear()
-                with patch.object(driver.contract_verdict, 'directory_read_verdict',
-                                  return_value=dict(size_at_least_header=reads, reads=[])):
-                    self.assertIs(driver.directory_reads_as_a_chunk(), reads)
-
-    def test_condition_absent_keeps_the_abort_matcher(self):
-        # The pinyin facade reproduces these aborts (`sigabrt`, 2026-10-31
-        # UTC): both sides die of SIGABRT where the host predicts the assert.
-        for name in (self.USER, self.SYSTEM):
-            with self.subTest(name=name):
-                self.assertEqual(self.decide(name, self.aborted(), self.aborted(), True), 'MATCH')
-                self.assertEqual(self.decide(name, self.aborted(), self.answered(), True), 'DIFFER')
-        # Survivals and the tmpfs SIGSEGV are not the abort the host predicts.
-        self.assertEqual(self.decide(self.USER, self.answered(True, ()), self.answered(True, ()), True), 'DIFFER')
-        line = self.answered(stderr=self.FRESH + self.UNMAPPABLE)
-        self.assertEqual(self.decide(self.SYSTEM, self.segv(), line, True), 'DIFFER')
-        self.assertEqual(self.run_driver(self.SYSTEM, self.segv(), line, True), (1, 'DIFFER', False))
-
-    def test_condition_present_user_dir_compares_both_survivors(self):
-        survivor = self.answered(True, ())
-        self.assertEqual(self.decide(self.USER, survivor, copy.deepcopy(survivor), False), 'MATCH')
-        self.assertEqual(self.run_driver(self.USER, survivor, copy.deepcopy(survivor), False), (0, 'MATCH', True))
-        # The abort answer, another stderr or another profile stays a DIFFER.
-        self.assertEqual(self.decide(self.USER, survivor, self.answered(), False), 'DIFFER')
-        self.assertEqual(self.decide(self.USER, survivor, self.answered(True, (), stderr=''), False), 'DIFFER')
-        other_profile = self.answered(True, ())
-        other_profile['userfiles'] = {}
-        self.assertEqual(self.decide(self.USER, survivor, other_profile, False), 'DIFFER')
-        self.assertEqual(self.decide(self.USER, self.aborted(), self.answered(), False), 'DIFFER')
-        self.assertEqual(self.run_driver(self.USER, self.aborted(), self.answered(), False), (1, 'DIFFER', False))
-
-    def test_condition_present_system_dir_segv_with_the_same_stderr_matches(self):
-        line = self.answered(stderr=self.FRESH + self.UNMAPPABLE)
-        self.assertEqual(self.decide(self.SYSTEM, self.segv(), line, False), 'MATCH')
-        self.assertEqual(self.run_driver(self.SYSTEM, self.segv(), line, False), (0, 'MATCH', True))
-
-    def test_condition_present_other_system_differences_stay_differ(self):
-        line = self.FRESH + self.UNMAPPABLE
-        other_profile = self.answered(stderr=line)
-        other_profile['userfiles'] = {}
-        for label, pin, subject in (
-                ('subject without the line', self.segv(), self.answered()),
-                ('subject with another line', self.segv(), self.answered(stderr=self.FRESH + 'mmap SCRATCH/x failed!\n')),
-                ('subject writes it twice', self.segv(), self.answered(stderr=line + self.UNMAPPABLE)),
-                ('pin without the line', self.segv(self.FRESH), self.answered(stderr=line)),
-                ('abort', self.aborted(), self.answered(stderr=line)),
-                ('pin survived', self.answered(True, (), stderr=line), self.answered(stderr=line)),
-                ('subject loaded', self.segv(), self.answered(True, (), stderr=line)),
-                ('two warnings', self.segv(), self.answered(logs=(('libpinyin', 16),) * 2, stderr=line)),
-                ('other profile', self.segv(), other_profile)):
-            with self.subTest(label):
-                self.assertEqual(self.run_driver(self.SYSTEM, pin, subject, False), (1, 'DIFFER', False))
-                self.assertNotEqual(self.decide(self.SYSTEM, pin, subject, False), 'MATCH')
-
-    def test_the_pins_recorded_probe_wins_over_this_hosts(self):
-        survivor = self.answered(True, ())
-        with patch.object(driver, 'directory_reads_as_a_chunk', side_effect=AssertionError('host probed')):
-            self.assertEqual(self.run_driver(self.USER, survivor, copy.deepcopy(survivor), False),
-                             (0, 'MATCH', True))
-            self.assertEqual(self.run_driver(self.USER, self.aborted(), self.aborted(), True), (0, 'MATCH', True))
-
-    def test_a_reference_without_directory_read_verdict_is_no_reference(self):
-        for recorded in (None, {}, dict(size_at_least_header=True, reads=[])):
-            with self.subTest(recorded=recorded):
-                spec = driver.CASES[self.USER]
-                self.freeze(spec, self.aborted(), directory_read=recorded)
-                result = self.verify({self.USER: spec}, self.aborted(), '--cases', self.USER)
-                self.assertEqual((result.status, result.rows[0]['verdict']), (1, 'NO-REFERENCE'))
-                self.assertIn('directory_read_verdict', result.rows[0]['message'])
-
-    def test_directory_verdict_controls_exact_match_and_host_dependence(self):
-        pin, subject = self.aborted(), self.answered()
-        captured = self.directory_verdict(True)
-        different = self.directory_verdict(False)
-        self.assertEqual(self.run_driver(self.USER, pin, subject, True, host=captured),
-                         (1, 'DIFFER', False))
-        self.assertEqual(self.run_driver(self.USER, pin, pin, True, host=captured),
-                         (0, 'MATCH', True))
-        self.assertEqual(self.run_driver(self.USER, pin, subject, True, host=different),
-                         (0, 'HOST-DEPENDENT', True))
-
-    def test_other_cases_ignore_the_probe(self):
-        spec = driver.CASES['table-conf-abort-default-dictionary']
-        with patch.object(driver, 'directory_reads_as_a_chunk', side_effect=AssertionError('probed')):
-            self.assertEqual(driver.verdict_for(spec, self.aborted(), self.aborted(), False)[0], 'MATCH')
 
 
 class WorkerEntryTests(DriverFixtureCase):

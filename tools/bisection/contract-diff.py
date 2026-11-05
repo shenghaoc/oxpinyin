@@ -163,7 +163,7 @@ from contract_fixtures import (  # profile, system-directory and DBM-container f
 import contract_verdict
 from contract_verdict import (  # comparison and verdict rules
     META_OFFSET_TIMESTAMP, NO_ABORT, TKRZW_HASH_METADATA_SIZE, TKRZW_TIMESTAMP_WIDTH, WARNING_DOMAIN,
-    _FATAL_GLIB_PREFIX, abort_answered, directory_read_verdict, directory_reads_as_a_chunk, fatal_stderr,
+    _FATAL_GLIB_PREFIX, abort_answered, fatal_stderr,
     host_scanf_verdict, observed, policy_observation, policy_pin_abort, policy_side,
 
     registered_termination, tkrzw_saved_bigram_bytes, tkrzw_saved_bigram_equal,
@@ -377,25 +377,6 @@ def case(name, *args, **kwargs):
     created its context; the subject refused `table.conf`) prints
     `HOST-DEPENDENT` instead of `DIFFER` outside `--expect-parent` and is
     not a failure; any other difference stays a DIFFER. A MATCH is reported as such on any host.
-    `dir_chunk='user'|'system'` (with `abort=`) is for a `table.conf` row
-    without a file name, which makes the pin read that directory of the
-    case as a chunk. `MemoryChunk` asserts on the `read` of a directory
-    (the class (c) site) only where `lseek(SEEK_END)` on it answers the
-    8-byte header or more (`MemoryChunk::load` and `MemoryChunk::mmap` in
-    `src/include/memory_chunk.h` at pin 074a2219), and the
-    scratch directory's read behaviour decides that. Capture records the
-    size gate and directory-header read results; verify probes its own
-    scratch directory and reports `HOST-DEPENDENT` when those verdicts differ.
-    Where the size gate answers less
-    (tmpfs refuses `SEEK_END` on a directory), the load is an ordinary
-    `false`. For `'user'` the pin then carries on, and so does the
-    subject, which asks the same question: the case is compared as an
-    ordinary one, with the stderr and the user directory. For `'system'`
-    the pin writes `mmap <dir> failed!` and dies of SIGSEGV in
-    `SubPhraseIndex::load` on the empty chunk, a class (b) site: the
-    subject writes the same line and gives the abort site's answer, so the
-    pin must die of SIGSEGV after the stderr the subject wrote, byte for
-    byte, and the subject must answer as `abort=` registers.
     `sigabrt=True` (with `abort=`) marks a pin `assert` or `abort()` site
     that oxpinyin reproduces since class (c) was retired (2026-10-31 UTC):
     both sides must die of SIGABRT, the subject must have written the pin's
@@ -403,8 +384,8 @@ def case(name, *args, **kwargs):
     `userdir=True` both must leave the same profile. The status comparison
     is MATCH; when the pin's assertion line is the only stderr difference
     the case reports POLICY-ACCEPTED (`pin-abort-assert-line.md`). `abort=`
-    keeps the pin's registered termination, so `either=` and `dir_chunk=`
-    choose the matcher as before; under --expect-parent the parent's
+    keeps the pin's registered termination, so `either=` chooses the matcher;
+    under --expect-parent the parent's
     refusal is the expected difference.
     `issues=<tags>` names the issues, register rows or lane tags the case
     guards (`'640'`, `'row:54'`, `'W11'`), the selectors of `--issue`; a
@@ -1061,19 +1042,10 @@ def run_axis_c(args, names):
 POLICY_ROOT = Path(__file__).resolve().parents[2] / 'docs/findings'
 
 
-# Bind the verdict rules to this run's findings directory, cell and host probe.
-def chunk_probe(pin):
-    """Use the pin's recorded directory size gate for a frozen dir_chunk comparison."""
-    recorded = pin.get('capture_dir_read_verdict')
-    if recorded is not None:
-        recorded = recorded['size_at_least_header']
-    return directory_reads_as_a_chunk if recorded is None else (lambda: recorded)
-
-
+# Bind the verdict rules to this run's findings directory and cell.
 def verdict_for(spec, pin, subject, expect_parent):
     """The driver's decision for one case: (verdict, expected_ok, same) (contract_verdict)."""
-    return contract_verdict.verdict_for(spec, pin, subject, expect_parent, policy_root=POLICY_ROOT, cell=selected_cell(),
-                                        directory_probe=chunk_probe(pin))
+    return contract_verdict.verdict_for(spec, pin, subject, expect_parent, policy_root=POLICY_ROOT, cell=selected_cell())
 
 
 def policy_diagnosis(spec, pin, subject):
@@ -1083,7 +1055,7 @@ def policy_diagnosis(spec, pin, subject):
 
 def matches(spec, pin, subject):
     """The verdict predicate shared by the driver and gcov measurement tier (contract_verdict)."""
-    return contract_verdict.matches(spec, pin, subject, directory_probe=chunk_probe(pin))
+    return contract_verdict.matches(spec, pin, subject)
 
 
 # Per-call measurement lives in contract_measurement. The driver retains its
@@ -1375,14 +1347,6 @@ def run_cases(args, parser, data, default_names=None, keep=None):
                     print(json.dumps(dict(cell=args.cell, case=n, verdict='NO-REFERENCE', expected_ok=False,
                                           message=f'{n}: reference has no capture_scanf'), sort_keys=True), flush=True)
                     continue
-                if (spec['dir_chunk'] and getattr(args, 'references', None) is not None
-                        and pin.get('capture_dir_read_verdict') is None):
-                    verdict_counts['NO-REFERENCE'] = verdict_counts.get('NO-REFERENCE', 0) + 1
-                    failures += 1
-                    print(json.dumps(dict(cell=args.cell, case=n, verdict='NO-REFERENCE', expected_ok=False,
-                                          message=f'{n}: reference has no directory_read_verdict'),
-                                     sort_keys=True), flush=True)
-                    continue
                 if args.observations:
                     with args.observations.open('a') as capture:
                         capture.write(json.dumps(dict(cell=args.cell, case=n, userdir=spec['userdir'],
@@ -1415,18 +1379,9 @@ def run_cases(args, parser, data, default_names=None, keep=None):
                                        else pin.get('capture_scanf') or host_scanner)
                     scanner_verdicts = dict(capture=capture_scanner,
                                             host=host_scanner)
-                directory_verdicts = None
-                if spec['dir_chunk']:
-                    host_directory = pin.get('host_dir_read_verdict') or directory_read_verdict()
-                    capture_directory = pin.get('capture_dir_read_verdict') or host_directory
-                    directory_verdicts = dict(capture=capture_directory, host=host_directory)
                 host_dependent = (verdict == 'DIFFER' and not args.expect_parent
                                   and scanner_verdicts is not None
                                   and scanner_verdicts['capture'] != scanner_verdicts['host'])
-                host_dependent = host_dependent or (
-                    directory_verdicts is not None and getattr(args, 'references', None) is not None
-                    and not args.expect_parent
-                    and directory_verdicts['capture'] != directory_verdicts['host'])
                 # A frozen reference holds on the libraries it was captured on. The comparison always
                 # comes first: equal observations are MATCH (or POLICY-ACCEPTED) on any host. Only a
                 # lambda scanner case whose captured and current libc scanner verdicts differ,
@@ -1446,8 +1401,6 @@ def run_cases(args, parser, data, default_names=None, keep=None):
                            stderr_lines=[pin['stderr_lines'], subject['stderr_lines']])
                 if scanner_verdicts is not None:
                     row['scanner_verdicts'] = scanner_verdicts
-                if directory_verdicts is not None:
-                    row['directory_verdicts'] = directory_verdicts
                 if spec['policy_record'] is not None:
                     row.update(record=spec['policy_record'], pin=pin, subject=subject)
                     if verdict == 'DIFFER':

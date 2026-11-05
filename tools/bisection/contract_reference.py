@@ -333,18 +333,6 @@ def check_row(row, spec, cell, data_digest, NO_ABORT):
                                              or not re.fullmatch(r'[0-9a-f]{8}', scanner['value_bits'])))
                 or (not scanner['accepted'] and scanner.get('value_bits') is not None)):
             raise ReferenceError(f'{case}: reference has no valid capture scanner verdict')
-    if spec.get('dir_chunk'):
-        directory = identity.get('directory_read_verdict')
-        if (not isinstance(directory, dict) or set(directory) != {'size_at_least_header', 'reads'}
-                or type(directory['size_at_least_header']) is not bool or not isinstance(directory['reads'], list)
-                or (not directory['size_at_least_header'] and directory['reads'])
-                or (directory['size_at_least_header'] and not 1 <= len(directory['reads']) <= 2)
-                or any(not isinstance(read, dict) or set(read) != {'count', 'errno'}
-                       or type(read['count']) is not int or not -1 <= read['count'] <= 4
-                       or (read['count'] == -1 and type(read['errno']) is not int)
-                       or (read['count'] != -1 and read['errno'] is not None)
-                       for read in directory['reads'])):
-            raise ReferenceError(f'{case}: reference has no directory_read_verdict')
     pin = row.get('pin')
     if not isinstance(pin, dict) or set(pin) != set(OBSERVATION_KEYS):
         raise ReferenceError(f'{case}: reference holds no complete pin observation')

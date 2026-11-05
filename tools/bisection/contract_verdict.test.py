@@ -24,7 +24,7 @@ import contract_verdict as verdict
 def spec(**overrides):
     """A registration spec with the defaults of the driver's case_spec."""
     return dict(dict(mode='pinyin', control=False, abort=verdict.NO_ABORT, stderr=False, crash=None, userdir=False,
-                     cells=('bdb', 'kc', 'tkrzw'), either=False, host_scanf=(), dir_chunk=None,
+                     cells=('bdb', 'kc', 'tkrzw'), either=False, host_scanf=(),
                      abort_logs=None, fatal=False, both_abort=False, issues=(),
                      policy_record=None, case_id='probe', pin_not_run=None, sigabrt=False), **overrides)
 
@@ -39,7 +39,7 @@ def forbidden_probe():
 
 
 def decide(case, pin, subject, parent=False, **state):
-    state = dict(dict(policy_root=Path('/nowhere'), cell='bdb', directory_probe=forbidden_probe), **state)
+    state = dict(dict(policy_root=Path('/nowhere'), cell='bdb'), **state)
     return verdict.verdict_for(case, pin, subject, parent, **state)
 
 
@@ -68,7 +68,7 @@ class ObservationTests(unittest.TestCase):
 
 class MatchTests(unittest.TestCase):
     def matches(self, case, pin, subject, probe=forbidden_probe):
-        return verdict.matches(case, pin, subject, directory_probe=probe)
+        return verdict.matches(case, pin, subject, )
 
     def test_an_ordinary_case_compares_everything_but_tilde_fields(self):
         pin = observation(result={'ret': 1, '~addr': 1})
@@ -159,33 +159,6 @@ class MatchTests(unittest.TestCase):
         same = observation(result={'ret': 1})
         self.assertFalse(self.matches(spec(policy_record='r.md'), same, same))
 
-    def test_the_directory_probe_is_asked_only_for_a_case_that_registers_a_dir_chunk(self):
-        pin = observation(result={'ret': 1}, stderr='s', userfiles={'a': 1})
-        self.assertTrue(self.matches(spec(), pin, dict(pin)))
-        asked = []
-
-        def reads(answer):
-            return lambda: asked.append(answer) or answer
-
-        # The host reads the directory as a chunk: the pin reached its assert, so the abort matcher applies.
-        abort = spec(abort=False, dir_chunk='user')
-        survivor = observation(exit=-signal.SIGABRT)
-        answered = observation(result={'ret': False, 'logs': [['libpinyin', 16]]})
-        self.assertTrue(self.matches(abort, survivor, answered, reads(True)))
-        # It does not: both sides carry on and are compared as ordinary results, with stderr and profile.
-        self.assertTrue(self.matches(abort, pin, dict(pin), reads(False)))
-        self.assertFalse(self.matches(abort, pin, dict(pin, userfiles={}), reads(False)))
-        self.assertEqual(asked, [True, False, False])
-
-    def test_a_system_dir_chunk_on_a_short_host_holds_the_pins_sigsegv_and_the_abort_answer(self):
-        case = spec(abort=False, dir_chunk='system')
-        pin = observation(exit=-signal.SIGSEGV, stderr='mmap failed!\n')
-        answered = observation(result={'ret': False, 'logs': [['libpinyin', 16]]}, stderr='mmap failed!\n')
-        self.assertTrue(self.matches(case, pin, answered, lambda: False))
-        self.assertFalse(self.matches(case, pin, dict(answered, stderr='x'), lambda: False))
-        self.assertFalse(self.matches(case, pin, answered, lambda: True), 'a host that reads it expects the abort')
-
-
 class VerdictTests(unittest.TestCase):
     def test_a_difference_counts_only_between_two_valid_observations(self):
         good, other = observation(result={'ret': 1}), observation(result={'ret': 2})
@@ -266,23 +239,6 @@ class VerdictTests(unittest.TestCase):
             self.assertEqual(decide(case, pin, observation(exit=pin_exit, stderr='wrong message'), True),
                              ('DIFFER', True, False))
             self.assertEqual(decide(case, pin, dict(pin), True), ('MATCH', False, True))
-
-    def test_parent_directory_chunk_validity_uses_the_registered_host_path(self):
-        for kind in ('user', 'system'):
-            case = spec(abort=False, dir_chunk=kind)
-            for reads in (False, True):
-                pin = (observation(exit=-signal.SIGABRT) if reads else
-                       observation(exit=-signal.SIGSEGV) if kind == 'system' else observation(result={}))
-                state = dict(directory_probe=lambda: reads)
-                with self.subTest(kind=kind, reads=reads):
-                    self.assertEqual(decide(case, pin, observation(result={'ret': True}), True, **state),
-                                     ('DIFFER', True, False))
-                    self.assertEqual(decide(case, pin, observation(exit=-signal.SIGILL), True, **state),
-                                     ('INVALID', False, False))
-                    self.assertEqual(decide(case, observation(exit=-signal.SIGILL),
-                                            observation(result={}), True, **state), ('INVALID', False, False))
-                    if pin['exit'] != 0:
-                        self.assertEqual(decide(case, pin, dict(pin), True, **state), ('DIFFER', True, False))
 
     def test_pin_not_run_classification_is_unchanged_in_both_modes(self):
         case = spec(pin_not_run={'ret': True})
@@ -427,16 +383,6 @@ class HostTests(unittest.TestCase):
                          dict(input='1.5', accepted=True, value_bits='3fc00000'))
         self.assertEqual(verdict.host_scanf_verdict('abc'),
                          dict(input='abc', accepted=False, value_bits=None))
-
-    def test_the_directory_probe_repeats_the_pin_header_reads(self):
-        for size, reaches in ((7, False), (8, True)):
-            with self.subTest(size=size):
-                with patch.object(verdict.os, 'lseek', side_effect=lambda fd, offset, whence:
-                                                size if whence == os.SEEK_END else 0), \
-                     patch.object(verdict.os, 'read', side_effect=OSError(21, 'directory')):
-                    self.assertEqual(verdict.directory_read_verdict(),
-                                     dict(size_at_least_header=reaches,
-                                          reads=[dict(count=-1, errno=21)] if reaches else []))
 
     def test_the_saved_bigram_mask_covers_only_the_timestamp_bytes(self):
         raw = bytes(range(256))

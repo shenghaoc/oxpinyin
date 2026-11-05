@@ -205,7 +205,7 @@ for _mode in ('pinyin', 'zhuyin'):
              sigabrt=True, stderr=True, issues=('row:91',))(
             lambda k: logger_mask_out_later_unmappable(k, _HEADER_TOKEN))
     # Row 91 in library 1 before row 96 in library 4: the earlier journal
-    # fault is the one reached, at init and at `mask_out`, with no line for
+    # fault is the one reached at init and `mask_out`, with no line for
     # the missing library 2 between them.
     case('abort-init-log-header-token-later-directory-' + _mode, mode=_mode, abort=False,
          sigabrt=True, stderr=True, userdir=True, issues=('row:91', 'row:96'))(
@@ -241,26 +241,6 @@ for _mode in ('pinyin', 'zhuyin'):
                                                 0x0F000000, 0x01000000))
 
 
-
-def mask_excluded_journal_header(k):
-    """The excluded library's journal is loaded before its mask is checked."""
-    _write_user_conf(k)
-    ctx = k.init()
-    assert ctx, 'init failed'
-    path = os.path.join(k.user, 'gb_char.dbin')
-    if os.path.lexists(path):
-        os.unlink(path)
-    os.mkdir(path)
-    with open(os.path.join(path, 'e' * 25), 'wb') as entry:
-        entry.write(b'x')
-    # Library 1 is excluded, but MemoryChunk::load's header read occurs
-    # before merge_with_mask tests the bits (pinyin.cpp:1280-1285).
-    return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0x0f000000, 0x02000000)}
-
-
-for _mode in ('pinyin', 'zhuyin'):
-    case('chunk-frame-excluded-journal-header-' + _mode, mode=_mode, abort=False,
-         sigabrt=True, dir_chunk='user', issues=('1576',))(mask_excluded_journal_header)
 
 def register(driver_case):
     """Register the declarations with the driver's current decorator, in their original order."""

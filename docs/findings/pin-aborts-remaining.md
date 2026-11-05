@@ -130,9 +130,7 @@ The `mmap %s failed!` line of a library the pin cannot map (row 76) is now
 written where the save's and the mask's loops reach that library, through
 the same hooks, instead of in an up-front pass. A row 76 library before a
 directory library is written and the loop continues (class (b): the pin
-dies of SIGSEGV there), so the later directory aborts. The one-entry
-directory below 8 bytes, the `dir_chunk` cases and row 79's `NullChunkName`
-short-directory handling are unchanged.
+dies of SIGSEGV there), so the later directory aborts. Directory size decisions are covered by filesystem-independent Rust tests.
 
 ### The save's staged files and `finish_save`
 
@@ -314,9 +312,9 @@ user `.dbin` that is a directory.
 |---|---|---|
 | 85 | `abort-mask-out-short-bigram-value`, `abort-zhuyin-mask-out-short-bigram-value`, `abort-remove-user-candidate-short-bigram-value`, `abort-guess-predicted-short-bigram-value`, `abort-guess-sentence-short-user-gram-{system-row-*,no-system-row}`, `abort-guess-candidates-dynamic-adjust-short-user-gram-*`, `abort-phrase-segment-short-user-gram`, `abort-phrase-segment-prefix-short-user-gram-*`, new `abort-bigram-export-short-predecessor` | POLICY-ACCEPTED (assertion line) |
 | 85 controls | `mask-out-short-bigram-value-masked-key`, `guess-predicted-unrelated-short-bigram-value`, `guess-unrelated-short-user-gram`, `guess-candidates-short-user-gram-dynamic-adjust-off`, `parse-dynamic-adjust-short-user-gram-*`, `phrase-segment-prefix-unrelated-short-user-gram-*` | MATCH |
-| 96 | `abort-library-directory-long-entry-{init,load,save,mask-out}[-zhuyin]`, `-addon`, and `library-directory-one-entry-*` (`either=True`: the pin's own signal picks this matcher or row 76's); `userdir=True` on init and save | POLICY-ACCEPTED on a file system where a directory reads as a chunk |
+| 96 | Directory-as-chunk size and header-read decisions | Rust unit tests exercise the size gate and failed read on every filesystem |
 | 96 controls | `library-directory-guard-{reserved,unloaded}-{save,mask-out}[-zhuyin]` | MATCH |
-| 91 before 96 | `abort-init-log-header-token-later-directory-*` (`userdir=True`), `abort-mask-out-log-header-token-later-directory-*`, both with `stderr=True`; library 2's chunk is missing too, so a subject that reached library 4 first would write its `mmap %s failed!` line | POLICY-ACCEPTED (the pin dies in library 1 whatever library 4 reads as) |
+| 91 before 96 | `abort-init-log-header-token-later-directory-*` (`userdir=True`), `abort-mask-out-log-header-token-later-directory-*`, both with `stderr=True`; library 2's chunk is missing too, so a subject that reached library 4 first would write its `mmap %s failed!` line | POLICY-ACCEPTED on ext4; the pin dies in library 1 before examining library 4 on any filesystem. On tmpfs oxpinyin opens library 4 first and can return its unmappable error before replaying library 1. |
 
 `abort-train-unsorted-set-freq-miss-{pinyin,zhuyin}` keep their
 `policy_record` ([1297-gram-partition-training.md](1297-gram-partition-training.md)):

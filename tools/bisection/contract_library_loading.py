@@ -147,7 +147,7 @@ def break_library(k, system, name, how):
         data = bytearray(Path(k.data, name).read_bytes())
         data[-1] ^= 0xff
         Path(path).write_bytes(bytes(data))
-    elif how in ('dir-long', 'dir-short'):
+    elif how == 'dir-long':
         # A non-empty directory in the library's place. The size the pin
         # reads from `lseek(SEEK_END)` is the file system's: ext4 answers
         # the htree end of file (huge) for any directory, btrfs the summed
@@ -155,7 +155,7 @@ def break_library(k, system, name, how):
         # characters), so which `MemoryChunk::mmap` site is reached follows
         # the size (`memory_chunk.h:479-483` against `:493`).
         os.makedirs(path)
-        Path(path, 'e' * 25 if how == 'dir-long' else 'x').write_bytes(b'x')
+        Path(path, 'e' * 25).write_bytes(b'x')
     else:
         assert how == 'missing'
 
@@ -253,48 +253,6 @@ for _mode in ('pinyin', 'zhuyin'):
         for _site, _label in (('init-fresh', 'fresh-user-dir'), ('init-nonconform', 'nonconforming-user-dir')):
             case(f'stderr-library-init-{_label}-{_how}' + _suffix, mode=_mode,
                  crash=library_expected(_site, _how, _mode), issues=('545',))(library_probe(_site, _how))
-
-
-# A directory where a system library should be (register row 96). A size of
-# 8 or more reads as a header-sized file, `read` then fails with EISDIR and
-# `assert(ret_len == sizeof(length))` kills the pin (`memory_chunk.h:493`,
-# reproduced since member 5c); a smaller size is `MemoryChunk::mmap`'s ordinary `false` and
-# the empty chunk the pin dies on later (row 76, class (b)). The long entry
-# name reaches `:493` on ext4 and on btrfs; the one-character entry reaches
-# it on ext4 and row 76 on btrfs, so both shapes match whichever site the
-# pin's own signal names.
-LIBRARY_FINAL = {'init': 'ctx', 'load': 'load', 'save': 'save', 'mask-out': 'mask_out', 'addon': 'load'}
-
-
-def library_directory_probe(site, how):
-    """Wrap a library-failure case so its final operation is also exposed as ret."""
-    inner = library_probe(site, how)
-
-    def probe(k):
-        """Run the configured library fault and alias the site's final flag as ret."""
-        out = inner(k)
-        out['ret'] = out[LIBRARY_FINAL[site]]
-        return out
-    return probe
-
-
-for _mode in ('pinyin', 'zhuyin'):
-    _suffix = '-zhuyin' if _mode == 'zhuyin' else ''
-    # The zhuyin facade has no addon entry point.
-    for _site in (s for s in LIBRARY_FINAL if s != 'addon' or _mode == 'pinyin'):
-        # Row 96 is reproduced (member 5c): where the pin dies of SIGABRT the
-        # subject must too, with the pin's user directory where the pin left
-        # files (init after `check_format`; save after the earlier
-        # libraries' `.tmp` files, renamed by libzhuyin). A pin SIGSEGV keeps
-        # row 76's class (b) matcher.
-        _userdir = {'userdir': True} if _site in ('init', 'save') else {}
-        _save_crash = {'crash_stderr_pattern': r'mmap .+ failed!$'} if _site == 'save' else {}
-        case(f'abort-library-directory-long-entry-{_site}' + _suffix, mode=_mode,
-             abort=False, crash=library_expected(_site, 'short', _mode, row76_stop=_site == 'save'), either=True,
-             sigabrt=True, issues=('545',), **_save_crash, **_userdir)(library_directory_probe(_site, 'dir-long'))
-        case(f'library-directory-one-entry-{_site}' + _suffix, mode=_mode, abort=False,
-             crash=library_expected(_site, 'short', _mode, row76_stop=_site == 'save'), either=True,
-             sigabrt=True, issues=('545',), **_save_crash, **_userdir)(library_directory_probe(_site, 'dir-short'))
 
 
 def library_directory_guard(site, guard):

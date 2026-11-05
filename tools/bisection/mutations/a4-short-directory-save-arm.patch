@@ -1,8 +1,0 @@
-diff --git a/tools/bisection/contract_library_loading.py b/tools/bisection/contract_library_loading.py
---- a/tools/bisection/contract_library_loading.py
-+++ b/tools/bisection/contract_library_loading.py
-@@ -294,3 +294,3 @@
-         case(f'library-directory-one-entry-{_site}' + _suffix, mode=_mode, abort=False,
--             crash=library_expected(_site, 'short', _mode, row76_stop=_site == 'save'), either=True,
-+             crash=library_expected(_site, 'short', _mode, row76_stop=False), either=True,
-              sigabrt=True, issues=('545',), **_save_crash, **_userdir)(library_directory_probe(_site, 'dir-short'))

@@ -96,7 +96,7 @@ class AdapterTests(unittest.TestCase):
         driver = load_driver()
         store = SimpleNamespace(row=Mock(return_value={'pin': 'row'}))
         arguments = SimpleNamespace(cell='bdb', pinyin_so=Path(__file__), zhuyin_so=None, case_timeout=1, references=store)
-        registry = {'only': dict(mode='pinyin', cells=('bdb',), dir_chunk=None)}
+        registry = {'only': dict(mode='pinyin', cells=('bdb',))}
         with patch.object(driver, 'CASES', registry), \
                 patch.object(contract_runner.Runner, 'verify_case', return_value='pair') as verify, \
                 patch.object(contract_runner.tempfile, 'TemporaryDirectory', return_value=contextlib.nullcontext('/isolated')):
@@ -131,7 +131,7 @@ class ReferenceRunTests(unittest.TestCase):
         with tempfile_dir() as scratch:
             pin, subject = self.runner(worker).verify_case(spec, row, Path('/subject/libpinyin.so'), '/data', 'plain', scratch, 30)
         self.assertEqual(calls, ['libpinyin.so'])
-        for key in ('capture_glibc', 'capture_glib', 'capture_dir_read_verdict', 'capture_scanf'):
+        for key in ('capture_glibc', 'capture_glib', 'capture_scanf'):
             self.assertIsNone(pin.pop(key))
         self.assertEqual((pin, subject), (row['pin'], self.observation(ret=1)))
 
