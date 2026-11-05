@@ -65,22 +65,18 @@ impl Index {
     /// Append the item as SubPhraseIndex::add_phrase_item does, without compacting.
     pub fn add(&mut self, slot: u32, item: &ChunkItem) {
         // This Index keeps no separate visibility cache to invalidate.
-        let _ = self.live.add_item(
-            slot,
-            &journal_item_bytes(item),
-            SystemLibrary::failed(0).view(),
-        );
+        let _ = self.live.add_item(slot, &journal_item_bytes(item));
     }
 
     /// Apply the sub-index's overflow-checked unigram change.
     pub fn add_unigram(&mut self, slot: u32, delta: u32) -> bool {
-        self.live.add_unigram(slot, delta, None).is_accepted()
+        self.live.add_unigram(slot, delta).is_accepted()
     }
 
     /// Mutate matching pronunciation counts in the resident buffer.
     pub fn increase(&mut self, slot: u32, keys: &[oxpinyin_core::ChewingKey], delta: u32) {
         self.live
-            .train(slot, core::iter::once(keys.to_vec()), delta, None);
+            .train(slot, core::iter::once(keys.to_vec()), delta);
     }
 
     /// Copy readable items in ascending slot order, preserving the pin's compact loop.
@@ -89,9 +85,7 @@ impl Index {
         for slot in self.range() {
             if let Some(bytes) = self.live.item_bytes(slot) {
                 // This Index keeps no separate visibility cache to invalidate.
-                let _ = next
-                    .live
-                    .add_item(slot, &bytes, SystemLibrary::failed(0).view());
+                let _ = next.live.add_item(slot, &bytes);
             }
         }
         *self = next;

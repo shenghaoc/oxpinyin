@@ -745,7 +745,7 @@ contract_save_failures_stderr.register(
 # files are never touched.
 
 
-contract_library_loading.register(case)
+contract_library_loading.register(case, items_system=items_system)
 
 
 # --------------------------------------------------------------------------

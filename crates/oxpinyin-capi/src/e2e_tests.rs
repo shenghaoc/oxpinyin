@@ -79,10 +79,8 @@ fn train_records_the_pinned_doubling_sequence(instance: *mut PinyinInstance) {
         with_store(instance, |store| store.bigram_count(SENTENCE_START, t1)).unwrap(),
         0
     );
-    assert_eq!(
-        with_store(instance, |store| store.unigram_delta(t1)).unwrap(),
-        0
-    );
+    // The system item's live count, as the chunk shipped it.
+    let shipped = with_store(instance, |store| store.system_unigram(t1)).expect("item");
 
     // 69 on first selection; the predecessor is sentence_start.
     assert!(pinyin_guess_sentence(instance));
@@ -97,8 +95,8 @@ fn train_records_the_pinned_doubling_sequence(instance: *mut PinyinInstance) {
             69
         );
         assert_eq!(
-            with_store(instance, |store| store.unigram_delta(t1)).unwrap(),
-            483
+            with_store(instance, |store| store.system_unigram(t1)),
+            Some(shipped + 483)
         ); // 69 * 7
     }
 
@@ -117,8 +115,8 @@ fn train_records_the_pinned_doubling_sequence(instance: *mut PinyinInstance) {
         621
     );
     assert_eq!(
-        with_store(instance, |store| store.unigram_delta(t1)).unwrap(),
-        483 + 966 + 2898
+        with_store(instance, |store| store.system_unigram(t1)),
+        Some(shipped + 483 + 966 + 2898)
     );
 
     // A new composition starts fresh at sentence_start: the predecessor is
@@ -437,6 +435,8 @@ fn longer_choose_trains_the_row_unigram_and_answers_cursor_one() {
             .expect("a LONGER row carries its token")
     };
 
+    let shipped = with_store(instance, |store| store.system_unigram(token.value())).expect("item");
+
     // Choose: cursor 1, exactly the pin's LONGER branch.
     assert_eq!(pinyin_choose_candidate(instance, 0, longer), 1);
 
@@ -448,8 +448,8 @@ fn longer_choose_trains_the_row_unigram_and_answers_cursor_one() {
         let inst = unsafe { instance_ref(instance) };
         assert_eq!(inst.core.dict.unigram_delta(token.value()), None);
         assert_eq!(
-            with_store(instance, |store| store.unigram_delta(token.value())).unwrap(),
-            483
+            with_store(instance, |store| store.system_unigram(token.value())),
+            Some(shipped + 483)
         );
     }
     assert_eq!(
@@ -469,8 +469,8 @@ fn longer_choose_trains_the_row_unigram_and_answers_cursor_one() {
         let inst = unsafe { instance_ref(instance) };
         assert_eq!(inst.core.dict.unigram_delta(token.value()), None);
         assert_eq!(
-            with_store(instance, |store| store.unigram_delta(token.value())).unwrap(),
-            483
+            with_store(instance, |store| store.system_unigram(token.value())),
+            Some(shipped + 483)
         );
     }
     assert_eq!(
@@ -661,19 +661,20 @@ fn training_through_the_abi_records_the_pinned_counts() {
         instance,
         lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE,
     );
+    let shipped = with_store(instance, |store| store.system_unigram(t4)).expect("item");
     assert!(pinyin_choose_predicted_candidate(instance, predicted));
     {
         assert_eq!(
-            with_store(instance, |store| store.unigram_delta(t4)).unwrap(),
-            483
+            with_store(instance, |store| store.system_unigram(t4)),
+            Some(shipped + 483)
         );
     }
     // Flat again — the unigram doubles nothing and the count stays linear.
     assert!(pinyin_choose_predicted_candidate(instance, predicted));
     {
         assert_eq!(
-            with_store(instance, |store| store.unigram_delta(t4)).unwrap(),
-            966
+            with_store(instance, |store| store.system_unigram(t4)),
+            Some(shipped + 966)
         );
     }
     // A selection in the same composition does not change the predecessor:
@@ -775,11 +776,7 @@ fn training_a_stale_forcing_aborts() {
 fn a_new_sentence_lookup_trains_a_forcing() {
     let user_dir = TempUserDir::new("train-restep");
     let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-    let forced = force_a_stale_phrase(instance);
-    assert_eq!(
-        with_store(instance, |store| store.unigram_delta(forced)).unwrap(),
-        0
-    );
+    force_a_stale_phrase(instance);
     assert!(pinyin_guess_sentence(instance));
     assert!(pinyin_train(instance, 0), "the lookup is back in step");
 
@@ -1012,12 +1009,13 @@ fn populated_store_raises_the_trained_unigram() {
         .expect("query")
         .expect("real unigrams");
 
+    let shipped = with_store(instance, |store| store.system_unigram(token)).expect("item");
     assert!(pinyin_choose_candidate(instance, 0, first) > 0);
     assert!(pinyin_guess_sentence(instance));
     assert!(pinyin_train(instance, 0));
     assert_eq!(
-        with_store(instance, |store| store.unigram_delta(token)).unwrap(),
-        483
+        with_store(instance, |store| store.system_unigram(token)),
+        Some(shipped + 483)
     );
 
     assert!(pinyin_reset(instance));
@@ -1106,7 +1104,7 @@ fn save_gates_on_dirty_and_roundtrips_through_the_abi() {
         (
             with_store(instance, |store| store.bigram_count(SENTENCE_START, t1)).unwrap(),
             with_store(instance, |store| store.bigram_total(SENTENCE_START)).unwrap(),
-            with_store(instance, |store| store.unigram_delta(t1)).unwrap(),
+            with_store(instance, |store| store.system_unigram(t1)),
             with_store(instance, |store| store.unigram_total()).unwrap(),
         )
     };
@@ -1139,7 +1137,7 @@ fn save_gates_on_dirty_and_roundtrips_through_the_abi() {
             counts.1
         );
         assert_eq!(
-            with_store(instance2, |store| store.unigram_delta(t1)).unwrap(),
+            with_store(instance2, |store| store.system_unigram(t1)),
             counts.2
         );
         assert_eq!(

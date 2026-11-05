@@ -2213,10 +2213,10 @@ impl<S: WriteStore> GenericUserStore<S> {
     }
 
     /// Accumulated phrase-index unigram delta for `token`; `0` if none. A
-    /// session store answers a user library item's count, or a system item's
-    /// live field less the original's, as a wrapping `guint32` (the model
-    /// prices the live field itself, [`Self::system_unigram`]). A standalone
-    /// store answers its stored row.
+    /// session store answers a user library item's count, and `0` for a
+    /// system item: its count is its live field ([`Self::system_unigram`]),
+    /// which the model prices, and the session keeps no shipped count to
+    /// take a difference from. A standalone store answers its stored row.
     ///
     /// # Errors
     ///
@@ -2226,19 +2226,11 @@ impl<S: WriteStore> GenericUserStore<S> {
             Ok(count)
         } else if self.inner.libpinyin.is_none() && self.has_user_data() {
             self.with_count_cache(|cached, db| cached.unigram_delta(db, token))
-        } else if let Some(live) = self.system_unigram(token) {
-            let slot = token & PHRASE_MASK;
-            let base = self
-                .originals
-                .get(&phrase_index_library_index(token))
-                .and_then(|original| match original.mapped {
-                    Some(library) if library.is_detached() => {
-                        library.original_slot(slot).and_then(|saved| saved.unigram)
-                    }
-                    _ => original.unigram(slot),
-                });
-            Ok(base.map_or(0, |base| u64::from(live.wrapping_sub(base))))
         } else {
+            // A session keeps no delta for a system item: its count is the
+            // live field ([`Self::system_unigram`]), as the pin's is, and the
+            // chunk's shipped count is not kept once the chunk is the live
+            // buffer.
             Ok(0)
         }
     }
@@ -4543,6 +4535,17 @@ impl<S: WriteStore> GenericUserStore<S> {
                 )
     }
 
+    /// Whether system library `nibble`'s live buffer records any slot's
+    /// first-write provenance.
+    #[cfg(test)]
+    pub(crate) fn system_provenance_recorded(&self, nibble: u8) -> bool {
+        self.inner
+            .system_items
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .has_provenance(nibble)
+    }
+
     #[cfg(test)]
     pub(crate) fn test_forget_removal(&self, _token: Token) {
         self.inner
@@ -4565,17 +4568,9 @@ impl<S: WriteStore> GenericUserStore<S> {
         let Some(mut item) = self.with_effective_system_item(token, Clone::clone) else {
             return Ok(None);
         };
-        let base = self
-            .inner
-            .libpinyin
-            .as_ref()
-            .and_then(|_| {
-                self.originals
-                    .get(&phrase_index_library_index(token))
-                    .and_then(|library| library.unigram(token & PHRASE_MASK))
-            })
-            .unwrap_or(0);
-        item.unigram = base.wrapping_add(self.unigram_delta(token)? as u32);
+        if let Some(unigram) = self.system_unigram(token) {
+            item.unigram = unigram;
+        }
         Ok(Some(item))
     }
 
@@ -6457,7 +6452,7 @@ mod tests {
                             .expect("near bound")
                     );
                     let before = (
-                        store.unigram_delta(token).unwrap(),
+                        store.system_unigram(token),
                         store.unigram_total().unwrap(),
                         store.system_library_total(1).unwrap(),
                         store.is_modified(),
@@ -6472,7 +6467,7 @@ mod tests {
                     assert_eq!(report, crate::SaveReport::default());
                     assert_eq!(
                         (
-                            store.unigram_delta(token).unwrap(),
+                            store.system_unigram(token),
                             store.unigram_total().unwrap(),
                             store.system_library_total(1).unwrap(),
                             store.is_modified()
@@ -6484,7 +6479,7 @@ mod tests {
                             .add_system_unigram_frequency(token, 4)
                             .expect("refusal")
                     );
-                    assert_eq!(store.unigram_delta(token).unwrap(), 2);
+                    assert_eq!(store.system_unigram(token), Some(102));
                     assert_eq!(
                         (store.unigram_total().unwrap() as u32)
                             .wrapping_add(store.system_library_total(1).unwrap()),
@@ -6537,7 +6532,6 @@ mod tests {
             assert_eq!(live, last + 1);
             last = live;
         }
-        assert_eq!(store.unigram_delta(token).unwrap(), 2000);
         assert_eq!(store.system_unigram(token), Some(2000));
         assert_eq!(store.system_library_total(1), Some(2000));
         assert_eq!(store.unigram_total().unwrap(), 0);

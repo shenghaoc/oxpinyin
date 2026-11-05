@@ -2818,7 +2818,7 @@ mod tests {
         let mut runtime = Runtime::open(&w3_dir(), None).unwrap();
         let token = runtime.dict().system().tokens_for_text("你").unwrap()[0];
         let library = runtime.libraries().library(token).unwrap();
-        assert!(library.is_detached() && !library.has_history());
+        assert!(library.is_detached());
         assert_eq!(
             runtime.user_store().unwrap().unigram_delta(token).unwrap(),
             0
@@ -2835,9 +2835,11 @@ mod tests {
                 assert!(runtime.add_unigram_delta(token, increment));
             }
             assert_eq!(runtime.bumps.token(token), 17);
+            // A session keeps no delta for a system item: the increment is in
+            // the live field.
             assert_eq!(
                 runtime.user_store().unwrap().unigram_delta(token).unwrap(),
-                delta
+                0
             );
             assert_eq!(
                 runtime.lm().unigram_freq(&PhraseToken::new(token)).unwrap(),
@@ -2853,10 +2855,13 @@ mod tests {
                 runtime.user_store().unwrap().system_unigram(token),
                 Some(initial + delta as u32)
             );
+            // No public call leaves a masked library its live buffer and its
+            // bump: unload drops both. Masked here, the token prices from
+            // the bump alone.
             assert_eq!(
                 runtime.lm().unigram_freq(&PhraseToken::new(token)).unwrap(),
-                Some(delta + 17),
-                "the same live token uses delta plus bump while masked"
+                Some(17),
+                "the masked token uses the bump alone"
             );
             runtime.library_mask.store(0, Ordering::SeqCst);
         }
@@ -2897,7 +2902,7 @@ mod tests {
         let mut runtime = Runtime::open(&w3_dir(), None).unwrap();
         let token = runtime.dict().system().tokens_for_text("你").unwrap()[0];
         let library = runtime.libraries().library(token).unwrap();
-        assert!(library.is_detached() && !library.has_history());
+        assert!(library.is_detached());
 
         // A pristine item of a detached library on the phrases path: the
         // capture fires, and it is the live field the model prices with.
@@ -3155,13 +3160,13 @@ mod tests {
         let ni = SyllableKey::from_text("ni").unwrap();
         let token = runtime.dict().system().tokens_for_text("你").unwrap()[0];
         assert!(
-            !runtime
+            runtime
                 .dict()
                 .system()
                 .libraries()
                 .library(token)
                 .unwrap()
-                .has_history()
+                .is_detached()
         );
         assert!(
             runtime

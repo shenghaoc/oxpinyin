@@ -54,8 +54,7 @@ use oxpinyin_data::table_info::FileName;
 use oxpinyin_data::user_files::read_chunk_payload;
 use oxpinyin_data::user_files::{
     LogEnd, LogFault, LogRecord, SystemVersions, UserConfError, UserDbm, UserFileLayout,
-    UserTableInfo, count_log_item_records, encode_log_records, get_open_counter,
-    load_chunk_payload, log_records,
+    UserTableInfo, encode_log_records, get_open_counter, load_chunk_payload, log_records,
 };
 use oxpinyin_input::path::{build_path, rename, unlink};
 use oxpinyin_store::{
@@ -268,12 +267,16 @@ impl<
         })
     }
 
+    /// Whether the baseline holds an item under `slot`: an inline item, or a
+    /// mapped one. A library whose mapping moved to its live buffer holds
+    /// none here; that buffer answers for what the chunk held
+    /// (`ReplayedLibrary::originally_held`).
     pub(crate) fn contains_item(&self, slot: u32) -> bool {
         self.items.borrow().contains_key(&slot)
             || self
                 .mapped
                 .as_ref()
-                .is_some_and(|library| library.borrow().originally_contains(slot))
+                .is_some_and(|library| library.borrow().item(slot).is_some())
     }
 
     pub(crate) fn unigram(&self, slot: u32) -> Option<u32> {
@@ -281,7 +284,7 @@ impl<
             .borrow()
             .get(&slot)
             .map(|item| item.unigram)
-            .or_else(|| self.mapped.as_ref()?.borrow().original_unigram(slot))
+            .or_else(|| Some(self.mapped.as_ref()?.borrow().item(slot)?.unigram()))
     }
 
     pub(crate) fn item(&self, slot: u32) -> Option<ChunkItem> {
@@ -315,7 +318,7 @@ impl<
             || self
                 .mapped
                 .as_ref()
-                .is_some_and(|library| library.borrow().originally_readable(slot))
+                .is_some_and(|library| library.borrow().item(slot).is_some())
     }
 
     /// The item `get_phrase_item` finds at `slot` as bytes: the shipped
@@ -1729,18 +1732,6 @@ fn replay_logs(
         } else {
             None
         };
-        // Count records in the loaded log, never slots in the system chunk.
-        // Reserving before replay avoids Vec growth on the ordinary path.
-        let item_records = match &masked {
-            Some(records) => records
-                .iter()
-                .filter(|record| !matches!(record, LogRecord::ModifyHeader { .. }))
-                .count(),
-            None => count_log_item_records(payload),
-        };
-        if let Some(library) = originals.get(&nibble).and_then(|original| original.mapped) {
-            library.reserve_original_slots(item_records);
-        }
         let live = replayed
             .as_deref_mut()
             .and_then(|views| views.remove(&nibble));
@@ -1758,7 +1749,7 @@ fn replay_logs(
                 // is local until `finish`, so dropping it skips the log.
                 let end = merge_log(
                     &mut merge,
-                    log_records(payload),
+                    || log_records(payload),
                     nibble,
                     &mut loaded.skipped,
                     &name,
@@ -1778,7 +1769,7 @@ fn replay_logs(
             Some(records) => {
                 merge_log(
                     &mut merge,
-                    records.into_iter().map(Ok),
+                    || records.iter().cloned().map(Ok),
                     nibble,
                     &mut loaded.skipped,
                     &name,
@@ -1826,14 +1817,17 @@ enum MergeEnd {
 /// (`phrase_index_logger.h:202`) and [`JournalFault::ShortAdd`] where
 /// `add_phrase_item` does (`memory_chunk.h:390`), each only where the walk
 /// reaches it.
-fn merge_log<'a>(
+fn merge_log<'a, I>(
     merge: &mut Merge<'_, 'a>,
-    records: impl Iterator<Item = Result<LogRecord<&'a [u8]>, LogFault>>,
+    records: impl Fn() -> I,
     library: u8,
     skipped: &mut Vec<String>,
     name: &str,
-) -> Result<MergeEnd, JournalFault> {
-    for record in records {
+) -> Result<MergeEnd, JournalFault>
+where
+    I: Iterator<Item = Result<LogRecord<&'a [u8]>, LogFault>>,
+{
+    for (applied, record) in records().enumerate() {
         let record = match record {
             Ok(record) => record,
             Err(LogFault::HeaderToken(token)) => {
@@ -1843,7 +1837,17 @@ fn merge_log<'a>(
             // unmasked replay reaches this.
             Err(LogFault::OverRead) => return Ok(MergeEnd::OverRead),
         };
-        if let Err(stop) = merge.apply(record) {
+        // Replay earlier successful MODIFY observations in record order before
+        // the first exceptional record classifies its slot. Ordinary logs
+        // never invoke this callback or allocate provenance sets.
+        let outcome = merge.apply_backfilling(record, &mut |merge| {
+            for prior in records().take(applied) {
+                if let Ok(LogRecord::Modify { token, .. }) = prior {
+                    merge.backfill(token);
+                }
+            }
+        });
+        if let Err(stop) = outcome {
             skipped.push(match stop {
                 Stop::ShortAdd(token) => return Err(JournalFault::ShortAdd { library, token }),
                 Stop::Mismatch("header", _) => {

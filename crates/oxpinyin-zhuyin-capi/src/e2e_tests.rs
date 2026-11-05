@@ -49,9 +49,10 @@ fn train_records_the_pinned_doubling_sequence() {
         !zhuyin_train(instance),
         "a choose without decoded results refuses"
     );
-    with_store(instance, |store| {
+    // The system item's live count, as the chunk shipped it.
+    let shipped = with_store(instance, |store| {
         assert_eq!(store.bigram_count(SENTENCE_START, t1).unwrap(), 0);
-        assert_eq!(store.unigram_delta(t1).unwrap(), 0);
+        store.system_unigram(t1).expect("item")
     });
 
     // 69 on first selection; the predecessor is sentence_start.
@@ -60,7 +61,7 @@ fn train_records_the_pinned_doubling_sequence() {
     with_store(instance, |store| {
         assert_eq!(store.bigram_count(SENTENCE_START, t1).unwrap(), 69);
         assert_eq!(store.bigram_total(SENTENCE_START).unwrap(), 69);
-        assert_eq!(store.unigram_delta(t1).unwrap(), 483); // 69 * 7
+        assert_eq!(store.system_unigram(t1), Some(shipped + 483)); // 69 * 7
     });
 
     // 138 on reselection (count 207), then 414 (count 621).
@@ -73,7 +74,7 @@ fn train_records_the_pinned_doubling_sequence() {
     assert!(zhuyin_train(instance));
     with_store(instance, |store| {
         assert_eq!(store.bigram_count(SENTENCE_START, t1).unwrap(), 621);
-        assert_eq!(store.unigram_delta(t1).unwrap(), 483 + 966 + 2898);
+        assert_eq!(store.system_unigram(t1), Some(shipped + 483 + 966 + 2898));
     });
 
     // A new composition starts fresh at sentence_start: the explicit

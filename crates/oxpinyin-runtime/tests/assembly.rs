@@ -565,34 +565,27 @@ fn rejected_unigram_add_keeps_item_and_library_counts_but_moves_facade_total() {
         .collect();
     assert_eq!(tokens.len(), 2);
     let remaining = u32::MAX - library.total_freq();
+    let live = |runtime: &Runtime, token: u32| {
+        runtime
+            .user_store()
+            .unwrap()
+            .system_unigram(token)
+            .expect("live item")
+    };
+    let shipped = [live(&runtime, tokens[0]), live(&runtime, tokens[1])];
     assert!(runtime.add_unigram_delta(tokens[0], u64::from(remaining)));
     assert_eq!(runtime.dict().unigram_delta(tokens[0]), None);
     assert_eq!(
-        runtime
-            .user_store_mut()
-            .unwrap()
-            .unigram_delta(tokens[0])
-            .unwrap(),
-        u64::from(remaining)
+        live(&runtime, tokens[0]),
+        shipped[0].wrapping_add(remaining)
     );
     assert!(!runtime.add_unigram_delta(tokens[1], 1));
-    assert_eq!(
-        runtime
-            .user_store_mut()
-            .unwrap()
-            .unigram_delta(tokens[1])
-            .unwrap(),
-        0
-    );
+    assert_eq!(live(&runtime, tokens[1]), shipped[1]);
     assert!(!runtime.add_unigram_delta(tokens[0], 1));
     assert_eq!(runtime.dict().unigram_delta(tokens[0]), None);
     assert_eq!(
-        runtime
-            .user_store_mut()
-            .unwrap()
-            .unigram_delta(tokens[0])
-            .unwrap(),
-        u64::from(remaining)
+        live(&runtime, tokens[0]),
+        shipped[0].wrapping_add(remaining)
     );
     assert_eq!(
         (runtime.lm().amplified_total() as u32).wrapping_sub(before),

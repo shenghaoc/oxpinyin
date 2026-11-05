@@ -221,7 +221,11 @@ fn interrupted_save_preserves_the_facade_specific_committed_prefix() {
     for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
         for stop_before in 2..=4_usize {
             let dir = tempfile::tempdir().unwrap();
-            drop(seed(dir.path(), law));
+            let seeded = seed(dir.path(), law);
+            let shipped: Vec<u32> = (1..=4_u32)
+                .map(|index| seeded.system_unigram((index << 24) | 1).expect("item"))
+                .collect();
+            drop(seeded);
             let old = data_bytes(dir.path());
             let mut child = Command::new(std::env::current_exe().unwrap());
             child
@@ -258,12 +262,15 @@ fn interrupted_save_preserves_the_facade_specific_committed_prefix() {
             let reopened = open(dir.path(), law);
             for index in 1..=4_u32 {
                 assert_eq!(
-                    reopened.unigram_delta((index << 24) | 1).unwrap(),
-                    if law == UserConfLaw::Zhuyin && index < stop_before as u32 {
-                        17
-                    } else {
-                        0
-                    }
+                    reopened.system_unigram((index << 24) | 1),
+                    Some(
+                        shipped[index as usize - 1]
+                            + if law == UserConfLaw::Zhuyin && index < stop_before as u32 {
+                                17
+                            } else {
+                                0
+                            }
+                    )
                 );
             }
         }
