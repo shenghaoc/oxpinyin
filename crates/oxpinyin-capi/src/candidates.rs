@@ -4,7 +4,7 @@ use std::os::raw::c_int;
 
 use oxpinyin_core::PhraseToken;
 use oxpinyin_engine::CandidateKind;
-use oxpinyin_user::{SENTENCE_START, is_user_token};
+use oxpinyin_user::{SENTENCE_START, UnigramAdd, is_user_token};
 
 use crate::state::{CapiCandidate, candidate_ptr, candidate_ref, instance_mut, instance_ref};
 use crate::types::{
@@ -405,10 +405,8 @@ pub extern "C" fn pinyin_choose_candidate(
     // (`pinyin.cpp:2521-2530`): a LONGER row is never a selection — no
     // constraint, no window, no record change — it only trains the
     // token's unigram by `initial_seed * unigram_factor = 69 * 7 = 483`
-    // into the phrase-index overlay and answers `true`, which the C
-    // `int` cursor surfaces as `1`. An overlay refusal (the token's
-    // library invisible) answers `-1`, standing in for the pin's
-    // overflow `false`.
+    // into the phrase-index overlay and answers as the pin does
+    // ([`unigram_leg_answer`]).
     if inst.state.candidates[index].candidate_type() == lookup_candidate_type_t::LONGER_CANDIDATE {
         let Some(token) = inst.state.candidates[index].token else {
             return -1;
@@ -417,16 +415,12 @@ pub extern "C" fn pinyin_choose_candidate(
         // SAFETY: the instance read is finished; this serialized C operation
         // exclusively borrows its live context for the unigram write.
         let ctx = unsafe { crate::state::context_mut(context) };
-        return if ctx
-            .core
-            .runtime
-            .as_mut()
-            .is_some_and(|runtime| runtime.add_unigram_delta(token.value(), 483))
-        {
-            1
-        } else {
-            -1
-        };
+        return unigram_leg_answer(
+            ctx.core
+                .runtime
+                .as_mut()
+                .map(|runtime| runtime.add_unigram_outcome(token.value(), 483)),
+        );
     }
     let context = inst.context;
     // SAFETY: the prior view is no longer used. Promotion borrows the live
@@ -439,7 +433,7 @@ pub extern "C" fn pinyin_choose_candidate(
     // reached after the addon promotion exactly as the pin's dispatch
     // falls through to it: only the unigram trains, by the LONGER
     // branch's `69 * 7 = 483`, into the same overlay, with the same
-    // refusal answer.
+    // answer.
     if inst.core.session.sort_options() & sort_option_t::SORT_WITHOUT_SENTENCE_CANDIDATE as u32 != 0
     {
         if offset != 0 {
@@ -454,16 +448,12 @@ pub extern "C" fn pinyin_choose_candidate(
         // SAFETY: the instance read is finished; this serialized C operation
         // exclusively borrows its live context for the unigram write.
         let ctx = unsafe { crate::state::context_mut(context) };
-        return if ctx
-            .core
-            .runtime
-            .as_mut()
-            .is_some_and(|runtime| runtime.add_unigram_delta(token.value(), 483))
-        {
-            1
-        } else {
-            -1
-        };
+        return unigram_leg_answer(
+            ctx.core
+                .runtime
+                .as_mut()
+                .map(|runtime| runtime.add_unigram_outcome(token.value(), 483)),
+        );
     }
     let source_index = inst.state.candidates[index].source_index as usize;
     // The chosen row's end in the window the caller saw — the pin's
@@ -543,6 +533,20 @@ pub extern "C" fn pinyin_choose_candidate(
         }
     };
     c_int::try_from(end).unwrap_or(c_int::MAX)
+}
+
+/// The answer of a choose leg that only trains a unigram
+/// (`pinyin.cpp:2523-2531`, `:2565-2575`). The pin returns `false`, the `int`
+/// `0`, for `ERROR_INTEGER_OVERFLOW` alone and `true`, the `int` `1`, for every
+/// other answer: a library with no sub-index (`ERROR_NO_SUB_PHRASE_INDEX`) and
+/// a missing item (`ERROR_NO_ITEM`) among them. `None` is a context without a
+/// runtime, which the pin has no case for.
+fn unigram_leg_answer(outcome: Option<UnigramAdd>) -> c_int {
+    match outcome {
+        Some(UnigramAdd::Refused) => 0,
+        Some(_) => 1,
+        None => -1,
+    }
 }
 
 /// Clear the constraint a prior choose pinned, by offset.
@@ -943,6 +947,11 @@ mod unloaded_library_tests {
     use crate::test_support::{DEFAULT_SORT, TempUserDir, cstr, open};
     use crate::types::{LookupCandidate, PinyinContext, PinyinInstance, lookup_candidate_type_t};
 
+    /// `SORT_WITHOUT_SENTENCE_CANDIDATE`: the choose leg that only trains.
+    const WITHOUT_SENTENCE: c_uint = 0x1;
+    /// The ibus preset that leaves `SORT_WITHOUT_LONGER_CANDIDATE` clear.
+    const IBUS_DEFAULT_SORT: c_uint = 0x1c;
+
     /// The open fixture of `previous_token_tests`, with `ni` parsed.
     struct Open {
         /// The directories the context reads, removed after it is freed.
@@ -1202,5 +1211,56 @@ mod unloaded_library_tests {
 
         assert!(pinyin_load_phrase_library(open.context, 2));
         assert!(pinyin_token_add_unigram_frequency(open.instance, gbk, 1));
+    }
+
+    /// The `SORT_WITHOUT_SENTENCE_CANDIDATE` leg trains the row's unigram and
+    /// answers `true` unless the add overflows (`pinyin.cpp:2565-2576`). A
+    /// library with no sub-index answers `ERROR_NO_SUB_PHRASE_INDEX`, not the
+    /// overflow.
+    #[test]
+    fn choosing_a_row_of_an_unloaded_library_under_the_sort_bit_answers_one() {
+        let open = Open::new("sort-bit-unloaded");
+        let (row, _) = open.gbk_row(DEFAULT_SORT | WITHOUT_SENTENCE);
+        assert!(pinyin_unload_phrase_library(open.context, 2));
+
+        assert_eq!(pinyin_choose_candidate(open.instance, 0, row), 1);
+    }
+
+    /// `ERROR_INTEGER_OVERFLOW` is the one error the leg answers `false` for.
+    #[test]
+    fn choosing_a_row_whose_unigram_add_overflows_under_the_sort_bit_answers_zero() {
+        let open = Open::new("sort-bit-overflow");
+        let (row, gbk) = open.gbk_row(DEFAULT_SORT | WITHOUT_SENTENCE);
+        let total = open
+            .store(|store| store.system_library_total(2))
+            .expect("the GBK library's total");
+        assert!(pinyin_token_add_unigram_frequency(
+            open.instance,
+            gbk,
+            u32::MAX - total
+        ));
+
+        assert_eq!(pinyin_choose_candidate(open.instance, 0, row), 0);
+    }
+
+    /// The LONGER leg (`pinyin.cpp:2523-2531`) answers as the sort-bit leg.
+    #[test]
+    fn choosing_a_longer_row_whose_unigram_add_overflows_answers_zero() {
+        let open = Open::new("longer-overflow");
+        assert!(pinyin_guess_sentence(open.instance));
+        let (row, token) = open.row_of(IBUS_DEFAULT_SORT, |kind, _| {
+            kind == lookup_candidate_type_t::LONGER_CANDIDATE
+        });
+        let library = u8::try_from(token >> 24).expect("a library nibble");
+        let total = open
+            .store(|store| store.system_library_total(library))
+            .expect("the row's library total");
+        assert!(pinyin_token_add_unigram_frequency(
+            open.instance,
+            token,
+            u32::MAX - total
+        ));
+
+        assert_eq!(pinyin_choose_candidate(open.instance, 0, row), 0);
     }
 }

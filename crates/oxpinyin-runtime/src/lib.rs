@@ -59,8 +59,8 @@ use oxpinyin_data::{
 };
 use oxpinyin_engine::{ConfigSource, EngineError, Session, StoragePaths};
 use oxpinyin_user::{
-    ItemOrigin, LiveSystemItems, PinyinKey, SaveBaseline, SystemLibrary, UserConfLaw, UserLookup,
-    UserStore, UserStoreError,
+    ItemOrigin, LiveSystemItems, PinyinKey, SaveBaseline, SystemLibrary, UnigramAdd, UserConfLaw,
+    UserLookup, UserStore, UserStoreError,
 };
 
 /// Orders the system and user phrase-table suggestion tokens the way
@@ -914,15 +914,17 @@ impl<'a> RuntimeDict<'a> {
     /// the facade-total bump is unconditional (`phrase_index.h:632`,
     /// before the item dispatch — an absent-token add still moves the
     /// amplified-law denominator), and the item delta lands only when
-    /// the token exists and its library total accepts the addition. Returns
-    /// whether the item update succeeded. A token
+    /// the token exists and its library total accepts the addition. Answers
+    /// what the pin's `add_unigram_frequency` does: [`UnigramAdd::Refused`] is
+    /// its `ERROR_INTEGER_OVERFLOW`, [`UnigramAdd::Missing`] every other
+    /// refusal. A token
     /// whose library is unloaded is invisible on both edges: neither
     /// the total nor the overlay moves, matching the visibility filter
     /// the rest of the surface honours.
     #[must_use]
-    fn add_unigram_delta(&self, token: u32, delta: u64) -> bool {
+    fn add_unigram_delta(&self, token: u32, delta: u64) -> UnigramAdd {
         if !self.library_visible(token >> 24) {
-            return false;
+            return UnigramAdd::Missing;
         }
         let found = {
             let system_found = self.live_items().read(token, |_| ()).found().is_some();
@@ -945,11 +947,11 @@ impl<'a> RuntimeDict<'a> {
         // (c)) instead of dividing by it. `fetch_add` wraps in debug and
         // release alike.
         let Ok(delta) = u32::try_from(delta) else {
-            return false;
+            return UnigramAdd::Missing;
         };
         self.bumps.total.fetch_add(delta, Ordering::SeqCst);
         if !found {
-            return false;
+            return UnigramAdd::Missing;
         }
         let mut overlay = self.bumps.overlay();
         let library = token >> 24;
@@ -961,7 +963,7 @@ impl<'a> RuntimeDict<'a> {
         let accepted = overlay.libraries.get(&library).copied().unwrap_or(0);
         let user_bound = match self.user.map(|user| user.unigram_total()).transpose() {
             Ok(total) => total.unwrap_or(0),
-            Err(_) => return false,
+            Err(_) => return UnigramAdd::Missing,
         };
         // Ordinary additions need only the cached/global bound. Scan the
         // user library only at the overflow edge, not on every training bump.
@@ -975,7 +977,7 @@ impl<'a> RuntimeDict<'a> {
             .transpose()
         {
             Ok(offset) => offset.unwrap_or(0),
-            Err(_) => return false,
+            Err(_) => return UnigramAdd::Missing,
         };
         let bound = u64::from(base) + u64::from(accepted);
         if offset != 0
@@ -990,14 +992,14 @@ impl<'a> RuntimeDict<'a> {
                 .transpose()
             {
                 Ok(total) => total.unwrap_or(0),
-                Err(_) => return false,
+                Err(_) => return UnigramAdd::Missing,
             };
             let total = base
                 .wrapping_add(accepted)
                 .wrapping_add(user_total)
                 .wrapping_add(offset);
             if total.checked_add(delta).is_none() {
-                return false;
+                return UnigramAdd::Refused;
             }
         }
         overlay
@@ -1006,7 +1008,7 @@ impl<'a> RuntimeDict<'a> {
         let entry = overlay.tokens.entry(token).or_insert(0);
         *entry = entry.saturating_add(u64::from(delta));
         self.bumps.live.store(true, Ordering::SeqCst);
-        true
+        UnigramAdd::Accepted
     }
 
     /// The overlay total — the amplified-law denominator's live shift
@@ -2456,18 +2458,28 @@ impl Runtime {
     /// Apply a unigram increment with exclusive access to the storage owner.
     #[must_use]
     pub fn add_unigram_delta(&mut self, token: u32, delta: u64) -> bool {
+        self.add_unigram_outcome(token, delta).is_accepted()
+    }
+
+    /// [`Self::add_unigram_delta`] with the answer in the pin's terms. A
+    /// caller that acts on `ERROR_INTEGER_OVERFLOW` alone, as the choose legs
+    /// do (`pinyin.cpp:2527-2531`, `:2567-2575`), tells [`UnigramAdd::Refused`]
+    /// from an unloaded library or a missing item, which are
+    /// [`UnigramAdd::Missing`].
+    #[must_use]
+    pub fn add_unigram_outcome(&mut self, token: u32, delta: u64) -> UnigramAdd {
         if !self.dict().library_visible(token >> 24) {
-            return false;
+            return UnigramAdd::Missing;
         }
         if u8::try_from(token >> 24).is_ok_and(|index| self.dict().is_system_library(index))
             && let Some(user) = self.user.as_mut()
         {
             let Ok(delta) = u32::try_from(delta) else {
-                return false;
+                return UnigramAdd::Missing;
             };
             return user
-                .add_system_unigram_frequency(token, delta)
-                .unwrap_or(false);
+                .add_system_unigram_outcome(token, delta)
+                .unwrap_or(UnigramAdd::Missing);
         }
         self.dict().add_unigram_delta(token, delta)
     }

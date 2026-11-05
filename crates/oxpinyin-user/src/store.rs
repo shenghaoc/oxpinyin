@@ -40,6 +40,7 @@ use crate::phrase::{
 };
 use crate::phrase_table;
 use crate::registry::{self, CountCache, RegistryLease, StandaloneLease, StoreInner};
+use crate::replay::UnigramAdd;
 use crate::seed;
 use crate::session_values::SessionValues;
 use crate::store_libpinyin::FiniGuard;
@@ -2315,16 +2316,26 @@ impl<S: WriteStore> GenericUserStore<S> {
         token: Token,
         delta: u32,
     ) -> Result<bool, UserStoreError> {
+        Ok(self.add_system_unigram_outcome(token, delta)?.is_accepted())
+    }
+
+    /// [`Self::add_system_unigram_frequency`] with the sub-index's answer in
+    /// the pin's terms: only [`UnigramAdd::Refused`] is
+    /// `ERROR_INTEGER_OVERFLOW`, the one error a caller can act on
+    /// (`pinyin.cpp:2528`).
+    ///
+    /// # Errors
+    /// Returns the store error if the in-memory transaction fails.
+    pub fn add_system_unigram_outcome(
+        &mut self,
+        token: Token,
+        delta: u32,
+    ) -> Result<UnigramAdd, UserStoreError> {
         if self.inner.libpinyin.is_none() {
-            return Ok(false);
+            return Ok(UnigramAdd::Missing);
         }
         let db = self.database();
-        let accepted = db.write(|txn| {
-            Ok(self
-                .arena_add_unigram_outcome(txn, token, delta)?
-                .is_accepted())
-        })?;
-        Ok(accepted)
+        Ok(db.write(|txn| self.arena_add_unigram_outcome(txn, token, delta))?)
     }
 
     /// What the user side adds to the facade's unigram total: for a session
