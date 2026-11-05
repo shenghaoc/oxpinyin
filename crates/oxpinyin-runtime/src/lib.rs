@@ -156,12 +156,14 @@ pub struct SystemRemap {
 pub struct RemapWalk {
     originals: oxpinyin_user::SystemOriginals,
     indices: std::ops::Range<u8>,
-    include_unloaded: bool,
+    /// One library's `_load_phrase_library`, not the mask loop: it maps an
+    /// unloaded library, and a row whether or not the row names a user file.
+    reload: bool,
 }
 
-/// What [`Runtime::remap_next`] reached. A library the loop skips (not
-/// loaded, no user file, or a chunk that fails some other check) is not a
-/// step.
+/// What [`Runtime::remap_next`] reached. A library the walk skips (in the
+/// mask loop one that is not loaded or names no user file; in either a chunk
+/// that fails some other check) is not a step.
 #[derive(Debug)]
 pub enum RemapStep {
     /// The library mapped and is in the walk's originals.
@@ -2655,8 +2657,11 @@ impl Runtime {
     /// Maps the unloaded SYSTEM_FILE/DICTIONARY default library `index`
     /// again, as `_load_phrase_library` does before it merges the saved
     /// `.dbin` (074a2219 `pinyin.cpp:246-264`, `zhuyin.cpp:298-312`). The
-    /// result is empty for a row with no system chunk and no user file
-    /// (the `USER_FILE` row, the unused rows) and for an unreadable file.
+    /// result is empty for a row with no system chunk (the `USER_FILE` row,
+    /// the unused rows) and for an unreadable file. A row that names no user
+    /// file is mapped like any other: `_load_phrase_library` reads the user
+    /// name only after it has mapped the chunk (`pinyin.cpp:266`), where the
+    /// mask loop skips such a row (`:1250-1251`).
     /// Call it before [`Runtime::load_library`] makes the library visible,
     /// so no reader sees the session's state of the freed sub-index.
     #[must_use]
@@ -2674,7 +2679,7 @@ impl Runtime {
         self.begin_remap(1..16, false)
     }
 
-    fn begin_remap(&self, indices: std::ops::Range<u8>, include_unloaded: bool) -> RemapWalk {
+    fn begin_remap(&self, indices: std::ops::Range<u8>, reload: bool) -> RemapWalk {
         let layout = UserFileLayout::from_conf(&self.conf);
         let indices = if self.paths.system_data_dirs().is_empty() {
             0..0
@@ -2684,7 +2689,7 @@ impl Runtime {
         RemapWalk {
             originals: oxpinyin_user::SystemOriginals::new(Default::default(), layout),
             indices,
-            include_unloaded,
+            reload,
         }
     }
 
@@ -2702,9 +2707,13 @@ impl Runtime {
             let Some(row) = self.conf.default_row(index) else {
                 continue;
             };
+            // The mask loop skips a library that is not loaded
+            // (`pinyin.cpp:1240-1241`) and a row that names no user file
+            // (`:1250-1251`). A reload does neither: it maps the unloaded
+            // library, and the user name is not read until it has.
             if !matches!(row.file_type, FileType::SystemFile | FileType::Dictionary)
-                || row.user.is_none()
-                || (!walk.include_unloaded && !self.dict().library_visible(u32::from(index)))
+                || (!walk.reload
+                    && (row.user.is_none() || !self.dict().library_visible(u32::from(index))))
             {
                 continue;
             }
@@ -2749,9 +2758,9 @@ impl Runtime {
     fn remap_system_libraries(
         &mut self,
         indices: std::ops::Range<u8>,
-        include_unloaded: bool,
+        reload: bool,
     ) -> SystemRemap {
-        let mut walk = self.begin_remap(indices, include_unloaded);
+        let mut walk = self.begin_remap(indices, reload);
         let mut unmappable = Vec::new();
         let mut header_fault = None;
         while let Some(step) = self.remap_next(&mut walk) {

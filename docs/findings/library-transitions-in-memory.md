@@ -95,6 +95,11 @@ visibility mask.
   `Journal` (rows 91 and 108). It replaces the library with the system
   chunk plus the saved `.dbin`, or with the saved user chunk or an empty
   one, before it clears the mask.
+  A system file that cannot be mapped again (row 76) replaces nothing:
+  the library stays unloaded behind its mask, the call still answers
+  `true`, and the next load maps the file again. The mask clears only
+  for a library the remap mapped, and a `SYSTEM_FILE` row is mapped
+  whether or not it names a user file (`pinyin.cpp:246-264`).
 - `UserStore::unload_system_libraries`, `load_user_library` and
   `unload_user_library` return nothing. `load_system_libraries` and
   `reload_system_libraries` return only `JournalFault`. Their table writes
