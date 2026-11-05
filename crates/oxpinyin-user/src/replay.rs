@@ -170,22 +170,25 @@ const PHRASE_ITEM_HEADER: usize = 6;
 /// the "no item" sentinel.
 const FIRST_ITEM_OFFSET: usize = 8;
 
-/// What `SubPhraseIndex::add_unigram_frequency` answers.
+/// What `FacadePhraseIndex::add_unigram_frequency` answers, through
+/// `SubPhraseIndex::add_unigram_frequency`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum UnigramAdd {
+pub enum UnigramAdd {
     /// The field and the sub-index total took the delta.
     Accepted,
     /// `ERROR_INTEGER_OVERFLOW`: the total cannot take the delta; nothing was
     /// written.
     Refused,
-    /// No readable item under the slot: `ERROR_OUT_OF_RANGE`, `ERROR_NO_ITEM`
-    /// or `ERROR_FILE_CORRUPTION`.
+    /// No sub-index or no readable item under the slot:
+    /// `ERROR_NO_SUB_PHRASE_INDEX`, `ERROR_OUT_OF_RANGE`, `ERROR_NO_ITEM` or
+    /// `ERROR_FILE_CORRUPTION`.
     Missing,
 }
 
 impl UnigramAdd {
     /// `ERROR_OK`.
-    pub(crate) fn is_accepted(self) -> bool {
+    #[must_use]
+    pub fn is_accepted(self) -> bool {
         self == Self::Accepted
     }
 }
