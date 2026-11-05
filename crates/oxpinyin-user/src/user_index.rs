@@ -403,13 +403,22 @@ impl UserIndex {
         }
     }
 
-    /// `search_suggestion` empties every longer length it visits.
+    /// `search_suggestion` empties every longer length it visits, but only
+    /// when the prefix key itself is a row: the pin returns before it makes a
+    /// cursor when `check(prefix)` is `-1`
+    /// (`chewing_large_table2_kyotodb.cpp:541-544`), when `DB_SET` on the
+    /// prefix fails (`chewing_large_table2_bdb.cpp:579-583`) and when
+    /// `Get(prefix)` is not OK (`chewing_large_table2_tkrzwdb.cpp:511-512`,
+    /// all at 074a2219). An empty marker row counts as present.
     pub(crate) fn note_suggestion(&mut self, keys: &[ChewingKey]) {
         let prefix_len = keys.len();
         if !ENTRY_PER_LENGTH || prefix_len == 0 || prefix_len > MAX_PHRASE_LENGTH {
             return;
         }
         let prefix = query_key(keys);
+        if !self.contains_key(&prefix) {
+            return;
+        }
         let mut lengths = [false; MAX_PHRASE_LENGTH + 1];
         for key in self.keys_starting_with(&prefix) {
             if key.len() == prefix.len() {
@@ -1229,14 +1238,13 @@ mod tests {
 
     #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
     #[test]
-    #[ignore = "FINDING: UserIndex::note_suggestion has no counterpart of the pin's \
-                check(prefix) == -1 early return (chewing_large_table2_kyotodb.cpp:541-544), \
-                so it empties the entry where the pin leaves it; run with --ignored"]
     fn a_suggestion_on_an_absent_prefix_key_leaves_the_entries_alone() {
         // The pin's first call is `m_db->check(prefix)`; `-1` returns before
-        // any cursor is made (chewing_large_table2_kyotodb.cpp:541-544 at
-        // 074a2219), so no longer key is visited and no entry is emptied,
-        // even though a longer key exists.
+        // any cursor is made (chewing_large_table2_kyotodb.cpp:541-544,
+        // chewing_large_table2_bdb.cpp:579-583 and
+        // chewing_large_table2_tkrzwdb.cpp:511-512 at 074a2219), so no
+        // longer key is visited and no entry is emptied, even though a
+        // longer key exists.
         let (short, long) = short_then_long();
         let mut index = index(&[
             (encode_complete_key(&short), record(&[(1, &short)])),
