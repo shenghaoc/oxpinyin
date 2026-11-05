@@ -1119,6 +1119,51 @@ mod unloaded_library_tests {
         assert_eq!(open.amplified_total(), total);
     }
 
+    /// `pinyin_load_phrase_library` over a system file the pin cannot map:
+    /// the pin dies (register row 76). The call keeps its answer, and the
+    /// library stays unloaded, so no reader meets a library whose bytes the
+    /// session no longer holds. The next load maps the repaired file.
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_reload_keeps_the_library_unloaded_until_the_next_load() {
+        let scratch = tempfile::tempdir().expect("scratch");
+        let system = crate::test_support::private_system(scratch.path());
+        let user = scratch.path().join("user");
+        std::fs::create_dir_all(&user).expect("user dir");
+        let system_c = cstr(system.to_str().expect("UTF-8 path"));
+        let user_c = cstr(user.to_str().expect("UTF-8 path"));
+        let context =
+            crate::context::oxpinyin_init_for_fixtures(system_c.as_ptr(), user_c.as_ptr());
+        assert!(!context.is_null());
+        let instance = crate::instance::pinyin_alloc_instance(context);
+        assert!(!instance.is_null());
+        let open = Open::parsed(Box::new(scratch), context, instance);
+        let (_, gbk) = open.gbk_row(DEFAULT_SORT);
+        assert!(pinyin_unload_phrase_library(context, 2));
+
+        let library = system.join("gbk_char.bin");
+        std::fs::remove_file(&library).expect("remove the system file");
+        assert!(pinyin_load_phrase_library(context, 2), "row 76's answer");
+        assert!(
+            !pinyin_token_add_unigram_frequency(instance, gbk, 1),
+            "the library is still unloaded"
+        );
+
+        std::os::unix::fs::symlink(
+            crate::test_support::system_dir().join("gbk_char.bin"),
+            &library,
+        )
+        .expect("repair the system file");
+        assert!(
+            pinyin_load_phrase_library(context, 2),
+            "the next load maps it"
+        );
+        assert!(
+            pinyin_token_add_unigram_frequency(instance, gbk, 1),
+            "the library is loaded again"
+        );
+    }
+
     /// `pinyin_end_add_phrases` compacts the phrase index
     /// (`pinyin.cpp:655-660`), and `compact` skips a missing sub-index
     /// (`phrase_index.cpp:651-652`): the unloaded library's total does not move
