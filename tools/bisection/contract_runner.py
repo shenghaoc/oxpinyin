@@ -174,16 +174,19 @@ class Runner:
         reload failure updates the corresponding observation; successful reloads
         add filtered cross_reload results. The #929 logical cases reuse the same
         handoff and deadline, requiring exact key/value rows in both directions,
-        without the #1114 byte criterion. Profile cleanup belongs to the caller."""
+        without the #1114 byte criterion. The lazy-user-bigram cases compare
+        both empty and trained save snapshots directly, with only timestamp
+        bytes normalized. Profile cleanup belongs to the caller."""
         deadline = time.monotonic() + timeout
         results = []
         fatal_env = {'G_DEBUG': 'fatal-criticals'} if spec['fatal'] else None
         handoff_929 = name in ('save-929-logical-cross-open-pinyin', 'save-929-logical-cross-open-zhuyin')
+        lazy_bigram = name in ('lazy-user-bigram-pinyin', 'lazy-user-bigram-zhuyin')
         handoff = handoff_929 or name in ('issue1114-collision-load-save-pinyin', 'issue1114-collision-load-save-zhuyin')
         profile_key = 'CONTRACT_929_PROFILE' if handoff_929 else 'CONTRACT_1114_PROFILE'
         reload_key = 'CONTRACT_929_RELOAD' if handoff_929 else 'CONTRACT_1114_RELOAD'
         profiles = {}
-        if handoff:
+        if handoff or lazy_bigram:
             for side in ('pin', 'subject'):
                 profiles[side] = tempfile.mkdtemp(prefix='handoff-' + side + '-', dir=scratch)
         for side, so in (('pin', pin_so), ('subject', subject_so)):
@@ -200,6 +203,8 @@ class Runner:
                              if self.driver['selected_cell']() == 'tkrzw' else fatal_env)
                 if handoff:
                     extra_env = dict(extra_env or {}, **{profile_key: profiles[side]})
+                if lazy_bigram:
+                    extra_env = dict(extra_env or {}, CONTRACT_BIGRAM_SNAPSHOTS=profiles[side])
                 result = self.driver['run_worker'](spec['mode'], so.resolve(), data, name, scratch,
                                     extra_env=extra_env, timeout=remaining)
             except subprocess.TimeoutExpired as error:
@@ -212,6 +217,14 @@ class Runner:
             results.append(result)
         if len(results) == 1:
             results.append(dict(exit='NOT-RUN', result=None, userfiles=[], stderr_lines=0, stderr=''))
+        if lazy_bigram and all(result['exit'] == 0 for result in results):
+            for filename in ('empty.db', 'trained.db'):
+                raw = [Path(profiles[side], filename).read_bytes() for side in ('pin', 'subject')]
+                if self.driver['tkrzw_saved_bigram_bytes'](raw[0]) != self.driver['tkrzw_saved_bigram_bytes'](raw[1]):
+                    results[0].update(exit=1, result={'error': filename + ' differs outside META_OFFSET_TIMESTAMP'})
+                    return results
+            for result in results:
+                result['result']['saved_byte_comparisons'] = ['empty.db', 'trained.db']
         if handoff and all(result['exit'] == 0 for result in results):
             if not handoff_929:
                 # Direct byte equality is the gate, not digest equality. Bucket
