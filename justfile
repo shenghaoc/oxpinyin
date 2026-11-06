@@ -250,14 +250,24 @@ fuzz *args:
     @{{windows_args}} just heavy -- pwsh -NoLogo -NoProfile -CommandWithArgs 'Set-Location fuzz; cargo fuzz run @args; exit $LASTEXITCODE' @forwarded; exit $LASTEXITCODE
 
 # Run native coverage with temporary state; run and report in one invocation.
+# Cargo owns argument and report selection; the arguments pass through unchanged.
+# Both state directories live in one scratch directory that is removed on exit.
 [unix]
-coverage *args: python
-    @just heavy -- uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev coverage "$@"
+coverage *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    scratch=$(mktemp -d "${TMPDIR:-/tmp}/oxpinyin-coverage-XXXXXX")
+    trap 'rm -rf "$scratch"' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    export CARGO_LLVM_COV_TARGET_DIR="$scratch/target" CARGO_LLVM_COV_BUILD_DIR="$scratch/target"
+    echo "CARGO_LLVM_COV_TARGET_DIR: $CARGO_LLVM_COV_TARGET_DIR" >&2
+    cargo llvm-cov "$@"
 
 # Windows coverage execution is unverified.
 [windows]
-coverage *args: python
-    @{{windows_args}} just heavy -- uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev coverage @forwarded; exit $LASTEXITCODE
+coverage *args:
+    @{{windows_args}} $scratch = Join-Path ([IO.Path]::GetTempPath()) ('oxpinyin-coverage-' + [guid]::NewGuid().ToString('N')); $target = Join-Path $scratch 'target'; New-Item -ItemType Directory -Path $scratch | Out-Null; $env:CARGO_LLVM_COV_TARGET_DIR = $target; $env:CARGO_LLVM_COV_BUILD_DIR = $target; [Console]::Error.WriteLine("CARGO_LLVM_COV_TARGET_DIR: $target"); try { cargo llvm-cov @forwarded; $status = $LASTEXITCODE } finally { Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $scratch }; exit $status
 
 # Run a sanitizer gate with address, thread, leak or memory instrumentation.
 [linux]

@@ -397,8 +397,8 @@ print('END ' + name, file=sys.stderr, flush=True)
 
     def test_changed_selection_precedes_the_tmpdir_requirement(self):
         cold = 'tools/bisection/teardown.test.py'
-        sources = {cold: "print('cold')", 'tools/dev/backend.test.py': "print('launched')"}
-        for paths, expected in ((['tools/dev/backend.test.py'], 0), ([cold], 2), (['unknown'], 2), ([], 0)):
+        sources = {cold: "print('cold')", 'tools/dev/check.test.py': "print('launched')"}
+        for paths, expected in ((['tools/dev/check.test.py'], 0), ([cold], 2), (['unknown'], 2), ([], 0)):
             with self.subTest(paths=paths), \
                     mock.patch.object(test_runner, 'changed_paths', return_value=paths):
                 status, out, err = self.fake_run(sources, changed='HEAD', filesystem='tmpfs')

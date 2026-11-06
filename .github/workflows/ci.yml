@@ -360,7 +360,7 @@ jobs:
         if: needs.changes.outputs.reuse != 'true'
       - name: C++ pinyin.h smoke gate
         if: needs.changes.outputs.reuse != 'true'
-        run: just heavy -- just runner cpp-smoke
+        run: just runner cpp-smoke
       # The exported-symbol gate: each cdylib exports exactly its pin
       # version script's set (libpinyin.ver 79, libzhuyin.ver 52) and
       # leaks nothing else — in the development build (fixture hooks
@@ -368,7 +368,7 @@ jobs:
       # compiled out). The packaged mode is the last step of this job.
       - name: ABI export gate (development build)
         if: needs.changes.outputs.reuse != 'true'
-        run: just heavy -- just abi exports
+        run: just abi exports
       # The allocator-pairing gate: every pointer the two C ABIs hand a
       # consumer is classified in libpinyin.alloc / libzhuyin.alloc, and a
       # C++ consumer built from those registers releases each one with its
@@ -378,7 +378,7 @@ jobs:
       # the g++ installed above already carries libasan/liblsan.
       - name: Allocator-pairing gate
         if: needs.changes.outputs.reuse != 'true'
-        run: just heavy -- just abi alloc-pairing
+        run: just abi alloc-pairing
       # The exported-symbol gate's packaged mode runs after every gate that
       # uses the development build (#970). Only oxpinyin-capi rebuilds for
       # it, and that build replaces the development one: the crate's lib
@@ -387,7 +387,7 @@ jobs:
       # after this step would compile oxpinyin-capi again.
       - name: ABI export gate (shipped build)
         if: needs.changes.outputs.reuse != 'true'
-        run: just heavy -- just abi exports --shipped
+        run: just abi exports --shipped
 
       - name: Refresh the main Rust cache using the lane's compile mode
         if: github.event_name == 'push' && needs.changes.outputs.reuse == 'true'

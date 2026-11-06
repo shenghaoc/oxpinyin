@@ -2,7 +2,8 @@
 
 The recipe behind `python -m tools.dev measure snapshot` and the nightly lane. It
 is one half of the series in docs/perf/ci-perf-size-gate-proposal-2026-09-09.md;
-tools/perf-gate/series.py is the other and compares this sample with the last.
+the benchmark action in verify-nightly.yml's perf-snapshot job is the other and
+compares this sample with the last. `--series-dir` writes the action's inputs.
 
 This is not a gate. It measures and records: no threshold lives here, nothing
 fails over a number, and wall clock is absent (the proposal's evidence against
@@ -17,6 +18,7 @@ one job on a fresh runner.
 import dataclasses
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -39,8 +41,8 @@ LABEL = 'snapshot.sh'
 HELP = '''# snapshot — measure the tree once and emit one perf snapshot as JSON.
 #
 # One half of the nightly series described in
-# docs/perf/ci-perf-size-gate-proposal-2026-09-09.md; tools/perf-gate/series.py
-# is the other, and compares this sample against the previous night's.
+# docs/perf/ci-perf-size-gate-proposal-2026-09-09.md; the benchmark action in
+# verify-nightly.yml is the other, and compares this sample against the last.
 #
 # This is NOT a gate. It measures and records. Nothing here decides anything,
 # nothing here fails a build over a number, and no threshold lives in this
@@ -52,7 +54,7 @@ HELP = '''# snapshot — measure the tree once and emit one perf snapshot as JSO
 # environment beside each number, a toolchain bump and a large refactor are
 # indistinguishable.
 #
-# Usage: just measure snapshot --out snapshot.json [--backend tkrzw]
+# Usage: just measure snapshot --out snapshot.json [--backend tkrzw] [--series-dir DIR]
 
 '''
 # Backend name to the extension of its committed w3 fixture directory.
@@ -75,33 +77,56 @@ SECTION_ROW = re.compile(r'\s*\[\s*\d+\]\s+(\S+)\s+\S+\s+[0-9a-fA-F]+\s+[0-9a-fA
 ALLOC_SYMBOL = b'oxpinyin_alloc_'
 
 
+# The metrics the nightly lane may flag: deterministic under a fixed environment.
+FLAGGABLE = ('section_sum', 'stripped_size', 'alloc_count_per_cycle',
+             'alloc_bytes_per_cycle', 'ir_oxpinyin_object')
+# Recorded and reported, never flagged. RSS moves with the allocator, the kernel and the host.
+REPORT_ONLY = ('rss_first_cycle_kib', 'rss_last_cycle_kib')
+UNITS = {'section_sum': 'bytes', 'stripped_size': 'bytes', 'alloc_count_per_cycle': 'allocations',
+         'alloc_bytes_per_cycle': 'bytes', 'ir_oxpinyin_object': 'Ir',
+         'rss_first_cycle_kib': 'KiB', 'rss_last_cycle_kib': 'KiB'}
+# Everything that decides how a metric is measured. The newest commit touching any of them is
+# recorded as harness_commit, so a change to the method gives a new environment key and a fresh
+# baseline instead of a flagged move: the harness and the callgrind reader, this recipe, and
+# bench.py, which builds the harness and runs the pinned processes. Files that build or configure
+# the measured libraries (packaging.py, its templates, cell.py) are deliberately absent: a change
+# there that grows a library must be flagged, not absorbed into a new baseline.
+MEASUREMENT_PATHS = ('tools/bisection/bisect.c', 'tools/perf-gate',
+                     'tools/dev/measure/snapshot.py', 'tools/dev/measure/bench.py')
+# The files --series-dir writes: the two benchmark-action inputs and the environment key.
+FLAG_FILE, REPORT_FILE, KEY_FILE = 'flag.json', 'report.json', 'environment.key'
+
+
 @dataclasses.dataclass(frozen=True)
 class Options:
-    """The parsed command line: where to write and which backend."""
+    """The parsed command line: where to write, which backend, and where the series inputs go."""
     out: str
     backend: str
+    series_dir: str = ''
 
 
 def parse_options(argv: Sequence[str]) -> Options:
     """Parse the command line in order, as the script's `case` loop did.
 
-    `--out` and `--backend` take the next word (empty when there is none, which
-    the later checks then refuse); `-h` prints the header and ends the run with 0.
+    `--out`, `--backend` and `--series-dir` take the next word (empty when there is none,
+    which the later checks then refuse); `-h` prints the header and ends the run with 0.
     """
-    out, backend, rest = '', cell.declared_default(), list(argv)
+    out, backend, series_dir, rest = '', cell.declared_default(), '', list(argv)
     while rest:
         flag = rest.pop(0)
         if flag == '--out':
             out = rest.pop(0) if rest else ''
         elif flag == '--backend':
             backend = rest.pop(0) if rest else ''
+        elif flag == '--series-dir':
+            series_dir = rest.pop(0) if rest else ''
         elif flag in ('-h', '--help'):
             sys.stdout.write(HELP)
             sys.stdout.flush()
             raise Finished(0)
         else:
             bench.fail(f'fatal: unknown argument {flag}', 2)
-    return Options(out, backend)
+    return Options(out, backend, series_dir)
 
 
 def section_sum(readelf_text: str) -> int:
@@ -119,8 +144,8 @@ def alloc_metrics(row: Mapping) -> dict:
 
     bisect.c emits steady_alloc_{cycles,count,bytes} in speed mode only when the
     oxpinyin_alloc_* readers resolved, so on an artifact built without
-    --features alloc-count the keys are absent. Absence is None, and series.py
-    refuses to treat it as a measurement.
+    --features alloc-count the keys are absent. Absence is None, and the series
+    inputs leave a None metric out rather than write it as zero.
     """
     cycles = row.get('steady_alloc_cycles', 0)
     if not cycles or 'steady_alloc_count' not in row:
@@ -144,6 +169,48 @@ def rss_metrics(rows: Sequence[Mapping]) -> dict:
         return int(statistics.median(values)) if values else None
     return {'rss_first_cycle_kib': median('after_first', 'rss_kib'),
             'rss_last_cycle_kib': median('after_last', 'rss_kib')}
+
+
+def benchmark_entries(metrics: Mapping, names: Sequence[str]) -> list[dict]:
+    """The benchmark action's `customSmallerIsBetter` entries for NAMES, in order.
+
+    Absence is not zero. A metric that is None, missing or not finite is left out: the
+    action coerces a JSON null to 0, which would record a missing instrument as a real
+    measurement and invent a cliff in the series, and NaN or infinity is no measurement.
+    """
+    return [{'name': name, 'unit': UNITS[name], 'value': metrics[name]} for name in names
+            if isinstance(metrics.get(name), (int, float)) and not isinstance(metrics[name], bool)
+            and math.isfinite(metrics[name])]
+
+
+def environment_key(doc: Mapping) -> str:
+    """A key for the environment the sample records; it changes when any recorded field does.
+
+    The nightly lane keeps its baseline in a cache entry under this key, so a changed
+    environment finds no predecessor and starts a new baseline instead of flagging a
+    move it cannot attribute.
+    """
+    text = json.dumps(doc['environment'], sort_keys=True, separators=(',', ':'))
+    return hashlib.sha256(text.encode()).hexdigest()[:32]
+
+
+def write_series_inputs(doc: Mapping, directory: str | Path) -> None:
+    """Write the benchmark action's inputs for DOC into DIRECTORY.
+
+    flag.json holds the metrics that may fail the lane and report.json the rest. A group
+    with no measured metric writes no file, because the action refuses an empty one and
+    the lane skips its step when the file is absent. environment.key holds environment_key.
+    """
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    for name, group in ((FLAG_FILE, FLAGGABLE), (REPORT_FILE, REPORT_ONLY)):
+        entries = benchmark_entries(doc['metrics'], group)
+        target = directory / name
+        if entries:
+            target.write_text(json.dumps(entries, indent=2) + '\n')
+        else:
+            target.unlink(missing_ok=True)
+    (directory / KEY_FILE).write_text(environment_key(doc) + '\n')
 
 
 def first_row(output: bytes) -> dict:
@@ -197,8 +264,7 @@ def document(tools: 'Tools', env: Mapping[str, str], *, backend: str, pinned: bo
             'backend': backend,
             'fixture_sha256': digest,
             'cpu_pinned': pinned,
-            'harness_commit': tools.query('git', 'log', '-1', '--format=%H', '--',
-                                          'tools/bisection/bisect.c', 'tools/perf-gate'),
+            'harness_commit': tools.query('git', 'log', '-1', '--format=%H', '--', *MEASUREMENT_PATHS),
         },
         'artifacts': {
             'shipped_libpinyin': {
@@ -374,6 +440,9 @@ def snapshot(argv: Sequence[str], env: Mapping[str, str], *, tools: Tools | None
                 json.dump(doc, stream, indent=2, sort_keys=True)
                 stream.write('\n')
             emit(f'wrote {options.out}')
+            if options.series_dir:
+                write_series_inputs(doc, options.series_dir)
+                emit(f'wrote the series inputs to {options.series_dir}')
     return 0
 
 

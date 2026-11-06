@@ -1,4 +1,4 @@
-"""Native setup, lint and host-backend checks.
+"""Native setup and lint checks.
 
 These are setup and gate checks, not oracle or pin comparisons. The old
 optional oracle-directory display is intentionally absent: the native boundary
@@ -7,7 +7,6 @@ does not probe an oracle installation or pass its variables to tests.
 import os
 from pathlib import Path
 import platform
-import re
 import subprocess
 import sys
 
@@ -172,128 +171,3 @@ def lint_crate_cfg_placement(argv, *, out=sys.stdout, err=sys.stderr, root=ROOT,
         return 1
     print(f'crate-cfg-placement: {checked} file(s) checked, no violations', file=out)
     return 0
-
-
-def _os_release(environment):
-    """Return the PRETTY_NAME /etc/os-release exports, or the inherited value."""
-    value = environment.get('PRETTY_NAME', '')
-    try:
-        text = Path('/etc/os-release').read_text(errors='replace')
-    except OSError:
-        return value or 'unknown'
-    for line in text.splitlines():
-        line = line.strip()
-        if line.startswith('PRETTY_NAME='):
-            candidate = line.partition('=')[2]
-            if len(candidate) >= 2 and candidate[0] == candidate[-1] and candidate[0] in '"\'':
-                candidate = candidate[1:-1]
-            return candidate
-    return value or 'unknown'
-
-
-def _probe_find_library(tools):
-    """Resolve libpinyin.so the way the shell probe did: cache first, then find."""
-    try:
-        result = tools.run(['ldconfig', '-p'])
-    except OSError:
-        result = None
-    if result is not None:
-        for line in result.stdout.splitlines():
-            match = re.search(r'=> (.*libpinyin\.so[^ ]*)', line)
-            if match:
-                return match.group(1)
-    try:
-        result = tools.run(['find', '/usr', '/lib', '/lib64', '-name', 'libpinyin.so*'])
-    except OSError:
-        return ''
-    lines = result.stdout.splitlines()
-    return lines[0] if lines else ''
-
-
-def _probe_version(tools):
-    """Return the first package version the distro queries report, or ?."""
-    commands = (
-        ['rpm', '-q', '--qf', '%{VERSION}-%{RELEASE}\n', 'libpinyin'],
-        ['dpkg-query', '-W', '-f=${Version}\n', 'libpinyin[0-9]*'],
-        ['pacman', '-Q', 'libpinyin'],
-    )
-    for command in commands:
-        try:
-            result = tools.run(command)
-        except OSError:
-            continue
-        lines = [line for line in result.stdout.splitlines() if line]
-        if lines:
-            return lines[0]
-    return '?'
-
-
-def _probe_needed(tools, library):
-    """Return the direct DT_NEEDED entries, or a diagnostic status.
-
-    readelf is authoritative when present; objdump is the fallback.  A failed
-    inspection is an error, never an unknown classification.
-    """
-    if tools.which('readelf') is not None:
-        try:
-            result = tools.run(['readelf', '-dW', library])
-        except OSError:
-            result = None
-        if result is None or result.returncode:
-            return None, f'backend : unknown (readelf could not read {library})'
-        needed = []
-        for line in result.stdout.splitlines():
-            match = re.search(r'\(NEEDED\).*\[(.*)\]', line)
-            if match:
-                needed.append(match.group(1))
-        return needed, None
-    if tools.which('objdump') is not None:
-        try:
-            result = tools.run(['objdump', '-p', library])
-        except OSError:
-            result = None
-        if result is None or result.returncode:
-            return None, f'backend : unknown (objdump could not read {library})'
-        needed = [fields[1] for fields in (line.split() for line in result.stdout.splitlines())
-                  if fields[:1] == ['NEEDED'] and len(fields) > 1]
-        return needed, None
-    return None, 'backend : unknown (need readelf or objdump; install binutils)'
-
-
-def backend_probe(*, out=sys.stdout, err=sys.stderr, root=ROOT, tools=None,
-                  environment=None):
-    """Identify the DBM linked directly into the system libpinyin.
-
-    Return 0 when a known DBM was identified, 1 when libpinyin was inspected
-    but no known DBM was found, 2 when it is not installed, and 3 when its
-    ELF dependencies could not be read.
-    """
-    environment = dict(os.environ if environment is None else environment)
-    tools = native.Tools(root=root, environment=environment) if tools is None else tools
-    print(f'distro  : {_os_release(environment)}', file=out, flush=True)
-    library = _probe_find_library(tools)
-    if not library:
-        print('libpinyin: not found (package not installed)', file=out, flush=True)
-        return 2
-    print(f'so      : {library}', file=out, flush=True)
-    print(f'version : {_probe_version(tools)}', file=out, flush=True)
-    needed, diagnostic = _probe_needed(tools, library)
-    if diagnostic is not None:
-        print(diagnostic, file=out, flush=True)
-        return 3
-    hit = next((entry for entry in needed
-                if re.search(r'libtkrzw|kyotocabinet|libdb-|libdb5|libdb\.so', entry, re.I)), '')
-    if 'tkrzw' in hit.lower():
-        backend = 'Tkrzw'
-    elif 'kyotocabinet' in hit.lower():
-        backend = 'KyotoCabinet'
-    elif 'libdb' in hit.lower():
-        backend = 'BerkeleyDB'
-    else:
-        backend = 'unknown (no known DBM library in DT_NEEDED)'
-    print(f'backend : {backend}', file=out, flush=True)
-    if hit:
-        print(f'needed  : {hit}', file=out, flush=True)
-        return 0
-    # The shell's final `[ -n "$hit" ] && echo` made an unknown DBM status 1.
-    return 1

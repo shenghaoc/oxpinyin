@@ -9,13 +9,13 @@ perf_event_paranoid hint are Linux-only, and the Linux fallbacks are not tried.
 Artifacts land under target/profile/.
 
 When samply supports `--unstable-presymbolicate`, the record also writes
-`<profile>.syms.json` and extract-hot-stacks.py reports function names. A samply
-without that flag still records; the report shows unresolved frames instead.
+`<profile>.syms.json` and `samply load` shows function names. A samply
+without that flag still records, but the profile is then not self-contained:
+its symbol information is incomplete without the sidecar.
 
-After a samply record the run prints the profile's sample total and warns when it
-is below the level extract-hot-stacks.py defines (MIN_SAMPLES): with fewer samples
-the order of the hot stacks is mostly sampling noise. The other profilers write no
-samply profile, print no total and keep their shorter default run.
+After a samply record the run prints the profile's path and the command that opens
+it, `samply load <profile>`. The other profilers write no samply profile and keep
+their shorter default run.
 
 Requirements: exported tables (PINYIN_EXPORT_DIR or /tmp/oxpinyin-export), the
 pinned model20 cache (just fetch-model), cargo-c, and on macOS samply
@@ -28,8 +28,8 @@ Environment:
                         against is tkrzw)
   PINYIN_MODEL_DIR      extracted model20 (default target/model20/extracted)
   PERF_CYCLES           bisect cycles for every profiler. Unset, samply runs 2048,
-                        which gave about three times MIN_SAMPLES samples on the
-                        measuring host (a faster host takes fewer), and the other
+                        which gave about 16,000 samples on the measuring
+                        host (a faster host takes fewer), and the other
                         profilers run 32, as before
   PERF_CPU              taskset CPU (Linux only; refused on macOS)
   PROFILE_REUSE_STAGE=1 reuse a previous cargo-c staging tree
@@ -46,10 +46,10 @@ from pathlib import Path
 import platform
 import re
 import select
+import shlex
 import shutil
 import subprocess
 import sys
-import traceback
 from collections.abc import Callable, Mapping, Sequence
 
 from .. import slot
@@ -59,16 +59,15 @@ from ..model import EXPECTED_MODEL_FILES, FETCH_HINT, MODEL20_SHA256
 
 # The runner name the libtkrzw refusal has always carried.
 LABEL = 'run-w8-cycle.sh'
-HERE = bench.ROOT / 'tools/profile'
 # The W8 cycle profiles against the tkrzw cell (its exports and records are
 # tkrzw). build-oracle.sh selects its configured backend, so build this
 # prefix with `build-oracle.sh --dbm tkrzw`.
 PIN_REF = ('libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99'
            '+model20-59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155+dbm-tkrzw')
 # A sampling profile ranks stacks by sample count, and samply takes about one
-# sample per CPU millisecond, so its default run is long enough to reach the level
-# extract-hot-stacks.py defines (MIN_SAMPLES). The other profilers keep the shorter
-# default: Callgrind counts instructions exactly, and perf record keeps a stack
+# sample per CPU millisecond, so its default run is long enough for the order of
+# the hot stacks to be more than sampling noise (docs/runbooks/benches.md). The
+# other profilers keep the shorter default: Callgrind counts instructions exactly, and perf record keeps a stack
 # dump for every sample.
 SAMPLY_CYCLES = '2048'
 FALLBACK_CYCLES = '32'
@@ -271,8 +270,8 @@ class W8:
                 'or put it on PATH.')
         presymbolicate = self.samply_has_presymbolicate()
         if self.which('samply') and not presymbolicate:
-            warn('warning: samply has no --unstable-presymbolicate; the hot-stack report '
-                 'will show unresolved frames.')
+            warn('warning: samply has no --unstable-presymbolicate; the profile '
+                 'will not be self-contained.')
         if self.argv[:1] == ['--check']:
             self.check(presymbolicate)
             return
@@ -484,20 +483,6 @@ class W8:
 
     # ── record ────────────────────────────────────────────────────────────
 
-    def report_samples(self, profile_json: str) -> None:
-        """Print the samply profile's sample total; extract-hot-stacks.py warns when it is below its level.
-
-        A profile it cannot read costs a warning, not the run: samply has already written it and the
-        timing is saved.
-        """
-        try:
-            status = bench.script('tools/profile/extract-hot-stacks.py').main(['--total', profile_json])
-        except Exception:
-            traceback.print_exc()
-            status = 1
-        if status:
-            warn(f'warning: could not read the sample total from {profile_json}')
-
     def record(self, presymbolicate: bool) -> None:
         """Check the subject, write the header, and record with the first profiler that works."""
         profile_dir, env = self.profile_dir, self.env
@@ -531,8 +516,8 @@ class W8:
                 if Path(profile_syms).is_file():
                     say(f'samply symbols: {profile_syms}')
                 else:
-                    warn('warning: samply wrote no symbol sidecar; the hot-stack report will show unresolved frames.')
-                self.report_samples(profile_json)
+                    warn('warning: samply wrote no symbol sidecar; the profile is not self-contained, so its symbol information is incomplete.')
+                say(f'open it with: samply load {shlex.quote(os.path.abspath(profile_json))}')
                 recorded = True
             elif self.darwin:
                 die('error: samply failed; macOS has no perf or Callgrind fallback.')
@@ -609,10 +594,10 @@ def profile_w8(argv: Sequence[str], env: Mapping[str, str], *, system: str | Non
                which: Callable[[str], str | None] | None = None, commands: Commands | None = None) -> int:
     """Run the W8 profile (or `--check` it) and return its status.
 
-    The script `cd`ed into its own directory first, so a relative path in the
-    environment resolves against tools/profile.
+    The run starts at the repository root, so a relative path in the environment
+    resolves against it.
     """
-    with bench.working_directory(HERE):
+    with bench.working_directory(bench.ROOT):
         W8(argv, dict(env), system, which, commands).execute()
     return 0
 
