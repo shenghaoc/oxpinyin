@@ -354,14 +354,11 @@ differentials are separate evidence, not permanent restrictions on portability.
 The nightly macOS CI job uses this broader portable scope:
 
 ```bash
-cargo test --locked --workspace \
-  --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi \
-  --exclude oxpinyin-kmm
+cargo test --locked --workspace
 ```
 
 The [validation status](#validated-on--not-validated) distinguishes native macOS CI
-from hands-on setup evidence. The current CI exclusions describe maintained
-build integration, not permanent limitations of the portable Rust code.
+from hands-on setup evidence.
 
 CI's macOS job builds tkrzw with `.github/actions/tkrzw` instead of
 Homebrew's. Berkeley DB is a non-default backend: `brew install berkeley-db@5`,

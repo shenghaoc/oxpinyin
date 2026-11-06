@@ -68,6 +68,21 @@ Valgrind, backend utilities or container runtime.
 
 ## Setup command
 
+Ubuntu's packaged tkrzw is defective; [verification rule 9](verification.md#9-sound-tkrzw-library)
+requires a sound build. Before running workspace tests in a cloud session,
+build the upstream revision and select it for both linking and runtime:
+
+```sh
+just tkrzw-build "$HOME/.cache/oxpinyin/tkrzw"
+export OXPINYIN_TKRZW_PREFIX="$HOME/.cache/oxpinyin/tkrzw"
+export PKG_CONFIG_PATH="$HOME/.cache/oxpinyin/tkrzw/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+export LD_LIBRARY_PATH="$HOME/.cache/oxpinyin/tkrzw/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+```
+
+Use an empty prefix when building. `tools/tkrzw/runtime.py` needs
+`OXPINYIN_TKRZW_PREFIX` to trust the tkrzw loaded by Python tooling. Full
+oracle setup below can also provision and select a sound build.
+
 **When to run it.** Run the setup only when the work needs the pin oracle
 (a differential, a same-run measurement against the pin, a data check);
 work that does not touch the oracle does not need it. From the checkout:

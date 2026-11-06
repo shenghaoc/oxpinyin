@@ -558,13 +558,9 @@ jobs:
           read -ra excludes <<< "$WINDOWS_EXCLUDES"
           cargo test --locked --doc --workspace "${excludes[@]}"
 
-  # macOS links tkrzw from the tkrzw action,
-  # with pinyin-oracle's oracle-ffi off. The
-  # workspace tests exclude the two C-ABI crates (their facade tests are
-  # Linux-first) and the backend-independent KMM tool. Their shipped macOS
-  # libraries are built and checked separately below. The training package remains
-  # in the lane because its segment/eval modules use the backend. It also
-  # runs the tools Python harness tests on macOS.
+  # macOS links tkrzw from the tkrzw action, with pinyin-oracle's oracle-ffi
+  # off. The full workspace runs here; shipped macOS libraries are also built
+  # and checked separately. The tools Python harness runs after the Rust steps.
   #
   # Moved here from ci.yml on 2026-10-31: platforms other than Linux are
   # unstable but not unusable (maintainer decision), so the job runs every
@@ -593,9 +589,6 @@ jobs:
           just: 'true'
           cargo-nextest: 'true'
       - run: rustup show active-toolchain
-      - name: Run tools Python harness tests
-        shell: bash
-        run: just test-tools
       # GLib and pkg-config from Homebrew; tkrzw from the tkrzw action, which
       # puts its build first on PKG_CONFIG_PATH.
       - name: Install GLib and pkg-config (Homebrew)
@@ -616,20 +609,17 @@ jobs:
           OXPINYIN_CAPI_SO="$stage/usr/local/lib/libpinyin.15.0.0.dylib" \
           OXPINYIN_ZHUYIN_SO="$stage/usr/local/lib/libzhuyin.15.0.0.dylib" \
             just abi exports --shipped
-      # Clippy over the lane's own feature set and exclusions, so a lint in
+      # Clippy over the lane's own feature set, so a lint in
       # macOS-only code fails here rather than nowhere.
       - name: Clippy (macOS)
         run: >
           cargo clippy --locked --workspace --all-targets
-          --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
-          --exclude oxpinyin-kmm
           -- -D warnings
       - run: >
           cargo nextest run --locked --profile ci --status-level skip --workspace
-          --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
-          --exclude oxpinyin-kmm
-      # nextest does not run doctests; keep the same features and exclusions.
+      # nextest does not run doctests; keep the same feature set.
       - run: >
           cargo test --locked --doc --workspace
-          --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
-          --exclude oxpinyin-kmm
+      - name: Run tools Python harness tests
+        shell: bash
+        run: just test-tools
