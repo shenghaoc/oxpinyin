@@ -53,8 +53,28 @@ def init_system_argument(k, form):
         return out
 
 
+# Which spellings run on which facade. Every spelling is a case of `g_build_path_va` (an empty or NULL
+# first element, leading separators kept on the first element and dropped from later ones, runs of
+# trailing separators dropped, everything between copied as it is), and the pin hands each directory
+# argument to it unchanged. libzhuyin's join sites are libpinyin's one for one: `table.conf`
+# (`zhuyin.cpp:279-280`, `pinyin.cpp:335-336`), each library file named in it
+# (`zhuyin.cpp:196-197,230-231`, `pinyin.cpp:252-253,286-287`), the user files (`zhuyin.cpp:212,252,
+# 297-312,342`, `pinyin.cpp:268,308,353-368,400`) and the save renames (`zhuyin.cpp:601-684`,
+# `pinyin.cpp:968-1121`). So libpinyin keeps every spelling, once per frozen outcome, and libzhuyin keeps
+# one spelling per site: the system argument, the system and the user directory, `table.conf`, a present
+# and a missing library, and the save renames. The marker line `pinyin.cpp:1194-1200` and the addon and
+# punctuation joins (`pinyin.cpp:419-440`) exist only in libpinyin.
+_ZHUYIN_INIT = ('empty', 'empty-missing', 'null')
+_ZHUYIN_DIR = ('system-dup-trailing',)
+_ZHUYIN_ROW = ('leading-slash',)
+_ZHUYIN_ROW_MISSING = ('leading-slash', 'nested')
+_ZHUYIN_TABLE_CONF = ('slashes',)
 for _mode in ('pinyin', 'zhuyin'):
     for _form in ('empty', 'empty-missing', 'null', 'dot', 'absolute'):
+        # `.` and an absolute path are both an ordinary first element; the system argument's
+        # spellings differ only in the first element, so `dot` repeats `absolute` and `empty`.
+        if _form == 'dot' or (_mode == 'zhuyin' and _form not in _ZHUYIN_INIT):
+            continue
         case('init-system-' + _form + '-' + _mode, mode=_mode,
              control=_form in ('empty-missing', 'dot', 'absolute'), stderr=True, issues=('643',))(
                  lambda k, form=_form: init_system_argument(k, form))
@@ -105,6 +125,8 @@ for _mode in ('pinyin', 'zhuyin'):
     for _label, _system, _user in (
             ('system-dup-trailing', 'dup-trailing', None), ('both-leading-dup', 'leading-dup', 'leading-dup'),
             ('both-dot-segments', 'dot-segments', 'dot-segments'), ('both-dotdot', 'dotdot', 'dotdot')):
+        if _mode == 'zhuyin' and _label not in _ZHUYIN_DIR:
+            continue
         case(f'glib-922-dir-{_label}-{_mode}', mode=_mode, control=True, stderr=True, issues=('922',))(
             lambda k, system=_system, user=_user: dir_spelling_session(k, system, user))
     # The user directory's repeated trailing separators reach the `open` line
@@ -214,12 +236,20 @@ def row_spelling_missing(form, system_form):
 
 for _mode in ('pinyin', 'zhuyin'):
     for _form in ROW_SPELLINGS:
+        # Interior text is copied as it is, so `dotdot` repeats `nested`'s pass-through; the
+        # leading-separator loop runs once for `leading-slash` and twice for the double one.
+        if _form == 'dotdot' or (_mode == 'zhuyin' and _form not in _ZHUYIN_ROW):
+            continue
         case(f'glib-922-row-{_form}-{_mode}', mode=_mode, control=True, stderr=True, issues=('922',))(
             lambda k, form=_form: row_spelling_session(k, form))
     for _label, _form, _system in (('leading-slash', 'leading-slash', None),
                                    ('double-leading-slash', 'double-leading-slash', 'dup-trailing'),
                                    ('nested', 'nested', 'dup-trailing'),
                                    ('dup-trailing-dir', 'leading-slash', 'dup-trailing')):
+        # One abort per site and facade, each a distinct frozen message; the double leading slash
+        # prints the same path as the single one.
+        if _label == 'double-leading-slash' or (_mode == 'zhuyin' and _label not in _ZHUYIN_ROW_MISSING):
+            continue
         case(f'glib-922-row-missing-{_label}-{_mode}', mode=_mode, control=_system is None,
              crash={'ctx': True, 'logs': []}, issues=('922',))(row_spelling_missing(_form, _system))
 
@@ -238,6 +268,8 @@ def table_conf_line(k, system, rejected=False):
 for _mode in ('pinyin', 'zhuyin'):
     for _label, _system in (('slash', b'/'), ('slashes', b'//'), ('many-slashes', b'////'),
                             ('missing-dup-trailing', b'/nonexistent-922-system-dir///')):
+        if _mode == 'zhuyin' and _label not in _ZHUYIN_TABLE_CONF:
+            continue
         case(f'glib-922-table-conf-missing-{_label}-{_mode}', mode=_mode, control=_system != b'//' and _system != b'////',
              stderr=True, issues=('922',))(lambda k, system=_system: table_conf_line(k, system))
     case(f'glib-922-table-conf-rejected-dup-trailing-{_mode}', mode=_mode, control=True, stderr=True, issues=('922',))(
