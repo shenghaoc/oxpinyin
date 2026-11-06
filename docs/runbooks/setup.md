@@ -102,9 +102,10 @@ root `justfile`, which `just` enforces itself and `just doctor` reports.
 Install it through the host route: `brew install just` on macOS, the
 distribution package on Linux, or `cargo install just --locked`.
 
-Provision the interpreter through `just python`. It installs the interpreter
-`.python-version` names only when none is present, and fails if that request
-still does not resolve afterwards. Every other Python recipe depends on it, so a recipe
+Provision the interpreter through `just python`. It runs `uv python install --quiet`,
+which reads `.python-version` and does nothing when that interpreter is present.
+A plain version request prefers the GIL-enabled build, and the check below rejects
+a free-threaded one. Every other Python recipe depends on it, so a recipe
 run on a bare host provisions the interpreter itself; `just doctor` installs
 nothing and names `just python` when the interpreter is missing. Then verify
 the interpreter:
@@ -142,19 +143,12 @@ interpreter (with `-X lazy_imports=normal`), followed by `runner run-all` and it
 arguments. This preserves the caller's working directory; its `.python-version`
 does not decide the interpreter. Direct-run Python
 harness files rely on their `uv` shebang and a working directory inside the
-checkout. The two Axis J ledger generators keep the historical command their
-tracked ledgers record, and the check exempts exactly those two files. The file's request ends in `+gil`, which requires the GIL-enabled build.
-uv 0.13.1 has no separate `+gil` archive, and `uv python install` with no
-arguments fails on that request, so `tools/install-python.sh` (the one place that
-derives it) installs the same series without `+gil` and selection keeps the file's
-request. The check `tools/dev/python-request.test.py` fails when a version request
+checkout. The check `tools/dev/python-request.test.py` fails when a version request
 appears anywhere else, outside the dated records in `docs/findings/` and
 `docs/perf/`.
 
 **Rule (#1230).** Provision the repository's managed Python interpreter
-through `just python`. Never pass the file's `+gil` request, or its expanded
-platform-specific identifier, to `uv python install`. Do not substitute another
-interpreter or upgrade uv to work around this error. A later series is a deliberate change: the tooling
+through `just python`. Do not substitute another interpreter. A later series is a deliberate change: the tooling
 relies on 3.15's `-X lazy_imports` modes. Do not use a system Python, a virtual
 environment, `pyproject.toml` or `uv.lock`; the checkout's `.python-version`
 and `uv.toml` name the same interpreter series and uv floor.

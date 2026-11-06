@@ -5,7 +5,8 @@ description: |-
   first), the checkout registered as a git safe.directory (container
   jobs run as root over a root-owned checkout), an optional
   pinned-rustup install (channel read from rust-toolchain.toml, minimal
-  profile), optional CI tools (uv through astral-sh/setup-uv; just,
+  profile), optional CI tools (uv through astral-sh/setup-uv, with the
+  managed Python and its build check; just,
   cargo-nextest, cargo-llvm-cov and cargo-deny through
   taiki-e/install-action), and an optional Swatinem/rust-cache
   restore/save (its post step runs with the composite's completion).
@@ -41,7 +42,8 @@ inputs:
     default: ''
   uv:
     description: >-
-      Install uv with astral-sh/setup-uv. It states no version: the action
+      Install uv with astral-sh/setup-uv, then install and check the managed
+      Python that .python-version names. It states no version: the action
       reads required-version from uv.toml and installs the newest uv that
       satisfies it. String 'true'/'false' (composite-action inputs are strings).
     required: false
@@ -140,6 +142,30 @@ runs:
       if: inputs.uv == 'true'
       with:
         enable-cache: false
+
+    # The one install and build check for every job that takes uv. The frozen
+    # references contain the process name python3.15:, and a free-threaded
+    # interpreter must fail here rather than as a behaviour difference later.
+    - name: Set up pinned repository Python
+      if: inputs.uv == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        uv python install
+        uv run --no-project --managed-python python -X lazy_imports=normal - <<'PYTHON'
+        from pathlib import Path
+        import subprocess
+        import sys
+        import sysconfig
+        assert sys.implementation.name == "cpython"
+        assert sys.version_info.releaselevel == "final" and (3, 15, 0) <= sys.version_info[:3] < (3, 16, 0)
+        assert sysconfig.get_config_var("Py_GIL_DISABLED") == 0
+        assert sys._is_gil_enabled()
+        managed = subprocess.check_output(
+            ["uv", "python", "find", "--managed-python"],
+            text=True).strip()
+        assert Path(sys.executable).resolve() == Path(managed).resolve()
+        PYTHON
 
     # install-action pins below: v2.90.0 tag commit. Each tool is written once,
     # here. Checksum verification stays on (its default) and fallback is off, so

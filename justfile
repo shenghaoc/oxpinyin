@@ -36,17 +36,14 @@ oracle-versions *args: python
     @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev oracle-versions @args; exit $LASTEXITCODE
 
 # Provision the interpreter .python-version names, the one place the version is
-# stated. uv has no download keyed `+gil` (#1230), so tools/install-python.sh
-# installs the file's request without `+gil`; selection keeps the file's request.
+# stated. uv reads the file itself and does nothing when the interpreter is there.
 [unix]
 python:
-    @tools/install-python.sh
+    @uv python install --quiet
 
-# PowerShell cannot run the shell script; this derives the same install request.
 [windows]
 python:
-    @uv python find --managed-python *> $null; if ($LASTEXITCODE -ne 0) { uv python install ((Get-Content .python-version -Raw).Trim() -replace '\+gil$', ''); if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }
-    @uv python find --managed-python *> $null; if ($LASTEXITCODE -ne 0) { [Console]::Error.WriteLine('the interpreter in .python-version does not resolve after installing it'); exit 1 }
+    @uv python install --quiet; exit $LASTEXITCODE
 
 # Post-bootstrap cloud provisioning; the shell entry also installs uv if needed.
 [unix]

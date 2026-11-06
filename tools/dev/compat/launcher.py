@@ -320,7 +320,7 @@ def image_identity(root, reference, ca_identity, platform):
     """Preserve the compatibility image's original recipe byte stream."""
     digest = hashlib.sha256()
     for name in ('tools/oracle/Dockerfile.compat', 'rust-toolchain.toml', '.python-version',
-                 'tools/install-python.sh', 'tools/lib/bash-floor.sh'):
+                 'tools/lib/bash-floor.sh'):
         digest.update((Path(root) / name).read_bytes())
     digest.update(f'{reference}:{ca_identity}:{platform}'.encode())
     return digest.hexdigest()[:16]

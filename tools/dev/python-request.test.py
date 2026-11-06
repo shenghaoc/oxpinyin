@@ -16,14 +16,10 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 ALLOWED = ('.python-version', 'docs/findings/', 'docs/perf/')
-# These two generators reproduce dated records: they print the exact command the tracked Axis J
-# ledgers record, which names the request of the day. Changing it would make `--check` fail on
-# ledgers that must not be regenerated. Only these exact files are exempt, one literal line each.
-DATED_RECORD_GENERATORS = ('tools/bisection/delta_ledger.py', 'tools/bisection/render_ledger.py')
-# A request in uv's forms: the implementation prefix with a version, a version followed by the
-# GIL suffix, or an explicit version given to `uv python install|find|pin` or `--python`. Managed-install directory names
+# A request in uv's forms: the implementation prefix with a version, or an explicit version given
+# to `uv python install|find|pin` or `--python`. Managed-install directory names
 # (cpython-3.x-linux...), prose such as "CPython 3.15" and version tuples are not requests.
-REQUEST = re.compile(r'cpython@\d|\d\.\d+(?:\.\d+)?\+gil|uv python (?:install|find|pin)[^\n]*? \d\.\d|--python[ =]["\']?\d\.\d')
+REQUEST = re.compile(r'cpython@\d|uv python (?:install|find|pin)[^\n]*? \d\.\d|--python[ =]["\']?\d\.\d')
 
 
 def literals(text):
@@ -35,7 +31,7 @@ def tracked_text_files():
     """Yield (path, text) for the tracked text files outside the allowlist."""
     listing = subprocess.run(['git', 'ls-files', '-z'], cwd=ROOT, capture_output=True, check=True).stdout
     for name in listing.decode().split('\0'):
-        if not name or name.startswith(ALLOWED[1:]) or name == ALLOWED[0] or name in DATED_RECORD_GENERATORS:
+        if not name or name.startswith(ALLOWED[1:]) or name == ALLOWED[0]:
             continue
         path = ROOT / name
         if not path.is_file() or path.is_symlink():
@@ -56,8 +52,7 @@ class RequestLiteralTests(unittest.TestCase):
         series = '3.' + '15'
         for line in (
                 'uv run --python cpython' + '@' + series + ' python',
-                'x = "cpython' + '@' + series + '.0' + '+gil' + '"',
-                'managed ' + series + '+gil build',
+                'x = "cpython' + '@' + series + '.0"',
                 'uv python install ' + series,
                 'uv python find --managed-python ' + series,
                 'uv run --python ' + series + ' python',
@@ -74,11 +69,10 @@ class RequestLiteralTests(unittest.TestCase):
                 'managed CPython ' + series + ' series',
                 'assert (3, 15, 0) <= sys.version_info[:3] < (3, 16, 0)',
                 'PYTHON_MINIMUM = "' + series + '.0"',
-                'uv python install "$install"',
+                'uv python install',
                 'uv python find --managed-python',
                 'uv run --no-project --managed-python python -X lazy_imports=normal',
                 'cpython@ is a request prefix',
-                'the +gil suffix selects the GIL build',
                 'python' + series,
         ):
             with self.subTest(line=line):
@@ -86,21 +80,11 @@ class RequestLiteralTests(unittest.TestCase):
 
     def test_the_allowlist_is_exactly_the_file_and_the_dated_records(self):
         self.assertEqual(ALLOWED, ('.python-version', 'docs/findings/', 'docs/perf/'))
-        self.assertTrue((ROOT / '.python-version').read_text().strip().endswith('+gil'))
-
-    def test_only_the_two_ledger_generators_are_exempt_and_each_writes_one_command(self):
-        self.assertEqual(DATED_RECORD_GENERATORS,
-                         ('tools/bisection/delta_ledger.py', 'tools/bisection/render_ledger.py'))
-        for name in DATED_RECORD_GENERATORS:
-            with self.subTest(name=name):
-                found = literals((ROOT / name).read_text())
-                self.assertEqual(len(found), 1, found)
-                self.assertTrue(found[0].startswith('uv run --no-project --managed-python --python '), found)
-                self.assertNotIn(name, {n for n, _ in tracked_text_files()})
+        self.assertRegex((ROOT / '.python-version').read_text().strip(), r'^\d+\.\d+$')
 
     def test_the_scan_sees_the_files_it_is_meant_to(self):
         names = {name for name, _ in tracked_text_files()}
-        for expected in ('justfile', 'tools/install-python.sh', 'tools/cloud/setup.sh', 'docs/runbooks/setup.md',
+        for expected in ('justfile', 'tools/cloud/setup.sh', 'docs/runbooks/setup.md',
                          '.github/workflows/ci.yml', 'tools/oracle/Dockerfile.compat', 'AGENTS.md'):
             self.assertIn(expected, names)
         for excluded in ('.python-version',):

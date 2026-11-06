@@ -89,7 +89,7 @@ fi
 uv_at_least_floor ||
 	die "uv $uv_minimum or newer required; found: $(uv --version 2>/dev/null || echo missing)"
 # Keep a managed interpreter that is already there; install one only when none is.
-if ! "$repo/tools/install-python.sh"; then
+if ! uv python install --directory "$repo"; then
 	((kept_uv)) && log "using $(uv --version)"
 	die 'managed Python provisioning failed; check writable UV_PYTHON_INSTALL_DIR/UV_CACHE_DIR and access to github.com and release-assets.githubusercontent.com (docs/runbooks/cloud.md)'
 fi

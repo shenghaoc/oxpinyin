@@ -52,9 +52,9 @@ replaces the earlier exact uv 0.13.1 pin. CI installs the newest uv that
 satisfies that floor through `astral-sh/setup-uv`, which reads
 `required-version` from `uv.toml`; no workflow states a uv version. Hosts may
 use any later uv.
-Use the GIL-enabled CPython request that `.python-version` states, the one place
-the interpreter version is written (#1246).
-uv 0.13.1 documents the implementation/version and `+gil` request forms in
+Use the CPython series that `.python-version` states, the one place the interpreter
+version is written (#1246).
+uv 0.13.1 documents that a plain version request prefers the GIL-enabled build in
 its [versioned Python guide](https://github.com/astral-sh/uv/blob/0.13.1/docs/concepts/python-versions.md).
 Support no older version, system-Python fallback or transition implementation.
 A later ruling must approve a Python package dependency.
@@ -63,7 +63,7 @@ PR #939 added these root files:
 
 | Implemented file | Required content |
 | --- | --- |
-| `.python-version` | the GIL-enabled request: the series, `+gil` and nothing else |
+| `.python-version` | the series and nothing else |
 | `uv.toml` | `python-preference = "only-managed"` and `required-version = ">=0.13.1"` on separate lines |
 
 Keep the interpreter series and the uv floor. Do not vendor Python. Do not add `pyproject.toml`,
@@ -80,19 +80,14 @@ On Linux and macOS, install uv through its documented host route.
 On Windows, use a native uv executable from PowerShell or the native installer.
 Neither route needs an older Python first.
 Then run `just python` (#1230), the provisioning entry point: it runs
-`tools/install-python.sh`, which installs only when
-`uv python find --managed-python` finds no interpreter and fails if that find
-still fails afterwards. Every `uv run` recipe except
+`uv python install --quiet`, which reads `.python-version` and does nothing when that
+interpreter is present. Every `uv run` recipe except
 `doctor` depends on it; doctor installs nothing and names it.
-uv 0.13.1 has no separate `+gil` download, and `uv python install` with no
-arguments fails on the file's `+gil` request. The install script derives the
-install request from the file by dropping `+gil`, the one place that does (the
-PowerShell recipe repeats the derivation, as PowerShell cannot run the script);
-execution and selection keep the file's request.
 Check `Py_GIL_DISABLED == 0` and the enabled runtime GIL. Check CPython
 3.15.0 or newer, below 3.16, and the resolved executable against
 `uv python find --managed-python`.
-These checks enforce the managed GIL build after installation.
+These checks enforce the managed GIL build after installation. In CI they run
+once, in the bootstrap action behind its `uv` input.
 `tools/dev/python-request.test.py` fails when a Python version request is written
 anywhere but `.python-version`; the dated records in `docs/findings/` and
 `docs/perf/` keep their wording.
@@ -344,7 +339,7 @@ kept scripts; this docs-only audit does not edit them.
 The [full per-script audit](tooling-shell-audit.md) covers **100 scripts** at
 `a04c91afa343428ba7294e86f217f3e4e286e890`, current `origin/main` when fetched,
 on 2026-10-26 UTC (`date -u`). Five whole scripts have concrete keep
-reasons: `install-python.sh`, `lib/bash-floor.sh`, `oracle/build-oracle.sh`,
+reasons: the managed-Python install script (since replaced by `uv python install`), `lib/bash-floor.sh`, `oracle/build-oracle.sh`,
 `model/fetch-model.sh` and `tkrzw/distro-probe.sh` (all under `tools/`). The
 closing check moves the model fetcher to `tools/dev/model.py` (`just
 fetch-model`), since its only shell callers, the two bisection Dockerfiles,

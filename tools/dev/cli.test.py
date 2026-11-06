@@ -18,8 +18,8 @@ if str(ROOT) not in sys.path:
 
 from tools.dev import cli, host, registry, slot, test_support
 
-IMPLEMENTATION = 'legacy:tools/install-python.sh'
-COMMAND = ['bash', '{root}/tools/install-python.sh']
+IMPLEMENTATION = 'legacy:tools/oracle/build-oracle.sh'
+COMMAND = ['bash', '{root}/tools/oracle/build-oracle.sh']
 
 
 class RealJustSmokeTests(unittest.TestCase):

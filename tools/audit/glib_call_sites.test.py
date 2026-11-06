@@ -42,7 +42,7 @@ class CallSiteTests(unittest.TestCase):
             pin = root / 'pin checkout with spaces'
             pin.mkdir()
             uv = root / 'uv'
-            uv.write_text(f'#!{sys.executable}\nimport json, sys\nprint(json.dumps(sys.argv[1:]))\n')
+            uv.write_text(f'#!{sys.executable}\nimport json, sys\nsys.argv[1:3] == ["python", "install"] and sys.exit(0)\nprint(json.dumps(sys.argv[1:]))\n')
             uv.chmod(0o755)
             result = subprocess.run(
                 ['just', '--justfile', str(ROOT / 'justfile'), 'audit-glib-call-sites', str(pin)],

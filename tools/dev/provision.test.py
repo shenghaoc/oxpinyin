@@ -376,6 +376,7 @@ if name=='uv':
     elif a[:2]==['python','find']:
         if os.environ.get('FAKE_PYTHON_FAILURE'): sys.exit(1)
         print(sys.executable)
+    elif a[:2]==['python','install']: sys.exit(1 if os.environ.get('FAKE_PYTHON_FAILURE') else 0)
     elif a[:1]==['run']:
         i=a.index('python'); os.execv(sys.executable,[sys.executable,*a[i+1:]])
     else: sys.exit(97)

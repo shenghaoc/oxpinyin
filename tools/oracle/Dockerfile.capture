@@ -25,11 +25,9 @@ RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
     python3 /usr/local/bin/versions.py --print \
       --manifest /usr/local/share/oxpinyin/version-manifest.json \
       > /opt/oxpinyin-capture-versions.txt
-# The managed interpreter that .python-version names, from tools/install-python.sh as
-# Dockerfile.compat installs it (uv 0.13.1, archive checksummed).
+# The managed interpreter that .python-version names, as Dockerfile.compat installs
+# it (uv 0.13.1, archive checksummed).
 COPY .python-version /opt/python-pin/.python-version
-COPY tools/install-python.sh /opt/python-pin/tools/install-python.sh
-COPY tools/lib/bash-floor.sh /opt/python-pin/tools/lib/bash-floor.sh
 ENV UV_INSTALL_DIR=/opt/uv/bin UV_PYTHON_INSTALL_DIR=/opt/uv/python UV_CACHE_DIR=/opt/uv/cache
 RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
     set -eu; \
@@ -53,8 +51,8 @@ RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
     mkdir -p /opt/uv/bin; \
     install -m755 "$uv_tmp/uv-$uv_target/uv" /opt/uv/bin/uv; \
     rm -rf "$uv_tmp"; \
-    PATH="/opt/uv/bin:$PATH" /opt/python-pin/tools/install-python.sh; \
-    version=$(sed -n 's/^cpython@\([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' /opt/python-pin/.python-version); \
+    /opt/uv/bin/uv python install --directory /opt/python-pin; \
+    version=$(sed -n 's/^\([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' /opt/python-pin/.python-version); \
     test -n "$version"; \
     ln -s "$(PATH="/opt/uv/bin:$PATH" uv python find --managed-python --directory /opt/python-pin)" "/usr/local/bin/python$version"; \
     rm -rf /opt/uv/cache; \

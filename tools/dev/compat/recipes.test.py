@@ -33,7 +33,7 @@ class RecipeTests(unittest.TestCase):
                 self.env.pop(key)
         # A forwarding uv exercises the actual modules without uv's own version diagnostics.
         uv = self.directory / 'uv'
-        uv.write_text(f'#!{sys.executable}\nimport os,sys\na=sys.argv[1:]\ni=a.index("python"); os.execv(sys.executable,[sys.executable,*a[i+1:]])\n')
+        uv.write_text(f'#!{sys.executable}\nimport os,sys\na=sys.argv[1:]\na[:2] == ["python", "install"] and sys.exit(0)\ni=a.index("python"); os.execv(sys.executable,[sys.executable,*a[i+1:]])\n')
         uv.chmod(0o755)
         self.env['PATH'] = str(self.directory) + os.pathsep + self.env['PATH']
 
@@ -96,6 +96,7 @@ class RecipeTests(unittest.TestCase):
         uv = self.directory / 'uv'
         uv.write_text(f'''#!{sys.executable}
 import json,sys
+sys.argv[1:3] == ['python', 'install'] and sys.exit(0)
 sys.path.insert(0, {str(ROOT)!r})
 from tools.dev import cli
 from tools.dev.compat import launcher
@@ -218,7 +219,7 @@ raise SystemExit(cli.main(args))
 
     def test_image_identity_is_the_original_byte_stream(self):
         digest = hashlib.sha256()
-        for path in ('tools/oracle/Dockerfile.compat', 'rust-toolchain.toml', '.python-version', 'tools/install-python.sh', 'tools/lib/bash-floor.sh'):
+        for path in ('tools/oracle/Dockerfile.compat', 'rust-toolchain.toml', '.python-version', 'tools/lib/bash-floor.sh'):
             digest.update((ROOT / path).read_bytes())
         digest.update(b'reference:no-custom-ca:linux/amd64')
         self.assertEqual(launcher.image_identity(ROOT, 'reference', 'no-custom-ca', 'linux/amd64'), digest.hexdigest()[:16])

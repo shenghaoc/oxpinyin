@@ -1,6 +1,6 @@
 # tools/lib/bash-floor.sh — the one declaration of the repository's Bash floor.
-# Bootstrap: install-python.sh and cloud/setup.sh source this before they
-# provision the managed interpreter.
+# Bootstrap: cloud/setup.sh sources this before it provisions the managed
+# interpreter.
 #
 # shellcheck shell=bash
 #

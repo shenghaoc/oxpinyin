@@ -19,12 +19,11 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Provision the managed Python
+    - name: Require uv from the bootstrap action
       shell: bash
       run: |
         set -euo pipefail
         command -v uv >/dev/null || { echo '::error::contract-verify needs uv: pass uv: "true" to the bootstrap action'; exit 1; }
-        tools/install-python.sh
     - name: Build the C libraries for this backend
       shell: bash
       env:
