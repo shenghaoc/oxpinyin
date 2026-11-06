@@ -79,8 +79,20 @@ fn mergeseq(cwd: &Path, args: &[&str], stdin: &[u8]) -> Output {
 
 fn assert_streams(output: &Output, stdout: &[u8], stderr: &[u8], status: i32) {
     assert_eq!(output.status.code(), Some(status), "exit status");
-    assert_eq!(output.stdout, stdout, "stdout");
-    assert_eq!(output.stderr, stderr, "stderr");
+    assert_eq!(output.stdout, expected_text(stdout), "stdout");
+    assert_eq!(output.stderr, expected_text(stderr), "stderr");
+}
+
+// Build only the expected text for the host CRT's stream mode.
+fn expected_text(text: &[u8]) -> Vec<u8> {
+    let mut expected = Vec::with_capacity(text.len());
+    for &byte in text {
+        if cfg!(windows) && byte == b'\n' {
+            expected.push(b'\r');
+        }
+        expected.push(byte);
+    }
+    expected
 }
 
 #[test]
@@ -180,7 +192,7 @@ fn spseg_matches_the_committed_w3_golden() {
         .expect("committed spseg golden");
     let output = spseg(&data, &[input.to_str().expect("utf-8 path")], b"");
     assert_eq!(output.status.code(), Some(0));
-    assert_eq!(output.stdout, golden, "spseg stdout");
+    assert_eq!(output.stdout, expected_text(&golden), "spseg stdout");
     assert_eq!(output.stderr, b"");
 }
 
@@ -192,7 +204,7 @@ fn mergeseq_matches_the_committed_w3_golden() {
         .expect("committed mergeseq golden");
     let output = mergeseq(&data, &[input.to_str().expect("utf-8 path")], b"");
     assert_eq!(output.status.code(), Some(0));
-    assert_eq!(output.stdout, golden, "mergeseq stdout");
+    assert_eq!(output.stdout, expected_text(&golden), "mergeseq stdout");
     assert_eq!(output.stderr, b"");
 }
 
@@ -207,7 +219,8 @@ fn help_is_glibs_and_exits_zero() {
         assert_eq!(output.status.code(), Some(0), "help exit status");
         assert_eq!(output.stderr, b"");
         let text = String::from_utf8(output.stdout).expect("help is UTF-8");
-        assert!(text.contains("Usage:\n  "), "{text}");
+        let newline = if cfg!(windows) { "\r\n" } else { "\n" };
+        assert!(text.contains(&format!("Usage:{newline}  ")), "{text}");
         assert!(text.contains(parameter), "{text}");
         assert!(text.contains("--outputfile"), "{text}");
     }
@@ -245,7 +258,7 @@ fn a_missing_table_conf_prints_the_readers_line_and_the_utilitys() {
     assert_eq!(output.status.code(), Some(tool::ENOENT), "ENOENT");
     assert_eq!(
         output.stderr,
-        b"open table.conf failed.\nload table.conf failed.\n"
+        expected_text(b"open table.conf failed.\nload table.conf failed.\n")
     );
     assert_eq!(output.stdout, b"");
 }
@@ -261,7 +274,7 @@ fn a_missing_system_chunk_names_the_column_and_exits_enoent() {
     .expect("write table.conf");
     let output = ngseg(&data, &[], b"");
     assert_eq!(output.status.code(), Some(tool::ENOENT), "ENOENT");
-    assert_eq!(output.stderr, b"load absent.bin failed!\n");
+    assert_eq!(output.stderr, expected_text(b"load absent.bin failed!\n"));
     assert_eq!(output.stdout, b"");
 }
 
@@ -270,7 +283,7 @@ fn too_many_arguments_opens_the_output_then_exits_einval() {
     let (_directory, data) = data_dir();
     let output = ngseg(&data, &["-o", "extra.out", "a", "b"], b"");
     assert_eq!(output.status.code(), Some(tool::EINVAL), "EINVAL");
-    assert_eq!(output.stderr, b"too many arguments.\n");
+    assert_eq!(output.stderr, expected_text(b"too many arguments.\n"));
     // The output is opened before the argument-count check (`:123-134`).
     assert_eq!(
         std::fs::read(data.join("extra.out")).expect("created output"),
@@ -287,7 +300,7 @@ fn the_output_file_receives_the_stream() {
     assert_eq!(output.stderr, b"");
     assert_eq!(
         std::fs::read(data.join("seg.out")).expect("output file"),
-        b"0 \n0 \n"
+        expected_text(b"0 \n0 \n")
     );
 }
 

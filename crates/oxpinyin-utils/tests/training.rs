@@ -115,6 +115,13 @@ fn exit_word(outcome: &Output) -> i32 {
     }
 }
 
+fn expected_text(text: &str) -> String {
+    text.replace('\n', if cfg!(windows) { "\r\n" } else { "\n" })
+}
+
+// Expected host difference: Unix SIGABRT, Windows FAST_FAIL_FATAL_APP_EXIT.
+const ABORT_STATUS: i32 = if cfg!(windows) { -1_073_740_791 } else { -6 };
+
 /// The one `table.conf` the success tests use: the fixture's four default
 /// `SYSTEM_FILE` rows and the one addon dictionary the mini set ships.
 const TABLE_CONF: &str = "\
@@ -240,7 +247,10 @@ fn gen_unigram_reports_a_missing_chunk_and_exits_enoent() {
     let outcome = run("gen_unigram", dir.path(), &[], b"");
     assert_eq!(exit_word(&outcome), tool::ENOENT);
     assert_eq!(outcome.stdout, b"");
-    assert_eq!(outcome.stderr, b"load absent.bin failed!\n");
+    assert_eq!(
+        outcome.stderr,
+        expected_text("load absent.bin failed!\n").as_bytes()
+    );
 }
 
 #[test]
@@ -377,7 +387,10 @@ fn gen_deleted_ngram_ends_a_missing_chunk_at_enodata() {
         tool::ENODATA,
         "the ENODATA the pin uses"
     );
-    assert_eq!(outcome.stderr, b"load absent.bin failed!\n");
+    assert_eq!(
+        outcome.stderr,
+        expected_text("load absent.bin failed!\n").as_bytes()
+    );
 }
 
 #[test]
@@ -390,7 +403,10 @@ fn gen_ngram_ends_a_missing_chunk_at_enoent() {
         tool::ENOENT,
         "the ENOENT gen_ngram uses"
     );
-    assert_eq!(outcome.stderr, b"load absent.bin failed!\n");
+    assert_eq!(
+        outcome.stderr,
+        expected_text("load absent.bin failed!\n").as_bytes()
+    );
 }
 
 #[test]
@@ -398,7 +414,11 @@ fn a_segmented_line_that_does_not_split_aborts() {
     for utility in ["gen_ngram", "gen_deleted_ngram"] {
         let dir = fixture_copy();
         let outcome = run(utility, dir.path(), &[], b"abc\n");
-        assert_eq!(exit_word(&outcome), -6, "{utility}: the macro's abort()");
+        assert_eq!(
+            exit_word(&outcome),
+            ABORT_STATUS,
+            "{utility}: the macro's abort()"
+        );
         assert!(outcome.stderr.is_empty());
     }
 }
@@ -408,7 +428,7 @@ fn a_phrase_that_differs_from_the_token_aborts() {
     let dir = fixture_copy();
     // Token 0x01000006 is 呵, not 啊.
     let outcome = run("gen_ngram", dir.path(), &[], "16777222 啊\n".as_bytes());
-    assert_eq!(exit_word(&outcome), -6);
+    assert_eq!(exit_word(&outcome), ABORT_STATUS);
     // The check macro's own text is a policy-accepted language artefact.
     assert!(outcome.stderr.is_empty());
 }
@@ -429,7 +449,10 @@ fn estimate_interpolation_fits_the_committed_deleted_bigram() {
         token_lines,
         ["token:1 lambda:0.000000", "token:16777219 lambda:0.999892",]
     );
-    assert!(text.ends_with("average lambda:0.499946\n"), "{text}");
+    assert!(
+        text.ends_with(&expected_text("average lambda:0.499946\n")),
+        "{text}"
+    );
 }
 
 #[test]
@@ -440,7 +463,11 @@ fn estimate_interpolation_prints_the_host_nan_without_a_deleted_bigram() {
     assert_eq!(exit_word(&outcome), 0);
     assert_eq!(
         outcome.stdout,
-        format!("average lambda:{}\n", host_f(host_zero_divided_by_zero())).as_bytes()
+        expected_text(&format!(
+            "average lambda:{}\n",
+            host_f(host_zero_divided_by_zero())
+        ))
+        .as_bytes()
     );
     // `estimate_interpolation.cpp:111-114` keeps the failed attach's
     // handle, and the BDB pin's cursor and destructor sync on it print
@@ -467,16 +494,23 @@ fn eval_correction_rate_reports_the_correction_rate() {
     std::fs::write(&corpus, "16777219 阿\n").expect("corpus");
     let outcome = run("eval_correction_rate", dir.path(), &[], b"");
     assert_eq!(exit_word(&outcome), 0);
-    assert_eq!(outcome.stdout, b"correction rate:1.000000\n");
+    assert_eq!(
+        outcome.stdout,
+        expected_text("correction rate:1.000000\n").as_bytes()
+    );
     assert!(outcome.stderr.is_empty());
 
     std::fs::write(&corpus, "16777219 阿\n16777220 啊\n\n").expect("corpus");
     let outcome = run("eval_correction_rate", dir.path(), &[], b"");
     assert_eq!(exit_word(&outcome), 0);
-    assert_eq!(outcome.stdout, b"correction rate:0.000000\n");
+    assert_eq!(
+        outcome.stdout,
+        expected_text("correction rate:0.000000\n").as_bytes()
+    );
     assert_eq!(
         outcome.stderr,
-        "test sentence:阿啊\nguessed sentence:阿阿\nthe result mis-matches.\n".as_bytes()
+        expected_text("test sentence:阿啊\nguessed sentence:阿阿\nthe result mis-matches.\n")
+            .as_bytes()
     );
 
     std::fs::write(&corpus, "").expect("corpus");
@@ -484,7 +518,11 @@ fn eval_correction_rate_reports_the_correction_rate() {
     assert_eq!(exit_word(&outcome), 0);
     assert_eq!(
         outcome.stdout,
-        format!("correction rate:{}\n", host_f(host_zero_divided_by_zero())).as_bytes()
+        expected_text(&format!(
+            "correction rate:{}\n",
+            host_f(host_zero_divided_by_zero())
+        ))
+        .as_bytes()
     );
 }
 
@@ -496,7 +534,10 @@ fn eval_correction_rate_reports_a_missing_corpus() {
     let outcome = run("eval_correction_rate", dir.path(), &[], b"");
     assert_eq!(exit_word(&outcome), tool::ENOENT);
     assert_eq!(outcome.stdout, b"");
-    assert_eq!(outcome.stderr, b"Can't open file:evals2.text\n");
+    assert_eq!(
+        outcome.stderr,
+        expected_text("Can't open file:evals2.text\n").as_bytes()
+    );
 }
 
 #[test]
@@ -505,7 +546,7 @@ fn eval_correction_rate_aborts_on_a_phrase_token_mismatch() {
     // Token 0x01000006 is 呵, not 啊.
     std::fs::write(dir.path().join("evals2.text"), "16777222 啊\n").expect("corpus");
     let outcome = run("eval_correction_rate", dir.path(), &[], b"");
-    assert_eq!(exit_word(&outcome), -6);
+    assert_eq!(exit_word(&outcome), ABORT_STATUS);
     assert!(outcome.stderr.is_empty());
 }
 
@@ -517,7 +558,10 @@ fn eval_correction_rate_refuses_an_unknown_token() {
     // The pin's `strcmp(NULL, phrase)` reads the NULL (class (b)); oxpinyin
     // writes the helper's own line and exits 1.
     assert_eq!(exit_word(&outcome), 1);
-    assert_eq!(outcome.stderr, b"error: unknown token:999999.\n");
+    assert_eq!(
+        outcome.stderr,
+        expected_text("error: unknown token:999999.\n").as_bytes()
+    );
 }
 
 #[test]
@@ -526,7 +570,12 @@ fn the_option_help_names_the_pins_options() {
     let outcome = run("gen_ngram", dir.path(), &["--help"], b"");
     assert_eq!(exit_word(&outcome), 0);
     let text = String::from_utf8(outcome.stdout).expect("help");
-    assert!(text.contains("gen_ngram [OPTION"), "{text}");
+    let executable = Path::new(env!("CARGO_BIN_EXE_gen_ngram"))
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(text.contains(&format!("{executable} [OPTION")), "{text}");
     assert!(text.contains("--skip-pi-gram-training"), "{text}");
     assert!(text.contains("--bigram-file"), "{text}");
     assert!(text.contains("- generate n-gram"), "{text}");
@@ -544,7 +593,7 @@ fn a_bad_option_is_glibs_refusal() {
     assert_eq!(exit_word(&outcome), 22);
     assert_eq!(
         outcome.stdout,
-        b"option parsing failed:Unknown option --bogus\n"
+        expected_text("option parsing failed:Unknown option --bogus\n").as_bytes()
     );
     assert!(outcome.stderr.is_empty());
 }

@@ -4,6 +4,7 @@ use std::fs;
 use std::process::Command;
 
 fn refuse(table: &[u8], reserved: bool) {
+    let newline = if cfg!(windows) { "\r\n" } else { "\n" };
     let root = tempfile::tempdir().unwrap();
     let cwd = root.path().join("tests/storage");
     fs::create_dir_all(&cwd).unwrap();
@@ -22,9 +23,9 @@ fn refuse(table: &[u8], reserved: bool) {
     assert_eq!(result.status.code(), Some(22));
     assert!(result.stderr.is_empty());
     let stdout = String::from_utf8(result.stdout).unwrap();
-    assert!(stdout.starts_with("pinyin possiblitiy:0.250000\nSpent "));
+    assert!(stdout.starts_with(&format!("pinyin possiblitiy:0.250000{newline}Spent ")));
     assert!(stdout.contains(" us for 100000 operations, "));
-    assert!(stdout.ends_with("\n\npinyin poss:0.500000\n"));
+    assert!(stdout.ends_with(&format!("{newline}{newline}pinyin poss:0.500000{newline}")));
     assert_eq!(fs::read(root.path().join("data/gb.table")).unwrap(), table);
 }
 

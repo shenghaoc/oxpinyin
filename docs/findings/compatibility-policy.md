@@ -263,6 +263,15 @@ Linux pin's observable result using the native Windows facility. This covers
 platform adaptation only; the pin's own logic, C ABI and persistent file
 formats stay unchanged.
 
+<a id="fundamental-os-differences"></a>
+
+**Maintainer ruling (2026-11-06): fundamental OS differences.** Where the
+operating system itself does not allow the pin's Linux behaviour, oxpinyin
+does not imitate it. Example: on Windows, a file that is mapped or open
+without delete sharing cannot be deleted or replaced. Tests that depend on
+such behaviour are ignored on that platform with a reason that points to
+this entry.
+
 The call rule does not reproduce an undefined read or an abort in the
 pin's surrounding code. Existing class (b)/(c) records, including
 `1297-punct-words` and assertion refusals, stand. `LC_NUMERIC` row 39
