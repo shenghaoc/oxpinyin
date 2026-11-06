@@ -11,6 +11,78 @@ use core::ffi::{c_char, c_float, c_int};
 use core::ptr::NonNull;
 use std::ffi::CStr;
 
+#[cfg(windows)]
+unsafe extern "C" {
+    // UCRT stdio.h and io.h: wchar_t is an unsigned 16-bit word.
+    fn _wfopen(filename: *const u16, mode: *const u16) -> *mut libc::FILE;
+    fn _wunlink(filename: *const u16) -> c_int;
+    fn _errno() -> *mut c_int;
+    fn __doserrno() -> *mut core::ffi::c_ulong;
+}
+
+/// UCRT errno.h's int* __cdecl _errno(void).
+#[cfg(windows)]
+pub(crate) unsafe fn errno_location() -> *mut c_int {
+    // SAFETY: UCRT returns this thread's live errno cell.
+    unsafe { _errno() }
+}
+
+#[cfg(windows)]
+fn crt_error() -> std::io::Error {
+    // SAFETY: UCRT owns both readable error cells for this thread.
+    let os_code = unsafe { *__doserrno() };
+    if os_code != 0 {
+        return std::io::Error::from_raw_os_error(os_code as i32);
+    }
+    // CRT-only validation errors have no Win32 code. Copy the CRT message;
+    // do not interpret errno as a Windows error number.
+    // SAFETY: errno is thread-local; strerror returns a live C string.
+    let message = unsafe { CStr::from_ptr(libc::strerror(*errno_location())) };
+    std::io::Error::other(message.to_string_lossy().into_owned())
+}
+
+#[cfg(windows)]
+fn clear_crt_os_error() {
+    // SAFETY: UCRT owns this thread's writable DOS error cell.
+    unsafe { *__doserrno() = 0 };
+}
+
+/// A native Windows path, terminated at the pin's first NUL.
+#[cfg(windows)]
+pub(crate) fn wide_path(path: &std::path::Path) -> Vec<u16> {
+    use std::os::windows::ffi::OsStrExt as _;
+    path.as_os_str()
+        .encode_wide()
+        .take_while(|&word| word != 0)
+        .chain(std::iter::once(0))
+        .collect()
+}
+
+/// The pin's fopen, with a native wide filename on Windows.
+pub(crate) fn fopen(
+    filename: &(impl crate::FileName + ?Sized),
+    mode: &CStr,
+) -> Option<NonNull<libc::FILE>> {
+    #[cfg(not(windows))]
+    {
+        let filename = filename.as_c_name();
+        // SAFETY: both strings are NUL-terminated and live through fopen.
+        NonNull::new(unsafe { libc::fopen(filename.as_ptr(), mode.as_ptr()) })
+    }
+    #[cfg(windows)]
+    {
+        let filename = wide_path(&filename.as_path());
+        let mode: Vec<u16> = mode
+            .to_bytes_with_nul()
+            .iter()
+            .map(|&byte| u16::from(byte))
+            .collect();
+        // SAFETY: the wide filename and ASCII mode are NUL-terminated and
+        // live through the call. The caller owns the returned stream.
+        NonNull::new(unsafe { _wfopen(filename.as_ptr(), mode.as_ptr()) })
+    }
+}
+
 /// The descriptor of a system/addon chunk, closed before its mapping
 /// leave the loader. No `File` or borrowed raw handle escapes this module.
 pub(crate) struct ReadChunk(c_int);
@@ -26,13 +98,7 @@ impl ReadChunk {
         };
         #[cfg(windows)]
         let fd = {
-            use std::os::windows::ffi::OsStrExt as _;
-            let wide: Vec<u16> = path
-                .as_os_str()
-                .encode_wide()
-                .take_while(|&word| word != 0)
-                .chain(std::iter::once(0))
-                .collect();
+            let wide = wide_path(path);
             // SAFETY: wide is NUL-terminated and lives through _wopen; without
             // O_CREAT its variadic mode argument is not read. The returned CRT
             // descriptor is owned and closed by ReadChunk.
@@ -255,16 +321,16 @@ pub(crate) struct Stream(NonNull<File>);
 
 impl Stream {
     /// `fopen(filename, "r")`.
-    pub(crate) fn open_read(filename: &CStr) -> Option<Self> {
+    pub(crate) fn open_read(filename: &(impl crate::FileName + ?Sized)) -> Option<Self> {
         // SAFETY: `filename` and the mode literal are NUL-terminated and
         // outlive the call.
-        NonNull::new(unsafe { libc::fopen(filename.as_ptr(), c"r".as_ptr()) }).map(Self)
+        fopen(filename, c"r").map(Self)
     }
 
     /// `fopen(filename, "w")`.
-    pub(crate) fn open_write(filename: &CStr) -> Option<Self> {
+    pub(crate) fn open_write(filename: &(impl crate::FileName + ?Sized)) -> Option<Self> {
         // SAFETY: as `open_read`.
-        NonNull::new(unsafe { libc::fopen(filename.as_ptr(), c"w".as_ptr()) }).map(Self)
+        fopen(filename, c"w").map(Self)
     }
 
     /// `feof(input)`.
@@ -543,11 +609,21 @@ unsafe extern "C" {
 }
 
 /// `unlink(path)`; the pin ignores the result.
+#[cfg(not(windows))]
 pub(crate) fn unlink(path: &CStr) {
     // SAFETY: the pointer is a NUL-terminated string that outlives the call;
     // `unlink` only reads it.
     unsafe {
         let _ = libc::unlink(path.as_ptr());
+    }
+}
+
+#[cfg(windows)]
+pub(crate) fn unlink(path: &std::path::Path) {
+    let path = wide_path(path);
+    // SAFETY: the wide name is NUL-terminated and lives through _wunlink.
+    unsafe {
+        let _ = _wunlink(path.as_ptr());
     }
 }
 
@@ -642,19 +718,25 @@ fn short_write(expected: usize, written: isize, part: &str) -> std::io::Error {
 }
 
 /// `MemoryChunk::save`'s calls on Windows, where the pin's plain
-/// `open`/`write` are the CRT's and its `g_fsync` is `_commit`. The
-/// deferred Windows work is #1475; this keeps the same observable result.
+/// `open`/`write` are the CRT's and its `g_fsync` is `_commit`.
 #[cfg(windows)]
-pub(crate) fn save_chunk(path: &CStr, bytes: &[u8]) -> ChunkWrite {
-    use std::io::Write as _;
-
-    let text = String::from_utf8_lossy(path.to_bytes()).into_owned();
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    let mut file = match options.open(text) {
-        Ok(file) => file,
-        Err(error) => return ChunkWrite::Open(error),
+pub(crate) fn save_chunk(path: &std::path::Path, bytes: &[u8]) -> ChunkWrite {
+    let path = wide_path(path);
+    clear_crt_os_error();
+    // SAFETY: path is NUL-terminated and lives through _wopen. Flags and
+    // mode are the pin's memory_chunk.h:537 arguments.
+    let fd = unsafe {
+        libc::wopen(
+            path.as_ptr(),
+            libc::O_CREAT | libc::O_WRONLY | libc::O_TRUNC | libc::O_BINARY,
+            0o644,
+        )
     };
+    if fd < 0 {
+        return ChunkWrite::Open(crt_error());
+    }
+    // ReadChunk owns a CRT descriptor and closes it on every exit.
+    let _owner = ReadChunk(fd);
     let split = bytes.len().min(8);
     let (header, payload) = bytes.split_at(split);
     let (length, checksum) = header.split_at(header.len().min(4));
@@ -662,24 +744,36 @@ pub(crate) fn save_chunk(path: &CStr, bytes: &[u8]) -> ChunkWrite {
         (length, HeaderField::Length),
         (checksum, HeaderField::Checksum),
     ] {
-        match file.write(word) {
-            Ok(written) if written == word.len() => {}
-            Ok(written) => {
-                return ChunkWrite::Header(
-                    field,
-                    short_write(word.len(), written as isize, "header"),
-                );
-            }
-            Err(source) => return ChunkWrite::Header(field, source),
+        // SAFETY: fd is open; word holds the header bytes for this write.
+        let written = unsafe {
+            clear_crt_os_error();
+            libc::write(fd, word.as_ptr().cast(), word.len() as u32)
+        };
+        if written as isize != word.len() as isize {
+            let error = if written < 0 {
+                crt_error()
+            } else {
+                short_write(word.len(), written as isize, "header")
+            };
+            return ChunkWrite::Header(field, error);
         }
     }
-    match file.write(payload) {
-        Ok(written) if written == payload.len() => {}
-        Ok(written) => {
-            return ChunkWrite::Payload(short_write(payload.len(), written as isize, "payload"));
-        }
-        Err(source) => return ChunkWrite::Payload(source),
+    // SAFETY: fd is open; payload is live for the modulo-2^32 count the
+    // Windows C call accepts. Compare with the original length as the pin does.
+    let written = unsafe {
+        clear_crt_os_error();
+        libc::write(fd, payload.as_ptr().cast(), payload.len() as u32)
+    };
+    if written as isize != payload.len() as isize {
+        return ChunkWrite::Payload(if written < 0 {
+            crt_error()
+        } else {
+            short_write(payload.len(), written as isize, "payload")
+        });
     }
-    let _ = file.sync_all();
+    // SAFETY: fd is open; the pin ignores the sync result before close.
+    unsafe {
+        let _ = libc::commit(fd);
+    }
     ChunkWrite::Saved
 }

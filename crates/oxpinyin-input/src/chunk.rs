@@ -13,6 +13,7 @@ use std::io;
 use std::path::Path;
 
 use crate::native;
+#[cfg(unix)]
 use crate::path;
 
 /// The header and bytes returned by the single payload read.
@@ -271,7 +272,11 @@ pub enum ChunkSaveError {
 ///
 /// ChunkSaveError when the open or a write fails.
 pub fn save(path: &Path, bytes: &[u8]) -> Result<(), ChunkSaveError> {
-    match native::save_chunk(&path::c_string(path.as_os_str()), bytes) {
+    #[cfg(unix)]
+    let result = native::save_chunk(&path::c_string(path.as_os_str()), bytes);
+    #[cfg(windows)]
+    let result = native::save_chunk(path, bytes);
+    match result {
         native::ChunkWrite::Saved => Ok(()),
         native::ChunkWrite::Open(error) | native::ChunkWrite::Payload(error) => {
             Err(ChunkSaveError::Io(error))
@@ -391,7 +396,7 @@ mod tests {
         let dir = crate::path::build_chunk_path(root.path(), std::ffi::OsStr::new("目录"));
         std::fs::create_dir(&dir).unwrap();
         let path = crate::path::build_chunk_path(&dir, std::ffi::OsStr::new("词库.bin"));
-        std::fs::write(&path, [1_u8, 2, 3, 4, 5, 6, 7, 8]).unwrap();
+        save(&path, &[1_u8, 2, 3, 4, 5, 6, 7, 8]).unwrap();
         let mut source = MappingSource::open(&path).unwrap();
         assert_eq!(source.file_size(), 8);
         assert_eq!(source.read_word().unwrap(), [1, 2, 3, 4]);
@@ -539,6 +544,25 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("missing").join("chunk");
         assert!(matches!(save(&path, &chunk(0)), Err(ChunkSaveError::Io(_))));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn saving_over_a_read_only_file_is_permission_denied() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("readonly.bin");
+        std::fs::write(&path, chunk(0)).unwrap();
+        let original = std::fs::metadata(&path).unwrap().permissions();
+        let mut permissions = original.clone();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&path, permissions).unwrap();
+        let result = save(&path, &chunk(1));
+        std::fs::set_permissions(&path, original).unwrap();
+        let Err(ChunkSaveError::Io(error)) = result else {
+            panic!("expected an I/O error")
+        };
+        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+        assert_eq!(error.raw_os_error(), Some(5));
     }
 
     #[cfg(target_os = "linux")]

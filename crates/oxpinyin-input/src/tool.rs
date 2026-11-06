@@ -555,10 +555,10 @@ impl OutputStream {
 
     /// `fopen(filename, "w")` (`ngseg.cpp:122`); `None` for NULL.
     #[must_use]
-    pub fn open_write(filename: &CStr) -> Option<Self> {
+    pub fn open_write(filename: &(impl crate::FileName + ?Sized)) -> Option<Self> {
         // SAFETY: `filename` and the mode are NUL-terminated and outlive the
         // call.
-        NonNull::new(unsafe { libc::fopen(filename.as_ptr(), c"w".as_ptr()) }).map(|stream| Self {
+        crate::native::fopen(filename, c"w").map(|stream| Self {
             stream,
             owned: true,
         })
@@ -600,21 +600,6 @@ impl Drop for OutputStream {
     }
 }
 
-/// `filename` as a Rust path. On Unix the C string's bytes are the path.
-/// Elsewhere the C runtime converts a narrow name through the active code
-/// page, which is not reproduced: a name that is not UTF-8 does not open.
-fn path_of(filename: &CStr) -> Option<std::path::PathBuf> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::ffi::OsStrExt as _;
-        Some(std::ffi::OsStr::from_bytes(filename.to_bytes()).into())
-    }
-    #[cfg(not(unix))]
-    {
-        filename.to_str().ok().map(Into::into)
-    }
-}
-
 /// A C++ input stream as `std::getline(stream, linebuf)` reads it into the
 /// pin's `LineString`: its `eofbit`/`failbit` and one reusable line, which
 /// ends in the NUL `c_str()` adds.
@@ -643,13 +628,10 @@ impl LineReader<BufReader<std::fs::File>> {
     /// has no tie, and a failed open sets `failbit`, which `!input_file`
     /// ([`Self::is_open`]) tests.
     #[must_use]
-    pub fn open(filename: &CStr) -> Self {
-        let (file, open_errno) = match path_of(filename) {
-            Some(path) => match std::fs::File::open(path) {
-                Ok(file) => (Some(file), None),
-                Err(error) => (None, error.raw_os_error()),
-            },
-            None => (None, None),
+    pub fn open(filename: &(impl crate::FileName + ?Sized)) -> Self {
+        let (file, open_errno) = match std::fs::File::open(filename.as_path()) {
+            Ok(file) => (Some(file), None),
+            Err(error) => (None, error.raw_os_error()),
         };
         let mut reader = Self::over(file.map(BufReader::new), false);
         reader.open_errno = open_errno;
@@ -813,16 +795,14 @@ pub mod gen_pinyin_table {
     impl TableInput {
         /// `fopen(filename, "r")` (`:138`); `None` for NULL.
         #[must_use]
-        pub fn open(filename: &CStr) -> Option<Self> {
+        pub fn open(filename: &(impl crate::FileName + ?Sized)) -> Option<Self> {
             // SAFETY: `filename` and the mode are NUL-terminated and outlive
             // the call.
-            NonNull::new(unsafe { libc::fopen(filename.as_ptr(), c"r".as_ptr()) }).map(|stream| {
-                Self {
-                    stream,
-                    phrase: Box::new([0; FIELD]),
-                    pinyin: Box::new([0; FIELD]),
-                    freq: 0,
-                }
+            crate::native::fopen(filename, c"r").map(|stream| Self {
+                stream,
+                phrase: Box::new([0; FIELD]),
+                pinyin: Box::new([0; FIELD]),
+                freq: 0,
             })
         }
 
@@ -1256,11 +1236,10 @@ pub mod storage {
     impl TableFile {
         /// `fopen(filename, "r")` (`gen_binary_files.cpp:61`, `:97`).
         #[must_use]
-        pub fn open(filename: &CStr) -> Option<Self> {
+        pub fn open(filename: &(impl crate::FileName + ?Sized)) -> Option<Self> {
             // SAFETY: `filename` and the mode literal are NUL-terminated and
             // outlive the call.
-            NonNull::new(unsafe { libc::fopen(filename.as_ptr(), c"r".as_ptr()) })
-                .map(|stream| Self { stream })
+            crate::native::fopen(filename, c"r").map(|stream| Self { stream })
         }
 
         /// `fseek(tablefile, 0L, SEEK_SET)` (`gen_binary_files.cpp:69`,
@@ -1389,13 +1368,7 @@ pub mod storage {
     #[cfg(windows)]
     unsafe fn errno_location() -> *mut c_int {
         // SAFETY: as the Linux definition.
-        unsafe { _errno() }
-    }
-
-    // SAFETY: this is UCRT errno.h's int* __cdecl _errno(void), which libc does not bind.
-    #[cfg(windows)]
-    unsafe extern "C" {
-        fn _errno() -> *mut c_int;
+        unsafe { crate::native::errno_location() }
     }
 
     /// The C call converts size_t to unsigned int modulo 2^32 on Windows.
@@ -1450,10 +1423,23 @@ pub mod storage {
     /// `close`. The pin's answers are kept: a short header write aborts (its
     /// `assert`), a short payload write returns `false` after the close.
     #[must_use]
-    pub fn save_chunk(filename: &CStr, length: u32, checksum: u32, payload: &[u8]) -> bool {
+    pub fn save_chunk(
+        filename: &(impl crate::FileName + ?Sized),
+        length: u32,
+        checksum: u32,
+        payload: &[u8],
+    ) -> bool {
+        #[cfg(not(windows))]
+        let filename = filename.as_c_name();
+        #[cfg(windows)]
+        let filename = crate::native::wide_path(&filename.as_path());
+        #[cfg(not(windows))]
+        use libc::open;
+        #[cfg(windows)]
+        use libc::wopen as open;
         // SAFETY: `filename` is NUL-terminated and outlives the call.
         let fd = unsafe {
-            libc::open(
+            open(
                 filename.as_ptr(),
                 libc::O_CREAT | libc::O_WRONLY | libc::O_TRUNC | O_BINARY,
                 0o644,
@@ -2303,6 +2289,30 @@ mod tests {
         assert_eq!(input.line(), b"x");
         let missing = LineReader::open(&crate::c_path(&dir.path().join("absent")).unwrap());
         assert!(!missing.is_open());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_tools_open_cjk_paths_and_utf8_names() {
+        use std::os::windows::ffi::OsStringExt as _;
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("目录");
+        std::fs::create_dir(&dir).unwrap();
+        let path = dir.join("词表.txt");
+        let output = OutputStream::open_write(&path).unwrap();
+        drop(output);
+        std::fs::write(&path, b"x\n").unwrap();
+        let name = CString::new(path.to_str().unwrap()).unwrap();
+        assert!(gen_pinyin_table::TableInput::open(&name).is_some());
+        assert!(storage::TableFile::open(&path).is_some());
+        assert!(LineReader::open(&name).getline());
+        assert!(storage::save_chunk(&dir.join("词库.bin"), 1, 0, b"x"));
+        // A Rust path can contain a lone surrogate. No UTF-8 adapter may
+        // replace it before the wide open or the Rust file open.
+        let raw = dir.join(OsString::from_wide(&[0xd800, 0x8bcd]));
+        drop(OutputStream::open_write(&raw).unwrap());
+        assert!(LineReader::open(&raw).is_open());
+        assert!(storage::save_chunk(&raw, 0, 0, b""));
     }
 
     fn entries() -> [OptionEntry; 3] {

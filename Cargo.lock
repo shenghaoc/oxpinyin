@@ -717,6 +717,7 @@ name = "oxpinyin-capi-marshal"
 version = "0.1.0"
 dependencies = [
  "oxpinyin-core",
+ "oxpinyin-input",
 ]
 
 [[package]]

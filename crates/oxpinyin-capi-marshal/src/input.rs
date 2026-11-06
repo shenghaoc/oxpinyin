@@ -63,10 +63,19 @@ pub fn filename(input: Option<&CStr>) -> Option<PathBuf> {
 }
 
 /// Read a native non-Unix filename using the adapter's UTF-8 convention.
-#[cfg(not(unix))]
+#[cfg(windows)]
 #[must_use]
 pub fn filename(input: Option<&CStr>) -> Option<PathBuf> {
-    Some(PathBuf::from(input?.to_string_lossy().into_owned()))
+    Some(oxpinyin_input::path::decode_filename(input?))
+}
+
+#[cfg(all(test, windows))]
+#[test]
+fn filenames_keep_null_empty_and_lossy_utf8_handling() {
+    assert_eq!(filename(None), None);
+    assert_eq!(filename(Some(c"")), Some(PathBuf::new()));
+    let input = c"\xff";
+    assert_eq!(filename(Some(input)), Some(PathBuf::from("\u{fffd}")));
 }
 
 /// Borrow a nullable input pointer within an exposed C adapter.

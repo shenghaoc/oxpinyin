@@ -18,6 +18,29 @@ use std::path::{Path, PathBuf};
 
 use crate::native;
 
+/// Decode a filename from an internal C string or the C-ABI facade.
+/// Unix keeps its bytes. Windows uses UTF-8 and replaces invalid input
+/// with U+FFFD. The C string already ends at its first NUL.
+#[must_use]
+pub fn decode_filename(name: &CStr) -> PathBuf {
+    decode_filename_bytes(name.to_bytes())
+}
+
+/// Decode filename bytes already extracted from a C string or table field.
+/// NUL handling belongs to the caller, as it does at the C-string boundary.
+#[must_use]
+pub fn decode_filename_bytes(bytes: &[u8]) -> PathBuf {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt as _;
+        PathBuf::from(OsStr::from_bytes(bytes))
+    }
+    #[cfg(not(unix))]
+    {
+        PathBuf::from(String::from_utf8_lossy(bytes).into_owned())
+    }
+}
+
 /// `g_build_filename(dir, name, NULL)` with the pin's arguments.
 ///
 /// `None` passes the C `NULL` pointer. GLib stops at a `NULL` first
@@ -93,7 +116,10 @@ pub fn rename(from: &Path, to: &Path) -> std::io::Result<()> {
 /// `unlink(path)`, with the pin's ignored result (`_clean_user_files` and
 /// `_write_files` never examine it).
 pub fn unlink(path: &Path) {
+    #[cfg(not(windows))]
     native::unlink(&c_string(path.as_os_str()));
+    #[cfg(windows)]
+    native::unlink(path);
 }
 
 #[cfg(unix)]
@@ -103,9 +129,9 @@ fn path_from_c_string(joined: CString) -> PathBuf {
     PathBuf::from(OsString::from_vec(joined.into_bytes()))
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
 fn path_from_c_string(joined: CString) -> PathBuf {
-    PathBuf::from(String::from_utf8_lossy(&joined.into_bytes()).into_owned())
+    PathBuf::from(native::chunk_path_from_encoded(joined.into_bytes()))
 }
 
 #[cfg(test)]
