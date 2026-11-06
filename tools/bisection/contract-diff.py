@@ -461,7 +461,7 @@ def worker(mode, so, data, name):
         rows = index_file_rows(data, kind=name, allow_empty=True, library=runtime)
         print(json.dumps(dict(rows=rows)), flush=True)
         return
-    if name.startswith('axis-c-'):
+    if name.startswith('axis-c-') and sys.platform == 'linux':
         # Fedora's pipe core_pattern can invoke systemd-coredump even when
         # RLIMIT_CORE is zero. This guard prevents routing these deliberate
         # pin faults into a host capture service; descendants inherit it.

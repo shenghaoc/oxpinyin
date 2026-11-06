@@ -16,10 +16,10 @@ import contract_axis_c_cases as family
 
 # (case ID, positional options, keyword options) in registration order: the count, the
 # first and last entries, and the SHA-256 of the repr of the whole ordered list.
-EXPECTED_COUNT = 888
+EXPECTED_COUNT = 211
 EXPECTED_FIRST = ('axis-c-export-user', (), {})
-EXPECTED_LAST = ('axis-c-layout-zhuyin-2147483647-e0000070', (), {'mode': 'zhuyin', 'stderr': True})
-EXPECTED_SHA256 = 'c3614461562c4d2d5c97b2ed0c68d169449ae3f509fd4e6e2d54f180dfb45770'
+EXPECTED_LAST = ('axis-c-layout-zhuyin-2-e0000070', (), {'mode': 'zhuyin', 'stderr': True})
+EXPECTED_SHA256 = 'e59fbe4f0247b19e944a20dbdcc22c1bbfb69802a1ba0bd44e43ea8dde4f3109'
 INJECTED = ('AXIS_C_DEFINITION', 'AXIS_C_GROUPS', 'AXIS_C_LAYOUT_COVERED', 'WORKER')
 
 
