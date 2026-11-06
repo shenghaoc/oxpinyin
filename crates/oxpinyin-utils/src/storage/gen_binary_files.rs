@@ -142,6 +142,10 @@ fn generate_binary_files(
 pub(crate) fn load_chewing(table: Option<&Tree>, file: &mut TableFile, phonetic: PhoneticType) {
     while let Some(record) = read_pinyin_record(file) {
         let len = tool::utf8_strlen(&record.phrase);
+        // GLib returns the host glong. The bounded phrase fits either ABI;
+        // compare at the Linux pin's width after the call.
+        #[cfg(windows)]
+        let len = i64::from(len);
         let keys = match phonetic {
             PhoneticType::Pinyin => pinyin::parse(&record.pinyin),
             PhoneticType::Zhuyin => pinyin::parse_zhuyin(&record.pinyin),

@@ -101,11 +101,18 @@ fn run(name: &str, dir: &Path, args: &[&str], stdin: &[u8]) -> Output {
 /// `outcome.exit` as a status word: the exit code, or `-signal` for a
 /// signal (the pin's shell status).
 fn exit_word(outcome: &Output) -> i32 {
-    use std::os::unix::process::ExitStatusExt as _;
-    outcome
-        .status
-        .code()
-        .unwrap_or_else(|| -outcome.status.signal().unwrap_or(0))
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt as _;
+        outcome
+            .status
+            .code()
+            .unwrap_or_else(|| -outcome.status.signal().unwrap_or(0))
+    }
+    #[cfg(windows)]
+    {
+        outcome.status.code().expect("Windows process exit code")
+    }
 }
 
 /// The one `table.conf` the success tests use: the fixture's four default
