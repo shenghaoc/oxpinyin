@@ -1389,7 +1389,51 @@ pub mod storage {
     #[cfg(windows)]
     unsafe fn errno_location() -> *mut c_int {
         // SAFETY: as the Linux definition.
-        unsafe { libc::_errno() }
+        unsafe { _errno() }
+    }
+
+    // SAFETY: this is UCRT errno.h's int* __cdecl _errno(void), which libc does not bind.
+    #[cfg(windows)]
+    unsafe extern "C" {
+        fn _errno() -> *mut c_int;
+    }
+
+    /// The C call converts size_t to unsigned int modulo 2^32 on Windows.
+    #[cfg(windows)]
+    fn write_count(count: usize) -> libc::c_uint {
+        count as libc::c_uint
+    }
+
+    /// Unix write takes size_t without a conversion.
+    #[cfg(not(windows))]
+    fn write_count(count: usize) -> usize {
+        count
+    }
+
+    #[cfg(all(test, windows, target_pointer_width = "64"))]
+    #[test]
+    fn windows_write_count_is_the_c_unsigned_conversion() {
+        assert_eq!(write_count(0), 0);
+        assert_eq!(write_count(u32::MAX as usize), u32::MAX);
+        assert_eq!(write_count(u32::MAX as usize + 1), 0);
+        assert_eq!(write_count(1_usize << 32), 0);
+    }
+
+    #[cfg(all(test, windows))]
+    #[test]
+    fn windows_errno_cell_is_set_by_the_crt() {
+        // SAFETY: the cell belongs to this thread; strtoul accepts a live C
+        // string and a null end pointer. Restore the cell before asserting.
+        let error = unsafe {
+            let cell = errno_location();
+            let saved = *cell;
+            *cell = 0;
+            libc::strtoul(c"4294967296".as_ptr(), core::ptr::null_mut(), 10);
+            let error = *cell;
+            *cell = saved;
+            error
+        };
+        assert_eq!(error, libc::ERANGE);
     }
 
     /// `O_BINARY`, defined as zero where the target has no text/binary
@@ -1421,7 +1465,8 @@ pub mod storage {
         for word in [length.to_ne_bytes(), checksum.to_ne_bytes()] {
             // SAFETY: `fd` is open and `word` holds four bytes for a
             // four-byte `write`.
-            let written = unsafe { libc::write(fd, word.as_ptr().cast::<c_void>(), word.len()) };
+            let written =
+                unsafe { libc::write(fd, word.as_ptr().cast::<c_void>(), write_count(word.len())) };
             if usize::try_from(written).ok() != Some(word.len()) {
                 // `assert(ret_len == sizeof(guint32))`.
                 // SAFETY: `abort` never returns.
@@ -1430,7 +1475,13 @@ pub mod storage {
         }
         // SAFETY: `fd` is open and `payload` holds its length for the one
         // payload `write`.
-        let written = unsafe { libc::write(fd, payload.as_ptr().cast::<c_void>(), payload.len()) };
+        let written = unsafe {
+            libc::write(
+                fd,
+                payload.as_ptr().cast::<c_void>(),
+                write_count(payload.len()),
+            )
+        };
         if usize::try_from(written).ok() != Some(payload.len()) {
             // SAFETY: `fd` is open and is closed once.
             unsafe { libc::close(fd) };
@@ -1456,7 +1507,7 @@ pub mod storage {
     #[cfg(windows)]
     unsafe fn sync_fd(fd: c_int) {
         // SAFETY: the caller owns the open descriptor.
-        unsafe { libc::_commit(fd) };
+        unsafe { libc::commit(fd) };
     }
 
     /// `fprintf(stderr, "open %s failed!\n", tablename)`
@@ -2378,8 +2429,14 @@ pub mod timer {
     #[must_use]
     #[expect(
         clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
         reason = "timer.h:33 converts tv_sec to guint32 before wrapping arithmetic"
+    )]
+    #[cfg_attr(
+        unix,
+        expect(
+            clippy::cast_sign_loss,
+            reason = "timer.h:33 converts signed tv_sec and tv_usec to guint32"
+        )
     )]
     pub fn record_time() -> u32 {
         #[cfg(unix)]

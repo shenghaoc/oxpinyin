@@ -13,7 +13,7 @@
 //! `MoveFileExW` on Windows; `unlink` is the plain C call. The safe
 //! functions below make those calls through `crate::native`.
 
-use std::ffi::{CStr, CString, OsStr, OsString};
+use std::ffi::{CStr, CString, OsStr};
 use std::path::{Path, PathBuf};
 
 use crate::native;
@@ -98,6 +98,7 @@ pub fn unlink(path: &Path) {
 
 #[cfg(unix)]
 fn path_from_c_string(joined: CString) -> PathBuf {
+    use std::ffi::OsString;
     use std::os::unix::ffi::OsStringExt as _;
     PathBuf::from(OsString::from_vec(joined.into_bytes()))
 }
@@ -109,18 +110,15 @@ fn path_from_c_string(joined: CString) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use std::ffi::OsString;
+
     use super::*;
 
+    #[cfg(unix)]
     fn under(dir: &str, name: &[u8]) -> OsString {
-        #[cfg(unix)]
-        {
-            use std::os::unix::ffi::OsStrExt as _;
-            build_path(Path::new(dir), OsStr::from_bytes(name)).into_os_string()
-        }
-        #[cfg(not(unix))]
-        {
-            build_path(Path::new(dir), OsStr::new(&String::from_utf8_lossy(name))).into_os_string()
-        }
+        use std::os::unix::ffi::OsStrExt as _;
+        build_path(Path::new(dir), OsStr::from_bytes(name)).into_os_string()
     }
 
     /// `g_build_filename(dir, name, NULL)`: the separators, empty parts and
