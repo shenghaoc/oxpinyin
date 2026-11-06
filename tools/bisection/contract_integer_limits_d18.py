@@ -271,8 +271,21 @@ def d18_bigram_update(count, predicted=False, user_only=False):
     return probe
 
 
+# The arithmetic these cases bound is shared by both facades: `merge_single_gram` and the
+# `SingleGram` totals (`ngram.cpp:135-175,277-358`), `PhoneticLookup`'s merge
+# (`phonetic_lookup.h:598-640`), `train_result3` (`pinyin.cpp` `pinyin_train` and `zhuyin.cpp`
+# `zhuyin_train` differ only in the result index) and `add_unigram_frequency`
+# (`pinyin_token_add_unigram_frequency` and `zhuyin_token_add_unigram_frequency` are the same
+# body). So libpinyin keeps every before/at/after boundary and libzhuyin keeps the cases that
+# reach its own entry points: the unigram increment, a merge at each of its two wrap points
+# (the total and the count), a train from a zero stored count, from the seed that wraps the
+# merged count and from the total that overflows, the user-only fixture, the default lambda,
+# and the save path, which `zhuyin_save` implements apart from libpinyin's.
+_ZHUYIN_MERGE = ('total-zero', 'count-zero')
+_ZHUYIN_TRAIN = ('stored-zero', 'seed-zero', 'total-overflow')
 for _mode in ('pinyin', 'zhuyin'):
-    case('d18-unigram-max-' + _mode, mode=_mode, control=True, issues=('540',))(d18_unigram(False))
+    if _mode == 'pinyin':
+        case('d18-unigram-max-' + _mode, mode=_mode, control=True, issues=('540',))(d18_unigram(False))
     case('d18-unigram-total-boundary-' + _mode, mode=_mode, control=True, issues=('540',))(d18_unigram(True))
     for _label, _system, _user, _control in (
             ('total-before', (1, 1), (0xfffffffe, 1), True),
@@ -281,12 +294,16 @@ for _mode in ('pinyin', 'zhuyin'):
             ('count-before', (0x80000000, 1), (0xffffffff, 0xfffffffe), True),
             ('count-zero', (0x80000000, 1), (0xffffffff, 0xffffffff), False),
             ('count-after', (0x80000000, 2), (0xffffffff, 0xffffffff), False)):
+        if _mode == 'zhuyin' and _label not in _ZHUYIN_MERGE:
+            continue
         case(f'd18-merge-{_label}-{_mode}', mode=_mode, control=_control, issues=('540',))(
             d18_merge(_system, _user, current='嚎' if _label.startswith('count-') else '号'))
     for _label, _count, _control in (
             ('stored-zero', 0, False), ('seed-before', 0x7fffffff, True), ('seed-zero', 0x80000000, False),
             ('seed-after', 0x80000001, False), ('total-max', 0xffffffff - 22080, True),
             ('total-overflow', 0xffffffff - 22080 + 1, False)):
+        if _mode == 'zhuyin' and _label not in _ZHUYIN_TRAIN:
+            continue
         case(f'd18-train-{_label}-{_mode}', mode=_mode, control=_control, issues=('540',))(d18_bigram_update(_count))
 for _label, _count, _control in (('max', 0xffffffff - 69, True),
                                 ('zero', 0xffffffff - 68, False), ('after', 0xffffffff - 67, False)):
@@ -300,12 +317,15 @@ for _mode in ('pinyin', 'zhuyin'):
     case('d18-review-user-only-zero-total-' + _mode, mode=_mode, issues=('540',))(
         d18_merge(None, (0, 0xffffffff), current='嚎', empty_system=True, extra_successor=True))
     for _label, _lam in (('default', None), ('half', '0.5'), ('zero-lambda', '0')):
+        if _mode == 'zhuyin' and _label != 'default':
+            continue
         case(f'd18-review-zero-count-zero-total-{_label}-{_mode}', mode=_mode,
              control=_label != 'default' or _mode == 'pinyin', issues=('540',))(
             d18_merge((1, 1), (0xffffffff, 0xffffffff),
                       current='好' if _label == 'default' else '嚎', lam=_lam))
-    case('d18-review-unigram-library-two-' + _mode, mode=_mode, control=True, issues=('540',))(
-        d18_unigram(True, text='丠'))
+    if _mode == 'pinyin':
+        case('d18-review-unigram-library-two-' + _mode, mode=_mode, control=True, issues=('540',))(
+            d18_unigram(True, text='丠'))
 case('d18-review-predicted-user-only-zero-total', issues=('540',))(
     d18_bigram_update(0xffffffff - 69, predicted=True, user_only=True))
 
