@@ -66,9 +66,19 @@ def final_step_surface(text, options, imported=False):
 
 FINAL_STEP_INPUTS = ("ba'kua", "li'shi", "xi'an", "ni'hao", "ba'ku", "ni'h",
                      "nihao'", 'n', 'nih', 'ni', 'nihao', 'zhongguo')
+# PINYIN_INCOMPLETE (1 << 3) is read only where an index item carries the incomplete flag
+# (`pinyin_parser2.cpp:38-48`). The parse keeps the longest match, then the fewest keys
+# (`pinyin_parser2.cpp:298-309`), so an input that complete syllables cover whole parses alike
+# with the bit set or clear. Only an input with an unparsed or incomplete tail reads it: 'n',
+# 'nih' and "ni'h" (the frozen outcomes differ), and 'nihao' stays under it as the covered
+# input that shows the bit alone changes nothing. Both facades keep every input, because each
+# has its own parse and candidate window.
+_INCOMPLETE_INPUTS = ('n', 'nih', "ni'h", 'nihao')
 for _mode in ('pinyin', 'zhuyin'):
     for _options in (1 << 5, (1 << 5) | (1 << 3)):
         for _text in FINAL_STEP_INPUTS:
+            if _options & (1 << 3) and _text not in _INCOMPLETE_INPUTS:
+                continue
             case('final-step-%s-%s-%x' % (_mode, _text, _options),
                  mode=_mode, control=True, issues=('594',))(final_step_surface(_text, _options))
     case('final-step-%s-import-ba-kua' % _mode, mode=_mode, control=True, issues=('594',))(
