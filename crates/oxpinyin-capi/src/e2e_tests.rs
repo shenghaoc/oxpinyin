@@ -827,6 +827,18 @@ fn directories_with_non_utf8_names_open() {
     use std::ffi::{CString, OsStr};
     use std::os::unix::ffi::{OsStrExt, OsStringExt};
 
+    /// Removes the fixture however the test ends, a failed assertion included.
+    struct RemoveFixture<'a> {
+        system: &'a std::path::Path,
+        user: &'a std::path::Path,
+    }
+    impl Drop for RemoveFixture<'_> {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(self.system);
+            let _ = std::fs::remove_dir_all(self.user);
+        }
+    }
+
     let scratch = std::env::temp_dir();
     let pid = std::process::id();
     let named = |prefix: &str| {
@@ -839,6 +851,22 @@ fn directories_with_non_utf8_names_open() {
     let user = named("oxpinyin-user-");
     let _ = std::fs::remove_file(&system);
     let _ = std::fs::remove_dir_all(&user);
+    let _remove_fixture = RemoveFixture {
+        system: &system,
+        user: &user,
+    };
+    // macOS's expected result: APFS refuses both names with `EILSEQ`, so the
+    // fixture never exists and no oxpinyin code runs.
+    if cfg!(target_os = "macos") {
+        for refused in [
+            std::os::unix::fs::symlink(system_dir(), &system),
+            std::fs::create_dir(&user),
+        ] {
+            let error = refused.expect_err("APFS refuses a non-UTF-8 name");
+            assert_eq!(error.raw_os_error(), Some(libc::EILSEQ));
+        }
+        return;
+    }
     std::os::unix::fs::symlink(system_dir(), &system).expect("symlink to the fixtures");
     std::fs::create_dir(&user).expect("user dir");
 
@@ -858,8 +886,6 @@ fn directories_with_non_utf8_names_open() {
 
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);
-    let _ = std::fs::remove_file(&system);
-    let _ = std::fs::remove_dir_all(&user);
 }
 
 #[test]
