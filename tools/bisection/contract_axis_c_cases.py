@@ -13,6 +13,58 @@ from contract_abi import Arr, B, I, P, S, U, UNTOUCHED, Z, sentence_out, zhuyin_
 from contract_case_helpers import candidate_rows, d18_export_phrases
 
 
+# The kept test design (#1616's method). `axis-c-replacement.json` is left whole: every layout
+# case binds that definition, so narrowing it would change the kept cases' inputs digests.
+# The words are the defined bits that are read, the undefined bits 0 and 20, and the 32-bit edges.
+# `axis-c-options-single-00000008`, `-pair-00000060` and `-boundary-ffffffff` are also the
+# instance-snapshot check's words.
+#
+# Pairs: 0x18 (`pinyin_phrase2.h:86`) and 0x60 (`zhuyin_parser2.cpp:373`) are read on one line. The
+# 14 bits below reach one shared matrix, so the pin combines them later and each pair stays: the
+# parser's segmentation (`pinyin_parser2.cpp:49-53`), the fuzzy pass's final step reading the columns
+# its initial step and the tables appended (`phonetic_key_matrix.cpp:291-292`), a phrase's
+# possibility summed over key paths across columns (`:534-584`), and candidate ranking
+# (`pinyin.cpp:1845`). The other bits move no outcome on these inputs, alone or paired.
+_COMBINED_BITS = (0x08, 0x80, 0x200, 0x400, 0x800, 0x1000, 0x2000, 0x4000, 0x8000, 0x10000, 0x20000, 0x40000,
+                  0x80000, 0x10000000)
+OPTION_WORDS = {
+    'single': (0x02, 0x08, 0x10, 0x20, 0x40, 0x80, 0x100, 0x200, 0x400, 0x800, 0x1000, 0x2000, 0x4000,
+               0x8000, 0x10000, 0x20000, 0x40000, 0x80000, 0x200000, 0x400000, 0x800000, 0x1000000,
+               0x2000000, 0x4000000, 0x8000000, 0x10000000, 0x20000000),
+    'pair': (0x18, 0x60, *sorted(_a | _b for _a in _COMBINED_BITS for _b in _COMBINED_BITS if _a < _b)),
+    'boundary': (0x00000000, 0x00000001, 0x00100000, 0xfffffffe, 0xffffffff),
+}
+# One input per distinct frozen pin outcome of each (mode, operation), together covering every input.
+ENCODING_INPUTS = {
+    ('pinyin', 'parse_more_full_pinyins'): ('empty', 'pinyin', 'tone', 'nfc', 'nfd'),
+    ('pinyin', 'parse_more_double_pinyins'): ('hanzi', 'ff-end', 'tone', 'nfc', 'ff-middle'),
+    ('pinyin', 'parse_more_chewings'): ('bopomofo', 'overlong-end', 'tone', 'nfc', 'overlong-middle'),
+    ('zhuyin', 'parse_more_full_pinyins'): ('fullwidth', 'surrogate-end', 'tone', 'nfc', 'surrogate-middle'),
+    ('zhuyin', 'parse_more_chewings'): ('ff-start', 'truncated-end', 'tone', 'nfc', 'truncated-middle'),
+    ('pinyin', 'lookup_tokens'): ('overlong-start', 'hanzi'),
+    ('zhuyin', 'lookup_tokens'): ('surrogate-start', 'hanzi'),
+    ('pinyin', 'phrase_segment'): ('nul-start', 'nul-end', 'nfd', 'hanzi', 'ff-start', 'surrogate-start', 'nul-middle'),
+    ('zhuyin', 'phrase_segment'): ('empty', 'pinyin', 'tone', 'hanzi', 'ff-start', 'surrogate-start', 'nul-middle'),
+    ('pinyin', 'remember_user_input'): ('truncated-start', 'hanzi'),
+    ('pinyin', 'import-phrase'): ('empty', 'hanzi', 'nul-middle'),
+    ('pinyin', 'import-reading'): ('empty', 'pinyin', 'tone'),
+    ('zhuyin', 'import-phrase'): ('empty', 'hanzi', 'nul-middle'),
+    ('zhuyin', 'import-reading'): ('empty', 'bopomofo'),
+}
+# Every scheme of the setter's switch in each facade with word 0 (`pinyin.cpp:1166-1187`,
+# `zhuyin.cpp:713-734`), and one case per distinct outcome with word 0x60 (the parser reads the
+# word and the scheme's tone table together, `zhuyin_parser2.cpp:379-380`). 0xe0000070 sets the
+# zhuyin corrections the parser reads against an item's flags (`zhuyin_parser2.cpp:56`). Scheme 7
+# and scheme 0 are the two abort sites per facade: the fall-through to `zhuyin_parser2.cpp:295`
+# and the setter's default (`pinyin.cpp:1188`, `zhuyin.cpp:735`).
+LAYOUT_CASES = {
+    'pinyin': ((0, 0x00), (1, 0x00), (2, 0x00), (3, 0x00), (4, 0x00), (5, 0x00), (6, 0x00), (7, 0x00),
+               (8, 0x00), (9, 0x00), (1, 0x60), (2, 0x60), (3, 0x60), (4, 0x60), (5, 0x60), (6, 0x60), (9, 0x60)),
+    'zhuyin': ((0, 0x00), (1, 0x00), (2, 0x00), (3, 0x00), (4, 0x00), (5, 0x00), (6, 0x00), (7, 0x00),
+               (8, 0x00), (9, 0x00), (1, 0x60), (2, 0xe0000070)),
+}
+
+
 def register(case, *, AXIS_C_DEFINITION, AXIS_C_GROUPS, AXIS_C_LAYOUT_COVERED, WORKER):
     """Register these cases at their original driver position."""
     def axis_c_isolated(k, fn):
@@ -195,7 +247,7 @@ def register(case, *, AXIS_C_DEFINITION, AXIS_C_GROUPS, AXIS_C_LAYOUT_COVERED, W
                 count = U(UNTOUCHED)
                 got = k.fn('get_n_phrase', B, P, C.POINTER(U))(k.inst, C.byref(count))
                 out = dict(ret=ret, get_n_phrase=got, count=count.value)
-                # #751 reuses the six preregistered surrogate cases. The pin
+                # #751 reuses the preregistered surrogate cases. The pin
                 # returns false with six null slots and no GLib record (the
                 # worker already compares domain, level and exact message).
                 # Only read out the result; keep the battery's input, options
@@ -267,13 +319,15 @@ def register(case, *, AXIS_C_DEFINITION, AXIS_C_GROUPS, AXIS_C_LAYOUT_COVERED, W
         return probe
 
 
-    for _kind, _words in AXIS_C_DEFINITION['words'].items():
+    for _kind, _words in OPTION_WORDS.items():
         for _word in _words:
-            _name = f'axis-c-options-{_kind}-{int(_word, 16):08x}'
-            case(_name, stderr=True)(axis_c_options(int(_word, 16), AXIS_C_DEFINITION['option_inputs']))
+            _name = f'axis-c-options-{_kind}-{_word:08x}'
+            case(_name, stderr=True)(axis_c_options(_word, AXIS_C_DEFINITION['option_inputs']))
             AXIS_C_GROUPS['options'].append(_name)
     for _mode, _operation in AXIS_C_DEFINITION['encoding_operations']:
         for _input in AXIS_C_DEFINITION['encoding_inputs']:
+            if _input['name'] not in ENCODING_INPUTS[_mode, _operation]:
+                continue
             _name = f"axis-c-encoding-{_mode}-{_operation}-{_input['name']}"
             # phrase_segment on malformed UTF-8: the pin logs GLib's assertion critical and oxpinyin
             # logs none, a recorded language-runtime departure (docs/findings/1297-segment-critical.md,
@@ -284,18 +338,16 @@ def register(case, *, AXIS_C_DEFINITION, AXIS_C_GROUPS, AXIS_C_LAYOUT_COVERED, W
             AXIS_C_GROUPS['encoding'].append(_name)
     _covered_rows = {scheme: entry['row'] for entry in AXIS_C_DEFINITION['layout_covered']
                      for scheme in entry['schemes']}
-    for _mode in ('pinyin', 'zhuyin'):
-        for _scheme in AXIS_C_DEFINITION['layout_schemes']:
-            for _word in AXIS_C_DEFINITION['layout_words']:
-                _name = f'axis-c-layout-{_mode}-{_scheme}-{int(_word, 16):08x}'
-                # Scheme 3 (`u`) and 4 (`n`) type the one syllable ri, whose 鈤 and 馹 tie in the final
-                # n-best tails (unigram 1, pronunciation 3/3, no sentence-start bigram). The pin picks by
-                # heap pop order and the ruled S2 key by earlier batch position, so these two cases are
-                # POLICY-ACCEPTED under the S2 tie rule (docs/findings/trellis-adjusted-cost-s1-s2.md).
-                _policy = ({'policy_record': 'trellis-adjusted-cost-s1-s2.md'}
-                           if (_mode, _scheme, int(_word, 16)) in (('pinyin', 3, 0), ('pinyin', 4, 0)) else {})
-                case(_name, mode=_mode, stderr=True, **_policy)(
-                    axis_c_layout(_scheme, int(_word, 16), AXIS_C_DEFINITION))
-                AXIS_C_GROUPS['layouts'].append(_name)
-                if _scheme in _covered_rows:
-                    AXIS_C_LAYOUT_COVERED[_name] = _covered_rows[_scheme]
+    for _mode, _layouts in LAYOUT_CASES.items():
+        for _scheme, _word in _layouts:
+            _name = f'axis-c-layout-{_mode}-{_scheme}-{_word:08x}'
+            # Scheme 3 (`u`) and 4 (`n`) type the one syllable ri, whose 鈤 and 馹 tie in the final
+            # n-best tails (unigram 1, pronunciation 3/3, no sentence-start bigram). The pin picks by
+            # heap pop order and the ruled S2 key by earlier batch position, so these two cases are
+            # POLICY-ACCEPTED under the S2 tie rule (docs/findings/trellis-adjusted-cost-s1-s2.md).
+            _policy = ({'policy_record': 'trellis-adjusted-cost-s1-s2.md'}
+                       if (_mode, _scheme, _word) in (('pinyin', 3, 0), ('pinyin', 4, 0)) else {})
+            case(_name, mode=_mode, stderr=True, **_policy)(axis_c_layout(_scheme, _word, AXIS_C_DEFINITION))
+            AXIS_C_GROUPS['layouts'].append(_name)
+            if _scheme in _covered_rows:
+                AXIS_C_LAYOUT_COVERED[_name] = _covered_rows[_scheme]
