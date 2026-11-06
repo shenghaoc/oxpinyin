@@ -10,7 +10,7 @@ PR [#943](https://github.com/shenghaoc/oxpinyin/pull/943) is merged.
 | Native profiles and resource groups (§2) | Implemented in #943: local uses admitted num-cpus; ci uses four threads; retries are zero and fail-fast is false. The store-backend group has one thread; selected real-data binaries take the full budget. |
 | Shared admission and explicit nextest concurrency (§3) | Implemented in #943 on #941's shared slot. CLI counts precede NEXTEST_TEST_THREADS, then profile settings. Unsupported or ambiguous overrides fail closed. |
 | Equivalence across every native CI scope (§5) | Partial. #943 records six accepted Linux rows only at `7991ec6b17509980f42a59d72531617059f109d6`. The macOS tkrzw equivalence at `b034e834` on 2026-10-20 UTC is historical. The current macOS CI BDB scope passed at `219f420` on 2026-10-20 UTC: 1,218 passed and 22 ignored; identities and verdicts match. [#968](https://github.com/shenghaoc/oxpinyin/pull/968) (merge `c017ebee`) compared all 1,531 Linux and 1,246 macOS crate/binary-qualified identities and verdicts against cargo test; all matched, and both doctest sets matched six identities (four passed, two ignored). Other scopes and sanitizer equivalence remain unverified. |
-| CI and verification rule 5 cutover (§5) | Partial T13N: [#968](https://github.com/shenghaoc/oxpinyin/pull/968) (merge `c017ebee`) switched `ci.yml` test (Linux) and test-macos to pinned nextest 0.9.143 with `--profile ci` and separate `cargo test --doc` steps. Features, exclusions and ignored-test behavior are preserved. Windows stays on cargo test (#950). Other workflows and verification rule 5 are unchanged. |
+| CI and verification rule 5 cutover (§5) | Partial T13N: [#968](https://github.com/shenghaoc/oxpinyin/pull/968) (merge `c017ebee`) switched `ci.yml` test (Linux) and test-macos to pinned nextest 0.9.143 with `--profile ci` and separate `cargo test --doc` steps. Features, exclusions and ignored-test behavior are preserved. The Windows nightly job uses nextest with the ci profile and separate doctests, under the 2026-10-30 ruling. Other workflows and verification rule 5 are unchanged. |
 | Pin-dependent test route | Proposed under Layer 4; no container profile exists yet. |
 
 macOS: bounded checks passed on 2026-10-20 UTC at
@@ -34,7 +34,7 @@ identities: four passed and two ignored. The commands used `just heavy --`,
 one Cargo job, one test thread and the repository's nextest `local` profile.
 Elapsed times were excluded. The earlier BDB `just check` result remains
 separate evidence. Other CI scopes remain unverified.
-Windows: TODO (no host); tooling verification is deferred.
+Windows recipe argument transport is verified from pwsh; full tooling and executor equivalence remain unverified.
 Historical macOS comparisons in #943 belong to `e23367bc` and include failed
 backend runs. They do not verify this head. Hosted CI runs the repository
 Python harnesses on Linux and macOS ([#988](https://github.com/shenghaoc/oxpinyin/pull/988),
@@ -50,7 +50,7 @@ Normalize nextest skipped to Cargo ignored only for the same ignored test.
 Use `--status-level skip` to expose ignored identities without changing selection.
 Record observed job times without a controlled performance claim. The implementing
 PR records the one-cycle comparison and verified head. No logs, archives or evidence files are retained or uploaded.
-Windows remains on cargo test under #950.
+The Windows nightly job uses nextest and separate doctests under the 2026-10-30 ruling.
 
 ## 1. Test entry point
 

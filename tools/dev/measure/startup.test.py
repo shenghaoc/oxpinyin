@@ -119,7 +119,8 @@ class ControllerTests(unittest.TestCase):
     def test_cold_is_refused_on_windows_before_filesystem_or_slot(self):
         # Cold mode exists on Linux and macOS only; any other host refuses before admission.
         for system, extra in (('win32', []), ('win32', ['--cache', 'cold']), ('freebsd14', ['--cache', 'cold'])):
-            message = 'startup: native startup supports Linux/macOS; Windows is deferred (#950)\n'
+            message = ('startup: native startup supports Linux/macOS; '
+                       'the worker and measurement services do not support Windows\n')
             with self.subTest(system=system), mock.patch.object(st.sys, 'platform', system), \
                     mock.patch.object(slot, 'HeavyAdmission') as admission, \
                     contextlib.redirect_stderr(io.StringIO()) as error:

@@ -25,8 +25,8 @@ returned 143 for SIGTERM and 137 for SIGKILL. The macOS host reader returned
 positive `available_mib`; `sysctl` and `vm_stat` reads were available.
 Fresh-install, offline cache and full environment provisioning acceptance
 remain unverified.
-Windows: TODO (no host); tooling verification is deferred. It does not block
-T2N (maintainer ruling 2026-10-21 UTC).
+Windows recipe argument transport and doctor are verified from pwsh.
+Job Object lifetime, cancellation and full tooling acceptance remain unverified.
 Hosted CI runs the repository Python harnesses on Linux and macOS ([#988](https://github.com/shenghaoc/oxpinyin/pull/988), merge `96ca8c8e`). It does not run the container launcher's runtime paths. Earlier host checks retain
 their original heads and limitations in #939/#941; they do not verify this stack.
 The requirements below remain proposed where the table does not mark them implemented.

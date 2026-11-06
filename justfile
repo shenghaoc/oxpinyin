@@ -3,10 +3,12 @@
 set positional-arguments
 set minimum-version := "1.59.0"
 
-# Windows uses PowerShell, not a POSIX shell. This path is written but
-# unverified: there is no Windows host for this stack.
+# Windows uses pwsh; doctor checks the floor in tools/dev/pwsh-floor.txt.
 [windows]
-set shell := ["powershell.exe", "-NoLogo", "-NoProfile", "-Command"]
+set shell := ["pwsh", "-NoLogo", "-NoProfile", "-CommandWithArgs"]
+
+# Discard just's recipe name once, before native argument forwarding.
+windows_args := '$null, [object[]]$forwarded = $args;'
 
 default: doctor
 
@@ -17,13 +19,18 @@ rust-tables *args:
 
 [windows]
 rust-tables *args:
-    @uv run --offline --no-python-downloads --no-project --managed-python python -X lazy_imports=normal -m tools.dev rust-tables @args; exit $LASTEXITCODE
+    @{{windows_args}} uv run --offline --no-python-downloads --no-project --managed-python python -X lazy_imports=normal -m tools.dev rust-tables @forwarded; exit $LASTEXITCODE
 
 # Data-only transport target for the real-just smoke tests; never starts work.
 [unix]
 [private]
 _test-argv status *args: python
     @uv run --no-project --managed-python python -X lazy_imports=normal -c 'import json, sys; print(json.dumps(sys.argv[2:])); sys.exit(int(sys.argv[1]))' "$@"
+
+[windows]
+[private]
+_test-argv status *args: python
+    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -c 'import json, sys; print(json.dumps(sys.argv[2:])); sys.exit(int(sys.argv[1]))' @forwarded; exit $LASTEXITCODE
 
 # Record or check the pin-reference image's tool versions. Requires the
 # Debian image environment (dpkg-query); the image builds run the same check.
@@ -33,7 +40,7 @@ oracle-versions *args: python
 
 [windows]
 oracle-versions *args: python
-    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev oracle-versions @args; exit $LASTEXITCODE
+    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev oracle-versions @forwarded; exit $LASTEXITCODE
 
 # Provision the interpreter .python-version names, the one place the version is
 # stated. uv reads the file itself and does nothing when the interpreter is there.
@@ -62,7 +69,7 @@ fetch-contract-data *args: python
 
 [windows]
 fetch-contract-data *args: python
-    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev fetch-contract-data @args; exit $LASTEXITCODE
+    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev fetch-contract-data @forwarded; exit $LASTEXITCODE
 
 # Regenerate (`generate`) or check (`check`) the committed fixtures/w3 data
 # sets from the model20 cache; `content` truncates the oracle's content tables.
@@ -80,9 +87,9 @@ doctor:
 
 [windows]
 doctor:
-    @if (-not (Get-Command uv -ErrorAction SilentlyContinue)) { [Console]::Error.WriteLine('uv is not installed: see docs/runbooks/setup.md'); exit 1 }
-    @uv python find --managed-python *> $null; if ($LASTEXITCODE -ne 0) { [Console]::Error.WriteLine('the managed interpreter in .python-version is not installed: run `just python`'); exit 1 }
-    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev doctor; exit $LASTEXITCODE
+    @{{windows_args}} if (-not (Get-Command uv -ErrorAction SilentlyContinue)) { [Console]::Error.WriteLine('uv is not installed: see docs/runbooks/setup.md'); exit 1 }
+    @{{windows_args}} uv python find --managed-python *> $null; if ($LASTEXITCODE -ne 0) { [Console]::Error.WriteLine('the managed interpreter in .python-version is not installed: run `just python`'); exit 1 }
+    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev doctor; exit $LASTEXITCODE
 
 # Install, validate and assemble drop-in packages through the shared service.
 [unix]
@@ -107,7 +114,7 @@ tkrzw-build prefix: python
 
 [windows]
 tkrzw-build prefix: python
-    @just heavy -- uv run --no-project --managed-python python -X lazy_imports=normal -m tools.tkrzw.build build --prefix "{{prefix}}"; exit $LASTEXITCODE
+    @{{windows_args}} just heavy -- uv run --no-project --managed-python python -X lazy_imports=normal -m tools.tkrzw.build build --prefix @forwarded; exit $LASTEXITCODE
 
 # Run a command inside the native heavy slot and memory admission.
 [unix]
@@ -116,7 +123,7 @@ heavy *args: python
 
 [windows]
 heavy *args: python
-    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev slot run @args; exit $LASTEXITCODE
+    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev slot run @forwarded; exit $LASTEXITCODE
 
 # Run the native Rust tests through nextest and the heavy slot.
 [unix]
@@ -125,7 +132,7 @@ test *args: python
 
 [windows]
 test *args: python
-    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev test @args; exit $LASTEXITCODE
+    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev test @forwarded; exit $LASTEXITCODE
 
 # Run the CI Python harness discovery and exclusions (Linux and macOS).
 [unix]
@@ -139,7 +146,7 @@ policy-record *args: python
 
 [windows]
 policy-record *args: python
-    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev policy-record @args; exit $LASTEXITCODE
+    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev policy-record @forwarded; exit $LASTEXITCODE
 
 # Run doctests separately; nextest does not run them.
 [unix]
@@ -148,7 +155,7 @@ test-doc *args: python
 
 [windows]
 test-doc *args: python
-    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev test-doc @args; exit $LASTEXITCODE
+    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev test-doc @forwarded; exit $LASTEXITCODE
 
 # Build with the native heavy slot and memory admission.
 [unix]
@@ -157,7 +164,7 @@ build *args:
 
 [windows]
 build *args:
-    @just heavy -- cargo build @args; exit $LASTEXITCODE
+    @{{windows_args}} just heavy -- cargo build @forwarded; exit $LASTEXITCODE
 
 # Format directly; formatting does not take the heavy slot.
 [unix]
@@ -166,7 +173,7 @@ fmt *args:
 
 [windows]
 fmt *args:
-    @cargo fmt @args; exit $LASTEXITCODE
+    @{{windows_args}} cargo fmt @forwarded; exit $LASTEXITCODE
 
 # Regenerate the GLib/libc call-site TSV from a pinned libpinyin checkout.
 audit-glib-call-sites pin: python
@@ -179,7 +186,7 @@ clippy *args:
 
 [windows]
 clippy *args:
-    @just heavy -- cargo clippy @args; exit $LASTEXITCODE
+    @{{windows_args}} just heavy -- cargo clippy @forwarded; exit $LASTEXITCODE
 
 # Run the workspace benches with the native heavy slot and memory admission.
 [unix]
@@ -188,7 +195,7 @@ bench *args:
 
 [windows]
 bench *args:
-    @just heavy -- cargo bench --workspace --benches @args; exit $LASTEXITCODE
+    @{{windows_args}} just heavy -- cargo bench --workspace --benches @forwarded; exit $LASTEXITCODE
 
 # Build every selected bench harness without running it.
 [unix]
@@ -197,7 +204,7 @@ bench-smoke:
 
 [windows]
 bench-smoke:
-    @just bench --no-run; exit $LASTEXITCODE
+    @{{windows_args}} just bench --no-run; exit $LASTEXITCODE
 
 # Profile the W8 keystroke cycle with samply. macOS uses Homebrew's native
 # build inputs; tools.dev.measure.profile refuses Linux-only pinning and
@@ -220,7 +227,7 @@ profile-w8 *args: python
 
 [windows]
 profile-w8 *args:
-    @echo "profile-w8: native macOS and Linux only; Windows is unsupported." >&2; exit 1
+    @{{windows_args}} echo "profile-w8: native macOS and Linux only; Windows is unsupported." >&2; exit 1
 
 # Run one caller-selected fuzz target with the nightly workflow's ASLR wrapper.
 # Exact on purpose (#1074): a nightly is identified only by its date.
@@ -236,20 +243,20 @@ fuzz *args:
         LIBRARY_PATH="$(brew --prefix)/lib${LIBRARY_PATH:+:$LIBRARY_PATH}" \
         cargo +nightly-2026-08-01 fuzz run "$@"
 
-# Windows transport is unverified (#950); setarch is Linux-only.
+# Windows fuzz execution is unverified; setarch is Linux-only.
 [windows]
 fuzz *args:
-    @just heavy -- cargo +nightly-2026-08-01 fuzz run @args; exit $LASTEXITCODE
+    @{{windows_args}} just heavy -- cargo +nightly-2026-08-01 fuzz run @forwarded; exit $LASTEXITCODE
 
 # Run native coverage with temporary state; run and report in one invocation.
 [unix]
 coverage *args: python
     @just heavy -- uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev coverage "$@"
 
-# Windows transport is unverified (#950).
+# Windows coverage execution is unverified.
 [windows]
 coverage *args: python
-    @just heavy -- uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev coverage @args; exit $LASTEXITCODE
+    @{{windows_args}} just heavy -- uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev coverage @forwarded; exit $LASTEXITCODE
 
 # Run a sanitizer gate with address, thread, leak or memory instrumentation.
 [linux]
@@ -272,11 +279,11 @@ sanitize backend="" sanitizer="address": python
         PATH="$(brew --prefix tkrzw)/bin:$PATH" \
         uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev sanitize "$1" "$2"
 
-# The gates are Linux/Darwin native builds; Windows transport is unverified (#950).
+# The gates are Linux/Darwin native builds; Windows sanitizers are unsupported.
 [windows]
 sanitize backend="" sanitizer="address":
-    @echo "sanitize is unsupported on Windows: the sanitizer gates are Linux/Darwin native builds."
-    @exit 1
+    @{{windows_args}} echo "sanitize is unsupported on Windows: the sanitizer gates are Linux/Darwin native builds."
+    @{{windows_args}} exit 1
 
 # Run shared ABI export and allocation gates.
 [unix]
@@ -285,7 +292,7 @@ runner *args: python
 
 [windows]
 runner *args: python
-    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev runner @args; exit $LASTEXITCODE
+    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev runner @forwarded; exit $LASTEXITCODE
 
 [unix]
 abi *args: python
@@ -293,7 +300,7 @@ abi *args: python
 
 [windows]
 abi *args: python
-    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev abi @args; exit $LASTEXITCODE
+    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev abi @forwarded; exit $LASTEXITCODE
 
 # Build or describe the registry's selected cell artifacts.
 [unix]
@@ -302,7 +309,7 @@ cell-artifacts *args: python
 
 [windows]
 cell-artifacts *args: python
-    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev cell-artifacts @args; exit $LASTEXITCODE
+    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev cell-artifacts @forwarded; exit $LASTEXITCODE
 
 # Read registry metadata, optionally filtered by issue or kind.
 [unix]
@@ -311,7 +318,7 @@ list *args: python
 
 [windows]
 list *args: python
-    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev list @args; exit $LASTEXITCODE
+    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev list @forwarded; exit $LASTEXITCODE
 
 # Describe an explicit registry selection without executing it.
 [unix]
@@ -320,7 +327,7 @@ plan *args: python
 
 [windows]
 plan *args: python
-    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev plan @args; exit $LASTEXITCODE
+    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev plan @forwarded; exit $LASTEXITCODE
 
 # Run a measure recipe: startup (the controller holds the heavy slot), cold-qualify, or a measurement
 # or profile recipe such as perf-baseline or snapshot (the list is tools/dev/measure/recipes.py).
@@ -328,7 +335,7 @@ plan *args: python
 measure recipe *args: python
     @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev measure "$@"
 
-# Startup measurement alias (Windows deferred, #950).
+# Startup measurement requires the Linux/macOS worker and measurement services.
 [unix]
 initbench *args: python
     @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev measure startup "$@"
@@ -340,11 +347,11 @@ cold-qualify *paths: python
 
 [windows]
 measure recipe *args: python
-    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev measure @args; exit $LASTEXITCODE
+    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev measure @forwarded; exit $LASTEXITCODE
 
 [windows]
 initbench *args: python
-    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev measure startup @args; exit $LASTEXITCODE
+    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev measure startup @forwarded; exit $LASTEXITCODE
 
 # Oracle and compatibility recipes share host/runtime/fixture services.
 [unix]
