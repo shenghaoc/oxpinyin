@@ -81,14 +81,23 @@ fn binary(name: &str) -> PathBuf {
 
 /// Runs `binary` in `dir` with `args` and `stdin`.
 fn run(name: &str, dir: &Path, args: &[&str], stdin: &[u8]) -> Output {
-    let mut child = Command::new(binary(name))
+    let mut command = Command::new(binary(name));
+    command
         .args(args)
         .current_dir(dir)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn utility");
+        .stderr(Stdio::piped());
+    if args == ["--help"] || args == ["--bogus"] {
+        if let Some(locale) = std::env::var_os("LC_ALL").filter(|value| !value.is_empty()) {
+            command.env("LC_CTYPE", locale);
+        }
+        command
+            .env_remove("LC_ALL")
+            .env("LC_MESSAGES", "C")
+            .env_remove("LANGUAGE");
+    }
+    let mut child = command.spawn().expect("spawn utility");
     child
         .stdin
         .take()
@@ -564,6 +573,9 @@ fn eval_correction_rate_refuses_an_unknown_token() {
     );
 }
 
+/// Known English GLib usage placeholders, including older and non-UTF-8 variants.
+const GLIB_OPTION_PLACEHOLDERS: [&str; 3] = ["[OPTION\u{2026}]", "[OPTION?]", "[OPTION...]"];
+
 #[test]
 fn the_option_help_names_the_pins_options() {
     let dir = fixture_copy();
@@ -575,7 +587,12 @@ fn the_option_help_names_the_pins_options() {
         .unwrap()
         .to_str()
         .unwrap();
-    assert!(text.contains(&format!("{executable} [OPTION")), "{text}");
+    assert!(
+        GLIB_OPTION_PLACEHOLDERS
+            .iter()
+            .any(|option| text.contains(&format!("{executable} {option} "))),
+        "{text}"
+    );
     assert!(text.contains("--skip-pi-gram-training"), "{text}");
     assert!(text.contains("--bigram-file"), "{text}");
     assert!(text.contains("- generate n-gram"), "{text}");

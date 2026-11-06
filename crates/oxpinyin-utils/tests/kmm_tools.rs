@@ -172,11 +172,21 @@ fn run(cwd: &Path, name: &str, args: &[&str], stdin: Option<&[u8]>) -> Output {
     let mut command = Command::new(path);
     command
         .current_dir(cwd)
-        .env("LC_ALL", "C")
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    if args == ["--help"] {
+        if let Some(locale) = std::env::var_os("LC_ALL").filter(|value| !value.is_empty()) {
+            command.env("LC_CTYPE", locale);
+        }
+        command
+            .env_remove("LC_ALL")
+            .env("LC_MESSAGES", "C")
+            .env_remove("LANGUAGE");
+    } else {
+        command.env("LC_ALL", "C");
+    }
     let mut child = command.spawn().unwrap();
     if let Some(input) = stdin {
         use std::io::Write as _;
@@ -210,6 +220,9 @@ fn block(export: &str, header: &str, until: &str) -> Vec<String> {
     lines
 }
 
+/// Known English GLib usage placeholders, including older and non-UTF-8 variants.
+const GLIB_OPTION_PLACEHOLDERS: [&str; 3] = ["[OPTION\u{2026}]", "[OPTION?]", "[OPTION...]"];
+
 #[test]
 fn help_is_the_pins_glib_help_for_every_utility() {
     for (name, suffix) in [
@@ -227,9 +240,11 @@ fn help_is_the_pins_glib_help_for_every_utility() {
         let executable = binary(name);
         let executable = executable.file_name().unwrap().to_str().unwrap();
         assert!(
-            stdout.starts_with(&expected_text(&format!(
-                "Usage:\n  {executable} [OPTION\u{2026}] {suffix}\n"
-            ))),
+            GLIB_OPTION_PLACEHOLDERS.iter().any(|option| {
+                stdout.starts_with(&expected_text(&format!(
+                    "Usage:\n  {executable} {option} {suffix}\n"
+                )))
+            }),
             "{name}: {stdout:?}"
         );
         assert!(

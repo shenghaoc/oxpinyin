@@ -183,3 +183,7 @@ class LibraryLoadingTests(unittest.TestCase):
     def test_case_ids_order_and_metadata(self):
         cases = declarations()
         self.assertEqual([(name, args, kwargs) for name, args, kwargs, _ in cases], EXPECTED)
+
+
+if __name__ == '__main__':
+    unittest.main()
