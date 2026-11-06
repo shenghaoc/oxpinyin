@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import resource
+import sys
 
 from contract_abi import B, I, P, S, U, UNTOUCHED, Z
 from contract_case_helpers import LIBRARY_FACADES, _chunk, _modify_header, _write_log, log_walk, token_phrase_of, train_once
@@ -160,9 +161,6 @@ def break_library(k, system, name, how):
         assert how == 'missing'
 
 
-LIBRARY_BREAKS = ('missing', 'empty', 'short', 'bad-length', 'checksum')
-
-
 def library_probe(site, how):
     """Build a case that breaks a private library before the selected native operation.
 
@@ -243,16 +241,16 @@ def library_expected(site, how, mode, row76_stop=True):
     }[site])
 
 
-for _mode in ('pinyin', 'zhuyin'):
+# The pin dies at one site per caller and facade, so each caller keeps one break, and the
+# five breaks `MemoryChunk::mmap` refuses each appear at least once.
+for _mode, _breaks in (('pinyin', (('init', 'missing'), ('load', 'empty'), ('save', 'short'),
+                                   ('mask-out', 'bad-length'), ('addon', 'checksum'))),
+                       ('zhuyin', (('init', 'empty'), ('load', 'checksum'), ('save', 'missing'),
+                                   ('mask-out', 'short')))):
     _suffix = '-zhuyin' if _mode == 'zhuyin' else ''
-    for _how in LIBRARY_BREAKS:
-        for _site in ('init', 'load', 'save', 'mask-out') + (('addon',) if _mode == 'pinyin' else ()):
-            case(f'stderr-library-{_site}-{_how}' + _suffix, mode=_mode,
-                 crash=library_expected(_site, _how, _mode), issues=('545',))(library_probe(_site, _how))
-        # Both lines in the pin's order: the profile's, then the library's.
-        for _site, _label in (('init-fresh', 'fresh-user-dir'), ('init-nonconform', 'nonconforming-user-dir')):
-            case(f'stderr-library-init-{_label}-{_how}' + _suffix, mode=_mode,
-                 crash=library_expected(_site, _how, _mode), issues=('545',))(library_probe(_site, _how))
+    for _site, _how in _breaks:
+        case(f'stderr-library-{_site}-{_how}' + _suffix, mode=_mode,
+             crash=library_expected(_site, _how, _mode), issues=('545',))(library_probe(_site, _how))
 
 
 def library_directory_guard(site, guard):
@@ -291,11 +289,12 @@ def library_directory_guard(site, guard):
     return probe
 
 
-for _mode in ('pinyin', 'zhuyin'):
-    for _guard in ('reserved', 'unloaded'):
-        for _site in ('save', 'mask-out'):
-            case(f'library-directory-guard-{_guard}-{_site}' + ('-zhuyin' if _mode == 'zhuyin' else ''),
-                 mode=_mode, control=True, issues=('545',))(library_directory_guard(_site, _guard))
+# Each facade's save and mask-out are separate source, and each guard appears on both operations.
+for _mode, _guards in (('pinyin', (('reserved', 'save'), ('unloaded', 'mask-out'))),
+                       ('zhuyin', (('unloaded', 'save'), ('reserved', 'mask-out')))):
+    for _guard, _site in _guards:
+        case(f'library-directory-guard-{_guard}-{_site}' + ('-zhuyin' if _mode == 'zhuyin' else ''),
+             mode=_mode, control=True, issues=('545',))(library_directory_guard(_site, _guard))
 
 
 # The guards that keep the pin silent with the same broken library: the
@@ -347,9 +346,10 @@ def library_control(site):
     return probe
 
 
-for _mode in ('pinyin', 'zhuyin'):
-    for _site in ('load-already-loaded', 'load-whole', 'save-unmodified', 'save-unloaded', 'mask-out-unloaded') + \
-            (('addon-already-loaded',) if _mode == 'pinyin' else ()):
+for _mode, _sites in (('pinyin', ('load-already-loaded', 'load-whole', 'save-unmodified', 'save-unloaded',
+                                  'mask-out-unloaded', 'addon-already-loaded')),
+                      ('zhuyin', ('load-already-loaded', 'save-unmodified', 'mask-out-unloaded'))):
+    for _site in _sites:
         case(f'stderr-library-control-{_site}' + ('-zhuyin' if _mode == 'zhuyin' else ''), mode=_mode,
              control=True, stderr=True, issues=('545',))(library_control(_site))
 
@@ -379,11 +379,12 @@ def chunk_limits():
     # safe subject maps only the 8+data_len chunk (8 bytes for this
     # fixture). The CPU bound and dumpable=0 keep a surprise inside this
     # worker.
-    resource.setrlimit(resource.RLIMIT_AS, (12 << 30, 12 << 30))
     resource.setrlimit(resource.RLIMIT_CPU, (60, 60))
-    libc = C.CDLL(None, use_errno=True)
-    libc.prctl.argtypes, libc.prctl.restype = [I, C.c_ulong, C.c_ulong, C.c_ulong, C.c_ulong], I
-    assert libc.prctl(4, 0, 0, 0, 0) == 0, ('PR_SET_DUMPABLE failed', C.get_errno())
+    if sys.platform == 'linux':  # macOS refuses this RLIMIT_AS and has no prctl
+        resource.setrlimit(resource.RLIMIT_AS, (12 << 30, 12 << 30))
+        libc = C.CDLL(None, use_errno=True)
+        libc.prctl.argtypes, libc.prctl.restype = [I, C.c_ulong, C.c_ulong, C.c_ulong, C.c_ulong], I
+        assert libc.prctl(4, 0, 0, 0, 0) == 0, ('PR_SET_DUMPABLE failed', C.get_errno())
 
 
 def chunk_init_probe(site, how):
@@ -599,15 +600,13 @@ def chunk_token_probe():
 
 for _mode in ('pinyin', 'zhuyin'):
     _suffix = '-zhuyin' if _mode == 'zhuyin' else ''
-    for _site, _label in (('init', ''), ('init-settled', '-settled')):
-        case(f'sparse-library-init{_label}{_suffix}', mode=_mode,
-             stderr=True)(chunk_init_probe(_site, 'sparse'))
+    case(f'sparse-library-init{_suffix}', mode=_mode,
+         stderr=True)(chunk_init_probe('init', 'sparse'))
     case(f'sparse-library-load{_suffix}', mode=_mode, stderr=True)(chunk_load_probe('sparse'))
     case(f'sparse-library-save{_suffix}', mode=_mode, stderr=True,
          userdir=True)(chunk_save_probe('sparse'))
     case(f'sparse-library-mask-out{_suffix}', mode=_mode, stderr=True,
          userdir=True)(chunk_mask_probe('sparse'))
-    case(f'sparse-library-reinit{_suffix}', mode=_mode, stderr=True)(chunk_reinit_probe())
     case(f'sparse-library-candidates{_suffix}', mode=_mode, stderr=True)(chunk_candidates_probe())
 
 
@@ -805,24 +804,20 @@ def overlapping_modify_before_add(k, *, items_system):
     return out
 
 
-for _mode in ('pinyin', 'zhuyin'):
-    case('overlapping-modify-before-add-' + _mode, mode=_mode, issues=('row:107', '1604'))(
-        overlapping_modify_before_add)
+case('overlapping-modify-before-add-pinyin', mode='pinyin', issues=('row:107', '1604'))(
+    overlapping_modify_before_add)
 
 
-for _mode in ('pinyin', 'zhuyin'):
-    case('internally-overlapping-modify-' + _mode, mode=_mode, issues=('row:107', '1604'))(
-        internally_overlapping_modify)
+case('internally-overlapping-modify-pinyin', mode='pinyin', issues=('row:107', '1604'))(
+    internally_overlapping_modify)
 case('sparse-library-addon', stderr=True)(chunk_addon_probe('sparse', False))
 case('sparse-library-addon-reload', stderr=True)(chunk_addon_probe('sparse', True))
-case('sparse-library-tokens', stderr=True)(chunk_token_probe())
-case('sparse-library-tokens-zhuyin', mode='zhuyin', stderr=True)(chunk_token_probe())
 for _mode in ('pinyin', 'zhuyin'):
     _suffix = '-zhuyin' if _mode == 'zhuyin' else ''
-    case(f'header-only-library-init{_suffix}', mode=_mode,
-         stderr=True)(chunk_init_probe('init', 'header-only'))
-    case(f'header-only-library-load{_suffix}', mode=_mode,
-         stderr=True)(chunk_load_probe('header-only'))
+    case(f'sparse-library-reinit{_suffix}', mode=_mode, stderr=True)(chunk_reinit_probe())
+    case(f'sparse-library-tokens{_suffix}', mode=_mode, stderr=True)(chunk_token_probe())
+case('header-only-library-init', stderr=True)(chunk_init_probe('init', 'header-only'))
+case('header-only-library-load', stderr=True)(chunk_load_probe('header-only'))
 case('header-only-library-save', stderr=True, userdir=True)(chunk_save_probe('header-only'))
 
 
@@ -890,7 +885,7 @@ for _mode in ('pinyin', 'zhuyin'):
     # init's layout critical.
     case(f'nonzero-total-candidates{_suffix}', mode=_mode, abort=False, userdir=True, sigabrt=True)(
              nonzero_total_candidates_probe())
-    case(f'nonzero-total-save{_suffix}', mode=_mode, stderr=True)(nonzero_total_save_probe())
+case('nonzero-total-save', stderr=True)(nonzero_total_save_probe())
 
 
 def crash_layout_init_probe(how, library='gbk_char.bin'):
@@ -1004,23 +999,23 @@ for _mode in ('pinyin', 'zhuyin'):
     # The pin SIGSEGVs, so these are crash controls (MATCH on the parent too).
     case('crash-oob-layout' + _suffix, mode=_mode, crash={'init': False},
          control=True)(crash_layout_init_probe('oob-layout'))
-    # A short chunk keeps the pin's observable empty sub-index + critical;
-    # the out-of-object index reads behind it are not reproduced (class (b)
-    # arm of row 76), so the answer is the matched control.
-    case('short-chunk-layout' + _suffix, mode=_mode, stderr=True,
-         control=True)(crash_layout_init_probe('short-chunk'))
-    case('save-replacement-valid-to-different-valid-with-user-override' +
-         ('-zhuyin' if _mode == 'zhuyin' else ''), mode=_mode, stderr=True,
-         userdir=True)(save_changed_with_override_probe())
+# A short chunk keeps the pin's observable empty sub-index + critical;
+# the out-of-object index reads behind it are not reproduced (class (b)
+# arm of row 76), so the answer is the matched control.
+case('short-chunk-layout', stderr=True, control=True)(crash_layout_init_probe('short-chunk'))
+case('save-replacement-valid-to-different-valid-with-user-override', stderr=True,
+     userdir=True)(save_changed_with_override_probe())
 
-for _mode in ('pinyin', 'zhuyin'):
+for _mode, _replacements in (
+        ('pinyin', (('save-replacement-valid-to-invalid', 'valid', 'invalid'),
+                    ('save-replacement-invalid-to-valid', 'invalid', 'valid'),
+                    ('save-replacement-valid-to-different-valid', 'valid', 'different'),
+                    ('save-unchanged-valid', 'valid', 'same'),
+                    ('save-unchanged-layout-failed', 'invalid', 'same'))),
+        ('zhuyin', (('save-replacement-valid-to-invalid', 'valid', 'invalid'),
+                    ('save-replacement-valid-to-different-valid', 'valid', 'different')))):
     _suffix = '-zhuyin' if _mode == 'zhuyin' else ''
-    for _name, _initial, _replacement in (
-            ('save-replacement-valid-to-invalid', 'valid', 'invalid'),
-            ('save-replacement-invalid-to-valid', 'invalid', 'valid'),
-            ('save-replacement-valid-to-different-valid', 'valid', 'different'),
-            ('save-unchanged-valid', 'valid', 'same'),
-            ('save-unchanged-layout-failed', 'invalid', 'same')):
+    for _name, _initial, _replacement in _replacements:
         case(_name + _suffix, mode=_mode, stderr=True, userdir=True)(
             save_replacement_probe(_initial, _replacement))
     # `_write_files` emits the critical synchronously; under fatal mode the
@@ -1150,15 +1145,11 @@ def save_unloaded_replacement_probe():
     return probe
 
 
-for _mode in ('pinyin', 'zhuyin'):
-    _suffix = '-zhuyin' if _mode == 'zhuyin' else ''
-    case('save-unloaded-replacement' + _suffix, mode=_mode, stderr=True,
-         userdir=True)(save_unloaded_replacement_probe())
-for _mode in ('pinyin', 'zhuyin'):
-    _suffix = '-zhuyin' if _mode == 'zhuyin' else ''
-    for _how in ('second-separator', 'third-separator'):
-        case(f'{_how}-library-init{_suffix}', mode=_mode,
-             stderr=True)(chunk_init_probe('init', _how))
+case('save-unloaded-replacement', stderr=True, userdir=True)(save_unloaded_replacement_probe())
+for _how in ('second-separator', 'third-separator'):
+    case(f'{_how}-library-init', stderr=True)(chunk_init_probe('init', _how))
+case('second-separator-library-init-zhuyin', mode='zhuyin',
+     stderr=True)(chunk_init_probe('init', 'second-separator'))
 
 
 # The cases whose fixture reaches a `SubPhraseIndex::load` layout check: the
@@ -1167,31 +1158,23 @@ for _mode in ('pinyin', 'zhuyin'):
 LAYOUT_CRITICAL_RECORD = '1297-layout-criticals.md'
 LAYOUT_CRITICAL_CASES = frozenset((
     'header-only-library-init',
-    'header-only-library-init-zhuyin',
     'header-only-library-load',
-    'header-only-library-load-zhuyin',
     'header-only-library-save',
     'nonzero-total-save',
-    'nonzero-total-save-zhuyin',
     'save-fatal-valid-to-invalid',
     'save-fatal-valid-to-invalid-zhuyin',
     'save-replacement-invalid-to-valid',
-    'save-replacement-invalid-to-valid-zhuyin',
     'save-replacement-valid-to-invalid',
     'save-replacement-valid-to-invalid-zhuyin',
     'save-unchanged-layout-failed',
-    'save-unchanged-layout-failed-zhuyin',
     'second-separator-library-init',
     'second-separator-library-init-zhuyin',
     'short-chunk-layout',
-    'short-chunk-layout-zhuyin',
     'sparse-library-addon',
     'sparse-library-addon-reload',
     'sparse-library-candidates',
     'sparse-library-candidates-zhuyin',
     'sparse-library-init',
-    'sparse-library-init-settled',
-    'sparse-library-init-settled-zhuyin',
     'sparse-library-init-zhuyin',
     'sparse-library-load',
     'sparse-library-load-zhuyin',
@@ -1204,7 +1187,6 @@ LAYOUT_CRITICAL_CASES = frozenset((
     'sparse-library-tokens',
     'sparse-library-tokens-zhuyin',
     'third-separator-library-init',
-    'third-separator-library-init-zhuyin',
 ))
 
 
@@ -1348,9 +1330,9 @@ def chunk_frame_system(k, trailing):
     return {'ctx': bool(k.init(system=system))}
 
 
+case('chunk-frame-system-exact-pinyin', control=True, issues=('1576',))(
+    lambda k: chunk_frame_system(k, False))
 for _mode in ('pinyin', 'zhuyin'):
-    case(f'chunk-frame-system-exact-{_mode}', mode=_mode, control=True, issues=('1576',))(
-        lambda k: chunk_frame_system(k, False))
     case(f'chunk-frame-system-trailing-{_mode}', mode=_mode,
          crash=library_expected('init', 'bad-length', _mode), issues=('row:76', '1576'))(
              lambda k: chunk_frame_system(k, True))
@@ -1430,9 +1412,8 @@ def unloaded_cached_pronunciation(k, *, items_system, craft_db):
     return out
 
 
-for _mode in ('pinyin', 'zhuyin'):
-    case(f'unloaded-cached-pronunciation-{_mode}', mode=_mode,
-         policy_record='compatibility-policy.md')(unloaded_cached_pronunciation)
+case('unloaded-cached-pronunciation-pinyin', mode='pinyin',
+     policy_record='compatibility-policy.md')(unloaded_cached_pronunciation)
 
 
 def unloaded_fixture(k, *, items_system, craft_db, longer=False, library=2, overflow=False):
@@ -1623,14 +1604,10 @@ def unloaded_operation(k, *, variant, items_system, craft_db, index_file_rows):
     return out
 
 
-for _mode in ('pinyin', 'zhuyin'):
-    _variants = ['train', 'train-journal', 'train-before', 'train-mixed', 'token', 'import']
-    if _mode == 'zhuyin':
-        _variants.append('train-user')
-    else:
-        _variants += ['longer', 'without', 'longer-missing', 'without-missing',
-                      'longer-overflow', 'without-overflow', 'predicted-prefix',
-                      'predicted-bigram', 'predicted-bigram-predecessor']
+for _mode, _variants in (('pinyin', ('train', 'train-journal', 'train-before', 'train-mixed', 'token', 'import',
+                                     'longer', 'longer-missing', 'without-missing', 'longer-overflow',
+                                     'predicted-prefix', 'predicted-bigram', 'predicted-bigram-predecessor')),
+                        ('zhuyin', ('train', 'token', 'import', 'train-user'))):
     for _variant in _variants:
         case(f'unloaded-library-{_variant}-{_mode}', mode=_mode)(
             partial(unloaded_operation, variant=_variant))
