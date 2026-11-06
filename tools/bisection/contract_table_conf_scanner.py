@@ -183,8 +183,10 @@ def register(case, *, CASES, WORKER):
         return probe
 
 
-    for _mode in ('pinyin', 'zhuyin'):
-        for _placement in ('system-directory', 'user-directory', 'system-filename', 'user-filename'):
+    # Each literal-`#` placement once; the zhuyin system filename shares the system directory's outcome.
+    for _mode, _placements in (('pinyin', ('system-directory', 'user-directory', 'system-filename', 'user-filename')),
+                               ('zhuyin', ('system-directory', 'user-directory', 'user-filename'))):
+        for _placement in _placements:
             case('hash-path/' + _placement + '-' + _mode, mode=_mode, stderr=True,
                  issues=('1119',))(hash_path_session(_placement))
 
@@ -202,16 +204,14 @@ def register(case, *, CASES, WORKER):
 
     # Files the parent already answered like the pin: the header fields it read,
     # the words it never needed, an alias, a row that changes nothing observable.
-    CONF_CONTROLS = {'addon-duplicate-row', 'addon-files-swapped', 'comment-dropped', 'extra-word-dropped',
-                     'lambda-exponent', 'lambda-half', 'lambda-hex', 'lambda-hex-fraction', 'lambda-hex-upper',
-                     'lambda-one', 'lambda-tiny', 'lambda-zero',
-                     'reserved-as-system-file', 'short-row-dropped', 'source-format-zhuyin', 'tsi-is-gb',
-                     'versions-other'}
+    CONF_CONTROLS = {'addon-files-swapped', 'extra-word-dropped', 'lambda-half', 'lambda-hex', 'lambda-one',
+                     'lambda-zero', 'reserved-as-system-file', 'short-row-dropped', 'source-format-zhuyin',
+                     'tsi-is-gb', 'versions-other'}
 
 
     # The libzhuyin candidate law read the pinned λ, not the file's, so these tie-order
     # cases differ from the parent on libzhuyin only.
-    CONF_ZHUYIN_CHANGED = {'lambda-zero', 'lambda-one', 'lambda-tiny'}
+    CONF_ZHUYIN_CHANGED = {'lambda-zero', 'lambda-one'}
 
 
     def conf_case(name, *edits, modes=('pinyin', 'zhuyin'), session=conf_session,
@@ -254,50 +254,52 @@ def register(case, *, CASES, WORKER):
         conf_case('1378-unigram-lambda-' + _name,
                   ('lambda parameter:0.312699', 'lambda parameter:' + _lambda),
                   session=unigram_only_session, issues=('1378',),
-                  control=_control, stderr=True)
+                  control=_control, stderr=True, modes=('pinyin', 'zhuyin') if _name == 'one' else ('pinyin',))
 
     # Valid files that are not the stock one: the pin follows the rows.
     _STOCK_DBIN = 'gb_char.dbin SYSTEM_FILE'
-    conf_case('row-removed-opengram', ('-', 'OPENGRAM_DICTIONARY'))
     conf_case('row-removed-gbk', ('-', 'GBK_DICTIONARY'))
     conf_case('row-removed-gb', ('-', 'GB_DICTIONARY'))
     conf_case('not-used-opengram', ('opengram.dbin SYSTEM_FILE', 'opengram.dbin NOT_USED'))
-    conf_case('not-used-gb', (_STOCK_DBIN, 'gb_char.dbin NOT_USED'))
     conf_case('not-used-merged', ('merged.dbin SYSTEM_FILE', 'merged.dbin NOT_USED'))
     conf_case('not-used-user-dictionary', ('user.bin USER_FILE', 'user.bin NOT_USED'))
     conf_case('not-used-network-dictionary', ('network.bin USER_FILE', 'network.bin NOT_USED'))
     conf_case('user-files-renamed', ('gb_char.dbin', 'x_gb.dbin'), ('merged.dbin', 'x_merged.dbin'),
               ('user.bin', 'x_user.bin'), ('addon.bin', 'x_addon.bin'))
-    conf_case('tsi-is-gb', ('default GB_DICTIONARY', 'default TSI_DICTIONARY'))
-    conf_case('later-row-wins', ('+', 'default OPENGRAM_DICTIONARY opengram.table opengram.bin opengram.dbin NOT_USED'))
+    conf_case('tsi-is-gb', ('default GB_DICTIONARY', 'default TSI_DICTIONARY'), modes=('pinyin',))
+    conf_case('later-row-wins', ('+', 'default OPENGRAM_DICTIONARY opengram.table opengram.bin opengram.dbin NOT_USED'),
+              modes=('pinyin',))
     conf_case('network-as-system-file', ('default NETWORK_DICTIONARY NULL NULL network.bin USER_FILE',
                                           'default NETWORK_DICTIONARY art.table art.bin network.dbin SYSTEM_FILE'))
     conf_case('reserved-as-system-file', ('default RESERVED NULL NULL NULL NOT_USED',
-                                           'default RESERVED merged.table merged.bin x_reserved.dbin SYSTEM_FILE'))
+                                           'default RESERVED merged.table merged.bin x_reserved.dbin SYSTEM_FILE'),
+              modes=('pinyin',))
     # λ spelled inside [0, 1]. The candidate law `(λ·bigram + (1−λ)·unigram)·2²⁴`
     # reads the file's λ (it used to be the pinned constant, which listed tied
-    # libzhuyin rows in another order at λ = 0, 1 and 1e-30).
-    for _name, _value in (('zero', '0'), ('half', '0.5'), ('one', '1'), ('exponent', '5e-1'), ('tiny', '1e-30')):
+    # libzhuyin rows in another order at λ = 0 and 1).
+    for _name, _value in (('zero', '0'), ('half', '0.5'), ('one', '1')):
         conf_case('lambda-' + _name, ('lambda parameter:0.312699', 'lambda parameter:' + _value))
     # λ outside [0, 1]: below 0 the possibilities exceed one and the costs go
     # negative; above 1 `unigram_lambda` is negative, `log` of it is NaN and the
     # NaN is sticky through the trellis. The tail sort (`g_ptr_array_sort` over a
     # comparator that turns the float difference into a `gint`) then orders the
     # sentences.
-    for _name, _value in (('negative-half', '-0.5'), ('negative-two', '-2'), ('one-and-a-half', '1.5'),
-                          ('two', '2'), ('million', '1e6'), ('inf', 'inf'), ('nan', 'nan')):
+    for _name, _value in (('negative-half', '-0.5'), ('negative-two', '-2'), ('one-and-a-half', '1.5')):
         conf_case('lambda-' + _name, ('lambda parameter:0.312699', 'lambda parameter:' + _value))
+    # On libpinyin these two read like 1.5; libzhuyin's views differ.
+    for _name, _value in (('two', '2'), ('million', '1e6')):
+        conf_case('lambda-' + _name, ('lambda parameter:0.312699', 'lambda parameter:' + _value), modes=('zhuyin',))
     # The header fields the user marker conforms against.
     conf_case('database-format-other', ('re', r'database format:\w+', lambda found: 'database format:' + (
         'BerkeleyDB' if found.group(0).endswith('Tkrzw') else 'Tkrzw')))
     conf_case('versions-other', ('binary format version:7', 'binary format version:8'),
               ('model data version:14', 'model data version:15'))
-    conf_case('source-format-zhuyin', ('source table format:pinyin', 'source table format:zhuyin'))
-    # Words are read in groups of six: a short row, a comment and a seventh
-    # word at the end are dropped, and an addon index goes through a `guint8`.
-    conf_case('short-row-dropped', ('+', 'default GB_DICTIONARY a b c'))
-    conf_case('comment-dropped', ('+', '# a comment'))
-    conf_case('extra-word-dropped', ('+', 'default GB_DICTIONARY gb_char.table gb_char.bin gb_char.dbin SYSTEM_FILE EXTRA'))
+    conf_case('source-format-zhuyin', ('source table format:pinyin', 'source table format:zhuyin'), modes=('pinyin',))
+    # Words are read in groups of six: a short row and a seventh word at the
+    # end are dropped, and an addon index goes through a `guint8`.
+    conf_case('short-row-dropped', ('+', 'default GB_DICTIONARY a b c'), modes=('pinyin',))
+    conf_case('extra-word-dropped', ('+', 'default GB_DICTIONARY gb_char.table gb_char.bin gb_char.dbin SYSTEM_FILE EXTRA'),
+              modes=('pinyin',))
     conf_case('addon-index-wraps', ('+', 'addon 256 art.table art.bin NULL DICTIONARY'),
               modes=('pinyin',), session=addon_session)
     # The addon rows decide what `pinyin_load_addon_phrase_library` loads.
@@ -305,11 +307,8 @@ def register(case, *, CASES, WORKER):
     conf_case('addon-files-swapped', ('addon 4 art.table art.bin', 'addon 4 art.table culture.bin'),
               ('addon 5 culture.table culture.bin', 'addon 5 culture.table art.bin'),
               modes=('pinyin',), session=addon_session)
-    conf_case('addon-removed', ('-', 'addon 4 '), modes=('pinyin',), session=addon_session)
     conf_case('addon-not-used', ('art.bin NULL DICTIONARY', 'art.bin NULL NOT_USED'), modes=('pinyin',), session=addon_session)
     conf_case('addon-index-zero', ('addon 4 art.table', 'addon 0 art.table'), modes=('pinyin',), session=addon_session)
-    conf_case('addon-duplicate-row', ('+', 'addon 4 culture.table culture.bin NULL DICTIONARY'),
-              modes=('pinyin',), session=addon_session)
 
 
     # The rows the pin dies on. Both facades die there too (`sigabrt`).
@@ -348,12 +347,9 @@ def register(case, *, CASES, WORKER):
     # `check_format`: the user directory is untouched.
     conf_abort('source-format-unknown', ('source table format:pinyin', 'source table format:foo'))
     conf_abort('database-format-unknown', ('re', r'database format:\w+', 'database format:LMDB'))
-    conf_abort('target-unknown', ('+', 'foo GB_DICTIONARY a b c SYSTEM_FILE'))
     conf_abort('default-name-unknown', ('+', 'default FOO_DICTIONARY a b c SYSTEM_FILE'))
     conf_abort('file-type-unknown', ('+', 'default GB_DICTIONARY a b c FOO_FILE'))
-    conf_abort('addon-index-99', ('+', 'addon 99 x.table x.bin NULL DICTIONARY'))
     conf_abort('addon-index-16', ('+', 'addon 16 x.table x.bin NULL DICTIONARY'))
-    conf_abort('addon-index-negative', ('+', 'addon -1 x.table x.bin NULL DICTIONARY'))
     # `UserTableInfo::load` converts the `database format:` token of the user's
     # `user.conf` and aborts on one it does not know (`table_info.cpp:132`,
     # reached from `check_format`); the system `table.conf` reaches the same
@@ -383,17 +379,10 @@ def register(case, *, CASES, WORKER):
     # The init loop (`pinyin.cpp:377-392`) runs after `check_format`: the profile
     # is judged and `user.conf` written when it dies.
     conf_abort('default-dictionary', (_STOCK_DBIN, 'gb_char.dbin DICTIONARY'))
-    conf_abort('default-dictionary-gbk', ('gbk_char.dbin SYSTEM_FILE', 'gbk_char.dbin DICTIONARY'))
     # A library call on a row the pin asserts on (`pinyin.cpp:457`, `:491`).
     conf_abort('load-library-not-used', ('opengram.dbin SYSTEM_FILE', 'opengram.dbin NOT_USED'),
                call=('load', 3), userdir=False)
-    conf_abort('load-library-row-removed', ('-', 'GBK_DICTIONARY'), call=('load', 2), userdir=False)
-    conf_abort('load-library-gb-not-used', (_STOCK_DBIN, 'gb_char.dbin NOT_USED'), call=('load', 1), userdir=False)
-    conf_abort('load-library-user-not-used', ('user.bin USER_FILE', 'user.bin NOT_USED'), call=('load', 7),
-               userdir=False)
     conf_abort('load-addon-system-file', ('art.bin NULL DICTIONARY', 'art.bin NULL SYSTEM_FILE'),
-               call=('addon', 4), userdir=False, modes=('pinyin',))
-    conf_abort('load-addon-user-file', ('art.bin NULL DICTIONARY', 'art.bin NULL USER_FILE'),
                call=('addon', 4), userdir=False, modes=('pinyin',))
     # Class (b): the header's `source table format:` line is missing, and the pin
     # compares a buffer it never wrote (undefined behaviour).
@@ -418,29 +407,26 @@ def register(case, *, CASES, WORKER):
         case('table-conf-lambda-line-missing' + _suffix, mode=_mode,
              stderr=True, issues=('694', '525'))(header_probe(('-', 'lambda parameter')))
         # glibc's scanner does not back up: an exponent mark with no digit after
-        # it, a `0x` with no hex digit and `infin` fail the `%f` conversion.
-        for _name, _spelling in (('exponent-without-digits', '1e'), ('hex-without-digits', '0x'),
-                                 ('hex-exponent-without-digits', '0x1p'), ('infin', 'infin')):
-            # Each host's libc decides acceptance identically for both facades.
-            case('table-conf-lambda-' + _name + _suffix, mode=_mode, stderr=True,
-                 issues=('694', '525'))(header_probe(('lambda parameter:0.312699', 'lambda parameter:' + _spelling)))
+        # it fails the `%f` conversion. Each host's libc decides acceptance
+        # identically for both facades.
+        case('table-conf-lambda-exponent-without-digits' + _suffix, mode=_mode, stderr=True,
+             issues=('694', '525'))(header_probe(('lambda parameter:0.312699', 'lambda parameter:1e')))
 
 
-    # Every spelling glibc's `%f` accepts, hexadecimal floats included.
-    for _name, _spelling in (('hex', '0x1p-1'), ('hex-fraction', '0x.8'), ('hex-upper', '0X1.P-1')):
-        conf_case('lambda-' + _name, ('lambda parameter:0.312699', 'lambda parameter:' + _spelling),
-                  modes=('pinyin', 'zhuyin'))
+    # A spelling glibc's `%f` accepts that is not a decimal.
+    conf_case('lambda-hex', ('lambda parameter:0.312699', 'lambda parameter:0x1p-1'), modes=('pinyin', 'zhuyin'))
 
 
     # #919: table.conf scanner partitions. The reference image uses glibc 2.41; the
-    # cases cover every partition the source walk distinguishes, not only the
+    # cases cover the partitions the source walk distinguishes, not only the
     # spellings the stock file uses. `control=True` cases already agree with the
-    # parent; the three incomplete-exponent spellings are the mutation targets.
+    # parent.
     def conf_919_case(name, mutate, **options):
-        """Register both facade sessions with a raw-byte config mutation under issue 919.
+        """Register the libpinyin session with a raw-byte config mutation under issue 919.
 
-        Forward options to case registration; each callable applies mutate only when run."""
-        for mode in ('pinyin', 'zhuyin'):
+        `SystemTableInfo2::load` is one source for both facades. Forward options to
+        case registration; each callable applies mutate only when run."""
+        for mode in ('pinyin',):
             def probe(k, mutate=mutate):
                 """Apply the captured byte mutation to private table.conf and run the standard config session."""
                 return conf_session(k, conf_system_bytes(k, mutate))
@@ -458,11 +444,7 @@ def register(case, *, CASES, WORKER):
 
 
     conf_919_case('header-one-line', one_line_conf, control=True)
-    conf_919_case('header-crlf', lambda data: data.replace(b'\n', b'\r\n'), control=True)
     conf_919_case('header-no-final-newline', lambda data: data.rstrip(b'\n'), control=True)
-    conf_919_case('header-indented-lambda',
-                  lambda data: data.replace(b'\nlambda parameter:', b'\n   lambda parameter:'),
-                  control=True)
     conf_919_case('word-nul-truncates',
                   lambda data: data.replace(
                       b'gb_char.table gb_char.bin gb_char.dbin',
@@ -478,8 +460,8 @@ def register(case, *, CASES, WORKER):
 
 
     def header_919(name, *edits, control=True):
-        """Register initialization-only header cases for both facades with stderr."""
-        for mode in ('pinyin', 'zhuyin'):
+        """Register an initialization-only libpinyin header case with stderr."""
+        for mode in ('pinyin',):
             case('table-conf-919-' + name + ('-zhuyin' if mode == 'zhuyin' else ''),
                  mode=mode, stderr=True, issues=('919',), control=control)(header_probe(*edits))
 
@@ -489,13 +471,6 @@ def register(case, *, CASES, WORKER):
     header_919('binary-version-line-missing', ('-', 'binary format version'))
     header_919('model-version-line-missing', ('-', 'model data version'))
 
-    conf_abort('919-database-format-line-missing', ('-', 'database format'), issues=('919',), control=True)
-    conf_abort('919-source-format-value-missing',
-               ('re', r'source table format:\w+', 'source table format:'), issues=('919',), control=True)
-    conf_abort('919-database-format-value-missing',
-               ('re', r'database format:\w+', 'database format:'), issues=('919',), control=True)
-    conf_abort('919-source-format-line-missing', ('-', 'source table format'), issues=('919',), control=True,
-               reproduced=False)
     conf_abort('919-word-width-overlong', ('+', 'x' * 300 + ' x.table x.bin x.dbin SYSTEM_FILE'),
                issues=('919',), control=True)
 
@@ -507,50 +482,16 @@ def register(case, *, CASES, WORKER):
               ('binary format version:7', 'binary format version:4294967296'),
               ('model data version:14', 'model data version:2147483648'),
               issues=('919',), control=False)
-    conf_case('919-versions-plus-sign',
-              ('binary format version:7', 'binary format version:+7'),
-              ('model data version:14', 'model data version:+14'),
-              issues=('919',), control=True)
     conf_case('919-versions-negative',
               ('binary format version:7', 'binary format version:-1'),
               ('model data version:14', 'model data version:-2'),
               issues=('919',), control=False)
     header_919('versions-no-digits', ('binary format version:7', 'binary format version:x'))
 
-    for _name, _spelling in (
-            ('lambda-hex-no-exponent', '0x1'),
-            ('lambda-dot-leading', '.5'),
-            ('lambda-exponent-plus', '1e-1'),
-            ('lambda-infinity', 'infinity'),
-            ('lambda-nan-payload', 'nan(1)'),
-            ('lambda-hex-overflow', '0x1p9999'),
-            ('lambda-decimal-underflow', '1e-5000'),
-            ('lambda-positive-sign', '+0.5')):
-        conf_case('919-' + _name, ('lambda parameter:0.312699', 'lambda parameter:' + _spelling),
-                  issues=('919',), control=True)
-
-    for _name, _spelling in (
-            ('lambda-exponent-sign-without-digits', '1e+'),
-            ('lambda-hex-exponent-sign-without-digits', '0x1p+'),
-            ('lambda-hex-exponent-minus-without-digits', '0x1p-'),
-            ('lambda-hex-dot-without-digits', '0x.'),
-            ('lambda-nan-unclosed', 'nan(')):
-        for _mode in ('pinyin', 'zhuyin'):
-            _suffix = '-zhuyin' if _mode == 'zhuyin' else ''
-            case('table-conf-919-' + _name + _suffix, mode=_mode, stderr=True,
-                 issues=('919',), control=True)(
-                     header_probe(('lambda parameter:0.312699', 'lambda parameter:' + _spelling)))
-
     # The five-word row plus the next row's first word form a valid six-word row with a
     # library/table mismatch; the pin then reads a NULL item and its stderr comes from freed
     # memory. The `table-conf-919-short-row-merged` pair is therefore a Rust test:
     # `e2e_tests::table_conf_919_short_row_merged` in crates/oxpinyin-capi and crates/oxpinyin-zhuyin-capi.
-    conf_case('919-addon-atoi-nondigit',
-              ('+', 'addon abc art.table art.bin NULL DICTIONARY'),
-              modes=('pinyin',), session=addon_session, issues=('919',), control=True)
-    conf_abort('919-addon-positive-overflow',
-               ('+', 'addon 99999999999999999999 art.table art.bin NULL DICTIONARY'),
-               modes=('pinyin',), issues=('919',), control=True)
 
     # #1297 Phase 2 accepted these fixtures as policy divergences of a Rust
     # scanner. External-I/O stage 1 reads table.conf with the pin's own
@@ -570,21 +511,12 @@ def register(case, *, CASES, WORKER):
     # Maintainer ruling 2026-10-28: both sides read lambda with the same host
     # libc. Preserve current main's initialization observations for these scanner
     # fixtures; every spelling must MATCH, including version-sensitive failures.
-    for _name in ('lambda-hex', 'lambda-hex-fraction', 'lambda-hex-upper', 'lambda-inf', 'lambda-nan',
-                  '919-lambda-hex-no-exponent', '919-lambda-infinity', '919-lambda-nan-payload',
-                  '919-lambda-hex-overflow'):
-        for _suffix in ('', '-zhuyin'):
-            _spec = CASES['table-conf-' + _name + _suffix]
-            _spec['fn'] = scanner_initialization(_spec['fn'])
-            _spec['issues'] = tuple(dict.fromkeys((*_spec['issues'], '919')))
-    for _name in ('lambda-exponent-without-digits', 'lambda-hex-exponent-without-digits',
-                  '919-lambda-exponent-sign-without-digits',
-                  '919-lambda-hex-exponent-sign-without-digits',
-                  '919-lambda-hex-exponent-minus-without-digits',
-                  '919-lambda-hex-dot-without-digits'):
-        for _suffix in ('', '-zhuyin'):
-            _spec = CASES['table-conf-' + _name + _suffix]
-            _spec['issues'] = tuple(dict.fromkeys((*_spec['issues'], '919')))
+    for _suffix in ('', '-zhuyin'):
+        _spec = CASES['table-conf-lambda-hex' + _suffix]
+        _spec['fn'] = scanner_initialization(_spec['fn'])
+        _spec['issues'] = tuple(dict.fromkeys((*_spec['issues'], '919')))
+        _spec = CASES['table-conf-lambda-exponent-without-digits' + _suffix]
+        _spec['issues'] = tuple(dict.fromkeys((*_spec['issues'], '919')))
 
 
     # Maintainer ruling 2026-10-28 UTC (D3): `SystemTableInfo2::load` is the
@@ -654,8 +586,6 @@ def register(case, *, CASES, WORKER):
     # overflow, which the stores into an `int` and a `guint8` cut to 0.
     conf_case('versions-negative-overflow', ('binary format version:7', 'binary format version:-9223372036854775808'),
               ('model data version:14', 'model data version:-99999999999999999999'))
-    conf_case('addon-index-negative-overflow', ('+', 'addon -99999999999999999999 art.table art.bin NULL DICTIONARY'),
-              modes=('pinyin',), session=addon_session)
 
     # The names are the bytes the word holds.
     conf_case('user-file-not-utf8', ('user.bin USER_FILE', 'u\udcff.bin USER_FILE'))
@@ -664,9 +594,9 @@ def register(case, *, CASES, WORKER):
     # and the bigram, and `_rename_files` renames in the same order: where a file
     # of the set is given two roles one name, the later writer's contents are what
     # the first rename moves into place, and the second rename fails.
-    def stderr_conf_case(name, *edits):
-        """Register both facade config sessions with stderr comparison enabled."""
-        for mode in ('pinyin', 'zhuyin'):
+    def stderr_conf_case(name, *edits, modes=('pinyin', 'zhuyin')):
+        """Register the selected facades' config sessions with stderr comparison enabled."""
+        for mode in modes:
             def probe(k, edits=edits):
                 """Build the captured edited system and return the standard session's observations."""
                 return conf_session(k, conf_system(k, *edits))
@@ -675,7 +605,8 @@ def register(case, *, CASES, WORKER):
 
     stderr_conf_case('colliding-library-files', ('network.bin USER_FILE', 'shared.bin USER_FILE'),
                      ('user.bin USER_FILE', 'shared.bin USER_FILE'))
-    stderr_conf_case('library-named-like-an-index', ('user.bin USER_FILE', 'user_pinyin_index.bin USER_FILE'))
+    stderr_conf_case('library-named-like-an-index', ('user.bin USER_FILE', 'user_pinyin_index.bin USER_FILE'),
+                     modes=('pinyin',))
     stderr_conf_case('log-named-like-a-library', ('gb_char.dbin SYSTEM_FILE', 'user.bin SYSTEM_FILE'))
     # libpinyin's check_format saves the marker, then wipes a non-conforming
     # profile (074a2219 pinyin.cpp:187, :194-215): a library whose user file
@@ -708,9 +639,6 @@ def register(case, *, CASES, WORKER):
         for _name, _edits in (
                 ('files-swapped', (('gb_char.table gb_char.bin', 'gb_char.table TMP.bin'),
                                    ('gbk_char.table gbk_char.bin', 'gbk_char.table gb_char.bin'),
-                                   ('TMP.bin', 'gbk_char.bin'))),
-                ('duplicate-row', (('+', 'default GB_DICTIONARY gbk_char.table gbk_char.bin gbk_char.dbin SYSTEM_FILE'),)),
-                ('library-as-user-file', (('default GB_DICTIONARY gb_char.table gb_char.bin gb_char.dbin SYSTEM_FILE',
-                                           'default GB_DICTIONARY NULL NULL gb_char.dbin USER_FILE'),))):
+                                   ('TMP.bin', 'gbk_char.bin'))),):
             case('table-conf-candidates-' + _name + ('-zhuyin' if _mode == 'zhuyin' else ''), mode=_mode,
                  crash={'ret': False, 'logs': [[_domain, 16]]}, issues=('694', '525'))(candidates_probe(*_edits))

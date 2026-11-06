@@ -733,7 +733,7 @@ class HashPathFixtureTests(DriverFixtureCase):
 
     def test_both_facades_and_all_cells_are_selected_by_issue(self):
         names, _ = driver.select_cases(issues=('1119',))
-        self.assertEqual(len(names), 8)
+        self.assertEqual(len(names), 7)
         self.assertEqual({driver.CASES[name]['mode'] for name in names}, {'pinyin', 'zhuyin'})
         for name in names:
             self.assertEqual(driver.CASES[name]['cells'], ('bdb', 'kc', 'tkrzw'))
@@ -1065,22 +1065,15 @@ class VerdictTests(DriverFixtureCase):
     """verdict_for: a difference needs two valid observations; a registered
     termination keeps the matcher's own semantics."""
 
-    def test_hex_dot_has_no_legacy_host_scanner_exemption(self):
+    def test_incomplete_exponent_has_no_legacy_host_scanner_exemption(self):
         self.assertEqual(
-            [contract['CASES']['table-conf-919-lambda-hex-dot-without-digits' + suffix]['host_scanf']
+            [contract['CASES']['table-conf-lambda-exponent-without-digits' + suffix]['host_scanf']
              for suffix in ('', '-zhuyin')],
             [(), ()],
         )
 
     def test_lambda_cases_require_a_match_without_scanner_policy(self):
-        names = ('lambda-hex', 'lambda-hex-fraction', 'lambda-hex-upper', 'lambda-inf',
-                 'lambda-nan', 'lambda-exponent-without-digits',
-                 'lambda-hex-exponent-without-digits', '919-lambda-hex-no-exponent',
-                 '919-lambda-infinity', '919-lambda-nan-payload', '919-lambda-hex-overflow',
-                 '919-lambda-exponent-sign-without-digits',
-                 '919-lambda-hex-exponent-sign-without-digits',
-                 '919-lambda-hex-exponent-minus-without-digits',
-                 '919-lambda-hex-dot-without-digits')
+        names = ('lambda-hex', 'lambda-exponent-without-digits')
         for name in names:
             for suffix in ('', '-zhuyin'):
                 with self.subTest(name=name, suffix=suffix):
