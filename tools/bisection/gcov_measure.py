@@ -583,7 +583,7 @@ def declared_residuals(root=REPO):
     """The six §12 shared-comparison residual inputs, read from the same
     membership source and with the same anchors as the Rust gate
     (`declared_sentence_residuals` in
-    crates/pinyin-oracle/tests/sentence_surface_parity.rs); no second list."""
+    crates/oxpinyin-runtime/tests/sentence_surface_parity.rs); no second list."""
     doc = (root / 'docs/findings/sentence-surface.md').read_text()
     anchors = ('\n## 12. ', 'Only the following six shared-comparison rows are class (a), as ruled.',
                '| Input | Pin deciding f32 bits | Subject native costs |\n')

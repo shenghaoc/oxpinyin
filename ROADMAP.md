@@ -15,7 +15,7 @@ Crate roles: `docs/architecture.md`.
 | Stage | Goal |
 |---|---|
 | **0** | Scaffold, pin, SPECs/fixtures (complete) |
-| **1** | Exact-output parity with the pin-built libpinyin oracle (differential testing) — complete: candidate surface bit-identical on all 10,190 corpus rows (`docs/testing/corpus-tail.md`); the sentence-trellis float band stays the frozen exception (row 11) |
+| **1** | Exact-output parity with the pin-built libpinyin oracle (differential testing) — complete: candidate surface bit-identical on all 10,190 corpus rows (`docs/testing/corpus-tail.md`; gate: `oxpinyin-runtime`'s `candidate_surface`); the sentence-trellis float band stays the frozen exception (row 11) |
 | **2** | **Current.** Bug-for-bug compatibility with the pin across the whole exported ABI and the user-store surfaces, defects included, with internal improvements (ruling 2026-10-14 UTC). Behaviour is derived by reading the pin's source, then its disassembly — never by running experiments. Performance, memory, safety and architecture work is allowed when output, files on disk and the ABI do not change; oxpinyin may be faster or smaller than the pin by any amount. Floor: never worse than the pin on both time and space (axis L, #757). See the [stage rules](docs/source-policy.md#stages). Spec: `docs/specs/bug-for-bug/` |
 | **3** | Opt-in departures from the pin: for example a new language model (trigram/KN), typo edges, own data, or an incompatible data format. Each departure sits behind an opt-in cargo feature, off by default; the default build stays bug-for-bug. A build that breaks the ABI or the data formats does not claim libpinyin's binary identity. After Stage 2. Spec: `docs/specs/stage3-departures/` |
 
@@ -82,7 +82,7 @@ landed 2026-09-09 as the backend's native user files (maintainer ruling
 | ID | Focus | Crate(s) |
 |---|---|---|
 | W1 | Types, parser, correction flags | oxpinyin-core |
-| W2 | Oracle FFI + differential runner | pinyin-oracle |
+| W2 | Oracle FFI + differential runner | pinyin-oracle (deleted 2026-11-06 UTC) |
 | W3 | Table loading | oxpinyin-data |
 | W4 | SegmentGraph, k-best, engine session | oxpinyin-core, oxpinyin-engine |
 | W5 | C ABI (began as the consumer subset; the full 79-symbol surface closed under W8) | oxpinyin-capi |
@@ -101,9 +101,9 @@ Crates outside the Stage 1 table (roles in `docs/architecture.md`):
 `oxpinyin-facade` and `oxpinyin-runtime` (the shared orchestration and
 assembly layers under both C ABIs),
 `oxpinyin-chewing` (the excisable zhuyin layer, D6 seam:
-`docs/findings/chewing-crate-seam.md`), `oxpinyin-zhuyin-capi`
+`docs/findings/chewing-crate-seam.md`), and `oxpinyin-zhuyin-capi`
 (`libzhuyin.so.15`, upstream's `--enable-libzhuyin` counterpart, 52
-symbols), and `oxpinyin-testsupport` (dev-only).
+symbols).
 
 **Stage 1 status (2026-09-12).** *Implementation:* complete — every
 workstream above has landed or closed (W9, W10, W11, W13, W14 and W15

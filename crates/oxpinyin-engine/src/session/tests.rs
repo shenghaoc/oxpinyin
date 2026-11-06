@@ -3446,7 +3446,7 @@ fn diagnostic_403_scan_matrix_fanout() {
     use oxpinyin_core::{Completeness, OptionBits, SyllableKey};
 
     // The 20-line RSS-report corpus, order preserved (matches
-    // `crates/pinyin-oracle/benches/support/mod.rs::CYCLE_INPUTS`).
+    // `crates/oxpinyin-runtime/benches/support/mod.rs::CYCLE_INPUTS`).
     const CYCLE_INPUTS: &[&str] = &[
         "ni",
         "wo",

@@ -38,8 +38,7 @@ Debian build dependencies by mode and backend are listed in
 [`tools/oracle/dependencies.json`](../../tools/oracle/dependencies.json). The reference image is libraries-only; a full build needs the `full` dependency group. The parity oracle uses the [reference cell](backends.md)
 (maintainer decision 2026-10-30 UTC: tkrzw is maintained upstream; it supersedes the 2026-09-27 UTC ruling that
 made Berkeley DB the default); differentials pick the cell with
-`PINYIN_ORACLE_DBM`. The capture goldens and the `pinyin-oracle` crate's
-tests use the tkrzw cell too.
+`PINYIN_ORACLE_DBM`. The capture goldens use the tkrzw cell too.
 Add `--enable-libzhuyin` to also build libzhuyin, which the zhuyin, candidate-assembly, two-context and open-counter differentials need.
 
 ```sh
@@ -215,7 +214,7 @@ export PINYIN_EXPORT_DIR=/tmp/oxpinyin-export
 ```
 
 `/tmp/oxpinyin-export` is the default every harness reads
-(`oxpinyin_testsupport::model_cache::DEFAULT_EXPORT_DIR`).
+(`PINYIN_EXPORT_DIR` overrides it).
 
 ## 4. Run the differentials
 
@@ -406,9 +405,8 @@ hold them: see `e2e_tests` in `crates/oxpinyin-capi` and
 `pinyin_train(instance, index)` trains the n-best result `index` and
 returns false unless `pinyin_guess_sentence` filled the n-best results
 first (`pinyin.cpp:2676` at the pin) — it does not consume the candidate
-list from `pinyin_guess_candidates`. `Session::train_top` in
-`pinyin-oracle` exists to make this impossible to get wrong; harness
-and bench authors call it rather than `pinyin_train` directly
+list from `pinyin_guess_candidates`. Harnesses and benches therefore reset,
+parse, check full consumption and guess the sentence before training row 0
 (see [verification](verification.md#procedure-specific-rules)).
 
 ### User-profile interchange

@@ -2,7 +2,7 @@
 //!
 //! Benches refuse to start without the exported tables and the fetched
 //! model20 cache: fixture-scale numbers would not describe the pinned
-//! construction. They do not assert the 10190-class candidate pins.
+//! construction. They do not assert the candidate surface.
 
 #![allow(dead_code)]
 
@@ -41,9 +41,55 @@ pub const PIN_REF: &str = concat!(
     "+dbm-tkrzw"
 );
 
-/// Pinned SHA-256 of `model20.text.tar.gz`, re-exported from the canonical
-/// model20-cache locator (`oxpinyin_testsupport::model_cache`).
-pub use oxpinyin_testsupport::model_cache::{MODEL20_SHA256, export_dir, missing_model_files};
+/// Pinned SHA-256 of `model20.text.tar.gz`; `tools/dev/model.py` holds the same pin.
+pub const MODEL20_SHA256: &str = "59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155";
+
+/// The eighteen files the pinned archive expands to; in lockstep with `tools/dev/model.py`.
+const EXPECTED_MODEL_FILES: &[&str] = &[
+    "art.table",
+    "culture.table",
+    "economy.table",
+    "gb_char.table",
+    "gbk_char.table",
+    "geology.table",
+    "history.table",
+    "interpolation2.text",
+    "life.table",
+    "merged.table",
+    "nature.table",
+    "opengram.table",
+    "people.table",
+    "punct.table",
+    "science.table",
+    "society.table",
+    "sport.table",
+    "technology.table",
+];
+
+/// Expected model files that are not present under `dir`.
+pub fn missing_model_files(dir: &Path) -> Vec<&'static str> {
+    EXPECTED_MODEL_FILES
+        .iter()
+        .copied()
+        .filter(|name| !dir.join(name).is_file())
+        .collect()
+}
+
+/// `$PINYIN_EXPORT_DIR`, else `/tmp/oxpinyin-export`: a system data directory for the
+/// compiled-in backend. Panics when it lacks one of libpinyin's three DBMs.
+pub fn export_dir() -> PathBuf {
+    let dir = std::env::var_os("PINYIN_EXPORT_DIR")
+        .map_or_else(|| PathBuf::from("/tmp/oxpinyin-export"), PathBuf::from);
+    for name in ["pinyin_index.bin", "phrase_index.bin", "bigram.db"] {
+        assert!(
+            dir.join(name).is_file(),
+            "system data missing at {} ({name}); point PINYIN_EXPORT_DIR at a \
+             libpinyin data dir of the same backend",
+            dir.display()
+        );
+    }
+    dir
+}
 
 /// W8 parity-profile option word: `IS_PINYIN | PINYIN_INCOMPLETE |
 /// USE_DIVIDED_TABLE | USE_RESPLIT_TABLE` (`0x18a`).

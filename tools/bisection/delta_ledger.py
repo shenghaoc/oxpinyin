@@ -572,7 +572,7 @@ non-MATCH verdict.
 Build Rust facades with `cargo build --locked -p oxpinyin-capi -p oxpinyin-zhuyin-capi
 --no-default-features --features {spec["feature"]}`; build the two requested test
 binaries in `$J_{env}_RUST_TARGET/j-tests` with `cargo test --locked --profile dev
---config profile.dev.opt-level=1 -p pinyin-oracle -p oxpinyin-runtime
+--config profile.dev.opt-level=1 -p oxpinyin-runtime
 --no-default-features --features {spec["feature"]} --test sentence_surface_parity
 --test user_dir_round_trip --no-run`, setting `CARGO_TARGET_DIR="$J_{env}_RUST_TARGET/j-tests"`
 for this test build, and the separate `${env}_RUST_SURFACE_SO` with the same facade

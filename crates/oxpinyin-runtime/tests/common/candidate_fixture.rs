@@ -1,13 +1,67 @@
 //! The W4 structure capture and its candidate-only projection.
+#![allow(dead_code)]
 
 use std::collections::BTreeMap;
 use std::io;
 use std::path::Path;
 
-use crate::OracleCandidateType;
-
 /// The single committed candidate capture, relative to the repository root.
 pub const STRUCTURE_FIXTURE: &str = "fixtures/w4/oracle-candidate-structure.txt";
+
+/// A row's `lookup_candidate_type_t`, as the capture's `type` column names it.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum OracleCandidateType {
+    /// `NBEST_MATCH_CANDIDATE` — a sentence-decode (n-best) candidate.
+    NbestMatch,
+    /// `NORMAL_CANDIDATE` — a phrase-lookup candidate.
+    Normal,
+    /// `ZOMBIE_CANDIDATE`.
+    Zombie,
+    /// `PREDICTED_BIGRAM_CANDIDATE`.
+    PredictedBigram,
+    /// `PREDICTED_PREFIX_CANDIDATE`.
+    PredictedPrefix,
+    /// `ADDON_CANDIDATE`.
+    Addon,
+    /// `LONGER_CANDIDATE`.
+    Longer,
+    /// `PREDICTED_PUNCTUATION_CANDIDATE`.
+    PredictedPunctuation,
+}
+
+impl OracleCandidateType {
+    /// The frozen public enum **name**, as written to the fixture's `type`
+    /// column.
+    #[must_use]
+    pub const fn as_wire(self) -> &'static str {
+        match self {
+            Self::NbestMatch => "NBEST_MATCH_CANDIDATE",
+            Self::Normal => "NORMAL_CANDIDATE",
+            Self::Zombie => "ZOMBIE_CANDIDATE",
+            Self::PredictedBigram => "PREDICTED_BIGRAM_CANDIDATE",
+            Self::PredictedPrefix => "PREDICTED_PREFIX_CANDIDATE",
+            Self::Addon => "ADDON_CANDIDATE",
+            Self::Longer => "LONGER_CANDIDATE",
+            Self::PredictedPunctuation => "PREDICTED_PUNCTUATION_CANDIDATE",
+        }
+    }
+
+    /// Parses a frozen public enum name back to a variant, for fixture readers.
+    #[must_use]
+    pub fn from_wire(text: &str) -> Option<Self> {
+        Some(match text {
+            "NBEST_MATCH_CANDIDATE" => Self::NbestMatch,
+            "NORMAL_CANDIDATE" => Self::Normal,
+            "ZOMBIE_CANDIDATE" => Self::Zombie,
+            "PREDICTED_BIGRAM_CANDIDATE" => Self::PredictedBigram,
+            "PREDICTED_PREFIX_CANDIDATE" => Self::PredictedPrefix,
+            "ADDON_CANDIDATE" => Self::Addon,
+            "LONGER_CANDIDATE" => Self::Longer,
+            "PREDICTED_PUNCTUATION_CANDIDATE" => Self::PredictedPunctuation,
+            _ => return None,
+        })
+    }
+}
 
 /// One structure row, retaining the input verbatim and its captured rank.
 #[derive(Clone, Debug, Eq, PartialEq)]

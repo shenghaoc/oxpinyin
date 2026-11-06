@@ -348,7 +348,7 @@ ledger stays byte-identical; it reuses no compiler row set and does not repeat
 the unchanged behavioral suites. Build Rust facades with `cargo build --locked -p oxpinyin-capi
 -p oxpinyin-zhuyin-capi --no-default-features --features bdb`; build the two
 requested test binaries in `$J_BDB_RUST_TARGET/j-tests` with
-`cargo test --locked --profile dev --config profile.dev.opt-level=1 -p pinyin-oracle
+`cargo test --locked --profile dev --config profile.dev.opt-level=1
 -p oxpinyin-runtime --no-default-features --features bdb --test
 sentence_surface_parity --test user_dir_round_trip --no-run`, setting
 `CARGO_TARGET_DIR="$J_BDB_RUST_TARGET/j-tests"` for this test build. Test executables use an optimized development

@@ -20,7 +20,7 @@ Estimated costs below are rough additive deltas on a cached runner.
 cargo fmt --all --check                        # existing
 cargo fmt --manifest-path fuzz/Cargo.toml --all --check   # existing
 cargo clippy --locked --workspace --all-targets -- -D warnings   # existing, now with curated lints
-cargo clippy --locked -p oxpinyin-capi -p pinyin-oracle --all-targets -- -D warnings   # + FFI-crate lints
+cargo clippy --locked -p oxpinyin-capi --all-targets -- -D warnings   # + FFI-crate lints
 cargo nextest run --workspace (or cargo test)  # existing runner, nextest optional
 cargo test --doc                               # only if nextest adopted
 cargo deny --locked check                      # landed as the `deny` job: root default, root --all-features, fuzz graph

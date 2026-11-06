@@ -38,7 +38,7 @@
 #     test job decodes through; a fixture-only change
 #     is exactly the kind that must be re-proven (added 2026-09-06 — until
 #     then a fixture-only PR ran no CI at all)
-#   - tests/parity/** — the parity corpus pinyin-oracle's tests replay
+#   - tests/parity/** — the parity corpus the core and runtime tests replay
 #   - clippy.toml — the lint job's Clippy configuration (msrv)
 #   - .config/nextest.toml — the `ci` nextest profile the Linux test job
 #     runs under
@@ -353,6 +353,9 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --locked --no-deps --workspace
+      - name: Provide the pinned system data
+        if: needs.changes.outputs.reuse != 'true'
+        uses: ./.github/actions/contract-data
       - run: cargo nextest run --locked --profile ci --status-level skip --workspace
         if: needs.changes.outputs.reuse != 'true'
       # nextest does not run doctests; keep the same workspace selection.
@@ -430,7 +433,7 @@ jobs:
           rustup: 'true'
           cargo-deny: 'true'
       # Default-feature tree first, then the feature-gated dependency
-      # subtrees (tkrzw, oracle-ffi). --locked pins both root graphs
+      # subtrees (tkrzw). --locked pins both root graphs
       # to the committed Cargo.lock, which Dependabot maintains. The fuzz
       # workspace has its own lock (fuzz/Cargo.lock) and its own graph
       # (libfuzzer-sys plus workspace path deps). Dependabot's cargo

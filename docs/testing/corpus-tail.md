@@ -14,6 +14,8 @@ Class A closed 2026-08-22 — candidate residual is zero**
 > `sentence_surface_fixture_is_fresh` and
 > `sentence_surface_matches_the_declared_residual`; the pin moved to
 > `074a2219` on 2026-09-06.
+> `pinyin-oracle` was deleted on 2026-11-06 UTC, with the bins, tests and freshness
+> gates named here. The candidate gate is now `oxpinyin-runtime`'s `candidate_surface`.
 
 W12 is the corpus tail (`ROADMAP.md` W12): the undiagnosed parity gap
 against the pinned oracle at `0c5e80e`. This finding names the inputs

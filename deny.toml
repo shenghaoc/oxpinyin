@@ -3,8 +3,8 @@
 # cargo-audit; running both in CI would be redundant.
 
 [graph]
-# Audit the default build. Feature-gated dependency subtrees (tkrzw,
-# oracle-ffi) are re-checked by the second, --all-features CI invocation.
+# Audit the default build. Feature-gated dependency subtrees (tkrzw)
+# are re-checked by the second, --all-features CI invocation.
 all-features = false
 
 [advisories]
@@ -35,8 +35,8 @@ deny = [
   { crate = "cxx", wrappers = ["oxpinyin-store"] },
   { crate = "cxx-build", wrappers = ["cxx", "oxpinyin-store"] },
   { crate = "bindgen", wrappers = ["oxpinyin-store"] },
-  { crate = "oxpinyin-data", wrappers = ["oxpinyin-capi", "oxpinyin-facade", "oxpinyin-fuzz", "oxpinyin-runtime", "oxpinyin-training", "oxpinyin-user", "oxpinyin-utils", "oxpinyin-zhuyin-capi", "pinyin-oracle"] },
-  { crate = "oxpinyin-user", wrappers = ["oxpinyin-capi", "oxpinyin-facade", "oxpinyin-fuzz", "oxpinyin-runtime", "oxpinyin-utils", "oxpinyin-zhuyin-capi", "pinyin-oracle"] },
+  { crate = "oxpinyin-data", wrappers = ["oxpinyin-capi", "oxpinyin-facade", "oxpinyin-fuzz", "oxpinyin-runtime", "oxpinyin-training", "oxpinyin-user", "oxpinyin-utils", "oxpinyin-zhuyin-capi"] },
+  { crate = "oxpinyin-user", wrappers = ["oxpinyin-capi", "oxpinyin-facade", "oxpinyin-fuzz", "oxpinyin-runtime", "oxpinyin-utils", "oxpinyin-zhuyin-capi"] },
   { crate = "oxpinyin-kmm", wrappers = ["oxpinyin-utils"] },
   { crate = "oxpinyin-training", wrappers = ["oxpinyin-utils"] },
   { crate = "oxpinyin-runtime", wrappers = ["oxpinyin-capi", "oxpinyin-facade", "oxpinyin-utils", "oxpinyin-zhuyin-capi"] },
@@ -45,7 +45,6 @@ deny = [
   { crate = "oxpinyin-zhuyin-capi", wrappers = ["oxpinyin-utils"] },
   # Leaves: nothing may depend on them. The wrapper names the crate itself,
   # a dependency no crate can have, so any new dependent fails.
-  { crate = "pinyin-oracle", wrappers = ["pinyin-oracle"] },
   { crate = "oxpinyin-utils", wrappers = ["oxpinyin-utils"] },
   { crate = "oxpinyin-fuzz", wrappers = ["oxpinyin-fuzz"] },
 ]

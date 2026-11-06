@@ -217,6 +217,9 @@ they do not make the native interface execute a container or oracle check.
 The Windows recipes use PowerShell and preserve the child status explicitly.
 Their argument transport remains TODO (no Windows host).
 
+Run `just fetch-contract-data` once before a full test run: `oxpinyin-runtime`'s
+`candidate_surface` test reads the pinned system data it fetches, and fails without it.
+
 The native Rust test entry point uses cargo-nextest at or above the
 `nextest-version` in `.config/nextest.toml` ([profile inheritance](https://nexte.st/docs/configuration/#profile-inheritance)
 needs it); `just doctor` reports it. Install it with

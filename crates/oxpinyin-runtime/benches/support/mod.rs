@@ -14,9 +14,6 @@ use oxpinyin_data::{SystemDbm, SystemDictionary};
 pub type ReadModel<'a> =
     oxpinyin_data::BigramLanguageModel<&'a oxpinyin_data::PhraseLibraries, &'a BigramTables>;
 use oxpinyin_engine::{EmptyConfigSource, Session};
-// Canonical export-dir resolution, shared with the capi benches.
-pub use oxpinyin_testsupport::model_cache::export_dir;
-use pinyin_oracle::model_cache;
 
 /// Twenty committed-corpus lines spanning short, long, ambiguous,
 /// apostrophe, incomplete, and junk-adjacent inputs.
@@ -43,10 +40,78 @@ pub const CYCLE_INPUTS: &[&str] = &[
     "chuaipengdengzaimiu",
 ];
 
-/// Fetched model20 extraction; panics if the cache is absent.
+fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+/// `$PINYIN_EXPORT_DIR`, else `/tmp/oxpinyin-export`: a system data directory
+/// for the compiled-in backend. Panics when it lacks one of the three DBMs.
+pub fn export_dir() -> PathBuf {
+    let dir = std::env::var_os("PINYIN_EXPORT_DIR")
+        .map_or_else(|| PathBuf::from("/tmp/oxpinyin-export"), PathBuf::from);
+    for dbm in [
+        SystemDbm::PinyinIndex,
+        SystemDbm::PhraseIndex,
+        SystemDbm::Bigram,
+    ] {
+        let name = dbm.file_name();
+        assert!(
+            dir.join(&name).is_file(),
+            "system data missing at {} ({name}); point PINYIN_EXPORT_DIR at a \
+             libpinyin data dir of the same backend",
+            dir.display()
+        );
+    }
+    dir
+}
+
+/// Fetched model20 extraction: `$PINYIN_MODEL_DIR`, `$PINYIN_MODEL_CACHE/extracted`,
+/// `$CARGO_TARGET_DIR/model20/extracted`, then `target/model20/extracted`.
+/// Requires all eighteen model files. An invalid explicit directory is an error.
 pub fn model_dir() -> PathBuf {
-    model_cache::locate_model_dir()
-        .expect("PINYIN_MODEL_DIR / cache lookup")
+    let complete = |dir: &std::path::Path| {
+        // Inventory of the pinned model20 archive; keep with tools/dev/model.py.
+        [
+            "art.table",
+            "culture.table",
+            "economy.table",
+            "gb_char.table",
+            "gbk_char.table",
+            "geology.table",
+            "history.table",
+            "interpolation2.text",
+            "life.table",
+            "merged.table",
+            "nature.table",
+            "opengram.table",
+            "people.table",
+            "punct.table",
+            "science.table",
+            "society.table",
+            "sport.table",
+            "technology.table",
+        ]
+        .iter()
+        .all(|name| dir.join(name).is_file())
+    };
+    let env = |name| std::env::var_os(name).map(PathBuf::from);
+    if let Some(dir) = env("PINYIN_MODEL_DIR") {
+        assert!(
+            complete(&dir),
+            "PINYIN_MODEL_DIR is not a complete model20 directory: {}; run just fetch-model",
+            dir.display()
+        );
+        return dir;
+    }
+    let candidates = [
+        env("PINYIN_MODEL_CACHE").map(|cache| cache.join("extracted")),
+        env("CARGO_TARGET_DIR").map(|target| target.join("model20/extracted")),
+        Some(repo_root().join("target/model20/extracted")),
+    ];
+    candidates
+        .into_iter()
+        .flatten()
+        .find(|dir| complete(dir))
         .expect("model cache missing; run just fetch-model")
 }
 
@@ -170,18 +235,10 @@ where
     let _ = session.type_pinyin(input);
 }
 
-/// W2 parity inputs from the committed corpus.
-///
-/// Reads the committed stratum files directly instead of running
-/// `corpus::generate()`: the generator re-parses the syllable inventory to
-/// discover file names, and those allocations must not land in a profile
-/// that wraps the decode loop.
+/// W2 parity inputs from the committed corpus, one per line; empty lines are
+/// kept, because the empty input is a corpus member.
 pub fn load_w2_inputs() -> Vec<String> {
-    use pinyin_oracle::corpus;
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..");
-    let corpus_dir = root.join(corpus::CORPUS_DIR);
+    let corpus_dir = repo_root().join("tests/parity/corpus/inputs");
     let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&corpus_dir)
         .expect("corpus directory")
         .map(|entry| entry.expect("corpus entry").path())
@@ -190,7 +247,9 @@ pub fn load_w2_inputs() -> Vec<String> {
     let mut inputs = Vec::new();
     for file in files {
         let bytes = std::fs::read(&file).expect("stratum");
-        inputs.extend(corpus::Stratum::parse_file_bytes(&bytes));
+        inputs.extend(bytes.split_inclusive(|byte| *byte == b'\n').map(|line| {
+            String::from_utf8_lossy(line.strip_suffix(b"\n").unwrap_or(line)).into_owned()
+        }));
     }
     assert!(!inputs.is_empty(), "W2 corpus is empty");
     inputs

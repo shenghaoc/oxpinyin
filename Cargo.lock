@@ -707,7 +707,6 @@ dependencies = [
  "oxpinyin-facade",
  "oxpinyin-input",
  "oxpinyin-runtime",
- "oxpinyin-testsupport",
  "oxpinyin-user",
  "tempfile",
 ]
@@ -796,6 +795,8 @@ dependencies = [
 name = "oxpinyin-runtime"
 version = "0.1.0"
 dependencies = [
+ "criterion",
+ "dhat",
  "oxpinyin-core",
  "oxpinyin-data",
  "oxpinyin-engine",
@@ -815,10 +816,6 @@ dependencies = [
  "cxx-build",
  "system-deps",
 ]
-
-[[package]]
-name = "oxpinyin-testsupport"
-version = "0.1.0"
 
 [[package]]
 name = "oxpinyin-training"
@@ -956,21 +953,6 @@ name = "pin-project-lite"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
-
-[[package]]
-name = "pinyin-oracle"
-version = "0.1.0"
-dependencies = [
- "criterion",
- "dhat",
- "glib-sys",
- "oxpinyin-core",
- "oxpinyin-data",
- "oxpinyin-engine",
- "oxpinyin-testsupport",
- "oxpinyin-user",
- "tempfile",
-]
 
 [[package]]
 name = "pkg-config"

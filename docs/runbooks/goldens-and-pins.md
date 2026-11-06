@@ -9,23 +9,48 @@ differential, and a maintainer ruling recorded in the findings.
 | what | where | regenerate with |
 | --- | --- | --- |
 | the mini data set, per backend | `fixtures/w3/<ext>/` | `just w3-fixtures generate --model-dir <model20 extraction>` (`tools/dev/w3_fixtures.py`): the Python subset of the model20 text, then `oxpinyin-utils`' `gen_binary_files` / `import_interpolation` / `gen_unigram` / `gen_deleted_ngram` built for each backend. `just w3-fixtures check` regenerates into a temporary directory and compares records and chunk bytes with the committed tree; `fixtures/w3/README.md` has the details |
-| W4 oracle goldens (candidate structure, paths) | `fixtures/w4/oracle-*.txt` | the `pinyin-oracle` bins `oracle-candidate-structure` (~3 h, full corpus), `oracle-paths` (imports historical W2 logs; the comparator is retired), `oracle_sentence_surface` (~1 min; auto-discovered from `src/bin/`, so it has no `[[bin]]` entry); the ignored `*_fixture_is_fresh` tests re-derive and compare |
+| W4 oracle goldens (candidate structure, sentence surface, paths, tie order) | `fixtures/w4/oracle-*.txt` | no regenerator today, except the tie order (`contract_sentence_ties.py`); see [the next pin capture](#the-next-pin-capture). `oracle-paths.txt` came from W2 logs that no longer exist and stays frozen |
+| parity corpus inputs | `tests/parity/corpus/inputs/` | frozen input files; a change is a deliberate edit, with the digests in `tools/bisection/axis-c-replacement.json` updated with it |
 | trainer manifests and goldens | `fixtures/w9/` (`segmenter-han.txt`, `segmenter-ngseg.txt`, `counter-ngram.manifest`, `interpolation2.manifest`, `lambda-estimate.manifest`) | the ignored differential tests in counter, emitter, lambda and segment compare against these; regenerate with the pin tool the test names and commit only when it agrees |
 
 A missing golden is a test failure, never a skip (#373). Regenerate,
 diff, and commit the golden in the same change as the code that moved
 it, with the before/after numbers in the message.
 
+### The next pin capture
+
+The Rust capture programs were deleted on 2026-11-06 UTC, and Python is the
+capture side. Each of these needs a Python regenerator in the next pin capture,
+alongside the [user-profile interchange captures](oracle.md#user-profile-interchange)
+and the behaviours the live C drivers in `tools/bisection/` still cover alone.
+None of these regenerators exists yet:
+
+| capture | file |
+| --- | --- |
+| candidate structure | `fixtures/w4/oracle-candidate-structure.txt` |
+| sentence surface | `fixtures/w4/oracle-sentence-surface.txt` |
+| F-A | `fixtures/foundation/f-a.txt` |
+| F-C | `fixtures/foundation/f-c.txt` |
+| ZH | `fixtures/w4/oracle-zhuyin-parse.txt` |
+
+That capture's list also gains the six apostrophe inputs `'`, `''`, `'''`, `ni'`,
+`ni'!` and `ni'i`. The next capture will freeze them formally.
+`oracle-paths.txt` excludes all six, but core's `graph_paths` tests retain the
+deleted `live_sentinels` tests' recorded expectations as native regressions:
+apostrophe-only inputs consume every byte without key edges; the other three
+consume three bytes and admit `ni@0:2:complete` (the recorded pin segments were
+`ni@0:2:complete,<missing-pinyin>@2`). No new pin run was used.
+
 ## 2. The frozen parity numbers
 
-The candidate surface (top-1, top-5-set, prefix-10, absent, order-only)
-and the sentence-surface residual (491/396/390 of 496, re-frozen
-2026-09-04) are asserted by `pinyin-oracle`'s parity tests and recorded
-in `docs/findings/pin-refreeze-2026-08.md` and
+The candidate surface is asserted by `oxpinyin-runtime`'s `candidate_surface`
+test: all 97,442 captured rows over 10,037 inputs, identical to the pin. It reads
+the pinned libpinyin-data package (`just fetch-contract-data`). The sentence-surface
+residual (496 1-best, 492 distinct-set and 491 ordered of 500) is asserted by the
+ignored `sentence_surface_parity` test and recorded in
 `docs/findings/sentence-surface.md` §12. A change that moves any of them:
 
-1. Run the parity suite against the oracle (`oracle.md`) and capture the
-   new numbers.
+1. Run those tests and capture the new numbers.
 2. Classify the delta under `compatibility-policy.md`; a change toward
    the pin is a closure, a change away needs a class or a revert.
 3. Ask. The re-freeze is the maintainer's ruling, recorded as an

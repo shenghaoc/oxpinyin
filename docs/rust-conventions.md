@@ -78,7 +78,7 @@ Use the applicable test kinds:
 - Property tests with `proptest` for totality and determinism.
 - Fuzz tests with `cargo-fuzz`, from W1.
 - Hard-kill crash-path tests on all operating systems.
-- Linux-only differentials through `pinyin-oracle` against pinned libpinyin.
+- Differentials against frozen captures of pinned libpinyin.
 
 Derive behaviour from the pin's source as the [source policy](source-policy.md#stage-2) describes; a differential verifies it and never discovers it.
 Use `cargo fmt --check` and `clippy -D warnings`.

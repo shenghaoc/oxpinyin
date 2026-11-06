@@ -1,5 +1,5 @@
 # Fixtures in this repository are frozen artefacts, and three separate gates
-# depend on their exact bytes: the parity corpus is regenerated and compared
+# depend on their exact bytes: the parity corpus is compared with its digests
 # byte for byte, capture records are stamped with a SHA-256, and a golden line
 # is scanned for stray control bytes.
 #

@@ -100,7 +100,7 @@ matrix contains a zero key.
   bisection harness is a plain `dlopen` driver — see `tools/bisection/bisect.c`
   — and the failure reproduces on `main` independently of any oxpinyin change.
 - Same shape as the concurrency-only `zero_key != key` abort already noted
-  in `crates/pinyin-oracle/src/live.rs` (see `ORACLE_LOCK`), but a different
+  in the since-deleted oracle wrapper (`ORACLE_LOCK`), but a different
   trigger: this one fires under the single-threaded bisect driver.
 
 ## Scope
@@ -111,9 +111,9 @@ matrix contains a zero key.
 - Only the **optional differential form** (Mode 4 in `run-bisect.sh`, gated
   on the two positional arguments being present) exercises the oracle path
   that trips the assertion.
-- Parity coverage against the oracle is not lost: the routine differential
-  runs through `pinyin-oracle` (`crates/pinyin-oracle/src/live.rs`) under
-  `ORACLE_LOCK`, not through the bisect driver, and remains green.
+- At the time, the routine differential ran through `pinyin-oracle` under
+  `ORACLE_LOCK`, not through the bisect driver. That crate was deleted on
+  2026-11-06 UTC.
 
 ## Upstream status
 
