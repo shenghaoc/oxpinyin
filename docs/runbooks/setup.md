@@ -19,7 +19,8 @@ Every repository shell script requires Bash 5.0 or newer on Linux and macOS.
 `just doctor` reports the `bash` that `env bash` selects and fails below 5.0.
 Linux distributions provide it; the macOS section installs Homebrew's Bash and
 checks the selection. On Windows doctor reports Bash as not applicable and
-never fails on its version: native Windows recipes use PowerShell 7.
+never fails on its version. Native Windows recipes use pwsh with
+`-CommandWithArgs`; doctor checks its declared minimum.
 
 Rust's **toolchain** consists of the compiler and its tools. rustup installs
 and selects it; `rust-toolchain.toml` is the version/component authority.
@@ -615,11 +616,18 @@ This is native Windows Rust development, not Linux under WSL. Install Git
 and [rustup's MSVC prerequisites](https://rust-lang.github.io/rustup/installation/windows-msvc.html):
 Visual Studio Build Tools with **Desktop development with C++** and the
 Windows SDK. [Microsoft's Rust setup](https://learn.microsoft.com/en-us/windows/dev-environment/rust/setup)
-explains installation. Use a new **Developer PowerShell for VS** so the MSVC
-linker and SDK are on PATH. Install rustup with the official Windows installer
+explains installation. Cargo finds MSVC through the Visual Studio installer;
+MSVC does not need to be on PATH. Doctor uses the installer's fixed
+`vswhere.exe` location and requires the VC tools component.
+Install rustup with the official Windows installer
 if it is not already available.
 
-In Developer PowerShell:
+Use pwsh at or above the minimum in
+[pwsh-floor.txt](../../tools/dev/pwsh-floor.txt). Call just recipes from pwsh,
+including in a Developer PowerShell session. Windows PowerShell can change
+empty arguments and embedded quotes before just receives them.
+
+In pwsh:
 
 ```powershell
 New-Item -ItemType Directory -Force "$HOME/src" | Out-Null
@@ -661,6 +669,9 @@ put `DIR\lib\pkgconfig` on `PKG_CONFIG_PATH` and `DIR\bin` on `PATH`, and
 set `PKG_CONFIG` to a `pkgconf.exe` (for example from `vcpkg install
 pkgconf:x64-windows`). No local Windows storage run has been
 executed; CI is the evidence.
+
+The tkrzw recipe needs `sh` from Git for Windows for its unchanged
+`distro-probe.sh` check. Put Git for Windows' `usr\bin` on PATH for that session.
 
 The job also installs vcpkg's `glib` port, found through the same
 `PKG_CONFIG` and `PKG_CONFIG_PATH`, so it builds and tests

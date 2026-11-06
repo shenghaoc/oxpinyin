@@ -4,6 +4,7 @@ from pathlib import Path
 import json
 import re
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -142,7 +143,8 @@ class DoctorTests(unittest.TestCase):
                     doctor.check_python(numbers, level)
 
     def test_missing_uv_is_named(self):
-        with self.assertRaisesRegex(doctor.DoctorError, r'^missing uv 0\.13\.1 or newer;'):
+        with mock.patch.object(doctor, '_run', return_value=None), \
+                self.assertRaisesRegex(doctor.DoctorError, r'^missing uv 0\.13\.1 or newer;'):
             doctor.uv_version({'PATH': '/nonexistent'})
 
     def test_uv_minimum_version(self):
@@ -186,6 +188,7 @@ class DoctorTests(unittest.TestCase):
 # a version below the minimum, the minimum itself and a newer one. The output
 # shapes are the ones the tools print on the hosts this repository runs on.
 SAMPLES = {
+    'pwsh': ('PowerShell {}', '7.4.99', doctor.PWSH_MINIMUM, '7.6.1'),
     'bash': ('GNU bash, version {} (1)-release (x86_64-pc-linux-gnu)', '4.4.23', '5.0.0', '5.2.37'),
     'just': ('just {}', '1.58.9', '1.59.0', '1.61.2'),
     'cargo-nextest': ('cargo-nextest {} (60fa45f63 2026-08-04)', '0.9.114', '0.9.115', '0.10.0'),
@@ -271,6 +274,10 @@ class ToolMinimumTests(ToolCase):
             with self.subTest(tool=candidate.name), \
                     mock.patch.object(doctor.shutil, 'which', return_value=None), \
                     mock.patch.object(doctor, '_run') as run:
+                if candidate.required:
+                    with self.assertRaisesRegex(doctor.DoctorError, 'missing .*install:'):
+                        doctor.check_tool(candidate, {'PATH': '/tools'})
+                    continue
                 line = doctor.check_tool(candidate, {'PATH': '/tools'})
             test_support.assert_not_called(self, run)
             self.assertEqual(line, f'{candidate.name}: missing (requires {candidate.minimum} or later; '
@@ -288,7 +295,8 @@ class ToolMinimumTests(ToolCase):
     def test_linux_only_tools_are_skipped_elsewhere(self):
         linux_only = {candidate.name for candidate in doctor.TOOLS if candidate.platform == 'linux'}
         self.assertEqual(linux_only, {'GNU ld', 'gcov', 'valgrind'})
-        for platform_name, expected in (('darwin', set(SAMPLES) - linux_only), ('linux', set(SAMPLES))):
+        for platform_name, expected in (('darwin', set(SAMPLES) - linux_only - {'pwsh'}),
+                                        ('linux', set(SAMPLES) - {'pwsh'})):
             with self.subTest(platform=platform_name), \
                     mock.patch.object(doctor.sys, 'platform', platform_name), \
                     mock.patch.object(doctor.shutil, 'which', return_value=None):
@@ -327,7 +335,8 @@ class BashFloorTests(ToolCase):
                 raise doctor.DoctorError(failure)
             return f'{subject.name}: ok'
 
-        with mock.patch.object(doctor, 'check_tool', side_effect=fake_check):
+        with mock.patch.object(doctor.sys, 'platform', 'linux'), \
+                mock.patch.object(doctor, 'check_tool', side_effect=fake_check):
             lines, failures = doctor.tool_lines({'PATH': '/tools'})
         self.assertEqual(failures, [failure])
         self.assertIn(f'FAIL: {failure}', lines)
@@ -384,13 +393,14 @@ class AdvisoryToolTests(unittest.TestCase):
         self.assertIn(f'{line} (advisory)', lines)
 
 
-SEMVER_TOOLS = ('just', 'cargo-nextest', 'cargo-c', 'cargo-fuzz', 'cargo-llvm-cov')
+SEMVER_TOOLS = ('pwsh', 'just', 'cargo-nextest', 'cargo-c', 'cargo-fuzz', 'cargo-llvm-cov')
 
 
 def semver_line(subject, version):
     """The first line `<tool> --version` prints for VERSION. cargo-nextest adds a commit and a date."""
     trailer = ' (60fa45f63 2026-08-04)' if subject.name == 'cargo-nextest' else ''
-    return f'{subject.name} {version}{trailer}'
+    name = 'PowerShell' if subject.name == 'pwsh' else subject.name
+    return f'{name} {version}{trailer}'
 
 
 def numbers_of(version):
@@ -573,6 +583,10 @@ class MinimumsAgreeWithTheirOtherHomes(unittest.TestCase):
         self.assertIsNotNone(match)
         self.assertEqual(match.group(1), doctor.UV_MINIMUM)
 
+    def test_pwsh_floor_has_one_source(self):
+        self.assertEqual(read('tools/dev/pwsh-floor.txt').strip(), self.minimum('pwsh'))
+        self.assertIn('pwsh-floor.txt', read('docs/runbooks/setup.md'))
+
     def test_just_minimum_is_the_justfiles(self):
         match = re.search(r'^set minimum-version := "([\d.]+)"$', read('justfile'), re.M)
         self.assertIsNotNone(match)
@@ -599,6 +613,68 @@ class MinimumsAgreeWithTheirOtherHomes(unittest.TestCase):
         from tools.dev import provision
         self.assertIs(provision.doctor, doctor)
         self.assertIn("tool.name == 'valgrind'", read('tools/dev/provision.py'))
+
+
+class WindowsCompilerTests(unittest.TestCase):
+    def test_windows_reports_the_probe_shell_or_its_path_fix(self):
+        for shell in (None, 'C:/Git/usr/bin/sh.exe'):
+            with self.subTest(shell=shell), mock.patch.object(doctor.sys, 'platform', 'win32'), \
+                    mock.patch.object(doctor.shutil, 'which', side_effect=lambda name, **kwargs:
+                                      shell if name == 'sh' else None), \
+                    mock.patch.object(doctor, 'windows_compiler', return_value='MSVC installed'):
+                lines = doctor.host_lines({'PATH': 'session-path'})
+            expected = (f'tkrzw probe shell: sh at {shell}' if shell else
+                        "tkrzw probe shell: missing sh; put Git for Windows' usr\\bin on PATH")
+            self.assertIn(expected, lines)
+
+    def test_installer_finds_compiler_without_path(self):
+        for architecture, folder in (('AMD64', 'x64'), ('ARM64', 'arm64')):
+            with self.subTest(architecture=architecture), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                version = root / 'VC/Auxiliary/Build/Microsoft.VCToolsVersion.default.txt'
+                version.parent.mkdir(parents=True)
+                version.write_text('14.44.35207\n')
+                compiler = root / f'VC/Tools/MSVC/14.44.35207/bin/Host{folder}/{folder}/cl.exe'
+                compiler.parent.mkdir(parents=True)
+                compiler.touch()
+                env = {'ProgramFiles(x86)': str(root / 'Program Files (x86)'), 'PATH': ''}
+                with mock.patch.object(doctor, '_run', return_value=completed(str(root))) as run, \
+                        mock.patch.object(doctor.platform, 'machine', return_value=architecture):
+                    line = doctor.windows_compiler(env)
+                self.assertEqual(line, f'MSVC 14.44.35207 at {compiler}')
+                self.assertEqual(run.call_args.args, ([str(root / 'Program Files (x86)' /
+                    'Microsoft Visual Studio/Installer/vswhere.exe'), '-latest', '-products', '*',
+                    '-requires', 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64',
+                    '-property', 'installationPath'], env))
+
+    def test_missing_or_failed_installer_reports_missing_compiler(self):
+        for result in (None, completed('', 1), completed('')):
+            with self.subTest(result=result), mock.patch.object(doctor, '_run', return_value=result):
+                self.assertIn('missing', doctor.windows_compiler({}))
+
+    def test_missing_toolset_or_compiler_reports_missing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with mock.patch.object(doctor, '_run', return_value=completed(str(root))):
+                self.assertIn('version is unavailable', doctor.windows_compiler({}))
+                version = root / 'VC/Auxiliary/Build/Microsoft.VCToolsVersion.default.txt'
+                version.parent.mkdir(parents=True)
+                version.write_text('14.44.35207\n')
+                self.assertIn('compiler not found', doctor.windows_compiler({}))
+
+    def test_windows_does_not_lookup_cc_and_unix_keeps_its_lookup(self):
+        for name in ('win32', 'linux', 'darwin'):
+            with self.subTest(platform=name), mock.patch.object(doctor.sys, 'platform', name), \
+                    mock.patch.object(doctor.shutil, 'which', return_value=None) as which, \
+                    mock.patch.object(doctor, 'windows_compiler', return_value='MSVC installed') as compiler:
+                lines = doctor.host_lines({})
+            if name == 'win32':
+                self.assertIn('compiler: MSVC installed', lines)
+                self.assertNotIn(mock.call('cc'), which.call_args_list)
+                compiler.assert_called_once_with({})
+            else:
+                self.assertIn(mock.call('cc'), which.call_args_list)
+                compiler.assert_not_called()
 
 
 if __name__ == '__main__':
