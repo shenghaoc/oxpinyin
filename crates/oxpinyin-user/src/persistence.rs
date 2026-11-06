@@ -3253,6 +3253,7 @@ mod tests {
                 "save/replay expanded originals"
             );
         }
+        drop(mapped);
         std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 
@@ -4188,7 +4189,7 @@ mod tests {
     /// A system library with one mapped item per probe slot and one inline
     /// item, so every in-place comparison runs against the mapping and the
     /// inline map alike.
-    fn library_for_equivalence(name: &str) -> SystemLibrary {
+    fn library_for_equivalence(dir: &Path) -> SystemLibrary {
         let key = |n: u16| vec![n, n + 1];
         let items = vec![
             (1, item(&[0x4f60, 0x597d], 9, &[(key(1), 5), (key(3), 7)])),
@@ -4197,11 +4198,9 @@ mod tests {
             (4, item(&[0x4f60, 0x597d], 9, &[(key(1), 5), (key(1), 8)])),
         ];
         let chunk = oxpinyin_data::chunk_write::build_chunk(&items).expect("chunk");
-        let dir = tempdir(name);
         let path = dir.join("equiv.bin");
         std::fs::write(&path, chunk).expect("write");
         let mapped = oxpinyin_data::phrase_library::PhraseLibrary::open(&path).expect("open");
-        std::fs::remove_dir_all(&dir).expect("cleanup");
         SystemLibrary {
             total: 0,
             range_end: 0,
@@ -4212,7 +4211,8 @@ mod tests {
 
     #[test]
     fn in_place_item_reads_agree_with_the_materialized_item() {
-        let library = library_for_equivalence("equivalence");
+        let dir = tempdir("equivalence");
+        let library = library_for_equivalence(&dir);
         let probes = [
             item(&[0x4f60, 0x597d], 9, &[(vec![1, 2], 5), (vec![3, 4], 7)]),
             item(&[0x4f60, 0x597d], 10, &[(vec![1, 2], 5), (vec![3, 4], 7)]),
@@ -4260,6 +4260,8 @@ mod tests {
                 }
             }
         }
+        drop(library);
+        std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 
     /// The replay reads the originals in place when they are mapped; it must

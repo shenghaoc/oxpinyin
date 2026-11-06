@@ -557,6 +557,7 @@ mod tests {
         let pron = item.pronunciation(0).expect("pronunciation");
         assert_eq!(pron.keys, &[0x11_u8, 0x00, 0x22, 0x00]);
         assert_eq!(pron.freq, 9);
+        drop(lib);
         dir.close().expect("cleanup");
     }
 
@@ -590,6 +591,7 @@ mod tests {
         assert!(lib.item(0x0000_0001).is_none());
         assert_eq!(lib.items().count(), 0);
         assert!(!lib.has_items());
+        drop(lib);
         dir.close().expect("cleanup");
     }
 

@@ -552,6 +552,10 @@ fn libraries_record_absent_files_and_recheck_the_loaded_ones() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "see docs/findings/compatibility-policy.md#fundamental-os-differences"
+)]
 fn addon_load_keeps_its_answer_and_reports_the_refusal() {
     let dir = temp_dir("addon");
     let mut addons = AddonDictionary::empty();

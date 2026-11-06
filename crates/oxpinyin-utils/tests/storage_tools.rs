@@ -76,6 +76,10 @@ const GB_CHAR: &str = "a\t吖\t16777217\t104\na\t啊\t16777218\t5\n\
 ni\t你\t16777219\t7\nni'hao\t你好\t16777220\t9\n\
 zhong'guo\t中国\t16777221\t3\n";
 
+fn expected_text(text: &str) -> String {
+    text.replace('\n', if cfg!(windows) { "\r\n" } else { "\n" })
+}
+
 #[test]
 fn export_mini_fixture_writes_the_model_and_reads_only() {
     let dir = fixture();
@@ -84,9 +88,10 @@ fn export_mini_fixture_writes_the_model_and_reads_only() {
     assert_eq!(output.status.code(), Some(0));
     assert!(output.stderr.is_empty(), "{:?}", output.stderr);
     let text = String::from_utf8(output.stdout).expect("UTF-8 model");
-    assert!(text.starts_with("\\data model interpolation\n\\1-gram\n"));
-    assert!(text.ends_with("\\end\n"));
-    let (head, rest) = text.split_once("\\2-gram\n").expect("bigram section");
+    assert!(text.starts_with(&expected_text("\\data model interpolation\n\\1-gram\n")));
+    assert!(text.ends_with(&expected_text("\\end\n")));
+    let section = expected_text("\\2-gram\n");
+    let (head, rest) = text.split_once(section.as_str()).expect("bigram section");
     // Every unigram line is `\item <token> <phrase> count <count>`.
     for line in head.lines().skip(2) {
         let fields: Vec<&str> = line.split(' ').collect();
@@ -127,7 +132,7 @@ fn export_missing_table_conf_is_enoent() {
     assert_eq!(output.status.code(), Some(tool::ENOENT));
     assert_eq!(
         output.stderr,
-        b"open table.conf failed.\nload table.conf failed.\n"
+        expected_text("open table.conf failed.\nload table.conf failed.\n").as_bytes()
     );
     assert!(output.stdout.is_empty());
 }
@@ -138,7 +143,10 @@ fn import_empty_stdin_is_enodata() {
     let before: Vec<(PathBuf, Vec<u8>)> = chunk_files(dir.path());
     let output = run(import_bin(), dir.path(), &[], b"");
     assert_eq!(output.status.code(), Some(tool::ENODATA));
-    assert_eq!(output.stderr, b"empty file input.\n");
+    assert_eq!(
+        output.stderr,
+        expected_text("empty file input.\n").as_bytes()
+    );
     assert_eq!(chunk_files(dir.path()), before);
 }
 
@@ -147,7 +155,10 @@ fn import_bad_header_is_enodata() {
     let dir = fixture();
     let output = run(import_bin(), dir.path(), &[], b"garbage\n");
     assert_eq!(output.status.code(), Some(tool::ENODATA));
-    assert_eq!(output.stderr, b"error: interpolation model expected.\n");
+    assert_eq!(
+        output.stderr,
+        expected_text("error: interpolation model expected.\n").as_bytes()
+    );
 }
 
 #[test]
@@ -156,7 +167,10 @@ fn import_missing_phrase_index_is_enoent() {
     fs::write(dir.path().join("table.conf"), table_conf()).expect("write conf");
     let output = run(import_bin(), dir.path(), &[], b"");
     assert_eq!(output.status.code(), Some(tool::ENOENT));
-    assert_eq!(output.stderr, b"open phrase_index.bin failed!\n");
+    assert_eq!(
+        output.stderr,
+        expected_text("open phrase_index.bin failed!\n").as_bytes()
+    );
 }
 
 #[test]
@@ -266,7 +280,10 @@ fn gen_missing_table_file_is_enoent() {
     fs::write(dir.path().join("table.conf"), table_conf()).expect("write conf");
     let output = run(gen_bin(), dir.path(), &[], b"");
     assert_eq!(output.status.code(), Some(tool::ENOENT));
-    assert_eq!(output.stderr, b"open gb_char.table failed!\n");
+    assert_eq!(
+        output.stderr,
+        expected_text("open gb_char.table failed!\n").as_bytes()
+    );
     // The pin attaches both index files before it opens the table.
     assert!(dir.path().join("pinyin_index.bin").is_file());
     assert!(dir.path().join("phrase_index.bin").is_file());

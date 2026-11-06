@@ -1170,6 +1170,10 @@ mod library_transition_tests {
     /// user directory: with one, the pin reads the directory itself as the
     /// row's log, and on a file system where that asserts the init dies.
     #[test]
+    #[cfg_attr(
+        windows,
+        ignore = "see docs/findings/compatibility-policy.md#fundamental-os-differences"
+    )]
     fn a_reload_maps_a_system_row_that_names_no_user_file() {
         let scratch = tempfile::tempdir().expect("scratch");
         let system = system_with_gbk_naming_no_user_file(scratch.path());

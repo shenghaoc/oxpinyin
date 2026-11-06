@@ -189,12 +189,18 @@ fn text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
 
+fn expected_text(text: &str) -> String {
+    text.replace('\n', if cfg!(windows) { "\r\n" } else { "\n" })
+}
+
 fn block(export: &str, header: &str, until: &str) -> Vec<String> {
+    let header = expected_text(header);
+    let until = expected_text(until);
     let section = export
-        .split(header)
+        .split(header.as_str())
         .nth(1)
         .unwrap_or_else(|| panic!("no {header:?} section"));
-    let section = section.split(until).next().unwrap();
+    let section = section.split(until.as_str()).next().unwrap();
     let mut lines: Vec<String> = section
         .lines()
         .filter(|line| line.starts_with("\\item "))
@@ -218,11 +224,18 @@ fn help_is_the_pins_glib_help_for_every_utility() {
         let out = run(&repo_root(), name, &["--help"], None);
         assert_eq!(out.status.code(), Some(0), "{name}");
         let stdout = text(&out.stdout);
+        let executable = binary(name);
+        let executable = executable.file_name().unwrap().to_str().unwrap();
         assert!(
-            stdout.starts_with(&format!("Usage:\n  {name} [OPTION\u{2026}] {suffix}\n")),
+            stdout.starts_with(&expected_text(&format!(
+                "Usage:\n  {executable} [OPTION\u{2026}] {suffix}\n"
+            ))),
             "{name}: {stdout:?}"
         );
-        assert!(stdout.contains("\nHelp Options:\n  -h, --help"), "{name}");
+        assert!(
+            stdout.contains(&expected_text("\nHelp Options:\n  -h, --help")),
+            "{name}"
+        );
         assert!(out.stderr.is_empty(), "{name}");
     }
 }
@@ -242,7 +255,7 @@ fn an_unknown_option_is_einval_on_stdout() {
         assert_eq!(out.status.code(), Some(tool::EINVAL), "{name}");
         assert_eq!(
             text(&out.stdout),
-            "option parsing failed:Unknown option --bogus\n",
+            expected_text("option parsing failed:Unknown option --bogus\n"),
             "{name}"
         );
         assert!(out.stderr.is_empty(), "{name}");
@@ -255,7 +268,11 @@ fn the_positional_programs_refuse_a_wrong_argument_count() {
         for args in [&[][..], &["a", "b"][..]] {
             let out = run(&repo_root(), name, args, None);
             assert_eq!(out.status.code(), Some(tool::EINVAL), "{name} {args:?}");
-            assert_eq!(text(&out.stderr), "wrong arguments.\n", "{name}");
+            assert_eq!(
+                text(&out.stderr),
+                expected_text("wrong arguments.\n"),
+                "{name}"
+            );
             assert!(out.stdout.is_empty());
         }
     }
@@ -273,7 +290,7 @@ fn missing_table_conf_is_enoent_after_the_pins_two_lines() {
         assert_eq!(out.status.code(), Some(tool::ENOENT), "{name}");
         assert_eq!(
             text(&out.stderr),
-            "open table.conf failed.\nload table.conf failed.\n",
+            expected_text("open table.conf failed.\nload table.conf failed.\n"),
             "{name}"
         );
     }
@@ -290,7 +307,10 @@ fn a_missing_system_chunk_names_itself_and_is_enoent() {
         None,
     );
     assert_eq!(out.status.code(), Some(tool::ENOENT));
-    assert_eq!(text(&out.stderr), "load gbk_char.bin failed!\n");
+    assert_eq!(
+        text(&out.stderr),
+        expected_text("load gbk_char.bin failed!\n")
+    );
 }
 
 #[test]
@@ -401,7 +421,7 @@ fn an_empty_or_foreign_import_is_enodata() {
         let out = run(dir.path(), "import_k_mixture_model", &[], Some(input));
         assert_eq!(out.status.code(), Some(tool::ENODATA), "{message:?}");
         assert!(
-            text(&out.stderr).ends_with(message),
+            text(&out.stderr).ends_with(&expected_text(message)),
             "{:?}",
             text(&out.stderr)
         );
@@ -454,6 +474,8 @@ fn merge_sums_the_same_model_and_refuses_a_missing_result_file() {
         use std::os::unix::process::ExitStatusExt as _;
         assert_eq!(_out.status.signal(), Some(6), "SIGABRT");
     }
+    #[cfg(windows)]
+    assert_eq!(_out.status.code(), Some(-1_073_740_791));
     assert!(!dir.path().join("merged-null.db").exists());
 }
 
@@ -482,7 +504,7 @@ fn prune_with_zero_k_and_cdf_keeps_the_model_and_prints_one_star_per_row() {
     );
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     assert!(out.stdout.is_empty());
-    assert_eq!(text(&out.stderr), "**********\n");
+    assert_eq!(text(&out.stderr), expected_text("**********\n"));
     let out = run(dir.path(), "validate_k_mixture_model", &["model.db"], None);
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
 }
@@ -507,10 +529,10 @@ fn prune_refuses_a_nan_probability_with_edom_and_leaves_the_file_alone() {
     assert_eq!(out.status.code(), Some(tool::EDOM), "EDOM");
     assert_eq!(
         text(&out.stderr),
-        format!(
+        expected_text(&format!(
             "*some wrong possibility is encountered:{}.\nk:3 N:1 WC:10 n_0:1 n_1:0\n",
             host_f(prune_fixture_nan())
-        )
+        ))
     );
 }
 
@@ -530,7 +552,10 @@ fn estimate_with_no_models_divides_zero_by_zero() {
     assert_eq!(text(&out.stderr), "");
     assert_eq!(
         text(&out.stdout),
-        format!("average lambda:{}\n", host_f(host_zero_divided_by_zero()))
+        expected_text(&format!(
+            "average lambda:{}\n",
+            host_f(host_zero_divided_by_zero())
+        ))
     );
 }
 
@@ -597,7 +622,7 @@ fn an_absent_export_target_is_open_failed_and_enoent() {
             0 => "open (null) failed.\n",
             _ => "open absent.db failed.\n",
         };
-        assert_eq!(text(&out.stderr), expected, "{args:?}");
+        assert_eq!(text(&out.stderr), expected_text(expected), "{args:?}");
     }
 }
 
@@ -608,7 +633,7 @@ fn validate_of_an_absent_container_is_enodata() {
     assert_eq!(out.status.code(), Some(tool::ENODATA));
     assert_eq!(
         text(&out.stderr),
-        "no magic header in k mixture model.\nk mixture model validation failed.\n"
+        expected_text("no magic header in k mixture model.\nk mixture model validation failed.\n")
     );
 }
 
@@ -620,7 +645,10 @@ fn prune_attaches_without_create_and_leaves_a_missing_model_missing() {
     let dir = scratch();
     let out = run(dir.path(), "prune_k_mixture_model", &["absent.db"], None);
     assert_eq!(out.status.code(), Some(tool::ENODATA));
-    assert_eq!(text(&out.stderr), "no magic header in k mixture model.\n");
+    assert_eq!(
+        text(&out.stderr),
+        expected_text("no magic header in k mixture model.\n")
+    );
     assert!(!dir.path().join("absent.db").exists(), "no file is created");
 }
 
@@ -636,7 +664,7 @@ fn gen_reports_a_missing_document_with_errno() {
     assert_eq!(out.status.code(), Some(tool::ENOENT));
     assert_eq!(
         text(&out.stderr),
-        "can't open file: absent.txt.\nerror:No such file or directory.\n"
+        expected_text("can't open file: absent.txt.\nerror:No such file or directory.\n")
     );
 }
 
@@ -684,10 +712,10 @@ fn the_committed_kmm_fixtures_are_the_pin_records() {
     assert_eq!(out.status.code(), Some(tool::EDOM));
     assert_eq!(
         text(&out.stderr),
-        format!(
+        expected_text(&format!(
             "*some wrong possibility is encountered:{}.\nk:3 N:1 WC:10 n_0:1 n_1:0\n",
             host_f(prune_fixture_nan())
-        )
+        ))
     );
 
     // The zero-total candidate aborts in `compute_interpolation`.
@@ -707,6 +735,8 @@ fn the_committed_kmm_fixtures_are_the_pin_records() {
         use std::os::unix::process::ExitStatusExt as _;
         assert_eq!(out.status.signal(), Some(6), "SIGABRT");
     }
+    #[cfg(windows)]
+    assert_eq!(out.status.code(), Some(-1_073_740_791));
     assert!(out.stdout.is_empty());
 
     // No result file: the NULL attach aborts in `merge_magic_header`.
@@ -721,6 +751,8 @@ fn the_committed_kmm_fixtures_are_the_pin_records() {
         use std::os::unix::process::ExitStatusExt as _;
         assert_eq!(_out.status.signal(), Some(6), "SIGABRT");
     }
+    #[cfg(windows)]
+    assert_eq!(_out.status.code(), Some(-1_073_740_791));
     assert!(!dir.path().join("k_mixture_model_ngram.db").exists());
 }
 

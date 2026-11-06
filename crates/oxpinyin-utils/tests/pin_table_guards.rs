@@ -29,6 +29,7 @@ fn run(binary: &str, input: &[u8]) -> std::process::Output {
 
 #[test]
 fn invalid_phrase_query_keeps_the_previous_timed_result() {
+    let newline = if cfg!(windows) { "\r\n" } else { "\n" };
     let result = run(
         env!("CARGO_BIN_EXE_test_phrase_table"),
         b"\xe4\xbd\xa0\n\xff\n",
@@ -37,17 +38,18 @@ fn invalid_phrase_query_keeps_the_previous_timed_result() {
     assert!(result.stderr.is_empty());
     let stdout = String::from_utf8(result.stdout).unwrap();
     assert!(stdout.contains(" us for 1000 operations, "));
-    assert!(stdout.ends_with("token:16777217\t\n"));
+    assert!(stdout.ends_with(&format!("token:16777217\t{newline}")));
 }
 
 #[test]
 fn overlong_chewing_query_keeps_the_previous_timed_result() {
+    let newline = if cfg!(windows) { "\r\n" } else { "\n" };
     let input = format!("ni3\n{}\n", ["ni3"; 17].join("'"));
     let result = run(env!("CARGO_BIN_EXE_test_chewing_table"), input.as_bytes());
     assert_eq!(result.status.code(), Some(22));
     assert!(result.stderr.is_empty());
     let stdout = String::from_utf8(result.stdout).unwrap();
     assert!(stdout.contains(" us for 1000 operations, "));
-    assert!(stdout.contains("range items number:1\n"));
-    assert!(stdout.ends_with("ni3'\x08\t100\t\n"));
+    assert!(stdout.contains(&format!("range items number:1{newline}")));
+    assert!(stdout.ends_with(&format!("ni3'\x08\t100\t{newline}")));
 }
