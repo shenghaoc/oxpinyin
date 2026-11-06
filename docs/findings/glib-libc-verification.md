@@ -6,8 +6,8 @@ Status: **partial coverage, removal gate** · 2026-10-25 UTC ·
 This ledger is keyed to G1–G17 of the merged
 [inventory](glib-libc-inventory.md) ([#1146](https://github.com/shenghaoc/oxpinyin/pull/1146)).
 Its [call-site list](glib-libc-call-sites.tsv) supplies the complete membership
-of each family: 1,224 exported-path sites, 115 tool-only sites and 173 dead
-sites. Inventory membership is not proof that every input was investigated.
+of each family: 1,179 sites an exported entry reaches, 190 only `utils/` programs
+reach and 188 no link keeps. Inventory membership is not proof that every input was investigated.
 The entries below preserve that distinction.
 
 ## Evidence and decision rules

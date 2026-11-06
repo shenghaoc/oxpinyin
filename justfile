@@ -176,8 +176,8 @@ fmt *args:
     @{{windows_args}} cargo fmt @forwarded; exit $LASTEXITCODE
 
 # Regenerate the GLib/libc call-site TSV from a pinned libpinyin checkout.
-audit-glib-call-sites pin: python
-    @uv run --no-project --managed-python python -X lazy_imports=normal tools/audit/glib_call_sites.py "$1"
+audit-glib-call-sites pin *args: python
+    @CARGO_BUILD_JOBS=2 just heavy -- uv run --no-project --managed-python --with clang==21.1.7 python -X lazy_imports=normal tools/audit/glib_call_sites.py "$@"
 
 # Lint with the native heavy slot and memory admission.
 [unix]
