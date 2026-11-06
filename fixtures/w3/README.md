@@ -59,7 +59,7 @@ files at this level:
 
 ### KMM tool fixtures (2026-10-31 UTC)
 
-`kmm/` holds the three text models the k-mixture-model `tool-diff` cases
+`kmm/` holds the three text models the k-mixture-model tool cases
 import: `k_mixture_model.text` (a small valid model over the fixture's
 `<start>`, `中国` and `你好` tokens), `k_mixture_model_zero.text` (all
 counts and frequencies zero) and `k_mixture_model_edom.text` (a model

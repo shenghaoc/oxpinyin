@@ -251,9 +251,9 @@ class TimingTests(unittest.TestCase):
         self.assertIsNone(run_all['timing_of']('{"timing": nonsense\n'))
 class ArtifactUnionTests(unittest.TestCase):
     def test_union_is_ordered_and_deduplicated(self):
-        rows = [dict(name='a', artifacts=['zhuyin-capi', 'pinyin-capi']), dict(name='b', artifacts=['pinyin-capi', 'gen-pinyin-table']),
+        rows = [dict(name='a', artifacts=['zhuyin-capi', 'pinyin-capi']), dict(name='b', artifacts=['pinyin-capi']),
                 dict(name='c', artifacts=[])]
-        self.assertEqual(run_all['artifact_union'](rows), ['pinyin-capi', 'zhuyin-capi', 'gen-pinyin-table'])
+        self.assertEqual(run_all['artifact_union'](rows), ['pinyin-capi', 'zhuyin-capi'])
 
     def test_a_subjectless_selection_needs_no_build(self):
         self.assertEqual(run_all['artifact_union']([dict(name='pc-version', artifacts=[])]), [])

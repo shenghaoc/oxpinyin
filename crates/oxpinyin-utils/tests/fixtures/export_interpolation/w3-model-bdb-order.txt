@@ -1,0 +1,1081 @@
+\data model interpolation
+\1-gram
+\item 16777217 锕 count 3
+\item 16777218 吖 count 11
+\item 16777219 阿 count 21996
+\item 16777220 啊 count 2450
+\item 16777221 腌 count 180
+\item 16777222 呵 count 275
+\item 16777223 嗄 count 6
+\item 16777771 诐 count 3
+\item 16778010 蚝 count 55
+\item 16778334 重 count 18220
+\item 16778510 疒 count 11
+\item 16779422 昊 count 442
+\item 16779423 耗 count 277
+\item 16779424 鄗 count 1
+\item 16779425 灏 count 64
+\item 16779426 浩 count 1629
+\item 16779427 豪 count 2141
+\item 16779428 譹 count 1
+\item 16779429 好 count 38056
+\item 16779430 薃 count 1
+\item 16779431 薅 count 14
+\item 16779432 嚆 count 4
+\item 16779433 貉 count 42
+\item 16779434 嚎 count 41
+\item 16779435 皓 count 393
+\item 16779436 澔 count 1
+\item 16779437 皜 count 1
+\item 16779438 皞 count 18
+\item 16779439 颢 count 20
+\item 16779440 蒿 count 249
+\item 16779441 秏 count 1
+\item 16779442 壕 count 217
+\item 16779443 諕 count 1
+\item 16779444 郝 count 740
+\item 16779445 濠 count 136
+\item 16779446 嗥 count 9
+\item 16779447 毫 count 813
+\item 16779448 号 count 31728
+\item 16779642 咶 count 1
+\item 16779687 苋 count 49
+\item 16779883 咁 count 21
+\item 16779926 镐 count 43
+\item 16779933 暠 count 9
+\item 16780246 圀 count 7
+\item 16780247 椁 count 245
+\item 16780248 锅 count 3420
+\item 16780249 國 count 3
+\item 16780250 嘓 count 1
+\item 16780251 猓 count 1
+\item 16780252 崞 count 8
+\item 16780253 輠 count 5
+\item 16780254 帼 count 7
+\item 16780255 蜾 count 1
+\item 16780256 蝈 count 1
+\item 16780257 聒 count 4
+\item 16780258 腘 count 1
+\item 16780259 聝 count 1
+\item 16780260 虢 count 98
+\item 16780261 膕 count 1
+\item 16780262 馘 count 12
+\item 16780263 果 count 9089
+\item 16780264 涡 count 429
+\item 16780265 掴 count 45
+\item 16780266 咼 count 1
+\item 16780267 粿 count 1
+\item 16780268 过 count 38935
+\item 16780269 菓 count 1
+\item 16780270 埚 count 17
+\item 16780271 郭 count 5741
+\item 16780272 囯 count 7
+\item 16780273 囶 count 1
+\item 16780274 裹 count 263
+\item 16780275 国 count 45179
+\item 16780341 薧 count 1
+\item 16780387 硍 count 1
+\item 16780929 醎 count 1
+\item 16780930 閒 count 1
+\item 16780944 见 count 18701
+\item 16781652 祢 count 58
+\item 16781665 禰 count 1
+\item 16781672 狝 count 3
+\item 16781775 妳 count 1
+\item 16781812 呢 count 3397
+\item 16781848 堄 count 1
+\item 16781849 逆 count 1043
+\item 16781850 猊 count 40
+\item 16781851 霓 count 114
+\item 16781852 儗 count 3
+\item 16781853 輗 count 1
+\item 16781854 怩 count 13
+\item 16781855 倪 count 647
+\item 16781856 昵 count 172
+\item 16781857 蜺 count 4
+\item 16781858 尼 count 11289
+\item 16781859 匿 count 154
+\item 16781860 慝 count 7
+\item 16781861 你 count 52887
+\item 16781862 鹢 count 12
+\item 16781863 睨 count 14
+\item 16781864 鉨 count 1
+\item 16781865 坭 count 28
+\item 16781866 齯 count 1
+\item 16781867 腻 count 439
+\item 16781868 鶂 count 1
+\item 16781869 貎 count 1
+\item 16781870 麑 count 5
+\item 16781871 膩 count 1
+\item 16781872 妮 count 1683
+\item 16781873 暱 count 9
+\item 16781874 鲵 count 42
+\item 16781875 溺 count 200
+\item 16781876 薿 count 1
+\item 16781877 惄 count 9
+\item 16781878 柅 count 1
+\item 16781879 鷊 count 3
+\item 16781880 铌 count 34
+\item 16781881 旎 count 3
+\item 16781882 拟 count 1403
+\item 16781883 臡 count 1
+\item 16781884 泥 count 3217
+\item 16781885 郳 count 1
+\item 16782406 溓 count 1
+\item 16782756 衵 count 1
+\item 16783103 綅 count 1
+\item 16783307 纤 count 345
+\item 16783565 佡 count 1
+\item 16783570 鏾 count 1
+\item 16783620 忪 count 1
+\item 16783826 縿 count 1
+\item 16783840 钐 count 12
+\item 16783970 冼 count 158
+\item 16784235 锬 count 1
+\item 16784339 穜 count 1
+\item 16784819 囗 count 57
+\item 16784941 洗 count 3142
+\item 16785034 铣 count 114
+\item 16785070 猃 count 7
+\item 16785071 崄 count 1
+\item 16785072 県 count 71
+\item 16785073 缐 count 9
+\item 16785074 氙 count 25
+\item 16785075 尟 count 1
+\item 16785076 贤 count 4878
+\item 16785077 弦 count 2213
+\item 16785078 挦 count 1
+\item 16785079 献 count 2420
+\item 16785080 霰 count 147
+\item 16785081 娴 count 212
+\item 16785082 舷 count 428
+\item 16785083 显 count 3830
+\item 16785084 絃 count 1
+\item 16785085 孅 count 1
+\item 16785086 筅 count 6
+\item 16785087 祆 count 5
+\item 16785088 先 count 12979
+\item 16785089 繊 count 1
+\item 16785090 睍 count 1
+\item 16785091 癎 count 1
+\item 16785092 豏 count 3
+\item 16785093 限 count 1346
+\item 16785094 衔 count 1106
+\item 16785095 顕 count 5
+\item 16785096 晛 count 18
+\item 16785097 轞 count 1
+\item 16785098 癣 count 48
+\item 16785099 陥 count 1
+\item 16785100 险 count 1507
+\item 16785101 獮 count 1
+\item 16785102 幰 count 6
+\item 16785103 酰 count 282
+\item 16785104 杴 count 1
+\item 16785105 葴 count 1
+\item 16785106 陷 count 555
+\item 16785107 腺 count 225
+\item 16785108 険 count 20
+\item 16785109 籼 count 1
+\item 16785110 掀 count 37
+\item 16785111 玁 count 1
+\item 16785112 馅 count 561
+\item 16785113 撊 count 1
+\item 16785114 涎 count 86
+\item 16785115 閑 count 1
+\item 16785116 岘 count 108
+\item 16785117 銛 count 16
+\item 16785118 鲜 count 2821
+\item 16785119 羡 count 288
+\item 16785120 宪 count 1793
+\item 16785121 憪 count 4
+\item 16785122 綫 count 1
+\item 16785123 蚬 count 31
+\item 16785124 嶮 count 1
+\item 16785125 现 count 12298
+\item 16785126 咸 count 1674
+\item 16785127 憸 count 1
+\item 16785128 暹 count 97
+\item 16785129 县 count 45318
+\item 16785130 线 count 13074
+\item 16785131 蚿 count 9
+\item 16785132 韅 count 1
+\item 16785133 秈 count 1
+\item 16785134 僊 count 1
+\item 16785135 嫌 count 545
+\item 16785136 藓 count 15
+\item 16785137 俔 count 1
+\item 16785138 仙 count 6903
+\item 16785139 仚 count 6
+\item 16785140 線 count 1
+\item 16785141 跣 count 24
+\item 16785142 僩 count 3
+\item 16785143 痫 count 41
+\item 16785144 韱 count 1
+\item 16785145 闲 count 1262
+\item 16785146 鷳 count 1
+\item 16785147 諴 count 3
+\item 16785148 鷴 count 1
+\item 16785149 燹 count 58
+\item 16785150 跹 count 31
+\item 16785151 姺 count 1
+\item 16785152 忺 count 9
+\item 16785153 現 count 1
+\item 16785199 鸮 count 66
+\item 16785216 呺 count 1
+\item 16785307 茠 count 1
+\item 16785416 鶱 count 3
+\item 16785779 鈆 count 1
+\item 16785841 綖 count 1
+\item 16786819 伀 count 1
+\item 16786820 众 count 6911
+\item 16786821 中 count 257503
+\item 16786822 尰 count 1
+\item 16786823 踵 count 50
+\item 16786824 锺 count 54
+\item 16786825 衆 count 1
+\item 16786826 湩 count 1
+\item 16786827 衷 count 204
+\item 16786828 彸 count 1
+\item 16786829 钟 count 5352
+\item 16786830 冢 count 875
+\item 16786831 螽 count 5
+\item 16786832 肿 count 382
+\item 16786833 盅 count 58
+\item 16786834 狆 count 1
+\item 16786835 终 count 3558
+\item 16786836 种 count 69116
+\item 16786837 忠 count 4922
+\item 16786838 仲 count 2847
+\item 16802309 你好 count 161
+\item 16802445 你们 count 3192
+\item 16812155 锡安 count 69
+\item 16812156 西安 count 2841
+\item 16812157 西岸 count 417
+\item 16817937 中国 count 146095
+\item 33554433 錒 count 1
+\item 33554485 懝 count 1
+\item 33554731 兒 count 1
+\item 33554740 䮘 count 1
+\item 33555289 䦘 count 1
+\item 33555817 䍎 count 1
+\item 33556162 㧱 count 1
+\item 33556241 褈 count 1
+\item 33556245 祌 count 1
+\item 33556250 蝩 count 1
+\item 33556255 徸 count 1
+\item 33557813 䐄 count 1
+\item 33557833 譀 count 1
+\item 33557840 㽉 count 1
+\item 33557887 闞 count 1
+\item 33557919 椃 count 1
+\item 33557920 䬉 count 1
+\item 33557921 㬔 count 1
+\item 33557922 蠔 count 3
+\item 33557923 㠙 count 1
+\item 33557924 鰝 count 1
+\item 33557925 瀥 count 1
+\item 33557926 昦 count 1
+\item 33557927 㘪 count 1
+\item 33557928 儫 count 1
+\item 33557929 㬶 count 1
+\item 33557930 嘷 count 1
+\item 33557931 㝀 count 1
+\item 33557932 㵆 count 1
+\item 33557933 獆 count 3
+\item 33557934 籇 count 1
+\item 33557935 獋 count 1
+\item 33557936 恏 count 1
+\item 33557937 噑 count 1
+\item 33557938 獔 count 1
+\item 33557939 聕 count 1
+\item 33557940 㩝 count 1
+\item 33557941 灝 count 1
+\item 33557942 䝞 count 1
+\item 33557943 號 count 1
+\item 33557944 虠 count 1
+\item 33557945 䝥 count 1
+\item 33557946 顥 count 1
+\item 33557947 晧 count 16
+\item 33557948 㙱 count 1
+\item 33557949 㕺 count 1
+\item 33557950 悎 count 1
+\item 33557951 傐 count 1
+\item 33557952 皡 count 1
+\item 33557953 暤 count 1
+\item 33557954 皥 count 3
+\item 33557955 㚪 count 1
+\item 33557956 暭 count 1
+\item 33557957 鶴 count 1
+\item 33557958 䒵 count 1
+\item 33557959 㞻 count 1
+\item 33557960 䚽 count 1
+\item 33557961 䪽 count 1
+\item 33557962 侾 count 1
+\item 33557963 勂 count 1
+\item 33557964 滈 count 3
+\item 33557965 曍 count 1
+\item 33557966 淏 count 15
+\item 33557967 䧚 count 1
+\item 33557968 哠 count 1
+\item 33557969 狢 count 1
+\item 33557970 䧫 count 1
+\item 33557971 䯫 count 1
+\item 33557972 峼 count 1
+\item 33558395 㦥 count 1
+\item 33558635 楇 count 1
+\item 33558798 鎬 count 1
+\item 33559052 瘑 count 1
+\item 33559141 矌 count 1
+\item 33559142 櫎 count 1
+\item 33559243 錁 count 1
+\item 33559244 簂 count 1
+\item 33559245 䤋 count 1
+\item 33559246 漍 count 1
+\item 33559247 䬎 count 1
+\item 33559248 鈛 count 1
+\item 33559249 餜 count 5
+\item 33559250 堝 count 1
+\item 33559251 渦 count 1
+\item 33559252 䐸 count 1
+\item 33559253 䴹 count 1
+\item 33559254 鐹 count 1
+\item 33559255 腂 count 1
+\item 33559256 鍋 count 1
+\item 33559257 彍 count 4
+\item 33559258 過 count 1
+\item 33559259 摑 count 1
+\item 33559260 慖 count 1
+\item 33559261 幗 count 1
+\item 33559262 呙 count 3
+\item 33559263 䙨 count 1
+\item 33559264 啯 count 1
+\item 33559265 㕵 count 1
+\item 33559266 㶁 count 1
+\item 33559267 馃 count 8
+\item 33559268 㞅 count 1
+\item 33559269 㚍 count 1
+\item 33559270 墎 count 1
+\item 33559271 䆐 count 1
+\item 33559272 㖪 count 1
+\item 33559273 綶 count 1
+\item 33559274 䂸 count 1
+\item 33559275 㳀 count 1
+\item 33559276 濄 count 1
+\item 33559277 惈 count 1
+\item 33559278 蟈 count 1
+\item 33559279 淉 count 1
+\item 33559280 槨 count 1
+\item 33559281 囻 count 1
+\item 33559282 埻 count 1
+\item 33559311 㸝 count 1
+\item 33559319 塪 count 1
+\item 33559517 彉 count 1
+\item 33559551 蔮 count 1
+\item 33559634 㗥 count 1
+\item 33559655 㰹 count 1
+\item 33559888 聻 count 1
+\item 33560080 礆 count 1
+\item 33560089 㔓 count 1
+\item 33560092 鰔 count 1
+\item 33560101 䄯 count 1
+\item 33560104 稴 count 1
+\item 33560130 䵖 count 1
+\item 33560132 䵛 count 1
+\item 33560138 䵤 count 1
+\item 33560140 筧 count 1
+\item 33560160 見 count 1
+\item 33560171 梘 count 1
+\item 33560178 䶠 count 1
+\item 33560189 覸 count 1
+\item 33560225 糮 count 1
+\item 33560262 䙹 count 1
+\item 33560384 㔾 count 1
+\item 33560433 㮞 count 1
+\item 33560452 䇒 count 1
+\item 33560473 顈 count 1
+\item 33561226 䡅 count 1
+\item 33561316 㜷 count 1
+\item 33561354 檷 count 1
+\item 33561496 䀑 count 1
+\item 33561511 抐 count 1
+\item 33561517 誽 count 1
+\item 33561532 䍲 count 1
+\item 33561536 㮏 count 1
+\item 33561538 㲡 count 1
+\item 33561692 䘌 count 1
+\item 33561693 縌 count 3
+\item 33561694 㠜 count 1
+\item 33561695 儞 count 3
+\item 33561696 䘦 count 1
+\item 33561697 鈮 count 1
+\item 33561698 䰯 count 1
+\item 33561699 伱 count 1
+\item 33561700 伲 count 3
+\item 33561701 愵 count 1
+\item 33561702 嬺 count 1
+\item 33561703 氼 count 3
+\item 33561704 䘽 count 1
+\item 33561705 䵑 count 1
+\item 33561706 䵒 count 1
+\item 33561707 屔 count 1
+\item 33561708 婗 count 1
+\item 33561709 䝚 count 1
+\item 33561710 鹝 count 1
+\item 33561711 䁥 count 1
+\item 33561712 䕥 count 1
+\item 33561713 孨 count 1
+\item 33561714 㵫 count 1
+\item 33561715 屰 count 1
+\item 33561716 䭲 count 1
+\item 33561717 孴 count 1
+\item 33561718 㹸 count 1
+\item 33561719 譺 count 1
+\item 33561720 㥾 count 1
+\item 33561721 籾 count 3
+\item 33561722 㦐 count 1
+\item 33561723 㪒 count 1
+\item 33561724 馜 count 1
+\item 33561725 隬 count 1
+\item 33561726 蚭 count 1
+\item 33561727 抳 count 14
+\item 33561728 䦵 count 1
+\item 33561729 㲻 count 1
+\item 33561730 㞾 count 1
+\item 33561731 痆 count 1
+\item 33561732 㣇 count 1
+\item 33561733 䧇 count 1
+\item 33561734 狋 count 1
+\item 33561735 䛏 count 1
+\item 33561736 胒 count 1
+\item 33561737 鯓 count 1
+\item 33561738 狔 count 1
+\item 33561739 秜 count 1
+\item 33561740 跜 count 1
+\item 33561741 嫟 count 1
+\item 33561742 迡 count 1
+\item 33561743 鯢 count 1
+\item 33561744 淣 count 1
+\item 33561745 苨 count 1
+\item 33561746 擬 count 1
+\item 33561747 觬 count 1
+\item 33561748 埿 count 1
+\item 33561766 㲽 count 1
+\item 33561805 鑈 count 1
+\item 33561838 棿 count 1
+\item 33562036 壏 count 1
+\item 33562040 懢 count 1
+\item 33562480 蘚 count 1
+\item 33562555 㱹 count 1
+\item 33562705 䭑 count 1
+\item 33562734 㦑 count 1
+\item 33562743 薟 count 1
+\item 33562747 莶 count 1
+\item 33562750 㾾 count 1
+\item 33563253 㯗 count 1
+\item 33563424 腝 count 1
+\item 33563599 塜 count 1
+\item 33564135 欦 count 1
+\item 33564164 譣 count 1
+\item 33564171 㩮 count 1
+\item 33564185 膁 count 1
+\item 33564207 槏 count 1
+\item 33564212 㯠 count 1
+\item 33564215 臤 count 1
+\item 33564329 㥦 count 1
+\item 33564340 㛍 count 1
+\item 33564345 蛪 count 1
+\item 33564631 攕 count 1
+\item 33565036 彡 count 5
+\item 33565064 姍 count 1
+\item 33565069 釤 count 1
+\item 33565241 竓 count 1
+\item 33565503 揱 count 1
+\item 33565598 錟 count 1
+\item 33565708 饀 count 1
+\item 33565762 鼨 count 1
+\item 33565766 㼿 count 1
+\item 33565793 䳋 count 1
+\item 33565966 盷 count 1
+\item 33566760 銑 count 1
+\item 33566875 㘅 count 1
+\item 33566876 䘆 count 1
+\item 33566877 蜆 count 1
+\item 33566878 攇 count 1
+\item 33566879 甉 count 1
+\item 33566880 娊 count 1
+\item 33566881 㘋 count 1
+\item 33566882 唌 count 1
+\item 33566883 㬎 count 1
+\item 33566884 錎 count 1
+\item 33566885 䀏 count 1
+\item 33566886 嬐 count 1
+\item 33566887 贒 count 1
+\item 33566888 嘕 count 1
+\item 33566889 㬗 count 1
+\item 33566890 瀗 count 1
+\item 33566891 䨘 count 1
+\item 33566892 搟 count 1
+\item 33566893 尠 count 1
+\item 33566894 餡 count 1
+\item 33566895 䜢 count 1
+\item 33566896 伣 count 1
+\item 33566897 縣 count 1
+\item 33566898 礥 count 1
+\item 33566899 娨 count 1
+\item 33566900 锨 count 9
+\item 33566901 㜪 count 1
+\item 33566902 訮 count 1
+\item 33566903 輱 count 1
+\item 33566904 㔵 count 1
+\item 33566905 䨷 count 1
+\item 33566906 鼸 count 1
+\item 33566907 娹 count 1
+\item 33566908 䤼 count 1
+\item 33566909 褼 count 1
+\item 33566910 鍁 count 1
+\item 33566911 䁂 count 1
+\item 33566912 䵇 count 1
+\item 33566913 癇 count 1
+\item 33566914 鹇 count 34
+\item 33566915 㩈 count 1
+\item 33566916 㡉 count 1
+\item 33566917 橌 count 1
+\item 33566918 鍌 count 3
+\item 33566919 䕔 count 1
+\item 33566920 衘 count 1
+\item 33566921 㭠 count 1
+\item 33566922 啣 count 1
+\item 33566923 䱤 count 1
+\item 33566924 絤 count 1
+\item 33566925 灦 count 1
+\item 33566926 䝨 count 1
+\item 33566927 㵪 count 1
+\item 33566928 䥪 count 1
+\item 33566929 獫 count 1
+\item 33566930 癬 count 1
+\item 33566931 蹮 count 1
+\item 33566932 䉯 count 1
+\item 33566933 顯 count 1
+\item 33566934 婱 count 1
+\item 33566935 䉳 count 1
+\item 33566936 屳 count 1
+\item 33566937 襳 count 1
+\item 33566938 齴 count 1
+\item 33566939 㭹 count 1
+\item 33566940 鹹 count 1
+\item 33566941 獻 count 1
+\item 33566942 赻 count 1
+\item 33566943 鱻 count 1
+\item 33566944 㡾 count 1
+\item 33566945 奾 count 1
+\item 33566946 涀 count 1
+\item 33566947 䞁 count 1
+\item 33566948 㪇 count 1
+\item 33566949 㺌 count 1
+\item 33566950 㶍 count 1
+\item 33566951 纎 count 3
+\item 33566952 撏 count 1
+\item 33566953 禒 count 1
+\item 33566954 㦓 count 1
+\item 33566955 澖 count 1
+\item 33566956 纖 count 1
+\item 33566957 䲗 count 1
+\item 33566958 䚚 count 1
+\item 33566959 躚 count 1
+\item 33566960 銜 count 1
+\item 33566961 咞 count 1
+\item 33566962 䶟 count 1
+\item 33566963 䶢 count 1
+\item 33566964 誢 count 1
+\item 33566965 䦥 count 1
+\item 33566966 馦 count 1
+\item 33566967 莧 count 1
+\item 33566968 羨 count 1
+\item 33566969 險 count 1
+\item 33566970 羬 count 1
+\item 33566971 㮭 count 1
+\item 33566972 枮 count 1
+\item 33566973 鮮 count 1
+\item 33566974 瞯 count 1
+\item 33566975 粯 count 1
+\item 33566976 憲 count 1
+\item 33566977 箲 count 1
+\item 33566978 麲 count 1
+\item 33566979 垷 count 1
+\item 33566980 䒸 count 1
+\item 33566981 㢺 count 1
+\item 33566982 䢾 count 1
+\item 33566983 㯀 count 1
+\item 33566984 痃 count 1
+\item 33566985 㳄 count 1
+\item 33566986 㿅 count 1
+\item 33566987 燅 count 1
+\item 33566988 㧋 count 1
+\item 33566989 䧋 count 1
+\item 33566990 烍 count 1
+\item 33566991 軐 count 1
+\item 33566992 蓒 count 1
+\item 33566993 臔 count 1
+\item 33566994 藖 count 1
+\item 33566995 珗 count 1
+\item 33566996 胘 count 1
+\item 33566997 蛝 count 1
+\item 33566998 䧟 count 1
+\item 33566999 賢 count 1
+\item 33567000 㧥 count 1
+\item 33567001 铦 count 22
+\item 33567002 鋧 count 1
+\item 33567003 毨 count 1
+\item 33567004 㫫 count 1
+\item 33567005 㳭 count 1
+\item 33567006 姭 count 1
+\item 33567007 䧮 count 1
+\item 33567008 苮 count 1
+\item 33567009 哯 count 1
+\item 33567010 廯 count 1
+\item 33567011 韯 count 1
+\item 33567012 䃱 count 1
+\item 33567013 僲 count 1
+\item 33567014 僴 count 1
+\item 33567015 峴 count 1
+\item 33567016 櫶 count 5
+\item 33567017 䃸 count 1
+\item 33567018 䏹 count 1
+\item 33567019 嫺 count 1
+\item 33567020 嫻 count 1
+\item 33567021 鷼 count 1
+\item 33567022 臽 count 1
+\item 33567023 㛾 count 1
+\item 33567024 䗾 count 1
+\item 33567126 藃 count 1
+\item 33567148 搚 count 1
+\item 33567382 伭 count 3
+\item 33567393 䩙 count 1
+\item 33567414 妶 count 1
+\item 33567416 誸 count 1
+\item 33567417 玹 count 9
+\item 33567424 軒 count 1
+\item 33567471 㰊 count 1
+\item 33567746 㘈 count 1
+\item 33567775 眤 count 1
+\item 33567830 㩘 count 1
+\item 33567871 晲 count 1
+\item 33567912 掜 count 1
+\item 33568161 麙 count 1
+\item 33568173 䢭 count 1
+\item 33568180 醶 count 1
+\item 33568475 銿 count 1
+\item 33568716 螤 count 1
+\item 33569610 瘇 count 1
+\item 33569611 鐘 count 3
+\item 33569612 蔠 count 3
+\item 33569613 鈡 count 1
+\item 33569614 刣 count 8
+\item 33569615 鴤 count 1
+\item 33569616 種 count 1
+\item 33569617 舯 count 7
+\item 33569618 堹 count 1
+\item 33569619 㐺 count 1
+\item 33569620 茽 count 1
+\item 33569621 眾 count 1
+\item 33569622 終 count 1
+\item 33569623 煄 count 1
+\item 33569624 偅 count 1
+\item 33569625 乑 count 1
+\item 33569626 幒 count 1
+\item 33569627 筗 count 1
+\item 33569628 塚 count 1
+\item 33569629 籦 count 1
+\item 33569630 潨 count 8
+\item 33569631 腫 count 1
+\item 33569632 䱰 count 1
+\item 33569633 歱 count 1
+\item 33569634 蹱 count 3
+\item 33569635 衳 count 1
+\item 33569636 衶 count 1
+\item 33569637 汷 count 1
+\item 33569638 鍾 count 1
+\item 33569639 炂 count 1
+\item 33569640 妐 count 1
+\item 33569641 媑 count 1
+\item 33569642 妕 count 1
+\item 33569643 蚛 count 1
+\item 33569644 喠 count 1
+\item 33569645 㲴 count 1
+\item 33569646 泈 count 1
+\item 33569647 柊 count 9
+\item 33569648 緟 count 1
+\item 33569649 諥 count 1
+\item 33569650 㣫 count 1
+\item 33569704 夂 count 1
+\item 50331904 毜 count 1
+\item 50332011 㿆 count 1
+\item 50332012 㳡 count 1
+\item 50332013 㗻 count 1
+\item 50332034 㲁 count 1
+\item 50332166 聣 count 1
+\item 50332167 袮 count 1
+\item 50332534 䄳 count 1
+\item 50332535 䩂 count 1
+\item 50332536 䵌 count 1
+\item 50332537 鑦 count 1
+\item 50332538 䂅 count 1
+\item 50332539 䆎 count 1
+\item 50332540 㲔 count 1
+\item 50332541 㺤 count 1
+\item 50332542 䊱 count 1
+\item 50332543 㿌 count 1
+\item 50332544 䯭 count 1
+\item 50332545 䯹 count 1
+\item 50332546 㷿 count 1
+\item 50332667 㳊 count 1
+\item 50332756 䈺 count 1
+\item 50332757 㹣 count 1
+\item 50332758 䝦 count 1
+\item 50332759 䇗 count 1
+\item 50332760 迚 count 1
+\2-gram
+\item 16777219 阿 16777220 啊 count 3
+\item 16777219 阿 16779427 豪 count 11
+\item 16777219 阿 16780263 果 count 8
+\item 16777219 阿 16780275 国 count 32
+\item 16777219 阿 16781858 尼 count 14
+\item 16777219 阿 16781861 你 count 8
+\item 16777219 阿 16781872 妮 count 26
+\item 16777219 阿 16785076 贤 count 2
+\item 16777219 阿 16785081 娴 count 5
+\item 16777219 阿 16785129 县 count 7
+\item 16777219 阿 16785138 仙 count 9
+\item 16777219 阿 16785145 闲 count 3
+\item 16777219 阿 16786837 忠 count 3
+\item 16777221 腌 16779429 好 count 25
+\item 16777221 腌 16780268 过 count 8
+\item 16777221 腌 16785118 鲜 count 5
+\item 16781849 逆 16785129 县 count 2
+\item 16781849 逆 16786829 钟 count 4
+\item 16781855 倪 16780275 国 count 5
+\item 16781855 倪 16781872 妮 count 2
+\item 16781855 倪 16785100 险 count 3
+\item 16781861 你 16777220 啊 count 45
+\item 16781861 你 16777222 呵 count 8
+\item 16781861 你 16779429 好 count 30
+\item 16781861 你 16780268 过 count 34
+\item 16781861 你 16780944 见 count 31
+\item 16781861 你 16781812 呢 count 52
+\item 16781861 你 16781861 你 count 49
+\item 16781861 你 16785088 先 count 85
+\item 16781861 你 16785135 嫌 count 8
+\item 16781861 你 16786821 中 count 22
+\item 16784941 洗 16779429 好 count 24
+\item 16784941 洗 16780268 过 count 37
+\item 16784941 洗 16785138 仙 count 8
+\item 16779883 咁 16779883 咁 count 6
+\item 16779883 咁 16785088 先 count 3
+\item 16786820 众 16780268 过 count 9
+\item 16786820 众 16780275 国 count 66
+\item 16786820 众 16780944 见 count 12
+\item 16786820 众 16781858 尼 count 3
+\item 16786820 众 16784941 洗 count 2
+\item 16786820 众 16785076 贤 count 9
+\item 16786820 众 16785126 咸 count 10
+\item 16786820 众 16785138 仙 count 53
+\item 16786820 众 16786821 中 count 52
+\item 16802445 你们 16779429 好 count 14
+\item 16802445 你们 16786821 中 count 8
+\item 16802445 你们 16817937 中国 count 10
+\item 16786830 冢 16780275 国 count 3
+\item 16786830 冢 16786821 中 count 15
+\item 16786836 种 16777220 啊 count 4
+\item 16786836 种 16778334 重 count 13
+\item 16786836 种 16779429 好 count 55
+\item 16786836 种 16780263 果 count 14
+\item 16786836 种 16780268 过 count 15
+\item 16786836 种 16780944 见 count 8
+\item 16786836 种 16781849 逆 count 3
+\item 16786836 种 16781882 拟 count 5
+\item 16786836 种 16781884 泥 count 2
+\item 16786836 种 16785145 闲 count 6
+\item 16786836 种 16786821 中 count 78
+\item 16786836 种 16786837 忠 count 6
+\item 16786836 种 16817937 中国 count 34
+\item 16786838 仲 16781858 尼 count 92
+\item 16786838 仲 16785076 贤 count 21
+\item 16786838 仲 16785088 先 count 24
+\item 16786838 仲 16785120 宪 count 3
+\item 16779427 豪 16779448 号 count 2
+\item 16779427 豪 16780271 郭 count 4
+\item 16779429 好 16777220 啊 count 83
+\item 16779429 好 16777222 呵 count 3
+\item 16779429 好 16780268 过 count 68
+\item 16779429 好 16780944 见 count 3
+\item 16779429 好 16781812 呢 count 55
+\item 16779429 好 16781861 你 count 41
+\item 16779429 好 16784941 洗 count 4
+\item 16779429 好 16785112 馅 count 5
+\item 16779429 好 16785199 鸮 count 11
+\item 16779429 好 16786821 中 count 21
+\item 16779429 好 16786836 种 count 6
+\item 16779433 貉 16780275 国 count 5
+\item 16779435 皓 16779435 皓 count 7
+\item 16785077 弦 16785077 弦 count 5
+\item 16785077 弦 16785088 先 count 5
+\item 16785077 弦 16785130 线 count 24
+\item 16785077 弦 16786821 中 count 10
+\item 16785079 献 16780262 馘 count 3
+\item 16785079 献 16780263 果 count 9
+\item 16785079 献 16786821 中 count 9
+\item 16785079 献 16786837 忠 count 23
+\item 16785083 显 16779435 皓 count 3
+\item 16785083 显 16779447 毫 count 39
+\item 16785083 显 16780263 果 count 2
+\item 16785083 显 16780268 过 count 3
+\item 16785083 显 16780275 国 count 19
+\item 16785083 显 16785079 献 count 2
+\item 16785083 显 16785083 显 count 7
+\item 16785083 显 16785138 仙 count 2
+\item 16785083 显 16786821 中 count 6
+\item 16785083 显 16786837 忠 count 41
+\item 16785093 限 16779448 号 count 3
+\item 16785093 限 16786821 中 count 8
+\item 16785107 腺 16785107 腺 count 5
+\item 16780248 锅 16780248 锅 count 5
+\item 16780248 锅 16786821 中 count 429
+\item 16780252 崞 16785129 县 count 10
+\item 16785119 羡 16781872 妮 count 6
+\item 16780260 虢 16780275 国 count 16
+\item 16785125 现 16780944 见 count 18
+\item 16785125 现 16781861 你 count 4
+\item 16785125 现 16785125 现 count 5
+\item 16785125 现 16786829 钟 count 2
+\item 16785125 现 16786836 种 count 3
+\item 16785125 现 16817937 中国 count 49
+\item 16785129 县 16777219 阿 count 10
+\item 16785129 县 16780271 郭 count 16
+\item 16785129 县 16780275 国 count 6
+\item 16785129 县 16781867 腻 count 2
+\item 16785129 县 16785093 限 count 2
+\item 16785129 县 16785118 鲜 count 3
+\item 16785129 县 16785129 县 count 130
+\item 16785129 县 16785138 仙 count 6
+\item 16785129 县 16786821 中 count 82
+\item 16785129 县 16817937 中国 count 4
+\item 16780268 过 16777219 阿 count 21
+\item 16780268 过 16777220 啊 count 8
+\item 16780268 过 16779429 好 count 40
+\item 16780268 过 16780268 过 count 26
+\item 16780268 过 16781861 你 count 73
+\item 16780268 过 16781884 泥 count 5
+\item 16780268 过 16785125 现 count 6
+\item 16780268 过 16785126 咸 count 7
+\item 16780268 过 16785129 县 count 10
+\item 16780268 过 16785130 线 count 13
+\item 16780268 过 16786821 中 count 26
+\item 16780268 过 16786829 钟 count 6
+\item 16780268 过 16802445 你们 count 8
+\item 16780268 过 16817937 中国 count 117
+\item 16781812 呢 16779429 好 count 8
+\item 16781812 呢 16781861 你 count 6
+\item 16785145 闲 16785145 闲 count 29
+\item 16785145 闲 16786821 中 count 15
+\item 16817937 中国 16778334 重 count 6
+\item 16817937 中国 16779429 好 count 21
+\item 16817937 中国 16780263 果 count 7
+\item 16817937 中国 16780275 国 count 41
+\item 16817937 中国 16781856 昵 count 2
+\item 16817937 中国 16781858 尼 count 3
+\item 16817937 中国 16781882 拟 count 4
+\item 16817937 中国 16785125 现 count 118
+\item 16817937 中国 16785129 县 count 9
+\item 16817937 中国 16786821 中 count 94
+\item 16817937 中国 16812156 西安 count 19
+\item 16817937 中国 16817937 中国 count 9
+\item 16781858 尼 16777219 阿 count 14
+\item 16781858 尼 16779448 号 count 26
+\item 16781858 尼 16780263 果 count 6
+\item 16781858 尼 16780271 郭 count 3
+\item 16781858 尼 16780275 国 count 23
+\item 16781858 尼 16781858 尼 count 39
+\item 16781858 尼 16785129 县 count 4
+\item 16781858 尼 16785138 仙 count 4
+\item 16781858 尼 16786820 众 count 40
+\item 16781872 妮 16779448 号 count 3
+\item 16781872 妮 33569612 蔠 count 2
+\item 16781882 拟 16778334 重 count 5
+\item 16781882 拟 16779429 好 count 17
+\item 16781884 泥 16785106 陷 count 5
+\item 16781884 泥 16786821 中 count 25
+\item 16778334 重 16779429 好 count 4
+\item 16778334 重 16780268 过 count 23
+\item 16778334 重 16780275 国 count 11
+\item 16778334 重 16780944 见 count 54
+\item 16778334 重 16784941 洗 count 8
+\item 16778334 重 16785083 显 count 13
+\item 16778334 重 16785100 险 count 7
+\item 16778334 重 16785129 县 count 15
+\item 16778334 重 16786821 中 count 12
+\item 16778334 重 16786838 仲 count 4
+\item 16783970 冼 16780275 国 count 19
+\item 16812156 西安 16785129 县 count 8
+\item 16812156 西安 16786829 钟 count 2
+\item 16812156 西安 16817937 中国 count 7
+\item 16786821 中 16777219 阿 count 56
+\item 16786821 中 16778334 重 count 36
+\item 16786821 中 16779427 豪 count 11
+\item 16786821 中 16779429 好 count 19
+\item 16786821 中 16779448 号 count 16
+\item 16786821 中 16780268 过 count 66
+\item 16786821 中 16780271 郭 count 14
+\item 16786821 中 16780274 裹 count 2
+\item 16786821 中 16780275 国 count 11
+\item 16786821 中 16780944 见 count 251
+\item 16786821 中 16781858 尼 count 13
+\item 16786821 中 16781861 你 count 71
+\item 16786821 中 16781875 溺 count 12
+\item 16786821 中 16781884 泥 count 15
+\item 16786821 中 16783307 纤 count 8
+\item 16786821 中 16785076 贤 count 6
+\item 16786821 中 16785077 弦 count 17
+\item 16786821 中 16785079 献 count 30
+\item 16786821 中 16785083 显 count 38
+\item 16786821 中 16785088 先 count 43
+\item 16786821 中 16785120 宪 count 30
+\item 16786821 中 16785125 现 count 23
+\item 16786821 中 16785129 县 count 48
+\item 16786821 中 16785130 线 count 68
+\item 16786821 中 16786820 众 count 10
+\item 16786821 中 16786821 中 count 87
+\item 16786821 中 16786836 种 count 17
+\item 16786821 中 16802445 你们 count 3
+\item 16786827 衷 16786821 中 count 22
+\item 16786829 钟 16778334 重 count 4
+\item 16786829 钟 16779426 浩 count 10
+\item 16786829 钟 16780275 国 count 8
+\item 16786829 钟 16781875 溺 count 2
+\item 16786829 钟 16785076 贤 count 4
+\item 16786829 钟 16785083 显 count 2
+\item 16786829 钟 16786821 中 count 6
+\item 16786829 钟 16786838 仲 count 4
+\item 16780944 见 16777219 阿 count 18
+\item 16780944 见 16778334 重 count 9
+\item 16780944 见 16779426 浩 count 10
+\item 16780944 见 16779427 豪 count 10
+\item 16780944 见 16779429 好 count 5
+\item 16780944 见 16780260 虢 count 3
+\item 16780944 见 16780268 过 count 720
+\item 16780944 见 16780275 国 count 17
+\item 16780944 见 16781861 你 count 46
+\item 16780944 见 16785076 贤 count 10
+\item 16780944 见 16785088 先 count 13
+\item 16780944 见 16785119 羡 count 2
+\item 16780944 见 16786820 众 count 19
+\item 16780944 见 16786837 忠 count 3
+\item 16780944 见 16817937 中国 count 23
+\item 16786835 终 16780944 见 count 8
+\item 16786835 终 16785106 陷 count 3
+\item 16786837 忠 16779426 浩 count 4
+\item 16786837 忠 16779427 豪 count 16
+\item 16786837 忠 16780263 果 count 7
+\item 16786837 忠 16780275 国 count 14
+\item 16786837 忠 16780944 见 count 4
+\item 16786837 忠 16781858 尼 count 32
+\item 16786837 忠 16785076 贤 count 35
+\item 16786837 忠 16785083 显 count 18
+\item 16786837 忠 16785120 宪 count 5
+\item 16786837 忠 16785129 县 count 17
+\item 16779422 昊 16779426 浩 count 4
+\item 16779422 昊 16780944 见 count 4
+\item 16779426 浩 16785076 贤 count 2
+\item 16779426 浩 16786837 忠 count 2
+\item 16779440 蒿 16786821 中 count 3
+\item 16784819 囗 16784819 囗 count 14
+\item 16785076 贤 16777219 阿 count 4
+\item 16785076 贤 16778334 重 count 8
+\item 16785076 贤 16779427 豪 count 13
+\item 16785076 贤 16779435 皓 count 17
+\item 16785076 贤 16785088 先 count 4
+\item 16785076 贤 16786821 中 count 5
+\item 16785076 贤 16786830 冢 count 10
+\item 16779448 号 16777219 阿 count 5
+\item 16779448 号 16780263 果 count 7
+\item 16779448 号 16780275 国 count 9
+\item 16779448 号 16780944 见 count 2
+\item 16779448 号 16781851 霓 count 2
+\item 16779448 号 16785076 贤 count 3
+\item 16779448 号 16785088 先 count 4
+\item 16779448 号 16785130 线 count 741
+\item 16779448 号 16786821 中 count 42
+\item 16779448 号 16786829 钟 count 7
+\item 16779448 号 16817937 中国 count 12
+\item 16785082 舷 16779448 号 count 47
+\item 16785088 先 16779429 好 count 2
+\item 16785088 先 16780268 过 count 20
+\item 16785088 先 16780275 国 count 11
+\item 16785088 先 16780944 见 count 20
+\item 16785088 先 16784941 洗 count 17
+\item 16785088 先 16785083 显 count 3
+\item 16785088 先 16785088 先 count 5
+\item 16785088 先 16785129 县 count 4
+\item 16785088 先 16786836 种 count 5
+\item 16785094 衔 16781884 泥 count 13
+\item 16785100 险 16780268 过 count 4
+\item 16785100 险 16786821 中 count 20
+\item 16785106 陷 16781875 溺 count 8
+\item 16785106 陷 16781884 泥 count 8
+\item 16780247 椁 16786821 中 count 7
+\item 16785112 馅 16786821 中 count 7
+\item 16785118 鲜 16780944 见 count 73
+\item 16785118 鲜 16785126 咸 count 15
+\item 16785120 宪 16780275 国 count 13
+\item 16785120 宪 16785083 显 count 2
+\item 16785120 宪 16785094 衔 count 3
+\item 16785120 宪 16786821 中 count 8
+\item 16785120 宪 16786837 忠 count 3
+\item 16785120 宪 16786838 仲 count 2
+\item 16785126 咸 16785118 鲜 count 73
+\item 16780263 果 16777219 阿 count 30
+\item 16780263 果 16778334 重 count 41
+\item 16780263 果 16781884 泥 count 7
+\item 16780263 果 16785138 仙 count 22
+\item 16780263 果 16786821 中 count 32
+\item 16780263 果 16786836 种 count 5
+\item 16785130 线 16785077 弦 count 4
+\item 16785130 线 16786821 中 count 22
+\item 16785130 线 16817937 中国 count 3
+\item 16780271 郭 16779426 浩 count 8
+\item 16780271 郭 16780275 国 count 13
+\item 16780271 郭 16785076 贤 count 3
+\item 16780271 郭 16785079 献 count 14
+\item 16780271 郭 16785088 先 count 2
+\item 16780271 郭 16785117 銛 count 2
+\item 16780271 郭 16785119 羡 count 6
+\item 16780271 郭 16785129 县 count 19
+\item 16780271 郭 16785130 线 count 10
+\item 16780271 郭 16786837 忠 count 14
+\item 16780271 郭 16786838 仲 count 17
+\item 16785138 仙 16780263 果 count 21
+\item 16785138 仙 16781851 霓 count 11
+\item 16785138 仙 16781858 尼 count 7
+\item 16785138 仙 16781872 妮 count 3
+\item 16785138 仙 16781884 泥 count 3
+\item 16785138 仙 16785076 贤 count 2
+\item 16785138 仙 16785138 仙 count 12
+\item 16780275 国 16777219 阿 count 7
+\item 16780275 国 16778334 重 count 31
+\item 16780275 国 16779423 耗 count 3
+\item 16780275 国 16779426 浩 count 5
+\item 16780275 国 16779427 豪 count 15
+\item 16780275 国 16779448 号 count 25
+\item 16780275 国 16780248 锅 count 2
+\item 16780275 国 16780275 国 count 45
+\item 16780275 国 16781812 呢 count 4
+\item 16780275 国 16784941 洗 count 2
+\item 16780275 国 16785083 显 count 11
+\item 16780275 国 16785120 宪 count 6
+\item 16780275 国 16785126 咸 count 4
+\item 16780275 国 16785129 县 count 14
+\item 16780275 国 16785130 线 count 6
+\item 16780275 国 16786821 中 count 413
+\item 16780275 国 16786829 钟 count 17
+\item 16780275 国 16786837 忠 count 77
+\item 16780275 国 16786838 仲 count 3
+\end

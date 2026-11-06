@@ -261,9 +261,7 @@ class Settings:
             os.unlink(staged)
 
     def build(self, wanted: Sequence[str]) -> int:
-        packages = {'pinyin-capi': 'oxpinyin-capi', 'zhuyin-capi': 'oxpinyin-zhuyin-capi',
-                    'gen-pinyin-table': 'oxpinyin-utils',
-                    'gen-zhuyin-table': 'oxpinyin-utils', 'k-mixture-model-to-interpolation': 'oxpinyin-utils'}
+        packages = {'pinyin-capi': 'oxpinyin-capi', 'zhuyin-capi': 'oxpinyin-zhuyin-capi'}
         for item in wanted:
             if item and item not in packages:
                 raise CellError(f"fatal: unknown artifact '{item}' (pinyin-capi, zhuyin-capi)", 2)
@@ -290,9 +288,7 @@ class Settings:
         source = dict(head=output('git', 'rev-parse', 'HEAD').strip(),
                       tracked_diff_sha256=hashlib.sha256(output('git', 'diff', 'HEAD', '--', '.').encode()).hexdigest())
         artifacts = {}
-        for name, filename in (('pinyin-capi', 'libpinyin_capi.so'), ('zhuyin-capi', 'libzhuyin_capi.so'),
-                               ('gen-pinyin-table', 'gen_pinyin_table'), ('gen-zhuyin-table', 'gen_zhuyin_table'),
-                               ('k-mixture-model-to-interpolation', 'k_mixture_model_to_interpolation')):
+        for name, filename in (('pinyin-capi', 'libpinyin_capi.so'), ('zhuyin-capi', 'libzhuyin_capi.so')):
             file = self.target / 'debug' / filename
             if file.exists():
                 stat = file.stat()

@@ -2,10 +2,58 @@
   "cases": {
     "estimate_interpolation-layout-refusal-total": {
       "cells": {
+        "bdb": {
+          "divergence": [
+            "stderr: pin \"\\n** (process:PID): CRITICAL **: TIME: bool\" … (length 182); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
+          ],
+          "pin": {
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "files": "f9e9003feae812de",
+              "stderr": "4881e98f155df6c2",
+              "stdout": "151ba24074e96a50"
+            },
+            "sha256": "3b84b2ffafed56bb39379237d1e6fa7e0a12dbe2ea65ffbdff97626efd2c821d"
+          },
+          "subject": {
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "files": "f9e9003feae812de",
+              "stderr": "12ae32cb1ec02d01",
+              "stdout": "151ba24074e96a50"
+            },
+            "sha256": "829b906d8562ece1f7a4ce81f3386f841a66d368eb757135eb9dc00654fb82d7"
+          }
+        },
+        "kc": {
+          "divergence": [
+            "stderr: pin \"\\n** (process:PID): CRITICAL **: TIME: bool\" … (length 182); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
+          ],
+          "pin": {
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "files": "4c093fdea7761367",
+              "stderr": "4881e98f155df6c2",
+              "stdout": "8bfb553cdcf3a5d8"
+            },
+            "sha256": "e3bdea9a5800f4a88905e64703472b5427d20b67e756a4b837a449d789d62424"
+          },
+          "subject": {
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "files": "4c093fdea7761367",
+              "stderr": "12ae32cb1ec02d01",
+              "stdout": "8bfb553cdcf3a5d8"
+            },
+            "sha256": "10f3df4ca557aeb99a05c6d86e01519baf5296ec62d486c11f85645e46e91cce"
+          }
+        },
         "tkrzw": {
           "divergence": [
-            "stderr: pin \"\\n** (process:PID): CRITICAL **: TIME: bool\" \u2026 (length 182); subject \"\"",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "stderr: pin \"\\n** (process:PID): CRITICAL **: TIME: bool\" … (length 182); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -385,22 +433,22 @@
         "bdb": {
           "divergence": [
             "exit: pin -5; subject 0",
-            "result: pin null; subject {\"l\" \u2026 (length 4): [], \"m\" \u2026 (length 6): <list length 3>, \"r\" \u2026 (length 7): <dict length 4>} \u2026 (length 5)",
-            "stderr: pin \"open SCRATCH/user-X/user.conf failed.\\n** C\" \u2026 (length 205); subject \"open SCRATCH/user-X/user.conf failed.\"",
-            "userfiles.addon.bin: subject only [27, \"4aeb3f46357bead\" \u2026 (length 64)]",
-            "userfiles.gb_char.dbin: subject only [26, \"b0624c19cf007ca\" \u2026 (length 64)]",
-            "userfiles.gb_char.dbin.tmp: pin only [26, \"b0624c19cf007ca\" \u2026 (length 64)]",
-            "userfiles.gbk_char.dbin: subject only [26, \"f4f18f1863e8a94\" \u2026 (length 64)]",
-            "userfiles.gbk_char.dbin.tmp: pin only [26, \"f4f18f1863e8a94\" \u2026 (length 64)]",
-            "userfiles.merged.dbin: subject only [38252, \"59eed2f9ef43edc\" \u2026 (length 64)]",
-            "userfiles.network.bin: subject only [27, \"4aeb3f46357bead\" \u2026 (length 64)]",
-            "userfiles.opengram.dbin: subject only [26, \"d3b9a15d9498085\" \u2026 (length 64)]",
-            "userfiles.opengram.dbin.tmp: pin only [26, \"d3b9a15d9498085\" \u2026 (length 64)]",
-            "userfiles.user.bin: subject only [27, \"4aeb3f46357bead\" \u2026 (length 64)]",
+            "result: pin null; subject {\"l\" … (length 4): [], \"m\" … (length 6): <list length 3>, \"r\" … (length 7): <dict length 4>} … (length 5)",
+            "stderr: pin \"open SCRATCH/user-X/user.conf failed.\\n** C\" … (length 205); subject \"open SCRATCH/user-X/user.conf failed.\"",
+            "userfiles.addon.bin: subject only [27, \"4aeb3f46357bead\" … (length 64)]",
+            "userfiles.gb_char.dbin: subject only [26, \"b0624c19cf007ca\" … (length 64)]",
+            "userfiles.gb_char.dbin.tmp: pin only [26, \"b0624c19cf007ca\" … (length 64)]",
+            "userfiles.gbk_char.dbin: subject only [26, \"f4f18f1863e8a94\" … (length 64)]",
+            "userfiles.gbk_char.dbin.tmp: pin only [26, \"f4f18f1863e8a94\" … (length 64)]",
+            "userfiles.merged.dbin: subject only [38252, \"59eed2f9ef43edc\" … (length 64)]",
+            "userfiles.network.bin: subject only [27, \"4aeb3f46357bead\" … (length 64)]",
+            "userfiles.opengram.dbin: subject only [26, \"d3b9a15d9498085\" … (length 64)]",
+            "userfiles.opengram.dbin.tmp: pin only [26, \"d3b9a15d9498085\" … (length 64)]",
+            "userfiles.user.bin: subject only [27, \"4aeb3f46357bead\" … (length 64)]",
             "userfiles.user_bigram.db: subject only [12288]",
             "userfiles.user_phrase_index.bin: subject only [8192]",
             "userfiles.user_pinyin_index.bin: subject only [8192]",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -428,22 +476,22 @@
         "kc": {
           "divergence": [
             "exit: pin -5; subject 0",
-            "result: pin null; subject {\"l\" \u2026 (length 4): [], \"m\" \u2026 (length 6): <list length 3>, \"r\" \u2026 (length 7): <dict length 4>} \u2026 (length 5)",
-            "stderr: pin \"open SCRATCH/user-X/user.conf failed.\\n** C\" \u2026 (length 205); subject \"open SCRATCH/user-X/user.conf failed.\"",
-            "userfiles.addon.bin: subject only [27, \"4aeb3f46357bead\" \u2026 (length 64)]",
-            "userfiles.gb_char.dbin: subject only [26, \"b0624c19cf007ca\" \u2026 (length 64)]",
-            "userfiles.gb_char.dbin.tmp: pin only [26, \"b0624c19cf007ca\" \u2026 (length 64)]",
-            "userfiles.gbk_char.dbin: subject only [26, \"f4f18f1863e8a94\" \u2026 (length 64)]",
-            "userfiles.gbk_char.dbin.tmp: pin only [26, \"f4f18f1863e8a94\" \u2026 (length 64)]",
-            "userfiles.merged.dbin: subject only [38252, \"59eed2f9ef43edc\" \u2026 (length 64)]",
-            "userfiles.network.bin: subject only [27, \"4aeb3f46357bead\" \u2026 (length 64)]",
-            "userfiles.opengram.dbin: subject only [26, \"d3b9a15d9498085\" \u2026 (length 64)]",
-            "userfiles.opengram.dbin.tmp: pin only [26, \"d3b9a15d9498085\" \u2026 (length 64)]",
-            "userfiles.user.bin: subject only [27, \"4aeb3f46357bead\" \u2026 (length 64)]",
+            "result: pin null; subject {\"l\" … (length 4): [], \"m\" … (length 6): <list length 3>, \"r\" … (length 7): <dict length 4>} … (length 5)",
+            "stderr: pin \"open SCRATCH/user-X/user.conf failed.\\n** C\" … (length 205); subject \"open SCRATCH/user-X/user.conf failed.\"",
+            "userfiles.addon.bin: subject only [27, \"4aeb3f46357bead\" … (length 64)]",
+            "userfiles.gb_char.dbin: subject only [26, \"b0624c19cf007ca\" … (length 64)]",
+            "userfiles.gb_char.dbin.tmp: pin only [26, \"b0624c19cf007ca\" … (length 64)]",
+            "userfiles.gbk_char.dbin: subject only [26, \"f4f18f1863e8a94\" … (length 64)]",
+            "userfiles.gbk_char.dbin.tmp: pin only [26, \"f4f18f1863e8a94\" … (length 64)]",
+            "userfiles.merged.dbin: subject only [38252, \"59eed2f9ef43edc\" … (length 64)]",
+            "userfiles.network.bin: subject only [27, \"4aeb3f46357bead\" … (length 64)]",
+            "userfiles.opengram.dbin: subject only [26, \"d3b9a15d9498085\" … (length 64)]",
+            "userfiles.opengram.dbin.tmp: pin only [26, \"d3b9a15d9498085\" … (length 64)]",
+            "userfiles.user.bin: subject only [27, \"4aeb3f46357bead\" … (length 64)]",
             "userfiles.user_bigram.db: subject only [7]",
             "userfiles.user_phrase_index.bin: subject only [7]",
             "userfiles.user_pinyin_index.bin: subject only [7]",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -471,22 +519,22 @@
         "tkrzw": {
           "divergence": [
             "exit: pin -5; subject 0",
-            "result: pin null; subject {\"l\" \u2026 (length 4): [], \"m\" \u2026 (length 6): <list length 3>, \"r\" \u2026 (length 7): <dict length 4>} \u2026 (length 5)",
-            "stderr: pin \"open SCRATCH/user-X/user.conf failed.\\n** C\" \u2026 (length 205); subject \"open SCRATCH/user-X/user.conf failed.\"",
-            "userfiles.addon.bin: subject only [27, \"4aeb3f46357bead\" \u2026 (length 64)]",
-            "userfiles.gb_char.dbin: subject only [26, \"b0624c19cf007ca\" \u2026 (length 64)]",
-            "userfiles.gb_char.dbin.tmp: pin only [26, \"b0624c19cf007ca\" \u2026 (length 64)]",
-            "userfiles.gbk_char.dbin: subject only [26, \"f4f18f1863e8a94\" \u2026 (length 64)]",
-            "userfiles.gbk_char.dbin.tmp: pin only [26, \"f4f18f1863e8a94\" \u2026 (length 64)]",
-            "userfiles.merged.dbin: subject only [38252, \"59eed2f9ef43edc\" \u2026 (length 64)]",
-            "userfiles.network.bin: subject only [27, \"4aeb3f46357bead\" \u2026 (length 64)]",
-            "userfiles.opengram.dbin: subject only [26, \"d3b9a15d9498085\" \u2026 (length 64)]",
-            "userfiles.opengram.dbin.tmp: pin only [26, \"d3b9a15d9498085\" \u2026 (length 64)]",
-            "userfiles.user.bin: subject only [27, \"4aeb3f46357bead\" \u2026 (length 64)]",
+            "result: pin null; subject {\"l\" … (length 4): [], \"m\" … (length 6): <list length 3>, \"r\" … (length 7): <dict length 4>} … (length 5)",
+            "stderr: pin \"open SCRATCH/user-X/user.conf failed.\\n** C\" … (length 205); subject \"open SCRATCH/user-X/user.conf failed.\"",
+            "userfiles.addon.bin: subject only [27, \"4aeb3f46357bead\" … (length 64)]",
+            "userfiles.gb_char.dbin: subject only [26, \"b0624c19cf007ca\" … (length 64)]",
+            "userfiles.gb_char.dbin.tmp: pin only [26, \"b0624c19cf007ca\" … (length 64)]",
+            "userfiles.gbk_char.dbin: subject only [26, \"f4f18f1863e8a94\" … (length 64)]",
+            "userfiles.gbk_char.dbin.tmp: pin only [26, \"f4f18f1863e8a94\" … (length 64)]",
+            "userfiles.merged.dbin: subject only [38252, \"59eed2f9ef43edc\" … (length 64)]",
+            "userfiles.network.bin: subject only [27, \"4aeb3f46357bead\" … (length 64)]",
+            "userfiles.opengram.dbin: subject only [26, \"d3b9a15d9498085\" … (length 64)]",
+            "userfiles.opengram.dbin.tmp: pin only [26, \"d3b9a15d9498085\" … (length 64)]",
+            "userfiles.user.bin: subject only [27, \"4aeb3f46357bead\" … (length 64)]",
             "userfiles.user_bigram.db: subject only [4198400]",
             "userfiles.user_phrase_index.bin: subject only [529408]",
             "userfiles.user_pinyin_index.bin: subject only [529408]",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -518,17 +566,17 @@
         "bdb": {
           "divergence": [
             "exit: pin -5; subject 0",
-            "result: pin null; subject {\"l\" \u2026 (length 4): [], \"m\" \u2026 (length 6): <list length 3>, \"r\" \u2026 (length 7): <dict length 4>} \u2026 (length 5)",
-            "stderr: pin \"open SCRATCH/user-X/user.conf failed.\\n** C\" \u2026 (length 205); subject \"open SCRATCH/user-X/user.conf failed.\"",
-            "userfiles.addon.bin: subject only [27, \"4aeb3f46357bead\" \u2026 (length 64)]",
-            "userfiles.merged.dbin: subject only [38252, \"59eed2f9ef43edc\" \u2026 (length 64)]",
-            "userfiles.network.bin: subject only [27, \"4aeb3f46357bead\" \u2026 (length 64)]",
-            "userfiles.user.bin: subject only [27, \"4aeb3f46357bead\" \u2026 (length 64)]",
-            "userfiles.user.conf: subject only \"binary format version:7|model data version\" \u2026 (length 88)",
+            "result: pin null; subject {\"l\" … (length 4): [], \"m\" … (length 6): <list length 3>, \"r\" … (length 7): <dict length 4>} … (length 5)",
+            "stderr: pin \"open SCRATCH/user-X/user.conf failed.\\n** C\" … (length 205); subject \"open SCRATCH/user-X/user.conf failed.\"",
+            "userfiles.addon.bin: subject only [27, \"4aeb3f46357bead\" … (length 64)]",
+            "userfiles.merged.dbin: subject only [38252, \"59eed2f9ef43edc\" … (length 64)]",
+            "userfiles.network.bin: subject only [27, \"4aeb3f46357bead\" … (length 64)]",
+            "userfiles.user.bin: subject only [27, \"4aeb3f46357bead\" … (length 64)]",
+            "userfiles.user.conf: subject only \"binary format version:7|model data version\" … (length 88)",
             "userfiles.user_bigram.db: subject only [12288]",
             "userfiles.user_phrase_index.bin: subject only [8192]",
             "userfiles.user_pinyin_index.bin: subject only [8192]",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -556,17 +604,17 @@
         "kc": {
           "divergence": [
             "exit: pin -5; subject 0",
-            "result: pin null; subject {\"l\" \u2026 (length 4): [], \"m\" \u2026 (length 6): <list length 3>, \"r\" \u2026 (length 7): <dict length 4>} \u2026 (length 5)",
-            "stderr: pin \"open SCRATCH/user-X/user.conf failed.\\n** C\" \u2026 (length 205); subject \"open SCRATCH/user-X/user.conf failed.\"",
-            "userfiles.addon.bin: subject only [27, \"4aeb3f46357bead\" \u2026 (length 64)]",
-            "userfiles.merged.dbin: subject only [38252, \"59eed2f9ef43edc\" \u2026 (length 64)]",
-            "userfiles.network.bin: subject only [27, \"4aeb3f46357bead\" \u2026 (length 64)]",
-            "userfiles.user.bin: subject only [27, \"4aeb3f46357bead\" \u2026 (length 64)]",
-            "userfiles.user.conf: subject only \"binary format version:7|model data version\" \u2026 (length 90)",
+            "result: pin null; subject {\"l\" … (length 4): [], \"m\" … (length 6): <list length 3>, \"r\" … (length 7): <dict length 4>} … (length 5)",
+            "stderr: pin \"open SCRATCH/user-X/user.conf failed.\\n** C\" … (length 205); subject \"open SCRATCH/user-X/user.conf failed.\"",
+            "userfiles.addon.bin: subject only [27, \"4aeb3f46357bead\" … (length 64)]",
+            "userfiles.merged.dbin: subject only [38252, \"59eed2f9ef43edc\" … (length 64)]",
+            "userfiles.network.bin: subject only [27, \"4aeb3f46357bead\" … (length 64)]",
+            "userfiles.user.bin: subject only [27, \"4aeb3f46357bead\" … (length 64)]",
+            "userfiles.user.conf: subject only \"binary format version:7|model data version\" … (length 90)",
             "userfiles.user_bigram.db: subject only [7]",
             "userfiles.user_phrase_index.bin: subject only [7]",
             "userfiles.user_pinyin_index.bin: subject only [7]",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -594,17 +642,17 @@
         "tkrzw": {
           "divergence": [
             "exit: pin -5; subject 0",
-            "result: pin null; subject {\"l\" \u2026 (length 4): [], \"m\" \u2026 (length 6): <list length 3>, \"r\" \u2026 (length 7): <dict length 4>} \u2026 (length 5)",
-            "stderr: pin \"open SCRATCH/user-X/user.conf failed.\\n** C\" \u2026 (length 205); subject \"open SCRATCH/user-X/user.conf failed.\"",
-            "userfiles.addon.bin: subject only [27, \"4aeb3f46357bead\" \u2026 (length 64)]",
-            "userfiles.merged.dbin: subject only [38252, \"59eed2f9ef43edc\" \u2026 (length 64)]",
-            "userfiles.network.bin: subject only [27, \"4aeb3f46357bead\" \u2026 (length 64)]",
-            "userfiles.user.bin: subject only [27, \"4aeb3f46357bead\" \u2026 (length 64)]",
-            "userfiles.user.conf: subject only \"binary format version:7|model data version\" \u2026 (length 83)",
+            "result: pin null; subject {\"l\" … (length 4): [], \"m\" … (length 6): <list length 3>, \"r\" … (length 7): <dict length 4>} … (length 5)",
+            "stderr: pin \"open SCRATCH/user-X/user.conf failed.\\n** C\" … (length 205); subject \"open SCRATCH/user-X/user.conf failed.\"",
+            "userfiles.addon.bin: subject only [27, \"4aeb3f46357bead\" … (length 64)]",
+            "userfiles.merged.dbin: subject only [38252, \"59eed2f9ef43edc\" … (length 64)]",
+            "userfiles.network.bin: subject only [27, \"4aeb3f46357bead\" … (length 64)]",
+            "userfiles.user.bin: subject only [27, \"4aeb3f46357bead\" … (length 64)]",
+            "userfiles.user.conf: subject only \"binary format version:7|model data version\" … (length 83)",
             "userfiles.user_bigram.db: subject only [4198400]",
             "userfiles.user_phrase_index.bin: subject only [529408]",
             "userfiles.user_pinyin_index.bin: subject only [529408]",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {

@@ -49,8 +49,8 @@ conditional on `--enable-libzhuyin`. Interactive drivers and manual test
 programs have the same porting requirement as the six automated tests.
 
 **GAP** means the complete drop-in executable is pending. **Ported** means
-its source-defined interface is implemented and its registered `tool-diff`
-cases pass the required cells. Existing unit tests, adapted APIs and
+its source-defined interface is implemented and its [frozen cases](../runbooks/tool-diff.md)
+pass the required cells. Existing unit tests, adapted APIs and
 algorithm differentials do not by themselves make a program Ported.
 The previous PORT/ADAPT/REPLACE/N/A entries described internal behavior
 coverage and are superseded for these programs; no program is exempt.
@@ -62,29 +62,29 @@ coverage and are superseded for these programs; no program is exempt.
 | A | `tests/test_chewing.cpp` / `test_chewing` | No | `../data`: Pinyin C API's chewing parse, sentence and auxiliary text, train/reset/save and teardown | **Ported** (2026-11-01 UTC) |
 | A | `tests/test_zhuyin.cpp` / `test_zhuyin` | No | `../data`: the separate `zhuyin_*` C API, chewing parse and sentence, train/reset/save and teardown | **Ported** (2026-11-01 UTC) |
 | B | `tests/storage/test_parser2.cpp` / `test_parser2` | No | GLib `--parser`, `--incomplete`, `--scheme`; stdin; every parser variant, consumed length and raw key spans; `timer.h` output | **Ported** — `test_parser2.json`, 26 tkrzw cases |
-| C | `tests/storage/test_ngram.cpp` / `test_ngram` | Yes | `SingleGram`/`Bigram` operations; `/tmp/test.db`, `/tmp/snapshot.db` | **Ported** — same-named tool case file, all three cells |
-| C | `tests/storage/test_flexible_ngram.cpp` / `test_flexible_ngram` | Yes | Flexible single-gram range search and mutation, bigram storage; `/tmp/training.db` | **Ported** — same-named tool case file, all three cells |
-| C | `tests/storage/test_punct_table.cpp` / `test_punct_table` | Yes | Punctuation append/remove and snapshot save/load; `/tmp/punct.bin`, `/tmp/snapshot.db` | **Ported** — same-named tool case file, all three cells |
+| C | `tests/storage/test_ngram.cpp` / `test_ngram` | Yes | `SingleGram`/`Bigram` operations; `/tmp/test.db`, `/tmp/snapshot.db` | **Ported** — same-named frozen test module, all three cells |
+| C | `tests/storage/test_flexible_ngram.cpp` / `test_flexible_ngram` | Yes | Flexible single-gram range search and mutation, bigram storage; `/tmp/training.db` | **Ported** — same-named frozen test module, all three cells |
+| C | `tests/storage/test_punct_table.cpp` / `test_punct_table` | Yes | Punctuation append/remove and snapshot save/load; `/tmp/punct.bin`, `/tmp/snapshot.db` | **Ported** — same-named frozen test module, all three cells |
 | D | `tests/storage/test_table_info.cpp` / `test_table_info` | Yes | System/user table configuration and conformance; `../../data/table.conf`, `/tmp/user.conf` | **Ported** — `test_table_info.json`, 11 MATCH and 3 POLICY-ACCEPTED on tkrzw |
 | E | `tests/include/test_memory_chunk.cpp` / `test_memory_chunk` | Yes | Chunk content, capacity, insert/remove, save/load/map; `/tmp/test.bin` | **Ported** — `test_memory_chunk.json`, 3 MATCH and 1 POLICY-ACCEPTED on tkrzw |
-| E | `tests/storage/test_phrase_index.cpp` / `test_phrase_index` | No | Phrase-item/index mutation, frequency, compact and chunk round trips; `../../data/*` through `tests_helper.h` | **Ported** — same-named tool case file and source-only class (b) guards |
-| E | `tests/storage/test_phrase_index_logger.cpp` / `test_phrase_index_logger` | Yes | Phrase-index logger diff/merge; `../../data/*`; `/tmp/gb_char.bin`, `/tmp/gb_char.dbin`, `/tmp/gb_char2.bin` | **Ported** — same-named tool case file and source-only class (b) guards |
-| E | `tests/storage/test_phrase_table.cpp` / `test_phrase_table` | No | Phrase-table lookup and mutation over `../../data/*` | **Ported** — same-named tool case file, all three cells, with class (b) source-only guards |
-| E | `tests/storage/test_chewing_table.cpp` / `test_chewing_table` | No | Chewing-table lookup and mutation over `../../data/*` | **Ported** — same-named tool case file, all three cells, with class (b) source-only guards |
-| E | `tests/storage/test_matrix.cpp` / `test_matrix` | No | Phonetic-key matrix construction and search over `../../data/*` | **Ported** — same-named tool case file; matrix, result positions and text compared |
-| E | `tests/lookup/test_pinyin_lookup.cpp` / `test_pinyin_lookup` | No | Phonetic n-best lookup over parsed matrices, phrase chunks and `../../data/bigram.db` | **Ported** — same-named tool case file; matrix, result positions and text compared |
-| E | `tests/lookup/test_phrase_lookup.cpp` / `test_phrase_lookup` | No | Raw-text phrase lookup with phrase chunks and `../../data/bigram.db` | **Ported** — same-named tool case file; matrix, result positions and text compared |
+| E | `tests/storage/test_phrase_index.cpp` / `test_phrase_index` | No | Phrase-item/index mutation, frequency, compact and chunk round trips; `../../data/*` through `tests_helper.h` | **Ported** — same-named frozen test module and source-only class (b) guards |
+| E | `tests/storage/test_phrase_index_logger.cpp` / `test_phrase_index_logger` | Yes | Phrase-index logger diff/merge; `../../data/*`; `/tmp/gb_char.bin`, `/tmp/gb_char.dbin`, `/tmp/gb_char2.bin` | **Ported** — same-named frozen test module and source-only class (b) guards |
+| E | `tests/storage/test_phrase_table.cpp` / `test_phrase_table` | No | Phrase-table lookup and mutation over `../../data/*` | **Ported** — same-named frozen test module, all three cells, with class (b) source-only guards |
+| E | `tests/storage/test_chewing_table.cpp` / `test_chewing_table` | No | Chewing-table lookup and mutation over `../../data/*` | **Ported** — same-named frozen test module, all three cells, with class (b) source-only guards |
+| E | `tests/storage/test_matrix.cpp` / `test_matrix` | No | Phonetic-key matrix construction and search over `../../data/*` | **Ported** — same-named frozen test module; matrix, result positions and text compared |
+| E | `tests/lookup/test_pinyin_lookup.cpp` / `test_pinyin_lookup` | No | Phonetic n-best lookup over parsed matrices, phrase chunks and `../../data/bigram.db` | **Ported** — same-named frozen test module; matrix, result positions and text compared |
+| E | `tests/lookup/test_phrase_lookup.cpp` / `test_phrase_lookup` | No | Raw-text phrase lookup with phrase chunks and `../../data/bigram.db` | **Ported** — same-named frozen test module; matrix, result positions and text compared |
 
 Family A is implemented by the four same-named `oxpinyin-utils` binaries
 and `src/pin_tests.rs`, using tool-gated ownership adapters in the two
-existing C facades. Its one-per-program case files are
-`tools/bisection/tool-cases/test_{pinyin,phrase,chewing,zhuyin}.json`:
+existing C facades. Its cases are the `frozen::test_{pinyin,phrase,chewing,zhuyin}`
+modules of `crates/oxpinyin-utils/tests/storage_tools.rs`:
 21 cases match on tkrzw, bdb and kc, including saved user files. The named
 `pin-tests-a-prefix-prompt.patch` mutation is detected by
 `test-pinyin-quit` on tkrzw; reversing it and rebuilding restores MATCH.
 
 Family C ports `test_ngram`, `test_flexible_ngram` and `test_punct_table`
-with 14 source-derived cases in their three same-named case files. The
+with 14 source-derived cases in their three same-named frozen test modules. The
 fixed `/tmp` paths remain isolated per side. Combined with all 45 current
 K-mixture cases, the all-cell result is tkrzw 50 MATCH / 9 POLICY-ACCEPTED,
 BDB 44 / 15, and KC 48 / 11, with no DIFFER or INVALID. Policy records bind
@@ -191,7 +191,7 @@ ABI behaviors are N/A by design rather than artificially reconstructed.
 ## Maintenance rule
 
 Each libpinyin family PR updates its rows from GAP to Ported, names its
-source-derived case files and records the selected-cell results. Keep the
+source-derived frozen cases and records the selected-cell results. Keep the
 17-program inventory tied to the pin's four Makefiles; do not replace a
 missing executable with an internal-test claim or silently omit it.
 

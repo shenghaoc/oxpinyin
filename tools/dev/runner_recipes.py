@@ -1412,6 +1412,3 @@ RECIPES['import-diff'] = import_diff
 
 from .runner_identity import RECIPES as IDENTITY_RECIPES
 RECIPES.update(IDENTITY_RECIPES)
-
-from .tool_diff import run as tool_diff
-RECIPES['tool-diff'] = tool_diff

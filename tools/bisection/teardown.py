@@ -1417,7 +1417,7 @@ def fan_out(campaign, units, label, emit=None):
     def instance(name, function):
         def run(context):
             return function(campaign.unit(name, cpu=context.cpu, driver=context.driver(campaign.driver),
-                                          environment=context.environment, fds=context.fds))
+                                          environment=context.environment))
         return name, run
     return pool.run_leased([instance(name, function) for name, function in units],
                            cancelled=pool.cancelled_from(campaign.driver.check_cancelled),

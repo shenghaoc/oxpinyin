@@ -1,0 +1,11 @@
+Usage:
+  test_parser2 [OPTION?] - test pinyin parser
+
+Help Options:
+  -h, --help                                                                Show help options
+
+Application Options:
+  -p, --parser=fullpinyin doublepinyin zhuyin pinyindirect zhuyindirect     parser
+  -i, --incomplete                                                          incomplete pinyin
+  -s, --scheme=standard hsu dachen26                                        scheme
+

@@ -27,10 +27,13 @@ pub fn main() {
         index.add_unigram(slot, delta);
     }
     output::total(facade_total);
-    save(Path::new("/tmp/gb_char.bin"), &stored(&index));
+    save(
+        crate::fixed_tmp::path("gb_char.bin").as_path(),
+        &stored(&index),
+    );
     let log = present(index.diff(load()));
     save(
-        Path::new("/tmp/gb_char.dbin"),
+        crate::fixed_tmp::path("gb_char.dbin").as_path(),
         &present(build_memory_chunk(&log).ok()),
     );
     // FacadePhraseIndex::load keeps the facade cache and adjusts it by
@@ -42,7 +45,7 @@ pub fn main() {
     if accepted {
         facade_total = facade_total.wrapping_add(index.total());
     }
-    let log = payload(Path::new("/tmp/gb_char.dbin")).unwrap_or_default();
+    let log = payload(crate::fixed_tmp::path("gb_char.dbin").as_path()).unwrap_or_default();
     let old_total = index.total();
     check(index.merge(&log).unwrap_or_else(|_| tool::abort()));
     // Merge adjusts the same cache, independently of its item fields
@@ -50,6 +53,9 @@ pub fn main() {
     facade_total = facade_total
         .wrapping_sub(old_total)
         .wrapping_add(index.total());
-    save(Path::new("/tmp/gb_char2.bin"), &stored(&index));
+    save(
+        crate::fixed_tmp::path("gb_char2.bin").as_path(),
+        &stored(&index),
+    );
     output::total(facade_total);
 }

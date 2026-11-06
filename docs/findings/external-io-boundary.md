@@ -793,6 +793,6 @@ Row 109's post-fini release is settled by the [mapping lifetime ruling](#mapping
 production activation is complete.
 
 Stage 5 follow-up: `gen_zhuyin_table` now uses the same tool boundary and
-shared phrase tree as `gen_pinyin_table`. The registered
-[`tool-diff` runner](../runbooks/tool-diff.md) compares both generators'
-case files, including source-derived class (b) refusal records.
+shared phrase tree as `gen_pinyin_table`. The
+[frozen tool cases](../runbooks/tool-diff.md) hold both generators to the
+pin, including source-derived class (b) refusal records.

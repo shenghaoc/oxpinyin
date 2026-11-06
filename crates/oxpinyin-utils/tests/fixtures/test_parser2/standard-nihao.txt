@@ -1,0 +1,28 @@
+Spent <TIME> us for 1000 operations, <TIME> us/op, <TIME> times/s.
+
+parsed 6 chars, 2 keys.
+ni3 0 3	hao3 3 6	
+Spent <TIME> us for 1000 operations, <TIME> us/op, <TIME> times/s.
+
+parsed 0 chars, 0 keys.
+
+Spent <TIME> us for 1000 operations, <TIME> us/op, <TIME> times/s.
+
+parsed 0 chars, 0 keys.
+
+Spent <TIME> us for 1000 operations, <TIME> us/op, <TIME> times/s.
+
+parsed 3 chars, 1 keys.
+zhong 0 3	
+Spent <TIME> us for 1000 operations, <TIME> us/op, <TIME> times/s.
+
+parsed 2 chars, 2 keys.
+ao 0 1	o 1 2	
+Spent <TIME> us for 1000 operations, <TIME> us/op, <TIME> times/s.
+
+parsed 2 chars, 2 keys.
+wu 0 1	yi 1 2	
+Spent <TIME> us for 1000 operations, <TIME> us/op, <TIME> times/s.
+
+parsed 0 chars, 0 keys.
+

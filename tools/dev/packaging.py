@@ -46,8 +46,7 @@ NAMES = ('install', 'relink-versioned', 'pc-version', 'check-pc-version', 'check
          'release-stage', 'release-deb', 'release-rpm', 'release-arch', 'compare-installs', 'sizes',
          'trainer-layout')
 
-# libpinyin 074a2219 utils/{storage,segment,training}/Makefile.am. dbm_rows
-# is oxpinyin's inspection helper, not one of the pin's 21 utilities.
+# libpinyin 074a2219 utils/{storage,segment,training}/Makefile.am.
 TRAINER_TOOLS = {
     'storage': ('gen_binary_files', 'import_interpolation', 'export_interpolation',
                 'gen_pinyin_table', 'gen_zhuyin_table'),

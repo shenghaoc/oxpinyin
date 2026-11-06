@@ -1,0 +1,10 @@
+Usage:
+  gen_zhuyin_table [OPTION?] - generate pinyin table
+
+Help Options:
+  -h, --help            Show help options
+
+Application Options:
+  -t, --phraseindex     phrase index
+  -o, --outputfile      output filename
+

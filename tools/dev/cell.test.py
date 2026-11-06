@@ -163,15 +163,6 @@ class BuildLaunchTests(unittest.TestCase):
         for call in self.calls:
             self.assert_supervised(call)
 
-    def test_table_utilities_share_one_package_build(self):
-        settings = Settings.read(self.env)
-        with self.recording(), mock.patch.object(Settings, 'record'):
-            self.assertEqual(settings.build(['gen-pinyin-table', 'gen-zhuyin-table',
-                                             'k-mixture-model-to-interpolation']), 0)
-        self.assertEqual(len(self.calls), 1)
-        self.assertEqual(self.calls[0]['argv'].count('oxpinyin-utils'), 1)
-        self.assert_supervised(self.calls[0])
-
     def test_windows_builds_take_the_job_object_path(self):
         library = self.target / 'debug/libpinyin_capi.so'
         library.parent.mkdir(parents=True)

@@ -3,7 +3,6 @@ use super::*;
 use oxpinyin_store::{
     AttachMode, DefaultFlexibleBigram, FixedRecord, FlexibleGramSpec, SingleGram,
 };
-use std::path::Path;
 
 #[derive(Clone)]
 struct Word(u32);
@@ -40,7 +39,7 @@ fn print_gram(gram: &SingleGram<Word, Word>) {
     }
 }
 
-/// Execute the program under its fixed /tmp name.
+/// Execute the program under its fixed name ([`crate::fixed_tmp`]).
 pub fn main() {
     let mut single = SingleGram::<Word, Word>::new();
     single.set_header(Word(16));
@@ -57,7 +56,7 @@ pub fn main() {
     check(single.header().0 == 16);
 
     let bigram = required(DefaultFlexibleBigram::<Test>::attach(
-        Some(Path::new("/tmp/training.db")),
+        Some(crate::fixed_tmp::path("training.db").as_path()),
         AttachMode::ReadWriteCreate,
     ));
     check(bigram.attached());

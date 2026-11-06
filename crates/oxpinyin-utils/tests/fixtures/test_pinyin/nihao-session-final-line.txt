@@ -1,0 +1,8 @@
+prefix:pinyin:auxiliary text:|ni hao 
+auxiliary text:n|i hao 
+auxiliary text:ni |hao 
+auxiliary text:ni h|ao 
+auxiliary text:ni ha|o 
+auxiliary text:ni hao |
+你好	你号	拟好	你	尼	呢	泥	妮	拟	逆	倪	腻	溺	昵	匿	霓	祢	鲵	猊	铌	坭	睨	抳	怩	鹢	疒	暱	惄	慝	麑	蜺	儗	鷊	旎	縌	儞	伲	氼	籾	禰	妳	堄	輗	鉨	齯	鶂	貎	膩	薿	柅	臡	郳	衵	懝	兒	䮘	㧱	聻	㮞	檷	䀑	抐	誽	䍲	㮏	㲡	䘌	㠜	䘦	鈮	䰯	伱	愵	嬺	䘽	䵑	䵒	屔	婗	䝚	鹝	䁥	䕥	孨	㵫	屰	䭲	孴	㹸	譺	㥾	㦐	㪒	馜	隬	蚭	䦵	㲻	㞾	痆	㣇	䧇	狋	䛏	胒	鯓	狔	秜	跜	嫟	迡	鯢	淣	苨	擬	觬	埿	鑈	棿	腝	蛪	㘈	眤	㩘	晲	掜	聣	袮	
+prefix:

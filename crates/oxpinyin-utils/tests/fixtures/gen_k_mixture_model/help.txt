@@ -1,0 +1,12 @@
+Usage:
+  gen_k_mixture_model [OPTION?] - generate k mixture model
+
+Help Options:
+  -h, --help                           Show help options
+
+Application Options:
+  --skip-pi-gram-training              skip pi-gram training
+  --maximum-occurs-allowed             maximum occurs allowed
+  --maximum-increase-rates-allowed     maximum increase rates allowed
+  --k-mixture-model-file               k mixture model file
+

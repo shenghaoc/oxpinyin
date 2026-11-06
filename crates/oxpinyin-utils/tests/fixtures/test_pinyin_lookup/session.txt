@@ -1,0 +1,116 @@
+Column:1:
+ChewingKey:ni
+ChewingKeyRest:1	3
+Column:3:
+ChewingKey:
+ChewingKeyRest:3	4
+Column:4:
+ChewingKey:
+ChewingKeyRest:4	5
+Column:5:
+ChewingKey:hao
+ChewingKeyRest:5	8
+Column:8:
+ChewingKey:
+ChewingKeyRest:8	9
+Column:9:
+ChewingKey:
+ChewingKeyRest:9	10
+Spent <TIME> us for 100 operations, <TIME> us/op, <TIME> times/s.
+
+Column:0:
+ChewingKey:ni
+ChewingKeyRest:0	7
+Column:7:
+ChewingKey:
+ChewingKeyRest:7	8
+Spent <TIME> us for 100 operations, <TIME> us/op, <TIME> times/s.
+
+pos:0,token:16781861	
+你
+pos:0,token:16781858	
+尼
+pos:0,token:16781884	
+泥
+Column:0:
+ChewingKey:ni3
+ChewingKeyRest:0	3
+Column:3:
+ChewingKey:hao3
+ChewingKeyRest:3	7
+Column:7:
+ChewingKey:
+ChewingKeyRest:7	8
+Spent <TIME> us for 100 operations, <TIME> us/op, <TIME> times/s.
+
+pos:0,token:16781861	pos:3,token:16779429	
+你好
+pos:0,token:16781861	pos:3,token:16779448	
+你号
+pos:0,token:16781882	pos:3,token:16779429	
+拟好
+Column:0:
+ChewingKey:ni
+ChewingKeyRest:0	2
+Column:2:
+ChewingKey:
+ChewingKeyRest:2	3
+Column:3:
+ChewingKey:hao
+ChewingKeyRest:3	6
+Column:6:
+ChewingKey:
+ChewingKeyRest:6	7
+Spent <TIME> us for 100 operations, <TIME> us/op, <TIME> times/s.
+
+pos:0,token:16781861	pos:2,token:16779429	
+你好
+pos:0,token:16781861	pos:2,token:16779448	
+你号
+pos:0,token:16781882	pos:2,token:16779429	
+拟好
+Column:0:
+ChewingKey:zhong
+ChewingKeyRest:0	5
+Column:5:
+ChewingKey:guo
+ChewingKeyRest:5	8
+Column:8:
+ChewingKey:
+ChewingKeyRest:8	9
+Spent <TIME> us for 100 operations, <TIME> us/op, <TIME> times/s.
+
+pos:0,token:16817937	
+中国
+pos:0,token:16786821	pos:5,token:16780268	
+中过
+pos:0,token:16786821	pos:5,token:16780275	
+中国
+Column:0:
+ChewingKey:xian
+ChewingKeyRest:0	4
+Column:4:
+ChewingKey:
+ChewingKeyRest:4	5
+Spent <TIME> us for 100 operations, <TIME> us/op, <TIME> times/s.
+
+pos:0,token:16785129	
+县
+pos:0,token:16785130	
+线
+pos:0,token:16785088	
+先
+Column:0:
+ChewingKey:a
+ChewingKeyRest:0	1
+Column:1:
+ChewingKey:
+ChewingKeyRest:1	2
+Spent <TIME> us for 100 operations, <TIME> us/op, <TIME> times/s.
+
+pos:0,token:16777219	
+阿
+pos:0,token:16777220	
+啊
+pos:0,token:16777221	
+腌
