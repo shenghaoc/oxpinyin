@@ -93,6 +93,21 @@ def changed_parse_constraints(initial, choices, replacement, sequence,
     return probe
 
 
+_SEQUENCES = {
+    **{('pinyin', _name): ('direct',) for _name in (
+        'shorter', 'longer', 'different-first', 'whole-span-past-end', 'edit-within-span', 'whole-span-kept',
+        'two-choices')},
+    ('pinyin', 'changed-suffix'): ('direct', 'guess', 'empty', 'empty-guess'),
+    ('pinyin', 'span-past-end'): ('direct', 'empty-guess'),
+    ('pinyin', 'temporary-mismatch'): ('direct', 'intermediate-guess'),
+    ('pinyin', 'temporary-shorter'): ('direct', 'intermediate-guess'),
+    ('zhuyin', 'changed-suffix'): ('direct',),
+    ('zhuyin', 'span-past-end'): ('direct',),
+    ('zhuyin', 'edit-within-span'): ('direct',),
+    ('zhuyin', 'temporary-shorter'): ('intermediate-guess',),
+}
+
+
 for _mode in ('pinyin', 'zhuyin'):
     for _name, _initial, _choices, _replacement, _control in (
             ('changed-suffix', 'nihao', ((0, '泥'),), 'nihai', False),
@@ -104,7 +119,10 @@ for _mode in ('pinyin', 'zhuyin'):
             ('edit-within-span', 'nihaoshijie', ((0, '你好'),), 'nihaishijie', True),
             ('whole-span-kept', 'nihaoshijie', ((0, '你好'),), 'nihaoshijian', False),
             ('two-choices', 'nihao', ((0, '泥'), (2, '浩')), 'nihai', False)):
-        for _sequence in ('direct', 'guess', 'empty', 'empty-guess'):
+        # Only a guess reaches `validate_constraint` (`phonetic_lookup.cpp:120-160`), which is one
+        # source for both facades: the edit shapes are read there, so each keeps its direct form on
+        # libpinyin. The parse sequences change when it runs: a kept and a cleared constraint take them.
+        for _sequence in _SEQUENCES.get((_mode, _name), ()):
             case(f'parse-constraints-{_mode}-{_name}-{_sequence}', mode=_mode,
                  control=_control or _sequence == 'empty-guess', issues=('710',))(
                 changed_parse_constraints(_initial, _choices, _replacement, _sequence))
@@ -112,7 +130,7 @@ for _mode in ('pinyin', 'zhuyin'):
     # something validates that intermediate matrix.
     for _name, _intermediate in (('temporary-mismatch', 'nahao'),
                                 ('temporary-shorter', 'n')):
-        for _sequence in ('direct', 'intermediate-guess'):
+        for _sequence in _SEQUENCES.get((_mode, _name), ()):
             case(f'parse-constraints-{_mode}-{_name}-{_sequence}', mode=_mode,
                  control=_sequence == 'intermediate-guess' and not (
                      _mode == 'zhuyin' and _name == 'temporary-shorter'), issues=('710',))(
