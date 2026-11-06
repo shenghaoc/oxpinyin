@@ -159,7 +159,12 @@ for _mode, _table in (('pinyin', _RELOAD_PINYIN), ('zhuyin', _RELOAD_ZHUYIN)):
         _tag = '%s-%s' % (_mode, _name)
         if _library == 1:
             # The facade refuses to unload library 1: both calls answer false
-            # and the session's change stays.
+            # and the session's change stays. The refusal is the one index test of
+            # `pinyin_unload_phrase_library` (`pinyin.cpp:470-471`, `GBK_DICTIONARY != index`), made
+            # before anything is read, so what the session changed does not reach it: libpinyin
+            # keeps the training refusal and not the import.
+            if _tag == 'pinyin-import-library-1':
+                continue
             case('reload-refused-%s' % _tag, mode=_mode, control=True, issues=('805',))(_reload_probe(_change, _library, False))
             continue
         case('reload-drops-session-%s' % _tag, mode=_mode, issues=('805',))(_reload_probe(_change, _library, False))
@@ -223,6 +228,12 @@ for _mode, (_readings, _input) in _RELOAD_USER.items():
     for _name, _setup, _change, _inputs, _save_setup, _save_change, _control in _user:
         _probe = _reload_user(_setup, _change, ['好你'], _inputs, _save_setup, _save_change)
         _tag = '%s-%s' % (_mode, _name)
+        # The pinyin refusal is the same index test as library 1's (`pinyin.cpp:470-471`), made before
+        # anything is read, so one library-7 refusal is kept. libzhuyin keeps all four: `reading-saved`
+        # is the only case that adds a reading to an existing phrase, saves and reloads, and that is
+        # its own branch of `zhuyin.cpp`.
+        if _mode == 'pinyin' and _name != 'item':
+            continue
         if _mode == 'pinyin':
             # The pinyin facade refuses to unload library 7: both calls answer
             # false and the session's change stays.
@@ -527,6 +538,11 @@ def _reload_unreadable(how, rows, phrases, inputs):
 for _mode, (_rows, _inputs) in (('pinyin', ([('礙', 'ai1', 50)], [b'ai1'])),
                                 ('zhuyin', ([('礙', 'ㄞ', 50)], [b'9']))):
     for _how in ('missing', 'short'):
+        # `MemoryChunk::load` has two refusals, an open that fails and a file shorter than its
+        # header (`memory_chunk.h:416-429`). The merge is libpinyin's and libzhuyin's one
+        # (`pinyin.cpp:264-277`, `zhuyin.cpp:208-221`), so libzhuyin keeps the missing log.
+        if _mode == 'zhuyin' and _how == 'short':
+            continue
         case('reload-unreadable-log-%s-%s' % (_how, _mode), mode=_mode, stderr=True, control=True,
              issues=('805', 'row:103'))(_reload_unreadable(_how, _rows, ['礙'], _inputs))
 
