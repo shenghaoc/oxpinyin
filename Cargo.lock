@@ -757,7 +757,6 @@ dependencies = [
  "compact_str",
  "criterion",
  "oxpinyin-core",
- "oxpinyin-testsupport",
  "smallvec",
 ]
 
@@ -790,7 +789,6 @@ version = "0.1.0"
 dependencies = [
  "oxpinyin-input",
  "oxpinyin-store",
- "oxpinyin-testsupport",
  "tempfile",
 ]
 
@@ -821,10 +819,6 @@ dependencies = [
 [[package]]
 name = "oxpinyin-testsupport"
 version = "0.1.0"
-dependencies = [
- "oxpinyin-core",
- "tempfile",
-]
 
 [[package]]
 name = "oxpinyin-training"
@@ -833,7 +827,6 @@ dependencies = [
  "oxpinyin-core",
  "oxpinyin-data",
  "oxpinyin-store",
- "oxpinyin-testsupport",
  "tempfile",
 ]
 

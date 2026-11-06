@@ -1,19 +1,14 @@
 //! Scorer behaviour against the shared fixture doubles.
 //!
-//! These tests exercise `oxpinyin-core`'s public `Scorer` through the
-//! fixture-backed `Dictionary`/`LanguageModel` this crate provides. They
-//! live under this crate, not under `oxpinyin-core/tests/`, because this
-//! crate depends on core: a core dev-dependency on it would close a cycle
-//! that rust-analyzer reports and that builds two instances of core, whose
-//! trait impls do not unify. They are integration tests in the Rust sense
-//! anyway — components working together across the public seam.
+//! These tests exercise the public `Scorer` through the fixture-backed
+//! `Dictionary`/`LanguageModel` doubles in `common/fixture_doubles.rs`.
 
+use crate::common::fixture_doubles::{FixtureDictionary, FixtureLanguageModel};
 use oxpinyin_core::cost::UNKNOWN_COST;
 use oxpinyin_core::graph::{EdgeKind, SegmentGraph};
 use oxpinyin_core::kbest::{EdgeCost, k_best};
 use oxpinyin_core::scoring::{Scorer, ScoringConfig, ScoringError};
 use oxpinyin_core::{Cost, Dictionary, PhraseEntry, PhraseToken, SyllableKey};
-use oxpinyin_testsupport::{FixtureDictionary, FixtureLanguageModel};
 
 const VOCAB: &str = include_str!("../../../fixtures/w4/mini-vocab.txt");
 const BIGRAM: &str = include_str!("../../../fixtures/w4/mini-bigram.txt");

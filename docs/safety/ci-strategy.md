@@ -65,8 +65,8 @@ Doctest step only if nextest lands. Gates: all hard.
    config setters, adversarial iterator begin/end ordering; exercises
    F-6/F-7 surface), `dict-loader` (bytes→data decode; F-3 class),
    `scheme` and `codec` — landed since as `double-pinyin`, `table-conf`,
-   `user-store-ops`, `phrase-library`, `chewing-parser`, `session-keys`
-   and `fixture-model` (ten targets in `fuzz/Cargo.toml`).
+   `user-store-ops`, `phrase-library`, `chewing-parser` and `session-keys`
+   (nine targets in `fuzz/Cargo.toml`).
 2. ~~**Miri**: `cargo +nightly miri test --no-default-features --features redb
    -p oxpinyin-core -p oxpinyin-store` (redb is the pure-Rust peer Miri
    can reason about; the C-backed peers are covered by the ABI smoke

@@ -5,12 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Shared test support for the oxpinyin workspace: fixture-backed trait doubles. Never a dependency of shipping code."
+description = "The model20 cache locator for benches and the oracle harness. Never a dependency of shipping code."
 
 [lints]
 workspace = true
-
-[dependencies]
-oxpinyin-core.workspace = true
-# PinDir owns its scratch dir; this crate is test support and never ships.
-tempfile.workspace = true

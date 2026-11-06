@@ -13,6 +13,9 @@
 pub mod counter;
 pub mod emitter;
 pub mod eval;
+#[cfg(test)]
+#[path = "../../oxpinyin-core/tests/common/fixture_doubles.rs"]
+mod fixture_doubles;
 pub mod lambda;
 pub mod numeric;
 pub mod segment;

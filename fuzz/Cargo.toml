@@ -22,10 +22,6 @@ oxpinyin-data = { path = "../crates/oxpinyin-data" }
 # fuzzer.rs shape). The facade links natively on macOS with Homebrew GLib
 # and Berkeley DB 5.3; the nightly CI soak still runs on Linux.
 oxpinyin-capi = { path = "../crates/oxpinyin-capi", features = ["fuzz-api"] }
-# fixture-model: the fixture Dictionary/LanguageModel doubles live in the
-# test-support crate, not oxpinyin-core (core defines the traits; testsupport
-# holds the in-memory test implementations).
-oxpinyin-testsupport = { path = "../crates/oxpinyin-testsupport" }
 # session-keys: the Rust session API is an internal surface under the C facades; the
 # store backend rides the workspace default (tkrzw since
 # 2026-10-30), as capi-commands
@@ -44,13 +40,6 @@ bench = false
 [[bin]]
 name = "dict-loader"
 path = "fuzz_targets/dict_loader.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "fixture-model"
-path = "fuzz_targets/fixture_model.rs"
 test = false
 doc = false
 bench = false

@@ -15,8 +15,12 @@
 use std::collections::BTreeMap;
 
 use oxpinyin_core::{PhraseToken, SyllableKey};
-use oxpinyin_testsupport::FixtureDictionary;
 use oxpinyin_training::eval::{PhraseSource, build_model, correction_rate, parse_interpolation2};
+
+#[path = "../../oxpinyin-core/tests/common/fixture_doubles.rs"]
+mod fixture_doubles;
+
+use fixture_doubles::FixtureDictionary;
 
 const VOCAB: &str = "\
 token=10\tkeys=zhong\ttext=中\tunigram=100

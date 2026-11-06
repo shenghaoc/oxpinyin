@@ -5,11 +5,22 @@
 //! `fixtures/foundation/f-a.txt`, restricted to what the mini vocabulary can
 //! reach.
 
-use oxpinyin_engine::{Candidate, CandidateKind, EmptyConfigSource, Selection, Session};
-use oxpinyin_testsupport::{FixtureDictionary, FixtureLanguageModel};
+use std::collections::BTreeSet;
 
+use oxpinyin_engine::{Candidate, CandidateKind, EmptyConfigSource, Selection, Session};
+
+#[path = "../../oxpinyin-core/tests/common/fixture_doubles.rs"]
+mod fixture_doubles;
+
+use fixture_doubles::{FixtureDictionary, FixtureLanguageModel};
+
+const F_A: &str = include_str!("../../../fixtures/foundation/f-a.txt");
+const F_C: &str = include_str!("../../../fixtures/foundation/f-c.txt");
 const VOCAB: &str = include_str!("../../../fixtures/w4/mini-vocab.txt");
 const BIGRAM: &str = include_str!("../../../fixtures/w4/mini-bigram.txt");
+
+/// Depth the capture protocol records candidates to.
+const CAPTURE_DEPTH: usize = 10;
 
 type Fixtures = Session<FixtureDictionary, FixtureLanguageModel>;
 
@@ -511,4 +522,125 @@ fn incomplete_initials_expand_by_phonetic_initial() {
             "{input} must exclude {excluded}: {offered:?}"
         );
     }
+}
+
+fn field<'a>(line: &'a str, name: &str) -> Option<&'a str> {
+    line.split('\t')
+        .filter_map(|field| field.split_once('='))
+        .find(|(key, _)| *key == name)
+        .map(|(_, value)| value)
+}
+
+/// A capture record that carries a candidate list.
+struct Candidates {
+    input: String,
+    theirs: Vec<String>,
+}
+
+fn candidate_cases() -> Vec<Candidates> {
+    F_A.lines()
+        .chain(F_C.lines())
+        .filter_map(|line| {
+            let input = field(line, "input")?;
+            let encoded = field(line, "candidates_hex")?;
+            if encoded == "-" || input.contains('\\') {
+                return None;
+            }
+            let theirs = encoded
+                .split(',')
+                .map(|item| {
+                    let bytes: Vec<u8> = (0..item.len() / 2)
+                        .map(|index| {
+                            u8::from_str_radix(&item[index * 2..index * 2 + 2], 16)
+                                .expect("capture hex is valid")
+                        })
+                        .collect();
+                    String::from_utf8(bytes).expect("capture candidates are UTF-8")
+                })
+                .collect();
+            Some(Candidates {
+                input: input.to_owned(),
+                theirs,
+            })
+        })
+        .collect()
+}
+
+#[test]
+fn candidate_differential_over_the_capture_families() {
+    let mut total = 0_usize;
+    let mut covered = 0_usize;
+    let mut top1 = 0_usize;
+    let mut top5 = 0_usize;
+    let mut overlap = 0_usize;
+    let mut theirs_depth = 0_usize;
+
+    for case in candidate_cases() {
+        total += 1;
+
+        let mut session = session();
+
+        for character in case.input.chars() {
+            session
+                .type_pinyin(character.encode_utf8(&mut [0; 4]))
+                .expect("typing cannot fail");
+        }
+
+        let ours: Vec<String> = session
+            .candidates()
+            .iter()
+            .map(|candidate| candidate.text().as_str().unwrap_or_default().to_owned())
+            .collect();
+        // A record the mini vocabulary knows nothing about would otherwise
+        // drag every rate toward zero while measuring the fixture, not the
+        // decoder.
+        if ours.iter().all(|text| !case.theirs.contains(text)) {
+            continue;
+        }
+        covered += 1;
+
+        let theirs_first = case.theirs.first().expect("at least one candidate");
+        if ours.first() == Some(theirs_first) {
+            top1 += 1;
+        }
+        if ours.iter().take(5).any(|text| text == theirs_first) {
+            top5 += 1;
+        }
+
+        let ours_prefix: BTreeSet<&String> = ours.iter().take(CAPTURE_DEPTH).collect();
+        let theirs_prefix: BTreeSet<&String> = case.theirs.iter().take(CAPTURE_DEPTH).collect();
+        overlap += ours_prefix.intersection(&theirs_prefix).count();
+        theirs_depth += theirs_prefix.len();
+    }
+
+    let share = |count: usize, of: usize| {
+        if of == 0 {
+            0.0
+        } else {
+            f64::from(u32::try_from(count).unwrap_or(u32::MAX)) * 100.0
+                / f64::from(u32::try_from(of).unwrap_or(u32::MAX))
+        }
+    };
+    println!("decode differential — candidates, F-A and F-C");
+    println!("  records with a candidate list  {total}");
+    println!("  reachable by the mini vocab    {covered}");
+    println!(
+        "  top-1                          {top1:>4}  {:.2}%",
+        share(top1, covered)
+    );
+    println!(
+        "  top-5-set                      {top5:>4}  {:.2}%",
+        share(top5, covered)
+    );
+    println!(
+        "  prefix-10 overlap              {overlap:>4} of {theirs_depth}  {:.2}%",
+        share(overlap, theirs_depth)
+    );
+
+    assert!(covered >= 8, "the fixture must reach something");
+    assert!(
+        top5 * 100 >= covered * 80,
+        "top-5-set fell to {:.2}%",
+        share(top5, covered)
+    );
 }

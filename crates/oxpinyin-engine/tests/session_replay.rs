@@ -11,7 +11,11 @@
 
 use oxpinyin_core::{Dictionary, SyllableKey};
 use oxpinyin_engine::{EmptyConfigSource, EngineError, Selection, Session};
-use oxpinyin_testsupport::{FixtureDictionary, FixtureLanguageModel};
+
+#[path = "../../oxpinyin-core/tests/common/fixture_doubles.rs"]
+mod fixture_doubles;
+
+use fixture_doubles::{FixtureDictionary, FixtureLanguageModel};
 
 const VOCAB: &str = include_str!("../../../fixtures/w4/mini-vocab.txt");
 const BIGRAM: &str = include_str!("../../../fixtures/w4/mini-bigram.txt");
