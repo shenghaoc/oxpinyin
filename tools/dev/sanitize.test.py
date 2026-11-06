@@ -3,8 +3,10 @@
 import io
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -14,11 +16,13 @@ if str(ROOT) not in sys.path:
 
 from tools.dev import native, test_runner
 
+NIGHTLY = test_runner.sanitizer_nightly()
+
 
 class FakeTools:
     """Record each child launch; answer the toolchain and runtime questions."""
 
-    def __init__(self, *, nightly='nightly-2026-09-07-x86_64-unknown-linux-gnu',
+    def __init__(self, *, nightly=f'{NIGHTLY}-x86_64-unknown-linux-gnu',
                  host_library=None):
         self.calls = []
         self.checks = []
@@ -56,6 +60,52 @@ def run(*args, host='Darwin', arch='arm64', tools=None, environment=None):
     status = test_runner.sanitize(list(args), out=out, err=err, environment=env,
                                   tools=tools)
     return status, out.getvalue(), err.getvalue()
+
+
+class ToolchainTests(unittest.TestCase):
+    def test_the_nightly_is_the_dated_channel_of_the_fuzz_toolchain_file(self):
+        text = (ROOT / 'fuzz' / 'rust-toolchain.toml').read_text()
+        self.assertIn(f'channel = "{NIGHTLY}"', text)
+        self.assertRegex(NIGHTLY, r'^nightly-\d{4}-\d{2}-\d{2}$')
+
+    def test_tools_dev_starts_without_the_file_and_only_sanitizer_commands_name_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            shutil.copytree(ROOT / 'tools', root / 'tools',
+                            ignore=shutil.ignore_patterns('__pycache__'))
+            # tools.dev reads the interpreter request when it starts.
+            shutil.copyfile(ROOT / '.python-version', root / '.python-version')
+            missing = root / 'fuzz' / 'rust-toolchain.toml'
+            environment = {name: value for name, value in os.environ.items()
+                           if name != 'OXPINYIN_SANITIZER_TOOLCHAIN'}
+
+            def python(*arguments):
+                return subprocess.run([sys.executable, '-X', 'lazy_imports=normal', *arguments],
+                                      cwd=root, env=environment, capture_output=True,
+                                      text=True, timeout=60)
+
+            imported = python('-c', 'from tools.dev import cli, test_runner; '
+                                    'print(test_runner.SANITIZER_TOOLCHAIN_FILE)')
+            self.assertEqual((imported.returncode, imported.stdout.strip()),
+                             (0, str(missing)), imported.stderr)
+            # --check never runs a gate.
+            for command in (['sanitize-toolchain'], ['sanitize', '--check', 'bdb']):
+                with self.subTest(command=command):
+                    result = python('-m', 'tools.dev', *command)
+                    self.assertEqual((result.returncode, result.stdout), (1, ''), result.stderr)
+                    self.assertEqual(result.stderr, f'{command[0]}: {missing} is missing; '
+                                                    'it names the sanitizer nightly.\n')
+
+    def test_a_missing_toolchain_file_stops_the_gate_before_any_child_runs(self):
+        tools = FakeTools()
+        with tempfile.TemporaryDirectory() as directory:
+            missing = Path(directory) / 'fuzz' / 'rust-toolchain.toml'
+            with mock.patch.object(test_runner, 'SANITIZER_TOOLCHAIN_FILE', missing):
+                status, out, err = run('bdb', tools=tools,
+                                       environment={'OXPINYIN_SANITIZER_TOOLCHAIN': ''})
+        self.assertEqual((status, out), (1, ''))
+        self.assertEqual(err, f'sanitize: {missing} is missing; it names the sanitizer nightly.\n')
+        self.assertEqual(tools.calls, [])
 
 
 class SelectionTests(unittest.TestCase):
@@ -106,11 +156,11 @@ class SelectionTests(unittest.TestCase):
         status, out, err = run('bdb', tools=tools)
         self.assertEqual(status, 1)
         self.assertEqual(out, '')
-        self.assertIn('nightly-2026-09-07 is not installed.', err)
+        self.assertIn(f'{NIGHTLY} is not installed.', err)
         self.assertIn('ERROR: the sanitizer gate cannot run.', err)
         status, out, err = run('kc', tools=tools)
         self.assertEqual(status, 1)
-        self.assertIn('nightly-2026-09-07 is not installed.', out)
+        self.assertIn(f'{NIGHTLY} is not installed.', out)
         self.assertEqual(err, '')
         status, out, err = run('bdb', tools=tools,
                                environment={'OXPINYIN_SANITIZER_ALLOW_SKIP': '1'})
@@ -121,7 +171,7 @@ class SelectionTests(unittest.TestCase):
 class BackendTests(unittest.TestCase):
     def environment(self, **values):
         return {'OXPINYIN_SANITIZER_TARGET': 'x86_64-unknown-linux-gnu',
-                'OXPINYIN_SANITIZER_TOOLCHAIN': 'nightly-2026-09-07', **values}
+                'OXPINYIN_SANITIZER_TOOLCHAIN': NIGHTLY, **values}
 
     def test_bdb_runs_the_rust_test_then_the_c_harness(self):
         tools = FakeTools()
@@ -134,13 +184,13 @@ class BackendTests(unittest.TestCase):
         self.assertEqual((status, err), (0, ''), out)
         commands = [call[0] for call in tools.calls]
         test = next(command for command in commands
-                    if command[:3] == ['cargo', '+nightly-2026-09-07', 'test'])
+                    if command[:3] == ['cargo', f'+{NIGHTLY}', 'test'])
         self.assertIn('--features', test)
         self.assertEqual(test[test.index('--features') + 1], 'bdb')
         self.assertTrue(any(command[0] == 'gcc' and '-fsanitize=address,undefined' in command
                             for command in commands))
         test_environment = next(env for command, env in tools.calls
-                                if command[:3] == ['cargo', '+nightly-2026-09-07', 'test'])
+                                if command[:3] == ['cargo', f'+{NIGHTLY}', 'test'])
         self.assertEqual(test_environment['RUSTFLAGS'],
                          '-Zsanitizer=address -Cdebuginfo=1')
         self.assertIn('--- 2/2: the libdb call pattern under ASan + UBSan (C) ---', out)
@@ -168,7 +218,7 @@ class BackendTests(unittest.TestCase):
                                  environment=self.environment())
         self.assertEqual((status, err), (0, ''))
         _, env = next(call for call in tools.calls if call[0][:3] ==
-                      ['cargo', '+nightly-2026-09-07', 'test'])
+                      ['cargo', f'+{NIGHTLY}', 'test'])
         self.assertEqual(env['TSAN_OPTIONS'], 'detect_deadlocks=0:abort_on_error=1')
         self.assertEqual(env['RUSTFLAGS'],
                          '-Zsanitizer=thread -Cunsafe-allow-abi-mismatch=sanitizer')

@@ -571,13 +571,13 @@ export the keg-only `SYSTEM_DEPS_BDB_*` overrides
 Keep each backend's target and user-data directories separate.
 
 Fuzzing and the backend sanitizer gates run natively on macOS. The recipes
-select Homebrew's Berkeley DB 5.3, Kyoto Cabinet and tkrzw and use the pinned
-nightlies; no Linux `setarch`:
+select Homebrew's Berkeley DB 5.3, Kyoto Cabinet and tkrzw and use the one
+nightly that `fuzz/rust-toolchain.toml` names, with `rust-src`; no Linux
+`setarch`. In `fuzz/`, rustup installs the toolchain that file names:
 
 ```bash
 brew install berkeley-db@5 kyoto-cabinet
-rustup toolchain install nightly-2026-08-01 --profile minimal
-rustup toolchain install nightly-2026-09-07 --profile minimal
+(cd fuzz && rustup toolchain install)
 just fuzz parser -- -runs=100
 just sanitize bdb address
 just sanitize bdb thread

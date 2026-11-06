@@ -230,10 +230,11 @@ profile-w8 *args:
     @{{windows_args}} echo "profile-w8: native macOS and Linux only; Windows is unsupported." >&2; exit 1
 
 # Run one caller-selected fuzz target with the nightly workflow's ASLR wrapper.
-# Exact on purpose (#1074): a nightly is identified only by its date.
+# cargo fuzz runs in fuzz/, where rustup selects the nightly that
+# fuzz/rust-toolchain.toml names. No recipe names the nightly.
 [linux]
 fuzz *args:
-    @just heavy -- setarch "$(uname -m)" -R cargo +nightly-2026-08-01 fuzz run "$@"
+    @just heavy -- sh -c 'cd fuzz && exec setarch "$(uname -m)" -R cargo fuzz run "$@"' fuzz "$@"
 
 # cargo-fuzz supports Darwin. Homebrew's tkrzw.pc names its compression
 # libraries without their directory, so Homebrew's lib joins LIBRARY_PATH.
@@ -241,12 +242,12 @@ fuzz *args:
 fuzz *args:
     @just heavy -- env \
         LIBRARY_PATH="$(brew --prefix)/lib${LIBRARY_PATH:+:$LIBRARY_PATH}" \
-        cargo +nightly-2026-08-01 fuzz run "$@"
+        sh -c 'cd fuzz && exec cargo fuzz run "$@"' fuzz "$@"
 
 # Windows fuzz execution is unverified; setarch is Linux-only.
 [windows]
 fuzz *args:
-    @{{windows_args}} just heavy -- cargo +nightly-2026-08-01 fuzz run @forwarded; exit $LASTEXITCODE
+    @{{windows_args}} just heavy -- pwsh -NoLogo -NoProfile -CommandWithArgs 'Set-Location fuzz; cargo fuzz run @args; exit $LASTEXITCODE' @forwarded; exit $LASTEXITCODE
 
 # Run native coverage with temporary state; run and report in one invocation.
 [unix]

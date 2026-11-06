@@ -153,8 +153,9 @@ jobs:
           # backend. --also adds this workflow's own infrastructure: the
           # workflow, the backend provisioning under tools/bdb, tools/tkrzw and
           # .github/actions/tkrzw, the contract-verify action,
-          # service (tools/dev/test_runner.py), the toolchain pin and this
-          # gate's own script.
+          # service (tools/dev/test_runner.py), the toolchain pins (the
+          # sanitizer nightly is in fuzz/rust-toolchain.toml) and this gate's
+          # own script.
           python3 tools/bisection/cells-for-diff.py --run-flag \
             --also .github/workflows/store-backends.yml \
             --also .github/workflows/ci.yml \
@@ -168,6 +169,7 @@ jobs:
             --also tools/dev/check.py \
             --also tools/dev/test_runner.py \
             --also rust-toolchain.toml \
+            --also fuzz/rust-toolchain.toml \
             "$base" >> "$GITHUB_OUTPUT"
 
   store-features:
@@ -439,7 +441,7 @@ jobs:
           safe-directory: 'true'
           uv: 'true'
 
-      # The sanitizer nightly is declared once in tools/dev/test_runner.py and
+      # The sanitizer nightly is declared once in fuzz/rust-toolchain.toml and
       # read through `tools.dev sanitize-toolchain`. RUSTUP_TOOLCHAIN beats
       # rust-toolchain.toml's channel pin for this job only.
       - name: Select the sanitizer nightly
