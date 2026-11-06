@@ -74,6 +74,23 @@ def zero_key_guess_case(text, options, operation):
     return probe
 
 
+def _kept(options, text, operation):
+    """Whether the pin's source distinguishes this (options, text, operation) from a kept case.
+
+    Every operation refuses before it reads a context option: `0 == matrix.size()` returns first
+    (`pinyin.cpp:2193-2196`, `zhuyin.cpp:1468-1471,1548-1551`; `phonetic_lookup.h:743-748`), so an
+    operation is paired with `'` under the default options and under 0x18a, whose resplit and
+    divided-table bits are the only ones the empty-matrix steps read (`phonetic_key_matrix.cpp:89-95`,
+    `171-177`); the seeded sentence differs between those two. 0x20 reaches only `parse_one_key`, which
+    a separator never calls, so it keeps one operation. The text reaches only the separator branch
+    (`pinyin_parser2.cpp:238-250`): the first `'` starts from the initial step and the second from a
+    separator-made step, and a third repeats the second, so `''` and `'''` keep one operation under
+    each option class, which reproduces every frozen consumed length."""
+    if text == b"'":
+        return options != 0x20 or operation == 'guess_sentence'
+    return options != 0x20 and operation == 'guess_sentence'
+
+
 for _mode in ('pinyin', 'zhuyin'):
     _operations = ('guess_sentence', 'guess_sentence_with_prefix') + (
         ('guess_candidates',) if _mode == 'pinyin' else
@@ -81,6 +98,8 @@ for _mode in ('pinyin', 'zhuyin'):
     for _options in (None, 0x20, 0x18a):
         for _text in (b"'", b"''", b"'''"):
             for _operation in _operations:
+                if not _kept(_options, _text, _operation):
+                    continue
                 _label = 'default' if _options is None else hex(_options)
                 case(f'zero-key-guess/{_mode}/{_label}/{_text.decode()}/{_operation}',
                      mode=_mode, control=_mode == 'pinyin', issues=('902',))(

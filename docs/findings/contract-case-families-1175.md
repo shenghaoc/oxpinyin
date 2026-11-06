@@ -87,7 +87,7 @@ registrations that pass its per-run state to the modules beside it.
 | 41 | user stored words (`user-stored-words/pinyin-1-valid`) | 32 | `user_stored_words` | moved (`contract_user_stored_words`) |
 | 42 | toned keys and zhuyin refusals (`abort-is-incomplete-toned-initial`) | 24 | `toned_initial`, `offset_call`, `guess_call`, `key_call`, `char_offset_call`, `_no_rank_z` | moved (`contract_toned_keys_zhuyin_refusals`) |
 | 43 | final step surface (`final-step-pinyin-ba'kua-20`) | 50 | `final_step_surface` | moved (`contract_final_step_surface`) |
-| 44 | zero-key guess (`zero-key-guess/pinyin/default/'/guess_sentence`) | 63 | `zero_key_guess_case` | moved (`contract_zero_key_guess`) |
+| 44 | zero-key guess (`zero-key-guess/pinyin/default/'/guess_sentence`) | 24 | `zero_key_guess_case` | moved (`contract_zero_key_guess`) |
 | 45 | token reuse and addon import (`issue762-token-reuse-no-mask-pinyin`) | 30 | `token_reuse_sequence`, `index_file_rows`, `token_reuse_files`, `addon_promote_sequence`, `addon_promoted_listing` | moved (`contract_token_reuse_addon_import`) |
 | 46 | system phrase text (`phrase-text/pinyin-valid-candidate`) | 32 | `phrase_text_system`, `items_system`, `phrase_text_bytes`, `phrase_text_rows`, `phrase_text_choose`, `phrase_text_probe` | moved (`contract_system_phrase_text`) |
 | 47 | prefix conversion (`prefix-convert/predicted-valid`) | 28 | `glib_utf8`, `prefix_system`, `prefix_argument`, `prefix_prediction_case`, `prefix_sentence_case` | moved (`contract_prefix_conversion`) |
