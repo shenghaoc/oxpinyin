@@ -114,7 +114,7 @@ class World(unittest.TestCase):
         self.log.append(('report', Path(script).name, argv[0] if argv else ''))
         return self.report_status.get(Path(script).name, 0), f'REPORT {Path(script).name}\n'
 
-    def fake_build_all(self, builds, label, *, env=None):
+    def fake_build_all(self, builds, *, env=None):
         class Context:
             environment = {}
 
@@ -130,9 +130,9 @@ class World(unittest.TestCase):
                     (directory / 'release').mkdir(parents=True)
                     (directory / 'release/libpinyin_capi.so').write_bytes(b'\x7fELF cargo')
                 return pool.Completed(0, b'cargo output\n', b'')
-        self.log.append(('builds', label, [name for name, _ in builds]))
+        self.log.append(('builds', [name for name, _ in builds]))
         for name, function in builds:
-            function(Context(), 2)
+            function(Context())
 
     # ── driver ─────────────────────────────────────────────────────────────────────────────
     def execute(self, recipe, argv=(), env=None):

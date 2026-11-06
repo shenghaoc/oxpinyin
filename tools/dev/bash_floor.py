@@ -27,10 +27,8 @@ SOURCED_ONLY = frozenset()
 MIXED = frozenset()
 
 # Scripts that run only from a staged copy, with the floor file staged beside
-# them: compat.sh runs compat-inside.sh as /input/inside.sh.
-STAGED = frozenset({
-    'tools/oracle/compat-inside.sh',
-})
+# them. None remains.
+STAGED = frozenset()
 
 
 def read_floor():

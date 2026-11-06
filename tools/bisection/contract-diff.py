@@ -83,8 +83,8 @@ Ordinary cases share a 300-second deadline across pin and subject.
 INVALID for registered terminations under --expect-parent and TIMEOUT
 otherwise. Later cases still run.
 
---jobs N requests at most N concurrent ordinary cases. The default is serial.
-Heavy admission reserves memory for every active case and can reduce N.
+--jobs N requests at most N concurrent ordinary cases. The default is
+OXPINYIN_CONTRACT_JOBS, else the CPU count.
 Each case owns its scratch directory. Its two sides still run in sequence
 with one deadline; verdicts and observations stay in selection order.
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
-"""Check stdout, statuses and visible slot diagnostics without Rust builds."""
+"""Check stdout, statuses and launch failures without Rust builds."""
 import io
 import os
 from pathlib import Path
@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tools.dev import cell, check, host, native
+from tools.dev import cell, check, native
 
 
 class CheckTests(unittest.TestCase):
@@ -50,19 +50,17 @@ esac
         self.addCleanup(patch.stop)
 
     def exercise(self, status=0, error=None):
-        """Run check.run with a fake admitted launch and return the streams."""
+        """Run check.run with a fake supervised launch and return the streams."""
         os.environ['FIXTURE_CARGO_STATUS'] = str(status)
         out, err = io.StringIO(), io.StringIO()
         child_calls = []
 
-        def run_command(command, *, env, out):
-            self.assertIs(out, err)
+        def run_command(command, *, env):
             child_calls.append((list(command), dict(env)))
-            print('fixture slot wait and resource diagnostics', file=out)
             if error is not None:
                 raise error
             child = subprocess.run(command, env=env, capture_output=True, text=True)
-            # Child stdout stays on stdout; admission diagnostics go to stderr.
+            # Child stdout stays on stdout and child stderr on stderr.
             output.write(child.stdout)
             err.write(child.stderr)
             return child.returncode
@@ -74,13 +72,11 @@ esac
             rc = check.run('bdb', out=out, err=err)
         return child_calls, rc, out.getvalue(), err.getvalue()
 
-    def test_child_output_reaches_stdout_and_slot_diagnostics_reach_stderr(self):
+    def test_child_output_reaches_stdout_and_child_errors_reach_stderr(self):
         calls, rc, actual, err = self.exercise()
         self.assertEqual(rc, 0)
         self.assertIn('fixture cargo stdout', actual)
         self.assertNotIn('fixture cargo stdout', err)
-        self.assertIn('fixture slot wait and resource diagnostics', err)
-        self.assertNotIn('fixture slot wait and resource diagnostics', actual)
         self.assertEqual(calls[0][0], ['cargo', 'test', '--locked', '--no-default-features',
                                        '--features', 'bdb', '-p', 'oxpinyin-store',
                                        '-p', 'oxpinyin-capi'])
@@ -92,12 +88,11 @@ esac
         self.assertIn('fixture cargo stdout', actual)
         self.assertNotIn('fixture cargo stdout', err)
 
-    def test_blocked_check_keeps_wait_diagnostics_and_the_final_reason(self):
-        _, rc, actual, err = self.exercise(
-            error=host.ResourceBlocked('resource-blocked: fixture memory limit'))
+    def test_launch_failure_reports_the_reason_with_status_one(self):
+        _, rc, actual, err = self.exercise(error=OSError('fixture launch failure'))
         self.assertEqual(rc, 1)
         self.assertNotIn('fixture cargo stdout', actual)
-        self.assertIn('FAIL: resource-blocked: fixture memory limit', err)
+        self.assertIn('FAIL: fixture launch failure', err)
 
     def test_unknown_backend_is_usage_and_missing_tool_is_status_one(self):
         out, err = io.StringIO(), io.StringIO()

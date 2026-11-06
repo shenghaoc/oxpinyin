@@ -396,12 +396,12 @@ class ProcessTests(Scratch):
     def test_a_cancellation_reaps_a_console_child_and_its_descendants(self):
         self.cancelled_while_running(bench.run, slot.Cancelled)
 
-    def test_heavy_runs_under_the_slot_with_the_trailer_and_returns_the_shell_status(self):
+    def test_heavy_runs_supervised_and_returns_the_shell_status(self):
         with mock.patch.object(bench.slot, 'run_command', return_value=-15) as run_command:
             _, status, _, _ = stopped(bench.heavy, ['cargo', Path('x')], env={'A': 'b'})
         self.assertEqual(status, 128 + 15)
         self.assertEqual(run_command.call_args.args, (['cargo', 'x'],))
-        test_support.assert_calls(self, run_command, [mock.call(['cargo', 'x'], env={'A': 'b'}, stdout=None, report=True)])
+        test_support.assert_calls(self, run_command, [mock.call(['cargo', 'x'], env={'A': 'b'}, stdout=None)])
         with mock.patch.object(bench.slot, 'run_command', return_value=7):
             self.assertEqual(bench.heavy(['true'], check_status=False), 7)
 
@@ -491,42 +491,18 @@ class ExportedTests(unittest.TestCase):
         self.assertEqual(dict(os.environ), before)
 
 
-class FakeAdmission:
-    """HeavyAdmission stand-in: admits a fixed worker and job count and records its lifecycle."""
-    workers = 4
-    jobs = 2
-    events = None
-
-    def __init__(self, label, env, out=None, runner=False, prepare_heavy_env=None):
-        self.env = {pool.POOL_WORKERS: str(self.workers), pool.POOL_JOBS: str(self.jobs)}
-        self.slot = type('Slot', (), {'pass_fds': staticmethod(lambda: ()), 'handoff': staticmethod(lambda: None)})()
-        self.events.append('admission')
-
-    def try_acquire(self):
-        return True
-
-    def close(self):
-        self.events.append('close')
-
-
 class BuildTests(unittest.TestCase):
     def setUp(self):
-        self.events = []
-        FakeAdmission.events, FakeAdmission.workers, FakeAdmission.jobs = self.events, 4, 2
-        for patcher in (mock.patch.object(slot, 'HeavyAdmission', FakeAdmission),
-                        mock.patch.object(host, 'allowed_cpus', lambda: {0, 1, 2, 3}),
+        for patcher in (mock.patch.object(host, 'allowed_cpus', lambda: {0, 1, 2, 3}),
                         mock.patch.object(slot.CANCELLED, 'is_set', lambda: False)):
             patcher.start()
             self.addCleanup(patcher.stop)
 
-    def test_builds_get_the_planned_jobs_and_replay_their_output_in_build_order(self):
-        seen, lock = {}, threading.Lock()
+    def test_builds_replay_their_output_in_build_order(self):
         release = threading.Event()
 
         def build(name, wait):
-            def run(context, jobs):
-                with lock:
-                    seen[name] = jobs
+            def run(context):
                 if wait:
                     release.wait(5)
                 else:
@@ -536,22 +512,35 @@ class BuildTests(unittest.TestCase):
         err = io.BytesIO()
         with mock.patch.object(bench, 'write', lambda data, error=False: err.write(data)):
             with contextlib.redirect_stderr(io.StringIO()):
-                bench.build_all([('first', build('first', True)), ('second', build('second', False))],
-                                'builds', env={})
-        self.assertEqual(seen, {'first': 2, 'second': 2})
+                bench.build_all([('first', build('first', True)), ('second', build('second', False))], env={})
         self.assertEqual(err.getvalue(), b'first output\nsecond output\n')
-        self.assertEqual(self.events, ['admission', 'close'])
+
+    def test_builds_overlap_up_to_the_allowed_cpus(self):
+        lock, together = threading.Lock(), threading.Event()
+        running, peak = [0], [0]
+
+        def run(context):
+            with lock:
+                running[0] += 1
+                peak[0] = max(peak[0], running[0])
+                if running[0] == 4:
+                    together.set()
+            self.assertTrue(together.wait(5), 'the builds did not overlap')
+            with lock:
+                running[0] -= 1
+        with contextlib.redirect_stderr(io.StringIO()):
+            bench.build_all([(str(index), run) for index in range(6)], env={})
+        self.assertEqual(peak[0], 4)
 
     def test_the_earliest_failure_ends_the_run_with_its_status(self):
-        def failing(context, jobs):
+        def failing(context):
             raise Finished(101)
         with contextlib.redirect_stderr(io.StringIO()):
             with self.assertRaises(Finished) as stop:
-                bench.build_all([('a', lambda context, jobs: b''), ('b', failing)], 'builds', env={})
+                bench.build_all([('a', lambda context: b''), ('b', failing)], env={})
         self.assertEqual(stop.exception.status, 101)
-        self.assertEqual(self.events[-1], 'close')
 
-    def test_cargo_builds_with_its_share_unless_the_caller_chose(self):
+    def test_cargo_launches_in_the_units_environment_and_leaves_the_job_count_to_cargo(self):
         launched = []
 
         class Context:
@@ -560,11 +549,8 @@ class BuildTests(unittest.TestCase):
             def launch(self, command, *, env, merge_stderr):
                 launched.append((command, env, merge_stderr))
                 return completed(0, b'built\n')
-        self.assertEqual(bench.cargo(Context(), ['cargo', Path('x')], 2), b'built\n')
-        self.assertEqual(launched[0], (['cargo', 'x'], {'A': 'b', 'CARGO_BUILD_JOBS': '2'}, True))
-        Context.environment = {'CARGO_BUILD_JOBS': '7'}
-        bench.cargo(Context(), ['cargo'], 2)
-        self.assertEqual(launched[1][1]['CARGO_BUILD_JOBS'], '7')
+        self.assertEqual(bench.cargo(Context(), ['cargo', Path('x')]), b'built\n')
+        self.assertEqual(launched[0], (['cargo', 'x'], {'A': 'b'}, True))
 
     def test_a_failed_cargo_replays_its_output_and_ends_the_run(self):
         class Context:
@@ -575,107 +561,8 @@ class BuildTests(unittest.TestCase):
         err = io.BytesIO()
         with mock.patch.object(bench, 'write', lambda data, error=False: err.write(data)):
             with self.assertRaises(Finished) as stop:
-                bench.cargo(Context(), ['cargo'], 1)
+                bench.cargo(Context(), ['cargo'])
         self.assertEqual((stop.exception.status, err.getvalue()), (101, b'error[E0000]\n'))
-
-
-class AdmittedBuildTests(Scratch):
-    """build_all against the real slot admission on a fake host: the plan comes from the admitted CPUs and memory."""
-
-    def setUp(self):
-        super().setUp()
-        locks = self.root / 'locks'
-        locks.mkdir()
-        environment = {name: value for name, value in os.environ.items()
-                       if name not in ('CARGO_BUILD_JOBS', 'RUST_TEST_THREADS', slot.HEAVY_SLOT_HELD)}
-        environment.update(OXPINYIN_HEAVY_SLOTS='1', OXPINYIN_RESOURCE_WAIT_SECONDS='0')
-        for patcher in (mock.patch.dict(os.environ, environment, clear=True),
-                        mock.patch.object(host, 'host_lock_dir', return_value=locks),
-                        mock.patch.object(slot.CANCELLED, 'is_set', lambda: False)):
-            patcher.start()
-            self.addCleanup(patcher.stop)
-
-    def fake_host(self, available, cpus, total=4096):
-        """A host with AVAILABLE MiB free of TOTAL and CPUS CPUs, all of them allowed."""
-        snapshot = dict(available_mib=available, total_mib=total, memory_limit_mib=None, cpus=cpus,
-                        cargo_cpus=cpus, notes=[f'synthetic {available} MiB, {cpus} CPUs'])
-        for patcher in (mock.patch.object(host, 'allowed_cpus', lambda: set(range(cpus))),
-                        mock.patch.object(host, 'resource_snapshot', lambda *args, **kwargs: dict(snapshot))):
-            patcher.start()
-            self.addCleanup(patcher.stop)
-
-    def build(self, count, expected=0, **options):
-        """Run COUNT builds that record the jobs they got; return (jobs by name, most running at once).
-
-        With EXPECTED, each build waits until that many run together, so a narrower pool cannot pass.
-        """
-        lock, together = threading.Lock(), threading.Event()
-        seen, running, peak = {}, [0], [0]
-
-        def build(name):
-            def run(context, jobs):
-                with lock:
-                    seen[name] = jobs
-                    running[0] += 1
-                    peak[0] = max(peak[0], running[0])
-                    if running[0] == expected:
-                        together.set()
-                if expected:
-                    self.assertTrue(together.wait(5), 'the builds did not overlap')
-                time.sleep(0.02)
-                with lock:
-                    running[0] -= 1
-            return run
-        self.started = seen
-        with contextlib.redirect_stderr(io.StringIO()):
-            bench.build_all([(str(index), build(str(index))) for index in range(count)], 'builds', **options)
-        return seen, peak[0]
-
-    def test_a_host_with_many_cpus_and_little_memory_builds_with_fewer_jobs(self):
-        # 32 CPUs and 4 GiB, two builds: a fixed share of 16 jobs a build is 9,600 MiB for even one
-        # worker, which this host never admits. The plan holds the build to the jobs the memory carries.
-        self.fake_host(available=4096, cpus=32)
-        seen, peak = self.build(2)
-        self.assertEqual(sorted(seen), ['0', '1'])
-        jobs = set(seen.values())
-        self.assertEqual(len(jobs), 1, jobs)
-        (jobs,) = jobs
-        self.assertTrue(1 <= jobs < 16, jobs)
-        self.assertLessEqual(peak * jobs * host.RUSTC_PEAK_MIB, 4096 - host.desktop_headroom_mib(4096))
-
-    def test_a_build_is_admitted_on_any_cpu_count_while_memory_holds_a_rustc(self):
-        room = 4096 - host.desktop_headroom_mib(4096)
-        for cpus in (1, 2, 3, 4, 8, 16, 32, 64, 128, 256):
-            with self.subTest(cpus=cpus):
-                self.fake_host(available=4096, cpus=cpus)
-                seen, peak = self.build(4)
-                self.assertEqual(len(seen), 4)
-                self.assertLessEqual(peak * max(seen.values()) * host.RUSTC_PEAK_MIB, room)
-                self.assertLessEqual(peak * max(seen.values()), cpus)
-
-    def test_a_roomy_host_overlaps_builds_within_its_cpus(self):
-        self.fake_host(available=65536, cpus=8, total=65536)
-        seen, peak = self.build(4, expected=4)
-        self.assertEqual((set(seen.values()), peak), ({2}, 4))
-
-    def test_an_explicit_job_count_is_kept_and_charged_in_full(self):
-        # 3 jobs at 600 MiB is 1,800 MiB a build: two fit the 3,687 MiB the host admits.
-        self.fake_host(available=4096, cpus=32)
-        seen, peak = self.build(4, expected=2, env=dict(os.environ, CARGO_BUILD_JOBS='3'))
-        self.assertEqual((len(seen), set(seen.values()), peak), (4, {3}, 2))
-
-    def test_an_explicit_job_count_that_does_not_fit_is_refused_and_not_reduced(self):
-        self.fake_host(available=4096, cpus=32)
-        with self.assertRaises(host.ResourceBlocked):
-            self.build(2, env=dict(os.environ, CARGO_BUILD_JOBS='8'))    # 4,800 MiB a build
-        self.assertEqual(self.started, {})
-
-    def test_default_and_negative_job_counts_are_resolved_against_the_cpus(self):
-        self.fake_host(available=65536, cpus=8, total=65536)
-        for setting, jobs in (('default', 8), ('-1', 7), ('-20', 1), ('+4', 4)):
-            with self.subTest(setting=setting):
-                seen, _ = self.build(2, env=dict(os.environ, CARGO_BUILD_JOBS=setting))
-                self.assertEqual(set(seen.values()), {jobs})
 
 
 class IdentityTests(Scratch):
@@ -705,7 +592,7 @@ class IdentityTests(Scratch):
         self.assertEqual(identity.cpu_model(empty), '')
 
     def test_processors_are_the_snapshots_rounded_up_count(self):
-        with mock.patch.object(host, 'resource_snapshot', return_value=dict(cpus=2, cargo_cpus=3)) as snapshot:
+        with mock.patch.object(host, 'cpu_snapshot', return_value=dict(cpus=2, cargo_cpus=3)) as snapshot:
             self.assertEqual(identity.processors(self.root / 'proc', self.root / 'cgroup'), 3)
         snapshot.assert_called_once_with(self.root / 'proc', self.root / 'cgroup')
         self.assertGreaterEqual(identity.processors(), 1)

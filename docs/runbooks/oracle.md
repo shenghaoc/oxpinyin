@@ -1,12 +1,10 @@
 # Oracle — building the pin and running the differentials
 
-For contributor compatibility verification, use a supported
-[remote Linux host](cloud.md) provisioned for every gate, or the second supported
-[canonical Debian compatibility container](compatibility-container.md).
-The latter executes subject, reference and harness together on Linux storage.
+For contributor compatibility verification, use a
+[remote Linux host](cloud.md) provisioned for every gate.
 Ordinary work uses [native setup](setup.md), without an oracle or container.
-The direct build/runner operations below expose the existing machinery used
-by both routes; extracting libraries alone is not passing parity evidence.
+The direct build/runner operations below expose the existing machinery;
+extracting libraries alone is not passing parity evidence.
 
 The oracle is libpinyin built from the pinned commit, with the pinned
 model20 data, on the tkrzw backend by default (the reference cell,
@@ -19,12 +17,10 @@ the pin is `docs/testing/oracle-environment.md`.
 
 Linux only. The model20 archive is not redistributable
 (`docs/findings/model-provenance.md`): no CI job fetches it, and nothing
-below that needs it runs on GitHub-hosted runners. The one hosted job
-that touches the oracle, `.github/workflows/oracle-image.yml`, builds the
-libraries only and ships no model-derived data (section 2a).
-On a pull request, a push whose image tag and verification files already
-passed on that pull request and architecture skips the rebuild and says so in
-the job log; any change to an input rebuilds and verifies.
+below that needs it runs on GitHub-hosted runners. No workflow in this
+repository builds the reference image. It is built on a host with
+`tools/oracle/build-contract-image.sh`; the image holds the libraries only and
+ships no model-derived data (section 2a).
 
 ## 1. Fetch the model (once per machine)
 
@@ -39,7 +35,7 @@ extracted directory.
 ## 2. Build the oracle
 
 Debian build dependencies by mode and backend are listed in
-[`tools/oracle/dependencies.json`](../../tools/oracle/dependencies.json). The reference and compatibility images are libraries-only; a full build needs the `full` dependency group. The parity oracle uses the [reference cell](backends.md)
+[`tools/oracle/dependencies.json`](../../tools/oracle/dependencies.json). The reference image is libraries-only; a full build needs the `full` dependency group. The parity oracle uses the [reference cell](backends.md)
 (maintainer decision 2026-10-30 UTC: tkrzw is maintained upstream; it supersedes the 2026-09-27 UTC ruling that
 made Berkeley DB the default); differentials pick the cell with
 `PINYIN_ORACLE_DBM`. The capture goldens and the `pinyin-oracle` crate's
@@ -82,24 +78,23 @@ their hashes are recorded once per platform in
 `tools/oracle/oracle-pin.txt` (`libpinyin_sha256_<dbm>`,
 `libzhuyin_sha256_<dbm>`). The historical unqualified fields are
 **linux/amd64**; linux/arm64 adds the same fields with a `_linux_arm64`
-suffix. `just compat pin-field --platform <platform> <field>` selects them;
+suffix. `python -m tools.oracle.image pin-field --platform <platform> <field>` selects them;
 `tools/cloud/setup.sh` derives the platform from `uname -m` and refuses an
 architecture with no frozen hashes. The Dockerfile and the checks take
-`--platform`. CI
-(`oracle-image.yml`) builds the bdb, kc and tkrzw cells on native amd64 and
-arm64 runners. The amd64 tags are the historical
+`--platform`. The image holds the bdb, kc and tkrzw cells and is built on a
+native amd64 or arm64 host. The amd64 tags are the historical
 
     ghcr.io/shenghaoc/oxpinyin-oracle:<tag>
 
 and arm64 publishes the siblings `<tag>-arm64` and `<tag>-deps-arm64`.
-`<tag>` is printed by `just compat image-tag`: the libpinyin
+`<tag>` is printed by `python -m tools.oracle.image image-tag`: the libpinyin
 commit and the base image codename (both from `oracle-pin.txt`) and a hash
 of `Dockerfile.oracle`, `build-oracle.sh`, the Bash floor, the version-check inputs and
 `oracle-pin.txt` itself, so it changes whenever the library hashes or their
 record can. The arm64 contract gate
 excludes the cases diagnosed in #1137; amd64 still
 runs them. See [the arm64 finding](../findings/oracle-arm64-1132.md). A published tag is
-immutable (the workflow never overwrites one), and `tools/cloud/setup.sh`
+immutable (a published tag is never overwritten), and `tools/cloud/setup.sh`
 and the commands below derive it the same way. The hashes are also in the
 image labels. The
 image holds `/opt/pinyin-oracle/{bdb,kc,tkrzw}` with `lib/`, `include/`,
@@ -108,7 +103,7 @@ image holds `/opt/pinyin-oracle/{bdb,kc,tkrzw}` with `lib/`, `include/`,
 step below before any differential can use it.
 
 ```sh
-tag=$(just compat image-tag)
+tag=$(uv run --no-project --managed-python python -X lazy_imports=normal -m tools.oracle.image image-tag)
 platform=linux/amd64                       # or linux/arm64
 suffix=
 [[ $platform == linux/amd64 ]] || suffix=-arm64
@@ -138,7 +133,7 @@ the image is not this repository's recipe — stop and report it):
 
 ```sh
 for lib in libpinyin libzhuyin; do
-    want=$(just compat pin-field --platform "$platform" "${lib}_sha256_bdb")
+    want=$(uv run --no-project --managed-python python -X lazy_imports=normal -m tools.oracle.image pin-field --platform "$platform" "${lib}_sha256_bdb")
     echo "$want  $dest/bdb/lib/$lib.so" | sha256sum --check
 done
 ```
@@ -184,16 +179,21 @@ local manifest before the pre-release real-installation checks below.
 
 ### Reproducing the libraries
 
-`just compat reproducible --platform linux/arm64` builds each
-cell twice in the trixie pin-reference image, from different work
-directories and prefixes, and fails unless the two builds agree with each
-other and with the platform's `oracle-pin.txt` fields. The default platform
-is `linux/amd64`; run it when the recipe or the base image changes, and
-update the recorded hashes in the same commit. The recipe is
-`SOURCE_DATE_EPOCH` = the pin's commit time, `-ffile-prefix-map` and
-`-fdebug-prefix-map` on the source path, and `-Wl,--build-id=none`; the
-`.la` and `.pc` files still record the install prefix and are not part
-of the contract.
+The recipe is `SOURCE_DATE_EPOCH` = the pin's commit time,
+`-ffile-prefix-map` and `-fdebug-prefix-map` on the source path, and
+`-Wl,--build-id=none`; the `.la` and `.pc` files still record the install
+prefix and are not part of the contract. When the recipe or the base image
+changes, rebuild each cell twice from different work directories and
+prefixes, confirm the two builds and the platform's `oracle-pin.txt` fields
+agree, and update the recorded hashes in the same commit.
+
+The two-clean-builds reproducibility check is retired
+(2026-11-06 UTC): nothing runs it any more, so do the comparison above by hand
+when the recipe or base image changes. `python -m tools.oracle.image
+verify-image` still runs on a built image. It hashes each cell's
+`libpinyin.so` and `libzhuyin.so` in the image against the platform's
+`oracle-pin.txt` fields and rejects any model-derived data in the image. It
+does not rebuild anything, so it does not show that a build is reproducible.
 
 ## 3. Produce the export
 
@@ -219,29 +219,15 @@ export PINYIN_EXPORT_DIR=/tmp/oxpinyin-export
 
 ## 4. Run the differentials
 
-```sh
-just compat differentials --libpinyin <built libpinyin tree> \
-    --data <built system data dir> --export "$PINYIN_EXPORT_DIR" \
-    --model "$PINYIN_MODEL_DIR"
-```
-
-The script takes explicit paths (`--libpinyin`, `--data`, `--export`
-and `--model` are required) and exits 2 without them. The shell
-expands the `PINYIN_EXPORT_DIR` and `PINYIN_MODEL_DIR` exports from steps
-1 and 3 into those arguments before the script starts; the script itself
-discovers nothing, and with `PINYIN_EXPORT_DIR` unset `--export` is empty
-and the run fails.
-
-Wires the `PINYIN_*` variables and runs the `#[ignore]`d differential
-tests with `--include-ignored` (`libpinyin_data_dir` on tkrzw, KMM,
-segment, lambda, counter, and eval when its inputs exist). `--data` is
-also exported as `OXPINYIN_LIBPINYIN_DATA_DIR`; the runtime test opens
-that directory unchanged. `--model` supplies `PINYIN_MODEL_DIR` for the
-segment suites.
-Each suite's status is accumulated; the script exits
-non-zero if any suite failed. A test that panics with `missing input:
-…` names the input it lacked — that is a provisioning gap, not a
-divergence.
+Run the `#[ignore]`d differential tests with `--include-ignored`
+(`libpinyin_data_dir` on tkrzw, KMM, segment, lambda, counter, and eval when
+its inputs exist), as in the tkrzw example under "Pre-release
+real-installation checks" below. Export `PINYIN_EXPORT_DIR` and
+`PINYIN_MODEL_DIR` from steps 1 and 3 and `OXPINYIN_LIBPINYIN_DATA_DIR`
+for the data directory the test opens unchanged. A test that panics with
+`missing input: …` names the input it lacked — that is a provisioning gap,
+not a divergence. The retired `just compat differentials` wrapper ran these
+suites and accumulated their statuses.
 
 The C-ABI drop-in gate, both libraries opened on one unchanged data
 directory:
@@ -322,30 +308,30 @@ just w3-fixtures check --cells bdb,kc,tkrzw
 # BDB: four real-file storage tests.
 OXPINYIN_LIBPINYIN_DATA_DIR="$prefix_bdb/lib/libpinyin/data" \
 CARGO_TARGET_DIR="$PWD/target/real-installation/bdb" \
-just heavy -- cargo test -p oxpinyin-store --no-default-features --features bdb \
+cargo test -p oxpinyin-store --no-default-features --features bdb \
     --test bdb_libpinyin_files -- --include-ignored --nocapture
 
 # BDB reference installation: real per-library chunks.
 OXPINYIN_LIBPINYIN_DATA="$prefix_bdb/lib/libpinyin/data" \
 CARGO_TARGET_DIR="$PWD/target/real-installation/bdb" \
-just heavy -- cargo test -p oxpinyin-data --no-default-features --features bdb \
+cargo test -p oxpinyin-data --no-default-features --features bdb \
     --test phrase_library -- reads_a_real_libpinyin_installation --exact --include-ignored --nocapture
 
 # KC: an unchanged pin-built data directory.
 OXPINYIN_LIBPINYIN_DATA_DIR="$prefix_kc/lib/libpinyin/data" \
 CARGO_TARGET_DIR="$PWD/target/real-installation/kc" \
-just heavy -- cargo test -p oxpinyin-runtime --no-default-features --features kyotocabinet \
+cargo test -p oxpinyin-runtime --no-default-features --features kyotocabinet \
     --test libpinyin_data_dir -- --include-ignored --nocapture
 ```
 
-The tkrzw runtime suite of `just compat differentials` can also be run
-on its own with the same inputs, after loading setup's tkrzw environment:
+The tkrzw runtime suite can be run on its own with the same inputs, after
+loading setup's tkrzw environment:
 
 ```sh
 export PINYIN_MODEL_DIR="$HOME/.cache/oxpinyin/model20/extracted"
 export OXPINYIN_LIBPINYIN_DATA_DIR="$PINYIN_ORACLE_PREFIX/lib/libpinyin/data"
 export CARGO_TARGET_DIR="$PWD/target/real-installation/tkrzw"
-just heavy -- cargo test -p oxpinyin-runtime \
+cargo test -p oxpinyin-runtime \
     --test libpinyin_data_dir -- --include-ignored --nocapture
 ```
 
@@ -358,7 +344,7 @@ the pin observations frozen in `fixtures/contract-refs` (see
 container is involved:
 
 ```sh
-just heavy -- just runner contract-diff verify tkrzw \
+just runner contract-diff verify tkrzw \
     <target>/debug/libpinyin_capi.so <target>/debug/libzhuyin_capi.so -- --jobs 4
 ```
 
@@ -386,15 +372,12 @@ then prefixes, in that order. Each issue, family and prefix contributes
 sorted IDs; overlapping selections keep the first position and all reasons
 in the plan.
 
-Ordinary cases remain serial by default. Add `-- --jobs N` to request
+Ordinary cases default to `OXPINYIN_CONTRACT_JOBS`, else the CPU count.
+Add `-- --jobs N` to request
 at most N active cases. Each case has its own scratch directory and deadline,
-and verdicts and `--observations` remain in selection order. Parallel calls
-use the existing heavy slot, including validated slot inheritance from
-`just heavy`. Admission charges 1,024 MiB per active case, or the larger
-build estimate, and reduces the requested case count when memory is short.
-Admission limits workers by memory, not CPU, so a `--jobs` well above the
-host's CPU count can make a case hit its wall-clock deadline and report
-TIMEOUT; keep `--jobs` at or below the CPU count.
+and verdicts and `--observations` remain in selection order. A `--jobs` well
+above the host's CPU count can make a case hit its wall-clock deadline and
+report TIMEOUT; keep `--jobs` at or below the CPU count.
 
 `--expect-parent` verifies a parent build against the same references: a case
 marked `control` must still pass and every other case must fail
@@ -418,60 +401,6 @@ stderr came from freed memory are Rust tests, because no frozen reference can
 hold them: see `e2e_tests` in `crates/oxpinyin-capi` and
 `crates/oxpinyin-zhuyin-capi`.
 
-### Contract differentials in a macOS-hosted Linux container
-
-Keep the contract harness's scratch directory and generated user directories
-on the container's local filesystem, outside macOS bind mounts. Create the
-directory and export `TMPDIR` **inside the Linux container** before starting
-`just runner contract-diff verify`:
-
-```sh
-mkdir -p /var/tmp/lane-c-contract
-export TMPDIR=/var/tmp/lane-c-contract
-```
-
-The harness creates its per-run scratch under `TMPDIR` and passes that path
-to the workers, which create their fresh user directories beneath it. The
-non-UTF-8 pathname cases need this: in the amd64/Rosetta macOS session, a
-`mkdir` containing byte `0xFF` under the Mac-mounted `/lane/tmp` failed with
-`EPERM`, while the same operation under container-local `/var/tmp` succeeded.
-The bounded probe recorded these two results:
-
-| Probe pathname (byte `0xFF` shown as `\\xff`) | Result |
-| --- | --- |
-| `/lane/tmp/lane-c-invalid-\xff-check` (Mac bind mount) | `mkdir` failed with errno 1 (`EPERM`); no directory was created. |
-| `/var/tmp/lane-c-invalid-\xff-check` (container-local) | `mkdir` succeeded and the probe removed the directory. |
-
-Using `TMPDIR=/var/tmp/lane-c-contract`, the full Lane C BDB suite passed
-**151 of 151 at `dcc635576153291619b08c839b210d6d8293a03c`**. The single
-full run omitted `--cases` and used the debug subject libraries against
-libpinyin 2.11.92 pin `074a2219c90feaf962d0d24f034514033ece5f99`, both on
-BDB. All 302 worker stdout/stderr observations are retained outside the
-commits; no harness or expectation change was needed.
-
-The earlier pre-restack baseline was **149 of 149 at
-`5995db2cdbbfd1dbf1bd3f383863b728e714ad20`**. That historical registry did
-not yet contain the two user-library-token unload cases included in the
-151-case run.
-
-From the repository root, print the current number of registered cases
-without running the CLI or any case. The first number is every registered
-case; the second is the default selection, which leaves out the axis C
-battery:
-
-```sh
-uv run --no-project --managed-python python -X lazy_imports=normal -c "import runpy; c = runpy.run_path('tools/bisection/contract-diff.py')['CASES']; print(len(c), sum(not n.startswith('axis-c-') for n in c))"
-```
-
-The harness runs every registered non-axis-C case, sorted, when no selector
-is given (the full default selection, below). Count the registry at the
-tested commit rather than assuming an earlier count still applies; a
-selected-case run does not establish a complete-suite result.
-
-Retain the original failure logs when diagnosing this setup error. Evidence
-logs may be written or copied back to the mounted work directory, but keep
-scratch and the user directories exercised by the cases container-local.
-
 ### Training through the C API
 
 `pinyin_train(instance, index)` trains the n-best result `index` and
@@ -481,6 +410,29 @@ list from `pinyin_guess_candidates`. `Session::train_top` in
 `pinyin-oracle` exists to make this impossible to get wrong; harness
 and bench authors call it rather than `pinyin_train` directly
 (see [verification](verification.md#procedure-specific-rules)).
+
+### User-profile interchange
+
+The two-way user-profile interchange property is no longer measured live. Its
+two ignored tests in `crates/oxpinyin-runtime/tests/user_dir_round_trip.rs`
+and the launcher that ran them are removed (2026-11-06 UTC). The property
+moves to frozen captures, to be added in the next pin capture. One capture
+certifies both directions:
+
+- **libpinyin to oxpinyin.** The capture holds a user directory written by the
+  pin. oxpinyin reads it and renders the same results the pin recorded for it.
+- **oxpinyin to libpinyin.** From the same scripted input, oxpinyin writes a
+  user directory, and that directory is compared with the pin's:
+  - the files oxpinyin writes in its own format (`user.conf`, the `.dbin`
+    journals and the phrase-library chunks) must be byte-identical to the
+    pin's;
+  - the database files are written through the same tkrzw, Berkeley DB and
+    Kyoto Cabinet libraries the pin uses, so their bytes are not compared.
+    They must hold identical records, key for key and value for value.
+    libpinyin reads those files through the same libraries, so identical
+    records mean it can read them.
+
+Until those captures exist, nothing checks this property against the pin.
 
 ## 5. What to do with a divergence
 

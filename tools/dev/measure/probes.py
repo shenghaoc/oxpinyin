@@ -147,8 +147,7 @@ def build_variant(tag: str, assignments: Mapping[str, str], *, package: str, bac
     """Build the crate with ASSIGNMENTS in the environment, keep the artifact as WORK/TAG.so and describe it.
 
     The build touches the crate's lib.rs first so cargo rebuilds it, prints nothing
-    and, as before, does not hold the heavy slot: this is a manual probe, run
-    by hand. A failed build ends the probe with its status and no message.
+    and is a manual probe, run by hand. A failed build ends the probe with its status and no message.
     """
     library = Path('crates', package, 'src', 'lib.rs')
     try:
@@ -267,8 +266,8 @@ def probe_egress(argv: Sequence[str], env: Mapping[str, str]) -> int:
     emit(row('-----------------------', '-----', '-------', '----------'))
     failed = False
     # Serial on purpose: this is a diagnostic to run before anything heavy, and a
-    # pool would hold the heavy slot, perhaps behind a build, to make eight short
-    # requests whose table prints in a fixed order anyway.
+    # pool would save little on eight short requests whose table prints in a
+    # fixed order anyway.
     for url, host, need in EGRESS_PROBES:
         _, output = curl(['-s', '-o', '/dev/null', '-w', '%{http_code}', '--max-time', '20', url], env)
         code = output.decode('utf-8', 'replace').rstrip('\n')

@@ -6,7 +6,6 @@ import argparse
 import os
 import re
 import shutil
-import sys
 
 from . import slot
 from .cell import CellError, Settings, patch_digest
@@ -1140,7 +1139,7 @@ def residue(ctx: Context, args: Sequence[str]) -> int:
             built = slot.run_command(['cargo', 'build', '--locked', '-p', 'oxpinyin-runtime',
                                       '--example', 'nbest_tail_probe', '--no-default-features', '--features',
                                       settings.feature, '--manifest-path', str(settings.root / 'Cargo.toml')],
-                                     env=ctx.env, out=sys.stderr, cwd=settings.root)
+                                     env=ctx.env, cwd=settings.root)
             if built:
                 raise Finished(status(built))
             probe = str(settings.target / 'debug/examples/nbest_tail_probe')

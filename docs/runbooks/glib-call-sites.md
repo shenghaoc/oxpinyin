@@ -30,7 +30,7 @@ Use a clean checkout of the pin, then:
 just audit-glib-call-sites <pin-checkout>
 ```
 
-The recipe takes the heavy slot and accepts `--work DIR` (default
+The recipe accepts `--work DIR` (default
 `target/glib-call-sites`), `--jobs N`, `--reuse` (read the trees already under `--work`),
 `--output FILE`, `--unplaced FILE` and `--check` (compare with the committed list).
 

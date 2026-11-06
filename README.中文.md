@@ -16,7 +16,7 @@ Stage 3 构建需显式启用。只改变可观察输出的 Stage 3 构建保留
 
 ## 快速开始
 
-从 [CONTRIBUTING.md](CONTRIBUTING.md) 开始。其中依次介绍前置条件、Linux/macOS/Windows 原生环境搭建、第一次链接并运行测试，以及如何在新终端中继续工作。日常开发不需要 oracle、model20 或容器。兼容性门禁请使用已配置的[远程 Linux 主机](docs/runbooks/cloud.md)，或[规范的 Debian trixie 兼容性容器](docs/runbooks/compatibility-container.md)；后者会把被测实现、参考实现和对比测试框架放在一起运行。
+从 [CONTRIBUTING.md](CONTRIBUTING.md) 开始。其中依次介绍前置条件、Linux/macOS/Windows 原生环境搭建、第一次链接并运行测试，以及如何在新终端中继续工作。日常开发不需要 oracle、model20 或容器。兼容性门禁请使用已配置的[远程 Linux 主机](docs/runbooks/cloud.md)。
 
 [环境搭建指南](docs/runbooks/setup.md#storage-backend)给出默认的存储后端，以及各平台所需的软件包和设置。
 

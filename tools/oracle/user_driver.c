@@ -10,8 +10,9 @@
  *                                      (the bigram count is the stored
  *                                      count × 2 — the pin's rendering)
  *
- * Built and driven by tools/oracle/user-dir-round-trip.sh against the
- * pin-built prefix (tools/oracle/build-oracle.sh).
+ * Built against the pin-built prefix (tools/oracle/build-oracle.sh) by
+ * tools/bisection/gcov_measure.py. tools/oracle/user-dir-round-trip.sh,
+ * which used to drive it, is retired.
  *
  * This file is part of oxpinyin, GPL-3.0-or-later like the rest of it.
  */

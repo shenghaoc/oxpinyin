@@ -82,4 +82,4 @@ Use the applicable test kinds:
 
 Derive behaviour from the pin's source as the [source policy](source-policy.md#stage-2) describes; a differential verifies it and never discovers it.
 Use `cargo fmt --check` and `clippy -D warnings`.
-Follow the [verification procedure](runbooks/verification.md) for applicable checks and resource admission.
+Follow the [verification procedure](runbooks/verification.md) for applicable checks.

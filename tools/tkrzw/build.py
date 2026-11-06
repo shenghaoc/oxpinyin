@@ -88,7 +88,7 @@ def fetch(source, env, *, runner=run, delays=(2, 4, 8, 16), sleep=time.sleep):
 
 
 def make_jobs(env, cpus=None):
-    """make's -j: the CARGO_BUILD_JOBS budget `just heavy` admitted, read as
+    """make's -j: the caller's CARGO_BUILD_JOBS, read as
     cargo reads it ("default" is the CPU count, a negative count is taken from
     it, at least one), or the CPU count when nothing set one."""
     cpus = cpus or os.cpu_count() or 1

@@ -42,20 +42,19 @@ class ControllerTests(unittest.TestCase):
             self.assertEqual(entry['darwin_resident_pages'], 1)
             self.assertEqual(entry['rows'][0]['offset_range'], [0, st.mman.PAGE_SIZE])
 
-    def test_optimised_controller_refuses_before_inputs_or_admission(self):
+    def test_optimised_controller_refuses_before_inputs_or_the_campaign(self):
         for flags, value in (([], '1'), (['-O'], '0'), (['-OO'], '0')):
-            with self.subTest(flags=flags, value=value), tempfile.TemporaryDirectory() as locks:
+            with self.subTest(flags=flags, value=value):
                 result = subprocess.run(
                     [sys.executable, '-X', 'lazy_imports=normal', *flags,
                      '-m', 'tools.dev', 'measure', 'startup'], cwd=ROOT,
-                    env=dict(os.environ, PYTHONOPTIMIZE=value, OXPINYIN_LOCK_DIR=locks),
+                    env=dict(os.environ, PYTHONOPTIMIZE=value),
                     capture_output=True, text=True, timeout=30)
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertEqual(result.stdout, '')
                 self.assertIn('startup: optimised Python is unsupported', result.stderr)
                 self.assertIn('unset PYTHONOPTIMIZE and remove -O/-OO', result.stderr)
                 self.assertNotIn('Traceback', result.stderr)
-                self.assertEqual(list(Path(locks).iterdir()), [])
 
     def setUp(self):
         self.temp = self.enterContext(tempfile.TemporaryDirectory())
@@ -70,10 +69,10 @@ class ControllerTests(unittest.TestCase):
         self.argv = ['--base', str(self.root / 'base'), '--pr', str(self.root / 'pr'),
                      '--system-dir', str(self.root / 'data'), '--profiles-dir', str(self.root / 'profiles')]
 
-    def test_pin_row_is_refused_before_inputs_or_slot_with_container_path(self):
-        with mock.patch.object(slot, 'HeavyAdmission') as admission, contextlib.redirect_stderr(io.StringIO()) as err:
+    def test_pin_row_is_refused_before_inputs_or_the_campaign_with_container_path(self):
+        with mock.patch.object(st, 'campaign_run') as campaign, contextlib.redirect_stderr(io.StringIO()) as err:
             self.assertEqual(st.main(['--pin', 'some-pin']), 1)
-        test_support.assert_not_called(self, admission)
+        test_support.assert_not_called(self, campaign)
         self.assertIn('just container run', err.getvalue())
 
     def test_populated_profiles_require_nonempty_witness(self):
@@ -105,27 +104,27 @@ class ControllerTests(unittest.TestCase):
         default = st.parser().parse_args(self.argv)
         self.assertEqual(list(st.validate(default)), ['empty', 'modest', 'phrases', 'journals'])
 
-    def test_review_missing_manifest_has_a_designed_error_before_admission(self):
+    def test_review_missing_manifest_has_a_designed_error_before_the_campaign(self):
         for name in ('empty', 'user'):
             (self.root / 'profiles' / name / 'profile.manifest').unlink()
-            with self.subTest(profile=name), mock.patch.object(slot, 'HeavyAdmission') as admission, \
+            with self.subTest(profile=name), mock.patch.object(st, 'campaign_run') as campaign, \
                     contextlib.redirect_stderr(io.StringIO()) as error:
                 self.assertEqual(st.main([*self.argv, '--profiles', name]), 1)
-            test_support.assert_not_called(self, admission)
+            test_support.assert_not_called(self, campaign)
             self.assertIn('missing profile manifest', error.getvalue())
             self.assertIn('provision through the pin', error.getvalue())
             self.assertNotIn('Traceback', error.getvalue())
 
-    def test_cold_is_refused_on_windows_before_filesystem_or_slot(self):
-        # Cold mode exists on Linux and macOS only; any other host refuses before admission.
+    def test_cold_is_refused_on_windows_before_filesystem_or_the_campaign(self):
+        # Cold mode exists on Linux and macOS only; any other host refuses before the campaign.
         for system, extra in (('win32', []), ('win32', ['--cache', 'cold']), ('freebsd14', ['--cache', 'cold'])):
             message = ('startup: native startup supports Linux/macOS; '
                        'the worker and measurement services do not support Windows\n')
             with self.subTest(system=system), mock.patch.object(st.sys, 'platform', system), \
-                    mock.patch.object(slot, 'HeavyAdmission') as admission, \
+                    mock.patch.object(st, 'campaign_run') as campaign, \
                     contextlib.redirect_stderr(io.StringIO()) as error:
                 self.assertEqual(st.main([*self.argv, *extra]), 1)
-            test_support.assert_not_called(self, admission)
+            test_support.assert_not_called(self, campaign)
             self.assertEqual(error.getvalue(), message)
 
     def test_cold_validates_on_macos_and_linux_with_no_approval_gate(self):
@@ -152,10 +151,10 @@ class ControllerTests(unittest.TestCase):
         with mock.patch.object(st.sys, 'platform', 'linux'), \
                 mock.patch.object(st.native, 'filesystem', return_value=('tmpfs', '0:1')), \
                 mock.patch.object(st.native, 'pin_cpu', return_value=None), \
-                mock.patch.object(slot, 'HeavyAdmission') as admission, \
+                mock.patch.object(st, 'campaign_run') as campaign, \
                 self.assertRaisesRegex(ValueError, r'requires ext4, found tmpfs \(tmpfs is unsupported\)$'):
             st.run(args)
-        test_support.assert_not_called(self, admission)
+        test_support.assert_not_called(self, campaign)
 
     def test_all_statuses(self):
         for result, expected in ((0, 0), (ValueError('refused'), 1), (st.NotResult('INVALID'), 3),
@@ -215,7 +214,7 @@ class ControllerTests(unittest.TestCase):
         with mock.patch.object(st.tempfile, 'gettempdir', return_value=str(self.root)), \
                 mock.patch.object(native, 'pin_cpu', return_value=None), \
                 mock.patch.object(native, 'check_filesystems', return_value={'A'}) as check, \
-                mock.patch.object(slot, 'HeavyAdmission'), mock.patch.object(st, 'campaign_run', return_value=0):
+                mock.patch.object(st, 'campaign_run', return_value=0):
             self.assertEqual(st.run(args), 0)
         self.assertEqual(check.call_args_list, [
             mock.call([self.root], recursive=False),
@@ -225,27 +224,26 @@ class ControllerTests(unittest.TestCase):
         with mock.patch.object(st.sys, 'platform', 'darwin'), \
                 mock.patch.object(native, 'pin_cpu', return_value=None), \
                 mock.patch.object(native, 'check_filesystems', side_effect=[{'A'}, {'B'}]), \
-                mock.patch.object(slot, 'HeavyAdmission') as admission, \
+                mock.patch.object(st, 'campaign_run') as campaign, \
                 contextlib.redirect_stderr(io.StringIO()) as error:
             self.assertEqual(st.main([*self.argv, '--profiles', 'empty']), 1)
-        test_support.assert_not_called(self, admission)
+        test_support.assert_not_called(self, campaign)
         self.assertIn('one APFS volume', error.getvalue())
 
-    def test_a_failing_admission_assertion_does_not_print_the_environment(self):
-        # HeavyAdmission receives dict(os.environ): the shared helper must fail without printing it.
+    def test_a_failing_campaign_assertion_does_not_print_the_environment(self):
+        # campaign_run receives dict(os.environ): the shared helper must fail without printing it.
         sentinel = 'environment-sentinel-5f2c'
         args = st.parser().parse_args([*self.argv, '--profiles', 'empty'])
         with mock.patch.dict(os.environ, OXPINYIN_TEST_SENTINEL=sentinel), \
                 mock.patch.object(st.tempfile, 'gettempdir', return_value=str(self.root)), \
                 mock.patch.object(native, 'pin_cpu', return_value=None), \
                 mock.patch.object(native, 'check_filesystems', return_value={'A'}), \
-                mock.patch.object(slot, 'HeavyAdmission') as admission, \
-                mock.patch.object(st, 'campaign_run', return_value=0):
+                mock.patch.object(st, 'campaign_run', return_value=0) as campaign:
             self.assertEqual(st.run(args), 0)
-        self.assertEqual(admission.call_count, 1)
-        self.assertEqual(admission.call_args.args[1]['OXPINYIN_TEST_SENTINEL'], sentinel)
+        self.assertEqual(campaign.call_count, 1)
+        self.assertEqual(campaign.call_args.args[3]['OXPINYIN_TEST_SENTINEL'], sentinel)
         with self.assertRaises(AssertionError) as raised:
-            test_support.assert_not_called(self, admission)
+            test_support.assert_not_called(self, campaign)
         # Not assertNotIn(sentinel, message): a failure would print the message, and with it the environment.
         self.assertFalse(sentinel in str(raised.exception), 'the assertion message echoes the environment')
 
@@ -600,7 +598,7 @@ class ControllerTests(unittest.TestCase):
                 mock.patch.object(st, 'instrument') as instrument, \
                 mock.patch.object(st, 'emit', side_effect=lambda kind, **v: printed.append((kind, v))):
             status = st.campaign_run(args, {'empty': self.root / 'profiles/empty/user'}, work,
-                                     SimpleNamespace(env={}, slot=SimpleNamespace(pass_fds=lambda: ())))
+                                     {})
         self.assertEqual(status, 0)
         self.assertEqual(seen[:9], [(a, False) for a in ('baseobj', 'subject', 'control',
                                                        'subject', 'control', 'baseobj', 'control', 'baseobj', 'subject')])
@@ -650,7 +648,7 @@ class ControllerTests(unittest.TestCase):
                 mock.patch.object(st, 'instrument', side_effect=AssertionError('profiler called')), \
                 mock.patch.object(st, 'emit', side_effect=lambda kind, **v: printed.append((kind, v))):
             status = st.campaign_run(args, {'empty': self.root / 'profiles/empty/user'}, work,
-                                     SimpleNamespace(env={}, slot=SimpleNamespace(pass_fds=lambda: ())))
+                                     {})
         self.assertEqual(status, 0)
         self.assertEqual(len(seen), 9)
         self.assertFalse(any(kind in ('timing', 'instructions') for kind, _ in printed))
@@ -691,7 +689,7 @@ class ControllerTests(unittest.TestCase):
                 mock.patch.object(st, 'instrument'), \
                 mock.patch.object(st, 'emit', side_effect=lambda kind, **v: printed.append((kind, v))):
             status = st.campaign_run(args, {'empty': self.root / 'profiles/empty/user'}, work,
-                                     SimpleNamespace(env={}, slot=SimpleNamespace(pass_fds=lambda: ())))
+                                     {})
         self.assertEqual(status, 0)
         self.assertTrue(calls)
         self.assertTrue(all(calls))
@@ -790,7 +788,7 @@ class ControllerTests(unittest.TestCase):
                 mock.patch.object(st.cold_linux.native, 'filesystem', return_value=('ext4', '0:1')), \
                 mock.patch.object(st.identity, 'library_backend', return_value='kc'):
             status = st.campaign_run(args, {'empty': self.root / 'profiles/empty/user'}, work,
-                                     SimpleNamespace(env={}, slot=SimpleNamespace(pass_fds=lambda: ())))
+                                     {})
         return status, printed
 
     def test_macos_warm_campaign_output_is_byte_identical_to_before(self):

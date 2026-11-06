@@ -5,7 +5,7 @@ the driver. Every side (pin, ox) is profiled three ways: Callgrind phase
 instruction counts, the Massif heap peak and the Massif mapped-page peak. The
 six collections are independent: each has its own user store, reads only
 instruction and allocation counters, and shares no file with another. They run
-in tools/dev/pool.py's admitted pool, sized by the heavy slot's CPU and memory admission, and their report
+in tools/dev/pool.py's pool, one per allowed CPU, and their report
 lines print in the fixed order pin then ox, callgrind, heap, pages, whatever
 order they finish in. `--jobs 1` runs them in that order with no pool.
 
@@ -126,8 +126,8 @@ def collect(side, mode, plan, environment, context):
 def run_collections(plan, jobs, emit):
     """Collect every side and mode; emit(side, mode, lines) runs in fixed order.
 
-    The six collections are units of tools/dev/pool.py's admitted pool; --jobs 1
-    limits the admitted pool to one worker. Emission is in this thread, pin then ox and
+    The six collections are units of tools/dev/pool.py's pool; --jobs 1
+    limits the pool to one worker. Emission is in this thread, pin then ox and
     callgrind, heap, pages, as each result becomes the next in that order. Every
     child gets the environment captured here, because Callgrind counts move with
     its size and serial and pooled runs must agree.
@@ -136,9 +136,9 @@ def run_collections(plan, jobs, emit):
     units = [(f'{side}-{mode}', lambda context, side=side, mode=mode:
               collect(side, mode, plan, environment, context)) for side in SIDES for mode in MODES]
     keys = {f'{side}-{mode}': (side, mode) for side in SIDES for mode in MODES}
-    return pool.run_admitted(units, 'system-import-profile collections', cancelled=slot.CANCELLED.is_set,
-                             serial=jobs == 1, max_workers=jobs, emit=lambda name, lines: emit(*keys[name], lines),
-                             cancel_error=slot.Cancelled)
+    return pool.run_leased(units, cancelled=slot.CANCELLED.is_set,
+                           serial=jobs == 1, max_workers=jobs, emit=lambda name, lines: emit(*keys[name], lines),
+                           cancel_error=slot.Cancelled)
 
 
 def positive(text):
@@ -157,8 +157,8 @@ def main(argv=None):
     parser.add_argument('work', type=Path, help='directory holding the compiled driver; user stores go here')
     parser.add_argument('workload', help='iteration count, or --cold-open')
     parser.add_argument('--jobs', type=positive,
-                        help='maximum concurrent collections, reduced by admission '
-                             '(default: as many as admission allows; 1 runs them in order)')
+                        help='maximum concurrent collections '
+                             '(default: one per allowed CPU; 1 runs them in order)')
     args = parser.parse_args(argv)
     check_tkrzw = runpy.run_path(str(ROOT / 'tools/tkrzw/runtime.py'))['check']
     plan = dict(pin=args.pin, ox=args.ox, data=args.data, work=args.work, workload=args.workload)

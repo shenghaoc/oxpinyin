@@ -85,7 +85,7 @@ Save whole files to `.tmp` siblings, then rename them as the pin does.
 See `docs/findings/user-store.md` §11.
 Same-backend libpinyin and oxpinyin builds use the same user directory.
 A different backend starts fresh because it cannot read those files.
-Task 9 measured both directions with `tools/oracle/user-dir-round-trip.sh` against pin-built oracles.
+Task 9 measured both directions with `tools/oracle/user-dir-round-trip.sh` against pin-built oracles. That script and its two ignored tests are retired (2026-11-06 UTC); see `docs/runbooks/oracle.md` for where the property moves.
 
 The [libpinyin wiki](https://github.com/libpinyin/libpinyin/wiki) documents model formats, internals and multiple dictionaries.
 Use the pinned source (`074a2219`) when it differs.

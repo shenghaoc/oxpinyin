@@ -21,8 +21,8 @@ def run(backend=None, out=sys.stdout, err=sys.stderr, env=None):
 
     Use the Cargo default and include the C API tests on Linux. Print tool
     and backend diagnostics; return 2 for an unknown backend, 1 for missing
-    tools or slot errors, or the failing child status. The optional env is
-    used only for the Cargo child admitted through the heavy slot.
+    tools or launch errors, or the failing child status. The optional env is
+    used only for the supervised Cargo child.
     """
     backend = backend or cell.declared_default()
     if backend not in cell.BACKENDS:
@@ -86,10 +86,9 @@ def run(backend=None, out=sys.stdout, err=sys.stderr, env=None):
         if result.returncode:
             return result.returncode
         args += ['-p', 'oxpinyin-capi']
-    # Send slot diagnostics to stderr. Keep stdout aligned with check.sh.
     try:
-        rc = tools.admitted(['cargo', 'test', *args],
-                            environment=dict(os.environ if env is None else env), out=err)
+        rc = tools.supervised(['cargo', 'test', *args],
+                              environment=dict(os.environ if env is None else env))
     except Exception as exc:
         print(f'FAIL: {exc}', file=err, flush=True)
         return 1

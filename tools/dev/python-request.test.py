@@ -85,7 +85,7 @@ class RequestLiteralTests(unittest.TestCase):
     def test_the_scan_sees_the_files_it_is_meant_to(self):
         names = {name for name, _ in tracked_text_files()}
         for expected in ('justfile', 'tools/cloud/setup.sh', 'docs/runbooks/setup.md',
-                         '.github/workflows/ci.yml', 'tools/oracle/Dockerfile.compat', 'AGENTS.md'):
+                         '.github/workflows/ci.yml', 'tools/oracle/Dockerfile.oracle', 'AGENTS.md'):
             self.assertIn(expected, names)
         for excluded in ('.python-version',):
             self.assertNotIn(excluded, names)

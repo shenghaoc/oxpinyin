@@ -110,29 +110,20 @@ check backend="": python
 # Build upstream tkrzw at the provisioning revision into an empty DIR.
 [unix]
 tkrzw-build prefix: python
-    @just heavy -- uv run --no-project --managed-python python -X lazy_imports=normal -m tools.tkrzw.build build --prefix "$1"
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.tkrzw.build build --prefix "$1"
 
 [windows]
 tkrzw-build prefix: python
-    @{{windows_args}} just heavy -- uv run --no-project --managed-python python -X lazy_imports=normal -m tools.tkrzw.build build --prefix @forwarded; exit $LASTEXITCODE
+    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.tkrzw.build build --prefix @forwarded; exit $LASTEXITCODE
 
-# Run a command inside the native heavy slot and memory admission.
+# Run the native Rust tests through nextest.
 [unix]
-heavy *args: python
-    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev slot run "$@"
+test *args:
+    @cargo nextest run --profile local "$@"
 
 [windows]
-heavy *args: python
-    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev slot run @forwarded; exit $LASTEXITCODE
-
-# Run the native Rust tests through nextest and the heavy slot.
-[unix]
-test *args: python
-    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev test "$@"
-
-[windows]
-test *args: python
-    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev test @forwarded; exit $LASTEXITCODE
+test *args:
+    @{{windows_args}} cargo nextest run --profile local @forwarded; exit $LASTEXITCODE
 
 # Run the CI Python harness discovery and exclusions (Linux and macOS).
 [unix]
@@ -150,23 +141,23 @@ policy-record *args: python
 
 # Run doctests separately; nextest does not run them.
 [unix]
-test-doc *args: python
-    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev test-doc "$@"
+test-doc *args:
+    @cargo test --doc "$@"
 
 [windows]
-test-doc *args: python
-    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev test-doc @forwarded; exit $LASTEXITCODE
+test-doc *args:
+    @{{windows_args}} cargo test --doc @forwarded; exit $LASTEXITCODE
 
-# Build with the native heavy slot and memory admission.
+# Build the workspace.
 [unix]
 build *args:
-    @just heavy -- cargo build "$@"
+    @cargo build "$@"
 
 [windows]
 build *args:
-    @{{windows_args}} just heavy -- cargo build @forwarded; exit $LASTEXITCODE
+    @{{windows_args}} cargo build @forwarded; exit $LASTEXITCODE
 
-# Format directly; formatting does not take the heavy slot.
+# Format directly.
 [unix]
 fmt *args:
     @cargo fmt "$@"
@@ -177,25 +168,25 @@ fmt *args:
 
 # Regenerate the GLib/libc call-site TSV from a pinned libpinyin checkout.
 audit-glib-call-sites pin *args: python
-    @CARGO_BUILD_JOBS=2 just heavy -- uv run --no-project --managed-python --with clang==21.1.7 python -X lazy_imports=normal tools/audit/glib_call_sites.py "$@"
+    @uv run --no-project --managed-python --with clang==21.1.7 python -X lazy_imports=normal tools/audit/glib_call_sites.py "$@"
 
-# Lint with the native heavy slot and memory admission.
+# Lint the workspace.
 [unix]
 clippy *args:
-    @just heavy -- cargo clippy "$@"
+    @cargo clippy "$@"
 
 [windows]
 clippy *args:
-    @{{windows_args}} just heavy -- cargo clippy @forwarded; exit $LASTEXITCODE
+    @{{windows_args}} cargo clippy @forwarded; exit $LASTEXITCODE
 
-# Run the workspace benches with the native heavy slot and memory admission.
+# Run the workspace benches.
 [unix]
 bench *args:
-    @just heavy -- cargo bench --workspace --benches "$@"
+    @cargo bench --workspace --benches "$@"
 
 [windows]
 bench *args:
-    @{{windows_args}} just heavy -- cargo bench --workspace --benches @forwarded; exit $LASTEXITCODE
+    @{{windows_args}} cargo bench --workspace --benches @forwarded; exit $LASTEXITCODE
 
 # Build every selected bench harness without running it.
 [unix]
@@ -211,11 +202,11 @@ bench-smoke:
 # fallbacks there.
 [linux]
 profile-w8 *args: python
-    @just heavy -- uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev measure profile-w8 "$@"
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev measure profile-w8 "$@"
 
 [macos]
 profile-w8 *args: python
-    @just heavy -- env \
+    @env \
         SYSTEM_DEPS_BDB_NO_PKG_CONFIG=1 \
         SYSTEM_DEPS_BDB_LIB=db \
         SYSTEM_DEPS_BDB_SEARCH_NATIVE="$(brew --prefix berkeley-db@5)/lib" \
@@ -234,20 +225,20 @@ profile-w8 *args:
 # fuzz/rust-toolchain.toml names. No recipe names the nightly.
 [linux]
 fuzz *args:
-    @just heavy -- sh -c 'cd fuzz && exec setarch "$(uname -m)" -R cargo fuzz run "$@"' fuzz "$@"
+    @sh -c 'cd fuzz && exec setarch "$(uname -m)" -R cargo fuzz run "$@"' fuzz "$@"
 
 # cargo-fuzz supports Darwin. Homebrew's tkrzw.pc names its compression
 # libraries without their directory, so Homebrew's lib joins LIBRARY_PATH.
 [macos]
 fuzz *args:
-    @just heavy -- env \
+    @env \
         LIBRARY_PATH="$(brew --prefix)/lib${LIBRARY_PATH:+:$LIBRARY_PATH}" \
         sh -c 'cd fuzz && exec cargo fuzz run "$@"' fuzz "$@"
 
 # Windows fuzz execution is unverified; setarch is Linux-only.
 [windows]
 fuzz *args:
-    @{{windows_args}} just heavy -- pwsh -NoLogo -NoProfile -CommandWithArgs 'Set-Location fuzz; cargo fuzz run @args; exit $LASTEXITCODE' @forwarded; exit $LASTEXITCODE
+    @{{windows_args}} pwsh -NoLogo -NoProfile -CommandWithArgs 'Set-Location fuzz; cargo fuzz run @args; exit $LASTEXITCODE' @forwarded; exit $LASTEXITCODE
 
 # Run native coverage with temporary state; run and report in one invocation.
 # Cargo owns argument and report selection; the arguments pass through unchanged.
@@ -272,14 +263,14 @@ coverage *args:
 # Run a sanitizer gate with address, thread, leak or memory instrumentation.
 [linux]
 sanitize backend="" sanitizer="address": python
-    @just heavy -- uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev sanitize "$1" "$2"
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev sanitize "$1" "$2"
 
 # Darwin uses Homebrew's Berkeley DB 5.3, Kyoto Cabinet and tkrzw. The recipe
 # selects Darwin paths and omits Linux setarch. The tkrzw gate certifies the
 # host library through distro-probe.sh; put Homebrew's tkrzw_dbm_util on PATH.
 [macos]
 sanitize backend="" sanitizer="address": python
-    @just heavy -- env \
+    @env \
         SYSTEM_DEPS_BDB_NO_PKG_CONFIG=1 \
         SYSTEM_DEPS_BDB_LIB=db \
         SYSTEM_DEPS_BDB_SEARCH_NATIVE="$(brew --prefix berkeley-db@5)/lib" \
@@ -340,7 +331,7 @@ plan *args: python
 plan *args: python
     @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev plan @forwarded; exit $LASTEXITCODE
 
-# Run a measure recipe: startup (the controller holds the heavy slot), cold-qualify, or a measurement
+# Run a measure recipe: startup, cold-qualify, or a measurement
 # or profile recipe such as perf-baseline or snapshot (the list is tools/dev/measure/recipes.py).
 [unix]
 measure recipe *args: python
@@ -363,8 +354,3 @@ measure recipe *args: python
 [windows]
 initbench *args: python
     @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev measure startup @forwarded; exit $LASTEXITCODE
-
-# Oracle and compatibility recipes share host/runtime/fixture services.
-[unix]
-compat *args: python
-    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev compat "$@"

@@ -18,7 +18,8 @@ Reproduce from a clean ignored build directory:
 
 ```bash
 tools/oracle/build-oracle.sh --dbm tkrzw --work-dir target/oracle --jobs 4
-just compat capture target/oracle/prefix fixtures/foundation
+# The `just compat capture` recipe was removed on 2026-11-06 UTC with the
+# compat launcher; no replacement recipe exists yet.
 sha256sum fixtures/foundation/f-a.txt fixtures/foundation/f-c.txt
 ```
 

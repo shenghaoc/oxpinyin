@@ -110,7 +110,7 @@ workstream above has landed or closed (W9, W10, W11, W13, W14 and W15
 carry LANDED notes below, W12 closed 2026-08-22), and W8 drop-in task 9
 landed 2026-09-09: the user dir is the backend's native user file set,
 the same files a libpinyin build on that backend keeps (2026-09-09
-maintainer ruling, `docs/findings/compatibility-policy.md`), measured by `just compat user-round-trip`
+maintainer ruling, `docs/findings/compatibility-policy.md`), measured by the user-dir round-trip gate (retired 2026-11-06 UTC)
 against tkrzw, Kyoto Cabinet and Berkeley DB oracles, re-measured
 2026-09-13 after the harness's own driver was fixed
 (`docs/findings/user-store.md` §11). *Verification:* one gap open — the

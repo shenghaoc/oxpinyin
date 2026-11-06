@@ -3,7 +3,7 @@
 Status: partial implementation. Reconciled: 2026-10-23 UTC (`date -u`).
 This layer builds on [native Python](tooling-python.md).
 PR [#942](https://github.com/shenghaoc/oxpinyin/pull/942) added the native
-`justfile`, doctor, check and heavy recipes. PR
+`justfile`, doctor and check recipes. PR
 [#943](https://github.com/shenghaoc/oxpinyin/pull/943) added test and test-doc.
 PR [#948](https://github.com/shenghaoc/oxpinyin/pull/948) (merge `219f4205`)
 added build, fmt, clippy, list and plan. PR
@@ -14,7 +14,7 @@ The recipe table distinguishes these from the remaining surface.
 macOS: bounded checks passed on 2026-10-20 UTC at
 `b034e8342e70aab874b32414976cc9b6d232dc1d`.
 `just doctor` and the managed-Python doctor had identical output and status.
-For BDB, Kyoto Cabinet and tkrzw, the old shell check under `just heavy`
+For BDB, Kyoto Cabinet and tkrzw, the old shell check
 and `just check <backend>` both exited 0. The BDB row used
 Homebrew `berkeley-db@5` 5.3.28 with its include and library directories.
 The rows passed 51 tests with four ignored, 43 tests and 49 tests,
@@ -72,21 +72,20 @@ Layer 5 schedules the old-to-new handoffs.
 | --- | --- | --- | --- |
 | `just --list` | List tasks; bare `just` runs doctor. | README/runbook discovery | Implemented, #942. |
 | `just doctor` | Call Layer 1's native doctor. | Bootstrap doctor | Implemented, #942. |
-| `just list [--issue X] [--kind K]` | Read registry rows and implementation state; execute nothing. | `run-all.py --list` | Partial: #941 supplies `tools.dev list [--heavy]`; #948 implemented the recipe, issue/kind filters and selection tests. [#1033](https://github.com/shenghaoc/oxpinyin/pull/1033) (maintainer ruling 2026-10-22 UTC) implemented the `implementation` field: `list` prints it in place of the reason, and `plan` prints it with each row. |
+| `just list [--issue X] [--kind K]` | Read registry rows and implementation state; execute nothing. | `run-all.py --list` | Partial: #941 supplies `tools.dev list`; #948 implemented the recipe, issue/kind filters and selection tests. [#1033](https://github.com/shenghaoc/oxpinyin/pull/1033) (maintainer ruling 2026-10-22 UTC) implemented the `implementation` field: `list` prints it in place of the reason, and `plan` prints it with each row. |
 | `just plan [selection ...]` | Print the native plan without execution. | Native command planning | Partial: #941 supplies read-only `tools.dev plan --runners/--cells`; #948 implemented the recipe and issue/kind selection. Full command/input identities and digests (stage T3) remain proposed. |
 | `just check [backend]` | Run native setup checks; [Cargo default](../runbooks/backends.md). | `python -m tools.dev check` | Implemented, #942; the legacy shell control retired in #1293. |
-| `just heavy -- <command>` | Use Layer 1's slot and admission. | Merged #905/#906/#903 `run-all.py --heavy-slot --` | Implemented, #942; shared core from #941. |
-| `just test [args ...]` | Enter Layer 3's native Rust test path. | Native `cargo test` orchestration | Implemented, #943; the `ci.yml` Linux and macOS test cutover is #968 (merge `c017ebee`). Windows and other workflows remain proposed. |
-| `just test-doc [args ...]` | Run doctests through the heavy slot. | `cargo test --doc` | Implemented, #943. |
-| `just build [args ...]` | Run a native build through the heavy wrapper. | `cargo build` | Implemented, #948. |
+| `just test [args ...]` | Run `cargo nextest run --profile local <args>` directly. | Native `cargo test` orchestration | Implemented, #943; the `ci.yml` Linux and macOS test cutover is #968 (merge `c017ebee`). Windows and other workflows remain proposed. |
+| `just test-doc [args ...]` | Run doctests with `cargo test --doc`. | `cargo test --doc` | Implemented, #943. |
+| `just build [args ...]` | Run a native build directly. | `cargo build` | Implemented, #948. |
 | `just fmt [args ...]` | Run formatting. | `cargo fmt` | Implemented, #948. |
-| `just clippy [args ...]` | Run lints through the heavy wrapper. | `cargo clippy` | Implemented, #948. |
-| `just bench [args ...]` | Run the workspace benches through the heavy wrapper: `cargo bench --workspace --benches <args>`. | `cargo bench` | Implemented, #1038 (maintainer ruling 2026-10-22 UTC). `--benches` skips the `required-features` targets: `backend_matrix_kyotocabinet` and `backend_matrix_tkrzw` (oxpinyin-store), and `dbm_bench` (pinyin-oracle); `kyotocabinet_bnum` was retired 2026-11-02. |
+| `just clippy [args ...]` | Run lints directly. | `cargo clippy` | Implemented, #948. |
+| `just bench [args ...]` | Run the workspace benches directly: `cargo bench --workspace --benches <args>`. | `cargo bench` | Implemented, #1038 (maintainer ruling 2026-10-22 UTC). `--benches` skips the `required-features` targets: `backend_matrix_kyotocabinet` and `backend_matrix_tkrzw` (oxpinyin-store), and `dbm_bench` (pinyin-oracle); `kyotocabinet_bnum` was retired 2026-11-02. |
 | `just bench-smoke` | Build every selected bench harness without running it: `just bench --no-run`. | `cargo bench --no-run` | Implemented, #1038 (maintainer ruling 2026-10-22 UTC). On a host with model20, `just bench -- --test` is the full start-up check. |
 | `just measure <recipe>` / `just initbench` | Enter native oxpinyin-only measurement; `initbench` is `measure startup`. Pin rows are refused. | Native startup controller and worker (layer 5 §7.8) | Implemented under the 2026-10-22 UTC ruling; Linux KC empty-profile smoke completed on 2026-10-24 UTC at controller `1cea405c`, retained shipping `ebc9d4f5`, via recheck plus separate continuation (both exit 0; benches runbook); macOS acceptance pending. |
-| `just fuzz <target> [args ...]` | Run one native fuzz target through the heavy wrapper. | `setarch "$(uname -m)" -R cargo fuzz run <args>` in `fuzz/`, on the nightly that `fuzz/rust-toolchain.toml` names, on Linux from `verify-nightly.yml`'s `fuzz-soak` job; the macOS recipe supplies Homebrew GLib and Berkeley DB paths. | Implemented (maintainer ruling 2026-10-23 UTC; macOS native path added by #1180). All ten targets run on Linux and macOS. Windows transport is verified; workload execution is unverified. |
-| `just coverage [args ...]` | Run native coverage through the heavy wrapper; the tool owns crate, backend and report selection. | `tools.dev coverage` runs `cargo llvm-cov <args>` from `coverage.yml`'s `coverage` job with temporary per-invocation state. | Implemented (maintainer ruling 2026-10-23 UTC). Run and report in one invocation; pass the desired workflow scope, report and floor options together. macOS execution unverified; Windows transport is verified; workload execution is unverified. |
-| `just sanitize [bdb\|kc\|tkrzw\|all] [address\|thread\|leak\|memory]` | Run one store backend's sanitizer gate, or all three, through the heavy wrapper: `python -m tools.dev sanitize <backend> [sanitizer]`, default `bdb address`. | `tools/dev/test_runner.py` (moved from `store-backends.yml`'s inline `tkrzw-sanitizers` command and the three backend scripts retired in #1293). | Implemented (maintainer approval 2026-10-23 UTC, #1085; macOS and thread selection added by #1180; Python service #1293). Linux and macOS select address and thread; only macOS thread has been run. macOS refuses MemorySanitizer and standalone LSan on arm64; tkrzw leak is refused on every host. Windows exits 1. `store-backends.yml`'s three sanitizer jobs call the same service. |
+| `just fuzz <target> [args ...]` | Run one native fuzz target directly. | `setarch "$(uname -m)" -R cargo fuzz run <args>` in `fuzz/`, on the nightly that `fuzz/rust-toolchain.toml` names, on Linux from `verify-nightly.yml`'s `fuzz-soak` job; the macOS recipe supplies Homebrew GLib and Berkeley DB paths. | Implemented (maintainer ruling 2026-10-23 UTC; macOS native path added by #1180). All ten targets run on Linux and macOS. Windows transport is verified; workload execution is unverified. |
+| `just coverage [args ...]` | Run native coverage directly; the tool owns crate, backend and report selection. | `tools.dev coverage` runs `cargo llvm-cov <args>` from `coverage.yml`'s `coverage` job with temporary per-invocation state. | Implemented (maintainer ruling 2026-10-23 UTC). Run and report in one invocation; pass the desired workflow scope, report and floor options together. macOS execution unverified; Windows transport is verified; workload execution is unverified. |
+| `just sanitize [bdb\|kc\|tkrzw\|all] [address\|thread\|leak\|memory]` | Run one store backend's sanitizer gate, or all three, directly: `python -m tools.dev sanitize <backend> [sanitizer]`, default `bdb address`. | `tools/dev/test_runner.py` (moved from `store-backends.yml`'s inline `tkrzw-sanitizers` command and the three backend scripts retired in #1293). | Implemented (maintainer approval 2026-10-23 UTC, #1085; macOS and thread selection added by #1180; Python service #1293). Linux and macOS select address and thread; only macOS thread has been run. macOS refuses MemorySanitizer and standalone LSan on arm64; tkrzw leak is refused on every host. Windows exits 1. `store-backends.yml`'s three sanitizer jobs call the same service. |
 | `just ci <job>` | Select an approved native job. | Workflow-specific commands | Proposed. |
 
 `just check` keeps the retired `check.sh`'s backend selection and selected crate sets.
@@ -98,8 +97,6 @@ oracle installation or pass oracle variables to tests. The earlier optional
 oracle-directory display is superseded by this native boundary.
 Report unsupported native capabilities explicitly. Do not dispatch elsewhere.
 
-`just heavy` has one command line that calls the slot CLI.
-It holds no slot or admission logic itself. Pass the command vector unchanged.
 The Python code owns process creation, inheritance and status propagation.
 Keep status 0, 1 and 77 unchanged. Do not append `|| true` or turn a failure
 into a successful skip. A requested missing input is a failed verification.
@@ -129,11 +126,10 @@ Coverage state belongs to one invocation. `tools.dev.coverage.run` allocates a
 private target path beneath a fresh temporary parent for both
 `CARGO_LLVM_COV_TARGET_DIR` and `CARGO_LLVM_COV_BUILD_DIR`, preserving raw
 arguments and the child's status. Cargo creates its own tagged target directory.
-It uses the existing `slot.run_command` for process-group cleanup and inherited
-slot handling, and removes the directory after the child is reaped, including
+It uses the existing `slot.run_command` for process-group cleanup, and removes the directory after the child is reaped, including
 on failure or cancellation. Caller coverage directory overrides do not make
 these invocations share state. No checkout lock is added: `slot.run_command`
-uses `HeavyAdmission` and starts the child directly; it has no checkout lock.
+starts the child directly; it has no checkout lock.
 
 Run tests and produce their report in the **same invocation**. Profiles and
 instrumented artifacts are not retained for a later `just coverage report`,
@@ -162,7 +158,7 @@ revision; it does not relabel the smoke as a run of later state-isolation
 changes. The earlier pre-provisioning attempts ran no workload and are
 superseded for Linux acceptance. Argument transport (empty arguments, spaced
 paths and `--`) and statuses 0, 1 and 77 also passed with a temporary Cargo
-substitute through the real heavy slot. These bounded results close neither
+substitute through `slot.run_command`. These bounded results close neither
 other recipes' acceptance nor T2N's fresh-install/offline checks.
 
 The macOS fuzz refusal has been removed: all ten targets now run natively
@@ -229,10 +225,9 @@ Do not weaken byte-exact fixtures or wire formats. Record untested cases.
 
 ## 4. Implemented wrapper rule
 
-The #905/#906/#903 stack is merged. `run-all.py --heavy-slot --` remains
-available through #941's adapter to the shared core. PR #942 changed
-contributor guidance to use `just heavy --` for direct heavy commands and runner builds.
-Layer 1 limits the native slot to its environment. The recipe migration above
+The #905/#906/#903 stack is merged. Maintainer ruling 2026-11-06 UTC removed
+`just heavy` and `run-all.py --heavy-slot --`; direct commands and runner builds
+run directly. The recipe migration above
 that remains open is ci;
 the `ci.yml` Linux and macOS test cutover landed in #968 (merge `c017ebee`).
 This reconciliation changes no production rule.

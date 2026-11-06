@@ -1,12 +1,11 @@
 """Install, validate and assemble the drop-in packages (#1292).
 
 One layout and process adapter serve every entry point.
-Cargo and package builders use the shared heavy admission; captured tools use
+Cargo and package builders run supervised (slot.run_command); captured tools use
 pool.UnitContext, which reaps their process groups on cancellation.
 """
 from contextlib import contextmanager
 from dataclasses import dataclass
-import io
 import os
 from pathlib import Path
 import re
@@ -118,8 +117,7 @@ class Tools:
 
     def capture(self, argv, *, cwd=None, env=None, merge_stderr=False, input=b''):
         context = pool.UnitContext('packaging', slot.CANCELLED,
-            environment=dict(self.env if env is None else env),
-            fds=slot.inherited_fds('packaging', out=io.StringIO()))
+            environment=dict(self.env if env is None else env))
         try:
             done = context.launch(list(map(str, argv)), cwd=cwd, merge_stderr=merge_stderr, input=input)
         except PermissionError as error:
@@ -137,8 +135,7 @@ class Tools:
     def heavy(self, argv, *, cwd=None, env=None):
         with directory(cwd or Path.cwd()):
             try:
-                code = status(slot.run_command(list(map(str, argv)), env=self.env if env is None else env,
-                                           out=io.StringIO()))
+                code = status(slot.run_command(list(map(str, argv)), env=self.env if env is None else env))
             except PermissionError as error:
                 fail(str(error), 126)
         if code:

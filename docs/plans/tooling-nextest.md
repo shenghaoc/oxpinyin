@@ -6,9 +6,8 @@ PR [#943](https://github.com/shenghaoc/oxpinyin/pull/943) is merged.
 
 | Capability | Status on main |
 | --- | --- |
-| Native test entry point, minimum version and ignored-test mapping (§§1, 4) | Implemented in #943 through `tools.dev.test_runner`, `just test` and `just test-doc`. |
-| Native profiles and resource groups (§2) | Implemented in #943: local uses admitted num-cpus; ci uses four threads; retries are zero and fail-fast is false. The store-backend group has one thread; selected real-data binaries take the full budget. |
-| Shared admission and explicit nextest concurrency (§3) | Implemented in #943 on #941's shared slot. CLI counts precede NEXTEST_TEST_THREADS, then profile settings. Unsupported or ambiguous overrides fail closed. |
+| Native test entry point and minimum version (§§1, 4) | Implemented in #943; since the 2026-11-06 UTC ruling `just test` runs `cargo nextest run --profile local` and `just test-doc` runs `cargo test --doc`, both directly, with no ignored-test mapping. |
+| Native profiles and resource groups (§2) | Implemented in #943: local uses num-cpus; ci uses four threads; retries are zero and fail-fast is false. The store-backend group has one thread; selected real-data binaries take the full budget. |
 | Equivalence across every native CI scope (§5) | Partial. #943 records six accepted Linux rows only at `7991ec6b17509980f42a59d72531617059f109d6`. The macOS tkrzw equivalence at `b034e834` on 2026-10-20 UTC is historical. The current macOS CI BDB scope passed at `219f420` on 2026-10-20 UTC: 1,218 passed and 22 ignored; identities and verdicts match. [#968](https://github.com/shenghaoc/oxpinyin/pull/968) (merge `c017ebee`) compared all 1,531 Linux and 1,246 macOS crate/binary-qualified identities and verdicts against cargo test; all matched, and both doctest sets matched six identities (four passed, two ignored). Other scopes and sanitizer equivalence remain unverified. |
 | CI and verification rule 5 cutover (§5) | Partial T13N: [#968](https://github.com/shenghaoc/oxpinyin/pull/968) (merge `c017ebee`) switched `ci.yml` test (Linux) and test-macos to pinned nextest 0.9.143 with `--profile ci` and separate `cargo test --doc` steps. Features, exclusions and ignored-test behavior are preserved. The Windows nightly job uses nextest with the ci profile and separate doctests, under the 2026-10-30 ruling. Other workflows and verification rule 5 are unchanged. |
 | Pin-dependent test route | Proposed under Layer 4; no container profile exists yet. |
@@ -23,14 +22,14 @@ at `b034e834`, Cargo and nextest each passed 1,222 tests and skipped the same
 20. Discovery found 1,242 test identities in 85 binaries. Every per-binary
 name, pass verdict and ignored status matched. The separate `just test-doc`
 step matched Cargo's six doctest identities: four passed and two ignored.
-The runs used one test thread through the shared slot.
+The runs used one test thread.
 
 The current `ci.yml` test-macos BDB scope passed equivalence on 2026-10-20 UTC
 at `219f4205952a6db549331a90ec11501f6be0b68d`, with Homebrew
 `berkeley-db@5` 5.3.28. Cargo and nextest each passed 1,218 tests and ignored
 22, across 1,240 identities in 85 binaries. Identities and verdicts match.
 The separate `cargo test --doc` comparison matched all six doctest
-identities: four passed and two ignored. The commands used `just heavy --`,
+identities: four passed and two ignored. The commands used
 one Cargo job, one test thread and the repository's nextest `local` profile.
 Elapsed times were excluded. The earlier BDB `just check` result remains
 separate evidence. Other CI scopes remain unverified.
@@ -55,15 +54,9 @@ The Windows nightly job uses nextest and separate doctests under the 2026-10-30 
 ## 1. Test entry point
 
 Use cargo-nextest as the native Rust test orchestrator.
-`just test` runs `cargo nextest run` under the shared heavy slot.
-Keep the recipe thin. The `tools.dev` test command selects the native profile
-and calls `slot.run_command` directly. The process path is:
+`just test` runs `cargo nextest run --profile local <args>` directly.
 
-```text
-just test -> tools.dev test -> slot.run_command -> cargo nextest run --profile local <args>
-```
-
-Use `--no-fail-fast` for complete selected-run feedback.
+The default profile sets `fail-fast = false` for complete selected-run feedback.
 Keep the selected crates, features and cases unchanged. Native tests use the
 host toolchain. They load no oracle or pin installation and start no container.
 Pin-dependent Rust tests belong to Layer 4's separate environment.
@@ -72,7 +65,7 @@ Cargo-nextest and `just` are approved host-tool choices in this plan.
 Require cargo-nextest 0.9.115 or later for the `inherits` key.
 See the [profile inheritance documentation](https://nexte.st/docs/configuration/#profile-inheritance).
 Set `nextest-version = "0.9.115"` in `.config/nextest.toml`.
-Keep `--run-ignored=only` for ignored-only selections.
+Pass `--run-ignored=only` for ignored-only selections; `just test` translates no libtest switches.
 PR #943 records the minimum and provisioning commands in setup and doctor.
 This reconciliation installs nothing. Keep `rust-toolchain.toml`
 as the Rust toolchain authority.
@@ -90,13 +83,13 @@ Do not narrow test discovery through an unreviewed default filter.
 Use named test groups with `max-threads` for tests that interfere or use much
 memory. The implemented `store-backend` group has a ceiling of 1. Its binary
 filters are `assembly`, `empty_user_dir`, `trait_laws`, `user_store_acid`,
-`user_store_semantics`, `bdb_libpinyin_files`, `libpinyin_data_dir` and
-`user_dir_round_trip`. These cases create or recover backend files, fork or
+`user_store_semantics`, `bdb_libpinyin_files` and `libpinyin_data_dir`.
+These cases create or recover backend files, fork or
 change process state. Independent logic and in-memory tests stay outside.
 Name other shared resources before adding groups. Any extension must list
 its matched tests and justify exclusions.
 
-The `bdb_libpinyin_files`, `libpinyin_data_dir` and `user_dir_round_trip`
+The `bdb_libpinyin_files` and `libpinyin_data_dir`
 binaries use `threads-required = "num-test-threads"` to run alone
 within that invocation. Use a smaller weight only for a measured
 resource estimate. A group's ceiling limits its subset; `threads-required`
@@ -107,20 +100,17 @@ and [heavy-test rules](https://nexte.st/docs/configuration/threads-required/).
 ## 3. Responsibility boundaries
 
 Nextest limits concurrency inside one test invocation.
-[Layer 1's slot](tooling-python.md#5-native-heavy-slot-and-memory-admission)
-limits heavy work across native processes. Groups do not replace file locks
+Groups do not replace file locks
 for resources that separate processes share. Use the OS locks from Layer 1.
 Keep resource locks even when a group has `max-threads = 1`.
 
-Account for nextest's `-j` / `NEXTEST_TEST_THREADS` in memory admission.
-Keep explicit settings. If the required budget does not fit, block or fail
-under the slot contract; do not silently reduce a caller's value.
+Nextest's `-j` / `NEXTEST_TEST_THREADS` and the profile settings choose its process pool.
 Keep cargo build concurrency separate from nextest test concurrency.
 Do not assume `RUST_TEST_THREADS` alone controls nextest's process pool.
 
 ## 4. Doctests and ignored tests
 
-Keep doctests on `cargo test --doc`, through `just test-doc` under heavy-slot admission.
+Keep doctests on `cargo test --doc`, through `just test-doc`.
 Nextest does not replace that separate step. See its
 [running guide](https://nexte.st/docs/running/).
 
@@ -169,7 +159,7 @@ approval; the T13N exception above covers only the two approved CI jobs.
 After equivalence passes, the cutover implementation updates verification rule 5.
 Replace its documented `cargo test -p <crate>` command with the native `just test`
 nextest route. Keep the same touched-crate scope and feature selection.
-Keep doctests on `cargo test --doc` through `just test-doc` under heavy-slot admission.
+Keep doctests on `cargo test --doc` through `just test-doc`.
 Keep the fmt obligation. Do not add a local workspace sweep.
 This is a planned policy edit; this docs-only PR changes no verification rule.
 

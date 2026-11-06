@@ -1,6 +1,8 @@
 # Tooling layer 1: native Python
 
 Status: partial implementation. Reconciled: 2026-10-21 UTC (`date -u`).
+
+Note, 2026-11-06 UTC: the compat launcher (`tools/dev/compat/`, `just compat`, `compat.sh`) was removed; `image-tag`, `pin-field` and `verify-image` moved to `tools/oracle/image.py` (`python -m tools.oracle.image`) and `tools/dev/compat/process.py` to `tools/dev/process.py`. Passages below about the other compat recipes are historical.
 The #938 → #939 → #941 → #942 → #943 stack is merged on `main`.
 This document records current code and remaining requirements. It installs nothing.
 
@@ -10,8 +12,7 @@ This document records current code and remaining requirements. It installs nothi
 | Package, CLI, host report, bootstrap doctor and identity checks (§3) | Implemented in [#941](https://github.com/shenghaoc/oxpinyin/pull/941); nextest version check added in [#943](https://github.com/shenghaoc/oxpinyin/pull/943). Doctor reports capabilities; it does not install them. |
 | Registry service (§3) | Implemented in [#941](https://github.com/shenghaoc/oxpinyin/pull/941) and [#948](https://github.com/shenghaoc/oxpinyin/pull/948) (merge `219f4205`): read, validate and select by runner, cell, issue and kind through `registry.select`, with tests. The `implementation` field is implemented in [#1033](https://github.com/shenghaoc/oxpinyin/pull/1033) (maintainer ruling 2026-10-22 UTC): every `runners.json` row names `legacy:<path>`, `python:<module>` or `instrument:<path>`, and `registry.load` rejects a missing field, an unknown form and a path or module that does not exist. |
 | Python feature policy (§4) | Partial: #939 sets normal import mode in execution commands. #1013 adds the entry-point `sys.get_lazy_imports()` guard in `tools/dev/__main__.py`, tested by `tools/dev/entry.test.py`. Optional lazy imports, frozendict, sentinel and sampling use remain proposed. |
-| Shared native slot, admission, process cleanup and legacy adapter (§5) | Implemented in #941, from the merged #905/#906/#903 contracts and #938 acceptance. Platform acceptance remains partial. |
-| Container lifetime budget integration (§5) | Implemented in [#957](https://github.com/shenghaoc/oxpinyin/pull/957) (merge `af9df745`), [#969](https://github.com/shenghaoc/oxpinyin/pull/969) (merge `bdb520f4`) and [#978](https://github.com/shenghaoc/oxpinyin/pull/978) (merge `e219d33d`): Layer 4's hard limit and native lifetime reservation exist, with one desktop-headroom application and 2560/4608 MiB defaults. [#998](https://github.com/shenghaoc/oxpinyin/pull/998) (merge `3e280c8c`) adds cache-aware admission. Platform acceptance stays Layer 4's record. |
+| Shared native process supervision and cancellation (§5) | Implemented in #941, from the merged #905/#906/#903 contracts and #938 acceptance. Platform acceptance remains partial. Maintainer ruling 2026-11-06 UTC removed the slot and memory admission that #941 also delivered. |
 | Full environment provisioning and complete three-platform acceptance (§§2, 6) | Proposed provisioning; partial acceptance. [#955](https://github.com/shenghaoc/oxpinyin/pull/955) (merge `21be16aa`) adds a Python-only cloud provisioning mode, not full environment provisioning. Native compiler/backend setup remains a separate runbook procedure. |
 
 macOS: bounded checks passed on 2026-10-20 UTC at
@@ -20,9 +21,6 @@ CPython 3.15.0 with `Py_GIL_DISABLED == 0` and an enabled runtime GIL.
 `UV_PYTHON`, `PYTHONHOME` and `PYTHONPATH` overrides each failed with status 1.
 `uv ... -m tools.dev doctor` and `just doctor` had identical status and output.
 The slot, CLI, host and test-runner suites passed 6, 7, 4 and 16 tests.
-The slot suite included wrapper-kill handoff. Live `just heavy` children
-returned 143 for SIGTERM and 137 for SIGKILL. The macOS host reader returned
-positive `available_mib`; `sysctl` and `vm_stat` reads were available.
 Fresh-install, offline cache and full environment provisioning acceptance
 remain unverified.
 Windows recipe argument transport and doctor are verified from pwsh.
@@ -111,7 +109,7 @@ callable as a function. Put process, path and environment logic in Python.
 Publish or install no Python package. A console entry point needs a new ruling.
 Do not import product Rust crates into Python.
 
-This layer owns native `cli`, `host` and `slot` services.
+This layer owns native `cli`, `host` and `slot` services; `slot` is process supervision and cancellation.
 Layer 5 owns the registry, observation, comparison and migration semantics.
 Use one implementation of each service. A later stage may reuse code inside
 another environment; it must not reuse that environment's state.
@@ -169,98 +167,48 @@ Use `profiling.sampling` only for optional diagnostics. Keep it outside native
 measurement intervals. Exclude the experimental JIT and free-threaded build
 until a separate measured decision.
 
-## 5. Native heavy slot and memory admission
+## 5. Native process supervision
 
-PR #941 delivered T2N's `tools.dev.slot` by extracting the slot and admission
-core from `tools/bisection/run-all.py`. It is the one implementation. Preserve that
-script's slot and admission semantics from #905/#906/#903, subject to the
-fail-closed ruling below. `run-all.py` imports the core through an adapter and
-keeps its CLI, its rows, its environment variables and its cancellation
-semantics unchanged. It remains authoritative for its legacy behaviour until
-T5. Support one host, one filesystem and one environment per heavy lock domain.
-Do not claim distributed locking or shared native/container slot ownership.
-Layer 4's host budget record does not share a heavy lock domain.
+`tools.dev.slot` supervises native child processes. Maintainer ruling
+2026-11-06 UTC removed the host-wide slot, the memory admission and the
+container memory reservation that #941 and #957 added, and withdrew the
+2026-10-19 UTC ruling that required them. Anyone who wants to limit builds sets
+`CARGO_BUILD_JOBS` in their own Cargo configuration. `CARGO_BUILD_JOBS`,
+`RUST_TEST_THREADS` and the nextest thread count use the tools' own defaults.
+`OXPINYIN_CONTRACT_JOBS` defaults to `os.cpu_count()`, and the variable overrides it.
 
-Keep `heavy-slot-<n>`, `heavy-admission`, holder records and memory reservations.
-Keep `OXPINYIN_HEAVY_SLOT_HELD` and its validated inheritance contract.
-Keep `OXPINYIN_LOCK_DIR`, `XDG_CACHE_HOME`, `OXPINYIN_HEAVY_SLOTS`,
-`OXPINYIN_RESOURCE_WAIT_SECONDS`, `CARGO_BUILD_JOBS` and `RUST_TEST_THREADS`.
-Keep their meanings and defaults. Preserve explicit child settings.
-Choose only unset settings. Share native lock files across native worktrees
-on that host. Never select a container lock directory.
+`slot.run_command` runs a child in its own session and reaps it. On SIGTERM,
+SIGINT or SIGHUP, the shared cancellation event is set and each child process
+group gets SIGTERM, five seconds to exit, then SIGKILL, and is reaped. A
+cancelled run exits 130. Cancellation, expiry or a killed child cannot pass or
+skip.
 
-Use `fcntl.flock` on Linux and macOS. On Windows, use `LockFileEx` through
-`ctypes`, with `LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY`.
-All native Windows contenders lock one fixed byte in each slot file.
-Use offset 4294967295 and length 1, beyond the bounded JSON holder record.
-Use the same range for the admission lock. This avoids locking record bytes.
-Microsoft permits locks beyond EOF and denies other processes access to an
-exclusively locked range. This gives an explicit exclusive kernel lock.
-Release it with the matching `UnlockFileEx` range. Do not truncate lock files
-to replace locks. See [LockFileEx](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-lockfileex).
-
-Implement Windows ancestry and liveness checks with Windows process APIs,
-without `/proc` or a POSIX `ps`. Validate the holder record, live process and
-ancestor relationship before accepting a nested marker.
-Preserve Unix child handoff and cleanup. Windows does not inherit LockFileEx
-ownership: the kernel releases the range when its owning process ends.
-
-Use this Windows handoff protocol. The slot holder owns a non-inheritable
-Job Object handle with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`.
+On native Windows, use a non-inheritable Job Object handle with
+`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`.
 Create the workload suspended, assign it to the job, then resume it.
 Let no workload process inherit the job handle. Allow no breakaway.
 Fail closed if job creation or assignment fails.
-Nested work stays in that job and inherits admission context, not lock ownership.
 When the controller ends, closing its job handle terminates the workload tree.
-Do not admit later heavy work until the previous workload has ended.
-If termination cannot be proved, keep admission blocked.
 See Microsoft's [job lifetime rules](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects#managing-job-objects).
 
-Keep the Linux MemAvailable and cgroup readers, macOS `vm_stat` reader and
-Windows GlobalMemoryStatusEx reader. Take the slot before the final resource
-read. Keep estimates, headroom, CPU ceilings and explicit-setting validation.
-Serialize reservation updates. Count live native slot reservations.
-Proposed integration: subtract Layer 4's unreleased native memory reservations
-for containers.
-Layer 4 owns their creation, lifetime and release; do not read inner slot state.
-Hold no checkout lock while waiting for resources.
-
-Apply the 2026-10-19 fail-closed ruling. If available memory cannot be measured,
-treat it as no room. Start no heavy process. Release the acquired slot while
-waiting, then retry slot acquisition and admission. At the wait limit, emit
-the existing `resource-blocked` FAIL reason when memory was the cause of the
-last attempt, or the slot-wait reason (the holder, the time waited and the
-limit) when the slot was still held, and a nonzero status either way.
-Keep the inherited-slot immediate resource-blocked FAIL. Never wait for memory
-while the ancestor holds the slot. Cancellation, expiry or a killed child
-cannot pass or skip. Start the workload timeout only after admission.
-
-Layer 2 owns the public heavy recipe. Layer 3 owns nextest's internal limits.
-Layer 5 schedules the runner refactor at T5. T2N already extracted this code;
-the refactor keeps the adapter import, with separate state in each environment.
+Keep `host.allowed_cpus` and `host.cpu_snapshot` as the CPU readers. Keep the
+container inspection helpers in `tools/dev/host.py`.
 
 ### Independent campaign work (#1232)
 
 A tool that launches many independent subprocesses or builds uses a bounded
-pool under the shared heavy-slot and memory admission. Choose its worker
-count from admitted CPU and memory capacity, not a fixed count. Account for
-nested compiler jobs and every live subprocess; multiple pools cannot share
-a reservation whose estimate only covers one of them. Give each worker
-private writable state, propagate errors, and reap children before releasing
-admission. Preserve deterministic output by combining results independently
+pool (`tools/dev/pool.py`). Size it from the allowed CPUs. Give each worker
+private writable state, propagate errors, and reap children before returning.
+Preserve deterministic output by combining results independently
 of completion order.
 
-CPU shares are per pool, or per `run-all.py` invocation: a pool keeps workers
-times make jobs within the CPUs it was admitted or measured, and does not
-reserve those CPUs against other, independent slot holders, which plan their own
-share the same way. Memory is admitted host-wide, counting every holder's
-reservation. There is no global CPU scheduler. `tools/dev/pool.py` also names,
+`tools/dev/pool.py` also names,
 labels and records the containers it starts (a per-invocation random token and
 `--cidfile`) and removes only those on a failure or signal. Its unit runner
-(`run_admitted`) takes callables, in-process steps and launched processes alike,
-under the same admission and stop rule: the first failure or a cancellation starts
-nothing more, stops the running units, and joins them (each reaps its own children)
-before the admission is released, and results and output follow unit order.
+(`run_units`, `run_leased`) takes callables, in-process steps and launched processes alike,
+under one stop rule: the first failure or a cancellation starts
+nothing more, stops the running units, and joins them (each reaps its own children),
+and results and output follow unit order.
 
 Serialize dependent steps and work requiring isolation, and state the reason
 in the tool or its runbook. Timing, residency, cache-sensitive observations
@@ -270,17 +218,17 @@ Audit at `27c785c0` (follow-ups retain their own implementation gates):
 
 | Tool | Classification and disposition |
 | --- | --- |
-| `cloud/setup.sh` | Common dependency-image/model setup and final environment publication are dependencies. Per-cell builds/data regeneration run through the shared pool, with nested make jobs included in the admitted CPU and memory budget (merged #1261): [#1233](https://github.com/shenghaoc/oxpinyin/issues/1233). |
+| `cloud/setup.sh` | Common dependency-image/model setup and final environment publication are dependencies. Per-cell builds/data regeneration run through the shared pool (merged #1261): [#1233](https://github.com/shenghaoc/oxpinyin/issues/1233). |
 | `oracle/Dockerfile.oracle` | Backend builds have distinct work/prefix directories. The maintainer retained the serial backend loop: copying host tooling into the image would couple image rebuilds to unrelated tooling changes; the measured saving did not justify that cost (#1263 closed unmerged): [#1234](https://github.com/shenghaoc/oxpinyin/issues/1234). |
-| `bisection/teardown.py` | Export must precede recipe selection; mutation within a profile is ordered. Independent profile population and witness checks run as units in one admitted pool, each with its own sample names, counter and CPU lease; records print in profile order, and `--jobs 1` is the serial reference ([#1235](https://github.com/shenghaoc/oxpinyin/issues/1235)). Timing, residency and measurement phases remain isolated and start only after the pool is released. |
+| `bisection/teardown.py` | Export must precede recipe selection; mutation within a profile is ordered. Independent profile population and witness checks run as units in one pool, each with its own sample names, counter and CPU lease; records print in profile order, and `--jobs 1` is the serial reference ([#1235](https://github.com/shenghaoc/oxpinyin/issues/1235)). Timing, residency and measurement phases remain isolated and start only after the pool is released. |
 | `just profile-w8` (`tools.dev.measure.profile`, formerly `profile/run-w8-cycle.sh`) | Profiler attempts form a fallback chain, each conditional on failure of its predecessor. Sampling and native timing need isolation; no independent campaign loop to parallelize. |
-| `measure system-import-profile` (formerly `bisection/run-system-import-profile.sh`) | Side/mode collections use private users and instruction/allocation counters; the serialization was accidental. `system_import_profile.py` now runs the six collections in one admitted pool and reports in a fixed order; `--jobs 1` is the serial reference ([#1236](https://github.com/shenghaoc/oxpinyin/issues/1236)). Attempts within each retry chain remain dependent and sequential. |
+| `measure system-import-profile` (formerly `bisection/run-system-import-profile.sh`) | Side/mode collections use private users and instruction/allocation counters; the serialization was accidental. `system_import_profile.py` now runs the six collections in one pool and reports in a fixed order; `--jobs 1` is the serial reference ([#1236](https://github.com/shenghaoc/oxpinyin/issues/1236)). Attempts within each retry chain remain dependent and sequential. |
 | `measure perf-baseline`, `perf-matrix`, `perf-same-data`, `rss-diag`, `callgrind-differential`, `snapshot` | Every sample is a timed, resident-set or hardware-counter observation of one arm, pinned to the caller's one `PERF_CPU`; `bench.round_robin` runs them one process at a time and interleaves the arms so host drift lands on all of them. Serial by measurement isolation. `callgrind-differential` stage 4 (Callgrind is exact) pins its runs to that same CPU, so pooling them would only time-share it. |
-| `measure shipped-check`, `tree-recipe-control` (#1290) | The two or four builds are independent (private target and stage directories): units of one admitted pool (`bench.build_all`) that `pool.plan` sizes from the admitted CPUs and memory at a rustc allowance (600 MiB) per Cargo job. Both how many builds overlap and the jobs each gets come from the plan, so a host with many CPUs and little memory builds one at a time with fewer jobs. An explicit `CARGO_BUILD_JOBS` is kept as given and charged in full (rule 8): only the overlap adapts, and a host that cannot hold one build at that count refuses it. The sampling that follows is serial, as above. |
-| `measure callgrind-differential` annotations (#1290) | The two `callgrind_annotate` runs (self and inclusive) over each profile are independent post-processing of files on disk: units of one admitted pool (`pool.run_admitted`), each charged the runner allowance (1,024 MiB; the old script ran them one at a time and Valgrind documents no figure). The slot is taken, or inherited, and the memory reserved before any starts, so a host short of memory annotates one at a time and a direct run, such as the image's command, never starts more than it holds. |
+| `measure shipped-check`, `tree-recipe-control` (#1290) | The two or four builds are independent (private target and stage directories): units of one pool (`bench.build_all`); Cargo chooses each build's jobs unless the caller sets `CARGO_BUILD_JOBS`. The sampling that follows is serial, as above. |
+| `measure callgrind-differential` annotations (#1290) | The two `callgrind_annotate` runs (self and inclusive) over each profile are independent post-processing of files on disk: units of one pool (`pool.run_leased`), at most one per allowed CPU. |
 | `measure perf-same-data` builds (#1290) | The two builds share one target directory and copy `libpinyin_capi.so` out before the next replaces it: dependent, so serial. |
 | `measure snapshot` builds (#1290) | The shipping artifact and the alloc-count fixture use separate build steps. |
-| `measure probe-egress` (#1290) | A diagnostic: eight short requests whose table prints in a fixed order. It must not hold the heavy slot or wait behind a build to make them, so it takes no admission. |
+| `measure probe-egress` (#1290) | A diagnostic: eight short requests whose table prints in a fixed order. It must not wait behind a build to make them. |
 | `measure probe-debuginfo-neutrality` builds (#1290) | The three builds share `target/release` and each artifact is copied out before the next replaces it: serial. |
 
 Maintainer decision after this audit: [#1234](https://github.com/shenghaoc/oxpinyin/issues/1234) was closed as not planned. The serial backend build in `Dockerfile.oracle` stays, and no `tools/dev` module is copied into an image build.
@@ -291,14 +239,9 @@ Run setup, bootstrap doctor and interpreter identity checks on all three native
 platforms. Check a fresh terminal and unavailable-network/cache cases.
 Record untested cases and their reasons. Do not claim execution from this plan.
 
-On native Windows without a POSIX shell, require two concurrent one-slot sleep
-commands to serialise. Check nested inheritance, stale markers, live-holder
-validation and cancellation. Kill the controller while its workload and a
+On native Windows without a POSIX shell, check cancellation. Kill the controller while its workload and a
 descendant remain live. Require the Job Object to terminate both.
-Start a contending heavy call and prove that its work never overlaps the old
-workload. Check no leaked job handle, breakaway or premature slot reuse.
-Check low and unmeasurable memory, wait expiry, reservations and explicit
-settings.
+Check no leaked job handle or breakaway.
 Use the same semantic cases on Linux and macOS. Layer 2 supplies recipe-level
 argument and status acceptance. No cross-OS shared-directory case is required.
 
@@ -346,7 +289,7 @@ fetch-model`), since its only shell callers, the two bisection Dockerfiles,
 run after managed Python. The pin reader `oracle/pin.sh` was kept at that base
 and is removed by the closing check: its one live caller, the arm64 metadata step of `oracle-image.yml`,
 runs after managed Python is provisioned and reads the platform-keyed fields
-through `just compat pin-field`. The remaining 94 enter six units below. Cloud
+through `python -m tools.oracle.image pin-field`. The remaining 94 enter six units below. Cloud
 setup retains only its pre-interpreter portion; its post-bootstrap work
 migrates. The 98 count in #1260 predates this base.
 
@@ -383,7 +326,7 @@ Its shared services are `tools.dev.cell`, `system_data`, `drivers`, `runners`
 and the recipe modules under `tools/dev/`. `just runner RECIPE ...` retains the
 audited runner arguments; `just abi ...` and `just cell-artifacts ...` expose
 the ABI gates and cell builder. The registry calls the same services. Independent
-case groups use `pool.run_admitted`; per-side comparisons and mutation/control
+case groups use `pool.run_leased`; per-side comparisons and mutation/control
 chains remain ordered within a unit, with private writable state.
 The former wrappers (`run-all.sh`, `run-contract-diff.sh`) use the shared CLI
 routes, retaining interpreter-injection rejection and exec status semantics. #1175 is the
@@ -401,7 +344,7 @@ measure RECIPE`) for `perf-baseline`, `perf-matrix`, `perf-same-data`,
 `system-import-profile`, `snapshot`, `probe-debuginfo-neutrality` and
 `probe-egress`, and `just profile-w8`. The shared services are
 `tools/dev/measure/bench.py` (counts, the libtkrzw
-check through its adapter, harness builds, pinned launches, heavy builds, the
+check through its adapter, harness builds, pinned launches, supervised builds, the
 pool of independent builds, arm scheduling), `identity.py`, `reports.py`,
 `neutrality.py` and the recipe modules `campaigns.py`, `valgrind.py`, `probes.py`,
 `profile.py` and `snapshot.py`; the report parsers stay the existing
@@ -431,9 +374,9 @@ and under `OMP_NUM_THREADS` or `OMP_THREAD_LIMIT` (applied by `nproc`, ignored
 here).
 Independent builds are pool units: a failing build lets its siblings
 finish, the pool names the failed unit and prints its accounting lines in place
-of one slot trailer per build, and the build and neutrality scratch files are
-removed. The callgrind annotations, which the old script ran one at a time and
-without a slot, are pool units too and print the same accounting lines. A signal sent to the controller alone terminates and reaps the children it started
+of one trailer per build, and the build and neutrality scratch files are
+removed. The callgrind annotations, which the old script ran one at a time,
+are pool units too and print the same accounting lines. A signal sent to the controller alone terminates and reaps the children it started
 and exits 128 plus the signal, where the shell runner died of it and left them
 running; the cancellation messages differ. A measured launch of a harness that
 is not there leaves taskset's own line in the arm's `.err` file, with status 1
@@ -457,8 +400,8 @@ bootstrap keeps the adjacent Bash floor and fail-closed guard from #1313, sets
 image-owned interpreter paths, then hands off to a separately hashed `guest.py`.
 The supplied-image round-trip bootstrap retains only pre-interpreter provisioning.
 No `tools.dev` module enters the reference image, and its serial backend loop is
-unchanged. Heavy launches use `slot.run_command`; independent reproducibility
-builds use the existing admitted pool. Container workloads retain the existing
+unchanged. Supervised launches use `slot.run_command`; independent reproducibility
+builds use the existing pool. Container workloads retain the existing
 memory reservation transport, including confirmed-exit fencing before a reader.
 
 U3's deliberate diagnostic wording differences change no status. Bash's
@@ -479,7 +422,7 @@ For function layout, see the [maintainer ruling](../packaging.md#function-layout
 U4 is implemented by `just packaging COMMAND` (`python -m tools.dev packaging
 COMMAND`), `tools/dev/packaging.py` and the package metadata in
 `tools/dev/packaging_templates.py`. The ten shell entry points are removed.
-Heavy work uses `slot.run_command`; captured processes use the pool.
+Supervised work uses `slot.run_command`; captured processes use the pool.
 Stages share their install tree/target, so their dependent facade installs stay
 serial. The release CI callers provision managed Python first.
 
@@ -539,7 +482,7 @@ still omits the Cargo/toolchain and Valgrind checks.
 
 | Concern | Single owner and migration disposition |
 | --- | --- |
-| Admission, reservations, CPU/job budgets and bounded fan-out | `tools/dev/slot.py` and `tools/dev/pool.py`; migrate shell glue into calls to these services. #1232's rule remains; do not reopen completed #1233. |
+| Process supervision, cancellation and bounded fan-out | `tools/dev/slot.py` and `tools/dev/pool.py`; migrate shell glue into calls to these services. #1232's rule remains; do not reopen completed #1233. |
 | mmap/munmap/mincore and page residency | `tools/dev/mman.py`, landed in [#1286](https://github.com/shenghaoc/oxpinyin/pull/1286). Reuse it; move teardown's remaining separate binding after its owning lane lands. |
 | Mount-type parsing and disk-backed TMPDIR preflight | `tools/dev/mounts.py`, landed in [#1283](https://github.com/shenghaoc/oxpinyin/pull/1283), implementing [#1281](https://github.com/shenghaoc/oxpinyin/issues/1281); do not duplicate either reader or preflight. |
 | Bash version checks | `tools/lib/bash-floor.sh`; retained Bash entry points source the one declaration, and Python doctor reads it. |

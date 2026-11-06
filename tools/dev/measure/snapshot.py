@@ -12,8 +12,7 @@ can localize the night a level moved but cannot say what moved it.
 
 Standard library only. Every external command and host fact goes through `Tools`,
 so the order of the run and each metric rule are tested without a toolchain. The
-builds take no heavy-slot admission, as the shell script's never did: the lane is
-one job on a fresh runner.
+lane is one job on a fresh runner.
 """
 import dataclasses
 import hashlib

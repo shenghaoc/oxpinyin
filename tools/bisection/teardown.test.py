@@ -2109,7 +2109,7 @@ void *forbidden_begin(void *p, uint8_t index) { (void)p; (void)index; abort(); }
             self.assertEqual(guard.call_args.args[1:4], ('teardown.py/populate', 'pin', self.library))
             test_support.assert_not_called(self, child)
 
-    def test_unit_launch_gets_its_admitted_environment_and_slot_descriptor_and_private_scratch(self):
+    def test_unit_launch_gets_its_environment_and_inherited_descriptor_and_private_scratch(self):
         worker = self.root / 'unit-worker'
         worker.write_text(f'#!{sys.executable}\nimport os, sys\n'
                           'os.fstat(int(os.environ["TD_FD"]))\n'
@@ -2117,24 +2117,24 @@ void *forbidden_begin(void *p, uint8_t index) { (void)p; (void)index; abort(); }
                           'sys.stdout.write(\'{"teardown":\')\nraise SystemExit(1)\n')
         worker.chmod(0o755)
         with open(self.root / 'held', 'w') as held:
-            unit = self.campaign(worker).unit('witness', environment=dict(TD_PROBE='admitted', TD_FD=str(held.fileno())),
+            unit = self.campaign(worker).unit('witness', environment=dict(TD_PROBE='unit', TD_FD=str(held.fileno())),
                                               fds=(held.fileno(),))
             with self.assertRaises(ValueError) as raised:
                 unit.run('pinyin', self.library, self.profile, mode='observe')
-        self.assertIn('probe=admitted fd=open', str(raised.exception))
+        self.assertIn('probe=unit fd=open', str(raised.exception))
         self.assertEqual(unit.serial, 1)
         self.assertEqual(self.campaign(worker).serial, 0)
         self.assertFalse(list(self.root.glob('witness-sample-*')))
 
-    def test_profile_population_passes_the_unit_environment_and_slot_descriptor(self):
+    def test_profile_population_passes_the_unit_environment_and_inherited_descriptor(self):
         worker = self.root / 'populate-worker'
         worker.write_text(f'#!{sys.executable}\nimport os\n'
                           'os.fstat(int(os.environ["TD_FD"]))\n'
-                          'assert os.environ["TD_PROBE"] == "admitted"\n'
+                          'assert os.environ["TD_PROBE"] == "unit"\n'
                           'print(\'{"populated": true, "saved": true}\')\n')
         worker.chmod(0o755)
         with open(self.root / 'held-populate', 'w') as held:
-            unit = self.campaign(worker).unit('modest', environment=dict(TD_PROBE='admitted', TD_FD=str(held.fileno())),
+            unit = self.campaign(worker).unit('modest', environment=dict(TD_PROBE='unit', TD_FD=str(held.fileno())),
                                               fds=(held.fileno(),))
             td.populate_user(unit, self.library, self.profile, self.root / 'rows')
 
@@ -2181,27 +2181,8 @@ class FakeDriver:
         pass
 
 
-class FakeAdmission:
-    """HeavyAdmission stand-in: records its lifecycle and admits a fixed worker count."""
-    workers = 2
-    blocked = False
-    events = None
-
-    def __init__(self, label, env, out=None, runner=False, prepare_heavy_env=None):
-        self.label, self.runner = label, runner
-        self.env = {'OXPINYIN_POOL_WORKERS': str(self.workers), 'FAKE_ADMITTED': '1'}
-        self.slot = SimpleNamespace(pass_fds=lambda: (), handoff=lambda: self.events.append('handoff'))
-        self.events.append('admission')
-
-    def try_acquire(self):
-        return not self.blocked
-
-    def close(self):
-        self.events.append('close')
-
-
 class UnitPoolTests(unittest.TestCase):
-    """run_units, with a fake admission and fake units; no native worker."""
+    """fan_out over the CPU pool, with fake units; no native worker."""
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix='teardown-pool-')
         self.root = Path(self.temporary.name)
@@ -2209,16 +2190,13 @@ class UnitPoolTests(unittest.TestCase):
         self.driver = FakeDriver()
         self.events = []
         self.lock = threading.Lock()
-        FakeAdmission.events, FakeAdmission.workers, FakeAdmission.blocked = self.events, 2, False
-        patcher = patch('tools.dev.slot.HeavyAdmission', FakeAdmission)
-        patcher.start()
-        self.addCleanup(patcher.stop)
-        patcher = patch.object(td.host, 'allowed_cpus', return_value={0, 1, 2, 3})
+        self.workers = 2
+        patcher = patch.object(td.host, 'allowed_cpus', side_effect=lambda: set(range(self.workers)))
         patcher.start()
         self.addCleanup(patcher.stop)
         self.children = []
 
-    def campaign(self, jobs=None, cpu=2):
+    def campaign(self, jobs=None, cpu=0):
         return td.Campaign(self.root / 'worker', self.root, self.root, cpu, self.driver, jobs=jobs)
 
     def log(self, event):
@@ -2244,18 +2222,17 @@ class UnitPoolTests(unittest.TestCase):
             self.log(('reaped', unit.prefix))
             raise
 
-    def test_one_job_and_one_unit_run_in_order_under_admission(self):
+    def test_one_job_and_one_unit_run_in_order(self):
         caller, seen = threading.get_ident(), []
         units = [(name, lambda c, name=name: seen.append((name, threading.get_ident() == caller, c.prefix, c.cpu)))
                  for name in ('a', 'b', 'c')]
         td.fan_out(self.campaign(jobs=1), units, 'pool')
         td.fan_out(self.campaign(), units[:1], 'pool')
-        self.assertEqual(seen, [('a', False, 'a-sample', 2), ('b', False, 'b-sample', 2),
-                                ('c', False, 'c-sample', 2), ('a', False, 'a-sample', 2)])
-        self.assertEqual(self.events, ['admission', 'handoff', 'close'] * 2)
+        self.assertEqual(seen, [('a', False, 'a-sample', 0), ('b', False, 'b-sample', 0),
+                                ('c', False, 'c-sample', 0), ('a', False, 'a-sample', 0)])
 
     def test_failure_starts_no_queued_unit_and_reaps_running_children_before_release(self):
-        FakeAdmission.workers = 2
+        self.workers = 2
         started = []
         both_running = threading.Barrier(2, timeout=5)
 
@@ -2274,10 +2251,10 @@ class UnitPoolTests(unittest.TestCase):
             td.fan_out(self.campaign(), [('fail', failing), ('wait', waiting), *queued], 'pool')
         self.assertEqual(sorted(started), ['fail', 'wait'])
         self.assertIsNotNone(self.children[0].returncode)
-        self.assertEqual(self.events[-2:], [('reaped', 'wait-sample'), 'close'])
+        self.assertEqual(self.events[-1], ('reaped', 'wait-sample'))
 
     def test_cancellation_stops_queued_units_and_reaps_before_release(self):
-        FakeAdmission.workers = 2
+        self.workers = 2
         started, running = [], threading.Barrier(3, timeout=5)
 
         def holding(name):
@@ -2301,20 +2278,17 @@ class UnitPoolTests(unittest.TestCase):
         self.assertTrue(all(child.returncode is not None for child in self.children))
         self.assertEqual(sorted(event for event in self.events if isinstance(event, tuple) and event[0] == 'reaped'),
                          [('reaped', 'a-sample'), ('reaped', 'b-sample')])
-        self.assertEqual(self.events[-1], 'close')
 
-    def test_cancellation_while_waiting_for_admission_starts_nothing_and_releases(self):
-        FakeAdmission.blocked = True
+    def test_cancellation_before_the_pool_starts_starts_nothing(self):
         started = []
-        threading.Timer(.2, lambda: setattr(self.driver, 'cancelled', True)).start()
+        self.driver.cancelled = True
         with self.assertRaises(FakeCancelled):
             td.fan_out(self.campaign(), [('a', lambda c: started.append('a')), ('b', lambda c: started.append('b'))],
                          'pool')
         self.assertEqual(started, [])
-        self.assertEqual(self.events[-1], 'close')
 
     def test_each_concurrent_unit_has_private_names_counter_cpu_and_stop_view(self):
-        FakeAdmission.workers = 3
+        self.workers = 3
         base = self.campaign(cpu=2)
         seen, together = {}, threading.Barrier(3, timeout=5)
 
@@ -2334,7 +2308,7 @@ class UnitPoolTests(unittest.TestCase):
         # The campaign's own CPU leads; no two concurrent units share one.
         self.assertEqual(sorted(value['cpu'] for value in seen.values()), [0, 1, 2])
         self.assertTrue(all(isinstance(value['driver'], pool.StoppableDriver) for value in seen.values()))
-        self.assertTrue(all(value['environment'].get('FAKE_ADMITTED') == '1' for value in seen.values()))
+        self.assertTrue(all(value['environment'] == dict(os.environ) for value in seen.values()))
         self.assertEqual(base.environment, {})
 
     def test_unit_names_are_unique_across_threads_of_one_campaign_family(self):
@@ -2370,11 +2344,10 @@ class FixtureFlowTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(prefix='teardown-fixtures-')
         self.root = Path(self.temporary.name)
         self.addCleanup(self.temporary.cleanup)
-        FakeAdmission.events, FakeAdmission.workers, FakeAdmission.blocked = [], 4, False
-        for patcher in (patch('tools.dev.slot.HeavyAdmission', FakeAdmission),
-                        patch.object(td.host, 'allowed_cpus', return_value={0, 1, 2, 3})):
-            patcher.start()
-            self.addCleanup(patcher.stop)
+        self.workers = 4
+        patcher = patch.object(td.host, 'allowed_cpus', side_effect=lambda: set(range(self.workers)))
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.records = []
         patcher = patch.object(td, 'print_record', lambda kind, **values: self.records.append((kind, values)))
         patcher.start()
@@ -2413,14 +2386,12 @@ class FixtureFlowTests(unittest.TestCase):
 
     def test_pooled_provision_matches_serial_output_order_and_files(self):
         serial_profiles, serial_records = self.provisioned('serial', 1)
-        self.assertEqual(FakeAdmission.events, ['admission', 'handoff', 'close'])
         pooled_profiles, pooled_records = self.provisioned('pooled', None)
         self.assertEqual([record[1]['profile'] for record in serial_records], list(td.PROFILES))
         self.assertEqual(serial_records, pooled_records)
         self.assertEqual({name: path.relative_to(self.root / 'serial') for name, path in serial_profiles.items()},
                          {name: path.relative_to(self.root / 'pooled') for name, path in pooled_profiles.items()})
         self.assertEqual(self.tree(self.root / 'serial'), self.tree(self.root / 'pooled'))
-        self.assertEqual(FakeAdmission.events, ['admission', 'handoff', 'close'] * 2)
 
     def test_selected_user8_provision_does_not_populate_other_profiles(self):
         root = self.root / 'selected'
@@ -2436,7 +2407,7 @@ class FixtureFlowTests(unittest.TestCase):
             self.assertEqual(td.provision(self.campaign(1), Path('pin'), root, names=('user8',)), profiles)
 
     def test_provision_failure_in_one_profile_raises_after_the_export_and_stops_the_rest(self):
-        FakeAdmission.workers = 1
+        self.workers = 1
         seen = []
 
         def populate(campaign, pin, user, rows, **kwargs):
@@ -2452,7 +2423,6 @@ class FixtureFlowTests(unittest.TestCase):
         self.assertEqual(seen, ['modest'])
         self.assertEqual(self.records, [('fixture', unittest.mock.ANY)])
         self.assertEqual(self.records[0][1]['profile'], 'empty')
-        self.assertEqual(FakeAdmission.events[-1], 'close')
 
     def witnesses(self, name, jobs):
         profiles = {}
@@ -2558,7 +2528,6 @@ class FixtureFlowTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'changes no witness answer'):
                 td.prepare_witnesses(self.campaign(None), Path('pin.so'), profiles)
         self.assertEqual(self.records, [])
-        self.assertEqual(FakeAdmission.events[-1], 'close')
 
 
 if __name__ == '__main__':

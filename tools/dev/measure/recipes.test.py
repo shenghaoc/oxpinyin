@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tools.dev import cli, host
+from tools.dev import cli
 from tools.dev.measure import recipes
 from tools.dev.runners import Finished
 
@@ -65,8 +65,6 @@ class DispatchTests(unittest.TestCase):
         self.assertEqual(dispatch('x', table=raises(FileNotFoundError('taskset')))[0], 127)
         status, _, err = dispatch('x', table=raises(ValueError('bad')))
         self.assertEqual((status, err), (1, 'FAIL: bad\n'))
-        status, _, err = dispatch('x', table=raises(host.ResourceBlocked('resource-blocked: no room')))
-        self.assertEqual((status, err), (1, 'resource-blocked: no room\n'))
 
 
 class CommandLineTests(unittest.TestCase):

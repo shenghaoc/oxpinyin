@@ -16,45 +16,26 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from tools.dev import pool, test_support
-from tools.dev.measure import valgrind
 spec = importlib.util.spec_from_file_location('system_import_profile', ROOT / 'tools/bisection/system_import_profile.py')
 PROFILE = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(PROFILE)
 
 
-class FakeAdmission:
-    """HeavyAdmission stand-in: records its lifecycle and admits a fixed worker count."""
-    workers = 2
-    events = None
-
-    def __init__(self, label, env, out=None, runner=False, prepare_heavy_env=None):
-        self.env = {pool.POOL_WORKERS: str(self.workers)}
-        self.slot = type('Slot', (), {'pass_fds': staticmethod(lambda: ()), 'handoff': staticmethod(lambda: None)})()
-        self.events.append('admission')
-
-    def try_acquire(self):
-        return True
-
-    def close(self):
-        self.events.append('close')
-
-
 class SystemImportProfileTests(unittest.TestCase):
     """The independent collections: order, retries, validation, runtime check; no Valgrind, /proc or CLOCK_BOOTTIME.
 
-    The pool's own rules (admission bound, stop on failure, reaping, cancellation) are tested in
-    tools/dev/pool.test.py; here the collections go through that pool with a fake admission.
+    The pool's own rules (CPU bound, stop on failure, reaping, cancellation) are tested in
+    tools/dev/pool.test.py; here the collections go through that pool on six pretend CPUs.
     """
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix='system-import-profile-test-')
         self.work = Path(self.temporary.name)
         self.addCleanup(self.temporary.cleanup)
-        self.events, self.lock = [], threading.Lock()
-        FakeAdmission.events, FakeAdmission.workers = self.events, 2
+        self.lock = threading.Lock()
         # The host readers a collection consults: the boot-minus-monotonic clock offset (Linux only)
         # and /proc/loadavg. Neither exists on macOS.
         self.offsets = lambda: 0
-        for patcher in (mock.patch('tools.dev.slot.HeavyAdmission', FakeAdmission),
+        for patcher in (mock.patch.object(pool.host, 'allowed_cpus', lambda: set(range(6))),
                         mock.patch.object(PROFILE, 'suspend_offset', lambda: self.offsets()),
                         mock.patch.object(PROFILE, 'load_average', lambda: '0.25')):
             patcher.start()
@@ -68,8 +49,7 @@ class SystemImportProfileTests(unittest.TestCase):
         PROFILE.run_collections(self.plan, jobs, lambda side, mode, report: lines.append((side, mode, report)))
         return lines
 
-    def test_jobs_two_caps_concurrent_collections_despite_larger_admission(self):
-        FakeAdmission.workers = 6
+    def test_jobs_two_caps_concurrent_collections_despite_more_cpus(self):
         active, peak, completed = 0, 0, []
         together = threading.Event()
 
@@ -138,7 +118,6 @@ class SystemImportProfileTests(unittest.TestCase):
             return PROFILE.collect(side, mode, self.plan, {}, pool.UnitContext('x', threading.Event())), calls
 
     def test_users_are_private_per_side_mode_and_attempt_and_retries_follow_their_own_discard(self):
-        FakeAdmission.workers = 6
         launch, calls = self.launcher(self.good_outcomes())
         # Only pin heap overlaps a suspend, once: the offset jumps during its first attempt.
         local = threading.local()
@@ -224,7 +203,6 @@ class SystemImportProfileTests(unittest.TestCase):
         self.assertIn('ox total: 8 instructions', output)
 
     def test_pooled_main_prints_the_same_lines_as_serial_apart_from_the_run_time_fields(self):
-        FakeAdmission.workers = 6
 
         def normal(text):
             return re.sub(r'utc=\S+ load1=\S+ suspend_delta_ns=-?\d+', 'RUN', text)
@@ -261,7 +239,6 @@ class SystemImportProfileTests(unittest.TestCase):
         self.assertEqual(err.getvalue(), b'valgrind said no')
 
     def test_a_pooled_failure_reports_the_earliest_collection_and_prints_those_before_it(self):
-        FakeAdmission.workers = 6
         outcomes = self.good_outcomes()
         outcomes[('pin', 'pages')] = [(1, b'', b'pin pages broke', True)]
         outcomes[('ox', 'heap')] = [(1, b'', b'ox heap broke', True)]
@@ -275,7 +252,6 @@ class SystemImportProfileTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 'pin pages: failed workload or user-store open')
         self.assertIn('pin peak heap:', out.getvalue())
         self.assertNotIn('ox ', out.getvalue())
-        self.assertEqual(self.events[-1], 'close')
 
 
 

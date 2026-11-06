@@ -31,8 +31,7 @@ class RunnerSelectionTests(unittest.TestCase):
         output = io.StringIO()
         namespace = run_all['main'].__globals__
         with mock.patch.object(sys, 'argv', ['run-all.py', '--list', *argv]), \
-                mock.patch.dict(namespace, resource_snapshot=mock.Mock(side_effect=AssertionError('scheduled work')),
-                                contract_tag_index=mock.Mock(return_value=index or {'tags': {}, 'modes': {}})), \
+                mock.patch.dict(namespace, contract_tag_index=mock.Mock(return_value=index or {'tags': {}, 'modes': {}})), \
                 contextlib.redirect_stdout(output):
             self.assertEqual(run_all['main'](), 0)
         return [json.loads(line) for line in output.getvalue().splitlines()]
@@ -42,7 +41,7 @@ class RunnerSelectionTests(unittest.TestCase):
         schedule = mock.Mock(side_effect=AssertionError('scheduled work'))
         namespace = run_all['main'].__globals__
         with mock.patch.object(sys, 'argv', ['run-all.py', *argv]), \
-                mock.patch.dict(namespace, resource_snapshot=schedule, execute=schedule,
+                mock.patch.dict(namespace, execute=schedule,
                                 contract_tag_index=mock.Mock(return_value=index or {'tags': {}, 'modes': {}})), \
                 contextlib.redirect_stderr(error), self.assertRaises(SystemExit) as caught:
             run_all['main']()
@@ -152,7 +151,7 @@ class RunnerSelectionTests(unittest.TestCase):
                     error = io.StringIO()
                     schedule = mock.Mock(side_effect=AssertionError('scheduled work'))
                     with mock.patch.object(sys, 'argv', ['run-all.py', '--runners', value, *extra]), \
-                            mock.patch.dict(namespace, resource_snapshot=schedule, execute=schedule), \
+                            mock.patch.dict(namespace, execute=schedule), \
                             contextlib.redirect_stderr(error), self.assertRaises(SystemExit) as caught:
                         run_all['main']()
                     self.assertEqual(caught.exception.code, 2)
@@ -193,7 +192,6 @@ class RunnerSelectionTests(unittest.TestCase):
             with self.subTest(text=text), \
                     mock.patch.object(Path, 'read_text', return_value=text), \
                     mock.patch.dict(run_all['main'].__globals__,
-                                    resource_snapshot=mock.Mock(side_effect=AssertionError('scheduled work')),
                                     execute=mock.Mock(side_effect=AssertionError('scheduled work'))):
                 with self.assertRaises(run_all['_registry'].RegistryError) as caught:
                     run_all['main']()
@@ -231,8 +229,8 @@ class IssueResolutionTests(unittest.TestCase):
         self.assertIn('pc-version: --runners; oracle: no; inputs: none', lines[-1])
 
     def test_plan_resolves_env_placeholders_like_the_runner(self):
-        row = dict(name='user-dir-round-trip', input_paths=['{capi}', '{env[OXPINYIN_USER_RT_TEST]}'],
-                   env={'OXPINYIN_USER_RT_TEST': '{root}/target/rt-test'})
+        row = dict(name='extra-input', input_paths=['{capi}', '{env[OXPINYIN_EXTRA_INPUT]}'],
+                   env={'OXPINYIN_EXTRA_INPUT': '{root}/target/rt-test'})
         substitutions = dict(root='/w', capi='/w/libpinyin_capi.so')
         self.assertEqual(run_all['planned_inputs'](row, {}, substitutions),
                          ['/w/libpinyin_capi.so', '/w/target/rt-test'])
@@ -253,9 +251,9 @@ class TimingTests(unittest.TestCase):
         self.assertIsNone(run_all['timing_of']('{"timing": nonsense\n'))
 class ArtifactUnionTests(unittest.TestCase):
     def test_union_is_ordered_and_deduplicated(self):
-        rows = [dict(name='a', artifacts=['zhuyin-capi', 'pinyin-capi']), dict(name='b', artifacts=['pinyin-capi', 'user-rt-test']),
+        rows = [dict(name='a', artifacts=['zhuyin-capi', 'pinyin-capi']), dict(name='b', artifacts=['pinyin-capi', 'gen-pinyin-table']),
                 dict(name='c', artifacts=[])]
-        self.assertEqual(run_all['artifact_union'](rows), ['pinyin-capi', 'zhuyin-capi', 'user-rt-test'])
+        self.assertEqual(run_all['artifact_union'](rows), ['pinyin-capi', 'zhuyin-capi', 'gen-pinyin-table'])
 
     def test_a_subjectless_selection_needs_no_build(self):
         self.assertEqual(run_all['artifact_union']([dict(name='pc-version', artifacts=[])]), [])
@@ -278,22 +276,18 @@ class ArtifactUnionTests(unittest.TestCase):
                 if '{zhuyin}' in blob:
                     self.assertIn('zhuyin-capi', row['artifacts'])
         self.assertEqual(next(r for r in rows if r['name'] == 'pc-version')['artifacts'], [])
-        self.assertEqual(next(r for r in rows if r['name'] == 'user-dir-round-trip')['artifacts'],
-                         ['pinyin-capi', 'user-rt-test'])
         self.assertEqual(next(r for r in rows if r['name'] == 'import-diff')['artifacts'], ['pinyin-capi'])
 
 
 class TimingColumnsTests(unittest.TestCase):
-    def test_each_wait_has_its_own_column(self):
+    def test_the_table_has_only_the_build_and_lock_timings(self):
         columns = run_all['COLUMNS']
-        self.assertEqual(columns[:6], ('runner', 'cell', 'status', 'seconds', 'build_seconds', 'lock_wait_seconds'))
-        self.assertEqual(columns[6:9], ('slot_wait_seconds', 'build_slot_wait_seconds', 'memory_wait_seconds'))
-        self.assertNotIn('build_wait_seconds', columns)
-        self.assertNotIn('resource_wait_seconds', columns)
+        self.assertEqual(columns, ('runner', 'cell', 'status', 'seconds', 'build_seconds', 'lock_wait_seconds',
+                                   'pin_ref', 'reason'))
 
 
 class ConcurrentContractCellsTests(unittest.TestCase):
-    def run_cells(self, available, expected_overlap, contract_jobs='4', cpus=4):
+    def run_cells(self, expected_overlap, contract_jobs='4', jobs='3', environment_jobs=None):
         namespace = run_all['main'].__globals__
         original = Path.read_text
         row = next(r for r in json.loads(original(Path(__file__).with_name('runners.json')))
@@ -305,46 +299,37 @@ class ConcurrentContractCellsTests(unittest.TestCase):
         lock = threading.Lock()
         barrier = threading.Barrier(expected_overlap)
         active, peak, seen = 0, 0, []
-        def execute(command, env, cwd, timeout, output, slot=None):
+        def execute(command, env, cwd, timeout, output):
             nonlocal active, peak
             cell = env['PINYIN_ORACLE_DBM']
-            marker = json.loads(env['OXPINYIN_HEAVY_SLOT_HELD'])
-            record = json.loads(original(Path(marker['lock_dir']) / f"heavy-slot-{marker['slot']}"))
-            workers = int(env['OXPINYIN_CONTRACT_JOBS'])
-            self.assertGreaterEqual(record['estimate_mib'], workers * 1024)
             self.assertEqual(Path(env['CARGO_TARGET_DIR']).name, cell)
             self.assertEqual(Path(env['PINYIN_ORACLE_PREFIX']).name, cell)
-            self.assertIn(marker['fd'], slot.pass_fds())
             with lock:
                 active += 1
                 peak = max(peak, active)
-                seen.append((cell, workers, env['CARGO_TARGET_DIR'], env['TMPDIR']))
+                seen.append((cell, env.get('OXPINYIN_CONTRACT_JOBS'), env['CARGO_TARGET_DIR'], env['TMPDIR']))
             try:
                 barrier.wait(timeout=5)
                 time.sleep(.05)
-                return 0, .05, json.dumps({'timing': {'jobs': workers}}), False
+                return 0, .05, json.dumps({'timing': {'jobs': env.get('OXPINYIN_CONTRACT_JOBS')}}), False
             finally:
                 with lock:
                     active -= 1
         with tempfile.TemporaryDirectory() as directory:
-            env = dict(os.environ, OXPINYIN_HEAVY_SLOTS='3', OXPINYIN_LOCK_DIR=directory,
-                       OXPINYIN_RESOURCE_WAIT_SECONDS='5', CARGO_BUILD_JOBS='1', RUST_TEST_THREADS='1')
-            for key in ('OXPINYIN_HEAVY_SLOT_HELD', 'CARGO_TARGET_DIR', 'OXPINYIN_CONTRACT_JOBS'):
-                env.pop(key, None)
-            resources = dict(available_mib=available, total_mib=16384, cpus=cpus, cargo_cpus=cpus, notes=[])
+            env = dict(os.environ)
+            env.pop('CARGO_TARGET_DIR', None)
+            env.pop('OXPINYIN_CONTRACT_JOBS', None)
+            if environment_jobs:
+                env['OXPINYIN_CONTRACT_JOBS'] = environment_jobs
             args = ['run-all.py', '--runners', 'contract-diff', '--cells', 'bdb,kc,tkrzw',
-                    '--no-build', '--jobs', '3', *(['--contract-jobs', contract_jobs] if contract_jobs else []),
+                    '--no-build', '--jobs', jobs, *(['--contract-jobs', contract_jobs] if contract_jobs else []),
                     '--target-root', directory + '/targets', '--oracle-root', directory + '/oracles']
             output = io.StringIO()
             with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(Path, 'read_text', read), \
                     mock.patch.object(sys, 'argv', args), \
-                    mock.patch.dict(namespace, execute=execute,
-                                    resource_snapshot=lambda: dict(resources, notes=[])), \
-                    mock.patch.object(namespace['_host'], 'process_tree_use_mib', return_value=0), \
+                    mock.patch.dict(namespace, execute=execute), \
                     contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
                 self.assertEqual(run_all['main'](), 0)
-            self.assertEqual(resources['available_mib'], available)
-            self.assertEqual(resources['notes'], [])
             self.assertEqual(output.getvalue().count(' | PASS | '), 3)
         self.assertEqual({item[0] for item in seen}, {'bdb', 'kc', 'tkrzw'})
         self.assertEqual(len({item[2] for item in seen}), 3)
@@ -352,20 +337,18 @@ class ConcurrentContractCellsTests(unittest.TestCase):
         self.assertEqual(peak, expected_overlap)
         return seen
 
-    def test_three_cells_overlap_with_private_inputs_and_full_worker_reservations(self):
-        self.assertEqual({item[1] for item in self.run_cells(16000, 3)}, {4})
+    def test_three_cells_overlap_with_private_inputs(self):
+        self.assertEqual({item[1] for item in self.run_cells(3)}, {'4'})
 
-    def test_short_memory_reduces_workers_and_serializes_cells(self):
-        self.assertEqual({item[1] for item in self.run_cells(5000, 1)}, {3})
+    def test_one_job_serializes_cells(self):
+        self.assertEqual({item[1] for item in self.run_cells(1, jobs='1')}, {'4'})
 
-    def test_no_setting_gives_each_concurrent_cell_its_share_of_the_cpus(self):
-        for cpus, expected in ((3, 1), (6, 2), (9, 3)):
-            with self.subTest(cpus=cpus):
-                seen = self.run_cells(32000, 3, contract_jobs=None, cpus=cpus)
-                self.assertEqual({item[1] for item in seen}, {expected})
+    def test_no_setting_leaves_the_contract_job_count_to_the_driver(self):
+        self.assertEqual({item[1] for item in self.run_cells(3, contract_jobs=None)}, {None})
 
-    def test_explicit_contract_jobs_override_the_default(self):
-        self.assertEqual({item[1] for item in self.run_cells(32000, 3, contract_jobs='1', cpus=9)}, {1})
+    def test_explicit_contract_jobs_override_the_environment(self):
+        seen = self.run_cells(3, contract_jobs='1', environment_jobs='9')
+        self.assertEqual({item[1] for item in seen}, {'1'})
 
 
 if __name__ == '__main__':

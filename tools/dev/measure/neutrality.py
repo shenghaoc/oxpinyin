@@ -273,7 +273,7 @@ def classify(scratch: Path, first: str, second: str, run: Run, say: Callable[[st
 
     The tools run one after another, first object then second. Each is a few seconds of
     binutils inside a step of the caller's run (the differential's stage 2, or the manual
-    probe), which owns any admission; a pool here would take the heavy slot to save that.
+    probe); a pool here would save little.
     """
     texts = []
     for name, path in (('first', first), ('second', second)):

@@ -1,6 +1,5 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """Regressions for run-all.py's target-directory identity check."""
-import json
 import os
 from pathlib import Path
 import runpy
@@ -64,13 +63,11 @@ class IdentityCheckTests(unittest.TestCase):
 
     def test_needed_artifacts_follow_the_declarations(self):
         env = dict(OXPINYIN_CAPI_SO='/t/libpinyin_capi.so', OXPINYIN_ZHUYIN_SO='/t/libzhuyin_capi.so',
-                   OXPINYIN_GEN_PINYIN_TABLE='/t/gen_pinyin_table', OXPINYIN_USER_RT_TEST='/t/user-dir-round-trip-test')
+                   OXPINYIN_GEN_PINYIN_TABLE='/t/gen_pinyin_table')
         rows = [dict(name='tool-diff', artifacts=['pinyin-capi', 'gen-pinyin-table'], command=['{capi}']),
-                dict(name='pc-version', artifacts=[], command=['{capi}', '{zhuyin}']),
-                dict(name='user-dir-round-trip', artifacts=['pinyin-capi', 'user-rt-test'], command=[])]
+                dict(name='pc-version', artifacts=[], command=['{capi}', '{zhuyin}'])]
         self.assertEqual(run_all['needed_artifacts'](rows, env),
-                         {'pinyin-capi': '/t/libpinyin_capi.so', 'gen-pinyin-table': '/t/gen_pinyin_table',
-                          'user-rt-test': '/t/user-dir-round-trip-test'})
+                         {'pinyin-capi': '/t/libpinyin_capi.so', 'gen-pinyin-table': '/t/gen_pinyin_table'})
         self.assertEqual(run_all['needed_artifacts']([dict(name='pc-version', artifacts=[])], env), {})
 
     def test_identity_of_reads_the_record_or_none(self):
@@ -118,9 +115,7 @@ if os.environ.get('STUB_FAIL') == '1':
         just.chmod(0o755)
         self.env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ['PATH'],
                         CARGO_TARGET_DIR=str(self.target), PINYIN_ORACLE_DBM='bdb',
-                        OXPINYIN_LOCK_DIR=str(self.root / 'locks'), OXPINYIN_HEAVY_SLOTS='1',
                         STUB_ENTERED=str(self.entered), STUB_RELEASE=str(self.release))
-        self.env.pop('OXPINYIN_HEAVY_SLOT_HELD', None)
 
     def command(self, owner, artifacts='pinyin-capi'):
         # Real admission in a private lock directory, reading a fixed snapshot so
@@ -178,14 +173,6 @@ if os.environ.get('STUB_FAIL') == '1':
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(self.target.exists())
         self.assertFalse((self.target / 'oxpinyin-cell-identity.json').exists())
-        self.assertEqual(list(self.entered.iterdir()), [])
-
-    def test_malformed_inherited_marker_fails_before_cargo_without_traceback(self):
-        result = subprocess.run(self.command(ROOT), env=dict(self.env, OXPINYIN_HEAVY_SLOT_HELD='{'),
-                                capture_output=True, text=True, timeout=5)
-        self.assertEqual(result.returncode, 1)
-        self.assertIn('Invalid OXPINYIN_HEAVY_SLOT_HELD', result.stderr)
-        self.assertNotIn('Traceback', result.stderr)
         self.assertEqual(list(self.entered.iterdir()), [])
 
     def test_unreadable_identity_stops_before_cargo_without_traceback(self):

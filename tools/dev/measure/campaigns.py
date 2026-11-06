@@ -411,12 +411,12 @@ def settings_of(label: str, env: Mapping[str, str], sizes: str) -> dict:
 
 def cinstall(source: Path, destination: Path, features: str):
     """A build unit: `cargo cinstall` SOURCE with FEATURES into scratch, then copy libpinyin.so.15.0.0 out."""
-    def build(context, jobs):
+    def build(context):
         with tempfile_directory() as target, tempfile_directory() as stage:
             command = ['cargo', 'cinstall', '--locked', '--release', '-p', 'oxpinyin-capi', '--no-default-features',
                        '--features', features, '--manifest-path', source / 'Cargo.toml',
                        '--target-dir', target, '--destdir', stage, '--prefix', '/usr']
-            output = bench.cargo(context, command, jobs)
+            output = bench.cargo(context, command)
             built = bench.find_named(stage, 'libpinyin.so.15.0.0', any_type=True)
             if built is None:
                 write(output, error=True)
@@ -428,11 +428,11 @@ def cinstall(source: Path, destination: Path, features: str):
 
 def cargo_build(source: Path, destination: Path):
     """A build unit: the record recipe, `cargo build` then `strip`, copied to DESTINATION."""
-    def build(context, jobs):
+    def build(context):
         with tempfile_directory() as target:
             command = ['cargo', 'build', '--locked', '--release', '-p', 'oxpinyin-capi', '--no-default-features',
                        '--features', 'tkrzw', '--manifest-path', source / 'Cargo.toml', '--target-dir', target]
-            output = bench.cargo(context, command, jobs)
+            output = bench.cargo(context, command)
             bench.copy_file(Path(target) / 'release/libpinyin_capi.so', destination)
             bench.run(['strip', '--strip-all', destination])
         return output
@@ -470,8 +470,7 @@ def shipped_check(argv: Sequence[str], env: Mapping[str, str]) -> int:
     data = LIBPINYIN_TKRZW / DATA_SUBDIRECTORY
     l_so = library_in(LIBPINYIN_TKRZW)
     z_so, s_so = SCRATCH / 'Z-plain.so', SCRATCH / 'S-shipped.so'
-    bench.build_all([('Z', cinstall(src, z_so, 'tkrzw')), ('S', cinstall(src, s_so, 'tkrzw,shipped'))],
-                    'shipped-check builds', env=env)
+    bench.build_all([('Z', cinstall(src, z_so, 'tkrzw')), ('S', cinstall(src, s_so, 'tkrzw,shipped'))], env=env)
     worker = measured(env, label, SCRATCH / 'bisect', cpu, cell='tkrzw', required=True)
     arms = [Arm(l_label, l_so, data, l_so.parent), Arm(z_label, z_so, data, z_so.parent),
             Arm(s_label, s_so, data, s_so.parent)]
@@ -559,7 +558,7 @@ def tree_recipe_control(argv: Sequence[str], env: Mapping[str, str]) -> int:
                                                                      'S-cur-shipped'))
     bench.build_all([('X', cargo_build(old, x_so)), ('Y', cargo_build(src, y_so)),
                      ('Z', cinstall(src, z_so, 'tkrzw')), ('S', cinstall(src, s_so, 'tkrzw,shipped'))],
-                    'tree-recipe-control builds', env=env)
+                    env=env)
     worker = measured(env, label, SCRATCH / 'bisect', cpu, cell='tkrzw', required=True)
     arms = [Arm(labels[tag], so, data, so.parent) for tag, so in (('L', l_so), ('X', x_so), ('Y', y_so),
                                                                   ('Z', z_so), ('S', s_so))]
@@ -816,7 +815,7 @@ STEADY_FIXTURES = ('ball', 'pall')
 def steady_comparison_inner(argv: Sequence[str], env: Mapping[str, str]) -> int:
     """Compare supplied base/PR/pin artifacts with the existing steady worker.
 
-    Run through just heavy. All native, allocation and Ir launches are serial;
+    All native, allocation and Ir launches are serial;
     the warmup cycle is excluded. Allocation fixtures are never shipping arms.
     """
     from ...bisection import startup_profile
@@ -943,10 +942,9 @@ def steady_comparison_inner(argv: Sequence[str], env: Mapping[str, str]) -> int:
 
 
 def steady_comparison(argv: Sequence[str], env: Mapping[str, str]) -> int:
-    """Hold heavy admission for the complete serial steady comparison."""
+    """Run the complete serial steady comparison under the cancellation handlers."""
     with slot.cancellation_handlers():
-        with slot.HeavyAdmission('steady comparison', dict(env), runner=True) as admission:
-            return steady_comparison_inner(argv, admission.env)
+        return steady_comparison_inner(argv, dict(env))
 
 
 STACK_WORKLOADS = ('write', 'init', 'init-ir', 'steady')
@@ -1055,10 +1053,9 @@ def stack_comparison_inner(argv: Sequence[str], env: Mapping[str, str]) -> int:
 
 
 def stack_comparison(argv: Sequence[str], env: Mapping[str, str]) -> int:
-    """Hold heavy admission for the whole serial stack comparison."""
+    """Run the whole serial stack comparison under the cancellation handlers."""
     with slot.cancellation_handlers():
-        with slot.HeavyAdmission('stack comparison', dict(env), runner=True) as admission:
-            return stack_comparison_inner(argv, admission.env)
+        return stack_comparison_inner(argv, dict(env))
 
 
 RECIPES = {'perf-baseline': perf_baseline, 'perf-matrix': perf_matrix, 'perf-same-data': perf_same_data,
