@@ -667,19 +667,17 @@ locally, run `just tkrzw-build DIR` from Developer PowerShell (it loads the
 developer environment through `vswhere` when it is not already loaded),
 put `DIR\lib\pkgconfig` on `PKG_CONFIG_PATH` and `DIR\bin` on `PATH`, and
 set `PKG_CONFIG` to a `pkgconf.exe` (for example from `vcpkg install
-pkgconf:x64-windows`). No local Windows storage run has been
-executed; CI is the evidence.
+pkgconf:x64-windows`). The local Windows tkrzw distribution probe passed.
 
 The tkrzw recipe needs `sh` from Git for Windows for its unchanged
 `distro-probe.sh` check. Put Git for Windows' `usr\bin` on PATH for that session.
 
 The job also installs vcpkg's `glib` port, found through the same
 `PKG_CONFIG` and `PKG_CONFIG_PATH`, so it builds and tests
-`oxpinyin-utils` and `oxpinyin-training`. It excludes the
-backend-independent KMM tool, whose results do not depend on the OS, and
-the two C-ABI crates, whose locale and zhuyin open-counter tests do not
-yet pass on Windows (#1475). `WINDOWS_EXCLUDES` in `verify-nightly.yml`
-gives each reason. The oracle's Linux FFI feature is
+the full workspace, including `oxpinyin-utils`, `oxpinyin-training`, KMM
+and both C-ABI crates. The locale tests select `.UTF-8` on Windows.
+Text expectations use the host newline. All 18 local KMM tests passed.
+`WINDOWS_EXCLUDES` in `verify-nightly.yml` is empty. The oracle's Linux FFI feature is
 not selected. Native Windows oracle behavior is not established by those
 tests. Physical Windows hardware is not needed to use
 this CI coverage.
