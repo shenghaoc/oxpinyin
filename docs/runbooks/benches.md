@@ -55,11 +55,11 @@ It compares supplied shipping libraries in one job on one Linux host,
 rotating base, PR, pin and byte-identical base/PR controls serially. It also
 rotates separate base/PR `alloc-count` fixtures. Build those fixtures with
 `cargo build --locked --release -p oxpinyin-capi --no-default-features
---features <backend>,alloc-count`, through `just heavy`; they are never
+--features <backend>,alloc-count`; they are never
 installed or reported as shipping artifacts.
 
 ```bash
-just heavy -- just measure steady-comparison --cell bdb \
+just measure steady-comparison --cell bdb \
   --base "$BASE_SO" --pr "$PR_SO" --pin "$PIN_SO" \
   --base-alloc "$BASE_ALLOC_SO" --pr-alloc "$PR_ALLOC_SO" \
   --system-dir "$DATA" --out "$WORK/steady"
@@ -100,10 +100,10 @@ plain shipping arm for wall-clock timing.
 To check preparation natively without running the pin or collecting profiles:
 
 ```bash
-just heavy -- env RUSTFLAGS="-Cdebuginfo=1 -Cstrip=none" CARGO_TARGET_DIR=target/tkrzw \
+env RUSTFLAGS="-Cdebuginfo=1 -Cstrip=none" CARGO_TARGET_DIR=target/tkrzw \
   cargo cinstall -v --locked --release -p oxpinyin-capi \
   --destdir=target/callgrind-tkrzw/profile --prefix=/usr
-just heavy -- env CARGO_TARGET_DIR=target/tkrzw \
+env CARGO_TARGET_DIR=target/tkrzw \
   cargo cinstall -v --locked --release -p oxpinyin-capi \
   --destdir=target/callgrind-tkrzw/control --prefix=/usr
 just measure callgrind-control target/callgrind-tkrzw/profile target/callgrind-tkrzw/control
@@ -147,8 +147,8 @@ checks. Use the shipping Cargo profile and only
 `RUSTFLAGS="-Cdebuginfo=1 -Cstrip=none"` for the profiled files. Install through
 `just packaging install` for the shipping artifact. The campaign
 checks `DT_NEEDED` against `--cell`, DWARF, code neutrality,
-and the sound-tkrzw runtime before collecting. It acquires the heavy slot
-for the harness build and all serial collections; do not overlap other work.
+and the sound-tkrzw runtime before collecting. It runs the harness build and
+all collections serially; do not overlap other work.
 
 ```bash
 just measure callgrind-differential --workload sentence --cell tkrzw \
@@ -231,11 +231,11 @@ TMPDIR="$HOME/owned-startup-tmp" just initbench \
 
 Create the owned temporary parent first. Linux requires ext4 for every
 library, system file, profile and work path; macOS requires one APFS volume.
-The controller acquires `tools.dev.slot` for its worker build and whole run.
+The controller runs its worker build and the whole campaign itself.
 It uses private, equal-length base/PR/control library paths and fresh user
 copies, identifies each Linux arm's backend, and removes temporary inputs even after failure.
 It writes no profiler capture.
-Do not overlap measurement with builds; use the existing host-wide slot.
+Do not overlap measurement with builds.
 The PR control is always a byte-for-byte copy.
 
 Native verification compares U1–U6, the full script, witness answers,
@@ -516,8 +516,7 @@ failure refuses the comparison; an unreadable DB is never an empty DB.
 
 Run inside the selected pinned Linux amd64 cell, after installing both
 shipping libraries with
-`just packaging install`. Use the existing container reservation and heavy
-admission paths. Keep one campaign active. The work directory and measured
+`just packaging install`. Keep one campaign active. The work directory and measured
 library copies must be on ext4; tmpfs gives misleading private-dirty
 attribution for clean library pages.
 
@@ -526,15 +525,14 @@ teardown_work=$(mktemp -d "$PWD/target/teardown.XXXXXX")
 trap 'rm -rf "$teardown_work"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-just heavy -- uv run --no-project --managed-python \
+uv run --no-project --managed-python \
   python -B -X lazy_imports=normal tools/bisection/contract-diff.py \
   bdb "$pin_prefix" "$shipping_prefix/lib/libpinyin.so" \
   --zhuyin-so "$shipping_prefix/lib/libzhuyin.so" \
   --teardown --teardown-stage verify --teardown-work-dir "$teardown_work"
 ```
 
-The host's `python -m tools.dev slot run --` is the same admission entry used
-by `just heavy`. After verification, select `pilot`, then `confirm` explicitly.
+After verification, select `pilot`, then `confirm` explicitly.
 The latter uses 60 timing rounds plus three warm-ups and 30 memory rounds
 plus two warm-ups. `--teardown-cases` selects named scenarios; the defaults are
 `empty`, `modest`, `phrases`, `journals`, `modest-unsaved`, `modest-saved`.
@@ -576,7 +574,7 @@ names the pages that became resident between them (see "Per-page residency
 attribution"). Equivalence/provisioning observations stay warm;
 `verify` performs no cold samples. Cold mode refuses profiling and repeated
 in-process lifecycles. Run cold campaigns only when other measurement runs
-are idle and the heavy slot is available: dependency and system-data cache
+are idle: dependency and system-data cache
 pages can be shared across runs.
 
 Save, each instance free, all frees, fini and dlclose have separate wall/CPU
@@ -706,7 +704,7 @@ private Rust API is instrumented. Use the ordered shipping prefixes built
 above, an ext4 `TMPDIR`, and an owned ext4 work directory:
 
 ```bash
-just heavy -- uv run --no-project --managed-python python -B -X lazy_imports=normal \
+uv run --no-project --managed-python python -B -X lazy_imports=normal \
   tools/bisection/contract-diff.py bdb "$PIN_PREFIX" "$PR_PREFIX/lib/libpinyin.so" \
   --base-pinyin-so "$BASE_PREFIX/lib/libpinyin.so" --teardown \
   --teardown-stage user-verify --teardown-facades pinyin \
@@ -724,7 +722,7 @@ full workload needs its write recipe; existing manifests are validated and reuse
 For only `user8`'s R0–R1 instruction counts, use the existing read anchor:
 
 ```bash
-just heavy -- uv run --no-project --managed-python python -B -X lazy_imports=normal \
+uv run --no-project --managed-python python -B -X lazy_imports=normal \
   tools/bisection/contract-diff.py bdb "$PIN_PREFIX" "$PR_PREFIX/lib/libpinyin.so" \
   --base-pinyin-so "$BASE_PREFIX/lib/libpinyin.so" --teardown \
   --teardown-stage user-phrase --teardown-facades pinyin --teardown-cases user8 \
@@ -811,8 +809,7 @@ beside the others. `steady-comparison` takes the same arms as `--arm NAME=SO`
 (NAME: four of `[a-z0-9_]`); every arm reports `ratio_to_base` and
 `ratio_to_pin`, and its checksum must equal the base's.
 
-`just measure stack-comparison` runs a whole stack's gate in one job under one
-heavy admission: the `user-phrase` write window on `user8`, `confirm` init with
+`just measure stack-comparison` runs a whole stack's gate in one job: the `user-phrase` write window on `user8`, `confirm` init with
 `--teardown-startup-heap` and `init-attribute` instructions on all seven
 profiles and both facades, then `steady-comparison` on the `user8` profile the
 first stage provisioned. Every workload runs base, PR, the pin and each
@@ -1008,8 +1005,7 @@ the lib under libtest, which rejects criterion flags such as
 
 ### `just bench` and `just bench-smoke`
 
-Maintainer ruling 2026-10-22 UTC. Both recipes run under the heavy slot
-and memory admission:
+Maintainer ruling 2026-10-22 UTC. Both recipes:
 
 - `just bench [args ...]` runs
   `cargo bench --workspace --benches <args>`.
@@ -1020,7 +1016,7 @@ and memory admission:
 `[[bench]]` target plus each library and binary target, which keep the
 default `bench = true`. Library and binary harnesses run their unit
 tests under libtest. Criterion flags such as `--profile-time` are
-rejected there, so pass them to one bench through `just heavy`, as
+rejected there, so pass them to one bench directly, as
 above.
 
 `--benches` skips a target whose `required-features` are not enabled.
@@ -1028,9 +1024,9 @@ With the default features it skips these three targets:
 
 | package | bench | run it with |
 | --- | --- | --- |
-| oxpinyin-store | `backend_matrix_kyotocabinet` | `just heavy -- cargo bench -p oxpinyin-store --no-default-features --features kyotocabinet --bench backend_matrix_kyotocabinet` |
-| oxpinyin-store | `backend_matrix_bdb` | `just heavy -- cargo bench -p oxpinyin-store --no-default-features --features bdb --bench backend_matrix_bdb` |
-| pinyin-oracle | `dbm_bench` | `just heavy -- cargo bench -p pinyin-oracle --features oracle-ffi --bench dbm_bench` (also needs the bench oracles) |
+| oxpinyin-store | `backend_matrix_kyotocabinet` | `cargo bench -p oxpinyin-store --no-default-features --features kyotocabinet --bench backend_matrix_kyotocabinet` |
+| oxpinyin-store | `backend_matrix_bdb` | `cargo bench -p oxpinyin-store --no-default-features --features bdb --bench backend_matrix_bdb` |
+| pinyin-oracle | `dbm_bench` | `cargo bench -p pinyin-oracle --features oracle-ffi --bench dbm_bench` (also needs the bench oracles) |
 
 `backend_matrix_tkrzw` needs the default backend feature, so it is
 selected.
@@ -1504,8 +1500,7 @@ A report that uses Callgrind or Massif states the Valgrind version it used, as p
 peaks move with the Valgrind release as well as the CPU, so a report
 without the version cannot be compared with another run. Normal cloud
 provisioning (`tools/cloud/setup.sh`) installs it idempotently and prints the
-version. Ordinary native setup and `--in-container` behavioural checks do not
-require it. On other measurement hosts, install it explicitly.
+version. Ordinary native setup does not require it. On other measurement hosts, install it explicitly.
 On Debian/Ubuntu, `sudo` installs the distribution package:
 
 ```bash
@@ -1591,11 +1586,10 @@ rejection rules, including exact checks where the method requires them.
 
 Use the contract driver for #882, #883 and #884. Build base and subject
 with `just packaging install`. Use one target directory per worktree.
-Run this command under the shared host admission wrapper:
+Run this command:
 
 ```sh
-tools/bisection/run-all.py --heavy-slot -- \
-  uv run --no-project --managed-python \
+uv run --no-project --managed-python \
   python -X lazy_imports=normal tools/bisection/contract-diff.py \
   bdb "$PINYIN_ORACLE_PREFIX" "$SUBJECT_PREFIX/lib/libpinyin.so" \
   --zhuyin-so "$SUBJECT_PREFIX/lib/libzhuyin.so" \

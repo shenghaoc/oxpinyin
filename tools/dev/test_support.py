@@ -2,14 +2,13 @@
 
 A failing Mock.assert_not_called or assert_called_once_with prints every
 recorded call, and assertIn or assertEqual on a mapping prints the mapping.
-Launcher, subprocess and HeavyAdmission mocks receive the environment, so one
+Launcher and subprocess mocks receive the environment, so one
 such failure printed API and GitHub tokens (#1262). These helpers report call
 counts and the argument positions or variable names that differ, never values.
 Standard library only.
 """
 import contextlib
 import sys
-import types
 from unittest import mock
 
 
@@ -17,8 +16,7 @@ from unittest import mock
 def windows_launch(status=0, write=None):
     """Drive slot.run_command's Windows branch on any host, starting nothing.
 
-    Patch sys.platform to win32, admission to a stand-in that holds no lock,
-    and the Job Object, ntdll and Popen to recorders. WRITE, if given, fills a
+    Patch sys.platform to win32 and the Job Object, ntdll and Popen to recorders. WRITE, if given, fills a
     child's standard output when it is redirected to a file. Yield the Popen
     mock, the jobs created (each with the process handles it was given), and
     the ntdll stand-in.
@@ -44,19 +42,6 @@ def windows_launch(status=0, write=None):
         def __exit__(self, *exc):
             return False
 
-    class Admission:
-        def __init__(self, command, env, *args, **options):
-            self.env = dict(env)
-            # The report's figures, and no descriptor to pass or hand off: the Windows branch needs neither.
-            self.slot = types.SimpleNamespace(slot=0)
-            self.slot_wait = self.memory_wait = 0.0
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *exc):
-            return False
-
     def popen(argv, **options):
         if write is not None and hasattr(options.get('stdout'), 'write'):
             write(options['stdout'])
@@ -67,7 +52,6 @@ def windows_launch(status=0, write=None):
     ntdll = mock.Mock()
     ntdll.NtResumeProcess.return_value = 0
     with mock.patch.object(sys, 'platform', 'win32'), \
-            mock.patch.object(slot, 'HeavyAdmission', Admission), \
             mock.patch.object(slot, 'WindowsJob', Job), \
             mock.patch('ctypes.WinDLL', return_value=ntdll, create=True), \
             mock.patch.object(slot.subprocess, 'Popen', side_effect=popen) as launch:

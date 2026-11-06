@@ -10,7 +10,7 @@ findings document.
 
 system-import-profile prepares what system_import_profile.py needs (the arms'
 a fresh work directory and the compiled driver) and hands
-it the collections, which already run as units of one admitted pool.
+it the collections, which already run as units of one pool.
 """
 import contextlib
 import io
@@ -151,13 +151,8 @@ def annotate(out: Path) -> None:
     """Annotate each callgrind profile twice, self and inclusive; a failing annotate is not a failed run.
 
     The annotations are independent post-processing of profiles already on disk, not
-    measurements, so they run as units of an admitted pool (pool.run_admitted) and not
-    one after another. Admission takes the heavy slot (or inherits the caller's) and
-    reserves memory for every worker, so a host short of memory annotates one profile
-    at a time and a direct run, such as the image's command, never starts more than it
-    holds. Each unit is charged the runner allowance (host.RUNNER_PEAK_MIB): the old
-    script ran the annotations one at a time and Valgrind documents no figure, and
-    callgrind_annotate holds a whole profile in memory.
+    measurements, so they run as units of a pool (pool.run_leased) and not
+    one after another, at most one per allowed CPU.
     """
     def unit(profile: Path, suffix: str, extra: list):
         def annotate_one(context):
@@ -173,8 +168,8 @@ def annotate(out: Path) -> None:
     units = [unit(profile, suffix, extra) for profile in profiles
              for suffix, extra in (('annotated', []), ('inclusive', ['--inclusive=yes']))]
     if units:
-        pool.run_admitted(units, f'{CALLGRIND} callgrind_annotate', cancelled=slot.CANCELLED.is_set,
-                          cancel_error=slot.Cancelled, out=sys.stderr)
+        pool.run_leased(units, cancelled=slot.CANCELLED.is_set,
+                        cancel_error=slot.Cancelled, out=sys.stderr)
 
 
 def callgrind_control(argv: Sequence[str], env: Mapping[str, str]) -> int:
@@ -331,7 +326,7 @@ def system_import_profile(argv: Sequence[str], env: Mapping[str, str]) -> int:
     Usage: PIN-SO OX-SO SYSTEM-DATA-DIR NEW-WORK-DIR [ITERATIONS|--cold-open]
     [--jobs N]. The
     collections (pin and ox, each under Callgrind, Massif heap and Massif pages) are
-    independent, so system_import_profile.py runs them in an admitted pool and reports
+    independent, so system_import_profile.py runs them in a pool and reports
     in a fixed order; --jobs 1 runs them one after another.
     """
     label = SYSTEM_IMPORT

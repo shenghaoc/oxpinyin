@@ -7,7 +7,6 @@ neutrality comparison it calls is replaced by a fake module (it has its own test
 """
 import contextlib
 import io
-import os
 from pathlib import Path
 import shutil
 import signal
@@ -184,27 +183,17 @@ class LibrariesTests(World):
 
 
 class AnnotateTests(World):
-    """annotate takes heavy-slot and memory admission: the real one, on a fake host."""
+    """annotate runs its units in the pool: at most one per allowed CPU."""
 
     def setUp(self):
         super().setUp()
-        locks = self.root / 'locks'
-        locks.mkdir()
-        environment = {name: value for name, value in os.environ.items()
-                       if name not in ('CARGO_BUILD_JOBS', 'RUST_TEST_THREADS', slot.HEAVY_SLOT_HELD)}
-        environment.update(OXPINYIN_HEAVY_SLOTS='1', OXPINYIN_RESOURCE_WAIT_SECONDS='0')
-        self.enterContext(mock.patch.dict(os.environ, environment, clear=True))
-        self.enterContext(mock.patch.object(host, 'host_lock_dir', return_value=locks))
         self.enterContext(mock.patch.object(slot.CANCELLED, 'is_set', lambda: False))
         self.enterContext(contextlib.redirect_stderr(io.StringIO()))
-        self.fake_host(available=64000, cpus=4)
+        self.fake_host(cpus=4)
 
-    def fake_host(self, available, cpus, total=16384):
-        """A host with AVAILABLE MiB free of TOTAL and CPUS CPUs, all of them allowed."""
-        snapshot = dict(available_mib=available, total_mib=total, memory_limit_mib=None, cpus=cpus,
-                        cargo_cpus=cpus, notes=[f'synthetic {available} MiB, {cpus} CPUs'])
+    def fake_host(self, cpus):
+        """A host with CPUS CPUs, all of them allowed."""
         self.enterContext(mock.patch.object(host, 'allowed_cpus', lambda: set(range(cpus))))
-        self.enterContext(mock.patch.object(host, 'resource_snapshot', lambda *args, **kwargs: dict(snapshot)))
 
     def annotate_four_profiles(self, expected=0):
         """Annotate four profiles, eight annotations; return the most that ran at once.
@@ -233,22 +222,14 @@ class AnnotateTests(World):
             valgrind.annotate(self.root)
         return peak[0]
 
-    def test_a_host_short_of_memory_annotates_one_profile_at_a_time(self):
-        # 3,000 MiB less 1,638 MiB of headroom holds one 1,024 MiB annotation, not two; four CPUs would run four.
-        self.fake_host(available=3000, cpus=4)
+    def test_a_single_cpu_annotates_one_profile_at_a_time(self):
+        self.fake_host(cpus=1)
         self.assertEqual(self.annotate_four_profiles(), 1)
         self.assertEqual(len(self.ran), 8)
 
-    def test_a_roomy_host_annotates_up_to_its_cpu_count_at_once(self):
-        self.fake_host(available=64000, cpus=4)
+    def test_annotations_run_up_to_the_cpu_count_at_once(self):
         self.assertEqual(self.annotate_four_profiles(expected=4), 4)
         self.assertEqual(len(self.ran), 8)
-
-    def test_a_host_that_cannot_hold_one_annotation_refuses_the_pool_and_starts_none(self):
-        self.fake_host(available=2000, cpus=4)    # 362 MiB after the headroom
-        with self.assertRaises(host.ResourceBlocked):
-            self.annotate_four_profiles()
-        self.assertEqual(self.ran, [])
 
     def test_each_profile_is_annotated_twice_and_the_redirection_probe_is_skipped(self):
         for name in ('callgrind.libpinyin-tkrzw.r1.out', 'callgrind.redir-probe.out', 'callgrind.oxpinyin-tkrzw.r1.out', 'other.out'):

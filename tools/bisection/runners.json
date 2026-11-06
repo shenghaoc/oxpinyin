@@ -141,7 +141,6 @@
   },
   {
     "name": "bisect",
-    "heavy": true,
     "kind": "gate",
     "implementation": "python:tools.dev",
     "issues": [
@@ -290,7 +289,6 @@
       "fixtures/contract-refs, and for the tkrzw cell the pinned libpinyin-data package (just fetch-contract-data)"
     ],
     "timeout": 3600,
-    "heavy": true,
     "exclusive_resources": [],
     "command": [
       "uv",
@@ -843,7 +841,6 @@
       "pin-built libzhuyin and prebuilt dev libzhuyin for the cell"
     ],
     "timeout": 1800,
-    "heavy": true,
     "exclusive_resources": [],
     "command": [
       "uv",
@@ -2137,7 +2134,6 @@
       "committed transformed-options input and word files"
     ],
     "timeout": 3600,
-    "heavy": true,
     "exclusive_resources": [],
     "command": [
       "uv",
@@ -2230,7 +2226,6 @@
       "Linux glibc, C++ compiler and GLib"
     ],
     "timeout": 900,
-    "heavy": true,
     "exclusive_resources": [],
     "command": [
       "uv",
@@ -2385,45 +2380,6 @@
     ]
   },
   {
-    "name": "user-dir-round-trip",
-    "kind": "gate",
-    "implementation": "python:tools.dev",
-    "issues": [
-      "task:9",
-      "599"
-    ],
-    "cells": [
-      "bdb",
-      "kc",
-      "tkrzw"
-    ],
-    "artifacts": [
-      "pinyin-capi",
-      "user-rt-test"
-    ],
-    "oracle": true,
-    "required_inputs": [
-      "registered headers and version scripts",
-      "native compiler, pkg-config, glib",
-      "prebuilt user_dir_round_trip integration-test executable",
-      "pin-built oracle headers and library"
-    ],
-    "timeout": 900,
-    "exclusive_resources": [],
-    "command": [
-      "uv", "run", "--no-project", "--managed-python", "python", "-X",
-      "lazy_imports=normal", "-m", "tools.dev", "compat", "user-round-trip",
-      "{prefix}"
-    ],
-    "env": {},
-    "input_paths": [
-      "{capi}",
-      "{env[OXPINYIN_USER_RT_TEST]}",
-      "{root}/tools/dev/compat/fixtures.py",
-      "{root}/tools/tkrzw/runtime.py"
-    ]
-  },
-  {
     "name": "fuzz",
     "kind": "not-a-gate",
     "implementation": "legacy:justfile",
@@ -2442,7 +2398,6 @@
       "caller-selected fuzz target and libFuzzer arguments"
     ],
     "timeout": 900,
-    "heavy": true,
     "exclusive_resources": [],
     "command": [
       "just",
@@ -2478,7 +2433,6 @@
       "caller-selected native crate, backend and report arguments"
     ],
     "timeout": 900,
-    "heavy": true,
     "exclusive_resources": [],
     "command": [
       "just",
@@ -2518,7 +2472,6 @@
       "caller-selected backend: bdb, kc, tkrzw or all"
     ],
     "timeout": 2700,
-    "heavy": true,
     "exclusive_resources": [],
     "command": [
       "uv",
@@ -2550,7 +2503,6 @@
     "cells": [
       "native"
     ],
-    "heavy": true,
     "command": [
       "uv",
       "run",

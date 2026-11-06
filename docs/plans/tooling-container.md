@@ -1,7 +1,9 @@
 # Tooling layer 4: pinned Linux container
 
-Status: partial foundation; Python service proposed.
+Status: retired.
 Reconciled: 2026-10-21 UTC (`date -u`).
+
+Removed 2026-11-06 UTC: the compat launcher (`tools/dev/compat/`, `compat.sh`, `compat-inside.sh`, `Dockerfile.compat`) and the container compatibility route were deleted by maintainer ruling; nothing runs in containers except the pin oracle and CI. This plan is kept as a historical record; its links to deleted files are dead.
 This layer builds on [native nextest](tooling-nextest.md).
 The shell compatibility route is implemented. It is not the planned Python service.
 
@@ -82,8 +84,7 @@ Inner admission uses the effective cgroup limit and its own reservations.
 Size the default limit from a cold two-job build and the selected gates on one
 host, including measured overhead and at least the two-job build and runner
 estimates. The measured default is 2560 MiB; host admission requires 4608 MiB
-including desktop headroom (the [runbook](../runbooks/compatibility-container.md#container-memory-budget)
-records the sizing). A host launcher excludes only the native slot identified
+including desktop headroom (the removed runbook recorded the sizing). A host launcher excludes only the native slot identified
 by the existing validated live-ancestor marker; other live native slots still count.
 Reject a runtime that cannot enforce and report the hard limit.
 Do not launch without both the limit and the native reservation.
@@ -99,8 +100,8 @@ is unknown. Accept no native slot ownership or inner lock state in this record.
 
 Use the merged #890 inputs: `tools/oracle/compat.sh`,
 `tools/oracle/compat-inside.sh`, `tools/oracle/Dockerfile.compat` and the
-[compatibility runbook](../runbooks/compatibility-container.md).
-That runbook describes current behaviour. This plan defines the later Python
+removed compatibility runbook.
+That runbook described the behaviour of the time. This plan defines the later Python
 launcher and stricter environment boundary. It does not change the launcher now.
 
 Preserve runtime order:

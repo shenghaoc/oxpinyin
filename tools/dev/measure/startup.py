@@ -599,8 +599,8 @@ def _recheck_instructions(path):
     return dict(start=start, scopes=qualified, source_sha256=worker.sha256(raw), source=str(path))
 
 
-def campaign_run(args, profiles, work, admission):
-    """Execute the selected native campaign inside an admitted work directory.
+def campaign_run(args, profiles, work, env):
+    """Execute the selected native campaign inside a work directory.
 
     Validate filesystems, copy libraries, build the worker, and verify every
     facade/profile before instrumentation or timed/memory sampling. Emit JSON
@@ -627,7 +627,7 @@ def campaign_run(args, profiles, work, admission):
     if sys.platform == 'linux':
         backends = {arm: {facade: identity.library_backend(path) for facade, path in paths.items()}
                     for arm, paths in libraries.items()}
-    executable, record = worker.build(work, admission.env, admission.slot.pass_fds())
+    executable, record = worker.build(work, env, ())
     retained = recheck_instructions(args.instructions_from) if args.instructions_from else None
     if retained:
         old = retained['start']
@@ -656,7 +656,7 @@ def campaign_run(args, profiles, work, admission):
              witness_sha256=worker.sha256(path.read_bytes()) if path.is_file() else None,
              witnesses=path.read_text().splitlines() if path.is_file() else [])
     campaign = worker.Worker(executable, record, args.system_dir.resolve(), work,
-                             admission.env, admission.slot.pass_fds(), args.cpu, args.bind)
+                             env, (), args.cpu, args.bind)
     cold_sample = args.cache == 'cold'
     old_affinity = os.sched_getaffinity(0) if sys.platform == 'linux' else None
     try:
@@ -768,11 +768,11 @@ def campaign_run(args, profiles, work, admission):
 
 
 def run(args):
-    """Validate inputs and run a startup campaign under heavy admission.
+    """Validate inputs and run a startup campaign.
 
     Fill default rounds and CPU on args, require suitable filesystems, and
     create a temporary work directory removed on exit. Return the campaign
-    status; input, admission, and worker errors propagate.
+    status; input and worker errors propagate.
     """
     profiles = validate(args)
     if args.rounds is None:
@@ -786,9 +786,8 @@ def run(args):
     if sys.platform == 'darwin' and len(volumes) != 1:
         raise ValueError('all startup inputs and work must be on one APFS volume')
     with slot.cancellation_handlers():
-        with slot.HeavyAdmission('native startup ' + args.stage, dict(os.environ), runner=True) as admission:
-            with tempfile.TemporaryDirectory(prefix='startup-', dir=parent) as temporary:
-                return campaign_run(args, profiles, Path(temporary), admission)
+        with tempfile.TemporaryDirectory(prefix='startup-', dir=parent) as temporary:
+            return campaign_run(args, profiles, Path(temporary), dict(os.environ))
 
 
 def main(argv=None):

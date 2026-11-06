@@ -40,9 +40,7 @@ CI tests Linux x86_64 on each PR that changes code, and macOS arm64 and Windows 
 Start at [CONTRIBUTING.md](CONTRIBUTING.md). It walks through prerequisites,
 native Linux/macOS/Windows setup, a first link-and-run test, and returning
 in a fresh terminal. Ordinary development does not need an oracle, model20,
-or container. For compatibility gates, use a provisioned [remote Linux host](docs/runbooks/cloud.md)
-or the [canonical Debian trixie compatibility container](docs/runbooks/compatibility-container.md),
-which runs the subject, reference and harness together.
+or container. For compatibility gates, use a provisioned [remote Linux host](docs/runbooks/cloud.md).
 
 The [setup guide](docs/runbooks/setup.md#storage-backend) names the default
 storage backend and gives each platform's packages and settings for it.

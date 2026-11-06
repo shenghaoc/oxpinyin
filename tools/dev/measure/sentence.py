@@ -354,5 +354,4 @@ def campaign(args, env):
 def run(argv, env):
     args = arguments(argv)
     with slot.cancellation_handlers():
-        with slot.HeavyAdmission('sentence Callgrind campaign', dict(env), runner=True) as admission:
-            return campaign(args, admission.env)
+        return campaign(args, dict(env))

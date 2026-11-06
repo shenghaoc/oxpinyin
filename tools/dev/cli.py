@@ -5,7 +5,7 @@ import json
 import sys
 from pathlib import Path
 
-from . import abi, cell, check, doctor, host, pool, registry, slot, test_runner
+from . import abi, cell, check, doctor, pool, registry, test_runner
 from .measure import cold, recipes, startup
 
 
@@ -94,16 +94,6 @@ def sanitize_toolchain_command(args):
     return test_runner.sanitize_toolchain()
 
 
-def test_command(args):
-    """Forward test arguments and profile to nextest under resource admission."""
-    return test_runner.run(args.args, args.profile)
-
-
-def test_doc_command(args):
-    """Forward doctest arguments to cargo test --doc under heavy-slot admission; return its status."""
-    return test_runner.run_doc(args.args)
-
-
 def test_tools_command(args):
     """Run the same Python harness discovery and exclusions as CI."""
     return test_runner.run_tools(args.files, args.pattern, args.changed)
@@ -112,15 +102,11 @@ def test_tools_command(args):
 def list_command(args):
     """Print matching registry rows as tab-separated metadata.
 
-    Apply the optional heavy-only filter after selection and raise
-    RegistryError if it leaves no rows. Return zero after printing.
+    Raise RegistryError if the selection leaves no rows. Return zero after printing.
     """
     rows = _selected(args)
-    if args.heavy:
-        rows = [row for row in rows if registry.is_heavy(row)]
     for row in rows:
         print(f'{row["name"]}\t{row.get("kind", "")}\t{",".join(row["cells"])}\t'
-              f'{"heavy" if registry.is_heavy(row) else "light"}\t'
               f'{row["implementation"]}')
     if not rows:
         raise registry.RegistryError('selection matched no registry rows')
@@ -139,7 +125,7 @@ def plan_command(args):
     for row in chosen:
         inputs = '; '.join(row.get('required_inputs', []))
         selected_cells = [cell for cell in row['cells'] if cells is None or cell in cells]
-        print(f'{row["name"]}: {"heavy" if registry.is_heavy(row) else "light"}; cells: '
+        print(f'{row["name"]}: cells: '
               f'{",".join(selected_cells)}; '
               f'kind: {row.get("kind", "")}; inputs: {inputs or "none"}')
         print('  implementation: ' + row['implementation'])
@@ -150,33 +136,8 @@ def plan_command(args):
     return 0
 
 
-def slot_command(args):
-    """Report slot configuration or execute a command under resource admission.
-
-    Strip one leading -- from the child arguments. Report OS or value errors
-    as status 1 and cancellation as 130; convert a negative child status to
-    the corresponding shell signal status. A missing command raises SystemExit.
-    """
-    if args.action == 'status':
-        print(f'lock_dir: {host.host_lock_dir()}')
-        print(f'slots: {host.heavy_slot_count()}')
-        return 0
-    command = list(args.command)
-    if command[:1] == ['--']:
-        command = command[1:]
-    if not command:
-        raise SystemExit('slot run needs a command after --')
-    try:
-        rc = slot.run_command(command)
-    except (OSError, ValueError) as exc:
-        diagnostic = ' '.join(str(exc).splitlines())
-        print(f'slot run: {diagnostic}', file=sys.stderr)
-        return 130 if isinstance(exc, slot.Cancelled) else 1
-    return 128 - rc if rc < 0 else rc
-
-
 def pool_command(args):
-    """Run a command per item within one CPU and memory budget; see tools/dev/pool.py."""
+    """Run a command per item within one CPU budget; see tools/dev/pool.py."""
     if args.command[:1] == ['--']:
         args.command = args.command[1:]
     return pool.run_command(args)
@@ -197,7 +158,7 @@ def policy_record_command(args):
 def build_parser():
     """Build the native service CLI with dispatch callbacks on each subcommand."""
     parser = argparse.ArgumentParser(prog='python -m tools.dev',
-                                     description='Native tooling services: capabilities, registry and heavy slot.')
+                                     description='Native tooling services: capabilities and registry.')
     sub = parser.add_subparsers(dest='command', required=True)
 
     p = sub.add_parser('doctor', help='report native capabilities and the interpreter identity')
@@ -232,15 +193,6 @@ def build_parser():
     p = sub.add_parser('sanitize-toolchain', help='print the sanitizer nightly')
     p.set_defaults(func=sanitize_toolchain_command)
 
-    p = sub.add_parser('test', help='run cargo nextest through the heavy slot')
-    p.add_argument('--profile')
-    p.add_argument('args', nargs=argparse.REMAINDER)
-    p.set_defaults(func=test_command)
-
-    p = sub.add_parser('test-doc', help='run cargo test --doc through the heavy slot')
-    p.add_argument('args', nargs=argparse.REMAINDER)
-    p.set_defaults(func=test_doc_command)
-
     p = sub.add_parser('test-tools', help='run the CI Python harness suite')
     p.add_argument('files', nargs='*', metavar='FILE')
     p.add_argument('-k', dest='pattern', help='unittest name substring or wildcard pattern')
@@ -264,10 +216,6 @@ def build_parser():
     p.add_argument('args', nargs=argparse.REMAINDER)
     p.set_defaults(func=runner_command)
 
-    p = sub.add_parser('compat', help='oracle and isolated compatibility recipes')
-    p.add_argument('args', nargs=argparse.REMAINDER)
-    p.set_defaults(func=lambda args: __import__('tools.dev.compat.commands', fromlist=['main']).main(args.args))
-
     p = sub.add_parser('w3-fixtures', help='regenerate or check the committed fixtures/w3 data sets')
     p.add_argument('args', nargs=argparse.REMAINDER)
     p.set_defaults(func=lambda args: __import__('tools.dev.w3_fixtures', fromlist=['main']).main(args.args))
@@ -290,7 +238,6 @@ def build_parser():
     p.set_defaults(func=lambda args: __import__('tools.dev.provision', fromlist=['main']).main(args.args))
 
     p = sub.add_parser('list', help='list the registry, read-only')
-    p.add_argument('--heavy', action='store_true', help='only rows marked heavy')
     _selection_arguments(p)
     p.set_defaults(func=list_command)
 
@@ -307,14 +254,7 @@ def build_parser():
     p.add_argument('args', nargs=argparse.REMAINDER)
     p.set_defaults(func=measure_command)
 
-    p = sub.add_parser('slot', help='inspect or run under the host-wide heavy slot')
-    slot_sub = p.add_subparsers(dest='action', required=True)
-    run = slot_sub.add_parser('run', help='run a command under one heavy slot')
-    run.add_argument('command', nargs=argparse.REMAINDER)
-    slot_sub.add_parser('status', help='show the lock directory and slot count')
-    p.set_defaults(func=slot_command)
-
-    p = sub.add_parser('pool', help='run independent builds at once within one CPU and memory budget')
+    p = sub.add_parser('pool', help='run independent builds at once within one CPU budget')
     pool.add_arguments(p)
     p.set_defaults(func=pool_command)
     return parser
@@ -347,9 +287,6 @@ def main(argv=None):
     if argv[:1] == ['fetch-contract-data']:
         from . import contract_data
         return contract_data.main(argv[1:])
-    if argv[:1] == ['compat']:
-        from .compat import commands
-        return commands.main(argv[1:])
     if argv[:1] == ['packaging']:
         from . import packaging
         return packaging.main(argv[1:])
@@ -366,10 +303,6 @@ def main(argv=None):
         return test_runner.sanitize(argv[1:])
     if argv[:1] == ['sanitize-toolchain']:
         return test_runner.sanitize_toolchain()
-    if argv[:1] == ['test'] and argv[1:2] not in (['-h'], ['--help']):
-        return test_runner.run(argv[1:])
-    if argv[:1] == ['test-doc'] and argv[1:2] not in (['-h'], ['--help']):
-        return test_runner.run_doc(argv[1:])
     args = build_parser().parse_args(argv)
     try:
         return args.func(args)

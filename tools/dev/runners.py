@@ -17,7 +17,7 @@ import subprocess
 import sys
 import tempfile
 
-from . import cell as backend_cell, host, pool, slot
+from . import cell as backend_cell, pool, slot
 from .cell import CellError, ROOT, Settings, library_path
 from .drivers import DriverServices
 from .system_data import SystemData
@@ -65,18 +65,13 @@ class Context:
     def campaign(self, items: Sequence, function: Callable) -> list:
         """Run independent cases with private scratch and deterministic streams.
 
-        Admission and child cleanup are pool.py's, including inherited slots.
+        Child cleanup is pool.py's.
         Dependent steps within each case remain sequential in its callback.
         """
         def unit(item):
             def run(context):
                 events = []
-                if not context.fds and self.services.context is not None:
-                    context = replace(context, fds=self.services.context.fds)
                 environment = dict(context.environment, **self.env)
-                for key in ('OXPINYIN_HEAVY_SLOT_HELD', 'OXPINYIN_LOCK_DIR', pool.POOL_WORKERS):
-                    if key in context.environment:
-                        environment[key] = context.environment[key]
                 settings = replace(self.settings, environment=environment)
                 with ExitStack() as stack:
                     services = self.services.fork(settings, context,
@@ -95,9 +90,9 @@ class Context:
                 self.write(data, error=error)
 
         try:
-            results = pool.run_admitted([(f'{index}:{item}', unit(item)) for index, item in enumerate(items)],
-                                        self.name, cancelled=slot.CANCELLED.is_set, emit=emit_unit,
-                                        out=io.StringIO())
+            results = pool.run_leased([(f'{index}:{item}', unit(item)) for index, item in enumerate(items)],
+                                      cancelled=slot.CANCELLED.is_set, emit=emit_unit,
+                                      out=io.StringIO())
         except (Finished, CellError) as error:
             for diagnostic, data in getattr(error, 'events', []):
                 self.write(data, error=diagnostic)
@@ -302,8 +297,7 @@ def main(argv: Sequence[str]) -> int:
     def call() -> int:
         with ExitStack() as stack:
             settings = Settings.read(os.environ)
-            context = pool.UnitContext(recipe, slot.CANCELLED, environment=dict(settings.environment),
-                                       fds=slot.inherited_fds(recipe, out=io.StringIO()))
+            context = pool.UnitContext(recipe, slot.CANCELLED, environment=dict(settings.environment))
             ctx = Context(settings, DriverServices(settings, context), stack, Path.cwd(), recipe)
             return RECIPES[recipe](ctx, args)
     return guarded(call)
@@ -313,7 +307,7 @@ def guarded(call: Callable[[], int]) -> int:
     """Run CALL under the cancellation handlers and return its status.
 
     The failures every runner shares end in the same statuses and messages: a
-    finished or refused run, a cancellation, a blocked admission, a missing
+    finished or refused run, a cancellation, a missing
     command (127), and any other OS or value error (1).
     """
     try:
@@ -327,9 +321,6 @@ def guarded(call: Callable[[], int]) -> int:
     except (pool.UnitStopped, pool.UnitsCancelled, slot.Cancelled) as error:
         emit(str(error), error=True)
         return slot.cancellation_status()
-    except host.ResourceBlocked as error:
-        emit(str(error), error=True)
-        return 1
     except FileNotFoundError as error:
         emit(str(error), error=True)
         return 127

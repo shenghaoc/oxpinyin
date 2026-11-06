@@ -135,17 +135,10 @@ fixture directory. The original sweep and focused follow-up results are linked
 from the tooling-lane findings.
 
 The registry also includes the ABI export/allocation gates, static package
-version check, installed metadata comparison, user-directory round-trip,
+version check, installed metadata comparison,
 requested-row training and transformed-option sweep from the lane inventory.
 The older Rust training suites, provisioning/capture scripts and sanitizer
 build recipes remain standalone procedures; they are not ABI runner entries.
-
-The user-directory gate consumes `OXPINYIN_USER_RT_TEST`, the existing
-`user_dir_round_trip` integration-test executable. If that gate is selected,
-the cell build stage compiles it once with `cargo test --profile dev --no-run`
-and records a stable symlink in the cell target. Gate execution runs only its
-two existing ignored cases; it never invokes Cargo. An independently supplied
-capi library therefore also needs that matching prebuilt test executable.
 
 Installed metadata is a supplied-tree gate. Its staging inputs may be set per
 cell without changing the global process environment:

@@ -105,8 +105,7 @@ cannot produce is a complete libpinyin `.pc` (see "Locating the model data"
 below), which is why `just packaging install` wraps `cargo cinstall`.
 Run from the checkout with the [ordinary native setup](runbooks/setup.md);
 `just python` provisions its managed interpreter. The packaging commands
-use the shared heavy slot and memory admission for builds, relinks and package
-builders.
+run builds, relinks and package builders supervised, with cancellation handling.
 
 ## Metadata on `oxpinyin-capi`
 
@@ -470,7 +469,6 @@ just packaging sizes run --base origin/main
 ```
 
 `run` builds the base commit and `HEAD`, then prints the same table.
-Each build takes the heavy-work admission inside `just packaging install`.
 Use `--base-cache FILE` to reuse a base result and `--work DIR` and `--target DIR` to keep the build directories.
 `just packaging sizes build --commit REV --out FILE` writes one side as JSON.
 `just packaging sizes key --commit REV` prints the cache key.

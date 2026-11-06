@@ -29,10 +29,8 @@ library that storage-dependent crates are built against; the
 When a change needs **compatibility verification**, compare it with the
 **oracle** (the fixed upstream libpinyin implementation). A
 **differential** runs the same behaviour against both implementations.
-Run it on a [provisioned remote Linux host](docs/runbooks/cloud.md) or with
-the [canonical Debian compatibility procedure](docs/runbooks/compatibility-container.md),
-which runs oxpinyin, the pinned reference and the comparison harness
-together, so you do not install libpinyin or reconstruct its environment.
+Run it on a [provisioned remote Linux host](docs/runbooks/cloud.md),
+so you do not install libpinyin or reconstruct its environment.
 Native tests and differentials provide different evidence.
 Package-manager examples and runtime adapters are not extra test targets.
 
@@ -124,7 +122,6 @@ Do not use emulation for work that does not compare against the pin.
 
 A remote Linux host that meets the [remote Linux requirements](docs/runbooks/cloud.md#host-requirements) supports every gate.
 Provision it with `tools/cloud/setup.sh`.
-Compatibility work can also use `tools/oracle/compat.sh`, which runs subject, pin and harness together in the [canonical Debian Linux amd64 environment](docs/runbooks/compatibility-container.md).
 
 ## Checkpoints and rebases
 

@@ -89,7 +89,8 @@ A bench prefix is linked by setting `PINYIN_ORACLE_PREFIX` plus
 in `crates/pinyin-oracle/build.rs` to a `dbm-<name>` containment check
 (the manifest still records the full pin, hashes included). The
 relaxation is CI-guarded — `PINYIN_BENCH_DBM` set under `CI` fails the
-build — and `just compat capture` separately refuses any
+build — and the capture recipe (removed 2026-11-06 UTC with the compat
+launcher) refused any
 prefix whose manifest `dbm=` is not `Tkrzw`, so parity and capture can
 link only the tkrzw oracle regardless.
 
@@ -203,7 +204,7 @@ What changed, and what did not:
 - **Unchanged — the tkrzw cell stays the pin for the frozen goldens.** The
   capture fixtures (`fixtures/foundation`, `fixtures/w4`, `fixtures/w3/pin-ref.txt`)
   and the `pinyin-oracle` crate's `EXPECTED_PIN_REF` carry `+dbm-tkrzw`;
-  `just compat capture`, `just profile-w8` and the
+  the removed capture recipe, `just profile-w8` and the
   crate's parity tests need a prefix built with `--dbm tkrzw`. The
   Multi-backend section's statement that capture links only the tkrzw
   oracle still holds.

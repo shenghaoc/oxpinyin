@@ -9,7 +9,7 @@ import re
 
 ROOT = Path(__file__).resolve().parents[2]
 REGISTRY = ROOT / 'tools/bisection/runners.json'
-COLUMNS = ('name', 'kind', 'cells', 'heavy')
+COLUMNS = ('name', 'kind', 'cells')
 IMPLEMENTATION_FORMS = ('legacy', 'python', 'instrument')
 
 
@@ -111,13 +111,6 @@ def _command_path(part):
 def by_name(rows):
     """Index rows by name, keeping the last row if names repeat."""
     return {row['name']: row for row in rows}
-
-
-def is_heavy(row):
-    """A registry row is heavy when it says so (`"heavy": true`); the default
-    is light. The cell build is always heavy (cargo decides how much it
-    compiles; a no-op build holds the slot for a fraction of a second)."""
-    return bool(row.get('heavy'))
 
 
 def names(value):

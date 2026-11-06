@@ -1056,9 +1056,9 @@ class Campaign:
         """Store sample settings and resolve system data; initialize the sample serial counter.
 
         jobs is the --jobs setting: 1 keeps fixture work serial, None lets
-        admission size the pool (fan_out). A unit's copy (unit) carries its
+        the pool use the allowed CPUs (fan_out). A unit's copy (unit) carries its
         own serial counter, scratch prefix, CPU, driver view and, in a pool,
-        the admitted environment and slot descriptors for its children.
+        the environment for its children.
         """
         self.worker, self.data, self.work, self.cpu, self.driver = worker, data.resolve(), work, cpu, driver
         self.serial = 0
@@ -1404,8 +1404,8 @@ def fan_out(campaign, units, label, emit=None):
 
     Each function receives a private copy of the campaign (Campaign.unit): its own
     sample names, counter and CPU lease, a driver whose checks also see the pool's
-    stop, and the admitted environment and slot descriptors for its children.
-    All units run in tools/dev/pool.py's admitted pool; --jobs 1 limits it to one
+    stop, and the environment for its children.
+    All units run in tools/dev/pool.py's pool; --jobs 1 limits it to one
     worker. Each unit gets one CPU lease from the allowed set,
     this campaign's own first. emit(name, value) runs in unit order. Only fixture
     work goes through here: measured stages never run inside the pool.
@@ -1419,10 +1419,10 @@ def fan_out(campaign, units, label, emit=None):
             return function(campaign.unit(name, cpu=context.cpu, driver=context.driver(campaign.driver),
                                           environment=context.environment, fds=context.fds))
         return name, run
-    return pool.run_admitted([instance(name, function) for name, function in units], label,
-                             cancelled=pool.cancelled_from(campaign.driver.check_cancelled),
-                             serial=campaign.jobs == 1, cpus=cpus or None, emit=emit,
-                             cancel_error=getattr(campaign.driver, 'Cancelled', pool.UnitsCancelled))
+    return pool.run_leased([instance(name, function) for name, function in units],
+                           cancelled=pool.cancelled_from(campaign.driver.check_cancelled),
+                           serial=campaign.jobs == 1, cpus=cpus or None, emit=emit,
+                           cancel_error=getattr(campaign.driver, 'Cancelled', pool.UnitsCancelled))
 
 
 def provision(campaign, pin, root, names=None):

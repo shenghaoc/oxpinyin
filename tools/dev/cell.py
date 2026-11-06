@@ -112,8 +112,6 @@ def main(argv: Sequence[str], *, root: Path = ROOT,
             print(json.dumps(settings.oracle(argv[1], argv[2]).describe()))
             return 0
         wanted = ['pinyin-capi', 'zhuyin-capi']
-        if environment.get('OXPINYIN_BUILD_USER_RT') == '1':
-            wanted.append('user-rt-test')
         if len(argv) == 2 and argv[0] == '--artifacts':
             wanted = argv[1].split(',')
         elif argv:
@@ -222,7 +220,7 @@ class Settings:
         else:
             command = ['cargo', 'build', '--locked', '--manifest-path',
                        str(self.root / 'Cargo.toml'), '-p', package, *self.feature_args()]
-            if slot.run_command(command, env=self.environment, out=sys.stderr, cwd=self.root, stdout=2):
+            if slot.run_command(command, env=self.environment, cwd=self.root, stdout=2):
                 raise CellError(f'FAIL: building {package}', 1)
             artifact = self.target / 'debug' / filename
         if not artifact.is_file():
@@ -267,8 +265,8 @@ class Settings:
                     'gen-pinyin-table': 'oxpinyin-utils',
                     'gen-zhuyin-table': 'oxpinyin-utils', 'k-mixture-model-to-interpolation': 'oxpinyin-utils'}
         for item in wanted:
-            if item and item not in (*packages, 'user-rt-test'):
-                raise CellError(f"fatal: unknown artifact '{item}' (pinyin-capi, zhuyin-capi, user-rt-test)", 2)
+            if item and item not in packages:
+                raise CellError(f"fatal: unknown artifact '{item}' (pinyin-capi, zhuyin-capi)", 2)
         if not any(wanted):
             return 0
         self.claim()
@@ -278,31 +276,9 @@ class Settings:
                     for part in ('-p', package)]
         if selected:
             status = slot.run_command(['cargo', 'build', *common, *selected, *features],
-                                      env=self.environment, out=sys.stderr, cwd=self.root)
+                                      env=self.environment, cwd=self.root)
             if status:
                 return status
-        if 'user-rt-test' in wanted:
-            # A file, not a pipe: run_command supervises the child and drains nothing.
-            with tempfile.TemporaryFile('w+') as messages:
-                status = slot.run_command(['cargo', 'test', *common, '--profile', 'dev', '--no-run',
-                                           '--message-format=json', '-p', 'oxpinyin-runtime', *features,
-                                           '--test', 'user_dir_round_trip'],
-                                          env=self.environment, out=sys.stderr, cwd=self.root, stdout=messages)
-                if status:
-                    return status
-                messages.seek(0)
-                lines = messages.read().splitlines()
-            executables = [row['executable'] for line in lines
-                           if (row := json.loads(line)).get('reason') == 'compiler-artifact'
-                           and row.get('target', {}).get('name') == 'user_dir_round_trip'
-                           and row.get('executable')]
-            if len(executables) != 1:
-                raise CellError('FAIL: expected exactly one user_dir_round_trip executable')
-            link = self.target / 'debug/user-dir-round-trip-test'
-            staged = link.with_name(f'.{link.name}.{os.getpid()}')
-            staged.unlink(missing_ok=True)
-            staged.symlink_to(executables[0])
-            os.replace(staged, link)
         self.record()
         return 0
 
@@ -311,16 +287,10 @@ class Settings:
             return subprocess.run(command, cwd=self.root, env=self.environment, capture_output=True,
                                   text=True, check=True).stdout
         rustc = dict(line.split(': ', 1) for line in output('rustc', '-vV').splitlines() if ': ' in line)
-        if self.environment.get('OXPINYIN_COMPAT_CONTAINER') == '1':
-            from .compat.identity import current_inputs, seal_artifacts
-            inputs = current_inputs()
-            source = dict(head=inputs['head'], container_source_sha256=inputs['source_sha256'])
-        else:
-            source = dict(head=output('git', 'rev-parse', 'HEAD').strip(),
-                          tracked_diff_sha256=hashlib.sha256(output('git', 'diff', 'HEAD', '--', '.').encode()).hexdigest())
+        source = dict(head=output('git', 'rev-parse', 'HEAD').strip(),
+                      tracked_diff_sha256=hashlib.sha256(output('git', 'diff', 'HEAD', '--', '.').encode()).hexdigest())
         artifacts = {}
         for name, filename in (('pinyin-capi', 'libpinyin_capi.so'), ('zhuyin-capi', 'libzhuyin_capi.so'),
-                               ('user-rt-test', 'user-dir-round-trip-test'),
                                ('gen-pinyin-table', 'gen_pinyin_table'), ('gen-zhuyin-table', 'gen_zhuyin_table'),
                                ('k-mixture-model-to-interpolation', 'k_mixture_model_to_interpolation')):
             file = self.target / 'debug' / filename
@@ -330,8 +300,6 @@ class Settings:
         record = dict(schema=1, **self.owner(), toolchain=dict(release=rustc.get('release'),
                       commit=rustc.get('commit-hash'), host=rustc.get('host')),
                       source=source, built_utc=utc(), artifacts=artifacts)
-        if self.environment.get('OXPINYIN_COMPAT_CONTAINER') == '1':
-            record['container'] = seal_artifacts(record, str(self.target))
         path = self.target / 'oxpinyin-cell-identity.json'
         staged = path.with_name(path.name + f'.{os.getpid()}')
         staged.write_text(json.dumps(record, indent=1, sort_keys=True) + '\n')

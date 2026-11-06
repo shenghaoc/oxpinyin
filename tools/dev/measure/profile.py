@@ -36,8 +36,7 @@ Environment:
   OXPINYIN_PROFILE_OS   test override for the host name; native runs use uname
   OXPINYIN_TKRZW_PREFIX Homebrew prefix for libtkrzw on macOS
 
-The recipe holds the heavy slot (`just profile-w8` runs it under `just heavy`), so
-nothing here asks for admission again. Standard library only.
+Standard library only.
 """
 import glob
 import hashlib

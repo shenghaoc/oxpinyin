@@ -240,8 +240,8 @@ class RecipeTests(unittest.TestCase):
                 env=dict(os.environ, PATH=str(root) + os.pathsep + os.environ['PATH']),
                 capture_output=True, text=True, timeout=30)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(json.loads(result.stdout)[-11:], [
-                'uv', 'run', '--no-project', '--managed-python', '--with', 'clang==21.1.7',
+            self.assertEqual(json.loads(result.stdout)[-10:], [
+                'run', '--no-project', '--managed-python', '--with', 'clang==21.1.7',
                 'python', '-X', 'lazy_imports=normal', 'tools/audit/glib_call_sites.py', str(pin)])
 
 

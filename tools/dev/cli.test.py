@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tools.dev import cli, host, registry, slot, test_support
+from tools.dev import cli, registry, slot, test_support
 
 IMPLEMENTATION = 'legacy:tools/oracle/build-oracle.sh'
 COMMAND = ['bash', '{root}/tools/oracle/build-oracle.sh']
@@ -64,20 +64,6 @@ class RealJustSmokeTests(unittest.TestCase):
                     self.assertEqual(result.returncode, status, result.stderr)
                     self.assertEqual(json.loads(result.stdout), values)
 
-    @unittest.skipUnless(sys.platform == 'win32', 'Windows abort status')
-    def test_real_heavy_preserves_windows_abort_status(self):
-        child = ['uv', 'run', '--no-project', '--managed-python', 'python',
-                 '-X', 'lazy_imports=normal', '-c',
-                 'import ctypes; ctypes.CDLL("ucrtbase").abort()']
-        result = self.invoke('heavy', '--', *child)
-        self.assertEqual(result.returncode, 0xC0000409, result.stderr)
-
-    @unittest.skipUnless(sys.platform == 'win32', 'Windows nested transport')
-    def test_real_heavy_preserves_nested_arguments_and_status(self):
-        result = self.invoke('heavy', '--', 'just', '_test-argv', '77', 'path with spaces')
-        self.assertEqual(result.returncode, 77, result.stderr)
-        self.assertEqual(json.loads(result.stdout), ['path with spaces'])
-
     def test_bootstrapping_uv_recipes_depend_on_python(self):
         result = self.invoke('--dump', '--dump-format', 'json')
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -85,7 +71,6 @@ class RealJustSmokeTests(unittest.TestCase):
         users = {name for name, recipe in recipes.items()
                  if any('uv run' in fragment for line in recipe['body'] for fragment in line)}
         self.assertIn('check', users)
-        self.assertIn('heavy', users)
         for name in sorted(users - {'doctor', 'rust-tables'}):
             with self.subTest(recipe=name):
                 self.assertIn('python', [dependency['recipe'] for dependency in recipes[name]['dependencies']])
@@ -150,46 +135,6 @@ class CliTests(unittest.TestCase):
         self.launch = self.enterContext(mock.patch.object(
             slot.subprocess, 'Popen', side_effect=AssertionError('CLI unit test launched a process')))
 
-    def test_expected_slot_failures_print_one_line_without_a_traceback(self):
-        failures = (
-            (host.ResourceBlocked('resource-blocked: available memory unknown'), 1),
-            (slot.Cancelled('cancelled; child process groups terminated and reaped'), 130),
-            (ValueError('OXPINYIN_LOCK_DIR must be an absolute path'), 1),
-            (ValueError('Invalid OXPINYIN_HEAVY_SLOT_HELD'), 1),
-            (OSError('child launch\nfailed'), 1),
-        )
-        for error, expected in failures:
-            with self.subTest(error=error), mock.patch.object(
-                    slot, 'run_command', side_effect=error), contextlib.redirect_stderr(io.StringIO()) as err:
-                self.assertEqual(cli.main(['slot', 'run', '--', 'child']), expected)
-            self.assertEqual(err.getvalue().splitlines(),
-                             ['slot run: ' + ' '.join(str(error).splitlines())])
-
-    def test_negative_child_status_uses_the_shell_signal_convention(self):
-        for signum in (15, 9):
-            with self.subTest(signal=signum), mock.patch.object(
-                    slot, 'run_command', return_value=-signum):
-                self.assertEqual(cli.main(['slot', 'run', '--', 'child']), 128 + signum)
-
-    def test_nonnegative_child_status_and_arguments_are_preserved(self):
-        for status in (0, 1, 7, 77):
-            with self.subTest(status=status), mock.patch.object(
-                    slot, 'run_command', return_value=status) as run:
-                command = ['child', '--flag', '', '/path with spaces', 'literal;$value']
-                self.assertEqual(cli.main(['slot', 'run', '--', *command]), status)
-                test_support.assert_calls(self, run, [mock.call(command)])
-
-    def test_test_commands_forward_raw_arguments_before_argparse(self):
-        selections = (['-p', 'oxpinyin-core'], ['--workspace'],
-                      ['--test-threads=2'], ['-P', 'ci'], ['--', '-p', 'oxpinyin-core'])
-        for command, target in (('test', 'run'), ('test-doc', 'run_doc')):
-            for selection in selections:
-                with self.subTest(command=command, selection=selection), \
-                        mock.patch.object(cli.test_runner, target, return_value=7) as run:
-                    self.assertEqual(cli.main([command, *selection]), 7)
-                    run.assert_called_once_with(selection)
-        test_support.assert_not_called(self, self.launch)
-
     def test_tools_dispatches_to_shared_harness_runner(self):
         with mock.patch.object(cli.test_runner, 'run_tools', return_value=1) as run:
             self.assertEqual(cli.main(['test-tools']), 1)
@@ -205,22 +150,6 @@ class CliTests(unittest.TestCase):
                     mock.patch.object(cli.test_runner, 'run_tools', return_value=7) as run:
                 self.assertEqual(cli.main(['test-tools', *argv]), 7)
                 run.assert_called_once_with(*expected)
-
-    def test_test_options_reach_the_slot_without_a_separator(self):
-        for selection in (['-p', 'oxpinyin-core'], ['--workspace'],
-                          ['--test-threads=2'], ['-P', 'ci']):
-            with self.subTest(selection=selection), \
-                    mock.patch.object(slot, 'run_command', return_value=0) as run:
-                self.assertEqual(cli.main(['test', *selection]), 0)
-                self.assertEqual(run.call_args.args[0][-len(selection):], selection)
-        test_support.assert_not_called(self, self.launch)
-
-    def test_main_reads_raw_arguments_from_sys_argv(self):
-        with mock.patch.object(sys, 'argv', ['tools.dev', 'test', '--workspace']), \
-                mock.patch.object(cli.test_runner, 'run', return_value=7) as run:
-            self.assertEqual(cli.main(), 7)
-            run.assert_called_once_with(['--workspace'])
-        test_support.assert_not_called(self, self.launch)
 
     def test_registry_commands_reject_empty_unknown_and_unmatched_selections(self):
         selections = ([], ['--runners', ''], ['--runners', ','],
@@ -239,7 +168,7 @@ class CliTests(unittest.TestCase):
                 self.assertNotIn('Traceback', error.getvalue())
         test_support.assert_not_called(self, self.launch)
 
-    def test_registry_listing_filters_static_issues_kind_and_heavy_state(self):
+    def test_registry_listing_filters_static_issues_and_kind(self):
         for selector in ('row:33', 'Row 33'):
             with self.subTest(selector=selector), \
                     contextlib.redirect_stdout(io.StringIO()) as output:
@@ -247,8 +176,8 @@ class CliTests(unittest.TestCase):
                 self.assertEqual([line.split('\t')[0] for line in output.getvalue().splitlines()],
                                  ['abi-probe-diff', 'residue-a-tail-diff'])
         with contextlib.redirect_stdout(io.StringIO()) as output:
-            self.assertEqual(cli.main(['list', '--runners', 'bisect', '--heavy']), 0)
-            self.assertEqual(output.getvalue(), 'bisect\tgate\tbdb,kc,tkrzw\theavy\t'
+            self.assertEqual(cli.main(['list', '--runners', 'bisect']), 0)
+            self.assertEqual(output.getvalue(), 'bisect\tgate\tbdb,kc,tkrzw\t'
                              'python:tools.dev\n')
         with contextlib.redirect_stdout(io.StringIO()) as output:
             self.assertEqual(cli.main(['list', '--runners', 'perf-baseline']), 0)

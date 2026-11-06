@@ -159,12 +159,13 @@ class JobCountTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             execution.positive_jobs('many')
 
-    def test_the_flag_wins_the_environment_next_and_serial_is_the_default(self):
+    def test_the_flag_wins_the_environment_next_and_the_cpu_count_is_the_default(self):
         with patch.dict(os.environ, OXPINYIN_CONTRACT_JOBS='bad'):
             self.assertEqual(execution.ordinary_jobs(self.parser(), 5), 5)
         environment = {name: value for name, value in os.environ.items() if name != 'OXPINYIN_CONTRACT_JOBS'}
         with patch.dict(os.environ, environment, clear=True):
-            self.assertEqual(execution.ordinary_jobs(self.parser(), None), 1)
+            with patch.object(os, 'cpu_count', return_value=6):
+                self.assertEqual(execution.ordinary_jobs(self.parser(), None), 6)
         with patch.dict(os.environ, OXPINYIN_CONTRACT_JOBS='4'):
             self.assertEqual(execution.ordinary_jobs(self.parser(), None), 4)
 

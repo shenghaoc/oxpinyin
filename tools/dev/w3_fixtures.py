@@ -222,7 +222,7 @@ def build_tools(settings, out=sys.stderr):
     bins = [part for name in UTILITIES for part in ('--bin', name)]
     for command in ([*common, '-p', 'oxpinyin-utils', *bins],
                     [*common, '-p', 'oxpinyin-store', '--example', 'raw_records']):
-        if slot.run_command(command, env=settings.environment, out=out, cwd=ROOT, stdout=2):
+        if slot.run_command(command, env=settings.environment, cwd=ROOT, stdout=2):
             raise Refused(f'FAIL: building for the {settings.cell} cell: {" ".join(command)}')
     debug = settings.target / 'debug'
     tools = {name: debug / name for name in UTILITIES}

@@ -5,7 +5,6 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -36,13 +35,8 @@ STARTUP_INVALID = 'none'
 
 class EntryGuardTests(unittest.TestCase):
     def setUp(self):
-        temp = self.enterContext(tempfile.TemporaryDirectory())
-        self.lock_dir = Path(temp, 'locks')
-        self.lock_dir.mkdir()
-        self.marker = Path(temp, 'marker')
         self.env = {key: value for key, value in os.environ.items()
                     if not key.startswith(('PYTHON', 'OXPINYIN_'))}
-        self.env.update(OXPINYIN_LOCK_DIR=str(self.lock_dir), OXPINYIN_HEAVY_SLOTS='1')
 
     def run_wrapper(self, args, *, flag=None, env_mode=None, action='keep'):
         env = dict(self.env)
@@ -71,7 +65,6 @@ class EntryGuardTests(unittest.TestCase):
         self.assertEqual(result.stdout, '')
         self.assertIn('Fatal Python error: config_init_lazy_imports', result.stderr)
         self.assertNotIn('cli_loaded', result.stderr)
-        self.assertEqual(list(self.lock_dir.iterdir()), [])
 
     def assert_rejected(self, outcome, mode):
         result, diagnostic, report = outcome
@@ -82,7 +75,6 @@ class EntryGuardTests(unittest.TestCase):
         self.assertIn(repr(mode), diagnostic[0])
         self.assertIn('-X lazy_imports=normal', diagnostic[0])
         self.assertIn('PYTHON_LAZY_IMPORTS=normal', diagnostic[0])
-        self.assertEqual(list(self.lock_dir.iterdir()), [])
 
     def test_normal_mode_reaches_the_cli_listing(self):
         expected = subprocess.run([sys.executable, '-X', 'lazy_imports=normal', '-c',
@@ -106,22 +98,6 @@ class EntryGuardTests(unittest.TestCase):
             with self.subTest(label):
                 self.assert_startup_refused(result)
 
-    def test_rejected_slot_run_starts_no_child_and_takes_no_slot(self):
-        child = [sys.executable, '-c', f'open({str(self.marker)!r}, "w").close()']
-        for label, outcome, mode in self.rejected_runs(['slot', 'run', '--', *child]):
-            with self.subTest(label):
-                self.assert_rejected(outcome, mode)
-                self.assertFalse(self.marker.exists())
-        for label, result in self.startup_refusals(['slot', 'run', '--', *child]):
-            with self.subTest(label):
-                self.assert_startup_refused(result)
-                self.assertFalse(self.marker.exists())
-        # Control: the same command in normal mode does start the child.
-        result, diagnostic, report = self.run_reported(['slot', 'run', '--', *child], flag='normal')
-        self.assertEqual(result.returncode, 0, diagnostic)
-        self.assertEqual(report, {'status': 0, 'cli_loaded': True})
-        self.assertTrue(self.marker.exists())
-
     def test_missing_get_lazy_imports_names_the_required_interpreter(self):
         result, diagnostic, report = self.run_reported(['list'], flag='normal', action='drop')
         self.assertEqual(result.returncode, 2)
@@ -130,7 +106,6 @@ class EntryGuardTests(unittest.TestCase):
         self.assertEqual(len(diagnostic), 1)
         self.assertIn('sys.get_lazy_imports is missing', diagnostic[0])
         self.assertIn('.python-version', diagnostic[0])
-        self.assertEqual(list(self.lock_dir.iterdir()), [])
 
 
 if __name__ == '__main__':

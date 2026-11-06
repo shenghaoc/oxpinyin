@@ -12,10 +12,10 @@ import contextlib
 import hashlib
 import os
 from pathlib import Path
+import re
 import shutil
 import signal
 import subprocess
-import sys
 
 
 def terminate_group(proc):
@@ -90,28 +90,21 @@ def positive_jobs(value):
 
 
 def ordinary_jobs(parser, requested):
-    """The case count of an ordinary run: --jobs, else the validated environment, else serial.
+    """The case count of an ordinary run: --jobs, else the validated environment, else the CPU count.
 
     Only ordinary contract runs read OXPINYIN_CONTRACT_JOBS, so a bad value
     in the environment cannot break --list-tags, --teardown or --per-call.
 
     Return requested unchanged when supplied. Otherwise validate the environment
-    value through tools.dev.host and report invalid settings with parser.error;
-    importing the validator may prepend the repository to sys.path. Return one
-    when the setting is absent."""
+    value as a positive integer and report an invalid one with parser.error.
+    Return os.cpu_count() when the setting is absent."""
     if requested is not None:
         return requested
     value = os.environ.get('OXPINYIN_CONTRACT_JOBS')
     if value is None:
-        return 1
-    root = str(Path(__file__).resolve().parents[2])
-    if root not in sys.path:
-        sys.path.insert(0, root)
-    from tools.dev import host
-    try:
-        host.validate_settings({'OXPINYIN_CONTRACT_JOBS': value})
-    except ValueError as error:
-        parser.error(str(error))
+        return os.cpu_count() or 1
+    if not re.fullmatch(r'[+]?[0-9]+', value) or int(value) <= 0:
+        parser.error('Invalid OXPINYIN_CONTRACT_JOBS: use a positive integer')
     return int(value)
 
 

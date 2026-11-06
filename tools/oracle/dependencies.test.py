@@ -25,7 +25,7 @@ class OracleDependenciesTests(unittest.TestCase):
     def test_local_build_accepts_exact_reference_stage_copies(self):
         build = (ROOT / 'tools/oracle/build-contract-image.sh').read_text()
         self.assertIn('-f tools/oracle/Dockerfile.oracle', build)
-        self.assertIn('compat verify-image', build)
+        self.assertIn('py_oracle verify-image', build)
         pattern = r'^COPY tools/(oracle/(version-manifest.json|versions.py)|tkrzw/distro-probe.sh|lib/bash-floor.sh) '
         docker = (ROOT / 'tools/oracle/Dockerfile.oracle').read_text().split('FROM deps AS build', 1)[0]
         copies = [line for line in docker.splitlines() if line.startswith('COPY ')]

@@ -31,7 +31,7 @@ import sys
 import tarfile
 import tempfile
 
-from .compat.process import ROOT, fail, run
+from .process import ROOT, fail, run
 from .runners import guarded
 
 MODEL_URL = 'https://downloads.sourceforge.net/libpinyin/models/model20.text.tar.gz'

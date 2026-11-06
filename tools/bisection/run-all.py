@@ -1,6 +1,7 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """Execute the live parity registry. Standard library only; never cache the oracle."""
 import argparse
+import concurrent.futures
 import contextlib
 try:
     import fcntl
@@ -10,7 +11,6 @@ import json
 import os
 from pathlib import Path
 import re
-import signal
 import shutil
 import subprocess
 import sys
@@ -22,83 +22,24 @@ ROOT = HERE.parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tools.dev import host as _host
 from tools.dev import registry as _registry
 from tools.dev import slot as _slot
 from tools.dev import cell as backend_cell
 from tools.dev.cell import Settings as CellSettings
 from tools.bisection.contract_selection import prefix_matches
 
-RUSTC_PEAK_MIB = _host.RUSTC_PEAK_MIB
-TEST_THREAD_PEAK_MIB = _host.TEST_THREAD_PEAK_MIB
-RUNNER_PEAK_MIB = _host.RUNNER_PEAK_MIB
-HEADROOM_MIB = _host.HEADROOM_MIB
-memory_available_mib = _host.memory_available_mib
-linux_cgroup_dirs = _host.linux_cgroup_dirs
-fit = _host.fit
-validate_settings = _host.validate_settings
-memory_defaults = _host.memory_defaults
-plan_defaults = _host.plan_defaults
-prepare_heavy_env = _host.prepare_heavy_env
-resource_wait_limit = _host.resource_wait_limit
-ResourceBlocked = _host.ResourceBlocked
-host_lock_dir = _host.host_lock_dir
-heavy_slot_count = _host.heavy_slot_count
-pid_alive = _host.pid_alive
-read_holder = _host.read_holder
-describe_holder = _host.describe_holder
-write_holder = _host.write_holder
-process_parent = _host.process_parent
-is_ancestor = _host.is_ancestor
-is_heavy = _registry.is_heavy
-HEAVY_SLOT = _slot.HEAVY_SLOT
-HEAVY_SLOT_HELD = _slot.HEAVY_SLOT_HELD
-
-
-def resource_snapshot(*args, **kwargs):
-    """Read resources through tools.dev.host, the shared admission entry point.
-
-    Late-bound so one replacement of host.resource_snapshot covers every
-    admission path in this module, including the wrapper and the aggregate.
-    The arguments are the host reader's synthetic test roots.
-    """
-    return _host.resource_snapshot(*args, **kwargs)
-
-
-lock_file = _slot.lock_file
-admission_lock = _slot.admission_lock
-CANCELLED = _slot.CANCELLED
-Cancelled = _slot.Cancelled
 check_cancelled = _slot.check_cancelled
 cancellation_handlers = _slot.cancellation_handlers
 terminate_group = _slot.terminate_group
 wait_child = _slot.wait_child
-HeavySlot = _slot.HeavySlot
-other_reservations = _slot.other_reservations
-reserve_heavy_env = _slot.reserve_heavy_env
-run_admitted = _slot.run_admitted
-
-
-class HeavyAdmission(_slot.HeavyAdmission):
-    """Adapter: resolve the resource reader through this module's globals."""
-
-    def __init__(self, *args, **kwargs):
-        """Default admission callbacks to late-bound readers in this module."""
-        kwargs.setdefault('resource_snapshot', lambda: resource_snapshot())
-        kwargs.setdefault('prepare_heavy_env',
-                          lambda *a, **k: prepare_heavy_env(*a, **k))
-        super().__init__(*args, **kwargs)
 
 
 CELLS = backend_cell.CELLS
 # The results table. build_seconds is the cell's one build, shared by every row
 # of that cell; lock_wait_seconds is the runner's wait for its exclusive
-# resources (#899); slot_wait_seconds is the runner's wait for the heavy slot,
-# taken before its locks; build_slot_wait_seconds is the cell build's wait for
-# the heavy slot, shared by every row of that cell.
-# memory_wait_seconds adds the cell build and runner memory waits.
+# resources (#899).
 COLUMNS = ('runner', 'cell', 'status', 'seconds', 'build_seconds', 'lock_wait_seconds',
-           'slot_wait_seconds', 'build_slot_wait_seconds', 'memory_wait_seconds', 'pin_ref', 'reason')
+           'pin_ref', 'reason')
 
 
 @contextlib.contextmanager
@@ -141,12 +82,12 @@ def assignments(values, allowed, parser):
     return result
 
 
-def execute(command, env, cwd, timeout, output, slot=None):
+def execute(command, env, cwd, timeout, output):
     """Bound the whole process group, including grandchildren retaining stdout."""
     start = time.monotonic()
     with output.open('wb') as log:
         try:
-            process = start_child(command, env, slot=slot, cwd=cwd, stdout=log,
+            process = start_child(command, env, cwd=cwd, stdout=log,
                                   stderr=subprocess.STDOUT, start_new_session=True)
         except OSError as exc:
             return 1, time.monotonic() - start, str(exc), False
@@ -277,7 +218,7 @@ def plan_lines(cell, jobs, contract_cases, reasons, index):
             if len(names) > 50:
                 lines.append('    ... %d more (contract-diff.py --list-tags lists them)' % (len(names) - 3))
     return lines
-ARTIFACTS = ('pinyin-capi', 'zhuyin-capi', 'user-rt-test', 'gen-pinyin-table', 'gen-zhuyin-table',
+ARTIFACTS = ('pinyin-capi', 'zhuyin-capi', 'gen-pinyin-table', 'gen-zhuyin-table',
              'k-mixture-model-to-interpolation')
 
 
@@ -296,7 +237,6 @@ def artifact_union(rows):
         needed.update(declared)
     return [artifact for artifact in ARTIFACTS if artifact in needed]
 ARTIFACT_ENV = {'pinyin-capi': 'OXPINYIN_CAPI_SO', 'zhuyin-capi': 'OXPINYIN_ZHUYIN_SO',
-                'user-rt-test': 'OXPINYIN_USER_RT_TEST',
                 'gen-pinyin-table': 'OXPINYIN_GEN_PINYIN_TABLE', 'gen-zhuyin-table': 'OXPINYIN_GEN_ZHUYIN_TABLE',
                 'k-mixture-model-to-interpolation': 'OXPINYIN_K_MIXTURE_MODEL_TO_INTERPOLATION'}
 
@@ -345,76 +285,12 @@ def check_identity(identity, root, cell, needed):
             raise ValueError(f'artifact {name} ({path}) changed after the recorded build '
                              f'(size/mtime {stat.st_size}/{stat.st_mtime_ns} vs {staged.get("size")}/{staged.get("mtime_ns")}): '
                              'a mixed target directory; rebuild it from this worktree')
-    if os.environ.get('OXPINYIN_COMPAT_CONTAINER') == '1':
-        from tools.dev.compat.identity import verify_artifacts
-        verify_artifacts(identity, root, needed)
 
-def start_child(command, env, *, slot=None, **kwargs):
-    """Transfer an acquired slot to the workload before it executes."""
-    descriptors = ()
-    if slot is not None:
-        descriptors = slot.pass_fds()
-        if not slot.inherited:
-            command = [sys.executable, str(HERE / 'run-all.py'), '--heavy-child-fd',
-                       str(descriptors[0]), '--', *command]
+def start_child(command, env, **kwargs):
+    """Start the workload in its own session unless the caller chose otherwise."""
     check_cancelled()
     kwargs.setdefault('start_new_session', True)
-    process = subprocess.Popen(command, env=env, pass_fds=descriptors, **kwargs)
-    if slot is not None and not slot.inherited:
-        slot.handoff()
-    return process
-
-
-def heavy_child(fd, command):
-    """Give the inherited descriptor and holder record to the actual child."""
-    os.set_inheritable(fd, True)
-    marker = json.loads(os.environ[HEAVY_SLOT_HELD])
-    directory = Path(marker['lock_dir'])
-    with admission_lock(directory):
-        with os.fdopen(os.dup(fd), 'r+') as file:
-            file.seek(0)
-            holder = json.loads(file.read())
-            holder.update(pid=os.getpid(), command=' '.join(command))
-            write_holder(file, holder)
-    marker.update(pid=os.getpid(), fd=fd)
-    env = dict(os.environ, **{HEAVY_SLOT_HELD: json.dumps(marker)})
-    check_cancelled()
-    with subprocess.Popen(command, env=env, pass_fds=(fd,)) as process:
-        while True:
-            try:
-                rc = process.wait(timeout=0.1)
-                break
-            except subprocess.TimeoutExpired:
-                if CANCELLED.is_set():
-                    # The group already received the signal. Keep the supervisor
-                    # alive so it can reap a command that ignores cancellation.
-                    try:
-                        rc = process.wait(timeout=2)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                        rc = process.wait()
-                    break
-    if CANCELLED.is_set():
-        return 1
-    if rc < 0:
-        if -rc not in (signal.SIGKILL, signal.SIGSTOP):
-            signal.signal(-rc, signal.SIG_DFL)
-        os.kill(os.getpid(), -rc)
-    return rc
-
-
-def run_in_heavy_slot(command):
-    """`run-all.py --heavy-slot -- COMMAND...`: run COMMAND holding a heavy
-    slot (for campaigns, Valgrind runs and builds started outside run-all).
-    The wait is printed; the command's exit status is returned."""
-    with HeavyAdmission(' '.join(command), os.environ) as admission:
-        slot = admission.slot
-        started = time.monotonic()
-        with start_child(command, admission.env, slot=slot) as process:
-            rc = wait_child(process)
-        print(f'heavy slot {slot.slot}: slot_wait_seconds {admission.slot_wait:.1f}, memory_wait_seconds {admission.memory_wait:.1f}, ran {time.monotonic() - started:.1f}s, exit {rc}',
-              file=sys.stderr, flush=True)
-        return rc
+    return subprocess.Popen(command, env=env, **kwargs)
 
 
 def cell_config(cell, target_root, env):
@@ -438,15 +314,14 @@ def oracle_config(prefix, variant, env):
 
 
 def run_main():
-    """Select registry gates, build their artifacts, and execute admitted runner jobs.
+    """Select registry gates, build their artifacts, and execute runner jobs.
 
     List mode only prints metadata. Execution validates cell identities, uses
-    heavy admission and checkout resource locks, and prints a result table
-    with optional JSON and retained logs. Return nonzero for failed gates or
-    unallowed skips; heavy-child and heavy-slot modes return their child status.
+    checkout resource locks, and prints a result table with optional JSON and
+    retained logs. Return nonzero for failed gates or unallowed skips.
     """
     if fcntl is None:
-        raise ValueError("run-all.py needs POSIX fcntl; Windows support requires #895 Stage 2 (`just heavy`)")
+        raise ValueError("run-all.py needs POSIX fcntl")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--runners', help='comma-separated registry names (default: every gate)')
     parser.add_argument('--cases', help='comma-separated contract-diff case IDs (requires contract-diff)')
@@ -459,11 +334,10 @@ def run_main():
                              'contract-diff cases registered under it')
     parser.add_argument('--list', action='store_true', help='list gate and not-a-gate metadata; do not build')
     parser.add_argument('--jobs', type=positive, default=None,
-                        help='concurrent runner jobs (default: from available memory, at most 2)')
+                        help='concurrent runner jobs (default: the CPU count)')
     parser.add_argument('--contract-jobs', type=positive,
-                        help='maximum concurrent cases per contract-diff cell, reduced by memory admission '
-                             '(default: each concurrent cell\'s share of the CPUs, at most what fits in memory; '
-                             '1 runs the cases serially)')
+                        help='maximum concurrent cases per contract-diff cell '
+                             '(default: the CPU count; 1 runs the cases serially)')
     parser.add_argument('--timeout', type=positive, help='override the registry default for every runner')
     parser.add_argument('--runner-timeout', action='append', default=[], metavar='RUNNER=SECONDS')
     parser.add_argument('--allow-skipped', action='append', default=[], metavar='RUNNER[:CELL]',
@@ -481,17 +355,6 @@ def run_main():
     parser.add_argument('--build-timeout', type=positive, default=900)
     parser.add_argument('--json', type=Path, help='write the same result table as JSON (no raw captures)')
     parser.add_argument('--log-dir', type=Path, help='retain local build/runner logs here instead of deleting scratch')
-    if sys.argv[1:2] == ['--heavy-child-fd']:
-        return heavy_child(int(sys.argv[2]), sys.argv[4:])
-    parser.epilog = ('run-all.py --heavy-slot -- COMMAND...  runs COMMAND holding one host-wide heavy slot '
-                     '(for campaigns, Valgrind runs and builds started outside run-all) and exits with its status.')
-    if sys.argv[1:2] == ['--heavy-slot']:
-        command = sys.argv[2:]
-        if command[:1] == ['--']:
-            command = command[1:]
-        if not command:
-            parser.error('--heavy-slot needs a command after --')
-        return run_in_heavy_slot(command)
     args = parser.parse_args()
     if args.runners is not None and any(not name.strip() for name in args.runners.split(',')):
         parser.error('--runners must not contain an empty value')
@@ -609,15 +472,8 @@ def run_main():
             parser.error(f'invalid or reserved cell environment setting: {value}')
         extra_env[cell][key] = item
     base_env = os.environ.copy()
-    resources = resource_snapshot()
-    print('resources (provisional): ' + '; '.join(resources['notes']), file=sys.stderr, flush=True)
-    defaults = memory_defaults(base_env, args.jobs, cpus=resources['cpus'],
-                               available_mib=resources['available_mib'],
-                               memory_limit_mib=resources.get('memory_limit_mib'),
-                               total_mib=resources.get('total_mib'))
-    plan_defaults(defaults, phase='provisional defaults')
-    # A worker can run light work even when no heavy process fits.
-    args.jobs = max(1, defaults['--jobs'][0])
+    if args.jobs is None:
+        args.jobs = os.cpu_count() or 1
     if len(cells) > 1 and base_env.get('CARGO_TARGET_DIR'):
         parser.error('CARGO_TARGET_DIR is a single-cell override; use --target-root for multiple cells')
     targets = args.target_root.resolve()
@@ -649,7 +505,6 @@ def run_main():
             for utility in ('gen_pinyin_table', 'gen_zhuyin_table', 'k_mixture_model_to_interpolation'):
                 env['OXPINYIN_' + utility.upper()] = str(Path(cfg['CARGO_TARGET_DIR']) / 'debug' / utility)
             env.update(extra_env[cell])
-            env['OXPINYIN_USER_RT_TEST'] = str(Path(cfg['CARGO_TARGET_DIR']) / 'debug/user-dir-round-trip-test')
             substitutions = dict(root=str(ROOT), prefix=str(prefix), data=str(data), cell=cell,
                                  capi=env['OXPINYIN_CAPI_SO'], zhuyin=env['OXPINYIN_ZHUYIN_SO'])
             build_candidates = []
@@ -662,7 +517,6 @@ def run_main():
                 runner_prefix = Path(oracle['PINYIN_ORACLE_PREFIX'])
                 result = dict(runner=row['name'], cell=cell, status='SKIPPED', seconds=0.0,
                               build_seconds=0.0, lock_wait_seconds=0.0, phases=None,
-                              slot_wait_seconds=0.0, build_slot_wait_seconds=0.0, memory_wait_seconds=0.0,
                               pin_ref=oracle['EXPECTED_ORACLE_PIN_REF'].removeprefix('pin_ref='), reason='')
                 if cell not in row['cells']:
                     result['reason'] = 'unsupported cell'
@@ -699,27 +553,15 @@ def run_main():
             elif not args.no_build:
                 print(f'Building dev opt-level 1 artifacts: {cell}: {", ".join(artifacts)}',
                       file=sys.stderr, flush=True)
-                # The build is heavy work: it holds a host-wide slot while cargo runs.
-                admission = HeavyAdmission(f'cell build {cell} in {ROOT}', env)
-                try:
-                    with admission:
-                        rc, seconds, output, expired = execute(
-                            [sys.executable, '-X', 'lazy_imports=normal', '-m', 'tools.dev',
-                             'cell-artifacts', '--artifacts', ','.join(artifacts)],
-                            admission.env, ROOT, args.build_timeout, scratch / f'build-{cell}.log', slot=admission.slot)
-                except ResourceBlocked as exc:
-                    rc, seconds, output, expired = 1, 0.0, str(exc), False
+                rc, seconds, output, expired = execute(
+                    [sys.executable, '-X', 'lazy_imports=normal', '-m', 'tools.dev',
+                     'cell-artifacts', '--artifacts', ','.join(artifacts)],
+                    env, ROOT, args.build_timeout, scratch / f'build-{cell}.log')
                 build_seconds[cell] = round(seconds, 3)
-                for _, result, _ in build_candidates:
-                    admission.record(result)
-                    result['build_slot_wait_seconds'] = result['slot_wait_seconds']
-                    result['slot_wait_seconds'] = 0.0
                 if rc or expired:
                     for _, result, _ in build_candidates:
-                        # An admission refusal is already a whole reason; only a build failure takes the prefix.
                         result.update(status='FAIL', seconds=round(seconds, 3), build_seconds=build_seconds[cell],
-                                      reason=output if output.startswith(('resource-blocked:', 'slot-wait-expired:')) else
-                                      'cell build: ' + reason_for(rc, output, args.build_timeout, expired))
+                                      reason='cell build: ' + reason_for(rc, output, args.build_timeout, expired))
                         results.append(result)
                     continue
             # Execute only what this worktree staged into this cell's target.
@@ -736,10 +578,7 @@ def run_main():
                           f"{identity.get('built_utc', '?')}; this worktree is at {head[:12]}", file=sys.stderr, flush=True)
             jobs.extend(cell_jobs)
 
-        # Contract-diff runs that can be live together share the CPUs; with no
-        # OXPINYIN_CONTRACT_JOBS, admission gives each its share as the case
-        # maximum (#1240). --contract-jobs 1 keeps a run serial.
-        contract_rows = min(args.jobs, sum(row['name'] == 'contract-diff' for row, *_ in jobs))
+        # --contract-jobs 1 keeps a contract-diff run serial.
         prepared = []
         for row, result, base, substitutions in jobs:
             timeout = timeouts.get(row['name'], args.timeout or row['timeout'])
@@ -765,39 +604,32 @@ def run_main():
                               else 'SKIPPED', reason='missing required input: ' + ', '.join(missing))
                 results.append(result)
                 continue
-            admission = HeavyAdmission(f"{row['name']} / {result['cell']} in {ROOT}", env, runner=True,
-                                       contract_rows=contract_rows if row['name'] == 'contract-diff' else 0
-                                       ) if is_heavy(row) else None
             prepared.append(dict(row=row, result=result, env=env, command=command,
-                                 timeout=timeout, work=work, admission=admission))
+                                 timeout=timeout, work=work))
 
         def run(job):
-            """Run one admitted job under its sorted checkout resource locks.
+            """Run one job under its sorted checkout resource locks.
 
             Update and return its result with timing, status, and failure reason.
             Treat required SKIP output on an otherwise successful exit as skipped.
             """
             row, result = job['row'], job['result']
-            admission = job['admission']
-            env = admission.env if admission else job['env']
+            env = job['env']
             timeout = job['timeout']
             with contextlib.ExitStack() as stack:
-                # Admission holds the slot before these sorted checkout locks.
-                # Light holders never wait for a slot. Heavy holders have one.
-                # These waits cannot form a cycle.
+                # Sorted acquisition keeps these waits from forming a cycle.
                 waiting = time.monotonic()
                 for resource in sorted(row['exclusive_resources']):
                     lock = stack.enter_context((lock_root / resource).open('a'))
                     while True:
                         check_cancelled()
                         try:
-                            lock_file(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
                             break
                         except BlockingIOError:
                             time.sleep(0.05)
                 lock_wait = time.monotonic() - waiting
-                rc, seconds, output, expired = execute(job['command'], env, ROOT, timeout, job['work'] / 'runner.log',
-                                                        slot=admission.slot if admission else None)
+                rc, seconds, output, expired = execute(job['command'], env, ROOT, timeout, job['work'] / 'runner.log')
             # Legacy CI behavior is preserved in the direct live-typing runner;
             # aggregate skips cannot silently turn into passes.
             required_skips = [line for line in output.splitlines() if 'SKIP:' in line and
@@ -813,7 +645,8 @@ def run_main():
                   file=sys.stderr, flush=True)
             return result
 
-        results.extend(run_admitted(prepared, args.jobs, run))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as executor:
+            results.extend(executor.map(run, prepared))
     order = {row['name']: index for index, row in enumerate(rows)}
     results.sort(key=lambda row: (order[row['runner']], cells.index(row['cell'])))
     print(' | '.join(COLUMNS))

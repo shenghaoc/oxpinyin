@@ -408,7 +408,7 @@ OWNERSHIP_CEILING = 60
 
 
 @unittest.skipUnless(sys.platform == 'linux' and Path('/proc/self/stat').is_file(),
-                     'Linux /proc process-liveness and flock handoff facilities')
+                     'Linux /proc process-liveness facilities')
 class LinuxOwnershipTests(unittest.TestCase):
     def live(self, pid):
         try:
@@ -476,8 +476,7 @@ from tools.dev.drivers import DriverServices
 from tools.dev.runners import Context
 with slot.cancellation_handlers(), ExitStack() as stack:
     settings = Settings.read(os.environ)
-    context = pool.UnitContext('fixture', slot.CANCELLED, environment=dict(settings.environment), fds=slot.inherited_fds())
-    assert context.fds, 'the runner lost the inherited slot descriptor'
+    context = pool.UnitContext('fixture', slot.CANCELLED, environment=dict(settings.environment))
     services = DriverServices(settings, context)
     work = Context(settings, services, stack, Path.cwd(), 'fixture').scratch()
     Path(sys.argv[1] + '.part').write_text(json.dumps(dict(pid=os.getpid(), work=str(work))))
@@ -498,14 +497,12 @@ raise SystemExit(result)
         with tempfile.TemporaryDirectory() as scratch:
             directory = Path(scratch)
             record, children = directory / 'record', directory / 'children'
-            env = dict(os.environ, OXPINYIN_LOCK_DIR=str(directory / 'locks'), OXPINYIN_HEAVY_SLOTS='1',
-                       OXPINYIN_RESOURCE_WAIT_SECONDS='2')
-            env.pop('OXPINYIN_HEAVY_SLOT_HELD', None)
+            env = dict(os.environ)
             process = subprocess.Popen([sys.executable, '-X', 'lazy_imports=normal', '-c', outer, str(record), str(children)],
                                        cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             pids, failure = [], None
             try:
-                self.until(children.exists, 'the admitted driver did not start', process)
+                self.until(children.exists, 'the driver did not start', process)
                 pids = json.loads(children.read_text())
                 owner = json.loads(record.read_text())
                 os.kill(owner['pid'], terminate)
@@ -514,21 +511,8 @@ raise SystemExit(result)
                 except subprocess.TimeoutExpired:
                     self.fail(f'the signalled wrapper did not exit within {OWNERSHIP_CEILING}s')
                 self.assertEqual(process.returncode, 128 + terminate)
-                if terminate == signal.SIGTERM:
-                    self.assertFalse(Path(owner['work']).exists(), 'cancelled runner kept its private scratch')
-                    self.assertFalse(any(self.live(pid) for pid in pids), 'cancelled runner kept a live descendant')
-                else:
-                    self.assertTrue(self.live(pids[0]))
-                    contender = ("import io; from tools.dev import slot; holder=slot.HeavySlot('contender',out=io.StringIO()); "
-                                 "acquired=holder.try_acquire(); print('acquired' if acquired else 'blocked'); holder.__exit__()")
-                    result = subprocess.run([sys.executable, '-c', contender], cwd=ROOT, env=env, capture_output=True, text=True)
-                    self.assertEqual(result.returncode, 0, result.stderr)
-                    self.assertEqual(result.stdout, 'blocked\n', 'a killed wrapper released its live driver’s slot')
-                    os.killpg(pids[0], signal.SIGKILL)
-                    self.until(lambda: not self.live(pids[0]), 'the killed driver did not end')
-                    result = subprocess.run([sys.executable, '-c', contender], cwd=ROOT, env=env, capture_output=True, text=True)
-                    self.assertEqual(result.returncode, 0, result.stderr)
-                    self.assertEqual(result.stdout, 'acquired\n', 'the ended driver leaked its slot descriptor')
+                self.assertFalse(Path(owner['work']).exists(), 'cancelled runner kept its private scratch')
+                self.assertFalse(any(self.live(pid) for pid in pids), 'cancelled runner kept a live descendant')
             except BaseException as error:
                 failure = error
                 raise
@@ -539,9 +523,6 @@ raise SystemExit(result)
 
     def test_sigterm_reaps_descendants_and_removes_scratch(self):
         self.exercise(signal.SIGTERM)
-
-    def test_sigkill_keeps_the_slot_until_the_driver_ends(self):
-        self.exercise(signal.SIGKILL)
 
 
 def observe_group_live(group, timeout=1):
@@ -571,8 +552,7 @@ def run(driver, so, args, *, side, **options):
     if side == 'pin' and fixture['signal_before_build']:
         os.kill(os.getpid(), signal.SIGTERM)
     return subprocess.CompletedProcess([str(driver)], 0, b'row\\n', b'')
-with mock.patch.object(host, 'resource_snapshot', return_value=fixture['resources']), \\
-        mock.patch.object(runners.Context, 'compile', return_value=Path(fixture['driver'])), \\
+with mock.patch.object(runners.Context, 'compile', return_value=Path(fixture['driver'])), \\
         mock.patch.object(runners.Context, 'run', side_effect=run), \\
         mock.patch.object(Settings, 'artifact', return_value=Path(fixture['capi'])):
     seen = dict(status=runners.main(['residue-a-tail-diff']))
@@ -619,21 +599,18 @@ class ResidueProbeFixture(unittest.TestCase):
         (prefix / 'lib/libpinyin/data/bigram.db').write_bytes(b'')
         (prefix / 'oracle-patches.sha256').write_text('pin-bigram-export-strjoinv.patch\n')
         self.env = {name: value for name, value in os.environ.items()
-                    if name not in ('OXPINYIN_HEAVY_SLOT_HELD', 'OXPINYIN_CAPI_SO', 'OXPINYIN_ZHUYIN_SO',
+                    if name not in ('OXPINYIN_CAPI_SO', 'OXPINYIN_ZHUYIN_SO',
                                     'RESIDUE_A_CAPI_SO', 'OXPINYIN_NBEST_TAIL_PROBE', 'RESIDUE_A_DUMP_PREFIX',
                                     'CARGO_BUILD_JOBS', 'RUST_TEST_THREADS', 'UV_PYTHON', 'PYTHONHOME', 'PYTHONPATH')}
         self.env.update(PATH=str(root / 'bin') + os.pathsep + os.environ['PATH'],
-                        OXPINYIN_LOCK_DIR=str(root / 'locks'), OXPINYIN_HEAVY_SLOTS='1',
-                        OXPINYIN_RESOURCE_WAIT_SECONDS='5', CARGO_TARGET_DIR=str(root / 'target'),
+                        CARGO_TARGET_DIR=str(root / 'target'),
                         PINYIN_ORACLE_DBM='bdb', PINYIN_ORACLE_PREFIX=str(prefix), RESIDUE_A_PROBE='1',
                         RESIDUE_A_SAME_DIR='1', RESIDUE_A_OUT=str(root / 'out'), FAKE_CARGO_STATE=str(self.state))
         digest = patch_digest(ROOT / 'tools/bisection/patches/bigram-export-strjoinv')
         (prefix / 'oracle-pin.txt').write_text(f'{Settings.read(self.env).expected_pin}+patches-{digest}\n'
                                                f'patches_manifest_sha256={digest}\n')
         self.fixture = dict(driver=str(root / 'driver'), capi=str(root / 'libpinyin_capi.so'),
-                            result=str(root / 'result.json'),
-                            resources=dict(available_mib=12000, total_mib=16384, cpus=4, cargo_cpus=4,
-                                           memory_limit_mib=None, notes=['synthetic resources']))
+                            result=str(root / 'result.json'))
 
     def kill_leftovers(self):
         pids = self.state / 'pids'
@@ -711,7 +688,7 @@ class ProbeServices(FixtureServices):
 
 
 class ResidueProbeWindowsTests(ResidueProbeFixture):
-    def test_windows_probe_build_takes_the_job_object_path_without_pass_fds(self):
+    def test_windows_probe_build_takes_the_job_object_path(self):
         settings = Settings.read(self.env)
         with ExitStack() as stack, test_support.windows_launch() as (launch, jobs, ntdll), \
                 mock.patch.object(Settings, 'artifact', return_value=Path(self.fixture['capi'])):

@@ -6,7 +6,7 @@
 # CELL is bdb, kc or tkrzw. The options are those of `contract-diff.py capture`
 # (--cases, --issue, --family, --cases-prefix, --runs, --case-timeout, --out). References
 # are written to fixtures/contract-refs unless --out names another directory under the
-# checkout. The pin is the published oracle image (`just compat image-tag`), pulled when
+# checkout. The pin is the published oracle image (`python -m tools.oracle.image image-tag`), pulled when
 # absent; build it locally with build-contract-image.sh when unpublished.
 # An investigative live comparison is a capture into a temporary --out, then
 # `just runner contract-diff verify CELL ... --references <that directory>`.
@@ -42,7 +42,8 @@ case $(uname -m) in
     *) echo "FAIL: contract capture supports only native x86_64 and aarch64" >&2; exit 2 ;;
 esac
 py() { uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev "$@"; }
-tag=$(py compat image-tag | tail -n 1)
+py_oracle() { uv run --no-project --managed-python python -X lazy_imports=normal -m tools.oracle.image "$@"; }
+tag=$(py_oracle image-tag | tail -n 1)
 reference=ghcr.io/shenghaoc/oxpinyin-oracle:$tag$suffix
 recipe=$(sha256sum tools/oracle/Dockerfile.capture tools/oracle/versions.py tools/oracle/version-manifest.json .python-version | sha256sum | cut -c1-12)
 capture=oxpinyin-capture:$tag$suffix-$recipe

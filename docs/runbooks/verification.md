@@ -65,7 +65,6 @@ Do not build release libraries locally for sizes.
 [`just packaging sizes run`](../packaging.md#shipping-library-sizes) reproduces the table; use it to debug a failure of the job.
 All commands stay documented and runnable without CI.
 Run them locally to reproduce a CI failure.
-Apply the heavy-work admission procedure in rule 8 to commands that compile.
 
 ## 6. Shared tooling
 
@@ -131,40 +130,25 @@ A fix is ready for review when the local checks that CI does not cover pass.
 A PR is not ready to merge until CI passes on its head.
 A `wip/` checkpoint push does not require a completion gate.
 
-## 8. Builds and resource admission
+## 8. Builds
 
 Build differentials in debug, never release.
 Keep and reuse one target directory per cell.
 Do not delete target directories between issues.
 Clean once when the work is finished.
 
-On Linux and macOS, heavy work uses the host-wide slot and memory admission check (maintainer ruling 2026-10-19 UTC).
-The native slot is not validated on Windows.
-Run direct cargo build, test and clippy commands through `just heavy`.
-Cell builds and runners marked `"heavy": true` in `tools/bisection/runners.json` use the slot too.
+Maintainer ruling 2026-11-06 UTC: no memory admission; it withdraws the 2026-10-19 UTC ruling.
+Run cargo build, test and clippy directly.
+Anyone who wants to limit builds sets `CARGO_BUILD_JOBS` in their own Cargo configuration.
 
-Heavy work includes:
+`CARGO_BUILD_JOBS` bounds only Cargo's own jobs.
+`run-all.py` runs `os.cpu_count()` runner jobs by default, and each contract runner (`contract-diff.py`) runs `os.cpu_count()` case workers by default.
+A `run-all.py` run that includes `contract-diff` therefore nests one pool inside another and oversubscribes the host.
+Bound the runner jobs with `run-all.py --jobs N`.
+Bound the case workers with `run-all.py --contract-jobs N`, `contract-diff.py --jobs N` or `OXPINYIN_CONTRACT_JOBS=N`.
+`--contract-jobs 1` runs the cases serially.
 
-- The bisect, contract-diff, open-counter-diff and transformed-options-sweep runners, at every selection size.
-- Direct `cargo build`, `cargo test` and `cargo clippy` commands, because they compile.
-- Full or family-wide differentials.
-- Mutation runs, Valgrind and Massif.
-- Release and LTO builds.
-
-`run-all.py` applies both admission checks to cell builds and heavy runners.
-Start other heavy work with `just heavy -- <command>`.
-
-Light work includes:
-
-- `cargo fmt`, plans, listings and harness tests.
-- `contract-diff.py verify --cases` against built artifacts.
-- Registry runners that are not marked heavy.
-
-Run light work without resource admission.
-Runner scripts that require Cargo builds start those builds through `just heavy --`.
-Leave `CARGO_BUILD_JOBS`, `RUST_TEST_THREADS` and `--jobs` unset unless a measurement requires fixed values.
 Cancellation, expiry and an OOM-killed child never count as PASS or SKIP.
-See [heavy-work admission](setup.md#heavy-work-admission) for mechanics, settings, estimates, waits and refusal reasons.
 
 ## 9. Sound tkrzw library
 
@@ -183,7 +167,7 @@ If none is available, report "tkrzw: not run (no sound libtkrzw on this host)" a
 
 ## Procedure-specific rules
 
-- Run independent campaign subprocesses and builds in bounded pools under heavy admission.
+- Run independent campaign subprocesses and builds in bounded pools.
   See [independent campaign work](../plans/tooling-python.md#independent-campaign-work-1232) for isolation exceptions and the audit.
 - Use `.python-version` as the sole managed Python version declaration.
   Provision Python with `just python`.

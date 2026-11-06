@@ -3,9 +3,7 @@
 from pathlib import Path
 import contextlib
 import io
-import json
 import os
-import signal
 import subprocess
 import sys
 import tempfile
@@ -17,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tools.dev import host, slot, test_runner, test_support
+from tools.dev import test_runner
 
 
 class HarnessTests(unittest.TestCase):
@@ -229,17 +227,6 @@ if __name__ == '__main__': unittest.main()
         self.assertEqual(test_runner.changed_harness_files(['tools/other.test.py'],
                                                          ['tools/dev/test_runner.py']),
                          ['tools/other.test.py'])
-
-    def test_guest_changes_select_interrupted_target_test(self):
-        selected = test_runner.changed_harness_files(test_runner.harness_files(), ['tools/dev/compat/guest.py'])
-        self.assertIn('tools/dev/compat/guest.test.py', selected)
-
-    def test_storage_and_preparation_changes_select_their_tests(self):
-        files = test_runner.harness_files()
-        for source, test in (('tools/dev/compat/storage.py', 'tools/dev/compat/storage.test.py'),
-                             ('tools/dev/compat/prepared.py', 'tools/dev/compat/prepared.test.py')):
-            with self.subTest(source=source):
-                self.assertIn(test, test_runner.changed_harness_files(files, [source]))
 
     def test_shared_files_including_justfile_select_every_harness(self):
         files = test_runner.harness_files()
@@ -454,195 +441,6 @@ print('END ' + name, file=sys.stderr, flush=True)
             'tools harness: credential-shaped environment variables removed: 1',
             'tools harness: tools/probe.test.py',
             'None kept'])
-
-
-class MappingTests(unittest.TestCase):
-    def test_include_ignored_maps_to_all(self):
-        self.assertEqual(test_runner._nextest_args(['--include-ignored', '-p', 'x']),
-                         ['--run-ignored=all', '-p', 'x'])
-
-    def test_ignored_maps_to_only(self):
-        self.assertEqual(test_runner._nextest_args(['--ignored']), ['--run-ignored=only'])
-
-    def test_separator_is_removed_once(self):
-        self.assertEqual(test_runner._strip_separator(['--', '--workspace']), ['--workspace'])
-        self.assertEqual(test_runner._strip_separator(['--workspace']), ['--workspace'])
-
-    def test_unknown_profile_is_rejected(self):
-        with mock.patch.dict(os.environ, {'PATH': os.environ['PATH']}, clear=True), \
-                mock.patch.object(slot.subprocess, 'Popen') as launch, \
-                contextlib.redirect_stderr(io.StringIO()):
-            self.assertEqual(test_runner.run([], profile='other'), 2)
-        test_support.assert_not_called(self, launch)
-
-
-class AdmissionTests(unittest.TestCase):
-    def setUp(self):
-        scratch = tempfile.TemporaryDirectory()
-        self.addCleanup(scratch.cleanup)
-        self.environ = {'PATH': os.environ['PATH'], 'OXPINYIN_LOCK_DIR': scratch.name,
-                        'OXPINYIN_RESOURCE_WAIT_SECONDS': '0'}
-        self.resources = dict(available_mib=host.HEADROOM_MIB + 700,
-                              cpus=16, cargo_cpus=16, notes=['synthetic resources'])
-
-    def run_nextest(self, args=(), env=None, resources=None):
-        child = mock.MagicMock()
-        child.__enter__.return_value = child
-        child.wait.return_value = 0
-        child.poll.return_value = 0
-        out = io.StringIO()
-        snapshots = ({'side_effect': resources} if isinstance(resources, list)
-                     else {'return_value': resources or self.resources})
-        with mock.patch.dict(os.environ, dict(self.environ, **(env or {})), clear=True), \
-                mock.patch.object(host, 'resource_snapshot', **snapshots), \
-                mock.patch.object(slot.subprocess, 'Popen', return_value=child) as launch, \
-                contextlib.redirect_stderr(out):
-            status = test_runner.run(list(args))
-        return status, launch, out.getvalue()
-
-    def test_admitted_count_below_cpus_reaches_nextest(self):
-        status, launch, output = self.run_nextest()
-        self.assertEqual(status, 0, output)
-        self.assertEqual(launch.call_args.kwargs['env']['NEXTEST_TEST_THREADS'], '10')
-        self.assertLess(10, self.resources['cpus'])
-        self.assertIn('nextest test threads: 10 (admitted)', output)
-        self.assertEqual(launch.call_args.args[0][:5],
-                         ['cargo', 'nextest', 'run', '--no-fail-fast', '--profile'])
-
-    def test_final_resource_read_controls_the_reported_child_count(self):
-        provisional = dict(self.resources, available_mib=host.HEADROOM_MIB + 2000)
-        status, launch, output = self.run_nextest(resources=[provisional, dict(self.resources)])
-        self.assertEqual(status, 0, output)
-        self.assertEqual(launch.call_args.kwargs['env']['NEXTEST_TEST_THREADS'], '10')
-        self.assertIn('provisional defaults: NEXTEST_TEST_THREADS=16', output)
-        self.assertIn('nextest test threads: 10 (admitted)', output)
-
-    def test_environment_override_is_used_in_admission(self):
-        status, launch, output = self.run_nextest(env={'NEXTEST_TEST_THREADS': '3'})
-        self.assertEqual(status, 0, output)
-        self.assertEqual(launch.call_args.kwargs['env']['NEXTEST_TEST_THREADS'], '3')
-        self.assertEqual(launch.call_args.kwargs['env']['RUST_TEST_THREADS'], '3')
-        self.assertIn('3 (user-set (NEXTEST_TEST_THREADS))', output)
-
-    def test_cli_aliases_override_the_environment(self):
-        for args in (['--test-threads', '2'], ['--test-threads=2'],
-                     ['--jobs', '2'], ['--jobs=2'], ['-j', '2'], ['-j2'], ['-j=2']):
-            with self.subTest(args=args):
-                status, launch, output = self.run_nextest(args, {'NEXTEST_TEST_THREADS': 'invalid'})
-                self.assertEqual(status, 0, output)
-                self.assertEqual(launch.call_args.kwargs['env']['NEXTEST_TEST_THREADS'], '2')
-                self.assertEqual(launch.call_args.args[0][-len(args):], args)
-                self.assertIn('2 (user-set (nextest CLI))', output)
-
-    def test_override_that_does_not_fit_never_starts_nextest(self):
-        for args, env in ((['--test-threads=20'], {}), ([], {'NEXTEST_TEST_THREADS': '20'})):
-            with self.subTest(args=args, env=env):
-                status, launch, output = self.run_nextest(args, env)
-                self.assertEqual(status, 2)
-                test_support.assert_not_called(self, launch)
-                self.assertIn('resource-blocked: 1280 MiB needed, 700 MiB available', output)
-
-    def test_ci_profile_keeps_four_in_the_estimate_and_child(self):
-        resources = dict(self.resources, available_mib=host.HEADROOM_MIB + 601)
-        for args, env in (([], {'NEXTEST_PROFILE': 'ci'}), (['--profile=ci'], {}),
-                          (['-P', 'ci'], {}), (['-Pci'], {})):
-            with self.subTest(args=args, env=env):
-                status, launch, output = self.run_nextest(args, env, resources)
-                self.assertEqual(status, 0, output)
-                self.assertEqual(launch.call_args.kwargs['env']['NEXTEST_TEST_THREADS'], '4')
-                self.assertEqual(launch.call_args.kwargs['env']['RUST_TEST_THREADS'], '4')
-                self.assertIn('4 (profile (ci))', output)
-
-    def test_cli_profile_overrides_profile_environment(self):
-        status, launch, output = self.run_nextest(['--profile=local'], {'NEXTEST_PROFILE': 'ci'})
-        self.assertEqual(status, 0, output)
-        self.assertEqual(launch.call_args.kwargs['env']['NEXTEST_TEST_THREADS'], '10')
-        self.assertIn('nextest profile: local', output)
-
-    def test_internal_argument_boundary_is_preserved(self):
-        args = ['-p', 'crate', '--', 'name with spaces', '--test-threads=99', '--ignored']
-        status, launch, output = self.run_nextest(args)
-        self.assertEqual(status, 0, output)
-        self.assertEqual(launch.call_args.args[0][-len(args):], args)
-        self.assertEqual(launch.call_args.kwargs['env']['NEXTEST_TEST_THREADS'], '10')
-
-    def test_uncertain_or_invalid_override_syntax_fails_clearly(self):
-        for args in (['--test-threads=0'], ['--test-threads=-2'], ['--test-threads=num-cpus'],
-                     ['--test-threads'], ['--test-threads='], ['-vj2'],
-                     ['--test-threads=2', '-j3'], ['--tool-config-file=tool:/tmp/other.toml']):
-            with self.subTest(args=args):
-                status, launch, output = self.run_nextest(args)
-                self.assertEqual(status, 2, output)
-                test_support.assert_not_called(self, launch)
-                self.assertIn('FAIL:', output)
-
-    def test_no_capture_uses_nextest_serial_semantics(self):
-        status, launch, output = self.run_nextest(['--test-threads=5', '--no-capture'])
-        self.assertEqual(status, 0, output)
-        self.assertEqual(launch.call_args.kwargs['env']['NEXTEST_TEST_THREADS'], '1')
-        self.assertIn('1 (user-set (no-capture))', output)
-
-    def test_explicit_build_jobs_are_also_budgeted(self):
-        status, launch, output = self.run_nextest(['--build-jobs=2'])
-        self.assertEqual(status, 2)
-        test_support.assert_not_called(self, launch)
-        self.assertIn('1200 MiB needed, 700 MiB available', output)
-
-    def test_rust_test_threads_caller_value_is_preserved(self):
-        status, launch, output = self.run_nextest(['--test-threads=2'], {'RUST_TEST_THREADS': '3'})
-        self.assertEqual(status, 0, output)
-        self.assertEqual(launch.call_args.kwargs['env']['RUST_TEST_THREADS'], '3')
-        self.assertEqual(launch.call_args.kwargs['env']['NEXTEST_TEST_THREADS'], '2')
-
-    def run_doctests(self, args=(), status=0, resources=None):
-        child = mock.MagicMock()
-        child.__enter__.return_value = child
-        child.wait.return_value = status
-        out = io.StringIO()
-        with mock.patch.dict(os.environ, self.environ, clear=True), \
-                mock.patch.object(host, 'resource_snapshot', return_value=resources or self.resources), \
-                mock.patch.object(slot.subprocess, 'Popen', return_value=child) as launch, \
-                contextlib.redirect_stderr(out):
-            result = test_runner.run_doc(list(args))
-        return result, launch, out.getvalue()
-
-    def test_doctests_run_cargo_through_run_command(self):
-        # No just: run_command admits here and supervises cargo in its own session.
-        args = ['-p', 'oxpinyin-core', '--', 'name with spaces']
-        for status, expected in ((0, 0), (101, 101), (-15, 143)):
-            with self.subTest(status=status):
-                result, launch, output = self.run_doctests(['--', *args], status)
-                self.assertEqual(result, expected, output)
-                self.assertEqual(launch.call_count, 1)
-                self.assertEqual(launch.call_args.args[0], ['cargo', 'test', '--doc', *args])
-                options = launch.call_args.kwargs
-                marker = json.loads(options['env'][slot.HEAVY_SLOT_HELD])
-                self.assertEqual(marker['pid'], os.getpid())
-                self.assertEqual(options['pass_fds'], (marker['fd'],))
-                self.assertTrue(options['start_new_session'])
-                self.assertEqual((options['cwd'], options['stdout']), (None, None))
-                self.assertIn('resources (admitted)', output)
-
-    def test_windows_doctests_take_the_job_object_path_without_pass_fds(self):
-        with mock.patch.dict(os.environ, self.environ, clear=True), \
-                test_support.windows_launch(status=3) as (launch, jobs, ntdll), \
-                contextlib.redirect_stderr(io.StringIO()):
-            self.assertEqual(test_runner.run_doc(['-p', 'oxpinyin-core']), 3)
-        test_support.assert_windows_launches(self, launch, jobs, ntdll)
-        self.assertEqual(launch.call_args.args[0], ['cargo', 'test', '--doc', '-p', 'oxpinyin-core'])
-
-    def test_a_cancelled_doctest_run_exits_with_128_plus_the_signal(self):
-        with mock.patch.object(slot, 'run_command', side_effect=slot.Cancelled('cancelled')), \
-                mock.patch.object(slot, 'CANCELLED_SIGNAL', signal.SIGTERM), \
-                contextlib.redirect_stderr(io.StringIO()):
-            self.assertEqual(test_runner.run_doc([]), 128 + signal.SIGTERM)
-
-    def test_doctests_never_start_without_admission(self):
-        resources = dict(self.resources, available_mib=host.HEADROOM_MIB + 100)
-        result, launch, output = self.run_doctests(resources=resources)
-        self.assertEqual(result, 2)
-        test_support.assert_not_called(self, launch)
-        self.assertIn('FAIL: resource-blocked', output)
 
 
 if __name__ == '__main__':

@@ -287,13 +287,10 @@ class SteadyComparisonTests(unittest.TestCase):
                     self.assertEqual(list(user.iterdir()), [user / 'user.bin'])
                     self.assertEqual((user / 'user.bin').read_bytes(), b'untouched')
 
-    def test_recipe_holds_admission_for_the_whole_comparison(self):
-        admitted = mock.Mock(env={'admitted': 'yes'})
-        with mock.patch.object(campaigns.slot, 'HeavyAdmission', return_value=contextlib.nullcontext(admitted)) as heavy:
-            with mock.patch.object(campaigns, 'steady_comparison_inner', return_value=0) as inner:
-                self.assertEqual(campaigns.steady_comparison(['--cell', 'bdb'], {'source': 'yes'}), 0)
-        heavy.assert_called_once_with('steady comparison', {'source': 'yes'}, runner=True)
-        inner.assert_called_once_with(['--cell', 'bdb'], {'admitted': 'yes'})
+    def test_recipe_runs_the_comparison_with_the_callers_environment(self):
+        with mock.patch.object(campaigns, 'steady_comparison_inner', return_value=0) as inner:
+            self.assertEqual(campaigns.steady_comparison(['--cell', 'bdb'], {'source': 'yes'}), 0)
+        inner.assert_called_once_with(['--cell', 'bdb'], {'source': 'yes'})
 
 
 class CountTests(World):
@@ -649,7 +646,7 @@ class ControlTests(World):
     def test_shipped_check_builds_two_artifacts_then_samples_l_z_s_for_each_size(self):
         status, out, err = self.execute(campaigns.shipped_check, [], self.env)
         self.assertEqual(status, 0, err)
-        self.assertEqual(self.kinds('builds'), [('builds', 'shipped-check builds', ['Z', 'S'])])
+        self.assertEqual(self.kinds('builds'), [('builds', ['Z', 'S'])])
         features = [command[command.index('--features') + 1] for command in self.builds]
         self.assertEqual(features, ['tkrzw', 'tkrzw,shipped'])
         order = [(w[1], w[4]) for w in self.workers_of()]
@@ -687,7 +684,7 @@ class ControlTests(World):
                               "The control cannot proceed: X must reproduce the record's build before\n"
                               "any ratio is read. Stop and report.\n")
         self.assertEqual(self.workers_of(), [])
-        self.assertEqual(self.kinds('builds')[0][2], ['X', 'Y', 'Z', 'S'])
+        self.assertEqual(self.kinds('builds')[0][1], ['X', 'Y', 'Z', 'S'])
         self.assertTrue((self.out / 'environment.txt').read_text().startswith('=== environment ===\ncaptured_utc: 2026-10-27T00:00:00Z\ncontroller_commit: unset\n'))
         self.assertIn('S: ' + 'f' * 64, (self.out / 'build-identity.txt').read_text())
 

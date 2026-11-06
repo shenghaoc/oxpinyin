@@ -18,10 +18,10 @@ import tempfile
 import time
 
 from . import doctor, model, slot
-from .compat import images, runtime as runtime_adapter
-from .compat.identity import digest_file
-from .compat.process import ROOT, capture, fail, run, text
+from .process import ROOT, capture, fail, run, text
 from .runners import Finished
+from tools.oracle import image as images
+from tools.oracle.image import digest_file
 from tools.tkrzw import runtime
 from tools.tkrzw.build import TKRZW_REV
 
@@ -170,8 +170,7 @@ class Provision:
             self.jobs = text(['nproc'], env=self.env, check=False, stderr=False) or '2'
         except OSError:
             self.jobs = '2'
-        self.pull, self.inside, self.python_only = True, False, False
-        self.libraries_only = self.skip_backend_tools = self.without_reference = False
+        self.pull, self.python_only = True, False
         self.platform = ''
         self.started = time.monotonic() - int(self.env.get('OXPINYIN_CLOUD_BOOTSTRAP_SECONDS', '0'))
         self.tkrzw_local = False
@@ -224,22 +223,13 @@ class Provision:
                     self.cells = re.findall(r'[^ \t]+', value.partition('\n')[0])
                 else:
                     self.jobs = value
-            elif option in ('--in-container', '--no-pull', '--libraries-only', '--skip-backend-tools', '--without-reference'):
+            elif option == '--no-pull':
                 oracle_options = True
-                if option == '--in-container':
-                    self.inside = True
-                elif option == '--no-pull':
-                    self.pull = False
-                elif option == '--libraries-only':
-                    self.libraries_only = True
-                elif option == '--skip-backend-tools':
-                    self.skip_backend_tools = True
-                else:
-                    self.without_reference = True
+                self.pull = False
             else:
                 fail(f'unknown option: {option}', 2)
         if self.python_only and oracle_options:
-            fail('--python-only cannot be combined with --cells, --cache-dir, --jobs, --no-pull or --in-container', 2)
+            fail('--python-only cannot be combined with --cells, --cache-dir, --jobs or --no-pull', 2)
         if text(['uname', '-s'], env=self.env) != 'Linux':
             fail('Oracle provisioning requires Linux; run subject, reference and harness together in a Linux environment. See docs/runbooks/setup.md.', 2)
         arch = text(['uname', '-m'], env=self.env)
@@ -248,12 +238,6 @@ class Provision:
             fail(f'No frozen oracle hashes for architecture {arch}; supported platforms are linux/amd64 and linux/arm64. See docs/runbooks/setup.md.', 2)
         if not self.field('libpinyin_sha256_bdb'):
             fail(f'No frozen oracle hashes for {self.platform} in {self.pin}. See docs/runbooks/setup.md.', 2)
-        if (self.libraries_only or self.skip_backend_tools or self.without_reference) and not self.inside:
-            fail('selective provisioning is available only in the controlled container', 2)
-        if self.without_reference and not self.libraries_only:
-            fail('--without-reference requires --libraries-only', 2)
-        if self.inside and (self.env.get('OXPINYIN_COMPAT_CONTAINER') != '1' or not Path('/opt/reference').is_dir()):
-            fail('--in-container requires the controlled compatibility image; no host provisioning attempted', 2)
         if not self.cells:
             fail('at least one cell is required', 2)
         for cell in self.cells:
@@ -289,8 +273,6 @@ class Provision:
             for name in ('rustc', 'cargo', 'rustfmt', 'clippy-driver'):
                 if run(['rustup', 'run', channel, name, '--version'], env=self.env, stdout=null, stderr=null, check=False):
                     self.die(f'Rust toolchain {channel} is not installed; run: rustup toolchain install {channel} --component clippy --component rustfmt')
-        if self.inside:
-            return
         tool = next(tool for tool in doctor.TOOLS if tool.name == 'valgrind')
         def found():
             return text(['valgrind', '--version'], env=self.env, check=False, stderr=False) if self.which('valgrind') else ''
@@ -441,7 +423,7 @@ class Provision:
             lines.append(kept_paths)
         for cell in env_cells:
             lines += [f'export OXPINYIN_ORACLE_PREFIX_{cell.upper()}=' + quote(prefixes[cell]),
-                      f'export OXPINYIN_ORACLE_DATA_{cell.upper()}=' + quote('' if self.libraries_only and cell in self.cells else prefixes[cell] + '/lib/libpinyin/data')]
+                      f'export OXPINYIN_ORACLE_DATA_{cell.upper()}=' + quote(prefixes[cell] + '/lib/libpinyin/data')]
         lines += ['export PINYIN_ORACLE_DBM=${PINYIN_ORACLE_DBM:-' + default + '}', SELECT.rstrip('\n')]
         staging = Path(str(path) + '.new')
         try:
@@ -468,7 +450,7 @@ class Provision:
         elif present(self.ca):
             self.custom_ca = True
             self.log(f'proxy CA: {self.ca} (session bundle)')
-        elif self.proxy and not self.inside:
+        elif self.proxy:
             candidates = [('SSL_CERT_FILE', self.env.get('SSL_CERT_FILE', '')), ('CURL_CA_BUNDLE', self.env.get('CURL_CA_BUNDLE', ''))]
             candidates += [('system bundle', p) for p in self.env.get('OXPINYIN_SYSTEM_CA_BUNDLES', '/etc/ssl/certs/ca-certificates.crt:/etc/pki/tls/certs/ca-bundle.crt:/etc/ssl/cert.pem').split(':')]
             for label, path in candidates:
@@ -480,7 +462,7 @@ class Provision:
             if not self.custom_ca:
                 self.die(f"HTTPS_PROXY is set but there is no proxy CA bundle: {ccr}/ca-bundle.crt is absent and the host trusts none (SSL_CERT_FILE, CURL_CA_BUNDLE, system bundle); set OXPINYIN_PROXY_CA to the proxy's CA bundle")
         self.ca_mount = self.ca
-        if self.custom_ca and not self.inside:
+        if self.custom_ca:
             temporary = Path(stack.enter_context(tempfile.TemporaryDirectory()))
             self.ca_mount = temporary / 'ca.crt'
             try:
@@ -556,8 +538,6 @@ class Provision:
             self.log('  ' + line) if logged else print(line, file=sys.stderr)
 
     def build_deps_image(self):
-        if self.inside:
-            return
         with open(os.devnull, 'wb') as null:
             if not run([self.ctr, 'image', 'inspect', self.deps_image], env=self.env, stdout=null, stderr=null, check=False):
                 return
@@ -585,9 +565,7 @@ class Provision:
             env=dict(self.env, DOCKER_BUILDKIT='1', https_proxy=self.proxy, HTTPS_PROXY=self.proxy), stdout=2, heavy=True)
 
     def in_image_command(self, args, flags=()):
-        """Keep pre-provisioned compat execution outside the native runtime path."""
-        if self.inside:
-            return [str(self.root / 'tools/oracle/build-oracle.sh'), *args]
+        """The container command that runs build-oracle.sh with ARGS."""
         return [self.ctr, 'run', '--rm', '--platform', self.platform, *self.net_flags, *self.env_flags, *flags,
                 '-v', f'{self.root}/tools/oracle/build-oracle.sh:/usr/local/bin/build-oracle.sh:ro,z',
                 '-v', f'{self.root}/tools/lib/bash-floor.sh:/usr/local/lib/bash-floor.sh:ro,z',
@@ -597,11 +575,9 @@ class Provision:
 
     def pool_phase(self, label, cells, log, args):
         """Reuse #1233's exact pool phase and owned-container cancellation."""
-        flags, owner = [], []
-        if not self.inside:
-            flags = ['--name', f'oxpinyin-setup-{{token}}-{label}-{{item}}', '--label', 'oxpinyin.setup={token}',
-                     '--cidfile', '{cidfile}', '--cpus', '{jobs}']
-            owner = ['--container-runtime', shlex.quote(self.ctr), '--container-label', 'oxpinyin.setup']
+        flags = ['--name', f'oxpinyin-setup-{{token}}-{label}-{{item}}', '--label', 'oxpinyin.setup={token}',
+                 '--cidfile', '{cidfile}', '--cpus', '{jobs}']
+        owner = ['--container-runtime', shlex.quote(self.ctr), '--container-label', 'oxpinyin.setup']
         # A subprocess preserves the invocation's environment without mutating
         # Python's process-global environ during pool scheduling.
         return run([sys.executable, '-X', 'lazy_imports=normal', '-m', 'tools.dev', 'pool', 'run',
@@ -610,15 +586,6 @@ class Provision:
                    cwd=self.root, env=self.env, check=False)
 
     def libraries(self):
-        if self.inside:
-            for cell in self.cells:
-                if not self.libs_ok(cell):
-                    shutil.rmtree(self.oracle_root / cell, ignore_errors=True)
-                    shutil.copytree(Path('/opt/reference') / cell, self.oracle_root / cell, symlinks=True)
-                if not self.libs_ok(cell):
-                    for library in ('libpinyin', 'libzhuyin'):
-                        print(f'MISMATCH {cell} {library}\n  recorded: {self.field(f"{library}_sha256_{cell}")}\n  reference: {digest_file(self.oracle_root / cell / "lib" / (library + ".so"))}', file=sys.stderr)
-                    raise Finished(3)
         need = []
         for cell in self.cells:
             if self.libs_ok(cell):
@@ -727,8 +694,6 @@ class Provision:
                 run(['sh', str(probe)], env=dict(child, LD_LIBRARY_PATH=str(prefix / 'lib')), stdout=sys.stderr, check=False)
                 self.die("the built tkrzw does not print 'RESULT : healthy' (refusing to use it)")
             revision.write_text(TKRZW_REV + '\n')
-        if self.without_reference:
-            return
         resolved = resolve_tkrzw(self.oracle_root / 'tkrzw/lib/libpinyin.so', dict(self.env, LD_LIBRARY_PATH=str(prefix / 'lib')), self.root)
         if resolved != str(prefix / 'lib/libtkrzw.so.1'):
             self.die(f"the tkrzw oracle libpinyin.so resolves libtkrzw.so.1 to '{resolved or 'nothing'}', not {prefix}/lib")
@@ -767,31 +732,22 @@ class Provision:
             for path in ('tools/oracle/Dockerfile.oracle', 'tools/oracle/versions.py', 'tools/oracle/version-manifest.json', 'tools/tkrzw/distro-probe.sh', 'tools/lib/bash-floor.sh', 'tools/oracle/oracle-pin.txt'):
                 digest.update((self.root / path).read_bytes())
             self.deps_image = 'oxpinyin-oracle-deps:' + digest.hexdigest()[:12]
-            if not self.inside:
-                self.ctr = runtime_adapter.select_runtime(env=self.env)
-                if Path(self.ctr).name == 'container':
-                    self.die('normal cloud provisioning requires a Linux cloud runtime; use compat.sh for the Apple adapter')
-            else:
-                print('Runtime: supplied compatibility container (no nested runtime)')
-            if not self.skip_backend_tools:
-                self.backend_tools()
+            self.ctr = images.select_runtime(env=self.env)
+            if Path(self.ctr).name == 'container':
+                self.die('normal cloud provisioning requires a Linux cloud runtime; the Apple adapter is not supported')
+            self.backend_tools()
             for cell in self.cells:
-                if not self.libraries_only and (not self.libs_ok(cell) or not self.data_ok(cell)):
+                if not self.libs_ok(cell) or not self.data_ok(cell):
                     try:
                         model.fetch(self.model_cache, root=self.root, env=self.env)
                     except Finished:
                         self.die('model20 is unavailable; allow downloads.sourceforge.net and its *.dl.sourceforge.net redirect target, or supply a verified local model cache (docs/runbooks/cloud.md)')
                     break
-            if self.inside:
-                Path('/opt/pinyin-oracle').symlink_to(self.oracle_root)
-                Path('/model-cache').symlink_to(self.model_cache)
-            else:
-                self.runtime_ready()
-            if not self.without_reference:
-                self.libraries()
+            self.runtime_ready()
+            self.libraries()
             self.sound_tkrzw()
             need = []
-            for cell in (() if self.libraries_only else self.cells):
+            for cell in self.cells:
                 if self.data_ok(cell):
                     self.log(f'{cell}: data already matches the recorded manifest')
                 else:
@@ -808,17 +764,12 @@ class Provision:
                     if not self.data_ok(cell):
                         self.die(f'{cell}: the regenerated data does not match the recorded manifest')
             self.report_ext4()
-            if not self.inside:
-                print(f'Valgrind: {self.valgrind_version}')
+            print(f'Valgrind: {self.valgrind_version}')
             for cell in self.cells:
                 prefix = self.oracle_root / cell
                 for pc in (prefix / 'lib/pkgconfig').glob('*.pc'):
                     pc.write_text(re.sub(r'^prefix=.*$', lambda _: 'prefix=' + str(prefix), pc.read_text(), flags=re.M))
-                if self.without_reference:
-                    print(f'{cell}: reference and data not requested', flush=True)
-                else:
-                    data_status = 'data not requested' if self.libraries_only else 'data manifest OK'
-                    print(f'{cell} prefix={prefix} libpinyin={digest_file(prefix / "lib/libpinyin.so")} libzhuyin={digest_file(prefix / "lib/libzhuyin.so")} {data_status}', flush=True)
+                print(f'{cell} prefix={prefix} libpinyin={digest_file(prefix / "lib/libpinyin.so")} libzhuyin={digest_file(prefix / "lib/libzhuyin.so")} data manifest OK', flush=True)
             self.write_oracle_env()
         return 0
 
@@ -844,7 +795,7 @@ def main(argv=None):
     except Finished as error:
         return error.status
     except slot.Cancelled:
-        return 1 if service is not None and service.custom_ca and not service.inside else slot.cancellation_status()
+        return 1 if service is not None and service.custom_ca else slot.cancellation_status()
     except OSError as error:
         print(f'FAIL: {error.strerror}', file=sys.stderr)
         return 1

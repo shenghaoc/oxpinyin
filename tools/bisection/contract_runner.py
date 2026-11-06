@@ -408,48 +408,11 @@ class Runner:
 
     @contextlib.contextmanager
     def case_jobs(self, requested):
-        """Admit the entire case pool before making scratch or starting workers.
+        """Yield the case count of this run.
 
-        Aggregate runners already hold a slot; use its normal validated inheritance
-        and update its reservation under the admission lock. A direct parallel
-        driver acquires its own slot. Direct serial calls stay light; nested
-        serial calls also pass their parent's slot descriptor to the worker.
-
-        Direct serial work yields one. Parallel or inherited-slot work acquires
-        HeavyAdmission, checks cancellation while waiting, prints requested/admitted
-        counts and yields the effective count. Temporarily publish its worker
-        environment and descriptors; restore WORKER_ENV and WORKER_FDS and close
-        admission on exit. The caller must join case threads and reap worker groups
-        before leaving the context."""
-        if requested == 1 and 'OXPINYIN_HEAVY_SLOT_HELD' not in os.environ:
-            yield 1
-            return
-        root = str(Path(self.driver['__file__']).resolve().parents[2])
-        if root not in sys.path:
-            sys.path.insert(0, root)
-        from tools.dev import slot
-        env = dict(os.environ, OXPINYIN_CONTRACT_JOBS=str(requested))
-        admission = slot.HeavyAdmission('contract-diff case pool', env, runner=True)
-        previous_env, previous_fds = self.worker_env, self.worker_fds
-        try:
-            # Keep the driver's signal handlers installed. They cancel both an
-            # admission wait and active case workers, without nested handlers
-            # hiding the driver's cancellation flag.
-            while not admission.try_acquire():
-                self.driver['check_cancelled']()
-                time.sleep(.05)
-            self.driver['check_cancelled']()
-            self.set_state(worker_env=admission.env, worker_fds=admission.slot.pass_fds())
-            admission.slot.handoff()
-            effective = int(admission.env['OXPINYIN_CONTRACT_JOBS'])
-            print(f'contract case workers: requested {requested}, admitted {effective}',
-                  file=sys.stderr, flush=True)
-            yield effective
-        finally:
-            # The caller joins all case threads and reaps their process groups
-            # before leaving this context and releasing its reservation.
-            self.set_state(worker_env=previous_env, worker_fds=previous_fds)
-            admission.close()
+        The caller must join case threads and reap worker groups before
+        leaving the context."""
+        yield requested
 
     @contextlib.contextmanager
     def case_results(self, args, names, data, scratch, jobs):

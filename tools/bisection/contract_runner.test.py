@@ -2,7 +2,6 @@
 """State ownership and driver patch boundaries of the extracted runner (#1175)."""
 import contextlib
 import importlib.util
-import os
 from pathlib import Path
 import signal
 import sys
@@ -71,24 +70,18 @@ class StateTests(unittest.TestCase):
                     driver.check_cancelled()
             self.assertEqual(installed, previous)
 
-    def test_admission_publishes_and_restores_only_owned_state_even_on_body_error(self):
-        from tools.dev import slot
+    def test_case_jobs_yields_the_requested_count_and_leaves_worker_state_alone(self):
         driver = load_driver()
         old_env, old_fds = {'before': 'yes'}, (5,)
         driver._RUNNER.set_state(worker_env=old_env, worker_fds=old_fds)
-        admission = SimpleNamespace(env={'OXPINYIN_CONTRACT_JOBS': '2'}, try_acquire=lambda: True,
-                                    slot=SimpleNamespace(pass_fds=lambda: (19,), handoff=Mock()), close=Mock())
-        with patch.dict(os.environ, OXPINYIN_HEAVY_SLOT_HELD='synthetic'), \
-                patch.object(slot, 'HeavyAdmission', return_value=admission), \
-                self.assertRaisesRegex(RuntimeError, 'body'):
-            with driver.case_jobs(3) as admitted:
-                self.assertEqual(admitted, 2)
-                self.assertIs(driver.WORKER_ENV, admission.env)
-                self.assertEqual(driver.WORKER_FDS, (19,))
+        with self.assertRaisesRegex(RuntimeError, 'body'):
+            with driver.case_jobs(3) as jobs:
+                self.assertEqual(jobs, 3)
+                self.assertIs(driver.WORKER_ENV, old_env)
+                self.assertIs(driver.WORKER_FDS, old_fds)
                 raise RuntimeError('body')
         self.assertIs(driver.WORKER_ENV, old_env)
         self.assertIs(driver.WORKER_FDS, old_fds)
-        admission.close.assert_called_once_with()
 
 
 class AdapterTests(unittest.TestCase):

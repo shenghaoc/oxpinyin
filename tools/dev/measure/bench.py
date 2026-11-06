@@ -5,13 +5,13 @@ harness. It lives here once: refusing a count that is not a plain decimal, the
 libtkrzw runtime
 check on every object a worker opens, building the harness, launching a measured
 worker pinned to a CPU with the object's directory first on the loader path, and
-a build under the heavy slot. Recipes (recipes.py) compose these.
+a supervised build. Recipes (recipes.py) compose these.
 
 Measured launches are serial. A timed or resident-set sample belongs to its arm
 only if nothing else runs beside it, so `round_robin` runs one process at a time
 and interleaves the arms, spreading host drift over all of them. Builds and
 untimed collections are not measurements: `build_all` runs independent builds as
-units of one admitted pool. Standard library only.
+units of one pool. Standard library only.
 """
 import contextlib
 import dataclasses
@@ -29,7 +29,7 @@ import traceback
 import types
 from collections.abc import Callable, Iterator, Mapping, Sequence
 
-from .. import host, pool, slot
+from .. import pool, slot
 from ..runners import Finished, emit, status as shell_status, write
 from tools.tkrzw.runtime import RuntimeRefused, check
 
@@ -299,32 +299,25 @@ def run(command: Sequence, *, env: Mapping[str, str] | None = None, cwd=None, st
 
 def heavy(command: Sequence, *, env: Mapping[str, str] | None = None, stdout=None,
           check_status: bool = True) -> int:
-    """Run COMMAND holding one heavy slot and return its shell status.
+    """Run COMMAND supervised and return its shell status.
 
-    The former `run-all.py --heavy-slot --`: admission waits are printed, the run
-    ends with the slot's trailer line on stderr, and a nonzero status ends the
-    runner with it unless CHECK_STATUS is false.
+    A nonzero status ends the runner with it unless CHECK_STATUS is false.
     """
-    code = shell_status(slot.run_command([str(part) for part in command], env=env, stdout=stdout, report=True))
+    code = shell_status(slot.run_command([str(part) for part in command], env=env, stdout=stdout))
     if check_status and code:
         raise Finished(code)
     return code
 
 
-def build_all(builds: Sequence[tuple[str, Callable[[pool.UnitContext, int], bytes | None]]],
-              label: str, *, env: Mapping[str, str] | None = None) -> None:
-    """Run independent BUILDS, (name, function(context, jobs)) pairs, as units of one admitted pool.
+def build_all(builds: Sequence[tuple[str, Callable[[pool.UnitContext], bytes | None]]],
+              *, env: Mapping[str, str] | None = None) -> None:
+    """Run independent BUILDS, (name, function(context)) pairs, as units of one pool.
 
-    Builds are not measurements, so nothing needs them one at a time. The pool takes
-    the heavy slot once and plans from the CPUs and memory admission grants
-    (pool.plan, a rustc allowance per job): how many builds overlap and the Cargo jobs
-    each one builds with, so a host with many CPUs and little memory builds them one
-    by one with fewer jobs, as the heavy-slot builds did. An explicit CARGO_BUILD_JOBS
-    stays as given and is charged in full (docs/runbooks/verification.md, rule 8):
-    only the overlap adapts, and a host that cannot hold one build at that count
-    refuses it. A unit returns the bytes its build printed, replayed on stderr in
-    build order whatever order they finish in; the earliest failure ends the run
-    with its status.
+    Builds are not measurements, so nothing needs them one at a time. They overlap
+    up to the allowed CPUs, and Cargo chooses each build's jobs unless the caller
+    set CARGO_BUILD_JOBS. A unit returns the bytes its build printed, replayed on
+    stderr in build order whatever order they finish in; the earliest failure ends
+    the run with its status.
     """
     environment = dict(os.environ if env is None else env)
 
@@ -332,26 +325,17 @@ def build_all(builds: Sequence[tuple[str, Callable[[pool.UnitContext, int], byte
         if output:
             write(output, error=True)
 
-    def planned(function):
-        return lambda context: function(context, int(context.environment[pool.POOL_JOBS]))
-
-    prepare = pool.admission_preparer(len(builds), None, 0, host.RUSTC_PEAK_MIB,
-                                      explicit=environment.get('CARGO_BUILD_JOBS'), job_name='cargo job')
-    pool.run_admitted([(name, planned(function)) for name, function in builds], label,
-                      cancelled=slot.CANCELLED.is_set, prepare=prepare, env=environment, emit=replay,
-                      cancel_error=slot.Cancelled, out=sys.stderr)
+    pool.run_leased(list(builds), cancelled=slot.CANCELLED.is_set, env=environment, emit=replay,
+                    cancel_error=slot.Cancelled, out=sys.stderr)
 
 
-def cargo(context: pool.UnitContext, command: Sequence, jobs: int) -> bytes:
+def cargo(context: pool.UnitContext, command: Sequence) -> bytes:
     """Run a cargo COMMAND as a unit of `build_all` and return its merged output.
 
-    The unit's admitted environment applies with CARGO_BUILD_JOBS set to the jobs
-    the pool planned for it unless the caller set one. A failed build replays its
-    output and ends the run with its status.
+    The unit's environment applies. A failed build replays its output and ends
+    the run with its status.
     """
-    environment = dict(context.environment)
-    environment.setdefault('CARGO_BUILD_JOBS', str(jobs))
-    done = context.launch([str(part) for part in command], env=environment, merge_stderr=True)
+    done = context.launch([str(part) for part in command], env=dict(context.environment), merge_stderr=True)
     if done.status:
         write(done.stdout, error=True)
         raise Finished(shell_status(done.status))

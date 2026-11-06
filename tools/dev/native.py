@@ -68,10 +68,10 @@ class Tools:
                               env=dict(settings), input=input, text=text,
                               stdout=stdout, stderr=stderr)
 
-    def admitted(self, argv, *, environment=None, out=sys.stderr):
-        """Run ARGV under the shared heavy slot and memory admission."""
+    def supervised(self, argv, *, environment=None):
+        """Run ARGV under the shared cancellation handlers."""
         settings = self.environment if environment is None else environment
-        return slot.run_command([str(part) for part in argv], env=dict(settings), out=out)
+        return slot.run_command([str(part) for part in argv], env=dict(settings))
 
     def tkrzw(self, obj, *, runner, side, cwd, environment=None):
         """Return the qualified libtkrzw path for OBJ, or None when it has none.

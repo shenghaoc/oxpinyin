@@ -1716,8 +1716,8 @@ mod tests {
                 /// original defect was hash-on-both-halves, which is
                 /// self-consistent and passes this law. Only the oracle
                 /// round trip — a real libpinyin writes the profile,
-                /// oxpinyin reads it — can catch that
-                /// (`tools/oracle/user-dir-round-trip.sh`).
+                /// oxpinyin reads it — can catch that; the frozen captures
+                /// that carry it are described in `docs/runbooks/oracle.md`.
                 #[test]
                 fn user_bigram_round_trips_through_its_own_seam() {
                     let path = temp_path("user-bigram");

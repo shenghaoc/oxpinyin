@@ -1,34 +1,20 @@
-"""Bounded pool for independent builds under one CPU and memory budget (#1233).
-
-Standard library only. Capacity comes from host.py's readers; nothing here reads
-/proc or a cgroup.
+"""Bounded pool of independent units and tasks, with one stop rule.
 
 `python -m tools.dev pool run ... -- ARGV...` runs ARGV once per item, at most
-WORKERS at once, each with its share of the make jobs. By default the run holds
-the heavy slot (tools/dev/slot.py, as `just heavy` does), and the plan is
-computed from the budget admitted under that slot. `--admission none` sizes from
-the host's own readers and takes no slot, for callers with no host slot to hold.
+WORKERS at once, each with its share of the make jobs: workers times jobs stays
+within the allowed CPUs.
 
-CPU shares are per pool run (and, in run-all.py, per invocation): workers times
-make jobs stays within the CPUs this run was admitted or measured, but those CPUs
-are not reserved against other, independent slot holders, which plan their own
-share the same way. Memory is different: the slot admits it host-wide and counts
-other holders' reservations. There is no global CPU scheduler.
-
-Units: a task may carry a callable instead of an argv (`unit()`). `run_units` and
-`run_admitted` run such callables in worker threads under the same loop, so
+Standard library only. A task is an argv or a callable (a unit). `run_units`
+and `run_leased` run callables in worker threads under the same loop, so
 in-process steps and launched processes get one stop rule: the first failure or a
 cancellation starts nothing more, stops the running units, and joins every one (a
-unit reaps its own children, `UnitContext.launch` does) before the admission is
-released. Results and emission follow unit order, never completion order. A unit
-must stop when `UnitContext.check()` raises; a thread cannot be killed.
+unit reaps its own children, `UnitContext.launch` does). Results and emission
+follow unit order, never completion order. A unit must stop when
+`UnitContext.check()` raises; a thread cannot be killed.
 
-Containers: with `--container-runtime`, each item's command may use {token} (a
-random value for this invocation) and {cidfile} (a private file per item) in
-`--name`, `--label` and `--cidfile` flags. Cleanup after a failure or a signal
-removes a container only when the runtime reports an ID equal to the one recorded
-in that item's cidfile and the label `--container-label` equal to this token. An
-item whose run never created a container (empty cidfile) leaves nothing to
+Containers: `remove_owned` removes a container only when the runtime reports an ID
+equal to the one recorded in the unit's cidfile and the label equal to the run's
+token. A run that never created a container (empty cidfile) leaves nothing to
 remove, and a container this run did not create is never touched, whatever its name.
 """
 import argparse
@@ -53,94 +39,8 @@ from typing import NamedTuple
 
 from . import host, slot
 
-# Planning figures for one library build or data regeneration, in MiB: the
-# largest cgroup peaks measured for build-oracle.sh on linux/amd64 (Docker, 4
-# CPUs, 2026-10-25 UTC). --libs-only: bdb 361 at -j1 and 432 at -j4, kc 528 at
-# -j1 and 1,312 at -j4 (about 270 per make job on about 270 fixed), tkrzw 367
-# and 691. --regen-data on bdb at -j4: 606. Rounded up to cover every point.
-BUILD_BASE_MIB = 300
-BUILD_JOB_MIB = 275
-# Overlap only while each build keeps two make jobs: a build's compile scales
-# with make -j, its configure and link steps do not, and three builds at -j1 on
-# four CPUs ran 16% slower than one at a time at -j4 (#1233).
-MIN_OVERLAP_JOBS = 2
-
-POOL_WORKERS = 'OXPINYIN_POOL_WORKERS'
-POOL_JOBS = 'OXPINYIN_POOL_JOBS'
-CANCELLED_STATUS = 130
 TAIL_LINES = 40
-
-
-class Plan(NamedTuple):
-    """How many builds overlap and the make jobs each one gets."""
-    workers: int
-    jobs: int
-
-
-def plan(tasks: int, cpus: int, memory_mib: int | None,
-         base_mib: int = BUILD_BASE_MIB, job_mib: int = BUILD_JOB_MIB, *, jobs: int | None = None) -> Plan:
-    """Divide a CPU and memory budget among TASKS independent builds.
-
-    Workers times jobs never exceeds CPUS, so the nested make -j is counted; every
-    overlapped build keeps MIN_OVERLAP_JOBS jobs; and workers x (BASE_MIB + jobs x
-    JOB_MIB) fits MEMORY_MIB. Unknown memory (None) admits no overlap: one build
-    with every CPU. A single build's jobs are held below the CPU count when
-    memory is short, never below one.
-
-    JOBS is the caller's own job count per build (an explicit CARGO_BUILD_JOBS). It is
-    kept as given and charged in full, so only the overlap adapts: as many builds as the
-    CPUs and the memory hold at that count, one when not even that fits. The admission
-    then refuses the one build instead of shrinking the request.
-    """
-    cpus, tasks = max(1, cpus), max(1, tasks)
-    if jobs is not None:
-        if memory_mib is None:
-            return Plan(1, jobs)
-        return Plan(max(1, min(tasks, cpus // jobs, memory_mib // (base_mib + jobs * job_mib))), jobs)
-    if memory_mib is None:
-        return Plan(1, cpus)
-    workers = max(1, min(tasks, cpus // MIN_OVERLAP_JOBS))
-    while workers > 1 and workers * (base_mib + (cpus // workers) * job_mib) > memory_mib:
-        workers -= 1
-    jobs = max(1, cpus // workers)
-    if workers == 1:
-        jobs = max(1, min(jobs, (memory_mib - base_mib) // job_mib))
-    return Plan(workers, jobs)
-
-
-def estimate_mib(chosen: Plan, base_mib: int = BUILD_BASE_MIB, job_mib: int = BUILD_JOB_MIB) -> int:
-    """Memory the plan needs, in MiB: every worker's fixed part plus its make jobs."""
-    return chosen.workers * (base_mib + chosen.jobs * job_mib)
-
-
-def admission_preparer(tasks: int, cpu_cap: int | None, base_mib: int = BUILD_BASE_MIB,
-                       job_mib: int = BUILD_JOB_MIB, *, explicit: str | None = None, job_name: str = 'make job'):
-    """Return the heavy-admission callback that sizes the pool from the admitted budget.
-
-    slot.HeavyAdmission calls it with the resource snapshot read under the
-    admission lock, after other slots' reservations are subtracted. It chooses
-    the plan from that room and reserves exactly the plan's estimate, so the pool
-    cannot use capacity the slot did not admit.
-
-    EXPLICIT is the caller's CARGO_BUILD_JOBS setting, if it set one: its job count
-    (host.cargo_jobs) is kept for every build and charged in full (see `plan`).
-    JOB_NAME names a job in the reasoning that is printed.
-    """
-    def prepare(env: Mapping[str, str], resources, *, runner: bool = False):
-        cpus = resources['cpus'] if cpu_cap is None else min(resources['cpus'], cpu_cap)
-        available = resources['available_mib']
-        headroom = host.memory_headroom(env, resources)
-        room = None if available is None else max(0, available - headroom)
-        kept = None if explicit is None else host.cargo_jobs(explicit, resources['cargo_cpus'])
-        chosen = plan(tasks, cpus, room, base_mib, job_mib, jobs=kept)
-        why = (f'{tasks} builds, {cpus} CPUs, '
-               + ('memory unknown, no overlap' if room is None else f'{room} MiB after {headroom} MiB headroom')
-               + f', {base_mib} MiB + {job_mib} MiB per {job_name}'
-               + ('' if kept is None else f'; {job_name}s kept at {kept} as the caller set them'))
-        return (dict(env, **{POOL_WORKERS: str(chosen.workers), POOL_JOBS: str(chosen.jobs)}),
-                {POOL_WORKERS: (chosen.workers, why, False), POOL_JOBS: (chosen.jobs, why, False)},
-                estimate_mib(chosen, base_mib, job_mib))
-    return prepare
+CANCELLED_STATUS = 130
 
 
 @dataclasses.dataclass
@@ -171,15 +71,15 @@ class Result:
 class ProcessLauncher:
     """Start each task in its own session so the pool can stop and reap its whole tree."""
 
-    def __init__(self, env: Mapping[str, str] | None = None, pass_fds: Sequence[int] = (),
+    def __init__(self, env: Mapping[str, str] | None = None,
                  cpus: Sequence[int] = (), wake: threading.Event | None = None,
                  cancelled: Callable[[], bool] | None = None):
-        """Remember the child environment and the slot descriptors children inherit.
+        """Remember the child environment.
 
         CPUS are leased one per running unit; WAKE is set whenever a unit ends; units
         also see CANCELLED() at their checks.
         """
-        self.env, self.pass_fds, self.cancelled = env, tuple(pass_fds), cancelled
+        self.env, self.cancelled = env, cancelled
         self.leases: queue.Queue = queue.Queue()
         for cpu in cpus:
             self.leases.put(cpu)
@@ -197,7 +97,8 @@ class ProcessLauncher:
             except queue.Empty:
                 cpu = None
             context = UnitContext(task.name, threading.Event(), cpu,
-                                  {} if self.env is None else dict(self.env), self.pass_fds, self.cancelled)
+                                  {} if self.env is None else dict(self.env),
+                                  cancelled=self.cancelled)
             self.units[task.name] = UnitHandle(task, context, self.wake, self.leases)
             return self.units[task.name]
         log = None
@@ -208,7 +109,7 @@ class ProcessLauncher:
             process = subprocess.Popen(task.argv, env=None if self.env is None else dict(self.env),
                                        stdin=subprocess.DEVNULL, stdout=log or subprocess.DEVNULL,
                                        stderr=subprocess.STDOUT if log else subprocess.DEVNULL,
-                                       start_new_session=True, pass_fds=self.pass_fds)
+                                       start_new_session=True)
         finally:
             if log is not None:
                 log.close()
@@ -359,7 +260,10 @@ class StoppableDriver:
 
 @dataclasses.dataclass
 class UnitContext:
-    """What a running unit sees: its stop request, leased CPU, environment and slot descriptors."""
+    """What a running unit sees: its stop request, leased CPU and environment.
+
+    FDS stays only because tools/dev/tool_diff.py reads it; nothing sets it.
+    """
     name: str
     stop: threading.Event
     cpu: int | None = None
@@ -388,12 +292,13 @@ class UnitContext:
         Every POLL seconds the unit checks for a stop; on a
         stop, a timeout of the caller's making, or any other error the group gets
         SIGTERM, then SIGKILL through slot.terminate_group, and its leader is reaped before the
-        error propagates. ENV defaults to the unit's environment, PASS_FDS to its slot
-        descriptors.
+        error propagates. ENV defaults to the unit's environment, PASS_FDS to FDS
+        (both kept for tools/dev/tool_diff.py).
         """
         with subprocess.Popen(list(argv), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                               stderr=subprocess.STDOUT if merge_stderr else subprocess.PIPE, cwd=cwd, umask=umask,
-                              env=dict(self.environment if env is None else env), start_new_session=True,
+                              env=dict(self.environment if env is None else env),
+                              start_new_session=True,
                               pass_fds=tuple(self.fds if pass_fds is None else pass_fds)) as process:
             try:
                 first = True
@@ -510,105 +415,6 @@ def run_units(units: Sequence[tuple[str, Callable[[UnitContext], object]]], work
     return [handles[name].value for name in names]
 
 
-def unit_preparer(units: int, cpu_cap: int | None = None, unit_mib: int = host.RUNNER_PEAK_MIB):
-    """Return the heavy-admission callback that sizes a pool of UNITS callables.
-
-    Like admission_preparer, it chooses from the room the slot admits after other
-    holders' reservations and headroom, and reserves exactly what it chose: one
-    UNIT_MIB allowance per worker (the heavy-runner allowance by default), at most
-    UNITS workers and the admitted (or capped) CPUs. When not even one worker fits,
-    it reserves one worker's allowance and the slot refuses it.
-    """
-    def prepare(env: Mapping[str, str], resources, *, runner: bool = False):
-        cpus = resources['cpus'] if cpu_cap is None else min(resources['cpus'], cpu_cap)
-        available = resources['available_mib']
-        headroom = host.memory_headroom(env, resources)
-        workers = 0 if available is None else host.fit(available, unit_mib, min(units, cpus), headroom)
-        why = (f'{units} units, {cpus} CPUs, '
-               + ('memory unknown' if available is None else f'{max(0, available - headroom)} MiB after {headroom} MiB headroom')
-               + f', {unit_mib} MiB per unit')
-        return (dict(env, **{POOL_WORKERS: str(max(1, workers))}),
-                {POOL_WORKERS: (workers, why, False)}, max(1, workers) * unit_mib)
-    return prepare
-
-
-class Budget(NamedTuple):
-    """What admission granted a pool: its worker count, environment and slot descriptors."""
-    workers: int
-    env: dict
-    fds: tuple
-
-
-@contextlib.contextmanager
-def admitted(units: int, label: str, *, cancelled: Callable[[], bool], cpu_cap: int | None = None,
-             unit_mib: int = host.RUNNER_PEAK_MIB, prepare=None, env: Mapping[str, str] | None = None,
-             cancel_error: Callable[[str], BaseException] = UnitsCancelled, out=sys.stderr):
-    """Admit a pool of at most UNITS callables before any starts, and yield its Budget.
-
-    Take or inherit the heavy slot and reserve the pool's memory (unit_preparer: one
-    UNIT_MIB allowance per worker). PREPARE replaces that callback, for a pool that plans
-    more than its workers: admission_preparer also chooses the jobs each unit builds with
-    and puts them in the units' environment as POOL_JOBS. ENV is the environment the
-    units inherit (default os.environ). While waiting, CANCELLED() is polled and
-    CANCEL_ERROR raised; the slot is released on any error. The caller joins its threads
-    and reaps their children before leaving the block, which releases it.
-    """
-    with contextlib.ExitStack() as stack:
-        admission = slot.HeavyAdmission(label, dict(os.environ if env is None else env), out=out, runner=True,
-                                        prepare_heavy_env=prepare or unit_preparer(units, cpu_cap, unit_mib))
-        stack.callback(admission.close)
-        while not admission.try_acquire():
-            if cancelled():
-                raise cancel_error('cancelled while waiting for admission')
-            time.sleep(0.05)
-        if cancelled():
-            raise cancel_error('cancelled while waiting for admission')
-        budget = Budget(int(admission.env[POOL_WORKERS]), dict(admission.env), tuple(admission.slot.pass_fds()))
-        admission.slot.handoff()
-        jobs = f', {budget.env[POOL_JOBS]} jobs each' if prepare is not None and POOL_JOBS in budget.env else ''
-        print(f'{label}: requested {units}, admitted {budget.workers}{jobs}', file=out, flush=True)
-        yield budget
-
-
-def run_admitted(units: Sequence[tuple[str, Callable[[UnitContext], object]]], label: str, *,
-                 cancelled: Callable[[], bool], serial: bool = False, cpus: Sequence[int] | None = None,
-                 max_workers: int | None = None,
-                 emit: Callable[[str, object], object] | None = None,
-                 cancel_error: Callable[[str], BaseException] = UnitsCancelled,
-                 unit_mib: int = host.RUNNER_PEAK_MIB, prepare=None, env: Mapping[str, str] | None = None,
-                 out=sys.stderr) -> list:
-    """Run independent UNITS in a pool sized by the heavy slot's admission; return values in order.
-
-    Every nonempty run takes or inherits admission, including a single unit.
-    SERIAL caps admission and execution at one worker. The pool never exceeds
-    MAX_WORKERS, the unit count or CPUS (the CPU ids to lease, one per running
-    unit; defaults to the host's allowed set). See `run_units` for the stop and
-    ordering rules. Every unit sees the admitted environment and slot descriptors.
-    PREPARE and ENV are those of `admitted`; a PREPARE does not see SERIAL or
-    MAX_WORKERS, which still cap the workers but not what it reserves.
-    """
-    if max_workers is not None and max_workers < 1:
-        raise ValueError('max_workers must be positive')
-    if not units:
-        return []
-    cpus = sorted(host.allowed_cpus()) if cpus is None else list(cpus)
-    if not cpus:
-        raise ValueError('cpus must not be empty')
-    if serial:
-        max_workers = 1
-    cpu_cap = len(cpus)
-    if max_workers is not None:
-        cpu_cap = min(cpu_cap, max_workers)
-    with admitted(len(units), label, cancelled=cancelled, cpu_cap=cpu_cap, unit_mib=unit_mib, prepare=prepare,
-                  env=env, cancel_error=cancel_error, out=out) as budget:
-        workers = max(1, min(budget.workers, len(units), len(cpus),
-                             max_workers if max_workers is not None else len(units)))
-        launcher = ProcessLauncher(env=budget.env, pass_fds=budget.fds, cpus=cpus[:workers],
-                                   cancelled=cancelled)
-        return run_units(units, workers, cancelled=cancelled, launcher=launcher, emit=emit,
-                         cancel_error=cancel_error, out=out)
-
-
 @dataclasses.dataclass(frozen=True)
 class OwnedContainer:
     """A container this invocation asked RUNTIME to create: where its ID is recorded, and the label and token to match."""
@@ -650,6 +456,58 @@ def remove_owned(owned: OwnedContainer, run: Callable[[Sequence[str]], subproces
     return True
 
 
+def run_leased(units: Sequence[tuple[str, Callable[[UnitContext], object]]], *,
+               cancelled: Callable[[], bool], serial: bool = False, cpus: Sequence[int] | None = None,
+               max_workers: int | None = None,
+               emit: Callable[[str, object], object] | None = None,
+               cancel_error: Callable[[str], BaseException] = UnitsCancelled,
+               env: Mapping[str, str] | None = None, out=sys.stderr) -> list:
+    """Run independent UNITS, one CPU leased per running unit; return values in order.
+
+    SERIAL caps execution at one worker. The pool never exceeds MAX_WORKERS, the
+    unit count or CPUS (the CPU ids to lease; defaults to the host's allowed set).
+    See `run_units` for the stop and ordering rules. Every unit sees ENV
+    (default os.environ) as its environment.
+    """
+    if max_workers is not None and max_workers < 1:
+        raise ValueError('max_workers must be positive')
+    if not units:
+        return []
+    cpus = sorted(host.allowed_cpus()) if cpus is None else list(cpus)
+    if not cpus:
+        raise ValueError('cpus must not be empty')
+    if serial:
+        max_workers = 1
+    workers = max(1, min(len(units), len(cpus), max_workers if max_workers is not None else len(units)))
+    launcher = ProcessLauncher(env=dict(os.environ if env is None else env), cpus=cpus[:workers],
+                               cancelled=cancelled)
+    return run_units(units, workers, cancelled=cancelled, launcher=launcher, emit=emit,
+                     cancel_error=cancel_error, out=out)
+
+
+class Plan(NamedTuple):
+    """How many builds overlap and the make jobs each one gets."""
+    workers: int
+    jobs: int
+
+
+# Overlap only while each build keeps two make jobs: a build's compile scales
+# with make -j, its configure and link steps do not, and three builds at -j1 on
+# four CPUs ran 16% slower than one at a time at -j4 (#1233).
+MIN_OVERLAP_JOBS = 2
+
+
+def plan(tasks: int, cpus: int) -> Plan:
+    """Divide a CPU budget among TASKS independent builds.
+
+    Workers times jobs never exceeds CPUS, so the nested make -j is counted, and
+    every overlapped build keeps MIN_OVERLAP_JOBS jobs.
+    """
+    cpus, tasks = max(1, cpus), max(1, tasks)
+    workers = max(1, min(tasks, cpus // MIN_OVERLAP_JOBS))
+    return Plan(workers, max(1, cpus // workers))
+
+
 def _substitute(text: str, item: str, chosen: Plan, token: str = '', cidfile: str = '') -> str:
     """Replace {item}, {jobs}, {workers}, {token} and {cidfile}; other braces are left alone."""
     return (text.replace('{item}', item).replace('{jobs}', str(chosen.jobs))
@@ -678,29 +536,6 @@ def build_tasks(args, chosen: Plan, token: str = '', cid_dir: Path | None = None
     return tasks
 
 
-def _announce(args, chosen: Plan, budget: str, out) -> None:
-    """Print the plan the way the other effective settings are reported."""
-    print(f'{args.label}: {" ".join(args.items)} with {chosen.workers} at once, make -j{chosen.jobs} each '
-          f'({budget})', file=out, flush=True)
-
-
-@contextlib.contextmanager
-def _own_cancellation():
-    """Turn SIGINT, SIGTERM and SIGHUP into a flag the pool polls (no slot module here)."""
-    import threading
-    event = threading.Event()
-    previous = {}
-    for name in ('SIGTERM', 'SIGINT', 'SIGHUP'):
-        signum = getattr(signal, name, None)
-        if signum is not None:
-            previous[signum] = signal.signal(signum, lambda *_: event.set())
-    try:
-        yield event.is_set
-    finally:
-        for signum, handler in previous.items():
-            signal.signal(signum, handler)
-
-
 def _finish(result: Result, out) -> int:
     """Map a pool result to an exit status: 0, 1 for a failure, 130 for cancellation."""
     if result.cancelled:
@@ -716,53 +551,29 @@ def run_command(args, out=sys.stderr, launcher_factory=ProcessLauncher) -> int:
     if len(set(args.items)) != len(args.items):
         raise SystemExit('pool run needs distinct --items')
     token = secrets.token_hex(8)
+    allowed = len(host.allowed_cpus())
+    cpus = allowed if args.cpus is None else min(allowed, args.cpus)
+    chosen = plan(len(args.items), cpus)
+    print(f'{args.label}: {" ".join(args.items)} with {chosen.workers} at once, make -j{chosen.jobs} each '
+          f'({cpus} CPUs)', file=out, flush=True)
     with tempfile.TemporaryDirectory(prefix='oxpinyin-pool-') as cid_directory:
-        cid_dir = Path(cid_directory)
-
-        def tasks_for(chosen: Plan) -> list[Task]:
-            return build_tasks(args, chosen, token, cid_dir)
-        if args.admission == 'none':
-            resources = host.resource_snapshot()
-            available = resources['available_mib']
-            cpus = resources['cpus'] if args.cpus is None else min(resources['cpus'], args.cpus)
-            chosen = plan(len(args.items), cpus, available, args.base_mib, args.job_mib)
-            _announce(args, chosen, f'{cpus} CPUs, {"unknown" if available is None else available} MiB available', out)
-            with _own_cancellation() as cancelled:
-                result = run_pool(tasks_for(chosen), chosen.workers, launcher_factory(),
-                                  cancelled=cancelled, out=out)
-            return _finish(result, out)
-        from . import slot
         try:
             with slot.cancellation_handlers():
-                prepare = admission_preparer(len(args.items), args.cpus, args.base_mib, args.job_mib)
-                with slot.HeavyAdmission(f'{args.label}: {" ".join(args.items)}', dict(os.environ),
-                                         out=out, prepare_heavy_env=prepare) as admission:
-                    chosen = Plan(int(admission.env[POOL_WORKERS]), int(admission.env[POOL_JOBS]))
-                    _announce(args, chosen, f'admitted, {estimate_mib(chosen, args.base_mib, args.job_mib)} MiB reserved', out)
-                    launcher = launcher_factory(env=admission.env, pass_fds=admission.slot.pass_fds())
-                    admission.slot.handoff()
-                    result = run_pool(tasks_for(chosen), chosen.workers, launcher,
-                                      cancelled=slot.CANCELLED.is_set, out=out)
+                result = run_pool(build_tasks(args, chosen, token, Path(cid_directory)), chosen.workers,
+                                  launcher_factory(), cancelled=slot.CANCELLED.is_set, out=out)
         except slot.Cancelled:
             return _finish(Result(cancelled=True), out)
-        except (OSError, ValueError) as exc:
-            print(f'pool run: {" ".join(str(exc).splitlines())}', file=out, flush=True)
-            return 1
-        return _finish(result, out)
+    return _finish(result, out)
 
 
 def add_arguments(parser: argparse.ArgumentParser) -> None:
     """Define the `pool run` options on PARSER (shared by `python -m tools.dev pool` and this module)."""
     sub = parser.add_subparsers(dest='action', required=True)
-    run = sub.add_parser('run', help='run a command per item, within one CPU and memory budget')
+    run = sub.add_parser('run', help='run a command per item, within one CPU budget')
     run.add_argument('--label', default='pool')
     run.add_argument('--items', type=lambda value: [part for part in value.split(',') if part], default=[],
                      help='comma-separated item names; {item} in the command, log and remove')
-    run.add_argument('--cpus', type=int, help='cap the CPU budget (default: what the host or slot admits)')
-    run.add_argument('--base-mib', type=int, default=BUILD_BASE_MIB)
-    run.add_argument('--job-mib', type=int, default=BUILD_JOB_MIB)
-    run.add_argument('--admission', choices=('slot', 'none'), default='slot',
-                     help='slot: hold the host heavy slot; none: size from this container, no slot')
+    run.add_argument('--cpus', type=int, help='cap the CPU budget (default: the allowed CPUs)')
     run.add_argument('--log', help='log file per item; output of a failed item is tailed')
     run.add_argument('--container-runtime', help='container command (shell-quoted); with it, items may use {token} and '
                      '{cidfile}, and a failure or signal removes only the containers this run recorded and labelled')

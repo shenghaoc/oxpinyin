@@ -18,7 +18,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from tools.dev import provision
-from tools.dev.compat.identity import digest_file
+from tools.oracle.image import digest_file
 from tools.dev.native import NativeRefused, Tools
 from tools.dev.runners import Finished
 
@@ -47,25 +47,6 @@ class ProvisionTests(unittest.TestCase):
         self.service.log = lambda value: print(value, file=sys.stderr)
         for cell in provision.CELLS:
             self.fixture(cell)
-
-    def test_oracle_free_selection_skips_reference_model_and_dump_tools(self):
-        service = self.service
-        service.pin.write_text(service.pin.read_text() + 'base_image=debian:trixie\n')
-        service.cells = ['bdb']
-        service.inside = service.libraries_only = service.without_reference = service.skip_backend_tools = True
-        with mock.patch.object(service, 'options'), mock.patch.object(service, 'prerequisites'), \
-             mock.patch.object(service, 'proxy_ca'), mock.patch.object(service, 'libraries') as libraries, \
-             mock.patch.object(service, 'backend_tools') as tools, \
-             mock.patch.object(service, 'sound_tkrzw'), mock.patch.object(service, 'report_ext4'), \
-             mock.patch.object(service, 'write_oracle_env'), \
-             mock.patch.object(provision.model, 'fetch') as fetch, \
-             mock.patch.object(provision.doctor, 'identity', return_value={'version': 'fixture', 'executable': 'fixture'}), \
-             mock.patch.object(provision, 'text', return_value='uv fixture'), \
-             mock.patch.object(Path, 'symlink_to'):
-            self.assertEqual(service.execute([]), 0)
-        libraries.assert_not_called()
-        tools.assert_not_called()
-        fetch.assert_not_called()
 
     def fixture(self, cell):
         prefix = self.service.oracle_root / cell
@@ -330,15 +311,7 @@ else:
             self.service.report_ext4()
         self.assertIn('ext4 paths: unknown (findmnt unavailable)', output.getvalue())
 
-    def test_pool_delegates_and_in_container_never_launches_a_runtime(self):
-        self.service.inside = True
-        with mock.patch.object(provision, 'run', return_value=19) as child:
-            self.assertEqual(self.service.pool_phase('data', ['bdb'], self.work / '{item}.log', ['--dbm', '{item}']), 19)
-        command = list(map(str, child.call_args.args[0]))
-        self.assertIn('pool', command)
-        self.assertNotIn('--container-runtime', command)
-        self.assertNotIn('tools.dev', self.service.in_image_command([]))
-        self.service.inside = False
+    def test_pool_delegates_with_owned_container_teardown(self):
         self.service.ctr = 'podman'
         self.service.deps_image = 'synthetic-deps'
         with mock.patch.object(provision, 'run', return_value=0) as child:
@@ -428,10 +401,10 @@ elif name in ('curl','apt-get','sudo'):
         return current
 
     def test_usage_options_and_missing_argument_statuses(self):
-        for args in (['--unknown'], ['--cells', 'bad'], ['--cells', ''], ['--in-container'], ['--libraries-only'], ['--without-reference'], ['--skip-backend-tools']):
+        for args in (['--unknown'], ['--cells', 'bad'], ['--cells', '']):
             with self.subTest(args=args):
                 self.check_entry(args, 2)
-        for option in ('--cells', '--jobs', '--cache-dir', '--no-pull', '--in-container'):
+        for option in ('--cells', '--jobs', '--cache-dir', '--no-pull'):
             args = ['--python-only', option] + (['bdb' if option == '--cells' else '1'] if option in ('--cells', '--jobs', '--cache-dir') else [])
             self.check_entry(args, 2)
         for option in ('--cells', '--jobs', '--cache-dir'):
@@ -587,7 +560,7 @@ class InImageCommandTests(unittest.TestCase):
         # build-oracle.sh sources ../lib/bash-floor.sh relative to /usr/local/bin; a deps image
         # published before the floor existed does not carry it.
         run = object.__new__(provision.Provision)
-        run.inside, run.ctr, run.platform = False, 'podman', 'linux/amd64'
+        run.ctr, run.platform = 'podman', 'linux/amd64'
         run.net_flags, run.env_flags = [], []
         run.root, run.pin = Path('/checkout'), Path('/checkout/tools/oracle/oracle-pin.txt')
         run.cache, run.model_cache, run.deps_image = Path('/cache'), Path('/model'), 'deps:tag'

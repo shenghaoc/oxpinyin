@@ -4,9 +4,7 @@ A remote Linux host that meets the requirements below can run every
 non-measurement gate; measurement gates also need the ext4 paths below.
 Provision it with `tools/cloud/setup.sh`, which also installs Valgrind for
 measurement work. Ordinary native development uses [native setup](setup.md)
-and does not need a remote host. The
-[canonical compatibility container](compatibility-container.md) is a second
-supported route for compatibility work, not a replacement for this one.
+and does not need a remote host.
 
 The host may be a root container, may supply its own container runtime, and
 may reach the network only through an HTTPS proxy. The provisioner handles
@@ -14,8 +12,6 @@ each case, scopes custom trust to an existing proxy certificate or an
 explicit CA path, and verifies the same frozen oracle and data contracts.
 No particular editor or IDE is required. Give each worktree its own
 `OXPINYIN_ORACLE_ENV` and `--cache-dir` paths when several share a host.
-`--in-container` is the behavioural adapter for the container route; it
-neither installs nor requires Valgrind.
 
 ## Host requirements
 
@@ -66,9 +62,7 @@ even when it reports a candidate.
 
 On a host lacking these capabilities, stop at the named prerequisite and
 ask the environment owner to provide it, or move to a suitable host.
-Do not route around network policy. The canonical compatibility container
-can supply the reference/subject environment for compatibility work; it
-does not establish the host Valgrind measurement gate. `--python-only`
+Do not route around network policy. `--python-only`
 has the narrower requirements documented below and needs no Cargo, Rust,
 Valgrind, backend utilities or container runtime.
 
@@ -116,8 +110,8 @@ utilities, provision oracle libraries or model data, or write the oracle
 environment file. See [native setup](setup.md) for the interpreter policy;
 on a host that has `just`, `just python` provisions the same interpreter.
 
-`--python-only` cannot be combined with `--cells`, `--cache-dir`, `--jobs`,
-`--no-pull` or `--in-container`; these combinations fail with exit 2 before
+`--python-only` cannot be combined with `--cells`, `--cache-dir`, `--jobs`
+or `--no-pull`; these combinations fail with exit 2 before
 provisioning. For concurrent worktrees, `UV_INSTALL_DIR`,
 `UV_PYTHON_INSTALL_DIR` and `UV_CACHE_DIR` can select task-owned uv,
 interpreter and download-cache locations.
@@ -238,7 +232,6 @@ by the inherited value. The remaining overwrites were classified as follows:
 | `just runner cpp-smoke`: cleared-path `ldd` assertion | Intentional SONAME/RPATH test; the subsequent executable launch is checked with its actual environment. |
 | `build-oracle.sh`: generation-prefix assignment | Intentional isolation in the pinned build recipe; not a differential launch. |
 | `tools/dev/provision.py`: generated-path parsing and host-probe filtering; setup's cache-probe assignments | Intentional parsing without caller inheritance, or isolation of the host or selected cache while provisioning. |
-| `tools/dev/compat/boundary.py`: removal of host loader variables | Intentional host/container boundary; the container supplies its own runtime. |
 
 No listed remaining measurement overwrite is exempt as never-tkrzw.
 `teardown.py` checks each copied object before every native, fixture-population
@@ -264,13 +257,12 @@ uv run --no-project --managed-python python -B -X lazy_imports=normal tools/tkrz
    install them with apt; ordinary accounts get an explicit missing-package
    error. Install them deliberately before running setup. Normal
    provisioning installs Valgrind idempotently when
-   `valgrind --version` fails and prints its version in the summary. The
-   `--in-container` behavioural path omits that requirement; see [benches](benches.md).
+   `valgrind --version` fails and prints its version in the summary.
 1. Resolves and prints the runtime/version before container provisioning. Platform order
    is Windows: wslc/Podman/Docker; macOS: Apple container/Podman/Docker;
    Linux: Podman/Docker. Explicit `OXPINYIN_CONTAINER` wins; no available candidate
    is an error. wslc is blocked as not yet verified, and the Apple adapter is
-   not yet verified (use compat.sh rather than this Linux provisioner).
+   not supported by this Linux provisioner.
    Every container call uses the resolved runtime. Only the Docker path
    starts `dockerd` (detached, `setsid
    nohup dockerd`) unless `docker info` already answers, and waits for it.
@@ -290,7 +282,7 @@ uv run --no-project --managed-python python -B -X lazy_imports=normal tools/tkrz
    frozen hashes the pin records). If
    `ghcr.io/shenghaoc/oxpinyin-oracle:<tag>` exists for amd64, or
    `<tag>-arm64` for arm64, with `<tag>` printed by
-   `just compat image-tag` (pin, base image codename and a hash
+   `python -m tools.oracle.image image-tag` (pin, base image codename and a hash
    of the recipe and `oracle-pin.txt`), it is pulled and the cells are copied out of it. A cell
    whose pulled hashes do not match `oracle-pin.txt` is discarded and built
    instead, as is every cell when no image exists: the pinned image's
@@ -298,20 +290,12 @@ uv run --no-project --managed-python python -B -X lazy_imports=normal tools/tkrz
    --enable-libzhuyin --dbm <cell>` runs inside it, at the same in-image
    paths as the Dockerfile (`/build/<cell>`, `/opt/pinyin-oracle/<cell>`).
    The cells that need a build, and later the cells that need data, run at
-   once in a bounded pool (#1233, `python -m tools.dev pool run`,
-   `tools/dev/pool.py`). Each pool run holds the host heavy slot as `just heavy`
-   does, inheriting `OXPINYIN_HEAVY_SLOT_HELD` when `setup.sh` itself runs
-   under one, and divides the budget the slot admits: the available memory
-   after other slots' reservations and the CPUs (capped by `--jobs`). Workers
+   once in a bounded pool (#1233, `tools/dev/pool.py`). Workers
    times make jobs stays within the CPUs, so nested `make -j` is counted; every
-   overlapped build keeps at least two make jobs; each build is counted at 300
-   MiB plus 275 MiB per make job (`docs/runbooks/oracle.md`); and unknown
-   memory builds one cell at a time. Each container is held to its make jobs
-   with `--cpus`; the memory figure sizes the overlap and is not a container
-   limit. The `deps` image, the model, the hash check, step 3b and the report
+   overlapped build keeps at least two make jobs. Each container is held to its make jobs
+   with `--cpus`. The `deps` image, the model, the hash check, step 3b and the report
    stay serial: the data step must not run on libraries that were not
-   verified. CPU shares are per pool run, not reserved against other slot
-   holders; memory is admitted host-wide. Each container is named with this
+   verified. Each container is named with this
    invocation's random token (not the shell's PID), labelled with it, and its ID
    is recorded with `--cidfile`. A failed build, or SIGINT or SIGTERM, starts no
    further cell, stops the running containers and ends the run, and removes only
@@ -445,40 +429,6 @@ last five lines, and says which case it is before building the libraries:
 `manifest unknown / not found` (the tag is not published) or `pull FAILED
 (network, auth or proxy, not "not found")` for anything else. Both fall
 back to the build.
-
-### The nightly fixture differentials
-
-The `oracle` and `differentials` jobs of `verify-nightly.yml` do not run this
-setup, and setup does not change for them. Their oracle is not the frozen
-model20 cells but the pin built over the committed toned mini-model, by the
-one recipe `just compat nightly-fixtures`
-(`tools/dev/compat/campaigns.py`), whose `build` and `run` halves the two
-jobs share:
-
-- **Oracle, on stable.** `nightly-fixtures build --deps-image` runs each
-  build command inside the same trixie `deps` image setup uses (the
-  published `<oracle-tag>-deps` for amd64, otherwise the `deps` stage of
-  `tools/oracle/Dockerfile.oracle` built locally). It fetches and verifies
-  the pin commit, copies the toned model in, and runs configure
-  `--with-dbm=Tkrzw` against the distro `libtkrzw-dev`, then `make` and
-  `make install`. `build-oracle.sh` is not involved. The work directory
-  (`/tmp/oxpinyin-fixture-differentials`) and the prefix
-  (`/opt/libpinyin-tkrzw`) are mounted at their own paths, and the job
-  uploads both as one artifact.
-- **Subject, on testing.** In the unpinned `debian:testing` container, the
-  job restores the artifact at the same absolute paths, which configure's
-  `--prefix` and the `run` half name. The pin's uninstalled tools are
-  ordinary executables that link libpinyin statically. The job provisions
-  tkrzw with `.github/actions/tkrzw`, then runs `nightly-fixtures run`.
-  That builds the subject, checks with `ldd` that the pin library, the pin
-  tools and the subject all load `libtkrzw.so.1` from the action's build
-  ([rule 9](#runtime-enforcement-verification-rule-9)), and runs the
-  suites. It builds none of the pin.
-
-Without `build` or `run`, `nightly-fixtures` runs both halves on the
-current host, as before; the `run` half's loader check needs
-`OXPINYIN_TKRZW_PREFIX` or `OXPINYIN_TKRZW_LIBRARY`, which the environment
-file sets.
 
 ## Gates on a remote host
 

@@ -1777,7 +1777,7 @@ class DeadlineTests(DriverFixtureCase):
 
 class DriverVerdictTests(VerifyCase):
     def invoke(self, parent=False, timeout=None, timeout_side=0):
-        options = ['--cases', 'slow,next'] + (['--expect-parent'] if parent else [])
+        options = ['--cases', 'slow,next', '--jobs', '1'] + (['--expect-parent'] if parent else [])
         if timeout is not None:
             options.extend(['--case-timeout', str(timeout)])
         cases = {name: dict(driver.CASES['default-option-parse'], control=True) for name in ('slow', 'next')}
@@ -2191,7 +2191,7 @@ class CancellationTests(DriverFixtureCase):
         except FileNotFoundError:
             return False
 
-    def cancel(self, signum, through_runner=False, leader_exits=False, per_call=False, jobs=1):
+    def cancel(self, signum, leader_exits=False, per_call=False, jobs=1):
         # Fail before spawning if neither process-observation source is available.
         self.children(os.getpid())
         with tempfile.TemporaryDirectory() as scratch:
@@ -2209,11 +2209,6 @@ class CancellationTests(DriverFixtureCase):
                               '    signal.signal(signal.SIGTERM, signal.SIG_DFL)\n'
                               'time.sleep(60)\n')
             setup = "module.WORKER = pathlib.Path(sys.argv.pop(2)); "
-            if jobs > 1:
-                setup = (f"sys.path.insert(0, {str(Path(driver.__file__).resolve().parents[2])!r}); "
-                         "from tools.dev import host; "
-                         "host.resource_snapshot = lambda: dict(available_mib=16000, total_mib=16384, "
-                         "cpus=4, cargo_cpus=4, notes=[]); " + setup)
             if per_call:
                 # Keep this process-group test independent of compiler and profiler tools.
                 setup = ("module.__file__ = sys.argv.pop(2); "
@@ -2245,24 +2240,6 @@ class CancellationTests(DriverFixtureCase):
             owned_scratch = prefix / 'scratch'
             owned_scratch.mkdir()
             env['TMPDIR'] = str(owned_scratch)
-            if through_runner or jobs > 1:
-                # Exercise real slot admission and cancellation without host resources
-                # or caller settings delaying the worker past the startup deadline.
-                env.update(OXPINYIN_LOCK_DIR=str(prefix / 'locks'), OXPINYIN_HEAVY_SLOTS='1',
-                           OXPINYIN_RESOURCE_WAIT_SECONDS='0', CARGO_BUILD_JOBS='1',
-                           RUST_TEST_THREADS='1')
-                env.pop('OXPINYIN_HEAVY_SLOT_HELD', None)
-            if through_runner:
-                runner_code = (
-                    "import importlib.util, sys; "
-                    "spec = importlib.util.spec_from_file_location('run_all', sys.argv.pop(1)); "
-                    "module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module); "
-                    "module.resource_snapshot = lambda: dict(available_mib=4096, cpus=1, cargo_cpus=1, "
-                    "notes=['synthetic cancellation-test resources']); "
-                    "sys.exit(module.main())")
-                command = [sys.executable, '-c', runner_code,
-                           str(Path(__file__).with_name('run-all.py').resolve()),
-                           '--heavy-slot', '--', *command]
             proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                     start_new_session=True, env=env)
             worker_pid = descendant = None
@@ -2334,21 +2311,11 @@ class CancellationTests(DriverFixtureCase):
 
     @unittest.skipUnless(sys.platform.startswith('linux'),
                          'requires Linux /proc process observation')
-    def test_sigterm_through_run_all(self):
-        self.cancel(signal.SIGTERM, through_runner=True)
-
-    @unittest.skipUnless(sys.platform.startswith('linux'),
-                         'requires Linux /proc process observation')
     def test_parallel_signals_reap_every_group_before_releasing_scratch(self):
         for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
             with self.subTest(signum=signum):
                 self.cancel(signum, jobs=2)
         self.cancel(signal.SIGTERM, jobs=2, leader_exits=True)
-
-    @unittest.skipUnless(sys.platform.startswith('linux'),
-                         'requires Linux /proc process observation')
-    def test_parallel_sigterm_through_run_all(self):
-        self.cancel(signal.SIGTERM, through_runner=True, jobs=2)
 
     @unittest.skipUnless(sys.platform.startswith('linux'),
                          'requires Linux /proc process observation')
@@ -2441,7 +2408,7 @@ class ProcessObservationTests(DriverFixtureCase):
                 patch.object(Path, 'iterdir', return_value=iter(())), \
                 patch.object(subprocess, 'Popen') as spawn, \
                 self.assertRaisesRegex(AssertionError, r'no readable /proc/\*/stat records'):
-            CancellationTests().cancel(signal.SIGTERM, through_runner=True)
+            CancellationTests().cancel(signal.SIGTERM)
         test_support.assert_not_called(self, spawn)
 
 

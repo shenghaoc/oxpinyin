@@ -16,8 +16,7 @@ from . import pool, slot
 
 
 def driver_services(settings: Settings) -> DriverServices:
-    context = pool.UnitContext('ABI gate', slot.CANCELLED, environment=dict(settings.environment),
-                               fds=slot.inherited_fds('ABI gate'))
+    context = pool.UnitContext('ABI gate', slot.CANCELLED, environment=dict(settings.environment))
     return DriverServices(settings, context)
 
 
