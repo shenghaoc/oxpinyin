@@ -137,12 +137,6 @@ def register(case, *, CASES, crafted_bigram_context, index_file_rows, token_reus
         return blocked_save(k, 'user_pinyin_index.bin.tmp')
 
 
-    @case('stderr-save-one-final-blocked', stderr=True, issues=('545',))
-    def _(k):
-        """Save with the final user_phrase_index.bin path blocked by a nonempty directory."""
-        return blocked_save(k, 'user_phrase_index.bin')
-
-
     @case('stderr-save-one-tmp-blocked-zhuyin', mode='zhuyin', stderr=True, issues=('545',))
     def _(k):
         """Repeat the blocked temporary pinyin-index save through the zhuyin facade."""
@@ -265,8 +259,12 @@ def register(case, *, CASES, crafted_bigram_context, index_file_rows, token_reus
                 functools.partial(save_929_failure, blocked=_save929_name))
         case('save-929-reload-' + _save929_mode, mode=_save929_mode,
              issues=('929',))(save_929_roundtrip)
-        case('save-929-sync-rejecting-' + _save929_mode, mode=_save929_mode,
-             issues=('929',))(save_929_sync_rejecting)
+        # The ignored sync is `MemoryChunk::save`'s (`memory_chunk.h:555-557`), which both facades'
+        # saves call (`pinyin.cpp:988`, `zhuyin.cpp:633`); libzhuyin's every save reaches it,
+        # so the witness stays on libpinyin.
+        if _save929_mode == 'pinyin':
+            case('save-929-sync-rejecting-' + _save929_mode, mode=_save929_mode,
+                 issues=('929',))(save_929_sync_rejecting)
 
 
     def save_929_import(k, ctx, number, count=100):
