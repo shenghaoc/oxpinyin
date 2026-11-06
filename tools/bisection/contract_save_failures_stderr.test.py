@@ -15,7 +15,6 @@ import contract_save_failures_stderr as family
 
 # (case ID, positional options, keyword options) in registration order.
 EXPECTED = [('stderr-save-one-tmp-blocked', (), {'issues': ('545',), 'stderr': True}),
-            ('stderr-save-one-final-blocked', (), {'issues': ('545',), 'stderr': True}),
             ('stderr-save-one-tmp-blocked-zhuyin', (), {'issues': ('545',), 'mode': 'zhuyin', 'stderr': True}),
             ('save-929-rename-user_bigram.db.tmp-pinyin',
              (),
@@ -48,7 +47,6 @@ EXPECTED = [('stderr-save-one-tmp-blocked', (), {'issues': ('545',), 'stderr': T
              (),
              {'issues': ('929',), 'mode': 'zhuyin', 'stderr': True}),
             ('save-929-reload-zhuyin', (), {'issues': ('929',), 'mode': 'zhuyin'}),
-            ('save-929-sync-rejecting-zhuyin', (), {'issues': ('929',), 'mode': 'zhuyin'}),
             ('save-929-boundary-save-marker-pinyin', (), {'issues': ('929',), 'mode': 'pinyin'}),
             ('save-929-boundary-after-save-pinyin', (), {'issues': ('929',), 'mode': 'pinyin'}),
             ('save-929-boundary-after-fini-pinyin', (), {'issues': ('929',), 'mode': 'pinyin'}),
