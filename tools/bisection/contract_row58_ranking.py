@@ -56,6 +56,14 @@ def row58_scoring(dynamic):
     return probe
 
 
+# DYNAMIC_ADJUST (1 << 9) is dead in everything these cases call. `pinyin_guess_predicted_candidates`
+# declares `prev_token = null_token` (`pinyin.cpp:2418`), never assigns it and passes it to
+# `_compute_frequency_of_items` (`pinyin.cpp:2438`), whose only read of the bit is gated by
+# `null_token != prev_token` (`pinyin.cpp:1845-1846`); a prefix or addon row `continue`s before it
+# (`pinyin.cpp:1812-1843`), and `choose_predicted_candidate` reads no option. Every frozen on/off pair
+# below is identical. So the bit is a case input only where it could change a score: the cases that
+# seed bigram statistics, `row58-bigram-scoring-*` and `row58-bigram-choices-*`, keep both states, and
+# every other scenario keeps the `on` state, the one a subject that honoured the bit would fail.
 for _dynamic in (False, True):
     case('row58-bigram-scoring-' + ('on' if _dynamic else 'off'), issues=('697', 'row:58'))(row58_scoring(_dynamic))
 
@@ -169,11 +177,13 @@ def row58_lambda(dynamic):
 
 for _dynamic in (False, True):
     _state = 'on' if _dynamic else 'off'
-    case('row58-prefix-no-bigram-' + _state, issues=('697', 'row:58'))(row58_prefix(_dynamic, '是', 1))
-    case('row58-prefix-live-21-' + _state, issues=('697', 'row:58'))(row58_prefix(_dynamic, '是谁', 21))
+    if _dynamic:
+        case('row58-prefix-no-bigram-' + _state, issues=('697', 'row:58'))(row58_prefix(_dynamic, '是', 1))
+        case('row58-prefix-live-21-' + _state, issues=('697', 'row:58'))(row58_prefix(_dynamic, '是谁', 21))
     case('row58-bigram-choices-' + _state, issues=('697', 'row:58'))(row58_bigram_choices(_dynamic))
-    case('row58-conversions-' + _state, issues=('697', 'row:58'))(row58_conversion(_dynamic))
-    case('row58-lambda-ties-' + _state, issues=('697', 'row:58'))(row58_lambda(_dynamic))
+    if _dynamic:
+        case('row58-conversions-' + _state, issues=('697', 'row:58'))(row58_conversion(_dynamic))
+        case('row58-lambda-ties-' + _state, issues=('697', 'row:58'))(row58_lambda(_dynamic))
 
 
 def row58_prefix_overflow(dynamic):
@@ -199,7 +209,7 @@ def row58_prefix_overflow(dynamic):
     return probe
 
 
-for _dynamic in (False, True):
+for _dynamic in (True,):
     case('row58-prefix-overflow-' + ('on' if _dynamic else 'off'), issues=('697', 'row:58'))(row58_prefix_overflow(_dynamic))
 
 
@@ -231,8 +241,10 @@ def row58_signed_score(dynamic, duplicate=False, denominator=20000000):
 
 for _dynamic in (False, True):
     _state = 'on' if _dynamic else 'off'
-    case('row58-signed-score-' + _state, issues=('697', 'row:58'))(row58_signed_score(_dynamic))
-    case('row58-signed-duplicate-' + _state, issues=('697', 'row:58'))(row58_signed_score(_dynamic, True))
+    if _dynamic:
+        case('row58-signed-score-' + _state, issues=('697', 'row:58'))(row58_signed_score(_dynamic))
+        case('row58-signed-duplicate-' + _state, issues=('697', 'row:58'))(row58_signed_score(_dynamic, True))
+    # Both states stay: #1137's arm64 exclusion list and diagnosis name the pair (`ARM64_EXCLUDED_CASES`).
     case('row58-unsigned-score-' + _state, issues=('697', 'row:58'),
          policy_record='arm64-pin-portability-1137.md')(row58_signed_score(_dynamic, denominator=10000000))
 
@@ -265,7 +277,7 @@ def row58_zero_total(dynamic, punct=False):
     return probe
 
 
-for _dynamic in (False, True):
+for _dynamic in (True,):
     for _punct in (False, True):
         name = 'row58-total-zero-' + ('punct-' if _punct else '') + ('on' if _dynamic else 'off')
         case(name, abort=False, sigabrt=True, issues=('697', 'row:58'))(row58_zero_total(_dynamic, _punct))
@@ -283,7 +295,7 @@ def row58_prefix_zero_total(dynamic):
     return probe
 
 
-for _dynamic in (False, True):
+for _dynamic in (True,):
     case('row58-prefix-zero-total-' + ('on' if _dynamic else 'off'), control=True, issues=('697', 'row:58'))(
         row58_prefix_zero_total(_dynamic))
 
@@ -312,7 +324,7 @@ def row58_lambda_rounding(dynamic):
     return probe
 
 
-for _dynamic in (False, True):
+for _dynamic in (True,):
     case('row58-lambda-rounding-' + ('on' if _dynamic else 'off'), issues=('697', 'row:58'))(row58_lambda_rounding(_dynamic))
 
 
@@ -375,13 +387,13 @@ def row58_system_import(library, dynamic=False, existing=False):
 
 
 for _library in range(1, 5):
-    for _dynamic in (False, True):
+    for _dynamic in (True,):
         case('row58-system-import-%d-%s' % (_library, 'on' if _dynamic else 'off'), issues=('712', '697', 'row:58'))(
             row58_system_import(_library, _dynamic))
     # The import/count twin exists; libzhuyin has no predicted API twin.
     case('row58-system-import-zhuyin-%d' % _library, mode='zhuyin', control=True, issues=('712', '697', 'row:58'))(
         row58_system_import(_library))
-for _dynamic in (False, True):
+for _dynamic in (True,):
     case('row58-system-existing-' + ('on' if _dynamic else 'off'), control=True, issues=('712', '697', 'row:58'))(
         row58_system_import(4, _dynamic, existing=True))
 case('row58-system-existing-zhuyin', mode='zhuyin', control=True, issues=('712', '697', 'row:58'))(
