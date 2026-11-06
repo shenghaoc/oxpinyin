@@ -114,6 +114,12 @@ impl FiniGuard {
     pub(crate) const fn disarmed() -> Self {
         Self(None)
     }
+
+    /// Leave without the fini write: an open that fails where the pin dies
+    /// ([`UserStoreError::SessionSeed`]) never reaches `pinyin_fini`.
+    fn abandon(&mut self) {
+        self.0 = None;
+    }
 }
 
 impl FiniGuard {
@@ -179,16 +185,17 @@ impl GenericUserStore<DefaultStore> {
     /// # Errors
     ///
     /// Returns [`UserStoreError`] when the profile's `user.conf` cannot
-    /// be re-written or the session store cannot be created. A corrupt
-    /// or partial profile does not fail here — it degrades per-file,
-    /// exactly as upstream's loader degrades.
+    /// be re-written, and [`UserStoreError::SessionSeed`] when the session
+    /// cannot be built from the loaded profile, where the pin dies. A
+    /// corrupt or partial profile does not fail here — it degrades
+    /// per-file, exactly as upstream's loader degrades.
     pub fn open_libpinyin(
         user_dir: &Path,
         originals: impl Into<SystemOriginals>,
         versions: SystemVersions,
         law: UserConfLaw,
     ) -> Result<Self, UserStoreError> {
-        Self::open_session(Some(user_dir), &mut originals.into(), versions, law, None)
+        Self::open_session::<PinSteps>(Some(user_dir), &mut originals.into(), versions, law, None)
     }
 
     /// Open the pin's NULL-user-directory session entirely in memory.
@@ -197,14 +204,15 @@ impl GenericUserStore<DefaultStore> {
     ///
     /// # Errors
     ///
-    /// Returns [`UserStoreError`] if an in-memory container cannot be created
-    /// or seeded with the system libraries' allocation bases.
+    /// Returns [`UserStoreError::SessionSeed`] if an in-memory container
+    /// cannot be created or seeded with the system libraries' allocation
+    /// bases, where the pin dies.
     pub fn open_transient(
         originals: impl Into<SystemOriginals>,
         versions: SystemVersions,
         law: UserConfLaw,
     ) -> Result<Self, UserStoreError> {
-        Self::open_session(None, &mut originals.into(), versions, law, None)
+        Self::open_session::<PinSteps>(None, &mut originals.into(), versions, law, None)
     }
 
     /// [`open_libpinyin`](Self::open_libpinyin) for a profile
@@ -225,7 +233,7 @@ impl GenericUserStore<DefaultStore> {
         law: UserConfLaw,
         check: crate::persistence::ProfileCheck,
     ) -> Result<Self, UserStoreError> {
-        Self::open_session(
+        Self::open_session::<PinSteps>(
             Some(user_dir),
             originals,
             versions,
@@ -257,7 +265,13 @@ impl GenericUserStore<DefaultStore> {
         persistence::check_format_unnamed(versions, law);
     }
 
-    fn open_session(
+    // Keeps one shared copy of this function for its three callers
+    // (`open_libpinyin`, `open_transient`, `open_libpinyin_checked`).
+    // Generic over its steps, LLVM otherwise inlined it into each caller
+    // the C libraries reach: `shipping-sizes` measured +65,536 B
+    // (libpinyin) and +69,632 B (libzhuyin) stripped at 235438d.
+    #[inline(never)]
+    fn open_session<P: OpenSteps>(
         user_dir: Option<&Path>,
         originals: &mut SystemOriginals,
         versions: SystemVersions,
@@ -296,6 +310,8 @@ impl GenericUserStore<DefaultStore> {
                 ..Default::default()
             }
         };
+        let mut profile = profile;
+        P::profile(&mut profile);
         // A system library's log replay reached a pin assertion
         // (rows 91 and 108) on an open without the loop.
         if let Some(fault) = profile.loaded.journal_fault {
@@ -309,9 +325,11 @@ impl GenericUserStore<DefaultStore> {
             index,
             phrase_table,
         } = profile;
-        // Armed as soon as the load has raised the counter: an open that
-        // fails from here on drops it and lowers the counter again, so a
-        // failed open reads as a finished session, not a crash.
+        // Armed as soon as the load has raised the counter. Every failure
+        // from here on is the pin's death ([`UserStoreError::SessionSeed`]),
+        // which abandons the guard: the pin dies without `pinyin_fini`, so
+        // the raised counter stays on disk and nothing is written or saved.
+        // Only an open that completes hands it to the store.
         let target = Arc::new(Target {
             dir: user_dir.map(Path::to_path_buf),
             phrases: std::sync::Mutex::new(Default::default()),
@@ -320,18 +338,28 @@ impl GenericUserStore<DefaultStore> {
             open_counter: loaded.open_counter,
             overlong_index_keys,
         });
-        let fini = FiniGuard(Some(Arc::clone(&target)));
-        let (has_user_data, seeded_totals) = db.write(|txn| {
-            let seeded = seed_txn_with_replay(
-                txn,
-                &loaded.state,
-                originals,
-                &loaded.library_totals,
-                &replayed,
-                &user_libraries,
-            )?;
-            Ok((count_tables(txn)?, seeded))
-        })?;
+        let mut fini = FiniGuard(Some(Arc::clone(&target)));
+        // From here the session owns the system libraries (`replayed`), so a
+        // failure cannot leave a store without them: each is the pin's
+        // death, never a degraded open, and leaves without finalizing.
+        let mut seed_fault = |error: &dyn std::fmt::Display| {
+            fini.abandon();
+            UserStoreError::SessionSeed(error.to_string())
+        };
+        let (has_user_data, seeded_totals) = db
+            .write(|txn| {
+                let seeded = seed_txn_with_replay(
+                    txn,
+                    &loaded.state,
+                    originals,
+                    &loaded.library_totals,
+                    &replayed,
+                    &user_libraries,
+                )
+                .and_then(|seeded| Ok((count_tables(txn)?, seeded)));
+                P::seeded(seeded)
+            })
+            .map_err(|error| seed_fault(&error))?;
         {
             let mut phrases = target.phrases();
             phrases.libraries = user_libraries;
@@ -339,14 +367,9 @@ impl GenericUserStore<DefaultStore> {
             phrases.phrase_table = phrase_table;
             for (&nibble, items) in &loaded.state.libraries {
                 for (&slot, item) in items {
-                    let bytes = persistence::encode_persisted_item(item)
-                        .map_err(|e| UserStoreError::Persistence(e.to_string()))?;
-                    phrases
-                        .libraries
-                        .entry(nibble)
-                        .or_default()
-                        .replace(slot, &bytes)
-                        .map_err(UserStoreError::Persistence)?;
+                    let bytes = P::encode(item).map_err(|e| seed_fault(&e))?;
+                    P::replace(phrases.libraries.entry(nibble).or_default(), slot, &bytes)
+                        .map_err(|e| seed_fault(&e))?;
                 }
             }
             // An item a system library with an original lacks lives in that
@@ -358,14 +381,9 @@ impl GenericUserStore<DefaultStore> {
                 }
                 for (&slot, item) in items {
                     if let Some(item) = item {
-                        let bytes = persistence::encode_persisted_item(item)
-                            .map_err(|e| UserStoreError::Persistence(e.to_string()))?;
-                        phrases
-                            .libraries
-                            .entry(nibble)
-                            .or_default()
-                            .replace(slot, &bytes)
-                            .map_err(UserStoreError::Persistence)?;
+                        let bytes = P::encode(item).map_err(|e| seed_fault(&e))?;
+                        P::replace(phrases.libraries.entry(nibble).or_default(), slot, &bytes)
+                            .map_err(|e| seed_fault(&e))?;
                     }
                 }
             }
@@ -376,17 +394,21 @@ impl GenericUserStore<DefaultStore> {
         // gram included: the pin merges its total (`ngram.cpp:298-306`).
         // The flag only gates a fast path, so a profile that has the file
         // takes the full read without a walk of the container here.
-        let (bigram_db, has_bigram_file) = match target.dir.as_deref() {
-            Some(dir) => (
-                persistence::load_user_bigram_db(dir)?,
-                oxpinyin_input::path::build_path(
-                    dir,
-                    std::ffi::OsStr::new(&oxpinyin_data::user_files::UserDbm::Bigram.file_name()),
-                )
-                .exists(),
-            ),
-            None => (DefaultUserBigramDb::empty()?, false),
-        };
+        //
+        // Without a user dir the pin loads `g_build_filename(NULL, …)`,
+        // `""`, the same way. The container answers only an unsupported
+        // linked library, which the system tables' attach has already
+        // refused; one the pin cannot create ends the process in the
+        // backend, and a Berkeley DB one whose open failed is the pin's
+        // failed container.
+        let bigram_db = P::bigram(target.dir.as_deref()).map_err(|e| seed_fault(&e))?;
+        let has_bigram_file = target.dir.as_deref().is_some_and(|dir| {
+            oxpinyin_input::path::build_path(
+                dir,
+                std::ffi::OsStr::new(&oxpinyin_data::user_files::UserDbm::Bigram.file_name()),
+            )
+            .exists()
+        });
         let has_user_data = has_user_data
             || replayed
                 .values()
@@ -422,6 +444,7 @@ impl GenericUserStore<DefaultStore> {
             phrase_table_generation: std::sync::atomic::AtomicU64::new(0),
             has_user_data: std::sync::atomic::AtomicBool::new(has_user_data),
             has_library_offsets: std::sync::atomic::AtomicBool::new(!library_offsets.is_empty()),
+            bigram_failed: oxpinyin_store::UserBigramDb::is_failed(&bigram_db),
             bigram_db: Some(std::sync::Mutex::new(bigram_db)),
             libpinyin: Some(target),
         });
@@ -439,6 +462,58 @@ impl GenericUserStore<DefaultStore> {
         ))
     }
 }
+
+/// The steps of a session open, past the hand-over of the system
+/// libraries, that can fail. Each default method is the real step, and the
+/// open is generic over the steps, so a production open ([`PinSteps`])
+/// calls them directly. A test type overrides one to inject its failure
+/// (#1576's `load_with` form), since none can be made to fail from data.
+trait OpenSteps {
+    /// The loaded profile, before the session is built from it.
+    #[inline]
+    fn profile(_profile: &mut persistence::LoadedProfile) {}
+
+    /// The session store's seed write, given the real write's answer.
+    #[inline]
+    fn seeded(seeded: SeedWrite) -> SeedWrite {
+        seeded
+    }
+
+    /// A loaded item's encoding ([`persistence::encode_persisted_item`]).
+    #[inline]
+    fn encode(item: &ChunkItem) -> Result<Vec<u8>, oxpinyin_data::chunk_write::ChunkWriteError> {
+        persistence::encode_persisted_item(item)
+    }
+
+    /// The encoded item's placement in its library's arena.
+    #[inline]
+    fn replace(
+        library: &mut crate::user_library::UserLibrary,
+        slot: u32,
+        bytes: &[u8],
+    ) -> Result<(), String> {
+        library.replace(slot, bytes)
+    }
+
+    /// `m_user_bigram->load_db(user_bigram.db)` (`pinyin.cpp:399-401`,
+    /// `zhuyin.cpp:341-343`), or the empty container without a user dir.
+    #[inline]
+    fn bigram(dir: Option<&Path>) -> Result<DefaultUserBigramDb, PersistenceError> {
+        match dir {
+            Some(dir) => persistence::load_user_bigram_db(dir),
+            None => Ok(DefaultUserBigramDb::empty()?),
+        }
+    }
+}
+
+/// The seed write's answer: whether the store holds user data, and the
+/// seeded totals.
+type SeedWrite = Result<(bool, SeedTotals), StoreError>;
+
+/// The real [`OpenSteps`]: every production open.
+struct PinSteps;
+
+impl OpenSteps for PinSteps {}
 
 /// `init_and_wrap`'s `has_user_data` probe, against a seeded session
 /// store; the user bigram lives in the container, which the caller asks.
@@ -4885,6 +4960,8 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+mod open_faults;
 #[cfg(test)]
 mod provenance;
 #[cfg(test)]

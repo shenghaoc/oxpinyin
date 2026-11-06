@@ -131,6 +131,14 @@ impl BdbUnopenedHandle {
         ))
     }
 
+    /// `Bigram::remove`'s answer on the failed handle: the pin's `DB->del`
+    /// gets `EINVAL` and `remove` returns false (`ngram_bdb.cpp:165-176`).
+    pub(crate) fn delete(&self, _key: &[u8]) -> Result<(), StoreError> {
+        Err(StoreError::Backend(
+            "DB->del: method not permitted before handle's open method".into(),
+        ))
+    }
+
     /// `Bigram::get_all_items`' answer on the failed handle: the pin's
     /// `DB->cursor` leaves no cursor and the walk returns false
     /// (`ngram_bdb.cpp:178-191`).
@@ -912,8 +920,15 @@ impl MergedRows<'_, '_> {
 /// an in-memory `DB_HASH` filled from the file by `copy_bdb`'s cursor
 /// walk (`ngram_bdb.cpp:47-79`, `bdb_utils.h:43-74`), so its walk is the
 /// pin's.
+///
+/// When the in-memory `DB->open` fails, `load_db` returns before the file
+/// is read and the pin carries on with that handle (`ngram_bdb.cpp:54-57`;
+/// `pinyin.cpp:401` and `zhuyin.cpp:343` ignore the answer). This is the
+/// failed container: its handle is closed ([`BdbUnopenedHandle`], register
+/// row 113), and each call answers as the pin's call on the failed handle
+/// does.
 pub struct BdbUserBigramDb {
-    db: Db,
+    db: Result<Db, BdbUnopenedHandle>,
 }
 
 /// Visits one borrowed record at a time in the database's native order.
@@ -930,38 +945,85 @@ fn visit_db(
     Ok(())
 }
 
-impl crate::UserBigramDb for BdbUserBigramDb {
-    fn empty() -> Result<Self, StoreError> {
-        Ok(Self {
-            db: Db::open_in_memory_hash()?,
-        })
+impl BdbUserBigramDb {
+    /// The failed container `load_db` leaves when its in-memory `DB->open`
+    /// fails (`ngram_bdb.cpp:54-57`).
+    const fn failed() -> Self {
+        Self {
+            db: Err(BdbUnopenedHandle { _closed: () }),
+        }
     }
 
-    fn load_db(path: &Path) -> Result<Self, StoreError> {
-        let this = Self::empty()?;
+    /// [`Self::failed`] for the user store's tests of a session over it: no
+    /// input makes the in-memory open fail short of memory. Test-only: it
+    /// exists only with the `test-hooks` feature, which only a
+    /// `[dev-dependencies]` entry enables.
+    #[cfg(feature = "test-hooks")]
+    #[must_use]
+    pub const fn failed_container() -> Self {
+        Self::failed()
+    }
+
+    /// [`UserBigramDb::load_db`] over `create`, the in-memory container's
+    /// open: [`Db::open_in_memory_hash_attach`], or an injected failure.
+    fn load_db_with(
+        path: &Path,
+        create: impl FnOnce() -> Result<Option<Db>, StoreError>,
+    ) -> Result<Self, StoreError> {
+        let Some(db) = create()? else {
+            // `return false` before `tmp_db` is created: the file is not read.
+            return Ok(Self::failed());
+        };
         // `tmp_db->open(…, dbfile, NULL, DB_HASH, DB_RDONLY, 0600)` then
         // `copy_bdb(tmp_db, m_db)`; a file that does not open leaves the
         // container empty, as the pin's does.
         if let Ok(file) = Db::open(path, ffi::DB_HASH, true, false, ffi::USER_FILE_MODE) {
             // Keep the usable in-memory container if source traversal fails;
             // callers of the pin retain it even when load_db returns false.
-            if let Err(error) = visit_db(&file, |key, value| this.db.put(key, value)) {
+            if let Err(error) = visit_db(&file, |key, value| db.put(key, value)) {
                 eprintln!("user-bigram load {}: {error}", path.display());
             }
         }
-        Ok(this)
+        Ok(Self { db: Ok(db) })
+    }
+}
+
+impl crate::UserBigramDb for BdbUserBigramDb {
+    fn empty() -> Result<Self, StoreError> {
+        Ok(match Db::open_in_memory_hash_attach()? {
+            Some(db) => Self { db: Ok(db) },
+            None => Self::failed(),
+        })
+    }
+
+    fn load_db(path: &Path) -> Result<Self, StoreError> {
+        Self::load_db_with(path, Db::open_in_memory_hash_attach)
     }
 
     fn get(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> {
-        self.db.get(key, value)
+        match &self.db {
+            Ok(db) => db.get(key, value),
+            // `Bigram::load`'s `DB->get` fails, so `load` answers no gram
+            // (`ngram_bdb.cpp:140-142`).
+            Err(_) => {
+                value.clear();
+                Ok(false)
+            }
+        }
     }
 
     fn store(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
-        self.db.put(key, value)
+        match &self.db {
+            Ok(db) => db.put(key, value),
+            Err(handle) => handle.write(key, value),
+        }
     }
 
     fn remove(&self, key: &[u8]) -> Result<(), StoreError> {
-        self.db.del(key).map(drop)
+        match &self.db {
+            Ok(db) => db.del(key).map(drop),
+            Err(handle) => handle.delete(key),
+        }
     }
 
     fn keys(&self) -> Result<Vec<Option<[u8; 4]>>, StoreError> {
@@ -969,8 +1031,16 @@ impl crate::UserBigramDb for BdbUserBigramDb {
         // one vector of four-byte tokens, as `get_all_items` appends them
         // to one `GArray` (`ngram_bdb.cpp:178-215` at 074a2219). Berkeley
         // DB keeps no record count to reserve by, so it grows as it goes.
+        let Ok(db) = &self.db else {
+            // `get_all_items` empties the array, then its `DB->cursor` leaves
+            // no cursor and it answers false (`ngram_bdb.cpp:178-191`). Every
+            // caller ignores that answer and reads the empty array
+            // (`pinyin.cpp:779`; `mask_out`'s false at `:1230`, `:3766`,
+            // `zhuyin.cpp:765`).
+            return Ok(Vec::new());
+        };
         let mut keys = Vec::new();
-        let mut cursor = self.db.cursor()?;
+        let mut cursor = db.cursor()?;
         let mut seek = ffi::Seek::First;
         while let Some(key) = cursor.key(seek)? {
             keys.push(<[u8; 4]>::try_from(key).ok());
@@ -980,12 +1050,40 @@ impl crate::UserBigramDb for BdbUserBigramDb {
     }
 
     fn is_empty(&self) -> Result<bool, StoreError> {
-        Ok(self.db.cursor()?.key(ffi::Seek::First)?.is_none())
+        let Ok(db) = &self.db else {
+            return Ok(true);
+        };
+        Ok(db.cursor()?.key(ffi::Seek::First)?.is_none())
+    }
+
+    const CAN_FAIL: bool = true;
+
+    fn is_failed(&self) -> bool {
+        self.db.is_err()
     }
 
     fn save_db(&self, path: &Path) -> Result<(), StoreError> {
-        save_bigram_db(&self.db, path)
+        match &self.db {
+            Ok(db) => save_bigram_db(db, path),
+            Err(handle) => save_failed_bigram_db(handle, path),
+        }
     }
+}
+
+/// `Bigram::save_db` over the failed container (`ngram_bdb.cpp:81-108`):
+/// unlink, create the `DB_HASH` file (`DB_CREATE, 0600`), whose empty
+/// pages libdb writes and syncs as it creates it (`db_open.c:360-361`,
+/// Berkeley DB 5.3.28), then `copy_bdb` finds no cursor on the failed
+/// handle (`bdb_utils.h:49-52`) and the save answers false. The pin never
+/// closes that file's handle; this one is closed, unsynced, as a
+/// successful save closes it. The caller's rename still runs, as the
+/// pin's does (`pinyin.cpp:1121`, `zhuyin.cpp:687`), so the empty file
+/// replaces the profile's `user_bigram.db`.
+fn save_failed_bigram_db(handle: &BdbUnopenedHandle, path: &Path) -> Result<(), StoreError> {
+    crate::remove_if_present(path)?;
+    let file = Db::open(path, ffi::DB_HASH, false, true, ffi::USER_FILE_MODE)?;
+    file.close_unsynced();
+    handle.walk()
 }
 
 fn save_bigram_db(db: &Db, path: &Path) -> Result<(), StoreError> {
@@ -1088,6 +1186,102 @@ mod tests {
             });
             drop(store);
         }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    fn temp_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "oxpinyin-bdb-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos())
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// A `user_bigram.db` with one gram, saved by a working container.
+    fn saved_bigram(dir: &std::path::Path) -> std::path::PathBuf {
+        use crate::UserBigramDb as _;
+        let path = dir.join("user_bigram.db");
+        let db = super::BdbUserBigramDb::load_db(&path).unwrap();
+        db.store(&7_u32.to_le_bytes(), &[1, 2, 3, 4]).unwrap();
+        db.save_db(&path).unwrap();
+        path
+    }
+
+    /// `ngram_bdb.cpp:51-52`: `assert(ret == 0)` after `db_create`. The
+    /// process dies of SIGABRT, with no Rust panic text or other line.
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_user_bigram_db_create_aborts_where_load_db_asserts() {
+        let stderr = crate::death_test::assert_aborts(
+            "bdb::tests::a_failed_user_bigram_db_create_aborts_where_load_db_asserts",
+            || {
+                // The open dies before any file is read, so no directory.
+                let _ = super::BdbUserBigramDb::load_db_with(
+                    std::path::Path::new("never-read/user_bigram.db"),
+                    || {
+                        super::ffi::SharedDb::failed_in_memory_hash_attach(
+                            super::ffi::FailedStep::Create,
+                        )
+                    },
+                );
+            },
+        );
+        assert!(stderr.is_empty(), "{}", String::from_utf8_lossy(&stderr));
+    }
+
+    #[test]
+    fn a_failed_in_memory_open_leaves_the_pins_failed_container() {
+        use crate::UserBigramDb as _;
+        let dir = temp_dir("bigram-db-open");
+        let path = saved_bigram(&dir);
+        // `ngram_bdb.cpp:54-57`: the in-memory `DB->open` fails and
+        // `load_db` returns before the file is read; the init carries on.
+        let db = super::BdbUserBigramDb::load_db_with(&path, || {
+            super::ffi::SharedDb::failed_in_memory_hash_attach(super::ffi::FailedStep::Open)
+        })
+        .unwrap();
+        assert!(db.is_failed());
+        let key = 7_u32.to_le_bytes();
+        let mut value = vec![9];
+        // `load`: a miss, though the file holds the gram (`:140-142`).
+        assert!(!db.get(&key, &mut value).unwrap());
+        assert!(value.is_empty());
+        // `store` and `remove` answer false (`:161-162`, `:174-175`).
+        assert!(db.store(&key, &[1, 2, 3, 4]).is_err());
+        assert!(db.remove(&key).is_err());
+        // `get_all_items`: the emptied array (`:178-191`).
+        assert!(db.keys().unwrap().is_empty());
+        assert!(db.is_empty().unwrap());
+
+        // `save_db` answers false after it has created the empty hash
+        // file (`:84-100`): the caller renames that file into place.
+        let tmp = dir.join("user_bigram.db.tmp");
+        std::fs::write(&tmp, b"stale").unwrap();
+        assert!(db.save_db(&tmp).is_err());
+        let saved = super::BdbUserBigramDb::load_db(&tmp).unwrap();
+        assert!(!saved.is_failed());
+        assert!(saved.keys().unwrap().is_empty());
+        // The profile's own file is not touched by the save.
+        let kept = super::BdbUserBigramDb::load_db(&path).unwrap();
+        assert_eq!(kept.keys().unwrap(), vec![Some(key)]);
+        drop((db, saved, kept));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_working_container_is_not_failed() {
+        use crate::UserBigramDb as _;
+        let dir = temp_dir("bigram-db-working");
+        let path = saved_bigram(&dir);
+        let db = super::BdbUserBigramDb::load_db(&path).unwrap();
+        assert!(!db.is_failed());
+        assert!(!super::BdbUserBigramDb::empty().unwrap().is_failed());
+        assert_eq!(db.keys().unwrap(), vec![Some(7_u32.to_le_bytes())]);
+        drop(db);
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

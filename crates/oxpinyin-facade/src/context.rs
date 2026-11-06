@@ -200,6 +200,18 @@ impl OpenFailure {
         }
     }
 
+    /// Whether the user session could not be built after the library loop
+    /// handed it the system libraries ([`oxpinyin_runtime::OpenError::UserSession`]):
+    /// the pin's counterparts die (`bad_alloc`, or its in-memory loads'
+    /// asserts, `ngram_bdb.cpp:51-52`). The C facades abort on it.
+    #[must_use]
+    pub fn user_session_fault(&self) -> bool {
+        matches!(
+            self,
+            Self::Runtime(oxpinyin_runtime::OpenError::UserSession(_))
+        )
+    }
+
     /// The pin assertion a default library's `.dbin` merge reached at init
     /// ([`JournalFault`], rows 91 and 108), if that is why the open stopped.
     /// The C facades abort on it.

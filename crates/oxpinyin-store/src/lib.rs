@@ -1060,7 +1060,9 @@ pub trait UserBigramDb: Sized {
     ///
     /// # Errors
     ///
-    /// Returns [`StoreError`] when the container cannot be created.
+    /// Returns [`StoreError`] for a linked library this backend does not
+    /// support. A container the pin cannot create ends the process, as the
+    /// pin's assert or uncaught `std::bad_alloc` does.
     fn empty() -> Result<Self, StoreError>;
 
     /// `Bigram::load_db`: a fresh in-memory container, then the file's
@@ -1070,8 +1072,7 @@ pub trait UserBigramDb: Sized {
     ///
     /// # Errors
     ///
-    /// Returns [`StoreError`] only when the in-memory container itself
-    /// cannot be created.
+    /// As [`Self::empty`].
     fn load_db(path: &Path) -> Result<Self, StoreError>;
 
     /// `Bigram::load`'s read: the stored value for `key`, into `value`
@@ -1119,6 +1120,20 @@ pub trait UserBigramDb: Sized {
     /// Returns [`StoreError`] when the container cannot be read.
     fn is_empty(&self) -> Result<bool, StoreError> {
         Ok(self.keys()?.is_empty())
+    }
+
+    /// Whether this backend has a failed container at all: only Berkeley
+    /// DB's `load_db` carries on after its in-memory `DB->open` fails
+    /// (`ngram_bdb.cpp:54-57` at 074a2219). The other backends cannot fail
+    /// to create the container and carry on, so a caller's check of
+    /// [`Self::is_failed`] behind this constant is a constant `false` there.
+    const CAN_FAIL: bool = false;
+
+    /// Whether this is the failed container a Berkeley DB `load_db` leaves
+    /// when its in-memory `DB->open` fails: reads miss, walks are empty,
+    /// and `store` fails. It never changes after creation.
+    fn is_failed(&self) -> bool {
+        false
     }
 
     /// `Bigram::save_db`: remove `path`, then write the container to it
@@ -1267,6 +1282,9 @@ pub const DEFAULT_STORE_DB_FORMAT: &str = "BerkeleyDB";
 /// gated to the backends that use it (see the module docs).
 #[cfg(any(feature = "kyotocabinet", feature = "tkrzw", feature = "bdb"))]
 mod common;
+// The Berkeley DB attach death tests' re-run helper.
+#[cfg(all(test, unix, feature = "bdb"))]
+mod death_test;
 
 #[cfg(feature = "tkrzw")]
 mod tkrzw;

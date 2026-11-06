@@ -123,7 +123,12 @@ matching upstream `PunctTable::attach` ignore. Do not make it `Result`.
 I/O is `Err`, a missing token is `Ok(None)`. That split is correct.
 
 `UserStore::open` failing at C ABI init degrades to `user: None` rather
-than failing `pinyin_init` (system tables still load). The process-global
+than failing `pinyin_init` (system tables still load). *Superseded
+2026-11-06 UTC: an open no longer degrades. A failure after the library
+loop hands the session its system libraries is `OpenError::UserSession`,
+on which both C facades abort as the pin dies; a Berkeley DB user bigram
+whose in-memory open fails is the pin's failed container
+([compatibility register row 113](compatibility-policy.md#bdb-failed-handles)).* The process-global
 store registry recovers mutex poison with `into_inner` instead of
 panicking.
 

@@ -172,6 +172,15 @@ pub enum EngineError {
         /// The predecessor token whose gram the step trains.
         token: u32,
     },
+    /// A training step would store its gram in the failed Berkeley DB user
+    /// bigram container, whose `store` answers false: the pin's
+    /// `check_result(m_user_bigram->store(last_token, user))` asserts
+    /// (`phonetic_lookup.h:904`). The engine answers an error, before
+    /// observing anything.
+    FailedUserBigramStore {
+        /// The predecessor token whose gram the step trains.
+        token: u32,
+    },
     /// A training span met a matrix position the pin's
     /// `increase_pronunciation_possibility` asserts on: the decoded
     /// result no longer fits the current matrix because a re-parse
@@ -309,6 +318,13 @@ impl fmt::Display for EngineError {
                     "training the predecessor {token:#010x}'s gram misses its inserted item"
                 )
             }
+            Self::FailedUserBigramStore { token } => {
+                write!(
+                    formatter,
+                    "training the predecessor {token:#010x}'s gram stores into the failed \
+                     user bigram container"
+                )
+            }
             Self::MatrixColumnAssert { offset } => {
                 write!(
                     formatter,
@@ -363,6 +379,7 @@ impl std::error::Error for EngineError {
             | Self::UnsafeTrainingPredecessor { .. }
             | Self::ShortTrainingPredecessor { .. }
             | Self::TrainingSetFreqMiss { .. }
+            | Self::FailedUserBigramStore { .. }
             | Self::ShortLookupPredecessor { .. }
             | Self::UnsafeLookupPredecessor { .. }
             | Self::ReadAfterCheck { .. }

@@ -238,6 +238,20 @@ pub enum UserStoreError {
     /// A user reading cannot be removed from both pinyin index projections;
     /// the pin asserts on the failed removal (`pinyin.cpp:3759`).
     UserReadingRemoval,
+    /// The open could not build the session once the system libraries
+    /// were handed to it: the session store's seed write, a loaded item's
+    /// encoding or its placement, or the user bigram's container. The
+    /// pin's counterparts die: an allocation that throws `std::bad_alloc`,
+    /// or the asserts of its in-memory loads (`ngram_bdb.cpp:51-52`,
+    /// `bdb_utils.h:61`, `tkrzwdb_utils.h:45`). The C adapters abort.
+    SessionSeed(String),
+    /// A training step would store its gram in the failed Berkeley DB user
+    /// bigram container ([`oxpinyin_store::UserBigramDb::is_failed`]): its
+    /// `store` answers false and the pin's
+    /// `check_result(m_user_bigram->store(last_token, user))` dies
+    /// (`phonetic_lookup.h:904`). Returned before anything is stored; the
+    /// C adapters abort.
+    FailedUserBigramStore,
 }
 
 impl fmt::Display for UserStoreError {
@@ -325,6 +339,16 @@ impl fmt::Display for UserStoreError {
                 f,
                 "user reading removal failed (upstream asserts, pinyin.cpp:3759)"
             ),
+            Self::SessionSeed(cause) => write!(
+                f,
+                "the session could not be built after the system libraries were handed \
+                 over (upstream dies): {cause}"
+            ),
+            Self::FailedUserBigramStore => write!(
+                f,
+                "a training step stores into the failed user bigram container \
+                 (upstream asserts, phonetic_lookup.h:904)"
+            ),
         }
     }
 }
@@ -353,7 +377,9 @@ impl std::error::Error for UserStoreError {
             | Self::EmptyUserBigramGram
             | Self::ResidualUserBigramGram
             | Self::TrainingSetFreqMiss
-            | Self::UserReadingRemoval => None,
+            | Self::UserReadingRemoval
+            | Self::SessionSeed(_)
+            | Self::FailedUserBigramStore => None,
             Self::Journal(fault) => Some(fault),
             Self::LibraryLoop(stop) => Some(stop),
         }
@@ -1507,6 +1533,9 @@ pub enum TrainingFault {
     PartialTail(Token),
     /// `set_freq` misses the item `insert_freq` added (`phonetic_lookup.h:903`).
     SetFreqMiss(Token),
+    /// The step's `store` meets the failed user bigram container
+    /// (`phonetic_lookup.h:904`).
+    FailedUserBigramStore(Token),
 }
 
 /// One training call's replay: the grams its checked steps left, and the
@@ -1643,6 +1672,15 @@ impl<S: WriteStore> GenericUserStore<S> {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
         })
+    }
+
+    /// Whether the session's user bigram is the failed Berkeley DB container
+    /// ([`oxpinyin_store::UserBigramDb::is_failed`]), as recorded when it was
+    /// created: no lock is taken, and on a backend whose container cannot
+    /// fail this is the constant `false`.
+    #[inline]
+    fn user_bigram_failed(&self) -> bool {
+        <DefaultUserBigramDb as oxpinyin_store::UserBigramDb>::CAN_FAIL && self.inner.bigram_failed
     }
 
     /// `Bigram::load(prev)`: the raw gram stored under `prev` — one lock
@@ -1874,6 +1912,14 @@ impl<S: WriteStore> GenericUserStore<S> {
         prev: Token,
         cur: Token,
     ) -> Result<(), UserStoreError> {
+        // The failed container's `load` misses, so the step trains a fresh
+        // gram with no overflow, and its `store` answers false: the pin's
+        // `check_result` dies at this first trained step
+        // (`phonetic_lookup.h:876-904`).
+        if self.user_bigram_failed() {
+            check.fault = Some(TrainingFault::FailedUserBigramStore(prev));
+            return Err(UserStoreError::FailedUserBigramStore);
+        }
         let row = match check.grams.get(&prev) {
             Some(row) => row.clone(),
             None => self.bigram_row(prev)?,
@@ -2105,6 +2151,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             has_library_offsets: AtomicBool::new(false),
             libpinyin: None,
             bigram_db: None,
+            bigram_failed: false,
         }))
     }
 
@@ -2698,13 +2745,28 @@ impl<S: WriteStore> GenericUserStore<S> {
         // `m_user_bigram->store(last_token, user)` (`phonetic_lookup.h:904`,
         // `pinyin.cpp:2638`): one store of the predecessor's gram, skipped
         // by training's overflow guard.
-        if accepted
+        let stored = if accepted
             && session
             && let Some(gram) = &gram
         {
-            self.store_gram(&db, last, gram)?;
-        }
+            self.store_gram(&db, last, gram)
+        } else {
+            Ok(())
+        };
         self.mark_committed_write(db, true);
+        match stored {
+            Ok(()) => {}
+            // The failed container's `store` answers false.
+            // `pinyin_choose_predicted_candidate` ignores that answer
+            // (`pinyin.cpp:2638`); training's `check_result` dies on it
+            // (`phonetic_lookup.h:904`), which its step check reports first.
+            Err(_) if self.user_bigram_failed() => {
+                if matches!(policy, SeedPolicy::Training) {
+                    return Err(UserStoreError::FailedUserBigramStore);
+                }
+            }
+            Err(error) => return Err(error),
+        }
         if !accepted {
             return Err(UserStoreError::UnigramTotalOverflow);
         }

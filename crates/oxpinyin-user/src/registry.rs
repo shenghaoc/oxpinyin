@@ -116,6 +116,11 @@ pub struct StoreInner<S: WriteStore> {
     /// order. A writer takes the database guard first, then this one, and
     /// bumps `write_generation` before releasing the database guard.
     pub(crate) bigram_db: Option<Mutex<oxpinyin_store::DefaultUserBigramDb>>,
+    /// Whether [`Self::bigram_db`] is the failed Berkeley DB container
+    /// ([`oxpinyin_store::UserBigramDb::is_failed`]), recorded when it is
+    /// created: it never changes, so a training step reads it without the
+    /// container's lock.
+    pub(crate) bigram_failed: bool,
 }
 
 /// Declared last on [`crate::UserStore`] so this runs after the handle `Arc` dies.
