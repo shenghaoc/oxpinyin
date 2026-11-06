@@ -5,7 +5,6 @@
 //! `table.conf`'s system chunks and `bigram.db` from the current directory
 //! and writes the interpolation model to `stdout`.
 
-use core::ffi::c_long;
 use std::ffi::OsString;
 use std::path::Path;
 
@@ -62,7 +61,7 @@ fn gen_unigram(output: &OutputStream, libraries: &Libraries) {
             let Some(word) = token_to_string(libraries, token) else {
                 continue;
             };
-            tool::storage::print_unigram(output, token as i32, &word, c_long::from(freq));
+            tool::storage::print_unigram(output, token as i32, &word, i64::from(freq));
         }
     }
 }

@@ -448,11 +448,11 @@ fn merge_sums_the_same_model_and_refuses_a_missing_result_file() {
 
     // No result file: the target is the pin's NULL attach, and the first
     // source's magic-header check aborts (`merge:104-128`).
-    let out = run(dir.path(), "merge_k_mixture_model", &["model.db"], None);
+    let _out = run(dir.path(), "merge_k_mixture_model", &["model.db"], None);
     #[cfg(unix)]
     {
         use std::os::unix::process::ExitStatusExt as _;
-        assert_eq!(out.status.signal(), Some(6), "SIGABRT");
+        assert_eq!(_out.status.signal(), Some(6), "SIGABRT");
     }
     assert!(!dir.path().join("merged-null.db").exists());
 }
@@ -710,7 +710,7 @@ fn the_committed_kmm_fixtures_are_the_pin_records() {
     assert!(out.stdout.is_empty());
 
     // No result file: the NULL attach aborts in `merge_magic_header`.
-    let out = run(
+    let _out = run(
         dir.path(),
         "merge_k_mixture_model",
         &["k_mixture_model.db"],
@@ -719,7 +719,7 @@ fn the_committed_kmm_fixtures_are_the_pin_records() {
     #[cfg(unix)]
     {
         use std::os::unix::process::ExitStatusExt as _;
-        assert_eq!(out.status.signal(), Some(6), "SIGABRT");
+        assert_eq!(_out.status.signal(), Some(6), "SIGABRT");
     }
     assert!(!dir.path().join("k_mixture_model_ngram.db").exists());
 }

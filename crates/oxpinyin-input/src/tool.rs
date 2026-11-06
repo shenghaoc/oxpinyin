@@ -1624,22 +1624,17 @@ pub mod storage {
 
     /// `fprintf(output, "\\item %d %s count %ld\n", token, phrase, freq)`
     /// (`export_interpolation.cpp:98`).
-    pub fn print_unigram(
-        output: &OutputStream,
-        token: c_int,
-        word: &CStr,
-        freq: core::ffi::c_long,
-    ) {
+    pub fn print_unigram(output: &OutputStream, token: c_int, word: &CStr, freq: i64) {
+        // The Linux pin's long holds every u32 frequency (:93-98).
+        // Windows long is narrower; use its 64-bit printf conversion.
+        #[cfg(windows)]
+        let format = c"\\item %d %s count %lld\n";
+        #[cfg(not(windows))]
+        let format = c"\\item %d %s count %ld\n";
         // SAFETY: the stream is open; the format takes an int, a string and
-        // a long.
+        // a signed 64-bit integer on the selected platform.
         unsafe {
-            libc::fprintf(
-                output.as_ptr(),
-                c"\\item %d %s count %ld\n".as_ptr(),
-                token,
-                word.as_ptr(),
-                freq,
-            );
+            libc::fprintf(output.as_ptr(), format.as_ptr(), token, word.as_ptr(), freq);
         }
     }
 
