@@ -23,9 +23,20 @@ def case(name, *args, **kwargs):
 # libzhuyin's full-pinyin seam omits both split passes (zhuyin.cpp:1017-
 # 1040); cover that facade's distinct order too. Compare every ordered
 # type/text row.
-MATRIX_RESPLIT_INPUTS = (
-    'banangang', 'baguanangang', 'chenanengang', 'anangang', 'fanangang',
-    'lianai', 'xiane', 'liane', 'xianai', 'qiane', 'lian', 'xian',
+#
+# Texts: a resplit hit after an initial (banangang, fanangang) and with none (anangang), a
+# near miss of the resplit table (baguanangang, chenanengang), and a divided hit alone (xian)
+# or with a following syllable (xiane, xianai). Each stays under the tables, exact and fuzzy:
+# the fuzzy pass reads the columns the tables made, and `PINYIN_AMB_AN_ANG` is read against each
+# key's final at `phonetic_key_matrix.cpp:291-292`. Without the tables, one text per kind.
+# (facade, text, tables, fuzzy).
+MATRIX_RESPLIT_CASES = (
+    *(('pinyin', _text, True, _fuzzy) for _text in (
+        'banangang', 'anangang', 'fanangang', 'baguanangang', 'chenanengang', 'xian', 'xiane', 'xianai')
+      for _fuzzy in (False, True)),
+    *((_mode, _text, False, _fuzzy) for _mode in ('pinyin', 'zhuyin') for _text in ('banangang', 'xian')
+      for _fuzzy in (False, True)),
+    ('zhuyin', 'xian', True, False),
 )
 
 
@@ -53,18 +64,15 @@ def matrix_resplit_windows(text, options):
     return run
 
 
-for _mode in ('pinyin', 'zhuyin'):
-    for _tables in (False, True):
-        for _fuzzy in (False, True):
-            # PINYIN_AMB_AN_ANG: expand the halves produced by the tables.
-            _options = (0x18a if _tables else 0x0a) | ((1 << 17) if _fuzzy else 0)
-            for _text in MATRIX_RESPLIT_INPUTS:
-                case('matrix-resplit-%s-%s-%s-%s' % (
-                    _mode, _text, 'tables' if _tables else 'plain',
-                    'fuzzy' if _fuzzy else 'exact'), mode=_mode,
-                    control=not _tables or _text in ('baguanangang', 'chenanengang')
-                    or (_mode == 'pinyin' and _text in ('lian', 'xian')), issues=('682', '683'))(
-                        matrix_resplit_windows(_text, _options))
+for _mode, _text, _tables, _fuzzy in MATRIX_RESPLIT_CASES:
+    # PINYIN_AMB_AN_ANG: expand the halves produced by the tables.
+    _options = (0x18a if _tables else 0x0a) | ((1 << 17) if _fuzzy else 0)
+    case('matrix-resplit-%s-%s-%s-%s' % (
+        _mode, _text, 'tables' if _tables else 'plain',
+        'fuzzy' if _fuzzy else 'exact'), mode=_mode,
+        control=not _tables or _text in ('baguanangang', 'chenanengang')
+        or (_mode == 'pinyin' and _text == 'xian'), issues=('682', '683'))(
+            matrix_resplit_windows(_text, _options))
 
 
 # #1031: every reader of a facade's one retained matrix. zhuyin.cpp:1017-1040
