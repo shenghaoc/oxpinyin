@@ -160,8 +160,22 @@ def register(case, *, predicted_bigram_context, token_reuse_files):
         'mask-reopen-lookup': (False, SAVED + [('mask',) + MIDDLE, ('add', 3), ('save',), ('reopen',),
                                                ('lookup', 1), ('lookup', 0)]),
     }
+    # The two facades share the index tables: `zhuyin_mask_out` is `pinyin_mask_out` line for line
+    # (`pinyin.cpp:1224-1297`, `zhuyin.cpp:759-832`), both import through `add_index`
+    # (`pinyin.cpp:2552-2557`, `zhuyin.cpp:483-484`) and both save through `store`
+    # (`pinyin.cpp:1001`, `zhuyin.cpp:653`), and a `ChewingKey` carries no mark of the facade that
+    # parsed it. So every sequence runs on libpinyin, and libzhuyin keeps the sequences that reach each
+    # entry point it has: import and save, a mask alone (`mask-save`: nothing is modified, so the save
+    # returns false and writes nothing), a mask and the import after it, a reopen over the emptied keys,
+    # and a fresh instance's lookup, in the masking session (`mask-lookup`) and straight after a reopen
+    # of the masked entries (`mask-reopen-lookup`, the only one that does). The mask value
+    # (`mask-highest`, `mask-all`), the order of the masks and the unsaved form are read by the shared
+    # tables and the shared token allocation, not by a facade function.
+    ZHUYIN_INDEX_KEPT = ('no-mask', 'mask-save', 'mask-middle', 'mask-reopen', 'mask-lookup', 'mask-reopen-lookup')
     for _mode in ('pinyin', 'zhuyin'):
         for _name, (_control, _steps) in INDEX_KEY_SEQUENCES.items():
+            if _mode == 'zhuyin' and _name not in ZHUYIN_INDEX_KEPT:
+                continue
             case('issue784-index-keys-%s-%s' % (_name, _mode), mode=_mode, control=_control, issues=('784',))(
                 lambda k, steps=_steps: index_key_sequence(k, steps))
     # `pinyin_remove_user_candidate` (the zhuyin facade has none).
@@ -236,10 +250,16 @@ def register(case, *, predicted_bigram_context, token_reuse_files):
         'mask-none': SHARED + [DD, ('mask', 0xffffffff, 0x07000009), ('save',)],
         'mask-all': SHARED + [DD, ('mask',) + USER_ALL, ('add', 5), ('save',)],
     }
+    # The zhuyin facade never calls `search_suggestion` (`pinyin.cpp:1883` is the only caller), so it
+    # keeps the three ways it can leave the entry a mask walk starts from: an import (`add`), a search
+    # hit (`hit`, through the shared `search`), and the file on reopen (`reopen`), plus the lookup over
+    # the tailed records. Which mask value, how many masks and which record the walk meets first are
+    # `ChewingLargeTable2::mask_out` and `MaskOutProcessor2`, shared with libpinyin.
+    ZHUYIN_TAIL_KEPT = ('add', 'hit', 'reopen', 'lookup')
     for _mode in ('pinyin', 'zhuyin'):
         for _name, _steps in TAIL_SEQUENCES.items():
-            if _mode == 'zhuyin' and _name.startswith('remove'):
-                continue  # the zhuyin facade has no `remove_user_candidate`
+            if _mode == 'zhuyin' and _name not in ZHUYIN_TAIL_KEPT:
+                continue  # the zhuyin facade has no `remove_user_candidate` or suggestion walk
             case('issue785-pinyin-tails-%s-%s' % (_name, _mode), mode=_mode, control=_name in TAIL_CONTROLS, issues=('785',))(
                 lambda k, steps=_steps: index_key_sequence(k, steps, TAIL_PHRASES, TAIL_READINGS))
 
