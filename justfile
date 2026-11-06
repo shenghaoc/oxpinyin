@@ -354,3 +354,8 @@ measure recipe *args: python
 [windows]
 initbench *args: python
     @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev measure startup @forwarded; exit $LASTEXITCODE
+
+# Build and enter the local oracle-based performance environment on the host architecture.
+[unix]
+performance *args: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.oracle.image performance "$@"

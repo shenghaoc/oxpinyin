@@ -52,9 +52,10 @@ without further settings. Without `--prefix` the script installs to
 when `TMPDIR` is unset), and the runners find it only if
 `PINYIN_ORACLE_PREFIX` points there.
 The script writes a manifest the differential runners compare against
-`oracle-pin.txt` before trusting the prefix. The container recipes in
-`tools/bisection/Dockerfile.perf-matrix` carry a prebuilt oracle at
-`/opt/libpinyin-tkrzw` for the perf work.
+`oracle-pin.txt` before trusting the prefix. The local `performance` stage of `tools/oracle/Dockerfile.oracle` carries
+the prebuilt libraries. Enter it with `just performance` and prepare data
+using the [measurement procedure](benches.md#where-measurements-run).
+The oracle never runs on GitHub Actions.
 
 ## 2a. Or pull the prebuilt libraries (any machine)
 

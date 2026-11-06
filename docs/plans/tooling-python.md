@@ -350,10 +350,10 @@ pool of independent builds, arm scheduling), `identity.py`, `reports.py`,
 `profile.py` and `snapshot.py`; the report parsers stay the existing
 `tools/bisection` and `tools/perf-gate` scripts. A diagnostic keeps the legacy
 script name (`run-perf-baseline.sh: PERF_RUNS must be a decimal count ...`)
-because reports and runbooks quote it. The two measurement images
-(`Dockerfile.callgrind`, `Dockerfile.perf-matrix`) now install uv and the managed
-interpreter and run their recipe as `CMD`; the libtkrzw runtime check now lives
-in `tools/tkrzw/runtime.py` (U3).
+because reports and runbooks quote it. Pin comparisons now use the local
+`performance` stage of `tools/oracle/Dockerfile.oracle`; runtime preparation
+is in `campaigns.py`. The old standalone matrix/Callgrind Dockerfiles are
+removed. The libtkrzw runtime check remains in `tools/tkrzw/runtime.py` (U3).
 
 U2's recorded differences from the shell runners change no measured value,
 report schema, option or documented status. A missing command is Python's

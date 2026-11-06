@@ -7,8 +7,10 @@ capture-contract.sh, build-contract-image.sh and cloud provisioning:
     python -m tools.oracle.image pin-field [--platform PLATFORM] KEY
     python -m tools.oracle.image verify-image [--engine docker|podman] [--platform PLATFORM] IMAGE
 """
+import argparse
 import hashlib
 import os
+import platform
 from pathlib import Path
 import re
 import shutil
@@ -190,11 +192,62 @@ def select_runtime(override='', *, env=None, host=None, output=print):
     return selected
 
 
+def performance(argv, *, root=ROOT):
+    """Build and enter the local stable performance environment, on the host architecture."""
+    parser = argparse.ArgumentParser(prog='just performance')
+    parser.add_argument('--engine', choices=('container', 'docker', 'podman'))
+    build_mode = parser.add_mutually_exclusive_group()
+    build_mode.add_argument('--build-only', action='store_true')
+    build_mode.add_argument('--skip-build', action='store_true')
+    parser.add_argument('--volume', help='persistent local Cargo/model cache volume')
+    parser.add_argument('command', nargs=argparse.REMAINDER)
+    args = parser.parse_args(argv)
+    if os.environ.get('GITHUB_ACTIONS') == 'true':
+        fail('the oracle performance environment is local-only; never run it on GitHub Actions', 2)
+    if platform.system() == 'Darwin':
+        translated = subprocess.run(['/usr/sbin/sysctl', '-n', 'sysctl.proc_translated'],
+                                    check=False, capture_output=True)
+        if translated.returncode == 0 and translated.stdout.strip() == b'1':
+            fail('performance measurements require native Python; this interpreter runs under Rosetta', 2)
+    native = {'arm64': 'arm64', 'aarch64': 'arm64', 'x86_64': 'amd64', 'AMD64': 'amd64'}.get(platform.machine())
+    if native is None:
+        fail(f'unsupported native performance architecture: {platform.machine()}', 2)
+    selected_platform = f'linux/{native}'
+    for variable in ('DOCKER_DEFAULT_PLATFORM', 'CONTAINER_DEFAULT_PLATFORM', 'ORACLE_PLATFORM'):
+        if os.environ.get(variable) not in (None, '', selected_platform):
+            fail(f'{variable} forces a non-native performance platform; unset it', 2)
+    engine = args.engine or select_runtime()
+    inputs = hashlib.sha256()
+    for name in ('.python-version', 'rust-toolchain.toml'):
+        inputs.update((Path(root) / name).read_bytes())
+    tag = f'oxpinyin-performance:{image_tag(root)}-{inputs.hexdigest()[:12]}-{native}'
+    resources = ['--cpus', '4', '--memory', '6G'] if Path(engine).name == 'container' else []
+    if not args.skip_build:
+        run([engine, 'build', *resources, '--platform', selected_platform, '--build-arg', f'ORACLE_PLATFORM={selected_platform}',
+             '--target', 'performance', '-f', Path(root) / 'tools/oracle/Dockerfile.oracle', '-t', tag, root])
+    if args.build_only:
+        return 0
+    command = args.command
+    if command[:1] == ['--']:
+        command = command[1:]
+    cache = args.volume or f'oxpinyin-performance-{selected_platform.split("/")[1]}'
+    flags = ['-it'] if not command and sys.stdin.isatty() else []
+    flags += resources
+    common = text(['git', '-C', root, 'rev-parse', '--path-format=absolute', '--git-common-dir'])
+    flags += ['-v', f'{common}:{common}:ro']
+    return run([engine, 'run', '--rm', '--platform', selected_platform, *flags,
+                '-v', f'{Path(root).resolve()}:/repo:ro', '-v', f'{cache}:/performance',
+                '-e', 'CARGO_TARGET_DIR=/performance/target', '-e', 'TMPDIR=/performance/tmp',
+                '-e', 'PYTHONDONTWRITEBYTECODE=1', '-w', '/repo', tag, *(command or ['bash'])], check=False)
+
+
 def main(argv=None):
-    """Dispatch image-tag, pin-field or verify-image; return the shell status."""
+    """Dispatch oracle image operations and the local performance environment."""
     args = list(sys.argv[1:] if argv is None else argv)
 
     def call():
+        if args[:1] == ['performance']:
+            return performance(args[1:])
         if args[:1] == ['image-tag']:
             print(image_tag())
             return 0
@@ -202,7 +255,7 @@ def main(argv=None):
             return pin_field(args[1:])
         if args[:1] == ['verify-image']:
             return verify_image(args[1:])
-        print('usage: python -m tools.oracle.image image-tag|pin-field|verify-image ...', file=sys.stderr)
+        print('usage: python -m tools.oracle.image image-tag|pin-field|verify-image|performance ...', file=sys.stderr)
         return 2
     return guarded(call)
 

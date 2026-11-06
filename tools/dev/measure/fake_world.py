@@ -35,6 +35,11 @@ class World(unittest.TestCase):
 
     def setUp(self):
         self.root = Path(self.enterContext(tempfile.TemporaryDirectory(prefix='campaigns-test-'))).resolve()
+        from . import campaigns, valgrind
+        scratch = self.root / 'scratch'
+        scratch.mkdir()
+        for module in (campaigns, valgrind):
+            self.enterContext(mock.patch.object(module, 'SCRATCH', scratch))
         self.log = []
         self.taskset = True
         self.worker_status = {}        # nth worker launch (1-based) -> exit status

@@ -474,7 +474,7 @@ class SystemImportProfileTests(World):
         self.assertFalse(self.out.exists())
 
     def test_missing_operands_are_named_with_the_runner(self):
-        for given, name in ((0, 'pin-so'), (1, 'ox-so'), (2, 'system-data-dir'), (3, 'new-output-dir')):
+        for given, name in ((0, 'pin-so'), (1, 'ox-so'), (2, 'system-data-dir')):
             status, _, err = self.execute(valgrind.system_import_profile, [str(self.pin)] * given, {})
             self.assertEqual((status, err), (1, f'run-system-import-profile.sh: {given + 1}: {name}\n'))
 

@@ -1,5 +1,11 @@
 # Remote Linux development
 
+Pin-comparison campaigns use the local oracle `performance` stage; see
+[where measurements run](benches.md#where-measurements-run). Native development
+and native-only measurements are unchanged. The oxpinyin-only nightly snapshot
+uses plain Debian stable; other Linux CI stays on unpinned Debian testing.
+
+
 A remote Linux host that meets the requirements below can run every
 non-measurement gate; measurement gates also need the ext4 paths below.
 Provision it with `tools/cloud/setup.sh`, which also installs Valgrind for

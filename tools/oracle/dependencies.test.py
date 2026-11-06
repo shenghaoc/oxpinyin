@@ -33,6 +33,22 @@ class OracleDependenciesTests(unittest.TestCase):
         for line in copies:
             self.assertRegex(line, pattern)
 
+    def test_performance_is_local_and_snapshot_uses_testing(self):
+        docker = (ROOT / 'tools/oracle/Dockerfile.oracle').read_text()
+        workflow = (ROOT / '.github/workflows/verify-nightly.yml').read_text()
+        stable = 'debian:testing'
+        self.assertIn('FROM deps AS performance', docker)
+        stage = docker.split('FROM deps AS performance', 1)[1].split('\nFROM ', 1)[0]
+        self.assertIn('ENV OXPINYIN_TKRZW_LIBRARY=', stage)
+        for own_build in ('tools.tkrzw.build', '/opt/tkrzw', 'OXPINYIN_TKRZW_PREFIX', 'LD_LIBRARY_PATH', 'PKG_CONFIG_PATH'):
+            self.assertNotIn(own_build, stage)
+        snapshot = workflow.split('  perf-snapshot:', 1)[1].split('\n  test-', 1)[0]
+        self.assertIn('image: ' + stable, snapshot)
+        self.assertIn('OXPINYIN_MEASUREMENT_IMAGE: ' + stable, snapshot)
+        self.assertNotIn('Dockerfile.oracle', snapshot.replace('# keep aligned with tools/oracle/Dockerfile.oracle', ''))
+        self.assertEqual(workflow.count('image: debian:testing'), 4)
+        self.assertNotIn('restore-keys: |\n            perf-snapshot-', snapshot)
+
     def test_missing_bash_floor_fails_closed_even_with_inherited_sentinel(self):
         with tempfile.TemporaryDirectory() as directory:
             script = Path(directory) / 'build-oracle.sh'

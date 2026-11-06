@@ -275,8 +275,7 @@ if __name__ == '__main__': unittest.main()
                    'docs/runbooks/benches.md', 'docs/runbooks/cloud.md',
                    'docs/runbooks/oracle.md', 'docs/testing/README.md',
                    'docs/testing/capture-fixtures.md', 'docs/testing/oracle-environment.md',
-                   'fixtures/datagen-toned/README.md', 'tools/bisection/Dockerfile.callgrind',
-                   'tools/bisection/Dockerfile.perf-matrix')
+                   'fixtures/datagen-toned/README.md')
         for path in audited:
             with self.subTest(path=path):
                 self.assertNotIn(path, test_runner.HARNESS_DEPENDENCIES)
