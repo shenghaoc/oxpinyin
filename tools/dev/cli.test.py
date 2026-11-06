@@ -26,13 +26,20 @@ class RealJustSmokeTests(unittest.TestCase):
     """Use CI's pinned real just and managed Python; no command mocks."""
 
     def invoke(self, *args):
-        return subprocess.run(['just', '--justfile', str(ROOT / 'justfile'), *args],
+        command = ['just', '--justfile', str(ROOT / 'justfile'), *args]
+        if sys.platform == 'win32':
+            # pwsh is the supported interactive caller; avoid legacy argument conversion.
+            command = ['pwsh', '-NoLogo', '-NoProfile', '-Command',
+                       'just ' + ' '.join("'" + value.replace("'", "''") + "'" for value in command[1:])
+                       + '; exit $LASTEXITCODE']
+        return subprocess.run(command,
                               cwd=ROOT, capture_output=True, text=True, timeout=30)
 
     def test_real_justfile_lists_its_public_recipes(self):
         result = self.invoke('--list')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('test-tools', result.stdout)
+        if sys.platform != 'win32':
+            self.assertIn('test-tools', result.stdout)
         self.assertIn('audit-glib-call-sites', result.stdout)
         self.assertNotIn('_test-argv', result.stdout)
 
@@ -41,13 +48,35 @@ class RealJustSmokeTests(unittest.TestCase):
             marker = Path(directory) / 'must-not-exist'
             values = ['path with spaces', '', 'literal;$HOME', '*?[abc]',
                       'double" and single\' quotes', r'back\slash', 'line\nbreak',
-                      f'$(touch "{marker}")', f'`touch "{marker}"', '--flag']
-            for status in (0, 23):
+                      f'$(touch "{marker}")', f'`touch "{marker}"', '-flag', '--flag', '-', '--']
+            for status in (0, 1, 2, 77):
                 with self.subTest(status=status):
                     result = self.invoke('_test-argv', str(status), *values)
                     self.assertEqual(result.returncode, status, result.stderr)
                     self.assertEqual(json.loads(result.stdout), values)
                     self.assertFalse(marker.exists(), 'shell expanded a literal argument')
+
+    def test_real_recipe_with_zero_or_one_user_arguments(self):
+        for values in ([], ['one argument']):
+            for status in (0, 1, 2, 77):
+                with self.subTest(status=status, values=values):
+                    result = self.invoke('_test-argv', str(status), *values)
+                    self.assertEqual(result.returncode, status, result.stderr)
+                    self.assertEqual(json.loads(result.stdout), values)
+
+    @unittest.skipUnless(sys.platform == 'win32', 'Windows abort status')
+    def test_real_heavy_preserves_windows_abort_status(self):
+        child = ['uv', 'run', '--no-project', '--managed-python', 'python',
+                 '-X', 'lazy_imports=normal', '-c',
+                 'import ctypes; ctypes.CDLL("ucrtbase").abort()']
+        result = self.invoke('heavy', '--', *child)
+        self.assertEqual(result.returncode, 0xC0000409, result.stderr)
+
+    @unittest.skipUnless(sys.platform == 'win32', 'Windows nested transport')
+    def test_real_heavy_preserves_nested_arguments_and_status(self):
+        result = self.invoke('heavy', '--', 'just', '_test-argv', '77', 'path with spaces')
+        self.assertEqual(result.returncode, 77, result.stderr)
+        self.assertEqual(json.loads(result.stdout), ['path with spaces'])
 
     def test_bootstrapping_uv_recipes_depend_on_python(self):
         result = self.invoke('--dump', '--dump-format', 'json')
@@ -83,6 +112,7 @@ class RealJustSmokeTests(unittest.TestCase):
             with self.subTest(recipe=name):
                 self.assertIn('python', dependencies.split())
 
+    @unittest.skipIf(sys.platform == 'win32', 'the fake uv executable is a Unix shell script')
     def test_table_recipe_disables_downloads_and_does_not_bootstrap_python(self):
         with tempfile.TemporaryDirectory() as directory:
             log = Path(directory) / 'uv.log'
@@ -98,6 +128,7 @@ class RealJustSmokeTests(unittest.TestCase):
                 'run --offline --no-python-downloads --no-project --managed-python '
                 'python -X lazy_imports=normal -m tools.dev rust-tables --check'])
 
+    @unittest.skipIf(sys.platform == 'win32', 'the fake uv executable is a Unix shell script')
     def test_doctor_without_the_interpreter_names_just_python_and_installs_nothing(self):
         with tempfile.TemporaryDirectory() as directory:
             log = Path(directory) / 'uv.log'

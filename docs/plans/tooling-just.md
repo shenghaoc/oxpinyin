@@ -37,8 +37,8 @@ libdb required: the `bdb` feature links the SYSTEM Berkeley DB and needs its hea
 
 The configured BDB result supersedes that attempt.
 
-Windows: TODO (no host); tooling verification is deferred. It does not block
-T2N (maintainer ruling 2026-10-21 UTC).
+Windows argument transport is verified through `_test-argv` from a pwsh caller.
+Job Object lifetime, cancellation and full tooling acceptance remain unverified.
 Shell and argument acceptance remains partial. Hosted Rust CI does not verify
 these recipes. Historical macOS checks in #942/#943 retain their original
 heads and failures; they do not verify this head.
@@ -84,8 +84,8 @@ Layer 5 schedules the old-to-new handoffs.
 | `just bench [args ...]` | Run the workspace benches through the heavy wrapper: `cargo bench --workspace --benches <args>`. | `cargo bench` | Implemented, #1038 (maintainer ruling 2026-10-22 UTC). `--benches` skips the `required-features` targets: `backend_matrix_kyotocabinet` and `backend_matrix_tkrzw` (oxpinyin-store), and `dbm_bench` (pinyin-oracle); `kyotocabinet_bnum` was retired 2026-11-02. |
 | `just bench-smoke` | Build every selected bench harness without running it: `just bench --no-run`. | `cargo bench --no-run` | Implemented, #1038 (maintainer ruling 2026-10-22 UTC). On a host with model20, `just bench -- --test` is the full start-up check. |
 | `just measure <recipe>` / `just initbench` | Enter native oxpinyin-only measurement; `initbench` is `measure startup`. Pin rows are refused. | Native startup controller and worker (layer 5 §7.8) | Implemented under the 2026-10-22 UTC ruling; Linux KC empty-profile smoke completed on 2026-10-24 UTC at controller `1cea405c`, retained shipping `ebc9d4f5`, via recheck plus separate continuation (both exit 0; benches runbook); macOS acceptance pending. |
-| `just fuzz <target> [args ...]` | Run one native fuzz target through the heavy wrapper. | `setarch "$(uname -m)" -R cargo +nightly-2026-08-01 fuzz run <args>` on Linux from `verify-nightly.yml`'s `fuzz-soak` job; the macOS recipe supplies Homebrew GLib and Berkeley DB paths. | Implemented (maintainer ruling 2026-10-23 UTC; macOS native path added by #1180). All ten targets run on Linux and macOS. Windows transport unverified (#950). |
-| `just coverage [args ...]` | Run native coverage through the heavy wrapper; the tool owns crate, backend and report selection. | `tools.dev coverage` runs `cargo llvm-cov <args>` from `coverage.yml`'s `coverage` job with temporary per-invocation state. | Implemented (maintainer ruling 2026-10-23 UTC). Run and report in one invocation; pass the desired workflow scope, report and floor options together. macOS execution unverified; Windows transport unverified (#950). |
+| `just fuzz <target> [args ...]` | Run one native fuzz target through the heavy wrapper. | `setarch "$(uname -m)" -R cargo +nightly-2026-08-01 fuzz run <args>` on Linux from `verify-nightly.yml`'s `fuzz-soak` job; the macOS recipe supplies Homebrew GLib and Berkeley DB paths. | Implemented (maintainer ruling 2026-10-23 UTC; macOS native path added by #1180). All ten targets run on Linux and macOS. Windows transport is verified; workload execution is unverified. |
+| `just coverage [args ...]` | Run native coverage through the heavy wrapper; the tool owns crate, backend and report selection. | `tools.dev coverage` runs `cargo llvm-cov <args>` from `coverage.yml`'s `coverage` job with temporary per-invocation state. | Implemented (maintainer ruling 2026-10-23 UTC). Run and report in one invocation; pass the desired workflow scope, report and floor options together. macOS execution unverified; Windows transport is verified; workload execution is unverified. |
 | `just sanitize [bdb\|kc\|tkrzw\|all] [address\|thread\|leak\|memory]` | Run one store backend's sanitizer gate, or all three, through the heavy wrapper: `python -m tools.dev sanitize <backend> [sanitizer]`, default `bdb address`. | `tools/dev/test_runner.py` (moved from `store-backends.yml`'s inline `tkrzw-sanitizers` command and the three backend scripts retired in #1293). | Implemented (maintainer approval 2026-10-23 UTC, #1085; macOS and thread selection added by #1180; Python service #1293). Linux and macOS select address and thread; only macOS thread has been run. macOS refuses MemorySanitizer and standalone LSan on arm64; tkrzw leak is refused on every host. Windows exits 1. `store-backends.yml`'s three sanitizer jobs call the same service. |
 | `just ci <job>` | Select an approved native job. | Workflow-specific commands | Proposed. |
 
@@ -168,7 +168,7 @@ other recipes' acceptance nor T2N's fresh-install/offline checks.
 The macOS fuzz refusal has been removed: all ten targets now run natively
 with Homebrew GLib and Berkeley DB paths, and the C-ABI target links there as
 well. Native macOS coverage recipe execution remains unverified. Windows
-transport and runtime remain unverified (#950).
+transport is verified; fuzz and coverage execution remain unverified.
 
 These recipes do not change either workflow.
 
@@ -198,12 +198,17 @@ nightly from `tools.dev sanitize-toolchain`, and feed `store-backends-gate`.
 Configure a native Windows shell with `[windows]` on `set shell`.
 Do not require Git Bash, Cygwin, WSL or another POSIX shell.
 Do not use deprecated `set windows-shell` or `set windows-powershell`.
-PR #942 added `powershell.exe -NoLogo -NoProfile -Command` and variadic
-recipes that use `@args` with `exit $LASTEXITCODE`. Windows variadic transport
-is partial and unverified. With `-Command`, trailing tokens may be parsed as
-command text rather than preserved as separate arguments. A recipe fix needs
-a Windows host and a separate implementation PR. Native Windows acceptance
-remains TODO. Do not infer acceptance from the syntax.
+Windows recipes use `pwsh -NoLogo -NoProfile -CommandWithArgs`.
+The minimum is in [pwsh-floor.txt](../../tools/dev/pwsh-floor.txt).
+Call recipes from pwsh. Windows PowerShell uses legacy native argument
+conversion before just receives the arguments.
+
+One exception to the thin-recipe rule permits the `windows_args` assignment
+in the justfile. Windows recipe lines that forward arguments interpolate it.
+Just supplies the recipe name as the first positional argument. The assignment
+discards that name and keeps the remaining arguments in `$forwarded`.
+It uses no pipe and does not parse options or command text.
+The native command uses `@forwarded`; `exit $LASTEXITCODE` preserves its status.
 See the [just shell manual](https://just.systems/man/en/configuring-the-shell.html).
 
 Preserve argument boundaries and paths with spaces. Do not use POSIX `quote()`
@@ -212,10 +217,12 @@ actual exit code; a generic status 1 is insufficient. Keep shell quoting and
 transport separate from Python selection logic. Use platform-specific recipe
 attributes only where the host command transport differs.
 
-Native Windows acceptance needs a real Python-backed recipe with no POSIX
-shell on PATH. Pass multiple arguments, an empty argument, and a spaced path.
-Check statuses 0, 1 and 77 exactly. Listing tasks or running doctor alone does
-not satisfy acceptance. Run the same contract on native Linux and macOS.
+Native Windows transport acceptance uses the real Python-backed `_test-argv`
+recipe from pwsh. Spaces, embedded double and single quotes, empty arguments,
+leading `-` and `--`, and the no-argument case pass unchanged.
+Statuses 0, 1, 2 and 77 are preserved. The CLI harness tests this contract.
+These results establish argument transport, not Windows workload support.
+Run the same contract on native Linux and macOS.
 Compare verdicts, case counts, digests, input identities and exit codes.
 Only OS path separators and line endings may differ where the format permits.
 Do not weaken byte-exact fixtures or wire formats. Record untested cases.

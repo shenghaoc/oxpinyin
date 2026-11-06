@@ -632,8 +632,9 @@ cargo fmt --all --check
 cargo clippy --locked -p oxpinyin-chewing -p oxpinyin-core -p oxpinyin-engine --all-targets -- -D warnings
 ```
 
-Repository Python tooling on Windows runs through the PowerShell recipes
-(unverified: no Windows host, [`tooling-python.md`](../plans/tooling-python.md)).
+Repository Python tooling on Windows runs through the pwsh recipes.
+The Python-backed `_test-argv` recipe verifies argument and exit-status transport.
+Job Object lifetime, fuzz, coverage and full tooling acceptance remain unverified.
 Install uv with its native Windows installer, then just (`cargo install just
 --locked`), then run `just python`; the rule above applies unchanged.
 

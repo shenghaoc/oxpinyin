@@ -345,7 +345,8 @@ Timing and residency use the 2026-10-21 UTC control rules and shared
 gets no PR/base ratio. Fault counts are diagnostic, not residency ratios.
 The statuses are 0 completed (including INCONCLUSIVE), 1 failure/refusal,
 2 usage error, 3 NOT COMPARABLE or INVALID exact control, 130 cancelled.
-Pin rows require the Layer 4 container path; Windows stays deferred (#950).
+Pin rows require the Layer 4 container path. The startup worker and measurement
+services support Linux/macOS only.
 `--cache cold` runs on native macOS (APFS) and native Linux (ext4); any other
 host, and on Linux any input or work file off ext4, refuses with status 1.
 Maintainer ruling (2026-10-25

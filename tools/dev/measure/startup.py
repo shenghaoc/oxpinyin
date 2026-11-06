@@ -165,7 +165,7 @@ def validate(args):
     if args.pin is not None:
         raise ValueError('native pin rows require the Layer 4 container path: just container run (T11C)')
     if sys.platform not in ('linux', 'darwin'):
-        raise ValueError('native startup supports Linux/macOS; Windows is deferred (#950)')
+        raise ValueError('native startup supports Linux/macOS; the worker and measurement services do not support Windows')
     for name in ('base', 'pr', 'system_dir', 'profiles_dir'):
         path = getattr(args, name)
         if path is None or not path.is_dir():
