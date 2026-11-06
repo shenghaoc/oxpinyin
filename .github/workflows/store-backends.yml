@@ -229,8 +229,9 @@ jobs:
           rustup-components: clippy rustfmt
           rust-cache: 'true'
           rust-cache-key: store-backend-${{ matrix.backend }}
-          # The KC and BDB children also run the contract references (contract-verify).
-          uv: ${{ matrix.backend != 'tkrzw' && needs.changes.outputs.reuse != 'true' }}
+          # The KC and BDB children also run the contract references (contract-verify); the
+          # tkrzw child fetches the system data of runtime's candidate_surface test.
+          uv: ${{ needs.changes.outputs.reuse != 'true' }}
 
       - name: Install build dependencies (apt)
         # Every matrix child installs the full set so each lane is
@@ -282,8 +283,11 @@ jobs:
       # backend, and the other stage modules compile against that selection.
       # What stays is everything a backend choice can change: the store
       # itself, the user store, data readers, runtime, engine, facade, both
-      # C ABIs, the oracle harness, the training package (segment and eval
+      # C ABIs, the training package (segment and eval
       # modules) and KMM.
+      - name: Provide the pinned system data
+        if: matrix.backend == 'tkrzw' && needs.changes.outputs.reuse != 'true'
+        uses: ./.github/actions/contract-data
       - name: Test the workspace under this backend
         if: needs.changes.outputs.reuse != 'true'
         id: backend-test

@@ -4,7 +4,7 @@
 //! global allocator for the whole executable:
 //!
 //! ```text
-//! cargo bench -p pinyin-oracle --features dhat-heap --bench alloc_profile -- --dhat
+//! cargo bench -p oxpinyin-runtime --features dhat-heap --bench alloc_profile -- --dhat
 //! ```
 //!
 //! writes `/tmp/dhat-heap-parity.json` for a full W2 parity `type_pinyin`
@@ -75,7 +75,7 @@ fn main() {
     {
         if want_dhat {
             eprintln!(
-                "--dhat needs the dhat-heap feature: cargo bench -p pinyin-oracle --features dhat-heap --bench alloc_profile -- --dhat"
+                "--dhat needs the dhat-heap feature: cargo bench -p oxpinyin-runtime --features dhat-heap --bench alloc_profile -- --dhat"
             );
             std::process::exit(2);
         }

@@ -3,18 +3,17 @@
 //! the remaining rows or freeze unattributed defects permanently. Only the
 //! current exact selection residuals have the registered S1/S2/S3 disposition.
 //!
-//! Uses the same `pinyin_oracle::sentence_tail::measure` as `sentence-tail`.
 //! This ignored real-table test fails if its required inputs are absent.
 //! Provision `PINYIN_EXPORT_DIR` with exported tables and `PINYIN_MODEL_DIR`
 //! with the complete extracted model20 directory (all 18 files), then run
 //! with `--include-ignored`.
 //!
 //! Approved repairs update these measured numbers and §12 in the same PR.
-//! A pin move also requires regenerating the oracle fixture with
-//! `cargo run -p pinyin-oracle --features oracle-ffi --bin
-//! oracle_sentence_surface` and re-measuring.
+//! A pin move also requires regenerating the oracle fixture and re-measuring
+//! (`docs/runbooks/goldens-and-pins.md`).
 
-use pinyin_oracle::sentence_tail;
+#[path = "common/sentence_tail.rs"]
+mod sentence_tail;
 
 /// The §12 measured residual, over the 500 comparable inputs of the frozen
 /// W2 sample. Re-measure and obtain approval before updating these numbers

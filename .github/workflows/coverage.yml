@@ -70,8 +70,11 @@ jobs:
           rustup: 'true'
           rust-cache: 'true'
           cargo-llvm-cov: 'true'
+          uv: 'true'
       - name: Provision tkrzw (built at the setup.sh revision and cached)
         uses: ./.github/actions/tkrzw
+      - name: Provide the pinned system data
+        uses: ./.github/actions/contract-data
       - run: cargo llvm-cov --locked --workspace --lcov --output-path lcov.info
       # Default-backend run measured 85.83% lines on 2026-11-04.
       - run: cargo llvm-cov report --summary-only --fail-under-lines 85

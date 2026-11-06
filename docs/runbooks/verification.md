@@ -178,7 +178,7 @@ If none is available, report "tkrzw: not run (no sound libtkrzw on this host)" a
   Do not add self-skipping tests.
   Examples include model20, system-table exports, pin-built tools and opencc.
   See [testing](../testing/README.md).
-- Train oracle C-API sessions through `Session::train_top`, never directly through `pinyin_train`.
+- Train an oracle C-API session by resetting, parsing, checking full consumption and guessing the sentence before `pinyin_train` on row 0.
   See the [oracle procedure](oracle.md).
 - Give backend-specific benches `required-features`.
   Select a bench with `--bench <name>`.

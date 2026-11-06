@@ -84,6 +84,7 @@ default path — no flag — is unchanged: the parity oracle remains tkrzw
 and nothing in this section applies to it. *(Superseded 2026-09-27 UTC:
 the no-flag path is now Berkeley DB; see the amendment below.)*
 
+*(`pinyin-oracle` and this link check were deleted 2026-11-06 UTC.)*
 A bench prefix is linked by setting `PINYIN_ORACLE_PREFIX` plus
 `PINYIN_BENCH_DBM=kc|bdb`, which relaxes the frozen pin-ref comparison
 in `crates/pinyin-oracle/build.rs` to a `dbm-<name>` containment check
@@ -203,9 +204,8 @@ What changed, and what did not:
   (`tools/bisection/system-dir.sh`).
 - **Unchanged — the tkrzw cell stays the pin for the frozen goldens.** The
   capture fixtures (`fixtures/foundation`, `fixtures/w4`, `fixtures/w3/pin-ref.txt`)
-  and the `pinyin-oracle` crate's `EXPECTED_PIN_REF` carry `+dbm-tkrzw`;
-  the removed capture recipe, `just profile-w8` and the
-  crate's parity tests need a prefix built with `--dbm tkrzw`. The
+  carry `+dbm-tkrzw`; the removed capture recipe and `just profile-w8`
+  need a prefix built with `--dbm tkrzw`. The
   Multi-backend section's statement that capture links only the tkrzw
   oracle still holds.
 - Dated facts above stay as written: Debian's history with Berkeley DB,

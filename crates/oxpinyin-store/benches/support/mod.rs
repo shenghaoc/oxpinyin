@@ -2,9 +2,7 @@
 //!
 //! One bench target per backend (`required-features` per the b8aff564
 //! convention), all driving this module over the store-tier traits, so the
-//! `backend_matrix_*` runs measure identical work over identical bytes. Operations mirror
-//! `pinyin-oracle`'s `dbm_bench` where the store API allows, so the two
-//! reports' rows align:
+//! `backend_matrix_*` runs measure identical work over identical bytes:
 //!
 //! - `init_load` — open the six system DBMs of the pre-built w3 fixture
 //!   directory (`fixtures/w3/<ext>`), the same opens production makes: tree
@@ -23,9 +21,8 @@
 //!   user store, copying outside the timed window so every open sees
 //!   identical bytes.
 //!
-//! These are storage-tier numbers: no facade, no lookup, no decode. They are
-//! NOT comparable in absolute value with `dbm_bench`'s facade+DBM numbers —
-//! within-project deltas are the comparable signal.
+//! These are storage-tier numbers: no facade, no lookup, no decode.
+//! Within-project deltas are the comparable signal.
 //!
 //! RAM is a separate axis and a separate mode: `--vmhwm` re-executes this
 //! binary as one child per operation and reports each child's

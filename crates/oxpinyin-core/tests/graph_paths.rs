@@ -8,15 +8,23 @@
 //! represents without trying.
 //!
 //! The fixture is the pin's own answer for all 10,459 non-sentinel corpus
-//! inputs, recovered from historical W2 logs by the `oracle-paths` importer. No
+//! inputs, recovered from historical W2 logs. No
 //! oracle build is needed to run this, which is the point: the check belongs
 //! in ordinary portable CI, not behind a Linux-only feature.
 
 use oxpinyin_core::graph::SegmentGraph;
 use oxpinyin_core::{Completeness, SyllableKey};
-use pinyin_oracle::capture::unescape;
+
+use crate::common::capture_text::unescape;
 
 const PATHS: &str = include_str!("../../../fixtures/w4/oracle-paths.txt");
+
+/// The pin the paths were captured from.
+const EXPECTED_PIN_REF: &str = concat!(
+    "libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99",
+    "+model20-59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155",
+    "+dbm-tkrzw"
+);
 
 /// Inputs whose oracle path the graph deliberately does not admit.
 ///
@@ -27,6 +35,33 @@ const PATHS: &str = include_str!("../../../fixtures/w4/oracle-paths.txt");
 /// 2026-08-21 by the same zero-width step-propagation law. No open
 /// apostrophe cases remain.
 const OPEN_APOSTROPHE_CASES: [&str; 0] = [];
+
+/// Expectations retained from the deleted `live_sentinels` tests, without a
+/// new pin run. See `oracle-apostrophe-abort.md`: the no-key-column and
+/// missing-pinyin sentinels have no syllable edge to walk.
+#[test]
+fn apostrophe_only_inputs_consume_every_byte_without_key_edges() {
+    for input in ["'", "''", "'''"] {
+        let graph = SegmentGraph::build(input.as_bytes()).expect("short input");
+        assert_eq!(graph.consumed(), input.len(), "{input:?}");
+        assert!(graph.edges().is_empty(), "{input:?}");
+    }
+}
+
+#[test]
+fn trailing_apostrophe_sentinels_retain_the_recorded_ni_path() {
+    // The recorded pin wire value for all three was
+    // `ni@0:2:complete,<missing-pinyin>@2`.
+    for input in ["ni'", "ni'!", "ni'i"] {
+        let graph = SegmentGraph::build(input.as_bytes()).expect("short input");
+        assert_eq!(graph.consumed(), 3, "{input:?}");
+        assert_eq!(
+            walk(&graph, &parse_path("ni@0:2:complete")),
+            Ok(()),
+            "{input:?}"
+        );
+    }
+}
 
 /// One record: the input, what the oracle consumed, and the path it chose.
 struct Record {
@@ -126,7 +161,7 @@ fn the_fixture_covers_the_whole_corpus() {
         "10,465 corpus inputs less the six oracle-sentinel records"
     );
     assert!(PATHS.contains("pinyin-oracle-path-v1"));
-    assert!(PATHS.contains(pinyin_oracle::EXPECTED_PIN_REF));
+    assert!(PATHS.contains(EXPECTED_PIN_REF));
 }
 
 #[test]
@@ -234,82 +269,6 @@ fn the_incomplete_key_divergences_are_resolved() {
         checked >= 481,
         "expected the measured path-set population, saw {checked}"
     );
-}
-
-// These six sentinel inputs cannot appear in the ordinary path fixture. Keep
-// the live oracle's guard assertions when retiring the W2 comparator, and
-// check the production graph beside them. See oracle-apostrophe-abort.md.
-#[cfg(feature = "oracle-ffi")]
-mod live_sentinels {
-    use super::{SegmentGraph, parse_path, walk};
-    use pinyin_oracle::capture::segments_to_wire;
-    use pinyin_oracle::{Oracle, OracleFlags, OraclePrefix, OracleSegment};
-
-    fn oracle() -> Oracle {
-        let prefix = OraclePrefix::locate().expect("pin-verified oracle prefix");
-        Oracle::open_with_temp_user_dir(prefix).expect("oracle context opens")
-    }
-
-    #[test]
-    fn the_abort_guard_fires_exactly_on_apostrophe_only_inputs() {
-        let mut oracle = oracle();
-        for input in ["'", "''", "'''"] {
-            let observed = oracle
-                .observe(input.as_bytes(), OracleFlags::DEFAULT)
-                .expect("guarded, so observable");
-            assert_eq!(
-                observed.segments,
-                vec![OracleSegment::NoKeyColumns {
-                    parsed_len: input.len()
-                }],
-                "{input:?}"
-            );
-            assert!(observed.has_sentinel_segment());
-            assert_eq!(observed.parsed_input_length, input.len());
-            let graph = SegmentGraph::build(input.as_bytes()).expect("short input");
-            assert_eq!(graph.consumed(), input.len());
-            assert!(graph.edges().is_empty());
-        }
-
-        for input in ["'ni", "a'a", "ni'h", "xi'an", "q"] {
-            let observed = oracle
-                .observe(input.as_bytes(), OracleFlags::DEFAULT)
-                .expect("observable");
-            assert!(
-                !observed
-                    .segments
-                    .iter()
-                    .any(|segment| matches!(segment, OracleSegment::NoKeyColumns { .. })),
-                "guard fired on {input:?}"
-            );
-            let graph = SegmentGraph::build(input.as_bytes()).expect("short input");
-            let path = parse_path(&segments_to_wire(&observed.segments));
-            assert_eq!(walk(&graph, &path), Ok(()), "{input:?}");
-            assert_eq!(graph.consumed(), observed.parsed_input_length);
-        }
-    }
-
-    #[test]
-    fn the_live_f_e_01_shape_is_recorded_rather_than_crashing() {
-        let mut oracle = oracle();
-        for input in ["ni'", "ni'!", "ni'i"] {
-            let observed = oracle
-                .observe(input.as_bytes(), OracleFlags::DEFAULT)
-                .expect("observable");
-            assert_eq!(
-                segments_to_wire(&observed.segments),
-                "ni@0:2:complete,<missing-pinyin>@2",
-                "{input:?}"
-            );
-            let graph = SegmentGraph::build(input.as_bytes()).expect("short input");
-            assert_eq!(graph.consumed(), 3, "{input:?}");
-            assert_eq!(
-                walk(&graph, &parse_path("ni@0:2:complete")),
-                Ok(()),
-                "{input:?}"
-            );
-        }
-    }
 }
 
 #[test]

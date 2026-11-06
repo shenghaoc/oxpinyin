@@ -2,6 +2,9 @@
 
 Date: 2026-08-09 · Source tier: Architect capture; human freeze pending.
 
+> `pinyin-oracle` and this FFI were deleted on 2026-11-06 UTC. oxpinyin's tests run
+> against frozen captures; this finding stays as the record of the surface.
+
 This finding freezes the FFI surface `pinyin-oracle` uses to drive the
 pin-built libpinyin as the W2 differential subject. It is the implementation
 contract for W2-T1 and the live producer for W2-T3.

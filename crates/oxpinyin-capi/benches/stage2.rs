@@ -7,8 +7,8 @@
 //! - `user_store_count_delta_hot_token`: cached overlay on one token
 //!
 //! Uses the pinned model dir. Prints the pin SHA in the run header.
-//! Does **not** assert the 10190-class candidate pins — those stay in
-//! `pinyin-oracle` `real_tables_integration`.
+//! Does **not** assert the candidate surface — that is `oxpinyin-runtime`'s
+//! `candidate_surface` test.
 //!
 //! `noise_threshold(0.50)`: a `--baseline` comparison only flags a change
 //! larger than 50%. That is the optional large-regression gate; CI does

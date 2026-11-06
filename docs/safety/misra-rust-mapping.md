@@ -83,8 +83,8 @@ Safe-Rust column = 61 Yes / **18 Partial** / 144 No; Rust category =
 Roughly: for oxpinyin — whose shipped surface is overwhelmingly safe Rust with
 a thin, audited FFI layer — **42% (94) of MISRA C:2025's guidelines are moot
 by language design** (Table 3), **30% (68) apply only where unsafe/FFI code
-exists and there collapses onto three crates** (`oxpinyin-capi`,
-`pinyin-oracle`, `oxpinyin-store` behind features — Table 2 guidance stays
+exists and there collapses onto two crates** (`oxpinyin-capi`,
+`oxpinyin-store` behind features — Table 2 guidance stays
 live for exactly those), and **27% (61) is the safe-Rust residue of Table 1**,
 most of which safe Rust + the existing workspace lints already cover.
 
@@ -164,7 +164,7 @@ CI = `.github/workflows/ci.yml`; proposals are specified in
 | D.4.9 | Function design (single-purpose, documented pre/post) | Advisory | I | Review; `missing_errors_doc` (82 pedantic hits) is the mechanical half → propose warn. |
 | D.4.11 | Module boundaries / interface design | Required | E | `missing_docs` warn; structure.md crate map; `redundant_pub_crate` (63 nursery hits) as the pub-minimization signal → TRIAL at warn. |
 | D.4.12 | No hidden conversions/sharing at interfaces | Required | E | Ownership/move semantics make accidental aliasing impossible; review for semantic (not mechanical) sharing. |
-| D.4.13 | Data/ordering guarantees expressed in types | Advisory | A | ADD6: "many Rust APIs use the type system to enforce ordering". Exemplified here by `Session<'oracle>` borrow lifetimes in `pinyin-oracle`. No action. |
+| D.4.13 | Data/ordering guarantees expressed in types | Advisory | A | ADD6: "many Rust APIs use the type system to enforce ordering". No action. |
 | D.4.14 | Validate data crossing trust boundaries | Required | E/G | Decode paths are `Result`-returning and fuzzed (`parser` target). Audit found one gap class: `content.rs:367` trusts a header count for `with_capacity` — fix filed as F-3. Expand fuzz targets (see ci-strategy). |
 | D.4.15 | Floating-point implementation understood | Required | E | Engine is fixed-point by design (`Cost = i64`, u128 rationals); the two f64 sites (segmenter trellis, `amplified_frequency`) are documented bit-parity ports. `clippy::float_cmp` fires 4× (pedantic) → warn. |
 | D.5.2 | Pointer use only where unavoidable | Required | A/K | Safe crates: zero raw pointers (audited). FFI crates: reviewed pattern inventory (audit §unsafe). |
@@ -221,9 +221,9 @@ CI = `.github/workflows/ci.yml`; proposals are specified in
 
 ## Table 2 — Guidelines applicable only in the presence of `unsafe` (68)
 
-These bind exactly three places in oxpinyin: `oxpinyin-capi` (151 unsafe
+These bind exactly two places in oxpinyin: `oxpinyin-capi` (151 unsafe
 blocks + 6 `unsafe fn` + 4 `unsafe extern` blocks; 55 exported symbols),
-`pinyin-oracle` (39 blocks + 2 extern blocks), and `oxpinyin-store` behind the
+and `oxpinyin-store` behind the
 `lmdb`/`tkrzw` features (5 blocks + 2 `unsafe impl` + 1 extern block +
 cxx-generated bridge). Every block carries a `// SAFETY:` comment today
 (195/195 audited) — the mechanical goal is to keep that true without trusting
@@ -234,7 +234,7 @@ prose: `clippy::undocumented_unsafe_blocks`, `clippy::missing_safety_doc`,
 |---|---|---|---|
 | Directives | D.4.2, D.4.3, D.5.1 | commenting/commenting-out discipline, code hygiene, concurrency primitives | Review inside unsafe crates; D.5.1's "not all safe Rust types are race-free" note maps to the two `unsafe impl Send/Sync` in store (justified, documented). |
 | R.1.1, R.5.1, R.5.5, R.5.10, R.20.4, R.20.7 | lexical/name/syntax violations (duplicate names, macro pitfalls, reserved identifiers) | Only reachable via `macro_rules!`/proc-macro or `extern "C"` symbol collision. | Review; `no_mangle` surface is pinned to the checked-in `pinyin.h` (55 symbols) — CI smoke gate already compiles the fork against it. |
-| R.8.3, R.8.5, R.8.6, R.8.15, R.8.17 | declarations compatible with their definitions; parameter type consistency | `extern` blocks must match the C ABI. | Hand-written extern blocks are pinned to header SHA (`pinyin-oracle/src/ffi.rs`); capi is verified by the C++ smoke gate + contract tests. Keep both. |
+| R.8.3, R.8.5, R.8.6, R.8.15, R.8.17 | declarations compatible with their definitions; parameter type consistency | `extern` blocks must match the C ABI. | Capi is verified by the C++ smoke gate + contract tests. Keep both. |
 | R.9.7 | aggregates not partially initialized | `MaybeUninit` misuse — absent from workspace. | Review (the geiger and Miri lanes were retired 2026-09-01; no active tool control). |
 | R.10.5, R.10.8, R.11.1, R.11.2, R.11.5, R.11.6, R.11.8, R.12.2 | pointer/integral conversion and cast discipline | The heart of FFI cast rules (`as`/`transmute`). | `transmute`: zero in workspace. `as`: ~150 numeric casts, concentrated in capi/data. Proposal: `cast_possible_truncation`/`cast_sign_loss`/`cast_precision_loss` at **warn** (58/14/35 hits) with `#[allow]`+justification at FFI seams; `clippy::transmute_*` family already denied via `all`. |
 | R.12.4 | enum/bitfield evaluation | C semantics; "either well-defined or will not occur" (ADD6). | N/A-in-practice. |

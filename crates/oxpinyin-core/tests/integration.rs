@@ -11,6 +11,8 @@ mod common;
 mod decode_differential;
 mod fixture_doubles;
 mod fixture_provenance;
+mod graph_paths;
+mod parity_corpus;
 mod parser_acceptance;
 mod scheme_parsers;
 mod scoring;

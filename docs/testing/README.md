@@ -12,14 +12,13 @@ result protocol, see [live parity gates](../runbooks/parity-gates.md). The
 ## Candidate capture
 
 `fixtures/w4/oracle-candidate-structure.txt` is the single W4 candidate
-capture. Use `pinyin_oracle::candidate_fixture::CandidateFixture` for its
-structured rows or its `(input, rank, text)` projection; both retain input
+capture. `crates/oxpinyin-runtime/tests/common/candidate_fixture.rs` reads its
+structured rows and its `(input, rank, text)` projection; both retain input
 identity, row order, duplicates and the captured pin reference. The
-`oracle-candidate-structure` binary is the capture generator, and
-`candidate_structure` tests its format, candidate types and live freshness.
-The candidate-only `oracle-candidates.txt` and its generator were removed
-after a byte-for-byte migration check. Dated findings below retain their
-historical file names and measurements.
+`candidate_surface` test compares oxpinyin with it over the pinned libpinyin-data
+package, so run `just fetch-contract-data` before a full test run; a missing package
+fails the test. The capture has no regenerator yet
+([next pin capture](../runbooks/goldens-and-pins.md#the-next-pin-capture)).
 
 ## Tests that need inputs CI never has
 

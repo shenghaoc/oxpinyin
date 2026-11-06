@@ -78,6 +78,25 @@ fn vocab_records() -> Vec<(u32, String, String, u64)> {
         .collect()
 }
 
+/// `docs/testing/capture-fixtures.md` freezes F-A at 15 records and F-C at 46, all
+/// from one pin.
+#[test]
+fn the_captures_hold_their_frozen_records_from_one_pin() {
+    const PIN_REF: &str = concat!(
+        "libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99",
+        "+model20-59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155",
+        "+dbm-tkrzw"
+    );
+    for (name, text, count) in [("F-A", F_A, 15), ("F-C", F_C, 46)] {
+        assert_eq!(text.lines().count(), count, "{name} record count");
+        for line in text.lines() {
+            assert_eq!(field(line, "schema"), Some("pinyin-capture-v1"), "{name}");
+            assert_eq!(field(line, "family"), Some(name), "{name}");
+            assert_eq!(field(line, "pin_ref"), Some(PIN_REF), "{name}");
+        }
+    }
+}
+
 #[test]
 fn every_fixture_phrase_is_captured_oracle_output() {
     let ranks = captured_ranks();

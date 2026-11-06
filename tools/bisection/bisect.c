@@ -376,7 +376,7 @@ static const char *TEST_INPUTS[] = {
 static const size_t N_INPUTS = sizeof(TEST_INPUTS) / sizeof(TEST_INPUTS[0]);
 
 /* ── Performance-baseline inputs (same 20-input corpus as the Criterion
- * keystroke-cycle bench: crates/pinyin-oracle/benches/support/mod.rs) ─── */
+ * keystroke-cycle bench: crates/oxpinyin-runtime/benches/support/mod.rs) ─── */
 
 static const char *PERF_CYCLE_INPUTS[] = {
     "ni",

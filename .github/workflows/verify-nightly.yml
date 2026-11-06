@@ -550,6 +550,8 @@ jobs:
         run: |
           read -ra excludes <<< "$WINDOWS_EXCLUDES"
           cargo clippy --locked --workspace --all-targets "${excludes[@]}" -- -D warnings
+      - name: Provide the pinned system data
+        uses: ./.github/actions/contract-data
       - run: |
           read -ra excludes <<< "$WINDOWS_EXCLUDES"
           cargo nextest run --locked --profile ci --status-level skip --workspace "${excludes[@]}"
@@ -558,8 +560,8 @@ jobs:
           read -ra excludes <<< "$WINDOWS_EXCLUDES"
           cargo test --locked --doc --workspace "${excludes[@]}"
 
-  # macOS links tkrzw from the tkrzw action, with pinyin-oracle's oracle-ffi
-  # off. The full workspace runs here; shipped macOS libraries are also built
+  # macOS links tkrzw from the tkrzw action. The full workspace runs here;
+  # shipped macOS libraries are also built
   # and checked separately. The tools Python harness runs after the Rust steps.
   #
   # Moved here from ci.yml on 2026-10-31: platforms other than Linux are
@@ -615,6 +617,8 @@ jobs:
         run: >
           cargo clippy --locked --workspace --all-targets
           -- -D warnings
+      - name: Provide the pinned system data
+        uses: ./.github/actions/contract-data
       - run: >
           cargo nextest run --locked --profile ci --status-level skip --workspace
       # nextest does not run doctests; keep the same feature set.

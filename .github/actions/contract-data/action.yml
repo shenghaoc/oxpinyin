@@ -1,0 +1,18 @@
+name: 'contract-data'
+description: |-
+  Provide the pinned libpinyin-data package at target/contract-data, where oxpinyin-runtime's
+  candidate_surface test reads it (just fetch-contract-data). Restores it from the cache first,
+  so a run needs snapshot.debian.org only when the pin changes. Call this after checkout and the
+  bootstrap action with `uv: 'true'`.
+
+runs:
+  using: composite
+  steps:
+    - name: Restore the pinned data
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: target/contract-data
+        key: contract-data-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/oracle/libpinyin-data.json') }}
+    - name: Fetch and verify the pinned data
+      shell: bash
+      run: uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev fetch-contract-data

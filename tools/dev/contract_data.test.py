@@ -32,6 +32,20 @@ def deb(files):
 
 
 class PinTests(unittest.TestCase):
+    def test_native_windows_amd64_uses_the_pinned_amd64_package(self):
+        payload = deb({'usr/lib/x/libpinyin/data/table.conf': b'c'})
+        with tempfile.TemporaryDirectory() as directory:
+            expected = Path(directory, 'expected')
+            contract_data.extract(payload, 'usr/lib/x/libpinyin/data', expected)
+            pin = dict(version='test', content_sha256=contract_data.content_digest(expected),
+                       archives={'amd64': dict(snapshot_sha1='a' * 40,
+                                               sha256=hashlib.sha256(payload).hexdigest(),
+                                               data_dir='usr/lib/x/libpinyin/data')})
+            with patch.object(contract_data.platform, 'machine', return_value='AMD64'), \
+                    patch.object(contract_data.urllib.request, 'urlopen', return_value=io.BytesIO(payload)):
+                target = contract_data.fetch(Path(directory, 'cache'), pin=pin)
+            self.assertEqual((target / 'table.conf').read_bytes(), b'c')
+
     def test_the_pin_names_one_exact_version_and_both_architectures(self):
         pin = contract_data.read_pin()
         self.assertEqual(pin['version'], '2.11.92-1')

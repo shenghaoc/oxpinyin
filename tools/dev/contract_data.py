@@ -68,7 +68,7 @@ def extract(payload, member_dir, destination):
 def fetch(cache, architecture=None, pin=None):
     """Return the verified data directory under CACHE, downloading the package if needed."""
     pin = pin or read_pin()
-    architecture = architecture or ARCHITECTURES.get(platform.machine())
+    architecture = architecture or ARCHITECTURES.get(platform.machine().lower())
     if architecture not in pin['archives']:
         raise SystemExit(f'fetch-contract-data: no package pinned for {platform.machine()}')
     entry = pin['archives'][architecture]

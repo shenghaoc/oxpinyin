@@ -157,21 +157,13 @@ byte-identical files, which is the W2-T2 acceptance criterion.
 
 ## Reproducibility contract
 
-The acceptance criterion is that generating twice yields identical output. That
-is enforced as a test rather than a manual step: `crates/pinyin-oracle/tests/parity_corpus.rs`
-regenerates every stratum in memory and asserts byte equality against the
-committed files, so drift fails CI on the portable tier with no oracle present.
-It also checks that the directory holds exactly the generated strata, that the
-per-stratum counts match the table above, and that no line carries edge
-whitespace or a control byte.
-
-Regenerate with:
-
-```bash
-cargo run -p pinyin-oracle --bin parity-corpus -- tests/parity/corpus/inputs
-git diff --exit-code tests/parity/corpus/inputs
-```
+The corpus is frozen input files. Its generator was deleted on 2026-11-06 UTC with
+`pinyin-oracle`, and the digests above stay the byte record; `contract_axis_c.py`
+also checks them through `tools/bisection/axis-c-replacement.json`.
+`crates/oxpinyin-core/tests/parity_corpus.rs` checks that the directory holds exactly
+the committed strata, that the per-stratum counts match the table above, and that no
+line carries edge whitespace or a control byte.
 
 A corpus change is a deliberate, reviewed act: it moves the W2-T3 divergence
-baseline, so it belongs in its own commit alongside the regenerated files and
+baseline, so it belongs in its own commit alongside the edited files and
 the reason for the change.

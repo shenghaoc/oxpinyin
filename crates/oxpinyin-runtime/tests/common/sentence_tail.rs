@@ -1,6 +1,5 @@
-//! Port-vs-pin sentence-surface measurement, shared by the `sentence-tail`
-//! binary and the `sentence_surface_parity` integration test so the reported
-//! numbers and the asserted numbers cannot drift apart.
+//! Port-vs-pin sentence-surface measurement for the `sentence_surface_parity`
+//! test, which prints the report it asserts.
 //!
 //! Read-only, no oracle FFI: `fixtures/w4/oracle-sentence-surface.txt` holds
 //! the pinned oracle's answer for every sampled input. The port's surface is
@@ -84,7 +83,8 @@ pub fn repo_root() -> PathBuf {
 /// `None` otherwise (so callers can skip).
 #[must_use]
 pub fn export_dir() -> Option<PathBuf> {
-    let dir = oxpinyin_testsupport::model_cache::resolve_export_dir();
+    let dir = std::env::var_os("PINYIN_EXPORT_DIR")
+        .map_or_else(|| PathBuf::from("/tmp/oxpinyin-export"), PathBuf::from);
     [
         SystemDbm::PinyinIndex,
         SystemDbm::PhraseIndex,
