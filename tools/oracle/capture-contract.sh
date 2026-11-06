@@ -71,5 +71,5 @@ exec "$runtime" run --rm --platform "$platform" --network none "${run_user[@]}" 
     -e HOME=/tmp -e TMPDIR=/tmp -e PYTHONPYCACHEPREFIX=/tmp/pyc \
     -e "OXPINYIN_CAPTURE_IMAGE=$image" -e "OXPINYIN_TKRZW_LIBRARY=/usr/lib/$multiarch/libtkrzw.so.1" \
     -v "$repo:/work:ro" -v "$repo/$out:/work/$out:rw" -v "$data:/data:ro" -w /work \
-    "$capture" "python$(sed -n 's/^cpython@\([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' .python-version)" -X lazy_imports=normal tools/bisection/contract-diff.py capture "$cell" \
+    "$capture" "python$(sed -n 's/^\([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' .python-version)" -X lazy_imports=normal tools/bisection/contract-diff.py capture "$cell" \
     "/opt/reference/$cell" --data /data --out "/work/$out" "${args[@]}"

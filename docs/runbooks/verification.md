@@ -187,7 +187,7 @@ If none is available, report "tkrzw: not run (no sound libtkrzw on this host)" a
   See [independent campaign work](../plans/tooling-python.md#independent-campaign-work-1232) for isolation exceptions and the audit.
 - Use `.python-version` as the sole managed Python version declaration.
   Provision Python with `just python`.
-  Do not repeat the version elsewhere or pass the file's `+gil` request to `uv python install`.
+  Do not repeat the version elsewhere.
   See [setup](setup.md).
 - Mark tests that need inputs unavailable in CI with `#[ignore = "needs …"]`.
   Fail when an input is missing.

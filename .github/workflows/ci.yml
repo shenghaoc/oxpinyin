@@ -253,27 +253,7 @@ jobs:
       # instead. The checker reads placement, not cfg outcomes, so it holds
       # for every host from here. The harness runs first: a regression in
       # the checker itself must not pass quietly. Both run under the pinned
-      # repository Python, which is provisioned immediately before them.
-      - name: Set up pinned repository Python
-        if: needs.changes.outputs.reuse != 'true'
-        run: |
-          set -euo pipefail
-          tools/install-python.sh
-          uv run --no-project --managed-python python -X lazy_imports=normal - <<'PYTHON'
-          from pathlib import Path
-          import subprocess
-          import sys
-          import sysconfig
-          assert sys.implementation.name == "cpython"
-          assert sys.version_info.releaselevel == "final" and (3, 15, 0) <= sys.version_info[:3] < (3, 16, 0)
-          assert sysconfig.get_config_var("Py_GIL_DISABLED") == 0
-          assert sys._is_gil_enabled()
-          managed = subprocess.check_output(
-              ["uv", "python", "find", "--managed-python"],
-              text=True).strip()
-          assert Path(sys.executable).resolve() == Path(managed).resolve()
-          PYTHON
-
+      # repository Python, which the bootstrap action provisions.
       - name: Crate cfg-placement harness
         if: needs.changes.outputs.reuse != 'true'
         run: uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev test-tools tools/dev/lint-crate-cfg-placement.test.py
@@ -348,25 +328,6 @@ jobs:
         # points pkg-config at it. The tkrzw cxx bridge compiles with g++;
         # bindgen (libclang) serves the Berkeley DB lanes.
         run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libglib2.0-dev
-      - name: Set up pinned repository Python
-        if: needs.changes.outputs.reuse != 'true'
-        run: |
-          set -euo pipefail
-          tools/install-python.sh
-          uv run --no-project --managed-python python -X lazy_imports=normal - <<'PYTHON'
-          from pathlib import Path
-          import subprocess
-          import sys
-          import sysconfig
-          assert sys.implementation.name == "cpython"
-          assert sys.version_info.releaselevel == "final" and (3, 15, 0) <= sys.version_info[:3] < (3, 16, 0)
-          assert sysconfig.get_config_var("Py_GIL_DISABLED") == 0
-          assert sys._is_gil_enabled()
-          managed = subprocess.check_output(
-              ["uv", "python", "find", "--managed-python"],
-              text=True).strip()
-          assert Path(sys.executable).resolve() == Path(managed).resolve()
-          PYTHON
       - name: Run tools Python harness tests
         if: needs.changes.outputs.reuse != 'true'
         shell: bash
@@ -537,24 +498,6 @@ jobs:
           uv: 'true'
           just: 'true'
       - run: rustup show active-toolchain
-      - name: Set up pinned repository Python
-        run: |
-          set -euo pipefail
-          tools/install-python.sh
-          uv run --no-project --managed-python python -X lazy_imports=normal - <<'PYTHON'
-          from pathlib import Path
-          import subprocess
-          import sys
-          import sysconfig
-          assert sys.implementation.name == "cpython"
-          assert sys.version_info.releaselevel == "final" and (3, 15, 0) <= sys.version_info[:3] < (3, 16, 0)
-          assert sysconfig.get_config_var("Py_GIL_DISABLED") == 0
-          assert sys._is_gil_enabled()
-          managed = subprocess.check_output(
-              ["uv", "python", "find", "--managed-python"],
-              text=True).strip()
-          assert Path(sys.executable).resolve() == Path(managed).resolve()
-          PYTHON
       # cargo-c is the distribution's own package, as in release-packages.yml.
       # The backend packages follow the reference cell (tools/dev/cell.py).
       - name: Install build dependencies (apt)

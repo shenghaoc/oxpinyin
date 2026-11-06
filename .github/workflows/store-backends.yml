@@ -442,25 +442,6 @@ jobs:
       # The sanitizer nightly is declared once in tools/dev/test_runner.py and
       # read through `tools.dev sanitize-toolchain`. RUSTUP_TOOLCHAIN beats
       # rust-toolchain.toml's channel pin for this job only.
-      - name: Set up pinned repository Python
-        run: |
-          set -euo pipefail
-          tools/install-python.sh
-          uv run --no-project --managed-python python -X lazy_imports=normal - <<'PYTHON'
-          from pathlib import Path
-          import subprocess
-          import sys
-          import sysconfig
-          assert sys.implementation.name == "cpython"
-          assert sys.version_info.releaselevel == "final" and (3, 15, 0) <= sys.version_info[:3] < (3, 16, 0)
-          assert sysconfig.get_config_var("Py_GIL_DISABLED") == 0
-          assert sys._is_gil_enabled()
-          managed = subprocess.check_output(
-              ["uv", "python", "find", "--managed-python"],
-              text=True).strip()
-          assert Path(sys.executable).resolve() == Path(managed).resolve()
-          PYTHON
-
       - name: Select the sanitizer nightly
         run: echo "RUSTUP_TOOLCHAIN=$(uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev sanitize-toolchain)" >> "$GITHUB_ENV"
 
@@ -555,25 +536,6 @@ jobs:
           uv: 'true'
 
       # Same nightly source as the tkrzw lane above.
-      - name: Set up pinned repository Python
-        run: |
-          set -euo pipefail
-          tools/install-python.sh
-          uv run --no-project --managed-python python -X lazy_imports=normal - <<'PYTHON'
-          from pathlib import Path
-          import subprocess
-          import sys
-          import sysconfig
-          assert sys.implementation.name == "cpython"
-          assert sys.version_info.releaselevel == "final" and (3, 15, 0) <= sys.version_info[:3] < (3, 16, 0)
-          assert sysconfig.get_config_var("Py_GIL_DISABLED") == 0
-          assert sys._is_gil_enabled()
-          managed = subprocess.check_output(
-              ["uv", "python", "find", "--managed-python"],
-              text=True).strip()
-          assert Path(sys.executable).resolve() == Path(managed).resolve()
-          PYTHON
-
       - name: Select the sanitizer nightly
         run: echo "RUSTUP_TOOLCHAIN=$(uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev sanitize-toolchain)" >> "$GITHUB_ENV"
 
@@ -650,25 +612,6 @@ jobs:
           uv: 'true'
 
       # Same nightly source as the tkrzw lane above.
-      - name: Set up pinned repository Python
-        run: |
-          set -euo pipefail
-          tools/install-python.sh
-          uv run --no-project --managed-python python -X lazy_imports=normal - <<'PYTHON'
-          from pathlib import Path
-          import subprocess
-          import sys
-          import sysconfig
-          assert sys.implementation.name == "cpython"
-          assert sys.version_info.releaselevel == "final" and (3, 15, 0) <= sys.version_info[:3] < (3, 16, 0)
-          assert sysconfig.get_config_var("Py_GIL_DISABLED") == 0
-          assert sys._is_gil_enabled()
-          managed = subprocess.check_output(
-              ["uv", "python", "find", "--managed-python"],
-              text=True).strip()
-          assert Path(sys.executable).resolve() == Path(managed).resolve()
-          PYTHON
-
       - name: Select the sanitizer nightly
         run: echo "RUSTUP_TOOLCHAIN=$(uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev sanitize-toolchain)" >> "$GITHUB_ENV"
 

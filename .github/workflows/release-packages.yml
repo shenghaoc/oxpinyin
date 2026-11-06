@@ -152,10 +152,6 @@ jobs:
           rust-cache: 'true'
           rust-cache-key: release-${{ matrix.distro }}
           uv: 'true'
-      - name: Provision managed packaging Python
-        shell: bash
-        run: |
-          tools/install-python.sh
       - run: rustup show active-toolchain
 
       # The install libdir per distro. Debian's is the MULTIARCH dir —

@@ -969,6 +969,7 @@ elif action=='rm':
         # Keep the entire test synthetic, including host resource readings.
         uv = self.directory / 'uv'
         uv.write_text(f'#!{sys.executable}\n' + """import sys
+sys.argv[1:3] == ['python', 'install'] and sys.exit(0)
 from tools.dev import host
 host.resource_snapshot=lambda: dict(available_mib=16000, cpus=1, cargo_cpus=1, notes=[])
 import importlib
@@ -1002,7 +1003,7 @@ raise SystemExit(importlib.import_module(module).main(sys.argv[sys.argv.index('-
         apple.symlink_to(runtime)
         fixture = self.directory / 'source'
         paths = ('tools/oracle/compat.sh', 'tools/dev/compat/identity.py', 'tools/lib/bash-floor.sh',
-                 'tools/dev/compat/guest.py', '.python-version', 'tools/install-python.sh')
+                 'tools/dev/compat/guest.py', '.python-version')
         for relative in paths:
             destination = fixture / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
