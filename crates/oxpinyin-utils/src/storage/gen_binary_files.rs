@@ -75,7 +75,7 @@ fn path_of(name: &CStr) -> PathBuf {
     }
     #[cfg(not(unix))]
     {
-        PathBuf::from(name.to_string_lossy().into_owned())
+        oxpinyin_input::path::decode_filename(name)
     }
 }
 

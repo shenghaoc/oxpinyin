@@ -21,6 +21,38 @@ use oxpinyin_facade::TextSpan;
 use std::ffi::c_uint;
 use std::ptr;
 
+#[cfg(windows)]
+#[test]
+fn utf8_c_api_paths_open_cjk_directories_and_files() {
+    let root = tempfile::tempdir().unwrap();
+    let system = root.path().join("系统");
+    let user = root.path().join("用户");
+    std::fs::create_dir(&system).unwrap();
+    std::fs::create_dir(&user).unwrap();
+    for entry in std::fs::read_dir(system_dir()).unwrap() {
+        let entry = entry.unwrap();
+        std::fs::copy(entry.path(), system.join(entry.file_name())).unwrap();
+    }
+    std::fs::rename(system.join("gb_char.bin"), system.join("汉字.bin")).unwrap();
+    let conf = std::fs::read_to_string(system.join("table.conf")).unwrap();
+    std::fs::write(
+        system.join("table.conf"),
+        conf.replace("gb_char.bin", "汉字.bin"),
+    )
+    .unwrap();
+    let system = cstr(system.to_str().unwrap());
+    let user_name = cstr(user.to_str().unwrap());
+    let context = crate::context::pinyin_init(system.as_ptr(), user_name.as_ptr());
+    assert!(!context.is_null());
+    pinyin_end_add_phrases(pinyin_begin_add_phrases(
+        context,
+        oxpinyin_user::USER_DICTIONARY,
+    ));
+    assert!(pinyin_save(context));
+    crate::context::pinyin_fini(context);
+    assert!(user.join("user.conf").is_file());
+}
+
 use oxpinyin_user::{FIRST_USER_TOKEN, SENTENCE_START, USER_DICTIONARY, UserStore};
 
 use crate::candidates::{

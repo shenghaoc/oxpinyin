@@ -23,7 +23,7 @@
 //! those files, and a same-backend oxpinyin pair is what stays conform.
 
 use crate::chunk_format::{CHUNK_HEADER_SIZE, chunk_checksum};
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 
 use crate::table_info::FileName;
 use oxpinyin_input::config::{
@@ -374,9 +374,14 @@ impl UserTableInfo {
     /// [`UserConfError::Unopenable`] and [`UserConfError::Line`] are the
     /// load's `false` (the pin's open line has been written for the first).
     /// [`UserConfError::UnknownDatabaseFormat`] is the abort point.
-    pub fn load(filename: &CStr) -> Result<Self, UserConfError> {
-        let mut input =
-            UserTableInfoReader::open(filename).map_err(|_| UserConfError::Unopenable)?;
+    pub fn load(
+        filename: &(impl oxpinyin_input::FileName + ?Sized),
+    ) -> Result<Self, UserConfError> {
+        let input = UserTableInfoReader::open(filename).map_err(|_| UserConfError::Unopenable)?;
+        Self::read(input)
+    }
+
+    fn read(mut input: UserTableInfoReader) -> Result<Self, UserConfError> {
         // Each early return drops `input`: the pin's `fclose`, without its
         // closing `setlocale` (`:339-348`).
         let binary_format_version = input
@@ -421,8 +426,18 @@ impl UserTableInfo {
     /// As [`Self::load`]; a path holding a NUL is
     /// [`UserConfError::Unopenable`].
     pub fn load_path(path: &std::path::Path) -> Result<Self, UserConfError> {
-        let filename = oxpinyin_input::c_path(path).ok_or(UserConfError::Unopenable)?;
-        Self::load(&filename)
+        #[cfg(not(windows))]
+        {
+            let filename = oxpinyin_input::c_path(path).ok_or(UserConfError::Unopenable)?;
+            Self::load(&filename)
+        }
+        #[cfg(windows)]
+        {
+            if path.as_os_str().as_encoded_bytes().contains(&0) {
+                return Err(UserConfError::Unopenable);
+            }
+            Self::load(path)
+        }
     }
 
     /// `UserTableInfo::save(filename)` (`table_info.cpp:377-397`): `false`
@@ -434,7 +449,7 @@ impl UserTableInfo {
     /// (`make_conform` copies the system's first); here it writes nothing
     /// and answers `false`.
     #[must_use]
-    pub fn save(&self, filename: &CStr) -> bool {
+    pub fn save(&self, filename: &(impl oxpinyin_input::FileName + ?Sized)) -> bool {
         let Some(database_format) = self
             .database_format
             .as_deref()
@@ -457,7 +472,14 @@ impl UserTableInfo {
     /// holding a NUL, which no C caller can pass.
     #[must_use]
     pub fn save_path(&self, path: &std::path::Path) -> bool {
-        oxpinyin_input::c_path(path).is_some_and(|filename| self.save(&filename))
+        #[cfg(not(windows))]
+        {
+            oxpinyin_input::c_path(path).is_some_and(|filename| self.save(&filename))
+        }
+        #[cfg(windows)]
+        {
+            !path.as_os_str().as_encoded_bytes().contains(&0) && self.save(path)
+        }
     }
 
     /// The four lines [`Self::save`] writes, in its order, for composing

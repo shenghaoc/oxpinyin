@@ -254,8 +254,7 @@ pub(crate) fn filename_value(parsed: &ParsedOptions, index: usize) -> Option<CSt
 }
 
 /// A C string's bytes as the path the store opens. On Unix the bytes are
-/// the path; elsewhere the C runtime's narrow-name conversion is not
-/// reproduced (a name that is not UTF-8 does not open).
+/// the path; Windows uses the shared lossy UTF-8 filename decoder.
 pub(crate) fn path_of(name: &CStr) -> std::path::PathBuf {
     #[cfg(unix)]
     {
@@ -264,6 +263,6 @@ pub(crate) fn path_of(name: &CStr) -> std::path::PathBuf {
     }
     #[cfg(not(unix))]
     {
-        name.to_string_lossy().into_owned().into()
+        oxpinyin_input::path::decode_filename(name)
     }
 }

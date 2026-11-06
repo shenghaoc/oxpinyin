@@ -91,10 +91,10 @@ impl SystemTableInfoReader {
     ///
     /// [`OpenFailed`] after the pin's `open %s failed.\n` line, with the
     /// locale left at `"C"`.
-    pub fn open(filename: &CStr) -> Result<Self, OpenFailed> {
+    pub fn open(filename: &(impl crate::FileName + ?Sized)) -> Result<Self, OpenFailed> {
         let locale = SavedNumeric::install_c();
         let Some(stream) = Stream::open_read(filename) else {
-            native::report_system_open_failed(filename);
+            native::report_system_open_failed(&filename.as_c_name());
             return Err(OpenFailed);
         };
         Ok(Self {
@@ -186,10 +186,10 @@ impl UserTableInfoReader {
     ///
     /// [`OpenFailed`] after the pin's `open %s failed.` line, which has no
     /// newline, with the locale left at `"C"`.
-    pub fn open(filename: &CStr) -> Result<Self, OpenFailed> {
+    pub fn open(filename: &(impl crate::FileName + ?Sized)) -> Result<Self, OpenFailed> {
         let locale = SavedNumeric::install_c();
         let Some(stream) = Stream::open_read(filename) else {
-            native::report_user_open_failed(filename);
+            native::report_user_open_failed(&filename.as_c_name());
             return Err(OpenFailed);
         };
         Ok(Self {
@@ -259,10 +259,13 @@ pub struct UserTableInfoFields<'a> {
 /// `write %s failed.\n` line. The writes and the close are not checked, as
 /// the pin does not check them.
 #[must_use]
-pub fn save_user_table_info(filename: &CStr, fields: &UserTableInfoFields<'_>) -> bool {
+pub fn save_user_table_info(
+    filename: &(impl crate::FileName + ?Sized),
+    fields: &UserTableInfoFields<'_>,
+) -> bool {
     let locale = SavedNumeric::install_c();
     let Some(mut output) = Stream::open_write(filename) else {
-        native::report_user_write_failed(filename);
+        native::report_user_write_failed(&filename.as_c_name());
         return false;
     };
     output.print_user_table_info(
@@ -415,5 +418,33 @@ mod tests {
         assert_eq!(atoi(c" 12abc"), 12);
         assert_eq!(atoi(c"abc"), 0);
         assert_eq!(atoi(c"-1"), -1);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_config_paths_keep_cjk_and_lone_surrogates() {
+        use std::os::windows::ffi::OsStringExt as _;
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("目录");
+        std::fs::create_dir(&dir).unwrap();
+        let fields = UserTableInfoFields {
+            binary_format_version: 7,
+            model_data_version: 14,
+            database_format: c"Tkrzw",
+            open_counter: 0,
+        };
+        for name in [
+            std::ffi::OsString::from("用户.conf"),
+            std::ffi::OsString::from_wide(&[0xd800, 0x7528]),
+        ] {
+            let path = dir.join(name);
+            assert!(save_user_table_info(&path, &fields));
+            let mut reader = UserTableInfoReader::open(&path).unwrap();
+            assert_eq!(reader.binary_format_version(), Scanned::Assigned(7));
+            reader.finish();
+            assert!(SystemTableInfoReader::open(&path).is_ok());
+            crate::path::unlink(&path);
+            assert!(!path.exists());
+        }
     }
 }

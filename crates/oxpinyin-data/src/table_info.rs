@@ -115,7 +115,7 @@ impl FileName {
         }
         #[cfg(not(unix))]
         {
-            Self(OsString::from(String::from_utf8_lossy(bytes).into_owned()))
+            Self(oxpinyin_input::path::decode_filename_bytes(bytes).into_os_string())
         }
     }
 
@@ -353,9 +353,15 @@ impl TableConf {
     /// # Errors
     ///
     /// [`TableConfError`] where the pin returns `false` or dies.
-    pub fn load(filename: &CStr) -> Result<Self, TableConfError> {
-        let mut input =
+    pub fn load(
+        filename: &(impl oxpinyin_input::FileName + ?Sized),
+    ) -> Result<Self, TableConfError> {
+        let input =
             SystemTableInfoReader::open(filename).map_err(|_| TableConfError::Unopenable)?;
+        Self::read(input)
+    }
+
+    fn read(mut input: SystemTableInfoReader) -> Result<Self, TableConfError> {
         // Each early return drops `input`: the pin's `fclose`, without its
         // closing `setlocale` (`:209-224`).
         let binary_format_version = input
@@ -449,8 +455,18 @@ impl TableConf {
     /// As [`Self::load`]; a path holding a NUL is
     /// [`TableConfError::Unopenable`].
     pub fn load_path(path: &Path) -> Result<Self, TableConfError> {
-        let filename = oxpinyin_input::c_path(path).ok_or(TableConfError::Unopenable)?;
-        Self::load(&filename)
+        #[cfg(not(windows))]
+        {
+            let filename = oxpinyin_input::c_path(path).ok_or(TableConfError::Unopenable)?;
+            Self::load(&filename)
+        }
+        #[cfg(windows)]
+        {
+            if path.as_os_str().as_encoded_bytes().contains(&0) {
+                return Err(TableConfError::Unopenable);
+            }
+            Self::load(path)
+        }
     }
 
     /// `SystemTableInfo2::load` of `table.conf` in `system_dir`, named as

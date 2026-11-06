@@ -53,3 +53,49 @@ use std::path::Path;
 pub fn c_path(path: &Path) -> Option<CString> {
     CString::new(path.as_os_str().as_encoded_bytes()).ok()
 }
+
+/// A filename from a Rust path or an internal C-string interface.
+/// Rust paths retain their native encoding. C strings use the shared
+/// filename decoder on Windows.
+pub trait FileName {
+    /// The path to open.
+    fn as_path(&self) -> std::borrow::Cow<'_, Path>;
+    /// The pin's narrow name for Unix calls and diagnostics.
+    fn as_c_name(&self) -> std::borrow::Cow<'_, std::ffi::CStr>;
+}
+
+impl FileName for Path {
+    fn as_path(&self) -> std::borrow::Cow<'_, Path> {
+        std::borrow::Cow::Borrowed(self)
+    }
+    fn as_c_name(&self) -> std::borrow::Cow<'_, std::ffi::CStr> {
+        std::borrow::Cow::Owned(path::c_string(self.as_os_str()))
+    }
+}
+
+impl FileName for std::path::PathBuf {
+    fn as_path(&self) -> std::borrow::Cow<'_, Path> {
+        std::borrow::Cow::Borrowed(self.as_ref())
+    }
+    fn as_c_name(&self) -> std::borrow::Cow<'_, std::ffi::CStr> {
+        std::borrow::Cow::Owned(path::c_string(self.as_os_str()))
+    }
+}
+
+impl FileName for std::ffi::CStr {
+    fn as_path(&self) -> std::borrow::Cow<'_, Path> {
+        std::borrow::Cow::Owned(path::decode_filename(self))
+    }
+    fn as_c_name(&self) -> std::borrow::Cow<'_, std::ffi::CStr> {
+        std::borrow::Cow::Borrowed(self)
+    }
+}
+
+impl FileName for CString {
+    fn as_path(&self) -> std::borrow::Cow<'_, Path> {
+        self.as_c_str().as_path()
+    }
+    fn as_c_name(&self) -> std::borrow::Cow<'_, std::ffi::CStr> {
+        std::borrow::Cow::Borrowed(self)
+    }
+}

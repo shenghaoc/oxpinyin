@@ -17,3 +17,6 @@ workspace = true
 
 [dependencies]
 oxpinyin-core = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+oxpinyin-input = { workspace = true }
