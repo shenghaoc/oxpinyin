@@ -51,7 +51,11 @@ fn a_failed_init_leaves_lc_numeric_at_c() {
         !installed.is_null(),
         "missing input: {utf8_locale:?} locale"
     );
+    #[cfg(not(windows))]
     assert_eq!(numeric_locale().as_c_str(), utf8_locale);
+    // UCRT expands .UTF-8 to the current language and UTF-8 code page.
+    #[cfg(windows)]
+    assert_ne!(numeric_locale().as_c_str(), c"C");
 
     let context = pinyin_capi::pinyin_init(c"".as_ptr(), c"".as_ptr());
     assert!(context.is_null());
