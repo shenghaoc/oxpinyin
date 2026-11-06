@@ -1,0 +1,1 @@
+LIBPINYIN { global: pinyin_entry; local: *; };

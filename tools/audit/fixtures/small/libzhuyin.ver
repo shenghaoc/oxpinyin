@@ -1,0 +1,1 @@
+LIBZHUYIN { global: zhuyin_entry; local: *; };

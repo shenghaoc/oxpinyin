@@ -1,0 +1,10 @@
+function	family
+fprintf	io
+g_free	memory
+g_strdup	memory
+g_utf8_next_char	text
+memcpy	bytes
+memset	bytes
+printf	io
+strcmp	bytes
+strlen	bytes
