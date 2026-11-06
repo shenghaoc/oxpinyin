@@ -131,16 +131,21 @@ jobs:
         uses: ./.github/actions/tkrzw
       # One nightly toolchain serves both cargo-fuzz's build and the runs
       # (cargo install works on nightly; no second toolchain needed).
+      # fuzz/rust-toolchain.toml names it, with rust-src. rustup reads that
+      # file for a command run in fuzz/, so each cargo step below runs there
+      # and no step names the nightly. No default toolchain is installed.
       - name: Install the pinned nightly with Rust sources
+        working-directory: fuzz
         run: |
           set -euo pipefail
-          # Exact on purpose (#1074): a nightly is identified only by its date.
           curl --fail --location --retry 3 --show-error https://sh.rustup.rs \
-            | sh -s -- -y --profile minimal --default-toolchain nightly-2026-08-01 --component rust-src
+            | sh -s -- -y --profile minimal --default-toolchain none
           printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
           . "$HOME/.cargo/env"
+          rustup toolchain install
       # Exact on purpose (#1074): cargo-fuzz passes unstable flags to the pinned nightly above, so the two are pinned together.
       - run: cargo install cargo-fuzz --version 0.13.2 --locked
+        working-directory: fuzz
       # Fuzzing memory, half one: the corpora persist across nightly runs
       # (latest-wins — the run-id key always misses so every run saves,
       # the prefix restore-key always loads the newest save), so a soak
@@ -169,8 +174,9 @@ jobs:
         # status is the step's exit code. -print_final_stats leaves the
         # coverage/edge counters in the log so a soak that explored
         # nothing is visible as one, not just green.
+        working-directory: fuzz
         run: |
-          mapfile -t targets < <(cargo +nightly-2026-08-01 fuzz list)
+          mapfile -t targets < <(cargo fuzz list)
           if [ "${#targets[@]}" -eq 0 ]; then
             echo "::error::cargo fuzz list returned no targets"
             exit 1
@@ -182,7 +188,7 @@ jobs:
             # kernels' mmap entropy exceeds ASan's shadow mapping, and an
             # unprivileged container cannot lower vm.mmap_rnd_bits itself
             # (same rationale as store-backends.yml's sanitizer job).
-            if ! setarch "$(uname -m)" -R cargo +nightly-2026-08-01 fuzz run "$target" -- -max_total_time=180 -timeout=15 -max_len=4096 -print_final_stats=1; then
+            if ! setarch "$(uname -m)" -R cargo fuzz run "$target" -- -max_total_time=180 -timeout=15 -max_len=4096 -print_final_stats=1; then
               status=1
               echo "::error::fuzz target $target failed"
             fi

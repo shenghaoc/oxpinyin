@@ -2437,7 +2437,7 @@
     "oracle": false,
     "required_inputs": [
       "Linux native toolchain and Berkeley DB headers/library",
-      "cargo-fuzz 0.13.2 and nightly-2026-08-01 with rust-src",
+      "cargo-fuzz 0.13.2 and the nightly that fuzz/rust-toolchain.toml names, with rust-src",
       "setarch with permission to disable ASLR",
       "caller-selected fuzz target and libFuzzer arguments"
     ],
@@ -2454,6 +2454,7 @@
     "input_paths": [
       "{root}/justfile",
       "{root}/fuzz/Cargo.toml",
+      "{root}/fuzz/rust-toolchain.toml",
       "{root}/fuzz/fuzz_targets"
     ],
     "reason": "native fuzz recipe; caller supplies the target and duration; excluded from compatibility aggregate gates"
@@ -2511,7 +2512,7 @@
     "oracle": false,
     "required_inputs": [
       "Linux native toolchain and the selected backend's headers and library",
-      "the nightly named in tools/dev/test_runner.py (nightly-2026-09-07)",
+      "the nightly that fuzz/rust-toolchain.toml names",
       "setarch with permission to disable ASLR (tkrzw)",
       "a verified libtkrzw: the one setup.sh's environment file names, or a host library that passes tools/tkrzw/distro-probe.sh (tkrzw)",
       "caller-selected backend: bdb, kc, tkrzw or all"
@@ -2535,6 +2536,7 @@
     "input_paths": [
       "{root}/justfile",
       "{root}/tools/dev/test_runner.py",
+      "{root}/fuzz/rust-toolchain.toml",
       "{root}/tools/dev/native.py",
       "{root}/tools/tkrzw/runtime.py",
       "{root}/tools/tkrzw/distro-probe.sh",

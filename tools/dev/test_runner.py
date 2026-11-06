@@ -361,7 +361,10 @@ def run_tools(files=(), pattern=None, changed=None):
     return status
 
 
-SANITIZER_TOOLCHAIN = 'nightly-2026-09-07'
+# The repository names its one nightly in this file. Fuzzing gets it from
+# rustup. The sanitizer commands read the channel when they run, so no other
+# tools.dev command needs the file.
+SANITIZER_TOOLCHAIN_FILE = ROOT / 'fuzz' / 'rust-toolchain.toml'
 SANITIZER_ALIASES = {'asan': 'address', 'tsan': 'thread', 'lsan': 'leak', 'msan': 'memory'}
 SANITIZER_NAMES = ('address', 'thread', 'leak', 'memory')
 SANITIZER_BACKENDS = cell.CELLS
@@ -408,9 +411,23 @@ BACKEND_DATA = {
 }
 
 
+def sanitizer_nightly():
+    """Return the nightly that SANITIZER_TOOLCHAIN_FILE names.
+
+    Raise FileNotFoundError when the file is missing.
+    """
+    with SANITIZER_TOOLCHAIN_FILE.open('rb') as stream:
+        return tomllib.load(stream)['toolchain']['channel']
+
+
+def _toolchain_file_missing(command):
+    """Return the diagnostic for a command that needs the missing toolchain file."""
+    return f'{command}: {SANITIZER_TOOLCHAIN_FILE} is missing; it names the sanitizer nightly.'
+
+
 def _nightly(environment):
     """Return the selected sanitizer nightly."""
-    return environment.get('OXPINYIN_SANITIZER_TOOLCHAIN') or SANITIZER_TOOLCHAIN
+    return environment.get('OXPINYIN_SANITIZER_TOOLCHAIN') or sanitizer_nightly()
 
 
 def _toolchain_installed(tools, nightly, environment):
@@ -742,7 +759,11 @@ def sanitize(argv=None, *, out=sys.stdout, err=sys.stderr, environment=None, too
     if sanitizer not in SANITIZER_NAMES:
         err.write(SANITIZE_USAGE)
         return 2
-    environment['OXPINYIN_SANITIZER_TOOLCHAIN'] = _nightly(environment)
+    try:
+        environment['OXPINYIN_SANITIZER_TOOLCHAIN'] = _nightly(environment)
+    except FileNotFoundError:
+        print(_toolchain_file_missing('sanitize'), file=err, flush=True)
+        return 1
     selection_os = environment.get('OXPINYIN_SANITIZER_HOST_OS') or platform.system()
     selection_arch = environment.get('OXPINYIN_SANITIZER_HOST_ARCH') or platform.machine()
     # The backend scripts read the real host; the override only selects and
@@ -797,8 +818,15 @@ def sanitize(argv=None, *, out=sys.stdout, err=sys.stderr, environment=None, too
 
 
 def sanitize_toolchain():
-    """Print the single sanitizer nightly for callers that select the toolchain."""
-    print(SANITIZER_TOOLCHAIN)
+    """Print the single sanitizer nightly for callers that select the toolchain.
+
+    Return 0, or 1 with a diagnostic when the toolchain file is missing.
+    """
+    try:
+        print(sanitizer_nightly())
+    except FileNotFoundError:
+        print(_toolchain_file_missing('sanitize-toolchain'), file=sys.stderr, flush=True)
+        return 1
     return 0
 
 

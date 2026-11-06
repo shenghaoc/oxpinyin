@@ -352,7 +352,7 @@ class MigratedWorkflowTests(unittest.TestCase):
             'tools/dev/ci_tree.py', 'tools/dev/ci_tree.test.py', 'tools/bisection/cells-for-diff.py',
             'tools/bdb', 'tools/tkrzw', '.github/actions/tkrzw', '.github/actions/contract-verify', 'tools/dev/check.py',
             'tools/dev/test_runner.py',
-            'rust-toolchain.toml'])
+            'rust-toolchain.toml', 'fuzz/rust-toolchain.toml'])
         for path in also:
             with self.subTest(path=path):
                 self.assertTrue((ROOT / path).exists(), path)
