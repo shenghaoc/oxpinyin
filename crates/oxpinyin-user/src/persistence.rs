@@ -341,9 +341,6 @@ pub struct SystemOriginals {
     libraries: BTreeMap<u8, SystemLibrary>,
     mapped: PhraseLibraries,
     layout: UserFileLayout,
-    /// The library init's loop stopped at (`memory_chunk.h:493`, register
-    /// row 96): the replay merges only the logs of the libraries before it.
-    stop: Option<u8>,
 }
 
 /// An operation's selection of original libraries. It retains no byte owner.
@@ -356,8 +353,6 @@ pub struct SelectedOriginals<'a> {
 pub trait OriginalLibraries {
     /// Configured profile filenames.
     fn layout(&self) -> &UserFileLayout;
-    /// First library whose initialization asserted, when present.
-    fn stop(&self) -> Option<u8>;
     /// Borrow one selected original library.
     fn get(&self, nibble: &u8) -> Option<SystemLibraryRef<'_>>;
     /// Borrow selected libraries in nibble order.
@@ -376,9 +371,6 @@ impl OriginalLibraries for SystemOriginals {
     fn layout(&self) -> &UserFileLayout {
         &self.layout
     }
-    fn stop(&self) -> Option<u8> {
-        self.stop
-    }
     fn get(&self, nibble: &u8) -> Option<SystemLibraryRef<'_>> {
         self.get(nibble)
     }
@@ -390,9 +382,6 @@ impl OriginalLibraries for SystemOriginals {
 impl OriginalLibraries for SelectedOriginals<'_> {
     fn layout(&self) -> &UserFileLayout {
         self.owner.layout()
-    }
-    fn stop(&self) -> Option<u8> {
-        self.owner.stop()
     }
     fn get(&self, nibble: &u8) -> Option<SystemLibraryRef<'_>> {
         if *nibble >= 16 || self.mask & (1 << *nibble) == 0 {
@@ -425,7 +414,6 @@ impl SystemOriginals {
             libraries,
             mapped,
             layout,
-            stop: None,
         }
     }
 
@@ -443,7 +431,6 @@ impl SystemOriginals {
                 .collect(),
             mapped: PhraseLibraries::empty(),
             layout: self.layout.clone(),
-            stop: self.stop,
         }
     }
 
@@ -468,15 +455,32 @@ impl SystemOriginals {
         let nibbles: Vec<u8> = self.libraries.keys().copied().collect();
         nibbles
             .into_iter()
-            .filter_map(|nibble| {
-                let total = self.libraries.get(&nibble)?.total;
-                let content = self.mapped.take_live_content(nibble)?;
-                Some((
-                    nibble,
-                    crate::replay::ReplayedLibrary::from_mapping(content, total),
-                ))
-            })
+            .filter_map(|nibble| Some((nibble, self.take_live_library(nibble)?)))
             .collect()
+    }
+
+    /// [`Self::take_live_libraries`] of one library.
+    fn take_live_library(&mut self, nibble: u8) -> Option<crate::replay::ReplayedLibrary> {
+        let total = self.libraries.get(&nibble)?.total;
+        let content = self.mapped.take_live_content(nibble)?;
+        Some(crate::replay::ReplayedLibrary::from_mapping(content, total))
+    }
+
+    /// Maps one default library from `system_dir` where the init loop
+    /// reaches it, and records its metadata if the layout logs it.
+    fn map_library(
+        &mut self,
+        nibble: u8,
+        system_dir: &Path,
+        file: &FileName,
+    ) -> Result<(), LibraryError> {
+        self.mapped.map_library(nibble, system_dir, file.as_ref())?;
+        if self.layout.system_logs().iter().any(|(n, _)| *n == nibble)
+            && let Some(library) = library_metadata(&self.mapped, nibble)
+        {
+            self.libraries.insert(nibble, library);
+        }
+        Ok(())
     }
 
     /// One operation's original library view.
@@ -580,13 +584,6 @@ impl SystemOriginals {
         }
     }
 
-    /// The library init's library loop asserted on while it mapped it
-    /// (`memory_chunk.h:493`), if any: no log at or after it is merged.
-    #[must_use]
-    pub const fn stop(&self) -> Option<u8> {
-        self.stop
-    }
-
     /// The user dir's file layout.
     #[must_use]
     pub const fn layout(&self) -> &UserFileLayout {
@@ -626,28 +623,27 @@ impl From<BTreeMap<u8, SystemLibrary>> for SystemOriginals {
 /// A fresh profile therefore pays no full-item pass (#588).
 #[must_use]
 pub fn system_originals(libraries: PhraseLibraries, layout: UserFileLayout) -> SystemOriginals {
-    let mut out = BTreeMap::new();
-    for &(nibble, _) in layout.system_logs() {
-        let Some(library) = libraries.library(u32::from(nibble) << 24) else {
-            continue;
-        };
-        out.insert(
-            nibble,
-            SystemLibrary {
-                total: library.total_freq(),
-                range_end: library.token_range().end,
-                items: BTreeMap::new(),
-                mapped: None,
-            },
-        );
-    }
-    let stop = libraries.chunk_header_fault();
+    let out = layout
+        .system_logs()
+        .iter()
+        .filter_map(|&(nibble, _)| Some((nibble, library_metadata(&libraries, nibble)?)))
+        .collect();
     SystemOriginals {
         libraries: out,
         mapped: libraries,
         layout,
-        stop,
     }
+}
+
+/// A mapped library's load-time metadata, without its bytes or items.
+fn library_metadata(libraries: &PhraseLibraries, nibble: u8) -> Option<SystemLibrary> {
+    let library = libraries.library(u32::from(nibble) << 24)?;
+    Some(SystemLibrary {
+        total: library.total_freq(),
+        range_end: library.token_range().end,
+        items: BTreeMap::new(),
+        mapped: None,
+    })
 }
 
 /// The user state, in the value shapes the file set carries.
@@ -1028,7 +1024,7 @@ pub(crate) fn load_profile(
 #[derive(Clone, Copy, Debug)]
 pub struct ProfileCheck {
     open_counter: i32,
-    conform: bool,
+    pub(crate) conform: bool,
 }
 
 /// `check_format`'s half of [`load`]: judge the `user.conf` marker, raise
@@ -1107,6 +1103,142 @@ pub(crate) fn load_session_checked(
     check: &ProfileCheck,
 ) -> LoadedProfile {
     load_checked_impl(dir, originals, check, true, BTreeMap::new())
+}
+
+/// The init's profile load: the user tables first (`pinyin.cpp:350-373`),
+/// then the library loop, each row judged, mapped and merged before the next
+/// (`:377-392`). Without a conforming profile the loop only maps: the wipe
+/// left nothing to read. The stop is the loop's first fault, after everything
+/// the pin does before it.
+pub(crate) fn load_session_in_loop(
+    dir: &Path,
+    originals: &mut SystemOriginals,
+    rows: &crate::library_loop::LibraryLoopRows<'_>,
+    check: &ProfileCheck,
+) -> (
+    LoadedProfile,
+    Result<(), crate::library_loop::LibraryLoopStop>,
+) {
+    let mut profile = begin_session_profile(dir, check);
+    let stop = crate::library_loop::run(
+        rows.steps(),
+        &mut SessionSteps {
+            user_dir: dir,
+            system_dir: rows.system_dir(),
+            originals,
+            profile: &mut profile,
+            conform: check.conform,
+        },
+    );
+    (profile, stop)
+}
+
+/// The part of a session load that precedes the library loop.
+pub(crate) fn begin_session_profile(dir: &Path, check: &ProfileCheck) -> LoadedProfile {
+    let mut profile = LoadedProfile {
+        loaded: Loaded {
+            open_counter: check.open_counter,
+            wiped: !check.conform,
+            ..Loaded::default()
+        },
+        replayed: BTreeMap::new(),
+        user_libraries: BTreeMap::new(),
+        overlong_index_keys: Vec::new(),
+        index: UserIndex::default(),
+        phrase_table: UserPhraseTable::default(),
+    };
+    if check.conform {
+        load_user_pinyin_index(
+            dir,
+            &mut profile.loaded,
+            &mut profile.overlong_index_keys,
+            &mut profile.index,
+            true,
+        );
+        load_user_phrase_index(
+            dir,
+            &mut profile.loaded.skipped,
+            &mut profile.loaded.state.phrase_table,
+            &mut profile.phrase_table,
+            true,
+        );
+    }
+    profile
+}
+
+/// The library loop's steps over a user profile.
+pub(crate) struct SessionSteps<'a> {
+    pub(crate) user_dir: &'a Path,
+    pub(crate) system_dir: &'a Path,
+    pub(crate) originals: &'a mut SystemOriginals,
+    pub(crate) profile: &'a mut LoadedProfile,
+    pub(crate) conform: bool,
+}
+
+impl crate::library_loop::LoopSteps for SessionSteps<'_> {
+    fn map(&mut self, index: u8, file: &FileName) -> Result<(), LibraryError> {
+        self.originals.map_library(index, self.system_dir, file)?;
+        if let Some(live) = self.originals.take_live_library(index) {
+            self.profile.replayed.insert(index, live);
+        }
+        Ok(())
+    }
+
+    fn merge_log(&mut self, index: u8) -> Result<(), JournalFault> {
+        if !self.conform {
+            return Ok(());
+        }
+        let Some((_, file)) = self
+            .originals
+            .layout()
+            .system_logs()
+            .iter()
+            .find(|(nibble, _)| *nibble == index)
+        else {
+            return Ok(());
+        };
+        replay_log(
+            self.user_dir,
+            &*self.originals,
+            &mut self.profile.loaded,
+            index,
+            file,
+            None,
+            false,
+            Some(&mut self.profile.replayed),
+            None,
+        )
+    }
+
+    fn read_user_library(&mut self, index: u8) {
+        if self.conform {
+            load_libraries(
+                self.user_dir,
+                self.originals.layout(),
+                &mut self.profile.loaded,
+                Some(index),
+                Some(&mut self.profile.user_libraries),
+            );
+        }
+    }
+}
+
+/// The library loop without a user profile: each row judged and mapped.
+pub(crate) struct MapSteps<'a> {
+    pub(crate) system_dir: &'a Path,
+    pub(crate) originals: &'a mut SystemOriginals,
+}
+
+impl crate::library_loop::LoopSteps for MapSteps<'_> {
+    fn map(&mut self, index: u8, file: &FileName) -> Result<(), LibraryError> {
+        self.originals.map_library(index, self.system_dir, file)
+    }
+
+    fn merge_log(&mut self, _index: u8) -> Result<(), JournalFault> {
+        Ok(())
+    }
+
+    fn read_user_library(&mut self, _index: u8) {}
 }
 
 pub(crate) fn load_session_checked_live(
@@ -1679,119 +1811,143 @@ fn replay_logs(
     mut preread: Option<&mut MaskLogs>,
 ) -> Result<(), JournalFault> {
     for (nibble, file) in originals.layout().system_logs() {
-        let nibble = *nibble;
-        // Init's loop maps each library before it merges its log
-        // (`pinyin.cpp:255`, `:276`); at the library whose mapping asserts
-        // (`memory_chunk.h:493`) the pin dies, so no later log is merged.
-        if originals.stop().is_some_and(|stop| nibble >= stop) {
-            break;
+        replay_log(
+            dir,
+            originals,
+            loaded,
+            *nibble,
+            file,
+            mask,
+            only_originals,
+            replayed.as_deref_mut(),
+            preread.as_deref_mut(),
+        )?;
+    }
+    Ok(())
+}
+
+/// One library's turn in [`replay_logs`]: `FacadePhraseIndex::merge`, or with
+/// `mask`, `merge_with_mask`. Init's loop calls it for each library right
+/// after mapping that library ([`crate::library_loop`]).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "replay_logs' parameters and one library's identity"
+)]
+fn replay_log(
+    dir: &Path,
+    originals: &impl OriginalLibraries,
+    loaded: &mut Loaded,
+    nibble: u8,
+    file: &FileName,
+    mask: Option<(u32, u32)>,
+    only_originals: bool,
+    mut replayed: Option<&mut BTreeMap<u8, ReplayedLibrary>>,
+    preread: Option<&mut MaskLogs>,
+) -> Result<(), JournalFault> {
+    if only_originals && !originals.contains_key(&nibble) {
+        return Ok(());
+    }
+    // The pin skips unloaded libraries, but loads each remaining log
+    // before merge_with_mask checks the library bits.
+    if mask.is_some() && !originals.contains_key(&nibble) {
+        return Ok(());
+    }
+    let name = file.display();
+    // An absent or unreadable `.dbin` is an empty log: `MemoryChunk::load`
+    // fails and leaves the chunk empty, and the merge reads nothing.
+    let read = preread
+        .and_then(|logs| logs.0.remove(&nibble))
+        .unwrap_or_else(|| load_chunk_payload(&build_path(dir, file.as_ref())));
+    let bytes = match read {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => {
+            loaded.skipped.push(format!("{name}: {e}"));
+            return Ok(());
         }
-        if only_originals && !originals.contains_key(&nibble) {
-            continue;
-        }
-        // The pin skips unloaded libraries, but loads each remaining log
-        // before merge_with_mask checks the library bits.
-        if mask.is_some() && !originals.contains_key(&nibble) {
-            continue;
-        }
-        let name = file.display();
-        // An absent or unreadable `.dbin` is an empty log: `MemoryChunk::load`
-        // fails and leaves the chunk empty, and the merge reads nothing.
-        let read = preread
-            .as_deref_mut()
-            .and_then(|logs| logs.0.remove(&nibble))
-            .unwrap_or_else(|| load_chunk_payload(&build_path(dir, file.as_ref())));
-        let bytes = match read {
-            Ok(bytes) => bytes,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(e) => {
-                loaded.skipped.push(format!("{name}: {e}"));
-                continue;
-            }
+    };
+    if mask.is_some_and(|(mask, value)| {
+        (nibble & crate::phrase::phrase_index_library_index(mask))
+            != crate::phrase::phrase_index_library_index(value)
+    }) {
+        return Ok(());
+    }
+    let payload = bytes.as_slice();
+    // The pin emits local slots, but its reader masks high bits even
+    // in hand-written records (074a2219 phrase_index.cpp:180-215, 219-232).
+    // `SubPhraseIndex::merge` over the records, in the pin's own terms:
+    // bytes compared as bytes, payloads kept whole, the first failure the
+    // end (`phrase_index.cpp:439-517`). Session opens retain the byte
+    // views; value-only callers decode the final touched slots.
+    // A masked logger with no header is empty. Decide that before
+    // taking ownership so rollback remains exclusive to payload over-read.
+    let masked = if let Some((mask, value)) = mask {
+        let Some(records) = masked_log(payload, mask, value, nibble)? else {
+            return Ok(());
         };
-        if mask.is_some_and(|(mask, value)| {
-            (nibble & crate::phrase::phrase_index_library_index(mask))
-                != crate::phrase::phrase_index_library_index(value)
-        }) {
-            continue;
-        }
-        let payload = bytes.as_slice();
-        // The pin emits local slots, but its reader masks high bits even
-        // in hand-written records (074a2219 phrase_index.cpp:180-215, 219-232).
-        // `SubPhraseIndex::merge` over the records, in the pin's own terms:
-        // bytes compared as bytes, payloads kept whole, the first failure the
-        // end (`phrase_index.cpp:439-517`). Session opens retain the byte
-        // views; value-only callers decode the final touched slots.
-        // A masked logger with no header is empty. Decide that before
-        // taking ownership so rollback remains exclusive to payload over-read.
-        let masked = if let Some((mask, value)) = mask {
-            let Some(records) = masked_log(payload, mask, value, nibble)? else {
-                continue;
-            };
-            Some(records)
-        } else {
-            None
-        };
-        let live = replayed
-            .as_deref_mut()
-            .and_then(|views| views.remove(&nibble));
-        let mut merge = match live {
-            Some(live) => Merge::from_live(originals.get(&nibble), live),
-            None => Merge::new(originals.get(&nibble)),
-        };
-        match masked {
-            None => {
-                // A payload past the log's end is the pin's over-read (class
-                // (b)): where the walk reaches it, the log is skipped whole, as
-                // the parent's `load_logs_with_mask` did when
-                // `validate_log_records` refused it. Every fault or stop
-                // before it comes first, as in the pin's lazy walk; the merge
-                // is local until `finish`, so dropping it skips the log.
-                let end = merge_log(
-                    &mut merge,
-                    || log_records(payload),
-                    nibble,
-                    &mut loaded.skipped,
-                    &name,
-                )?;
-                if end == MergeEnd::OverRead {
-                    loaded
-                        .skipped
-                        .push(format!("{name}: a record's payload runs past the log"));
-                    // The library keeps its pre-replay content: the applied
-                    // records are reversed, not dropped with the buffer.
-                    if let Some(replayed) = replayed.as_deref_mut() {
-                        replayed.insert(nibble, merge.rollback());
-                    }
-                    continue;
+        Some(records)
+    } else {
+        None
+    };
+    let live = replayed
+        .as_deref_mut()
+        .and_then(|views| views.remove(&nibble));
+    let mut merge = match live {
+        Some(live) => Merge::from_live(originals.get(&nibble), live),
+        None => Merge::new(originals.get(&nibble)),
+    };
+    match masked {
+        None => {
+            // A payload past the log's end is the pin's over-read (class
+            // (b)): where the walk reaches it, the log is skipped whole, as
+            // the parent's `load_logs_with_mask` did when
+            // `validate_log_records` refused it. Every fault or stop
+            // before it comes first, as in the pin's lazy walk; the merge
+            // is local until `finish`, so dropping it skips the log.
+            let end = merge_log(
+                &mut merge,
+                || log_records(payload),
+                nibble,
+                &mut loaded.skipped,
+                &name,
+            )?;
+            if end == MergeEnd::OverRead {
+                loaded
+                    .skipped
+                    .push(format!("{name}: a record's payload runs past the log"));
+                // The library keeps its pre-replay content: the applied
+                // records are reversed, not dropped with the buffer.
+                if let Some(replayed) = replayed.as_deref_mut() {
+                    replayed.insert(nibble, merge.rollback());
                 }
-            }
-            Some(records) => {
-                merge_log(
-                    &mut merge,
-                    || records.iter().cloned().map(Ok),
-                    nibble,
-                    &mut loaded.skipped,
-                    &name,
-                )?;
+                return Ok(());
             }
         }
-        let (total, overrides) = if let Some(replayed) = replayed.as_deref_mut() {
-            let (total, overrides, retained) = merge.finish_views(&mut loaded.skipped, &name);
-            if let Some(retained) = retained {
-                replayed.insert(nibble, retained);
-            }
-            (total, overrides)
-        } else {
-            merge.finish(&mut loaded.skipped, &name)
-        };
-        if let Some(total) = total {
-            loaded.library_totals.insert(nibble, total);
+        Some(records) => {
+            merge_log(
+                &mut merge,
+                || records.iter().cloned().map(Ok),
+                nibble,
+                &mut loaded.skipped,
+                &name,
+            )?;
         }
-        // An empty override set and an absent one are the same state.
-        if !overrides.is_empty() {
-            loaded.state.system_overrides.insert(nibble, overrides);
+    }
+    let (total, overrides) = if let Some(replayed) = replayed {
+        let (total, overrides, retained) = merge.finish_views(&mut loaded.skipped, &name);
+        if let Some(retained) = retained {
+            replayed.insert(nibble, retained);
         }
+        (total, overrides)
+    } else {
+        merge.finish(&mut loaded.skipped, &name)
+    };
+    if let Some(total) = total {
+        loaded.library_totals.insert(nibble, total);
+    }
+    // An empty override set and an absent one are the same state.
+    if !overrides.is_empty() {
+        loaded.state.system_overrides.insert(nibble, overrides);
     }
     Ok(())
 }

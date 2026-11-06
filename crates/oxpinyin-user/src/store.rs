@@ -227,6 +227,8 @@ pub enum UserStoreError {
     /// `mask_out`'s `merge_with_mask`. The pin dies there; the C adapters
     /// abort on it.
     Journal(crate::JournalFault),
+    /// Init's library loop died at a row ([`crate::LibraryLoopStop`]).
+    LibraryLoop(crate::LibraryLoopStop),
     /// A training step's `set_freq` misses the item its `insert_freq` just
     /// added: on an unsorted gram the second `lower_bound` can land past
     /// it, and the pin's `check_result(user->set_freq(token, freq + seed))`
@@ -313,6 +315,7 @@ impl fmt::Display for UserStoreError {
                 "masking a user bigram leaves a residual total_freq (upstream aborts, ngram.cpp:70)"
             ),
             Self::Journal(fault) => write!(f, "journal replay: {fault}"),
+            Self::LibraryLoop(stop) => write!(f, "library loop: {stop}"),
             Self::TrainingSetFreqMiss => write!(
                 f,
                 "a training step's set_freq misses the item insert_freq added \
@@ -352,6 +355,7 @@ impl std::error::Error for UserStoreError {
             | Self::TrainingSetFreqMiss
             | Self::UserReadingRemoval => None,
             Self::Journal(fault) => Some(fault),
+            Self::LibraryLoop(stop) => Some(stop),
         }
     }
 }

@@ -68,12 +68,8 @@ impl Loaded {
 pub struct PhraseLibraries {
     /// nibble → library, `None` = not loaded.
     by_nibble: [Option<Loaded>; 16],
-    /// Files `open` found absent.
-    unmapped: Vec<(u8, PathBuf)>,
-    /// The library [`PhraseLibraries::open_to_header_fault`] stopped at: a
-    /// directory whose header read `MemoryChunk::mmap` asserts on
-    /// (`memory_chunk.h:493`). No later library was loaded.
-    chunk_header_fault: Option<u8>,
+    /// Files [`Self::map_library`] found absent.
+    unmapped: Vec<PathBuf>,
     /// `FacadePhraseIndex::m_total_freq` (074a2219 `phrase_index.h:440`)
     /// over every loaded library: each library's stored `total_freq` is
     /// added when it loads and subtracted when it unloads or is replaced,
@@ -103,7 +99,6 @@ impl PhraseLibraries {
         Self {
             by_nibble: Default::default(),
             unmapped: Vec::new(),
-            chunk_header_fault: None,
             total: 0,
             stocked: 0,
         }
@@ -121,38 +116,6 @@ impl PhraseLibraries {
         dir: &Path,
         stems: &[(u8, S)],
     ) -> Result<Self, LibraryError> {
-        Self::open_impl(dir, stems, false)
-    }
-
-    /// [`Self::open`] the way `pinyin_init`'s library loop maps the default
-    /// libraries in order (`pinyin.cpp:377-392`, `zhuyin.cpp:318-334`): at a
-    /// library that is a directory `MemoryChunk::mmap` asserts on
-    /// (`memory_chunk.h:493`, register row 96) the open stops, keeps the
-    /// libraries before it and records the nibble
-    /// ([`Self::chunk_header_fault`]), so the caller can merge the earlier
-    /// libraries' logs before it returns the fault at the pin's point.
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::open`], for every other failure.
-    pub fn open_to_header_fault<S: AsRef<std::ffi::OsStr>>(
-        dir: &Path,
-        stems: &[(u8, S)],
-    ) -> Result<Self, LibraryError> {
-        Self::open_impl(dir, stems, true)
-    }
-
-    /// The library [`Self::open_to_header_fault`] stopped at, if any.
-    #[must_use]
-    pub const fn chunk_header_fault(&self) -> Option<u8> {
-        self.chunk_header_fault
-    }
-
-    fn open_impl<S: AsRef<std::ffi::OsStr>>(
-        dir: &Path,
-        stems: &[(u8, S)],
-        stop_at_header_fault: bool,
-    ) -> Result<Self, LibraryError> {
         let mut this = Self::empty();
         let mut seen = [false; 16];
         for (nibble, file) in stems {
@@ -169,52 +132,55 @@ impl PhraseLibraries {
                 )));
             }
             seen[slot] = true;
-            // `g_build_filename`: a name never leaves the directory.
-            let path = oxpinyin_input::path::build_chunk_path(dir, file.as_ref());
-            match std::fs::metadata(&path) {
-                // A directory is `MemoryChunk::mmap`'s to judge by its
-                // reported size (`phrase_library::directory_chunk_fault`);
-                // any other file that is not a regular one is skipped
-                // without a word, as before.
-                #[cfg(unix)]
-                Ok(meta) if meta.is_dir() => {}
-                Ok(meta) if !meta.is_file() => continue,
-                Ok(_) => {}
-                // The pin's `open` fails and `MemoryChunk::mmap` answers
-                // `false`; the library stays unloaded here.
-                Err(_) => {
-                    this.unmapped.push((nibble, path));
-                    continue;
-                }
-            }
-            match this.load(nibble, &path) {
-                Err(LibraryError::Row(RowFault::ChunkHeaderRead)) if stop_at_header_fault => {
-                    this.chunk_header_fault = Some(nibble);
-                    break;
-                }
-                loaded => {
-                    loaded?;
-                }
-            }
+            this.map_library(nibble, dir, file.as_ref())?;
         }
         Ok(this)
     }
 
-    /// The files [`PhraseLibraries::open`] found absent, in the order it
-    /// met them: where the pin writes `mmap %s failed!` at init and goes on
-    /// with an empty chunk (`pinyin.cpp:256`).
-    pub fn unmapped(&self) -> impl Iterator<Item = &Path> {
-        self.unmapped.iter().map(|(_, path)| path.as_path())
+    /// Maps one default library from `dir`, the mapping half of the pin's
+    /// `_load_phrase_library` (`pinyin.cpp:254-264`, `zhuyin.cpp:198-208`).
+    /// An absent file leaves the library unloaded and is recorded in
+    /// [`Self::unmapped`]; any other file that is not a regular one is
+    /// skipped without a word.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibraryError`] when the present file does not verify as a
+    /// well-formed `SubPhraseIndex` chunk, or when it is a directory whose
+    /// header read `MemoryChunk::mmap` asserts on (`memory_chunk.h:493`,
+    /// register row 96).
+    pub fn map_library(
+        &mut self,
+        nibble: u8,
+        dir: &Path,
+        file: &std::ffi::OsStr,
+    ) -> Result<(), LibraryError> {
+        // `g_build_filename`: a name never leaves the directory.
+        let path = oxpinyin_input::path::build_chunk_path(dir, file);
+        match std::fs::metadata(&path) {
+            // A directory is `MemoryChunk::mmap`'s to judge by its
+            // reported size (`phrase_library::directory_chunk_fault`);
+            // any other file that is not a regular one is skipped
+            // without a word, as before.
+            #[cfg(unix)]
+            Ok(meta) if meta.is_dir() => {}
+            Ok(meta) if !meta.is_file() => return Ok(()),
+            Ok(_) => {}
+            // The pin's `open` fails and `MemoryChunk::mmap` answers
+            // `false`; the library stays unloaded here.
+            Err(_) => {
+                self.unmapped.push(path);
+                return Ok(());
+            }
+        }
+        self.load(nibble, &path).map(|_| ())
     }
 
-    /// The [`Self::unmapped`] files of the libraries before sub-index
-    /// `stop`, and of `stop` itself when `through`: the lines the pin's init
-    /// loop has written when it dies at that library.
-    pub fn unmapped_before(&self, stop: u8, through: bool) -> impl Iterator<Item = &Path> {
-        self.unmapped
-            .iter()
-            .filter(move |&&(nibble, _)| nibble < stop || (through && nibble == stop))
-            .map(|(_, path)| path.as_path())
+    /// The files [`Self::map_library`] found absent, in the order it met
+    /// them: where the pin writes `mmap %s failed!` at init and goes on
+    /// with an empty chunk (`pinyin.cpp:256`).
+    pub fn unmapped(&self) -> impl Iterator<Item = &Path> {
+        self.unmapped.iter().map(PathBuf::as_path)
     }
 
     /// The files of the loaded libraries that `MemoryChunk::mmap` would

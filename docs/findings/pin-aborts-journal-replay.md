@@ -72,9 +72,10 @@ writing `mmap %s failed!` if its system chunk is absent
 (`pinyin.cpp:253-256`, `zhuyin.cpp:197-200`), then merges its log, where
 rows 91 and 108 assert (`:276`). So when init dies at library `i`, the
 lines of the absent libraries through `i` are on stderr and those after it
-are not. `Runtime::open_with_law_reporting` now reports them that way
-(`PhraseLibraries::unmapped_before`); before, every absent library's line
-was written after the open, so a journal fault wrote none. Held by
+are not. `Runtime::open_with_law_reporting` now reports them that way:
+since 2026-11-06 UTC the library loop stops at the fault, so its list of
+absent libraries holds only those it reached; before, every absent library's
+line was written after the open, so a journal fault wrote none. Held by
 `a_journal_fault_reports_only_the_libraries_through_its_own`.
 
 Before these aborts the pin changes only in-memory state, except
@@ -154,8 +155,9 @@ Notes:
   `mask_out_faults_before_an_over_read_come_first`.
 - Row 107's class (b) handling (a REMOVE of an absent token, a stale
   MODIFY, a read past an item) is unchanged in `replay.rs`.
-- The library loop is per library (`persistence::replay_logs`), so the
-  mapping check member 5c adds for row 96 can sit at the pin's position.
+- The library loop is per library (`library_loop::run`, over
+  `persistence::replay_log`), so the row judgement and mapping of each row
+  sit at the pin's position ([record](pin-aborts-remaining.md#the-init-library-loop-2026-11-06-utc)).
 
 ## Fuzzing
 

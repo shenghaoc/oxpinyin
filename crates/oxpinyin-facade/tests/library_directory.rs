@@ -147,6 +147,64 @@ fn init_returns_the_fault_where_its_library_loop_maps_the_directory() {
     }
 }
 
+/// An open and the lines it reports: only the libraries the library loop
+/// reached (`pinyin.cpp:253-256`, `zhuyin.cpp:197-200`).
+fn open_lines(
+    system: &Path,
+    user: &Path,
+    law: UserConfLaw,
+) -> (
+    Result<oxpinyin_runtime::Runtime, oxpinyin_runtime::OpenError>,
+    Vec<PathBuf>,
+) {
+    let mut lines = Vec::new();
+    let opened =
+        oxpinyin_runtime::Runtime::open_with_law_reporting(system, Some(user), law, &mut |path| {
+            lines.push(path.to_path_buf())
+        });
+    (opened, lines)
+}
+
+/// Replaces the system library `file` with one too short for a chunk header.
+fn make_unmappable(system: &Path, file: &str) {
+    let path = system.join(file);
+    std::fs::remove_file(&path).expect("unlink the library");
+    std::fs::write(&path, b"abc").expect("short library");
+}
+
+/// Library 1's log asserts before the loop opens library 2 or library 4, so
+/// neither writes its line and the fault is the log's. With a sound log the
+/// loop reaches them: library 2's line, then library 4's refusal.
+#[test]
+fn init_reports_only_what_the_library_loop_reached() {
+    for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
+        let system = private_system("lines");
+        let user = scratch("lines-user");
+        conforming_profile(&system, &user);
+        std::fs::remove_file(system.join("gbk_char.bin")).expect("unlink the library");
+        make_unmappable(&system, "merged.bin");
+
+        let (opened, lines) = open_lines(&system, &user, law);
+        let error = opened.err().expect("the open fails");
+        assert_eq!(
+            error.unmappable_library(),
+            Some(system.join("merged.bin").as_path()),
+            "{law:?}"
+        );
+        assert_eq!(lines, [system.join("gbk_char.bin")], "{law:?}");
+
+        plant_header_token_log(&user, "gb_char.dbin");
+        let (opened, lines) = open_lines(&system, &user, law);
+        assert!(
+            matches!(opened, Err(oxpinyin_runtime::OpenError::Journal(_))),
+            "{law:?}"
+        );
+        assert!(lines.is_empty(), "{law:?}: {lines:?}");
+        let _ = std::fs::remove_dir_all(&system);
+        let _ = std::fs::remove_dir_all(&user);
+    }
+}
+
 /// `_write_files` maps each loaded system library at its place in the
 /// library loop (`pinyin.cpp:955-956`), so at the directory in library 4
 /// libpinyin has written the `.tmp` logs of libraries 1 to 3 and renamed

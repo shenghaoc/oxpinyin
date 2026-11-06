@@ -208,21 +208,30 @@ impl GenericUserStore<DefaultStore> {
     }
 
     /// [`open_libpinyin`](Self::open_libpinyin) for a profile
-    /// [`check_profile`](Self::check_profile) already judged: the profile is
-    /// read, not judged again.
+    /// [`check_profile`](Self::check_profile) already judged, over `originals`
+    /// that the library loop fills as it walks `rows`: the profile is read,
+    /// not judged again.
     ///
     /// # Errors
     ///
     /// As [`open_libpinyin`](Self::open_libpinyin), less the `user.conf`
-    /// judgement.
+    /// judgement. The loop's first fault is
+    /// [`UserStoreError::LibraryLoop`], with the counter left raised.
     pub fn open_libpinyin_checked(
         user_dir: &Path,
         originals: &mut SystemOriginals,
+        rows: &crate::library_loop::LibraryLoopRows<'_>,
         versions: SystemVersions,
         law: UserConfLaw,
         check: crate::persistence::ProfileCheck,
     ) -> Result<Self, UserStoreError> {
-        Self::open_session(Some(user_dir), originals, versions, law, Some(check))
+        Self::open_session(
+            Some(user_dir),
+            originals,
+            versions,
+            law,
+            Some((check, rows)),
+        )
     }
 
     /// `check_format` alone, for an init that must judge the profile before
@@ -253,7 +262,10 @@ impl GenericUserStore<DefaultStore> {
         originals: &mut SystemOriginals,
         versions: SystemVersions,
         law: UserConfLaw,
-        checked: Option<crate::persistence::ProfileCheck>,
+        checked: Option<(
+            crate::persistence::ProfileCheck,
+            &crate::library_loop::LibraryLoopRows<'_>,
+        )>,
     ) -> Result<Self, UserStoreError> {
         // Create the session's own container before touching the
         // profile, so a failure here cannot follow a `check_format` that
@@ -264,7 +276,15 @@ impl GenericUserStore<DefaultStore> {
 
         let profile = if let Some(dir) = user_dir {
             match checked {
-                Some(check) => persistence::load_session_checked_live(dir, originals, &check),
+                // The library loop's fault: the open returns here, after
+                // `check_format`'s writes and the rows before it, before the
+                // fini guard is armed, so the raised counter stays on disk.
+                Some((check, rows)) => {
+                    let (profile, stop) =
+                        persistence::load_session_in_loop(dir, originals, rows, &check);
+                    stop.map_err(UserStoreError::LibraryLoop)?;
+                    profile
+                }
                 None => persistence::load_profile_live(dir, originals, &versions, law)?,
             }
         } else {
@@ -276,19 +296,10 @@ impl GenericUserStore<DefaultStore> {
                 ..Default::default()
             }
         };
-        // A system library's log replay reached a pin assertion (the
-        // library loop's `merge`, rows 91 and 108): the session open
-        // returns it here, after `check_format`'s writes and the libraries
-        // before it, with the open counter left raised as the pin leaves it.
+        // A system library's log replay reached a pin assertion
+        // (rows 91 and 108) on an open without the loop.
         if let Some(fault) = profile.loaded.journal_fault {
             return Err(UserStoreError::Journal(fault));
-        }
-        // The library loop then mapped a library that is a directory and
-        // asserted (`memory_chunk.h:493`, register row 96): the replay
-        // stopped before it, and the open returns here too, before the fini
-        // guard is armed, so the raised counter stays on disk.
-        if originals.stop().is_some() {
-            return Err(UserStoreError::LibraryChunkHeaderRead);
         }
         let persistence::LoadedProfile {
             loaded,

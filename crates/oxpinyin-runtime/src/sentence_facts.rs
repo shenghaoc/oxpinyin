@@ -345,7 +345,7 @@ mod tests {
         runtime.user = Some(UserStore::create_standalone(&dir.path().join("user.db")).unwrap());
         fallback(&runtime, ordinary);
         runtime.user = None;
-        let (_, libraries) = SystemDictionary::attach_with(&fixture(), runtime.table_conf())
+        let (_, libraries) = SystemDictionary::open_with(&fixture(), runtime.table_conf())
             .unwrap()
             .into_parts();
         runtime.originals = oxpinyin_user::system_originals(

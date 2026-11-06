@@ -120,7 +120,7 @@ Unix only, as before.
 
 | Path | Pin site and preceding work | oxpinyin item that returns the fault | Adapter |
 |---|---|---|---|
-| `pinyin_init`, `zhuyin_init` | The default-library loop (`pinyin.cpp:377-392`, `zhuyin.cpp:318-334`) maps each library (`_load_phrase_library`, `pinyin.cpp:255`, `zhuyin.cpp:199`) and merges its `.dbin` before the next. Preceding work: `check_format`'s writes; the earlier libraries are mapped and merged in memory, and one of their merges can assert first (rows 91, 108). | `PhraseLibraries::open_to_header_fault` stops at the library and records it (`chunk_header_fault`); `system_originals` carries it as `SystemOriginals::stop`, and `persistence::replay_logs` merges only the logs before it; the session open then returns `UserStoreError::LibraryChunkHeaderRead` before its fini guard is armed (so `check_format`'s raised open counter stays on disk, as the pin leaves it), and `Runtime::open_with_law` returns `OpenError::Dict(…ChunkHeaderRead)` (or the earlier `OpenError::Journal`) before the language model is opened | both `context.rs` abort (the warning is deleted) |
+| `pinyin_init`, `zhuyin_init` | The default-library loop (`pinyin.cpp:377-392`, `zhuyin.cpp:318-334`) maps each library (`_load_phrase_library`, `pinyin.cpp:255`, `zhuyin.cpp:199`) and merges its `.dbin` before the next. Preceding work: `check_format`'s writes; the earlier libraries are mapped and merged in memory, and one of their merges can assert first (rows 91, 108). | `library_loop::run` walks the default rows in order, so it maps the library only after the earlier logs merged, and stops there with `LibraryLoopStop::Library`; the session open returns `UserStoreError::LibraryLoop` before its fini guard is armed (so `check_format`'s raised open counter stays on disk, as the pin leaves it), and `Runtime::open_with_law` returns `OpenError::Dict(…ChunkHeaderRead)` (or the earlier `OpenError::Journal`) before the language model is opened | both `context.rs` abort (the warning is deleted) |
 | `*_load_phrase_library` | `pinyin.cpp:255`, `zhuyin.cpp:199` at the reload, before the merge; nothing precedes it | `ContextCore::load_phrase_library` → `LibraryLoadFault::Row(ChunkHeaderRead)` (unchanged point) | both `config.rs` abort |
 | `pinyin_load_addon_phrase_library` | `pinyin.cpp:289` | `load_system_addon_reporting` → `LibraryRowAssert::ChunkHeaderRead` (unchanged point) | `state.rs` aborts |
 | `*_save` | `_write_files` maps each loaded system library in the library loop (`pinyin.cpp:955`, `zhuyin.cpp:588`). libpinyin has written the earlier libraries' `.tmp` files and renamed none (`_rename_files` runs after, `pinyin.cpp:1141`); libzhuyin has renamed each earlier library's file as it wrote it (`zhuyin.cpp:609`, `:635`). | the save's baseline hook (`Runtime::save_disk_baseline` → `SaveRemapFault::ChunkHeaderRead` → `SaveBaseline::ChunkHeaderRead`) at `persistence::stage_rest`'s library loop, which returns `PersistenceError::LibraryChunkHeaderRead` there → `UserStoreError::LibraryChunkHeaderRead` → `SaveOutcome::ChunkHeaderRead` | both `context.rs` abort |
@@ -314,7 +314,7 @@ user `.dbin` that is a directory.
 | 85 controls | `mask-out-short-bigram-value-masked-key`, `guess-predicted-unrelated-short-bigram-value`, `guess-unrelated-short-user-gram`, `guess-candidates-short-user-gram-dynamic-adjust-off`, `parse-dynamic-adjust-short-user-gram-*`, `phrase-segment-prefix-unrelated-short-user-gram-*` | MATCH |
 | 96 | Directory-as-chunk size and header-read decisions | Rust unit tests exercise the size gate and failed read on every filesystem |
 | 96 controls | `library-directory-guard-{reserved,unloaded}-{save,mask-out}[-zhuyin]` | MATCH |
-| 91 before 96 | `abort-init-log-header-token-later-directory-*` (`userdir=True`), `abort-mask-out-log-header-token-later-directory-*`, both with `stderr=True`; library 2's chunk is missing too, so a subject that reached library 4 first would write its `mmap %s failed!` line | POLICY-ACCEPTED on ext4; the pin dies in library 1 before examining library 4 on any filesystem. On tmpfs oxpinyin opens library 4 first and can return its unmappable error before replaying library 1. |
+| 91 before 96 | `abort-init-log-header-token-later-directory-*` (`userdir=True`), `abort-mask-out-log-header-token-later-directory-*`, both with `stderr=True`; library 2's chunk is missing too, so a subject that reached library 4 first would write its `mmap %s failed!` line | POLICY-ACCEPTED on every filesystem; the pin dies in library 1 before examining library 4, and so does the subject, which walks the rows in the same order. |
 
 `abort-train-unsorted-set-freq-miss-{pinyin,zhuyin}` keep their
 `policy_record` ([1297-gram-partition-training.md](1297-gram-partition-training.md)):
@@ -329,8 +329,55 @@ A miss that oxpinyin's own search does reach is the abort
 The save cases of both facades hold the user directory at the abort: the
 directory library is `merged.bin`, library 4, after libraries 1 to 3.
 
+## The init library loop (2026-11-06 UTC)
+
+The pin's init handles each default row completely before it looks at the
+next: it judges the row (`pinyin.cpp:388`), maps the chunk (`:254-256`),
+merges the log (`:268-276`) or reads the `USER_FILE` chunk (`:303-318`).
+`zhuyin.cpp:318-334` and `:198-220` do the same. Read at `074a2219`.
+Before this change oxpinyin judged every row first, mapped every library and
+attached the bigram, and replayed the logs afterwards. Where library N's log
+asserts, that differed from the pin as follows. No differential recorded
+these inputs; they follow from the source and are held by the tests below.
+
+| Input | Pin | oxpinyin before |
+|---|---|---|
+| Later library unmappable | SIGABRT, no line | That library's `mmap %s failed!`, NULL and a warning, no abort |
+| Later library with a layout read past its chunk (`LibraryError::Format`) | SIGABRT | NULL and a warning |
+| Later row the pin dies on | SIGABRT at N, no line | Lines for absent libraries up to that row, then its abort, or NULL and a warning for a null system file whose directory does not read as a chunk |
+| Later files sound | Untouched | Mapped, checksummed, read and attached, with no change in answer or stderr |
+
+Without any bad log, an absent library followed by an unmappable one lost the
+absent library's line, because the `Err` dropped the list.
+
+`library_loop::run` is now the one loop. `TableConf::default_row_steps` gives
+each row's step, `SessionSteps` and `MapSteps` run it, and
+`LibraryLoopStop` is the one record of where it stopped. The runtime reports
+the lines of the absent libraries the loop reached, then returns the stop.
+It attaches the bigram after the loop (`pinyin.cpp:394-397`).
+
+The remaining differences on these paths are the existing class (b) answers:
+the pin dies of SIGSEGV on an absent or unmappable library, and oxpinyin goes
+on from an absent one and answers NULL for an unmappable one. An absent
+library's own log is still merged, so its assertion can be reached there,
+where the pin has already died.
+
 ## Tests
 
+- The loop, each under both laws, with real replay and injected map faults
+  (`library_loop.rs`): `a_bad_log_aborts_before_a_later_library_that_cannot_map`,
+  `a_bad_log_aborts_before_a_later_library_with_a_bad_layout`,
+  `a_bad_log_aborts_before_a_later_fatal_row`,
+  `an_absent_library_keeps_its_line_before_a_later_unmappable_one`,
+  `the_loop_touches_nothing_after_the_faulting_log`,
+  `each_library_maps_before_its_log_and_before_the_next`,
+  `a_library_that_cannot_map_never_reads_its_log`,
+  `an_absent_library_keeps_its_line_and_the_fault_of_its_log` and
+  `a_directory_library_stops_the_loop_after_the_earlier_logs`.
+  `init_reports_only_what_the_library_loop_reached` (`library_directory.rs`)
+  holds the lines through the runtime, and
+  `init_aborts_on_a_log_before_an_unmappable_library` is the death test on both
+  adapters.
 - Death tests: `mask_out_aborts_on_a_short_bigram_value` (both adapters),
   `bigram_export_aborts_where_the_walk_loads_a_short_predecessor`, and
   `{init,save,mask_out,reload}_aborts_on_a_directory_library` (both),

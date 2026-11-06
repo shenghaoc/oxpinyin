@@ -30,7 +30,7 @@
 //! buffer (`:228-229`): [`TableConfError::UninitialisedSourceFormat`].
 
 use std::ffi::{CStr, OsStr, OsString};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use oxpinyin_input::config::SystemTableInfoReader;
 
@@ -51,6 +51,24 @@ pub enum FileType {
     Dictionary,
     /// `USER_FILE`: a chunk that lives in the user dir alone.
     UserFile,
+}
+
+/// One default row as the pin's init loop meets it
+/// ([`TableConf::default_row_steps`]).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DefaultRowStep<'a> {
+    /// The loop dies at this row before it maps anything.
+    Stop(TableConfSite),
+    /// A `SYSTEM_FILE` row: map `file`, then merge the row's log. With
+    /// `null_user_file` the mapping happens and the log's read then asserts.
+    System {
+        /// The system chunk's file name.
+        file: &'a FileName,
+        /// The row names no user file, where that is fatal.
+        null_user_file: bool,
+    },
+    /// A `USER_FILE` row: read the library from the user directory.
+    User,
 }
 
 /// `TABLE_PHONETIC_TYPE`: the `source table format:` value.
@@ -555,69 +573,42 @@ impl TableConf {
             .map(|(index, _)| index)
     }
 
-    /// The init loop over the default rows in index order
-    /// (`pinyin.cpp:377-392`, `zhuyin.cpp:318-334`): the first row the pin
-    /// dies on, if any. A `DICTIONARY` row asserts; a library the pin
-    /// would read through a name it does not have asserts inside
-    /// `MemoryChunk`. `user_dir` is the context's user dir, if any (a
-    /// `SYSTEM_FILE` log or a `USER_FILE` chunk is read from it).
+    /// What the init loop does at each default row, in index order
+    /// (`pinyin.cpp:377-392`, `zhuyin.cpp:318-334`); a `NOT_USED` row does
+    /// nothing and is left out. The pin reaches a row only after every row
+    /// before it, so a caller walks these in order and stops at the first
+    /// fault.
     ///
-    /// A row without a user file name makes the pin read the user directory
-    /// itself as a chunk (`g_build_filename` stops at the `NULL`);
-    /// `MemoryChunk::load` asserts on the `read` of a directory only when
-    /// `lseek(SEEK_END)` gave it a size of at least the 8-byte header
-    /// (`memory_chunk.h:424-434`), which depends on the file system and on
-    /// what the directory holds: this asks the file system the same
-    /// question. A row without a system chunk is [`TableConfSite::NullSystemFile`]
-    /// on any file system: the pin dies on that row either way, of the
-    /// assert or of the empty chunk it goes on with (the facade writes the
-    /// pin's `mmap %s failed!` line for the second).
-    ///
-    /// # Errors
-    ///
-    /// The sub-index and [`TableConfSite`] of the first fatal row.
-    pub fn check_default_rows(&self, user_dir: Option<&Path>) -> Result<(), (u8, TableConfSite)> {
-        self.check_default_rows_with(user_dir.is_some_and(directory_reads_as_a_chunk))
-    }
-
-    fn check_default_rows_with(&self, has_user_dir: bool) -> Result<(), (u8, TableConfSite)> {
-        for (index, row) in (0_u8..).zip(&self.default) {
-            let site = match row.file_type {
-                FileType::NotUsed => None,
-                FileType::Dictionary => Some(TableConfSite::DefaultDictionary),
-                FileType::SystemFile if row.system.is_none() => Some(TableConfSite::NullSystemFile),
-                FileType::SystemFile | FileType::UserFile if row.user.is_none() && has_user_dir => {
-                    Some(TableConfSite::NullUserFile)
-                }
-                FileType::SystemFile | FileType::UserFile => None,
-            };
-            if let Some(site) = site {
-                return Err((index, site));
-            }
-        }
-        Ok(())
-    }
-
-    /// The system chunks of the default `SYSTEM_FILE` rows before sub-index
-    /// `stop` (through it when `through`) whose file is absent, in index
-    /// order: the libraries whose `MemoryChunk::mmap` fails, so the pin's
-    /// init loop writes `mmap %s failed!` for each (`pinyin.cpp:253-256`,
-    /// `zhuyin.cpp:197-200`) before it reaches `stop`. The same test as
-    /// [`crate::phrase_libraries::PhraseLibraries::open`]'s unloaded files.
+    /// `user_dir` decides whether a row without a user file is fatal: the
+    /// pin reads the directory itself there (`memory_chunk.h:424-434`), which
+    /// asserts only where the directory reads as a chunk.
     #[must_use]
-    pub fn absent_default_libraries(
-        &self,
-        system_dir: &Path,
-        stop: u8,
-        through: bool,
-    ) -> Vec<PathBuf> {
+    pub fn default_row_steps(&self, user_dir: Option<&Path>) -> Vec<(u8, DefaultRowStep<'_>)> {
+        self.default_row_steps_with(user_dir.is_some_and(directory_reads_as_a_chunk))
+    }
+
+    fn default_row_steps_with(&self, has_user_dir: bool) -> Vec<(u8, DefaultRowStep<'_>)> {
         (0_u8..)
             .zip(&self.default)
-            .take_while(|&(index, _)| index < stop || (through && index == stop))
-            .filter(|(_, row)| row.file_type == FileType::SystemFile)
-            .filter_map(|(_, row)| row.system.as_ref())
-            .map(|file| oxpinyin_input::path::build_path(system_dir, file.as_ref()))
-            .filter(|path| std::fs::metadata(path).is_err())
+            .filter_map(|(index, row)| {
+                let null_user_file = row.user.is_none() && has_user_dir;
+                let step = match row.file_type {
+                    FileType::NotUsed => return None,
+                    FileType::Dictionary => DefaultRowStep::Stop(TableConfSite::DefaultDictionary),
+                    FileType::SystemFile => row.system.as_ref().map_or(
+                        DefaultRowStep::Stop(TableConfSite::NullSystemFile),
+                        |file| DefaultRowStep::System {
+                            file,
+                            null_user_file,
+                        },
+                    ),
+                    FileType::UserFile if null_user_file => {
+                        DefaultRowStep::Stop(TableConfSite::NullUserFile)
+                    }
+                    FileType::UserFile => DefaultRowStep::User,
+                };
+                Some((index, step))
+            })
             .collect()
     }
 
@@ -687,31 +678,47 @@ mod tests {
     fn null_chunk_names_follow_directory_size_decision() {
         let user = parse(&STOCK.replace("gb_char.dbin SYSTEM_FILE", "NULL SYSTEM_FILE")).unwrap();
         use crate::phrase_library::directory_size_reads_as_a_chunk;
+        let null_user_file = |conf: &TableConf, reads: bool| {
+            conf.default_row_steps_with(reads)
+                .into_iter()
+                .any(|(index, step)| {
+                    index == 1 && matches!(step, DefaultRowStep::System { null_user_file, .. } if null_user_file)
+                })
+        };
         for size in [Ok(7), Err(std::io::ErrorKind::Other.into())] {
-            assert_eq!(
-                user.check_default_rows_with(directory_size_reads_as_a_chunk(size)),
-                Ok(())
-            );
+            assert!(!null_user_file(
+                &user,
+                directory_size_reads_as_a_chunk(size)
+            ));
         }
-        assert_eq!(
-            user.check_default_rows_with(directory_size_reads_as_a_chunk(Ok(8))),
-            Err((1, TableConfSite::NullUserFile))
-        );
+        assert!(null_user_file(
+            &user,
+            directory_size_reads_as_a_chunk(Ok(8))
+        ));
         let user_file = parse(&STOCK.replace("user.bin USER_FILE", "NULL USER_FILE")).unwrap();
+        let row_seven = |reads| {
+            user_file
+                .default_row_steps_with(reads)
+                .into_iter()
+                .find_map(|(index, step)| (index == 7).then_some(step))
+        };
         assert_eq!(
-            user_file.check_default_rows_with(directory_size_reads_as_a_chunk(Ok(7))),
-            Ok(())
+            row_seven(directory_size_reads_as_a_chunk(Ok(7))),
+            Some(DefaultRowStep::User)
         );
         assert_eq!(
-            user_file.check_default_rows_with(directory_size_reads_as_a_chunk(Ok(8))),
-            Err((7, TableConfSite::NullUserFile))
+            row_seven(directory_size_reads_as_a_chunk(Ok(8))),
+            Some(DefaultRowStep::Stop(TableConfSite::NullUserFile))
         );
         let system =
             parse(&STOCK.replace("gb_char.bin gb_char.dbin", "NULL gb_char.dbin")).unwrap();
         for reads in [false, true] {
             assert_eq!(
-                system.check_default_rows_with(reads),
-                Err((1, TableConfSite::NullSystemFile))
+                system
+                    .default_row_steps_with(reads)
+                    .first()
+                    .map(|row| row.1),
+                Some(DefaultRowStep::Stop(TableConfSite::NullSystemFile))
             );
         }
     }
