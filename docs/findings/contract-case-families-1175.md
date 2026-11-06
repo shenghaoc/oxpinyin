@@ -8,7 +8,8 @@ remember-tone portions and the three axis-C builders are grouped together.
 The zhuyin allocation-after-fini twin remains in the zhuyin facade twins
 section. The final C-string cases register after the CLI definitions.
 
-The 67 sections account for every registered ID. Counts assign each ID
+The 67 sections account for every ID registered when the inventory was taken; section 68 holds the
+missing-system-DBM cases (#1516), which came later. Counts assign each ID
 to the section defining its case function or generated probe, including
 partials and closures; they are not counts of the `--family` selector. The
 first example ID identifies the section. Builders/helpers lists named
@@ -111,3 +112,4 @@ registrations that pass its per-run state to the modules beside it.
 | 65 | journal replay and removed items (`replay-unigram-add-live-item-pinyin`) | 116 | `_log_record`, `_item_size`, `_system_items`, `_item_with`, `_flip`, `_item_text`, `_observe_system_item`, `system_replay`, `_replay_case`, `_watch`, `unigram_lifecycle`, `unigram_null_user_save`, `_add_fresh`, `_matched_remove`, `_compare_case`, `_touched_order`, `_seed_mixed`, `_touched_sparse_edits`, `_modify_grow`, `_modify_in_place`, `_modify_empty`, `_watch_absent`, `_modify_absent_stale`, `_modify_absent_default`, `_cross_item_pair`, `_cross_item_records`, `_cross_item_records_past_area`, `_observe_replayed_item`, `_observe_cross_item`, `_watch_last`, `touched_many_invalid`, `_short_add`, `_pron_entries`, `_pron_shape`, `pron_lifecycle`, `pron_mixed`, `_removed_extension`, `_removed_candidate`, `_removed_predict_setup`, `_predicted_surface`, `_predicted_sole`, `_predicted_choose`, `_predicted_class_b`, `_predicted_stale_skip` | moved (`contract_journal_replay`); `replay-touched-duplicate-invalid` and `replay-touched-many-invalid` check that oxpinyin reports each invalid slot once, in ascending order: that behaviour moves to a Rust test |
 | 66 | axis C cases (`axis-c-export-user`) | 211 | `axis_c_isolated`, `axis_c_surface`, `axis_c_options`, `axis_c_lookup`, `axis_c_import`, `axis_c_export_user`, `axis_c_encoding`, `axis_c_keyboard`, `axis_c_layout` | moved (`contract_axis_c_cases`); 49 of the 91 option-bit pairs, those where no `option_inputs` text changes under each bit alone, cover mask decoding only, not whether the two bits interact |
 | 67 | separator and before-cursor (`separator/pinyin/0/right/3`) | 156 | `borrowed_text`, `separator_case` | moved (`contract_separator_before_cursor`) |
+| 68 | missing system DBM (`missing-system-dbm/pinyin-pinyin-operations`) | 25 | `exercise`, `missing_case` | moved (`contract_missing_system_dbm`; added after the 67 sections above) |
