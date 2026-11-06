@@ -1,5 +1,4 @@
 //! `tests/include/test_memory_chunk.cpp:5-69` at libpinyin 074a2219.
-use std::path::Path;
 
 use oxpinyin_data::chunk_format::chunk_checksum;
 use oxpinyin_input::tool::memory_chunk as output;
@@ -134,7 +133,8 @@ pub fn main() {
     check(buffer.bytes().get(4..8).is_some());
     output::integers(&[buffer.integer(4)]);
 
-    let path = Path::new("/tmp/test.bin");
+    let path = crate::fixed_tmp::path("test.bin");
+    let path = path.as_path();
     let payload = buffer.bytes();
     let mut framed = Vec::with_capacity(8 + payload.len());
     framed.extend_from_slice(&(payload.len() as u32).to_ne_bytes());

@@ -1,5 +1,5 @@
 //! Source-derived checks of `k_mixture_model_to_interpolation` that CI runs
-//! without the pin; the registered `tool-diff` cases compare the rest with
+//! without the pin; the frozen integration cases compare the rest with
 //! it. Pin citations are in the utility. The ignored `rust_kmm_matches_pin_*` gate
 //! compares the built utility with the pin-built one
 //! (`PINYIN_KMM_TO_INTERP`; `tools/oracle/run-differentials.sh`). Run it
@@ -203,4 +203,276 @@ fn rust_kmm_matches_pin_to_interpolation() {
     assert_eq!(ours.stdout, theirs.stdout);
     assert_eq!(ours.stderr, theirs.stderr);
     eprintln!("live parity: k_mixture_model_to_interpolation matches the pin");
+}
+
+#[cfg(unix)]
+mod common;
+
+#[cfg(unix)]
+mod frozen {
+    mod k_mixture_model_to_interpolation {
+        use crate::common::expected::*;
+        use crate::common::{inventory, mask_glib_prefix, snapshot_inputs};
+        use assert_cmd::cargo::cargo_bin_cmd;
+        use assert_fs::TempDir;
+        use rstest::rstest;
+        use std::time::Duration;
+
+        const INTERPOLATION_HEADER: &[u8] = b"\\data model interpolation\n\\1-gram\n";
+        const INTERPOLATION_ITEM_JIA: &[u8] =
+            "\\data model interpolation\n\\1-gram\n\\item 10 甲 count 1\n".as_bytes();
+        const LINE_WITHOUT_A_TOKEN: &[u8] =
+            b"k_mixture_model_to_interpolation: line without a token: \n";
+
+        #[rstest]
+        // kti-arguments-ignored: utils/training/k_mixture_model_to_interpolation.cpp at
+        // 074a2219: 188-213, 55-186; src/storage/tag_utility.cpp: 118-264.
+        #[case::kti_arguments_ignored(
+            &["--help", "-o", "out.txt", "missing.txt"],
+            crate::MERGED_KMM.as_bytes(),
+            Run {
+                status: Exit(0),
+                stdout: Exact(include_bytes!("fixtures/k_mixture_model_to_interpolation/merged-model.txt")),
+                stderr: b"",
+                files: &[],
+            },
+        )]
+        // kti-bigram-assert: utils/training/k_mixture_model_to_interpolation.cpp at 074a2219:
+        // 188-213, 55-186; src/storage/tag_utility.cpp: 118-264.
+        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; the pin's
+        // own result is in fixtures/contract-policy/eio-tool-check-messages.json.
+        #[case::kti_bigram_assert(
+            &[],
+            b"\\data model \"k mixture model\" count 20 N 2 total_freq 20\n\\2-gram\n\\item 1 a 2 b T 1\n",
+            Run {
+                status: Signal(6),
+                stdout: Exact(b"\\data model interpolation\n\\2-gram\n"),
+                stderr: b"\n** (process:PID): WARNING **: TIME: missed required tags: count.\n\n",
+                files: &[],
+            },
+        )]
+        // kti-blank-line: utils/training/k_mixture_model_to_interpolation.cpp at 074a2219:
+        // 188-213, 55-186; src/storage/tag_utility.cpp: 118-264.
+        // Policy-accepted on every cell:
+        // docs/findings/eio-kmm-to-interpolation-undefined-lines.md; the pin's own result is
+        // in fixtures/contract-policy/eio-kmm-to-interpolation-undefined-lines.json.
+        #[case::kti_blank_line(
+            &[],
+            b"\\data model \"k mixture model\" count 20 N 2 total_freq 20\n\\1-gram\n\\item 10 \xe7\x94\xb2 freq 1\n\n\\end\n",
+            Run {
+                status: Exit(1),
+                stdout: Exact(INTERPOLATION_ITEM_JIA),
+                stderr: LINE_WITHOUT_A_TOKEN,
+                files: &[],
+            },
+        )]
+        // kti-empty-input: utils/training/k_mixture_model_to_interpolation.cpp at 074a2219:
+        // 188-213, 55-186; src/storage/tag_utility.cpp: 118-264.
+        // Platform exception, macos: exit(ENODATA) is 96 on macOS and 61 on Linux.
+        #[case::kti_empty_input(
+            &[],
+            b"",
+            Run {
+                status: if cfg!(target_os = "macos") {
+                    Exit(96)
+                } else {
+                    Exit(61)
+                },
+                stdout: Exact(b""),
+                stderr: EMPTY_FILE_INPUT,
+                files: &[],
+            },
+        )]
+        // kti-end-missing: utils/training/k_mixture_model_to_interpolation.cpp at 074a2219:
+        // 188-213, 55-186; src/storage/tag_utility.cpp: 118-264.
+        // Policy-accepted on every cell:
+        // docs/findings/eio-kmm-to-interpolation-undefined-lines.md; the pin's own result is
+        // in fixtures/contract-policy/eio-kmm-to-interpolation-undefined-lines.json.
+        #[case::kti_end_missing(
+            &[],
+            b"\\data model \"k mixture model\" count 20 N 2 total_freq 20\n\\1-gram\n\\item 10 \xe7\x94\xb2 freq 1\n",
+            Run {
+                status: Exit(1),
+                stdout: Exact(INTERPOLATION_ITEM_JIA),
+                stderr: LINE_WITHOUT_A_TOKEN,
+                files: &[],
+            },
+        )]
+        // kti-foreign-header: utils/training/k_mixture_model_to_interpolation.cpp at 074a2219:
+        // 188-213, 55-186; src/storage/tag_utility.cpp: 118-264.
+        // Platform exception, macos: exit(ENODATA) is 96 on macOS and 61 on Linux.
+        #[case::kti_foreign_header(
+            &[],
+            b"\\data model interpolation\n\\end\n",
+            Run {
+                status: if cfg!(target_os = "macos") {
+                    Exit(96)
+                } else {
+                    Exit(61)
+                },
+                stdout: Exact(b""),
+                stderr: b"error: k mixture model expected.\n",
+                files: &[],
+            },
+        )]
+        // kti-header-line-abort: utils/training/k_mixture_model_to_interpolation.cpp at
+        // 074a2219: 188-213, 55-186; src/storage/tag_utility.cpp: 118-264.
+        #[case::kti_header_line_abort(
+            &[],
+            b"\\data model \"k mixture model\" count 20 N 2 total_freq 20\n\\1-gram\n\\data model x\n",
+            Run {
+                status: Signal(6),
+                stdout: Exact(INTERPOLATION_HEADER),
+                stderr: b"",
+                files: &[],
+            },
+        )]
+        // kti-header-only: utils/training/k_mixture_model_to_interpolation.cpp at 074a2219:
+        // 188-213, 55-186; src/storage/tag_utility.cpp: 118-264.
+        #[case::kti_header_only(
+            &[],
+            b"\\data model \"k mixture model\" count 20 N 2 total_freq 20",
+            Run {
+                status: Exit(0),
+                stdout: Exact(b"\\data model interpolation\n"),
+                stderr: b"",
+                files: &[],
+            },
+        )]
+        // kti-last-line-reread-assert: utils/training/k_mixture_model_to_interpolation.cpp at
+        // 074a2219: 188-213, 55-186; src/storage/tag_utility.cpp: 118-264.
+        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; the pin's
+        // own result is in fixtures/contract-policy/eio-tool-check-messages.json.
+        // Platform exception, macos: abort() flushes stdio on macOS, so buffered stdout
+        // survives; glibc's discards it.
+        #[case::kti_last_line_reread_assert(
+            &[],
+            b"\\data model \"k mixture model\" count 20 N 2 total_freq 20\n\\1-gram\n\\item 10 \xe7\x94\xb2 freq 1",
+            Run {
+                status: Signal(6),
+                stdout: if cfg!(target_os = "macos") {
+                    Exact(INTERPOLATION_ITEM_JIA)
+                } else {
+                    Exact(INTERPOLATION_HEADER)
+                },
+                stderr: b"",
+                files: &[],
+            },
+        )]
+        // kti-merged: utils/training/k_mixture_model_to_interpolation.cpp at 074a2219:
+        // 188-213, 55-186; src/storage/tag_utility.cpp: 118-264.
+        #[case::kti_merged(
+            &[],
+            crate::MERGED_KMM.as_bytes(),
+            Run {
+                status: Exit(0),
+                stdout: Exact(include_bytes!("fixtures/k_mixture_model_to_interpolation/merged-model.txt")),
+                stderr: b"",
+                files: &[],
+            },
+        )]
+        // kti-missing-model: utils/training/k_mixture_model_to_interpolation.cpp at 074a2219:
+        // 188-213, 55-186; src/storage/tag_utility.cpp: 118-264.
+        // Platform exception, macos: exit(ENODATA) is 96 on macOS and 61 on Linux.
+        #[case::kti_missing_model(
+            &[],
+            b"\\data count 1\n\\end\n",
+            Run {
+                status: if cfg!(target_os = "macos") {
+                    Exit(96)
+                } else {
+                    Exit(61)
+                },
+                stdout: Exact(b""),
+                stderr: b"\n** (process:PID): WARNING **: TIME: missed required tags: model.\n\nerror: k mixture model expected.\n",
+                files: &[],
+            },
+        )]
+        // kti-missing-value-assert: utils/training/k_mixture_model_to_interpolation.cpp at
+        // 074a2219: 188-213, 55-186; src/storage/tag_utility.cpp: 118-264.
+        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; the pin's
+        // own result is in fixtures/contract-policy/eio-tool-check-messages.json.
+        #[case::kti_missing_value_assert(
+            &[],
+            b"\\data model \"k mixture model\" count 20 N 2 total_freq 20\n\\1-gram\n\\item 10\n",
+            Run {
+                status: Signal(6),
+                stdout: Exact(INTERPOLATION_HEADER),
+                stderr: b"",
+                files: &[],
+            },
+        )]
+        // kti-numeric-fields: utils/training/k_mixture_model_to_interpolation.cpp at 074a2219:
+        // 188-213, 55-186; src/storage/tag_utility.cpp: 118-264.
+        #[case::kti_numeric_fields(
+            &[],
+            b"\\data model \"k mixture model\" count 20 N 2 total_freq 20\n\\1-gram\n\\item 16817937 \xe4\xb8\xad\xe5\x9b\xbd count 1 freq +5\n\\item 16802309 \xe4\xbd\xa0\xe5\xa5\xbd count 1 freq 4294967301\n\\item 16808451 \xe4\xb8\x96\xe7\x95\x8c count 1 freq -7\n\\item 16782711 \xe4\xba\xba count 1 freq abc\n\\item 2147483649 \xe7\x94\xb2 count 1 freq 00012x\n\\item 1 <start> count 1 freq 9\n\\2-gram\n\\item +16817937 \xe4\xb8\xad\xe5\x9b\xbd -4278149359 \xe4\xb8\xad\xe5\x9b\xbd count +3 T 3 N_n_0 1 n_1 1 Mr 3\n\\item 4311785233 \xe4\xb8\xad\xe5\x9b\xbd 16802309 \xe4\xbd\xa0\xe5\xa5\xbd count 4294967299 T 3 N_n_0 1 n_1 1 Mr 3\n\\item 16802309 \xe4\xbd\xa0\xe5\xa5\xbd 16808451 \xe4\xb8\x96\xe7\x95\x8c count 99999999999999999999 T 3 N_n_0 1 n_1 1 Mr 3\n\\item 16808451 \xe4\xb8\x96\xe7\x95\x8c 16817937 \xe4\xb8\xad\xe5\x9b\xbd count - T 3 N_n_0 1 n_1 1 Mr 3\n\\end\n",
+            Run {
+                status: Exit(0),
+                stdout: Exact(include_bytes!("fixtures/k_mixture_model_to_interpolation/numeric-fields-model.txt")),
+                stderr: b"",
+                files: &[],
+            },
+        )]
+        // kti-tag-pairs: utils/training/k_mixture_model_to_interpolation.cpp at 074a2219:
+        // 188-213, 55-186; src/storage/tag_utility.cpp: 118-264.
+        #[case::kti_tag_pairs(
+            &[],
+            b"\\data model \"k mixture model\" count 20 N 2 total_freq 20\n\\1-gram\n\\item 10 \xe7\x94\xb2 freq 2 junk 9 freq 3 count 1\n\\item 20 \"\xe4\xb9\x99 \xe4\xb8\x99\" freq 4\n\\2-gram\n\\item 10 \xe7\x94\xb2 20 \xe4\xb9\x99 count 1 extra\n\\1-gram\n\\item 30 \xe4\xb8\x81 freq 5\n\\end trailing\nnot read\n",
+            Run {
+                status: Exit(0),
+                stdout: Exact("\\data model interpolation\n\\1-gram\n\\item 10 甲 count 3\n\\item 20 乙 丙 count 4\n\\2-gram\n\\item 10 甲 20 乙 count 1\n\\1-gram\n\\item 30 丁 count 5\n\\end\n".as_bytes()),
+                stderr: include_bytes!("fixtures/k_mixture_model_to_interpolation/unexpected-tag-warnings.txt"),
+                files: &[],
+            },
+        )]
+        // kti-trailing-escape: utils/training/k_mixture_model_to_interpolation.cpp at
+        // 074a2219: 188-213, 55-186; src/storage/tag_utility.cpp: 118-264.
+        // Policy-accepted on every cell:
+        // docs/findings/eio-kmm-to-interpolation-undefined-lines.md; the pin's own result is
+        // in fixtures/contract-policy/eio-kmm-to-interpolation-undefined-lines.json.
+        #[case::kti_trailing_escape(
+            &[],
+            b"\\data model \"k mixture model\" count 20 N 2 total_freq 20\n\\1-gram\n\\item 10 \"\xe7\x94\xb2\\",
+            Run {
+                status: Exit(1),
+                stdout: Exact(INTERPOLATION_HEADER),
+                stderr: "\n(process:PID): GLib-CRITICAL **: TIME: g_strv_length: assertion 'str_array != NULL' failed\nk_mixture_model_to_interpolation: escape at the end of the line: \\item 10 \"甲\\\n".as_bytes(),
+                files: &[],
+            },
+        )]
+        // kti-unknown-line-assert: utils/training/k_mixture_model_to_interpolation.cpp at
+        // 074a2219: 188-213, 55-186; src/storage/tag_utility.cpp: 118-264.
+        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; the pin's
+        // own result is in fixtures/contract-policy/eio-tool-check-messages.json.
+        #[case::kti_unknown_line_assert(
+            &[],
+            b"\\data model \"k mixture model\" count 20 N 2 total_freq 20\n\\1-gram\n\\item 10 \xe7\x94\xb2 freq 1\nitem 20 \xe4\xb9\x99 freq 1\n",
+            Run {
+                status: Signal(6),
+                stdout: Exact(INTERPOLATION_ITEM_JIA),
+                stderr: b"",
+                files: &[],
+            },
+        )]
+        fn captured_cases(#[case] args: &[&str], #[case] stdin: &[u8], #[case] expected: Run) {
+            let directory = TempDir::new().expect("scratch directory");
+            let inputs = snapshot_inputs(directory.path());
+            let mut output = cargo_bin_cmd!("k_mixture_model_to_interpolation")
+                .current_dir(directory.path())
+                .env("LC_ALL", "C")
+                .args(args)
+                .write_stdin(stdin)
+                .timeout(Duration::from_secs(300))
+                .output()
+                .expect("run k_mixture_model_to_interpolation");
+            output.stderr = mask_glib_prefix(&output.stderr);
+            check(
+                output,
+                &inventory(directory.path(), &inputs, &[], &[], &[], &[]),
+                &inputs,
+                &expected,
+            );
+        }
+    }
 }

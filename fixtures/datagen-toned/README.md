@@ -19,6 +19,6 @@ It was the input of `just compat drop-in` (removed 2026-11-06 UTC with the compa
 one side, `oxpinyin-utils`' ports under the same names on the other, and
 the recipe compares every chunk file byte for byte (tone bits included).
 Neither side reads the other's output. The `gbf-toned-model` case in
-`tools/bisection/tool-cases/gen_binary_files.json` runs `gen_binary_files`
-over the same tables on both sides and compares the complete output
-inventory, the toned pinyin-index rows included.
+the `frozen::gen_binary_files` module of `crates/oxpinyin-utils/tests/storage_tools.rs` runs `gen_binary_files`
+over the same tables and compares the complete output inventory with the
+frozen pin capture, the toned pinyin-index rows included.

@@ -2,7 +2,6 @@
 use super::*;
 use oxpinyin_core::single_gram as gram;
 use oxpinyin_store::{DefaultUserBigramDb, UserBigramDb, WriteStore};
-use std::path::Path;
 
 fn print_gram(bytes: &[u8]) {
     let total = present(gram::get_total_freq(bytes));
@@ -17,7 +16,7 @@ fn store_gram(bigram: &DefaultStore, token: u32, single: &[u8]) {
     let _ = bigram.tool_set(&token.to_ne_bytes(), single);
 }
 
-/// Execute the program under its fixed /tmp names.
+/// Execute the program under its fixed names ([`crate::fixed_tmp`]).
 pub fn main() {
     let mut single = gram::new_gram();
     gram::set_total_freq(&mut single, 16);
@@ -33,7 +32,9 @@ pub fn main() {
     print_gram(&single);
     check(gram::get_total_freq(&single) == Some(16));
 
-    let bigram = required(DefaultStore::create_hash(Path::new("/tmp/test.db")));
+    let bigram = required(DefaultStore::create_hash(
+        crate::fixed_tmp::path("test.db").as_path(),
+    ));
     store_gram(&bigram, 1, &single);
     check(gram::insert_freq(&mut single, 5, 8));
     check(gram::remove_freq(&mut single, 1).is_some());
@@ -54,10 +55,12 @@ pub fn main() {
     for item in items {
         output::token(item);
     }
-    required(bigram.save_bigram_db(Path::new("/tmp/snapshot.db")));
+    required(bigram.save_bigram_db(crate::fixed_tmp::path("snapshot.db").as_path()));
     // load_db resets/closes the attached handle before loading the snapshot.
     drop(bigram);
-    let bigram = required(DefaultUserBigramDb::load_db(Path::new("/tmp/snapshot.db")));
+    let bigram = required(DefaultUserBigramDb::load_db(
+        crate::fixed_tmp::path("snapshot.db").as_path(),
+    ));
     // mask_out(0,0) removes every predecessor, never reaches a gram's mask_out.
     for key in required(bigram.keys()) {
         required(bigram.remove(&present(key)));

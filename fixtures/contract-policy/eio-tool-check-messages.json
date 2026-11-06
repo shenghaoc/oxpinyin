@@ -4,8 +4,8 @@
       "cells": {
         "bdb": {
           "divergence": [
-            "stderr: pin \"test_chewing_table: pinyin_phrase3.h:152: \" \u2026 (length 159); subject \"\"",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "stderr: pin \"test_chewing_table: pinyin_phrase3.h:152: \" … (length 159); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -28,8 +28,8 @@
         },
         "kc": {
           "divergence": [
-            "stderr: pin \"test_chewing_table: pinyin_phrase3.h:152: \" \u2026 (length 159); subject \"\"",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "stderr: pin \"test_chewing_table: pinyin_phrase3.h:152: \" … (length 159); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -52,8 +52,8 @@
         },
         "tkrzw": {
           "divergence": [
-            "stderr: pin \"test_chewing_table: pinyin_phrase3.h:152: \" \u2026 (length 159); subject \"\"",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "stderr: pin \"test_chewing_table: pinyin_phrase3.h:152: \" … (length 159); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -80,8 +80,8 @@
       "cells": {
         "bdb": {
           "divergence": [
-            "stderr: pin \"test_chewing_table: pinyin_phrase3.h:152: \" \u2026 (length 159); subject \"\"",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "stderr: pin \"test_chewing_table: pinyin_phrase3.h:152: \" … (length 159); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -104,8 +104,8 @@
         },
         "kc": {
           "divergence": [
-            "stderr: pin \"test_chewing_table: pinyin_phrase3.h:152: \" \u2026 (length 159); subject \"\"",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "stderr: pin \"test_chewing_table: pinyin_phrase3.h:152: \" … (length 159); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -128,8 +128,8 @@
         },
         "tkrzw": {
           "divergence": [
-            "stderr: pin \"test_chewing_table: pinyin_phrase3.h:152: \" \u2026 (length 159); subject \"\"",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "stderr: pin \"test_chewing_table: pinyin_phrase3.h:152: \" … (length 159); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -156,8 +156,8 @@
       "cells": {
         "bdb": {
           "divergence": [
-            "stderr: pin \"test_flexible_ngram: test_flexible_ngram.c\" \u2026 (length 158); subject \"\"",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "stderr: pin \"test_flexible_ngram: test_flexible_ngram.c\" … (length 158); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -180,8 +180,8 @@
         },
         "kc": {
           "divergence": [
-            "stderr: pin \"test_flexible_ngram: test_flexible_ngram.c\" \u2026 (length 158); subject \"\"",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "stderr: pin \"test_flexible_ngram: test_flexible_ngram.c\" … (length 158); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -204,8 +204,8 @@
         },
         "tkrzw": {
           "divergence": [
-            "stderr: pin \"test_flexible_ngram: test_flexible_ngram.c\" \u2026 (length 158); subject \"\"",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "stderr: pin \"test_flexible_ngram: test_flexible_ngram.c\" … (length 158); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -232,8 +232,8 @@
       "cells": {
         "kc": {
           "divergence": [
-            "stderr: pin \"test_flexible_ngram: test_flexible_ngram.c\" \u2026 (length 158); subject \"\"",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "stderr: pin \"test_flexible_ngram: test_flexible_ngram.c\" … (length 158); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -256,8 +256,8 @@
         },
         "tkrzw": {
           "divergence": [
-            "stderr: pin \"test_flexible_ngram: test_flexible_ngram.c\" \u2026 (length 158); subject \"\"",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "stderr: pin \"test_flexible_ngram: test_flexible_ngram.c\" … (length 158); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -284,8 +284,8 @@
       "cells": {
         "kc": {
           "divergence": [
-            "stderr: pin \"gen_k_mixture_model: ../../src/storage/fle\" \u2026 (length 367); subject \"\"",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "stderr: pin \"gen_k_mixture_model: ../../src/storage/fle\" … (length 367); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -312,8 +312,8 @@
       "cells": {
         "bdb": {
           "divergence": [
-            "stderr: pin \"BDB0004 fop_read_meta: empty.db: unexpecte\" \u2026 (length 232); subject \"BDB0004 fop_read_meta: empty.db: unexpecte\" \u2026 (length 100)",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "stderr: pin \"BDB0004 fop_read_meta: empty.db: unexpecte\" … (length 232); subject \"BDB0004 fop_read_meta: empty.db: unexpecte\" … (length 100)",
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -336,8 +336,8 @@
         },
         "kc": {
           "divergence": [
-            "stderr: pin \"prune_k_mixture_model: ../../src/storage/f\" \u2026 (length 369); subject \"\"",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "stderr: pin \"prune_k_mixture_model: ../../src/storage/f\" … (length 369); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -363,8 +363,8 @@
     "kti-bigram-assert": {
       "database_free": {
         "divergence": [
-          "stderr: pin \"\\n** (process:PID): WARNING **: TIME: misse\" \u2026 (length 254); subject \"\\n** (process:PID): WARNING **: TIME: misse\" \u2026 (length 67)",
-          "\u2026 further divergence omitted (4096-byte budget)"
+          "stderr: pin \"\\n** (process:PID): WARNING **: TIME: misse\" … (length 254); subject \"\\n** (process:PID): WARNING **: TIME: misse\" … (length 67)",
+          "… further divergence omitted (4096-byte budget)"
         ],
         "pin": {
           "fields": {
@@ -389,8 +389,8 @@
     "kti-last-line-reread-assert": {
       "database_free": {
         "divergence": [
-          "stderr: pin \"k_mixture_model_to_interpolation: k_mixtur\" \u2026 (length 184); subject \"\"",
-          "\u2026 further divergence omitted (4096-byte budget)"
+          "stderr: pin \"k_mixture_model_to_interpolation: k_mixtur\" … (length 184); subject \"\"",
+          "… further divergence omitted (4096-byte budget)"
         ],
         "pin": {
           "fields": {
@@ -415,8 +415,8 @@
     "kti-missing-value-assert": {
       "database_free": {
         "divergence": [
-          "stderr: pin \"\\n** (process:PID): CRITICAL **: TIME: bool\" \u2026 (length 333); subject \"\"",
-          "\u2026 further divergence omitted (4096-byte budget)"
+          "stderr: pin \"\\n** (process:PID): CRITICAL **: TIME: bool\" … (length 333); subject \"\"",
+          "… further divergence omitted (4096-byte budget)"
         ],
         "pin": {
           "fields": {
@@ -441,8 +441,8 @@
     "kti-unknown-line-assert": {
       "database_free": {
         "divergence": [
-          "stderr: pin \"k_mixture_model_to_interpolation: k_mixtur\" \u2026 (length 188); subject \"\"",
-          "\u2026 further divergence omitted (4096-byte budget)"
+          "stderr: pin \"k_mixture_model_to_interpolation: k_mixtur\" … (length 188); subject \"\"",
+          "… further divergence omitted (4096-byte budget)"
         ],
         "pin": {
           "fields": {
@@ -468,8 +468,8 @@
       "cells": {
         "bdb": {
           "divergence": [
-            "stderr: pin \"test_matrix: ../../src/include/memory_chun\" \u2026 (length 142); subject \"\"",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "stderr: pin \"test_matrix: ../../src/include/memory_chun\" … (length 142); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -492,8 +492,8 @@
         },
         "kc": {
           "divergence": [
-            "stderr: pin \"test_matrix: ../../src/include/memory_chun\" \u2026 (length 142); subject \"\"",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "stderr: pin \"test_matrix: ../../src/include/memory_chun\" … (length 142); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -516,8 +516,8 @@
         },
         "tkrzw": {
           "divergence": [
-            "stderr: pin \"test_matrix: ../../src/include/memory_chun\" \u2026 (length 142); subject \"\"",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "stderr: pin \"test_matrix: ../../src/include/memory_chun\" … (length 142); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -542,10 +542,58 @@
     },
     "memory-chunk-save-directory": {
       "cells": {
+        "bdb": {
+          "divergence": [
+            "stderr: pin \"test_memory_chunk: test_memory_chunk.cpp:6\" … (length 117); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
+          ],
+          "pin": {
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "fd78820024278f7d",
+              "stderr": "72baaa962c0645db",
+              "stdout": "12ae32cb1ec02d01"
+            },
+            "sha256": "6a968f8385c7dde3aaa99be38a6697135259ae2f4543aff65549d078cfa00a3b"
+          },
+          "subject": {
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "fd78820024278f7d",
+              "stderr": "12ae32cb1ec02d01",
+              "stdout": "12ae32cb1ec02d01"
+            },
+            "sha256": "4762e9f653df46d1e48b75fb8a6cc08c71d022e5dafe50eddd19722e2cf1d815"
+          }
+        },
+        "kc": {
+          "divergence": [
+            "stderr: pin \"test_memory_chunk: test_memory_chunk.cpp:6\" … (length 117); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
+          ],
+          "pin": {
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "fd78820024278f7d",
+              "stderr": "72baaa962c0645db",
+              "stdout": "12ae32cb1ec02d01"
+            },
+            "sha256": "6a968f8385c7dde3aaa99be38a6697135259ae2f4543aff65549d078cfa00a3b"
+          },
+          "subject": {
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "fd78820024278f7d",
+              "stderr": "12ae32cb1ec02d01",
+              "stdout": "12ae32cb1ec02d01"
+            },
+            "sha256": "4762e9f653df46d1e48b75fb8a6cc08c71d022e5dafe50eddd19722e2cf1d815"
+          }
+        },
         "tkrzw": {
           "divergence": [
-            "stderr: pin \"test_memory_chunk: test_memory_chunk.cpp:6\" \u2026 (length 117); subject \"\"",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "stderr: pin \"test_memory_chunk: test_memory_chunk.cpp:6\" … (length 117); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -572,8 +620,8 @@
       "cells": {
         "bdb": {
           "divergence": [
-            "stderr: pin \"test_ngram: test_ngram.cpp:40: int main(in\" \u2026 (length 136); subject \"\"",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "stderr: pin \"test_ngram: test_ngram.cpp:40: int main(in\" … (length 136); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -596,8 +644,8 @@
         },
         "kc": {
           "divergence": [
-            "stderr: pin \"test_ngram: test_ngram.cpp:40: int main(in\" \u2026 (length 136); subject \"\"",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "stderr: pin \"test_ngram: test_ngram.cpp:40: int main(in\" … (length 136); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -620,8 +668,8 @@
         },
         "tkrzw": {
           "divergence": [
-            "stderr: pin \"test_ngram: test_ngram.cpp:40: int main(in\" \u2026 (length 136); subject \"\"",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "stderr: pin \"test_ngram: test_ngram.cpp:40: int main(in\" … (length 136); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -648,8 +696,8 @@
       "cells": {
         "bdb": {
           "divergence": [
-            "stderr: pin \"test_ngram: test_ngram.cpp:78: int main(in\" \u2026 (length 109); subject \"\"",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "stderr: pin \"test_ngram: test_ngram.cpp:78: int main(in\" … (length 109); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -672,8 +720,8 @@
         },
         "kc": {
           "divergence": [
-            "stderr: pin \"test_ngram: test_ngram.cpp:78: int main(in\" \u2026 (length 109); subject \"\"",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "stderr: pin \"test_ngram: test_ngram.cpp:78: int main(in\" … (length 109); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -696,8 +744,8 @@
         },
         "tkrzw": {
           "divergence": [
-            "stderr: pin \"test_ngram: test_ngram.cpp:78: int main(in\" \u2026 (length 109); subject \"\"",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "stderr: pin \"test_ngram: test_ngram.cpp:78: int main(in\" … (length 109); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -722,10 +770,58 @@
     },
     "phrase-index-logger-refused-layout": {
       "cells": {
+        "bdb": {
+          "divergence": [
+            "stderr: pin \"\\n** (process:PID): CRITICAL **: TIME: bool\" … (length 546); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
+          ],
+          "pin": {
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "files": "781c7817252ebbe2",
+              "stderr": "7e7d37f83866a912",
+              "stdout": "6fbbc3bfabedc351"
+            },
+            "sha256": "5eca72baccff282f190a2d665a1769dc67ddc210b655babd7bbb72f8a4eaf23e"
+          },
+          "subject": {
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "files": "781c7817252ebbe2",
+              "stderr": "12ae32cb1ec02d01",
+              "stdout": "6fbbc3bfabedc351"
+            },
+            "sha256": "4253120477fd392bdb6ecca2a45ff9be2f0c6e37e698c78a02d6eeaf4d696947"
+          }
+        },
+        "kc": {
+          "divergence": [
+            "stderr: pin \"\\n** (process:PID): CRITICAL **: TIME: bool\" … (length 546); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
+          ],
+          "pin": {
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "files": "781c7817252ebbe2",
+              "stderr": "7e7d37f83866a912",
+              "stdout": "6fbbc3bfabedc351"
+            },
+            "sha256": "5eca72baccff282f190a2d665a1769dc67ddc210b655babd7bbb72f8a4eaf23e"
+          },
+          "subject": {
+            "fields": {
+              "exit": "5feceb66ffc86f38",
+              "files": "781c7817252ebbe2",
+              "stderr": "12ae32cb1ec02d01",
+              "stdout": "6fbbc3bfabedc351"
+            },
+            "sha256": "4253120477fd392bdb6ecca2a45ff9be2f0c6e37e698c78a02d6eeaf4d696947"
+          }
+        },
         "tkrzw": {
           "divergence": [
-            "stderr: pin \"\\n** (process:PID): CRITICAL **: TIME: bool\" \u2026 (length 546); subject \"\"",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "stderr: pin \"\\n** (process:PID): CRITICAL **: TIME: bool\" … (length 546); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -750,10 +846,58 @@
     },
     "phrase-index-wrong-long-length": {
       "cells": {
+        "bdb": {
+          "divergence": [
+            "stderr: pin \"FacadePhraseIndex::load_text:yi1'yi1'yi1'y\" … (length 220); subject \"FacadePhraseIndex::load_text:yi1'yi1'yi1'y\" … (length 99)",
+            "… further divergence omitted (4096-byte budget)"
+          ],
+          "pin": {
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "c0c1c3bb999b449a",
+              "stderr": "045de632bd357968",
+              "stdout": "12ae32cb1ec02d01"
+            },
+            "sha256": "e2b483e6df12ed1df5b9c7c47d4ef83d83be1f7878590328c95bf5cea08ae627"
+          },
+          "subject": {
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "c0c1c3bb999b449a",
+              "stderr": "6df573a4135e5947",
+              "stdout": "12ae32cb1ec02d01"
+            },
+            "sha256": "0ef832ee4b5d39a21703de24d264bb9a492bc674de0e48ad346fc60525b70e59"
+          }
+        },
+        "kc": {
+          "divergence": [
+            "stderr: pin \"FacadePhraseIndex::load_text:yi1'yi1'yi1'y\" … (length 220); subject \"FacadePhraseIndex::load_text:yi1'yi1'yi1'y\" … (length 99)",
+            "… further divergence omitted (4096-byte budget)"
+          ],
+          "pin": {
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "c0c1c3bb999b449a",
+              "stderr": "045de632bd357968",
+              "stdout": "12ae32cb1ec02d01"
+            },
+            "sha256": "e2b483e6df12ed1df5b9c7c47d4ef83d83be1f7878590328c95bf5cea08ae627"
+          },
+          "subject": {
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "c0c1c3bb999b449a",
+              "stderr": "6df573a4135e5947",
+              "stdout": "12ae32cb1ec02d01"
+            },
+            "sha256": "0ef832ee4b5d39a21703de24d264bb9a492bc674de0e48ad346fc60525b70e59"
+          }
+        },
         "tkrzw": {
           "divergence": [
-            "stderr: pin \"FacadePhraseIndex::load_text:yi1'yi1'yi1'y\" \u2026 (length 220); subject \"FacadePhraseIndex::load_text:yi1'yi1'yi1'y\" \u2026 (length 99)",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "stderr: pin \"FacadePhraseIndex::load_text:yi1'yi1'yi1'y\" … (length 220); subject \"FacadePhraseIndex::load_text:yi1'yi1'yi1'y\" … (length 99)",
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -780,8 +924,8 @@
       "cells": {
         "bdb": {
           "divergence": [
-            "stderr: pin \"test_phrase_lookup: ../../src/include/memo\" \u2026 (length 149); subject \"\"",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "stderr: pin \"test_phrase_lookup: ../../src/include/memo\" … (length 149); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -804,8 +948,8 @@
         },
         "kc": {
           "divergence": [
-            "stderr: pin \"test_phrase_lookup: ../../src/include/memo\" \u2026 (length 149); subject \"\"",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "stderr: pin \"test_phrase_lookup: ../../src/include/memo\" … (length 149); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -828,8 +972,8 @@
         },
         "tkrzw": {
           "divergence": [
-            "stderr: pin \"test_phrase_lookup: ../../src/include/memo\" \u2026 (length 149); subject \"\"",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "stderr: pin \"test_phrase_lookup: ../../src/include/memo\" … (length 149); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -856,8 +1000,8 @@
       "cells": {
         "bdb": {
           "divergence": [
-            "stderr: pin \"test_pinyin_lookup: ../../src/include/memo\" \u2026 (length 149); subject \"\"",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "stderr: pin \"test_pinyin_lookup: ../../src/include/memo\" … (length 149); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -880,8 +1024,8 @@
         },
         "kc": {
           "divergence": [
-            "stderr: pin \"test_pinyin_lookup: ../../src/include/memo\" \u2026 (length 149); subject \"\"",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "stderr: pin \"test_pinyin_lookup: ../../src/include/memo\" … (length 149); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -904,8 +1048,8 @@
         },
         "tkrzw": {
           "divergence": [
-            "stderr: pin \"test_pinyin_lookup: ../../src/include/memo\" \u2026 (length 149); subject \"\"",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "stderr: pin \"test_pinyin_lookup: ../../src/include/memo\" … (length 149); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -932,8 +1076,8 @@
       "cells": {
         "bdb": {
           "divergence": [
-            "stderr: pin \"test_punct_table: test_punct_table.cpp:49:\" \u2026 (length 149); subject \"\"",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "stderr: pin \"test_punct_table: test_punct_table.cpp:49:\" … (length 149); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -956,8 +1100,8 @@
         },
         "kc": {
           "divergence": [
-            "stderr: pin \"test_punct_table: test_punct_table.cpp:49:\" \u2026 (length 149); subject \"\"",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "stderr: pin \"test_punct_table: test_punct_table.cpp:49:\" … (length 149); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -980,8 +1124,8 @@
         },
         "tkrzw": {
           "divergence": [
-            "stderr: pin \"test_punct_table: test_punct_table.cpp:49:\" \u2026 (length 149); subject \"\"",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "stderr: pin \"test_punct_table: test_punct_table.cpp:49:\" … (length 149); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -1008,8 +1152,8 @@
       "cells": {
         "bdb": {
           "divergence": [
-            "stderr: pin \"test_punct_table: test_punct_table.cpp:63:\" \u2026 (length 120); subject \"\"",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "stderr: pin \"test_punct_table: test_punct_table.cpp:63:\" … (length 120); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -1032,8 +1176,8 @@
         },
         "kc": {
           "divergence": [
-            "stderr: pin \"test_punct_table: test_punct_table.cpp:63:\" \u2026 (length 120); subject \"\"",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "stderr: pin \"test_punct_table: test_punct_table.cpp:63:\" … (length 120); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -1056,8 +1200,8 @@
         },
         "tkrzw": {
           "divergence": [
-            "stderr: pin \"test_punct_table: test_punct_table.cpp:63:\" \u2026 (length 120); subject \"\"",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "stderr: pin \"test_punct_table: test_punct_table.cpp:63:\" … (length 120); subject \"\"",
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {
@@ -1082,10 +1226,58 @@
     },
     "table-info-save-fails": {
       "cells": {
+        "bdb": {
+          "divergence": [
+            "stderr: pin \"write /tmp/user.conf failed.\\ntest_table_in\" … (length 152); subject \"write /tmp/user.conf failed.\\n\"",
+            "… further divergence omitted (4096-byte budget)"
+          ],
+          "pin": {
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "ab786b23734061c6",
+              "stderr": "1b9fe7bdd5e9d0e0",
+              "stdout": "12ae32cb1ec02d01"
+            },
+            "sha256": "2c2ecb2976b1308e06fd0777bb35303cec7670deba1803e08acb31c4a95ba16e"
+          },
+          "subject": {
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "ab786b23734061c6",
+              "stderr": "f15cf91b4786a459",
+              "stdout": "12ae32cb1ec02d01"
+            },
+            "sha256": "c9729ee057b8b0d87a667031d8deec93c11c7abc45d920cf52f551cfa0b6425f"
+          }
+        },
+        "kc": {
+          "divergence": [
+            "stderr: pin \"write /tmp/user.conf failed.\\ntest_table_in\" … (length 152); subject \"write /tmp/user.conf failed.\\n\"",
+            "… further divergence omitted (4096-byte budget)"
+          ],
+          "pin": {
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "ab786b23734061c6",
+              "stderr": "1b9fe7bdd5e9d0e0",
+              "stdout": "12ae32cb1ec02d01"
+            },
+            "sha256": "2c2ecb2976b1308e06fd0777bb35303cec7670deba1803e08acb31c4a95ba16e"
+          },
+          "subject": {
+            "fields": {
+              "exit": "03b26944890929ff",
+              "files": "ab786b23734061c6",
+              "stderr": "f15cf91b4786a459",
+              "stdout": "12ae32cb1ec02d01"
+            },
+            "sha256": "c9729ee057b8b0d87a667031d8deec93c11c7abc45d920cf52f551cfa0b6425f"
+          }
+        },
         "tkrzw": {
           "divergence": [
-            "stderr: pin \"write /tmp/user.conf failed.\\ntest_table_in\" \u2026 (length 152); subject \"write /tmp/user.conf failed.\\n\"",
-            "\u2026 further divergence omitted (4096-byte budget)"
+            "stderr: pin \"write /tmp/user.conf failed.\\ntest_table_in\" … (length 152); subject \"write /tmp/user.conf failed.\\n\"",
+            "… further divergence omitted (4096-byte budget)"
           ],
           "pin": {
             "fields": {

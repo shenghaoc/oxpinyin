@@ -1,0 +1,10 @@
+Usage:
+  prune_k_mixture_model [OPTION?] - prune k mixture model
+
+Help Options:
+  -h, --help       Show help options
+
+Application Options:
+  -k, --pruneK     k parameter
+  --CDF            CDF parameter
+

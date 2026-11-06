@@ -62,12 +62,11 @@ class IdentityCheckTests(unittest.TestCase):
             self.check()
 
     def test_needed_artifacts_follow_the_declarations(self):
-        env = dict(OXPINYIN_CAPI_SO='/t/libpinyin_capi.so', OXPINYIN_ZHUYIN_SO='/t/libzhuyin_capi.so',
-                   OXPINYIN_GEN_PINYIN_TABLE='/t/gen_pinyin_table')
-        rows = [dict(name='tool-diff', artifacts=['pinyin-capi', 'gen-pinyin-table'], command=['{capi}']),
+        env = dict(OXPINYIN_CAPI_SO='/t/libpinyin_capi.so', OXPINYIN_ZHUYIN_SO='/t/libzhuyin_capi.so')
+        rows = [dict(name='contract-diff', artifacts=['pinyin-capi'], command=['{capi}']),
                 dict(name='pc-version', artifacts=[], command=['{capi}', '{zhuyin}'])]
         self.assertEqual(run_all['needed_artifacts'](rows, env),
-                         {'pinyin-capi': '/t/libpinyin_capi.so', 'gen-pinyin-table': '/t/gen_pinyin_table'})
+                         {'pinyin-capi': '/t/libpinyin_capi.so'})
         self.assertEqual(run_all['needed_artifacts']([dict(name='pc-version', artifacts=[])], env), {})
 
     def test_identity_of_reads_the_record_or_none(self):

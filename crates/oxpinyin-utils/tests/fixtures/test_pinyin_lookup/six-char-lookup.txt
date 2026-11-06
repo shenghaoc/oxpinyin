@@ -1,0 +1,14 @@
+Column:0:
+ChewingKey:ni
+ChewingKeyRest:0	6
+Column:6:
+ChewingKey:
+ChewingKeyRest:6	7
+Spent <TIME> us for 100 operations, <TIME> us/op, <TIME> times/s.
+
+pos:0,token:16781861	
+你
+pos:0,token:16781858	
+尼
+pos:0,token:16781884	
+泥

@@ -167,3 +167,189 @@ fn an_unconvertible_phrase_is_refused_at_the_pins_row_after_the_output_opens() {
         );
     }
 }
+
+#[cfg(unix)]
+mod common;
+
+#[cfg(unix)]
+mod frozen {
+    mod gen_pinyin_table {
+        use crate::common::expected::*;
+        use crate::common::{inventory, mask_glib_prefix, snapshot_inputs};
+        use assert_cmd::cargo::cargo_bin_cmd;
+        use assert_fs::{TempDir, prelude::*};
+        use rstest::rstest;
+        use std::time::Duration;
+
+        const PINYIN_NI_TEMP_OUT_FILES: &[(&str, File)] = &[(
+            "temp.out",
+            Sha256(
+                "a9ab04a2f3ae0c6587e1204e575782b7bd8d3ed5e01bd9471b2f7421fa9187c5",
+                11,
+            ),
+        )];
+
+        #[rstest]
+        // pinyin-bad-option: utils/storage/gen_pinyin_table.cpp at 074a2219: 97-322.
+        #[case::pinyin_bad_option(
+            &["--bogus"],
+            b"",
+            &[],
+            Run {
+                status: Exit(22),
+                stdout: Exact(UNKNOWN_OPTION_BOGUS),
+                stderr: b"",
+                files: &[],
+            },
+        )]
+        // pinyin-empty-phrase: utils/storage/gen_pinyin_table.cpp at 074a2219: 97-322.
+        #[case::pinyin_empty_phrase(
+            &["in.txt"],
+            b"",
+            &[("in.txt", b"\0 - 1\n\xe4\xbd\xa0 ni 5\n".as_slice())],
+            Run {
+                status: Exit(0),
+                stdout: Exact(NNODES_2),
+                stderr: b"\n(gen_pinyin_table:PID): GLib-CRITICAL **: TIME: g_array_append_vals: assertion 'array' failed\n",
+                files: PINYIN_NI_TEMP_OUT_FILES,
+            },
+        )]
+        // pinyin-help: utils/storage/gen_pinyin_table.cpp at 074a2219: 97-322.
+        // Platform exception, stdout.glib-*: GLib spells the help placeholder [OPTION?],
+        // [OPTION…] or [OPTION...] by version and locale; the case accepts any of them.
+        #[case::pinyin_help(
+            &["--help"],
+            b"",
+            &[],
+            Run {
+                status: Exit(0),
+                stdout: GlibOption(include_str!("fixtures/gen_pinyin_table/help.txt")),
+                stderr: b"",
+                files: &[],
+            },
+        )]
+        // pinyin-invalid-utf8: utils/storage/gen_pinyin_table.cpp at 074a2219: 97-322.
+        // Policy-accepted on every cell: docs/findings/eio-table-generator-invalid-utf8.md;
+        // the pin's own result is in
+        // fixtures/contract-policy/eio-table-generator-invalid-utf8.json.
+        #[case::pinyin_invalid_utf8(
+            &["in.txt"],
+            b"",
+            &[("in.txt", b"\xff a 1\n".as_slice())],
+            Run {
+                status: Exit(1),
+                stdout: Exact(NNODES_1),
+                stderr: b"gen_pinyin_table: invalid UTF-8 phrase: \xff\n",
+                files: EMPTY_TEMP_OUT_FILES,
+            },
+        )]
+        // pinyin-invalid-utf8-after-row: utils/storage/gen_pinyin_table.cpp at 074a2219:
+        // 97-322.
+        // Policy-accepted on every cell: docs/findings/eio-table-generator-invalid-utf8.md;
+        // the pin's own result is in
+        // fixtures/contract-policy/eio-table-generator-invalid-utf8.json.
+        #[case::pinyin_invalid_utf8_after_row(
+            &["in.txt"],
+            b"",
+            &[("in.txt", b"\xe4\xbd\xa0 ni 5\n\xff\xff a'a 1\n".as_slice())],
+            Run {
+                status: Exit(1),
+                stdout: Exact(NNODES_2),
+                stderr: b"gen_pinyin_table: invalid UTF-8 phrase: \xff\xff\n",
+                files: PINYIN_NI_TEMP_OUT_FILES,
+            },
+        )]
+        // pinyin-missing-input: utils/storage/gen_pinyin_table.cpp at 074a2219: 97-322.
+        #[case::pinyin_missing_input(
+            &["absent.txt"],
+            b"",
+            &[],
+            Run {
+                status: Exit(2),
+                stdout: Exact(b""),
+                stderr: CANT_OPEN_ABSENT_TXT,
+                files: &[],
+            },
+        )]
+        // pinyin-no-final-newline: utils/storage/gen_pinyin_table.cpp at 074a2219: 97-322.
+        #[case::pinyin_no_final_newline(
+            &["in.txt"],
+            b"",
+            &[("in.txt", b"\xe4\xbd\xa0 ni 5\n\xe5\xa5\xbd hao 3".as_slice())],
+            Run {
+                status: Exit(0),
+                stdout: Exact(NNODES_1),
+                stderr: b"",
+                files: PINYIN_NI_TEMP_OUT_FILES,
+            },
+        )]
+        // pinyin-no-input: utils/storage/gen_pinyin_table.cpp at 074a2219: 97-322.
+        #[case::pinyin_no_input(
+            &[],
+            b"",
+            &[],
+            Run {
+                status: Exit(0),
+                stdout: Exact(NNODES_0),
+                stderr: b"",
+                files: EMPTY_TEMP_OUT_FILES,
+            },
+        )]
+        // pinyin-normal: utils/storage/gen_pinyin_table.cpp at 074a2219: 97-322.
+        #[case::pinyin_normal(
+            &["-t", "3", "-o", "out.table", "in.txt"],
+            b"",
+            &[("in.txt", b"\xe4\xbd\xa0\xe5\xa5\xbd ni'hao 10\n\xe4\xbd\xa0 ni 5\n\xe5\xb0\xbc ni 2\n\xe4\xbd\xa0\xe5\xa5\xbd nihao 4\n\xe5\x91\xa2 ne 1\n\xe5\xa5\xbd hao3 7\n\xe5\xa5\xbd hao4 2\n\xe4\xbd\xa0\xe4\xbb\xac ni 3\n\xe4\xb8\x80\xe4\xba\x8c\xe4\xb8\x89\xe5\x9b\x9b\xe4\xba\x94\xe5\x85\xad\xe4\xb8\x83\xe5\x85\xab\xe4\xb9\x9d\xe5\x8d\x81\xe4\xb8\x80\xe4\xba\x8c\xe4\xb8\x89\xe5\x9b\x9b\xe4\xba\x94\xe5\x85\xad yi 1\n".as_slice())],
+            Run {
+                status: Exit(0),
+                stdout: Exact(NNODES_5),
+                stderr: "Duplicate item: phrase:你好\tpinyin:nihao\tfreq:4\nInvalid pinyin:你们\tni\t3\nToo long phrase:一二三四五六七八九十一二三四五六\tyi\t1\n".as_bytes(),
+                files: &[
+                    ("out.table", Sha256("16a99a9a9d90be757bfaf0470843a16aef77f81f19e528a3186b5bfce9a051ee", 120)),
+                ],
+            },
+        )]
+        // pinyin-output-failure: utils/storage/gen_pinyin_table.cpp at 074a2219: 97-322.
+        #[case::pinyin_output_failure(
+            &["-o", "missing/out.table"],
+            b"",
+            &[],
+            Run {
+                status: Exit(2),
+                stdout: Exact(NNODES_0),
+                stderr: CANT_WRITE_MISSING_OUT_TABLE,
+                files: &[],
+            },
+        )]
+        fn captured_cases(
+            #[case] args: &[&str],
+            #[case] stdin: &[u8],
+            #[case] files: &[(&str, &[u8])],
+            #[case] expected: Run,
+        ) {
+            let directory = TempDir::new().expect("scratch directory");
+            for (name, content) in files {
+                directory
+                    .child(name)
+                    .write_binary(content)
+                    .expect("input bytes");
+            }
+            let inputs = snapshot_inputs(directory.path());
+            let mut output = cargo_bin_cmd!("gen_pinyin_table")
+                .current_dir(directory.path())
+                .env("LC_ALL", "C")
+                .args(args)
+                .write_stdin(stdin)
+                .timeout(Duration::from_secs(300))
+                .output()
+                .expect("run gen_pinyin_table");
+            output.stderr = mask_glib_prefix(&output.stderr);
+            check(
+                output,
+                &inventory(directory.path(), &inputs, &[], &[], &[], &[]),
+                &inputs,
+                &expected,
+            );
+        }
+    }
+}

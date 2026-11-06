@@ -68,10 +68,11 @@ pub fn main() {
     if !user.is_conform(&versions) {
         tool::abort();
     }
-    if !user.save(c"/tmp/user.conf") {
+    let conf = crate::fixed_tmp::path("user.conf");
+    if !user.save(&conf) {
         tool::abort();
     }
-    let user = UserTableInfo::load(c"/tmp/user.conf").unwrap_or_else(|_| tool::abort());
+    let user = UserTableInfo::load(&conf).unwrap_or_else(|_| tool::abort());
     if !user.is_conform(&versions) {
         tool::abort();
     }

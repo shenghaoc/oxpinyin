@@ -260,15 +260,11 @@ class StoppableDriver:
 
 @dataclasses.dataclass
 class UnitContext:
-    """What a running unit sees: its stop request, leased CPU and environment.
-
-    FDS stays only because tools/dev/tool_diff.py reads it; nothing sets it.
-    """
+    """What a running unit sees: its stop request, leased CPU and environment."""
     name: str
     stop: threading.Event
     cpu: int | None = None
     environment: dict = dataclasses.field(default_factory=dict)
-    fds: tuple = ()
     cancelled: Callable[[], bool] | None = None
 
     def check(self) -> None:
@@ -283,7 +279,7 @@ class UnitContext:
         return StoppableDriver(base, self)
 
     def launch(self, argv: Sequence[str], *, env: Mapping[str, str] | None = None,
-               pass_fds: Sequence[int] | None = None, poll: float = 0.1,
+               poll: float = 0.1,
                cwd: Path | None = None, merge_stderr: bool = False, umask: int = -1,
                input: bytes = b'') -> Completed:
         """Run ARGV in its own session and return its status and captured output.
@@ -292,14 +288,12 @@ class UnitContext:
         Every POLL seconds the unit checks for a stop; on a
         stop, a timeout of the caller's making, or any other error the group gets
         SIGTERM, then SIGKILL through slot.terminate_group, and its leader is reaped before the
-        error propagates. ENV defaults to the unit's environment, PASS_FDS to FDS
-        (both kept for tools/dev/tool_diff.py).
+        error propagates. ENV defaults to the unit's environment.
         """
         with subprocess.Popen(list(argv), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                               stderr=subprocess.STDOUT if merge_stderr else subprocess.PIPE, cwd=cwd, umask=umask,
                               env=dict(self.environment if env is None else env),
-                              start_new_session=True,
-                              pass_fds=tuple(self.fds if pass_fds is None else pass_fds)) as process:
+                              start_new_session=True) as process:
             try:
                 first = True
                 while True:

@@ -71,12 +71,13 @@ oxpinyin-training = { path = "../oxpinyin-training", default-features = false }
 oxpinyin-kmm = { path = "../oxpinyin-kmm", default-features = false }
 
 [dev-dependencies]
+assert_cmd = "2.2"
+assert_fs = "1.1"
 libc.workspace = true
+regex = "1.13"
+rstest = { version = "0.28", default-features = false }
+sha2 = "0.11"
 tempfile.workspace = true
-
-[[bin]]
-name = "dbm_rows"
-path = "src/bin/dbm_rows.rs"
 
 [[bin]]
 name = "gen_pinyin_table"

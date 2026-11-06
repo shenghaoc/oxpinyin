@@ -1,0 +1,12 @@
+\data model interpolation
+\1-gram
+\item 16817937 中国 count 5
+\item 16802309 你好 count 4294967301
+\item 16808451 世界 count -7
+\item -2147483647 甲 count 12
+\2-gram
+\item 16817937 中国 16817937 中国 count 3
+\item 16817937 中国 16802309 你好 count 4294967299
+\item 16802309 你好 16808451 世界 count 9223372036854775807
+\item 16808451 世界 16817937 中国 count 0
+\end

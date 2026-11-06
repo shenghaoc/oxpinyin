@@ -1874,8 +1874,8 @@ behavior is unchanged. Cases `table-info-zero-versions-pinyin` and
 
 Their `pin_not_run` declarations in `test_table_info.json` bind the
 complete source-derived stdout, stderr, exit and directory inventory,
-including the exact saved user file. The existing tool-diff runner runs
-only oxpinyin for these cases. The schema-2 entries below bind those
+including the exact saved user file. The frozen tool cases hold
+only oxpinyin's output for these cases. The schema-2 entries below bind those
 declarations with the existing side-digest format; there is no recorded
 or replayed pin result. Ordinary discrepancy pairs still reject parity.
 

@@ -1,0 +1,15 @@
+created table.
+insert some punctuations.
+token: 1
+Punctuations: …… … ？
+remove some punctuations.
+token: 1
+Punctuations: …… ？
+after save and load table.
+token: 1
+Punctuations: …… ？
+remove some punctuations.
+token: 1
+Punctuations: ？
+remove some punctuations.
+token: 1

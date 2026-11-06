@@ -117,12 +117,12 @@
 
 ## Comparator correction (2026-11-01 UTC)
 
-`tools/dev/tool_diff.py::pinyin_index_rows` retains every key and value. It
+`mask_pinyin_index_row` in `crates/oxpinyin-utils/tests/common/mod.rs` retains every key and value. It
 masks only the two tail bytes of each odd-N item, where N is half the DBM
 key length and each item stride is `(4 + 2*N + 3) & ~3`. Empty continuation
 rows remain present. Invalid key or item lengths fail. No token, spelling
 key, record order or value length is dropped. The old key-only comparison
-has been removed. The `dbm_rows` helper still sorts whole DBM rows to
+has been removed. `rows_digest` in the same file sorts whole DBM rows to
 exclude container metadata; it does not reorder items within a value.
 
 The comparator is O(B) time and space in the helper's B output bytes, as

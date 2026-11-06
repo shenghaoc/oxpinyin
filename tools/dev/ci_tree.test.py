@@ -349,6 +349,7 @@ class MigratedWorkflowTests(unittest.TestCase):
         also = re.findall(r'--also (\S+)', gate)
         self.assertEqual(also, [
             '.github/workflows/store-backends.yml', '.github/workflows/ci.yml',
+            'crates/oxpinyin-utils/',
             'tools/dev/ci_tree.py', 'tools/dev/ci_tree.test.py', 'tools/bisection/cells-for-diff.py',
             'tools/bdb', 'tools/tkrzw', '.github/actions/tkrzw', '.github/actions/contract-verify', 'tools/dev/check.py',
             'tools/dev/test_runner.py',

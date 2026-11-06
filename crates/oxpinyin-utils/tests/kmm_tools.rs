@@ -859,3 +859,1152 @@ fn sample_text() -> String {
      \\end\n"
         .to_owned()
 }
+
+#[cfg(unix)]
+mod common;
+
+#[cfg(unix)]
+mod fixtures;
+
+#[cfg(unix)]
+mod frozen {
+    use crate::common::CELL;
+
+    const WRONG_ARGUMENTS: &[u8] = b"wrong arguments.\n";
+    fn empty_db_not_berkeley_db_twice() -> &'static [u8] {
+        match CELL {
+            "bdb" => b"BDB0004 fop_read_meta: empty.db: unexpected file type or format\nBDB0004 fop_read_meta: empty.db: unexpected file type or format\n",
+            "kc" | "tkrzw" => b"",
+            _ => unreachable!("unknown cell {CELL}"),
+        }
+    }
+
+    mod estimate_k_mixture_model {
+        use crate::common::expected::*;
+        use crate::common::{inventory, mask_glib_prefix, snapshot_inputs};
+        use assert_cmd::cargo::cargo_bin_cmd;
+        use assert_fs::{TempDir, prelude::*};
+        use rstest::rstest;
+        use std::time::Duration;
+
+        use super::empty_db_not_berkeley_db_twice;
+        use crate::common::CELL;
+        use crate::fixtures::w3;
+
+        #[rstest]
+        // kmm-estimate-bad-option: utils/training/estimate_k_mixture_model.cpp at 074a2219:
+        // 98-155, 36-96.
+        #[case::kmm_estimate_bad_option(
+            TempDir::new().unwrap(),
+            &["--bogus"],
+            b"",
+            &[],
+            Run {
+                status: Exit(22),
+                stdout: Exact(UNKNOWN_OPTION_BOGUS),
+                stderr: b"",
+                files: &[],
+            },
+        )]
+        // kmm-estimate-existing-empty: utils/training/estimate_k_mixture_model.cpp:111-153 at
+        // 074a2219.
+        // Policy-accepted on bdb: docs/findings/bdb-failed-handle.md; the pin's own result is
+        // in fixtures/contract-policy/bdb-failed-handle.json.
+        // Platform exception, aarch64, x86_64: a default NaN prints nan on aarch64 and -nan on
+        // x86_64.
+        #[case::kmm_estimate_existing_empty(
+            TempDir::new().unwrap(),
+            &["--bigram-file", "empty.db", "--deleted-bigram-file", "empty.db"],
+            b"",
+            &[("empty.db", b"".as_slice())],
+            Run {
+                status: Exit(0),
+                stdout: AVERAGE_LAMBDA_NAN,
+                stderr: empty_db_not_berkeley_db_twice(),
+                files: &[],
+            },
+        )]
+        // kmm-estimate-good: utils/training/estimate_k_mixture_model.cpp at 074a2219: 98-155,
+        // 36-96.
+        // Input: KC fixture contains an unsorted sentence-start row assembled manually; see
+        // eio-flexible-bigram-unsorted-records.md. Sorted bdb/tkrzw rows are controls.
+        #[case::kmm_estimate_good(
+            w3(),
+            &["--bigram-file", "k_mixture_model.db", "--deleted-bigram-file", "k_mixture_model.db"],
+            b"",
+            &[],
+            Run {
+                status: Exit(0),
+                stdout: match CELL {
+                    "bdb" | "tkrzw" => Exact(b"token:1 lambda:0.901963\ntoken:16817937 lambda:0.998480\naverage lambda:0.950222\n"),
+                    "kc" => Exact(b"token:1 lambda:0.000000\ntoken:16817937 lambda:0.998480\naverage lambda:0.499240\n"),
+                    _ => unreachable!("unknown cell {CELL}"),
+                },
+                stderr: b"",
+                files: &[],
+            },
+        )]
+        // kmm-estimate-help: utils/training/estimate_k_mixture_model.cpp at 074a2219: 98-155,
+        // 36-96.
+        // Platform exception, stdout.glib-*: GLib spells the help placeholder [OPTION?],
+        // [OPTION…] or [OPTION...] by version and locale; the case accepts any of them.
+        #[case::kmm_estimate_help(
+            TempDir::new().unwrap(),
+            &["--help"],
+            b"",
+            &[],
+            Run {
+                status: Exit(0),
+                stdout: GlibOption(include_str!("fixtures/estimate_k_mixture_model/help.txt")),
+                stderr: b"",
+                files: &[],
+            },
+        )]
+        // kmm-estimate-no-models: utils/training/estimate_k_mixture_model.cpp at 074a2219:
+        // 98-155, 36-96.
+        // Policy-accepted on bdb: docs/findings/bdb-failed-handle.md; the pin's own result is
+        // in fixtures/contract-policy/bdb-failed-handle.json.
+        // Platform exception, aarch64, x86_64: a default NaN prints nan on aarch64 and -nan on
+        // x86_64.
+        #[case::kmm_estimate_no_models(
+            TempDir::new().unwrap(),
+            &[],
+            b"",
+            &[],
+            Run {
+                status: Exit(0),
+                stdout: AVERAGE_LAMBDA_NAN,
+                stderr: b"",
+                files: &[],
+            },
+        )]
+        // kmm-estimate-zero-total: utils/training/estimate_k_mixture_model.cpp at 074a2219:
+        // 98-155, 36-96.
+        // Policy-accepted on every cell: docs/findings/eio-kmm-tools.md; the pin's own result
+        // is in fixtures/contract-policy/eio-kmm-tools.json.
+        #[case::kmm_estimate_zero_total(
+            w3(),
+            &["--bigram-file", "k_mixture_model_zero.db", "--deleted-bigram-file", "k_mixture_model.db"],
+            b"",
+            &[],
+            Run {
+                status: Signal(6),
+                stdout: Exact(b""),
+                stderr: b"",
+                files: &[],
+            },
+        )]
+        fn captured_cases(
+            #[case] directory: TempDir,
+            #[case] args: &[&str],
+            #[case] stdin: &[u8],
+            #[case] files: &[(&str, &[u8])],
+            #[case] expected: Run,
+        ) {
+            for (name, content) in files {
+                directory
+                    .child(name)
+                    .write_binary(content)
+                    .expect("input bytes");
+            }
+            let inputs = snapshot_inputs(directory.path());
+            let mut output = cargo_bin_cmd!("estimate_k_mixture_model")
+                .current_dir(directory.path())
+                .env("LC_ALL", "C")
+                .args(args)
+                .write_stdin(stdin)
+                .timeout(Duration::from_secs(300))
+                .output()
+                .expect("run estimate_k_mixture_model");
+            output.stderr = mask_glib_prefix(&output.stderr);
+            check(
+                output,
+                &inventory(directory.path(), &inputs, &[], &[], &[], &[]),
+                &inputs,
+                &expected,
+            );
+        }
+    }
+    mod export_k_mixture_model {
+        use crate::common::expected::*;
+        use crate::common::{inventory, mask_glib_prefix, snapshot_inputs};
+        use assert_cmd::cargo::cargo_bin_cmd;
+        use assert_fs::{TempDir, prelude::*};
+        use rstest::rstest;
+        use std::time::Duration;
+
+        use crate::common::CELL;
+        use crate::fixtures::w3;
+
+        #[rstest]
+        // export_k_mixture_model-family-e-truncated-first-chunk:
+        // utils/training/export_k_mixture_model.cpp:139; utils/utils_helper.h:73-94;
+        // src/include/memory_chunk.h:420-463 at 074a2219.
+        #[case::export_k_mixture_model_family_e_truncated_first_chunk(
+            w3(),
+            &[],
+            b"",
+            &[("gb_char.bin", b"\x04\0\0\0\0\0\0\0\x01".as_slice()), ("gbk_char.bin", b"\0".as_slice())],
+            Run {
+                status: Exit(2),
+                stdout: Exact(b""),
+                stderr: LOAD_GB_CHAR_BIN_FAILED,
+                files: &[],
+            },
+        )]
+        // kmm-export-absent-file: utils/training/export_k_mixture_model.cpp at 074a2219:
+        // 112-155, 35-110; src/storage/tag_utility.cpp:360-417.
+        // Policy-accepted on bdb: docs/findings/bdb-failed-handle.md; the pin's own result is
+        // in fixtures/contract-policy/bdb-failed-handle.json.
+        #[case::kmm_export_absent_file(
+            w3(),
+            &["--k-mixture-model-file", "absent.db"],
+            b"",
+            &[],
+            Run {
+                status: Exit(2),
+                stdout: Exact(b""),
+                stderr: b"open absent.db failed.\n",
+                files: &[],
+            },
+        )]
+        // kmm-export-bad-option: utils/training/export_k_mixture_model.cpp at 074a2219:
+        // 112-155, 35-110; src/storage/tag_utility.cpp:360-417.
+        #[case::kmm_export_bad_option(
+            TempDir::new().unwrap(),
+            &["--bogus"],
+            b"",
+            &[],
+            Run {
+                status: Exit(22),
+                stdout: Exact(UNKNOWN_OPTION_BOGUS),
+                stderr: b"",
+                files: &[],
+            },
+        )]
+        // kmm-export-existing-empty: utils/training/export_k_mixture_model.cpp:142-150 at
+        // 074a2219.
+        // Policy-accepted on bdb: docs/findings/bdb-failed-handle.md; the pin's own result is
+        // in fixtures/contract-policy/bdb-failed-handle.json.
+        #[case::kmm_export_existing_empty(
+            w3(),
+            &["--k-mixture-model-file", "empty.db"],
+            b"",
+            &[("empty.db", b"".as_slice())],
+            Run {
+                status: Exit(2),
+                stdout: Exact(b""),
+                stderr: match CELL {
+                    "bdb" => b"BDB0004 fop_read_meta: empty.db: unexpected file type or format\nopen empty.db failed.\n",
+                    "kc" | "tkrzw" => b"open empty.db failed.\n",
+                    _ => unreachable!("unknown cell {CELL}"),
+                },
+                files: &[],
+            },
+        )]
+        // kmm-export-good: utils/training/export_k_mixture_model.cpp at 074a2219: 112-155,
+        // 35-110; src/storage/tag_utility.cpp:360-417.
+        #[case::kmm_export_good(
+            w3(),
+            &["--k-mixture-model-file", "k_mixture_model.db"],
+            b"",
+            &[],
+            Run {
+                status: Exit(0),
+                stdout: match CELL {
+                    "bdb" | "tkrzw" => Exact(include_bytes!("fixtures/export_k_mixture_model/model-bdb-tkrzw-order.txt")),
+                    "kc" => Exact(include_bytes!("fixtures/export_k_mixture_model/model-kc-order.txt")),
+                    _ => unreachable!("unknown cell {CELL}"),
+                },
+                stderr: b"",
+                files: &[],
+            },
+        )]
+        // kmm-export-help: utils/training/export_k_mixture_model.cpp at 074a2219: 112-155,
+        // 35-110; src/storage/tag_utility.cpp:360-417.
+        // Platform exception, stdout.glib-*: GLib spells the help placeholder [OPTION?],
+        // [OPTION…] or [OPTION...] by version and locale; the case accepts any of them.
+        #[case::kmm_export_help(
+            TempDir::new().unwrap(),
+            &["--help"],
+            b"",
+            &[],
+            Run {
+                status: Exit(0),
+                stdout: GlibOption(include_str!("fixtures/export_k_mixture_model/help.txt")),
+                stderr: b"",
+                files: &[],
+            },
+        )]
+        // kmm-export-missing-table-conf: utils/training/export_k_mixture_model.cpp at
+        // 074a2219: 112-155, 35-110; src/storage/tag_utility.cpp:360-417.
+        #[case::kmm_export_missing_table_conf(
+            TempDir::new().unwrap(),
+            &[],
+            b"",
+            &[],
+            Run {
+                status: Exit(2),
+                stdout: Exact(b""),
+                stderr: OPEN_TABLE_CONF_FAILED,
+                files: &[],
+            },
+        )]
+        // kmm-export-null-name: utils/training/export_k_mixture_model.cpp at 074a2219:
+        // 112-155, 35-110; src/storage/tag_utility.cpp:360-417.
+        #[case::kmm_export_null_name(
+            w3(),
+            &[],
+            b"",
+            &[],
+            Run {
+                status: Exit(2),
+                stdout: Exact(b""),
+                stderr: b"open (null) failed.\n",
+                files: &[],
+            },
+        )]
+        fn captured_cases(
+            #[case] directory: TempDir,
+            #[case] args: &[&str],
+            #[case] stdin: &[u8],
+            #[case] files: &[(&str, &[u8])],
+            #[case] expected: Run,
+        ) {
+            for (name, content) in files {
+                directory
+                    .child(name)
+                    .write_binary(content)
+                    .expect("input bytes");
+            }
+            let inputs = snapshot_inputs(directory.path());
+            let mut output = cargo_bin_cmd!("export_k_mixture_model")
+                .current_dir(directory.path())
+                .env("LC_ALL", "C")
+                .args(args)
+                .write_stdin(stdin)
+                .timeout(Duration::from_secs(300))
+                .output()
+                .expect("run export_k_mixture_model");
+            output.stderr = mask_glib_prefix(&output.stderr);
+            check(
+                output,
+                &inventory(directory.path(), &inputs, &[], &[], &[], &[]),
+                &inputs,
+                &expected,
+            );
+        }
+    }
+    mod gen_k_mixture_model {
+        use crate::common::expected::*;
+        use crate::common::{CELL, inventory, mask_glib_prefix, snapshot_inputs};
+        use assert_cmd::cargo::cargo_bin_cmd;
+        use assert_fs::{TempDir, prelude::*};
+        use rstest::rstest;
+        use std::time::Duration;
+
+        use super::empty_db_not_berkeley_db_twice;
+        use crate::fixtures::w3;
+
+        #[rstest]
+        // gen_k_mixture_model-family-e-truncated-first-chunk:
+        // utils/training/gen_k_mixture_model.cpp:344; utils/utils_helper.h:73-94;
+        // src/include/memory_chunk.h:420-463 at 074a2219.
+        #[case::gen_k_mixture_model_family_e_truncated_first_chunk(
+            w3(),
+            &[],
+            b"",
+            &[("gb_char.bin", b"\x04\0\0\0\0\0\0\0\x01".as_slice()), ("gbk_char.bin", b"\0".as_slice())],
+            &[],
+            Run {
+                status: Exit(2),
+                stdout: Exact(b""),
+                stderr: LOAD_GB_CHAR_BIN_FAILED,
+                files: &[],
+            },
+        )]
+        // kmm-gen-bad-option: utils/training/gen_k_mixture_model.cpp at 074a2219: 313-403,
+        // 65-311; utils/utils_helper.h:51-95.
+        #[case::kmm_gen_bad_option(
+            TempDir::new().unwrap(),
+            &["--bogus"],
+            b"",
+            &[],
+            &[],
+            Run {
+                status: Exit(22),
+                stdout: Exact(UNKNOWN_OPTION_BOGUS),
+                stderr: b"",
+                files: &[],
+            },
+        )]
+        // kmm-gen-existing-empty: utils/training/gen_k_mixture_model.cpp:348-403;
+        // src/storage/flexible_ngram_tkrzwdb.h:145-177 at 074a2219;
+        // src/storage/flexible_ngram_kyotodb.h:282-308 at 074a2219.
+        // Policy-accepted on kc: docs/findings/eio-tool-check-messages.md; the pin's own
+        // result is in fixtures/contract-policy/eio-tool-check-messages.json.
+        // Platform exception, macos: a written DBM container's size and bytes follow the 16
+        // KiB page, against 4 KiB on Linux.
+        #[case::kmm_gen_existing_empty(
+            w3(),
+            &["--k-mixture-model-file", "empty.db", "doc.txt"],
+            b"",
+            &[("empty.db", b"".as_slice()), ("doc.txt", b"1 <start>\n16817937 \xe4\xb8\xad\xe5\x9b\xbd\n16802309 \xe4\xbd\xa0\xe5\xa5\xbd\n".as_slice())],
+            if ["bdb", "tkrzw"].contains(&CELL) { &["empty.db"][..] } else { &[] },
+            Run {
+                status: match CELL {
+                    "bdb" | "tkrzw" => Exit(0),
+                    "kc" => Signal(6),
+                    _ => unreachable!("unknown cell {CELL}"),
+                },
+                stdout: Exact(b""),
+                stderr: empty_db_not_berkeley_db_twice(),
+                files: match CELL {
+                    "bdb" | "tkrzw" => &[
+                        ("empty.db", Rows("fcc763fb9a18a33cdfd2f6243e06f7d45ab2656c742251b9b59bb4295ff076c7")),
+                    ],
+                    "kc" => if cfg!(target_os = "macos") {
+                        &[
+                            ("empty.db", Sha256("ddbe757462d2111ffafcd0538242d6e147348e1c526ae2b3180926d19d8d9602", 9453568)),
+                        ]
+                    } else {
+                        &[
+                            ("empty.db", Sha256("7f072ce7cc8e11878a63d4c690528df09387573b842601e5aea3700c3e9fbcc8", 9449472)),
+                        ]
+                    },
+                    _ => unreachable!("unknown cell {CELL}"),
+                },
+            },
+        )]
+        // kmm-gen-good-document: utils/training/gen_k_mixture_model.cpp at 074a2219: 313-403,
+        // 65-311; utils/utils_helper.h:51-95.
+        // Policy-accepted on every cell: docs/findings/eio-kmm-tools.md; the pin's own result
+        // is in fixtures/contract-policy/eio-kmm-tools.json.
+        #[case::kmm_gen_good_document(
+            w3(),
+            &["doc.txt"],
+            b"",
+            &[("doc.txt", b"1 <start>\n16817937 \xe4\xb8\xad\xe5\x9b\xbd\n16802309 \xe4\xbd\xa0\xe5\xa5\xbd\n".as_slice())],
+            &[],
+            Run {
+                status: Signal(6),
+                stdout: Exact(b""),
+                stderr: b"",
+                files: &[],
+            },
+        )]
+        // kmm-gen-help: utils/training/gen_k_mixture_model.cpp at 074a2219: 313-403, 65-311;
+        // utils/utils_helper.h:51-95.
+        // Platform exception, stdout.glib-*: GLib spells the help placeholder [OPTION?],
+        // [OPTION…] or [OPTION...] by version and locale; the case accepts any of them.
+        #[case::kmm_gen_help(
+            TempDir::new().unwrap(),
+            &["--help"],
+            b"",
+            &[],
+            &[],
+            Run {
+                status: Exit(0),
+                stdout: GlibOption(include_str!("fixtures/gen_k_mixture_model/help.txt")),
+                stderr: b"",
+                files: &[],
+            },
+        )]
+        // kmm-gen-missing-document: utils/training/gen_k_mixture_model.cpp at 074a2219:
+        // 313-403, 65-311; utils/utils_helper.h:51-95.
+        #[case::kmm_gen_missing_document(
+            w3(),
+            &["absent.txt"],
+            b"",
+            &[],
+            &[],
+            Run {
+                status: Exit(2),
+                stdout: Exact(b""),
+                stderr: b"can't open file: absent.txt.\nerror:No such file or directory.\n",
+                files: &[],
+            },
+        )]
+        // kmm-gen-missing-table-conf: utils/training/gen_k_mixture_model.cpp at 074a2219:
+        // 313-403, 65-311; utils/utils_helper.h:51-95.
+        #[case::kmm_gen_missing_table_conf(
+            TempDir::new().unwrap(),
+            &["absent.txt"],
+            b"",
+            &[],
+            &[],
+            Run {
+                status: Exit(2),
+                stdout: Exact(b""),
+                stderr: OPEN_TABLE_CONF_FAILED,
+                files: &[],
+            },
+        )]
+        fn captured_cases(
+            #[case] directory: TempDir,
+            #[case] args: &[&str],
+            #[case] stdin: &[u8],
+            #[case] files: &[(&str, &[u8])],
+            #[case] dbm_files: &[&str],
+            #[case] expected: Run,
+        ) {
+            for (name, content) in files {
+                directory
+                    .child(name)
+                    .write_binary(content)
+                    .expect("input bytes");
+            }
+            let inputs = snapshot_inputs(directory.path());
+            let mut output = cargo_bin_cmd!("gen_k_mixture_model")
+                .current_dir(directory.path())
+                .env("LC_ALL", "C")
+                .args(args)
+                .write_stdin(stdin)
+                .timeout(Duration::from_secs(300))
+                .output()
+                .expect("run gen_k_mixture_model");
+            output.stderr = mask_glib_prefix(&output.stderr);
+            check(
+                output,
+                &inventory(directory.path(), &inputs, dbm_files, &[], &[], &[]),
+                &inputs,
+                &expected,
+            );
+        }
+    }
+    mod import_k_mixture_model {
+        use crate::common::expected::*;
+        use crate::common::{CELL, inventory, mask_glib_prefix, snapshot_inputs};
+        use assert_cmd::cargo::cargo_bin_cmd;
+        use assert_fs::{TempDir, prelude::*};
+        use rstest::rstest;
+        use std::time::Duration;
+
+        use super::empty_db_not_berkeley_db_twice;
+        use crate::fixtures::w3;
+
+        #[rstest]
+        // import_k_mixture_model-family-e-truncated-first-chunk:
+        // utils/training/import_k_mixture_model.cpp:289; utils/utils_helper.h:73-94;
+        // src/include/memory_chunk.h:420-463 at 074a2219.
+        #[case::import_k_mixture_model_family_e_truncated_first_chunk(
+            w3(),
+            &[],
+            b"",
+            &[("gb_char.bin", b"\x04\0\0\0\0\0\0\0\x01".as_slice()), ("gbk_char.bin", b"\0".as_slice())],
+            &[],
+            Run {
+                status: Exit(2),
+                stdout: Exact(b""),
+                stderr: LOAD_GB_CHAR_BIN_FAILED,
+                files: &[],
+            },
+        )]
+        // kmm-import-bad-option: utils/training/import_k_mixture_model.cpp at 074a2219:
+        // 258-317, 72-256; src/storage/tag_utility.cpp:118-264.
+        #[case::kmm_import_bad_option(
+            TempDir::new().unwrap(),
+            &["--bogus"],
+            b"",
+            &[],
+            &[],
+            Run {
+                status: Exit(22),
+                stdout: Exact(UNKNOWN_OPTION_BOGUS),
+                stderr: b"",
+                files: &[],
+            },
+        )]
+        // kmm-import-empty-input: utils/training/import_k_mixture_model.cpp at 074a2219:
+        // 258-317, 72-256; src/storage/tag_utility.cpp:118-264.
+        // Platform exception, macos: exit(ENODATA) is 96 on macOS and 61 on Linux.
+        #[case::kmm_import_empty_input(
+            w3(),
+            &[],
+            b"",
+            &[],
+            &[],
+            Run {
+                status: if cfg!(target_os = "macos") {
+                    Exit(96)
+                } else {
+                    Exit(61)
+                },
+                stdout: Exact(b""),
+                stderr: EMPTY_FILE_INPUT,
+                files: &[],
+            },
+        )]
+        // kmm-import-existing-empty: utils/training/import_k_mixture_model.cpp:292-316 at
+        // 074a2219.
+        #[case::kmm_import_existing_empty(
+            w3(),
+            &["--k-mixture-model-file", "empty.db"],
+            b"\\data model \"k mixture model\" count 3 N 1 total_freq 3\n\\1-gram\n\\item 1 <start> count 2 freq 0\n\\item 16817937 \xe4\xb8\xad\xe5\x9b\xbd count 1 freq 1\n\\item 16802309 \xe4\xbd\xa0\xe5\xa5\xbd count 0 freq 2\n\\2-gram\n\\item 1 <start> 16817937 \xe4\xb8\xad\xe5\x9b\xbd count 1 T 1 N_n_0 1 n_1 1 Mr 1\n\\item 1 <start> 16802309 \xe4\xbd\xa0\xe5\xa5\xbd count 1 T 1 N_n_0 1 n_1 1 Mr 1\n\\item 16817937 \xe4\xb8\xad\xe5\x9b\xbd 16802309 \xe4\xbd\xa0\xe5\xa5\xbd count 1 T 1 N_n_0 1 n_1 1 Mr 1\n\\end\n",
+            &[("empty.db", b"".as_slice())],
+            if ["bdb", "tkrzw"].contains(&CELL) { &["empty.db"][..] } else { &[] },
+            Run {
+                status: Exit(0),
+                stdout: Exact(b""),
+                stderr: empty_db_not_berkeley_db_twice(),
+                files: match CELL {
+                    "bdb" | "tkrzw" => &[
+                        ("empty.db", Rows("981be74bdf7626e50c7e75b20a885de4d2adc1ec59e758d67fcba44ab4fd0973")),
+                    ],
+                    "kc" => &[
+                        ("empty.db", Sha256("938362d1aa417adaf1fefb58343fa368806badab7b37acb0ce5de79f3fe666df", 6297976)),
+                    ],
+                    _ => unreachable!("unknown cell {CELL}"),
+                },
+            },
+        )]
+        // kmm-import-foreign-header: utils/training/import_k_mixture_model.cpp at 074a2219:
+        // 258-317, 72-256; src/storage/tag_utility.cpp:118-264.
+        // Platform exception, macos: exit(ENODATA) is 96 on macOS and 61 on Linux.
+        #[case::kmm_import_foreign_header(
+            w3(),
+            &[],
+            b"\\data model interpolation\n\\end\n",
+            &[],
+            &[],
+            Run {
+                status: if cfg!(target_os = "macos") {
+                    Exit(96)
+                } else {
+                    Exit(61)
+                },
+                stdout: Exact(b""),
+                stderr: b"\n** (import_k_mixture_model:PID): WARNING **: TIME: missed required tags: count.\n\nerror: k mixture model expected.\n",
+                files: &[],
+            },
+        )]
+        // kmm-import-good: utils/training/import_k_mixture_model.cpp at 074a2219: 258-317,
+        // 72-256; src/storage/tag_utility.cpp:118-264.
+        #[case::kmm_import_good(
+            w3(),
+            &[],
+            b"\\data model \"k mixture model\" count 3 N 1 total_freq 3\n\\1-gram\n\\item 1 <start> count 2 freq 0\n\\item 16817937 \xe4\xb8\xad\xe5\x9b\xbd count 1 freq 1\n\\item 16802309 \xe4\xbd\xa0\xe5\xa5\xbd count 0 freq 2\n\\2-gram\n\\item 1 <start> 16817937 \xe4\xb8\xad\xe5\x9b\xbd count 1 T 1 N_n_0 1 n_1 1 Mr 1\n\\item 1 <start> 16802309 \xe4\xbd\xa0\xe5\xa5\xbd count 1 T 1 N_n_0 1 n_1 1 Mr 1\n\\item 16817937 \xe4\xb8\xad\xe5\x9b\xbd 16802309 \xe4\xbd\xa0\xe5\xa5\xbd count 1 T 1 N_n_0 1 n_1 1 Mr 1\n\\end\n",
+            &[],
+            &[],
+            Run {
+                status: Exit(0),
+                stdout: Exact(b""),
+                stderr: b"",
+                files: &[],
+            },
+        )]
+        // kmm-import-help: utils/training/import_k_mixture_model.cpp at 074a2219: 258-317,
+        // 72-256; src/storage/tag_utility.cpp:118-264.
+        // Platform exception, stdout.glib-*: GLib spells the help placeholder [OPTION?],
+        // [OPTION…] or [OPTION...] by version and locale; the case accepts any of them.
+        #[case::kmm_import_help(
+            TempDir::new().unwrap(),
+            &["--help"],
+            b"",
+            &[],
+            &[],
+            Run {
+                status: Exit(0),
+                stdout: GlibOption(include_str!("fixtures/import_k_mixture_model/help.txt")),
+                stderr: b"",
+                files: &[],
+            },
+        )]
+        // kmm-import-missing-table-conf: utils/training/import_k_mixture_model.cpp at
+        // 074a2219: 258-317, 72-256; src/storage/tag_utility.cpp:118-264.
+        #[case::kmm_import_missing_table_conf(
+            TempDir::new().unwrap(),
+            &[],
+            b"",
+            &[],
+            &[],
+            Run {
+                status: Exit(2),
+                stdout: Exact(b""),
+                stderr: OPEN_TABLE_CONF_FAILED,
+                files: &[],
+            },
+        )]
+        fn captured_cases(
+            #[case] directory: TempDir,
+            #[case] args: &[&str],
+            #[case] stdin: &[u8],
+            #[case] files: &[(&str, &[u8])],
+            #[case] dbm_files: &[&str],
+            #[case] expected: Run,
+        ) {
+            for (name, content) in files {
+                directory
+                    .child(name)
+                    .write_binary(content)
+                    .expect("input bytes");
+            }
+            let inputs = snapshot_inputs(directory.path());
+            let mut output = cargo_bin_cmd!("import_k_mixture_model")
+                .current_dir(directory.path())
+                .env("LC_ALL", "C")
+                .args(args)
+                .write_stdin(stdin)
+                .timeout(Duration::from_secs(300))
+                .output()
+                .expect("run import_k_mixture_model");
+            output.stderr = mask_glib_prefix(&output.stderr);
+            check(
+                output,
+                &inventory(directory.path(), &inputs, dbm_files, &[], &[], &[]),
+                &inputs,
+                &expected,
+            );
+        }
+    }
+    mod merge_k_mixture_model {
+        use crate::common::expected::*;
+        use crate::common::{CELL, inventory, mask_glib_prefix, snapshot_inputs};
+        use assert_cmd::cargo::cargo_bin_cmd;
+        use assert_fs::{TempDir, prelude::*};
+        use rstest::rstest;
+        use std::time::Duration;
+
+        use super::empty_db_not_berkeley_db_twice;
+        use crate::fixtures::w3;
+
+        #[rstest]
+        // kmm-merge-bad-option: utils/training/merge_k_mixture_model.cpp at 074a2219: 210-237,
+        // 96-129; src/include/pinyin_utils.h:26-31.
+        #[case::kmm_merge_bad_option(
+            TempDir::new().unwrap(),
+            &["--bogus"],
+            b"",
+            &[],
+            &[],
+            Run {
+                status: Exit(22),
+                stdout: Exact(UNKNOWN_OPTION_BOGUS),
+                stderr: b"",
+                files: &[],
+            },
+        )]
+        // kmm-merge-existing-empty: utils/training/merge_k_mixture_model.cpp:225-237 at
+        // 074a2219.
+        #[case::kmm_merge_existing_empty(
+            TempDir::new().unwrap(),
+            &["--result-file", "empty.db"],
+            b"",
+            &[("empty.db", b"".as_slice())],
+            if ["bdb", "tkrzw"].contains(&CELL) { &["empty.db"][..] } else { &[] },
+            Run {
+                status: Exit(0),
+                stdout: Exact(b""),
+                stderr: empty_db_not_berkeley_db_twice(),
+                files: match CELL {
+                    "bdb" => &[
+                        ("empty.db", Rows("32f22980ef437bfce6b0604d57bd79fb236df250117313212e9c9cd88f5f1897")),
+                    ],
+                    "kc" => &[
+                        ("empty.db", Sha256("ce29037244cafcc7ebef77c90b6434d16a4876b9867e2eba2a70ce101b7f7566", 6297720)),
+                    ],
+                    "tkrzw" => &[
+                        ("empty.db", NO_ROWS),
+                    ],
+                    _ => unreachable!("unknown cell {CELL}"),
+                },
+            },
+        )]
+        // kmm-merge-help: utils/training/merge_k_mixture_model.cpp at 074a2219: 210-237,
+        // 96-129; src/include/pinyin_utils.h:26-31.
+        // Platform exception, stdout.glib-*: GLib spells the help placeholder [OPTION?],
+        // [OPTION…] or [OPTION...] by version and locale; the case accepts any of them.
+        #[case::kmm_merge_help(
+            TempDir::new().unwrap(),
+            &["--help"],
+            b"",
+            &[],
+            &[],
+            Run {
+                status: Exit(0),
+                stdout: GlibOption("Usage:\n  merge_k_mixture_model [OPTION?] - merge k mixture model\n\nHelp Options:\n  -h, --help        Show help options\n\nApplication Options:\n  --result-file     merged result file\n\n"),
+                stderr: b"",
+                files: &[],
+            },
+        )]
+        // kmm-merge-no-result-file: utils/training/merge_k_mixture_model.cpp at 074a2219:
+        // 210-237, 96-129; src/include/pinyin_utils.h:26-31.
+        // Policy-accepted on every cell: docs/findings/eio-kmm-tools.md; the pin's own result
+        // is in fixtures/contract-policy/eio-kmm-tools.json.
+        #[case::kmm_merge_no_result_file(
+            w3(),
+            &["k_mixture_model.db"],
+            b"",
+            &[],
+            &[],
+            Run {
+                status: Signal(6),
+                stdout: Exact(b""),
+                stderr: b"",
+                files: &[],
+            },
+        )]
+        fn captured_cases(
+            #[case] directory: TempDir,
+            #[case] args: &[&str],
+            #[case] stdin: &[u8],
+            #[case] files: &[(&str, &[u8])],
+            #[case] dbm_files: &[&str],
+            #[case] expected: Run,
+        ) {
+            for (name, content) in files {
+                directory
+                    .child(name)
+                    .write_binary(content)
+                    .expect("input bytes");
+            }
+            let inputs = snapshot_inputs(directory.path());
+            let mut output = cargo_bin_cmd!("merge_k_mixture_model")
+                .current_dir(directory.path())
+                .env("LC_ALL", "C")
+                .args(args)
+                .write_stdin(stdin)
+                .timeout(Duration::from_secs(300))
+                .output()
+                .expect("run merge_k_mixture_model");
+            output.stderr = mask_glib_prefix(&output.stderr);
+            check(
+                output,
+                &inventory(directory.path(), &inputs, dbm_files, &[], &[], &[]),
+                &inputs,
+                &expected,
+            );
+        }
+    }
+    mod prune_k_mixture_model {
+        use crate::common::expected::*;
+        use crate::common::{CELL, inventory, mask_glib_prefix, snapshot_inputs};
+        use assert_cmd::cargo::cargo_bin_cmd;
+        use assert_fs::{TempDir, prelude::*};
+        use rstest::rstest;
+        use std::time::Duration;
+
+        use super::WRONG_ARGUMENTS;
+        use crate::fixtures::w3;
+
+        #[rstest]
+        // kmm-prune-bad-option: utils/training/prune_k_mixture_model.cpp at 074a2219: 107-191;
+        // k_mixture_model.h:40-95.
+        #[case::kmm_prune_bad_option(
+            TempDir::new().unwrap(),
+            &["--bogus"],
+            b"",
+            &[],
+            &[],
+            Run {
+                status: Exit(22),
+                stdout: Exact(UNKNOWN_OPTION_BOGUS),
+                stderr: b"",
+                files: &[],
+            },
+        )]
+        // kmm-prune-edom: utils/training/prune_k_mixture_model.cpp at 074a2219: 107-191;
+        // k_mixture_model.h:40-95.
+        // Platform exception, aarch64, x86_64: a default NaN prints nan on aarch64 and -nan on
+        // x86_64.
+        #[case::kmm_prune_edom(
+            w3(),
+            &["k_mixture_model_edom.db"],
+            b"",
+            &[],
+            &[],
+            Run {
+                status: Exit(33),
+                stdout: Exact(b""),
+                stderr: if cfg!(target_arch = "aarch64") {
+                    b"*some wrong possibility is encountered:nan.\nk:3 N:1 WC:10 n_0:1 n_1:0\n"
+                } else {
+                    b"*some wrong possibility is encountered:-nan.\nk:3 N:1 WC:10 n_0:1 n_1:0\n"
+                },
+                files: match CELL {
+                    "bdb" => &[],
+                    "kc" => &[
+                        ("k_mixture_model_edom.db", Sha256("3560fabf415732a006a29d74b4ff5f95232e06517303a3b2985a117dfbe9149d", 6696)),
+                    ],
+                    "tkrzw" => &[
+                        ("k_mixture_model_edom.db", Sha256("c04a50789ab8477be91e3ed71b7bff2d0e5cee02deebc645af23503d6bbd87a1", 1048576)),
+                    ],
+                    _ => unreachable!("unknown cell {CELL}"),
+                },
+            },
+        )]
+        // kmm-prune-existing-empty: utils/training/prune_k_mixture_model.cpp:125-135 at
+        // 074a2219; src/storage/flexible_ngram_kyotodb.h:282-308 at 074a2219.
+        // Policy-accepted on bdb, kc: docs/findings/eio-tool-check-messages.md; the pin's own
+        // result is in fixtures/contract-policy/eio-tool-check-messages.json.
+        // Platform exception, macos: exit(ENODATA) is 96 on macOS and 61 on Linux.
+        #[case::kmm_prune_existing_empty(
+            TempDir::new().unwrap(),
+            &["empty.db"],
+            b"",
+            &[("empty.db", b"".as_slice())],
+            if CELL == "tkrzw" { &["empty.db"][..] } else { &[] },
+            Run {
+                status: match CELL {
+                    "bdb" | "tkrzw" => if cfg!(target_os = "macos") {
+                        Exit(96)
+                    } else {
+                        Exit(61)
+                    },
+                    "kc" => Signal(6),
+                    _ => unreachable!("unknown cell {CELL}"),
+                },
+                stdout: Exact(b""),
+                stderr: match CELL {
+                    "bdb" => b"BDB0004 fop_read_meta: empty.db: unexpected file type or format\nno magic header in k mixture model.\n",
+                    "kc" => b"",
+                    "tkrzw" => b"no magic header in k mixture model.\n",
+                    _ => unreachable!("unknown cell {CELL}"),
+                },
+                files: match CELL {
+                    "bdb" => &[],
+                    "kc" => &[
+                        ("empty.db", KC_EMPTY_TREE_DB),
+                    ],
+                    "tkrzw" => &[
+                        ("empty.db", NO_ROWS),
+                    ],
+                    _ => unreachable!("unknown cell {CELL}"),
+                },
+            },
+        )]
+        // kmm-prune-help: utils/training/prune_k_mixture_model.cpp at 074a2219: 107-191;
+        // k_mixture_model.h:40-95.
+        // Platform exception, stdout.glib-*: GLib spells the help placeholder [OPTION?],
+        // [OPTION…] or [OPTION...] by version and locale; the case accepts any of them.
+        #[case::kmm_prune_help(
+            TempDir::new().unwrap(),
+            &["--help"],
+            b"",
+            &[],
+            &[],
+            Run {
+                status: Exit(0),
+                stdout: GlibOption(include_str!("fixtures/prune_k_mixture_model/help.txt")),
+                stderr: b"",
+                files: &[],
+            },
+        )]
+        // kmm-prune-wrong-args: utils/training/prune_k_mixture_model.cpp at 074a2219: 107-191;
+        // k_mixture_model.h:40-95.
+        #[case::kmm_prune_wrong_args(
+            TempDir::new().unwrap(),
+            &[],
+            b"",
+            &[],
+            &[],
+            Run {
+                status: Exit(22),
+                stdout: Exact(b""),
+                stderr: WRONG_ARGUMENTS,
+                files: &[],
+            },
+        )]
+        fn captured_cases(
+            #[case] directory: TempDir,
+            #[case] args: &[&str],
+            #[case] stdin: &[u8],
+            #[case] files: &[(&str, &[u8])],
+            #[case] dbm_files: &[&str],
+            #[case] expected: Run,
+        ) {
+            for (name, content) in files {
+                directory
+                    .child(name)
+                    .write_binary(content)
+                    .expect("input bytes");
+            }
+            let inputs = snapshot_inputs(directory.path());
+            let mut output = cargo_bin_cmd!("prune_k_mixture_model")
+                .current_dir(directory.path())
+                .env("LC_ALL", "C")
+                .args(args)
+                .write_stdin(stdin)
+                .timeout(Duration::from_secs(300))
+                .output()
+                .expect("run prune_k_mixture_model");
+            output.stderr = mask_glib_prefix(&output.stderr);
+            check(
+                output,
+                &inventory(directory.path(), &inputs, dbm_files, &[], &[], &[]),
+                &inputs,
+                &expected,
+            );
+        }
+    }
+    mod validate_k_mixture_model {
+        use crate::common::expected::*;
+        use crate::common::{inventory, mask_glib_prefix, snapshot_inputs};
+        use assert_cmd::cargo::cargo_bin_cmd;
+        use assert_fs::{TempDir, prelude::*};
+        use rstest::rstest;
+        use std::time::Duration;
+
+        use super::WRONG_ARGUMENTS;
+        use crate::common::CELL;
+        use crate::fixtures::w3;
+
+        const NO_MAGIC_HEADER: &[u8] =
+            b"no magic header in k mixture model.\nk mixture model validation failed.\n";
+
+        #[rstest]
+        // kmm-validate-bad-option: utils/training/validate_k_mixture_model.cpp at 074a2219:
+        // 141-173, 28-139; src/include/pinyin_utils.h:26-31.
+        #[case::kmm_validate_bad_option(
+            TempDir::new().unwrap(),
+            &["--bogus"],
+            b"",
+            &[],
+            Run {
+                status: Exit(22),
+                stdout: Exact(UNKNOWN_OPTION_BOGUS),
+                stderr: b"",
+                files: &[],
+            },
+        )]
+        // kmm-validate-existing-empty: utils/training/validate_k_mixture_model.cpp:157-170 at
+        // 074a2219.
+        // Policy-accepted on bdb: docs/findings/bdb-failed-handle.md; the pin's own result is
+        // in fixtures/contract-policy/bdb-failed-handle.json.
+        // Platform exception, macos: exit(ENODATA) is 96 on macOS and 61 on Linux.
+        #[case::kmm_validate_existing_empty(
+            TempDir::new().unwrap(),
+            &["empty.db"],
+            b"",
+            &[("empty.db", b"".as_slice())],
+            Run {
+                status: if cfg!(target_os = "macos") {
+                    Exit(96)
+                } else {
+                    Exit(61)
+                },
+                stdout: Exact(b""),
+                stderr: match CELL {
+                    "bdb" => b"BDB0004 fop_read_meta: empty.db: unexpected file type or format\nno magic header in k mixture model.\nk mixture model validation failed.\n",
+                    "kc" | "tkrzw" => NO_MAGIC_HEADER,
+                    _ => unreachable!("unknown cell {CELL}"),
+                },
+                files: &[],
+            },
+        )]
+        // kmm-validate-good: utils/training/validate_k_mixture_model.cpp at 074a2219: 141-173,
+        // 28-139; src/include/pinyin_utils.h:26-31.
+        #[case::kmm_validate_good(
+            w3(),
+            &["k_mixture_model.db"],
+            b"",
+            &[],
+            Run {
+                status: Exit(0),
+                stdout: Exact(b""),
+                stderr: b"",
+                files: &[],
+            },
+        )]
+        // kmm-validate-help: utils/training/validate_k_mixture_model.cpp at 074a2219: 141-173,
+        // 28-139; src/include/pinyin_utils.h:26-31.
+        // Platform exception, stdout.glib-*: GLib spells the help placeholder [OPTION?],
+        // [OPTION…] or [OPTION...] by version and locale; the case accepts any of them.
+        #[case::kmm_validate_help(
+            TempDir::new().unwrap(),
+            &["--help"],
+            b"",
+            &[],
+            Run {
+                status: Exit(0),
+                stdout: GlibOption("Usage:\n  validate_k_mixture_model [OPTION?] - validate k mixture model\n\nHelp Options:\n  -h, --help       Show help options\n\n"),
+                stderr: b"",
+                files: &[],
+            },
+        )]
+        // kmm-validate-missing-file: utils/training/validate_k_mixture_model.cpp at 074a2219:
+        // 141-173, 28-139; src/include/pinyin_utils.h:26-31.
+        // Policy-accepted on bdb: docs/findings/bdb-failed-handle.md; the pin's own result is
+        // in fixtures/contract-policy/bdb-failed-handle.json.
+        // Platform exception, macos: exit(ENODATA) is 96 on macOS and 61 on Linux.
+        #[case::kmm_validate_missing_file(
+            TempDir::new().unwrap(),
+            &["absent.db"],
+            b"",
+            &[],
+            Run {
+                status: if cfg!(target_os = "macos") {
+                    Exit(96)
+                } else {
+                    Exit(61)
+                },
+                stdout: Exact(b""),
+                stderr: NO_MAGIC_HEADER,
+                files: &[],
+            },
+        )]
+        // kmm-validate-wrong-args: utils/training/validate_k_mixture_model.cpp at 074a2219:
+        // 141-173, 28-139; src/include/pinyin_utils.h:26-31.
+        #[case::kmm_validate_wrong_args(
+            TempDir::new().unwrap(),
+            &[],
+            b"",
+            &[],
+            Run {
+                status: Exit(22),
+                stdout: Exact(b""),
+                stderr: WRONG_ARGUMENTS,
+                files: &[],
+            },
+        )]
+        // kmm-validate-zero-header: utils/training/validate_k_mixture_model.cpp at 074a2219:
+        // 141-173, 28-139; src/include/pinyin_utils.h:26-31.
+        // Platform exception, macos: exit(ENODATA) is 96 on macOS and 61 on Linux.
+        #[case::kmm_validate_zero_header(
+            w3(),
+            &["k_mixture_model_zero.db"],
+            b"",
+            &[],
+            Run {
+                status: if cfg!(target_os = "macos") {
+                    Exit(96)
+                } else {
+                    Exit(61)
+                },
+                stdout: Exact(b""),
+                stderr: b"word count in magic header is unexpected zero.\nk mixture model validation failed.\n",
+                files: &[],
+            },
+        )]
+        fn captured_cases(
+            #[case] directory: TempDir,
+            #[case] args: &[&str],
+            #[case] stdin: &[u8],
+            #[case] files: &[(&str, &[u8])],
+            #[case] expected: Run,
+        ) {
+            for (name, content) in files {
+                directory
+                    .child(name)
+                    .write_binary(content)
+                    .expect("input bytes");
+            }
+            let inputs = snapshot_inputs(directory.path());
+            let mut output = cargo_bin_cmd!("validate_k_mixture_model")
+                .current_dir(directory.path())
+                .env("LC_ALL", "C")
+                .args(args)
+                .write_stdin(stdin)
+                .timeout(Duration::from_secs(300))
+                .output()
+                .expect("run validate_k_mixture_model");
+            output.stderr = mask_glib_prefix(&output.stderr);
+            check(
+                output,
+                &inventory(directory.path(), &inputs, &[], &[], &[], &[]),
+                &inputs,
+                &expected,
+            );
+        }
+    }
+}

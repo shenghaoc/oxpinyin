@@ -1,0 +1,10 @@
+Usage:
+  gen_binary_files [OPTION?] - generate binary files
+
+Help Options:
+  -h, --help            Show help options
+
+Application Options:
+  --table-dir           table directory
+  --gen-punct-table     generate punctuation table
+

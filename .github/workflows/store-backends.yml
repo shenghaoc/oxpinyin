@@ -151,7 +151,8 @@ jobs:
           # a path under crates/oxpinyin-store/, a feature = "<backend>" line
           # in a changed non-Markdown file, or a Cargo.toml line naming a
           # backend. --also adds this workflow's own infrastructure: the
-          # workflow, the backend provisioning under tools/bdb, tools/tkrzw and
+          # workflow, the utilities' per-cell tests and their data under
+          # crates/oxpinyin-utils, the backend provisioning under tools/bdb, tools/tkrzw and
           # .github/actions/tkrzw, the contract-verify action,
           # service (tools/dev/test_runner.py), the toolchain pins (the
           # sanitizer nightly is in fuzz/rust-toolchain.toml) and this gate's
@@ -159,6 +160,7 @@ jobs:
           python3 tools/bisection/cells-for-diff.py --run-flag \
             --also .github/workflows/store-backends.yml \
             --also .github/workflows/ci.yml \
+            --also crates/oxpinyin-utils/ \
             --also tools/dev/ci_tree.py \
             --also tools/dev/ci_tree.test.py \
             --also tools/bisection/cells-for-diff.py \

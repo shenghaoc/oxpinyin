@@ -9,6 +9,8 @@
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::panic))]
 
+pub mod fixed_tmp;
+
 pub mod gen_pinyin_table;
 
 pub mod pin_tests;

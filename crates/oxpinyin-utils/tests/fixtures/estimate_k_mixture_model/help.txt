@@ -1,0 +1,10 @@
+Usage:
+  estimate_k_mixture_model [OPTION?] - estimate k mixture model
+
+Help Options:
+  -h, --help                Show help options
+
+Application Options:
+  --bigram-file             the bigram file
+  --deleted-bigram-file     the deleted bigram file
+

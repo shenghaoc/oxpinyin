@@ -141,7 +141,7 @@ if Path(sys.argv[0]).name == 'import_interpolation':
     def test_inventory_resolves_to_copied_executable_ports(self):
         self.assertEqual(self.stage(), 0)
         self.assert_inventory()
-        ports = {binary['name'] for binary in self.manifest['bin']} - {'dbm_rows'}
+        ports = {binary['name'] for binary in self.manifest['bin']}
         installed = {path.name for path in (self.target / 'utils').glob('*/*')}
         self.assertEqual(installed, ports)
         self.assertEqual(len(installed), 21)
