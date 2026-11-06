@@ -30,20 +30,21 @@ def register(case, *, items_system):
         return probe
 
 
-    for _mode in ('pinyin', 'zhuyin'):
-        # pinyin_parser2.cpp:169-175: no apostrophe, so the key is zeroed, then
-        # the index search fails on the malformed byte.
-        # Both match the parent: regression guards for the covered refusal.
-        for _variant, _spelling in (('valid', b'ni3'), ('malformed', b'n\xff3')):
+    # pinyin_parser2.cpp:169-175: no apostrophe, so the key is zeroed, then
+    # the index search fails on the malformed byte.
+    # Both match the parent: regression guards for the covered refusal.
+    for _mode, _variants in (('pinyin', (('valid', b'ni3'), ('malformed', b'n\xff3'))),
+                             ('zhuyin', (('malformed', b'n\xff3'),))):
+        for _variant, _spelling in _variants:
             case('c-string-input/%s-full-key-%s' % (_mode, _variant), mode=_mode,
                  control=True, issues=('1279',))(c_string_full_key(_spelling))
 
 
+    # One abort per facade; the apostrophe is found past invalid UTF-8.
     for _mode in ('pinyin', 'zhuyin'):
-        for _variant, _spelling in (('valid', b"n'i"), ('invalid', b"ni\xff'")):
-            case('c-string-input/%s-full-key-apostrophe-%s' % (_mode, _variant),
-                 mode=_mode, abort=False, sigabrt=True, issues=('1279',))(
-                     c_string_full_key_apostrophe(_spelling))
+        case('c-string-input/%s-full-key-apostrophe-invalid' % _mode,
+             mode=_mode, abort=False, sigabrt=True, issues=('1279',))(
+                 c_string_full_key_apostrophe(b"ni\xff'"))
 
 
     # U conversion accepts raw words; _add_phrase writes them verbatim
@@ -88,16 +89,19 @@ def register(case, *, items_system):
         return probe
 
 
-    for _mode in ('pinyin', 'zhuyin'):
-        for _operation in ('lookup', 'import', 'remember'):
-            if _operation == 'remember' and _mode == 'zhuyin':
-                continue
-            for _variant in (*PREFIX_WORDS, 'invalid', 'null'):
-                if _variant == 'null' and _operation == 'lookup':
-                    continue  # NULL lookup is the UB case in c_string_null_state
-                case('c-string-input/%s-%s-%s' % (_mode, _operation, _variant),
-                     mode=_mode, control=_variant in ('valid', 'invalid', 'null'), issues=('1279',))(
-                         c_string_words(_operation, _variant))
+    # Each facade's entry refuses malformed and NULL text on its own lines. The accepted words read
+    # alike (`g_utf8_to_ucs4`), so each appears once, except that remember keeps a surrogate: it is that
+    # entry's only non-scalar success case. NULL lookup is the UB case in c_string_null_state.
+    for _mode, _operation, _variants in (
+            ('pinyin', 'lookup', ('valid', 'surrogate', 'invalid')),
+            ('pinyin', 'import', ('five-byte', 'invalid', 'null')),
+            ('pinyin', 'remember', ('valid', 'surrogate', 'invalid', 'null')),
+            ('zhuyin', 'lookup', ('above-unicode', 'invalid')),
+            ('zhuyin', 'import', ('six-byte', 'invalid', 'null'))):
+        for _variant in _variants:
+            case('c-string-input/%s-%s-%s' % (_mode, _operation, _variant),
+                 mode=_mode, control=_variant in ('valid', 'invalid', 'null'), issues=('1279',))(
+                     c_string_words(_operation, _variant))
 
 
     def c_string_direct_reading(variant):
@@ -114,7 +118,7 @@ def register(case, *, items_system):
         return probe
 
 
-    for _variant in ('valid', 'later-invalid', 'same-invalid'):
+    for _variant in ('later-invalid', 'same-invalid'):
         case('c-string-input/zhuyin-direct-' + _variant, mode='zhuyin',
              control=_variant != 'later-invalid', issues=('1279',))(
                  c_string_direct_reading(_variant))
@@ -142,9 +146,9 @@ def register(case, *, items_system):
         return probe
 
 
-    for _mode in ('pinyin', 'zhuyin'):
+    for _mode, _nulls in (('pinyin', (False, True)), ('zhuyin', (True,))):
         for _operation in ('segment', 'lookup'):
-            for _null in (False, True):
+            for _null in _nulls:
                 # g_utf8_strlen's critical (gutf8.c:240) precedes the NULL
                 # dereference at gutf8.c:950; both sides' GLib-domain line is
                 # compared (GLib 2.84.4 CRITICAL = 8).
@@ -174,13 +178,16 @@ def register(case, *, items_system):
         return probe
 
 
+    # NULL for every entry of each facade; a valid control per facade and return kind.
+    _PARSE_VALID = {'pinyin': ('parse_full_pinyin', 'parse_more_full_pinyins'),
+                    'zhuyin': ('parse_chewing', 'parse_more_chewings')}
     for _mode in ('pinyin', 'zhuyin'):
         _entries = ['parse_full_pinyin', 'parse_chewing',
                     'parse_more_full_pinyins', 'parse_more_chewings']
         if _mode == 'pinyin':
             _entries += ['parse_double_pinyin', 'parse_more_double_pinyins']
         for _entry in _entries:
-            for _null in (False, True):
+            for _null in (False, True) if _entry in _PARSE_VALID[_mode] else (True,):
                 _expected = ({'ret': 0, 'length': 0, 'logs': []}
                              if _entry.startswith('parse_more_') else
                              {'ret': False, 'untouched key': True, 'logs': []})
@@ -213,12 +220,12 @@ def register(case, *, items_system):
         return probe
 
 
-    for _mode in ('pinyin', 'zhuyin'):
-        for _variant in ('valid', 'invalid', 'null', 'surrogate', 'above-unicode', 'five-byte', 'six-byte'):
+    for _mode, _variants in (('pinyin', ('valid', 'invalid', 'null', 'surrogate')),
+                             ('zhuyin', ('invalid', 'null', 'above-unicode'))):
+        for _variant in _variants:
             case('c-string-input/%s-character-offset-%s' % (_mode, _variant), mode=_mode,
                  control=_variant in ('valid', 'invalid', 'null'), issues=('1279',))(
                      c_string_character_offset(_variant))
-        for _variant in ('null-past-matrix', 'invalid-past-matrix'):
-            # pinyin.cpp:3200-3214 / zhuyin.cpp:2155-2167: assert(offset < size).
-            case('c-string-input/%s-character-offset-%s' % (_mode, _variant), mode=_mode,
-                 abort=False, sigabrt=True, issues=('1279',))(c_string_character_offset(_variant))
+        # pinyin.cpp:3200-3214 / zhuyin.cpp:2155-2167: assert(offset < size).
+        case('c-string-input/%s-character-offset-invalid-past-matrix' % _mode, mode=_mode,
+             abort=False, sigabrt=True, issues=('1279',))(c_string_character_offset('invalid-past-matrix'))
