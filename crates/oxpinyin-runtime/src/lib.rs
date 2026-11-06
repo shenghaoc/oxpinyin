@@ -135,6 +135,11 @@ pub enum OpenError {
     /// ([`oxpinyin_user::JournalFault`], rows 91 and 108): the open stops at
     /// that library, after `check_format`'s writes, and the C adapters abort.
     Journal(oxpinyin_user::JournalFault),
+    /// The user session could not be built after the library loop handed
+    /// it the system libraries ([`oxpinyin_user::UserStoreError::SessionSeed`],
+    /// or another failure of the open past `check_format`). The pin's
+    /// counterparts die, and the C adapters abort.
+    UserSession(oxpinyin_user::UserStoreError),
 }
 
 /// [`Runtime::reload_system_libraries`]'s result.
@@ -208,7 +213,8 @@ impl OpenError {
             | Self::Lm(_)
             | Self::UnknownDatabaseFormat(_)
             | Self::TableConf(_)
-            | Self::Journal(_) => None,
+            | Self::Journal(_)
+            | Self::UserSession(_) => None,
         }
     }
 
@@ -251,6 +257,7 @@ impl core::fmt::Display for OpenError {
             ),
             Self::TableConf(error) => write!(f, "table.conf: {error}"),
             Self::Journal(fault) => write!(f, "journal replay: {fault}"),
+            Self::UserSession(error) => write!(f, "user session: {error}"),
         }
     }
 }
@@ -2097,18 +2104,16 @@ fn check_profile_early(
     }
 }
 
-/// Opens the optional user dir: `check_format`'s `user.conf` half.
+/// Opens the user dir's session over the libraries the loop maps:
+/// `check_format`'s `user.conf` half has already run
+/// ([`check_profile_early`]).
 ///
-/// A bad user dir does not fail the open — the C ABI degrades to "no user
-/// state" — but it must not vanish silently either: those failures go to
-/// stderr like upstream's own loader notes, and the store's wipe
-/// (non-conforming profile cleaned) is logged inside `open_libpinyin`.
-///
-/// One failure is not a degradation. A `user.conf` whose `database
+/// A failure is never a degraded open. A `user.conf` whose `database
 /// format:` upstream cannot map is where `check_format` `abort()`s
-/// (`table_info.cpp:132`), and the class-(c) answer is a failed open:
-/// [`OpenError::UnknownDatabaseFormat`], with nothing cleaned and no
-/// marker written — upstream never reaches its wipe either.
+/// (`table_info.cpp:132`): [`OpenError::UnknownDatabaseFormat`]. The loop's
+/// first fault is the pin's. Anything else fails after the loop handed the
+/// session the system libraries, where the pin dies
+/// ([`OpenError::UserSession`]).
 fn open_user_store(
     conf: &TableConf,
     user_dir: &Path,
@@ -2116,24 +2121,17 @@ fn open_user_store(
     rows: &LibraryLoopRows<'_>,
     law: UserConfLaw,
     check: oxpinyin_user::ProfileCheck,
-) -> Result<Option<UserStore>, OpenError> {
+) -> Result<UserStore, OpenError> {
     let versions = SystemVersions::from_conf(conf);
-    let opened = UserStore::open_libpinyin_checked(user_dir, originals, rows, versions, law, check);
-    match opened {
-        Ok(store) => Ok(Some(store)),
-        Err(UserStoreError::UnknownDatabaseFormat) => {
-            Err(OpenError::UnknownDatabaseFormat(user_dir.to_path_buf()))
-        }
-        Err(UserStoreError::LibraryLoop(stop)) => Err(library_loop_error(stop)),
-        Err(error) => {
-            let user_dir = user_dir.display();
-            eprintln!(
-                "oxpinyin: user store degraded to no-user-state \
-                 (user dir {user_dir}: {error})"
-            );
-            Ok(None)
-        }
-    }
+    UserStore::open_libpinyin_checked(user_dir, originals, rows, versions, law, check).map_err(
+        |error| match error {
+            UserStoreError::UnknownDatabaseFormat => {
+                OpenError::UnknownDatabaseFormat(user_dir.to_path_buf())
+            }
+            UserStoreError::LibraryLoop(stop) => library_loop_error(stop),
+            error => OpenError::UserSession(error),
+        },
+    )
 }
 
 /// The library loop's fault, as the open's answer.
@@ -2153,9 +2151,9 @@ impl Runtime {
     /// tkrzw and Berkeley DB), the per-library chunk files, and optionally
     /// `punct.bin` and the addon DBM pair — the backend's native data
     /// directory, opened as is.
-    /// When `user_dir` is given, the learning store opens too (its
-    /// creation or read failure degrades to "no user state", matching the
-    /// C ABI so a bad user dir cannot fail init), under libpinyin's
+    /// When `user_dir` is given, the learning store opens too (an
+    /// unreadable or partial profile loads per file as the pin's does, so a
+    /// bad user dir cannot fail init), under libpinyin's
     /// `user.conf` law ([`UserConfLaw::Pinyin`]). An empty `user_dir` is
     /// given, not absent: it is the working directory, as `pinyin_init`'s
     /// `""` is, and stays relative for the life of the store.
@@ -2169,7 +2167,8 @@ impl Runtime {
     /// Returns [`OpenError`] when `table.conf` is one `SystemTableInfo2::load`
     /// refuses, missing included (maintainer ruling 2026-10-28 UTC, D3), or
     /// when a required file is missing or a DBM or chunk file cannot be
-    /// opened.
+    /// opened, and [`OpenError::UserSession`] where the user session cannot
+    /// be built after the libraries were handed to it.
     pub fn open(system_dir: &Path, user_dir: Option<&Path>) -> Result<Self, OpenError> {
         Self::open_with_law(system_dir, user_dir, UserConfLaw::Pinyin)
     }
@@ -2248,7 +2247,7 @@ impl Runtime {
         let rows = LibraryLoopRows::new(system_dir, &conf, user_dir);
         let opened = match (user_dir, early) {
             (Some(dir), Some(check)) => {
-                open_user_store(&conf, dir, &mut originals, &rows, law, check)
+                open_user_store(&conf, dir, &mut originals, &rows, law, check).map(Some)
             }
             _ => rows
                 .map_libraries(&mut originals)
@@ -2266,7 +2265,7 @@ impl Runtime {
                         law,
                     )
                     .map(Some)
-                    .map_err(|error| OpenError::Dict(DictError::Parse(error.to_string())))
+                    .map_err(OpenError::UserSession)
                 }),
         };
         // The one exit from the loop. The pin wrote each absent library's
@@ -2459,6 +2458,9 @@ impl Runtime {
                 Some(oxpinyin_user::TrainingFault::SetFreqMiss(token)) => {
                     Err(EngineError::TrainingSetFreqMiss { token })
                 }
+                Some(oxpinyin_user::TrainingFault::FailedUserBigramStore(token)) => {
+                    Err(EngineError::FailedUserBigramStore { token })
+                }
                 None => Err(EngineError::UserModel(error)),
             },
             Err(error) => Err(error),
@@ -2471,7 +2473,8 @@ impl Runtime {
                     | EngineError::StaleTrainingSpan { .. }
                     | EngineError::UnsafeTrainingPredecessor { .. }
                     | EngineError::ShortTrainingPredecessor { .. }
-                    | EngineError::TrainingSetFreqMiss { .. })
+                    | EngineError::TrainingSetFreqMiss { .. }
+                    | EngineError::FailedUserBigramStore { .. })
         ) {
             user.mark_modified();
         }

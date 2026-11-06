@@ -265,9 +265,25 @@ impl SharedDb {
             .close_unsynced();
     }
 
-    /// Opens the user bigram's unnamed hash database.
-    pub(crate) fn open_in_memory_hash() -> Result<Self, StoreError> {
-        Db::open_in_memory_hash().map(Self::new)
+    /// [`Db::open_in_memory_hash_attach`] on a shared handle: the user
+    /// bigram's unnamed hash database.
+    pub(crate) fn open_in_memory_hash_attach() -> Result<Option<Self>, StoreError> {
+        Ok(Db::open_in_memory_hash_attach()?.map(Self::new))
+    }
+
+    /// [`Self::open_in_memory_hash_attach`]'s answer when the open fails at
+    /// `step`, for the user bigram's injected-failure tests: the outcome
+    /// goes through [`attach_outcome`], as a real failure does.
+    #[cfg(test)]
+    pub(crate) fn failed_in_memory_hash_attach(
+        step: FailedStep,
+    ) -> Result<Option<Self>, StoreError> {
+        let error = StoreError::Backend("injected".into());
+        Ok(attach_outcome::<Db>(Err(match step {
+            FailedStep::Create => OpenFailure::Create(error),
+            FailedStep::Open => OpenFailure::Open(error),
+        }))?
+        .map(Self::new))
     }
 
     /// Opens the session's unnamed ordered database.
@@ -391,13 +407,24 @@ impl Db {
 
     /// An in-memory `DB_HASH` — `DB->open` with a null file name, as
     /// libpinyin's `Bigram::load_db` creates the user bigram it works on
-    /// (`ngram_bdb.cpp:51-56`: `DB_HASH, DB_CREATE, 0600`).
-    pub(crate) fn open_in_memory_hash() -> Result<Self, StoreError> {
-        Self::open_at(None, DB_HASH, false, true, USER_FILE_MODE)
+    /// (`ngram_bdb.cpp:51-56`: `DB_HASH, DB_CREATE, 0600`), with the pin's
+    /// answers (`:51-57`): `Ok(None)` when the native `DB->open`
+    /// failed, after its handle was closed (Berkeley DB requires
+    /// `DB->close` then, `dbopen.html`, 5.3.28; compatibility register row
+    /// 113).
+    ///
+    /// # Errors
+    ///
+    /// A linked libdb this backend does not support.
+    ///
+    /// A failed `db_create` aborts the process, where the pin asserts
+    /// (`ngram_bdb.cpp:51-52` at 074a2219; [`attach_outcome`]).
+    pub(crate) fn open_in_memory_hash_attach() -> Result<Option<Self>, StoreError> {
+        attach_outcome(Self::open_steps(None, DB_HASH, false, true, USER_FILE_MODE))
     }
 
     /// An in-memory `DB_BTREE` — the same null-file-name form as
-    /// [`Self::open_in_memory_hash`], ordered: the session store a
+    /// [`Self::open_in_memory_hash_attach`], ordered: the session store a
     /// libpinyin profile is loaded into.
     pub(crate) fn open_in_memory_tree() -> Result<Self, StoreError> {
         Self::open_at(None, DB_BTREE, false, true, USER_FILE_MODE)
@@ -424,12 +451,11 @@ impl Db {
     /// A path that contains NUL, or a linked libdb this backend does not
     /// support: neither is a failed attach.
     ///
-    /// # Panics
-    ///
-    /// When `db_create` fails, where every pin `attach` asserts or aborts
-    /// (`chewing_large_table2_bdb.cpp:87-88`, `phrase_large_table3_bdb.cpp:
-    /// 102-103`, `punct_table_bdb.cpp:64-65`, `ngram_bdb.cpp:116-117`,
-    /// `flexible_ngram_bdb.h:106-108` at 074a2219).
+    /// A failed `db_create` aborts the process, where every pin `attach`
+    /// asserts or aborts (`chewing_large_table2_bdb.cpp:87-88`,
+    /// `phrase_large_table3_bdb.cpp:102-103`, `punct_table_bdb.cpp:64-65`,
+    /// `ngram_bdb.cpp:116-117`, `flexible_ngram_bdb.h:106-108` at 074a2219;
+    /// [`attach_outcome`]).
     pub(crate) fn open_attach(
         path: &Path,
         db_type: DBTYPE,
@@ -772,6 +798,16 @@ impl Db {
 //   off-page-duplicate branch (src/db/db_cam.c:868), past those cited.
 unsafe impl Send for Db {}
 
+/// The open step an injected failure stops at.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum FailedStep {
+    /// `db_create`.
+    Create,
+    /// The native `DB->open`.
+    Open,
+}
+
 /// The step at which [`Db::open_steps`] stopped.
 #[derive(Debug)]
 enum OpenFailure {
@@ -793,21 +829,22 @@ impl OpenFailure {
 
 /// [`Db::open_attach`]'s answer for one open: only a failed native
 /// `DB->open` is a failed attach.
-#[cfg_attr(
-    not(test),
-    expect(
-        clippy::panic,
-        clippy::panic_in_result_fn,
-        reason = "every pin attach asserts or aborts on a failed db_create \
-                  (chewing_large_table2_bdb.cpp:87-88, flexible_ngram_bdb.h:106-108)"
-    )
-)]
+///
+/// A failed `db_create` ends the process with `std::process::abort()`, the
+/// register's abort rule. Every pin attach dies there: `assert(0 == ret)`
+/// in the tables' and the bigram's `attach` and the user bigram's `load_db`
+/// (`chewing_large_table2_bdb.cpp:87-88`, `phrase_large_table3_bdb.cpp:
+/// 102-103`, `punct_table_bdb.cpp:64-65`, `ngram_bdb.cpp:51-52`, `:116-117`)
+/// and `abort()` in `FlexibleBigram::attach` (`flexible_ngram_bdb.h:106-108`
+/// at 074a2219). Nothing is written first: an `abort()` writes nothing, and
+/// glibc's `Assertion … failed.` line is the register's policy-accepted
+/// missing line.
 fn attach_outcome<T>(opened: Result<T, OpenFailure>) -> Result<Option<T>, StoreError> {
     match opened {
         Ok(db) => Ok(Some(db)),
         Err(OpenFailure::Open(_)) => Ok(None),
         Err(OpenFailure::Before(error)) => Err(error),
-        Err(OpenFailure::Create(error)) => panic!("Berkeley DB attach: {error}"),
+        Err(OpenFailure::Create(_)) => std::process::abort(),
     }
 }
 
@@ -1082,10 +1119,19 @@ mod tests {
         assert!(attach_outcome::<u8>(Err(OpenFailure::Before(backend()))).is_err());
     }
 
+    /// Every pin attach dies where `db_create` fails, and so does this:
+    /// SIGABRT, with no Rust panic text or other line before it.
+    #[cfg(unix)]
     #[test]
-    #[should_panic(expected = "Berkeley DB attach")]
-    fn a_failed_db_create_panics_where_the_pin_asserts() {
-        let _ = attach_outcome::<u8>(Err(OpenFailure::Create(StoreError::Backend("x".into()))));
+    fn a_failed_db_create_aborts_where_the_pin_asserts() {
+        let stderr = crate::death_test::assert_aborts(
+            "bdb::ffi::tests::a_failed_db_create_aborts_where_the_pin_asserts",
+            || {
+                let _ =
+                    attach_outcome::<u8>(Err(OpenFailure::Create(StoreError::Backend("x".into()))));
+            },
+        );
+        assert!(stderr.is_empty(), "{}", String::from_utf8_lossy(&stderr));
     }
     use std::sync::{Arc, mpsc};
     use std::time::Duration;
@@ -1127,7 +1173,7 @@ mod tests {
 
     #[test]
     fn existence_checks_count_empty_values_and_miss_absent_keys() {
-        let db = SharedDb::open_in_memory_hash().unwrap();
+        let db = SharedDb::open_in_memory_hash_attach().unwrap().unwrap();
         db.put(b"empty", b"").unwrap();
         db.put(b"full", b"value").unwrap();
         assert!(db.exists(b"empty").unwrap());
@@ -1396,7 +1442,7 @@ mod tests {
     fn unnamed_opens_use_the_pins_unthreaded_create_flags() {
         for db in [
             SharedDb::open_in_memory_tree().unwrap(),
-            SharedDb::open_in_memory_hash().unwrap(),
+            SharedDb::open_in_memory_hash_attach().unwrap().unwrap(),
         ] {
             let guard = db.lock();
             let get_flags = method!(guard.handle, get_open_flags, "DB->get_open_flags").unwrap();

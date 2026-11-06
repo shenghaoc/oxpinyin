@@ -56,8 +56,9 @@ impl CapiContext {
     pub(crate) fn try_new(system_dir: &Path, user_dir: Option<&Path>) -> Result<Self, OpenFailure> {
         // W8 fork-bootstrap wiring lives in the shared assembly: the
         // constructor opens the DBM handles and chunk mappings, installs λ
-        // from table.conf when present, degrades an unusable user dir to
-        // "no learning", and wires addons + punctuation.
+        // from table.conf when present, opens the user dir's session (an
+        // unreadable profile loads per file, as the pin's does), and wires
+        // addons + punctuation.
         let core = ContextCore::try_open(
             system_dir,
             user_dir,

@@ -60,53 +60,66 @@ pub extern "C" fn zhuyin_init(
             handle
         }
         Err(error) => {
-            // Register row 44, `table_info.cpp:132` via `:353-354`: the
-            // pin's `check_format` loads `user.conf` first and aborts on a
-            // `database format:` token it does not know, before it writes
-            // or unlinks anything (`zhuyin.cpp:126-132`); the open stopped
-            // at the same point.
-            if error.unknown_database_format() {
-                std::process::abort();
-            }
-            if let Some(conf_error) = error.table_conf_error()
-                && table_conf_aborts(conf_error, &system_path)
-            {
-                std::process::abort();
-            }
-            // Register rows 91 and 108: a default library's `.dbin` merge
-            // reached `next_record`'s `assert(token == null_token)`
-            // (`phrase_index_logger.h:202`) or `add_phrase_item`'s unigram
-            // read (`memory_chunk.h:390`, via `phrase_index.cpp:457`,
-            // `:215`). The open stopped there, after `check_format`'s
-            // writes and the libraries before it, as the pin's init does.
-            if error.journal_fault().is_some() {
-                std::process::abort();
-            }
-            // Register row 96, `memory_chunk.h:493`: a default library is a
-            // directory whose reported size passes the header check and the
-            // pin's `MemoryChunk::mmap` asserts on reading it. The open stopped
-            // there, after `check_format`'s writes and the libraries before it.
-            if error.chunk_header_read() {
-                std::process::abort();
-            }
-            if let Some(conf_error) = error.table_conf_error() {
-                // A `table.conf` the pin refuses is `false` and one raw
-                // line (after the load's own `open %s failed.` when it
-                // could not be opened, #545); one it dies on without an
-                // assert or `abort()` (class (b): the missing source format
-                // line, a row without a chunk where the directory does not
-                // read as one) is one warning (#694, #525).
-                match conf_error.warning() {
-                    Some(text) => crate::ffi::log_warning(text),
-                    None => oxpinyin_data::c_stderr::table_conf_load_failed(Some(&system_path)),
-                }
-            } else {
-                crate::ffi::log_warning(&format!(
-                    "zhuyin_init: {error} (systemdir {system_path:?})"
-                ));
-            }
+            refuse_init(&error, &system_path);
             ptr::null_mut()
         }
+    }
+}
+
+/// `zhuyin_init`'s answer for a failed open, before it returns NULL: the
+/// process aborts where the pin dies, and a refusal writes the pin's line or
+/// one warning.
+fn refuse_init(error: &oxpinyin_facade::OpenFailure, system_path: &std::path::Path) {
+    // Register row 44, `table_info.cpp:132` via `:353-354`: the
+    // pin's `check_format` loads `user.conf` first and aborts on a
+    // `database format:` token it does not know, before it writes
+    // or unlinks anything (`zhuyin.cpp:126-132`); the open stopped
+    // at the same point.
+    if error.unknown_database_format() {
+        std::process::abort();
+    }
+    if let Some(conf_error) = error.table_conf_error()
+        && table_conf_aborts(conf_error, system_path)
+    {
+        std::process::abort();
+    }
+    // Register rows 91 and 108: a default library's `.dbin` merge
+    // reached `next_record`'s `assert(token == null_token)`
+    // (`phrase_index_logger.h:202`) or `add_phrase_item`'s unigram
+    // read (`memory_chunk.h:390`, via `phrase_index.cpp:457`,
+    // `:215`). The open stopped there, after `check_format`'s
+    // writes and the libraries before it, as the pin's init does.
+    if error.journal_fault().is_some() {
+        std::process::abort();
+    }
+    // The user session could not be built once the library loop had
+    // handed it the system libraries: the session store's seed, a
+    // loaded item's placement, or the user bigram's container. The
+    // pin dies at each counterpart (`std::bad_alloc`, or
+    // `ngram_bdb.cpp:51-52`'s assert), after the same writes.
+    if error.user_session_fault() {
+        std::process::abort();
+    }
+    // Register row 96, `memory_chunk.h:493`: a default library is a
+    // directory whose reported size passes the header check and the
+    // pin's `MemoryChunk::mmap` asserts on reading it. The open stopped
+    // there, after `check_format`'s writes and the libraries before it.
+    if error.chunk_header_read() {
+        std::process::abort();
+    }
+    if let Some(conf_error) = error.table_conf_error() {
+        // A `table.conf` the pin refuses is `false` and one raw
+        // line (after the load's own `open %s failed.` when it
+        // could not be opened, #545); one it dies on without an
+        // assert or `abort()` (class (b): the missing source format
+        // line, a row without a chunk where the directory does not
+        // read as one) is one warning (#694, #525).
+        match conf_error.warning() {
+            Some(text) => crate::ffi::log_warning(text),
+            None => oxpinyin_data::c_stderr::table_conf_load_failed(Some(system_path)),
+        }
+    } else {
+        crate::ffi::log_warning(&format!("zhuyin_init: {error} (systemdir {system_path:?})"));
     }
 }
 
@@ -212,5 +225,30 @@ pub extern "C" fn zhuyin_save(context: *mut ZhuyinContext) -> bool {
         // written and renamed in place (`zhuyin.cpp:554-617`).
         oxpinyin_facade::SaveOutcome::ChunkHeaderRead => std::process::abort(),
         outcome => outcome.is_saved(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// The session could not be built once the library loop had handed it
+    /// the system libraries (`OpenError::UserSession`): the pin dies at each
+    /// counterpart. No input makes those steps fail, so the open's answer
+    /// is handed to the init's refusal directly.
+    #[test]
+    fn a_user_session_fault_aborts_the_init() {
+        let stderr = crate::test_support::assert_aborts(
+            "context::tests::a_user_session_fault_aborts_the_init",
+            || {
+                let error = oxpinyin_facade::OpenFailure::Runtime(
+                    oxpinyin_runtime::OpenError::UserSession(
+                        oxpinyin_user::UserStoreError::SessionSeed("injected".into()),
+                    ),
+                );
+                super::refuse_init(&error, std::path::Path::new("system"));
+            },
+        );
+        // No Rust panic text or other line: the pin writes none here but
+        // glibc's assert line, the register's policy-accepted missing line.
+        assert!(stderr.is_empty(), "{}", String::from_utf8_lossy(&stderr));
     }
 }

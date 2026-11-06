@@ -68,6 +68,7 @@ pub(crate) fn refuse_lookup_gram(name: &str, error: &oxpinyin_engine::EngineErro
         | oxpinyin_engine::EngineError::UnsafeTrainingPredecessor { .. }
         | oxpinyin_engine::EngineError::ShortTrainingPredecessor { .. }
         | oxpinyin_engine::EngineError::TrainingSetFreqMiss { .. }
+        | oxpinyin_engine::EngineError::FailedUserBigramStore { .. }
         | oxpinyin_engine::EngineError::StaleTrainingSpan { .. }
         | oxpinyin_engine::EngineError::OverlongUserIndexKey { .. }
         | oxpinyin_engine::EngineError::ReduceTokensCount { .. }

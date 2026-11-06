@@ -828,9 +828,18 @@ pub struct KcUserBigramDb {
 impl crate::UserBigramDb for KcUserBigramDb {
     fn empty() -> Result<Self, StoreError> {
         // `m_db = new StashDB; m_db->open("-", …)`; `reset()` synchronizes
-        // before it closes (`ngram_kyotodb.cpp:43-50`).
+        // before it closes (`ngram_kyotodb.cpp:43-61`). The pin's `return
+        // false` after that open cannot be reached: a fresh `StashDB` refuses
+        // an open only when it is already open (`kcstashdb.h:640-661`), and
+        // its bucket allocation throws `std::bad_alloc` (`kcutil.cc:165`),
+        // which no pin frame catches, so the process ends. A refused open is
+        // that impossible case, and it ends here too.
+        let (db, opened) = Db::open_retained(Path::new("-"), DbType::Stash, false, true)?;
+        if !opened {
+            std::process::abort();
+        }
         Ok(Self {
-            db: Db::open_stash()?.with_reset_sync(),
+            db: db.with_reset_sync(),
         })
     }
 

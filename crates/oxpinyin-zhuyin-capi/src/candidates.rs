@@ -278,7 +278,13 @@ pub extern "C" fn zhuyin_train(instance: *mut ZhuyinInstance) -> bool {
 
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
-    match unsafe { crate::state::train_instance(instance, 0) } {
+    train_answer(unsafe { crate::state::train_instance(instance, 0) })
+}
+
+/// `zhuyin_train`'s answer for its training result: the process aborts where the
+/// pin dies, and a class (b) refusal is `false` with one warning.
+fn train_answer(result: Result<bool, oxpinyin_engine::EngineError>) -> bool {
+    match result {
         Ok(trained) => trained,
         // Register rows 6 and 82: `phonetic_lookup.h:868` (a forcing added
         // after the last sentence lookup no longer matches the decoded
@@ -292,11 +298,16 @@ pub extern "C" fn zhuyin_train(instance: *mut ZhuyinInstance) -> bool {
         // `memory_chunk.h:390` (a predecessor's gram too short for its
         // total) and `phonetic_lookup.h:903` (on an unsorted gram the step's
         // `set_freq` misses the item its `insert_freq` added).
+        //
+        // `phonetic_lookup.h:904`: the step's `store` into the failed
+        // Berkeley DB user bigram container answers false, and its
+        // `check_result` dies (register row 113).
         Err(
             oxpinyin_engine::EngineError::StaleTrainingConstraint { .. }
             | oxpinyin_engine::EngineError::StaleTrainingSpan { .. }
             | oxpinyin_engine::EngineError::ShortTrainingPredecessor { .. }
-            | oxpinyin_engine::EngineError::TrainingSetFreqMiss { .. },
+            | oxpinyin_engine::EngineError::TrainingSetFreqMiss { .. }
+            | oxpinyin_engine::EngineError::FailedUserBigramStore { .. },
         ) => std::process::abort(),
         // Class (b), `ngram.cpp:190`, `:241`, `:261`: training would
         // load a predecessor whose value has a partial item tail, which the
@@ -396,5 +407,27 @@ pub fn snapshot_candidates(
             source_index: u32::try_from(window_index).unwrap_or(u32::MAX),
             span_begin: u32::try_from(span_begin).unwrap_or(u32::MAX),
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// `phonetic_lookup.h:904`: training stores into the failed Berkeley DB
+    /// user bigram container and the pin's `check_result` dies. Only
+    /// running out of memory makes that container, so the training answer
+    /// is handed to the refusal directly.
+    #[test]
+    fn a_store_into_the_failed_user_bigram_aborts_training() {
+        let stderr = crate::test_support::assert_aborts(
+            "candidates::tests::a_store_into_the_failed_user_bigram_aborts_training",
+            || {
+                super::train_answer(Err(oxpinyin_engine::EngineError::FailedUserBigramStore {
+                    token: 0x0100_0001,
+                }));
+            },
+        );
+        // No Rust panic text or other line: the pin writes none here but
+        // glibc's assert line, the register's policy-accepted missing line.
+        assert!(stderr.is_empty(), "{}", String::from_utf8_lossy(&stderr));
     }
 }
