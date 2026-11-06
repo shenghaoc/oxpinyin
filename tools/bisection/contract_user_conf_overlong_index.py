@@ -144,6 +144,17 @@ def register(case, *, _craft_db):
         return probe
 
 
+    # Every edit is a case of the shared parse and test: `UserTableInfo::load` reads the four fields
+    # (`table_info.cpp:325-370`) and `is_conform` tests the versions, the database format and the
+    # counter in turn (`table_info.cpp:399-413`). Both facades' `check_format` call it
+    # (`pinyin.cpp:172-218`, `zhuyin.cpp:126-163`); what differs is what follows. libpinyin makes the
+    # marker conform, counts the open and saves it before it wipes, and libzhuyin does none of that and
+    # only wipes on a mismatch. So libpinyin keeps every edit, and libzhuyin keeps a conforming and a
+    # non-conforming version edit, which reach its two branches, and the counter edit, the one field
+    # only libpinyin also rewrites.
+    _ZHUYIN_920 = ('version-overflow-conforms', 'version-overflow-nonconforms',
+                   'counter-overflow-nonconforms')
+
     def _user_conf_920_case(name, edit, keep_state, control):
         """Register the edited-marker case for both facades under issue 920.
 
@@ -151,6 +162,8 @@ def register(case, *, _craft_db):
         registry; both cases share the requested edit and state-retention check.
         """
         for mode in ('pinyin', 'zhuyin'):
+            if mode == 'zhuyin' and name not in _ZHUYIN_920:
+                continue
             suffix = '-zhuyin' if mode == 'zhuyin' else ''
             case('user-conf-920-' + name + suffix, mode=mode, issues=('920',),
                  control=control)(_user_conf_920_session(edit, keep_state))
