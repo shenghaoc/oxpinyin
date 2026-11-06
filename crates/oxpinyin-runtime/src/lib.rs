@@ -61,8 +61,8 @@ use oxpinyin_data::{
 };
 use oxpinyin_engine::{ConfigSource, EngineError, Session, StoragePaths};
 use oxpinyin_user::{
-    ItemOrigin, LiveSystemItems, PinyinKey, SaveBaseline, SystemLibrary, UnigramAdd, UserConfLaw,
-    UserLookup, UserStore, UserStoreError,
+    ItemOrigin, LibraryLoopRows, LibraryLoopStop, LiveSystemItems, PinyinKey, SaveBaseline,
+    SystemLibrary, UnigramAdd, UserConfLaw, UserLookup, UserStore, UserStoreError,
 };
 
 /// Orders the system and user phrase-table suggestion tokens the way
@@ -2113,20 +2113,18 @@ fn open_user_store(
     conf: &TableConf,
     user_dir: &Path,
     originals: &mut oxpinyin_user::SystemOriginals,
+    rows: &LibraryLoopRows<'_>,
     law: UserConfLaw,
     check: oxpinyin_user::ProfileCheck,
 ) -> Result<Option<UserStore>, OpenError> {
     let versions = SystemVersions::from_conf(conf);
-    let opened = UserStore::open_libpinyin_checked(user_dir, originals, versions, law, check);
+    let opened = UserStore::open_libpinyin_checked(user_dir, originals, rows, versions, law, check);
     match opened {
         Ok(store) => Ok(Some(store)),
         Err(UserStoreError::UnknownDatabaseFormat) => {
             Err(OpenError::UnknownDatabaseFormat(user_dir.to_path_buf()))
         }
-        Err(UserStoreError::Journal(fault)) => Err(OpenError::Journal(fault)),
-        Err(UserStoreError::LibraryChunkHeaderRead) => Err(OpenError::Dict(DictError::Library(
-            LibraryError::Row(RowFault::ChunkHeaderRead),
-        ))),
+        Err(UserStoreError::LibraryLoop(stop)) => Err(library_loop_error(stop)),
         Err(error) => {
             let user_dir = user_dir.display();
             eprintln!(
@@ -2135,6 +2133,15 @@ fn open_user_store(
             );
             Ok(None)
         }
+    }
+}
+
+/// The library loop's fault, as the open's answer.
+fn library_loop_error(stop: LibraryLoopStop) -> OpenError {
+    match stop {
+        LibraryLoopStop::Row(site) => OpenError::TableConf(TableConfError::Abort(site)),
+        LibraryLoopStop::Library(error) => OpenError::Dict(DictError::Library(error)),
+        LibraryLoopStop::Journal(fault) => OpenError::Journal(fault),
     }
 }
 
@@ -2208,66 +2215,22 @@ impl Runtime {
         // `zhuyin.cpp:279-284`).
         let conf = TableConf::load_from_dir(system_dir).map_err(OpenError::TableConf)?;
         let early = check_profile_early(&conf, user_dir, law)?;
-        // The init loop over the default rows runs after `check_format`
-        // (`pinyin.cpp:344`, `:377-392`), so a profile judgement has been
-        // written when it dies.
-        if let Err((index, site)) = conf.check_default_rows(user_dir) {
-            // The rows before it were mapped and their lines written; a
-            // row without a user file maps its own chunk first (the log
-            // `load` that asserts comes after, `pinyin.cpp:268-271`).
-            let through = site == oxpinyin_data::table_info::TableConfSite::NullUserFile;
-            for path in conf.absent_default_libraries(system_dir, index, through) {
-                unmapped(&path);
-            }
-            return Err(OpenError::TableConf(TableConfError::Abort(site)));
-        }
-        let bigram = oxpinyin_input::path::build_path(
-            system_dir,
-            std::ffi::OsStr::new(&SystemDbm::Bigram.file_name()),
-        );
-
-        let (dict, libraries) = SystemDictionary::attach_with(system_dir, &conf)
-            .map_err(OpenError::Dict)?
-            .into_parts();
-        let mut originals =
-            oxpinyin_user::system_originals(libraries, UserFileLayout::from_conf(&conf));
-        // Register row 96: the library loop maps each default library and
-        // merges its `.dbin` in order (`pinyin.cpp:377-392`,
-        // `zhuyin.cpp:318-334`); `MemoryChunk::mmap` asserts on a library
-        // that is a directory (`memory_chunk.h:493`). The open stopped there;
-        // the earlier libraries' logs are merged (a merge can assert first,
-        // rows 91 and 108) and the fault is returned at that point, after
-        // `check_format`'s writes.
-        if let Some(stop) = originals.phrase_libraries().chunk_header_fault() {
-            if let (Some(dir), Some(check)) = (user_dir, early)
-                && let Err(error) = open_user_store(&conf, dir, &mut originals, law, check)
-            {
-                if let OpenError::Journal(fault) = &error {
-                    for path in originals
-                        .phrase_libraries()
-                        .unmapped_before(fault.library(), true)
-                    {
-                        unmapped(path);
-                    }
-                }
-                return Err(error);
-            }
-            // The libraries before it were mapped and their lines written.
-            for path in originals.phrase_libraries().unmapped_before(stop, false) {
-                unmapped(path);
-            }
-            return Err(OpenError::Dict(DictError::Library(LibraryError::Row(
-                RowFault::ChunkHeaderRead,
-            ))));
-        }
-        // The loaded-library mask is shared with the language model: an
-        // unloaded library's items leave both the lookups and the unigram
-        // denominator, as freeing the sub-index does upstream.
+        // The pin attaches the system tables before its library loop
+        // (`pinyin.cpp:350-373`, `zhuyin.cpp:294-316`).
+        let dict = SystemDictionary::attach_tables(system_dir, &conf).map_err(OpenError::Dict)?;
+        // The library mask is shared with the language model: an unloaded
+        // library's items leave both the lookups and the unigram denominator,
+        // as freeing the sub-index does upstream.
         let library_mask = AtomicU32::new(0);
-        let mut lm = oxpinyin_data::lm::BigramTables::attach(&bigram).map_err(OpenError::Lm)?;
-        // λ is the `gfloat` table.conf's scanner read.
-        lm.set_lambda_from_conf(&conf);
-
+        let mut originals = oxpinyin_user::system_originals(
+            oxpinyin_data::phrase_libraries::PhraseLibraries::empty(),
+            UserFileLayout::from_conf(&conf),
+        );
+        // The library loop: each default row is judged, mapped and merged
+        // before the next (`pinyin.cpp:377-392`, `zhuyin.cpp:318-334`), after
+        // `check_format`'s writes (`pinyin.cpp:344`), so the first fault is
+        // the pin's and nothing past it is touched.
+        //
         // `None` has transient user state without a directory (#642). An
         // empty path is a user directory like any other: the pin keeps
         // `g_strdup("")` (`pinyin.cpp:332`, `zhuyin.cpp:276`) and
@@ -2282,42 +2245,43 @@ impl Runtime {
         // check_format, the session runs in memory, and `pinyin_save`
         // writes the pin's files — a same-backend libpinyin picks them
         // up seamlessly.
-        let user = match (user_dir, early) {
+        let rows = LibraryLoopRows::new(system_dir, &conf, user_dir);
+        let opened = match (user_dir, early) {
             (Some(dir), Some(check)) => {
-                match open_user_store(&conf, dir, &mut originals, law, check) {
-                    Ok(user) => user,
-                    // Rows 91 and 108: the loop died merging library `library`'s
-                    // log, after mapping it and every library before it.
-                    Err(error @ OpenError::Journal(fault)) => {
-                        for path in originals
-                            .phrase_libraries()
-                            .unmapped_before(fault.library(), true)
-                        {
-                            unmapped(path);
-                        }
-                        return Err(error);
-                    }
-                    Err(error) => return Err(error),
-                }
+                open_user_store(&conf, dir, &mut originals, &rows, law, check)
             }
-            _ => Some(
-                UserStore::open_transient(
-                    std::mem::replace(
-                        &mut originals,
-                        oxpinyin_user::SystemOriginals::new(
-                            Default::default(),
-                            UserFileLayout::from_conf(&conf),
+            _ => rows
+                .map_libraries(&mut originals)
+                .map_err(library_loop_error)
+                .and_then(|()| {
+                    UserStore::open_transient(
+                        std::mem::replace(
+                            &mut originals,
+                            oxpinyin_user::SystemOriginals::new(
+                                Default::default(),
+                                UserFileLayout::from_conf(&conf),
+                            ),
                         ),
-                    ),
-                    SystemVersions::from_conf(&conf),
-                    law,
-                )
-                .map_err(|error| OpenError::Dict(DictError::Parse(error.to_string())))?,
-            ),
+                        SystemVersions::from_conf(&conf),
+                        law,
+                    )
+                    .map(Some)
+                    .map_err(|error| OpenError::Dict(DictError::Parse(error.to_string())))
+                }),
         };
-
-        // The init loop wrote each absent library's line as it mapped it
-        // (`pinyin.cpp:253-256` within `:377-392`); none of them stopped it.
+        // The one exit from the loop. The pin wrote each absent library's
+        // line as it reached it (`pinyin.cpp:253-256` within `:377-392`); the
+        // list holds only the libraries this loop reached, and none of them
+        // stopped it.
+        let user = match opened {
+            Ok(user) => user,
+            Err(error) => {
+                for path in originals.phrase_libraries().unmapped() {
+                    unmapped(path);
+                }
+                return Err(error);
+            }
+        };
         for path in user
             .as_ref()
             .map_or(&originals, UserStore::originals)
@@ -2326,6 +2290,16 @@ impl Runtime {
         {
             unmapped(path);
         }
+
+        // The bigram follows the library loop (`pinyin.cpp:394-397`,
+        // `zhuyin.cpp:336-339`).
+        let bigram = oxpinyin_input::path::build_path(
+            system_dir,
+            std::ffi::OsStr::new(&SystemDbm::Bigram.file_name()),
+        );
+        let mut lm = oxpinyin_data::lm::BigramTables::attach(&bigram).map_err(OpenError::Lm)?;
+        // λ is the `gfloat` table.conf's scanner read.
+        lm.set_lambda_from_conf(&conf);
 
         let addons = RwLock::new(AddonSet {
             dict: match law {

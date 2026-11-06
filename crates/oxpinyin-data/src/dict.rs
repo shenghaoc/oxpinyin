@@ -443,39 +443,15 @@ impl SystemDictionary {
             phrase_index,
             library_dir,
             SYSTEM_LIBRARY_FILES,
-            false,
-            false,
         )
     }
 
-    /// [`Self::open`] with the libraries `conf`'s `SYSTEM_FILE` rows name,
-    /// mapped as `pinyin_init`'s library loop maps them: a library that is a
-    /// directory the pin's `MemoryChunk::mmap` asserts on stops the open
-    /// there (`memory_chunk.h:493`), keeping the libraries before it
-    /// ([`PhraseLibraries::chunk_header_fault`]); the caller returns the
-    /// fault after it merged their logs.
+    /// [`Self::open`] with the libraries `conf`'s `SYSTEM_FILE` rows name.
     ///
     /// # Errors
     ///
     /// As [`Self::open`].
     pub fn open_with(system_dir: &Path, conf: &TableConf) -> Result<Self, DictError> {
-        Self::open_with_mode(system_dir, conf, false)
-    }
-
-    /// Opens the runtime's system tables, retaining failed attaches as the
-    /// pin does on every backend.
-    ///
-    /// # Errors
-    /// Returns configuration/chunk errors and failures before native attach.
-    pub fn attach_with(system_dir: &Path, conf: &TableConf) -> Result<Self, DictError> {
-        Self::open_with_mode(system_dir, conf, true)
-    }
-
-    fn open_with_mode(
-        system_dir: &Path,
-        conf: &TableConf,
-        retain_failed: bool,
-    ) -> Result<Self, DictError> {
         let stems: Vec<(u8, &FileName)> = conf
             .system_libraries()
             .filter_map(|(index, row)| row.system.as_ref().map(|file| (index, file)))
@@ -491,13 +467,36 @@ impl SystemDictionary {
             ),
             system_dir,
             &stems,
-            true,
-            retain_failed,
         )?;
-        dict.tables.user_nibbles = conf
-            .user_libraries()
-            .fold(0, |mask, (index, _)| mask | (1_u32 << index));
+        dict.tables.user_nibbles = user_nibbles(conf);
         Ok(dict)
+    }
+
+    /// Attaches the runtime's system tables, retaining failed attaches as
+    /// the pin does on every backend. No phrase library is mapped: the
+    /// pin's init attaches these before its library loop
+    /// (`pinyin.cpp:350-373`, `zhuyin.cpp:294-316`).
+    ///
+    /// # Errors
+    /// Returns failures before native attach.
+    pub fn attach_tables(system_dir: &Path, conf: &TableConf) -> Result<SystemTables, DictError> {
+        Ok(SystemTables {
+            pinyin: ChewingTable::new(crate::chewing_table::DefaultDbm::attach(
+                &oxpinyin_input::path::build_path(
+                    system_dir,
+                    std::ffi::OsStr::new(&SystemDbm::PinyinIndex.file_name()),
+                ),
+                false,
+            )?),
+            phrase: PhraseTable::new(crate::chewing_table::DefaultDbm::attach(
+                &oxpinyin_input::path::build_path(
+                    system_dir,
+                    std::ffi::OsStr::new(&SystemDbm::PhraseIndex.file_name()),
+                ),
+                false,
+            )?),
+            user_nibbles: user_nibbles(conf),
+        })
     }
 
     fn open_files_with(
@@ -505,37 +504,22 @@ impl SystemDictionary {
         phrase_index: &Path,
         library_dir: &Path,
         stems: &[(u8, impl AsRef<std::ffi::OsStr>)],
-        stop_at_header_fault: bool,
-        retain_failed: bool,
     ) -> Result<Self, DictError> {
-        let (pinyin, phrase) = if retain_failed {
-            (
-                ChewingTable::new(crate::chewing_table::DefaultDbm::attach(
-                    pinyin_index,
-                    false,
-                )?),
-                PhraseTable::new(crate::chewing_table::DefaultDbm::attach(
-                    phrase_index,
-                    false,
-                )?),
-            )
-        } else {
-            (open_tree(pinyin_index)?, open_phrase_table(phrase_index)?)
-        };
-        let libraries = if stop_at_header_fault {
-            PhraseLibraries::open_to_header_fault(library_dir, stems)?
-        } else {
-            PhraseLibraries::open(library_dir, stems)?
-        };
         Ok(Self {
             tables: SystemTables {
-                pinyin,
-                phrase,
+                pinyin: open_tree(pinyin_index)?,
+                phrase: open_phrase_table(phrase_index)?,
                 user_nibbles: 0,
             },
-            libraries,
+            libraries: PhraseLibraries::open(library_dir, stems)?,
         })
     }
+}
+
+/// The sub-indexes of `conf`'s `USER_FILE` rows, as a bit mask.
+fn user_nibbles(conf: &TableConf) -> u32 {
+    conf.user_libraries()
+        .fold(0, |mask, (index, _)| mask | (1_u32 << index))
 }
 
 impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTables>>
