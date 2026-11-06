@@ -130,13 +130,24 @@ def register(case):
         case(f'missing-system-dbm/bdb-{name}', mode=facade, cells=('bdb',), policy_record=RECORD,
              stderr=True, userdir=True, issues=('1516',))(probe)
 
+    # A lifecycle case is the clean init and fini with no operations. It is not an `operations` case
+    # without the exercise: the exercise trains and saves, so the lifecycle leaves one file in the user
+    # directory where the operations case leaves eleven, in the frozen rows. Every lifecycle result is
+    # the same, since the attach of a missing table is ignored, so each facade keeps one, on a different
+    # kind of table: libpinyin's bigram and libzhuyin's phrase index. A table libzhuyin never attaches
+    # (`zhuyin.cpp:301,312,338` open three) is never opened, so removing it leaves `zhuyin-intact`'s
+    # outcome in every frozen row; one overlay stays, the import that `zhuyin-intact` does not make.
+    LIFECYCLE_KEPT = (('pinyin', 'bigram'), ('zhuyin', 'phrase'))
     for facade in ('pinyin', 'zhuyin'):
         for table in TABLES:
-            for operation in ('lifecycle', 'operations'):
-                missing(f'{facade}-{table}-{operation}', facade, table,
-                        missing_case(table, operation == 'operations'))
-            missing(f'{facade}-{table}-overlay', facade, table,
-                    missing_case(table, True, overlay=True))
+            unattached = table not in ATTACHED[facade]
+            if (facade, table) in LIFECYCLE_KEPT:
+                missing(f'{facade}-{table}-lifecycle', facade, table, missing_case(table, False))
+            if not unattached:
+                missing(f'{facade}-{table}-operations', facade, table, missing_case(table, True))
+            if not unattached or table == 'punctuation':
+                missing(f'{facade}-{table}-overlay', facade, table,
+                        missing_case(table, True, overlay=True))
         case(f'missing-system-dbm/{facade}-intact', mode=facade, control=True,
              stderr=True, userdir=True, issues=('1516',))(missing_case(None, True))
         missing(f'{facade}-pinyin-unloaded', facade, 'pinyin',

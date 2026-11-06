@@ -55,11 +55,18 @@ class MissingSystemDbmTests(unittest.TestCase):
             plain = name.replace('/bdb-', '/')
             self.assertEqual(cases[plain]['cells'], ('kc', 'tkrzw'), plain)
             self.assertNotIn('policy_record', cases[plain])
-        self.assertEqual(len(twins), 19 + 10)
+        self.assertEqual(len(twins), 14 + 8)
+        unattached = cases['missing-system-dbm/zhuyin-punctuation-overlay']
+        self.assertNotIn('cells', unattached)
+        self.assertNotIn('policy_record', unattached)
         for table in ('punctuation', 'addon-pinyin', 'addon-phrase'):
-            unattached = cases[f'missing-system-dbm/zhuyin-{table}-operations']
-            self.assertNotIn('cells', unattached)
-            self.assertNotIn('policy_record', unattached)
+            for operation in ('lifecycle', 'operations'):
+                self.assertNotIn(f'missing-system-dbm/zhuyin-{table}-{operation}', cases)
+        self.assertEqual(sorted(name for name in cases if name.endswith('-lifecycle')),
+                         ['missing-system-dbm/bdb-pinyin-bigram-lifecycle',
+                          'missing-system-dbm/bdb-zhuyin-phrase-lifecycle',
+                          'missing-system-dbm/pinyin-bigram-lifecycle',
+                          'missing-system-dbm/zhuyin-phrase-lifecycle'])
         for facade in ('pinyin', 'zhuyin'):
             intact = cases[f'missing-system-dbm/{facade}-intact']
             self.assertNotIn('cells', intact)
