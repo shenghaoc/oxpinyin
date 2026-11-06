@@ -7,7 +7,8 @@ newer tool passes, an older one fails with the minimum and the version found,
 and an absent one is reported with its installation step. Each report line
 names the resolved executable. Bash is required at the floor declared in
 tools/lib/bash-floor.sh on Linux and macOS and reported as not applicable on
-Windows, whose native recipes use PowerShell 7; ShellCheck is advisory at 0.11.0 because only the lint
+Windows, whose native recipes use pwsh at the floor in pwsh-floor.txt;
+ShellCheck is advisory at 0.11.0 because only the lint
 job needs it. Each tool's version is
 read in the format that tool prints and compared by that format's rules:
 semantic versioning for most (a pre-release of the minimum is older than it),
@@ -46,6 +47,7 @@ MANAGED_REQUEST = (Path(__file__).resolve().parents[2] / '.python-version').read
 PYTHON_MINIMUM = '3.15.0'
 PYTHON_BELOW = '3.16'
 UV_MINIMUM = '0.13.1'
+PWSH_MINIMUM = Path(__file__).with_name('pwsh-floor.txt').read_text().strip()
 
 
 class DoctorError(RuntimeError):
@@ -184,6 +186,7 @@ class Tool(NamedTuple):
     identity: str = ''  # when set, any other program under this name is reported as absent
     optional: bool = False  # report the version but do not fail collect when it is old or missing
     applies_to: tuple = ()  # sys.platform prefixes it is checked on; elsewhere it is not applicable
+    required: bool = False  # absence fails the check, rather than only reporting installation advice
 
 
 UV = _semver_format('uv')
@@ -210,6 +213,8 @@ def _parse_shellcheck(text):
 # justfile, .config/nextest.toml, uv.toml, setup.sh) doctor.test.py keeps the
 # two in step.
 TOOLS = (
+    Tool('pwsh', 'pwsh', ('--version',), _semver_format('PowerShell'), PWSH_MINIMUM,
+         'install PowerShell from docs/runbooks/setup.md#native-windows', platform='win32', required=True),
     Tool('bash', 'bash', ('--version',), Format(_parse_bash, _dotted_key), bash_floor.read_floor(),
          'brew install bash (macOS) and make env bash select it, or your distribution package',
          applies_to=('linux', 'darwin')),
@@ -352,6 +357,8 @@ def check_tool(tool, environ=None):
     environ = os.environ if environ is None else environ
     executable = shutil.which(tool.executable, path=environ.get('PATH'))
     if executable is None:
+        if tool.required:
+            raise DoctorError(f'{tool.name}: missing (requires {tool.minimum} or later; install: {tool.install})')
         return (f'{tool.name}: missing (requires {tool.minimum} or later; '
                 f'install: {tool.install})')
     result = _run([executable, *tool.arguments], environ)
@@ -391,6 +398,27 @@ def tool_lines(environ=None):
     return lines, failures
 
 
+def windows_compiler(environ):
+    """Find MSVC through the fixed Visual Studio Installer location, without PATH."""
+    root = environ.get('ProgramFiles(x86)', r'C:\Program Files (x86)')
+    vswhere = Path(root) / 'Microsoft Visual Studio/Installer/vswhere.exe'
+    result = _run([str(vswhere), '-latest', '-products', '*', '-requires',
+                   'Microsoft.VisualStudio.Component.VC.Tools.x86.x64',
+                   '-property', 'installationPath'], environ)
+    if result is None or result.returncode or not result.stdout.strip():
+        return 'missing (Visual Studio Installer found no MSVC C++ tools)'
+    installation = Path(result.stdout.strip().splitlines()[0])
+    try:
+        version = (installation / 'VC/Auxiliary/Build/Microsoft.VCToolsVersion.default.txt').read_text().strip()
+    except OSError:
+        return 'missing (MSVC default toolset version is unavailable)'
+    architecture = 'arm64' if platform.machine().upper() == 'ARM64' else 'x64'
+    compiler = installation / 'VC/Tools/MSVC' / version / 'bin' / f'Host{architecture}' / architecture / 'cl.exe'
+    if not compiler.is_file():
+        return f'missing (MSVC compiler not found at {compiler})'
+    return f'MSVC {version} at {compiler}'
+
+
 def host_lines(environ=None):
     """Collect OS, architecture, compiler, and available utility descriptions.
 
@@ -409,8 +437,14 @@ def host_lines(environ=None):
         lines.append(f'rust toolchain: {_first_line(_run([rustc, "--version"], environ)) or "unknown"}')
     else:
         lines.append('rust toolchain: missing (install rustup: https://rustup.rs)')
-    cc = shutil.which('cc')
-    lines.append(f'compiler: {(_first_line(_run([cc, "--version"], environ)) if cc else "missing") or "unknown"}')
+    if sys.platform == 'win32':
+        lines.append(f'compiler: {windows_compiler(environ)}')
+        shell = shutil.which('sh', path=environ.get('PATH'))
+        lines.append(f'tkrzw probe shell: sh at {shell}' if shell else
+                     "tkrzw probe shell: missing sh; put Git for Windows' usr\\bin on PATH")
+    else:
+        cc = shutil.which('cc')
+        lines.append(f'compiler: {(_first_line(_run([cc, "--version"], environ)) if cc else "missing") or "unknown"}')
     backends = ['pkg-config', 'db5.3_dump', 'kchashmgr', 'tkrzw_dbm_util']
     found = [f'{name}={"yes" if shutil.which(name) else "no"}' for name in backends]
     lines.append('native backend utilities: ' + ', '.join(found))
