@@ -53,7 +53,9 @@ fn utf8_c_api_paths_open_cjk_directories_and_files() {
     assert!(user.join("user.conf").is_file());
 }
 
-use oxpinyin_user::{FIRST_USER_TOKEN, SENTENCE_START, USER_DICTIONARY, UserStore};
+#[cfg(unix)]
+use oxpinyin_user::USER_DICTIONARY;
+use oxpinyin_user::{FIRST_USER_TOKEN, SENTENCE_START, UserStore};
 
 use crate::candidates::{
     pinyin_choose_candidate, pinyin_choose_predicted_candidate, pinyin_clear_constraint,

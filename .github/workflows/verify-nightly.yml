@@ -409,25 +409,10 @@ jobs:
       # installs pkgconf:x64-windows itself; it is listed so its build is
       # cached under the same key.
       VCPKG_PACKAGES: glib:x64-windows pkgconf:x64-windows
-      # The workspace crates this lane leaves out, each for a reason other
-      # than GLib, which the job provisions:
-      # - oxpinyin-kmm: like oxpinyin-utils it links GLib through
-      #   oxpinyin-input's `tools` boundary, which this lane does not
-      #   provision; macOS installs GLib and tests it.
-      # - oxpinyin-capi and oxpinyin-zhuyin-capi: excluded since 2026-09-08
-      #   for GLib, which no longer applies; with GLib they build and link,
-      #   but three of their tests fail on Windows for other reasons (nightly
-      #   run 41182461287): both `locale` tests need the C.UTF-8 locale,
-      #   which Windows lacks, and zhuyin's e2e
-      #   zhuyin_launches_never_move_the_open_counter fails after opening
-      #   user.conf under %TEMP% fails. Windows-only; #1475.
-      # oxpinyin-utils and oxpinyin-training, once excluded for GLib alone,
-      # are in the lane: they link it through oxpinyin-input's `tools`
-      # boundary (glib-sys and libc, with no hand-declared GLib data
-      # symbol).
-      WINDOWS_EXCLUDES: >-
-        --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
-        --exclude oxpinyin-kmm
+      # All workspace crates are in this lane. GLib supplies the tools
+      # boundary. The C-ABI locale tests select the Windows UTF-8 locale;
+      # text expectations use the host newline. KMM's native tests pass.
+      WINDOWS_EXCLUDES: ""
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

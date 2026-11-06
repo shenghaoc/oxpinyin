@@ -39,15 +39,19 @@ impl Drop for RestoreNumericLocale {
 }
 
 /// A failed init still inherits table_info.cpp's LC_NUMERIC reset at the
-/// pin (074a2219). C.UTF-8 is glibc's built-in UTF-8 locale (2.35+).
+/// pin (074a2219). The setup locale is the host's UTF-8 locale.
 #[test]
 fn a_failed_init_leaves_lc_numeric_at_c() {
     let _restore = RestoreNumericLocale(numeric_locale());
+    let utf8_locale = if cfg!(windows) { c".UTF-8" } else { c"C.UTF-8" };
     // SAFETY: the literal is NUL-terminated and outlives the call. No
     // other test or thread in this executable can change the locale.
-    let installed = unsafe { setlocale(LC_NUMERIC, c"C.UTF-8".as_ptr()) };
-    assert!(!installed.is_null(), "missing input: the C.UTF-8 locale");
-    assert_eq!(numeric_locale().as_c_str(), c"C.UTF-8");
+    let installed = unsafe { setlocale(LC_NUMERIC, utf8_locale.as_ptr()) };
+    assert!(
+        !installed.is_null(),
+        "missing input: {utf8_locale:?} locale"
+    );
+    assert_eq!(numeric_locale().as_c_str(), utf8_locale);
 
     let context = pinyin_capi::pinyin_init(c"".as_ptr(), c"".as_ptr());
     assert!(context.is_null());

@@ -350,18 +350,21 @@ pub mod logs {
     }
 
     /// A null-token `MODIFY_HEADER`.
+    #[cfg(unix)]
     #[must_use]
     pub fn header() -> Vec<u8> {
         record(4, 0, &[4, 0, 0, 0, 0, 0, 0, 0, 0, 0])
     }
 
     /// An ADD of a one-byte payload (row 108).
+    #[cfg(unix)]
     #[must_use]
     pub fn short_add() -> Vec<u8> {
         record(1, 0x0100_0005, &[1, 0, 1])
     }
 
     /// An ADD of a six-byte item at slot `0x99`.
+    #[cfg(unix)]
     #[must_use]
     pub fn add() -> Vec<u8> {
         record(1, 0x0100_0099, &[6, 0, 0, 0, 1, 0, 0, 0])
