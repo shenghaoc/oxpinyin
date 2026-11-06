@@ -258,8 +258,9 @@ jobs:
   #   - Record freely, threshold almost nothing. A flag means "a human should
   #     look", never "this merge is bad".
   #   - The series localizes WHEN a level moved, not WHY. The environment is
-  #     recorded with each sample, and a move across an environment change is
-  #     reported as unattributable rather than flagged.
+  #     recorded with each sample and keys the stored baseline, so a move
+  #     across an environment change starts a new baseline rather than being
+  #     flagged.
   #   - Only the schedule writes the series. A workflow_dispatch run measures
   #     and reports, but must never become the predecessor the next real
   #     night compares against.
@@ -315,60 +316,93 @@ jobs:
       # install would break once it passes the pinned Rust. Any cargo-c at or above the minimum
       # that `just doctor` reports builds the same objects (docs/packaging.md, "Regeneration").
       - run: cargo install cargo-c --version 0.10.25 --locked
-      # Its own cache namespace: perf-snapshot-, disjoint from fuzz-corpus-.
+      - name: Measure
+        run: >
+          uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev
+          measure snapshot --out snapshot.json --backend tkrzw --series-dir perf-inputs
+      # The baseline lives in actions/cache under a key that carries the
+      # environment the snapshot records (runner image, toolchain, kernel,
+      # backend, fixtures, harness). A changed environment finds no entry, so
+      # tonight starts a new baseline instead of flagging a move the series
+      # cannot attribute. The key is read from the snapshot, so this restore
+      # follows the measurement.
+      # Its own cache namespace: perf-snapshot-v2-, disjoint from fuzz-corpus-.
       # Same latest-wins shape the fuzz soak uses — the run-id key always
       # misses so a save always happens, the prefix restore-key always loads
-      # the newest save. A miss is normal (first run, or an eviction) and the
-      # lane reports "nothing to compare" rather than failing.
+      # the newest save for this environment. A miss is normal (first run, an
+      # eviction, or a new environment) and the lane reports "no predecessor"
+      # rather than failing.
       # restore/save split rather than the combined actions/cache, because the
-      # combined action's post step is `post-if: success()`. The compare step
-      # below exits non-zero on a flagged move, which would skip the save and
-      # drop the very sample that was flagged — the next night would then
-      # compare against an older predecessor and could miss the move entirely.
-      # Save explicitly, with `if: always()`, and fail after it.
-      - name: Restore the snapshot series
+      # combined action's post step is `post-if: success()`, which would skip
+      # the save after a flagged step and drop the very sample that was
+      # flagged. Save explicitly, with `if: always()`, and fail after it.
+      - name: Key the baseline by the recorded environment
+        id: baseline
+        run: echo "key=perf-snapshot-v2-$(cat perf-inputs/environment.key)" >> "$GITHUB_OUTPUT"
+      - name: Restore the baseline
+        id: restore
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .perf-series
-          key: perf-snapshot-${{ github.run_id }}
+          key: ${{ steps.baseline.outputs.key }}-${{ github.run_id }}
           restore-keys: |
-            perf-snapshot-
-      - name: Measure
-        run: uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev measure snapshot --out snapshot.json --backend tkrzw
-      # --append only on the schedule. A manual run gets the full report and
-      # writes nothing, so an off-cadence sample cannot silently become
-      # tomorrow's baseline.
-      # The exit status is captured rather than allowed to end the step, so the
-      # save below still runs. It is re-raised after the save.
-      - name: Compare against the previous night and report
-        id: compare
+            ${{ steps.baseline.outputs.key }}-
+      - name: Note a missing predecessor
+        if: steps.restore.outputs.cache-matched-key == ''
         run: |
-          set -uo pipefail
-          args=(--snapshot snapshot.json --series-dir .perf-series
-                --summary "$GITHUB_STEP_SUMMARY")
-          if [ "$GITHUB_EVENT_NAME" = schedule ]; then
-            args+=(--append)
-          fi
-          status=0
-          uv run --no-project --managed-python python -X lazy_imports=normal tools/perf-gate/series.py "${args[@]}" || status=$?
-          echo "status=$status" >> "$GITHUB_OUTPUT"
-          if [ "$status" -gt 1 ]; then
-            echo "::error::series.py failed with $status"
-            exit "$status"
-          fi
-      # Only the schedule writes, so a workflow_dispatch run cannot become the
-      # predecessor the next real night compares against.
-      - name: Save the snapshot series
-        if: always() && github.event_name == 'schedule'
+          {
+            echo "## Perf snapshot"
+            echo
+            echo "No predecessor for environment \`${KEY}\`: a first run, an evicted cache or a changed environment. Nothing is compared; a scheduled run records this sample as the baseline."
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          KEY: ${{ steps.baseline.outputs.key }}
+      # Two steps over one snapshot (tools/dev/measure/snapshot.py splits it).
+      # Only the deterministic metrics (section_sum, stripped_size,
+      # alloc_count_per_cycle, alloc_bytes_per_cycle, ir_oxpinyin_object) can
+      # fail the lane, at a 1% move; a metric the snapshot could not measure is
+      # absent from the input, never zero. The action appends this sample to
+      # its data file before it alerts, so a flagged sample is still saved
+      # below. It reads the commit from the API on schedule and dispatch
+      # events, so it gets the token and the exact SHA.
+      - name: Compare the deterministic metrics (can flag)
+        if: hashFiles('perf-inputs/flag.json') != ''
+        uses: benchmark-action/github-action-benchmark@4322e5726e6334590d251fc4f92bec0efafc45dc # v1.22.2
+        with:
+          name: perf-snapshot flagged
+          tool: customSmallerIsBetter
+          output-file-path: perf-inputs/flag.json
+          external-data-json-path: .perf-series/flag.json
+          max-items-in-chart: 30
+          alert-threshold: '101%'
+          fail-on-alert: true
+          summary-always: true
+          github-token: ${{ github.token }}
+          ref: ${{ github.sha }}
+      # RSS moves with the allocator, the kernel and the host: a trend to
+      # read, never a trigger. always() so a flagged step above does not hide
+      # this report; the missing-file guard covers a failed measurement.
+      - name: Report the trend metrics (never flags)
+        if: always() && hashFiles('perf-inputs/report.json') != ''
+        uses: benchmark-action/github-action-benchmark@4322e5726e6334590d251fc4f92bec0efafc45dc # v1.22.2
+        with:
+          name: perf-snapshot trend
+          tool: customSmallerIsBetter
+          output-file-path: perf-inputs/report.json
+          external-data-json-path: .perf-series/report.json
+          max-items-in-chart: 30
+          summary-always: true
+          github-token: ${{ github.token }}
+          ref: ${{ github.sha }}
+      # Only the schedule writes, so a workflow_dispatch run compares against
+      # the baseline but cannot become the predecessor the next real night
+      # compares against. Nothing to save when the measurement failed.
+      - name: Save the baseline
+        if: always() && github.event_name == 'schedule' && hashFiles('.perf-series/*.json') != ''
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .perf-series
-          key: perf-snapshot-${{ github.run_id }}
-      - name: Re-raise a flagged comparison
-        if: steps.compare.outputs.status == '1'
-        run: |
-          echo "::warning::a metric moved more than the attention threshold; see the job summary"
-          exit 1
+          key: ${{ steps.baseline.outputs.key }}-${{ github.run_id }}
       # The durable copy. The cache is evictable; artifacts are not, so the
       # history survives an eviction even though the night-over-night
       # comparison skips that one night. Uploaded whether or not the compare
@@ -572,7 +606,7 @@ jobs:
         run: |
           # Same pinned version as perf-snapshot; a fresh prefix includes the
           # actual provisioning cost rather than reusing a runner's cargo-c.
-          just heavy -- cargo install cargo-c --version 0.10.25 --locked --root "$RUNNER_TEMP/cargo-c"
+          cargo install cargo-c --version 0.10.25 --locked --root "$RUNNER_TEMP/cargo-c"
           echo "$RUNNER_TEMP/cargo-c/bin" >> "$GITHUB_PATH"
       - name: Check shipped macOS library exports
         run: |

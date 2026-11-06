@@ -104,8 +104,7 @@ class FakeTools(snapshot.Tools):
         self.readelf, self.nm = readelf, nm
         self.valgrind_status, self.callgrind_ir = valgrind_status, callgrind_ir
         self.answers = {('git', 'rev-parse', 'HEAD'): COMMIT,
-                        ('git', 'log', '-1', '--format=%H', '--', 'tools/bisection/bisect.c',
-                         'tools/perf-gate'): HARNESS_COMMIT,
+                        ('git', 'log', '-1', '--format=%H', '--', *snapshot.MEASUREMENT_PATHS): HARNESS_COMMIT,
                         ('uname', '-srvm'): 'Linux 6.8.0 #1 SMP x86_64', ('rustc', '-V'): 'rustc 1.97.1',
                         ('cc', '--version'): 'cc (Debian 15.2.0) 15.2.0',
                         ('ldd', '--version'): 'ldd (Debian GLIBC 2.42) 2.42',
@@ -299,11 +298,132 @@ class PureTests(unittest.TestCase):
             self.assertIsNone(tools.object_ir(path, 'libc'))
 
 
+class SeriesInputTests(Scratch):
+    """The benchmark action's inputs: absence is left out, never written as zero."""
+
+    METRICS = {'section_sum': 10, 'stripped_size': 20, 'alloc_count_per_cycle': 0,
+               'alloc_bytes_per_cycle': None, 'ir_oxpinyin_object': None,
+               'rss_first_cycle_kib': 7, 'rss_last_cycle_kib': None}
+
+    def doc(self, **environment):
+        return {'environment': {'kernel': 'k', 'rustc': 'r', **environment}, 'metrics': dict(self.METRICS)}
+
+    def test_a_null_or_missing_metric_is_left_out_and_a_measured_zero_is_kept(self):
+        entries = snapshot.benchmark_entries({**self.METRICS, 'stripped_size': None}, snapshot.FLAGGABLE)
+        self.assertEqual(entries, [{'name': 'section_sum', 'unit': 'bytes', 'value': 10},
+                                   {'name': 'alloc_count_per_cycle', 'unit': 'allocations', 'value': 0}])
+        self.assertEqual(snapshot.benchmark_entries({}, snapshot.REPORT_ONLY), [])
+        self.assertEqual(snapshot.benchmark_entries({'section_sum': True}, snapshot.FLAGGABLE), [])
+
+    def test_nan_and_infinity_are_left_out_like_null(self):
+        metrics = {'section_sum': float('nan'), 'stripped_size': float('inf'),
+                   'alloc_count_per_cycle': float('-inf'), 'alloc_bytes_per_cycle': 3,
+                   'ir_oxpinyin_object': 0}
+        entries = snapshot.benchmark_entries(metrics, snapshot.FLAGGABLE)
+        self.assertEqual([entry['name'] for entry in entries], ['alloc_bytes_per_cycle', 'ir_oxpinyin_object'])
+
+    def test_every_metric_is_flaggable_or_report_only_and_has_a_unit(self):
+        self.assertEqual(set(snapshot.UNITS), {*snapshot.FLAGGABLE, *snapshot.REPORT_ONLY})
+        self.assertFalse(set(snapshot.FLAGGABLE) & set(snapshot.REPORT_ONLY))
+
+    def test_the_environment_key_follows_the_environment_only(self):
+        key = snapshot.environment_key(self.doc())
+        self.assertRegex(key, r'^[0-9a-f]{32}$')
+        self.assertEqual(key, snapshot.environment_key({**self.doc(), 'metrics': {}, 'commit': 'x'}))
+        self.assertNotEqual(key, snapshot.environment_key(self.doc(rustc='r2')))
+        self.assertNotEqual(key, snapshot.environment_key(self.doc(runner_image='ubuntu/2')))
+
+    def test_a_measurement_file_changes_the_environment_key_and_a_built_file_does_not(self):
+        repo = self.base / 'repo'
+        repo.mkdir()
+        git = lambda *args: subprocess.run(
+            ['git', '-c', 'user.name=t', '-c', 'user.email=t@t', *args], cwd=repo, check=True,
+            capture_output=True, text=True).stdout.strip()
+        files = {path: repo / path for path in snapshot.MEASUREMENT_PATHS}
+        for path in files.values():
+            target = path / 'file' if path.suffix == '' else path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text('0')
+        (repo / 'unrelated').write_text('0')
+        built = [repo / 'tools/dev/packaging.py', repo / 'tools/dev/packaging_templates.py',
+                 repo / 'tools/dev/cell.py']
+        for path in built:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('0')
+        git('init', '-q')
+        git('add', '-A')
+        git('commit', '-q', '-m', 'base')
+
+        def key():
+            with bench.working_directory(repo):
+                commit = snapshot.Tools().query('git', 'log', '-1', '--format=%H', '--',
+                                                *snapshot.MEASUREMENT_PATHS)
+            return snapshot.environment_key(self.doc(harness_commit=commit))
+
+        seen = {key()}
+        (repo / 'unrelated').write_text('1')
+        git('commit', '-q', '-am', 'unrelated')
+        self.assertEqual({key()}, seen)
+        for path in built:
+            with self.subTest(built=path.name):
+                path.write_text('1')
+                git('commit', '-q', '-am', f'change {path.name}')
+                self.assertEqual({key()}, seen)
+        for relative, path in files.items():
+            with self.subTest(path=relative):
+                target = path / 'file' if path.is_dir() else path
+                target.write_text(relative)
+                git('commit', '-q', '-am', f'measure {relative}')
+                changed = key()
+                self.assertNotIn(changed, seen)
+                seen.add(changed)
+
+    def test_the_inputs_split_flaggable_from_report_only(self):
+        directory = self.base / 'inputs'
+        snapshot.write_series_inputs(self.doc(), directory)
+        self.assertEqual([entry['name'] for entry in json.loads((directory / 'flag.json').read_text())],
+                         ['section_sum', 'stripped_size', 'alloc_count_per_cycle'])
+        self.assertEqual([entry['name'] for entry in json.loads((directory / 'report.json').read_text())],
+                         ['rss_first_cycle_kib'])
+        self.assertEqual((directory / 'environment.key').read_text(),
+                         snapshot.environment_key(self.doc()) + '\n')
+
+    def test_a_group_with_nothing_measured_writes_no_file_and_removes_a_stale_one(self):
+        directory = self.base / 'inputs'
+        directory.mkdir()
+        (directory / 'report.json').write_text('[]')
+        doc = self.doc()
+        doc['metrics'] = {name: None for name in doc['metrics']}
+        snapshot.write_series_inputs(doc, directory)
+        self.assertEqual(sorted(path.name for path in directory.iterdir()), ['environment.key'])
+
+    def test_the_run_writes_the_inputs_below_the_checkout_after_the_sample(self):
+        tools, (status, out, err) = self.run_series()
+        self.assertEqual((status, err), (0, ''))
+        self.assertEqual(out.splitlines()[-2:], [f'wrote {self.out}', 'wrote the series inputs to inputs'])
+        names = {path.name for path in (self.root / 'inputs').iterdir()}
+        self.assertEqual(names, {'flag.json', 'report.json', 'environment.key'})
+        doc = json.loads(self.out.read_text())
+        self.assertEqual((self.root / 'inputs/environment.key').read_text(),
+                         snapshot.environment_key(doc) + '\n')
+
+    def run_series(self):
+        return None, self.run_snapshot(['--out', str(self.out), '--series-dir', 'inputs'])
+
+    def test_a_run_without_the_option_writes_no_inputs(self):
+        status, out, err = self.run_snapshot(['--out', str(self.out)])
+        self.assertEqual(status, 0)
+        self.assertFalse((self.root / 'inputs').exists())
+        self.assertNotIn('series inputs', out)
+
+
 class OptionTests(Scratch):
     def test_defaults_and_every_option(self):
         self.assertEqual(snapshot.parse_options(['--out', 'x.json']), snapshot.Options('x.json', 'tkrzw'))
         parsed = snapshot.parse_options(['--out', 'x.json', '--backend', 'kyotocabinet'])
         self.assertEqual(parsed, snapshot.Options('x.json', 'kyotocabinet'))
+        parsed = snapshot.parse_options(['--out', 'x.json', '--series-dir', 'inputs'])
+        self.assertEqual(parsed, snapshot.Options('x.json', 'tkrzw', 'inputs'))
 
     def test_the_last_value_of_a_repeated_option_wins(self):
         self.assertEqual(snapshot.parse_options(['--out', 'a', '--out', 'b']).out, 'b')
@@ -326,7 +446,7 @@ class OptionTests(Scratch):
         self.assertTrue(snapshot.HELP.startswith('# snapshot — measure the tree once'))
         # Lines 2-19 of the retired script: 17 comment lines and the blank line after them.
         self.assertTrue(snapshot.HELP.endswith('# Usage: just measure snapshot --out snapshot.json '
-                                               '[--backend tkrzw]\n\n'))
+                                               '[--backend tkrzw] [--series-dir DIR]\n\n'))
         self.assertEqual(len(snapshot.HELP.splitlines()), 18)
 
     def test_out_is_required_and_a_trailing_option_has_no_value(self):

@@ -324,10 +324,10 @@ class MigratedWorkflowTests(unittest.TestCase):
     def test_migrated_gates_keep_the_tree_reuse_guard(self):
         workflow = (ROOT / PROFILE.path).read_text()
         commands = {
-            'C++ pinyin.h smoke gate': 'just heavy -- just runner cpp-smoke',
-            'ABI export gate (development build)': 'just heavy -- just abi exports',
-            'Allocator-pairing gate': 'just heavy -- just abi alloc-pairing',
-            'ABI export gate (shipped build)': 'just heavy -- just abi exports --shipped',
+            'C++ pinyin.h smoke gate': 'just runner cpp-smoke',
+            'ABI export gate (development build)': 'just abi exports',
+            'Allocator-pairing gate': 'just abi alloc-pairing',
+            'ABI export gate (shipped build)': 'just abi exports --shipped',
         }
         for name, command in commands.items():
             with self.subTest(gate=name):

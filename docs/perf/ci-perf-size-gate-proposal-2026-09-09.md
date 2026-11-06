@@ -3,7 +3,8 @@
 Status: **the per-PR gate is rejected and will not be built. The nightly
 snapshot series is implemented** — `perf-snapshot` in
 `.github/workflows/verify-nightly.yml`, with `tools/perf-gate/snapshot.sh`
-and `tools/perf-gate/series.py`. This file replaces the proposal it used
+and the pinned `benchmark-action/github-action-benchmark` step that replaced
+`tools/perf-gate/series.py` (2026-11). This file replaces the proposal it used
 to carry; the proposal text is preserved at this path as merged in PR #407
 (commit `d8de0ab2092bc090fce431277968b44fb533da2a`), and the path is kept
 so inbound references resolve to the decision.
@@ -184,16 +185,36 @@ protection, nothing on the PR path.
 | piece | what it does |
 |---|---|
 | `tools/perf-gate/snapshot.sh` | builds the shipped artifact through `cinstall` and an `alloc-count` fixture build, measures, emits one JSON sample with the environment recorded beside the numbers |
-| `tools/perf-gate/series.py` | appends to the series, compares against the previous sample, writes the step summary |
-| `tools/perf-gate/series.test.sh` | 30 cases over the rules above |
+| `benchmark-action/github-action-benchmark` | two steps over `snapshot.json`'s metrics: one with `fail-on-alert` at 1% for the five deterministic metrics, one that only reports the RSS trend; writes the step summary |
+| `actions/cache` | keeps the previous result under a key that includes the recorded environment; only the schedule saves it |
 
 Two implementation notes worth knowing when reading a report:
 
 - **A flagged move exits non-zero**, which turns the nightly job red. That
   is the attention mechanism, and it blocks nothing: this job is not a
-  required check. A move across an environment change never flags.
+  required check. A move across an environment change never flags: the
+  environment keys the cached baseline, so an environment with no cached
+  entry finds no predecessor and starts a new baseline (a returning
+  environment is the case below). The action flags an increase beyond 1%
+  and not a decrease; `series.py` flagged a move in either direction.
+- **A change to how metrics are measured starts a new baseline.** The
+  recorded `harness_commit` is the newest commit touching the harness, the
+  callgrind reader, `snapshot.py` and `bench.py`, so it is part of the
+  environment key. Packaging and `cell.py` are not in that set: they build
+  the measured libraries, so a change there that grows them is flagged.
+- **An environment that returns restores its own baseline.** The cache key
+  holds only the environment, so when the environment changes and later
+  changes back, the lane restores the older baseline saved under that key
+  and compares against it. A move that happened while the environment was
+  different can then flag as drift since that older sample.
+- **No summary is written when every cached sample is from the current
+  commit.** The action compares against the last entry with a different
+  commit. When all cached entries are from the commit being measured, it
+  has no predecessor, and neither the comparison table nor an alert is
+  produced. The lane's missing-predecessor note does not cover this case,
+  because a baseline was restored.
 - **Instruments degrade rather than lie.** No valgrind means
   `ir_oxpinyin_object` is `null`, not `0`; an artifact without the
-  `alloc-count` readers records `null` allocations. `series.py` never
-  compares a `null`, so a missing instrument cannot read as a 100%
-  improvement.
+  `alloc-count` readers records `null` allocations. `snapshot.py` leaves a
+  `null` metric out of the action's input, so a missing instrument is never
+  compared and cannot read as a 100% improvement.

@@ -93,20 +93,11 @@ PACKAGING_HARNESSES = (
     'tools/dev/cli.test.py',
     'tools/dev/bash_floor.test.py',
 )
-# U4-owned services and removed entry points only. Shared callers, registry,
+# U4-owned services only. Shared callers, registry,
 # helpers and documentation retain the full-suite fallback.
 PACKAGING_PATHS = (
     'tools/dev/packaging.py',
     'tools/dev/packaging_templates.py',
-    'tools/packaging/install.sh',
-    'tools/packaging/relink-versioned.sh',
-    'tools/packaging/pc-version.sh',
-    'tools/packaging/check-pc-version.sh',
-    'tools/packaging/check-pc-metadata.sh',
-    'tools/packaging/release-stage.sh',
-    'tools/packaging/release-deb.sh',
-    'tools/packaging/release-rpm.sh',
-    'tools/packaging/release-arch.sh',
 )
 
 # Each listed contract module selects its own test and the shared integration tests.
@@ -153,14 +144,12 @@ HARNESS_DEPENDENCIES = {
     'tools/bisection/teardown.py': ('tools/bisection/teardown.test.py',
                                   'tools/dev/measure/startup.test.py'),
     'tools/bisection/system_import_profile.py': ('tools/bisection/system_import_profile.test.py',),
-    'tools/dev/native.py': ('tools/dev/check.test.py', 'tools/dev/backend.test.py',
-                            'tools/dev/sanitize.test.py'),
-    'tools/dev/check.py': ('tools/dev/check.test.py', 'tools/dev/backend.test.py',
+    'tools/dev/native.py': ('tools/dev/check.test.py', 'tools/dev/sanitize.test.py'),
+    'tools/dev/check.py': ('tools/dev/check.test.py',
                            'tools/dev/lint-crate-cfg-placement.test.py',
                            'tools/dev/cli.test.py'),
     'tools/dev/cli.py': ('tools/dev/cli.test.py', 'tools/dev/sanitize.test.py',
-                         'tools/dev/lint-crate-cfg-placement.test.py',
-                         'tools/dev/backend.test.py'),
+                         'tools/dev/lint-crate-cfg-placement.test.py'),
     # The measure recipes (#1290). bench.py is every recipe module's service layer.
     'tools/dev/measure/bench.py': tuple(f'tools/dev/measure/{name}.test.py' for name in (
         'bench', 'campaigns', 'neutrality', 'probes', 'profile', 'recipes', 'snapshot', 'valgrind')),
@@ -181,7 +170,6 @@ HARNESS_DEPENDENCIES = {
     'tools/dev/measure/snapshot.py': ('tools/dev/measure/snapshot.test.py',),
     'tools/dev/w3_fixtures.py': ('tools/dev/w3_fixtures.test.py', 'tools/dev/cli.test.py'),
     'tools/perf-gate/callgrind-ir.py': ('tools/perf-gate/callgrind-ir.test.py', 'tools/dev/measure/snapshot.test.py'),
-    'tools/perf-gate/series.py': ('tools/perf-gate/series.test.py',),
 }
 # U3-owned compatibility services and entry points only. Shared callers and
 # documentation stay unmapped: repository-wide audits read their tracked text.

@@ -1382,11 +1382,11 @@ The launcher stages oxpinyin-capi from the tkrzw cell through
 `cargo cinstall --profile profiling` (the `profiling` profile keeps line
 tables and thin LTO) and samples the keystroke cycle. It needs the exported
 tables, the pinned model20 cache, cargo-c, and a profiler. `PROFILE_REUSE_STAGE=1`
-skips the restage. Artifacts land in `target/profile/`;
-`tools/profile/extract-hot-stacks.py` summarises them.
+skips the restage. Artifacts land in `target/profile/`. After a samply
+record, open the profile with `samply load target/profile/w8-cycle.profile.json.gz`.
 
-**Sample count.** A hot-stack report ranks stacks by how many samples each
-holds, so its order is only as good as the profile is long. samply takes one
+**Sample count.** A profile ranks stacks by how many samples each holds, so
+its order is only as good as the profile is long. samply takes one
 sample per CPU millisecond, so the total follows the work in a cycle. On the
 measuring host (Apple M5, macOS 27 arm64, samply 0.13.1) a steady cycle over
 the full model20 tkrzw export takes about 8 ms and yields about 8 samples; the
@@ -1399,13 +1399,11 @@ stores a stack dump with every sample. The W8 cycle and `bisect --perf` are
 unchanged; the timing JSON it prints and the launcher saves has one entry per
 cycle, so it is longer at 2048.
 
-After a samply record the launcher prints `samples: N` from the profile and
-warns on stderr when N is below 5,000. `extract-hot-stacks.py` opens its report
-with the same line and warning; `--total` prints the line alone and
-`--min-samples` changes the level. The flamegraph and perf fallbacks write no
-samply profile and print no total. A faster host or a smaller export takes
-fewer samples per cycle: when warned, raise `PERF_CYCLES` in proportion to the
-shortfall.
+After a samply record the launcher prints the profile's path and the
+`samply load` command that opens it. It no longer counts samples or warns about
+a short profile. The flamegraph and perf fallbacks write no samply profile.
+A faster host or a smaller export takes fewer samples per cycle: aim for at
+least 5,000 samples, and raise `PERF_CYCLES` in proportion to any shortfall.
 
 The level comes from repeated runs. Each row is six runs at that
 `PERF_CYCLES` on the measuring host, ranked against the runs pooled at 4096:
@@ -1431,18 +1429,15 @@ fourth, and in 5 of the 42 runs from 64 cycles up a `libsystem_malloc` frame
 calling `mach_absolute_time` took a top-three slot, which more samples do not
 prevent. Compare the counts as well as the ranks.
 To repeat the table, run `PERF_CYCLES=n PROFILE_REUSE_STAGE=1 just profile-w8`
-for each size and compare the first stacks of each report.
+for each size and compare the first stacks in the viewer.
 
 The save-only profile is unsymbolicated. When the installed samply supports
 `--unstable-presymbolicate` (0.13.0 or later), the launcher passes it and
 samply writes `target/profile/w8-cycle.profile.json.syms.json` beside the
-profile. The extractor maps each frame through the profile's `libs` and
-`resourceTable` to a library-relative address, then looks that address up in
-the sidecar's per-library `known_addresses`; the names are samply's demangled
-symbols. No separate symbolizer or debug-file step is required. A frame the
-sidecar does not cover prints as `unresolved`, never as its raw `0x...` offset.
-`samply load` uses the same sidecar. An older samply still records, with a
-warning, and the report is all unresolved. The flag is unstable upstream, so
+profile. `samply load` maps each frame through the sidecar's per-library
+`known_addresses`; the names are samply's demangled symbols. No separate
+symbolizer or debug-file step is required. An older samply still records, with
+a warning, but the profile is then not self-contained: its symbol information is incomplete. The flag is unstable upstream, so
 the launcher probes the installed help instead of requiring a version. Raw
 profiles and sidecars are not committed.
 

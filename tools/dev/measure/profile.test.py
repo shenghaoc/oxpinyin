@@ -7,12 +7,12 @@ A few tests start real stub programs through the real launcher and the real CLI
 status ladder; taskset, the one Linux mechanism, is skipped where it is absent.
 """
 import contextlib
-import gzip
 import hashlib
 import io
 import json
 import os
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import sys
@@ -28,28 +28,10 @@ from tools.dev import runners, slot, test_support
 from tools.dev.measure import bench, profile
 from tools.dev.runners import Finished, write
 
-EXTRACTOR = 'tools/profile/extract-hot-stacks.py'
 SAMPLY_CYCLES = '2048'
 FALLBACK_CYCLES = '32'
 HELP_WITH_FLAG = 'USAGE: samply record\n    --unstable-presymbolicate  write a symbol sidecar\n'
 HELP_WITHOUT_FLAG = 'USAGE: samply record\n'
-
-
-def default_level():
-    """The level extract-hot-stacks.py applies without --min-samples."""
-    return bench.script(EXTRACTOR).MIN_SAMPLES
-
-
-def profile_gz(samples):
-    """A gzipped profile holding `samples` samples on one named frame."""
-    document = {'threads': [{
-        'stringArray': ['hot'],
-        'samples': {'stack': [0] * samples},
-        'stackTable': {'prefix': [None], 'frame': [0]},
-        'frameTable': {'func': [0]},
-        'funcTable': {'name': [0]},
-    }]}
-    return gzip.compress(json.dumps(document).encode())
 
 
 def staged(call):
@@ -178,7 +160,7 @@ class Scenario:
         self.env = {'OXPINYIN_PROFILE_DIR': str(self.profile), 'PINYIN_EXPORT_DIR': str(self.export),
                     'PINYIN_MODEL_DIR': str(self.model), 'PATH': '/nowhere', **(env or {})}
         self.commands = FakeCommands(self)
-        self.profile_bytes = profile_gz(1)
+        self.profile_bytes = b'profile'
         self.sidecar = True
         self.libdirs = []
         self.commands.effects.update(cargo=self.cargo, cc=self.compile, gcc=self.compile, samply=self.samply)
@@ -284,8 +266,8 @@ class CheckTests(ScenarioTest):
         self.assertStatus(result, 0)
         self.assertIn('samply presymbolicate: unavailable\n', result.stdout)
         self.assertEqual(result.stderr.splitlines()[0],
-                         'warning: samply has no --unstable-presymbolicate; the hot-stack report '
-                         'will show unresolved frames.')
+                         'warning: samply has no --unstable-presymbolicate; the profile '
+                         'will not be self-contained.')
 
     def test_says_nothing_about_samply_when_there_is_none(self):
         self.scenario.tools.clear()
@@ -1061,78 +1043,81 @@ class PinningTests(ScenarioTest):
         self.assertEqual(launch.command[3], f'{self.scenario.profile}/bisect')
 
 
-class SampleTotalTests(ScenarioTest):
-    """A samply record reports its sample total, and warns when it is short."""
+class SamplyRecordTests(ScenarioTest):
+    """A samply record names its profile and the command that opens it."""
 
-    def record(self, content, system='Linux', status=0, cycles=None):
+    def record(self, system='Linux', status=0, cycles=None):
         self.scenario.system = system
-        self.scenario.profile_bytes = content
         self.commands.statuses['samply'] = status
         if cycles is not None:
             self.env['PERF_CYCLES'] = cycles
         return self.invoke()
 
-    def test_a_short_profile_prints_the_total_and_warns(self):
-        result = self.record(profile_gz(1))
+    def test_a_record_names_the_command_that_opens_the_profile(self):
+        result = self.record()
         self.assertStatus(result, 0)
-        self.assertIn(f'samples: 1 (fewer than the {default_level()} needed', result.stdout)
-        self.assertIn('warning: the profile has 1 of the', result.stderr)
+        profile_json = f'{self.scenario.profile}/w8-cycle.profile.json.gz'
+        self.assertIn(f'open it with: samply load {profile_json}', self.lines(result.stdout))
         self.assertEqual(self.lines(result.stdout)[-1], 'done.')
         self.assertEqual(len(self.commands.of('tee')), 1)
 
-    def test_a_profile_at_the_level_prints_the_total_without_a_warning(self):
-        level = default_level()
-        result = self.record(profile_gz(level))
+    def test_a_relative_profile_directory_is_named_by_its_absolute_path(self):
+        relative = Path(os.path.relpath(self.scenario.profile, ROOT))
+        self.env['OXPINYIN_PROFILE_DIR'] = str(relative)
+        result = self.record()
         self.assertStatus(result, 0)
-        self.assertIn(f'samples: {level} (at least the {level} needed', result.stdout)
-        self.assertNotIn('needed to rank hot stacks; their order', result.stderr)
+        absolute = os.path.abspath(ROOT / relative / 'w8-cycle.profile.json.gz')
+        self.assertIn(f'open it with: samply load {absolute}', self.lines(result.stdout))
 
-    def test_an_unreadable_profile_warns_and_keeps_the_run(self):
-        result = self.record(b'not gzip')
+    def test_a_path_with_spaces_is_shell_quoted(self):
+        spaced = self.scenario.root / 'a b' / "it's"
+        self.scenario.profile = spaced
+        self.env['OXPINYIN_PROFILE_DIR'] = str(spaced)
+        result = self.record()
         self.assertStatus(result, 0)
-        profile_json = f'{self.scenario.profile}/w8-cycle.profile.json.gz'
-        self.assertIn(f'warning: could not read the sample total from {profile_json}', result.stderr)
-        self.assertEqual(self.lines(result.stdout)[-1], 'done.')
+        quoted = shlex.quote(f'{spaced}/w8-cycle.profile.json.gz')
+        self.assertIn(f'open it with: samply load {quoted}', self.lines(result.stdout))
+        self.assertEqual(shlex.split(quoted), [f'{spaced}/w8-cycle.profile.json.gz'])
 
-    def test_a_failed_record_on_linux_reports_no_total(self):
-        result = self.record(profile_gz(1), status=1)
+    def test_a_failed_record_on_linux_names_no_profile(self):
+        result = self.record(status=1)
         self.assertStatus(result, 0)
-        self.assertNotIn('samples:', result.stdout)
+        self.assertNotIn('samply load', result.stdout)
 
-    def test_a_failed_record_on_darwin_reports_no_total_and_fails(self):
+    def test_a_failed_record_on_darwin_names_no_profile_and_fails(self):
         self.env['OXPINYIN_TKRZW_PREFIX'] = '/opt/tkrzw'
-        result = self.record(profile_gz(1), system='Darwin', status=1)
+        result = self.record(system='Darwin', status=1)
         self.assertStatus(result, 1)
-        self.assertNotIn('samples:', result.stdout)
+        self.assertNotIn('samply load', result.stdout)
 
     def test_samply_gets_its_own_default_cycle_count(self):
-        self.record(profile_gz(1))
+        self.record()
         self.assertEqual(self.commands.of('tee', 'samply')[0].env['PERF_CYCLES'], SAMPLY_CYCLES)
         self.assertEqual((self.scenario.profile / 'w8-cycle-timing.json').read_text(),
                          f'worker PERF_CYCLES={SAMPLY_CYCLES}\n')
 
     def test_samply_gets_the_requested_cycle_count(self):
-        self.record(profile_gz(1), cycles='7')
+        self.record(cycles='7')
         self.assertEqual(self.commands.of('tee', 'samply')[0].env['PERF_CYCLES'], '7')
 
     def test_the_timing_is_saved_and_printed(self):
-        result = self.record(profile_gz(1))
+        result = self.record()
         self.assertIn(f'worker PERF_CYCLES={SAMPLY_CYCLES}\n', result.stdout)
         self.assertEqual((self.scenario.profile / 'w8-cycle-timing.json').read_text(),
                          f'worker PERF_CYCLES={SAMPLY_CYCLES}\n')
 
     def test_the_profile_path_and_sidecar_are_announced(self):
-        result = self.record(profile_gz(1))
+        result = self.record()
         profile_json = f'{self.scenario.profile}/w8-cycle.profile.json.gz'
         lines = self.lines(result.stdout)
         self.assertIn(f'samply profile: {profile_json}', lines)
         self.assertIn(f'samply symbols: {self.scenario.profile}/w8-cycle.profile.json.syms.json', lines)
         self.assertIn('--- samply record (preferred) ---', lines)
 
-    def test_a_record_without_a_sidecar_warns_that_frames_stay_unresolved(self):
+    def test_a_record_without_a_sidecar_warns_that_the_profile_is_not_self_contained(self):
         self.scenario.sidecar = False
-        result = self.record(profile_gz(1))
-        self.assertIn('warning: samply wrote no symbol sidecar; the hot-stack report will show unresolved frames.',
+        result = self.record()
+        self.assertIn('warning: samply wrote no symbol sidecar; the profile is not self-contained, so its symbol information is incomplete.',
                       result.stderr)
         self.assertNotIn('samply symbols:', result.stdout)
 
@@ -1147,7 +1132,6 @@ class SampleTotalTests(ScenarioTest):
         result = self.invoke()
         self.assertStatus(result, 0)
         self.assertFalse(any(path.exists() for path in stale))
-        self.assertIn('could not read the sample total', result.stderr)
 
     def test_without_presymbolicate_the_flag_is_not_passed(self):
         self.commands.samply_help = HELP_WITHOUT_FLAG
@@ -1179,7 +1163,7 @@ class HostTests(unittest.TestCase):
     def test_any_other_name_takes_the_linux_path(self):
         self.assertFalse(profile.W8([], {'OXPINYIN_PROFILE_OS': 'FreeBSD'}).darwin)
 
-    def test_the_run_starts_in_tools_profile(self):
+    def test_the_run_starts_at_the_repository_root(self):
         directories = []
         scenario = Scenario(self)
         scenario.commands.effects['samply'] = lambda call: directories.append(os.getcwd())
@@ -1188,11 +1172,11 @@ class HostTests(unittest.TestCase):
         scenario.commands.calls.clear()
         scenario.invoke()
         self.assertEqual(os.getcwd(), before)
-        self.assertTrue(directories and all(Path(path).samefile(ROOT / 'tools/profile') for path in directories))
+        self.assertTrue(directories and all(Path(path).samefile(ROOT) for path in directories))
 
-    def test_a_relative_directory_resolves_against_tools_profile(self):
+    def test_a_relative_directory_resolves_against_the_repository_root(self):
         scenario = Scenario(self)
-        relative = Path(os.path.relpath(scenario.profile, ROOT / 'tools/profile'))
+        relative = Path(os.path.relpath(scenario.profile, ROOT))
         scenario.env['OXPINYIN_PROFILE_DIR'] = str(relative)
         self.assertEqual(scenario.invoke().status, 0)
         self.assertTrue((scenario.profile / 'header.txt').is_file())
@@ -1365,8 +1349,8 @@ class StatusTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('samply presymbolicate: unavailable\n', result.stdout)
         self.assertEqual(result.stderr,
-                         'warning: samply has no --unstable-presymbolicate; the hot-stack report '
-                         'will show unresolved frames.\n')
+                         'warning: samply has no --unstable-presymbolicate; the profile '
+                         'will not be self-contained.\n')
 
     def test_darwin_refuses_perf_cpu_with_status_2(self):
         result = self.run_recipe(system='Darwin', PERF_CPU='0')

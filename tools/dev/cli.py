@@ -5,7 +5,7 @@ import json
 import sys
 from pathlib import Path
 
-from . import abi, cell, check, coverage, doctor, host, pool, registry, slot, test_runner
+from . import abi, cell, check, doctor, host, pool, registry, slot, test_runner
 from .measure import cold, recipes, startup
 
 
@@ -84,11 +84,6 @@ def lint_command(args):
     return check.lint_crate_cfg_placement(args.files)
 
 
-def backend_probe_command(args):
-    """Identify the system libpinyin's DBM and return its probe status."""
-    return check.backend_probe()
-
-
 def sanitize_command(args):
     """Select and run a sanitizer gate, forwarding its arguments unchanged."""
     return test_runner.sanitize(args.args)
@@ -112,11 +107,6 @@ def test_doc_command(args):
 def test_tools_command(args):
     """Run the same Python harness discovery and exclusions as CI."""
     return test_runner.run_tools(args.files, args.pattern, args.changed)
-
-
-def coverage_command(args):
-    """Run llvm-cov with disposable coverage state and return its shell status."""
-    return coverage.run(args.args)
 
 
 def list_command(args):
@@ -235,9 +225,6 @@ def build_parser():
     p.set_defaults(func=lint_command)
 
 
-    p = sub.add_parser('backend-probe', help='identify the system libpinyin backend')
-    p.set_defaults(func=backend_probe_command)
-
     p = sub.add_parser('sanitize', help='run one store backend sanitizer gate')
     p.add_argument('args', nargs=argparse.REMAINDER)
     p.set_defaults(func=sanitize_command)
@@ -302,10 +289,6 @@ def build_parser():
     p.add_argument('args', nargs=argparse.REMAINDER)
     p.set_defaults(func=lambda args: __import__('tools.dev.provision', fromlist=['main']).main(args.args))
 
-    p = sub.add_parser('coverage', help='run cargo llvm-cov with temporary per-invocation state')
-    p.add_argument('args', nargs=argparse.REMAINDER)
-    p.set_defaults(func=coverage_command)
-
     p = sub.add_parser('list', help='list the registry, read-only')
     p.add_argument('--heavy', action='store_true', help='only rows marked heavy')
     _selection_arguments(p)
@@ -348,7 +331,7 @@ def _selection_arguments(parser):
 def main(argv=None):
     """Dispatch native tooling arguments and return the selected command status.
 
-    Default to sys.argv. Forward coverage and non-help test arguments directly
+    Default to sys.argv. Forward non-help test arguments directly
     to their runners; report registry selection errors on stderr with status 2.
     """
     argv = list(sys.argv[1:] if argv is None else argv)
@@ -377,12 +360,8 @@ def main(argv=None):
     if argv[:1] == ['runner']:
         from . import runners
         return runners.main(argv[1:])
-    if argv[:1] == ['coverage']:
-        return coverage.run(argv[1:])
     if argv[:1] == ['lint-crate-cfg-placement']:
         return check.lint_crate_cfg_placement(argv[1:])
-    if argv[:1] == ['backend-probe']:
-        return check.backend_probe()
     if argv[:1] == ['sanitize']:
         return test_runner.sanitize(argv[1:])
     if argv[:1] == ['sanitize-toolchain']:
