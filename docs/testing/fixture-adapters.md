@@ -6,15 +6,15 @@ The decoder needs a `Dictionary` and a `LanguageModel` to develop against
 before either exists for real. This finding records what that data is, where
 every part of it came from, and what it may not be mistaken for.
 
-## Location (updated 2026-08-29)
+## Location (updated 2026-11-06 UTC)
 
-The fixture doubles moved from `oxpinyin-core/src/fixture.rs` to the
-dev-only workspace crate `crates/oxpinyin-testsupport`, so the production
-build graph carries no test doubles. The provenance, data, and behavior are
-byte-identical; consumers take
-`use oxpinyin_testsupport::{FixtureDictionary, FixtureLanguageModel}` as an
-ordinary (dev-)dependency. See `docs/testing/upstream-test-coverage.md` for
-the wider test-architecture reorganization.
+The fixture doubles are one source file,
+`crates/oxpinyin-core/tests/common/fixture_doubles.rs`. Each test target that
+needs them includes it with `#[path]`, so the production build graph carries no
+test doubles and no shared test crate can close a dependency cycle through
+core. The provenance, data, and behavior are unchanged. See
+`docs/testing/upstream-test-coverage.md` for the wider test-architecture
+reorganization.
 
 ## Why not the real thing
 
@@ -112,7 +112,7 @@ is an error, not a silent skip.
 
 ## Adapters
 
-`oxpinyin_testsupport` provides:
+`fixture_doubles.rs` provides:
 
 - `FixtureDictionary` — `Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>`.
   Lookup is exact on the whole key slice and returns entries in fixture order.
@@ -121,7 +121,7 @@ is an error, not a silent skip.
   interpolated bigram over the same vocabulary, combining the caller's edge
   cost as the frozen seam requires.
 
-Both parse from `&str`. `oxpinyin-testsupport` does no I/O; callers `include_str!`.
+Both parse from `&str`. The doubles do no I/O; callers `include_str!`.
 
 `oxpinyin_core::cost` holds the arithmetic: costs are integers on a fixed-point
 negative-log₂ scale, one bit of surprisal per `COST_PER_BIT`, with an

@@ -595,11 +595,11 @@ mod tests {
         }
     }
 
-    fn fixture() -> (oxpinyin_testsupport::FixtureDictionary, EvalLanguageModel) {
+    fn fixture() -> (crate::fixture_doubles::FixtureDictionary, EvalLanguageModel) {
         // The real fixture dictionary; an evaluation model that gives every
         // fixture token a unigram count.
         let vocab = include_str!("../../../../fixtures/w4/mini-vocab.txt");
-        let dict = oxpinyin_testsupport::FixtureDictionary::parse(vocab).expect("vocab");
+        let dict = crate::fixture_doubles::FixtureDictionary::parse(vocab).expect("vocab");
         let mut counts = Counts::default();
         counts.unigrams.insert(1, 10);
         let model = EvalLanguageModel::from_counts(&counts, Lambda::PINNED);

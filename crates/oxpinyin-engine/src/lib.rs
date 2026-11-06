@@ -22,6 +22,9 @@ mod config;
 mod constraint;
 mod cursor;
 mod error;
+#[cfg(test)]
+#[path = "../../oxpinyin-core/tests/common/fixture_doubles.rs"]
+mod fixture_doubles;
 mod nbest;
 mod phrase;
 mod session;

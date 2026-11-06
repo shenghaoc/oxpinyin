@@ -19,7 +19,7 @@
 | oxpinyin-store | Ordered byte-KV interface with one compile-time Berkeley DB, Kyoto Cabinet or tkrzw backend. See backend dependencies below. | deny | yes | via engine |
 | oxpinyin-utils | libpinyin's utilities under their own names and interfaces, through `oxpinyin-input`'s `tools` boundary (stage 5 of `docs/findings/external-io-boundary.md`): the table generators, `k_mixture_model_to_interpolation`, the segmentation trio, the storage trio and the five n-gram/interpolation utilities (`gen_unigram`, `gen_ngram`, `gen_deleted_ngram`, `estimate_interpolation`, `eval_correction_rate`). | forbid | Linux, macOS (needs GLib) | never |
 | oxpinyin-training | Backend-sensitive training modules: segment, counter, lambda, emitter and eval. The stage command line was retired; `oxpinyin-utils` carries the pin-named utilities, and the eval module is the decode behind `eval_correction_rate`. One backend selection covers all modules. | forbid | yes | never |
-| oxpinyin-testsupport | Shared fixture Dictionary/LanguageModel doubles, model20 cache locator and scorer suites. See test-support dependencies below. | forbid | yes | never |
+| oxpinyin-testsupport | Model20 cache locator for the benches and the oracle harness. | forbid | yes | never |
 | oxpinyin-kmm | K-mixture-model operations on the pin's `FlexibleBigram` container: generate, estimate, merge, validate, prune, export and import; `oxpinyin-utils` carries the seven pin-named binaries. | forbid | yes | never |
 
 `oxpinyin-core`, `oxpinyin-chewing` and `oxpinyin-engine` never depend on storage (`oxpinyin-store`, `cxx`, `bindgen` or a backend binding), including through dev and build dependencies; `cargo deny check` enforces it through the `[bans] deny` wrappers in `deny.toml`.
@@ -38,9 +38,9 @@ Datagen uses `MemoryChunk`/`SubPhraseIndex` constants and the checksum from `chu
 It uses the four DBM row schemas and library-name tables from `row_format` and `system_files`.
 Readers and writers therefore share one layout definition.
 
-The scorer suites `tests/scoring.rs` and `tests/scoring_fixture.rs` reside in testsupport.
-This prevents core from having a development dependency on testsupport.
-Testsupport is for development only.
+The fixture `Dictionary`/`LanguageModel` doubles are one source file, `crates/oxpinyin-core/tests/common/fixture_doubles.rs`.
+Each test target that needs them includes the file with `#[path]`, so no shared test crate can close a dependency cycle through core.
+The production build graph carries no test doubles.
 
 ## Backend selection
 

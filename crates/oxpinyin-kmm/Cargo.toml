@@ -28,5 +28,4 @@ oxpinyin-store = { workspace = true }
 oxpinyin-input = { workspace = true, features = ["tools"] }
 
 [dev-dependencies]
-oxpinyin-testsupport = { path = "../oxpinyin-testsupport" }
 tempfile.workspace = true

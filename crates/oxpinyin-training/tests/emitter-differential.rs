@@ -17,12 +17,16 @@
 use std::path::{Path, PathBuf};
 
 use oxpinyin_data::parse_interpolation2;
-use oxpinyin_testsupport::{PinDir, fnv1a64, locate_bin, locate_data, parse_manifest};
 use oxpinyin_training::counter::{Counts, count_ngseg, parse_interpolation_dump};
 use oxpinyin_training::emitter::emit_interpolation2;
 use oxpinyin_training::segment::{
     DEFAULT_EXPORT_DIR, EXPORT_DIR_ENV, PhraseLexicon, locate_export_dir,
 };
+
+#[path = "common/differential.rs"]
+mod differential;
+
+use differential::{PinDir, fnv1a64, locate_bin, locate_data, parse_manifest};
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

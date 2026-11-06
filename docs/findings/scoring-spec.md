@@ -158,7 +158,7 @@ whole answer. `zzzzzzzz` expands past the limit and is correctly barren.
 Per-formula unit tests in `crates/oxpinyin-core/src/scoring.rs` cover each
 worked example above.
 
-`crates/oxpinyin-testsupport/tests/scoring_fixture.rs` reports the fixture pass rate.
+`crates/oxpinyin-core/tests/scoring_fixture.rs` reports the fixture pass rate.
 Measured at this freeze:
 
 ```text

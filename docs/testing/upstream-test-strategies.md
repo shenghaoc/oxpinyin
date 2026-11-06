@@ -184,5 +184,5 @@ decade of IME fuzzing converged on) and the config-mutation trick (fold
 | Valgrind/ASan stress | — | stresstest.py | — | nightly fuzz soak (ASan default) |
 | ABI size/pin guard | — | test-struct-size.c | checked-in pinyin.h + C++ smoke gate | none — keep |
 | Stateful C-API fuzzer | — | fuzzer.rs (AFL++) | `capi-commands` (landed) | done |
-| Hostile data-file fuzzer | — | trieloader/cdbloader | `dict-loader`, `phrase-library`, `table-conf`, `fixture-model` (landed) | done |
+| Hostile data-file fuzzer | — | trieloader/cdbloader | `dict-loader`, `phrase-library`, `table-conf` (landed) | done |
 | Interactive oracle tools | 4 REPL drivers | debug-chewing-shell.sh | oracle harness bins | none — equivalent exists |

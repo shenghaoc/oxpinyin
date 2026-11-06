@@ -29,5 +29,4 @@ oxpinyin-data.workspace = true
 oxpinyin-store.workspace = true
 
 [dev-dependencies]
-oxpinyin-testsupport = { path = "../oxpinyin-testsupport" }
 tempfile.workspace = true

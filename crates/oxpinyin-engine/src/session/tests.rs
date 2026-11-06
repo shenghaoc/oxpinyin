@@ -100,13 +100,13 @@ use oxpinyin_core::{
     Cost, Dictionary, LanguageModel, NbestStepCosts, PhraseEntry, PhraseToken, SyllableKey,
     UserModel,
 };
-use oxpinyin_testsupport::{
-    FixtureDictionary, FixtureError, FixtureLanguageModel, FrequencyFixtureModel,
-};
 
 use super::{KeyOutcome, Selection, Session};
 use crate::config::EmptyConfigSource;
 use crate::error::{EngineError, TrainingSpanFault};
+use crate::fixture_doubles::{
+    FixtureDictionary, FixtureError, FixtureLanguageModel, FrequencyFixtureModel,
+};
 
 /// A backend that answers nothing, so these tests measure the state
 /// machine and not a data set.

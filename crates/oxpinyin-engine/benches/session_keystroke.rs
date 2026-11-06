@@ -3,7 +3,7 @@
 //! and candidate selection.
 //!
 //! The session is driven through its public API with fixture-backed test
-//! doubles from `oxpinyin-testsupport`. The keystroke and composition groups
+//! doubles from `oxpinyin-core/tests/common/fixture_doubles.rs`. The keystroke and composition groups
 //! use [`FrequencyFixtureModel`], which reports `has_real_unigrams() == true`
 //! so the engine takes the production window-scan + frequency-ranking path
 //! (`collect_window_scan`, the three-key order, amplified-frequency ranking)
@@ -16,7 +16,11 @@ use std::hint::black_box;
 
 use oxpinyin_core::{Cost, Dictionary, LanguageModel, PhraseEntry, PhraseToken, SyllableKey};
 use oxpinyin_engine::{EmptyConfigSource, Session};
-use oxpinyin_testsupport::{FixtureDictionary, FixtureLanguageModel, FrequencyFixtureModel};
+
+#[path = "../../oxpinyin-core/tests/common/fixture_doubles.rs"]
+mod fixture_doubles;
+
+use fixture_doubles::{FixtureDictionary, FixtureLanguageModel, FrequencyFixtureModel};
 
 const MINI_VOCAB: &str = include_str!("../../../fixtures/w4/mini-vocab.txt");
 const MINI_BIGRAM: &str = include_str!("../../../fixtures/w4/mini-bigram.txt");

@@ -9,13 +9,17 @@
 //!   mid-composition choice commits the exact chosen phrase.
 //!
 //! The oxpinyin seam is the internal engine `Session` API over the
-//! `oxpinyin-testsupport` fixture doubles. Chewing's commit/preedit
+//! `oxpinyin-core/tests/common/fixture_doubles.rs` doubles. Chewing's commit/preedit
 //! buffer checks use selected text and raw-input offsets; its config setters
 //! map onto `set_options`/`set_incomplete_pinyin`/`set_scoring_config`.
 
 use oxpinyin_core::OptionBits;
 use oxpinyin_engine::{EmptyConfigSource, KeyOutcome, Selection, Session};
-use oxpinyin_testsupport::{FixtureDictionary, FixtureLanguageModel};
+
+#[path = "../../oxpinyin-core/tests/common/fixture_doubles.rs"]
+mod fixture_doubles;
+
+use fixture_doubles::{FixtureDictionary, FixtureLanguageModel};
 
 const VOCAB: &str = include_str!("../../../fixtures/w4/mini-vocab.txt");
 const BIGRAM: &str = include_str!("../../../fixtures/w4/mini-bigram.txt");

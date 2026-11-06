@@ -38,12 +38,16 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::PathBuf;
 
-use oxpinyin_testsupport::{PinDir, fnv1a64, locate_bin, locate_data, parse_estimate_stdout};
 use oxpinyin_training::counter::{Counts, count_ngseg, parse_interpolation_dump};
 use oxpinyin_training::lambda::{DeletedCounts, Lambda, count_deleted, estimate_lambda};
 use oxpinyin_training::segment::{
     DEFAULT_EXPORT_DIR, EXPORT_DIR_ENV, PhraseLexicon, locate_export_dir,
 };
+
+#[path = "common/differential.rs"]
+mod differential;
+
+use differential::{PinDir, fnv1a64, locate_bin, locate_data, parse_estimate_stdout};
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

@@ -1617,11 +1617,11 @@ mod tests {
         Cost, Dictionary, LanguageModel, NbestStepCosts, OptionBits, PhraseEntry, PhraseToken,
         SyllableKey,
     };
-    use oxpinyin_testsupport::{FixtureDictionary, FixtureLanguageModel};
     use std::cell::RefCell;
 
     use crate::config::EmptyConfigSource;
     use crate::error::EngineError;
+    use crate::fixture_doubles::{FixtureDictionary, FixtureLanguageModel};
     use crate::session::build_scan_matrix;
 
     #[derive(Debug)]

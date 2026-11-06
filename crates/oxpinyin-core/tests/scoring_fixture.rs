@@ -16,10 +16,10 @@
 //! scorer agrees with the pin's first choice — and that a regression in the
 //! weights shows up as a number that moved.
 
+use crate::common::fixture_doubles::{FixtureDictionary, FixtureLanguageModel};
 use oxpinyin_core::SyllableKey;
 use oxpinyin_core::graph::{EdgeKind, SegmentGraph};
 use oxpinyin_core::scoring::{Scorer, ScoringConfig};
-use oxpinyin_testsupport::{FixtureDictionary, FixtureLanguageModel};
 
 const F_A: &str = include_str!("../../../fixtures/foundation/f-a.txt");
 const F_C: &str = include_str!("../../../fixtures/foundation/f-c.txt");
