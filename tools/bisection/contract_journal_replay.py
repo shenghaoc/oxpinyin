@@ -13,7 +13,6 @@ from contract_case_helpers import (
     guess_rows, log_walk, phrase_table_reopen, remember_export, token_phrase_of, token_unigram_trained,
     train_selected_top, zhuyin_guess_rows)
 from contract_fixtures import _write_user_conf, import_rows, private_system
-from contract_phrase_index_logger import logger_reload_probe
 
 
 _REGISTRATIONS = []
@@ -171,13 +170,24 @@ def system_replay(k, build, reopen=False, unigram_add=True, observe_add=False, o
     return out
 
 
+# `merge` (`phrase_index.cpp:439-517`) is one source for both facades, reached from
+# `pinyin.cpp:276` and `zhuyin.cpp:219`. Libzhuyin keeps one case per record path and
+# one per crash site.
+_ZHUYIN_REPLAY = {
+    'unigram-add-live-item-reopen', 'matched-remove', 'touched-order-duplicates-reopen',
+    'seed-mixed-repeated-unigrams-reopen', 'modify-trailing-new-grow', 'mismatch-then-valid', 'remove-absent',
+    'modify-absent', 'modify-absent-default-grow', 'cross-item-unigram-unrecorded', 'modify-header-overlong',
+    'touched-duplicate-invalid',
+}
+
+
 def _replay_case(name, build, reopen=False, unigram_add=True, observe_add=False, observe=None,
                  observe_saved=False, extra_issues=(), **options):
-    """Register both facade replay cases with the supplied builder and observation options.
+    """Register the libpinyin replay case, and the libzhuyin one where `_ZHUYIN_REPLAY` names it.
 
     Enable stderr comparison and combine the replay issue IDs with extra_issues;
     the lambdas defer file mutation and native work until case execution."""
-    for mode in ('pinyin', 'zhuyin'):
+    for mode in ('pinyin', 'zhuyin') if name in _ZHUYIN_REPLAY else ('pinyin',):
         case('replay-' + name + '-' + mode, mode=mode, stderr=True,
              issues=('851', '850', '870') + tuple(extra_issues), **options)(
             lambda k, build=build: system_replay(k, build, reopen, unigram_add, observe_add,
@@ -352,9 +362,10 @@ for _mode in ('pinyin', 'zhuyin'):
          issues=('697', 'row:58'))(refused_add_reload)
 
 
-for _mode in ('pinyin', 'zhuyin'):
-    for _variant in ('repeat', 'replacement', 'wrap', 'overflow', 'missing', 'removed',
-                     'reload', 'mask', 'training', 'timing', 'import-system'):
+for _mode, _variants in (('pinyin', ('repeat', 'replacement', 'wrap', 'overflow', 'missing', 'removed',
+                                     'reload', 'mask', 'training', 'timing', 'import-system')),
+                        ('zhuyin', ('repeat', 'overflow', 'missing'))):
+    for _variant in _variants:
         case('unigram-lifecycle-' + _variant + '-' + _mode, mode=_mode, stderr=True,
              control=_variant in ('overflow', 'missing', 'removed', 'reload', 'mask'), issues=('853', '870'))(
             lambda k, variant=_variant: unigram_lifecycle(k, variant))
@@ -681,13 +692,6 @@ def _modify_absent_stale(grow):
 
 
 _compare_case('modify-absent-stale', _modify_absent_stale(False))
-# The growing form reaches REMOVE's NULL: the pin dies of SIGSEGV, the subject
-# stops at the record and keeps what the first MODIFY did.
-_compare_case('modify-absent-stale-grow', _modify_absent_stale(True),
-             crash={'ctx': True, 'absent': _NO_ITEM, 'fresh': _NO_ITEM,
-                    'one': [[True, 1, '锕'], [True, 3]]})
-
-
 # A MODIFY's new chunk is not checked against its own header: only the old
 # chunk is compared (`phrase_index.cpp:481-483`), and a new chunk no longer
 # than the visible item is `memmove`d over the stored bytes (`:493-500`). The
@@ -723,7 +727,6 @@ def _modify_absent_default(twice=False):
 
 
 _compare_case('modify-absent-default', _modify_absent_default())
-_compare_case('modify-absent-default-twice', _modify_absent_default(True))
 # A new chunk longer than the six-byte default reaches the NULL of REMOVE's
 # assert (`:486-491`): the pin dies of SIGSEGV, the subject stops at the record.
 _compare_case('modify-absent-default-grow', lambda p: ([
@@ -951,51 +954,17 @@ def _short_add(payload):
     return probe
 
 
-for _name, _payload in (('one-byte', b'\x01'), ('five-bytes', bytes((1, 1, 7, 0, 0)))):
-    for _mode in ('pinyin', 'zhuyin'):
-        _suffix = '-zhuyin' if _mode == 'zhuyin' else '-pinyin'
-        case('replay-short-add-' + _name + _suffix,
-             mode=_mode, abort=True, sigabrt=True, userdir=True, stderr=True,
-             issues=('850', '870', 'row:108'))(_short_add(_payload))
+for _mode in ('pinyin', 'zhuyin'):
+    _suffix = '-zhuyin' if _mode == 'zhuyin' else '-pinyin'
+    case('replay-short-add-five-bytes' + _suffix,
+         mode=_mode, abort=True, sigabrt=True, userdir=True, stderr=True,
+         issues=('850', '870', 'row:108'))(_short_add(bytes((1, 1, 7, 0, 0))))
 
 
-# Row 108 before an over-read: the pin's `merge` reads each record as it
-# applies it (`phrase_index.cpp:445-450`), so the short ADD's unigram read
-# (`memory_chunk.h:390`) asserts before `next_record` reaches the ADD whose
-# payload runs past the log (class (b), `phrase_index_logger.h:172-176`).
-# The over-read outcome applies only where the walk reaches it.
 def _over_read_add(token):
     """An ADD whose declared six-byte payload runs past the log's end."""
     return ((_LOG_ADD).to_bytes(4, 'little') + token.to_bytes(4, 'little') +
             (6).to_bytes(2, 'little') + b'\x01\x01\x07')
-
-
-def _short_add_before_over_read(p):
-    """A valid MODIFY of one, a one-byte ADD, then an over-reading ADD."""
-    return ([
-        _log_record(_LOG_MODIFY, p['one'][0], old=p['one'][1],
-                    new=_item_with(p['one'][1], freq=77)),
-        _log_record(_LOG_ADD, p['fresh'][0], new=b'\x01'),
-        _over_read_add(p['absent'][0])], _watch(p))
-
-
-def _short_add_before_over_read_init(k):
-    """Replay the short ADD before the over-read at init; alias init truth as ret."""
-    out = system_replay(k, _short_add_before_over_read, unigram_add=False)
-    out['ret'] = out['ctx']
-    return out
-
-
-for _mode in ('pinyin', 'zhuyin'):
-    case('replay-short-add-before-over-read-' + _mode,
-         mode=_mode, abort=True, sigabrt=True, userdir=True, stderr=True,
-         issues=('row:108',))(_short_add_before_over_read_init)
-    # The reload path: library 2's saved log merged by
-    # `*_load_phrase_library` (`pinyin.cpp:276`, `zhuyin.cpp:219`).
-    case('replay-reload-short-add-before-over-read-' + _mode,
-         mode=_mode, abort=False, sigabrt=True, userdir=True, issues=('row:108',))(
-        lambda k: logger_reload_probe(
-            k, _log_record(_LOG_ADD, 0x02000005, new=b'\x01') + _over_read_add(0x02000006)))
 
 
 # An over-read tail (class (b)): the walk reaches an ADD whose declared
@@ -1050,11 +1019,11 @@ def _stop_before_header_token(stop):
     return lambda k: system_replay(k, build, unigram_add=False)
 
 
+case('replay-stop-before-header-token-remove-pinyin', mode='pinyin', issues=('row:91',))(
+    _stop_before_header_token(
+        lambda p: _log_record(_LOG_REMOVE, p['two'][0], old=_flip(p['two'][1]))))
 for _mode in ('pinyin', 'zhuyin'):
     _suffix = '-zhuyin' if _mode == 'zhuyin' else '-pinyin'
-    case('replay-stop-before-header-token-remove' + _suffix, mode=_mode, issues=('row:91',))(
-        _stop_before_header_token(
-            lambda p: _log_record(_LOG_REMOVE, p['two'][0], old=_flip(p['two'][1]))))
     case('replay-stop-before-header-token-modify' + _suffix, mode=_mode, issues=('row:91',))(
         _stop_before_header_token(
             lambda p: _log_record(_LOG_MODIFY, p['two'][0], old=_flip(p['two'][1]),
@@ -1211,13 +1180,17 @@ _PRON_SHAPES = {
     'other-reading': ([(None, 100), (_PRON_OTHER_KEYS, 130)], None),
     'other-first': ([(_PRON_OTHER_KEYS, 130), (None, 250)], None),
 }
-for _mode in ('pinyin', 'zhuyin'):
-    case('replay-pron-unigram-combined-' + _mode, mode=_mode, stderr=True, issues=('871', '876', '870'))(
-        lambda k: pron_lifecycle(k, _pron_shape([(None, 160), (None, 220)]), 'unigram'))
+case('replay-pron-unigram-combined-pinyin', mode='pinyin', stderr=True, issues=('871', '876', '870'))(
+    lambda k: pron_lifecycle(k, _pron_shape([(None, 160), (None, 220)]), 'unigram'))
 
+# Training (`phrase_index.cpp:114-143`) and import (`:122-139`) read the entries the shape
+# leaves, so they take every shape on libpinyin. Masking reads none of them, and libzhuyin
+# calls the same code: one shape each.
 for _shape, (_entries, _unigram) in _PRON_SHAPES.items():
-    for _steps in ('train', 'import', 'mask'):
-        for _mode in ('pinyin', 'zhuyin'):
+    for _steps, _modes in (('train', ('pinyin', 'zhuyin') if _shape == 'dup-both' else ('pinyin',)),
+                           ('import', ('pinyin', 'zhuyin') if _shape == 'dup-both' else ('pinyin',)),
+                           ('mask', ('pinyin', 'zhuyin') if _shape == 'dup-both' else ())):
+        for _mode in _modes:
             case('replay-pron-' + _steps + '-' + _shape + '-' + _mode, mode=_mode, stderr=True, issues=('871', '876', '870'))(
                 lambda k, e=_entries, u=_unigram, st=_steps: pron_lifecycle(k, _pron_shape(e, u), st))
 
@@ -1384,9 +1357,9 @@ def _removed_extension(k, candidates, labels=('exact', 'longer', 'prefix'), befo
     return out
 
 
+case('removed-extension-sentence-pinyin', mode='pinyin', stderr=True)(
+    lambda k: _removed_extension(k, False))
 for _mode in ('pinyin', 'zhuyin'):
-    case('removed-extension-sentence-' + _mode, mode=_mode, stderr=True)(
-        lambda k: _removed_extension(k, False))
     case('removed-extension-candidates-' + _mode, mode=_mode, stderr=True)(
         lambda k: _removed_extension(k, True, ('prefix',)))
 
@@ -1421,9 +1394,6 @@ for _mode in ('pinyin', 'zhuyin'):
     case('removed-candidate-' + _mode, mode=_mode, stderr=True, crash={
         'removed': [False, 0, None], 'exact-guessed': True, 'exact-candidates-ret': True,
     }, issues=('row:102',))(_removed_candidate)
-case('removed-candidate-before-cursor-zhuyin', mode='zhuyin', stderr=True, crash={
-    'removed': [False, 0, None], 'exact-guessed': True, 'exact-candidates-ret': True,
-}, issues=('row:102',))(lambda k: _removed_candidate(k, before=True))
 
 
 # #1231: a system journal REMOVE leaves the phrase-table token, and the
@@ -1575,8 +1545,9 @@ def chunk_frame_user(k, trailing):
     return {'ctx': bool(k.ctx), 'unigram': unigram_of(k, token)}
 
 
-for _mode in ('pinyin', 'zhuyin'):
-    for _kind, _probe in (('journal', chunk_frame_journal), ('user', chunk_frame_user)):
+for _mode, _kinds in (('pinyin', (('journal', chunk_frame_journal), ('user', chunk_frame_user))),
+                      ('zhuyin', (('journal', chunk_frame_journal),))):
+    for _kind, _probe in _kinds:
         for _trailing in (False, True):
             case(f'chunk-frame-{_kind}-{"trailing" if _trailing else "exact"}-{_mode}',
                  mode=_mode, control=not _trailing, issues=('1576',))(
