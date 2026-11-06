@@ -255,6 +255,8 @@ def document(tools: 'Tools', env: Mapping[str, str], *, backend: str, pinned: bo
         'environment': {
             'kernel': tools.query('uname', '-srvm'),
             'runner_image': f'{env.get("ImageOS", "local")}/{env.get("ImageVersion", "local")}',
+            'container_image': env.get('OXPINYIN_MEASUREMENT_IMAGE', 'native'),
+            'os_release': tools.query('cat', '/etc/os-release'),
             'rustc': tools.query('rustc', '-V'),
             'cc': tools.query('cc', '--version'),
             'glibc': tools.query('ldd', '--version'),

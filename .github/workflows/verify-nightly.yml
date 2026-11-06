@@ -27,6 +27,7 @@ name: verify-nightly
 # test-macos on macos-latest): the nightly lanes exist to surface drift early, and the rolling
 # distro toolchain is part of what they exercise. The image is
 # deliberately unpinned — do not "stabilise" it.
+# The oracle is never built or run on GitHub Actions.
 
 on:
   schedule:
@@ -273,13 +274,14 @@ jobs:
     if: ${{ !inputs.windows_only && !inputs.macos_only }}
     runs-on: *ubuntu
     container:
-      image: debian:testing # deliberately unpinned; see the header comment
+      image: debian:testing
     timeout-minutes: 60
     defaults:
       run:
         shell: bash
     env:
       DEBIAN_FRONTEND: noninteractive
+      OXPINYIN_MEASUREMENT_IMAGE: debian:testing
     steps:
       - name: Bootstrap the bare runner essentials (apt)
         run: |

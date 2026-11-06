@@ -1,5 +1,11 @@
 # Native contributor setup
 
+Pin-comparison campaigns use the local oracle `performance` stage; see
+[where measurements run](benches.md#where-measurements-run). Native development
+and native-only measurements are unchanged. The oxpinyin-only nightly snapshot
+uses plain Debian stable; other Linux CI stays on unpinned Debian testing.
+
+
 Start from [CONTRIBUTING](../../CONTRIBUTING.md). These instructions build
 and test local files; they do not install an input method or replace your
 system libpinyin. Stop if a command fails and keep that command and its full

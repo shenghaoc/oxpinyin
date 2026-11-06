@@ -14,6 +14,7 @@ admitted pool, and perf-same-data builds in sequence because its two builds
 share one target directory.
 """
 import glob
+import hashlib
 import argparse
 import json
 import os
@@ -41,7 +42,7 @@ RECORD_X_SHA = 'bf8d3b5707b5bc1bafc09670185b96770b73f596dd2eb57b8a9cba46bad4aec8
 # the one the record was taken with (the image's run_perf_unit is byte-identical to the record's).
 IMAGE_HARNESS_SOURCE = Path('/repo/tools/bisection/bisect.c')
 # The control runners build into fixed names here, and their identity files and findings quote them.
-SCRATCH = Path('/tmp')
+SCRATCH = Path('/performance/tmp')
 LIBPINYIN_TKRZW, LIBPINYIN_KC = Path('/opt/libpinyin-tkrzw'), Path('/opt/libpinyin-kc')
 DATA_SUBDIRECTORY = 'lib/libpinyin/data'
 REQUIRED_DATA = ('pinyin_index.bin', 'phrase_index.bin', 'bigram.db', 'table.conf',
@@ -102,7 +103,7 @@ def perf_baseline(argv: Sequence[str], env: Mapping[str, str]) -> int:
         bench.no_arguments(argv)
         home = Path(env['HOME']) if env.get('HOME') else Path.home()
         oracle_prefix = Path(setting(env, 'PINYIN_ORACLE_PREFIX', str(home / '.local/opt/pinyin-oracle')))
-        work = Path(setting(env, 'OXPINYIN_PERF_WORK', str(bench.ROOT / 'target/perf-baseline')))
+        work = Path(setting(env, 'OXPINYIN_PERF_WORK', '/performance/results/perf-baseline'))
         stage = work / 'stage'
         cpu = setting(env, 'PERF_CPU', '0')
         runs = bench.count(label, env, 'PERF_RUNS', '20')
@@ -122,7 +123,7 @@ def perf_baseline(argv: Sequence[str], env: Mapping[str, str]) -> int:
             fail(f'fatal: oracle prefix at {oracle_prefix} is off-pin')
 
         emit('--- building bisect harness ---')
-        harness = bench.BISECT / 'bisect'
+        harness = SCRATCH / 'bisect'
         bench.run(bench.harness_build(harness))
         emit('build: ok')
 
@@ -157,7 +158,7 @@ def perf_baseline(argv: Sequence[str], env: Mapping[str, str]) -> int:
         worker.standalone('pin', Arm(oracle.label, oracle_so, oracle_data, oracle_so.parent))
         worker.standalone('subject', Arm(oxpinyin.label, capi_so, capi_data, capi_so.parent))
 
-        populate_data(capi_data, Path(setting(env, 'PINYIN_EXPORT_DIR', '/tmp/oxpinyin-export')))
+        populate_data(capi_data, Path(setting(env, 'PINYIN_EXPORT_DIR', '/performance/pinyin-oracle/tkrzw/lib/libpinyin/data')))
         for name in REQUIRED_DATA:
             if not (capi_data / name).is_file():
                 fail(f'fatal: missing {capi_data / name}')
@@ -235,7 +236,7 @@ def perf_matrix(argv: Sequence[str], env: Mapping[str, str]) -> int:
     env = dict(env)
     with bench.working_directory(bench.BISECT):
         bench.no_arguments(argv)
-        out = Path(setting(env, 'MATRIX_OUT', '/out'))
+        out = Path(setting(env, 'MATRIX_OUT', '/performance/results/perf-matrix'))
         cpu = setting(env, 'PERF_CPU', '0')
         runs = bench.count(label, env, 'PERF_RUNS', '20')
         cycles = setting(env, 'PERF_CYCLES', '8')
@@ -246,7 +247,7 @@ def perf_matrix(argv: Sequence[str], env: Mapping[str, str]) -> int:
         cells = matrix_cells()
         arms = [Arm(name, so, data, so.parent) for name, so, data in cells]
         a, b, c, d = arms
-        worker = measured(env, label, bench.BISECT / 'bisect', cpu)
+        worker = measured(env, label, SCRATCH / 'bisect', cpu)
         worker.standalone('pin', a, cell.default_cell())
         worker.standalone('subject', c, cell.default_cell())
 
@@ -336,13 +337,13 @@ def perf_same_data(argv: Sequence[str], env: Mapping[str, str]) -> int:
     env = dict(env)
     with bench.working_directory(bench.BISECT):
         bench.no_arguments(argv)
-        out = Path(setting(env, 'MATRIX_OUT', '/out'))
+        out = Path(setting(env, 'MATRIX_OUT', '/performance/results/perf-same-data'))
         cpu = setting(env, 'PERF_CPU', '0')
         runs = bench.count(label, env, 'PERF_RUNS', '20')
         cycles = setting(env, 'PERF_CYCLES', '8')
         repeats = setting(env, 'PERF_REPEATS', '1')
         ram_runs = bench.count(label, env, 'PERF_RAM_RUNS', '10')
-        target = Path(setting(env, 'CARGO_TARGET_DIR', str(bench.ROOT / 'target')))
+        target = Path(setting(env, 'CARGO_TARGET_DIR', '/performance/target'))
         out.mkdir(parents=True, exist_ok=True)
 
         # Serial: both builds write $TARGET/release/libpinyin_capi.so, and each is copied out before
@@ -363,7 +364,7 @@ def perf_same_data(argv: Sequence[str], env: Mapping[str, str]) -> int:
         verify_backend('tkrzw', tkrzw_so)
 
         emit('--- building bisect harness ---')
-        harness = bench.BISECT / 'bisect'
+        harness = SCRATCH / 'bisect'
         bench.run(bench.harness_build(harness, flags=('-std=gnu11', '-Wall', '-Wextra', '-O2')))
 
         a_so, b_so = bench.find_library(LIBPINYIN_TKRZW), bench.find_library(LIBPINYIN_KC)
@@ -404,7 +405,7 @@ def perf_same_data(argv: Sequence[str], env: Mapping[str, str]) -> int:
 def settings_of(label: str, env: Mapping[str, str], sizes: str) -> dict:
     """The CTRL_* settings the two control runners share, with their paths and counts."""
     runs = bench.count(label, env, 'CTRL_RUNS', '20')
-    return dict(out=Path(setting(env, 'CTRL_OUT', '/out')), runs=runs, cycles=setting(env, 'CTRL_CYCLES', '8'),
+    return dict(out=Path(setting(env, 'CTRL_OUT', '/performance/results/' + ('shipped-check' if label == SHIPPED else 'tree-recipe-control'))), runs=runs, cycles=setting(env, 'CTRL_CYCLES', '8'),
                 sizes=setting(env, 'CTRL_SIZES', sizes).split(), cpu=setting(env, 'CTRL_CPU', '0'),
                 tools=Path(setting(env, 'CTLTOOLS', '/ctltools')))
 
@@ -441,7 +442,7 @@ def cargo_build(source: Path, destination: Path):
 
 def tempfile_directory():
     """A scratch directory removed on exit: `mktemp -d` without leaving a build tree behind."""
-    return tempfile.TemporaryDirectory(prefix='oxpinyin-build-')
+    return tempfile.TemporaryDirectory(prefix='oxpinyin-build-', dir=SCRATCH)
 
 
 def control_sources(env: Mapping[str, str]) -> Path:
@@ -722,9 +723,9 @@ def rss_diag(argv: Sequence[str], env: Mapping[str, str]) -> int:
         lp, ox = Path(options['lp']), Path(options['ox'])
         cpu = setting(env, 'PERF_CPU', '0')
         cycles, rounds = options['cycles'], options['rounds']
-        out = Path(options['out'] or '/tmp/rss-diag')
+        out = Path(options['out'] or '/performance/results/rss-diag')
         arms = dict(L=Arm('L', lp, Path(options['data'])), S=Arm('S', ox, Path(options['data'])))
-        harness = bench.BISECT / 'bisect'
+        harness = SCRATCH / 'bisect'
         worker = measured(env, label, harness, cpu, required=True)
         worker.standalone('pin', arms['L'])
         worker.standalone('subject', arms['S'])
@@ -825,8 +826,9 @@ def steady_comparison_inner(argv: Sequence[str], env: Mapping[str, str]) -> int:
         fail('steady-comparison requires Linux, ext4 and Valgrind', 2)
     parser = argparse.ArgumentParser(description=steady_comparison_inner.__doc__)
     parser.add_argument('--cell', required=True, choices=cell.CELLS)
-    for name in ('base', 'pr', 'pin', 'base-alloc', 'pr-alloc', 'system-dir', 'out'):
+    for name in ('base', 'pr', 'pin', 'base-alloc', 'pr-alloc', 'system-dir'):
         parser.add_argument('--' + name, required=True, type=Path)
+    parser.add_argument('--out', type=Path, default=Path('/performance/results/steady-comparison'))
     parser.add_argument('--user-dir', type=Path, help='starting profile, copied privately for every launch')
     parser.add_argument('--arm', action='append', default=[], metavar='NAME=SO',
                         help='an additional measured library, NAME four of [a-z0-9_], reported against base and pin')
@@ -1002,10 +1004,11 @@ def stack_comparison_inner(argv: Sequence[str], env: Mapping[str, str]) -> int:
     """
     parser = argparse.ArgumentParser(description=stack_comparison_inner.__doc__)
     parser.add_argument('--cell', required=True, choices=cell.CELLS)
-    for name in ('pin-prefix', 'base-prefix', 'pr-prefix', 'base-alloc', 'pr-alloc', 'work'):
+    for name in ('pin-prefix', 'base-prefix', 'pr-prefix', 'base-alloc', 'pr-alloc'):
         parser.add_argument('--' + name, required=True, type=Path)
     parser.add_argument('--arm', action='append', default=[], metavar='NAME=PREFIX',
                         help='a further installed prefix, rotated with base, PR and pin (repeatable)')
+    parser.add_argument('--work', type=Path, default=Path('/performance/results/stack-comparison'))
     parser.add_argument('--workloads', default=','.join(STACK_WORKLOADS),
                         help='comma-separated subset of ' + ','.join(STACK_WORKLOADS))
     args = parser.parse_args(argv)
@@ -1061,3 +1064,134 @@ def stack_comparison(argv: Sequence[str], env: Mapping[str, str]) -> int:
 RECIPES = {'perf-baseline': perf_baseline, 'perf-matrix': perf_matrix, 'perf-same-data': perf_same_data,
            'shipped-check': shipped_check, 'tree-recipe-control': tree_recipe_control, 'rss-diag': rss_diag,
            'steady-comparison': steady_comparison, 'stack-comparison': stack_comparison}
+
+
+def prepared_pin_matches(prefix, seed):
+    """Verify the existing builder's identity, the cached libraries and both data manifests before reuse."""
+    def fields(path):
+        return dict(line.split('=', 1) for line in path.read_text().splitlines() if '=' in line)
+    try:
+        recorded = fields(prefix / 'oracle-pin.txt')
+        expected = fields(seed / 'oracle-pin.txt')
+        for key in ('pin_ref', 'libpinyin_commit', 'model_sha256', 'dbm',
+                    'shared_object_sha256', 'zhuyin_shared_object_sha256'):
+            if not expected.get(key) or recorded.get(key) != expected[key]:
+                return False
+        for library, key in (('libpinyin.so', 'shared_object_sha256'), ('libzhuyin.so', 'zhuyin_shared_object_sha256')):
+            if hashlib.sha256((prefix / 'lib' / library).read_bytes()).hexdigest() != recorded[key]:
+                return False
+        for manifest, key in (('oracle-data.sha256', 'data_manifest_sha256'),
+                              ('oracle-data-unstable.sha256', 'data_unstable_manifest_sha256')):
+            content = (prefix / manifest).read_bytes()
+            if hashlib.sha256(content).hexdigest() != recorded.get(key):
+                return False
+            for line in content.decode().splitlines():
+                digest, name = line.split('  ', 1)
+                path = prefix / name
+                if not path.resolve().is_relative_to(prefix.resolve()):
+                    return False
+                if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+                    return False
+        return (prefix / DATA_SUBDIRECTORY / 'table.conf').is_file()
+    except (OSError, ValueError, UnicodeError):
+        return False
+
+
+def prepare(argv, env):
+    """Prepare local campaign inputs after entering Dockerfile.oracle's performance stage.
+
+    Model data and subject artifacts are runtime working data, never image layers.
+    matrix builds separate subject data; callgrind builds profiling, shipping and
+    allocation arms over the pin's data. oracle prepares only the selected pin cells.
+    """
+    from .recipes import require_performance_environment
+    from .. import model
+    require_performance_environment(env)
+    parser = argparse.ArgumentParser(prog='python -m tools.dev.measure.campaigns')
+    parser.add_argument('mode', choices=('oracle', 'matrix', 'callgrind'))
+    parser.add_argument('--cells', nargs='+', choices=('tkrzw', 'kc', 'bdb'), default=None)
+    args = parser.parse_args(argv)
+    if args.cells is not None and args.mode != 'oracle':
+        parser.error('--cells is accepted only in oracle mode')
+    cells = (args.cells or ['tkrzw', 'kc']) if args.mode == 'oracle' else ['tkrzw', 'kc'] if args.mode == 'matrix' else ['tkrzw']
+    extracted = model.fetch('/performance/model20', env=env)
+    for backend in cells:
+        seed = Path('/opt/pinyin-oracle') / backend
+        prefix = Path('/performance/pinyin-oracle') / backend
+        if not prepared_pin_matches(prefix, seed):
+            shutil.rmtree(prefix, ignore_errors=True)
+            prefix.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(seed, prefix, symlinks=True)
+            bench.heavy(['bash', bench.ROOT / 'tools/oracle/build-oracle.sh', '--regen-data',
+                         '--dbm', backend, '--enable-libzhuyin', '--prefix', prefix, '--model-dir', extracted,
+                         '--work-dir', f'/performance/oracle-{backend}'], env=env)
+        alias = Path('/opt/libpinyin-' + backend)
+        if alias.is_symlink():
+            alias.unlink()
+        elif alias.exists():
+            shutil.rmtree(alias)
+        if args.mode == 'matrix':
+            stripped = Path('/performance/libpinyin-' + backend)
+            shutil.rmtree(stripped, ignore_errors=True)
+            shutil.copytree(prefix, stripped, symlinks=True)
+            alias.symlink_to(stripped, target_is_directory=True)
+            for library in (alias / 'lib').glob('*.so*'):
+                if library.is_file() and not library.is_symlink():
+                    bench.run(['strip', '--strip-all', library])
+        else:
+            alias.symlink_to(prefix, target_is_directory=True)
+    if args.mode == 'oracle':
+        return 0
+    for name, features, debug in (
+            [('tkrzw', 'tkrzw', False), ('kc', 'kyotocabinet', False)]
+            if args.mode == 'matrix' else
+            [('tkrzw', 'tkrzw', True), ('nodebug', 'tkrzw', False),
+             ('alloccount', 'tkrzw,alloc-count', True)]):
+        installed = Path(f'/performance/oxpinyin-{name}')
+        installed.mkdir(parents=True, exist_ok=True)
+        alias = Path(f'/opt/oxpinyin-{name}')
+        if not alias.exists():
+            alias.symlink_to(installed, target_is_directory=True)
+        stage = installed / 'stage'
+        build_env = dict(env)
+        if debug:
+            build_env['RUSTFLAGS'] = '-Cdebuginfo=1 -Cstrip=none'
+        else:
+            build_env.pop('RUSTFLAGS', None)
+        bench.heavy(['cargo', 'cinstall', '--locked', '--release', '-p', 'oxpinyin-capi',
+                     '--no-default-features', '--features', features, f'--destdir={stage}',
+                     '--prefix=/usr'], env=build_env)
+        if args.mode == 'matrix':
+            data = Path(f'/opt/oxpinyin-{name}/data')
+            data.mkdir(parents=True, exist_ok=True)
+            bench.copy_file(bench.ROOT / 'fixtures/w3' / cell.BACKEND_EXTENSIONS[features] / 'table.conf', data)
+            bench.heavy(['cargo', 'build', '--locked', '--release', '-p', 'oxpinyin-utils',
+                         '--no-default-features', '--features', features, '--bin', 'gen_binary_files',
+                         '--bin', 'import_interpolation', '--bin', 'gen_unigram'], env=build_env)
+            binaries = Path(build_env.get('CARGO_TARGET_DIR', '/performance/target')) / 'release'
+            bench.run([binaries / 'gen_binary_files', '--gen-punct-table', '--table-dir', extracted],
+                      cwd=data, env=build_env)
+            with (extracted / 'interpolation2.text').open('rb') as source:
+                bench.run([binaries / 'import_interpolation', '--table-dir', extracted],
+                          cwd=data, env=build_env, stdin=source)
+            bench.run([binaries / 'gen_unigram', '--table-dir', extracted], cwd=data, env=build_env)
+            for library in (stage / 'usr/lib').glob('*.so*'):
+                if library.is_file() and not library.is_symlink():
+                    bench.run(['strip', '--strip-all', library])
+    harness = SCRATCH / 'bisect'
+    bench.run(bench.harness_build(harness, flags=(*bench.STRICT_FLAGS, '-g')))
+    if args.mode == 'callgrind':
+        from . import valgrind
+        status = valgrind.callgrind_control(['/opt/oxpinyin-tkrzw/stage', '/opt/oxpinyin-nodebug/stage'], env)
+        if status:
+            raise Finished(status)
+        status, report = valgrind.anchors_table(harness)
+        emit(report)
+        if status:
+            raise Finished(status)
+    return 0
+
+
+if __name__ == '__main__':
+    from ..runners import guarded
+    raise SystemExit(guarded(lambda: prepare(sys.argv[1:], dict(os.environ))))

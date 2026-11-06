@@ -25,6 +25,7 @@ from ..runners import Finished, emit, write
 from . import bench, identity, reports
 from .bench import Arm, Bench, fail, setting
 
+SCRATCH = Path('/performance/tmp')
 CALLGRIND = 'run-callgrind-differential.sh'
 SYSTEM_IMPORT = 'run-system-import-profile.sh'
 LP_ROOT = Path('/opt/libpinyin-tkrzw')
@@ -207,7 +208,7 @@ def callgrind_differential(argv: Sequence[str], env: Mapping[str, str]) -> int:
         return sentence.run(argv, env)
     label = CALLGRIND
     env = dict(env)
-    out = Path(setting(env, 'CG_OUT', '/out'))
+    out = Path(setting(env, 'CG_OUT', '/performance/results/callgrind-differential'))
     cpu = setting(env, 'PERF_CPU', '0')
     # Stage 4 and 5 capture size. Callgrind is deterministic, so this is chosen for a workable runtime
     # under a ~50x interpreter, not for noise.
@@ -222,7 +223,7 @@ def callgrind_differential(argv: Sequence[str], env: Mapping[str, str]) -> int:
 
     found = libraries()
     lp, ox, nodebug, alloc = (found[key] for key in ('lp', 'ox', 'nodebug', 'alloc'))
-    harness = bench.BISECT / 'bisect'
+    harness = SCRATCH / 'bisect'
     worker = Bench(label, env, harness, cpu, cell='tkrzw', required=True)
     arms = {'lp': Arm('libpinyin-tkrzw', lp, DATA, lp.parent), 'ox': Arm('oxpinyin-tkrzw', ox, DATA, ox.parent),
             'nodebug': Arm('oxpinyin-nodebug', nodebug, DATA, nodebug.parent),
@@ -331,6 +332,8 @@ def system_import_profile(argv: Sequence[str], env: Mapping[str, str]) -> int:
     """
     label = SYSTEM_IMPORT
     arguments = list(argv)
+    if len(arguments) == 3 or (len(arguments) > 3 and arguments[3] == '--jobs'):
+        arguments.insert(3, '/performance/results/system-import-profile')
     for number, name in enumerate(('pin-so', 'ox-so', 'system-data-dir', 'new-output-dir'), 1):
         if len(arguments) < number or not arguments[number - 1]:
             fail(f'{label}: {number}: {name}')
@@ -350,7 +353,7 @@ def system_import_profile(argv: Sequence[str], env: Mapping[str, str]) -> int:
             leftover.append(rest.pop(0))
     bench.no_arguments(leftover)
     try:
-        os.mkdir(out)
+        Path(out).mkdir(parents=True)
     except OSError as error:
         fail(f"mkdir: cannot create directory '{out}': {error.strerror}")
     out = os.path.realpath(out)

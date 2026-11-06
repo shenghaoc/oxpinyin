@@ -11,10 +11,52 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from tools.oracle import image as images
+
+
+class PerformanceImageTests(unittest.TestCase):
+    def test_native_platform_is_explicit_for_build_and_run(self):
+        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(images.platform, 'machine', return_value='arm64'), \
+             mock.patch.object(images, 'run', return_value=0) as run, \
+             mock.patch.object(images, 'text', return_value='/checkout/.git'):
+            self.assertEqual(images.performance(['--engine', 'container', '--', 'true']), 0)
+        build, launch = [call.args[0] for call in run.call_args_list]
+        self.assertEqual(build[build.index('--platform') + 1], 'linux/arm64')
+        self.assertEqual(build[build.index('--memory') + 1], '6G')
+        self.assertIn('/checkout/.git:/checkout/.git:ro', launch)
+        self.assertIn(f'{ROOT.resolve()}:/repo:ro', launch)
+        self.assertIn('ORACLE_PLATFORM=linux/arm64', build)
+        self.assertEqual(build[build.index('--target') + 1], 'performance')
+        self.assertEqual(launch[launch.index('--platform') + 1], 'linux/arm64')
+        self.assertEqual(launch[-1], 'true')
+
+    def test_ci_and_forced_emulation_refuse_before_any_build(self):
+        for env in ({'GITHUB_ACTIONS': 'true'}, {'ORACLE_PLATFORM': 'linux/amd64'},
+                    {'DOCKER_DEFAULT_PLATFORM': 'linux/amd64'}, {'CONTAINER_DEFAULT_PLATFORM': 'linux/amd64'}):
+            with self.subTest(env=env), mock.patch.dict(os.environ, env, clear=True), \
+                 mock.patch.object(images.platform, 'machine', return_value='arm64'), \
+                 mock.patch.object(images, 'run') as run, contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(images.main(['performance', '--engine', 'container', '--build-only']), 2)
+                run.assert_not_called()
+
+    def test_rosetta_refuses_even_when_the_interpreter_reports_amd64(self):
+        with mock.patch.dict(os.environ, {}, clear=True), \
+             mock.patch.object(images.platform, 'system', return_value='Darwin'), \
+             mock.patch.object(images.platform, 'machine', return_value='x86_64'), \
+             mock.patch.object(images.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, b'1\n', b'')) as capture, \
+             mock.patch.object(images, 'run') as run, contextlib.redirect_stderr(io.StringIO()) as error:
+            self.assertEqual(images.main(['performance', '--engine', 'container']), 2)
+            self.assertIn('native Python', error.getvalue())
+            capture.assert_called_once_with(['/usr/sbin/sysctl', '-n', 'sysctl.proc_translated'], check=False, capture_output=True)
+            run.assert_not_called()
+
+    def test_platform_override_is_not_an_option(self):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            images.performance(['--platform', 'linux/amd64'])
 
 
 class ImageTests(unittest.TestCase):
