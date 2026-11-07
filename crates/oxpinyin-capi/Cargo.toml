@@ -124,6 +124,17 @@ rstest = { version = "0.28", default-features = false }
 # Dev-only: scratch dirs for the test fixtures. Never a dependency of the
 # C ABI itself.
 tempfile.workspace = true
+# Dev-only: the contract cases list chunk files by SHA-256.
+sha2 = "0.11"
+# Dev-only: the contract cases craft DBM files in the cell's own format.
+oxpinyin-store.workspace = true
+
+# The frozen pin contract cases whose references hold the tkrzw cell only:
+# they read the pinned libpinyin-data package (`just fetch-contract-data`),
+# which is in tkrzw format.
+[[test]]
+name = "contract_data"
+required-features = ["tkrzw"]
 
 [[bench]]
 name = "stage2"

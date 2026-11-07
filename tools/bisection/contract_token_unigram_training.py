@@ -3,7 +3,7 @@
 import ctypes as C
 
 from contract_abi import Arr, B, I, P, S, U, UNTOUCHED, Z, choose_text, tokens_of, unigram_of
-from contract_case_helpers import FACADE_TOTAL, _guess_out, token_unigram_trained, token_unigram_user
+from contract_case_helpers import FACADE_TOTAL, _guess_out
 from contract_fixtures import import_rows
 
 
@@ -138,10 +138,6 @@ for _mode in ('pinyin', 'zhuyin'):
     _prefix = 'zhuyin-' if _mode == 'zhuyin' else ''
     case(_prefix + 'token-unigram-system', mode=_mode, control=_mode == 'pinyin', issues=('808',))(
         token_unigram_system)
-    case(_prefix + 'token-unigram-user', mode=_mode, control=_mode == 'pinyin', issues=('808',))(
-        token_unigram_user)
-    case(_prefix + 'token-unigram-trained', mode=_mode, control=_mode == 'pinyin', issues=('808',))(
-        token_unigram_trained)
     case(_prefix + 'token-unigram-user-libraries', mode=_mode, control=_mode == 'zhuyin', issues=('808',))(
         token_unigram_user_libraries)
 
