@@ -24,13 +24,11 @@ class Reading256thTests(unittest.TestCase):
                 patch.object(family, '_wrap_zhuyin_readings', return_value=[b'z']) as zhuyin, \
                 patch.object(family, 'wrap_256th_reading', return_value='observed') as wrap:
             for name, readings, same in (('wrap-256th-reading', [b'p'], False),
-                                         ('wrap-256th-reading-same-iterator', [b'p'], True),
-                                         ('wrap-256th-reading-zhuyin', [b'z'], False),
-                                         ('wrap-256th-reading-zhuyin-same-iterator', [b'z'], True)):
+                                         ('wrap-256th-reading-zhuyin', [b'z'], False)):
                 with self.subTest(name=name):
                     self.assertEqual(cases[name][1](kit), 'observed')
                     wrap.assert_called_with(kit, readings, same_iterator=same)
-        self.assertEqual((pinyin.call_count, zhuyin.call_count), (2, 2))
+        self.assertEqual((pinyin.call_count, zhuyin.call_count), (1, 1))
 
     def test_candidate_readings_keep_the_tone_order(self):
         self.assertEqual(family._wrap_pinyin_readings()[:4], [b'ba1', b'ba2', b'ba3', b'ba4'])

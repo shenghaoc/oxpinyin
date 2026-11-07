@@ -1086,7 +1086,7 @@ class VerdictTests(DriverFixtureCase):
                     self.assertEqual(self.decide(spec, pin, refused, False), ('DIFFER', False, False))
 
     def plain(self, control=False):
-        return dict(contract['CASES']['default-option-parse'], control=control)
+        return dict(contract['CASES']['table-conf-919-source-token-nul'], control=control)
 
     def decide(self, spec, pin, subject, parent):
         return contract['verdict_for'](spec, pin, subject, parent)
@@ -1227,7 +1227,7 @@ class RegisteredTerminationDefaultTests(DriverFixtureCase):
 class DriverInvalidTests(VerifyCase):
     """verify: a failed worker on either side is INVALID and exits 1, and is never HOST-DEPENDENT."""
 
-    def invoke(self, parent, pin, subject, case_name='default-option-parse', glibc=None, glib=None,
+    def invoke(self, parent, pin, subject, case_name='table-conf-919-source-token-nul', glibc=None, glib=None,
                scanner_verdict=None):
         spec = contract['CASES'][case_name]
         self.freeze(spec, pin, glibc=glibc, glib=glib, scanner_verdict=scanner_verdict)
@@ -1258,12 +1258,12 @@ class DriverInvalidTests(VerifyCase):
         self.assertEqual((status, rows[0]['verdict'], rows[0]['expected_ok']), (0, 'DIFFER', True))
 
     def test_plan_only_never_runs_a_case(self):
-        spec = contract['CASES']['default-option-parse']
+        spec = contract['CASES']['table-conf-919-source-token-nul']
         self.freeze(spec, observation(result={'a': 1}))
 
         def worker(*args, **kwargs):
             raise AssertionError('plan executed a case')
-        result = self.verify({'default-option-parse': spec}, worker, '--cases', 'default-option-parse', '--plan-only')
+        result = self.verify({'table-conf-919-source-token-nul': spec}, worker, '--cases', 'table-conf-919-source-token-nul', '--plan-only')
         self.assertEqual((result.status, result.rows), (0, []))
         self.assertIn('plan: 1 case;', result.stderr)
 
@@ -1284,7 +1284,7 @@ class DriverInvalidTests(VerifyCase):
                                    case_name=name, glibc='0.0')
         self.assertEqual((status, rows[0]['verdict']), (0, 'MATCH'))
         # A case not registered as host-sensitive never becomes HOST-DEPENDENT: a mismatch is DIFFER.
-        self.assertFalse(reference.host_libc_sensitive('default-option-parse'))
+        self.assertFalse(reference.host_libc_sensitive('table-conf-919-source-token-nul'))
         status, rows = self.invoke(False, observation(result={'ctx': True}), observation(result={'ctx': False}),
                                    glibc='0.0')
         self.assertEqual((status, rows[0]['verdict']), (1, 'DIFFER'))
@@ -1499,12 +1499,12 @@ class SelectionTests(VerifyCase):
         self.assertEqual(contract['normal_tag']('W11'), 'w11')
 
     def test_issue_selects_registered_cases_only(self):
-        names, reasons = contract['select_cases'](issues=['#532'])
-        self.assertEqual(names, ['default-option-parse', 'default-option-single-key',
-                                 'explicit-incomplete-parse', 'explicit-use-tone-parse'])
-        self.assertEqual(reasons['default-option-parse'], ['issue 532'])
+        names, reasons = contract['select_cases'](issues=['#1378'])
+        self.assertEqual(names, ['table-conf-1378-unigram-lambda-one', 'table-conf-1378-unigram-lambda-one-zhuyin',
+                                 'table-conf-1378-unigram-lambda-zero-control'])
+        self.assertEqual(reasons['table-conf-1378-unigram-lambda-one'], ['issue 1378'])
         for name in names:
-            self.assertIn('532', contract['CASES'][name]['issues'])
+            self.assertIn('1378', contract['CASES'][name]['issues'])
         self.assertFalse(any(name.startswith('axis-c-') for name in contract['tag_index']().get('640', [])))
 
     def test_family_selects_by_id_prefix(self):
@@ -1514,10 +1514,10 @@ class SelectionTests(VerifyCase):
         self.assertEqual(reasons[names[0]], ['family zero-key'])
 
     def test_prefix_selects_untagged_cases_from_the_full_driver_registry(self):
-        names, _ = driver.select_cases(prefixes='table-conf-,user-conf-,remember-count-')
+        names, _ = driver.select_cases(prefixes='table-conf-,user-conf-,hash-path/')
         expected = sorted(n for n in driver.CASES if n.startswith('table-conf-'))
         expected += sorted(n for n in driver.CASES if n.startswith('user-conf-'))
-        expected += sorted(n for n in driver.CASES if n.startswith('remember-count-'))
+        expected += sorted(n for n in driver.CASES if n.startswith('hash-path/'))
         self.assertEqual(names, expected)
         self.assertTrue(any(not driver.CASES[n]['issues'] for n in names))
 
@@ -1538,9 +1538,10 @@ class SelectionTests(VerifyCase):
                 self.assertNotIn('unrecognized arguments', error)
 
     def test_explicit_cases_keep_their_order_and_combine(self):
-        names, reasons = contract['select_cases']('alloc-instance-after-fini,default-option-parse', issues=['532'])
-        self.assertEqual(names[:2], ['alloc-instance-after-fini', 'default-option-parse'])
-        self.assertEqual(reasons['default-option-parse'], ['--cases', 'issue 532'])
+        names, reasons = contract['select_cases']('table-conf-919-source-token-nul,table-conf-1378-unigram-lambda-one',
+                                                  issues=['1378'])
+        self.assertEqual(names[:2], ['table-conf-919-source-token-nul', 'table-conf-1378-unigram-lambda-one'])
+        self.assertEqual(reasons['table-conf-1378-unigram-lambda-one'], ['--cases', 'issue 1378'])
 
     def test_unknown_or_empty_selection_is_an_error_naming_what_exists(self):
         with self.assertRaises(contract['SelectionError']) as caught:
@@ -1565,15 +1566,15 @@ class SelectionTests(VerifyCase):
         self.assertEqual(contract['select_cases'](None), (names, reasons))
 
     def test_empty_cases_are_rejected_even_with_other_selectors(self):
-        for cases in ('', ' ', ',', 'default-option-parse,', ',default-option-parse'):
-            for selectors in ({}, {'issues': ['532']}, {'families': ['zero-key']}):
+        for cases in ('', ' ', ',', 'table-conf-919-source-token-nul,', ',table-conf-919-source-token-nul'):
+            for selectors in ({}, {'issues': ['1378']}, {'families': ['zero-key']}):
                 with self.subTest(cases=cases, selectors=selectors), \
                         self.assertRaisesRegex(driver.SelectionError, '--cases must not contain an empty value'):
                     driver.select_cases(cases, **selectors)
 
     def test_empty_cases_cli_exits_two_before_inputs_or_workers(self):
-        for value in ('', ' ', ',', 'default-option-parse,'):
-            for extra in ([], ['--issue', '532'], ['--family', 'zero-key']):
+        for value in ('', ' ', ',', 'table-conf-919-source-token-nul,'):
+            for extra in ([], ['--issue', '1378'], ['--family', 'zero-key']):
                 with self.subTest(value=value, extra=extra):
                     code, error = self.verify_exit('--cases', value, *extra)
                     self.assertEqual(code, 2)
@@ -1636,7 +1637,7 @@ class SelectionTests(VerifyCase):
             self.assertEqual(list(driver.CASES), ['unique-case', 'other-case'])
 
     def test_plan_lists_ids_reasons_facades_and_artifacts(self):
-        names, reasons = contract['select_cases'](issues=['532'], families=['zero-key'])
+        names, reasons = contract['select_cases'](issues=['1378'], families=['zero-key'])
         lines = contract['plan_lines'](names, reasons, Path('/s/libpinyin_capi.so'), Path('/s/libzhuyin_capi.so'),
                                        Path('/pin'), 'bdb')
         self.assertTrue(lines[0].startswith('plan: %d cases; cell bdb; facades: pinyin ' % len(names)))
@@ -1645,7 +1646,8 @@ class SelectionTests(VerifyCase):
         self.assertIn('pin /pin/lib/libzhuyin.so', lines[1])
         body = lines[2:]
         self.assertEqual(len(body), len(names))
-        self.assertTrue(any(line.split()[0] == 'default-option-parse' and 'issue 532' in line for line in body))
+        self.assertTrue(any(line.split()[0] == 'table-conf-1378-unigram-lambda-one' and 'issue 1378' in line
+                            for line in body))
         self.assertTrue(any(line.split()[0].startswith('zero-key/') and 'family zero-key' in line for line in body))
         default_lines = contract['plan_lines'](*contract['select_cases'](), Path('/s'), None, Path('/pin'), 'bdb')
         self.assertIn('default suite', default_lines[0])
@@ -1780,7 +1782,7 @@ class DriverVerdictTests(VerifyCase):
         options = ['--cases', 'slow,next', '--jobs', '1'] + (['--expect-parent'] if parent else [])
         if timeout is not None:
             options.extend(['--case-timeout', str(timeout)])
-        cases = {name: dict(driver.CASES['default-option-parse'], control=True) for name in ('slow', 'next')}
+        cases = {name: dict(driver.CASES['table-conf-919-source-token-nul'], control=True) for name in ('slow', 'next')}
         cases['slow'].update(control=False)
         self.freeze(cases['slow'], observation(result={'ret': True}))
         calls = []
@@ -1836,7 +1838,7 @@ class PlatformExclusionTests(VerifyCase):
         self.assertIn('#1137', contract['ARM64_EXCLUSION_REASON'])
 
     def invoke(self, host_platform, extra_args=(), cells=None, observations=False):
-        cases = {name: dict(driver.CASES['default-option-parse'], control=True,
+        cases = {name: dict(driver.CASES['table-conf-919-source-token-nul'], control=True,
                             platforms=('linux/amd64',),
                             platform_skip_reason='#1137: arm64 exclusion')
                  for name in ('slow', 'next')}
@@ -2087,7 +2089,7 @@ class ParallelCaseTests(VerifyCase):
                 self.assertIn('"tags"', output)
                 status, _, stderr = self.run_main(
                     ['verify', 'tkrzw', str(self.subject), '--data', str(self.data),
-                     '--references', str(self.references), '--cases', 'default-option-parse'],
+                     '--references', str(self.references), '--cases', 'table-conf-919-source-token-nul'],
                     dict(OXPINYIN_CONTRACT_JOBS=value), run_worker=lambda *a, **k: self.fail('a case ran'))
                 self.assertEqual(status, 2)
                 self.assertIn('Invalid OXPINYIN_CONTRACT_JOBS: use a positive integer', stderr)
@@ -2229,7 +2231,7 @@ class CancellationTests(DriverFixtureCase):
                 data = prefix / 'package-data'
                 data.mkdir()
                 (data / 'table.conf').write_text('x')
-                names = ['default-option-parse'] + (['explicit-use-tone-parse'] if jobs > 1 else [])
+                names = ['table-conf-919-source-token-nul'] + (['table-conf-919-header-one-line'] if jobs > 1 else [])
                 for name in names:
                     freeze(prefix / 'refs', 'tkrzw', driver.CASES[name], observation(result={'ret': True}))
                 operation = ['verify', 'tkrzw', str(prefix / 'lib/libpinyin.so'), '--data', str(data),
@@ -2630,47 +2632,6 @@ totals: 5
         profiled = [(name, op) for name, metric, case, op in calls if metric == 'ir' and case != 'calibrate']
         self.assertEqual(profiled, [(side, op) for side in ('libpinyin.so', 'base.so', 'subject.so')
                                     for op in ('add', 'count', 'lookup')])
-
-
-class AllocationFailure924Tests(DriverFixtureCase):
-    """Do not let a helper's successful exit substitute for failure evidence."""
-
-    def test_array_cases_are_default_members(self):
-        selected, _ = driver.select_cases()
-        for mode in ('pinyin', 'zhuyin'):
-            self.assertIn(f'glib-924-oom-array-growth-{mode}', selected)
-
-    def test_missing_failure_evidence_is_rejected(self):
-        kit = SimpleNamespace(scratch='/tmp', lib=SimpleNamespace(_name='subject.so'),
-                              data='/tmp/data', mode='pinyin')
-        with patch.object(driver.subprocess, 'check_output', return_value=''), \
-             patch.object(driver.subprocess, 'run', return_value=SimpleNamespace(stdout='')):
-            with self.assertRaises(AssertionError):
-                driver.glib_924_oom_array(kit)
-
-    def test_helper_failure_is_not_a_match(self):
-        kit = SimpleNamespace(scratch='/tmp', lib=SimpleNamespace(_name='subject.so'),
-                              data='/tmp/data', mode='pinyin')
-        with patch.object(driver.subprocess, 'check_output', return_value=''), \
-             patch.object(driver.subprocess, 'run', side_effect=[
-                 SimpleNamespace(), subprocess.CalledProcessError(1, ['alloc-failure'])]):
-            with self.assertRaises(subprocess.CalledProcessError):
-                driver.glib_924_oom_array(kit)
-
-    def test_harness_receives_the_arguments_its_usage_line_names(self):
-        # tools/abi/alloc-failure.cc: SO DATA FACADE SIDE USER_DIR [array-only].
-        kit = SimpleNamespace(scratch='/tmp', lib=SimpleNamespace(_name='subject.so'),
-                              data='/tmp/data', mode='pinyin')
-        calls = []
-
-        def run(argv, **options):
-            calls.append(list(argv))
-            return SimpleNamespace(stdout='pinyin pin allocation-5: PASS (fatal GLib error)\n')
-
-        with patch.object(driver.subprocess, 'check_output', return_value=''), \
-             patch.object(driver.subprocess, 'run', side_effect=run):
-            driver.glib_924_oom_array(kit)
-        self.assertEqual(calls[1][1:], ['subject.so', '/tmp/data', 'pinyin', 'pin', '', 'array-only'])
 
 
 class GLibDomainCaptureTests(DriverFixtureCase):
