@@ -4167,24 +4167,39 @@ fn export_walk(tag: &str, items: impl FnOnce(u32, u32, u32) -> Vec<(u32, u32)>) 
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);
 
-    let items = items(hao, hao_alt, dalong);
+    lay_gram(&user_dir.path, ni, &items(hao, hao_alt, dalong));
+    walk_bigram_export(&user_dir.path)
+}
+
+/// Lays a planted `user_bigram.db` holding PREDECESSOR's gram of ITEMS, `(token, count)` in the
+/// stored order with their total first, over the profile at USER_DIR.
+#[cfg(unix)]
+fn lay_gram(user_dir: &std::path::Path, predecessor: u32, items: &[(u32, u32)]) {
     let total: u32 = items.iter().map(|&(_, count)| count).sum();
     let mut gram = total.to_le_bytes().to_vec();
-    for (token, count) in items {
+    for &(token, count) in items {
         gram.extend_from_slice(&token.to_le_bytes());
         gram.extend_from_slice(&count.to_le_bytes());
     }
     // `plant_bigram` writes a whole profile; only its `user_bigram.db` is
     // wanted, laid over the session-one profile that holds the phrase.
     let planted = TempUserDir::new("export-gram-plant");
-    crate::test_support::plant_bigram(&planted.path, vec![(ni.to_le_bytes().to_vec(), gram)]);
+    crate::test_support::plant_bigram(
+        &planted.path,
+        vec![(predecessor.to_le_bytes().to_vec(), gram)],
+    );
     std::fs::copy(
         planted.path.join("user_bigram.db"),
-        user_dir.path.join("user_bigram.db"),
+        user_dir.join("user_bigram.db"),
     )
     .expect("lay the planted bigram over the profile");
+}
 
-    let context = init_at(&user_dir.path);
+/// Opens USER_DIR and walks the bigram export at most sixteen steps, stopping after two
+/// consecutive `has_next` answers of false.
+#[cfg(unix)]
+fn walk_bigram_export(user_dir: &std::path::Path) -> Vec<ExportStep> {
+    let context = init_at(user_dir);
     assert!(!context.is_null());
     let iter = crate::iterators::pinyin_begin_get_bigram_phrases(context);
     let mut steps = Vec::new();
@@ -4663,4 +4678,531 @@ fn remember_den_with_unmatched_character_returns_false() {
         cstr("你").as_ptr(),
         -1
     ));
+}
+
+// ── Pin capture of 2026-11-07 (tools/oracle/pin_capture.py, runs 1 and 2 identical) ──
+//
+// Each test below names its observation. The values are the pin's on the pinned
+// libpinyin-data; every one asserted here depends only on the test's own imports, parse
+// and options, so the w3 mini fixture holds it too.
+
+/// Every row of the current candidate list as (type, string, n-best index of an NBEST row).
+pub(crate) fn capture_rows(
+    instance: *mut PinyinInstance,
+) -> Vec<(lookup_candidate_type_t, String, Option<u8>)> {
+    let mut count = 0;
+    assert!(crate::candidates::pinyin_get_n_candidate(
+        instance,
+        &raw mut count
+    ));
+    (0..count)
+        .map(|index| {
+            let mut cand: *mut LookupCandidate = ptr::null_mut();
+            assert!(pinyin_get_candidate(instance, index, &raw mut cand));
+            let mut kind = lookup_candidate_type_t::ZOMBIE_CANDIDATE;
+            assert!(crate::candidates::pinyin_get_candidate_type(
+                instance,
+                cand,
+                &raw mut kind
+            ));
+            let mut text: *const crate::types::GChar = ptr::null();
+            assert!(crate::candidates::pinyin_get_candidate_string(
+                instance,
+                cand,
+                &raw mut text
+            ));
+            // SAFETY: a true answer points `text` at the row's borrowed string.
+            let text = unsafe { std::ffi::CStr::from_ptr(text) }
+                .to_string_lossy()
+                .into_owned();
+            let nbest = (kind == lookup_candidate_type_t::NBEST_MATCH_CANDIDATE).then(|| {
+                let mut index = 0_u8;
+                assert!(crate::candidates::pinyin_get_candidate_nbest_index(
+                    instance,
+                    cand,
+                    &raw mut index
+                ));
+                index
+            });
+            (kind, text, nbest)
+        })
+        .collect()
+}
+
+/// Imports ROWS into LIBRARY in one batch; answers each add's flag.
+pub(crate) fn import_batch(
+    context: *mut crate::types::PinyinContext,
+    library: u8,
+    rows: &[(&str, &str, i32)],
+) -> Vec<bool> {
+    let iter = pinyin_begin_add_phrases(context, library);
+    assert!(!iter.is_null());
+    let added = rows
+        .iter()
+        .map(|&(phrase, reading, count)| {
+            pinyin_iterator_add_phrase(iter, cstr(phrase).as_ptr(), cstr(reading).as_ptr(), count)
+        })
+        .collect();
+    pinyin_end_add_phrases(iter);
+    added
+}
+
+/// Library INDEX's export rows, through `begin`/`has_next`/`get_next`.
+pub(crate) fn export_of(
+    context: *mut crate::types::PinyinContext,
+    index: u32,
+) -> Vec<(String, String, i32)> {
+    let iter = pinyin_begin_get_phrases(context, index);
+    assert!(
+        !iter.is_null(),
+        "begin never answers NULL on a live context (pinyin.cpp:662-687)"
+    );
+    let rows = drain_phrases(iter);
+    pinyin_end_get_phrases(iter);
+    rows
+}
+
+/// Saves, then reopens the context on the same user directory.
+fn save_and_reopen(
+    context: *mut crate::types::PinyinContext,
+    instance: *mut PinyinInstance,
+    user_dir: &std::path::Path,
+) -> (*mut crate::types::PinyinContext, *mut PinyinInstance) {
+    assert!(pinyin_save(context));
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+    open(user_dir.to_str().expect("UTF-8 path"))
+}
+
+/// S1: an index with no sub-index exports nothing; a `guint` past 255 truncates to the
+/// iterator's `guint8` field (`pinyin.cpp:126`, `:666` at 074a2219); library 2 exports nothing
+/// once unloaded (`phrase_index.cpp:261-268`). `get_range` fails for a slot with no sub-index
+/// (`phrase_index.cpp:610-613`), so begin hands out an iterator with no next token
+/// (`pinyin.cpp:672-675`). Observations `export/empty/0`, `export/empty/15`,
+/// `export/truncated/256`, `export/truncated/263` and `export/unloaded/2`.
+#[test]
+fn export_follows_the_pins_slots_and_index_truncation() {
+    let user_dir = TempUserDir::new("export-slots");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    for index in [0, 15, 256] {
+        assert_eq!(export_of(context, index), [], "index {index}");
+    }
+    assert_eq!(
+        import_batch(context, 7, &[("你好世界", "ni'hao'shi'jie", 5)]),
+        [true]
+    );
+    let user = vec![("你好世界".to_owned(), "ni'hao'shi'jie".to_owned(), 5)];
+    assert_eq!(export_of(context, 7), user);
+    assert_eq!(export_of(context, 263), user, "263 is library 7");
+    assert!(crate::config::pinyin_unload_phrase_library(context, 2));
+    assert_eq!(export_of(context, 2), []);
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
+/// S2: 中国 is a system phrase, so the first add takes the new-token path (`pinyin.cpp:585-608`)
+/// and exports its own count; the second batch finds the token in library 7 and accumulates
+/// on the exact reading (`:563-583`, `phrase_index.cpp:73-84`) after the first batch's
+/// compaction (`pinyin.cpp:657`); a save and reopen keep it. Observation `import/rebatch/中国`.
+#[test]
+fn an_import_accumulates_across_a_batch_boundary() {
+    let user_dir = TempUserDir::new("import-rebatch");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    assert_eq!(
+        import_batch(context, 7, &[("中国", "zhong'guo", 4)]),
+        [true]
+    );
+    assert_eq!(
+        export_of(context, 7),
+        [("中国".to_owned(), "zhong'guo".to_owned(), 4)]
+    );
+    assert_eq!(
+        import_batch(context, 7, &[("中国", "zhong'guo", 6)]),
+        [true]
+    );
+    let accumulated = vec![("中国".to_owned(), "zhong'guo".to_owned(), 10)];
+    assert_eq!(export_of(context, 7), accumulated);
+    let (context, instance) = save_and_reopen(context, instance, &user_dir.path);
+    assert_eq!(export_of(context, 7), accumulated);
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
+/// S3: an import count other than -1 reaches the item as its `guint32` bit pattern
+/// (`pinyin.cpp:523-524`, `:578`, `:601`); the export starts at -1 and writes the count only when
+/// it is above 0 (`:703`, `:738-739`), so 0 exports as -1. A second add onto `INT_MAX` passes the
+/// overflow guard (`phrase_index.cpp:78`) and stores 0x80000000. Every add answers true, and a
+/// save and reopen keep the row. Observations `import-count/0`, `/-2`, `/INT_MIN`, `/INT_MAX`
+/// and `/INT_MAX+1`.
+#[test]
+fn import_counts_reach_the_export_as_the_pin_stores_them() {
+    type Row = (&'static str, &'static str, i32);
+    let cases: [(&[Row], Row); 5] = [
+        (&[("零次", "ling'ci", 0)], ("零次", "ling'ci", -1)),
+        (&[("负二", "fu'er", -2)], ("负二", "fu'er", -2)),
+        (
+            &[("最小", "zui'xiao", i32::MIN)],
+            ("最小", "zui'xiao", i32::MIN),
+        ),
+        (
+            &[("最大", "zui'da", i32::MAX)],
+            ("最大", "zui'da", i32::MAX),
+        ),
+        (
+            &[("最大", "zui'da", i32::MAX), ("最大", "zui'da", 1)],
+            ("最大", "zui'da", i32::MIN),
+        ),
+    ];
+    for (rows, (phrase, reading, count)) in cases {
+        let user_dir = TempUserDir::new("import-count");
+        let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+        assert!(import_batch(context, 7, rows).iter().all(|&added| added));
+        let expected = vec![(phrase.to_owned(), reading.to_owned(), count)];
+        assert_eq!(export_of(context, 7), expected, "{rows:?}");
+        let (context, instance) = save_and_reopen(context, instance, &user_dir.path);
+        assert_eq!(export_of(context, 7), expected, "{rows:?} after reopen");
+        crate::instance::pinyin_free_instance(instance);
+        crate::context::pinyin_fini(context);
+    }
+}
+
+/// D1: an import into a slot with no sub-index answers false: `get_range` fails
+/// (`pinyin.cpp:589`; `phrase_index.cpp:610-613`) and `result` stays false (`pinyin.cpp:608`).
+/// Library 7 stays empty. Observations `import/library/0` and `import/library/15`.
+///
+/// D2: libraries 16 and 255 read past the 16-slot array (`phrase_index.cpp:611`,
+/// `phrase_index.h:441`), undefined behaviour whose pinyin outcome is not stable (compatibility
+/// register row 43: the audit's D-12 recorded 255 accepted). oxpinyin refuses them; no capture.
+#[test]
+fn an_import_into_a_slot_without_a_sub_index_is_refused() {
+    let user_dir = TempUserDir::new("import-no-sub-index");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    for library in [0, 15, 16, 255] {
+        assert_eq!(
+            import_batch(context, library, &[("你好", "nihao", 1)]),
+            [false],
+            "library {library}"
+        );
+    }
+    assert_eq!(export_of(context, 7), []);
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
+/// D3: a second reading merged into an item is appended and never indexed (`pinyin.cpp:578`,
+/// `phrase_index.cpp:88-90`), and lowers the item's pronunciation possibility, the matched
+/// frequency over the total (`phrase_index.h:136-163`): 测侧 loses the sentence to 侧测 once its
+/// `xi'xi` reading carries 9,000,000 of 10,000,000. Observation `import/dilution/cece`.
+#[test]
+fn an_unindexed_second_reading_dilutes_the_sentence_score() {
+    let user_dir = TempUserDir::new("import-dilution");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    let sentence = || {
+        let input = cstr("cece");
+        assert_eq!(pinyin_parse_more_full_pinyins(instance, input.as_ptr()), 4);
+        assert!(pinyin_guess_sentence(instance));
+        let mut text: *mut std::os::raw::c_char = ptr::null_mut();
+        assert!(pinyin_get_sentence(instance, 0, &raw mut text));
+        assert!(pinyin_reset(instance));
+        crate::ffi::take_owned_cstr(text)
+    };
+    assert_eq!(
+        import_batch(
+            context,
+            1,
+            &[("测侧", "ce'ce", 1_000_000), ("侧测", "ce'ce", 600_000)]
+        ),
+        [true, true]
+    );
+    assert_eq!(sentence(), "测侧");
+    assert_eq!(
+        import_batch(context, 1, &[("测侧", "xi'xi", 9_000_000)]),
+        [true]
+    );
+    assert_eq!(sentence(), "侧测");
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
+/// D4: a keyed reparse leaves the n-best results in place (`pinyin.cpp:1497-1524`; only reset
+/// clears them, `:2700`): the sentence reads the stale result (`:1464-1474`), and the candidate
+/// list prepends it as its NBEST row (`:1934-1951`) until a new guess replaces it. Observation
+/// `assembly/stale-nbest/nihao-zhongguo`; its row count is the pinned data's and is not asserted.
+#[test]
+fn a_reparse_keeps_the_stale_nbest_result_until_the_next_guess() {
+    let user_dir = TempUserDir::new("stale-nbest");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    let sentence = || {
+        let mut text: *mut std::os::raw::c_char = ptr::null_mut();
+        assert!(pinyin_get_sentence(instance, 0, &raw mut text));
+        crate::ffi::take_owned_cstr(text)
+    };
+    let nihao = cstr("nihao");
+    assert_eq!(pinyin_parse_more_full_pinyins(instance, nihao.as_ptr()), 5);
+    assert!(pinyin_guess_sentence(instance));
+    assert_eq!(sentence(), "你好");
+    let zhongguo = cstr("zhongguo");
+    assert_eq!(
+        pinyin_parse_more_full_pinyins(instance, zhongguo.as_ptr()),
+        8
+    );
+    assert_eq!(sentence(), "你好", "the stale result");
+    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+    assert_eq!(
+        capture_rows(instance)[0],
+        (
+            lookup_candidate_type_t::NBEST_MATCH_CANDIDATE,
+            "你好".to_owned(),
+            Some(0)
+        )
+    );
+    assert!(pinyin_guess_sentence(instance));
+    assert_eq!(sentence(), "中国");
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
+/// D11: two contexts on one user directory each save their own whole files
+/// (`pinyin.cpp:1132-1147`), so the later save wins and a third context sees only its phrase.
+/// Observation `two-context/both-learn`.
+#[test]
+fn of_two_modified_contexts_the_later_save_wins() {
+    let user_dir = TempUserDir::new("two-context-both-learn");
+    let path = user_dir.path.to_str().expect("UTF-8 path");
+    let (first, first_instance) = open(path);
+    let (second, second_instance) = open(path);
+    assert_eq!(import_batch(first, 7, &[("甲甲", "jia'jia", 1)]), [true]);
+    assert_eq!(import_batch(second, 7, &[("乙乙", "yi'yi", 1)]), [true]);
+    assert!(pinyin_save(first));
+    assert!(pinyin_save(second));
+    let (third, third_instance) = open(path);
+    assert_eq!(
+        export_of(third, 7),
+        [("乙乙".to_owned(), "yi'yi".to_owned(), 1)]
+    );
+    for (context, instance) in [
+        (first, first_instance),
+        (second, second_instance),
+        (third, third_instance),
+    ] {
+        crate::instance::pinyin_free_instance(instance);
+        crate::context::pinyin_fini(context);
+    }
+}
+
+/// D14: an empty segment input has as many UCS-4 characters as UTF-8 ones, 0, so the pin runs the
+/// phrase lookup over nothing and answers true with no phrase (`pinyin.cpp:1446-1462`).
+/// Observation `segment/empty`.
+#[test]
+fn an_empty_phrase_segment_answers_true_with_no_phrase() {
+    let user_dir = TempUserDir::new("segment-empty");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    assert!(crate::phrase::pinyin_phrase_segment(
+        instance,
+        cstr("").as_ptr()
+    ));
+    let mut count = u32::MAX;
+    assert!(crate::phrase::pinyin_get_n_phrase(instance, &raw mut count));
+    assert_eq!(count, 0);
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
+/// D15: one-character user phrases under readings that differ only in the stored key, listed
+/// for the incomplete key `n` (0x18a): their order is the user pinyin index's key order, the
+/// ranges `convert` compresses (`storage/chewing_large_table2.h:91-133`). On the pinned data they
+/// are rows 788-796 of 797, in this order; the system rows around them are the data's and are
+/// not asserted. Observation `tie/user-n`.
+#[test]
+fn user_rows_for_an_incomplete_key_follow_the_stored_key_order() {
+    let user_dir = TempUserDir::new("tie-user-n");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    // tie-order-diff.c:82-85: 𦰡 takes two readings, the second appended.
+    let phrases = [
+        ("𦰡", "na"),
+        ("𫐐", "ni"),
+        ("𫠜", "ni"),
+        ("𨺙", "ni"),
+        ("𫔶", "nie"),
+        ("𬪩", "nong"),
+        ("𦰡", "nuo"),
+        ("𫟅", "nen"),
+        ("𫵷", "nao"),
+        ("𬇕", "nu"),
+    ];
+    let rows: Vec<(&str, &str, i32)> = phrases
+        .iter()
+        .map(|&(phrase, reading)| (phrase, reading, 1))
+        .collect();
+    assert!(import_batch(context, 7, &rows).iter().all(|&added| added));
+    assert!(pinyin_set_options(context, 0x18a));
+    let n = cstr("n");
+    assert_eq!(pinyin_parse_more_full_pinyins(instance, n.as_ptr()), 1);
+    assert!(pinyin_guess_sentence(instance));
+    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+    let user: Vec<String> = capture_rows(instance)
+        .into_iter()
+        .filter(|(_, text, _)| phrases.iter().any(|&(phrase, _)| phrase == text))
+        .map(|(kind, text, _)| {
+            assert_eq!(kind, lookup_candidate_type_t::NORMAL_CANDIDATE, "{text}");
+            text
+        })
+        .collect();
+    assert_eq!(user, ["𦰡", "𫵷", "𫟅", "𬪩", "𫐐", "𫠜", "𨺙", "𫔶", "𬇕"]);
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
+/// D6: the bigram export lists an item only when its count is above
+/// `threshold = initial_seed - 1`, 68 (`pinyin.cpp:791-792`, `:809` at 074a2219), and doubles
+/// it (`:906`): 你's gram `[好 68, 号 69]` exports only 你号, at 138. Source-derived, with no
+/// capture, per the 2026-11-01 ruling: the unpatched pin joins the pinyin strings with
+/// `g_strjoinv` over an unterminated array (`:849`, `:862`; compatibility register row 1).
+#[cfg(unix)]
+#[test]
+fn the_bigram_export_skips_a_count_at_the_threshold() {
+    let steps = export_walk("export-threshold", |hao, hao_alt, _| {
+        vec![(hao, 68), (hao_alt, 69)]
+    });
+    assert_eq!(
+        steps,
+        [
+            ExportStep::NoNext,
+            ExportStep::Row(false, "你号".to_owned(), "ni'hao".to_owned(), 138),
+            ExportStep::NoNext,
+            ExportStep::NoNext,
+        ]
+    );
+}
+
+/// D7: the export lists every reading of the predecessor against every reading of the
+/// successor, the predecessor's outer (`pinyin.cpp:839-869` at 074a2219). 龘龘 holds two
+/// readings, `da2'da2` and the appended `da4'da4` (`phrase_index.cpp:88-90`), and its own gram
+/// holds `[龘龘 100]`: four rows, each at 200 (`:906`). `get_next` answers `has_next` after each
+/// row (`:910`), so false only on the last. Source-derived, as D6 is (register row 1).
+#[cfg(unix)]
+#[test]
+fn the_bigram_export_crosses_both_items_readings() {
+    let user_dir = TempUserDir::new("export-cross-product");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    assert_eq!(
+        import_batch(
+            context,
+            7,
+            &[("龘龘", "da2'da2", 5), ("龘龘", "da4'da4", 5)]
+        ),
+        [true, true]
+    );
+    let dalong = {
+        // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
+        let inst = unsafe { instance_ref(instance) };
+        inst.core
+            .user
+            .expect("instance carries a user store")
+            .token_for_phrase("龘龘")
+            .expect("readable store")
+            .expect("the imported phrase has a token")
+    };
+    assert!(pinyin_save(context));
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+    lay_gram(&user_dir.path, dalong, &[(dalong, 100)]);
+    let row = |more: bool, pinyin: &str| {
+        ExportStep::Row(more, "龘龘龘龘".to_owned(), pinyin.to_owned(), 200)
+    };
+    assert_eq!(
+        walk_bigram_export(&user_dir.path),
+        [
+            ExportStep::NoNext,
+            row(true, "da2'da2'da2'da2"),
+            row(true, "da2'da2'da4'da4"),
+            row(true, "da4'da4'da2'da2"),
+            row(false, "da4'da4'da4'da4"),
+            ExportStep::NoNext,
+            ExportStep::NoNext,
+        ]
+    );
+}
+
+/// D12: the modes of the profile's files after a save, then after `chmod 0640` on every file
+/// and a modified save, under umask 022. The pin writes each DBM file anew and renames it into
+/// place, so it takes its backend's create mode again: Berkeley DB opens it `DB_CREATE, 0600`
+/// (`ngram_bdb.cpp`, `phrase_large_table3_bdb.cpp`, `chewing_large_table2_bdb.cpp` `save_db` at
+/// 074a2219); Kyoto Cabinet's `dump_snapshot` writes through a `std::ofstream`, 0666
+/// (`kcdb.h:2316-2319`); tkrzw opens it with its default 0644
+/// (`ngram_tkrzwdb.cpp`, `*_tkrzwdb.cpp` `save_db`). A chunk is written by
+/// `MemoryChunk::save`, `open(..., 0644)` (`include/memory_chunk.h:537`), into a `.tmp` that is
+/// renamed (`pinyin.cpp:966`). `user.conf` is rewritten in place (`table_info.cpp:378`), so it
+/// keeps 0640. Each mode is less the umask. Pin capture of 2026-11-07 on tkrzw, runs 1 and 2
+/// identical, observation `file-modes/dbm-after-chmod`; the bdb and kc DBM modes are from the
+/// source lines above. Modes only: container sizes are the backend's layout.
+#[cfg(unix)]
+#[test]
+fn a_save_recreates_every_file_but_user_conf_with_its_create_mode() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let run = crate::test_support::run_in_child(
+        "e2e_tests::a_save_recreates_every_file_but_user_conf_with_its_create_mode",
+        |user| {
+            // SAFETY: the child runs this test alone; umask touches only its own process.
+            unsafe { libc::umask(0o022) };
+            let modes = || -> Vec<(String, u32)> {
+                let mut found: Vec<(String, u32)> = std::fs::read_dir(user)
+                    .expect("user directory")
+                    .map(|entry| {
+                        let entry = entry.expect("entry");
+                        let mode =
+                            entry.metadata().expect("metadata").permissions().mode() & 0o7777;
+                        (entry.file_name().to_string_lossy().into_owned(), mode)
+                    })
+                    .collect();
+                found.sort();
+                found
+            };
+            let dbm = match oxpinyin_data::DEFAULT_STORE_EXT {
+                "db" => 0o600,
+                "kct" => 0o666 & !0o022,
+                _ => 0o644,
+            };
+            let expected = |conf: u32| -> Vec<(String, u32)> {
+                [
+                    ("addon.bin", 0o644),
+                    ("gb_char.dbin", 0o644),
+                    ("gbk_char.dbin", 0o644),
+                    ("merged.dbin", 0o644),
+                    ("network.bin", 0o644),
+                    ("opengram.dbin", 0o644),
+                    ("user.bin", 0o644),
+                    ("user.conf", conf),
+                    ("user_bigram.db", dbm),
+                    ("user_phrase_index.bin", dbm),
+                    ("user_pinyin_index.bin", dbm),
+                ]
+                .into_iter()
+                .map(|(name, mode)| (name.to_owned(), mode))
+                .collect()
+            };
+            let context = init_at(user);
+            assert!(!context.is_null());
+            assert_eq!(import_batch(context, 7, &[("你好", "nihao", 1)]), [true]);
+            assert!(pinyin_save(context));
+            assert_eq!(modes(), expected(0o644), "after the first save");
+            for (name, _) in modes() {
+                std::fs::set_permissions(user.join(name), std::fs::Permissions::from_mode(0o640))
+                    .expect("chmod");
+            }
+            assert_eq!(import_batch(context, 7, &[("世界", "shijie", 1)]), [true]);
+            assert!(pinyin_save(context));
+            assert_eq!(
+                modes(),
+                expected(0o640),
+                "after chmod 0640 and a modified save"
+            );
+            crate::context::pinyin_fini(context);
+        },
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stderr),
+        fresh_user_conf_line(&run.user_dir)
+    );
 }

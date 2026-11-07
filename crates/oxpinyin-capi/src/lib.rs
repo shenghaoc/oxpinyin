@@ -555,6 +555,8 @@ mod guess_offset_tests;
 mod matrix_bound_tests;
 #[cfg(test)]
 mod parse_matrix_tests;
+#[cfg(all(test, feature = "tkrzw"))]
+mod pinned_data_tests;
 #[cfg(test)]
 mod test_support;
 #[cfg(test)]
