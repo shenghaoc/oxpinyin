@@ -89,7 +89,7 @@ landed 2026-09-09 as the backend's native user files (maintainer ruling
 | W6 | User store (ACID store over the compiled-in `DefaultStore`; began on redb) | oxpinyin-user, oxpinyin-store |
 | W7 | Classic text-format interop (import + export); the tool was deleted by maintainer ruling 2026-10-31 UTC | oxpinyin-capi |
 | W8 | libpinyin drop-in: full 79-symbol `.so` ABI under `libpinyin.so.15` (see `docs/specs/drop-in/`) | oxpinyin-capi |
-| W9 | Rust counterparts for libpinyin's 21 `utils/` programs (see `docs/findings/trainer-parity-audit.md`); the trainer's own Python scripts are not ported. The utilities carry the pin's names and interfaces in `oxpinyin-utils`; the training crate keeps the stage modules behind them and has no command line of its own | oxpinyin-utils, oxpinyin-training (`segment`, `counter`, `lambda`, `emitter`, `eval` modules), oxpinyin-kmm |
+| W9 | Rust counterparts for libpinyin's 21 `utils/` programs (see `docs/findings/trainer-parity-audit.md`); the trainer's own Python scripts are not ported. The utilities carry the pin's names and interfaces in `oxpinyin-utils`; the training crate keeps only the `eval` decode behind `eval_correction_rate` and has no command line of its own | oxpinyin-utils, oxpinyin-training (`eval` module), oxpinyin-kmm |
 | W10 | Option bits: correction, fuzzy/ambiguity, dynamic-adjust gating | oxpinyin-core, oxpinyin-engine |
 | W11 | Phrase-index union at lookup (user, network, addon) | oxpinyin-engine, oxpinyin-data, oxpinyin-user |
 | W12 | Corpus tail (parity gaps; candidate residual closed 2026-08-22) | oxpinyin-core, oxpinyin-engine, oxpinyin-capi |
@@ -281,8 +281,7 @@ parked.
   W9 targets a Rust counterpart for each of the 21 programs libpinyin
   builds under `utils/` at pin `074a2219` — `segment/` (3), `storage/` (5)
   and `training/` (13) — in whichever crate each lives now:
-  `oxpinyin-training` (`segment`, `counter`, `lambda`, `emitter`, `eval`),
-  `oxpinyin-kmm` and `oxpinyin-utils`. The seven k-mixture-model
+  `oxpinyin-training` (`eval`), `oxpinyin-kmm` and `oxpinyin-utils`. The seven k-mixture-model
   utilities are `oxpinyin-utils` binaries under the pin's names since
   2026-10-31 UTC; `oxpinyin-kmm` is their operation layer on
   `oxpinyin-store`'s `FlexibleBigram` container. The trainer's
@@ -292,9 +291,9 @@ parked.
   were removed. The `eval` module keeps the `eval_correction_rate`
   decode; `oxpinyin-utils` carries the pin-named binaries, including
   `gen_unigram`, `gen_ngram`, `gen_deleted_ngram`,
-  `estimate_interpolation` and `eval_correction_rate`, while the training
-  crate's own `oxpinyin-counter`/`oxpinyin-lambda`/`oxpinyin-emitter`
-  command line was retired.
+  `estimate_interpolation` and `eval_correction_rate`. The training
+  crate's own `segment`, `counter`, `lambda` and `emitter` stages duplicated
+  those utilities and were removed (2026-11-07 UTC).
   Converting the counterparts into drop-ins is external-I/O stage 5: the
   segmentation trio and two table generators are ported, the others
   follow.

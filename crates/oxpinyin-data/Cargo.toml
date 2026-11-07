@@ -40,3 +40,9 @@ default = ["tkrzw"]
 kyotocabinet = ["oxpinyin-store/kyotocabinet"]
 bdb = ["oxpinyin-store/bdb"]
 tkrzw = ["oxpinyin-store/tkrzw"]
+
+# Reads the pinned libpinyin-data package, which is in tkrzw format
+# (`just fetch-contract-data`).
+[[test]]
+name = "package_libraries"
+required-features = ["tkrzw"]

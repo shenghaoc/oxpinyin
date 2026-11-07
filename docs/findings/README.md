@@ -58,7 +58,6 @@ series lives in `../perf/`.
 | [`compatibility-policy`](compatibility-policy.md) | Compatibility policy — what oxpinyin may diverge on, and what it may not | policy |
 | [`config-layering`](config-layering.md) | Layered configuration SPEC | historical (pre-P6) |
 | [`core-trait-seam`](core-trait-seam.md) | Core trait seam SPEC | behaviour frozen; Rust-signature freeze retired 2026-10-18 |
-| [`counter-port`](counter-port.md) | Counter port — `gen_ngram` n-gram counting (W9-T2) | historical (pre-P6) |
 | [`data-formats`](data-formats.md) | Data formats — pinned oracle table files | historical (pre-P6) |
 | [`data-layer-export`](data-layer-export.md) | Data-layer export SPEC — public-ABI derivation of the system tables | historical (pre-P6) |
 | [`data-load-audit-2026-08`](data-load-audit-2026-08.md) | Dictionary / LM load audit — init time and RSS (2026-08) | record (pre-P6 numbers) |
@@ -71,7 +70,6 @@ series lives in `../perf/`.
 | [`drop-in-abi-identity`](drop-in-abi-identity.md) | What `dlopen("libpinyin.so.15")` actually requires | record |
 | [`dynamic-adjust`](dynamic-adjust.md) | DYNAMIC_ADJUST | record (implemented, #204) |
 | [`dynamic-dispatch-inventory`](dynamic-dispatch-inventory.md) | Dynamic-dispatch inventory — what was erased, what replaced it, what it cost | record |
-| [`emitter-port`](emitter-port.md) | Emitter port — `export_interpolation` → `interpolation2.text` (W9-T4a) | historical (pre-P6) |
 | [`error-handling`](error-handling.md) | Error-handling audit | record (re-verified 2026-08-28; still cites oxpinyin-migrate) |
 | [`full-pinyin-aux-overread`](full-pinyin-aux-overread.md) | Findings — upstream heap over-read in `pinyin_get_full_pinyin_auxiliary_text` | record (upstream defect) |
 | [`glib-glibc-version-sensitivity`](glib-glibc-version-sensitivity.md) | GLib and glibc version sensitivity of the reimplemented behaviours — which of them changed across the versions Debian, Ubuntu, Fedora, Arch and Homebrew ship, the observable difference, and the #1303 classification (#1298) | record (read-only investigation) |
@@ -82,7 +80,6 @@ series lives in `../perf/`.
 | [`kc-native-call-inventory`](kc-native-call-inventory.md) | Pin Kyoto Cabinet classes, native calls, ownership, callbacks, sentinels, status/exception paths and shim mapping before the CXX migration | source inventory and bridge proposal (no implementation or policy closure) |
 | [`kmm-arithmetic-audit`](kmm-arithmetic-audit.md) | KMM arithmetic audit — line-by-line vs the pin | audit |
 | [`kyotocabinet-backend`](kyotocabinet-backend.md) | Kyoto Cabinet compat backend | record (backend; the compat framing is pre-P6) |
-| [`lambda-port`](lambda-port.md) | λ-estimator port — deleted-interpolation EM (W9-T3) | historical (pre-P6) |
 | [`legacy-migration`](legacy-migration.md) | Legacy user-data migration (W7-T2) — SHELVED | shelved |
 | [`libpinyin-structures-and-algorithms`](libpinyin-structures-and-algorithms.md) | libpinyin's components, data structures, algorithms and coefficients beside oxpinyin's, with the open gaps | register |
 | [`libpinyin-system-data-formats-2026-09-01`](libpinyin-system-data-formats-2026-09-01.md) | libpinyin system-data formats vs the #269 sysimage — source-level comparison | record (P1 input) |
@@ -127,7 +124,6 @@ series lives in `../perf/`.
 | [`scoring-constant-sweep`](scoring-constant-sweep.md) | Scoring constant sweep | measured (values frozen) |
 | [`scoring-spec`](scoring-spec.md) | Scoring SPEC | frozen |
 | [`segment-graph`](segment-graph.md) | SegmentGraph SPEC | frozen |
-| [`segmenter-port`](segmenter-port.md) | W9-T1 segmenter port — `ngseg` → Rust | port record |
 | [`send-sync-audit-2026-09-21`](send-sync-audit-2026-09-21.md) | Send+Sync mechanisms vs the C ABI (PR #503 follow-up) | audit |
 | [`sentence-surface`](sentence-surface.md) | Sentence surface (W14) | frozen (§12 residual re-frozen 2026-09-04) |
 | [`session-api`](session-api.md) | Framework-neutral session API SPEC | behaviour frozen; Rust-signature freeze retired 2026-10-18 |
