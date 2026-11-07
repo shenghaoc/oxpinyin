@@ -9,14 +9,14 @@
 #![allow(missing_docs)]
 
 use std::hint::black_box;
-use std::path::PathBuf;
 use std::time::Duration;
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use oxpinyin_core::{Cost, LanguageModel, PhraseToken, UserCountDelta};
+use oxpinyin_data::user_files::{SystemVersions, UserFileLayout};
 use oxpinyin_data::{LmError, SystemDbm, SystemDictionary, parse_interpolation2};
 use oxpinyin_engine::{EmptyConfigSource, Session};
-use oxpinyin_user::{SENTENCE_START, UserStore};
+use oxpinyin_user::{SENTENCE_START, SystemOriginals, UserConfLaw, UserStore};
 
 #[path = "support/mod.rs"]
 mod harness;
@@ -28,14 +28,6 @@ use harness::{CYCLE_INPUTS, load_real_tables, real_session, type_keystrokes};
 struct BenchLm<'a> {
     inner: harness::ReadModel<'a>,
     user: Option<UserStore>,
-}
-
-struct TempStorePath(PathBuf);
-
-impl Drop for TempStorePath {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
-    }
 }
 
 impl LanguageModel for BenchLm<'_> {
@@ -93,17 +85,15 @@ fn load_scoring_tables() -> (SystemDictionary, oxpinyin_data::lm::BigramTables) 
     (dict, lm)
 }
 
-fn bench_store_path(tag: &str) -> TempStorePath {
-    // Suffix follows the compiled-in backend (e.g. `.kct` under the KC
-    // default) — the file is opened through `UserStore`, which uses the
-    // same backend, so the extension is naming only.
-    let path = std::env::temp_dir().join(format!(
-        "pinyin-oracle-decode-pass-{tag}-{}.{}",
-        std::process::id(),
-        oxpinyin_data::DEFAULT_STORE_EXT,
-    ));
-    let _ = std::fs::remove_file(&path);
-    TempStorePath(path)
+/// The pin's NULL-user-directory session over the stock layout: the store
+/// the C libraries hold behind `pinyin_init`.
+fn session() -> UserStore {
+    UserStore::open_transient(
+        SystemOriginals::new(Default::default(), UserFileLayout::stock()),
+        SystemVersions::for_this_build(7, 14),
+        UserConfLaw::Pinyin,
+    )
+    .expect("user session opens")
 }
 
 fn decode_session<'a>(
@@ -159,15 +149,11 @@ fn user_store_decode_pass(criterion: &mut Criterion) {
         inner: lm.read_all(dict.libraries()),
         user: None,
     };
-    let empty_path = bench_store_path("empty");
-    let empty_store = UserStore::open(&empty_path.0).expect("empty user store opens");
     let empty_lm = BenchLm {
         inner: lm.read_all(dict.libraries()),
-        user: Some(empty_store),
+        user: Some(session()),
     };
-    let populated_path = bench_store_path("populated");
-    let mut populated_store =
-        UserStore::open(&populated_path.0).expect("populated user store opens");
+    let mut populated_store = session();
     populated_store
         .observe_selection(SENTENCE_START, 0x0100_1225)
         .expect("populate common token");

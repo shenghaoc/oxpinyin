@@ -4,9 +4,10 @@
 //! (`testing-strategy.md` §2): no target mutated `UserStore`, so the
 //! add/remove/train/mask algebra had no hostile-sequence evidence.
 //!
-//! Each input drives a fresh store at a fresh temp path (the previous
-//! input's file is removed at the start of the next one, so at most one
-//! orphan remains per process — the same footprint `capi_commands`
+//! Each input drives a fresh libpinyin session over a fresh user
+//! directory, the session the shipped libraries open (the previous
+//! input's directory is removed at the start of the next one, so at most
+//! one orphan remains per process — the same footprint `capi_commands`
 //! leaves). The command stream mirrors `capi_commands`: one byte
 //! selects the op, the remaining bytes feed it.
 //!
@@ -23,15 +24,16 @@
 //!   `phrase` are inverse on the live rows (checked in full while the
 //!   store is small, on the freshest token once it grows).
 
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use libfuzzer_sys::fuzz_target;
 use oxpinyin_core::SyllableKey;
+use oxpinyin_data::user_files::{SystemVersions, UserFileLayout};
 use oxpinyin_user::{
-    phrase_index_library_index, PinyinKey, UserStore, UserStoreError, USER_DICTIONARY,
+    phrase_index_library_index, PinyinKey, SystemOriginals, UserConfLaw, UserStore, UserStoreError,
+    USER_DICTIONARY,
 };
+use tempfile::TempDir;
 
 /// Real frozen syllables (a slice of the inventory the w4 fixtures
 /// exercise); fuzz bytes index into this list to build valid keys.
@@ -77,32 +79,34 @@ fn key_for(byte: u8) -> PinyinKey {
     PinyinKey::try_from(index).unwrap_or_else(|_| panic!("{text:?} index must fit u16"))
 }
 
-/// The previous input's store path, removed at the start of the next
-/// input. One orphan file can remain at process exit.
-static LAST_PATH: Mutex<Option<PathBuf>> = Mutex::new(None);
-static PATH_SERIAL: AtomicU64 = AtomicU64::new(0);
+/// The previous input's user directory, removed with the pin's file set
+/// it holds when the next input takes its own. One orphan directory can
+/// remain at process exit.
+static LAST_PATH: Mutex<Option<TempDir>> = Mutex::new(None);
 
-/// Removes a store file and its `-lock` sidecar, whichever container
-/// shape the compiled backend used (file, directory, or both).
-fn remove_store(path: &std::path::Path) {
-    let _ = std::fs::remove_file(path);
-    let _ = std::fs::remove_dir_all(path);
-    let lock = PathBuf::from(format!("{}-lock", path.display()));
-    let _ = std::fs::remove_file(&lock);
-    let _ = std::fs::remove_dir_all(&lock);
+/// A user directory no earlier run can have written: a fresh unique
+/// name, never a reused one, so `open_libpinyin` loads no profile.
+fn fresh_dir() -> TempDir {
+    if let Ok(mut last) = LAST_PATH.lock() {
+        drop(last.take());
+    }
+    tempfile::Builder::new()
+        .prefix("oxpinyin-fuzz-user-store-")
+        .tempdir()
+        .expect("a fresh user directory")
 }
 
-fn fresh_path() -> PathBuf {
-    if let Ok(mut last) = LAST_PATH.lock() {
-        if let Some(old) = last.take() {
-            remove_store(&old);
-        }
-    }
-    std::env::temp_dir().join(format!(
-        "oxpinyin-fuzz-user-store-{}-{}.store",
-        std::process::id(),
-        PATH_SERIAL.fetch_add(1, Ordering::Relaxed)
-    ))
+/// A session over `dir` with no system library: the stock layout's user,
+/// network and addon libraries. `save` writes the pin's file set there,
+/// so the dirty flag clears as the pin's does.
+fn open_session(dir: &std::path::Path) -> UserStore {
+    UserStore::open_libpinyin(
+        dir,
+        SystemOriginals::new(Default::default(), UserFileLayout::stock()),
+        SystemVersions::for_this_build(7, 14),
+        UserConfLaw::Pinyin,
+    )
+    .expect("a fresh session opens")
 }
 
 /// The totals law: a left-hand token's recorded total equals the sum of
@@ -198,8 +202,8 @@ fn holds_foreign_token(store: &UserStore, text: &str) -> bool {
 }
 
 fuzz_target!(|data: &[u8]| {
-    let path = fresh_path();
-    let mut store = UserStore::create_standalone(&path).expect("a fresh store opens");
+    let dir = fresh_dir();
+    let mut store = open_session(dir.path());
 
     let mut added: Vec<u32> = Vec::new();
     let mut lefts: Vec<u32> = Vec::new();
@@ -328,7 +332,9 @@ fuzz_target!(|data: &[u8]| {
         let freshest = added.last().copied();
         check_phrase_index(&store, freshest);
     }
+    // The fini guard writes `user.conf` on drop, inside the directory.
+    drop(store);
     if let Ok(mut last) = LAST_PATH.lock() {
-        *last = Some(path);
+        *last = Some(dir);
     }
 });

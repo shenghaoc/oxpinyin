@@ -3240,10 +3240,16 @@ mod tests {
     }
 
     #[test]
-    fn unigram_freq_preserves_standalone_count_cache_reads() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut store = UserStore::create_standalone(&dir.path().join("user.db")).unwrap();
-        let token = store.add_phrase(&"词".into(), &[7], Some(5)).unwrap();
+    fn unigram_freq_reads_a_user_items_count_live() {
+        let mut store = UserStore::open_transient(
+            oxpinyin_user::SystemOriginals::new(Default::default(), UserFileLayout::stock()),
+            SystemVersions::for_this_build(7, 14),
+            UserConfLaw::Pinyin,
+        )
+        .unwrap();
+        let ci = SyllableKey::from_text("ci").unwrap();
+        let keys = [oxpinyin_user::toned_key(ci.index(), 0).unwrap()];
+        let token = store.add_phrase(&"词".into(), &keys, Some(5)).unwrap();
         assert_eq!(store.system_unigram(token), None);
         let mut runtime = Runtime::open(&w3_dir(), None).unwrap();
         runtime.user = Some(store);

@@ -76,21 +76,22 @@ mod tests {
         PhraseToken::new(value)
     }
 
-    /// A store path inside a fresh, uniquely named dir. Bind the dir before
-    /// the store so it drops (and is removed) after the store's handle.
-    fn temp_path(tag: &str) -> (tempfile::TempDir, std::path::PathBuf) {
-        let dir = tempfile::Builder::new()
-            .prefix(&format!("oxpinyin-user-model-{tag}-"))
-            .tempdir()
-            .unwrap();
-        let path = dir.path().join(format!("{tag}.store"));
-        (dir, path)
+    /// The pin's NULL-user-directory session over the stock layout.
+    fn transient() -> UserStore {
+        UserStore::open_transient(
+            crate::persistence::SystemOriginals::new(
+                Default::default(),
+                oxpinyin_data::user_files::UserFileLayout::stock(),
+            ),
+            oxpinyin_data::user_files::SystemVersions::for_this_build(7, 14),
+            crate::persistence::UserConfLaw::Pinyin,
+        )
+        .unwrap()
     }
 
     #[test]
     fn observe_uses_last_of_history_as_predecessor() {
-        let (_dir, path) = temp_path("history");
-        let mut store = UserStore::open(&path).unwrap();
+        let mut store = transient();
 
         // history [5, 7] -> predecessor is 7.
         UserModel::observe(&mut store, &[token(5), token(7)], &token(42)).unwrap();
@@ -104,16 +105,21 @@ mod tests {
 
     #[test]
     fn score_is_neutral_zero() {
-        let (_dir, path) = temp_path("score");
-        let mut store = UserStore::open(&path).unwrap();
+        let mut store = transient();
+        // A user item with a zero unigram: the pin's unigram belongs to an
+        // item (`phrase_index.cpp:150-161`), so the count is read on one.
+        let ci = oxpinyin_core::SyllableKey::from_text("ci").unwrap().index();
+        let item = store
+            .add_phrase(&"词".into(), &[crate::toned_key(ci, 0).unwrap()], Some(0))
+            .unwrap();
         assert_eq!(
-            UserModel::score(&store, &[token(1), token(2)], &token(3)).unwrap(),
+            UserModel::score(&store, &[token(1), token(2)], &token(item)).unwrap(),
             0
         );
         // A populated store still returns 0 from this method: the merge is
         // in the count domain, not a post-hoc cost.
-        UserModel::observe(&mut store, &[], &token(3)).unwrap();
-        assert_eq!(UserModel::score(&store, &[], &token(3)).unwrap(), 0);
-        assert_eq!(store.count_delta(None, 3).unwrap().unigram_delta, 483);
+        UserModel::observe(&mut store, &[], &token(item)).unwrap();
+        assert_eq!(UserModel::score(&store, &[], &token(item)).unwrap(), 0);
+        assert_eq!(store.count_delta(None, item).unwrap().unigram_delta, 483);
     }
 }

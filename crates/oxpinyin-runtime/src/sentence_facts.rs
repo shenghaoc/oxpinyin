@@ -318,7 +318,7 @@ mod tests {
         assert!(facts.bytes.is_empty());
     }
     #[test]
-    fn user_imported_masked_missing_and_standalone_keep_old_readers() {
+    fn user_imported_masked_missing_and_detached_keep_old_readers() {
         let mut runtime = opened();
         let ni = SyllableKey::from_text("ni").unwrap();
         let keys = [oxpinyin_user::toned_key(ni.index(), 0).unwrap()];
@@ -341,8 +341,18 @@ mod tests {
             .store(1 << (ordinary >> 24), Ordering::SeqCst);
         fallback(&runtime, ordinary);
         runtime.library_mask.store(0, Ordering::SeqCst);
-        let dir = tempfile::tempdir().unwrap();
-        runtime.user = Some(UserStore::create_standalone(&dir.path().join("user.db")).unwrap());
+        // A session detached from this runtime's system libraries.
+        runtime.user = Some(
+            UserStore::open_transient(
+                oxpinyin_user::SystemOriginals::new(
+                    Default::default(),
+                    oxpinyin_data::user_files::UserFileLayout::stock(),
+                ),
+                oxpinyin_data::user_files::SystemVersions::for_this_build(7, 14),
+                oxpinyin_user::UserConfLaw::Pinyin,
+            )
+            .unwrap(),
+        );
         fallback(&runtime, ordinary);
         runtime.user = None;
         let (_, libraries) = SystemDictionary::open_with(&fixture(), runtime.table_conf())

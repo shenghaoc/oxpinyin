@@ -327,6 +327,20 @@ mod tests {
         SyllableKey::from_text(text).expect("frozen syllable")
     }
 
+    /// The pin's NULL-user-directory session over the stock layout: the
+    /// user and network libraries, and no system library.
+    fn transient() -> UserStore {
+        UserStore::open_transient(
+            crate::persistence::SystemOriginals::new(
+                Default::default(),
+                oxpinyin_data::user_files::UserFileLayout::stock(),
+            ),
+            oxpinyin_data::user_files::SystemVersions::for_this_build(7, 14),
+            crate::persistence::UserConfLaw::Pinyin,
+        )
+        .unwrap()
+    }
+
     #[test]
     fn session_lookup_keeps_full_token_identity() {
         let mut phrases = SessionPhrases::default();
@@ -387,8 +401,7 @@ mod tests {
 
     #[test]
     fn lookup_surfaces_user_then_network_by_token() {
-        let (_dir, path) = temp_path("order");
-        let mut store = UserStore::open(&path).unwrap();
+        let mut store = transient();
         let ni = u16::try_from(SyllableKey::from_text("ni").unwrap().index())
             .expect("frozen syllable inventory fits u16");
         store
@@ -405,21 +418,23 @@ mod tests {
         assert!(lookup.phrase_prefix_exists(&[key("ni")]));
     }
 
-    /// A reading with a syllable index that names no syllable is not
-    /// indexed under the syllables that do convert (`pinyin.cpp:638-641`).
+    /// `_add_phrase` takes `ChewingKey`s (`pinyin.cpp:514-519`), each of
+    /// which names a syllable; a dense id that names none has no packed
+    /// form, so the session refuses the phrase before it stores or indexes
+    /// anything, and the readings that do convert index as before.
     #[test]
-    fn a_reading_with_an_unconvertible_syllable_is_not_indexed() {
-        let (_dir, path) = temp_path("unconvertible");
-        let mut store = UserStore::open(&path).unwrap();
+    fn a_reading_with_an_unconvertible_syllable_is_refused_before_it_is_stored() {
+        let mut store = transient();
         let ni = u16::try_from(SyllableKey::from_text("ni").unwrap().index())
             .expect("frozen syllable inventory fits u16");
         let hao = u16::try_from(SyllableKey::from_text("hao").unwrap().index())
             .expect("frozen syllable inventory fits u16");
         let unknown = crate::phrase::KEY_SYLLABLE_MASK;
         assert!(SyllableKey::from_index(usize::from(unknown)).is_none());
-        store
-            .add_phrase_in(USER_DICTIONARY, &"你好".into(), &[ni, unknown], Some(5))
-            .unwrap();
+        assert!(matches!(
+            store.add_phrase_in(USER_DICTIONARY, &"你好".into(), &[ni, unknown], Some(5)),
+            Err(crate::UserStoreError::InvalidPhrase)
+        ));
         store
             .add_phrase_in(USER_DICTIONARY, &"好好".into(), &[hao, hao], Some(5))
             .unwrap();
@@ -427,6 +442,7 @@ mod tests {
         assert!(lookup.lookup(&[key("ni")]).is_empty());
         assert!(!lookup.phrase_prefix_exists(&[key("ni")]));
         assert_eq!(lookup.lookup(&[key("hao"), key("hao")]).len(), 1);
+        assert_eq!(store.phrases().unwrap().len(), 1);
     }
 
     /// `lookup` with an incomplete syllable at the head of the query must
@@ -437,8 +453,7 @@ mod tests {
     /// shenghaoc/oxpinyin#403's fix.
     #[test]
     fn lookup_answers_a_single_syllable_incomplete_query_from_by_initial() {
-        let (_dir, path) = temp_path("incomplete-single");
-        let mut store = UserStore::open(&path).unwrap();
+        let mut store = transient();
         let ni = u16::try_from(SyllableKey::from_text("ni").unwrap().index())
             .expect("frozen syllable inventory fits u16");
         let na = u16::try_from(SyllableKey::from_text("na").unwrap().index())
@@ -483,8 +498,7 @@ mod tests {
     /// shenghaoc/oxpinyin#403's fix.
     #[test]
     fn lookup_filters_mixed_incomplete_and_complete_syllables() {
-        let (_dir, path) = temp_path("incomplete-mixed");
-        let mut store = UserStore::open(&path).unwrap();
+        let mut store = transient();
         let ni = u16::try_from(SyllableKey::from_text("ni").unwrap().index())
             .expect("frozen syllable inventory fits u16");
         let na = u16::try_from(SyllableKey::from_text("na").unwrap().index())
