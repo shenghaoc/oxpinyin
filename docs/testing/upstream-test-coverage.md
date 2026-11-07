@@ -79,9 +79,9 @@ Family A is implemented by the four same-named `oxpinyin-utils` binaries
 and `src/pin_tests.rs`, using tool-gated ownership adapters in the two
 existing C facades. Its cases are the `frozen::test_{pinyin,phrase,chewing,zhuyin}`
 modules of `crates/oxpinyin-utils/tests/storage_tools.rs`:
-21 cases match on tkrzw, bdb and kc, including saved user files. The named
-`pin-tests-a-prefix-prompt.patch` mutation is detected by
-`test-pinyin-quit` on tkrzw; reversing it and rebuilding restores MATCH.
+21 cases match on tkrzw, bdb and kc, including saved user files. The exact prompt bytes are held by the module-local test
+`oxpinyin_input::tool::tests::prefix_prompt_writes_the_pins_exact_bytes`.
+The existing differential case is `test-pinyin-quit`.
 
 Family C ports `test_ngram`, `test_flexible_ngram` and `test_punct_table`
 with 14 source-derived cases in their three same-named frozen test modules. The
@@ -89,16 +89,16 @@ fixed `/tmp` paths remain isolated per side. Combined with all 45 current
 K-mixture cases, the all-cell result is tkrzw 50 MATCH / 9 POLICY-ACCEPTED,
 BDB 44 / 15, and KC 48 / 11, with no DIFFER or INVALID. Policy records bind
 the existing assertion-text and BDB failed-handle diagnostic exceptions. The tkrzw abort files use
-only the approved eight-byte clock-field normalization. The named
-`pin-tests-c-ngram-token-plus-one.patch` mutation is detected by
-`ngram-fresh`; reverting and rebuilding restores the complete gate.
+only the approved eight-byte clock-field normalization. The token arithmetic is held by
+`dbm_programs::test_ngram_prints_the_single_grams_and_leaves_both_bigram_rows`
+in `oxpinyin-utils` (Kyoto Cabinet), alongside `ngram-fresh`.
 [Shared attach and backend evidence](../findings/eio-test-flexible-attach-empty.md)
 records the native open, magic-header and mutation calls.
 
 Family E1 adds `test_memory_chunk` with the pin's logical capacity rule.
 Its four source-derived cases give 3 MATCH and 1 POLICY-ACCEPTED on tkrzw.
-The `pin-tests-e1-remove-wrong-integer` mutation makes `memory-chunk-fresh`
-DIFFER in stdout and the framed file; restoring it restores the gate.
+The removal offset is held by the `frozen::test_memory_chunk` case
+`memory_chunk_fresh` in `oxpinyin-utils`.
 
 Family E2 adds the phrase-index and logger executables with 15 cases:
 11 MATCH and 4 POLICY-ACCEPTED on tkrzw. The sparse and overflow logger cases
@@ -106,10 +106,13 @@ retain the facade cache across load and merge, independently of the local
 stored total. Refused layouts contribute no load total; reload still subtracts
 the prior local total. Defined same-token invalid conversions continue. The invalid-UTF-8 index guard runs only the subject, checking
 exit EINVAL and the output printed before conversion. Required-load failures
-use pin_not_run and exit ENOENT without a diagnostic. The named
-`pin-tests-e2-logger-delta-two` mutation is detected by the contiguous logger
-case; restoring it restores the gate. Review mutations also detect adding a
-refused load's total, rejecting defined same-token conversions, and omitting
+use pin_not_run and exit ENOENT without a diagnostic. In `oxpinyin-utils`, the
+`frozen::test_phrase_index_logger` cases `phrase_index_logger_contiguous` and
+`phrase_index_logger_refused_layout` hold the logger delta and the refused load's
+total. The `frozen::test_phrase_index` cases
+`phrase_index_same_token_invalid_utf8_reading` and
+`phrase_index_same_token_invalid_utf8_skip` hold defined same-token conversions.
+A review mutation also detects omitting
 the token-zero conversion guard. All three consuming guard tests are
 subject-only and retain the preceding output.
 
@@ -120,11 +123,13 @@ literal backspace before frequencies remain exact. Token-zero cursors are
 empty before extending/flushing and at the final flush. Only the first
 incomplete key asserts its zero tone, before the overlong-query refusal. Invalid UTF-8 and the
 17-key direct search use source-only guards. Subject-only tests also check
-that EINVAL preserves earlier timed results. The named
-`pin-tests-e3-drop-continued` mutation is detected by `phrase-table-session`;
-restoring it restores the gate. Review mutations also detect losing
-the token after a zero cursor, omitting the first-key tone assertion, and
-refusing length before that assertion; their restoration restores the gate.
+that EINVAL preserves earlier timed results. Continuation is held by the module-local
+`storage_tests::tables::tests::an_empty_phrase_row_still_reports_continuation`
+in `oxpinyin-utils`, alongside `phrase-table-session`. The token after a zero cursor is held by
+`storage_tests::tables::tests::a_zero_cursor_keeps_the_following_chewing_token`.
+The `frozen::test_chewing_table` cases `chewing_table_toned_initial` and
+`chewing_table_overlong_toned_first` hold the first-key tone assertion and its
+order before the length refusal.
 
 Family E4 adds `test_matrix`, `test_pinyin_lookup` and `test_phrase_lookup`.
 Their 22 source-derived cases give 19 MATCH / 3 POLICY-ACCEPTED on the
@@ -132,8 +137,8 @@ selected cells. The matrix includes separator and terminal zero keys;
 lookup results preserve non-null positions, token order and the phrase
 lookup's newline-separated `token phrase` entries. Required chunk failures
 and empty/unsegmentable text retain the pin's diagnostics and normal exits.
-The named `pin-tests-e4-disable-matrix-ambiguity` mutation is detected by
-`matrix-session`; restoring it restores the gate. Only source timer fields
+The ambiguity options are held by the `frozen::test_matrix` case
+`matrix_session` in `oxpinyin-utils`. Only source timer fields
 are masked. No pin undefined path is executed.
 
 The existing Rust Pinyin and Zhuyin C facades are separate implementations;

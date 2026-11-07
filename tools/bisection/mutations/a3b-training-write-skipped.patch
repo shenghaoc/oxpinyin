@@ -1,9 +1,0 @@
-diff --git a/crates/oxpinyin-user/src/replay.rs b/crates/oxpinyin-user/src/replay.rs
-index d10deecb..2e658f26 100644
---- a/crates/oxpinyin-user/src/replay.rs
-+++ b/crates/oxpinyin-user/src/replay.rs
-@@ -1232,2 +1232,2 @@ impl ReplayedLibrary {
--                self.content
--                    .write(count_at, &count.wrapping_add(delta).to_le_bytes());
-+                // Mutation: the trained count is never written to the buffer.
-+                let _ = (count_at, count);

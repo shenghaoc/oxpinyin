@@ -1,8 +1,0 @@
-diff --git a/crates/oxpinyin-user/src/store.rs b/crates/oxpinyin-user/src/store.rs
---- a/crates/oxpinyin-user/src/store.rs
-+++ b/crates/oxpinyin-user/src/store.rs
-@@ -3895,3 +3895,3 @@
-             // pinyin.cpp:246-276 at 074a2219).
--            None => Default::default(),
-+            None => return Ok(()),
-         };

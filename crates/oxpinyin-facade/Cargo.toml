@@ -30,6 +30,7 @@ oxpinyin-runtime.workspace = true
 oxpinyin-user.workspace = true
 
 [dev-dependencies]
+rstest = { version = "0.28", default-features = false }
 # Fixture directory names: the store's extension, through the data crate
 # the dependency chain already carries (the backend features reach it
 # through oxpinyin-runtime).

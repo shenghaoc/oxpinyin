@@ -1,0 +1,4 @@
+# Local, opt-in mutation testing: cargo mutants --package <crate>.
+# No exclusions: keep every eligible production function in scope.
+# Configuration reference: https://mutants.rs/config-file.html
+exclude_globs = []

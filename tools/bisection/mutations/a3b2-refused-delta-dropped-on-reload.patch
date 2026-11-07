@@ -1,7 +1,0 @@
-diff --git a/crates/oxpinyin-user/src/store.rs b/crates/oxpinyin-user/src/store.rs
-index 36456683..7954336a 100644
---- a/crates/oxpinyin-user/src/store.rs
-+++ b/crates/oxpinyin-user/src/store.rs
-@@ -4047,0 +4048,2 @@ impl<S: WriteStore> GenericUserStore<S> {
-+                let extra = items.facade_extra();
-+                items.sub_facade_extra(extra);

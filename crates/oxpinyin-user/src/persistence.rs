@@ -3057,6 +3057,46 @@ mod tests {
     use super::*;
     use oxpinyin_data::user_files::OPEN_COUNTER_LIMIT;
 
+    /// Register row 76: pinyin.cpp:944-957 reaches the current disk mapping
+    /// before diffing a library; the approved refusal stops that save there.
+    #[test]
+    fn an_unmappable_save_baseline_stops_before_the_library_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let originals = originals();
+        let state = state();
+        let index = UserIndex::new();
+        let versions = versions();
+        let mut visited = Vec::new();
+        let mut reporting = SaveReporting {
+            versions: &versions,
+            open_counter: 1,
+            bigram_db: None,
+            interleaved: false,
+            lenient: true,
+            baseline: Some(|library| {
+                visited.push(library);
+                SaveBaseline::Unmappable
+            }),
+        };
+        let result = save_reporting(
+            dir.path(),
+            SaveSource {
+                libraries: None,
+                state: &state,
+                index: &index,
+                phrase_table: None,
+                compacted: &[],
+                live: None,
+            },
+            &originals,
+            &mut reporting,
+        );
+        assert!(matches!(result, Err(PersistenceError::SystemRemapFailed)));
+        assert_eq!(visited.len(), 1);
+        assert!(!dir.path().join("gb_char.dbin.tmp").exists());
+        assert!(!dir.path().join("user.conf").exists());
+    }
+
     #[test]
     fn user_library_store_matches_existing_persistence_fixtures() {
         let mut fixtures: Vec<_> = state().libraries.into_values().collect();

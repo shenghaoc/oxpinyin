@@ -1,5 +1,0 @@
---- a/crates/oxpinyin-utils/src/storage_tests/tables.rs
-+++ b/crates/oxpinyin-utils/src/storage_tests/tables.rs
-@@ -45 +45 @@
--        (true, tokens)
-+        (false, tokens)

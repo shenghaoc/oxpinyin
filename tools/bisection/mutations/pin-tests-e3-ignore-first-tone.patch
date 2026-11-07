@@ -1,5 +1,0 @@
---- a/crates/oxpinyin-utils/src/storage_tests/tables.rs
-+++ b/crates/oxpinyin-utils/src/storage_tests/tables.rs
-@@ -53 +53 @@
--            && key.tone != 0
-+            && key.tone > 4
