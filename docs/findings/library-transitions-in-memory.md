@@ -165,11 +165,6 @@ The export iterator cases are those whose names contain `iterator`.
 
 ## Open items
 
-- `reload-user-zhuyin-reuse-same` DIFFERs on all three cells, on this
-  member and on its parent: both sides die of SIGABRT, but the case still
-  declares the class (c) `abort=False` matcher. Member 4 reproduced the
-  pin's abort at `zhuyin.cpp:454` (row 104); the case needs `sigabrt=True`
-  on that member.
 - Arena-limit behavior: see #1514 user content offset wrap.
 
 The pin's `pinyin_mask_out` is sequential: it masks the tables and bigrams,

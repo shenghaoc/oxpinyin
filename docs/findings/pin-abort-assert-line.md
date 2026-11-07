@@ -29,5 +29,5 @@ and the profiles must agree
 when the case compares them. A case whose only stderr difference is that
 line reports POLICY-ACCEPTED; one with identical stderr reports MATCH.
 Any other difference is DIFFER. Return-value and state cases are never
-folded into this disposition. The cases are listed in each former
-class (c) row's record in [the divergence register](upstream-divergences.md).
+folded into this disposition. The cases are listed in each retirement
+member's record, linked from [the divergence register](upstream-divergences.md).

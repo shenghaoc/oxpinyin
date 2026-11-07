@@ -3141,6 +3141,337 @@ fn bigram_export_aborts_where_the_walk_loads_a_short_predecessor() {
     );
 }
 
+/// Register row 93 through `pinyin_remember_user_input`: the pin's
+/// `_remember_phrase_recur` calls `_add_phrase` for USER_DICTIONARY
+/// (`pinyin.cpp:3702`), so a phrase table whose row for the phrase holds two
+/// library-7 tokens trips `assert(PHRASE_INDEX_LIBRARY_INDEX(token) != index)`
+/// (`:554`) there as it does on the import path.
+#[cfg(unix)]
+#[test]
+fn remember_user_input_aborts_on_two_same_library_tokens() {
+    crate::test_support::assert_aborts(
+        "e2e_tests::remember_user_input_aborts_on_two_same_library_tokens",
+        || {
+            let user_dir = TempUserDir::new("remember-two-tokens");
+            crate::test_support::set_phrase_table_row(
+                &user_dir.path,
+                "你好",
+                &[0x0700_0001, 0x0700_0002],
+            );
+            let (_context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+            assert_eq!(
+                pinyin_parse_more_full_pinyins(instance, cstr("nihao").as_ptr()),
+                5
+            );
+            let _ = pinyin_remember_user_input(instance, cstr("你好").as_ptr(), -1);
+        },
+    );
+}
+
+/// As above, for `:568`: the lone library-7 token names a stored phrase of
+/// another length (`你好` -> the three-character `你好嗷`).
+#[cfg(unix)]
+#[test]
+fn remember_user_input_aborts_on_an_item_length_mismatch() {
+    crate::test_support::assert_aborts(
+        "e2e_tests::remember_user_input_aborts_on_an_item_length_mismatch",
+        || {
+            let user_dir = TempUserDir::new("remember-length");
+            remember_against_a_redirected_row(&user_dir, "你好嗷", "ni'hao'ao");
+        },
+    );
+}
+
+/// As above, for `:571`: the lone library-7 token names another phrase of the
+/// same length (`你好` -> `你們`).
+#[cfg(unix)]
+#[test]
+fn remember_user_input_aborts_on_an_item_text_mismatch() {
+    crate::test_support::assert_aborts(
+        "e2e_tests::remember_user_input_aborts_on_an_item_text_mismatch",
+        || {
+            let user_dir = TempUserDir::new("remember-text");
+            remember_against_a_redirected_row(&user_dir, "你們", "ni'men");
+        },
+    );
+}
+
+/// `_remember_phrase_recur` computes `end = matrix.size() - 1`, which wraps
+/// for an empty matrix, and then asserts in `get_column_size(0)`
+/// (`phonetic_key_matrix.h:102`; register row 66). A fresh instance holds
+/// one.
+#[cfg(unix)]
+#[test]
+fn remember_user_input_aborts_on_a_fresh_instance() {
+    crate::test_support::assert_aborts(
+        "e2e_tests::remember_user_input_aborts_on_a_fresh_instance",
+        || {
+            let user_dir = TempUserDir::new("remember-fresh");
+            let (_context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+            let _ = pinyin_remember_user_input(instance, cstr("你好").as_ptr(), -1);
+        },
+    );
+}
+
+/// As above, for a parse that consumed bytes but placed no key (three
+/// apostrophes): `fill_matrix` leaves the matrix empty.
+#[cfg(unix)]
+#[test]
+fn remember_user_input_aborts_on_a_keyless_parse() {
+    crate::test_support::assert_aborts(
+        "e2e_tests::remember_user_input_aborts_on_a_keyless_parse",
+        || {
+            let user_dir = TempUserDir::new("remember-keyless");
+            let (_context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+            assert_eq!(
+                pinyin_parse_more_full_pinyins(instance, cstr("'''").as_ptr()),
+                3
+            );
+            let _ = pinyin_remember_user_input(instance, cstr("你好").as_ptr(), -1);
+        },
+    );
+}
+
+/// The empty-matrix abort follows the token computation: a character with
+/// no token refuses first (`pinyin.cpp:3685-3695`).
+#[test]
+fn remember_user_input_refuses_an_unknown_character_before_the_empty_matrix() {
+    let user_dir = TempUserDir::new("remember-unknown-empty");
+    let (_context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    assert!(!pinyin_remember_user_input(
+        instance,
+        cstr("😀").as_ptr(),
+        -1
+    ));
+}
+
+/// The preflight runs only where `_remember_phrase_recur` reaches
+/// `_add_phrase`. With the crafted 你好 row and only `ni` parsed, the one
+/// path has one key for a two-character phrase and is refused at
+/// `pinyin.cpp:3600-3601`, so the call answers `false`.
+#[cfg(unix)]
+#[test]
+fn remember_user_input_refuses_a_short_path_before_the_preflight() {
+    let user_dir = TempUserDir::new("remember-short-path");
+    crate::test_support::set_phrase_table_row(&user_dir.path, "你好", &[0x0700_0001, 0x0700_0002]);
+    let (_context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    assert_eq!(
+        pinyin_parse_more_full_pinyins(instance, cstr("ni").as_ptr()),
+        2
+    );
+    assert!(!pinyin_remember_user_input(
+        instance,
+        cstr("你好").as_ptr(),
+        -1
+    ));
+}
+
+/// A key the next character's item does not pronounce ends its branch
+/// (`pinyin.cpp:3640-3645`): 好 does not pronounce `ni`, so 好你 reaches no
+/// path under `nihao`, whatever its crafted row holds.
+#[cfg(unix)]
+#[test]
+fn remember_user_input_refuses_a_path_the_item_does_not_pronounce() {
+    let user_dir = TempUserDir::new("remember-unpronounced");
+    crate::test_support::set_phrase_table_row(&user_dir.path, "好你", &[0x0700_0001, 0x0700_0002]);
+    let (_context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    assert_eq!(
+        pinyin_parse_more_full_pinyins(instance, cstr("nihao").as_ptr()),
+        5
+    );
+    assert!(!pinyin_remember_user_input(
+        instance,
+        cstr("好你").as_ptr(),
+        -1
+    ));
+}
+
+/// Imports `phrase` into library 7 once per reading and returns its token.
+#[cfg(unix)]
+fn import_readings(
+    context: *mut crate::types::PinyinContext,
+    instance: *mut PinyinInstance,
+    phrase: &str,
+    readings: &[&str],
+) -> u32 {
+    let import = pinyin_begin_add_phrases(context, 7);
+    for reading in readings {
+        assert!(pinyin_iterator_add_phrase(
+            import,
+            cstr(phrase).as_ptr(),
+            cstr(reading).as_ptr(),
+            1
+        ));
+    }
+    pinyin_end_add_phrases(import);
+    with_store(instance, |store| store.token_for_phrase(phrase))
+        .expect("readable store")
+        .expect("the import gave the phrase a token")
+}
+
+/// The stored readings of `token` as `(packed first key, frequency)`.
+#[cfg(unix)]
+fn stored_readings(instance: *mut PinyinInstance, token: u32) -> Vec<(u16, u32)> {
+    with_store(instance, |store| store.item_pronunciations(token))
+        .expect("readable store")
+        .expect("an item")
+        .iter()
+        .map(|(keys, freq)| (keys[0].to_packed(), *freq))
+        .collect()
+}
+
+/// The remember walk reads the matrix the parse built. Double pinyin keeps
+/// the parsed tone (`ni3` is the reading `ni3`), and a different tone finds no
+/// path.
+#[cfg(unix)]
+#[test]
+fn remember_user_input_keeps_the_double_pinyin_tone() {
+    use crate::config::pinyin_set_double_pinyin_scheme;
+    use crate::parse::pinyin_parse_more_double_pinyins;
+
+    let ni3 = oxpinyin_core::ChewingKey::from_pinyin("ni")
+        .expect("ni is a key")
+        .with_tone(3)
+        .to_packed();
+    for (input, remembered) in [("ni3", true), ("ni2", false)] {
+        let user_dir = TempUserDir::new("remember-double-tone");
+        let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+        let token = import_readings(context, instance, "农", &["ni3"]);
+        assert!(pinyin_set_options(context, 0x28));
+        assert!(pinyin_set_double_pinyin_scheme(context, 2));
+        assert_eq!(
+            pinyin_parse_more_double_pinyins(instance, cstr(input).as_ptr()),
+            input.len()
+        );
+        assert_eq!(
+            pinyin_remember_user_input(instance, cstr("农").as_ptr(), 3),
+            remembered,
+            "{input}"
+        );
+        let expected = if remembered { 1 + 3 } else { 1 };
+        assert_eq!(
+            stored_readings(instance, token),
+            [(ni3, expected)],
+            "{input}"
+        );
+    }
+}
+
+/// 弄 with its `nong` and `long` readings, parsed as `ns` in Microsoft
+/// double pinyin under `L_N`. Returns the readings before any remember.
+#[cfg(unix)]
+fn parsed_nong_under_l_n(
+    user_dir: &TempUserDir,
+) -> (
+    *mut crate::types::PinyinContext,
+    *mut PinyinInstance,
+    u32,
+    Vec<(u16, u32)>,
+) {
+    use crate::config::pinyin_set_double_pinyin_scheme;
+    use crate::parse::pinyin_parse_more_double_pinyins;
+
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    let token = import_readings(context, instance, "弄", &["nong", "long"]);
+    let before = stored_readings(instance, token);
+    assert_eq!(before.len(), 2);
+    assert!(pinyin_set_options(context, 0x8 | (1 << 15)));
+    assert!(pinyin_set_double_pinyin_scheme(context, 2));
+    assert_eq!(
+        pinyin_parse_more_double_pinyins(instance, cstr("ns").as_ptr()),
+        2
+    );
+    (context, instance, token, before)
+}
+
+/// Both readings' frequencies rose by the count of 3.
+#[cfg(unix)]
+fn assert_both_readings_rose(instance: *mut PinyinInstance, token: u32, before: &[(u16, u32)]) {
+    let after = stored_readings(instance, token);
+    assert_eq!(after.len(), 2);
+    for ((_, was), (_, now)) in before.iter().zip(&after) {
+        assert_eq!(*now, *was + 3);
+    }
+}
+
+/// Fuzzy alternatives ride the parse-time matrix in every mode: `ns` is
+/// `nong` in Microsoft double pinyin, and `L_N` adds `long` beside it.
+#[cfg(unix)]
+#[test]
+fn remember_user_input_adds_fuzzy_alternatives_of_a_double_pinyin_parse() {
+    let user_dir = TempUserDir::new("remember-double-fuzzy");
+    let (_context, instance, token, before) = parsed_nong_under_l_n(&user_dir);
+    assert!(pinyin_remember_user_input(instance, cstr("弄").as_ptr(), 3));
+    assert_both_readings_rose(instance, token, &before);
+}
+
+/// The matrix comes from the parse, not from the options now: turning `L_N`
+/// off after the parse leaves `long` in it.
+#[cfg(unix)]
+#[test]
+fn remember_user_input_keeps_the_parse_time_fuzzy_alternatives() {
+    let user_dir = TempUserDir::new("remember-parse-time-fuzzy");
+    let (context, instance, token, before) = parsed_nong_under_l_n(&user_dir);
+    assert!(pinyin_set_options(context, 0x8));
+    assert!(pinyin_remember_user_input(instance, cstr("弄").as_ptr(), 3));
+    assert_both_readings_rose(instance, token, &before);
+}
+
+/// The same for the chewing seam: the standard keyboard spells `nong` as
+/// `sj/`, and `L_N` adds `long`.
+#[cfg(unix)]
+#[test]
+fn remember_user_input_adds_fuzzy_alternatives_of_a_chewing_parse() {
+    use crate::config::pinyin_set_zhuyin_scheme;
+    use crate::parse::pinyin_parse_more_chewings;
+
+    let user_dir = TempUserDir::new("remember-chewing-fuzzy");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    let token = import_readings(context, instance, "弄", &["nong", "long"]);
+    let before = stored_readings(instance, token);
+    assert!(pinyin_set_options(context, 0x8 | (1 << 15)));
+    assert!(pinyin_set_zhuyin_scheme(context, 1));
+    assert_eq!(
+        pinyin_parse_more_chewings(instance, cstr("sj/").as_ptr()),
+        3
+    );
+    assert!(pinyin_remember_user_input(instance, cstr("弄").as_ptr(), 3));
+    let after = stored_readings(instance, token);
+    assert_eq!(after.len(), 2);
+    for ((_, was), (_, now)) in before.iter().zip(&after) {
+        assert_eq!(*now, *was + 3);
+    }
+}
+
+/// Persists `other` in library 7, points 你好's phrase-table row at its
+/// token, reopens, and remembers 你好 under the composition `nihao`.
+#[cfg(unix)]
+fn remember_against_a_redirected_row(user_dir: &TempUserDir, other: &str, reading: &str) {
+    let path = user_dir.path.to_str().expect("UTF-8 path").to_owned();
+    let (context, instance) = open(&path);
+    let it = pinyin_begin_add_phrases(context, 7);
+    assert!(pinyin_iterator_add_phrase(
+        it,
+        cstr(other).as_ptr(),
+        cstr(reading).as_ptr(),
+        1
+    ));
+    pinyin_end_add_phrases(it);
+    let token = with_store(instance, |store| store.token_for_phrase(other))
+        .expect("readable store")
+        .expect("the setup phrase has a token");
+    assert!(pinyin_save(context));
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+    crate::test_support::set_phrase_table_row(&user_dir.path, "你好", &[token]);
+    let (_context, instance) = open(&path);
+    assert_eq!(
+        pinyin_parse_more_full_pinyins(instance, cstr("nihao").as_ptr()),
+        5
+    );
+    let _ = pinyin_remember_user_input(instance, cstr("你好").as_ptr(), -1);
+}
+
 /// Whether a directory reads as a chunk on this host's temporary file
 /// system (register row 96); where it does not, a directory library is row
 /// 76's unmappable one (class (b)).
@@ -4266,4 +4597,90 @@ fn null_context_unload_addon_phrase_library_aborts_on_index_16() {
             crate::config::pinyin_unload_addon_phrase_library(ptr::null_mut(), 16);
         },
     );
+}
+
+/// `_remember_phrase_recur` calls `_add_phrase` for every complete path and
+/// ORs the answers (`pinyin.cpp:3654-3659`). With `L_N` the composition
+/// `nong` holds two keys over one span, `nong` and `long`, and a character
+/// whose item pronounces both is added along both paths: each reading's
+/// frequency rises by the count.
+#[cfg(unix)]
+#[test]
+fn remember_user_input_adds_along_every_complete_path() {
+    let user_dir = TempUserDir::new("remember-two-paths");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    let import = pinyin_begin_add_phrases(context, 7);
+    for reading in ["nong", "long"] {
+        assert!(pinyin_iterator_add_phrase(
+            import,
+            cstr("弄").as_ptr(),
+            cstr(reading).as_ptr(),
+            1
+        ));
+    }
+    pinyin_end_add_phrases(import);
+    let token = with_store(instance, |store| store.token_for_phrase("弄"))
+        .expect("readable store")
+        .expect("the import gave 弄 a token");
+    let readings = |instance| {
+        with_store(instance, |store| store.item_pronunciations(token))
+            .expect("readable store")
+            .expect("an item")
+            .iter()
+            .map(|(keys, freq)| (keys.len(), *freq))
+            .collect::<Vec<_>>()
+    };
+    let before = readings(instance);
+    assert_eq!(before.len(), 2, "two imported readings");
+
+    assert!(pinyin_set_options(context, 0x8 | (1 << 15)));
+    assert_eq!(
+        pinyin_parse_more_full_pinyins(instance, cstr("nong").as_ptr()),
+        4
+    );
+    assert!(pinyin_remember_user_input(instance, cstr("弄").as_ptr(), 3));
+    let after = readings(instance);
+    assert_eq!(after.len(), before.len());
+    for ((_, was), (_, now)) in before.iter().zip(&after) {
+        assert_eq!(*now, *was + 3, "each path adds its reading once");
+    }
+}
+
+#[test]
+fn den_key_getter_returns_parsed_key() {
+    let _slots = crate::test_support::key_slot_guard();
+    let user_dir = TempUserDir::new("den-key-getter");
+    let (_context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    assert_eq!(
+        crate::parse::pinyin_parse_more_chewings(instance, cstr("2p").as_ptr()),
+        2
+    );
+    let mut key = ptr::null_mut();
+    assert!(crate::cursor::pinyin_get_pinyin_key(
+        instance,
+        0,
+        &raw mut key
+    ));
+    assert_eq!(
+        // SAFETY: the successful getter returned a live key pointer.
+        unsafe { (*key).packed },
+        oxpinyin_chewing::ChewingKey::from_pinyin("den")
+            .unwrap()
+            .to_packed()
+    );
+}
+
+#[test]
+fn remember_den_with_unmatched_character_returns_false() {
+    let user_dir = TempUserDir::new("remember-den");
+    let (_context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    assert_eq!(
+        crate::parse::pinyin_parse_more_chewings(instance, cstr("2p").as_ptr()),
+        2
+    );
+    assert!(!pinyin_remember_user_input(
+        instance,
+        cstr("你").as_ptr(),
+        -1
+    ));
 }

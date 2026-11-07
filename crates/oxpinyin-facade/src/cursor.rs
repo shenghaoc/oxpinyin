@@ -5,7 +5,7 @@
 //! moves port the pin's matrix laws over the engine's positional data —
 //! `oxpinyin_engine::lookup_offset_over_spans` and the `*_word_offset`
 //! pair. Where the pin's `_check_offset` aborts, these answer an error
-//! the C layers turn into `false` (the no-abort policy).
+//! for the C layers to act on.
 //!
 //! Parse-mode dispatch mirrors [`InstanceView::validate_lookup_offset`]:
 //! plain full pinyin runs the law over the session's own buffer; LUOMA /
@@ -14,7 +14,7 @@
 //! same separator); double pinyin and the zhuyin keyboards hold no
 //! zero-key columns, so the law steps their parse's key spans only.
 
-use oxpinyin_core::{DoublePinyinKey, FullPinyinIndexKey, SyllableKey, ZhuyinKey};
+use oxpinyin_core::{DoublePinyinKey, FullPinyinIndexKey, ZhuyinKey};
 use oxpinyin_engine::{EngineError, KeySpans, MatrixKey};
 
 use crate::instance::{InstanceState, InstanceView};
@@ -84,6 +84,7 @@ impl ModeKeys<'_> {
                 let key = &keys[index];
                 KeyAt {
                     text: key.key().text(),
+                    chewing: key.key().chewing_key().with_tone(key.tone()),
                     key: Some(key.key()),
                     tone: key.tone(),
                     begin: key.start(),
@@ -94,8 +95,9 @@ impl ModeKeys<'_> {
                 let key = keys[index];
                 KeyAt {
                     text: key.key().text(),
+                    chewing: key.key().chewing_key().with_tone(key.tone()),
                     key: Some(key.key()),
-                    tone: 0,
+                    tone: key.tone(),
                     begin: key.start(),
                     end: key.end(),
                 }
@@ -104,6 +106,9 @@ impl ModeKeys<'_> {
                 let key = &keys[index];
                 KeyAt {
                     text: key.canonical(),
+                    chewing: oxpinyin_core::ChewingKey::from_pinyin(key.canonical())
+                        .unwrap_or_default()
+                        .with_tone(key.tone()),
                     key: None,
                     tone: key.tone(),
                     begin: key.start(),
@@ -113,8 +118,9 @@ impl ModeKeys<'_> {
             Self::Matrix(keys) => {
                 let key = keys[index];
                 KeyAt {
-                    text: key.key().text(),
-                    key: Some(key.key()),
+                    text: key.key().pinyin_spelling(),
+                    chewing: key.key(),
+                    key: None,
                     tone: key.tone(),
                     begin: key.syllable_start(),
                     end: key.end(),
@@ -174,11 +180,7 @@ impl AbiColumns<'_> {
             if key.begin == position {
                 // The Full index variant has only canonical text: its key
                 // converts by spelling, as before.
-                let chewing = match key.key {
-                    Some(syllable) => Some(syllable.chewing_key()),
-                    None => oxpinyin_core::ChewingKey::from_pinyin(key.text),
-                };
-                let packed = chewing.map_or(0, |k| k.with_tone(key.tone).to_packed());
+                let packed = key.chewing.to_packed();
                 return Some((packed, key.begin, key.end));
             }
         }
@@ -210,6 +212,8 @@ impl AbiColumns<'_> {
 /// one.
 #[derive(Clone, Copy, Debug)]
 pub struct KeyAt {
+    /// The exact parser key.
+    pub chewing: oxpinyin_core::ChewingKey,
     /// The key's canonical full-pinyin spelling.
     pub text: &'static str,
     /// The key's vocabulary key; `None` for the index parse, which carries
@@ -240,7 +244,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
             return Some(SpanSource {
                 input: self.zhuyin_input.as_bytes(),
                 parsed: parse.consumed(),
-                spans: ModeKeys::Zhuyin(parse.keys()),
+                spans: ModeKeys::Matrix(&self.parse_matrix),
                 separators: false,
             });
         }
@@ -248,14 +252,14 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
             return Some(SpanSource {
                 input: self.double_input.as_bytes(),
                 parsed: parse.consumed(),
-                spans: ModeKeys::Double(parse.keys()),
+                spans: ModeKeys::Matrix(&self.parse_matrix),
                 separators: false,
             });
         }
         self.full_parse.as_ref().map(|parse| SpanSource {
             input: self.full_input.as_bytes(),
             parsed: parse.consumed(),
-            spans: ModeKeys::Full(parse.keys()),
+            spans: ModeKeys::Matrix(&self.parse_matrix),
             separators: true,
         })
     }
@@ -270,8 +274,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
     ///
     /// # Errors
     ///
-    /// Forwards [`EngineError`] where the pin aborts (the no-abort
-    /// policy's refusal).
+    /// Forwards [`EngineError`] where the pin aborts.
     pub fn lookup_offset(&self, cursor: usize) -> Result<usize, EngineError> {
         match self.span_source() {
             Some(source) => oxpinyin_engine::lookup_offset_over_spans(
@@ -384,22 +387,67 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
         Ok(!(self.mode_input().0.is_empty() || keys.is_empty()))
     }
 
-    /// The active parse mode's keys in place, in input order. Plain full
-    /// pinyin reads the session's scan-matrix keys, which the session
-    /// builds once per input and option word.
+    /// The bytes the active parse consumed: the pin's `m_parsed_len`
+    /// (`pinyin.cpp:1511`, `zhuyin.cpp:1034`). Apostrophes count, keys or
+    /// not, so `'''` consumes 3 with an empty matrix.
+    ///
+    /// # Errors
+    ///
+    /// Forwards [`EngineError`] from the session's matrix read.
+    pub fn pin_parsed_len(&self) -> Result<usize, EngineError> {
+        match self.span_source() {
+            Some(source) => Ok(source.parsed),
+            None => Ok(self.session.matrix_keys()?.1),
+        }
+    }
+
+    /// The pin matrix's column count: `parsed_len + 1` once the parse placed
+    /// a key (`fill_matrix` sizes it so, with one reserved slot), and 0
+    /// while it is empty (`phonetic_key_matrix.cpp:34-38`). The pin's
+    /// `PhoneticTable::get_column_size` asserts `index < columns`
+    /// (`phonetic_key_matrix.h:103`), so a read at or past this count aborts.
+    ///
+    /// # Errors
+    ///
+    /// Forwards [`EngineError`] from the session's matrix read.
+    pub fn pin_matrix_columns(&self) -> Result<usize, EngineError> {
+        if self.mode_has_keys()? {
+            Ok(self.pin_parsed_len()? + 1)
+        } else {
+            Ok(0)
+        }
+    }
+
+    /// The keys the active parser itself placed, before the pin's
+    /// post-fill steps: the input of `parse_matrix`'s construction.
+    /// Empty for plain full pinyin, which keeps no parser keys.
+    pub(crate) fn parser_key_list(&self) -> Vec<KeyAt> {
+        if let Some(parse) = self.zhuyin_parse.as_ref() {
+            ModeKeys::Zhuyin(parse.keys()).iter().collect()
+        } else if let Some(parse) = self.double_parse.as_ref() {
+            ModeKeys::Double(parse.keys()).iter().collect()
+        } else if let Some(parse) = self.full_parse.as_ref() {
+            ModeKeys::Full(parse.keys()).iter().collect()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// The active parse mode's matrix keys in place, in input order. Plain
+    /// full pinyin reads the session's scan-matrix keys, which the session
+    /// builds once per input and option word; the index-parsed full pinyin,
+    /// double pinyin and chewing modes read the matrix kept with the parse
+    /// (`parse_matrix`), with the pin's fuzzy, resplit and divided additions.
     ///
     /// # Errors
     ///
     /// Forwards [`EngineError`] from the session's matrix read.
     pub fn mode_key_source(&self) -> Result<ModeKeys<'_>, EngineError> {
-        if let Some(parse) = self.zhuyin_parse.as_ref() {
-            return Ok(ModeKeys::Zhuyin(parse.keys()));
-        }
-        if let Some(parse) = self.double_parse.as_ref() {
-            return Ok(ModeKeys::Double(parse.keys()));
-        }
-        if let Some(parse) = self.full_parse.as_ref() {
-            return Ok(ModeKeys::Full(parse.keys()));
+        // The three parsed modes keep the matrix the pin built at the parse,
+        // with its fuzzy, resplit and divided additions, as plain full
+        // pinyin's session does.
+        if self.zhuyin_parse.is_some() || self.double_parse.is_some() || self.full_parse.is_some() {
+            return Ok(ModeKeys::Matrix(&self.parse_matrix));
         }
         let (keys, _) = self.session.matrix_keys()?;
         Ok(ModeKeys::Matrix(keys))
@@ -417,8 +465,8 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
     ///
     /// # Errors
     ///
-    /// Forwards [`EngineError`] where the pin asserts (the no-abort
-    /// policy's refusal) and the dictionary's backend failure.
+    /// Forwards [`EngineError`] where the pin asserts and the dictionary's
+    /// backend failure.
     pub fn character_offset(
         &self,
         phrase: &oxpinyin_core::PhraseText,
@@ -428,19 +476,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
             return self.session.character_offset_with_walk(phrase, offset);
         };
         let (keys, input, separators) = self.mode_keys()?;
-        // A key whose canonical spelling is not a vocabulary syllable
-        // cannot be looked up; the parsers never place one.
-        let keys: Vec<MatrixKey> = keys
-            .iter()
-            .filter_map(|k| {
-                Some(MatrixKey::new(
-                    SyllableKey::from_text(k.text)?,
-                    k.tone,
-                    k.begin,
-                    k.end,
-                ))
-            })
-            .collect();
+        let keys = matrix_keys_of(&keys);
         oxpinyin_engine::character_offset_with_walk_over_keys(
             input,
             source.parsed,
@@ -450,6 +486,29 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
             phrase,
             offset,
         )
+    }
+
+    /// The pin's matrix columns for the active parse mode, for
+    /// `_remember_phrase_recur`'s walk; `None` is the empty matrix (a fresh
+    /// instance, or a parse that placed no key).
+    ///
+    /// # Errors
+    ///
+    /// Forwards [`EngineError`] from the session's matrix read.
+    pub fn matrix_columns(&self) -> Result<Option<oxpinyin_engine::MatrixColumns>, EngineError> {
+        let (keys, input, separators) = self.mode_keys()?;
+        let parsed = self.pin_parsed_len()?;
+        // The index-parsed full pinyin, double pinyin and chewing modes keep
+        // the matrix the pin built at the parse, with its fuzzy alternatives;
+        // plain full pinyin reads the session's scan matrix, which has them.
+        let keys = if self.span_source().is_some() {
+            self.parse_matrix.clone()
+        } else {
+            matrix_keys_of(&keys)
+        };
+        Ok(oxpinyin_engine::matrix_columns(
+            input, parsed, &keys, separators,
+        ))
     }
 
     /// The original-coordinate column table over the mode's keys.
@@ -577,6 +636,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
             .find(|key| key.end == end)?;
         Some(KeyAt {
             text: found.text,
+            chewing: found.chewing,
             key: found.key,
             tone: found.tone,
             begin,
@@ -590,4 +650,11 @@ impl<
     E: std::borrow::BorrowMut<oxpinyin_engine::SessionState>,
 > InstanceView<'_, S, E>
 {
+}
+
+/// Retain every parser key, including keys without a pinyin vocabulary entry.
+pub(crate) fn matrix_keys_of(keys: &[KeyAt]) -> Vec<MatrixKey> {
+    keys.iter()
+        .map(|k| MatrixKey::from_chewing(k.chewing, k.begin, k.end))
+        .collect()
 }

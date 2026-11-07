@@ -781,8 +781,9 @@ A Rust implementation should:
    return `Result` (constitution §4, amended 2026-10-29 UTC).
 2. Follow the pin's observable failure behaviour: permit a panic only for
    a corresponding pin assertion or abort, subject to existing class
-   (b)/(c) rulings. Where the pin continues or returns an error, introduce
-   no panic. Class (c) refusals keep `false`/`Err` and one warning.
+   (b) rulings. Where the pin continues or returns an error, introduce
+   no panic. Where the pin asserts or aborts, abort with
+   `std::process::abort()` ([source policy](../source-policy.md#compatibility-decision-order)).
 3. Treat the consumer's unchecked calls as implicit contracts: these
    functions must succeed for in-range inputs with valid state. An
    implementation that returned errors in these cases would break the

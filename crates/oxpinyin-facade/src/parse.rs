@@ -124,8 +124,8 @@ pub fn exact_input(keys: &[impl ExactKey]) -> (String, Vec<ExactSegment>) {
 }
 
 /// `FullPinyinParser2::parse_one_key` (`pinyin_parser2.cpp:164-214` at
-/// 074a2219) over a scheme index: an apostrophe is the assert shape the
-/// no-abort policy renders as `None`; under `USE_TONE` a trailing `1..5`
+/// 074a2219) over a scheme index: an apostrophe is the assert shape,
+/// returned as `None` here for the C adapters to abort on; under `USE_TONE` a trailing `1..5`
 /// is the tone, which `FORCE_TONE` then requires; the remaining spelling
 /// must be one row of the index exactly, and the key is the row's
 /// canonical syllable with that tone.
@@ -292,6 +292,7 @@ impl<
             self.parsed_len = parsed.consumed();
             text.clone_into(&mut self.full_input);
             self.full_parse = Some(parsed);
+            self.keep_parse_matrix(true);
             return self.parsed_len;
         }
         let consumed = match self.session.replace_raw(text) {
@@ -300,6 +301,18 @@ impl<
         };
         self.parsed_len = consumed;
         consumed
+    }
+
+    /// Builds the pin's parse-time matrix from the keys of the parse just
+    /// stored, under the options in force now: `fill_matrix`, then
+    /// `resplit_step` and `inner_split_step` when `divided` (the full-pinyin
+    /// entry point, `pinyin.cpp:1514-1520`), then `fuzzy_syllable_step`
+    /// (`:1557-1559`, `:1602-1604`). The remember walk reads it later,
+    /// whatever the options have become since.
+    fn keep_parse_matrix(&mut self, divided: bool) {
+        let keys = crate::cursor::matrix_keys_of(&self.parser_key_list());
+        self.parse_matrix =
+            oxpinyin_engine::parse_time_keys(&keys, self.parsed_len, self.options(), divided);
     }
 
     /// The chewing batch seam — the shared skeleton (continue/restart,
@@ -353,6 +366,7 @@ impl<
         self.parsed_len = parsed.consumed();
         text.clone_into(&mut self.zhuyin_input);
         self.zhuyin_parse = Some(parsed);
+        self.keep_parse_matrix(false);
         self.parsed_len
     }
 
@@ -413,6 +427,7 @@ impl<
         self.parsed_len = parsed.consumed();
         text.clone_into(&mut self.double_input);
         self.double_parse = Some(parsed);
+        self.keep_parse_matrix(false);
         self.parsed_len
     }
 }
@@ -422,6 +437,28 @@ mod tests {
     use oxpinyin_core::{ZhuyinParser, ZhuyinScheme};
 
     use super::*;
+
+    #[test]
+    fn den_matrix_keeps_key_and_fuzzy_deng() {
+        let parse = ZhuyinParser::with_scheme(ZhuyinScheme::Standard).parse(b"2p", true, false);
+        let keys = crate::cursor::ModeKeys::Zhuyin(parse.keys())
+            .iter()
+            .collect::<Vec<_>>();
+        let keys = crate::cursor::matrix_keys_of(&keys);
+        let matrix = oxpinyin_engine::parse_time_keys(
+            &keys,
+            2,
+            oxpinyin_core::OptionBits::from_bits(oxpinyin_core::PINYIN_AMB_EN_ENG),
+            false,
+        );
+        assert_eq!(
+            matrix
+                .iter()
+                .map(|k| k.key().pinyin_spelling())
+                .collect::<Vec<_>>(),
+            ["den", "deng"]
+        );
+    }
 
     #[test]
     fn scheme_dispatch_covers_the_header_discriminants_and_nothing_else() {

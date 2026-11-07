@@ -10,8 +10,8 @@
 //!    `fill_matrix` leaves it cleared) answers `false`.
 //! 2. `assert(offset < matrix.size())` and `_check_offset(matrix, offset)`
 //!    — abort shapes, answered as [`EngineError::LookupOffsetOutOfRange`]
-//!    and [`EngineError::ZeroKeyOffsetCheck`] (the no-abort policy,
-//!    `docs/findings/upstream-divergences.md`).
+//!    and [`EngineError::ZeroKeyOffsetCheck`], which the C adapters abort on
+//!    (register row 19).
 //! 3. A NULL or empty phrase answers `false` (`g_utf8_to_ucs4` also
 //!    answers NULL — length 0 — on invalid UTF-8).
 //! 4. `_pre_compute_tokens`: every character of the phrase is searched in
@@ -28,16 +28,20 @@
 //!    far as soon as the next key's raw end lies past `offset`, and
 //!    backtracks over the column's other keys when a branch fails.
 //!
-//! Two upstream shapes are answered conservatively here (register entry
-//! `pinyin_get_character_offset`'s recursion asserts answer `false` in
-//! `docs/findings/upstream-divergences.md`): an empty column at a reached
+//! Two upstream shapes are reported as errors here (register row 19): an
+//! empty column at a reached
 //! position (`assert(size > 0)`) or a zero key sharing a column with real
-//! keys (`assert(1 == size)`) answer [`EngineError::MatrixColumnAssert`]
-//! — the availability class; a walk that runs past the cached tokens
+//! keys (`assert(1 == size)`) answer [`EngineError::MatrixColumnAssert`],
+//! which the C adapters abort on; a walk that runs past the cached tokens
 //! (the pin reads `g_array_index` past the array — a phrase shorter than
 //! the key path it is measured against) treats the missing token as
 //! pronouncing nothing, so that branch fails like a mismatched key — the
 //! memory-safety class.
+//!
+//! [`remember_walk`] is `_remember_phrase_recur` (`pinyin.cpp:3578-3666`)
+//! over the same columns, for `pinyin_remember_user_input`: it differs in
+//! refusing, not asserting, on an empty column or a zero key that shares its
+//! column, and in calling the caller's `add` at every complete path.
 
 use oxpinyin_core::scoring::{ScoringError, expand_keys};
 use oxpinyin_core::{Completeness, Dictionary, PhraseEntry, PhraseToken, SyllableKey};
@@ -104,12 +108,15 @@ where
     D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
     D::Error: core::fmt::Display,
 {
+    let Some(syllable) = SyllableKey::from_chewing_key(key.key()) else {
+        return Ok(false);
+    };
     match dictionary
         .phrase_item_pronunciations(token)
         .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?
     {
         oxpinyin_core::PhraseItemRead::Item(rows) => {
-            let query = [key.key().chewing_key().with_tone(key.tone())];
+            let query = [key.key()];
             let total = rows
                 .iter()
                 .fold(0_u32, |sum, (_, freq)| sum.wrapping_add(*freq));
@@ -124,7 +131,7 @@ where
         oxpinyin_core::PhraseItemRead::NoItem => return Ok(false),
         oxpinyin_core::PhraseItemRead::Unsupported => {}
     }
-    let key = key.key();
+    let key = syllable;
     let keeps = |entries: Vec<PhraseEntry>| {
         entries.iter().any(|entry| {
             entry.token() == token && !matches!(entry.pronunciation_possibility(), Some((0, _)))
@@ -144,6 +151,133 @@ where
         return Ok(false);
     }
     Ok(keeps(lookup(&[key])?))
+}
+
+/// Whether `token`'s item pronounces `key` with a kept possibility, the
+/// pin's `item.get_pronunciation_possibility(&key) >= FLT_EPSILON`: the
+/// test both `_get_char_offset_recur` (`pinyin.cpp:3170-3174`) and
+/// `_remember_phrase_recur` (`:3640-3645`) apply before a key consumes the
+/// next cached token.
+///
+/// # Errors
+///
+/// The dictionary's backend failure as [`EngineError::Scoring`].
+pub fn key_pronounced_by<D>(
+    dictionary: &D,
+    key: MatrixKey,
+    token: PhraseToken,
+) -> Result<bool, EngineError>
+where
+    D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+    D::Error: core::fmt::Display,
+{
+    pronounces(dictionary, key, token)
+}
+
+/// The pin's matrix columns for one parse, owned so a walk can alternate
+/// dictionary reads with writes to the store behind them.
+pub struct MatrixColumns {
+    columns: Vec<Column>,
+    /// `matrix.size() - 1`: the parsed length, where a complete walk ends.
+    end: usize,
+}
+
+/// The columns of one parse, or `None` for the empty matrix (`fill_matrix`
+/// returns before sizing it when the parse placed no key,
+/// `phonetic_key_matrix.cpp:34-38`). Arguments as
+/// [`character_offset_over_keys`].
+#[must_use]
+pub fn matrix_columns(
+    input: &[u8],
+    parsed_len: usize,
+    keys: &[MatrixKey],
+    separators: bool,
+) -> Option<MatrixColumns> {
+    if input.is_empty() || keys.is_empty() {
+        return None;
+    }
+    let columns = build_columns(input, parsed_len, keys, separators);
+    Some(MatrixColumns {
+        columns,
+        end: parsed_len.min(input.len()),
+    })
+}
+
+/// `_remember_phrase_recur` (`pinyin.cpp:3578-3666`) over `columns`, from
+/// column 0 with no key chosen.
+///
+/// A real key is kept only when `pronounces(key, index)` accepts it, where
+/// `index` is the number of keys chosen before it, the cached token the key
+/// would consume. A column holding a zero key steps on only when that is its
+/// sole entry; an empty column refuses. At the parsed length the walk calls
+/// `add` once for every complete path of exactly `phrase_length` keys, in the
+/// pin's depth-first order and before it explores the next branch, and ORs
+/// the answers. `pronounces` is read at the moment of each test, so a write
+/// `add` made earlier is seen by the later tests, as in the pin.
+///
+/// # Errors
+///
+/// Whatever `pronounces` or `add` return.
+pub fn remember_walk<E>(
+    columns: &MatrixColumns,
+    phrase_length: usize,
+    pronounces: &mut dyn FnMut(MatrixKey, usize) -> Result<bool, E>,
+    add: &mut dyn FnMut(&[MatrixKey]) -> Result<bool, E>,
+) -> Result<bool, E> {
+    remember_recur(columns, phrase_length, 0, &mut Vec::new(), pronounces, add)
+}
+
+fn remember_recur<E>(
+    columns: &MatrixColumns,
+    phrase_length: usize,
+    start: usize,
+    path: &mut Vec<MatrixKey>,
+    pronounces: &mut dyn FnMut(MatrixKey, usize) -> Result<bool, E>,
+    add: &mut dyn FnMut(&[MatrixKey]) -> Result<bool, E>,
+) -> Result<bool, E> {
+    if start > columns.end {
+        return Ok(false);
+    }
+    if start == columns.end {
+        // `cached_keys->len != phrase_length`, then the empty and
+        // `MAX_PHRASE_LENGTH` bounds (`:3600-3609`); the caller's `add`
+        // holds the upper bound.
+        if path.len() != phrase_length || path.is_empty() {
+            return Ok(false);
+        }
+        return add(path);
+    }
+    let Some(column) = columns.columns.get(start) else {
+        return Ok(false);
+    };
+    // `size <= 0`: "assume pinyin parsers will filter invalid keys."
+    if column.real.is_empty() && column.zero_end.is_none() {
+        return Ok(false);
+    }
+    let mut result = false;
+    for key in &column.real {
+        // `cached_keys->len >= phrase_length`.
+        if path.len() >= phrase_length {
+            return Ok(false);
+        }
+        if !pronounces(*key, path.len())? {
+            continue;
+        }
+        path.push(*key);
+        let found = remember_recur(columns, phrase_length, key.end(), path, pronounces, add);
+        path.pop();
+        result = found? || result;
+    }
+    if let Some(zero_end) = column.zero_end {
+        // "assume only one key here for "'" or the last key": the zero key
+        // follows the real keys in the column, and `1 != size` drops the
+        // result gathered so far.
+        if !column.real.is_empty() {
+            return Ok(false);
+        }
+        return remember_recur(columns, phrase_length, zero_end, path, pronounces, add);
+    }
+    Ok(result)
 }
 
 /// `_get_char_offset_recur` (`pinyin.cpp:3138-3191`): `Ok(Some(length))`

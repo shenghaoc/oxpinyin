@@ -107,7 +107,7 @@ pub fn load_chunk_payload(path: &std::path::Path) -> std::io::Result<Vec<u8>> {
             ));
         }
         // The pin asserts on either header word, including an interrupted
-        // read. Its assert is a process abort under the class (c) ruling.
+        // read. Its assert is reproduced as a process abort.
         Err(ChunkLoadError::Header(_)) => std::process::abort(),
     };
     chunk.finish(chunk_checksum).ok_or_else(|| {
@@ -534,13 +534,12 @@ pub enum UserConfError {
     Line(&'static str),
     /// The `database format:` directive reached
     /// `to_table_database_format_type`, which `abort()`s on any token it
-    /// does not know (`table_info.cpp:122-133`, called at `:353-354`) —
-    /// the class-(c) availability site of
-    /// `docs/findings/compatibility-policy.md`. The token was either read
+    /// does not know (`table_info.cpp:122-133`, called at `:353-354`). The
+    /// token was either read
     /// and unrecognised, or never read at all: a matching failure leaves
     /// upstream's `str` unwritten and maps it anyway, which is the same
     /// abort from an indeterminate buffer. Both answer `Err`, and the
-    /// caller fails the open instead of aborting the process.
+    /// C adapters abort on it (register row 44).
     UnknownDatabaseFormat,
 }
 

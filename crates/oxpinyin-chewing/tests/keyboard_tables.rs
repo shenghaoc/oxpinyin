@@ -6,7 +6,7 @@
 //! `_ChewingKey` from caller memory): every one of the 65,536 bit
 //! patterns decodes to *some* element quadruple, and upstream indexes
 //! `chewing_key_table` unguarded under asserts that oxpinyin replaces
-//! with a graceful zero table index (`chewing_key.rs` no-abort note).
+//! with a graceful zero table index (see `chewing_key.rs`).
 //! These tests pin that policy at the public seam:
 //!
 //! - exhaustive: **every** packed pattern renders through all six
@@ -26,7 +26,7 @@ use oxpinyin_chewing::ChewingKey;
 use proptest::prelude::*;
 
 /// Every renderer must terminate and return for any key — the module's
-/// no-abort policy. Exhaustive over the packed space the C ABI carries.
+/// out-of-dims rule. Exhaustive over the packed space the C ABI carries.
 #[test]
 fn every_packed_pattern_renders_totally() {
     for bits in 0_u16..=u16::MAX {

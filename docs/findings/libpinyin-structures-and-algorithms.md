@@ -566,11 +566,11 @@ neither implementation's output allocation is removed by this guard.
 
 | Item | Pin | oxpinyin | Mark |
 | --- | --- | --- | --- |
-| Online training | `train_result3` (`lookup/phonetic_lookup.h:844`) | `train_spans` (`oxpinyin-engine/src/session/selection.rs`), `trained_gram` and `train_pronunciations` (`oxpinyin-user/src/store.rs`), constants in `oxpinyin-user/src/seed.rs` | same / follows; class (c) where the pin aborts |
+| Online training | `train_result3` (`lookup/phonetic_lookup.h:844`) | `train_spans` (`oxpinyin-engine/src/session/selection.rs`), `trained_gram` and `train_pronunciations` (`oxpinyin-user/src/store.rs`), constants in `oxpinyin-user/src/seed.rs` | same / follows; the C adapters abort where the pin aborts, except on an unsorted user gram, where the pin's `set_freq` misses and aborts and oxpinyin trains and answers `true` (accepted; row 85, [record](1297-gram-partition-training.md)) |
 | Predicted choice | `pinyin_choose_predicted_candidate` (`pinyin.cpp:2591`) | `observe_predicted`, `observe_predicted_prefix` | same / follows |
 | Add phrase | `_add_phrase` (`pinyin.cpp:514`) | `add_phrase_in` (`store.rs`); next token from a cursor row instead of `get_range` | different / unverified |
-| Remember input | `_remember_phrase_recur` (`pinyin.cpp:3578`), recursive matrix walk | `pinyin_remember_user_input` (`oxpinyin-capi/src/user_data.rs`), a walk over the selected syllables | different / unverified |
-| Remove user phrase | `pinyin_remove_user_candidate` (`pinyin.cpp:3726`) | `remove_user_phrase` (`store.rs`), same order; refuses before mutating where the pin asserts | same / follows; class (c) at the asserts |
+| Remember input | `_remember_phrase_recur` (`pinyin.cpp:3578`), recursive matrix walk | `pinyin_remember_user_input` (`oxpinyin-capi/src/user_data.rs`) over `remember_walk` (`oxpinyin-engine/src/char_offset.rs`), the same walk over the parse-time matrix in every parse mode, with the pin's fuzzy alternatives (and, for the index-parsed full pinyin, its resplit and divided additions) built at the parse (register row 93) | same |
+| Remove user phrase | `pinyin_remove_user_candidate` (`pinyin.cpp:3726`) | `remove_user_phrase` (`store.rs`), same order; the store returns `Ok(false)` where the pin asserts and the C adapter aborts (row 81) | same / follows |
 | Mask out | `pinyin_mask_out` (`pinyin.cpp:1224`): reload system chunks, `merge_with_mask` | `mask_out` (`oxpinyin-user/src/store_libpinyin.rs`) in one transaction, totals and allocation cursors recomputed | different / unverified |
 | Import end | `pinyin_end_add_phrases` (`pinyin.cpp:655-660`): `compact()`, mark modified | `compact_libraries`, `mark_modified` (`oxpinyin-capi/src/iterators.rs`) | different / unverified (§11) |
 | Export | export iterators (`pinyin.cpp:792` threshold) | `export_phrases_in`, `oxpinyin-facade/src/export_rows.rs` | different / unverified (§11) |
@@ -583,7 +583,7 @@ neither implementation's output allocation is removed by this guard.
 | Edits between saves | direct mutation of the in-memory chunks and DBs | transactions on the in-memory session store | different / unverified |
 | Init's library loop | Each default row in index order: judge it (`pinyin.cpp:388`), map the chunk (`:254-256`), merge the log (`:268-276`) or read the `USER_FILE` chunk (`:303-318`), then the next row; the bigram attaches after the loop (`:394-397`). `zhuyin.cpp:318-334`, `:198-220`, `:336-339` likewise. O(rows) steps, each linear in its chunk and log | `library_loop::run` over `TableConf::default_row_steps`, with the first fault in `LibraryLoopStop`. Same order and complexity; on a fault nothing past that row is touched | same / follows |
 | Save | `pinyin_save` (`pinyin.cpp:1132`), `_write_files` (`:922`), rename, `mark_version` | `save_with_bigram_reporting` (`oxpinyin-user/src/persistence.rs`) with the pin's file set and rename order | same / follows |
-| Aborts | asserts and `abort()` on caller-reachable input | `Result`, then warning plus `false` at the C ABI | different / class (c) |
+| Aborts | asserts and `abort()` on caller-reachable input | `Result`, then the C adapters abort, except the accepted unsorted-gram training case (row 85, [record](1297-gram-partition-training.md)) | same / follows |
 
 ## 8. Offline tooling
 

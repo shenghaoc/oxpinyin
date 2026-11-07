@@ -54,9 +54,10 @@ The replacement must preserve observable output.
 1. For each exported symbol, reproduce byte-identical output for identical inputs and state at libpinyin 2.11.92, `074a2219`.
    Recorded language artefacts remain exceptions.
    State includes the same-backend user directory.
-2. Permit only class (a) MATH, class (b) MEMORY SAFETY, class (c) AVAILABILITY and recorded language artefacts.
+2. Permit only class (a) MATH, class (b) MEMORY SAFETY and recorded language artefacts.
+   Where the pin asserts or aborts, abort with `std::process::abort()`; the [source policy](../../source-policy.md#compatibility-decision-order) holds the rule.
    The language-artefact amendment is 2026-10-26 UTC, #1303.
-   Follow `docs/findings/compatibility-policy.md`.
+   Follow the [compatibility policy](../../findings/compatibility-policy.md) for the rows.
 3. Match predicted-candidate rows and list order, except for policy-admitted differences.
    This covers `pinyin_guess_predicted_candidates[_with_punctuations]` and `pinyin_choose_predicted_candidate`.
    Register R1 closed with P6; see policy row 12.

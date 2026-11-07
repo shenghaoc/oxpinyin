@@ -730,8 +730,8 @@ fn train_nbest_without_results_does_not_observe_selection_history() {
 /// A re-parse that shortened the input under the last sentence lookup
 /// leaves the store (`constraints->length() - 1`) past the current matrix.
 /// The pin's walk then asserts `end < matrix->size()`
-/// (`storage/phonetic_key_matrix.cpp:661`) and aborts; the engine refuses
-/// the row before observing anything (class (c), no-abort policy).
+/// (`storage/phonetic_key_matrix.cpp:661`) and aborts; the engine returns
+/// the fault before observing anything and the C adapters abort (row 82).
 #[test]
 fn train_after_a_shortening_reparse_refuses_a_span_past_the_matrix() {
     let mut session = trellis_session();
@@ -3305,10 +3305,9 @@ fn candidates_at_an_apostrophe_beyond_the_parse_span_stays_empty() {
     use super::CandidateKind;
 
     // "ni,'hao" parses only `ni` — the comma stops the parse — so the
-    // apostrophe at byte 3 sits outside the matrix: the pin aborts
-    // there (measured SIGABRT, the same out-of-matrix landmine as one
-    // past a lone zero-key run), and the empty-column window is the
-    // no-abort answer, not a re-parse of the `'hao` suffix. The
+    // apostrophe at byte 3 sits outside the matrix (3 columns, 0..=2): the
+    // pin's lookup there is an ordinary empty window, which is the answer
+    // oxpinyin gives, not a re-parse of the `'hao` suffix. The
     // in-span apostrophe of `ni'hao` stays transparent.
     let mut session = train_session();
     session.replace_raw("ni,'hao").expect("cannot fail");

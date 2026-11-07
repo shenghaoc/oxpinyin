@@ -241,12 +241,26 @@ pub extern "C" fn zhuyin_get_character_offset(
     // SAFETY: `instance` is non-null and was produced by the facade's
     // alloc entry point.
     let inst = unsafe { instance_ref(instance) };
+    // `assert(offset < matrix.size())` follows the empty-matrix `false`,
+    // before the phrase is converted.
+    if let Ok(columns) = inst.core.pin_matrix_columns()
+        && columns > 0
+        && offset >= columns
+    {
+        std::process::abort();
+    }
     // SAFETY: Null-checked inside; invalid UTF-8 refuses like the pin's
     // `g_utf8_to_ucs4` NULL answer.
     let text =
         oxpinyin_capi_marshal::input::utf8_to_ucs4(oxpinyin_capi_marshal::borrow_c_string!(phrase))
             .unwrap_or_default();
     let char_count = match inst.core.character_offset(&text, offset) {
+        // Pin behaviour: the zhuyin `_get_char_offset_recur` has no zero-key
+        // branch, so at `offset == parsed_len` the walk reaches the last
+        // column's zero key (`zhuyin.cpp:2108-2117`), reads `cached_tokens`
+        // at index `phrase_length` (the array's zero terminator, token 0,
+        // `:2122-2123`), and the empty item fails the pronunciation test
+        // (`:2124-2128`): the call answers `false` with `*plength = 0`.
         Ok((Some(_), true)) if offset == inst.core.parsed_len => {
             if !length.is_null() {
                 // SAFETY: Null-checked above; caller supplied the output.
@@ -345,6 +359,14 @@ fn validated_lookup_offset(
     inst: &crate::state::CapiInstanceRead<'_>,
     offset: usize,
 ) -> Option<usize> {
+    // The matrix has `parsed_len + 1` columns, fewer than the input has bytes
+    // when the parse stopped early; `_check_offset` reads column
+    // `offset - 1`, and past the last column `get_column_size` asserts.
+    if let Ok(columns) = inst.core.pin_matrix_columns()
+        && offset > columns
+    {
+        std::process::abort();
+    }
     match inst.core.validate_abi_lookup_offset(offset, true) {
         Ok(normalized) => Some(normalized),
         Err(

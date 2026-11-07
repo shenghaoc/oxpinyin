@@ -118,7 +118,7 @@ def observe(library, data, word, cases):
 
 
 def isolated_cursor_call(fn):
-    """Record pin asserts and the subject's class-(c) false+warning safely."""
+    """Record pin asserts and the subject's matching aborts safely."""
     read_fd, write_fd = os.pipe()
     with tempfile.TemporaryFile() as errors:
         pid = os.fork()
@@ -138,6 +138,21 @@ def isolated_cursor_call(fn):
     return {"signal": os.WTERMSIG(status) if os.WIFSIGNALED(status) else None,
             "result": json.loads(payload) if payload else None,
             "warnings": diagnostic.count("WARNING"), "diagnostic": diagnostic}
+
+
+def cursor_observations_agree(pin, subject):
+    """Whether one isolated cursor call matches the pin's.
+
+    The signal and the diagnostics are judged together: a pin SIGABRT needs
+    a subject SIGABRT, and a pin normal return needs the same normal result,
+    and in both cases the subject may print no warning the pin does not.
+    """
+    if subject["warnings"] != pin["warnings"]:
+        return False
+    if pin["signal"] == signal.SIGABRT:
+        return subject["signal"] == signal.SIGABRT
+    return (pin["signal"] is None and subject["signal"] is None
+            and pin["result"] == subject["result"])
 
 
 def observe_cursors(library, data, word, cases, family):
@@ -253,22 +268,19 @@ def main():
                            "--cursor-worker", library, args.data, hex(word), json.dumps(cases), args.cursor_family]
                 result = subprocess.run(command, capture_output=True, text=True, timeout=600, check=True)
                 records.append(json.loads(result.stdout))
-            different, refusals = [], 0
+            different, refusals = [], 0  # refusals counts the pin's aborts
             for left, right in zip(*records, strict=True):
                 for key in left:
                     a, b = left[key], right[key]
                     if key in ("offset", "left_offset", "right_offset", "character"):
-                        if a["signal"] == signal.SIGABRT:
-                            refusals += 1
-                            same = b["signal"] is None and b["result"] is not None and b["result"][0] is False and b["warnings"] == 1
-                        else:
-                            same = a["signal"] is None and b["signal"] is None and a["result"] == b["result"] and b["warnings"] == 0
+                        refusals += a["signal"] == signal.SIGABRT
+                        same = cursor_observations_agree(a, b)
                     else:
                         same = a == b
                     if not same:
                         different.append({"case": left["case"], "offset": left["input_offset"], "function": key, "pin": a, "subject": b})
             print(json.dumps({"family": args.cursor_family, "word": hex(word),
-                              "offsets": len(records[0]), "class_c": refusals,
+                              "offsets": len(records[0]), "pin_aborts": refusals,
                               "differences": different, "pin": records[0], "subject": records[1]}, ensure_ascii=False), flush=True)
             assert not different, "cursor surface differs"
         return

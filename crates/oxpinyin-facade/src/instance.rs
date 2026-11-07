@@ -89,6 +89,13 @@ pub struct InstanceState {
     pub full_parse: Option<FullPinyinIndexParse>,
     /// Original full-pinyin input for aux-text cursor mapping.
     pub full_input: String,
+    /// The pin's parse-time matrix for the index-parsed full pinyin, double
+    /// pinyin and chewing entry points: the parse's keys plus the steps the
+    /// pin runs after `fill_matrix` under the options in force at that parse
+    /// (fuzzy alternatives, and for full pinyin the resplit and divided
+    /// passes). Empty for plain full pinyin, whose scan matrix the session
+    /// keeps, and while no key was placed.
+    pub parse_matrix: Vec<oxpinyin_engine::MatrixKey>,
 }
 
 impl std::ops::Deref for InstanceCore {
@@ -186,6 +193,7 @@ impl InstanceCore {
                 zhuyin_input: String::new(),
                 full_parse: None,
                 full_input: String::new(),
+                parse_matrix: Vec::new(),
             },
         }
     }
@@ -332,6 +340,7 @@ impl<
         self.zhuyin_input.clear();
         self.full_parse = None;
         self.full_input.clear();
+        self.parse_matrix.clear();
     }
 
     /// The full reset — `pinyin_reset`/`zhuyin_reset`'s law: the parse

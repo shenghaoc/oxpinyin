@@ -132,7 +132,7 @@ pub fn get_freq(gram: &[u8], token: u32) -> Option<u32> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GramFault {
     /// `get_total_freq` on a value shorter than its total: the pin asserts
-    /// (`memory_chunk.h:390`; register row 85, class (c)).
+    /// (`memory_chunk.h:390`; register row 85); the C adapters abort.
     Short,
     /// A walk that leaves the value: a partial item after the last whole
     /// one, or a value shorter than its total, where `cur_item != end`
