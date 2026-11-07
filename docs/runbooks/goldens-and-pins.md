@@ -33,8 +33,9 @@ None of these regenerators exists yet:
 | F-C | `fixtures/foundation/f-c.txt` |
 | ZH | `fixtures/w4/oracle-zhuyin-parse.txt` |
 
-That capture's list also gains the six apostrophe inputs `'`, `''`, `'''`, `ni'`,
-`ni'!` and `ni'i`. The next capture will freeze them formally.
+The six apostrophe inputs `'`, `''`, `'''`, `ni'`, `ni'!` and `ni'i` have their own
+capture step, which stages proposed observations for review, and native C-API tests in
+the two capi crates: see [pin captures](pin-captures.md).
 `oracle-paths.txt` excludes all six, but core's `graph_paths` tests retain the
 deleted `live_sentinels` tests' recorded expectations as native regressions:
 apostrophe-only inputs consume every byte without key edges; the other three
