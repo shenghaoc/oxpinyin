@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import argparse
+import fnmatch
 import json
 import os
 from pathlib import Path
@@ -22,7 +23,7 @@ from urllib.error import URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from . import cell
+from . import cell, ship_sizes
 
 
 @dataclass(frozen=True)
@@ -42,17 +43,20 @@ class Workflow:
     job_prefix: str = ""
     # Called workflows own their path gates and must always report success.
     required: tuple[str, ...] = ()
+    # The `changes` output flag of each lane in `lanes`.
+    flags: tuple[str, ...] = ()
 
 
 WORKFLOWS: dict[str, Workflow] = {
     "ci": Workflow(
         ".github/workflows/ci.yml", "ci-aggregate",
-        ("lint", "test", "deny"),
+        ("lint", "test", "deny", "harness"),
         frozenset({"lint", "test"}),
-        ("lint", "test", "deny"),
-        ("lint", "test", "deny"),
+        ("lint", "test", "deny", "harness"),
+        ("lint", "test", "deny", "harness"),
         (("shipping-sizes", "shipping-sizes", "ship"),),
-        required=("store-backends",)),
+        required=("store-backends",),
+        flags=("lint", "test", "deny", "harness")),
     "store": Workflow(
         ".github/workflows/store-backends.yml",
         "store backends (kyotocabinet / tkrzw / bdb)",
@@ -64,8 +68,83 @@ WORKFLOWS: dict[str, Workflow] = {
          "bdb-sanitizers", "kc-sanitizers"),
         ("store backend (${{ matrix.backend }})",
          "tkrzw FFI under address", "bdb backend sanitizers", "kc backend sanitizers"),
-        caller=".github/workflows/ci.yml", job_prefix="store-backends / "),
+        caller=".github/workflows/ci.yml", job_prefix="store-backends / ",
+        flags=("run",) * 6),
 }
+
+
+@dataclass(frozen=True)
+class Inputs:
+    """The paths one ci.yml job reads.
+
+    A path selects the job when it matches `paths` and does not match `skip`,
+    or when it matches `keep`. An entry with `*` is a glob whose `*` also
+    matches `/`; any other entry matches itself and every path under it.
+    """
+    paths: tuple[str, ...]
+    skip: tuple[str, ...] = ()
+    keep: tuple[str, ...] = ()
+
+    def selects(self, path: str) -> bool:
+        return matches(path, self.paths) and (not matches(path, self.skip) or matches(path, self.keep))
+
+
+def matches(path: str, entries: tuple[str, ...]) -> bool:
+    return any(fnmatch.fnmatchcase(path, entry) if "*" in entry
+               else path == entry or path.startswith(entry + "/") for entry in entries)
+
+
+# Every job reads its workflow, the actions, the toolchain and the tool configuration.
+SHARED = (".github/workflows/ci.yml", ".github/actions", "tools/lib", "rust-toolchain.toml", ".cargo",
+          "justfile", "uv.toml", ".python-version")
+RUST = (*SHARED, "crates", "Cargo.toml", "Cargo.lock", "fixtures", "tests/parity", "tools")
+# The tools/ paths that no Rust lane imports, runs or reads. `python -m tools.dev`
+# imports every other tools/dev module, so a change there still selects the Rust lanes.
+PYTHON_ONLY = ("tools/*.test.py", "tools/audit", "tools/bisection/*.py", "tools/bisection/coverage_review_rules",
+               "tools/capture", "tools/cloud", "tools/oracle", "tools/perf-gate", "tools/scripts2", "tools/workers")
+# The exceptions: `python -m tools.dev` imports these modules, and the Rust lanes read the pin records.
+RUST_READS = ("tools/bisection/contract_policy.py", "tools/bisection/contract_verdict.py",
+              "tools/bisection/startup_profile.py", "tools/bisection/teardown.py",
+              "tools/oracle/image.py", "tools/oracle/versions.py",
+              "tools/oracle/oracle-pin.txt", "tools/oracle/libpinyin-data.json")
+CI_INPUTS = {
+    # ShellCheck reads every tracked script; cargo fmt reads the fuzz workspace.
+    "lint": Inputs((*RUST, "fuzz", "clippy.toml", "*.sh"), PYTHON_ONLY,
+                   (*RUST_READS, "tools/dev/lint-crate-cfg-placement.test.py", "*.sh")),
+    "test": Inputs((*RUST, ".config/nextest.toml"), PYTHON_ONLY, RUST_READS),
+    # cargo deny reads the manifests and lockfiles only.
+    "deny": Inputs((".github/workflows/ci.yml", ".github/actions/bootstrap", "tools/lib", "rust-toolchain.toml",
+                    ".cargo", "Cargo.toml", "Cargo.lock", "crates/*/Cargo.toml", "deny.toml",
+                    "fuzz/Cargo.toml", "fuzz/Cargo.lock")),
+    # The harness tests read the code, the fixtures and the configuration as well as tools/.
+    "harness": Inputs((*RUST, "fuzz", "clippy.toml", "deny.toml", ".config", "*.sh")),
+    "ship": Inputs((*ship_sizes.INPUTS, *ship_sizes.REPORT_INPUTS)),
+}
+
+
+def event_base(event_name: str, event: dict[str, Any]) -> str:
+    """The pull request's base commit, or the previous head of a push."""
+    if event_name == "pull_request":
+        return (event.get("pull_request") or {}).get("base", {}).get("sha", "")
+    return event.get("before", "")
+
+
+def gate(base: str, inputs: dict[str, Inputs] = CI_INPUTS, root: Path | None = None) -> dict[str, bool]:
+    """Select each job whose inputs differ between base and HEAD.
+
+    The diff is two-dot: a branch behind main also sees main's own changes,
+    which can only select more jobs. An unavailable base selects every job.
+    """
+    command = ["git", "diff", "--name-only", base, "HEAD", "--"]
+    done = None
+    if SHA.fullmatch(base):
+        done = subprocess.run(command, cwd=root, capture_output=True, text=True)
+    if done is None or done.returncode:
+        return dict.fromkeys(inputs, True)
+    changed = done.stdout.splitlines()
+    return {name: any(lane.selects(path) for path in changed) for name, lane in inputs.items()}
+
+
 SHA = re.compile(r"[0-9a-f]{40}")
 # Strict up-to-date checks constrain Git ancestry, not runner-image drift.
 # Bound every original verification job, including its execution time.
@@ -254,21 +333,24 @@ def find_evidence(api: GitHub, workflow: Workflow, event: dict[str, Any],
     return None
 
 
-def aggregate(changes: str, gated: str, reuse: str,
+def aggregate(changes: str, flags: dict[str, str], reuse: str,
               results: dict[str, str], cached: frozenset[str], event_name: str = "push",
               own_gate: dict[str, tuple[str, str]] | None = None) -> bool:
     """Failures and unjustified skips fail; cancellation is handled by job if.
 
-    own_gate maps a lane to (result, flag). Such a lane must succeed when its
-    flag is true, whatever `reuse` says, and be skipped when it is false.
+    flags maps each lane in results to its path-gate flag. own_gate maps a lane
+    to (result, flag). Such a lane must succeed when its flag is true, whatever
+    `reuse` says, and be skipped when it is false.
     """
-    if changes != "success" or gated not in {"true", "false"} or reuse not in {"true", "false"}:
+    if (changes != "success" or set(flags) != set(results) or reuse not in {"true", "false"}
+            or any(flag not in {"true", "false"} for flag in flags.values())):
         return False
     for result, flag in (own_gate or {}).values():
         if flag not in {"true", "false"} or result != ("success" if flag == "true" else "skipped"):
             return False
     for name, result in results.items():
-        expected = "success" if gated == "true" and (reuse != "true" or (event_name == "push" and name in cached)) else "skipped"
+        expected = "success" if flags[name] == "true" and (
+            reuse != "true" or (event_name == "push" and name in cached)) else "skipped"
         if result != expected:
             return False
     return True
@@ -313,6 +395,7 @@ def main() -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     for name in ("evidence", "aggregate"):
         commands.add_parser(name).add_argument("workflow", choices=WORKFLOWS)
+    commands.add_parser("gate", help="write each ci.yml job's path-gate flag to GITHUB_OUTPUT")
     refresh = commands.add_parser("refresh")
     refresh.add_argument("lane", choices=CACHE_LANES)
     refresh.add_argument("--backend", choices=BACKENDS)
@@ -320,13 +403,23 @@ def main() -> int:
     if args.command == "refresh":
         refresh_cache(args.lane, args.backend)
         return 0
+    if args.command == "gate":
+        event_name = os.environ["GITHUB_EVENT_NAME"]
+        base = event_base(event_name, json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text()))
+        flags = gate(base)
+        lines = "".join(f"{name}={'true' if value else 'false'}\n" for name, value in flags.items())
+        print(f"base {base or '(none)'}\n{lines}", end="")
+        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+            output.write(lines)
+        return 0
     workflow = WORKFLOWS[args.workflow]
     if args.command == "aggregate":
         needs = json.loads(os.environ["NEEDS"])
         results = {name: needs[job]["result"] for name, job in zip(workflow.lanes, workflow.needs)}
         outputs = needs["changes"]["outputs"]
+        flags = {name: outputs.get(flag, "") for name, flag in zip(workflow.lanes, workflow.flags)}
         own_gate = {name: (needs[job]["result"], outputs.get(flag, "")) for name, job, flag in workflow.gated}
-        passed = aggregate(needs["changes"]["result"], outputs.get("run", ""),
+        passed = aggregate(needs["changes"]["result"], flags,
                            outputs.get("reuse", ""), results, workflow.cached, os.environ["EVENT_NAME"], own_gate)
         required = {job: needs.get(job, {}).get("result") for job in workflow.required}
         passed = passed and all(result == "success" for result in required.values())

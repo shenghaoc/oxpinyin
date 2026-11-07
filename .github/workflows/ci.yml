@@ -1,80 +1,17 @@
-# Path gates: CI runs its lanes only when code or a direct input of one
-# of its jobs changes, so docs-only changes skip lint, test,
-# and deny entirely. The gate moved from the workflow trigger to
-# the jobs themselves (2026-09-08): the workflow always starts, the
-# `changes` job computes one `run` flag from the path set below, and
-# every lane carries `if: needs.changes.outputs.run == 'true'`.
+# Path gates. The workflow always starts. The `changes` job writes one flag per
+# job (`python3 -m tools.dev.ci_tree gate`; CI_INPUTS in tools/dev/ci_tree.py
+# holds each job's paths), and a job runs only when its flag is true. A skipped
+# job still reports `skipped`, so the required `ci-aggregate` check sees it.
+# Paths that no job reads, such as docs/, reference/, .kiro/ and the root
+# Markdown files, select no job.
 #
-# The skip claim above holds only for a branch up to date with main: the
-# `changes` job computes its flag with a two-dot diff (git diff
-# --name-only "$base" HEAD, where $base is pull_request.base.sha), so a
-# branch behind main sees main's own commits in the gated paths and
-# sets run=true. Demonstrated on PR #487 (2026-09-19): 5 behind main,
-# tools/bisection/ changes on main ran the full matrix; rebased onto
-# the landing tip, the same docs-only branch skipped every code lane.
-# That over-approximation is intentional under rebase-and-merge — the
-# two-dot diff asks whether the post-merge tree differs from main's
-# current tree, which is the question that matters — not a bug to be
-# fixed.
+# The gate compares the event's base with HEAD (a two-dot diff). A branch behind
+# main also sees main's own changes, so it can select more jobs, never fewer. A
+# missing base selects every job.
 #
-# Why each path is gated:
-#   - crates/** — any code change
-#   - fuzz/** — lint formats the fuzz workspace and deny checks its
-#     graph against fuzz/Cargo.lock (the targets themselves build and
-#     run only in verify-nightly.yml's fuzz-soak)
-#   - tools/** — the test job runs just runner cpp-smoke and
-#     the tools/abi/ export and allocator-pairing gates, so changes to
-#     those scripts are CI inputs
-#   - Cargo.toml / Cargo.lock — workspace manifest and lockfile: a
-#     dependency or feature change reaches lint, test and deny
-#   - deny.toml — the deny job reads this directly
-#   - rust-toolchain.toml — a toolchain change affects every job
-#   - justfile / uv.toml / .python-version — tooling commands and managed Python
-#   - .github/workflows/ci.yml — the workflow file itself
-#   - tools/dev/check.py and tools/dev/lint-crate-cfg-placement.test.py —
-#     the lint job runs the crate-cfg placement checker and the harness that
-#     gates it, so a change to either is a direct input of that job
-#   - fixtures/** — the frozen tables, goldens and DBM files that the
-#     test job decodes through; a fixture-only change
-#     is exactly the kind that must be re-proven (added 2026-09-06 — until
-#     then a fixture-only PR ran no CI at all)
-#   - tests/parity/** — the parity corpus the core and runtime tests replay
-#   - clippy.toml — the lint job's Clippy configuration (msrv)
-#   - .config/nextest.toml — the `ci` nextest profile the Linux test job
-#     runs under
-#   - .github/actions/** — the bootstrap composite action every job runs
-#   - .cargo/** — Cargo configuration (none today) reaches every build
-#   - *.sh — the lint job runs ShellCheck over every tracked shell script,
-#     including scripts outside tools/ and the two named gate scripts
-#
-# Deliberately NOT gated (changes to these skip every lane):
-#   - docs/** — findings, design docs, ROADMAP: no code
-#   - reference/** — memory safety docs: no code
-#   - .kiro/** — specs and steering: no code
-#   - *.md at the root — README, CHANGELOG: no code
-#   - .github/workflows/store-backends.yml — the called workflow has its
-#     own path gate; the lint, test and deny lanes need not re-gate on it
-#
-# The shipping-sizes job has its own, narrower gate (`ship`): it runs when a
-# file that can change a shipping library changes (the crates in the two capi
-# crates' dependency graph, Cargo.toml, Cargo.lock, the toolchain file, the
-# packaging tooling) or when the job itself changes. Tree reuse never skips
-# it. tools/dev/ship_sizes.py owns the path list; docs/packaging.md#shipping-library-sizes
-# describes the job.
-#
-# Branch-protection interaction: skipped lanes still REPORT (conclusion
-# `skipped`), which required status checks treat as satisfied, and the
-# always-running `ci-aggregate` job at the tail reports on every push
-# and PR no matter what changed — it is the shape a required check
-# needs. Main's required set is `ci-aggregate`. `ci-aggregate`
-# fails when an applicable lane fails; superseded run sets stay cancelled,
-# and when a gated-out lane was skipped despite its paths changing.
-# The path-set bypass (a PR editing ci.yml to skip its own lanes) is
-# closed as far as this workflow can close it — the aggregate compares
-# each lane's conclusion against its `changes` flag — but a PR
-# that rewrites the workflow itself can always rewrite its gates; that
-# residual is a branch-protection policy question (enforce for
-# administrators), not a workflow one.
+# Main's required set is `ci-aggregate`. It fails when an applicable job fails or
+# when a job's result does not agree with its flag. A pull request that changes
+# this workflow can also change its gates; branch protection covers that case.
 
 name: CI
 
@@ -103,44 +40,30 @@ concurrency:
   group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# Three job groups (plus path gate and aggregate):
-#   lint — rustfmt + clippy + the Lizard CCN ratchet
-#   test — cargo test for the whole workspace (the ONE full sweep per
-#          PR) on Linux
-# The macOS and Windows workspace jobs run in verify-nightly.yml (nightly
-# and on manual dispatch), not on every PR.
-#   deny — supply-chain gate: RustSec advisories, licenses, sources,
-#          duplicate-version drift
-# Fuzzing is not a PR lane: every target builds and soaks nightly in
-# verify-nightly.yml's fuzz-soak (moved there 2026-09-23 — the per-PR
-# build-and-smoke of every target cost more than it caught).
+# Jobs after the gate:
+#   lint — rustfmt, Clippy, ShellCheck and the Lizard complexity limit
+#   test — the workspace tests on Linux; the macOS and Windows runs are in
+#          verify-nightly.yml
+#   deny — the supply-chain check: advisories, licenses, sources, duplicates
+#   harness — the Python harness tests of tools/
+#   shipping-sizes — the stripped shipping-library sizes
+# The fuzz targets build and run in verify-nightly.yml only.
 
 jobs:
   store-backends:
     uses: ./.github/workflows/store-backends.yml
 
-  # The path gate computes one `run` flag for the three code lanes.
-  # It runs first on every push and PR; each lane
-  # carries an `if` on its flag so it reports `skipped` — a conclusion,
-  # which unlike a workflow-level path filter still reaches
-  # required-check accounting.
-  #
-  # No third-party filter action: checkout with full history and diff
-  # against the event's base (the PR base sha; the previous pushed head
-  # on main). A missing base (first push, force-push rewrite, rebased
-  # base) falls back to running everything — the over-trigger direction,
-  # never the skip direction. Diffing the event base directly (not the
-  # merge-base) can only pick up extra files when the base moved under
-  # the event; that over-triggers too. The pathspec list is the one the
-  # header documents; keep the two in lockstep.
   changes:
     # The one Linux runner label in this workflow; the other Linux jobs
-    # alias it (*ubuntu). Pinned, not ubuntu-latest, so a runner-image
-    # move (26.04: actions/runner-images#14748) happens here under review.
+    # alias it (*ubuntu). It names a release, not ubuntu-latest, so a runner
+    # image change happens here under review.
     runs-on: &ubuntu ubuntu-26.04
     outputs:
-      run: ${{ steps.gate.outputs.run }}
-      ship: ${{ steps.ship.outputs.ship }}
+      lint: ${{ steps.gate.outputs.lint }}
+      test: ${{ steps.gate.outputs.test }}
+      deny: ${{ steps.gate.outputs.deny }}
+      harness: ${{ steps.gate.outputs.harness }}
+      ship: ${{ steps.gate.outputs.ship }}
       reuse: ${{ steps.evidence.outputs.reuse }}
       tree: ${{ steps.evidence.outputs.tree }}
       source_run: ${{ steps.evidence.outputs.source_run }}
@@ -157,42 +80,13 @@ jobs:
       - name: Require the Bash floor
         shell: bash
         run: . tools/lib/bash-floor.sh
-      - name: Compute the path-gate flag
+      - name: Compute the path-gate flags
         id: gate
-        run: |
-          set -euo pipefail
-          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
-            base='${{ github.event.pull_request.base.sha }}'
-          else
-            base='${{ github.event.before }}'
-          fi
-          if [ -z "$base" ] || ! git cat-file -e "$base" 2>/dev/null; then
-            echo "base $base unavailable; running every lane"
-            echo 'run=true' >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          changed=$(git diff --name-only "$base" HEAD --             crates fuzz tools '*.sh'             Cargo.toml Cargo.lock rust-toolchain.toml deny.toml clippy.toml             justfile uv.toml .python-version             .github/workflows/ci.yml             tools/dev/check.py             tools/dev/lint-crate-cfg-placement.test.py             fixtures tests/parity .github/actions .config/nextest.toml .cargo)
-          if [ -n "$changed" ]; then
-            echo 'run=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'run=false' >> "$GITHUB_OUTPUT"
-          fi
-      # The shipping-sizes flag: the same base, a narrower path set. An
-      # unavailable base runs the job.
-      - name: Compute the shipping-sizes gate flag
-        id: ship
-        run: |
-          set -euo pipefail
-          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
-            base='${{ github.event.pull_request.base.sha }}'
-          else
-            base='${{ github.event.before }}'
-          fi
-          python3 -m tools.dev.ship_sizes gate "$base"
+        run: python3 -m tools.dev.ci_tree gate
 
   lint:
     needs: changes
-    if: needs.changes.outputs.run == 'true' && (needs.changes.outputs.reuse != 'true' || github.event_name == 'push')
+    if: needs.changes.outputs.lint == 'true' && (needs.changes.outputs.reuse != 'true' || github.event_name == 'push')
     runs-on: *ubuntu
     container:
       image: debian:testing # deliberately unpinned; see store-backends.yml header
@@ -226,8 +120,8 @@ jobs:
         # points pkg-config at it. The tkrzw cxx bridge compiles with g++;
         # bindgen (libclang) serves the Berkeley DB lanes.
         run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libglib2.0-dev
-      # The distribution package supplies ShellCheck; the checked minimum is
-      # the version whose findings this tree is clean under. No installer.
+      # The distribution package supplies ShellCheck. The minimum is the
+      # version whose findings this tree is clean under.
       - name: ShellCheck tracked scripts (>= 0.11.0)
         if: needs.changes.outputs.reuse != 'true'
         run: |
@@ -242,17 +136,12 @@ jobs:
         if: needs.changes.outputs.reuse != 'true'
       - run: cargo fmt --manifest-path fuzz/Cargo.toml --all --check
         if: needs.changes.outputs.reuse != 'true'
-      # Placement gate for crate-level `#![cfg(...)]`. A gate that
-      # evaluates false discards the crate attributes written AFTER it, so
-      # one placed above a `//!` block takes the docs with it and
-      # `missing_docs` fires — on the excluded platform only, which no job
-      # here can see: this container makes every `target_os = "linux"`
-      # gate true, and the nightly macOS and Windows jobs build the
-      # portable crates only, so the breakage surfaced on a contributor's macOS checkout
-      # instead. The checker reads placement, not cfg outcomes, so it holds
-      # for every host from here. The harness runs first: a regression in
-      # the checker itself must not pass quietly. Both run under the pinned
-      # repository Python, which the bootstrap action provisions.
+      # Placement gate for crate-level `#![cfg(...)]`. A gate that evaluates
+      # false discards the crate attributes after it, so one above a `//!`
+      # block removes the docs and `missing_docs` fires on the excluded
+      # platform only. This Linux container cannot see that, so the checker
+      # reads placement, not cfg outcomes. Its harness runs first, so a
+      # defect in the checker cannot pass.
       - name: Crate cfg-placement harness
         if: needs.changes.outputs.reuse != 'true'
         run: uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev test-tools tools/dev/lint-crate-cfg-placement.test.py
@@ -260,23 +149,19 @@ jobs:
         if: needs.changes.outputs.reuse != 'true'
         run: uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev lint-crate-cfg-placement
       # Drop-in version agreement: the capi manifests' header subdirectory
-      # and pkg_config version against the pin record (issue #537). The
-      # full installed-tree diff, just packaging check-pc-metadata,
-      # needs the pin-built libpinyin, which CI never has.
+      # and pkg_config version against the pin record. The full
+      # installed-tree diff (just packaging check-pc-metadata) needs the
+      # pin-built libpinyin, which CI does not have.
       - run: uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev packaging check-pc-version
         if: needs.changes.outputs.reuse != 'true'
       - name: Provision tkrzw (built at the setup.sh revision and cached)
         uses: ./.github/actions/tkrzw
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
         if: needs.changes.outputs.reuse != 'true'
-      # Complexity ratchet: no function may exceed CCN 40 (current max is
-      # 38, the user/store.rs quartet — a tracked refactor target, never
-      # allowed to grow past the limit). Moved here from verify-nightly
-      # on 2026-09-08: seconds of runtime, and a ratchet that fired only
-      # the night after a merge was a ratchet in name only.
-      # --break-system-packages: PEP 668 marking; this container is
-      # ephemeral, there is no system Python to protect. 1.24.0 is the
-      # release the ratchet was validated against locally.
+      # Complexity limit: no function may exceed CCN 40.
+      # --break-system-packages: the container is temporary, so there is no
+      # system Python to protect. 1.24.0 is the release the limit was
+      # checked against.
       - run: apt-get install -y --no-install-recommends python3-pip
         if: needs.changes.outputs.reuse != 'true'
       - run: pip install --break-system-packages lizard==1.24.0
@@ -292,7 +177,7 @@ jobs:
 
   test:
     needs: changes
-    if: needs.changes.outputs.run == 'true' && (needs.changes.outputs.reuse != 'true' || github.event_name == 'push')
+    if: needs.changes.outputs.test == 'true' && (needs.changes.outputs.reuse != 'true' || github.event_name == 'push')
     runs-on: *ubuntu
     container:
       image: debian:testing # deliberately unpinned; see store-backends.yml header
@@ -327,22 +212,13 @@ jobs:
         # points pkg-config at it. The tkrzw cxx bridge compiles with g++;
         # bindgen (libclang) serves the Berkeley DB lanes.
         run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libglib2.0-dev
-      - name: Run tools Python harness tests
-        if: needs.changes.outputs.reuse != 'true'
-        shell: bash
-        run: just test-tools
-      # The w3 fixture manifest is a byte-identity gate that nothing
-      # consumed: no job, test or script checked it, which is how a stale
-      # row survived two members of the stack that produced this step.
-      # `fixtures/w3/README.md` documents a REGENERATION command — running
-      # that in CI would overwrite the very drift this must catch, so this
-      # is a check, run from the repo root because the manifest's paths are
-      # repo-relative.
+      # A check, not the regeneration command in fixtures/w3/README.md, which
+      # would overwrite the drift it must find. The manifest's paths are
+      # relative to the repository root.
       - name: Verify the w3 fixture checksums
         if: needs.changes.outputs.reuse != 'true'
         run: sha256sum -c fixtures/w3/fixtures.sha256
-      # After the harness tests, so its PKG_CONFIG_PATH, LD_LIBRARY_PATH and
-      # PATH reach only the builds; before the cache refresh too.
+      # Before the cache refresh, which builds against it.
       - name: Provision tkrzw (built at the setup.sh revision and cached)
         uses: ./.github/actions/tkrzw
       # Default-backend rustdoc, warnings denied; the peers' rustdoc runs in
@@ -364,10 +240,9 @@ jobs:
         if: needs.changes.outputs.reuse != 'true'
         run: just runner cpp-smoke
       # The exported-symbol gate: each cdylib exports exactly its pin
-      # version script's set (libpinyin.ver 79, libzhuyin.ver 52) and
-      # leaks nothing else — in the development build (fixture hooks
-      # allowed) and in the packaged one (--features shipped, hooks
-      # compiled out). The packaged mode is the last step of this job.
+      # version script's set and nothing else, in the development build
+      # (fixture hooks allowed) and in the packaged one (--features shipped,
+      # hooks compiled out). The packaged mode is the last step of this job.
       - name: ABI export gate (development build)
         if: needs.changes.outputs.reuse != 'true'
         run: just abi exports
@@ -381,12 +256,11 @@ jobs:
       - name: Allocator-pairing gate
         if: needs.changes.outputs.reuse != 'true'
         run: just abi alloc-pairing
-      # The exported-symbol gate's packaged mode runs after every gate that
-      # uses the development build (#970). Only oxpinyin-capi rebuilds for
-      # it, and that build replaces the development one: the crate's lib
-      # target is a cdylib, so cargo writes both feature sets to the same
-      # files and fingerprint in target/cells/tkrzw. A development-build gate
-      # after this step would compile oxpinyin-capi again.
+      # The packaged mode runs after every gate that uses the development
+      # build. Its build of oxpinyin-capi replaces the development one: the
+      # cdylib's two feature sets share files and a fingerprint in
+      # target/cells/tkrzw, so a later development-build gate would compile
+      # oxpinyin-capi again.
       - name: ABI export gate (shipped build)
         if: needs.changes.outputs.reuse != 'true'
         run: just abi exports --shipped
@@ -395,19 +269,13 @@ jobs:
         if: github.event_name == 'push' && needs.changes.outputs.reuse == 'true'
         run: python3 -m tools.dev.ci_tree refresh test
 
-  # Supply-chain gate. cargo-deny's advisories check consumes the same
-  # RustSec DB cargo-audit uses, so this one job replaces both tools; the
-  # policy (allow-lists, deviation registry with review-by dates) lives in
-  # deny.toml. The binary is downloaded pinned rather than `cargo install`ed
-  # to keep the job under a minute.
-  #
-  # Debian Testing container in the store-backends.yml style: the supply
-  # chain is checked on the rolling toolchain distros actually ship, and
-  # the image is deliberately unpinned for the same reason (see that
-  # workflow's header).
+  # Supply-chain gate. cargo-deny reads the RustSec database, and deny.toml
+  # holds the policy. The bootstrap action installs a released binary, so
+  # the job takes less than a minute. The Debian Testing image is unpinned
+  # for the reason in the store-backends.yml header.
   deny:
     needs: changes
-    if: needs.changes.outputs.run == 'true' && needs.changes.outputs.reuse != 'true'
+    if: needs.changes.outputs.deny == 'true' && needs.changes.outputs.reuse != 'true'
     runs-on: *ubuntu
     container:
       image: debian:testing # deliberately unpinned; see store-backends.yml
@@ -431,23 +299,45 @@ jobs:
           safe-directory: 'true'
           rustup: 'true'
           cargo-deny: 'true'
-      # Default-feature tree first, then the feature-gated dependency
-      # subtrees (tkrzw). --locked pins both root graphs
-      # to the committed Cargo.lock, which Dependabot maintains. The fuzz
-      # workspace has its own lock (fuzz/Cargo.lock) and its own graph
-      # (libfuzzer-sys plus workspace path deps). Dependabot's cargo
-      # ecosystem at directory: "/fuzz" updates that lock for crates.io
-      # bumps in the fuzz graph. A root `/` bump that changes workspace
-      # pins or path crates reachable from fuzz, and does not refresh
-      # fuzz/Cargo.lock, fails --locked. That failure is the gate.
+      # The default-feature graph, then the feature-gated graphs, then the
+      # fuzz workspace's own graph. --locked holds each to its committed
+      # lockfile, so a root change that the fuzz lockfile does not follow
+      # fails here.
       - run: cargo deny --locked --log-level error check
       - run: cargo deny --locked --all-features --log-level error check
       - run: cargo deny --locked --log-level error --manifest-path fuzz/Cargo.toml check
-      # deny.toml's advisory ignore list is empty, so nothing here needs a
-      # scope assertion to bound it. The guard this replaced existed only
-      # to keep the RUSTSEC-2025-0141 (bincode) ignore honest while heed
-      # was in the tree; that backend now binds a system C library, so
-      # heed, heed-types and bincode are all gone.
+
+  # The Python harness tests of tools/. Some of them run cargo metadata, a C
+  # compiler or GLib, so the job takes the toolchain and the build packages.
+  harness:
+    needs: changes
+    if: needs.changes.outputs.harness == 'true' && needs.changes.outputs.reuse != 'true'
+    runs-on: *ubuntu
+    container:
+      image: debian:testing # deliberately unpinned; see store-backends.yml header
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Bootstrap the bare runner essentials (apt)
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends bash python3 tar gzip zstd git ca-certificates curl jq
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/bootstrap
+        with:
+          safe-directory: 'true'
+          rustup: 'true'
+          uv: 'true'
+          just: 'true'
+      - name: Install build dependencies (apt)
+        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libglib2.0-dev
+      - run: just test-tools
 
   # Stripped shipping-library sizes (constitution section 2). Builds both
   # facades with the release recipe (`just packaging install`) on the
@@ -540,14 +430,14 @@ jobs:
           path: .ship-sizes
           key: ${{ steps.key.outputs.key }}
 
-  # The required aggregate checks lint, test and deny against
-  # run/reuse, and shipping-sizes against its own `ship` flag. Every
-  # applicable lane must succeed; an inapplicable lane must be skipped. It runs after failures and remains cancellable.
-  # The called store-backends workflow must also succeed. Its own aggregate
-  # checks backend selection and every applicable backend and sanitizer lane.
+  # The required aggregate checks each job against its flag and `reuse`,
+  # and shipping-sizes against `ship` alone. Every applicable job must
+  # succeed, and every other job must be skipped. It runs after failures and
+  # can be cancelled. The called store-backends workflow must also succeed;
+  # its own aggregate checks its backend and sanitizer jobs.
   ci-aggregate:
     needs:
-      [changes, lint, test, deny, shipping-sizes, store-backends]
+      [changes, lint, test, deny, harness, shipping-sizes, store-backends]
     if: ${{ !cancelled() }}
     runs-on: *ubuntu
     steps:
@@ -560,11 +450,10 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
         run: python3 -m tools.dev.ci_tree aggregate ci
 
-
   tree-evidence:
     name: tested tree ${{ needs.changes.outputs.tree }}
-    needs: [changes, ci-aggregate, lint, test, deny]
-    if: ${{ needs.changes.outputs.run == 'true' && needs.changes.outputs.reuse == 'false' && needs.changes.result == 'success' && needs.ci-aggregate.result == 'success' && needs.lint.result == 'success' && needs.test.result == 'success' && needs.deny.result == 'success' }}
+    needs: [changes, ci-aggregate, lint, test, deny, harness]
+    if: ${{ needs.changes.outputs.reuse == 'false' && needs.changes.result == 'success' && needs.ci-aggregate.result == 'success' && needs.lint.result == 'success' && needs.test.result == 'success' && needs.deny.result == 'success' && needs.harness.result == 'success' }}
     runs-on: *ubuntu
     steps:
       - run: echo 'All concrete verification lanes passed for this checkout tree.'

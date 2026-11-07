@@ -12,7 +12,8 @@ recipe key: the tree ids of every input that can change the libraries plus the
 toolchain fingerprint. The key does not name a commit, so every main commit
 with the same inputs shares one result.
 
-The gate, key and report subcommands use the standard library only.
+The key and report subcommands, and the path list that tools/dev/ci_tree.py
+gates the job on, use the standard library only.
 """
 from __future__ import annotations
 
@@ -35,7 +36,7 @@ SCHEMA = 1
 KEY_PREFIX = 'ship-sizes-v1-'
 # Normal and build path dependencies of the two capi crates. shipping_closure()
 # computes the same set from cargo metadata; the tests compare the two, so a new
-# crate in the graph fails there. The gate runs without Cargo and reads this tuple.
+# crate in the graph fails there. The CI path gate runs without Cargo and reads this tuple.
 SHIPPING_CRATES = ('oxpinyin-capi', 'oxpinyin-capi-marshal', 'oxpinyin-chewing', 'oxpinyin-core',
                    'oxpinyin-data', 'oxpinyin-engine', 'oxpinyin-facade', 'oxpinyin-input',
                    'oxpinyin-runtime', 'oxpinyin-store', 'oxpinyin-user', 'oxpinyin-zhuyin-capi')
@@ -71,20 +72,6 @@ def run(argv: Sequence[str | Path], *, cwd: Path | None = None, env: dict[str, s
 
 def git(*arguments: str | Path, root: Path = ROOT) -> str:
     return run(['git', *arguments], cwd=root).strip()
-
-
-def gate(base: str, root: Path = ROOT) -> bool:
-    """True when a path that can change a library, or this job, differs from base.
-
-    An unavailable base runs the job: the over-trigger direction, never a skip.
-    """
-    if not base:
-        return True
-    try:
-        run(['git', 'cat-file', '-e', base + '^{commit}'], cwd=root)
-        return bool(git('diff', '--name-only', base, 'HEAD', '--', *INPUTS, *REPORT_INPUTS, root=root))
-    except Failure:
-        return True
 
 
 def first_line(argv: Sequence[str], root: Path) -> str:
@@ -283,16 +270,6 @@ def emit_summary(text: str) -> None:
             handle.write(text + '\n')
 
 
-def cmd_gate(args: argparse.Namespace) -> int:
-    value = 'true' if gate(args.base) else 'false'
-    print('ship=' + value)
-    output = os.environ.get('GITHUB_OUTPUT')
-    if output:
-        with open(output, 'a', encoding='utf-8') as handle:
-            handle.write(f'ship={value}\n')
-    return 0
-
-
 def cmd_apt(args: argparse.Namespace) -> int:
     print(' '.join(backend_packages()))
     return 0
@@ -341,9 +318,6 @@ def cmd_run(args: argparse.Namespace) -> int:
 def parser() -> argparse.ArgumentParser:
     top = argparse.ArgumentParser(prog='just packaging sizes', description=__doc__)
     sub = top.add_subparsers(dest='command', required=True)
-    p = sub.add_parser('gate', help='print ship=true|false for changes since BASE')
-    p.add_argument('base')
-    p.set_defaults(func=cmd_gate)
     p = sub.add_parser('apt', help='print the distribution packages the reference backend needs')
     p.set_defaults(func=cmd_apt)
     p = sub.add_parser('key', help='print the recipe key of a commit')
@@ -376,5 +350,4 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 if __name__ == '__main__':
-    # Run as a script only for `gate`, which needs no package import.
     raise SystemExit(main())
