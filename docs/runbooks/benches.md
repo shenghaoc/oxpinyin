@@ -1042,7 +1042,7 @@ resident in only some of the rounds. A startup record holds one round.
 | --- | --- | --- |
 | oxpinyin-capi | `stage2` | the export (`PINYIN_EXPORT_DIR`), the C-ABI surface |
 | oxpinyin-store | `backend_matrix_{tkrzw,kyotocabinet,bdb}` | `--features <backend>` (each is `required-features`-gated) |
-| oxpinyin-user | `export_phrases`, `phrase_read` | the export |
+| oxpinyin-user | `export_phrases` | the export |
 | oxpinyin-runtime | `scan_perf`, `alloc_profile` | the export, model20 |
 
 Run one bench by name; without `--bench <name>` cargo also runs the lib

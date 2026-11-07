@@ -47,7 +47,6 @@ mod live_system;
 mod lookup;
 mod model;
 pub mod persistence;
-mod registry;
 mod replay;
 mod session_values;
 mod store;

@@ -102,10 +102,6 @@ pub enum ExportAssert {
     /// (`chewing_key.cpp:48`, reached from `:728` for each key in turn): a
     /// `USER_FILE` reading carries a tone past `MAX_KEY_TONE`.
     KeyTone,
-    /// `assert(index < (int) G_N_ELEMENTS(content_table))` in
-    /// `get_pinyin_string` (`chewing_key.cpp:50`): a `USER_FILE` reading
-    /// names a syllable this engine has no spelling for.
-    KeyTable,
 }
 
 impl ExportAssert {
@@ -118,7 +114,6 @@ impl ExportAssert {
             Self::Pronunciation => "nth_pronun < n_pronuns",
             Self::NthPronunciation => "item.get_nth_pronunciation(nth_pronun, keys, freq)",
             Self::KeyTone => "m_tone < CHEWING_NUMBER_OF_TONES",
-            Self::KeyTable => "index < (int) G_N_ELEMENTS(content_table)",
         }
     }
 }
@@ -219,17 +214,12 @@ fn user_syllable(key: PinyinKey) -> (&'static str, Option<u8>) {
     (spelling, digit)
 }
 
-/// The `get_pinyin_string` assert a `USER_FILE` key dies at, if any, in the
-/// pin's order: the tone (`chewing_key.cpp:48`), then the content-table
-/// index (`:50`). `key_pinyin_string` answers `None` for exactly these.
+/// The `get_pinyin_string` assert a `USER_FILE` key dies at, if any: the
+/// tone (`chewing_key.cpp:48`). The content-table index assert (`:50`) is
+/// out of reach: a session key always names a syllable, since every
+/// stored reading is a packed `ChewingKey` (`packed_to_pinyin_keys`).
 fn user_key_assert(key: PinyinKey) -> Option<ExportAssert> {
-    if key_tone(key) > MAX_KEY_TONE {
-        return Some(ExportAssert::KeyTone);
-    }
-    if SyllableKey::from_index(key_syllable(key)).is_none() {
-        return Some(ExportAssert::KeyTable);
-    }
-    None
+    (key_tone(key) > MAX_KEY_TONE).then_some(ExportAssert::KeyTone)
 }
 
 impl ExportRow<'_> {
@@ -1361,55 +1351,36 @@ mod phrase_cursor_tests {
         assert!(!PhraseExportCursor::default().has_next());
     }
 
-    /// `pinyin.cpp:728` → `chewing_key.cpp:48` and `:50`: a reading the
-    /// probe counts (`:682`) but `get_pinyin_string` cannot spell is read
-    /// and refused with the cursor unmoved, so the next call refuses again
-    /// (the parent build skipped the reading).
+    /// `pinyin.cpp:728` → `chewing_key.cpp:48`: a reading the probe counts
+    /// (`:682`) but `get_pinyin_string` cannot spell is read and refused
+    /// with the cursor unmoved, so the next call refuses again (the parent
+    /// build skipped the reading). The content-table assert (`:50`) has no
+    /// case: a session key always names a syllable.
     #[test]
     fn a_reading_the_engine_cannot_spell_is_the_pins_pinyin_string_assert() {
         let jia = SyllableKey::from_text("jia").expect("syllable").index();
         let past_the_tones = toned_key(jia, MAX_KEY_TONE).expect("key") + (1 << KEY_TONE_SHIFT);
-        for (tag, key, site) in [
-            ("tone", past_the_tones, ExportAssert::KeyTone),
-            ("table", KEY_SYLLABLE_MASK, ExportAssert::KeyTable),
-        ] {
-            let mut ctx = open();
-            let standalone = tempfile::tempdir().expect("standalone directory");
-            if tag == "table" {
-                // A dense Rust ID outside the syllable inventory has no
-                // ChewingKey encoding. Only the standalone row store can
-                // hold that synthetic input; C parsers produce packed keys.
-                ctx.runtime = None;
-                ctx.user = Some(
-                    oxpinyin_user::UserStore::create_standalone(&standalone.path().join("phrases"))
-                        .expect("standalone store"),
-                );
-            }
-            let store = ctx.user_store_mut().unwrap();
-            store
-                .add_phrase_in(
-                    USER_DICTIONARY,
-                    &"你好".into(),
-                    &user_keys(&["ni", "hao"], 0),
-                    Some(5),
-                )
-                .expect("first");
-            store
-                .add_phrase_in(USER_DICTIONARY, &"甲".into(), &[key], Some(2))
-                .expect("representable session key or standalone row");
-            let mut cursor = ctx.phrase_export_cursor(u32::from(USER_DICTIONARY));
-            assert_eq!(
-                next_row(&ctx, &mut cursor),
-                Some(row("你好", "ni'hao", 5)),
-                "{tag}"
-            );
-            assert!(cursor.has_next(), "{tag}: the probe selects the item");
-            for _ in 0..2 {
-                assert!(
-                    matches!(cursor.get_next_with(&ctx, |_| ()), ExportStep::Assert(at) if at == site),
-                    "{tag}"
-                );
-            }
+        let mut ctx = open();
+        let store = ctx.user_store_mut().unwrap();
+        store
+            .add_phrase_in(
+                USER_DICTIONARY,
+                &"你好".into(),
+                &user_keys(&["ni", "hao"], 0),
+                Some(5),
+            )
+            .expect("first");
+        store
+            .add_phrase_in(USER_DICTIONARY, &"甲".into(), &[past_the_tones], Some(2))
+            .expect("representable session key");
+        let mut cursor = ctx.phrase_export_cursor(u32::from(USER_DICTIONARY));
+        assert_eq!(next_row(&ctx, &mut cursor), Some(row("你好", "ni'hao", 5)));
+        assert!(cursor.has_next(), "the probe selects the item");
+        for _ in 0..2 {
+            assert!(matches!(
+                cursor.get_next_with(&ctx, |_| ()),
+                ExportStep::Assert(ExportAssert::KeyTone)
+            ));
         }
     }
 
@@ -1442,7 +1413,6 @@ mod phrase_cursor_tests {
             assert_for(&UserStoreError::Io(std::io::Error::other("unreadable"))),
             None
         );
-        assert_eq!(assert_for(&UserStoreError::AlreadyOpen), None);
     }
 
     /// `pinyin.cpp:748-767`: every `get_next_phrase` re-reads the range

@@ -1,11 +1,9 @@
 //! Lookup over the store's own session tables and item arena.
 //!
 //! Session queries borrow the canonical tables for the duration of each
-//! operation. Standalone stores cache their derived phonetic index once per
-//! phrase generation; count-only training does not rebuild it.
+//! operation.
 
-use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 use oxpinyin_core::{PhraseEntry, PhraseText, PhraseToken, SyllableKey};
 
@@ -30,50 +28,6 @@ enum Source<'a> {
         &'a Mutex<SessionPhrases>,
         &'a Mutex<crate::system_items::SystemItems>,
     ),
-    Standalone(Arc<StandaloneLookup>),
-}
-
-/// Plain stores have no session tables. Retain their derived index and text
-/// once on the shared store, with the existing phrase-generation lifetime.
-#[derive(Debug, Default)]
-pub(crate) struct StandaloneLookup {
-    index: UserIndex,
-    token_text: BTreeMap<u32, PhraseText>,
-}
-
-impl StandaloneLookup {
-    pub(crate) fn from_phrases(phrases: Vec<crate::UserPhrase>) -> Self {
-        let mut lookup = Self::default();
-        for phrase in phrases {
-            for pronunciation in phrase
-                .pronunciations()
-                .iter()
-                .filter(|reading| reading.indexed())
-            {
-                // Refuse the whole reading if any syllable cannot convert
-                // (pinyin.cpp:638-641 at 074a2219), as before.
-                let Some(keys) = pronunciation
-                    .keys()
-                    .iter()
-                    .map(|&key| {
-                        let syllable = SyllableKey::from_index(crate::key_syllable(key))?;
-                        Some(syllable.chewing_key().with_tone(crate::key_tone(key)))
-                    })
-                    .collect::<Option<Vec<_>>>()
-                else {
-                    continue;
-                };
-                if keys.is_empty() || keys.len() > crate::phrase::MAX_PHRASE_LENGTH {
-                    continue;
-                }
-                lookup.index.add(&keys, phrase.token());
-            }
-            if let Some(text) = phrase.phrase_text() {
-                lookup.token_text.insert(phrase.token(), text);
-            }
-        }
-        lookup
-    }
 }
 
 impl<'a> UserLookup<'a> {
@@ -92,12 +46,6 @@ impl<'a> UserLookup<'a> {
         }
     }
 
-    pub(crate) fn standalone(lookup: Arc<StandaloneLookup>) -> Self {
-        Self {
-            source: Source::Standalone(lookup),
-        }
-    }
-
     fn with_index<R>(&self, read: impl FnOnce(&UserIndex) -> R) -> R {
         match &self.source {
             Source::Empty => read(&UserIndex::new()),
@@ -107,7 +55,6 @@ impl<'a> UserLookup<'a> {
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .index,
             ),
-            Source::Standalone(lookup) => read(&lookup.index),
         }
     }
 
@@ -155,15 +102,6 @@ impl<'a> UserLookup<'a> {
                     })
                     .collect()
             }
-            Source::Standalone(lookup) => lookup
-                .index
-                .search(keys)
-                .into_iter()
-                .filter_map(|token| {
-                    let text = lookup.token_text.get(&token)?.clone();
-                    Some(PhraseEntry::new(PhraseToken::new(token), text))
-                })
-                .collect(),
         }
     }
 
@@ -193,12 +131,11 @@ impl<'a> UserLookup<'a> {
                 items,
                 token,
             ),
-            Source::Standalone(lookup) => lookup.token_text.get(&token).cloned(),
         }
     }
 
     /// Tokens whose stored UCS-4 key is exactly `words`, non-scalar words
-    /// included. Plain stores retain their previous empty phrase-table seam.
+    /// included.
     #[must_use]
     pub fn tokens_for_ucs4(&self, words: &[u32]) -> Vec<u32> {
         let Source::Session(phrases, _) = &self.source else {
@@ -312,17 +249,6 @@ mod tests {
     use crate::store::UserStore;
     use oxpinyin_core::Completeness;
 
-    /// A store path inside a fresh, uniquely named dir. Bind the dir before
-    /// the store so it drops (and is removed) after the store's handle.
-    fn temp_path(tag: &str) -> (tempfile::TempDir, std::path::PathBuf) {
-        let dir = tempfile::Builder::new()
-            .prefix(&format!("oxpinyin-user-lookup-{tag}-"))
-            .tempdir()
-            .unwrap();
-        let path = dir.path().join(format!("{tag}.store"));
-        (dir, path)
-    }
-
     fn key(text: &str) -> SyllableKey {
         SyllableKey::from_text(text).expect("frozen syllable")
     }
@@ -371,32 +297,6 @@ mod tests {
         assert_eq!(entries[0].token().value(), token);
         assert_eq!(entries[0].text(), "你");
         assert!(lookup.phrase_text(token | 0x8000_0000).is_none());
-    }
-
-    #[test]
-    fn standalone_lookup_refreshes_across_store_handles() {
-        let (_dir, path) = temp_path("refresh");
-        let store = UserStore::open(&path).unwrap();
-        let mut writer = UserStore::open(&path).unwrap();
-        let ni = u16::try_from(key("ni").index()).unwrap();
-        assert!(store.lookup().unwrap().lookup(&[key("ni")]).is_empty());
-        let token = writer.add_phrase(&"你".into(), &[ni], Some(5)).unwrap();
-        assert_eq!(
-            store.lookup().unwrap().lookup(&[key("ni")])[0]
-                .token()
-                .value(),
-            token
-        );
-        // Standalone lookup never supplied phrase-table prediction rows.
-        assert!(
-            store
-                .lookup()
-                .unwrap()
-                .tokens_for_ucs4(&[u32::from('你')])
-                .is_empty()
-        );
-        assert!(writer.remove_user_phrase(token).unwrap());
-        assert!(store.lookup().unwrap().lookup(&[key("ni")]).is_empty());
     }
 
     #[test]

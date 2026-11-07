@@ -45,7 +45,3 @@ oxpinyin-store = { workspace = true, features = ["test-hooks"] }
 [[bench]]
 name = "export_phrases"
 harness = false
-
-[[bench]]
-name = "phrase_read"
-harness = false
