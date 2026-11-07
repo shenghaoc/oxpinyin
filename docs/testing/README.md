@@ -20,17 +20,11 @@ package, so run `just fetch-contract-data` before a full test run; a missing pac
 fails the test. The capture has no regenerator yet
 ([next pin capture](../runbooks/goldens-and-pins.md#the-next-pin-capture)).
 
-## Tests that need inputs CI never has
+## Test inputs
 
-A test that needs the model20 cache, the system-table export, a
-pin-built libpinyin tool or data dir, or opencc is
-`#[ignore = "needs …; run with --include-ignored"]`, and once run it
-panics on a missing input instead of printing "skipping" and passing
-(2026-09-06; about 30 tests used to do the latter, so a green run proved
-nothing). A committed golden or fixture that is missing is a failure
-too. `cargo test` shows them as ignored; run them with `--include-ignored`
-(see [the oracle runbook](../runbooks/oracle.md)). Do not
-add a new self-skipping test (contributor guidance points here).
+Tests never skip and are never `#[ignore]`d. Their inputs come from committed
+fixtures or the pinned `libpinyin-data` package. Pin behaviour comes from frozen
+observations, never a live pin run. A missing input is a test failure.
 
 | Document | Subject |
 | --- | --- |
