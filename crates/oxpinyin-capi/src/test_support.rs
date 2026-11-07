@@ -366,7 +366,9 @@ pub fn plant_bigram(user_dir: &std::path::Path, rows: Vec<(Vec<u8>, Vec<u8>)>) {
 /// `user_dir`: the stored state is loaded when a profile exists (a fresh
 /// directory starts empty), the row replaced, and the profile saved again
 /// in the running backend's format. This is the crafted index of register
-/// row 93, whose tokens the library never wrote.
+/// row 93, whose tokens the library never wrote. Only the Unix e2e cases
+/// use it.
+#[cfg(unix)]
 pub fn set_phrase_table_row(user_dir: &std::path::Path, phrase: &str, tokens: &[u32]) {
     let conf = oxpinyin_data::table_info::TableConf::load_from_dir(&system_dir())
         .expect("fixture table.conf");
