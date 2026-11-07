@@ -352,9 +352,15 @@ row with a typed `IncompatibleFormat` refusal was added (aa40f4aa) and
 reverted the same day. libpinyin's user files carry no version, and the
 drop-in contract is to match them, not to add guarantees they lack; the
 backend's own file header stays the only stamp. A hostile or truncated
-file is a typed `UserStoreError`, never a panic
-(`crates/oxpinyin-user/tests/user_store_acid.rs`). Do not reintroduce a
-version row without a fresh ask.
+file degrades per file at the load, as upstream's does, never a panic
+(`crates/oxpinyin-user/src/persistence.rs`), with one exception: a
+`database format:` in `user.conf` that upstream's
+`to_table_database_format_type` does not know is the pin's abort
+(`table_info.cpp:122-133`, reached from `:353-354`). The load returns
+`UnknownDatabaseFormat` there, before anything is judged, wiped or
+written, and `pinyin_init` and `zhuyin_init` abort on it (register row
+44). Every other file error degrades that file alone. Do not reintroduce
+a version row without a fresh ask.
 
 ---
 
@@ -396,11 +402,8 @@ that continuation's decode score. The magnitude of the nudge is exactly the
 `seed` arithmetic of §2 flowing through this additive merge.
 
 **Storage (amended 2026-10-14 UTC, #757 PR 2).** The user half of the
-merge is the pin's own `SingleGram` value, held once: a libpinyin
-session keeps it in the pin's container (§11) and a plain or standalone
-store in the ordered `user_bigram_gram` table (raw values keyed by the
-big-endian predecessor token — a test-only layout with no pin
-counterpart). Every read takes the bytes apart the pin's way
+merge is the pin's own `SingleGram` value, held once, in the pin's own
+in-memory container (§11). Every read takes the bytes apart the pin's way
 (`oxpinyin_core::single_gram`, a port of `ngram.cpp`): a count is
 `get_freq`'s first match walking from libstdc++'s `__lower_bound`, which
 answers deterministically on an unsorted array, and duplicated items are
@@ -731,7 +734,8 @@ Architecture — a session scratch behind the value engine:
   `_write_files`+`_rename_files`: every file whole to a `.tmp` sibling,
   then all renames) and fini, each writing `user.conf` under the
   facade's law (`UserConfLaw`, amendment below). `user_phrase_index.bin`
-  is rebuilt at save from the USER_FILE items; at load it is read back
+  is saved as the session's stored records, as they are, never rebuilt
+  from the USER_FILE items; at load it is read back
   only as a set of exact `(token, text)` membership pairs
   (`PHRASE_TABLE`) for `remove_user_phrase`'s phrase-table check
   (`pinyin.cpp:3750`; policy row 81) — a token may sit under several
@@ -741,9 +745,8 @@ Architecture — a session scratch behind the value engine:
   zhuyin import makes (`phrase_table_tokens_for_text`); every
   `PHRASE_TABLE` writer maintains it and an empty one is rebuilt from
   `PHRASE_TABLE`.
-  A standalone store opening a profile written before the table existed
-  backfills the pairs from its `PHRASE` rows; a libpinyin session does
-  not (a missing row there is the pin's `:3750` state). The value
+  A profile written before the table existed is not backfilled: a missing
+  row is the pin's `:3750` state. The value
   engine's text lookups still derive from `user.bin`.
   `user_pinyin_index.bin` is not (amendment
   2026-09-27, #534): a reading merged into an existing phrase is never
@@ -824,8 +827,7 @@ Semantics this reverts or preserves, on purpose:
   before either is a no-op. The frozen dirty-gate test stands unedited.
 * **The W6-T5 durability deviation is reverted** — nothing durable
   between saves; a crash loses the sub-timer window exactly as
-  upstream's does. `user_store.<ext>` leaves the user dir (`user_store_file` stays a public helper for standalone stores; no
-  in-tree caller remains).
+  upstream's does. `user_store.<ext>` leaves the user dir.
 * System import pronunciation changes are preserved by #599, including
   pin-created payloads read and saved back through oxpinyin. The separate
   training path still lacks per-pronunciation updates, and replayed REMOVE

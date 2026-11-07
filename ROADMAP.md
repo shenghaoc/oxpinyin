@@ -86,7 +86,7 @@ landed 2026-09-09 as the backend's native user files (maintainer ruling
 | W3 | Table loading | oxpinyin-data |
 | W4 | SegmentGraph, k-best, engine session | oxpinyin-core, oxpinyin-engine |
 | W5 | C ABI (began as the consumer subset; the full 79-symbol surface closed under W8) | oxpinyin-capi |
-| W6 | User store (ACID store over the compiled-in `DefaultStore`; began on redb) | oxpinyin-user, oxpinyin-store |
+| W6 | User store (the libpinyin session's user data over the compiled-in `DefaultStore` user files; began on redb) | oxpinyin-user, oxpinyin-store |
 | W7 | Classic text-format interop (import + export); the tool was deleted by maintainer ruling 2026-10-31 UTC | oxpinyin-capi |
 | W8 | libpinyin drop-in: full 79-symbol `.so` ABI under `libpinyin.so.15` (see `docs/specs/drop-in/`) | oxpinyin-capi |
 | W9 | Rust counterparts for libpinyin's 21 `utils/` programs (see `docs/findings/trainer-parity-audit.md`); the trainer's own Python scripts are not ported. The utilities carry the pin's names and interfaces in `oxpinyin-utils`; the training crate keeps only the `eval` decode behind `eval_correction_rate` and has no command line of its own | oxpinyin-utils, oxpinyin-training (`eval` module), oxpinyin-kmm |

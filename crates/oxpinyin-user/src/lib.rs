@@ -1,29 +1,27 @@
-//! ACID store for user data over the compiled-in `DefaultStore` (tkrzw,
-//! Kyoto Cabinet, Berkeley DB or tkrzw — one per binary, selected by feature;
-//! see `oxpinyin-store`): learning, frequencies, preferences. Internal
-//! crate — the supported external interfaces are the libpinyin-compatible and
-//! libzhuyin-compatible C APIs and ABIs.
+//! The user data of one libpinyin session: the user phrase arenas (the
+//! pin's `USER_FILE` sub-indexes), the user pinyin index and phrase table,
+//! the pin's own user bigram container, the live system items, and the
+//! user-file persistence behind `pinyin_save`. The user files are read and
+//! written with the compiled-in `DefaultStore` backend (tkrzw, Kyoto
+//! Cabinet or Berkeley DB — one per binary, selected by feature; see
+//! `oxpinyin-store`). Internal crate — the supported external interfaces
+//! are the libpinyin-compatible and libzhuyin-compatible C APIs and ABIs.
 //!
-//! W6-T1: the integer count [`seed`] arithmetic pinned in
-//! `docs/findings/user-store.md` §2, the count tables, and the first
-//! [`oxpinyin_core::UserModel`] implementor. W6-T2: the user phrase index and
-//! `USER_DICTIONARY` token allocation (§3), as additional tables in the same
-//! database. W6-T3 wires the store through [`oxpinyin_core::UserModel`] (typed
-//! with the engine's [`oxpinyin_core::PhraseToken`]) into the engine session and
-//! the C ABI. W6-T4 exposes the stored counts as a
-//! [`oxpinyin_core::UserCountDelta`] so decode can merge them additively with
-//! the system model. W6-T5 adds the save cycle behind `pinyin_save`: the §4
-//! `m_modified` gate ([`UserStore::is_modified`] / [`UserStore::save`]).
-//! Since drop-in task 9 (`docs/findings/user-store.md` §11) the session
-//! runs on a scratch store and `save` exports its values into the pin's
-//! own user file set (`.tmp` + rename), so nothing is durable between
-//! saves — the pin's own shape. W6-T7 adds
-//! the §9 export surface ([`UserStore::export_phrases`] /
-//! [`UserStore::export_bigrams`]) that backs the C ABI's export iterators and
-//! the W6 differential. The user bigram is held once, as the pin's own
-//! `SingleGram` values, and every bigram operation runs the pin's
-//! `SingleGram` code over them (`oxpinyin_core::single_gram`; the `store`
-//! module documentation).
+//! The integer count [`seed`] arithmetic is pinned in
+//! `docs/findings/user-store.md` §2, and `USER_DICTIONARY` token allocation
+//! in §3. The store is the [`oxpinyin_core::UserModel`] implementor (typed
+//! with the engine's [`oxpinyin_core::PhraseToken`]) the engine session and
+//! the C ABI reach; it exposes the counts as a
+//! [`oxpinyin_core::UserCountDelta`] so decode can merge them additively
+//! with the system model, the §4 `m_modified` gate
+//! ([`UserStore::is_modified`] / [`UserStore::save`]) behind `pinyin_save`,
+//! and the §9 export surface ([`UserStore::export_phrases`] /
+//! [`UserStore::export_bigrams`]) behind the C ABI's export iterators.
+//! Nothing is durable between saves: `save` writes the pin's own user file
+//! set (`.tmp` + rename), the pin's own shape (`docs/findings/user-store.md`
+//! §11). The user bigram is held once, as the pin's own `SingleGram`
+//! values, and every bigram operation runs the pin's `SingleGram` code over
+//! them (`oxpinyin_core::single_gram`; the `store` module documentation).
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 // Constitution §4: keep these non-test denials. A permitted site needs the
