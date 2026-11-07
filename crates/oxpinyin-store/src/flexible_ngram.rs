@@ -942,8 +942,11 @@ mod tests {
         }
     }
 
+    // Only the Unix child-process test below uses this spec.
+    #[cfg(unix)]
     struct Spec;
 
+    #[cfg(unix)]
     impl super::FlexibleGramSpec for Spec {
         const MAGIC_NUMBER: [u8; 4] = *b"TEST";
         type MagicHeader = Magic;

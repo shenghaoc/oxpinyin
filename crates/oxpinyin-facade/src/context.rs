@@ -1103,7 +1103,21 @@ mod library_transition_tests {
             )
             .unwrap();
         }
-        std::fs::remove_file(system.join("merged.bin")).unwrap();
+        // The remap refuses merged.bin through its checksum word, as it would
+        // a missing file; Windows deletes or renames no mapped file.
+        {
+            use std::io::{Read, Seek, SeekFrom, Write};
+            let mut merged = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(system.join("merged.bin"))
+                .unwrap();
+            let mut checksum = [0_u8; 4];
+            merged.seek(SeekFrom::Start(4)).unwrap();
+            merged.read_exact(&mut checksum).unwrap();
+            merged.seek(SeekFrom::Start(4)).unwrap();
+            merged.write_all(&checksum.map(|byte| !byte)).unwrap();
+        }
         let result = ctx.mask_out(0, 0);
         if journal_first {
             assert!(
