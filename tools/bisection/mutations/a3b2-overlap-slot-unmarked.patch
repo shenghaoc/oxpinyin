@@ -1,8 +1,0 @@
-diff --git a/crates/oxpinyin-user/src/replay.rs b/crates/oxpinyin-user/src/replay.rs
---- a/crates/oxpinyin-user/src/replay.rs
-+++ b/crates/oxpinyin-user/src/replay.rs
-@@ -1361,3 +1361,3 @@
-         }
--        if !disjoint && written.contains(&true) {
-+        if false && !disjoint && written.contains(&true) {
-             self.mark_overlapping_training_slots(slot, first + 2 * length, row, &written);

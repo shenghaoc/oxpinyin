@@ -1066,7 +1066,8 @@ BDB only. Crate gates for engine, runtime, facade, both C adapters, dictool
 and oracle pass: 588 tests, eight ignored; all-target Clippy denies warnings.
 The three targeted contract harnesses pass all 26 tests; fmt passes.
 
-The earlier named mutation `1297-reverse-selection-batch-position.patch`: both
+The unit test `oxpinyin_engine::nbest::tests::selection_keeps_the_complete_key_at_each_limit`
+holds batch positions. With the earlier reversed-position mutation, both
 `nbest-user-table-order-*` witnesses DIFFER, both `glib-sort-tails-*`
 controls MATCH. Byte-for-byte source restoration, rebuild and the same
 four cases give two existing POLICY-ACCEPTED and two MATCH.

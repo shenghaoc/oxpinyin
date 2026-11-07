@@ -387,3 +387,100 @@ impl<'a> LiveSystemItems<'a> {
         self.user?.system_item_end(library)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use oxpinyin_data::chunk_write::{ChunkItem, build_chunk};
+
+    /// Policy row 107: phrase_index.cpp:180-206 at 074a2219 can hand out
+    /// an item extending past its buffer. The approved safe outcome is no
+    /// item, never resurrection of the valid original in a separate mapping.
+    #[test]
+    fn an_overlong_live_item_never_falls_back_to_a_shipped_copy() {
+        use crate::persistence::{SystemLibrary, SystemOriginals, UserConfLaw};
+        use oxpinyin_data::{
+            phrase_library::PhraseLibrary,
+            user_files::{LogRecord, SystemVersions, UserTableInfo, encode_log_records},
+        };
+        use std::collections::BTreeMap;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("system.bin");
+        let item = ChunkItem {
+            phrase: vec![0x4f60],
+            unigram: 1,
+            prons: Vec::new(),
+        };
+        std::fs::write(&path, build_chunk(&[(1, item.clone())]).unwrap()).unwrap();
+        let mut shipped = PhraseLibraries::empty();
+        shipped.load(1, &path).unwrap();
+        let original = PhraseLibrary::open(&path).unwrap();
+        let originals = SystemOriginals::from(BTreeMap::from([(
+            1,
+            SystemLibrary {
+                total: original.total_freq(),
+                range_end: original.token_range().end,
+                mapped: Some(original),
+                items: BTreeMap::new(),
+            },
+        )]));
+        let old = oxpinyin_data::chunk_write::encode_phrase_item(&item).unwrap();
+        let mut over = old.clone();
+        over[0] = 255;
+        over[1] = 255;
+        let payload = encode_log_records(&[LogRecord::Modify {
+            token: 1,
+            old_item: old,
+            new_item: over,
+        }])
+        .unwrap();
+        let versions = SystemVersions::for_this_build(7, 14);
+        let user = dir.path().join("user");
+        std::fs::create_dir(&user).unwrap();
+        std::fs::write(
+            user.join("user.conf"),
+            UserTableInfo::conform_to(&versions).to_text(),
+        )
+        .unwrap();
+        std::fs::write(
+            user.join("gb_char.dbin"),
+            oxpinyin_data::chunk_format::build_memory_chunk(&payload).unwrap(),
+        )
+        .unwrap();
+        let store =
+            UserStore::open_libpinyin(&user, originals, versions, UserConfLaw::Pinyin).unwrap();
+        assert!(store.live_item_past_buffer(0x0100_0001));
+        store.test_forget_removal(0x0100_0001);
+        let unloaded = AtomicU32::new(0);
+        let live = LiveSystemItems::new(&shipped, Some(&store), &unloaded);
+        assert_eq!(
+            live.read(0x0100_0001, |item| item.unigram()),
+            Lookup::Absent
+        );
+        assert_eq!(shipped.unigram_count(0x0100_0001), Some(1));
+    }
+
+    /// 074a2219 pinyin.cpp:337-367 loads the libraries named by table.conf;
+    /// the configured library index is not restricted to the stock 1..=4.
+    #[test]
+    fn a_nonstock_loaded_library_is_a_system_library() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("six.bin");
+        let item = ChunkItem {
+            phrase: vec![0x4f60],
+            unigram: 1,
+            prons: Vec::new(),
+        };
+        std::fs::write(&path, build_chunk(&[(1, item)]).unwrap()).unwrap();
+        let mut libraries = PhraseLibraries::empty();
+        assert!(libraries.load(6, &path).unwrap());
+        let unloaded = AtomicU32::new(0);
+        let live = LiveSystemItems::new(&libraries, None, &unloaded);
+        assert!(live.is_system_library(6));
+        assert!(!live.is_system_library(5));
+        assert_eq!(
+            live.read(0x0600_0001, |item| item.unigram()),
+            Lookup::Found(1)
+        );
+    }
+}

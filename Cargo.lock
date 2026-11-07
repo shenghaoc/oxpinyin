@@ -901,6 +901,7 @@ dependencies = [
  "oxpinyin-engine",
  "oxpinyin-runtime",
  "oxpinyin-user",
+ "rstest",
  "tempfile",
 ]
 

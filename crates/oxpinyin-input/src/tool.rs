@@ -2224,6 +2224,31 @@ mod tests {
     /// Set in the child: run the helper instead of the test body.
     const STORE_ERROR_CHILD: &str = "OXPINYIN_INPUT_STORE_ERROR_CHILD";
 
+    /// 074a2219 tests/test_pinyin.cpp:47-48 writes and flushes these bytes.
+    #[test]
+    fn prefix_prompt_writes_the_pins_exact_bytes() {
+        const CHILD: &str = "OXPINYIN_PREFIX_PROMPT_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            pin_tests::prefix_prompt();
+            std::process::exit(0);
+        }
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "tool::tests::prefix_prompt_writes_the_pins_exact_bytes",
+                "--quiet",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(
+            output.stdout.strip_prefix(b"\nrunning 1 test\n").unwrap(),
+            b"prefix:"
+        );
+        assert!(output.stderr.is_empty());
+    }
+
     #[test]
     fn a_store_error_is_reported_on_one_line() {
         let line = store_error_line(&"unsupported Berkeley DB 6.2: surveyed against 5.3\nsecond");

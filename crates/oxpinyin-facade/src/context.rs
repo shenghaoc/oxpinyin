@@ -1063,6 +1063,72 @@ mod library_transition_tests {
             .unwrap_or(0)
     }
 
+    /// 074a2219 pinyin.cpp:1260-1294 visits each library and its log in order.
+    /// Row 76 refuses an unmappable library without partial masking; row 91
+    /// preserves the earlier journal assertion before any later mmap failure.
+    #[rstest::rstest]
+    #[case::unmappable_without_partial_mask(false)]
+    #[case::journal_before_later_unmappable(true)]
+    fn mask_out_preserves_the_first_fault_and_its_effects(#[case] journal_first: bool) {
+        use super::MaskOutOutcome;
+        let scratch = tempfile::tempdir().unwrap();
+        let system = system_with_gbk_naming_no_user_file(scratch.path());
+        let conf = system.join("table.conf");
+        let text = std::fs::read_to_string(&conf).unwrap();
+        std::fs::write(
+            &conf,
+            text.replace(
+                "gbk_char.bin NULL SYSTEM_FILE",
+                "gbk_char.bin gbk_char.dbin SYSTEM_FILE",
+            ),
+        )
+        .unwrap();
+        let user = scratch.path().join("user");
+        std::fs::create_dir(&user).unwrap();
+        let mut ctx = ContextCore::open(&system, Some(&user), WORD, UserConfLaw::Pinyin).unwrap();
+        let text = PhraseText::from("你");
+        let key = toned_key(SyllableKey::from_text("ni").unwrap().index(), 3).unwrap();
+        let token = ctx
+            .user_store_mut()
+            .unwrap()
+            .add_phrase(&text, &[key], Some(7))
+            .unwrap();
+        if journal_first {
+            let mut payload = 4_u32.to_le_bytes().to_vec();
+            payload.extend_from_slice(&0x0100_0001_u32.to_le_bytes());
+            payload.extend_from_slice(&[4, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+            std::fs::write(
+                user.join("gb_char.dbin"),
+                oxpinyin_data::chunk_format::build_memory_chunk(&payload).unwrap(),
+            )
+            .unwrap();
+        }
+        std::fs::remove_file(system.join("merged.bin")).unwrap();
+        let result = ctx.mask_out(0, 0);
+        if journal_first {
+            assert!(
+                matches!(
+                    result,
+                    MaskOutOutcome::Journal(oxpinyin_user::JournalFault::HeaderToken {
+                        library: 1,
+                        ..
+                    })
+                ),
+                "{result:?}"
+            );
+        } else {
+            assert_eq!(result, MaskOutOutcome::Done(true));
+            assert_eq!(
+                ctx.user_store()
+                    .unwrap()
+                    .lookup()
+                    .unwrap()
+                    .tokens_for_ucs4(&[0x4f60]),
+                [token]
+            );
+        }
+    }
+
     #[test]
     fn unload_then_save_leaves_the_unloaded_librarys_log_alone() {
         let user = tempfile::tempdir().expect("user dir");

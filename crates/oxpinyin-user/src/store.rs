@@ -4985,6 +4985,45 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
 
+    /// 074a2219 phrase_index.h:634 increments the facade before a refused
+    /// sub-index add; phrase_index.cpp:243-248 reload adjusts only sub-index totals.
+    #[test]
+    fn reload_preserves_the_delta_no_subindex_accepted() {
+        use crate::persistence::{SystemLibrary, SystemOriginals, UserConfLaw};
+        let originals = || {
+            SystemOriginals::from(BTreeMap::from([(
+                1,
+                SystemLibrary {
+                    mapped: None,
+                    total: u32::MAX,
+                    range_end: 2,
+                    items: BTreeMap::from([(
+                        1,
+                        oxpinyin_data::chunk_write::ChunkItem {
+                            phrase: vec![0x4f60],
+                            unigram: u32::MAX,
+                            prons: Vec::new(),
+                        },
+                    )]),
+                },
+            )]))
+        };
+        let mut store = UserStore::open_transient(
+            originals(),
+            oxpinyin_data::user_files::SystemVersions::for_this_build(7, 14),
+            UserConfLaw::Pinyin,
+        )
+        .unwrap();
+        assert_eq!(
+            store.add_system_unigram_outcome(0x0100_0001, 7).unwrap(),
+            UnigramAdd::Refused
+        );
+        assert_eq!(store.unigram_total().unwrap(), 7);
+        store.load_system_libraries(originals()).unwrap();
+        assert_eq!(store.system_library_total(1), Some(u32::MAX));
+        assert_eq!(store.unigram_total().unwrap(), 7);
+    }
+
     #[test]
     fn system_import_changes_the_first_match_and_guards_its_prefix() {
         let mut item = oxpinyin_data::chunk_write::ChunkItem {

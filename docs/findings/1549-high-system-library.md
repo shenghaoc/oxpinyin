@@ -15,5 +15,6 @@ on main. This difference predates the stage 2 mapping stack.
 Member B moves the library's mapping into the live sub-index and selects its
 consumers by the configured file type. The same cases cover item and unigram
 lookup, import, training, a second import, save and reopen in both facades;
-pinyin additionally covers phrase export. They MATCH on tkrzw. The named
-`b-system-library-fixed-range.patch` mutation makes both DIFFER.
+pinyin additionally covers phrase export. They MATCH on tkrzw. The module-local test
+`oxpinyin_user::live_system::tests::a_nonstock_loaded_library_is_a_system_library`
+holds configured-library classification and reads outside the stock range.
