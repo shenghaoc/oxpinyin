@@ -18,11 +18,7 @@ use oxpinyin_core::{
 };
 
 use crate::candidate::{Candidate, CandidateKind, CandidateList};
-use crate::config::ConfigSource;
 use crate::error::EngineError;
-
-/// Configuration key for whether initial-only keys are admitted.
-const KEY_INCOMPLETE: &str = "incomplete-pinyin";
 
 /// How many segmentations the decoder keeps.
 ///
@@ -65,6 +61,23 @@ pub enum Selection {
     Completed,
 }
 
+/// What a session is opened with. Other option bits arrive later through
+/// [`Session::set_options`] from the C ABI's raw option word.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SessionSettings {
+    /// Whether initial-only keys are admitted (`PINYIN_INCOMPLETE`).
+    /// On by default.
+    pub incomplete_pinyin: bool,
+}
+
+impl Default for SessionSettings {
+    fn default() -> Self {
+        Self {
+            incomplete_pinyin: true,
+        }
+    }
+}
+
 /// Settings a session reads once, at construction.
 #[derive(Clone, Copy, Debug)]
 struct Settings {
@@ -72,14 +85,11 @@ struct Settings {
 }
 
 impl Settings {
-    fn read(config: &impl ConfigSource) -> Self {
-        // The captured parity profile is `PINYIN_INCOMPLETE |
-        // USE_DIVIDED_TABLE | USE_RESPLIT_TABLE`, and every reference
-        // consumer (ibus-libpinyin `PYLibPinyin.cc:195-196`) ORs the table
-        // bits unconditionally. A source that says nothing gets the parity
-        // behaviour. Other option bits arrive through
-        // [`Session::set_options`] from the C ABI's raw option word.
-        let incomplete = config.get_bool(KEY_INCOMPLETE).unwrap_or(true);
+    fn read(settings: SessionSettings) -> Self {
+        // A session opens under `PINYIN_INCOMPLETE | USE_DIVIDED_TABLE |
+        // USE_RESPLIT_TABLE` unless told otherwise: the table bits are
+        // always on, and incomplete pinyin follows the settings.
+        let incomplete = settings.incomplete_pinyin;
         let options = OptionBits::default()
             .with(oxpinyin_core::PINYIN_INCOMPLETE, incomplete)
             .with(oxpinyin_core::USE_DIVIDED_TABLE, true)

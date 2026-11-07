@@ -21,7 +21,7 @@
 use std::path::Path;
 
 use oxpinyin_core::{Dictionary, LanguageModel, OptionBits, PhraseToken, SyllableKey};
-use oxpinyin_engine::{CandidateKind, EmptyConfigSource};
+use oxpinyin_engine::{CandidateKind, SessionSettings};
 use oxpinyin_runtime::Runtime;
 
 /// `novel_types.h`'s `sentence_start` — the trellis seed.
@@ -180,7 +180,7 @@ fn main() {
     }
 
     println!("=== session rows ===");
-    let mut session = match runtime.new_session(&EmptyConfigSource) {
+    let mut session = match runtime.new_session(SessionSettings::default()) {
         Ok(session) => session,
         Err(error) => {
             eprintln!("session FAILED: {error}");

@@ -10,7 +10,7 @@
 use std::path::PathBuf;
 
 use oxpinyin_core::{Dictionary, LanguageModel, PhraseToken, SyllableKey};
-use oxpinyin_engine::{EmptyConfigSource, KeyOutcome, Selection};
+use oxpinyin_engine::{KeyOutcome, Selection, SessionSettings};
 use oxpinyin_runtime::{OpenError, Runtime, RuntimeSession, TableConfError};
 use oxpinyin_user::{FIRST_USER_TOKEN, PinyinKey, SENTENCE_START};
 
@@ -245,7 +245,9 @@ fn sends_and_syncs() {
 #[test]
 fn opens_the_w3_fixture_and_decodes_nihao() {
     let runtime = Runtime::open(&w3_dir(), None).expect("the fixture dir opens");
-    let mut session = runtime.new_session(&EmptyConfigSource).expect("session");
+    let mut session = runtime
+        .new_session(SessionSettings::default())
+        .expect("session");
     let outcome = runtime
         .session(&mut session)
         .type_pinyin("nihao")
@@ -328,7 +330,9 @@ fn open_reads_no_records_beyond_the_handles() {
 #[test]
 fn selection_advances_and_reset_clears_the_chosen_text() {
     let runtime = Runtime::open(&w3_dir(), None).expect("open");
-    let mut session = runtime.new_session(&EmptyConfigSource).expect("session");
+    let mut session = runtime
+        .new_session(SessionSettings::default())
+        .expect("session");
     runtime
         .session(&mut session)
         .type_pinyin("nihao")
@@ -892,7 +896,7 @@ fn a_store_write_between_guesses_reaches_the_second_guess() {
     let tmp = scratch_dir("oxpinyin-guess-memo-");
     let dir = tmp.path().to_path_buf();
     let mut runtime = Runtime::open(&w3_dir(), Some(&dir)).unwrap();
-    let mut session = runtime.new_session(&EmptyConfigSource).unwrap();
+    let mut session = runtime.new_session(SessionSettings::default()).unwrap();
     runtime.session(&mut session).type_pinyin("nihao").unwrap();
     let mut guess = |runtime: &Runtime| {
         runtime.session(&mut session).guess_sentence().unwrap();

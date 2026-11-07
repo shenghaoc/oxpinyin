@@ -22,7 +22,7 @@
 //!   selection text and token history) from any state whatever.
 
 use libfuzzer_sys::fuzz_target;
-use oxpinyin_engine::{EmptyConfigSource, EngineError, Session};
+use oxpinyin_engine::{EngineError, Session, SessionSettings};
 
 #[path = "../../crates/oxpinyin-core/tests/common/fixture_doubles.rs"]
 mod fixture_doubles;
@@ -37,7 +37,7 @@ type Fixtures = Session<FixtureDictionary, FixtureLanguageModel>;
 fn session() -> Fixtures {
     let dictionary = FixtureDictionary::parse(VOCAB).expect("committed fixture");
     let model = FixtureLanguageModel::parse(VOCAB, BIGRAM).expect("committed fixture");
-    Session::new(&EmptyConfigSource, dictionary, model).expect("the fixtures open")
+    Session::new(SessionSettings::default(), dictionary, model).expect("the fixtures open")
 }
 
 /// Selection and raw input share the same bounded byte coordinate space.

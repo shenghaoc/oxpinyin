@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use oxpinyin_data::{BigramLanguageModel, SystemDbm, SystemDictionary};
-use oxpinyin_engine::{Candidate, CandidateKind, EmptyConfigSource, Session};
+use oxpinyin_engine::{Candidate, CandidateKind, Session, SessionSettings};
 
 #[path = "common/candidate_fixture.rs"]
 mod candidate_fixture;
@@ -71,7 +71,7 @@ fn candidates_match_the_frozen_capture_over_the_corpus() {
     .expect("the bigram opens");
     model.set_lambda_from_table_conf(&dir.join("table.conf"));
     let mut session =
-        Session::new(&EmptyConfigSource, &dictionary, model).expect("the session opens");
+        Session::new(SessionSettings::default(), &dictionary, model).expect("the session opens");
 
     let inputs = corpus_inputs();
     let mut rows = 0_usize;

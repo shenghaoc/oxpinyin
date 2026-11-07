@@ -17,8 +17,8 @@ where
 {
     /// Opens a session over the supplied backends.
     ///
-    /// Configuration and backend handles arrive as data; the session reads
-    /// no environment and discovers no path.
+    /// Settings and backend handles arrive as data; the session reads no
+    /// environment and discovers no path.
     ///
     /// # Errors
     ///
@@ -27,7 +27,7 @@ where
     /// backend fails while the key-cost table is walked. A model carrying
     /// real unigram frequencies never walks, so no such rejection exists
     /// for it and construction currently always succeeds.
-    pub fn new(config: &impl ConfigSource, dictionary: D, model: L) -> Result<Self, EngineError> {
+    pub fn new(settings: SessionSettings, dictionary: D, model: L) -> Result<Self, EngineError> {
         // Only the fallback scorer reads the table (see `key_costs`), and
         // it is unreachable under real frequencies. The fallback keeps the
         // SPEC's construction-time walk verbatim: costs complete before any
@@ -39,7 +39,7 @@ where
             key_cost_table(&dictionary, &model)?
         };
         Ok(Self::init(
-            Settings::read(config),
+            Settings::read(settings),
             dictionary,
             model,
             key_costs,
@@ -66,13 +66,13 @@ where
     /// infallible; the `Result` return keeps this constructor's shape
     /// aligned with [`Self::new`], whose fallback walk can fail.
     pub fn new_with_key_costs(
-        config: &impl ConfigSource,
+        settings: SessionSettings,
         dictionary: D,
         model: L,
         key_costs: Vec<Cost>,
     ) -> Result<Self, EngineError> {
         Ok(Self::init(
-            Settings::read(config),
+            Settings::read(settings),
             dictionary,
             model,
             key_costs,

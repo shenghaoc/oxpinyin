@@ -12,7 +12,7 @@ use std::path::Path;
 
 use oxpinyin_data::lm::BigramTables;
 use oxpinyin_data::{BigramLanguageModel, SystemDbm, SystemDictionary};
-use oxpinyin_engine::{Candidate, CandidateKind, EmptyConfigSource, Session};
+use oxpinyin_engine::{Candidate, CandidateKind, Session, SessionSettings};
 
 use crate::sentence_fixture::{SENTENCE_FIXTURE, load_fixture, load_residuals};
 
@@ -41,9 +41,13 @@ impl PortSession {
         let mut model = BigramTables::open(&dir.join(SystemDbm::Bigram.file_name()))
             .map_err(|error| format!("cannot open BigramLanguageModel: {error}"))?;
         model.set_lambda_from_table_conf(&dir.join("table.conf"));
-        let state = Session::new(&EmptyConfigSource, &dict, model.read_all(dict.libraries()))
-            .map_err(|error| format!("cannot create Session: {error}"))?
-            .into_state();
+        let state = Session::new(
+            SessionSettings::default(),
+            &dict,
+            model.read_all(dict.libraries()),
+        )
+        .map_err(|error| format!("cannot create Session: {error}"))?
+        .into_state();
         Ok(Self { dict, model, state })
     }
 

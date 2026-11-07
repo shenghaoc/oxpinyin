@@ -103,7 +103,7 @@ state to the instance side:
 
 | Pin | oxpinyin |
 | --- | --- |
-| `pinyin_context_t`: options, parsers, dictionaries, bigrams, user state, save flag | `ContextCore` (`oxpinyin-facade/src/context.rs`): `Config`, the assembled `Runtime` (tables and model), the `UserStore` (whose shared dirty flag is `m_modified`), `LiveOptions`; no parser objects — parsing runs per call in `oxpinyin-core` |
+| `pinyin_context_t`: options, parsers, dictionaries, bigrams, user state, save flag | `ContextCore` (`oxpinyin-facade/src/context.rs`): the `SessionSettings` instances open with, the assembled `Runtime` (tables and model), the `UserStore` (whose shared dirty flag is `m_modified`), `LiveOptions`; no parser objects — parsing runs per call in `oxpinyin-core` |
 | `pinyin_context_t`: the two decoders and their scratch | per instance: the `Session`'s lookup state and `Scratch` (`oxpinyin-engine/src/session/mod.rs`) |
 | `pinyin_instance_t`: matrix, constraints, n-best, phrase result, candidates, sort option | `InstanceCore` (`oxpinyin-facade/src/instance.rs`) holding a `RuntimeSession`, whose `Session` owns the input and parsed matrix, the `SelectionRecord`, the `ConstraintStore`, the sentence (n-best) state, the `CandidateList` and the sort word; the phrase result sits on `InstanceCore` |
 | back pointer from instance to context | cloned handles to the context's dictionary, model and user store; the raw context pointer is kept only for `pinyin_get_context` |

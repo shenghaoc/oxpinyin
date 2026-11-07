@@ -14,7 +14,7 @@
 //! map onto `set_options`/`set_incomplete_pinyin`/`set_scoring_config`.
 
 use oxpinyin_core::OptionBits;
-use oxpinyin_engine::{EmptyConfigSource, KeyOutcome, Selection, Session};
+use oxpinyin_engine::{KeyOutcome, Selection, Session, SessionSettings};
 
 #[path = "../../oxpinyin-core/tests/common/fixture_doubles.rs"]
 mod fixture_doubles;
@@ -29,7 +29,7 @@ type TestSession = Session<FixtureDictionary, FixtureLanguageModel>;
 fn session() -> TestSession {
     let dictionary = FixtureDictionary::parse(VOCAB).expect("committed fixture");
     let model = FixtureLanguageModel::parse(VOCAB, BIGRAM).expect("committed fixtures");
-    Session::new(&EmptyConfigSource, dictionary, model).expect("session builds")
+    Session::new(SessionSettings::default(), dictionary, model).expect("session builds")
 }
 
 // ── libchewing test-reset.c ─────────────────────────────────────────

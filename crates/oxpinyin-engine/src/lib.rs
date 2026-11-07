@@ -1,6 +1,6 @@
 //! Internal session state and decoding operations used by the C facades.
 //!
-//! Configuration and backend handles arrive as data. The engine has no
+//! Session settings and backend handles arrive as data. The engine has no
 //! frontend key dispatch, display model or platform path discovery.
 
 #![forbid(unsafe_code)]
@@ -18,7 +18,6 @@
 
 mod candidate;
 mod char_offset;
-mod config;
 mod constraint;
 mod cursor;
 mod error;
@@ -37,7 +36,6 @@ pub use char_offset::{
     MatrixColumns, character_offset_over_keys, character_offset_with_walk_over_keys,
     key_pronounced_by, matrix_columns, remember_walk,
 };
-pub use config::{Config, ConfigSource, ConfigValue, EmptyConfigSource, UPSTREAM_DEFAULT_COUNT};
 pub use cursor::{
     KeySpans, MatrixKey, left_word_offset, left_word_offset_over_spans, lookup_offset_for_cursor,
     lookup_offset_over_spans, right_word_offset, right_word_offset_over_spans,
@@ -45,7 +43,7 @@ pub use cursor::{
 pub use error::{EngineError, TrainingSpanFault};
 pub use nbest::NbestShape;
 pub use session::{
-    CandidateRanking, KeyOutcome, Selection, Session, SessionState, TrainingPlan,
+    CandidateRanking, KeyOutcome, Selection, Session, SessionSettings, SessionState, TrainingPlan,
     amplified_frequency, check_lookup_offset_range, normalize_lookup_offset, parse_time_keys,
 };
 pub use storage::StoragePaths;

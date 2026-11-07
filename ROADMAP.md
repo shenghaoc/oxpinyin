@@ -71,7 +71,7 @@ landed 2026-09-09 as the backend's native user files (maintainer ruling
 |---|---|
 | Pin + recipe | `docs/testing/oracle-environment.md` (recorded) |
 | ABI surface | `docs/findings/abi-reference.md` (living reference: the full 79/79 export set) |
-| Upstream schema | `docs/findings/upstream-schema.md` (recorded) |
+| Upstream schema | `docs/findings/upstream-schema.md` (recorded; historical, read by no code) |
 | Parser / path-set / scoring SPECs | frozen 2026-08-09: `docs/findings/parser-spec.md`, `parser-path-set.md`, `scoring-spec.md` |
 | Data load route (D3) | decided: oxpinyin-data loads the backend's native tables (`docs/architecture.md`); native production of those tables is W15 |
 | Capture harness + F-A fixtures | built: `tools/capture/`, `docs/testing/capture-fixtures.md`, `fixtures/foundation/f-a.txt`, `f-c.txt`; F-E register: `docs/findings/robustness-evidence.md` (14 cases) |

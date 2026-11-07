@@ -154,8 +154,7 @@ The allocator-pairing check in `ci.yml` gates the release function of every poin
 
 ## Configuration
 
-Keep `Config::default()` equal to the captured [upstream defaults](findings/upstream-schema.md).
-The C adapters retain typed configuration and apply live option words through the session's setters.
+The C adapters retain the typed session settings and apply live option words through the session's setters.
 Neither libpinyin nor the engine has a settings store.
 The engine has no configuration-file parser or layer merger.
 Engine weights and language-model order are never user configuration.
