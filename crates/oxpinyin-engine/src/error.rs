@@ -92,9 +92,8 @@ pub enum EngineError {
     /// aborts on (`assert(zero_key != key)`, `pinyin.cpp:2175` at the pin)
     /// and post-`95e3af7` libpinyin answers with a `false` every caller
     /// discards (the function then completes with the computed value).
-    /// The engine answers with an error instead, so the C surface returns
-    /// `false` — the no-abort policy, diverging from both upstream arms
-    /// (`docs/findings/upstream-divergences.md`).
+    /// The engine answers with an error; the left and right moves abort on
+    /// it in the C adapters (register row 14).
     ZeroKeyOffsetCheck {
         /// The examined offset whose preceding column holds the lone zero key.
         offset: usize,
@@ -103,7 +102,7 @@ pub enum EngineError {
     /// on: an empty column at a stepped-to position (`assert(size > 0)`,
     /// `pinyin.cpp:3152` at the pin) or a zero key sharing a column with
     /// real keys (`assert(1 == size)`, `pinyin.cpp:3166`). Answered as an
-    /// error instead of the upstream abort (the no-abort policy).
+    /// error, on which the C adapters abort (register row 19).
     MatrixColumnAssert {
         /// The column position the walk stepped to.
         offset: usize,
@@ -201,8 +200,8 @@ pub enum EngineError {
     /// over either table, reaches the key
     /// through its `DB_SET`/`DB_NEXT` walk and its `switch`'s
     /// `default: abort()` dies (`storage/chewing_large_table2_bdb.cpp:282`
-    /// at the pin); the engine answers an error instead (the no-abort
-    /// policy).
+    /// at the pin); the engine answers an error, on which the C adapters
+    /// abort (register row 84).
     OverlongUserIndexKey {
         /// The prefix path length the walk was on when it reached the key.
         syllables: usize,

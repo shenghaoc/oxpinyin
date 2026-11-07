@@ -34,9 +34,9 @@ Maintainer ruling, 2026-10-28 UTC:
 3. `scripts2/` Python build generators are out of scope: they are build
    steps, not installed tools. The utility list below includes the pin's
    `noinst_PROGRAMS` as well as `bin_PROGRAMS`, per the tool ruling.
-4. Same call is not same defect. The existing class (b)/(c) records for
-   undefined reads and aborts stand, including `1297-punct-words` and
-   assertion refusals. Policy row 39 (`LC_NUMERIC`) stands. Row 109's
+4. Same call is not same defect. The existing class (b) records for
+   undefined reads stand, including `1297-punct-words`; the pin's asserts
+   and aborts are reproduced as aborts. Policy row 39 (`LC_NUMERIC`) stands. Row 109's
    mapping call is active; its release follows the later external API misuse
    ruling below.
 5. **Amended 2026-11-02 UTC:** library bindings and permitted semantic
@@ -60,7 +60,7 @@ Maintainer ruling, 2026-10-28 UTC:
 
 The ruling replaces #1304's language-artefact treatment **for external
 I/O**. It does not change the remaining internal language-artefact
-policy, class (a) maths, class (b)/(c), or Rust-interface freedom. C API
+policy, class (a) maths, class (b), or Rust-interface freedom. C API
 arguments and marshalling stay in the C adapters. DBM records and the
 backend calls that obtain and persist them stay in `oxpinyin-store`;
 decoding their contents remains in the owning data/domain layer.
@@ -553,7 +553,7 @@ associated tool entry points.
 | Output and exact pin call | Current oxpinyin item and candidate | Verdict and first difference or limit |
 | --- | --- | --- |
 | `user.conf`: `UserTableInfo::save` calls `fopen(filename, "w")`, `fprintf` with `"binary format version:%d\n"`, `"model data version:%d\n"`, `"database format:%s\n"`, `"open counter:%d\n"`, then `fclose`. It checks the open, not subsequent write/close results. `table_info.cpp:377-395`. | `oxpinyin-user/src/persistence.rs` `write_marker`; `oxpinyin-data/src/user_files.rs` `UserTableInfo::to_text`; `oxpinyin-facade/src/context.rs` `ContextCore::save_user_with_layout_faults`. Rust `std::fs::write`. **Stage 1:** `config::save_user_table_info` makes the pin's `fopen`/`fprintf`/`fclose` calls and checks only the open. | **NOT EQUIVALENT.** If `user.conf` points at `/dev/full` after initialization, opening can succeed while the subsequent output fails: the pin ignores that failure, while Rust reports the `std::fs::write` failure and emits the marker-write diagnostic. Use the exact sequence and check only the pin's results. |
-| Chunk creation/truncation/save: `MemoryChunk::save` calls `open(filename, O_CREAT\|O_WRONLY\|O_TRUNC\|O_BINARY, 0644)`, `write(fd, &length, sizeof(guint32))`, `write(fd, &checksum, sizeof(guint32))`, one `write(fd, begin(), size())`, `g_fsync(fd)`, and `close(fd)`. A short/failed payload closes and returns before sync. `memory_chunk.h:536-557`. | `oxpinyin-input/src/chunk.rs` `save`; `oxpinyin-data/src/chunk_format.rs` `build_memory_chunk` supplies the bytes. | **DONE (stage 3, 2026-11-01 UTC).** `chunk::save` makes the pin's `libc::open`, one `write` per header word, one payload `write`, `libc::fsync` and `libc::close`; the header's assert is the existing class-(c) refusal and a short payload is the pin's soft `false`. Cases `abort-save-chunk-header-*`, `abort-zhuyin-save-chunk-header-*`: POLICY-ACCEPTED on tkrzw. Windows uses libc::wopen with the same flags and mode, one CRT write per header and payload, libc::commit, then close. Rust paths reach encode_wide directly. |
+| Chunk creation/truncation/save: `MemoryChunk::save` calls `open(filename, O_CREAT\|O_WRONLY\|O_TRUNC\|O_BINARY, 0644)`, `write(fd, &length, sizeof(guint32))`, `write(fd, &checksum, sizeof(guint32))`, one `write(fd, begin(), size())`, `g_fsync(fd)`, and `close(fd)`. A short/failed payload closes and returns before sync. `memory_chunk.h:536-557`. | `oxpinyin-input/src/chunk.rs` `save`; `oxpinyin-data/src/chunk_format.rs` `build_memory_chunk` supplies the bytes. | **DONE (stage 3, 2026-11-01 UTC).** `chunk::save` makes the pin's `libc::open`, one `write` per header word, one payload `write`, `libc::fsync` and `libc::close`; the header's assert is reproduced as an abort (row 77) and a short payload is the pin's soft `false`. Cases `abort-save-chunk-header-*`, `abort-zhuyin-save-chunk-header-*`: POLICY-ACCEPTED on tkrzw. Windows uses libc::wopen with the same flags and mode, one CRT write per header and payload, libc::commit, then close. Rust paths reach encode_wide directly. |
 | Chunk sync: `g_fsync(fd)` at `memory_chunk.h:555`. Ordinary Unix GLib headers macro-expand it to `fsync`; Windows GLib's function calls `_commit`. [GLib header](https://github.com/GNOME/glib/blob/2.84.4/glib/gstdio.h#L60-L84), [wrapper](https://github.com/GNOME/glib/blob/2.84.4/glib/gstdio.c#L1666-L1702). | `oxpinyin-input/src/chunk.rs` `save` calls `libc::fsync` once and ignores its answer. | **DONE on Unix (stage 3, 2026-11-01 UTC).** The ordinary Unix macro is `fsync`, with no Rust retry and no macOS `F_FULLFSYNC`. Windows calls libc::commit once and ignores its result. |
 | Mapping release: `MemoryChunk::freemem` calls `munmap(m_data_begin - header, header + capacity())`; `memory_chunk.h:72-78`. A failed checksum instead calls `munmap(data - header, file_size)` at `:516`. | The input `Mapping` owns the whole-file writable private mapping; `PendingMapping` drops a rejected mapping before its descriptor. | **IMPLEMENTED:** memmap2 releases the whole mapping; the wrapped-size residual is POLICY-ACCEPTED under the [mapping lifetime ruling](#mapping-lifetime-ruling). |
 | Profile cleanup: `_clean_user_files` and `check_format` call plain `unlink(filename)` for selected user files and fixed DBM names; `pinyin.cpp:150-215`, `zhuyin.cpp:104-159`. | `oxpinyin-user/src/persistence.rs` `clean_user_files` calls `oxpinyin-input` `path::unlink` (`libc::unlink`). | **DONE (stage 3, 2026-11-01 UTC).** The order is the pin's: the default rows' user files by sub-index, libpinyin's addon rows (`pinyin.cpp:199-200`), then `USER_PINYIN_INDEX`, `USER_PHRASE_INDEX` and `USER_BIGRAM`; libzhuyin stops after the default rows. Every result is ignored. Cases `table-conf-addon-cleanup{,-zhuyin}`, `table-conf-user-library-named-user-conf{,-zhuyin}`: MATCH on tkrzw. |
@@ -649,8 +649,8 @@ as they were until the relevant implementation stage changes them.
 | `926-tool-tokenizers` | Revert #1297's external-scanner amendments and the datagen strict-input decision for the corresponding pin utilities; use their `fgets`, `g_ascii_strtoull`, token/locale calls. `k_mixture_model_to_interpolation`'s taglib and `atoi`/`atol` calls are the pin's at stage 5 (2026-10-31 UTC). |
 | [interpolation2-grammar](interpolation2-grammar.md) | Revert the bounded `g_unichar_isgraph` approximation and omitted GLib warnings on matching pin-tool inputs; use GLib. The standalone decoder reader has no matching pin runtime `interpolation2.text` reader established here. `oxpinyin-utils` `taglib` uses GLib's calls (2026-10-31 UTC); the datagen reader is not yet moved. |
 | [Policy row 109](compatibility-policy.md) | Whole-file writable private mapping is active; memmap2 releases it in full under the mapping-lifetime ruling. |
-| [1297-punct-words](1297-punct-words.md) | **Not reverted as an unsafe defect:** the class (b)/(c) treatment for the undefined surrounding read stands. DBM record access stays in store; no out-of-bounds native read is introduced. |
-| Policy row 39 and assertion records | **Stand:** reproduce the `LC_NUMERIC` side effect and preserve the established class (b)/(c) refusal and warning behavior. |
+| [1297-punct-words](1297-punct-words.md) | **Not reverted as an unsafe defect:** the class (b) treatment for the undefined surrounding read stands. DBM record access stays in store; no out-of-bounds native read is introduced. |
+| Policy row 39 and assertion records | **Stand:** reproduce the `LC_NUMERIC` side effect and preserve the established class (b) refusal and warning behavior and the reproduced aborts. |
 
 ## Platform gaps
 
@@ -720,7 +720,7 @@ specifications in advance of the stage that owns them.
    UTC, with the rulings above). Create the minimal boundary
    and C shim; move system/user config scans, marker writing and locale
    calls together, including the shared lambda scanner. Gate both facade
-   paths and the touched crates; preserve class (b)/(c) handling. Since
+   paths and the touched crates; preserve class (b) handling and the reproduced aborts. Since
    2026-10-31 UTC `config.c` is gone: `oxpinyin-input` `native.rs` makes
    the same `setlocale`, `fopen`, `fscanf`, `feof`, `atoi`, `fprintf`
    and `fclose` calls through the `libc` crate, with the same format
@@ -731,7 +731,7 @@ specifications in advance of the stage that owns them.
    ruling above. User chunk and journal loads use the input boundary's single
    payload read. The system chunk fallback is not compiled in the pin's build
    (`LIBPINYIN_USE_MMAP`, see the chunk row) and is not connected. Existing
-   class (b)/(c) records stand; the wrapped length rule is settled below.
+   class (b) records stand; the wrapped length rule is settled below.
 3. **Save and rename** (implemented 2026-11-01 UTC). Move pin path
    building, unlink, staging and rename calls while preserving pinyin's
    two-pass and zhuyin's interleaved order. Gate failure ordering and both
@@ -746,7 +746,7 @@ specifications in advance of the stage that owns them.
 4. **Diagnostics** (implemented 2026-10-30 UTC, #1437). Move the
    library's raw formatted writes and GLib diagnostics to the correct
    native calls; gate exact bytes, channels, ordering and existing
-   class-(b)/(c) warnings. oxpinyin's own class-(c) warnings stay the
+   class-(b) warnings. oxpinyin's own warnings stay the
    facades' `g_log` in the pin's domain; the pin has no call there.
    Since 2026-10-31 UTC `diagnostic.c` is gone: each line is
    `libc::fprintf` on the C library's own `stderr` object.

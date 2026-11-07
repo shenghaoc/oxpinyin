@@ -11,11 +11,12 @@
 //! (`src/storage/chewing_key.cpp:34-134`): `content_table` lookup by
 //! table index, tone appended per renderer (digits for pinyin / luoma /
 //! secondary zhuyin, tone marks for zhuyin, bare for shengmu / yunmu).
-//! Upstream asserts tone `< CHEWING_NUMBER_OF_TONES` and indexes
-//! `chewing_key_table` unguarded; hand-crafted bit patterns that violate
-//! those preconditions render gracefully here — zero table index —
-//! instead of aborting (the no-abort policy,
-//! `docs/findings/upstream-divergences.md`).
+//! Upstream asserts the initial, middle and final against the table
+//! dimensions (`get_table_index`, `chewing_key.cpp:28-32`) and the tone
+//! `< CHEWING_NUMBER_OF_TONES` in the renderers. Hand-crafted bit patterns
+//! that violate those preconditions render gracefully here — zero table
+//! index — instead of aborting; the C adapters abort on such keys before
+//! they render (register row 120).
 
 use crate::chewing_key_data::{
     CHEWING_KEY_TABLE, CONTENT_KEYS, NUM_FINALS, NUM_INITIALS, NUM_MIDDLES, content_strings,
@@ -90,7 +91,8 @@ impl ChewingKey {
     /// and for every combination the table marks invalid (`-1`).
     ///
     /// Upstream asserts the elements against the table dimensions; a
-    /// hand-crafted out-of-dims key answers 0 here instead (no-abort).
+    /// hand-crafted out-of-dims key answers 0 here instead, and the C
+    /// adapters abort on it (register row 120).
     #[must_use]
     pub fn table_index(self) -> usize {
         let initial = usize::from(self.initial);
@@ -281,8 +283,7 @@ const fn digit_text(base: &'static str, tone: u8) -> KeyText {
 /// The tone digit appended by the pinyin-family renderers (upstream's
 /// `%d`); tones above 5 are unreachable from the packed form. A
 /// hand-crafted key with a two-digit tone renders without a suffix
-/// rather than panicking on the `b'0' + tone` overflow — the module's
-/// no-abort policy for out-of-range elements.
+/// rather than panicking on the `b'0' + tone` overflow.
 const fn digit(tone: u8) -> Option<char> {
     match tone {
         0..=9 => Some((b'0' + tone) as char),

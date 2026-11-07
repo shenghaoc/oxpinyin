@@ -112,8 +112,11 @@ impl FullPinyinParser {
     /// [`SyllableKey::from_option_text`] is the option gate the batch
     /// path's edges use.
     ///
-    /// [`None`] is the upstream `false`, including the assert shapes the
-    /// no-abort policy renders as refusal (apostrophes, empty input).
+    /// [`None`] is the upstream `false`, and also the apostrophe input, whose
+    /// assert the C adapters turn into an abort. Empty input under
+    /// `USE_TONE` is not an assert: the pin reads one byte before the
+    /// buffer (class (b)) and answers `false`, as this does, and the C
+    /// adapters return `false` for it too.
     #[must_use]
     pub fn parse_one_key(&self, options: u32, input: &[u8]) -> Option<ChewingKey> {
         if input.contains(&b'\'') {

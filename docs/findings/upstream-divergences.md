@@ -9,11 +9,7 @@ is complete, these notes are collected to report back to libpinyin.
 A new language/runtime-quirk entry also needs the full record from
 `docs/findings/language-runtime-discrepancy-template.md`; this register
 keeps the short entry and links the record. Class (a)–(b) entries keep
-their existing shape. Class (c) was retired on 2026-10-31 UTC
-(`compatibility-policy.md`, "Amendment — class (c) retired; pin aborts
-reproduced"): its entries stay as history, and each former (c) row
-registers its pin-behaviour record by name below when its stacked
-change lands. No existing entry is rewritten by a later policy
+their existing shape. No existing entry is rewritten by a later policy
 change. An entry whose own issue reproduces the behaviour is closed in
 place with a dated status; the historical finding stays as the record of
 what used to differ.
@@ -297,108 +293,6 @@ what used to differ.
   split in the aux renderer, not parser consumption) — carrying the
   digit here is exactly what keeps that over-read closed on HANYU.
 
-### Tone digit on an initial-only key aborts the pin's phrase search
-
-- **Status (2026-10-04, lane C, PR 12e):** class (c), **both halves met**: the pin's sites are `storage/pinyin_phrase3.h:152` and `pinyin.cpp:2769`, both **`assert`**; oxpinyin answers `false` with exactly one `libpinyin` warning from `pinyin_get_pinyin_is_incomplete`, `pinyin_guess_candidates`, `pinyin_guess_sentence` and `pinyin_guess_sentence_with_prefix` (`compatibility-policy.md` row 4). It returned candidates (and `true`) before.
-
-- **Upstream source cite:** `contains_incomplete_pinyin`
-  (`src/storage/pinyin_phrase3.h:146-156`) asserts
-  `CHEWING_ZERO_TONE == key.m_tone` for any zero-middle/zero-final
-  key; every `chewing_large_table2` search path dispatches through it.
-- **Mechanism:** the tone scan's only precondition is the option-gated
-  index hit, so the *parser* produces an initial-only key with a tone
-  (`n4` under `PINYIN_INCOMPLETE | USE_TONE`) — and the first phrase
-  search containing that key trips the assert. The parser permits
-  exactly what the search asserts against.
-- **What oxpinyin does instead:** parses the toned initial-only key
-  as the pin does, then refuses every lookup over a matrix that holds
-  one — `false` and one warning, nothing searched (constitution 4:
-  nothing panics).
-- **Externally observable:** yes — the pinned oracle SIGABRTs on `n4`
-  under `USE_TONE | PINYIN_INCOMPLETE` as soon as candidates are
-  guessed; oxpinyin answers `false` with the warning. The abort is held
-  by the `abort-*-toned-initial*` cases of `contract-diff.py`; the
-  fullpin-diff tone sweep keeps its exclusion. Report-back candidate
-  for libpinyin.
-
-### Scheme setters abort or half-mutate on the no-op slots
-
-- **Status (reconciled 2026-10-11 UTC, #549):** class (c), **both halves met** for rows 5a, 5c and 5d. At `074a2219`, double 30 reaches `storage/pinyin_parser2.cpp:611`, zhuyin 7 `storage/zhuyin_parser2.cpp:295`, zhuyin out-of-enum `pinyin.cpp:1189` or `zhuyin.cpp:736`, and full-pinyin out-of-enum `storage/pinyin_parser2.cpp:398`; all are **`abort()`**. `645bf591` adds the pinyin warnings, and `8b455a44` the zhuyin warnings: each refuses with `false`, preserves the scheme and emits exactly one GLib warning in its facade's domain. The `abort-set-*-scheme-*` and `abort-zhuyin-*-scheme-*` cases of `contract-diff.py` hold these obligations. Row 5b's defined half-mutation stays closed by reproduction.
-
-The #109 contract-lock (all rows verified at `0c5e80e1`; row 5b
-reverted 2026-09-15; remaining rows pinned by
-`crates/oxpinyin-capi/tests/abi/contract.rs`):
-
-- **double CUSTOMIZED (30)** — upstream aborts mid-call inside
-  `DoublePinyinParser2::set_scheme` (`pinyin_parser2.cpp:611-612`)
-  after the unconditional fallback clear already ran. The API wrapper
-  `pinyin_set_double_pinyin_scheme` (`pinyin.cpp:1154-1159`) never
-  returns.
-- **double out-of-enum (negatives, 0, 7–29, 31+)** — the parser clears
-  `m_fallback_table` first (`pinyin_parser2.cpp:580`), returns `false`;
-  the wrapper ignores the result and answers **`true`**
-  (`pinyin.cpp:1155–1159`). A live fallback-bearing scheme
-  (ZRM/PYJJ/XHE) silently loses its fallback while the caller is told
-  the call succeeded: a half-mutation. **Reproduced 2026-09-15:** the
-  CAPI returns `true` and clears the fallback, matching the pin; the
-  shengmu/yunmu tables stay intact.
-- **zhuyin STANDARD_DVORAK (7)** — the API routes 7 into
-  `ZhuyinSimpleParser2::set_scheme`, whose dvorak arm assigns both
-  tables and falls through into `default: abort()`
-  (`zhuyin_parser2.cpp:291-295`). **Still present at libpinyin tip
-  `95e3af7`** (report-back candidate; the keyboard is dormant until
-  upstream fixes the fallthrough — then it becomes a table-addition
-  port, not a contract slot). The API wrapper also `delete`s the old
-  parser before the switch (`pinyin.cpp:1163-1164`), so the context
-  would be broken even if the abort were caught.
-- **zhuyin out-of-enum** — aborts at the API layer's `default:`
-  (`pinyin.cpp:1189` at `074a2219`); **full-pinyin out-of-enum** aborts inside
-  `FullPinyinParser2::set_scheme` (`pinyin_parser2.cpp:398`) while the
-  wrapper (`pinyin.cpp:1148-1153`) answers `true` unconditionally.
-
-**Externally observable:** only through crash or lied-about state —
-for the remaining abort rows (double 30, zhuyin 7 and out-of-enum,
-full-pinyin out-of-enum) oxpinyin's `false` + unchanged is the
-non-aborting contract the constitution requires; the double
-out-of-enum half-mutation (row 5b) now reproduces the pin's lied
-`true` + cleared fallback. No oracle differential is possible for
-the abort rows (the pin-built `.so` SIGABRTs); the half-mutation is
-observable through a following parse that would have used the
-fallback (the contract test's `aa` probe after the out-of-enum call).
-
-(Amended 2026-09-16: the `run-scheme-diff.sh` oracle differential with
-the out-of-enum values (99, −1 under ZRM, in `scheme-diff.c`) ran in a
-debian:testing container, both sides on tkrzw, the capi on a P6-native
-data directory: the probe rows are byte-identical on both sides — the
-setter answers `true`, baseline `aa` consumed=2/n=8, after each
-out-of-enum value consumed=0/guess false/n=0, restored ZRM
-consumed=2/n=8 — and the whole-log diff is IDENTICAL, exit 0, no SKIP
-line.)
-
-### Constraint-aware train without the consistency assert
-
-- **Status (reconciled 2026-10-11 UTC, #549):** class (c), **both halves met** (row 6). `lookup/phonetic_lookup.h:868` at `074a2219` is **`assert(token == constraint->m_token)`**. `74012938` adds the stale-forcing check before observations; both facades return `false` with exactly one warning (`libpinyin` or `libzhuyin`). `abort-train-stale-forcing` and `abort-zhuyin-train-stale-forcing` hold the refusal; `train-forcing-after-lookup` is the successful control.
-
-- **Upstream source cite:** `src/lookup/phonetic_lookup.h:841-935`
-  (`train_result3`), `src/pinyin.cpp:2669-2689` (`pinyin_train`).
-- **Mechanism:** the train walk asserts the result's token at every
-  `CONSTRAINT_ONESTEP` position equals the forced token — a stale result
-  walked against a fresh store aborts. With an empty store it trains
-  nothing at all, results or not.
-- **What oxpinyin does instead:** `Session::train_nbest` checks the
-  requested decoded row's forced tokens before observing user data
-  (`crates/oxpinyin-engine/src/session/selection.rs`, `train_spans`).
-  A mismatch returns `EngineError::StaleTrainingConstraint`;
-  `InstanceCore::train` leaves the context unmodified and both C facades
-  return `false` with one warning. A constraint-free decoded row trains
-  nothing, matching the pin's OneStep/train-next gate (row 33); the old
-  selection-history fallback no longer describes this case.
-- **Externally observable:** yes — forcing a different NORMAL token
-  after decoding, without re-guessing, aborts the pin at `:868` and now
-  returns `false` with one warning on oxpinyin. Re-guessing before the
-  train is the successful control. Before `74012938`, the subject
-  trained the stale row and met neither class-(c) obligation.
-
 ### validate_constraint's drop test is an integer zero test — CLOSED (academic: equivalent on model20)
 
 - **Upstream source cite:**
@@ -577,26 +471,6 @@ line.)
   composition drives exactly one such single-phrase row on the mini
   tables, and none of the frozen pin surfaces constructs one on real
   tables.
-
-### pinyin_get_sentence asserts a non-empty past-the-rows index
-
-- **Status (reconciled 2026-10-11 UTC, #549):** class (c), **both halves met** (row 10). `pinyin.cpp:1474` at `074a2219` is **`assert(index < results.size())`**. Since `ac701202`, `pinyin_get_sentence` in `crates/oxpinyin-capi/src/sentence.rs` refuses a past-the-rows index over nonempty results with `false`, an untouched out-parameter and exactly one `libpinyin` warning; `abort-get-sentence-past-rows` holds it. Empty results retain the pin's quiet `false` (`:1470-1471`).
-
-- **Upstream source cite:** `src/pinyin.cpp:1463-1482`
-  (`pinyin_get_sentence`).
-- **Mechanism:** the API is inconsistent with itself on the same caller
-  error — an empty result set answers `false` (defined), but a
-  non-empty one asserts `index < results.size()`: asking one row past
-  the set SIGABRTs. Two behaviors for one misuse, one of them a crash.
-- **What oxpinyin does instead:** `false` past the row count, including
-  on a non-empty set (the W14 decoded-or-false gate) — the empty-set
-  branch's own behavior, applied uniformly.
-- **Externally observable:** yes — upstream SIGABRTs on the call;
-  oxpinyin returns false. Found while teaching the live-typing driver
-  the caller contract: the frontend renders exactly the NBEST rows the
-  candidate list carries, so a proved-index-bound question never trips
-  it on either engine. Report-back batch: file with the aux over-read
-  as an internal-inconsistency pair, not a bare assert.
 
 ### One bigram-prediction row differs on the pin's own data (trellis residual)
 
@@ -894,8 +768,7 @@ Text, candidate type and counts cannot.
   Where the pin's `_check_offset` aborts (one past an apostrophe run), oxpinyin
   still normalizes or refuses via
   `CapiInstance::validate_lookup_offset`
-  (`Session::normalized_lookup_offset` → `EngineError::LookupOffsetPastSeparator`)
-  — the no-abort policy already recorded in `docs/testing/oracle-bisect-differential-abort.md`.
+  (`Session::normalized_lookup_offset` → `EngineError::LookupOffsetPastSeparator`).
 - **Externally observable:** not in practice — no known frontend passes a
   mid-syllable offset to `pinyin_guess_candidates`; fcitx5-oxpinyin and
   ibus-libpinyin both snap the cursor with `pinyin_get_pinyin_offset` first,
@@ -904,101 +777,13 @@ Text, candidate type and counts cannot.
   both engines. This closes the residue the 2026-08-27 amendment of
   `uncovered-surface-differentials` recorded as not chased.
 
-### The cursor helpers' `_check_offset` aborts answer `false` — not the pin's abort, not post-`95e3af7` upstream's discarded-`false` true
+### Apostrophe-only input: the pin consumes every byte, and so does the engine — CLOSED
 
-- **Status (reconciled 2026-10-11 UTC, #549):** class (c), **both halves met** (row 14). At `074a2219` the aborts are the **`assert`**-wrapped calls `pinyin.cpp:3035`, `:3057`, `:3067`, `:3092`; `_check_offset` itself (`:2163-2182`) returns `false`. Since `ac701202`, both word-move helpers in `crates/oxpinyin-capi/src/cursor.rs` refuse those errors with `false` and exactly one `libpinyin` warning. The separator and `nihao` offset-5 cases in `contract-diff.py` hold the logging path. `60bc0d3e` corrected the runner comments to the current pin's call sites. The historical narrative below uses the older `0c5e80e1` pin and is superseded by this status and the dated pin-bump amendment.
-
-- **Upstream source cite:** `src/pinyin.cpp:2163-2180` (`_check_offset`,
-  the assert at `:2175`) called on the COMPUTED result of the word moves
-  — `pinyin_get_left_pinyin_offset`'s second check (`pinyin.cpp:3055`)
-  and `pinyin_get_right_pinyin_offset`'s (`pinyin.cpp:3090`) — and on
-  the normalized cursor offset of `pinyin_get_pinyin_offset`
-  (`pinyin.cpp:3023`), at the pin.
-- **Mechanism:** `_check_offset` asserts that the column before the
-  examined offset is not a lone zero key. The word moves run it twice —
-  on the caller offset and on their own computed result — and the second
-  call is what fires on tail cursors: for `nihaoshijie` under the parity
-  word `0x18a`, `get_right_pinyin_offset(11)` passes the first check
-  (column 10 holds the lone non-zero `e`), reads the trailing zero key
-  at column 11 (the pin's reserved extra slot), and the second check at
-  the zero's raw end 12 sees column 11's lone zero key and aborts.
-  Measured first-hand on the rebuilt pin with a fork-per-probe driver:
-  the ONLY abort of 48 probes over `nihaoshijie` is `get_right(11)`;
-  `get_left(11)` genuinely answers 10 (its walk halts at column 10).
-  The same shape fires at every offset one past a separator zero —
-  `get_left(3)`/`get_right(3)` on `ni'hao` — and at every offset past
-  the parsed end of an early-stopping parse (`ni2hao` offsets 2..6).
-- **What oxpinyin does instead:** answers `false` — the engine's
-  `EngineError::ZeroKeyOffsetCheck` rendered as the C ABI's `false` by
-  the three cursor helpers, extending the no-abort policy already
-  applied at the guess seam (`LookupOffsetPastSeparator`) and the
-  scheme setters. `get_right` also keeps the pin's one graceful false
-  (no key starts at the position, `pinyin.cpp:3085-3086`).
-- **The two upstream arms:** at the pin (`0c5e80e`) the call SIGABRTs —
-  no oracle differential is possible there. Peng Wu's post-pin
-  [`Fix _check_offset function`](https://github.com/libpinyin/libpinyin/commit/95e3af71cca3ce6a974e55ab68db1424da79c286)
-  replaces the assert with `if (zero_key != key) return false;` — an
-  INVERTED condition whose return value every call site discards, so
-  the fixed upstream completes the call and returns `true` with the
-  computed value (`right=12` on a matrix whose last usable column is
-  11). oxpinyin's `false` diverges from BOTH arms, deliberately: `12`
-  is a value no caller can use — upstream is propagating a broken
-  result rather than reporting failure, and `false` is the only answer
-  a frontend can act on. Report-back candidate for libpinyin (the
-  inverted condition also inverts the intended validation).
-- **Externally observable:** yes — upstream aborts at the pin /
-  returns the broken value post-`95e3af7`; oxpinyin returns `false`.
-  Frontends driving Ctrl+Left/Right at a tail cursor see the
-  difference; no pinned differential is possible at the abort points.
-  The fifth distinct finding in the `_check_offset` family: the three
-  sightings consolidated in `docs/testing/oracle-bisect-differential-abort.md`
-  (the W11 bisect abort, the ibus-libpinyin#570 guess-seam pattern,
-  and the shared root cause), the guess-seam leading-run answered as
-  `LookupOffsetPastSeparator`, and this cursor-helper seam.
-
-**Amendment — 2026-09-06 UTC, oracle pin 0c5e80e1 → 074a2219 (runtime
-verification).** The pin bump re-measured this entry's shape with a
-fork-per-probe C driver against the oracle at BOTH pins and the port.
-Two narrowings, no new divergences:
-
-1. **The legal-boundary arm is CLOSED by upstream.** At an offset one
-   past a lone zero-key column (e.g. `pinyin_guess_candidates("ni'", 3)`,
-   the one-past-end boundary), the old pin SIGABRTs (`pinyin.cpp:2175`
-   at 0c5e80e1); at 074a221 the same call completes and returns `true`
-   with an empty candidate list — and the port answers exactly that
-   (`true`, 0 candidates). Upstream moved to the port here; this entry's
-   "diverges from BOTH arms" claim no longer holds at the legal
-   boundary.
-2. **The residual divergence is the illegal-offset arm only** (beyond
-   one-past-end, e.g. offset 4 on the same input): the new oracle
-   returns `true` with the computed value (the discarded check no longer
-   rejects out-of-range offsets — the upstream construct defect that
-   `assert(_check_offset(...))` compiles the call away under NDEBUG at
-   six of ten sites), while the port keeps answering `false` — the
-   already-registered abort-on-caller-input class answered by the
-   no-abort policy. Not a new finding; see
-   `oracle-pin-074a221-verification` §V3.
-
-Also corrected by the same measurement: of 074a221's four bare
-`_check_offset` call sites, `pinyin.cpp:3251` is dead code (`#if 0`),
-`pinyin_get_pinyin_key`/`_pinyin_key_rest` (:2933/:2956) return `false`
-at their range guard before reaching the check, and
-`pinyin_get_character_offset`'s live check is the assert-wrapped
-`:3204` (aborts at both pins). The single observable pin-to-pin change
-in this family is `pinyin_guess_candidates` (:2226), covered above.
-The port-side `get_character_offset` true-on-invalid-phrase behavior
-seen in the same probe is a separate parity defect: issue #356.
-
-### Apostrophe-only input: the pin consumes every byte, the engine consumes none — CLOSED
-
-- **Status (amended 2026-09-06):** closed by 678f3259 (2026-08-26, the
+- **Status (amended 2026-11-07 UTC):** closed by 678f3259 (2026-08-26, the
   B2 parser-termination class): `SegmentGraph` propagates each
   apostrophe one byte, counted, so `'` → 1, `''` → 2, `'''` → 3 match
-  the pin (pinned in `crates/oxpinyin-core/src/graph.rs`). The
-  "what oxpinyin does instead" text below describes the pre-fix state
-  and is kept as the record; the cursor helpers' class-(c) `false` at
-  the `_check_offset` abort shapes is unchanged.
-  Since #902 (this PR), the zhuyin facade's `guess_sentence`,
+  the pin (pinned in `crates/oxpinyin-core/src/graph.rs`).
+  Since #902, the zhuyin facade's `guess_sentence`,
   `guess_sentence_with_prefix`, `guess_candidates_after_cursor` and
   `guess_candidates_before_cursor` return `false` on a zero-key matrix,
   as the pin does, and the tag-902 contract cases hold that behaviour.
@@ -1017,94 +802,18 @@ seen in the same probe is a separate parity defect: issue #356.
   clears candidates and returns false (`src/pinyin.cpp:2193-2196`,
   `src/zhuyin.cpp:1468-1471,1548-1551`). This corrects the former
   non-empty-matrix explanation; the consumed-length fix stays closed.
-- **What oxpinyin does instead:** `SegmentGraph` consumes a leading
-  apostrophe run only as propagation TOWARD a following key — with no
-  key following, no edge is emitted and the consumed length is 0. The
-  cursor laws on top then answer `Ok(0)` where the pin's `_check_offset`
-  aborts over those zero columns (`EngineError::ZeroKeyOffsetCheck`,
-  the entry above); the parse surface itself reports 0 where the pin
-  reports the byte count.
-- **Externally observable:** yes — the `pinyin_parse_more_full_pinyins`
-  return and `pinyin_get_parsed_input_length` differ on apostrophe-only
-  input (pin 1/2/3, oxpinyin 0), and the cursor helpers diverge at the
-  abort shapes: `pinyin_get_pinyin_offset` answers `true, 0` (the
-  clamped zero-fill), while `pinyin_get_left_pinyin_offset` and
-  `pinyin_get_right_pinyin_offset` return `false` where the pin
-  aborts (`ZeroKeyOffsetCheck`) — the left helper also answers
-  `true, 0` at offset 0 only. This is the parser-stop-consumption surface —
-  class B2 of `uncovered-surface-differentials` ("where does the
-  parser stop consuming"), recorded here so B2's closing work INHERITS
-  it instead of rediscovering it; the sibling abort on the same input
-  (`pinyin_get_pinyin_key`) remains F-E-14 in
-  `docs/testing/oracle-apostrophe-abort.md`.
-
-### The single-key surface aborts the pin where oxpinyin answers `false`
-
-- **Status (reconciled 2026-10-11 UTC, #549):** class (c), **both halves met** for the asserts in row 21: `storage/pinyin_parser2.cpp:170` (apostrophe), `pinyin.cpp:499` and `:466` (unload index bound), all at `074a2219`. `645bf591` adds the unload warnings, `ac701202` the pinyin apostrophe warning, and `8b455a44` the shared parser's zhuyin warning. Each returns `false` and emits exactly one warning in the facade's domain, held by the unload-index-16 and full-pinyin-apostrophe `abort-*` cases of `contract-diff.py`. The empty-input reads (`pinyin_parser2.cpp:178`, `zhuyin_parser2.cpp:171`) remain memory over-reads, not class-(c) abort sites.
-
-- **Upstream source cite:** `FullPinyinParser2::parse_one_key`
-  (`src/storage/pinyin_parser2.cpp:168-170`, the
-  `assert(NULL == strchr(input, '\''))` on apostrophes);
-  `pinyin_unload_addon_phrase_library` (`src/pinyin.cpp:497-499`, the
-  `assert(index < PHRASE_INDEX_LIBRARY_COUNT)`); the empty-input reads
-  under `USE_TONE` (`input[parsed_len - 1]` at
-  `pinyin_parser2.cpp:178` at `074a2219` on a zero-length string;
-  `ZhuyinSimpleParser2::parse_one_key`'s `str[len - 1]` at
-  `zhuyin_parser2.cpp:171`).
-- **Mechanism:** the Tier-A single-key ABI surface (`pinyin_parse_full_pinyin`,
-  `pinyin_parse_double_pinyin`, `pinyin_parse_chewing`,
-  `pinyin_unload_addon_phrase_library`) takes arbitrary caller input with
-  no guards; several shapes run the caller straight into an `assert` (or
-  an out-of-bounds read) and the pinned oracle dies — measured first-hand
-  while building `tools/bisection/key-surface-diff.c`: the apostrophe
-  probe SIGABRTs at `pinyin_parser2.cpp:170`, the `index = 16` unload
-  probe SIGABRTs at `pinyin.cpp:499`.
-- **What oxpinyin does instead:** the no-abort policy — apostrophes
-  refuse (`false`, zero key for the full-pinyin entry, which zeroes
-  `*onekey` before its probe exactly like the pin), an out-of-range
-  addon index answers `false`, empty input refuses. All pinned by the
-  Rust ABI suite (`crates/oxpinyin-capi/tests/abi/keys.rs`); the differential excludes these
-  shapes with the exclusion documented in the driver.
-- **Externally observable:** yes — upstream SIGABRTs on the same calls
-  oxpinyin answers. Report-back batch: file with the scheme-setter and
-  `_check_offset` assert families.
-
-### `pinyin_get_character_offset`'s recursion asserts answer `false`
-
-- **Status (reconciled 2026-10-11 UTC, #549):** class (c), **both halves met** for row 19's asserts at `074a2219`: `pinyin.cpp:3147`, `:3161`, `:3203`, `:3204` and `zhuyin.cpp:2110`, `:2158`. `ac701202` adds the pinyin warning path and `8b455a44` the zhuyin path; `get_character_offset` returns `false` with exactly one warning in its facade's domain on a recursion or entry error. The past-matrix and separator cases in `contract-diff.py` hold these paths; the original `:3161` predicate has no separately executed trigger in this reconciliation. The unbounded cached-token read (`pinyin.cpp:3168`) remains the distinct memory-safety sub-shape.
-
-- **Upstream source cite:** `pinyin_get_character_offset`
-  (`src/pinyin.cpp:3193-3241` at `074a2219`; `zhuyin.cpp:2148-2196` for the
-  zhuyin twin), `_pre_compute_tokens` (`pinyin.cpp:3098-3136`) and
-  `_get_char_offset_recur` (`pinyin.cpp:3138-3191`).
-- **Mechanism:** the function asserts `offset < matrix.size()` and
-  `_check_offset` (the register's #14 family — the offset 3/4 rows of
-  issue #356's matrix), then the recursion asserts a non-empty column at
-  every stepped-to position (`assert(size > 0)`, `:3147` — an input with
-  a leading apostrophe run has an empty column 0) and a lone zero key
-  where one appears (`assert(1 == size)`, `:3161`). Separately, the
-  recursion indexes `cached_tokens` by the characters consumed so far
-  with no bound (`g_array_index`, `:3168`): a phrase shorter than the
-  key path measured against it reads the array's zero terminator
-  (`null_token`, whose `get_phrase_item` fails and leaves the previous
-  item) and beyond it the heap — the aux-text over-read's class.
-- **What oxpinyin does instead:** the ported law answers the pin's
-  `false` rows exactly (`_pre_compute_tokens` finding no token for a
-  phrase character — the #356 defect, fixed in
-  `oxpinyin-engine/src/char_offset.rs`; a walk no key path satisfies)
-  and answers `false` where the pin asserts:
-  `EngineError::LookupOffsetOutOfRange`, `EngineError::ZeroKeyOffsetCheck`
-  and the new `EngineError::MatrixColumnAssert` rendered as the C ABI's
-  `false`. A walk past the cached tokens treats the missing token as a
-  pronunciation miss, so that branch fails like a mismatched key rather
-  than reading a stale item.
-- **Externally observable:** yes — the pin SIGABRTs where oxpinyin
-  answers `false` (issue #356's offsets 3 and 4 on `ni'`), and reads off
-  its token array where oxpinyin answers a deterministic `false`. The
-  consumers (`PYPPinyinEditor.cc:290`, `PYPBopomofoEditor.cc:404`) pass
-  the guessed sentence and a normalized cursor offset, which reach
-  neither shape. Report-back batch: file with the `_check_offset` assert
-  family.
+- **What oxpinyin does:** `SegmentGraph` propagates each apostrophe, so a
+  separator-only input consumes every byte (`pinyin_parse_more_full_pinyins`
+  and `pinyin_get_parsed_input_length` answer 1, 2 or 3) and leaves an empty
+  matrix. Over that matrix `pinyin_get_pinyin_offset` answers `true` with
+  offset 0 at cursor 0 and aborts at every cursor of 1 or more, where the
+  pin's first `get_column_size` asserts (`phonetic_key_matrix.h:103`);
+  `pinyin_get_left_pinyin_offset` answers `true` with offset 0 at offset 0
+  and aborts at any other; `pinyin_get_right_pinyin_offset` and
+  `pinyin_get_pinyin_key` abort (register row 66, F-E-14 in
+  `docs/testing/oracle-apostrophe-abort.md`).
+- **Externally observable:** no. The parse return, the parsed length and
+  every cursor helper answer as the pin does on this input.
 
 ### FORCE_TONE — scheme-specific: every seam honours its scheme law except the pinyin facade's chewing batch (its own entry below); zhuyin batch closed (1671954); double-pinyin batch closed (5ec782ea)
 
@@ -1197,32 +906,6 @@ seen in the same probe is a separate parity defect: issue #356.
   hypothesis-selection class, unchanged by this closure (the same
   revert-check reproduces it) and first surfaced by the full-model
   scheme sweep.
-
-### Empty-string phrase lookup SIGFPEs the pin — corrected: the crash is `pinyin_lookup_tokens("")` — WITHDRAWN
-
-- **Withdrawn (2026-10-03 UTC, maintainer ruling):** not reproduced at `074a2219`: no crash and valgrind clean on tkrzw, bdb and kc (2026-10-03); the audit's original reproduction is unavailable; claim withdrawn (policy row 22). The record below is kept as written.
-- **Status (2026-09-27 UTC, #549):** class (c), **pending logging (lane C, #525)** — and the symbol is corrected. The audit's execution (R-2) crashes the pin on `pinyin_lookup_tokens(instance, "", …)`, which hands a zero length straight to `m_phrase_table->search` (`pinyin.cpp:2652-2667`); `pinyin_phrase_segment(instance, "")` answers `true` — `PhraseLookup::get_best_match` with length 0 runs no search (`lookup/phrase_lookup.cpp:119-149`: `nstep - 1 == 0`). The bullets below are the original record and name the wrong entry point. Site kind: a fault signal, neither `assert` nor `abort()`. oxpinyin answers `false` for the token lookup (`crates/oxpinyin-capi/src/dict.rs:86`) — the false half holds; the log line is owed (row 22). For `pinyin_phrase_segment("")` the two sides agree on `true`: oxpinyin's span DP backtracks from the start node to an empty result (`crates/oxpinyin-engine/src/phrase.rs:124-130`, `:181-201`), so the "oxpinyin answers `false`" below is stale as well.
-
-- **Upstream source cite:** `pinyin_phrase_segment` →
-  `PhraseLookup::get_best_match` with `sentence_length = 0`
-  (`src/lookup/phrase_lookup.cpp:121-157`), reaching
-  `m_phrase_table->search(0, ...)`; measured SIGFPE (gdb: divide in the
-  search path) on the pin-built oracle. **Re-measured 2026-10-03: not
-  reproduced** — see policy row 22; the crash claimed here could not be
-  re-captured on freshly built tkrzw, bdb and kc oracles.
-- **Mechanism:** a zero-length sentence reaches the span search, which
-  divides by the (zero) span length; upstream never guards the entry
-  point's UTF-8-validated but possibly-empty input.
-- **What oxpinyin does instead:** the span DP over zero characters has
-  one step (the virtual start), the last step is empty, `final_step`
-  answers `false` with a zero-length result — the same shape every
-  failed match takes.
-- **Externally observable:** yes — the pin SIGFPEs on
-  `pinyin_phrase_segment(instance, "")`; oxpinyin answers `false`.
-  Same theirs-bug family as the apostrophe abort (F-E-14) and the
-  SECONDARY_ZHUYIN over-read; report-back candidate for libpinyin.
-  Found while building the Tier-C dict-surface differential
-  (`tools/bisection/dict-surface-diff.c`, which excludes the shape).
 
 ## Sanitizer scope on the tkrzw shim CI (2026-08-27)
 
@@ -1453,8 +1136,8 @@ syllables (`ta`=1, `li`=2, `ju`=2) where the pin reported 0. Root cause was
 - **Externally observable:** yes — `zhuyin_get_candidate_type` differs on the
   row after the top match, and `zhuyin_guess_candidates_after_cursor`
   answers `false` at `offset == consumed` where the pin answers `true`/0.
-- **Classification:** engine workstream (n-best row count) + class (c)
-  (terminal-offset availability). Neither is a facade defect: the candidate
+- **Classification:** engine workstream (n-best row count) + terminal-offset
+  availability. Neither is a facade defect: the candidate
   set is identical, and the terminal-offset case is not exercised by the
   pinned differential driver. The `after(consumed)` coordinate gap and the
   multi-syllable before-cursor and candidate-construction gaps below share the
@@ -1490,7 +1173,7 @@ syllables (`ta`=1, `li`=2, `ju`=2) where the pin reported 0. Root cause was
   reserved slot, where the span walk yields nothing and only the prepended
   sentence rows answer — `true` with the BEST_MATCH row, measured identical
   on the extended differential at after(consumed) for every corpus input),
-  closing the class (c) coordinate gap. The tag-grouping and terminal-offset
+  closing the coordinate gap. The tag-grouping and terminal-offset
   halves of this entry are both closed; see the before-cursor entry for the
   builder's full measured numbers.)
 
@@ -2303,7 +1986,7 @@ section.
 ### `pinyin_train`/`zhuyin_train` gate (policy row 38)
 
 Updated 2026-10-04 UTC for #524. Valid-index and both empty-result defects
-closed in code; the approved bounds class (c) case is measured on all three cells.
+closed in code; the bounds assert is reproduced as an abort.
 
 The pin tree read and built is `074a2219c90feaf962d0d24f034514033ece5f99`.
 `src/pinyin.cpp:2678-2688` refuses empty decoded results, asserts the index
@@ -2317,115 +2000,28 @@ spans (`crates/oxpinyin-engine/src/session/selection.rs:361-376`), retaining
 the pin's OneStep/train-next observation gate in `train_spans` (:379-424).
 `InstanceCore::train(index)` returns `Result<bool, EngineError>` and leaves
 empty and bounds calls unmodified (`crates/oxpinyin-facade/src/instance.rs:245-259`).
-The pinyin facade maps bounds to false and exactly one `log_warning`
-(`crates/oxpinyin-capi/src/candidates.rs:600-606`), domain `libpinyin`,
-warning level 16: approved availability class (c), replacing the pin assert.
+The pinyin C adapter aborts on a bounds miss, as the pin's assert does
+(`crates/oxpinyin-capi/src/candidates.rs`, `train_answer`).
 Empty results return false quietly, including zhuyin
 (`crates/oxpinyin-zhuyin-capi/src/candidates.rs:272`).
 
 Measured on linux/amd64, debian:testing digest
 `sha256:16faa8d1cd99fcb2d30eebe90454e26b20499055fa7094e9b55d32d1a7666f08`:
 `python3 tools/bisection/train-index-diff.py bdb PREFIX PINYIN_SO ZHUYIN_SO`
-passes all 10 cases on bdb; replacing `bdb` with `kc` or `tkrzw` also
-passes all 10 cases (30 total). Identical pre-training pinyin rows are 今天/今田/今添;
+runs 10 cases; `kc` and `tkrzw` run the same 10. Identical pre-training pinyin rows are 今天/今田/今添;
 zhuyin row zero is 你好. Valid calls match returns, native exported records
 and complete saved `.dbin` bytes. Pinyin rows 0/1/2 train 今 followed by
 天/田/添 respectively, each credited bigram +69, each unigram +483,
-each pronunciation +69. Bounds len=3 and 255 isolate pin SIGABRT and
-observe subject false, zero training writes and exactly one warning.
-Both facades' fresh and parse/choose-without-guess cases are quiet false.
-The same command with `--expect-parent` against parent `1dc42d7e`
-(the shipped training sources are unchanged from `215365d3`) reproduces
-row-1/2 D0 writes, both selection-only training defects, and bounds
-true/write/no-warning. §12 passes 491/396/390 on all three cells.
+each pronunciation +69. Bounds len=3 and 255 are the pin's SIGABRT; the
+pinyin adapter aborts at the same inputs, before any training write, and
+prints no warning the pin does not. Both facades' fresh and
+parse/choose-without-guess cases are quiet false.
 
 Bdb and tkrzw raw user index-container bytes differ after valid saves while exported
 records match; no register row covers that container-byte difference.
 Row 18 covers padding in index values, a different issue. No container-byte
 fix is included. Kc raw index-container bytes also match. Captures are
 not committed; temporary profiles are discarded by the driver.
-
-### An unknown `database format:` in `user.conf` aborts the pin; oxpinyin refuses the open (policy row 44)
-
-Registered 2026-09-27 UTC from the "Register impact" of #591 (merged
-into `main` 2026-09-26 with the #578–#591 stack; the fix is
-`e5c1f3ad`), row text as #591 wrote it, cites re-read at `074a2219`
-and at `main`.
-
-- **Upstream source cite:** `src/storage/table_info.cpp:122-133`
-  (`to_table_database_format_type`; the fall-through `abort()` at
-  `:132`), called at `:353-354` from `UserTableInfo::load`
-  (`:351-352`: `char str[256]` and
-  `fscanf(input, "database format:%255s\n", str)`), which
-  `check_format` calls at `pinyin.cpp:172-178` and `zhuyin.cpp:126-132`
-  (`pinyin_init`/`zhuyin_init` then ignore its result and carry on —
-  `pinyin.cpp:344`, `zhuyin.cpp:288` — so the `abort()` is what
-  actually stops them).
-- **Condition:** the third `fscanf` converts a token (it returns `1`)
-  that is not `BerkeleyDB`, `KyotoCabinet` or `Tkrzw` — an
-  unrecognised token (a foreign or future backend's, a 255-byte
-  truncation of one, an empty field whose `%255s` reads the next word
-  across the newline): the source guarantees the `abort()` there. When
-  the directive's literal fails to match (a missing `database format:`
-  line, or junk the previous line left behind) `fscanf` returns `0`, not
-  `EOF`, and writes no `str`, so `strcmp` reads an indeterminate stack
-  buffer — undefined behaviour, not a source-guaranteed abort. For those
-  two shapes the evidence is execution only: the runner's
-  `abort-modelver-junk` and `abort-no-dbformat` cases, oracle exit 134 on
-  every cell in #591's runs.
-- **Trigger:** an edited, foreign or torn `user.conf`.
-  `UserTableInfo::save` is `fopen`/`fprintf`/`fclose` with no atomic
-  rename (`table_info.cpp:377-395`), so a write interrupted mid-file is
-  reachable in the field. Executed on both facades and all three cells:
-  24 runs, every one SIGABRT (exit 134), user dir untouched.
-- **What oxpinyin does instead:** `UserTableInfo::parse` answers
-  `Err(UserConfError::UnknownDatabaseFormat)` on both sub-cases,
-  `persistence::load` propagates it before any conformance judgement
-  (`crates/oxpinyin-user/src/persistence.rs:66-72`), `Runtime::open`'s
-  user-store step turns it into `OpenError::UnknownDatabaseFormat`, and
-  `pinyin_init`/`zhuyin_init` answer NULL with nothing cleaned and no
-  marker written — upstream never reaches its own wipe either. Stated
-  for the record: the *previous* oxpinyin behaviour (unknown token →
-  wipe) was itself a divergence, and this row replaces it.
-- **Log line:** `check_format: unknown database format in user.conf`,
-  exactly one per attempt, through GLib at warning level
-  (`oxpinyin_facade::UNKNOWN_DATABASE_FORMAT_WARNING`,
-  `crates/oxpinyin-facade/src/context.rs:49-50`; domain `libpinyin`
-  from the pinyin facade, `crates/oxpinyin-capi/src/context.rs:25`,
-  `libzhuyin` from the zhuyin one,
-  `crates/oxpinyin-zhuyin-capi/src/context.rs:48` — the pin sets no
-  `G_LOG_DOMAIN`, so its own `g_warning` sites print domain-less, and
-  the shared message text is the fixed string above).
-- **Externally observable:** yes, and it is a difference in kind — the
-  pin takes the process down, oxpinyin fails the open. No pinned
-  differential is possible at the abort point (the register's existing
-  abort rows), so `tools/bisection/run-open-counter-diff.sh`'s
-  `abort-*` expectation channel asserts the pair instead.
-- **Class:** (c), both halves met — the first class-(c) row that is.
-  The `table.conf` route to the same `abort()` (`table_info.cpp:232-233`)
-  is covered since 2026-10-10 UTC (policy row 79).
-
-### `pinyin_choose_candidate` under `SORT_WITHOUT_SENTENCE_CANDIDATE` with a nonzero offset aborts the pin (policy row 45)
-
-Registered 2026-10-03 UTC from #598's "Register impact" (merge commit
-`efa8337a`), row text as #598 wrote it, re-executed at `074a2219` on
-freshly built tkrzw, bdb and kc oracles.
-
-- **Upstream source cite:** `src/pinyin.cpp:2565-2576` — the `0x1` leg of
-  `pinyin_choose_candidate`, whose first statement is
-  `assert(0 == offset)` (`:2566`), then the unigram-only train.
-- **Condition:** `m_sort_option & SORT_WITHOUT_SENTENCE_CANDIDATE` (set by
-  the last `pinyin_guess_candidates` word) and `offset != 0`. ibus-libpinyin
-  1.16.5 always passes 0 on that path (`PYPLibPinyinCandidates.cc:139-145`).
-- **Executed:** `pinyin_parse_more_full_pinyins("nihao")`,
-  `pinyin_guess_candidates(0, 0x1)`, choose the first NORMAL row at offset 1:
-  `Assertion '0 == offset' failed`, SIGABRT (exit 134) on all three cells;
-  at offset 0 the call answers `1`.
-- **What oxpinyin does instead:** answers `0` and logs exactly one
-  `g_warning` in the `libpinyin` domain, `pinyin_choose_candidate: offset
-  must be 0 under SORT_WITHOUT_SENTENCE_CANDIDATE`
-  (`crates/oxpinyin-capi/src/candidates.rs:362-371`).
-- **Class:** (c), both halves met; the site is an **`assert`**.
 
 ### An empty-string user dir is the working directory on the pin (policy row 46)
 
@@ -2481,102 +2077,6 @@ tkrzw oracles (linux/amd64) against `main` @ `8cd06566`.
   issues and are not reproduced here: a NULL user dir still has
   in-memory user tables on the pin, so an import succeeds there (#642),
   and an empty-string *system* dir is the working directory too (#643).
-
-### Abort sites answered without a log: the #525 site ledger (policy rows 4, 5a, 5c, 5d, 6, 10, 14, 19, 21, 22)
-
-- **Source:** the 87-row per-site table in #525's body (the round-2
-  audit's D-03 code-basis pass, pin `074a2219`, subject `34a66bc9`),
-  re-grouped here by what that audited subject owed. Every site is live at the
-  reference build: no `-DNDEBUG`, and `check_result`
-  (`include/pinyin_utils.h:27-31`) is an `assert` there. Kind is the
-  pin's construct — **`assert`** or **`abort()`**. At that audited revision no site's answering
-  line logged (#525: `subject_site_log = False` for all 87); the only
-  `g_warning` calls then were the init-failure lines
-  (`crates/oxpinyin-capi/src/context.rs:25-29`,
-  `crates/oxpinyin-zhuyin-capi/src/context.rs:48-50`).
-- **Inventory scope:** the groups below retain the audit's original
-  refusal/guard classifications with later partial annotations. They are
-  not a current-main closure mapping. The original subject at `34a66bc9`
-  lacked logging; later commits listed here and in the policy replace
-  those answers. Rows 4, 5a, 5c, 5d, 6, 10, 14, 19 and 21 now record
-  both halves met, while row 22 is withdrawn and owes no log. The wider
-  #525 source-site closure check remains separate; promoting a policy
-  row does not prove every source predicate has an executed fixture.
-- **Logged since (lane C, 2026-10-04; each answers `false`/`0` and emits
-  exactly one warning in its facade's domain (`libpinyin` for pinyin,
-  `libzhuyin` for zhuyin), held by an `abort-*` case of
-  `contract-diff.py` that shows the pin dying of SIGABRT):**
-  - PR 12a: `pinyin.cpp:457`, `:466`, `:499`, `:709`, `:1189`;
-    `storage/pinyin_parser2.cpp:398`, `:611`; `storage/zhuyin_parser2.cpp:295`
-    (through `pinyin_set_zhuyin_scheme`).
-  - PR 12b: `pinyin.cpp:1474`, `:3035`, `:3057`, `:3067`, `:3092`, `:3203`,
-    `:3204`, `:3488` (`:3147` and `:3161` take the same logging path, no
-    trigger executed); `storage/phonetic_key_matrix.h:103`
-    (through `pinyin_get_pinyin_key` and `_key_rest` on an empty matrix);
-    `storage/pinyin_parser2.cpp:170`; `pinyin.cpp:3311` (group B), reached
-    by a leading `'` (`'nihao`, `''ni`): column 0 stays empty and all three
-    aux-text functions assert on every cursor (review of #652).
-  - PR 12c: `pinyin.cpp:2507`, `:2593`, `:2883`, `:3734`, `:3738`
-    (`pinyin_choose_candidate`, `pinyin_choose_predicted_candidate`,
-    `pinyin_get_candidate_nbest_index`, `pinyin_remove_user_candidate`;
-    policy row 64).
-  - PR 12d: `lookup/phonetic_lookup.h:868` through `pinyin_train` and
-    `zhuyin_train` (policy row 6).
-  - PR 12e: `storage/pinyin_phrase3.h:152` (through the lookups that
-    search the pinyin table), `pinyin.cpp:2769`.
-  - PR 12f: `zhuyin.cpp:372`, `:381`, `:736`, `:1261`, `:1453` (`_check_offset`,
-    also one past the reserved slot), `:2158`; `storage/zhuyin_parser2.cpp:295`;
-    `storage/pinyin_parser2.cpp:398` through `zhuyin_set_full_pinyin_scheme`;
-    `phonetic_key_matrix.h:103` through `zhuyin_get_zhuyin_key` and `_key_rest`;
-    `storage/pinyin_parser2.cpp:170` through `zhuyin_parse_full_pinyin`;
-    `zhuyin.cpp:2110` through `zhuyin_get_character_offset`. The zhuyin ABI
-    logs in its own domain, `libzhuyin`. `zhuyin.cpp:440` and `:457` are
-    file-triggered and wait for their own ruling (`:454` is refuted).
-  - #694 (2026-10-10 UTC, policy rows 78–80): `storage/table_info.cpp:119`,
-    `:132` (the `table.conf` half), `:142`, `:156`, `:175`, `:276`;
-    `pinyin.cpp:388`, `:491`, `:457` and `zhuyin.cpp:330`, `:372` driven by the
-    rows; `include/memory_chunk.h:493` and `:434` behind a `NULL` file name.
-  - PR 12g (batch C, 2026-10-10): `pinyin.cpp:3743`, `:3750`, `:3759`
-    (`pinyin_remove_user_candidate`'s three removal asserts; policy row
-    81). `:3750` leaves group C, which had called it not applicable to
-    the value store; `:3743` and `:3759` leave groups A and B.
-  - #731 (#525 closure check, PR 2; 2026-10-11 UTC): `pinyin.cpp:554`,
-    `:568`, `:571` (`pinyin_iterator_add_phrase`'s phrase-table asserts;
-    policy row 93); `storage/chewing_large_table2_bdb.cpp:529`,
-    `_kyotodb.cpp:499`, `_tkrzwdb.cpp:466` (`pinyin_mask_out` and
-    `zhuyin_mask_out` on a `user_pinyin_index.bin` key with no whole word;
-    row 94); `storage/chewing_large_table2_bdb.cpp:282`, `_kyotodb.cpp:269`,
-    `_tkrzwdb.cpp:252` (`pinyin_guess_candidates` over a system
-    `pinyin_index.bin` key past 16 words; row 95). The three `pinyin.cpp`
-    sites leave group C, which had called them not applicable to the user
-    store; the six `chewing_large_table2` sites leave group B.
-
-| group | sites at `074a2219` (kind) | what oxpinyin answers | owed |
-|---|---|---|---|
-| A — refuses silently (33) | `include/memory_chunk.h:390` (`assert`, via `check_result`), `:493`, `:543`, `:547` (`assert`); `pinyin.cpp:457`, `:466`, `:499`, `:709`, `:1474`, `:3035`, `:3067`, `:3092`, `:3147`, `:3203`, `:3204`, `:3738` (`assert`), `:1189`, `:3488` (`abort()`); `storage/ngram_bdb.cpp:199`, `ngram_kyotodb.cpp:173`, `ngram_tkrzwdb.cpp:150` (`assert`); `storage/phonetic_key_matrix.h:103` (`assert`); `storage/pinyin_parser2.cpp:170` (`assert`), `:398`, `:611` (`abort()`); `storage/zhuyin_parser2.cpp:295` (`abort()`); `zhuyin.cpp:372`, `:381`, `:440` (trigger not established), `:457`, `:2110`, `:2158` (`assert`), `:736` (`abort()`) | `false`, `Err`, NULL, a skipped library or a dropped row — the false/`Err` half holds | one `g_warning` line per site |
-| B — no check at all (26) | `lookup/phonetic_lookup.h:868` (`assert`, row 6); `pinyin.cpp:388`, `:491`, `:902`, `:2507`, `:2566`, `:2593`, `:2684`, `:2769`, `:2883`, `:3311`, `:3734` (`assert`); `storage/phonetic_key_matrix.cpp:661`, `:663` (`assert`); `storage/phrase_large_table3.h:95` (`assert`); `storage/pinyin_phrase3.h:152` (`assert`, row 4); `storage/ngram.cpp:70` (`assert`); `zhuyin.cpp:330`, `:1261`, `:1453` (arm (c) of #525's trigger; arms (a)/(b) refuse) (`assert`); `storage/table_info.cpp:119`, `:142`, `:156`, `:175` (`abort()`), `:276` (`assert`), and `:132`'s `table.conf` half (`abort()`; its `user.conf` half is policy row 44, both halves met) | `true`, data, a store write, or an ignored `table.conf` column — e.g. `pinyin_choose_candidate` has no candidate-type check for a predicted row (`:2507`, `crates/oxpinyin-capi/src/candidates.rs:304-409`) and `pinyin_remove_user_candidate` none for a non-`NORMAL` row (`:3734`, `candidates.rs:225-253`) | a guard answering `false`/`Err`, then the log line |
-| C — not applicable (0) | none (see the note below) | — | nothing |
-| refuted (8) | `include/memory_chunk.h:434`; `storage/bdb_utils.h:61`, `:67`; `storage/phrase_index_logger.h:245`; `storage/tkrzwdb_utils.h:65`, `:72`; `zhuyin.cpp:454`; `pinyin.cpp:2517` (`check_result`) — all `assert` | the executed trigger did not abort the pin | nothing |
-| not executed (5) | `include/memory_chunk.h:438`, `:497` (`assert`); `storage/chewing_large_table2_bdb.cpp:388`, `_kyotodb.cpp:367`, `_tkrzwdb.cpp:342` (`abort()`) | no trigger reached the site | a trigger |
-| unverified (3) | `storage/phrase_index.cpp:745`, `storage/phrase_index_logger.h:202`, `pinyin.cpp:1859` (`assert`) | the subject side was not traced (#525) | a trace |
-
-Totals 33 + 26 + 0 + 8 + 5 + 3 = 75; kinds 61 `assert` + 14 `abort()`
-(six `assert`s and six `abort()`s moved to the logged list, above), out
-of #525's original 87-site table.
-
-**Note — the not-applicable sites (different storage model).** Group C
-is empty. `pinyin.cpp:554`, `:568` and `:571` were listed here as asserts
-of invariants of upstream's text-searched phrase index that oxpinyin's
-user store makes structural; they were reproduced and are now logged
-(#731, policy row 93). `pinyin_iterator_add_phrase`
-(`crates/oxpinyin-capi/src/iterators.rs`) checks the phrase table's
-same-library tokens (the `user_phrase_index.bin` membership plus the
-system phrase index) and the found item's text before any mutation.
-
-`pinyin.cpp:3750` was listed here as a fourth not-applicable site; it was
-reproduced and is now logged (PR 12g, policy row 81), with the phrase
-table loaded from `user_phrase_index.bin` as the membership set the
-removal checks.
 
 ### NULL pointer arguments: the pin dereferences, oxpinyin null-guards (policy row 41)
 
@@ -2782,25 +2282,6 @@ The ordinary imports already matched at main 3b016f48; the historical
 #525 refusal claim for 1–4 is stale. Zhuyin has no phrase-export API.
 Approved additive internal Rust APIs are documented in
 ../api/transient-user-store.md; C ABI and dependencies are unchanged.
-
-### Import token-count assertion (#525; row 74, class (c), 2026-10-08 UTC)
-
-Read /home/sheng/work/libpinyin at 074a2219. The asserts-live pin calls
-reduce_tokens from _add_phrase (pinyin.cpp:541 / zhuyin.cpp:427);
-src/storage/phrase_large_table3.h:77-95 counts matching tokens and asserts
-`0 <= num && num <= 4` before any insertion. In a fresh ordinary context,
-add 你好 with ni3'hao3 (Zhuyin ㄋㄧˇ ㄏㄠˇ), count100000, to libraries
-1,2,3,4,5 in sequence: all succeed. Begin library6 succeeds; its add
-SIGABRTs on both facades, with five existing tokens. The frequency
-argument 100000 is not the bound: the asserted count is matching tokens.
-
-The subject now returns false at that add with exactly one g_warning
-under libpinyin / libzhuyin respectively. No state is changed. Existing
-contract cases test the fifth-add success boundary and sixth-add refusal,
-including tokens, unigram counts, exported readings where supported,
-dirty state and profile bytes before/after refusal. Zhuyin has no export
-API. No interface, ABI or dependency change. This row covers the import
-call measured here, not every independent caller of reduce_tokens.
 
 ### `pinyin_bigram_iterator_get_next_phrase` after a walk that ends on a real predecessor (policy row 75)
 
@@ -3103,678 +2584,6 @@ Registered 2026-10-10 UTC. Pin source read at `074a2219c90feaf962d0d24f034514033
   `UPSTREAM_DB_FORMATS`' comment said an unknown token is `UNKNOWN_FORMAT`; it
   reaches the `abort()` at `table_info.cpp:132`.
 
-### Chunk-header write failure during save (#525; row 77, class (c), 2026-10-10 UTC)
-
-Read libpinyin at `074a2219c90feaf962d0d24f034514033ece5f99`.
-`MemoryChunk::save` (`src/include/memory_chunk.h`) writes a chunk's 4-byte
-length word and then its 4-byte checksum, each with a `check_result` assert
-that the `write` returned the full word (`:543`, `:547`). A filesystem that
-refuses the write aborts the pin: with `user.bin.tmp` symlinked to `/dev/full`
-the very first write (`:543`) fails, and with `RLIMIT_FSIZE` of 4 the length
-word lands and the checksum word (`:547`) is refused. Both abort
-`pinyin_save`/`zhuyin_save` of a dirty context on both facades (SIGABRT,
-exit -6).
-
-Before this change the subject's header write was an ordinary `Io` error,
-which its reporting save tolerated as one more per-file write failure and
-carried past into its rename pass. It now stops at these two writes, answers
-`false` naming the header word, and the facade emits exactly one `g_warning`:
-under `libpinyin` for `pinyin_save` and `libzhuyin` for `zhuyin_save`. The
-soft chunk payload writes are unchanged: a refused payload write stays an
-ordinary per-file I/O failure that row 69 tolerates, the save continues and
-reports the renames and the marker. A header failure comes after staging
-starts, so the profile is not untouched: `stage_user_bigram` can already have
-replaced the bigram file in place, and the failing chunk is left as a partial
-`.tmp`. No interface, ABI or dependency change. This row covers the chunk
-header writes reached through the save calls, not the unrelated
-`MemoryChunk::mmap` reads of row 76.
-
-Held by `contract-diff.py` cases `abort-save-chunk-header-length`,
-`abort-save-chunk-header-checksum`,
-`abort-zhuyin-save-chunk-header-length` and
-`abort-zhuyin-save-chunk-header-checksum`: the pin dies of SIGABRT (exit -6),
-the subject exits 0 with one warning in its own domain and `false`; all four
-MATCH on bdb, kc and tkrzw, and DIFFER against the parent build.
-
-### `pinyin_remove_user_candidate`'s removal asserts (#525; row 81, class (c), 2026-10-10 UTC)
-
-Read libpinyin at `074a2219c90feaf962d0d24f034514033ece5f99`.
-`pinyin_remove_user_candidate` (`src/pinyin.cpp:3726-3769`) removes a user
-phrase from three structures in turn and asserts each removal
-(`assert(ERROR_OK == retval)`): the phrase index (`:3742-3743`,
-`phrase_index->remove_phrase_item`), the phrase table (`:3749-3750`,
-`phrase_table->remove_index`), and the pinyin table once per stored reading
-(`:3756-3759`, `pinyin_table->remove_index`). Three reachable triggers abort
-the pin (SIGABRT, exit -6), each reproduced on bdb with a small ctypes driver
-under an `LD_PRELOAD` SIGABRT handler that prints the failing statement:
-
-- **`:3743`, a candidate removed twice.** Add a single-reading user phrase,
-  `pinyin_guess_candidates` it up, remove it (the pin answers `true` and
-  deletes the item), then remove the same candidate again: the phrase index no
-  longer holds the token, so `remove_phrase_item` fails.
-- **`:3750`, `user_phrase_index.bin` absent.** Add a user phrase, `pinyin_save`,
-  `pinyin_fini`, delete (or rename away) `<user>/user_phrase_index.bin`, reopen,
-  guess and remove. The phrase index is loaded from `user.bin` (so `:3743`
-  passes), but the phrase table is loaded from `user_phrase_index.bin`, so
-  `remove_index` finds no row.
-- **`:3759`, a reading merged rather than indexed.** Add a user phrase with two
-  readings: `_add_phrase` indexes only the first reading
-  (`pinyin.cpp:569-582`) and merges the second into the same item without a
-  pinyin-table row (`#534`), so `remove_index` fails for it.
-
-oxpinyin already refused when the token was absent from `PHRASE` but removed
-everything else unconditionally, and `pinyin_remove_user_candidate` returned
-its `false` with no log. The store now loads `user_phrase_index.bin` as a set
-of exact `(token, text)` membership pairs (`PHRASE_TABLE`) — a token may sit
-under several texts, and the pin's `remove_index` matches the pair — that is
-checked together with every stored reading's `indexed` flag before anything
-is removed, and a standalone store opening a profile written before the table
-existed backfills the pairs from its `PHRASE` rows (a libpinyin session does
-not: a missing row there is the `:3750` state). A miss returns `Ok(false)`
-and leaves the store untouched. The C facade emits exactly one `g_warning` in
-`libpinyin` (level 16, `pinyin_remove_user_candidate: assertion 'ERROR_OK ==
-retval' failed`) and answers `false`. The subject's text lookups are
-unchanged: they still derive from `user.bin`, so the phrase table is read as a
-membership set only.
-
-This retires the #525 ledger's earlier classification of `:3750` among the
-not-applicable sites (the different-storage-model note): the divergence was
-real and reproducible, not structural. `:3750`'s neighbours `:554`, `:568`
-and `:571` remain separate sites.
-
-Held by `contract-diff.py` cases `abort-remove-user-candidate-twice`,
-`abort-remove-user-candidate-missing-phrase-table` and
-`abort-remove-user-candidate-multi-pron`: the pin dies of SIGABRT (exit -6),
-the subject exits 0 with one `libpinyin` warning and `false`; all three MATCH
-on bdb, kc and tkrzw, and DIFFER against the parent build. No interface, ABI
-or dependency change.
-
-### `increase_pronunciation_possibility`'s matrix asserts after a shortening re-parse (#525; row 82, class (c), 2026-10-10 UTC)
-
-Read libpinyin at `074a2219c90feaf962d0d24f034514033ece5f99`.
-`TrainResult3` walks a decoded sentence's spans and tails the LAST span at
-`constraints->length() - 1` (`src/lookup/phonetic_lookup.h:921`), not the
-current matrix's last column. The constraint store is written by a choose and
-survives the next `pinyin_parse_more_full_pinyins` unvalidated
-(`src/pinyin.cpp:1497-1525`), so a re-parse that shortens the input leaves it
-longer than the matrix the walk now indexes. `increase_pronunciation_possibility`
-(`src/storage/phonetic_key_matrix.cpp:657-668`) then asserts
-`end < matrix->size()` (`:661`), `matrix->get_column_size(start) > 0`
-(`:663`) and `matrix->get_column_size(end) > 0` (`:664`); the pin dies of
-SIGABRT at the first failing call. `fill_matrix` (`:52-78`) fills an internal
-separator between keys with a zero key, and `get_column_size` counts it, so
-an internal apostrophe column satisfies `:663`/`:664`; only a genuine gap — a
-leading separator run — is empty.
-
-Reproduced on bdb with a small ctypes driver under an `LD_PRELOAD`
-`__assert_fail` wrapper that prints the failing statement
-(`ASSERTRA libpinyin.so.15.0.0+0x2b04b (storage/phonetic_key_matrix.cpp:661 …)`
-and `+0x2b008 (…:663 …)`):
-
-- `pinyin_parse_more_full_pinyins(inst, nihao)` → `pinyin_guess_sentence` →
-  `pinyin_guess_candidates(inst, 0, 0)` → `pinyin_choose_candidate(inst, 0, i)`
-  with `i >= 2` → `pinyin_guess_sentence` →
-  `pinyin_parse_more_full_pinyins(inst, ni)` → `pinyin_train(inst, 0)`:
-  SIGABRT at `:661`, because the store still tails the old `nihao` length.
-- The same recipe with the re-parse `'ni`: SIGABRT at `:663`, because the
-  leading apostrophe leaves column 0 empty while the tail still passes the
-  end check on the shorter matrix.
-- The same recipe with the re-parse `ni'ha`: the stale second span starts on
-  the internal apostrophe column, a zero key, so `:663` passes, and its stale
-  end lands on a key column, so all three asserts pass and
-  `pinyin_train(inst, 0)` returns `true`.
-- The same recipe with the re-parse `ni'hao`: `:663` passes for the same
-  reason but the stale end lands on an empty column, so the pin dies at
-  `:664`.
-
-oxpinyin's `Session::train`/`train_nbest` walks the spans in order, checking
-each trained span's forced token (`assert(token == constraint->m_token)`,
-`phonetic_lookup.h:868`) and then the three matrix preconditions before
-recording any span, so the first fault in walk order is the one reported and
-nothing is observed for a call the pin would have aborted
-(`InstanceCore::train` also leaves the context unmodified). A column counts as
-occupied when `from_scan` holds a real key there or marked it a zero key
-(`column_is_empty`), so the internal separator column is accepted and the
-stale row trains, as at the pin. The refusal is
-`EngineError::StaleTrainingSpan`, carrying which precondition failed; the two
-C facades emit exactly one `g_warning` in their own domain (`libpinyin` for
-`pinyin_train`, `libzhuyin` for `zhuyin_train`), carrying the pin's assertion
-text (`end < matrix->size()`, `matrix->get_column_size(start) > 0` or
-`matrix->get_column_size(end) > 0`), and answer `false`. The walk now indexes the separator-adjusted scan topology the
-lookup indexes (`ParsedMatrix::from_scan`), so a span over a leading
-separator's empty column is refused rather than silently reading the key the
-raw scan re-anchored to offset 0 — the shape that made the `'ni` fork
-observable.
-
-Held by `contract-diff.py` cases `abort-train-after-reparse-past-matrix-end`,
-`abort-train-after-reparse-empty-start-column` and
-`abort-train-after-reparse-empty-end-column`, with the controls
-`train-after-choose-lookup-control` and
-`train-after-reparse-internal-zero-key`: MATCH on bdb (the three abort cases
-run the pin to SIGABRT -6 and the subject to `false` with one `libpinyin`
-warning; the internal zero-key case completes `true` on both), the three abort
-cases DIFFER against the parent build, and both controls match on both. No
-interface, ABI or dependency change.
-
-### An over-long user chewing index key aborts `mask_out` and the longer-candidate walk (#525; row 84, class (c), 2026-10-10 UTC)
-
-Read libpinyin at `074a2219c90feaf962d0d24f034514033ece5f99`.
-`ChewingLargeTable2` builds its `m_entries` array for phrase lengths 1..=16
-only (`src/storage/chewing_large_table2.cpp:26`, `init_entries`, sized
-`MAX_PHRASE_LENGTH + 1` with index 0 left NULL), and two walks index that
-array by dividing a DB key's byte length by `sizeof(ChewingKey)` (2 bytes):
-
-- `mask_out` (`:471-547`) takes `phrase_length = db_key.size / sizeof(ChewingKey)`
-  (`:489`) over every record and dispatches through a `switch` with cases
-  1..=16, `default: abort()` (`:529`).
-- `search_suggestion_internal` (`:251-287`) does the same on each extending key
-  the `search_suggestion` cursor walk reaches (`:550`), with
-  `default: abort()` (`:282`), after `assert(prefix_len < phrase_length)`.
-
-A `user_pinyin_index.bin` whose btree carries a key past `MAX_PHRASE_LENGTH`
-(16) syllables — `sizeof(ChewingKey) * 17 = 34` bytes or more — therefore
-aborts the pin. The length is integer division (`db_key.size /
-sizeof(ChewingKey)`, `:470`), so a malformed 35-byte key also reads as 17
-words and reaches the same `default`. Both facades walk the same user chewing
-table:
-`pinyin_mask_out` and `zhuyin_mask_out` (`src/zhuyin.cpp:763`) through
-`FacadeChewingTable2::mask_out`, and `pinyin_guess_candidates` through
-`_prepend_longer_candidates` (`src/pinyin.cpp:2292-2293`). No public call can
-write such a key: `_add_phrase` refuses `phrase_length >= MAX_PHRASE_LENGTH`
-(`src/pinyin.cpp:643`), so both reproductions craft the btree directly.
-
-Reproduced on bdb with a ctypes driver that writes a Berkeley DB btree
-holding `[first, first * 17]`, where `first` is the 2-byte packed key of the
-parse:
-
-- `pinyin_mask_out(ctx, 0xFFFFFFFF, 0)`: SIGABRT in `mask_out`.
-- `zhuyin_mask_out(ctx, 0xFFFFFFFF, 0)`: SIGABRT in `mask_out`. The zhuyin
-  context needs a conforming `user.conf` in the user dir first, because
-  `zhuyin_check_format` (`src/zhuyin.cpp:126`) wipes the user tables when the
-  marker is missing and only `zhuyin_save` writes one; `pinyin_check_format`
-  (`src/pinyin.cpp:172`) rewrites it on every open.
-- `pinyin_parse_more_full_pinyins(inst, ni)` →
-  `pinyin_guess_candidates(inst, 0, 0)` (sort word 0, LONGER candidate
-  enabled): SIGABRT in `search_suggestion_internal`.
-
-oxpinyin records every reading past `MAX_PHRASE_LENGTH` from the key's length
-alone, before touching the value, in the loaded profile
-(`crates/oxpinyin-user/src/persistence.rs`, `overlong_index_keys`). The
-length is the same integer division the pin's switch reads, so the complete
-words of a 35-byte key are recorded too and only the malformed trailing byte
-is dropped (`load_user_pinyin_index`); every even-length raw row is also kept
-in `index_keys`, the query-key set the exact-prefix probe reads below.
-`GenericUserStore::mask_out` refuses the whole call with
-`UserStoreError::OverlongIndexKey` when any such reading is present
-(`crates/oxpinyin-user/src/store.rs`, `has_overlong_index_key`), and both C
-facades map that to exactly one `g_warning` in their own domain (`libpinyin`
-for `pinyin_mask_out`, `libzhuyin` for `zhuyin_mask_out`) and answer `false`
-(`crates/oxpinyin-capi/src/config.rs`, `crates/oxpinyin-zhuyin-capi/src/config.rs`).
-For the longer-candidate walk, `RuntimeDict::overlong_extension_gate` answers
-whether any recorded reading strictly extends the pack's key path
-(`crates/oxpinyin-runtime/src/lib.rs`, `crates/oxpinyin-user/src/store.rs`).
-The pin's `search_suggestion` probes the exact query key first
-(`cursorp->c_get(..., DB_SET)`, `chewing_large_table2_bdb.cpp:576`) and
-answers `SEARCH_NONE` without walking when it is absent, so the gate also
-requires that key (`index_keys`); an over-long row whose prefix row is missing
-is unreachable at the pin. `Session::longer_candidate` raises
-`EngineError::OverlongUserIndexKey` before it reads the index
-(`crates/oxpinyin-engine/src/session/lookup.rs`). `pinyin_guess_candidates`
-answers `false`, clears the list and emits exactly one `libpinyin` warning at
-the re-anchored `candidates_at` lookup
-(`crates/oxpinyin-capi/src/sentence.rs`): the pin reaches its abort only
-inside `_prepend_longer_candidates` (`pinyin.cpp:2292-2293`), which a parse or
-the eager `set_sort_options` refresh never runs, so those refresh the walk
-without the gate. The incomplete projection keeps
-`compute_incomplete_chewing_index`'s zero initial — a vowel-initial syllable
-and `ng` pack to `ChewingKey::new(0, 0, 0, 0)`, not to a missing key — so an
-incomplete reading's index key still matches.
-
-Held by `contract-diff.py` abort cases `abort-mask-out-overlong-index-key`,
-`abort-zhuyin-mask-out-overlong-index-key`,
-`abort-guess-candidates-overlong-index-key`,
-`abort-guess-candidates-overlong-odd-index-key`,
-`abort-mask-out-overlong-odd-index-key` and
-`abort-guess-candidates-overlong-incomplete-index-key`, plus the non-abort
-probes `guess-after-overlong-index-key-without-prefix-answers-true` and
-`reparse-after-guess-ignores-overlong-index-key`: MATCH on bdb (pin SIGABRT
--6 for the abort cases, subject `false` with one warning), and the six abort
-cases and the two probes DIFFER against the pre-fix build. The kc and tkrzw
-chewing tables carry the same switch
-(`src/storage/chewing_large_table2_kyotodb.cpp:268`/`:498`,
-`src/storage/chewing_large_table2_tkrzwdb.cpp:251`/`:465`), but their user
-index is not a Berkeley DB btree, so the bdb fixture cannot reach the site on
-those cells and the cases declare `cells=('bdb',)`. No interface, ABI or
-dependency change.
-
-### A sub-`guint32` user-bigram value aborts `mask_out`, the removal and the predicted-candidate walk (#525; row 85, class (c), 2026-10-10 UTC)
-
-Read libpinyin at `074a2219c90feaf962d0d24f034514033ece5f99`.
-`SingleGram::get_total_freq` (`src/storage/ngram.cpp:48-51`) reads the
-four-byte `total_freq` at the front of a gram's value through
-`MemoryChunk::get_content<guint32>`, whose body is
-`assert(get_content(offset, &value, sizeof(T)))`
-(`src/include/memory_chunk.h:390`). A `user_bigram.db` value shorter than
-four bytes therefore aborts the read. Two public call paths read the total:
-
-- `pinyin_mask_out` / `zhuyin_mask_out`, through `m_user_bigram->mask_out`
-  (`src/pinyin.cpp:1230`, `src/zhuyin.cpp:765`), whose
-  `Bigram::mask_out` (`ngram_bdb.cpp:225-247`) calls `gram.get_total_freq`
-  (`ngram.cpp:80`).
-- `pinyin_remove_user_candidate` (`src/pinyin.cpp:3766`), through the same
-  `user_bigram->mask_out` walk.
-- `pinyin_guess_predicted_candidates`, through
-  `_compute_predicted_bigram_candidates` (`src/pinyin.cpp:2310-2341`), which
-  loads each prefix's user gram and merges it (`:2330`), reading the total
-  in `merge_single_gram`.
-
-`pinyin_init` merely copies the row during load and does not read the total,
-so it does not abort. `pinyin_bigram_iterator_has_next_phrase` also loads each predecessor
-and calls `SingleGram::retrieve_all` (`pinyin.cpp:889`), which reads
-`get_total_freq` before its item walk (`ngram.cpp:133-143`). The export
-preflight therefore refuses a short value with a NULL iterator and one
-`libpinyin` warning. This extension follows the pinned source; no crash
-probe was run in the bounded source-maintenance phase. No public call can
-write such a value: the writer's `SingleGram::set_total_freq` always stores
-four bytes.
-
-Reproduced on bdb with a ctypes driver that writes a Berkeley DB **hash**
-container holding one four-byte key whose value is three bytes:
-
-- `pinyin_mask_out(ctx, 0xFFFFFFFF, 0)`: SIGABRT in `get_total_freq`.
-- `zhuyin_mask_out(ctx, 0xFFFFFFFF, 0)`: SIGABRT in `get_total_freq` (the
-  zhuyin context needs a conforming `user.conf` first, as row 84 records).
-- `pinyin_mask_out(ctx, 0xFFFFFFFF, 1)`: completes — the mask erases the
-  key `1` without loading it, so `get_total_freq` never runs.
-- `pinyin_remove_user_candidate(inst, cand)`: SIGABRT in `get_total_freq`,
-  with a valid user phrase so the call reaches the bigram walk.
-- `pinyin_parse_more_full_pinyins(inst, ni)` →
-  `pinyin_guess_predicted_candidates(inst, "ni")`: SIGABRT in
-  `get_total_freq`.
-
-oxpinyin's `load_bigram` skips values shorter than four bytes in the
-decoded count model while preserving the raw row.
-`has_short_bigram_value_for` reads the live raw container, so a later
-valid write clears the guard (`crates/oxpinyin-user/src/persistence.rs`,
-`store.rs`).
-`GenericUserStore::mask_out` refuses the whole call with
-`UserStoreError::ShortUserBigramValue` when the mask leaves a short-valued
-key's gram to be loaded; a key the mask erases wholesale
-(`(key & mask) == value`) is never loaded, matching the pin
-(`crates/oxpinyin-user/src/store.rs`, `bigram_mask_fault`). Both C
-facades map that to exactly one `g_warning` in their own domain
-(`libpinyin` for `pinyin_mask_out`, `libzhuyin` for `zhuyin_mask_out`) and
-answer `false` (`crates/oxpinyin-capi/src/config.rs`,
-`crates/oxpinyin-zhuyin-capi/src/config.rs`). `GenericUserStore::remove_user_phrase`
-refuses the same way before touching the store, so `pinyin_remove_user_candidate`
-answers `false` with one `libpinyin` warning (`crates/oxpinyin-user/src/store.rs`,
-`crates/oxpinyin-capi/src/candidates.rs`). `pinyin_guess_predicted_candidates`
-refuses the call only when a resolved prefix's own gram is short — the pin's
-`_compute_predicted_bigram_candidates` loads no other row
-(`src/pinyin.cpp:2322-2330`) — checking `has_short_bigram_value_for` before
-its per-prefix empty-gram check (a corrupt container cannot exist at the pin
-and the per-prefix abort order has no observable answer), emitting one
-`libpinyin` warning and answering `false` with the candidate list cleared
-(`crates/oxpinyin-capi/src/predict.rs`, `predicted_bigram_fault`).
-
-Held by `contract-diff.py` cases `abort-mask-out-short-bigram-value`,
-`abort-zhuyin-mask-out-short-bigram-value`,
-`abort-guess-predicted-short-bigram-value` and
-`abort-remove-user-candidate-short-bigram-value`: MATCH on bdb (pin SIGABRT -6,
-subject `false` with one warning), and all four DIFFER against the parent
-build. Two controls hold the complement so the guard cannot over-refuse: in
-`mask-out-short-bigram-value-masked-key` a short value whose key the mask
-erases is never loaded, and in `guess-predicted-unrelated-short-bigram-value`
-a short value under `你`'s token is never loaded by a prediction for `我`, so
-pin and subject both complete; both MATCH on bdb and against the parent build
-alike. The prediction control is the one the store-wide first cut of this
-refusal failed: the review of #525 batch D measured the pin answering `true`
-on it while the un-scoped `predicted_bigram_fault` answered `false` with one
-warning, and the case now holds the prefix-scoped check. The fixture is a
-Berkeley DB hash, so the six cases declare
-`cells=('bdb',)`. No interface, ABI or dependency change.
-- **Status (2026-10-31 UTC):** closed by member 5c. The short value is the
-  pin's abort at each of these paths, and at training, the lookups and the
-  bigram export walk; the partial item tail is split out and keeps its class
-  (b) refusals. See [pin-aborts-remaining.md](pin-aborts-remaining.md).
-
-### A non-`phrase_token_t` user-bigram key aborts `mask_out`, the removal and the export iterator (#525; row 86, class (c), 2026-10-10 UTC)
-
-Read libpinyin at `074a2219c90feaf962d0d24f034514033ece5f99`.
-`Bigram::get_all_items` (`src/storage/ngram_bdb.cpp:180-215`) walks the whole
-container with a `DBC` cursor and, for each row,
-`assert(key.size == sizeof(phrase_token_t))` (`:199`), then
-`memcpy(&token, key.get_buffer(), sizeof(phrase_token_t))`. A
-`user_bigram.db` key that is not four bytes therefore aborts the walk. Two
-public call paths walk it:
-
-- `pinyin_mask_out` / `zhuyin_mask_out`, through `m_user_bigram->mask_out`
-  (`src/pinyin.cpp:1230`, `src/zhuyin.cpp:765`).
-- `pinyin_remove_user_candidate` (`src/pinyin.cpp:3766`), through the same
-  `user_bigram->mask_out` walk.
-- `pinyin_begin_get_bigram_phrases` (`src/pinyin.cpp:779`), which opens the
-  export iterator over the same walk.
-
-`pinyin_guess_predicted_candidates` loads a named key instead of walking, so
-it does not reach the assert.
-
-Reproduced on bdb with a ctypes driver that writes a Berkeley DB **hash**
-container holding a five-byte key (`b"\x01\x00\x00\x00\x00"`) and a
-four-byte value:
-
-- `pinyin_mask_out(ctx, 0xFFFFFFFF, 0)`: SIGABRT in `get_all_items`.
-- `zhuyin_mask_out(ctx, 0xFFFFFFFF, 0)`: SIGABRT in `get_all_items`.
-- `pinyin_remove_user_candidate(inst, cand)`: SIGABRT in `get_all_items`,
-  with a valid user phrase so the call reaches the bigram walk.
-- `pinyin_begin_get_bigram_phrases(ctx)`: SIGABRT in `get_all_items`.
-
-oxpinyin's `load_bigram` records the raw bytes of every key that is not four
-bytes before touching the value
-(`crates/oxpinyin-user/src/persistence.rs`, `bigram_non_token_keys`).
-`GenericUserStore::mask_out` refuses the whole call with
-`UserStoreError::NonTokenUserBigramKey` when any is present
-(`crates/oxpinyin-user/src/store.rs`, `has_non_token_bigram_key`), and both C
-facades map that to exactly one `g_warning` in their own domain and answer
-`false` (`crates/oxpinyin-capi/src/config.rs`,
-`crates/oxpinyin-zhuyin-capi/src/config.rs`). `GenericUserStore::remove_user_phrase`
-refuses the same way before touching the store, so `pinyin_remove_user_candidate`
-answers `false` with one `libpinyin` warning (`crates/oxpinyin-user/src/store.rs`,
-`crates/oxpinyin-capi/src/candidates.rs`). `pinyin_begin_get_bigram_phrases`
-checks `has_non_token_bigram_key` and answers NULL with one `libpinyin`
-warning, the export's own failure shape
-(`crates/oxpinyin-capi/src/iterators.rs`, `crates/oxpinyin-capi/src/state.rs`).
-
-Held by `contract-diff.py` cases `abort-mask-out-non-token-bigram-key`,
-`abort-zhuyin-mask-out-non-token-bigram-key`,
-`abort-remove-user-candidate-non-token-bigram-key` and
-`abort-begin-bigram-phrases-non-token-key`: MATCH on bdb (pin SIGABRT -6,
-subject NULL/`false` with one warning), and all four DIFFER against the
-parent build; the fixture is a Berkeley DB hash, so the four cases declare
-`cells=('bdb',)`. No interface, ABI or dependency change.
-
-### A user gram whose total its items do not cover, masked to nothing, aborts `Bigram::mask_out` (#525; row 87, class (c), 2026-10-10 UTC)
-
-Read libpinyin at `074a2219c90feaf962d0d24f034514033ece5f99`.
-`Bigram::mask_out` (`src/storage/ngram_bdb.cpp:218-249`, and its twins
-`ngram_kyotodb.cpp:198-227` and `ngram_tkrzwdb.cpp:174-203`) removes the items
-a mask selects from each gram and then, when the gram had items removed, asks
-`SingleGram::get_length` for the remainder (`:243`, `:224`, `:200`);
-`get_length` asserts `0 == total_freq` when no item is left
-(`src/storage/ngram.cpp:70`). `SingleGram::mask_out` (`:77-101`) subtracts
-each removed item's frequency from the stored total, so a gram whose stored
-`total_freq` is **not** the sum of its items' frequencies is left with a
-nonzero residual once every item is removed, and the assert dies.
-`pinyin_mask_out` / `zhuyin_mask_out` and `pinyin_remove_user_candidate` are
-the calls that reach it (through `m_user_bigram->mask_out` / `user_bigram->mask_out`,
-`src/pinyin.cpp:1230`, `src/zhuyin.cpp:765`, `src/pinyin.cpp:3766`).
-
-Reproduced on bdb with a ctypes driver that writes a Berkeley DB **hash**
-container holding one four-byte key (`\x01\x00\x00\x00`) and a value whose
-`total_freq` is `7` with a single item of token `0` and frequency `0`:
-
-- `pinyin_mask_out(ctx, 0xFFFFFFFF, 0)`: SIGABRT in `get_length`.
-- `zhuyin_mask_out(ctx, 0xFFFFFFFF, 0)`: SIGABRT in `get_length`.
-- `pinyin_remove_user_candidate(inst, cand)`: SIGABRT in `get_length`, with
-  a valid user phrase and the gram's single item carrying that phrase's token
-  (so `user_bigram->mask_out` selects and removes it, leaving the residual).
-- `pinyin_guess_predicted_candidates(inst, "我")`, `pinyin_train`, and
-  `pinyin_begin_get_bigram_phrases`: complete — the gram still carries its
-  item at load, so the predicted-candidate walk's `get_length` sees one and
-  no assert fires.
-
-An **item-less** gram with a nonzero total is a different state with a
-different failing call (row 88, below).
-
-oxpinyin's `load_bigram` records every four-byte key whose `total_freq` is
-not the wrapping sum of its item frequencies, with its item tokens
-(`crates/oxpinyin-user/src/persistence.rs`, `bigram_residual_grams`).
-`GenericUserStore::mask_out` recomputes the removal for the call's mask and
-value and refuses with `UserStoreError::ResidualUserBigramGram` when a
-recorded gram's key is left alone but every one of its items is selected
-(`crates/oxpinyin-user/src/store.rs`, `has_residual_bigram_gram`); both C
-facades map that to exactly one `g_warning` in their own domain and answer
-`false` (`crates/oxpinyin-capi/src/config.rs`,
-`crates/oxpinyin-zhuyin-capi/src/config.rs`). `GenericUserStore::remove_user_phrase`
-runs the same recomputation for its `PHRASE_INDEX_LIBRARY_MASK | PHRASE_MASK`
-/ token call and refuses before touching the store, so `pinyin_remove_user_candidate`
-answers `false` with one `libpinyin` warning (`crates/oxpinyin-user/src/store.rs`,
-`crates/oxpinyin-capi/src/candidates.rs`).
-
-Held by `contract-diff.py` cases `abort-mask-out-residual-bigram-gram`,
-`abort-zhuyin-mask-out-residual-bigram-gram` and
-`abort-remove-user-candidate-residual-bigram-gram`: MATCH on bdb (pin SIGABRT
--6, subject `false` with one warning), and all three DIFFER against the parent
-build; the fixture is a Berkeley DB hash, so the cases declare
-`cells=('bdb',)`. No interface, ABI or dependency change.
-
-### An item-less user gram with a residual total aborts the predicted-candidate walk (#525; row 88, class (c), 2026-10-10 UTC)
-
-Read libpinyin at `074a2219c90feaf962d0d24f034514033ece5f99`.
-`SingleGram::get_length` (`src/storage/ngram.cpp:64-75`) walks the gram's
-items and, when none is left over, `assert(0 == total_freq)` (`:70`) — a
-chunk that holds only the four-byte total with a nonzero value violates it.
-`pinyin_guess_predicted_candidates` is the call that reaches it:
-`_compute_predicted_bigram_candidates` (`src/pinyin.cpp:2310-2341`) loads each
-prefix's user gram and calls `get_length` on it (`:2332`). This corrects the
-Phase 1 ledger, which had said the state is read by `pinyin_mask_out`:
-`SingleGram::mask_out` answers 0 for an already item-less gram and the
-`get_length` check is skipped (`ngram_bdb.cpp:243`), so the pin **completes**
-the mask and leaves the gram as it was — the mask is not the failing
-operation, the predicted-candidate call is.
-
-`pinyin_mask_out` / `zhuyin_mask_out` therefore do not abort on this state,
-and neither do the load, the export iterator, or `pinyin_begin_get_bigram_phrases`.
-
-Reproduced on bdb with a ctypes driver that writes a Berkeley DB **hash**
-container holding one four-byte key and a four-byte value whose `total_freq`
-is `7` and whose item count is `0`:
-
-- `pinyin_parse_more_full_pinyins(inst, ni)` →
-  `pinyin_guess_predicted_candidates(inst, "ni")`: SIGABRT in `get_length`.
-- `pinyin_mask_out(ctx, 0xFFFFFFFF, 0)`: completes (no abort), the mask
-  answering 0 and leaving the state.
-
-oxpinyin's `load_bigram` decodes each four-byte total and its complete items into the
-value model. The predicted-candidate guard reads the current raw gram at
-call time (`crates/oxpinyin-user/src/persistence.rs`, `store.rs`).
-`pinyin_guess_predicted_candidates` refuses the call only when a resolved
-prefix's own gram is item-less with a residual total — the pin loads no other
-row (`src/pinyin.cpp:2322-2336`) — checking `has_empty_bigram_gram_for` after
-its short-value check, emitting one `libpinyin` warning and answering `false`
-with the candidate list cleared (`crates/oxpinyin-capi/src/predict.rs`,
-`predicted_bigram_fault`); since the mask is not a failing operation,
-`mask_out` is left to complete on this state, as the pin's does.
-
-Held by `contract-diff.py` case `abort-guess-predicted-empty-bigram-gram`:
-MATCH on bdb (pin SIGABRT -6, subject `false` with one warning), DIFFER
-against the parent build. The control
-`guess-predicted-unrelated-empty-bigram-gram` holds the complement — an
-item-less residual gram under `你`'s token is never loaded by a prediction for
-`我`, so pin and subject both complete — and MATCHes on bdb and against the
-parent build alike; the store-wide first cut of this refusal failed it for the
-same reason as row 85's prediction control. The fixture is a Berkeley DB hash,
-so the cases declare `cells=('bdb',)`. No interface, ABI or dependency change.
-
-### A duplicate same-library phrase-table token aborts `zhuyin_iterator_add_phrase` (#525; row 89, class (c), 2026-10-10 UTC)
-
-Read libpinyin at `074a2219c90feaf962d0d24f034514033ece5f99`.
-`_add_phrase` (`src/zhuyin.cpp:404-`) searches the phrase table, reduces the
-returned tokens to a `GArray` and walks it through `show_class_phrase`
-semantics (`src/zhuyin.cpp`): the first candidate is stored unconditionally,
-and for every later candidate whose `PHRASE_INDEX_LIBRARY_INDEX` equals the
-target `index` it asserts `PHRASE_INDEX_LIBRARY_INDEX(token) != index`
-(`:440`). Two tokens for the same phrase in the same sub-index library
-therefore abort `zhuyin_iterator_add_phrase` with SIGABRT. No public call
-writes two such tokens in one library — `_add_phrase` keeps one token per
-sub-index — so the case crafts `user_phrase_index.bin`, a Berkeley DB btree
-(the pin's own layout, `chewing_large_table2_bdb.cpp:58`), with one phrase
-key (`你好` as two little-endian `ucs4_t`) mapping to two tokens in library 7.
-
-Reproduced on bdb with a conforming `user.conf` so `check_format` keeps the
-crafted index: `zhuyin_init` succeeds, then `zhuyin_iterator_add_phrase` on
-`你好` dies at `zhuyin.cpp:440` (SIGABRT, exit -6).
-
-oxpinyin's `zhuyin_iterator_add_phrase` reads the phrase-table membership
-from the store (`UserStore::phrase_table_tokens_for_text`, the
-`user_phrase_index.bin` pairs) plus the system phrase index, keeps the tokens
-whose library equals the target index (`same_library_phrase_table_tokens`)
-and refuses with exactly one `libzhuyin` warning and `false` when more than
-one remains (`crates/oxpinyin-zhuyin-capi/src/iterators.rs`). Held by
-`contract-diff.py` case `abort-zhuyin-add-phrase-duplicate-library-token`:
-MATCH on bdb (pin SIGABRT -6, subject `false` with one `libzhuyin` warning),
-DIFFER against the parent build. The fixture is a Berkeley DB btree, so the
-case declares `cells=('bdb',)`. No interface, ABI or dependency change.
-
-### A phrase-index item text mismatch aborts `zhuyin_iterator_add_phrase` (#525; row 90, class (c), 2026-10-10 UTC)
-
-Read libpinyin at `074a2219c90feaf962d0d24f034514033ece5f99`.
-In the same `_add_phrase` walk, when the lone token in the target sub-index
-library names a phrase-index item, the pin fetches it and asserts the lengths
-match (`src/zhuyin.cpp:456`) and `0 == memcmp(phrase, tmp_phrase, sizeof(ucs4_t)
-* phrase_length)` (`:457`). A phrase table that points a phrase at a token
-whose item text differs — a stale `user_phrase_index.bin`, or a phrase
-reindexed elsewhere — aborts the add.
-
-Reproduced on bdb with a ctypes driver that persists `你們` in library 7, reads
-its token, rewrites `user_phrase_index.bin` so `你好` maps to that token, and
-reopens: `zhuyin_iterator_add_phrase` on `你好` dies at `zhuyin.cpp:457`
-(SIGABRT, exit -6); the subject's subject token introspection still reads `你們`.
-
-oxpinyin's `zhuyin_iterator_add_phrase` compares the token's phrase-index item
-text (`RuntimeDict::token_introspection`) with the phrase and refuses with
-exactly one `libzhuyin` warning and `false` when they differ
-(`crates/oxpinyin-zhuyin-capi/src/iterators.rs`). Held by `contract-diff.py`
-case `abort-zhuyin-add-phrase-index-text-mismatch`: MATCH on bdb (pin SIGABRT
--6, subject `false` with one warning), DIFFER against the parent build. The
-fixture is a Berkeley DB btree, so the case declares `cells=('bdb',)`. No
-interface, ABI or dependency change.
-
-### A non-null-token `MODIFY_HEADER` in a user `.dbin` aborts init and `mask_out` (#525; row 91, class (c), 2026-10-10 UTC)
-
-Read libpinyin at `074a2219c90feaf962d0d24f034514033ece5f99`.
-`PhraseIndexLogger::next_record` reads each record's `LOG_TYPE` and
-`phrase_token_t` and, for a `MODIFY_HEADER` record, asserts
-`token == null_token` (`src/storage/phrase_index_logger.h:202`). A user
-`.dbin` for a `SYSTEM_FILE` or `DICTIONARY` library that holds such a record
-aborts both reads of it: the library load's `merge` at init
-(`FacadePhraseIndex`'s `load_phrase_index`), and `mask_out`'s
-`merge_with_mask` (the pin re-reads each such library and its `.dbin`,
-`pinyin.cpp:1273-1285`, `zhuyin.cpp:808-820`).
-
-Reproduced on bdb with a ctypes driver that writes a `MemoryChunk` holding one
-`MODIFY_HEADER` record with a non-null token (`0x01000001`) to
-`gb_char.dbin`, with a conforming `user.conf`:
-
-- `pinyin_init` / `zhuyin_init`: SIGABRT at `phrase_index_logger.h:202`.
-- `pinyin_mask_out(ctx, 0, 0)` / `zhuyin_mask_out(ctx, 0, 0)`, with the
-  `.dbin` corrupted **after** a successful init: SIGABRT at the same site.
-
-oxpinyin's `decode_log_records` already rejected the record
-(`LogDecodeError::header_token`); `load_logs` now records it as
-`strict_log_fault` (`crates/oxpinyin-data/src/user_files.rs`,
-`crates/oxpinyin-user/src/persistence.rs`) and the store open fails with
-`UserStoreError::SystemLogHeaderToken`, mapped to
-`OpenError::CorruptLogHeader` (`crates/oxpinyin-user/src/store_libpinyin.rs`,
-`crates/oxpinyin-runtime/src/lib.rs`), so `pinyin_init`/`zhuyin_init` answer
-NULL with exactly one warning in the facade's domain
-(`crates/oxpinyin-capi/src/context.rs`,
-`crates/oxpinyin-zhuyin-capi/src/context.rs`). For the mask,
-`GenericUserStore::validate_system_logs` reads and validates every loaded
-`SYSTEM_FILE`/`DICTIONARY` library's user `.dbin` from the user directory
-(skipping a library the runtime reports unloaded, as the pin's `get_range`
-skips a missing sub-index) **before** `mask_out` changes any state (`crates/oxpinyin-user/src/store.rs`),
-so a refused mask leaves the store byte-for-byte where the pin's partial
-reloads die with its abort; both facades answer `false` with one warning
-(`MaskOutOutcome::SystemLogHeaderToken`, `crates/oxpinyin-facade/src/context.rs`,
-both `config.rs` files). Held by `contract-diff.py` cases
-`abort-init-log-header-token-{pinyin,zhuyin}`,
-`abort-mask-out-log-header-token-{pinyin,zhuyin}` and the atomicity cases
-`abort-mask-out-log-header-untouched-{pinyin,zhuyin}` (whose `untouched-*`
-fields hold the added phrase and the user-directory bytes unchanged): MATCH on
-bdb, kc and tkrzw (pin SIGABRT -6, subject `false`/NULL with one warning) and
-all DIFFER against the parent build. The `.dbin` is a backend-independent
-`MemoryChunk`, so those cases run in every cell. No interface, ABI or
-dependency change.
-
-### More than one `MODIFY_HEADER` in a user `.dbin` aborts `mask_out` only (#525; row 92, class (c), 2026-10-10 UTC)
-
-Read libpinyin at `074a2219c90feaf962d0d24f034514033ece5f99`.
-`_peek_header` walks a logger's records counting `MODIFY_HEADER`s and asserts
-`1 >= header_count` (`src/storage/phrase_index.cpp:745`). It is reached only
-by `merge_with_mask` — the `mask_out` read of the `.dbin`; init's `merge`
-applies every header (`m_total_freq += new_total - old_total`) without
-peeking. A `.dbin` with two null-token `MODIFY_HEADER` records therefore loads
-cleanly at init and aborts `pinyin_mask_out` / `zhuyin_mask_out`.
-
-Reproduced on bdb with a `MemoryChunk` holding two null-token `MODIFY_HEADER`
-records:
-
-- `pinyin_init` / `zhuyin_init`, with a conforming `user.conf`: complete
-  (both headers applied), no abort.
-- `pinyin_mask_out(ctx, 0, 0)` / `zhuyin_mask_out(ctx, 0, 0)`: SIGABRT at
-  `phrase_index.cpp:745`.
-
-oxpinyin's `validate_system_logs` counts the headers decoded before any
-malformed tail (the pin's `_peek_header` accumulates them until `next_record`
-answers false) and refuses the
-mask with `UserStoreError::SystemLogMultipleHeaders` (`MaskOutOutcome::
-SystemLogMultipleHeaders`) — one warning in the facade's domain, `false` —
-before any state change; init keeps loading the file exactly as the pin does
-(`crates/oxpinyin-user/src/store.rs`, `crates/oxpinyin-facade/src/context.rs`,
-both `config.rs` files). Held by `contract-diff.py` cases
-`abort-mask-out-multiple-log-headers-{pinyin,zhuyin}` and the controls
-`init-multiple-log-headers-{pinyin,zhuyin}`: the abort cases MATCH on bdb, kc
-and tkrzw and DIFFER against the parent build; both controls MATCH on every
-cell and against the parent. The `.dbin` is a backend-independent
-`MemoryChunk`, so those cases run in every cell. No interface, ABI or
-dependency change.
-
-### A surviving ADD in a masked system log aborts mask_out (#728; row 97, class (c), 2026-10-11 UTC)
-
-Read the libpinyin tree at `074a2219c90feaf962d0d24f034514033ece5f99`;
-the cited pinyin and zhuyin source blobs match that commit. Both facades
-replace each loaded system sub-index from disk before merging its user log
-(`src/pinyin.cpp:1253-1285`, `src/zhuyin.cpp:788-820`). The phrase table is
-separate and is not rebuilt. This reload is ordinary compatibility.
-
-`merge_with_mask` returns before reading the log when its library-bit check
-fails (`src/storage/phrase_index.cpp:309-313`). With matching library bits,
-`mask_out_phrase_index_logger` requires a header (`:855-856`) and filters out
-slot records selected by the mask. `_mask_out_records` re-appends each
-surviving non-header record with both `&oldchunk` and `&newchunk` (`:839`).
-For `LOG_ADD_RECORD`, `PhraseIndexLogger::append_record` asserts
-`NULL == oldone` (`src/storage/phrase_index_logger.h:245`): the pointer is
-non-null even though the old chunk's size is zero. This is an **assert**, not
-undefined behaviour or an `abort()` call.
-
-Reproduced on both facades: import 龘龘 into library 1, save, then call
-`mask_out(0x00FFFFFF, 0)`; the pin dies of SIGABRT at `:245`. oxpinyin
-preflights the current disk log with the existing #729 validation, before
-masking any table, replacing any mapping or changing an overlay. For a loaded
-matching library, exactly one decoded header and a surviving ADD cause
-`SystemLogSurvivingAdd`; each C facade returns `false` and emits exactly one
-warning in its own domain (`libpinyin` or `libzhuyin`), naming
-`NULL == oldone` and `phrase_index_logger.h:245`.
-
-Held by `abort-mask-out-surviving-add-{pinyin,zhuyin}` in the existing
-`tools/bisection/contract-diff.py`. The cases check that the saved item, an
-unsaved item in a second system library, the unigram overlay, phrase-table
-lookup and user-directory bytes remain unchanged. Adjacent cases hold the
-predicate boundaries: a selected ADD and an ADD without a header do not
-abort, an unloaded library's log is skipped, and `0xFFFFFFFF/0` rejects
-library 1's log and discards both saved and unsaved index additions while
-preserving phrase-table lookup.
-
-The successful merge case contains only `MODIFY_HEADER` and `MODIFY`: both
-pointers are permitted for MODIFY (`phrase_index_logger.h:267-268`). Its
-same-size item replacement changes token 0x01001225 from 你 to 龘 under
-`0x00FFFFFF/0`, with unchanged unigram and total values; token introspection
-observes the change while lookup of 你 keeps its phrase-table token. A
-separate case replaces a scratch system chunk after init to hold the actual
-disk reload, without modifying the oracle. All fixtures are ordinary
-backend-independent MemoryChunk inputs. No supported API, ABI or dependency
-change. Execution observations are transient; no captures are retained.
-
 ### Bigram export iterator reads past a partial user-gram item (#677; policy row 98, class (b), 2026-10-13 UTC)
 
 - **Upstream source cite:** `src/storage/ngram.cpp:133-143`
@@ -3799,19 +2608,6 @@ change. Execution observations are transient; no captures are retained.
   upstream can read outside the value. The source guard and ordinary
   backend-independent valid-row differential are prepared; no malformed
   crash probe was executed in this source-maintenance phase.
-
-### A partial user-gram tail with no complete items and a residual total reaches the existing `get_length` assertion (#677; policy row 88, class (c), 2026-10-13 UTC)
-
-`SingleGram::get_length` (`src/storage/ngram.cpp:58-70` at the same pin)
-computes the count in complete eight-byte items. A four-byte total followed
-by 1–7 bytes has zero complete items, so a nonzero total reaches its
-`assert(0 == total_freq)`. This is the same assertion and predicted-candidate
-API shape already registered in row 88 for a bare four-byte total. The user
-loader now decodes the partial value as an item-less gram with its total;
-the existing prefix-scoped predicted-candidate check reads the live raw
-value and refuses with `false`,
-an empty candidate list and exactly one `libpinyin` warning. No separate
-row 99 or five-byte-specific branch is needed.
 
 ### Training on a malformed user-gram value reads past a partial item (#677; policy row 100, class (b), 2026-10-14 UTC)
 
@@ -3906,28 +2702,6 @@ previous token's gram).
   the rest as plain differentials with their saved-first controls), and
   `reloading_a_system_library_drops_the_unsaved_session`
   (`crates/oxpinyin-user/src/store_libpinyin.rs`) at store level.
-
-### A library unload or reload whose user-store write is refused (#805; policy row 103, class (c), 2026-10-16 UTC)
-
-- **Upstream source cite:** `src/pinyin.cpp:264-277` and `:473-474`,
-  `src/zhuyin.cpp:298-312`, `src/storage/phrase_index.cpp:261-268` at
-  `074a2219c90feaf962d0d24f034514033ece5f99`. The pin has no failing site
-  here: unload is in memory and answers `true`, and an unreadable `.dbin` is
-  an empty log. The construct is neither an `assert` nor an `abort()`.
-- **Mechanism:** oxpinyin keeps the library's session state in a database
-  that can refuse a write.
-- **What oxpinyin does instead:** the store is written first and the
-  visibility mask flips only after it took. On a refused write the call
-  answers `false`, the runtime is unchanged, and one `g_warning` is emitted
-  in the facade's domain (`libpinyin` or `libzhuyin`).
-- **Externally observable:** only when the store write fails, which the pin
-  cannot do.
-- **Held by:** `store_first_tests`
-  (`crates/oxpinyin-facade/src/context.rs`).
-- **Status (2026-10-31 UTC):** closed by member 5b. The transitions are
-  in memory and cannot fail; the refusal and `store_first_tests` are
-  deleted. See
-  [library-transitions-in-memory.md](library-transitions-in-memory.md).
 
 ### A second `pinyin_fini` / `zhuyin_fini` on one context (#573; policy row 105, class (b), 2026-10-17 UTC)
 
@@ -4114,65 +2888,6 @@ texts are in
   `arm64-pin-portability-1137.md` ("libzhuyin candidate frequency: λ > 1
   orders candidates differently on arm64").
 
-### Final C string/vector allocation refusal (#1227; class (c))
-
-**Status 2026-10-31 UTC: pin behaviour reproduced.** Class (c) is retired
-(compatibility policy, "Returned strings (#1227)"). The returned strings and
-the keyboard vector are allocated with the pin's GLib calls and arguments,
-so allocation failure aborts as the pin's does; the `g_ucs4_to_utf8` sites
-keep the fallible encoder (NULL, the pin's return value, no warning). The
-warnings, the false returns and the deferred out-param cleanup below are
-gone. Per-site record: [returned-string-allocation.md](returned-string-allocation.md).
-The `abi-alloc-failure` gate now expects GLib's fatal failure on both sides.
-The text below is the 2026-10-25 UTC record.
-
-Recorded 2026-10-25 UTC. At `074a2219`, renderer duplication and formatting
-(`src/storage/chewing_key.cpp:47-115`, callers `src/pinyin.cpp:2707-2764`
-and `src/zhuyin.cpp:1732-1765`), keyboard vector elements
-(`src/storage/zhuyin_parser2.cpp:496-544`), auxiliary concatenation
-(`src/pinyin.cpp:3381-3596`), final sentence duplication/concatenation
-(`src/lookup/lookup.cpp:27-69`), unigram reading join
-(`src/pinyin.cpp:721-733`), and returned bigram strings
-(`src/pinyin.cpp:896-910`) reach fatal GLib allocation. GLib 2.84.4
-`glib/gmem.c:94-112` calls `g_error` on positive-size malloc failure;
-`gstrfuncs.c` implements the concatenation/join allocations with `g_new`.
-This is an explicit class-(c) availability choice, not a runtime quirk.
-
-Both facades' `ffi::owned_cstr` and `ffi::owned_cstr_list` now log exactly
-one warning under their existing `libpinyin`/`libzhuyin` domain on final
-allocation failure. Nested string failure is logged only by the string
-helper; vector cleanup adds no second warning. `malloc_cstr_with_warning`
-provides that policy for final byte-buffer allocations, while
-`malloc_cstr_with` preserves nonfatal conversion behavior. Callers return
-false; the keyboard vector frees every partial string and its vector.
-Both pinyin export iterators and the dual-string cursor renderer defer
-out-param writes until all requested allocations succeed. A warned failure
-frees this call's earlier buffers with libc `free`, leaves all outputs
-untouched, and emits only the failing allocator's warning. The unigram
-phrase conversion deliberately remains non-warning and may return NULL
-with success: the pin does not check `g_ucs4_to_utf8` at
-`src/pinyin.cpp:715-716`, publishes it at `:737`, and returns true at `:745`
-or `:755`. GLib 2.84.4 `glib/gutf8.c:1049-1051` returns NULL after its
-fallible allocation; this is distinct from the fatal reading join.
-
-The existing `tools/abi/check-alloc-failure.sh` gate, registered as
-`abi-alloc-failure`, injects eight final-allocation failures: the first-tone
-zhuyin renderer and HSU `c` vector/first-string/second-string allocations
-on each facade. It checks the false return, NULL output, exactly one
-warning with the expected domain/message, partial-vector cleanup, and
-injection-disabled negative controls. Three further witnesses fail the
-second allocation in each pinyin iterator and `pinyin_get_pinyin_strings`;
-they require one warning, false, unchanged outputs, and equal tracked/freed
-allocation counts. All three failed against f369b0a2 with one tracked
-buffer and none freed before the cleanup fix. The remaining changed key,
-sentence and zhuyin paths publish one string or an already-cleaned vector,
-so none publishes a buffer before another fallible allocation. Other
-callers above are source-only
-coverage. Earlier Rust allocations may still terminate; no identical
-allocation graph or whole-process OOM equivalence is claimed. Real GArray
-growth stays fatal. Nonfatal `token_get_phrase` conversion belongs to
-#1224 and is unchanged by #1227.
-
 ### NULL string conversion after defined prior work (#1279)
 
 Class (b), following the #1272/#1277 no-input ruling. At 074a2219
@@ -4211,7 +2926,7 @@ earlier evidence. Stage 1 of [external-io-boundary.md](external-io-boundary.md)
 `oxpinyin-input` makes the pin's own calls, their cases run their original
 probes as MATCH, and their records are no longer registered by any case.
 The punctuation record's undefined-read safety treatment stands under
-class (b)/(c); do not reproduce the pin's unsafe surrounding defect.
+class (b); do not reproduce the pin's unsafe surrounding defect.
 
 - Decimal lambda grammar: reverted at stage 1, host `fscanf` `%f` on the pin stream.
 - Representable version fields: reverted at stage 1, host `fscanf` `%d`.
@@ -4219,7 +2934,7 @@ class (b)/(c); do not reproduce the pin's unsafe surrounding defect.
 - Addon indexes in the library range: reverted at stage 1, host `atoi` and pin conversion.
 - Nonconforming decimal markers reset profiles: reverted at stage 1, marker `fscanf` `%d`.
 - Exact database marker tokens: reverted at stage 1, `%255s` and `strcmp`.
-- [Punctuation values contain whole words](1297-punct-words.md): not superseded; the existing class (b)/(c) safety treatment stands under the 2026-10-28 UTC ruling.
+- [Punctuation values contain whole words](1297-punct-words.md): not superseded; the existing class (b) safety treatment stands under the 2026-10-28 UTC ruling.
 - Complete chunk payload writes: superseded (2026-10-29 UTC) by the 2026-10-28 UTC external-I/O ruling; revert target at stage 2, one host `write`.
 - Complete tool decimal fields: superseded (2026-10-29 UTC) by the 2026-10-28 UTC external-I/O ruling and the tools drop-in ruling; revert target at stage 5, host `atoi`/`atol`.
 - Native nonfinite tool formatting: superseded (2026-10-29 UTC) by the 2026-10-28 UTC external-I/O ruling and the tools drop-in ruling; revert target at stage 5, pin's formatted call.

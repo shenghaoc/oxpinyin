@@ -205,11 +205,8 @@ and only the right call — the harness's word-move probe skip at cursor 8
 is over-cautious (the skip prints identical lines on both sides, so the
 differential is unaffected).
 
-**oxpinyin's answer at the abort points:** the no-abort policy —
-`pinyin_get_right_pinyin_offset` (and its siblings) return `false` where
-the pin aborts (`EngineError::ZeroKeyOffsetCheck`), extending the same
-policy as the guess seam above. This diverges from BOTH the pin (abort)
-and post-`95e3af7` upstream (which discards an inverted-condition
-`false` and returns true with the unusable computed value); both arms
-are recorded in `upstream-divergences.md`, as the fifth finding in this
-family.
+**oxpinyin's answer at the abort points:** `pinyin_get_right_pinyin_offset`
+and `pinyin_get_left_pinyin_offset` abort where the pin aborts
+(`EngineError::ZeroKeyOffsetCheck`; compatibility policy, row 14). Post-`95e3af7`
+upstream discards an inverted-condition `false` and returns true with the
+unusable computed value.

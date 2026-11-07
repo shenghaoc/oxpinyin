@@ -10,8 +10,8 @@
 //!    `fill_matrix` leaves it cleared) answers `false`.
 //! 2. `assert(offset < matrix.size())` and `_check_offset(matrix, offset)`
 //!    — abort shapes, answered as [`EngineError::LookupOffsetOutOfRange`]
-//!    and [`EngineError::ZeroKeyOffsetCheck`] (the no-abort policy,
-//!    `docs/findings/upstream-divergences.md`).
+//!    and [`EngineError::ZeroKeyOffsetCheck`], which the C adapters abort on
+//!    (register row 19).
 //! 3. A NULL or empty phrase answers `false` (`g_utf8_to_ucs4` also
 //!    answers NULL — length 0 — on invalid UTF-8).
 //! 4. `_pre_compute_tokens`: every character of the phrase is searched in
@@ -28,16 +28,20 @@
 //!    far as soon as the next key's raw end lies past `offset`, and
 //!    backtracks over the column's other keys when a branch fails.
 //!
-//! Two upstream shapes are answered conservatively here (register entry
-//! `pinyin_get_character_offset`'s recursion asserts answer `false` in
-//! `docs/findings/upstream-divergences.md`): an empty column at a reached
+//! Two upstream shapes are reported as errors here (register row 19): an
+//! empty column at a reached
 //! position (`assert(size > 0)`) or a zero key sharing a column with real
-//! keys (`assert(1 == size)`) answer [`EngineError::MatrixColumnAssert`]
-//! — the availability class; a walk that runs past the cached tokens
+//! keys (`assert(1 == size)`) answer [`EngineError::MatrixColumnAssert`],
+//! which the C adapters abort on; a walk that runs past the cached tokens
 //! (the pin reads `g_array_index` past the array — a phrase shorter than
 //! the key path it is measured against) treats the missing token as
 //! pronouncing nothing, so that branch fails like a mismatched key — the
 //! memory-safety class.
+//!
+//! [`remember_walk`] is `_remember_phrase_recur` (`pinyin.cpp:3578-3666`)
+//! over the same columns, for `pinyin_remember_user_input`: it differs in
+//! refusing, not asserting, on an empty column or a zero key that shares its
+//! column, and in calling the caller's `add` at every complete path.
 
 use oxpinyin_core::scoring::{ScoringError, expand_keys};
 use oxpinyin_core::{Completeness, Dictionary, PhraseEntry, PhraseToken, SyllableKey};

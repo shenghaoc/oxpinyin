@@ -374,8 +374,9 @@ where
     /// column — and a zero key at every apostrophe the parse reached, which
     /// the span search steps over to the following key. The matrix ends at
     /// the parse: an apostrophe past a stop byte sits outside it entirely
-    /// (the pin aborts there — `ni,'hao@3`, measured SIGABRT — and the
-    /// empty-column window is the no-abort answer). The scan's own key set
+    /// (the matrix has `parsed_len + 1` columns, so `ni,'hao` offset 3 is an
+    /// ordinary lookup of the empty window, and the C adapters abort from
+    /// offset 4; register row 66). The scan's own key set
     /// ([`build_scan_matrix`]) models the key columns, so a byte some key's
     /// syllable starts on, or an in-span apostrophe byte, answers; any other
     /// byte is an empty column. Exact mode has no pin counterpart, so its

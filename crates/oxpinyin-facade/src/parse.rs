@@ -124,8 +124,8 @@ pub fn exact_input(keys: &[impl ExactKey]) -> (String, Vec<ExactSegment>) {
 }
 
 /// `FullPinyinParser2::parse_one_key` (`pinyin_parser2.cpp:164-214` at
-/// 074a2219) over a scheme index: an apostrophe is the assert shape the
-/// no-abort policy renders as `None`; under `USE_TONE` a trailing `1..5`
+/// 074a2219) over a scheme index: an apostrophe is the assert shape,
+/// returned as `None` here for the C adapters to abort on; under `USE_TONE` a trailing `1..5`
 /// is the tone, which `FORCE_TONE` then requires; the remaining spelling
 /// must be one row of the index exactly, and the key is the row's
 /// canonical syllable with that tone.

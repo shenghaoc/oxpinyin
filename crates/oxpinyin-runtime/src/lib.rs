@@ -117,18 +117,19 @@ pub enum OpenError {
     /// `abort()`s (`table_info.cpp:122-133`, called at `:353-354` from
     /// `UserTableInfo::load`, which `check_format` calls).
     ///
-    /// The class-(c) availability answer of
-    /// `docs/findings/compatibility-policy.md`: the open fails and the C
-    /// ABI answers NULL, where upstream takes the process down. Nothing
-    /// is cleaned and no marker is written — upstream never reaches its
-    /// wipe either.
+    /// The open fails here and the C adapters abort, as upstream does
+    /// (register row 44). Nothing is cleaned and no marker is written —
+    /// upstream never reaches its wipe either.
     UnknownDatabaseFormat(PathBuf),
     /// The system `table.conf` is one the pin refuses or dies on
     /// (`SystemTableInfo2::load`, `table_info.cpp:194-294`, and the init
-    /// loop's asserts, `pinyin.cpp:377-392`): [`TableConfError::Header`] is
-    /// the pin's ordinary `false` return (`load %s failed!`, no warning),
-    /// every other kind a class-(b)/(c) site the C ABI answers with NULL and
-    /// one warning.
+    /// loop's asserts, `pinyin.cpp:377-392`): [`TableConfError::Unopenable`]
+    /// and [`TableConfError::Header`] are the pin's ordinary `false` returns
+    /// (`open %s failed.` and `load %s failed!`), an ordinary init failure
+    /// the C adapters answer with NULL and no warning. Every other kind
+    /// aborts in the C adapters where `table_conf_aborts` says the pin does
+    /// (rows 79 and 80), and is a class (b) site the C ABI answers with NULL
+    /// and one warning otherwise.
     TableConf(TableConfError),
     /// A `SYSTEM_FILE` library's user `.dbin` replay reached a pin
     /// assertion while the library loop merged it

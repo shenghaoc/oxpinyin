@@ -105,10 +105,10 @@ Replacing the library must preserve observable output.
 1. Reproduce byte-identical output for every export on identical inputs and state at libpinyin 2.11.92, `074a2219`.
    The pin is in `tools/oracle/oracle-pin.txt`.
    Observations include returns, out-parameters, pointed-to data, written lengths and handle-state transitions.
-2. Apply the compatibility policy's three classes.
+2. Apply the compatibility policy's two classes.
    Class (a) MATH covers platform-dependent floating-point accumulation.
    Class (b) MEMORY SAFETY covers upstream undefined behaviour that Rust structurally prevents.
-   Class (c) AVAILABILITY covers caller-input aborts with `false`/`Err` refusals.
+   Where the pin asserts or aborts, abort with `std::process::abort()`; the [source policy](../../source-policy.md#compatibility-decision-order) holds the rule.
 3. Preserve predicted-candidate list order.
    R1's text-ascending order, from the maintainer decision 2026-08-25, applied only to the removed redb/LMDB containers.
    P6 closed R1 (policy row 12).

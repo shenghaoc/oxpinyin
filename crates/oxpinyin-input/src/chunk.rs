@@ -5,7 +5,7 @@
 //! The calls are the pin's: open(filename, O_CREAT|O_WRONLY|O_TRUNC|O_BINARY,
 //! 0644), one write per header word, one write for the payload,
 //! g_fsync(fd), then close(fd). A short header write is the pin's live
-//! assert (class (c): the caller refuses instead of aborting); a short or
+//! assert (the pin asserts; the C adapters abort on the returned fault); a short or
 //! failed payload write is the pin's soft false, with no sync and no close
 //! result check.
 
@@ -239,8 +239,7 @@ pub enum ChunkHeaderField {
 }
 
 impl ChunkHeaderField {
-    /// The pin's assert expression at this write, for the facade's
-    /// class-(c) warning.
+    /// The pin's assert expression at this write, for the error text.
     #[must_use]
     pub const fn assert_expression(self) -> &'static str {
         match self {
