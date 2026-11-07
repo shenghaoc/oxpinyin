@@ -191,6 +191,24 @@ pub(crate) fn next_user_token_after(token: Token) -> Option<Token> {
     next_library_token_after(USER_DICTIONARY, token)
 }
 
+/// The token `_add_phrase` allocates from a sub-index whose `get_range` end
+/// is `end` (`pinyin.cpp:589-594` at 074a2219). `FacadePhraseIndex::get_range`
+/// masks the sub-index end into the library nibble (`phrase_index.cpp:620`,
+/// `PHRASE_INDEX_MAKE_TOKEN`), and a zero low word is bumped past the
+/// reserved id. Nothing checks for overflow: a library whose last slot is
+/// live has the end `PHRASE_MASK + 1`, which wraps to slot 1 (register row
+/// 119). The addon promotion takes the masked end without the bump
+/// (`pinyin.cpp:2541-2545`), so it wraps to slot 0.
+#[must_use]
+pub(crate) fn add_phrase_token(library: u8, end: u32) -> Token {
+    let token = phrase_index_make_token(library, end);
+    if token & PHRASE_MASK == 0 {
+        token + 1
+    } else {
+        token
+    }
+}
+
 /// Little-endian `u16` packing of a key sequence, stored as `&[u8]`.
 #[must_use]
 pub(crate) fn encode_keys(keys: &[PinyinKey]) -> Vec<u8> {
@@ -441,6 +459,28 @@ mod tests {
         assert_eq!(last, 0x07FF_FFFF);
         assert!(is_user_token(last));
         assert_eq!(next_user_token_after(last), None);
+    }
+
+    /// The session's allocation has no such boundary (register row 119):
+    /// the pin masks the range end into the nibble and bumps a zero low
+    /// word, so a full library wraps to slot 1, and the promotion's bare
+    /// mask wraps to slot 0.
+    #[test]
+    fn a_full_library_wraps_its_allocation_as_the_pin_does() {
+        assert_eq!(add_phrase_token(USER_DICTIONARY, 1), FIRST_USER_TOKEN);
+        assert_eq!(add_phrase_token(USER_DICTIONARY, 0), FIRST_USER_TOKEN);
+        assert_eq!(
+            add_phrase_token(USER_DICTIONARY, PHRASE_MASK),
+            phrase_index_make_token(USER_DICTIONARY, PHRASE_MASK)
+        );
+        assert_eq!(
+            add_phrase_token(USER_DICTIONARY, PHRASE_MASK + 1),
+            FIRST_USER_TOKEN
+        );
+        assert_eq!(
+            phrase_index_make_token(ADDON_DICTIONARY, PHRASE_MASK + 1),
+            phrase_index_make_token(ADDON_DICTIONARY, 0)
+        );
     }
 
     #[test]

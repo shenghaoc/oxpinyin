@@ -90,6 +90,10 @@ struct Replacement {
     offset: u32,
     length: usize,
     unigram: u32,
+    /// Whether the item the slot names leaves the total first:
+    /// `remove_phrase_item` then `add_phrase_item`, or `add_phrase_item`
+    /// alone, which only moves the offset word.
+    removes_old: bool,
 }
 
 impl PreparedReplacement {
@@ -270,17 +274,24 @@ impl UserLibrary {
         Ok(())
     }
 
+    /// `add_phrase_item` alone, as `_add_phrase`'s new-phrase branch
+    /// (`pinyin.cpp:597-603` at 074a2219) and the addon promotion
+    /// (`:2546-2556`) call it: the slot's offset word is overwritten and an
+    /// item it named keeps its bytes and its share of `m_total_freq`
+    /// (`phrase_index.cpp:208-217`). A full library wraps its allocation
+    /// onto a live slot this way (register row 119).
+    ///
     /// Finish every fallible check before the caller commits its tables.
-    /// At 074a2219 pinyin.cpp:597-607 and :2542-2558 publish indexes then
-    /// append unconditionally (phrase_index.cpp:208-217). Only a malformed
-    /// body or a slot past `PHRASE_MASK` can refuse; the offset wraps.
-    /// Applying the prepared bytes has no recoverable failure.
-    pub(crate) fn prepare_replace(
+    /// Those pin sites publish indexes then append unconditionally. Only a
+    /// malformed body or a slot past `PHRASE_MASK` can refuse; the offset
+    /// wraps. Applying the prepared bytes has no recoverable failure.
+    pub(crate) fn prepare_add(
         &self,
         slot: u32,
         bytes: Vec<u8>,
     ) -> Result<PreparedReplacement, String> {
-        let change = self.replacement(slot, &bytes)?;
+        let mut change = self.replacement(slot, &bytes)?;
+        change.removes_old = false;
         Ok(PreparedReplacement { bytes, change })
     }
 
@@ -304,6 +315,7 @@ impl UserLibrary {
             },
             length: view.as_bytes().len(),
             unigram: view.unigram(),
+            removes_old: true,
         }
     }
 
@@ -317,7 +329,9 @@ impl UserLibrary {
         }
         let slot = change.slot;
         let bytes = &bytes[..change.length];
-        if let Some(unigram) = self.item(slot).map(|item| item.unigram()) {
+        if change.removes_old
+            && let Some(unigram) = self.item(slot).map(|item| item.unigram())
+        {
             self.slots.set(slot, 0);
             self.total = self.total.wrapping_sub(unigram);
         }
@@ -997,6 +1011,26 @@ mod tests {
         assert_eq!(library.slots.offset(6), Some(8));
         assert_eq!(library.item(5).unwrap().unigram(), 60);
         assert_eq!(library.content.len(), 72);
+    }
+
+    /// A wrapped allocation lands on a live slot (register row 119):
+    /// `add_phrase_item` alone moves the offset word and adds the new
+    /// unigram, and the overwritten item's unigram stays in `m_total_freq`
+    /// (`phrase_index.cpp:208-217`), where `replace` takes it out first.
+    #[test]
+    fn an_add_over_a_live_slot_keeps_the_overwritten_unigram_in_the_total() {
+        let mut library = UserLibrary::default();
+        fill(&mut library, &[1, 2, 3]);
+        assert_eq!(library.total(), 6);
+        library
+            .prepare_add(2, small(20))
+            .unwrap()
+            .apply(&mut library);
+        assert_eq!(library.item(2).unwrap().unigram(), 20);
+        assert_eq!(library.total(), 26, "slot 2's old unigram stays");
+        assert_eq!(library.items().count(), 3);
+        library.replace(2, &small(30)).unwrap();
+        assert_eq!(library.total(), 36, "a replace removes first");
     }
 
     /// Zero narrows to 8, as an empty content does.

@@ -147,7 +147,10 @@ pub enum UserStoreError {
     /// Phrase text is empty, too long, or its key count does not match its
     /// Unicode scalar length (`docs/findings/user-store.md` §3.1–3.2).
     InvalidPhrase,
-    /// No remaining token in the [`crate::USER_DICTIONARY`] 24-bit id space.
+    /// The row store's allocation cursor has no token left in the library's
+    /// 24-bit id space. A session never answers it: the pin's `_add_phrase`
+    /// and addon promotion take `get_range`'s end unchecked and wrap
+    /// (`pinyin.cpp:589-594`, `:2541-2545`; register row 119).
     TokenSpaceExhausted,
     /// The libpinyin user-dir persistence failed (I/O, container, or a
     /// byte stream that does not parse).
@@ -3494,8 +3497,15 @@ impl<S: WriteStore> GenericUserStore<S> {
     ///
     /// Returns [`UserStoreError`] when the store cannot be read.
     pub fn next_user_token(&self) -> Result<Token, UserStoreError> {
-        if self.inner.libpinyin.is_some() {
-            return self.user_library_token_end(USER_DICTIONARY);
+        if let Some(target) = &self.inner.libpinyin {
+            // `_add_phrase`'s token (`pinyin.cpp:589-594`): the facade range
+            // end, bumped past a zero low word.
+            let end = target
+                .phrases()
+                .libraries
+                .get(&USER_DICTIONARY)
+                .map_or(1, crate::user_library::UserLibrary::token_end);
+            return Ok(phrase::add_phrase_token(USER_DICTIONARY, end));
         }
         let db = self.database();
         let alloc_key = codec::encode_u8(ALLOC_CURSOR);
@@ -4869,11 +4879,13 @@ impl<S: WriteStore> GenericUserStore<S> {
     }
 
     /// One past the highest token a `USER_FILE` library holds: the pin's
-    /// `SubPhraseIndex::get_range` end (`phrase_index.cpp:624-646` at
-    /// 074a2219, the offset array less its trailing zeros). It is the
-    /// library's allocation cursor, which every add moves past the token it
-    /// took and every mask or removal re-derives from the surviving items;
-    /// an empty library ends at its first token, the pin's `1..1`.
+    /// `FacadePhraseIndex::get_range` end (`phrase_index.cpp:610-646` at
+    /// 074a2219, the offset array less its trailing zeros, masked into the
+    /// library nibble, so a library whose last slot is live ends at its
+    /// slot 0). It is the library's allocation cursor, which every add
+    /// moves past the token it took and every mask or removal re-derives
+    /// from the surviving items; an empty library ends at its first token,
+    /// the pin's `1..1`.
     ///
     /// # Errors
     ///
@@ -4884,12 +4896,14 @@ impl<S: WriteStore> GenericUserStore<S> {
             return Err(UserStoreError::InvalidPhrase);
         }
         if let Some(target) = &self.inner.libpinyin {
-            return Ok((u32::from(library) << 24)
-                | target
+            return Ok(phrase::phrase_index_make_token(
+                library,
+                target
                     .phrases()
                     .libraries
                     .get(&library)
-                    .map_or(1, crate::user_library::UserLibrary::token_end));
+                    .map_or(1, crate::user_library::UserLibrary::token_end),
+            ));
         }
         let db = self.database();
         let keys = if library == USER_DICTIONARY {
@@ -6495,39 +6509,103 @@ mod tests {
             }
         }
 
-        /// `_add_phrase` takes the user sub-index's `get_range` end as the
-        /// new token and never checks it (`pinyin.cpp:592-594`); past the
-        /// last slot `PHRASE_INDEX_MAKE_TOKEN` masks the end back to zero
-        /// and `token++` lands on slot 1 (`novel_types.h`). The store
-        /// refuses the add whose token has no successor in the library,
-        /// the same point the row store's cursor refused at.
+        /// `_add_phrase` takes `get_range`'s end as the new token with no
+        /// check (`pinyin.cpp:589-594` at 074a2219), so the last slot is
+        /// allocated like any other. The end past it, `PHRASE_MASK + 1`, is
+        /// masked into the nibble by `FacadePhraseIndex::get_range`
+        /// (`phrase_index.cpp:620`, `novel_types.h:45-46`) and bumped past
+        /// the reserved id (`pinyin.cpp:592-594`): every later add lands on
+        /// slot 1, where `add_phrase_item` overwrites the offset word and
+        /// adds the new unigram to a total that keeps the overwritten one
+        /// (`phrase_index.cpp:208-217`). Register row 119. The planted item
+        /// takes the arena's sparse offset map, not the pin's 64 MiB array.
         #[test]
-        fn add_phrase_reports_typed_token_space_exhaustion() {
+        fn add_phrase_fills_the_last_slot_then_wraps_to_slot_1() {
             let mut store = transient();
             plant_item(&store, USER_DICTIONARY, PHRASE_MASK - 1);
-            assert_eq!(
-                store.next_user_token().unwrap(),
-                phrase_index_make_token(USER_DICTIONARY, PHRASE_MASK),
-                "the next token is the library's last slot"
-            );
-            let err = store
+            let last = phrase_index_make_token(USER_DICTIONARY, PHRASE_MASK);
+            assert_eq!(store.next_user_token().unwrap(), last);
+
+            let token = store
                 .add_phrase(&"你好".into(), &[key("ni"), key("hao")], None)
-                .unwrap_err();
-            assert!(matches!(err, UserStoreError::TokenSpaceExhausted));
-            assert_eq!(store.phrases().unwrap().len(), 1, "nothing was added");
+                .unwrap();
+            assert_eq!(token, last, "the last slot is allocated like any other");
+            assert_eq!(store.phrases().unwrap().len(), 2);
+            assert_eq!(
+                store.user_library_token_end(USER_DICTIONARY).unwrap(),
+                phrase_index_make_token(USER_DICTIONARY, 0),
+                "the facade range end is masked into the nibble"
+            );
+            assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN);
+
+            let wrapped = store
+                .add_phrase(&"世界".into(), &[key("shi"), key("jie")], None)
+                .unwrap();
+            assert_eq!(
+                wrapped, FIRST_USER_TOKEN,
+                "the add past the last slot wraps"
+            );
+            assert_eq!(store.phrases().unwrap().len(), 3);
+            assert_eq!(store.unigram_library_total(USER_DICTIONARY).unwrap(), 30);
+
+            // The range end stays past the last slot, so the next add lands
+            // on slot 1 again: the offset word moves to the new item and the
+            // overwritten item's unigram stays in `m_total_freq`.
+            let again = store
+                .add_phrase(&"再见".into(), &[key("zai"), key("jian")], None)
+                .unwrap();
+            assert_eq!(again, FIRST_USER_TOKEN);
+            assert_eq!(store.phrases().unwrap().len(), 3);
+            assert_eq!(
+                store
+                    .phrase(FIRST_USER_TOKEN)
+                    .unwrap()
+                    .unwrap()
+                    .phrase_text()
+                    .unwrap(),
+                "再见"
+            );
+            assert_eq!(store.unigram_delta(FIRST_USER_TOKEN).unwrap(), 15);
+            assert_eq!(store.unigram_library_total(USER_DICTIONARY).unwrap(), 45);
+            assert_eq!(store.unigram_total().unwrap(), 45);
         }
 
-        /// Addon promotion takes `ADDON_DICTIONARY`'s `get_range` end the
-        /// same way and assumes no overflow (`pinyin.cpp:2543-2545`).
+        /// The promotion takes `ADDON_DICTIONARY`'s `get_range` end as is,
+        /// "assume not over flow here" (`pinyin.cpp:2541-2545`): the last
+        /// slot is allocated, and the end past it is masked to slot 0
+        /// (`phrase_index.cpp:620`) with no reserved-id bump, so every later
+        /// promotion lands on slot 0 and `add_phrase_item` overwrites it
+        /// (`phrase_index.cpp:208-217`). Register row 119.
         #[test]
-        fn promote_addon_phrase_reports_typed_token_space_exhaustion() {
+        fn promote_addon_phrase_fills_the_last_slot_then_wraps_to_slot_0() {
             let mut store = transient();
             plant_item(&store, ADDON_DICTIONARY, PHRASE_MASK - 1);
-            let err = store
-                .promote_addon_phrase("二簧", &[(vec![key("er"), key("huang")], 100)], 100)
-                .unwrap_err();
-            assert!(matches!(err, UserStoreError::TokenSpaceExhausted));
-            assert_eq!(store.phrases().unwrap().len(), 1, "nothing was added");
+            let readings = [(vec![key("er"), key("huang")], 100)];
+            let last = store.promote_addon_phrase("二簧", &readings, 100).unwrap();
+            assert_eq!(last, phrase_index_make_token(ADDON_DICTIONARY, PHRASE_MASK));
+            assert_eq!(
+                store.user_library_token_end(ADDON_DICTIONARY).unwrap(),
+                phrase_index_make_token(ADDON_DICTIONARY, 0)
+            );
+
+            let wrapped = store.promote_addon_phrase("二簧", &readings, 100).unwrap();
+            assert_eq!(
+                wrapped,
+                phrase_index_make_token(ADDON_DICTIONARY, 0),
+                "no `token++` on this path"
+            );
+            assert_eq!(store.unigram_delta(wrapped).unwrap(), 100);
+            assert_eq!(store.unigram_library_total(ADDON_DICTIONARY).unwrap(), 200);
+
+            let again = store.promote_addon_phrase("二簧", &readings, 100).unwrap();
+            assert_eq!(again, wrapped);
+            assert_eq!(store.unigram_delta(again).unwrap(), 100);
+            assert_eq!(
+                store.unigram_library_total(ADDON_DICTIONARY).unwrap(),
+                300,
+                "the overwritten unigram stays in the total"
+            );
+            assert_eq!(store.unigram_total().unwrap(), 300);
         }
 
         #[test]
