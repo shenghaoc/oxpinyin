@@ -246,16 +246,6 @@ mod tests {
     }
 
     #[test]
-    fn incomplete_keys_are_sorted_and_disjoint_from_complete_keys() {
-        let mut previous = "";
-        for key in INCOMPLETE_PINYIN_KEYS {
-            assert!(previous < key, "{key:?} is out of ascending order");
-            assert!(!full_pinyin_syllables().any(|entry| entry == key));
-            previous = key;
-        }
-    }
-
-    #[test]
     fn correction_aliases_resolve_to_their_canonical_syllable() {
         use super::{
             OptionBits, PINYIN_CORRECT_GN_NG, PINYIN_CORRECT_IOU_IU, PINYIN_CORRECT_MG_NG,

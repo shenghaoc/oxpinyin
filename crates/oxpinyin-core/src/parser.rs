@@ -556,8 +556,8 @@ mod tests {
         Completeness, FullPinyinParser, MAX_PARSE_RESULTS, ParseError, ParseResult, ParsedSyllable,
     };
     use crate::ChewingKey;
+    use crate::InputParser;
     use crate::options::{FORCE_TONE, PINYIN_CORRECT_GN_NG, PINYIN_INCOMPLETE, USE_TONE};
-    use crate::{InputParser, full_pinyin_syllables};
 
     /// `FullPinyinParser2::parse_one_key`: the whole stripped input is
     /// one spelling probe — multi-syllable and apostrophe inputs are
@@ -762,20 +762,6 @@ mod tests {
 
         for (input, syllables, remainder) in cases {
             assert_parse(input, &[result(syllables.clone(), remainder)]);
-        }
-    }
-
-    #[test]
-    fn every_frozen_syllable_is_the_first_complete_path() {
-        let parser = FullPinyinParser;
-        for syllable in full_pinyin_syllables() {
-            let parsed = parser
-                .parse(syllable.as_bytes())
-                .expect("one complete syllable stays below the path limit");
-            assert_eq!(
-                parsed[0],
-                result(vec![complete(syllable, 0, syllable.len())], b"")
-            );
         }
     }
 

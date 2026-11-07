@@ -2575,21 +2575,6 @@ mod tests {
         assert_eq!(NbestShape::default(), NbestShape::PINYIN);
     }
 
-    #[test]
-    fn nbest_row_reports_its_span() {
-        let row = NbestRow {
-            text: "你好".into(),
-            tokens: vec![PhraseToken::new(7)],
-            spans: Vec::new(),
-            keys: 2,
-            span: 5,
-            cost: 3,
-            poss: None,
-        };
-        assert_eq!(row.span, 5);
-        assert_eq!(row.tokens, [PhraseToken::new(7)]);
-    }
-
     /// Session-level smoke: the public types compose.
     #[test]
     fn session_types_compose() {

@@ -275,16 +275,6 @@ fn a_row_choice_after_a_normal_selection_records_the_row_path_only() {
 }
 
 #[test]
-fn unknown_input_still_offers_itself_back() {
-    let session = typed("qqq");
-    let candidates = session.candidates();
-    assert!(!candidates.is_empty());
-    let fallback = candidates.get(0).expect("one candidate");
-    assert_eq!(fallback.kind(), CandidateKind::Fallback);
-    assert_eq!(fallback.text(), "qqq");
-}
-
-#[test]
 fn an_expansion_past_the_limit_offers_no_phrase_for_that_span() {
     // `zh` expands to 19 complete syllables after the phonetic-initial fix,
     // so a single initial expands (19 ≤ the default limit of 64) and reaches

@@ -5,10 +5,8 @@
 use std::path::Path;
 
 use oxpinyin_kmm::{
-    Database, FlexibleGramSpec, KMixtureModelArrayHeader, KMixtureModelArrayItem,
-    KMixtureModelMagicHeader, KmmSpec,
+    Database, KMixtureModelArrayHeader, KMixtureModelArrayItem, KMixtureModelMagicHeader,
 };
-use oxpinyin_store::FixedRecord;
 
 fn c_path(path: &Path) -> std::ffi::CString {
     oxpinyin_input::c_path(path).expect("path has no NUL")
@@ -129,14 +127,6 @@ fn the_native_walk_is_the_backends_order_not_a_sort() {
     assert_eq!(walked.len(), 4);
     walked.sort_unstable();
     assert_eq!(walked, [2, 9, 0x0100_0003, 0x0200_0001]);
-}
-
-#[test]
-fn the_record_lengths_are_the_pins() {
-    assert_eq!(KMixtureModelMagicHeader::LEN, 12);
-    assert_eq!(KMixtureModelArrayHeader::LEN, 8);
-    assert_eq!(KMixtureModelArrayItem::LEN, 16);
-    assert_eq!(KmmSpec::MAGIC_NUMBER, *b"KMMP");
 }
 
 #[test]

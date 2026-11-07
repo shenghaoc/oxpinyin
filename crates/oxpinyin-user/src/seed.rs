@@ -78,18 +78,6 @@ mod tests {
     }
 
     #[test]
-    fn first_selection_is_initial_seed() {
-        assert_eq!(training_seed(None), 69);
-    }
-
-    #[test]
-    fn second_selection_is_138() {
-        // After the first selection the stored count is 69, so the next seed
-        // is max(69, 69) * 2 = 138.
-        assert_eq!(training_seed(Some(69)), 138);
-    }
-
-    #[test]
     fn reselection_sequence_matches_pinned_formula() {
         // Accumulate exactly as the store does: new_count = prev + seed.
         let mut count = 0u64;
