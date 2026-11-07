@@ -6,7 +6,7 @@ premises of the brief did not hold and are corrected below** · Branch:
 
 Retargeted from `feat/bdb-backend`, which is shelved. What carries over
 from the Berkeley DB Phase 1 survey
-(`berkeleydb-compat-phase1.md`, `berkeleydb-compat-open-items.md`) is
+(`berkeleydb-compat-phase1`, `berkeleydb-compat-open-items`) is
 inherited unchanged: the `SingleGram` layout, the `memcmp`-then-length
 key order, the §5 `#180` decision ("require" = *cannot function
 without*), and the format-version-field prerequisite for the codec
@@ -145,7 +145,7 @@ counts match the model20-derived 56,359 / 1,849,609
 
 Every record re-encodes to the bytes on disk. The counts are what
 `oxpinyin-datagen` derives independently from `model20`
-(`datagen-model20.md`), so two unrelated routes agree.
+(`datagen-model20`), so two unrelated routes agree.
 
 **How strong this is, stated plainly.** It proves the backend reads
 libpinyin's *records* out of a Kyoto Cabinet container. It does **not**

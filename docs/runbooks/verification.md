@@ -74,7 +74,7 @@ If a new driver is necessary, explain why no existing driver could cover the cas
 
 Use repository `just` recipes and in-tree Python tools for builds, gates, differentials and measurements.
 Use managed CPython through `uv`.
-The [tooling consolidation plan](../findings/tooling-consolidation-python-just.md) describes the migration.
+The tooling consolidation plan describes the migration.
 Existing documented shell entry points remain supported until migration.
 Put new repeatable orchestration in shared Python tooling.
 Expose it through `just`.

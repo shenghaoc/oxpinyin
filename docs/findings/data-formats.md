@@ -1,7 +1,7 @@
 # Data formats — pinned oracle table files
 
 > **Historical (pre-P6), 2026-09-08.** Kept as the record; not a
-> description of the current tree: cites the retired oxpinyin-migrate route; the runtime reads libpinyin's own files since P6 (runtime-direct-libpinyin-data-2026-09-02.md).
+> description of the current tree: cites the retired oxpinyin-migrate route; the runtime reads libpinyin's own files since P6 (runtime-direct-libpinyin-data-2026-09-02).
 
 Date: 2026-08-12 · Status: recorded; human review required before freeze.
 Revision: Tkrzw files converted to redb (formerly via oxpinyin-migrate FFI

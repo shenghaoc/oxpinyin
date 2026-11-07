@@ -89,8 +89,8 @@ for libpinyin and libzhuyin, `pinyin` for the prediction-only surfaces;
 | G2 | C strings, joins and vectors: `g_strdup` 44, `g_free` 152, `g_strdup_printf` 14, `g_strconcat` 16, `g_strjoinv` 3, `g_strndup` 6, `g_strfreev` 10, `g_strv_length`/`g_strv_contains` 2, `g_string_*` 4 | both (punct subset pinyin only); all | `capi/src/ffi.rs` `strdup` / `key_text` (`g_strdup_printf`) / `strconcat_aux` / `strconcat_pair` / `strjoinv` / `symbol_vector`, the pin's own calls since #1227 (2026-10-31 UTC); `capi/src/aux_matrix.rs` `AuxMatrix::full` / `double` / `chewing`; `capi/src/predict.rs` `prepend_punctuations`; `capi/src/iterators.rs` export rendering; `data/src/pin_stderr.rs` `build_filename` | valid: identical bytes. malformed: raw path bytes, missing middle aux component, NUL in a diagnostic, duplicate punctuation. | valid: contract. malformed: quirk (#922) or #925; punctuation strings #1144 and punctuation order/duplicates #928, both contract (closed 2026-10-26 UTC) | #922, #924, #925, #928, #1144; export row 1 |
 | G3 | Path joining: `g_build_filename`, 68 sites, e.g. `pinyin.cpp:164,252,268,286,308,395,400,952,968,985,1052`; `zhuyin.cpp:118,196,212,230,252,337,342,585,601,605,626,630,684` | both; all | `data/src/table_info.rs` `FileName::under` / `pin_join`; `data/src/pin_stderr.rs` `build_filename`; `capi-marshal/src/input.rs` `filename` (#1279) | valid: same resolved path. malformed: leading `/`, empty name, `..`, duplicate separators, non-UTF-8 bytes. | valid: contract. malformed: quirk (#922) | #922 |
 | G4 | GArray/GPtrArray containers: `g_array_*` and `g_ptr_array_*`, 502 sites (`g_array_index` 105, `g_array_new` 64, `g_array_free` 68, `g_ptr_array_index` 59, `g_array_set_size` 49, `g_array_append_val` 45, ...) | both; all | `capi/src/dict.rs` and zhuyin twin keep real `GArray` for the ABI; internal steps are `Vec`/slices in `engine/src/nbest.rs`, `engine/src/session/*`, `data/src/phrase_library.rs` | valid: identical candidate/result arrays. malformed: out-of-range indices, a key with no whole word, a short chunk header. | valid: contract. malformed: class (b)/(c) rows; #924 for the ABI arrays | #924 |
-| G5 | n-best tail sort: `phonetic_lookup.h:337` `g_ptr_array_sort(tails, trellis_value_compare)` | both; all | `engine/src/nbest.rs` `glib_merge_sort`, `tail_compare`, `c_float_to_gint` | valid: the `gint` truncation ties scores under one unit apart, so the comparator is not transitive on finite scores. malformed: NaN and ±∞ from λ outside `[0, 1]`. | contract; merge kept, [record](921-927-glib-sorts.md); superseded 2026-10-26 UTC: language artefact, #1297 classification | #921 |
-| G6 | candidate and predicted list sorts: `pinyin.cpp:2286,2443` `g_array_sort_with_data(compare_item_with_sort_option)`; `zhuyin.cpp:1529,1610` `g_array_sort`; phrase-string dedup `pinyin.cpp:2067`, `zhuyin.cpp:1375` | both; all | `engine/src/nbest.rs` `glib_merge_sort` under `engine/src/session/mod.rs` `glib_rank_sort`, `RankKey::pin_compare` and `capi/src/predict.rs` `sort_predicted` | valid: a total order (frequencies below 2²⁴); stable order and dedup winner. malformed: λ outside `[0, 1]` wraps the `gint` frequency key into cycles. | contract; merge kept, [record](921-927-glib-sorts.md), superseded 2026-10-26 UTC (#1297 classification); dedup #913/#914 | #927, #928 |
+| G5 | n-best tail sort: `phonetic_lookup.h:337` `g_ptr_array_sort(tails, trellis_value_compare)` | both; all | `engine/src/nbest.rs` `glib_merge_sort`, `tail_compare`, `c_float_to_gint` | valid: the `gint` truncation ties scores under one unit apart, so the comparator is not transitive on finite scores. malformed: NaN and ±∞ from λ outside `[0, 1]`. | contract; merge kept, record; superseded 2026-10-26 UTC: language artefact, #1297 classification | #921 |
+| G6 | candidate and predicted list sorts: `pinyin.cpp:2286,2443` `g_array_sort_with_data(compare_item_with_sort_option)`; `zhuyin.cpp:1529,1610` `g_array_sort`; phrase-string dedup `pinyin.cpp:2067`, `zhuyin.cpp:1375` | both; all | `engine/src/nbest.rs` `glib_merge_sort` under `engine/src/session/mod.rs` `glib_rank_sort`, `RankKey::pin_compare` and `capi/src/predict.rs` `sort_predicted` | valid: a total order (frequencies below 2²⁴); stable order and dedup winner. malformed: λ outside `[0, 1]` wraps the `gint` frequency key into cycles. | contract; merge kept, record, superseded 2026-10-26 UTC (#1297 classification); dedup #913/#914 | #927, #928 |
 | G7 | hash tables: `g_hash_table_new` 2, `insert` 4, `lookup_extended` 4, `destroy` 2; `g_direct_hash`/`equal` | both; all | `engine/src/nbest.rs` `Step`, `engine/src/session/*` vectors; no exposed iteration order | valid: lookup only; no order reaches the ABI. malformed: none. | contract (internal; no observable order) | — |
 | G8 | diagnostics: `g_return_val_if_fail`, 6 sites (`pinyin.cpp:1454`, `zhuyin.cpp:973`, `phrase_index.cpp:354-356,361`); `abort` 45, nearly all after a failed internal check; `g_warning` only in the tool-only tag utility | both; all | `capi/src/ffi.rs` `log_warning`; zhuyin twin | valid: class (c) sites keep one warning at warning level and the pin's domain. malformed: the six sites are early returns of the pin's value with no critical ([1297-segment-critical](1297-segment-critical.md), [1297-layout-criticals](1297-layout-criticals.md)). | (c) where the pin aborts; #924 for the channel; #918 for the segment gate | #918, #924 |
 | G9 | allocation/free and real GArray ABI: `g_free` 152, `g_strdup` 44, `g_strdup_printf` 14; C `malloc`/`free`/`realloc` 5; `g_array_set_size`/`g_array_append_vals` into caller arrays in `pinyin.cpp:2805,2817` and `zhuyin.cpp:1797,1809` | both; all | `capi/src/ffi.rs` (both facades): returned strings and the keyboard vector from the pin's GLib calls, a failed allocation aborting as the pin's (#1227, 2026-10-31 UTC); `malloc_cstr_with`, the fallible libc-`malloc` encoder for the `g_ucs4_to_utf8` sites (NULL, no warning); `capi/src/dict.rs` and zhuyin twin on `glib_sys`; `libpinyin.alloc` / `libzhuyin.alloc` | valid: caller may `g_free` / `g_strfreev`; the real `GArray` keeps GLib's private metadata. malformed: NULL or OOM paths. | contract; MUST RETAIN | #924 |
@@ -100,7 +100,7 @@ for libpinyin and libzhuyin, `pinyin` for the prediction-only surfaces;
 | G13 | C primitives: `memset` 86, `memcpy` 11, `strlen` 16, `strcmp` 18, `memcmp` 3, `memmove` 7, `strchr` 1 | both; all | Rust slices/`str`; `data/src/row_format.rs`, `core/src/single_gram.rs`, `capi/src/ffi.rs` | valid: same bytes. malformed: NULL/unreadable phrase strings and out-of-range walks are class (b) rows. | contract; class (b) at the registered NULL/over-read rows | rows 80, 106 |
 | G14 | libm: `log` 7 (`phonetic_lookup.h:39,250,663,693`; `phrase_lookup.cpp:40,321,342`) | both; all | `core/src/cost.rs` `cost_of_probability` / `surprisal` (fixed-point `log2_fixed`); `engine/src/nbest.rs` `poss` | valid: class (a) last-bit differences are accepted. | class (a), row 11; record only | no child (math record) |
 | G15 | punctuation decoding: `punct_table.cpp:56-72` `unescape`, `:74-94` `get_all_punctuations`, reached at `pinyin.cpp:2474` | pinyin; all | `data/src/row_format.rs` `decode_puncts` (stored words per punctuation; infallible); `data/src/punct.rs` `PunctTable::punctuations` (`Err` only for a failed read; `Ok(Vec::new())` for unopened/absent/empty); `runtime/src/lib.rs` `RuntimeDict::punctuations`; `capi/src/predict.rs` `prepend_punctuations` (`phrase_text_bytes` at the C boundary) | valid: identical punctuation strings. malformed: non-scalar, empty, unterminated and misaligned values give the pin's rows; partitions below. | contract; class (b) for the unterminated over-read only, registered (2026-10-26 UTC, #1144) | **#1144** |
-| G16 | tool-only GLib: `tag_utility.cpp` (`g_strsplit_set`, `g_unichar_*`, `g_strv_length`, `g_utf8_get_char/next_char`, `g_ptr_array_foreach`, `g_hash_table_foreach_steal`, `g_warning`); `table_text_parser.h` (`g_ascii_strtoull`, `g_strlcpy`); the `load_text` methods | not C ABI | `data/src/interp.rs`, `data/src/interp_grammar.rs`; `training/src/counter/parse.rs`; `kmm/src/cnum.rs`; `datagen/src/table.rs`, `punct.rs`, `system.rs` | valid: tool input, identical records. malformed: separator, escape, category and `atoi` quirks reproduced in the training tools; datagen refuses or skips by its own contract. | tool scope, [record](926-tool-tokenizers.md); `is_graph` stays as [recorded](interpolation2-grammar.md) | #926 |
+| G16 | tool-only GLib: `tag_utility.cpp` (`g_strsplit_set`, `g_unichar_*`, `g_strv_length`, `g_utf8_get_char/next_char`, `g_ptr_array_foreach`, `g_hash_table_foreach_steal`, `g_warning`); `table_text_parser.h` (`g_ascii_strtoull`, `g_strlcpy`); the `load_text` methods | not C ABI | `data/src/interp.rs`, `data/src/interp_grammar.rs`; `training/src/counter/parse.rs`; `kmm/src/cnum.rs`; `datagen/src/table.rs`, `punct.rs`, `system.rs` | valid: tool input, identical records. malformed: separator, escape, category and `atoi` quirks reproduced in the training tools; datagen refuses or skips by its own contract. | tool scope, record; `is_graph` stays as [recorded](interpolation2-grammar.md) | #926 |
 | G17 | dead code: `pinyin_lookup2.cpp`, `chewing_large_table.cpp`, `phrase_large_table2.cpp`, `facade_chewing_table.h`, `facade_phrase_table2.h`, `PunctTableEntry::escape/append/remove`, `#if 0` dumps | none | no shipped counterpart; the runtime uses `PhoneticLookup`, `PhraseLookup` and the large-table-3/chunk path | n/a | negative coverage | — |
 
 ## Family notes
@@ -272,7 +272,7 @@ merge (#921, #927): one implementation,
 `oxpinyin_engine::glib_merge_sort`, used by the tails, `glib_rank_sort`
 and `sort_predicted`. A standard-library sort gives other sentence orders
 on NaN tails and may panic on a non-total comparator. The record is
-[921-927-glib-sorts.md](921-927-glib-sorts.md).
+`921-927-glib-sorts`.
 
 ### G7 — hash tables
 
@@ -293,7 +293,7 @@ it is never a quirk by itself.
 
 ### G10 — rename and sync
 
-**Amendment 2026-10-26 UTC (#1297 Phase 2).** The single-payload-write reproduction below is historical. [Complete payload writes](1297-chunk-payload.md) now use `write_all`; header-word diagnostics, ignored sync errors, file/rename order and tolerance remain.
+**Amendment 2026-10-26 UTC (#1297 Phase 2).** The single-payload-write reproduction below is historical. Complete payload writes now use `write_all`; header-word diagnostics, ignored sync errors, file/rename order and tolerance remain.
 
 `_rename_files` renames the library files by sub-index, then the user
 pinyin index, the phrase index and the bigram; `zhuyin_save` renames
@@ -361,7 +361,7 @@ mandatory for a valid profile and what is a platform exception:
 
 ### G11 — numeric parsing and locale
 
-**Amendment 2026-10-26 UTC (#1297 Phase 2).** The #1297 scanner lane replaces the scanner emulations described below with line headers, complete decimal fields, unlimited whole words, and exact marker tokens. The old G11 scanner conclusions are historical. See [decimal λ](1297-table-floats.md), [version fields](1297-table-decimals.md), [line boundaries](1297-table-lines.md), [addon indexes](1297-addon-index.md), [marker numbers](1297-user-decimals.md) and [marker tokens](1297-user-token.md). `LC_NUMERIC` remains unchanged. The source-history correction is glibc 2.42 for incomplete exponents and 2.43 for `0x.`.
+**Amendment 2026-10-26 UTC (#1297 Phase 2).** The #1297 scanner lane replaces the scanner emulations described below with line headers, complete decimal fields, unlimited whole words, and exact marker tokens. The old G11 scanner conclusions are historical. See decimal λ, version fields, line boundaries, addon indexes, marker numbers and marker tokens. `LC_NUMERIC` remains unchanged. The source-history correction is glibc 2.42 for incomplete exponents and 2.43 for `0x.`.
 
 `SystemTableInfo2::load` and `UserTableInfo::load` read their fields with
 `fscanf`; `atoi` cuts an addon index to `guint8`; `setlocale(LC_NUMERIC,
@@ -563,14 +563,14 @@ used only by `utils/storage/gen_binary_files.cpp`.
 `PunctTableEntry` writer methods have no exported caller.
 
 The tool parsers are recorded per helper in
-[926-tool-tokenizers.md](926-tool-tokenizers.md): the training tools
+`926-tool-tokenizers`: the training tools
 reproduce glibc `atoi`/`atol`;
 datagen reads exactly the pin's valid `.table`, `punct.table` and
 `interpolation2.text` records and refuses or skips malformed ones by its own
 contract; `gen_pinyin_table` and `gen_zhuyin_table` have no counterpart.
 ## Exported C string inputs
 
-The [#1279 per-parameter inventory](c-string-inputs-1279.md) covers all 25
+The #1279 per-parameter inventory covers all 25
 exported functions with string inputs (29 parameters), their pin conversion,
 invalid/non-scalar/NULL outcomes, prior state changes, and current Rust
 helper. It records source-derived defects and the pending session-interface
@@ -595,13 +595,13 @@ child column is the audit that must decide it.
 | `data/src/table_info.rs` `Scan`, `strtol_digits`, `atoi_guint8`, `hex_float` | `fscanf` `%d`/`%f`/`%255s`, `atoi`/`strtol`, glibc `strtof` | `table_info.cpp:160,208-289` | #919 |
 | `data/src/user_files.rs` `Scan::int` | `fscanf` `%d` and `strtol` truncation to `int` | `table_info.cpp:338-359` | #920 |
 | `capi/src/locale.rs` `pin_table_info_locale` | `setlocale(LC_NUMERIC, "C")` | `table_info.cpp:197,291,328,372,378,394` | #923 (STOP) |
-| `engine/src/nbest.rs` `glib_merge_sort`, `tail_compare`, `c_float_to_gint` | `g_sort_array` merge + `trellis_value_compare` | `phonetic_lookup.h:174-178,329-339`; GLib 2.84.4 `gqsort.c:69-281` | #921: kept, [record](921-927-glib-sorts.md) |
-| `engine/src/session/mod.rs` `glib_rank_sort`, `RankKey::pin_compare` | `g_array_sort_with_data` / `g_array_sort` under the `gint` frequency key, through `glib_merge_sort` | `pinyin.cpp:1678-1709`; `zhuyin.cpp:1129-1144` | #927: kept, [record](921-927-glib-sorts.md) |
-| `capi/src/predict.rs` `sort_predicted` | `gint` frequency key, through `glib_merge_sort` | `pinyin.cpp:1701-1705,2440-2445` | #927: kept, [record](921-927-glib-sorts.md) |
+| `engine/src/nbest.rs` `glib_merge_sort`, `tail_compare`, `c_float_to_gint` | `g_sort_array` merge + `trellis_value_compare` | `phonetic_lookup.h:174-178,329-339`; GLib 2.84.4 `gqsort.c:69-281` | #921: kept, record |
+| `engine/src/session/mod.rs` `glib_rank_sort`, `RankKey::pin_compare` | `g_array_sort_with_data` / `g_array_sort` under the `gint` frequency key, through `glib_merge_sort` | `pinyin.cpp:1678-1709`; `zhuyin.cpp:1129-1144` | #927: kept, record |
+| `capi/src/predict.rs` `sort_predicted` | `gint` frequency key, through `glib_merge_sort` | `pinyin.cpp:1701-1705,2440-2445` | #927: kept, record |
 | `user/src/persistence.rs` `save_with_bigram_reporting`, `pin_rename_order` | `_write_files` / `_rename_files` and per-file tolerance | `pinyin.cpp:915-1130`; `zhuyin.cpp:585-693` | #929 |
 | `data/src/phrase_library.rs` `map_chunk`, `MappedFile` | `MemoryChunk::mmap` / header / checksum | `memory_chunk.h:424-520` | rows 76, 96, 109 |
 | `data/src/interp_grammar.rs` `is_graph`, `interp.rs` | `taglib_read` + `g_unichar_isgraph` | `tag_utility.cpp:171-264` | #926: kept as [recorded](interpolation2-grammar.md) |
-| `training/src/counter/parse.rs` `parse_segmented_line`, `kmm/src/cnum.rs` `atoi`; `datagen/src/table.rs`, `system.rs` numeric fields | `g_strsplit_set` / C `atoi`, `atol` / `g_ascii_strtoull` in tool input | `utils_helper.h`, `table_text_parser.h:34-121`; `import_interpolation.cpp:135-182` | #926: training reproduces `atoi`; datagen strict, [record](926-tool-tokenizers.md) |
+| `training/src/counter/parse.rs` `parse_segmented_line`, `kmm/src/cnum.rs` `atoi`; `datagen/src/table.rs`, `system.rs` numeric fields | `g_strsplit_set` / C `atoi`, `atol` / `g_ascii_strtoull` in tool input | `utils_helper.h`, `table_text_parser.h:34-121`; `import_interpolation.cpp:135-182` | #926: training reproduces `atoi`; datagen strict, record |
 | `capi/src/dict.rs`, `zhuyin-capi/src/dict.rs` direct `g_array_*` | real GLib `GArray` mutation | `pinyin.cpp:2805,2817`; `zhuyin.cpp:1797,1809` | #924 |
 | `capi/src/ffi.rs` `strdup`, `symbol_vector` (until 2026-10-31 UTC `owned_cstr`, `owned_cstr_list`), `log_warning` (the `g_free` of a GLib buffer is gone since #1279; the `g_return_val_if_fail` sites are early returns since #1297) | `g_strdup` / `g_strfreev` / `g_log` / `g_return_val_if_fail` | `pinyin.cpp` diagnostics; `phrase_index.cpp:354-356` | #924 |
 
@@ -622,7 +622,7 @@ language-neutral requirement for the behaviour mention it?
 Pin read from a clone at `074a2219c90feaf962d0d24f034514033ece5f99`;
 GLib read at tag `2.84.4` (the GitHub mirror of the GNOME tree); the
 glibc citations are the #919, #920 and #926 readings in this file and in
-[926-tool-tokenizers.md](926-tool-tokenizers.md), not re-read. Nothing was
+`926-tool-tokenizers`, not re-read. Nothing was
 run to learn a behaviour. This is Phase 1 of #1297, docs only. The
 cleanup is Phase 2, below.
 
@@ -712,7 +712,7 @@ then names each part.
   17, 21, 23–25, 28 (already native), 29, 30 and 33.
 - Superseded: the earlier conclusion that the sorts stay a hand-written
   merge (the G5/G6 notes and
-  [921-927-glib-sorts.md](921-927-glib-sorts.md)) and the
+  `921-927-glib-sorts`) and the
   "under #1303" column of the first version of this section. The
   comparators are total once their artefacts are gone, so a standard
   stable sort is well defined and cannot panic.
@@ -720,7 +720,7 @@ then names each part.
 ### Scanner/tools implementation (2026-10-26 UTC)
 
 Rows 21, 23–25, 29 and 30 are implemented in native Rust in the scanner lane.
-The pin’s chunk header, sync and rename rules remain; [payload writes](1297-chunk-payload.md)
+The pin’s chunk header, sync and rename rules remain; payload writes
 retry short counts and interruptions. [Punctuation](1297-punct-words.md) reads whole words.
 `ConfigLines` replaces both `Scan` types; `TableConf::parse` has representable
 versions, decimal λ, line headers and complete unbounded words. Addon indexes
@@ -758,7 +758,7 @@ Reproduce the native gate with `just fmt --all --check`,
 and the corresponding `cargo clippy --all-targets -- -D warnings` command.
 Source the environment emitted by `tools/cloud/setup.sh`; run the existing
 contract driver with the selection above for each selected cell. Tool-input
-setup and live test commands remain in [the #926 audit](926-tool-tokenizers.md).
+setup and live test commands remain in the #926 audit.
 Use [packaging Regeneration](../packaging.md#regeneration), with
 `repeat_output_dir` for every backend, compare both outputs with `cmp`, then
 install both facades with ordering enabled. Validate linked objects using
@@ -883,18 +883,18 @@ language-artefact row or artefact part above.
 
 | Row | Status |
 | --- | --- |
-| 11 | **Tails overtaken; the rest open under the 2026-10-29 ruling.** The tails are overtaken by S3 (#1373, `8cf8e23`, [trellis-tail-sort-s3.md](trellis-tail-sort-s3.md)): they now use a stable `sort_by`. The candidate and predicted uses of `nbest::glib_merge_sort` are open; they are replaced as inventory item A below. |
+| 11 | **Tails overtaken; the rest open under the 2026-10-29 ruling.** The tails are overtaken by S3 (#1373, `8cf8e23`, `trellis-tail-sort-s3`): they now use a stable `sort_by`. The candidate and predicted uses of `nbest::glib_merge_sort` are open; they are replaced as inventory item A below. |
 | 12 | **Overtaken** by S3 (#1373, `8cf8e23`). `tail_compare`, `c_float_to_gint` and the `poss` round trip are gone. `tail_merge` now sorts by raw `Cost`, with the amendment's NaN-last order. The float scale itself belongs to #1378. |
 | 13 | **Open under the 2026-10-29 ruling.** The wrapping difference in `RankKey::pin_compare` and `glib_rank_sort` are replaced as inventory item A. Separately, the `pinyin_span as u8` cut in `RankKey::for_sort_word` (#1275) is open; see item 4 below. |
 | 14 | **Open under the 2026-10-29 ruling.** `capi/src/predict.rs` `sort_predicted` is replaced as inventory item A. |
 | 17 | **Comparison ruled; value closed by #1416.** The comparison of the key is closed by the ruling (rows 13 and 14). The ruling keeps the scaled `guint32` value as a ranking key. `amplified_frequency_with_bigram` computes it in `f32` and stores it with Rust's `as u32`; the out-of-range conversion C leaves undefined is class (b), recorded in `upstream-divergences.md` (the "Pinyin candidate frequency" and "Zhuyin candidate frequency" entries). |
-| 21 | **Done, then overtaken.** Done in `0147535`, [1297-chunk-payload](1297-chunk-payload.md): the payload uses `write_all`. Overtaken by the 2026-10-28 UTC external-I/O ruling: the record is a revert target, and stage 2 of [external-io-boundary.md](external-io-boundary.md) restores one host `write`. `wip/stage1-io` does not cover it. |
+| 21 | **Done, then overtaken.** Done in `0147535`, `1297-chunk-payload`: the payload uses `write_all`. Overtaken by the 2026-10-28 UTC external-I/O ruling: the record is a revert target, and stage 2 of [external-io-boundary.md](external-io-boundary.md) restores one host `write`. `wip/stage1-io` does not cover it. |
 | 23 | **Done and standing.** Done in `0147535`, [1297-punct-words](1297-punct-words.md). The external-I/O ruling keeps it: whole-word decoding is the class (b)/(c) treatment of the pin's undefined read. |
-| 24 | **Merged in #1404.** Done in `0147535`, recorded in [1297-table-lines](1297-table-lines.md), [1297-table-words](1297-table-words.md), [1297-table-decimals](1297-table-decimals.md), [1297-table-floats](1297-table-floats.md) and [1297-addon-index](1297-addon-index.md). Overtaken by the external-I/O ruling. #1404 (external-I/O stage 1, merged as `9015a178`) reverted all five divergences through `oxpinyin-input`, replacing the interim host-libc `read_lambda` from `f9663f1` as well. Its status lines and register entries are preserved. |
-| 25 | **Merged in #1404.** Done in `0147535`, recorded in [1297-user-decimals](1297-user-decimals.md) and [1297-user-token](1297-user-token.md). Overtaken by the external-I/O ruling. #1404 (merged as `9015a178`) reverted both divergences through `oxpinyin-input`. Its status lines and register entries are preserved. |
+| 24 | **Merged in #1404.** Done in `0147535`, recorded in `1297-table-lines`, `1297-table-words`, `1297-table-decimals`, `1297-table-floats` and `1297-addon-index`. Overtaken by the external-I/O ruling. #1404 (external-I/O stage 1, merged as `9015a178`) reverted all five divergences through `oxpinyin-input`, replacing the interim host-libc `read_lambda` from `f9663f1` as well. Its status lines and register entries are preserved. |
+| 25 | **Merged in #1404.** Done in `0147535`, recorded in `1297-user-decimals` and `1297-user-token`. Overtaken by the external-I/O ruling. #1404 (merged as `9015a178`) reverted both divergences through `oxpinyin-input`. Its status lines and register entries are preserved. |
 | 28 | **Done before #1297, then overtaken.** `interp_grammar::is_graph` was already Rust's predicate ([interpolation2-grammar.md](interpolation2-grammar.md), 2026-09-10). Overtaken by the external-I/O ruling and the 2026-10-28 UTC tools drop-in ruling: it is a revert target to GLib's `g_unichar_isgraph` at stage 5. |
-| 29 | **Done, then overtaken.** Done in `0147535`, [1297-tool-decimals](1297-tool-decimals.md): `kmm::numeric::decimal_field` replaced `cnum.rs`. Overtaken by the external-I/O and tools drop-in rulings: host `atoi`/`atol` at stage 5. |
-| 30 | **Done, then overtaken.** Done in `0147535`, [1297-tool-special-values](1297-tool-special-values.md): `numeric::format_six_decimals` with Rust spellings. Overtaken by the external-I/O and tools drop-in rulings: the pin's `printf("%f")` at stage 5. |
+| 29 | **Done, then overtaken.** Done in `0147535`, `1297-tool-decimals`: `kmm::numeric::decimal_field` replaced `cnum.rs`. Overtaken by the external-I/O and tools drop-in rulings: host `atoi`/`atol` at stage 5. |
+| 30 | **Done, then overtaken.** Done in `0147535`, `1297-tool-special-values`: `numeric::format_six_decimals` with Rust spellings. Overtaken by the external-I/O and tools drop-in rulings: the pin's `printf("%f")` at stage 5. |
 | 33 | **Open under the 2026-10-29 ruling.** The pinyin comparator is overtaken by S1/S2 (#1352, `49fbc45`, [trellis-adjusted-cost-s1-s2.md](trellis-adjusted-cost-s1-s2.md)). The `stl_heap.h` port is still in place for both facades and is replaced as inventory item B, with zhuyin as ruled. |
 | 34 | **Stored widths: no change.** The on-disk `guint32` and `guint8` widths stay. |
 

@@ -889,9 +889,8 @@ where
     /// selects the incomplete or complete index by
     /// `contains_incomplete_pinyin` and issues one `search_internal`
     /// either way. Previously this site enumerated completions via
-    /// [`expand_keys`] unconditionally, driving the fan-out
-    /// [`docs/findings/scan-matrix-fanout-2026-09-10.md`](../../docs/findings/scan-matrix-fanout-2026-09-10.md)
-    /// measured (~9× amplification from matrix path to probe); the
+    /// [`expand_keys`] unconditionally, driving the measured fan-out
+    /// (~9× amplification from matrix path to probe); the
     /// `gen_binary_files` already writes both keyspaces at
     /// `crates/oxpinyin-data/src/table_entries.rs:95-98`, and the user store
     /// now mirrors that with its `by_initial` index, so the expansion is

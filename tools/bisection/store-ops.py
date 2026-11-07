@@ -5,8 +5,7 @@ Drives the `backend_matrix_<backend>` bench binary's `--op` mode
 (`crates/oxpinyin-store/benches/support/ops.rs`) for a base build, a
 same-bytes control (the base binary copied to another path) and a candidate
 build, one fresh process per sample, rotating the order within each round.
-The statistics are `teardown.py`'s, so the §7.5 rules
-(`docs/findings/tooling-consolidation-python-just.md`) are applied by the
+The statistics are `teardown.py`'s, so its rules are applied by the
 same code:
 
 - timing: ns per store call; the control/base paired ratio and its whole

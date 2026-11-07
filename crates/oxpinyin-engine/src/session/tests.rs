@@ -1912,8 +1912,7 @@ impl LanguageModel for FixedUnigrams {
 // both `Scorer::with_key_costs` sites sit on the `else` of a
 // `has_real_unigrams()` gate, so a model carrying real frequencies can
 // never consult one and must not pay to build one. That walk is the
-// whole 42–57 ms first-alloc penalty in
-// `docs/findings/perf-backend-matrix-2026-09.md`, and upstream has no
+// whole 42–57 ms first-alloc penalty, and upstream has no
 // analogue in any configuration — `pinyin_alloc_instance` allocates
 // instance state and performs no dictionary or model read
 // (`src/pinyin.cpp:1310-1333` at the pin `0c5e80e1`). The fallback must

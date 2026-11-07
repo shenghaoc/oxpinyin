@@ -1,8 +1,7 @@
 //! Every path the pinned oracle selected is a path through our graph.
 //!
 //! This is the W4-T1 acceptance check, and the reason the graph exists. The
-//! 483 `path-set` divergences measured in
-//! `docs/findings/parser-spec-contradiction-incomplete-keys.md` all have the
+//! 483 `path-set` divergences measured on the W2 corpus all have the
 //! same shape — an initial-only key somewhere other than the end — which the
 //! foundation parser's `Vec<Parse>` contract cannot represent and a graph
 //! represents without trying.
@@ -29,8 +28,7 @@ const EXPECTED_PIN_REF: &str = concat!(
 /// Inputs whose oracle path the graph deliberately does not admit.
 ///
 /// Maintainer decision 3 in
-/// Both halves of maintainer decision 3 in
-/// `parser-spec-contradiction-incomplete-keys.md` are now closed. The doubled
+/// Both halves of maintainer decision 3 on apostrophes are now closed. The doubled
 /// half (`ni''hao`) closed 2026-08-21; the leading half (`'ni`) closed
 /// 2026-08-21 by the same zero-width step-propagation law. No open
 /// apostrophe cases remain.

@@ -699,8 +699,8 @@ pub trait WriteStore: ReadStore {
     /// regression on a path the C ABI runs synchronously from a
     /// keystroke, for a durability window narrower than the one
     /// upstream libpinyin already leaves open;
-    /// `docs/findings/perf-train-commit-fsync-2026-09-09.md` carries
-    /// the numbers and the decision. That measurement is tkrzw's. The
+    /// the maintainer chose this split on 2026-09-10 for that
+    /// measured cost. That measurement is tkrzw's. The
     /// equivalent per-commit cost on Berkeley DB, which has no soft tier
     /// to fall back to, has not been measured.
     ///

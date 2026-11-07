@@ -347,8 +347,7 @@ where
     /// touches upstream's instance-level `m_constraints` or the chosen
     /// cursor (`pinyin.cpp:1497-1533`); the next `guess_sentence`
     /// re-validates the surviving forcings against the new matrix. This
-    /// is that split's engine half: the L2 lifetime rule
-    /// (`docs/findings/live-typing.md`). The parse leaves
+    /// is that split's engine half: the L2 lifetime rule. The parse leaves
     /// `m_nbest_results` alone too (`pinyin.cpp:1497-1524`; only
     /// `pinyin_reset` clears it, `:2700`), so the sentence rows survive
     /// until the next `guess_sentence` replaces them (register row 34).
@@ -381,7 +380,7 @@ where
     /// (`pinyin_parser2.cpp:237-328` — there is no explicit stop, the
     /// termination is the DP's reachability), so space, control, and
     /// non-ASCII bytes must REACH the decoder for it to stop there
-    /// (class B2 of `uncovered-surface-differentials.md`). The decoder
+    /// (class B2 of the W12 differential). The decoder
     /// hard-stops on them; this seam must not pre-filter them away.
     ///
     /// The batch [`Session::type_pinyin`] keeps its printable-ASCII

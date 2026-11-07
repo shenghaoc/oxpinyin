@@ -1,7 +1,7 @@
 # Design — Foundation
 
 Investigations precede and gate later phases, although they produce no shipping software.
-See `docs/findings/spec-derivation.md` for details and fixture families.
+See `spec-derivation` for details and fixture families.
 
 **Investigation A: provenance.** Inspect archive licenses and record Branch A, A′ or B.
 Stage 1's pinned-archive route defers redistribution questions.
@@ -29,7 +29,7 @@ Open native system directories through `Runtime::open`, as `pinyin_init` does.
 Use native DBM names/layouts, mapped and checksummed MemoryChunk files, and `table.conf` for λ.
 The caller supplies the directory.
 Do not detect layouts.
-P6 replaced #228's reader; see `docs/findings/runtime-direct-libpinyin-data-2026-09-02.md`.
+P6 replaced #228's reader; see `runtime-direct-libpinyin-data-2026-09-02`.
 
 **Storage model.** Select bdb, kyotocabinet or tkrzw through the `DefaultStore` `#[cfg]` chain.
 tkrzw became default on 2026-10-30 UTC, the maintainer decision that tkrzw is maintained upstream and Berkeley DB and Kyoto Cabinet are not.

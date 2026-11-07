@@ -139,7 +139,7 @@ W10 (Amended 2026-09-14: the bit-SET fold landed 2026-08-30 as the
 three-gate implementation `217d0c4` — the `λ · bigram_poss · DISCOUNT`
 term folds into the amplified-frequency key, not `RankKey`, at the pin's
 three call sites; issue #99 closed with it, and the C2 isolating
-differential (`uncovered-surface-differentials.md`,
+differential (`uncovered-surface-differentials`,
 `PARITY_DYNAMIC_ADJUST` in `tools/bisection/uncovered-surface-diff.c`)
 is its probe. This paragraph describes the pre-`217d0c4`
 tree.) `SharedLm::unigram_freq` stays ungated (the
@@ -217,7 +217,7 @@ Bare `gn`/`mg`/`on` are not in `pinyin_index` (80/80/17 stemmed rows).
 
 Control: same top-10 ABI assertion under ALL-BITS-OFF (`0x0`).
 Each row is enumerated, reproduced on the fixture-based scoring path
-(no live oracle), and classed in `docs/findings/all-off-tails.md`.
+(no live oracle), and classed in `all-off-tails`.
 
 | Input | All-off verdict | Owner | Action |
 |---|---|---|---|
@@ -230,7 +230,7 @@ Each row is enumerated, reproduced on the fixture-based scoring path
 
 Upstream draws a corrected key's inventory from the **same** `content_table` slot as the canonical spelling: `search_pinyin_index` (`pinyin_parser2.cpp:93-116`) sets `key = content_table[index->m_table_index].m_chewing_key`. `pinyin_parser_table.h` gives `agn`/`amg`/`ang` table index 4 and `lue`/`lve` table index 203. The corrected parse does **not** restrict the inventory; it is the native key. Capi is not admitting extra correction-only entries — `n=` matches, and the tail is the ~4k prefix-overlap residual the pins count rather than assert as text (W12). No W10 work.
 
-**Closed 2026-08-24** (`docs/findings/all-off-tails.md` §"Closure"): all
+**Closed 2026-08-24** (`all-off-tails` §"Closure"): all
 six rows are class (iii), not divergences. The DIFF verdicts in the table
 are pre-`e941090` measurements of the Class A comparator species;
 post-port the lists are bit-identical to the pin at `0x0` (live-oracle
@@ -240,7 +240,7 @@ fires.
 `DYNAMIC_ADJUST` bit-SET (fold `λ · bigram_poss · DISCOUNT` into the
 amplified frequency) — implemented at the pin's three gates 2026-08-30
 (`217d0c4`, closing issue #99); the C2 isolating differential
-(`uncovered-surface-differentials.md`) is its probe.
+(`uncovered-surface-differentials`) is its probe.
 
 ## GSettings → bit mapping in the fork
 

@@ -37,7 +37,7 @@ The authority for the header identity is the `header_sha256` field of
 This is the same method the ABI reference derives its facts with:
 derive them from the declared public interface. The
 parity *behaviour* contract remains the executable oracle plus frozen
-fixtures, per `docs/findings/spec-derivation.md`.
+fixtures, per `spec-derivation`.
 
 Independent cross-check: the flag word this finding derives for the F-A capture
 profile, `IS_PINYIN | PINYIN_INCOMPLETE | USE_DIVIDED_TABLE |

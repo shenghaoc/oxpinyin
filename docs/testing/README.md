@@ -7,7 +7,7 @@ is `../runbooks/goldens-and-pins.md`.
 
 For the live ABI gate registry, cell selection, prebuilt artifacts and aggregate
 result protocol, see [live parity gates](../runbooks/parity-gates.md). The
-[tooling-lane run](../findings/tooling-lane-gates.md) records the three-cell table.
+tooling-lane run records the three-cell table.
 
 ## Candidate capture
 

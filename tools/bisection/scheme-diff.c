@@ -321,7 +321,7 @@ int main(int argc, char **argv) {
     for (size_t p = 0; p < N_TONE_PROFILES; p++)
         drive_tone_law(&s, inst, ctx, TONE_PROFILES[p]);
 
-    /* Out-of-enum half-mutation probe (revert-plan §8, row 5b).
+    /* Out-of-enum half-mutation probe (row 5b).
      *
      * With a fallback-bearing scheme active (ZRM = 1), an out-of-enum
      * value (99, −1) clears the fallback table and returns true (the lie).

@@ -24,12 +24,12 @@ fn reads_the_pinned_package_libraries() {
         libraries.push(library);
     }
     // The four system libraries of the model libpinyin 074a2219 builds: 138,096
-    // tokens (`docs/findings/datagen-model20.md`).
+    // tokens.
     assert_eq!(items, 138_096);
 
     // 的: token 0x010005DB. The pinned model's `gb_char.table` carries two
     // readings, `de 的 16778715 2213855` and `di 的 16778715 11000`, the counts
-    // the chunk stores verbatim (`datagen-model20.md`).
+    // the chunk stores verbatim.
     let gb = &libraries[0];
     let item = gb.item(0x0100_05DB).expect("的 present in gb_char");
     assert_eq!(

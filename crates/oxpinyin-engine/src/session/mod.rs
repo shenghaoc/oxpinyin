@@ -122,7 +122,7 @@ pub struct SessionState {
     /// construction prices candidates inline instead. Filling it for such a
     /// model would walk the whole frozen key inventory to produce a value
     /// nothing reads, which is what made the first `new_session` cost
-    /// 42–57 ms (`docs/findings/perf-backend-matrix-2026-09.md`). Upstream
+    /// 42–57 ms. Upstream
     /// has no analogue in any configuration: `pinyin_alloc_instance`
     /// allocates instance state and performs no dictionary or model read
     /// (`src/pinyin.cpp:1310-1333` at the pin `0c5e80e1`).

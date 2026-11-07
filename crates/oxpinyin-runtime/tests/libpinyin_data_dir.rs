@@ -50,9 +50,8 @@ fn an_unmodified_libpinyin_data_directory_opens_and_decodes() {
     let dict = runtime.dict();
     let lm = runtime.lm();
 
-    // The facade sizes of the model libpinyin 074a2219 builds
-    // (`docs/findings/datagen-model20.md`): 138,096 items over the four system
-    // libraries, real corpus counts from the chunk items.
+    // The facade sizes of the model libpinyin 074a2219 builds: 138,096 items
+    // over the four system libraries, real corpus counts from the chunk items.
     assert_eq!(dict.visible_item_count(), 138_096);
     let total = LanguageModel::unigram_total(&lm)
         .expect("query")

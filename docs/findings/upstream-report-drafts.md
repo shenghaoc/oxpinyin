@@ -105,7 +105,7 @@ gchar *right = g_strdup(pinyin + clamped);
 ```
 
 Full writeup with the upstream-status survey and the in-bounds boundary
-analysis: `docs/findings/full-pinyin-aux-overread.md`.
+analysis: `full-pinyin-aux-overread`.
 
 ---
 

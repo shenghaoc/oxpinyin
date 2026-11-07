@@ -25,7 +25,7 @@
   2³¹ (and failing antisymmetry at exactly 2³¹). `:2286,2440-2445` use
   stable GLib array sorting. `src/zhuyin.cpp:1129-1144,1529,1610` always
   uses phrase length then frequency. Stability is the documented contract;
-  the old GLib internals are recorded in [the dated source reading](921-927-glib-sorts.md).
+  the old GLib internals are recorded in the dated source reading.
 - **Rust counterpart:** `candidate::rank_by_frequency` stably groups rows
   by descending enabled `(phrase_length, pinyin_span)`, checks each group's
   frequency relation, then uses stable std sorting with

@@ -14,7 +14,7 @@ construction: the expanding-window scan, the three-key order, and keep-first
 dedup, measured at top-1 99% / absent 0 (§8; the doubled-apostrophe fix
 2026-08-21 moved absent from 1 to 0).
 
-Baselines and neighbours: `docs/findings/parity-climb-residual.md`,
+Baselines and neighbours: `parity-climb-residual`,
 `docs/testing/f3-bigram-kbest.md`, `docs/testing/f2-unigram-tiebreak-sweep.md`,
 `docs/findings/scoring-spec.md`, `docs/findings/segment-graph.md`,
 `docs/findings/kbest-search.md`, `docs/findings/session-api.md`.
@@ -24,7 +24,7 @@ Baselines and neighbours: `docs/findings/parity-climb-residual.md`,
 The frozen number every change in this area is measured against, pinned in
 `crates/pinyin-oracle/tests/real_tables_integration.rs`
 (`real_tables_session_reports_parity`) over `fixtures/w4/oracle-candidates.txt`,
-re-frozen on 2026-08-16 by `docs/findings/pin-refreeze-2026-08.md`, amended
+re-frozen on 2026-08-16 by `pin-refreeze-2026-08`, amended
 on 2026-08-21 by the doubled-apostrophe fix, and on 2026-08-22 by the Class A
 comparator tie-law port (`docs/testing/corpus-tail.md`):
 
@@ -44,7 +44,7 @@ tie-swap count;
 the tolerant floors beneath them (top-1 ≥ 55%, top-5 ≥ 80%,
 absent ≤ 4%) are the regression envelope. The 2026-08-13 pre-construction floor
 was 6525 (64%) / 9232 / 70 / 65505 of 98930; the pre-F1 snapshot in
-`parity-climb-residual.md` was 63% / 177 absent.
+`parity-climb-residual` was 63% / 177 absent.
 
 ## 1. Residual characterisation
 
@@ -126,7 +126,7 @@ fangan	2	反感
 
 `方案` is `fang` + `an`; `反感` is `fan` + `gan`. Interleaved in one list.
 **SHOWN.** (`scoring-spec.md` proves the same point from
-`fixtures/foundation/f-a.txt` as `ambiguous-fangan`; `divergence-taxonomy.md`
+`fixtures/foundation/f-a.txt` as `ambiguous-fangan`; `divergence-taxonomy`
 counts 468 `tie-swap` inputs of this shape, ranks 1–128.)
 
 Coverage-beats-prefix, from single segmentations:
@@ -210,7 +210,7 @@ Refining the hypothesis's "ours" against `session.rs`:
    thread a running bigram history (`prefix_history`) — but only for the
    multi-phrase whole-path sentence candidate, whose **first** phrase still
    starts from the empty history. **SHOWN** for our side
-   (`parity-climb-residual.md` §"Rank 2–5", point 2).
+   (`parity-climb-residual` §"Rank 2–5", point 2).
 
 3. **Does the oracle's rank-1 ordering actually depend on a bigram / a
    phrase-level lattice?** **INFERRED — not fixture-derivable.** The candidate
@@ -277,7 +277,7 @@ the contract on that evidence.
 
 ### 1.5 Residual buckets, and why the fixture caps the analysis
 
-From `parity-climb-residual.md` (regenerate with
+From `parity-climb-residual` (regenerate with
 `cargo run -p pinyin-oracle --release --bin parity-worst`), the 3,755 top-1
 misses over 10,190:
 
@@ -458,7 +458,7 @@ not a taste one.
 Stage-1 call sites must stay valid. The `Dictionary`, `LanguageModel` (and
 `UserModel`) traits are unsealed and **grow only by defaulted methods**
 (`docs/architecture.md`; the pattern F4 assumed in
-`parity-climb-residual.md`).
+`parity-climb-residual`).
 
 - **Strategy B** needs **no new trait method**: it is engine-local
   (`Session::refresh` gains a second pass) and reuses `Scorer::rank_phrases`
@@ -537,7 +537,7 @@ top-1 10177 / top-5-set 10189 / absent 1 / prefix-10 overlap 94871 /
 prefix-depth 98930 / order-only 1036 (2026-08-16, second),
 top-1 10136 / top-5-set 10182 / absent 1 / prefix-10 overlap 94456 /
 prefix-depth 98930 / order-only 1030 (2026-08-16, first) — and their Δ
-are in `pin-refreeze-2026-08.md`), never a silent edit. The
+are in `pin-refreeze-2026-08`), never a silent edit. The
 tolerant floors (top-1 ≥ 55%, top-5 ≥ 80%, absent ≤ 4%) are the
 regression envelope that must hold regardless.
 
@@ -828,7 +828,7 @@ Serial == parallel and debug == release, bit-identical. The candidate
 list now agrees with the pinned oracle bit-identically on every W2
 corpus input at depth 10; the 2026-08-22 closure and its law are
 `docs/testing/corpus-tail.md` Class A (the third amendment of
-`pin-refreeze-2026-08.md`).
+`pin-refreeze-2026-08`).
 
 **The frequency key is the pin's amplified scale, not the raw count.**
 RankKey-3 is `trunc(((1−λ)·(unigram+1)/total)·2²⁴)` computed in `f32`

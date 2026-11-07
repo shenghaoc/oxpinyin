@@ -13,8 +13,7 @@ the clamp live on the `len =` line would be a two-line change).
 implementation uses `strncpy`, which stops at the first NUL, so no
 over-read is possible there.
 
-See docs/findings/full-pinyin-aux-overread.md for the reproduction and
-the venue survey. Authored against libpinyin 2.11.91 @
+Authored against libpinyin 2.11.91 @
 `0c5e80e1200f84fab185d1c5bde458b770a0636c`.
 Re-verified to apply cleanly (--forward, no rejects) at the 074a2219
 tree on 2026-09-06 UTC.

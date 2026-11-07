@@ -427,8 +427,6 @@ pub mod bigram {
 /// `PunctTableEntry::escape`'s layout (`punct_table.cpp:40-54`) — each
 /// punctuation's UCS-4 code points followed by a `u32` zero terminator,
 /// successive punctuations concatenated.
-///
-/// `docs/findings/prediction-punct.md`.
 pub mod punct {
     use oxpinyin_core::PhraseText;
 

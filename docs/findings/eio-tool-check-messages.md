@@ -27,7 +27,7 @@ warnings from the pin's own code stay. Stdout, files and SIGABRT match
 The family C tkrzw `ngram-snapshot-directory` and
 `punct-table-snapshot-directory` records bind only this assertion-text
 exception. Their files compare exactly after the approved
-[HashDBM clock timestamp normalization](eio-test-dbm-abort-timestamp.md).
+HashDBM clock timestamp normalization.
 The timestamp normalization itself is not a POLICY-ACCEPTED divergence.
 
 The KC snapshot-abort and K-mixture existing-empty witnesses also bind

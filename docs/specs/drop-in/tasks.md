@@ -18,7 +18,7 @@ Task 10 added Berkeley DB on 2026-09-12; see `docs/findings/berkeleydb-backend.m
 
 - [x] 3. Open the backend's system directory.
   P6 native readers replaced #228's first reader on 2026-09-02.
-  See `docs/findings/runtime-direct-libpinyin-data-2026-09-02.md`.
+  See `runtime-direct-libpinyin-data-2026-09-02`.
   _Requirements: 2_
 
 - [x] 4. Implement MemoryChunk reading with checksum verification (#228).

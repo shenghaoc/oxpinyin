@@ -589,8 +589,8 @@ neither implementation's output allocation is removed by this guard.
 
 | Item | Pin | oxpinyin | Mark |
 | --- | --- | --- | --- |
-| K-mixture model | `utils/training` (`k_mixture_model.h` and tools) | `oxpinyin-kmm`, audited term by term in `kmm-arithmetic-audit.md` | same / argued (`kmm-arithmetic-audit.md`); output in token order, an iteration cap and `Err` for asserts (that audit's §7) |
-| System data | `gen_binary_files`, `import_interpolation`, `gen_unigram` | `oxpinyin-datagen`, one compiler from `model20` (`datagen-model20.md`) | different / argued — byte-identical output (`datagen-model20.md`) |
+| K-mixture model | `utils/training` (`k_mixture_model.h` and tools) | `oxpinyin-kmm`, audited term by term in `kmm-arithmetic-audit` | same / argued (`kmm-arithmetic-audit`); output in token order, an iteration cap and `Err` for asserts (that audit's §7) |
+| System data | `gen_binary_files`, `import_interpolation`, `gen_unigram` | `oxpinyin-datagen`, one compiler from `model20` (`datagen-model20`) | different / argued — byte-identical output (`datagen-model20`) |
 
 ## 9. Constants
 
@@ -632,7 +632,7 @@ external-I/O stage 1 (2026-10-28 UTC) `TableConf::load` makes that very
 call on the file's stream through `oxpinyin-input`, for both facades and the
 tools; the decoder's rational routing value is the scanned `gfloat`'s
 shortest decimal (`Lambda::from_f32`). See the
-[source derivation and supersession](1297-table-floats.md).
+source derivation and supersession.
 
 ### oxpinyin's own values, by call path
 
@@ -718,7 +718,7 @@ oxpinyin cannot follow. It is two things, both of which Rust can follow:
     `libpinyin.so.15` (0x96060–0x96072, 0x96080–0x96097) and
     `fadd s`/`fcmpe s` on arm64 (0x79d60–0x79d78, 0x79d90–0x79da8).
     Corrected 2026-10-28 UTC from "in double"; evidence in
-    [float-scoring-1378.md](float-scoring-1378.md), Appendix A, D-1.
+    `float-scoring-1378`, Appendix A, D-1.
 - *libm's `log`.* The one transcendental. The pin calls the platform
   libm's `log`. Rust's `f64::ln` documents unspecified precision that
   may vary by platform and Rust version, so whether a given oxpinyin
@@ -776,7 +776,7 @@ cross-platform determinism, not a language limit.
 **Fitted coefficients still in the tree — off the parity path.**
 `ScoringConfig::default` (`oxpinyin-core/src/scoring.rs`) carries `segmentation_penalty`,
 `incomplete_penalty` and `phrase_key_bonus` values chosen by sweeping
-against the oracle (`scoring-constant-sweep.md`, 2026-08-10), and the
+against the oracle (`scoring-constant-sweep`, 2026-08-10), and the
 engine `Session` still holds a `ScoringConfig`. These are not pin values.
 The session reads them in two places, both on the branch taken when the
 language model has no real unigram data (`has_real_unigrams` false): the
@@ -932,7 +932,7 @@ keeps the sorted 1493-row inventory and partition_point, but stores immutable
 UTF-8 pool spans rather than three fat string slices; canonical rendering
 keeps the original first-match scan. Both search complexities are O(log n)
 with bounded-length comparisons; rendering remains O(n). No runtime table
-allocation or initialization. See [the prototype findings](compact-zhuyin-prototype.md) for source
+allocation or initialization. See the prototype findings for source
 verification, alternatives and measured rejection: Simple lookup +21.7% and
 CP26 +18.8% instructions despite 320 KiB paired stripped-size saving. The
 prototype was reverted; the original representation remains in production.
@@ -958,7 +958,7 @@ borrowing fields and retaining empties/tails, with O(n) time and O(1)
 auxiliary space. Its unsigned numeric-prefix helper now borrows a prefix
 instead of constructing a `String`. No observable behavior is changed;
 the existing numeric-domain and phrase-validation gaps are not excused by
-this equivalent refactor. The [tool audit](926-tool-tokenizers.md) traces
+this equivalent refactor. The tool audit traces
 callers, output contracts, classified partitions and remaining work.
 
 ## Scanner/tools native parsing (#1297; 2026-10-26 UTC)
@@ -968,13 +968,13 @@ then six-column library rows. Since external-I/O stage 1 (2026-10-28 UTC)
 `oxpinyin-input` makes those `fscanf`, `feof` and `atoi` calls on the file's
 stream, and `TableConf::load` and `UserTableInfo::load` keep the pin's
 mappings, slots and refusals; the line-based Rust readers and their
-[scanner records](1297-table-lines.md) are superseded. Both loads are O(n)
+scanner records are superseded. Both loads are O(n)
 time in the file and O(1) space beyond the rows: the scanner keeps the pin's
 fixed 256-byte buffers. Library slot vectors and persistent writers
 retain their formats and ordering. Pin `utils_helper.h:23-35,57-69` feeds decimal
 tokens/counts to the training tools; `numeric::decimal_field` is the one complete
 field conversion for their domain types, O(field length) time and no successful
-parse allocation. The [tool record](1297-tool-decimals.md) names the callers.
+parse allocation. The tool record names the callers.
 Punctuation remains O(words) time/space; chunk payload retries preserve O(bytes)
 time and O(1) additional space, with the existing header/sync/rename contract.
 

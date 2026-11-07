@@ -158,5 +158,5 @@ staging root. Missing staging configuration is visible as SKIPPED. The generic
 `--cell-env CELL:NAME=VALUE` option is for additional runner inputs; core cell,
 artifact and target settings must use their dedicated options.
 
-The [recorded tooling-lane sweep](../findings/tooling-lane-gates.md) includes
+The recorded tooling-lane sweep includes
 the complete three-cell table and the residue-A invocation comparison.

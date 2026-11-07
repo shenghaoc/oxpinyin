@@ -109,7 +109,7 @@ pub struct ScoringConfig {
 ///   for `nih`.
 ///
 /// Settled against the full W2 corpus + exported tables by the parity-climb
-/// constant sweep (`docs/findings/scoring-constant-sweep.md`). Magnitudes
+/// constant sweep. Magnitudes
 /// are still not upstream's; they maximise measured top-1 under the frozen
 /// functional form.
 impl Default for ScoringConfig {

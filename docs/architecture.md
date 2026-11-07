@@ -49,6 +49,8 @@ This follows libpinyin's `--with-dbm` model.
 Do not add runtime dispatch or fallback.
 `oxpinyin-store` emits `compile_error!` when zero or multiple backends are enabled.
 
+Saving makes the pin's synchronisation call for the selected backend (`ngram_tkrzwdb.cpp:80`, `ngram_kyotodb.cpp:102` and `ngram_bdb.cpp:103` at `074a2219`), so durability is the backend's for that call, and oxpinyin promises nothing beyond it.
+
 ## Dependencies
 
 **Dependencies (amended by the [Rust/C++ interoperability ruling](findings/compatibility-policy.md#rust-cpp-interoperability), 2026-11-02 UTC):**
@@ -69,7 +71,7 @@ Kyoto Cabinet binds with CXX over the concrete classes the pin uses (`crates/oxp
 It constructs `TreeDB`, `HashDB`, `StashDB` and `ProtoTreeDB` from build-time headers.
 No bridge function returns `Result`, so a C++ exception terminates the process, as it ends the pin's.
 Like libpinyin, it depends on the system library's C++ ABI.
-The [KC native-call inventory](findings/kc-native-call-inventory.md) holds the source behind the migration from the C++ shim.
+The KC native-call inventory holds the source behind the migration from the C++ shim.
 The facades import 68 `kyotocabinet::` names, 67 among the pin's 77.
 This describes the current tree.
 The `oxpinyin-input` boundary calls the C library through the `libc` crate, with no build step; its [C-library calls and macro checks](source-policy.md#external-io) retain the 2026-10-31 UTC rule.
@@ -77,12 +79,12 @@ It declares in Rust, per platform and in one place, the C library's `stdout` and
 Its `tools` feature adds GLib through `glib-sys` and reads the C++ streams' lines with `std::io`.
 
 Kyoto Cabinet left `kclangc.h` after measurement in #1118, through a C++ shim that the CXX bridge replaced.
-See the [shim results](findings/kc-shim-1118.md).
+See the shim results.
 `kclangc.h` reaches every class through `PolyDB`.
 That dispatch and linked but unopened classes kept about 580 KiB more libkyotocabinet text resident than the pin.
 Constructing the concrete classes directly, as the shim and the bridge both do, retains the pin's libkyotocabinet residency.
 An earlier cxx bridge was measured and rejected in #1043; this is historical evidence about that implementation, not a restriction on CXX bindings under the [current ruling](findings/compatibility-policy.md#rust-cpp-interoperability).
-See its [results](findings/kc-c-vs-cxx-adapter-2026-10-22.md) and PR #1043 for code.
+See its results and PR #1043 for code.
 Its glue added 0.6–5.5% instructions to point reads, writes and framed scans.
 Cargo-built libraries also exported cxx runtime and bridge symbols beyond the version scripts.
 The shim that #1118 adopted had no glue layer.

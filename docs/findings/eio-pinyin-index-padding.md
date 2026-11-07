@@ -102,7 +102,7 @@
   contract controls also MATCH on all three cells.
 - **Prior rulings:** none reversed. The same artefact was recorded for
   the deleted `oxpinyin-datagen` producer in
-  `datagen-compat-2026-09-01.md` (the padding divergence) and was
+  `datagen-compat-2026-09-01` (the padding divergence) and was
   tolerated by its `libpinyin_parity` test; this record binds it in the
   tool-diff runner instead.
 - **Evidence:** `bash tools/oracle/compat.sh --cell bdb --runners

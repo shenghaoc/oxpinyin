@@ -101,7 +101,7 @@ Regenerated against the new pin (same recipe, `run-capture.sh` over the
 git-fetch-built oracle; every record's `pin_ref` stamp moves to
 `libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99+model20-59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155+dbm-tkrzw`;
 the captured behavior is unchanged — the corpus surfaces re-verified
-byte-identical, see `docs/findings/oracle-pin-074a221-verification.md`).
+byte-identical, see `oracle-pin-074a221-verification`).
 The table above is the 2.11.91 freeze and stands unedited.
 
 | Family | Records | SHA-256 |

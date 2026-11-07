@@ -124,12 +124,12 @@ frozen policy forbids the direction:
   reverted."
 - The performance goal does not require it: libpinyin demonstrates
   ~0.9 ms init and 12–18 MiB RSS **on these exact files**
-  (`perf-backend-matrix-2026-08-31.md`) — the #260 baseline itself says so.
+  (`perf-backend-matrix-2026-08-31`) — the #260 baseline itself says so.
 
 How the sysformat happened, honestly:
 
 1. **It inherited a pre-policy divergence.** oxpinyin's data layer is the
-   frozen export schema (`data-layer-export.md`, 2026-08-10): apostrophe-
+   frozen export schema (`data-layer-export`, 2026-08-10): apostrophe-
    joined spelling keys and `{token, freq}` records — a re-keyed
    projection of the same logical content, not libpinyin's formats.
 2. **That layer was created under a policy that no longer exists.** The
@@ -222,7 +222,7 @@ Recommended disposition (matches the maintainer's stated preference):
      (mmap, checksum, offset array, item views). Serves phrase text,
      pronunciations, per-item freqs. Replaces the phrase-index half;
      parity suite stays green because the logical content is the
-     proven-identical export content (`datagen-model20.md`'s
+     proven-identical export content (`datagen-model20`'s
      entry-for-entry equivalence).
    - **P2 — ChewingKey encoder + chewing DBM reader:** the 16-bit key
      packing from `chewing_key.cpp`, the two key spaces, the

@@ -29,7 +29,7 @@ the W6-T4 empty-store merge is.
   against main `1c7cbd0`.
 - Prior art that this finding leans on:
   `docs/findings/user-store.md` (W6 user store and the additive merge),
-  `docs/findings/data-layer-export.md` (why the raw `pinyin_index.bin` is not
+  `data-layer-export` (why the raw `pinyin_index.bin` is not
   the runtime schema),
   `docs/findings/data-formats.md` (raw addon/custom content formats),
   `docs/findings/candidate-construction.md` (the frozen window-scan
@@ -287,7 +287,7 @@ has nowhere to land. See §9.
 W3 `addon_*.redb` cannot be the runtime addon tables. Those files were
 `oxpinyin-migrate convert` passthroughs of the raw Tkrzw files, i.e. the
 same **undocumented sectioned binary format** that
-`docs/findings/data-layer-export.md` deliberately refused to parse for the
+`data-layer-export` deliberately refused to parse for the
 system pinyin index. Concretely:
 
 - `fixtures/w3/addon_pinyin_index.redb` has 117 records, all with 6-byte keys
@@ -301,7 +301,7 @@ implementations:
 
 **Option A — regenerate the addon tables in the established public-ABI schema.**
 Add a data-preparation step (analogous to
-`docs/findings/data-layer-export.md`) that reads the model archive's addon
+`data-layer-export`) that reads the model archive's addon
 `.table` text files and writes string-keyed pinyin indexes plus token→text
 phrase indexes, one per addon library. Runtime `pinyin_load_addon_phrase_library`
 then opens those files exactly like `SystemDictionary` opens the system pair.
@@ -313,7 +313,7 @@ for the `.bin` records.
 
 **Option B — port a raw binary decoder.** Read upstream C++ to reconstruct the
 sectioned `pinyin_index.bin`/`phrase_index.bin` format and implement it for the
-raw W3 addon tables. This is exactly the path `data-layer-export.md` rejected
+raw W3 addon tables. This is exactly the path `data-layer-export` rejected
 for system tables after measuring that the raw key space does not match
 `ChewingKey::get_table_index()` and the value layout is a sectioned
 multi-record format. It is much larger and is not required by any runtime
@@ -494,7 +494,7 @@ tie-swaps  0
 
 Movement means a leak into existing behaviour and is a STOP. Pins reflect
 the 2026-08-22 third amendment — the Class A comparator port
-(`docs/findings/pin-refreeze-2026-08.md`;
+(`pin-refreeze-2026-08`;
 `docs/testing/corpus-tail.md`).
 
 ### 8.2 New differentials

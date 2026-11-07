@@ -209,7 +209,7 @@ ours    ying@0:4:complete, chon@4:8:partial
 ```
 
 The pin's selected path has two non-final partials. Full accounting is in
-`docs/findings/parser-spec-contradiction-incomplete-keys.md`.
+`parser-spec-contradiction-incomplete-keys`.
 
 **Deferred.** Admitting mid-path and repeated partials multiplies the path
 set. `MAX_PARSE_RESULTS` (4,096) and its interaction with the corpus must be
@@ -221,7 +221,7 @@ invariant and the prose that states the observed upstream policy.
 ### 2026-08-21 — oracle-driven SPEC correction: doubled apostrophe
 
 **Kind:** oracle-driven SPEC correction. Half of maintainer decision 3 in
-`parser-spec-contradiction-incomplete-keys.md` — the doubled-apostrophe
+`parser-spec-contradiction-incomplete-keys` — the doubled-apostrophe
 half — is resolved by aligning with the pin. The leading half stays open.
 
 **Previous invariant.** A leading, repeated, or trailing apostrophe is not
@@ -241,13 +241,13 @@ the W2 residual (`docs/testing/corpus-tail.md`, W12 Class B).
 **Freeze move.** `real_tables_session_reports_parity` re-freezes from
 10,177 / 10,189 / 94,871 of 98,930 / absent 1 to
 **10,178 / 10,190 / 94,872 of 98,930 / absent 0**; tie-swaps stay at
-1,036. Recorded in `docs/findings/pin-refreeze-2026-08.md`
+1,036. Recorded in `pin-refreeze-2026-08`
 (the doubled-apostrophe amendment).
 
 ### 2026-08-21 — oracle-driven SPEC correction: leading apostrophe
 
 **Kind:** oracle-driven SPEC correction. The remaining half of maintainer
-decision 3 in `parser-spec-contradiction-incomplete-keys.md` — the
+decision 3 in `parser-spec-contradiction-incomplete-keys` — the
 leading-apostrophe half — is resolved by aligning with the pin.
 
 **Previous invariant.** A leading or trailing apostrophe is not a valid
@@ -258,7 +258,7 @@ leading run of consecutive apostrophes is consumed when the group after it
 consumes at least one byte. A leading run with no productive right side
 starts the remainder at position 0.
 
-**Evidence.** `parser-spec-contradiction-incomplete-keys.md` remaining
+**Evidence.** `parser-spec-contradiction-incomplete-keys` remaining
 divergences: `'ni` oracle consumes 3 vs our 0 (`consumed-length`).
 Upstream's `FullPinyinParser2::parse` (`pinyin_parser2.cpp:237-250`)
 treats every apostrophe at a reachable position as a zero-width

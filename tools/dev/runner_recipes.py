@@ -1042,8 +1042,7 @@ def predicted_order(ctx: Context, args: Sequence[str]) -> int:
     ctx.emit(f'DIVERGENCE: {total}/{rows} rows at different positions\n'
          '  Raw metric (text shape + order). Pre-fix baseline 2026-08-25: ~all\n'
          '  rows differ; after the prefix-slice fix the residual is order-only\n'
-         '  (measured hao 174/178) — the recorded Tkrzw bucket-walk divergence.\n'
-         '  See docs/findings/uncovered-surface-differentials.md.')
+         '  (measured hao 174/178) — the recorded Tkrzw bucket-walk divergence.')
     return 2
 
 

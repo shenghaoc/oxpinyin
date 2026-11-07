@@ -118,7 +118,7 @@ Rows above are the historical 2.11.91 freeze and stand unedited.
   candidates — the frozen fixture's exact counts); the sentence
   surface re-freeze §12 counts hold at 491/396/390 with every
   mechanism invariant intact. See
-  `docs/findings/oracle-pin-074a221-verification.md`.
+  `oracle-pin-074a221-verification`.
 - **Known upstream changes re-verified:** `libpinyin.so.15.0.0`
   unchanged (`libpinyin_abi_current=15`, revision 0, both pins); the
   public `pinyin.h` is byte-identical (same `header_sha256`); the six

@@ -652,7 +652,7 @@ project memory).
    the W6-era scope this finding was written under.)
 
    **Measured cost of this decision, on Kyoto Cabinet
-   ([`rss-attribution-2026-09-09.md`](rss-attribution-2026-09-09.md), Phase 2
+   (`rss-attribution-2026-09-09`, Phase 2
    Step 1):** upstream's user bigram is an in-memory `StashDB` opened on
    `"-"` and snapshotted to disk only at `pinyin_save`
    (`ngram_kyotodb.cpp:53-62`, reached from `pinyin.cpp:399-401`); oxpinyin's

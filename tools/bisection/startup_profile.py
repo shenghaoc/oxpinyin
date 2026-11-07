@@ -1,7 +1,6 @@
 """The startup-profile manifest, shared by its writer and its readers. Standard library only.
 
-Schema `oxpinyin-startup-profile-v1`
-(docs/findings/tooling-consolidation-python-just.md section 7.4): a header
+Schema `oxpinyin-startup-profile-v1`: a header
 line, then one line per regular file, `size<TAB>sha256<TAB>relative path`,
 in path-component order. tools/bisection/teardown.py's provisioner writes
 it as `profile.manifest`. Measurement tools compare it and hash it as the

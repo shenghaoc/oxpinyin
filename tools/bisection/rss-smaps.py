@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """rss-smaps.py — group a /proc/self/smaps dump by mapping, and diff two.
 
-Written for the RSS diagnosis (docs/findings/rss-attribution-2026-09-09.md).
+Written for the RSS diagnosis.
 `bisect --perf` in PERF_MODE=rss-diag with RSS_DIAG_DIR set writes the raw
 dumps; this turns them into the per-mapping Rss table the attribution is
 read off, and, with --diff, into the S-minus-L delta that names which

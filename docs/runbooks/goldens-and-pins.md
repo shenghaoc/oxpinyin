@@ -74,7 +74,7 @@ residual (496 1-best, 492 distinct-set and 491 ordered of 500) is asserted by th
 `tools/oracle/build-oracle.sh` (libpinyin commit, ibus-libpinyin commit,
 model SHA-256, DBM) are one identity; change every field together. The
 2026-09-06 move to 074a2219 is the worked example
-(`docs/findings/oracle-pin-074a221-verification.md`,
+(`oracle-pin-074a221-verification`,
 `docs/testing/oracle-environment.md`, "Amendment — pin 074a2219"):
 
 1. Bump the pin fields; rebuild the oracle (`oracle.md`); the build

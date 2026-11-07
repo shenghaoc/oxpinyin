@@ -36,17 +36,17 @@ oracle and moved towards the pin as the gaps showed up.
 
 | When (UTC) | What happened | Record |
 | --- | --- | --- |
-| 2026-08-09 | A segmentation search of our own (k-best over a segment graph) was specified, because 468 corpus inputs had the pin choosing a segmentation our greedy order did not put first | `findings/kbest-search.md`, `findings/divergence-taxonomy.md` |
-| 2026-08-10 | Scoring weights of our own (`segmentation_penalty`, `incomplete_penalty`, `phrase_key_bonus`) were swept against the oracle; top-1 against the pin stood at 63% | `findings/scoring-constant-sweep.md`, `findings/parity-climb-residual.md` |
+| 2026-08-09 | A segmentation search of our own (k-best over a segment graph) was specified, because 468 corpus inputs had the pin choosing a segmentation our greedy order did not put first | `findings/kbest-search.md` |
+| 2026-08-10 | Scoring weights of our own (`segmentation_penalty`, `incomplete_penalty`, `phrase_key_bonus`) were swept against the oracle; top-1 against the pin stood at 63% | — |
 | 2026-08-11 | A further constant, `UNIGRAM_TIEBREAK_SCALE`, was swept | `testing/f2-unigram-tiebreak-sweep.md` |
 | 2026-08-14 | The pin's window scan was reproduced from a source-verified specification: top-1 went to 99% | `findings/candidate-construction.md` |
 | 2026-08-22 | The candidate surface became bit-identical on all 10,190 corpus rows at depth 10 | `testing/corpus-tail.md` |
-| 2026-08-28 | The compatibility policy: a divergence must fit a named class, everything else is reverted | `findings/compatibility-policy.md`, `findings/revert-plan.md` |
-| 2026-09-01 | A faster on-disk format of our own was measured and rejected for breaking file compatibility; the clean-room rule was by then retired | `findings/perf-mmap-system-indexes-2026-08-31.md`, `findings/libpinyin-system-data-formats-2026-09-01.md` |
-| 2026-09-02 | The compatibility layer was replaced by reading the pin's data in place | `findings/runtime-direct-libpinyin-data-2026-09-02.md` |
+| 2026-08-28 | The compatibility policy: a divergence must fit a named class, everything else is reverted | `findings/compatibility-policy.md` |
+| 2026-09-01 | A faster on-disk format of our own was measured and rejected for breaking file compatibility; the clean-room rule was by then retired | `findings/libpinyin-system-data-formats-2026-09-01.md` |
+| 2026-09-02 | The compatibility layer was replaced by reading the pin's data in place | — |
 | 2026-09-04 | The sentence-surface residual was frozen as floating-point arithmetic (class (a)) at 491/396/390 | `findings/sentence-surface.md` |
-| 2026-09-10 | The scan's probe count was traced to oxpinyin expanding every incomplete key into all its completions, where the pin probes the incomplete keyspace once; the fix adopted the pin's approach | `findings/scan-matrix-fanout-2026-09-10.md` |
-| 2026-09-20 | The redb and LMDB backends were removed: nothing they did could be checked against the pin | `findings/backend-selection-audit.md` |
+| 2026-09-10 | The scan's probe count was traced to oxpinyin expanding every incomplete key into all its completions, where the pin probes the incomplete keyspace once; the fix adopted the pin's approach | — |
+| 2026-09-20 | The redb and LMDB backends were removed: nothing they did could be checked against the pin | — |
 | 2026-09-27 | An audit found that two rules inside the "arithmetic" residual were selection logic | `findings/upstream-divergences.md` |
 | 2026-10-04 | The pin's trellis selection was ported whole; the sentence gate went to 495/495/495, then 500/500/500 | `findings/sentence-surface.md` (lane D) |
 | 2026-10-16 | A source-level survey of every subsystem found one more selection rule missing — the full-pinyin parser's distance tie-break — and fitted scoring weights still in the tree, off the parity path | `findings/libpinyin-structures-and-algorithms.md` §11 |

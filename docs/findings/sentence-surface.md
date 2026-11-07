@@ -171,7 +171,7 @@ Ported divergences (recorded, not chased):
   ported** (`feat/constraint-machinery`, 2026-08-22 — the store in
   `constraint.rs`, the gated full-matrix walk, the reset split, the
   constraint-aware train, `pinyin_clear_constraint`; measured in
-  `live-typing.md`). The remaining-input re-seed (the W6 surface) still
+  `live-typing`). The remaining-input re-seed (the W6 surface) still
   carries every empty-store decode — the frozen pins' shape — and the
   §10 prefix context remains the display rule on that path.
 
@@ -558,7 +558,7 @@ token-ascending — the array order the oracle's stable
 `g_array_sort_with_data` keeps for comparator-0 pairs. The W12 Class A
 candidate residual closed to zero (10,190 / 10,190 / 98,930 of 98,930 /
 absent 0 / tie-swaps 0; `docs/testing/corpus-tail.md`,
-`pin-refreeze-2026-08.md` third amendment).
+`pin-refreeze-2026-08` third amendment).
 
 **This surface:** `loses_to`, the trellis, and the n-best row machinery
 are untouched — §3's trellis divergences stand. The measured agreement:
@@ -925,7 +925,7 @@ occurrences). Current main `9015a178` has 163 actual pin differences;
 PR B has 156, all byte-for-byte identical to main. Exactly seven surfaces
 move, all to pin equality. The five legacy math-row closures include
 `quguan` and `nou'y`, which already matched on current main. The seven
-PR B movements are recorded in [float-scoring-1378.md](float-scoring-1378.md).
+PR B movements are recorded in `float-scoring-1378`.
 
 The remaining cases pass only against their complete exact subject surfaces
 in `oracle-sentence-tie-order.txt`, with POLICY-ACCEPTED under the registered
