@@ -14,14 +14,10 @@ audited commit; their argv/environment columns record the interfaces that the
 Python recipes preserve.
 
 U2 now uses `just measure RECIPE ...` (`python -m tools.dev measure RECIPE`) for
-`perf-baseline`, `perf-matrix`, `perf-same-data`, `shipped-check`,
-`tree-recipe-control`, `rss-diag`, `callgrind-differential`,
-`snapshot`, `system-import-profile`, `probe-debuginfo-neutrality`
-and `probe-egress`, and `just profile-w8`. The shared services are
-`tools/dev/measure/bench.py`, `identity.py`, `reports.py` and `neutrality.py`
-beside the recipe modules; the fixtures are `tools/dev/measure/*.test.py` and
-`tools/perf-gate/*.test.py`. U2 links below name the audited commit too, and the
-two measurement images install uv and run their recipe as `CMD`.
+`callgrind-control`, `callgrind-differential` and `system-import-profile`. The
+shared services are `tools/dev/measure/bench.py`, `identity.py`, `reports.py` and
+`neutrality.py` beside `valgrind.py`; the fixtures are `tools/dev/measure/*.test.py`.
+U2 links below name the audited commit too.
 
 U4 now uses `just packaging COMMAND ...` (`python -m tools.dev packaging COMMAND`)
 for install, version and metadata checks, versioned ELF relinking and release

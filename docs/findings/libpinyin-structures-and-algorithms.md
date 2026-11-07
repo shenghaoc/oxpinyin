@@ -503,7 +503,7 @@ These planning estimates overlap; the combined estimate is 0.2–0.5%,
 not their sum. No change was implemented or compared with controls.
 
 To reproduce, use the [native setup](../runbooks/setup.md) and the
-[benchmark inputs](../runbooks/benches.md#criterion-benches). Set
+[benchmark inputs](../runbooks/benches.md). Set
 `PINYIN_MODEL_DIR`, `PINYIN_EXPORT_DIR` (complete model20 tkrzw export),
 `TMPDIR` (ext4), and the healthy tkrzw prefix's `PATH`, `PKG_CONFIG_PATH`
 and `LD_LIBRARY_PATH`. On the measurement host, run the following inside

@@ -15,8 +15,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-from tools.dev import darwin, mman
-from tools.dev.measure import cold_linux
+from tools.dev import mman
 
 
 class MmanTests(unittest.TestCase):
@@ -39,12 +38,8 @@ class MmanTests(unittest.TestCase):
 
     def test_one_binding_serves_both_hosts(self):
         self.assertEqual(mman.PAGE_SIZE, mmap.PAGESIZE)
-        self.assertIs(darwin.map_file, mman.map_file)
-        self.assertIs(darwin.unmap, mman.unmap)
-        self.assertIs(darwin.file_residency, mman.residency)
         # No second declaration of the shared calls in any of its users.
-        for path in (darwin.__file__, cold_linux.__file__,
-                     ROOT / 'tools/bisection/teardown.py'):
+        for path in (ROOT / 'tools/bisection/teardown.py',):
             tree = ast.parse(Path(path).read_text())
             declared = {node.value.attr for node in ast.walk(tree)
                         if isinstance(node, ast.Attribute) and node.attr in ('argtypes', 'restype')

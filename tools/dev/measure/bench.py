@@ -4,14 +4,13 @@ The shell runners each repeated the same machinery around the `bisect --perf`
 harness. It lives here once: refusing a count that is not a plain decimal, the
 libtkrzw runtime
 check on every object a worker opens, building the harness, launching a measured
-worker pinned to a CPU with the object's directory first on the loader path, and
-a supervised build. Recipes (recipes.py) compose these.
+worker pinned to a CPU with the object's directory first on the loader path.
+Recipes (recipes.py) compose these.
 
 Measured launches are serial. A timed or resident-set sample belongs to its arm
 only if nothing else runs beside it, so `round_robin` runs one process at a time
-and interleaves the arms, spreading host drift over all of them. Builds and
-untimed collections are not measurements: `build_all` runs independent builds as
-units of one pool. Standard library only.
+and interleaves the arms, spreading host drift over all of them. Standard
+library only.
 """
 import contextlib
 import dataclasses
@@ -30,7 +29,7 @@ import types
 from collections.abc import Callable, Iterator, Mapping, Sequence
 
 from .. import pool, slot
-from ..runners import Finished, emit, status as shell_status, write
+from ..runners import Finished, emit, status as shell_status
 from tools.tkrzw.runtime import RuntimeRefused, check
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -183,17 +182,6 @@ def pinned(command: Sequence, cpu, *, required: bool = True,
     return [*prefix, *map(str, command)]
 
 
-@contextlib.contextmanager
-def working_directory(path) -> Iterator[None]:
-    """Run the body in PATH, as a script that `cd`s into its own directory did."""
-    previous = os.getcwd()
-    os.chdir(path)
-    try:
-        yield
-    finally:
-        os.chdir(previous)
-
-
 def find_named(root, name: str, *, any_type: bool = False) -> Path | None:
     """The first entry named NAME below ROOT that is a file or a symlink, else None.
 
@@ -233,19 +221,6 @@ def append(path, data: bytes) -> None:
     """Append DATA to PATH, creating it: the `>>` redirection of a worker's output."""
     with open(path, 'ab') as stream:
         stream.write(data)
-
-
-def copy_file(source, destination) -> None:
-    """Copy SOURCE over DESTINATION as `cp` does, content and mode; a failure ends the run with status 1.
-
-    The messages are cp's own for the two ways a copy fails: no source to stat, or no file to create.
-    """
-    try:
-        shutil.copy(source, destination)
-    except OSError as error:
-        if not os.path.exists(source):
-            fail(f"cp: cannot stat '{source}': No such file or directory")
-        fail(f"cp: cannot create regular file '{destination}': {error.strerror}")
 
 
 def tee(path, text: str) -> None:
@@ -307,39 +282,6 @@ def heavy(command: Sequence, *, env: Mapping[str, str] | None = None, stdout=Non
     if check_status and code:
         raise Finished(code)
     return code
-
-
-def build_all(builds: Sequence[tuple[str, Callable[[pool.UnitContext], bytes | None]]],
-              *, env: Mapping[str, str] | None = None) -> None:
-    """Run independent BUILDS, (name, function(context)) pairs, as units of one pool.
-
-    Builds are not measurements, so nothing needs them one at a time. They overlap
-    up to the allowed CPUs, and Cargo chooses each build's jobs unless the caller
-    set CARGO_BUILD_JOBS. A unit returns the bytes its build printed, replayed on
-    stderr in build order whatever order they finish in; the earliest failure ends
-    the run with its status.
-    """
-    environment = dict(os.environ if env is None else env)
-
-    def replay(name, output):
-        if output:
-            write(output, error=True)
-
-    pool.run_leased(list(builds), cancelled=slot.CANCELLED.is_set, env=environment, emit=replay,
-                    cancel_error=slot.Cancelled, out=sys.stderr)
-
-
-def cargo(context: pool.UnitContext, command: Sequence) -> bytes:
-    """Run a cargo COMMAND as a unit of `build_all` and return its merged output.
-
-    The unit's environment applies. A failed build replays its output and ends
-    the run with its status.
-    """
-    done = context.launch([str(part) for part in command], env=dict(context.environment), merge_stderr=True)
-    if done.status:
-        write(done.stdout, error=True)
-        raise Finished(shell_status(done.status))
-    return done.stdout
 
 
 def harness_build(output, *, source=HARNESS_SOURCE, compiler: str = 'gcc',

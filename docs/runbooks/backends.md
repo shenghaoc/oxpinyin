@@ -85,7 +85,7 @@ three replace what the `.pc` file reports, and each is tracked by
 `_INCLUDE` and `_SEARCH_NATIVE` take path lists (split on `:`, or `;` on Windows), and `_LIB` takes space-separated names.
 
 Homebrew's `berkeley-db@5` is keg-only and ships no `.pc`. The macOS
-`sanitize` and `profile-w8` recipes set, from `brew --prefix berkeley-db@5`:
+`sanitize` recipe sets, from `brew --prefix berkeley-db@5`:
 `SYSTEM_DEPS_BDB_NO_PKG_CONFIG=1`, `SYSTEM_DEPS_BDB_LIB=db`,
 `SYSTEM_DEPS_BDB_SEARCH_NATIVE=<prefix>/lib` and
 `SYSTEM_DEPS_BDB_INCLUDE=<prefix>/include`. Export the same four to run

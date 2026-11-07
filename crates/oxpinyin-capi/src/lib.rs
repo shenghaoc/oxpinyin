@@ -27,8 +27,7 @@
 //! the process. There is deliberately no panic-catching wrapper.
 //! Abort at the ABI boundary applies under either panic strategy (the
 //! release profile is `unwind`; `panic = "abort"` was tried and reverted
-//! for its keystroke-cycle cost, see
-//! docs/perf/perf-baseline-kc-2026-09.md).
+//! for its keystroke-cycle cost).
 //!
 //! Opaque handles cross the boundary as `*mut T` via `Box::into_raw` /
 //! `Box::from_raw`. Every incoming pointer is null-checked before deref.
