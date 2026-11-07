@@ -1436,6 +1436,24 @@ mod frozen {
                 files: &[],
             },
         )]
+        // kmm-import-unigram-only: utils/training/import_k_mixture_model.cpp at 074a2219:
+        // 258-317, 72-256; src/storage/tag_utility.cpp:118-264. A 1-gram-only model with no
+        // --k-mixture-model-file: the pin exits 0, prints nothing and leaves the tree as it was.
+        // Pin capture of 2026-11-07 on the bdb, kc and tkrzw cells, runs 1 and 2 identical,
+        // observations utility/<cell>/kmm-import-unigram.
+        #[case::kmm_import_unigram_only(
+            w3(),
+            &[],
+            b"\\data model \"k mixture model\" count 3 N 1 total_freq 3\n\\1-gram\n\\item 1 <start> count 2 freq 0\n\\item 16817937 \xe4\xb8\xad\xe5\x9b\xbd count 1 freq 1\n\\item 16802309 \xe4\xbd\xa0\xe5\xa5\xbd count 0 freq 2\n\\end\n",
+            &[],
+            &[],
+            Run {
+                status: Exit(0),
+                stdout: Exact(b""),
+                stderr: b"",
+                files: &[],
+            },
+        )]
         fn captured_cases(
             #[case] directory: TempDir,
             #[case] args: &[&str],

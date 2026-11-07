@@ -543,7 +543,11 @@ mod tests {
         }
 
         let (mut left, mut right) = (usize::MAX, usize::MAX);
-        for (cursor, expected_left, expected_right) in [(0, 0, 2), (2, 0, 5), (5, 2, 8)] {
+        // Cursor 8 is the pin's own word moves too (`pinyin.cpp:3031-3096` at 074a2219): pin
+        // capture of 2026-11-07, runs 1 and 2 identical, observation `word-moves/nihaoshijie`
+        // (left 5, right 11).
+        for (cursor, expected_left, expected_right) in [(0, 0, 2), (2, 0, 5), (5, 2, 8), (8, 5, 11)]
+        {
             assert!(super::pinyin_get_pinyin_offset(
                 instance,
                 cursor,
@@ -719,6 +723,46 @@ mod preedit_key_tests {
     fn take(p: *mut crate::types::GChar) -> String {
         assert!(!p.is_null(), "renderer answered true with a NULL out-param");
         crate::ffi::take_owned_cstr(p)
+    }
+
+    /// S7: the key at offset 0 of a `nihao` parse under full-pinyin scheme 2 (luoma) and
+    /// scheme 3 (secondary zhuyin), both under 0x18a after a sentence guess. The key is `ni`,
+    /// packed 43, and both renderers spell it from its table index (`pinyin.cpp:2729-2749` at
+    /// 074a2219, `storage/chewing_key.cpp:91-116`). Pin capture of 2026-11-07, runs 1 and 2
+    /// identical, observations `scheme-key/luoma/nihao` and `scheme-key/secondary-zhuyin/nihao`.
+    #[test]
+    fn a_scheme_parse_keys_render_as_luoma_and_secondary_zhuyin() {
+        let _slots = key_slot_guard();
+        for scheme in [2, 3] {
+            let user_dir = TempUserDir::new("scheme-key");
+            let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+            assert!(pinyin_set_options(context, PARITY));
+            assert!(crate::config::pinyin_set_full_pinyin_scheme(
+                context, scheme
+            ));
+            let input = cstr("nihao");
+            assert_eq!(pinyin_parse_more_full_pinyins(instance, input.as_ptr()), 5);
+            assert!(crate::sentence::pinyin_guess_sentence(instance));
+            let mut key: *mut ChewingKey = ptr::null_mut();
+            assert!(super::pinyin_get_pinyin_key(instance, 0, &raw mut key));
+            // SAFETY: a true answer points `key` at the instance's key slot.
+            assert_eq!(unsafe { (*key).packed }, 43, "scheme {scheme}");
+            let mut rendered: *mut crate::types::GChar = ptr::null_mut();
+            assert!(crate::keys::pinyin_get_luoma_pinyin_string(
+                instance,
+                key,
+                &raw mut rendered
+            ));
+            assert_eq!(take(rendered), "ni", "scheme {scheme}");
+            assert!(crate::keys::pinyin_get_secondary_zhuyin_string(
+                instance,
+                key,
+                &raw mut rendered
+            ));
+            assert_eq!(take(rendered), "ni", "scheme {scheme}");
+            crate::instance::pinyin_free_instance(instance);
+            crate::context::pinyin_fini(context);
+        }
     }
 
     /// The expectation table established from the pin in

@@ -552,6 +552,8 @@ pub fn pinyin_remember_user_input(
 mod e2e_tests;
 #[cfg(test)]
 mod guess_offset_tests;
+#[cfg(all(test, feature = "tkrzw"))]
+mod pinned_data_tests;
 #[cfg(test)]
 mod test_support;
 #[cfg(test)]

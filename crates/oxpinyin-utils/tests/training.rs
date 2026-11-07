@@ -289,8 +289,8 @@ fn gen_ngram_adds_unigram_and_bigram_counts_then_saves_chunks() {
     }
 
     // The first token and the one after the blank line both follow
-    // `sentence_start`: `sentence_start → 阿` twice, `阿 → 啊` once,
-    // `啊 → 阿` once.
+    // `sentence_start`: `sentence_start → 阿` twice and `阿 → 啊` once; the
+    // blank line drops the `啊 → 阿` pair.
     let bigram = dir.path().join("bigram.db");
     let (start_total, start_records) = bigram_row(&bigram, START);
     assert_eq!(start_total, before_start.0 + 2);
@@ -303,6 +303,29 @@ fn gen_ngram_adds_unigram_and_bigram_counts_then_saves_chunks() {
         path_row(&bigram, AH),
         path_row(&fixture().join("bigram.db"), AH)
     );
+    // The pin's rows for this run (utility/<cell>/gen-ngram, identical on every backend).
+    assert_eq!(start_total, 2);
+    assert_eq!(start_records, vec![(A, 2)]);
+    assert_eq!(a_total, 132);
+    assert_eq!(
+        a_records,
+        vec![
+            (AH, 4),
+            (16779427, 11),
+            (16780263, 8),
+            (16780275, 32),
+            (16781858, 14),
+            (16781861, 8),
+            (16781872, 26),
+            (16785076, 2),
+            (16785081, 5),
+            (16785129, 7),
+            (16785138, 9),
+            (16785145, 3),
+            (16786837, 3),
+        ]
+    );
+    assert!(!has_bigram_row(&bigram, AH));
 }
 
 /// One successor's stored count, 0 where the record is absent.
@@ -383,6 +406,25 @@ fn gen_deleted_ngram_writes_rows_and_leaves_the_chunks_alone() {
             "{name} is not saved by gen_deleted_ngram"
         );
     }
+}
+
+// The pin's rows for this input (utility/<cell>/gen-deleted-ngram, identical on every backend):
+// a blank line restarts at sentence_start, and 啊 → 阿 crosses it, so 啊 gets no row.
+#[test]
+fn gen_deleted_ngram_restarts_after_a_blank_line_as_the_pin_does() {
+    let dir = fixture_copy();
+    let outcome = run(
+        "gen_deleted_ngram",
+        dir.path(),
+        &["--deleted-bigram-file", "deleted.db"],
+        "16777219 阿\n16777220 啊\n\n16777219 阿\n".as_bytes(),
+    );
+    assert_eq!(exit_word(&outcome), 0, "stderr: {:?}", outcome.stderr);
+    assert!(outcome.stdout.is_empty() && outcome.stderr.is_empty());
+    let deleted = dir.path().join("deleted.db");
+    assert_eq!(bigram_row(&deleted, START), (2, vec![(A, 2)]));
+    assert_eq!(bigram_row(&deleted, A), (1, vec![(AH, 1)]));
+    assert!(!has_bigram_row(&deleted, AH));
 }
 
 #[test]

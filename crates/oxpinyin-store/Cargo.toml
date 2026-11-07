@@ -33,6 +33,9 @@ cxx = { version = "1.0.205", optional = true }
 [dev-dependencies]
 # Backend micro-benches (benches/); workspace lock pins 0.8.
 criterion = "0.8"
+# The frozen rows digest of the pin-written Berkeley DB tests (tests/bdb_libpinyin_files.rs),
+# the one crates/oxpinyin-utils/tests/common computes.
+sha2 = "0.11"
 
 [build-dependencies]
 bindgen = { workspace = true, optional = true }

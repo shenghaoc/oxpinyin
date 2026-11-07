@@ -947,6 +947,7 @@ dependencies = [
  "criterion",
  "cxx",
  "cxx-build",
+ "sha2",
  "system-deps",
 ]
 

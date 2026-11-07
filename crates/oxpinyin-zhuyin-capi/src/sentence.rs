@@ -515,3 +515,113 @@ fn guess_candidates(instance: *mut ZhuyinInstance, offset: usize, before_cursor:
     // zhuyin.cpp:1460-1551). The empty matrix was refused above.
     true
 }
+
+#[cfg(test)]
+mod tests {
+    use std::ptr;
+
+    use super::{zhuyin_guess_candidates_before_cursor, zhuyin_guess_sentence};
+    use crate::candidates::{
+        zhuyin_get_candidate, zhuyin_get_candidate_type, zhuyin_get_n_candidate,
+    };
+    use crate::parse::zhuyin_parse_more_chewings;
+    use crate::test_support::{close, cstr, open};
+    use crate::types::{LookupCandidate, lookup_candidate_type_t};
+
+    /// Every row's type in the current list.
+    fn kinds(instance: *mut crate::types::ZhuyinInstance) -> Vec<lookup_candidate_type_t> {
+        let mut count = 0;
+        assert!(zhuyin_get_n_candidate(instance, &raw mut count));
+        (0..count)
+            .map(|index| {
+                let mut cand: *mut LookupCandidate = ptr::null_mut();
+                assert!(zhuyin_get_candidate(instance, index, &raw mut cand));
+                let mut kind = lookup_candidate_type_t::ZOMBIE_CANDIDATE;
+                assert!(zhuyin_get_candidate_type(instance, cand, &raw mut kind));
+                kind
+            })
+            .collect()
+    }
+
+    /// S6, zhuyin-diff's noguess protocol: no sentence guess since the parse, so the n-best results
+    /// are empty and nothing is prepended (`zhuyin.cpp:1277-1278` at 074a2219). Before offset 0 the
+    /// span loop does not run (`:1563`); inside a key the span is skipped (`:1590-1591`;
+    /// `phonetic_key_matrix.cpp:422-423`). A toneless `su` places no key under FORCE_TONE
+    /// (`zhuyin_parser2.cpp:178-179`), so the empty matrix answers false (`zhuyin.cpp:1549-1552`).
+    /// Pin capture of 2026-11-07, runs 1 and 2 identical, observations
+    /// `zhuyin-noguess-before/su3cl3@0,1,2,4,5` and `zhuyin-noguess-before/su@0`.
+    #[test]
+    fn an_unguessed_before_cursor_window_with_no_span_is_empty() {
+        for (keys, consumed, offset, answer) in [
+            ("su3cl3", 6, 0, true),
+            ("su3cl3", 6, 1, true),
+            ("su3cl3", 6, 2, true),
+            ("su3cl3", 6, 4, true),
+            ("su3cl3", 6, 5, true),
+            ("su", 0, 0, false),
+        ] {
+            let (context, instance) = open();
+            let text = cstr(keys);
+            assert_eq!(
+                zhuyin_parse_more_chewings(instance, text.as_ptr()),
+                consumed
+            );
+            assert_eq!(
+                zhuyin_guess_candidates_before_cursor(instance, offset),
+                answer,
+                "{keys}@{offset}"
+            );
+            assert_eq!(kinds(instance), [], "{keys}@{offset}");
+            close(context, instance);
+        }
+    }
+
+    /// S6: at a key end every unguessed row is a phrase of the spans ending there,
+    /// NORMAL_CANDIDATE_BEFORE_CURSOR (`zhuyin.cpp:1594`); after a guess the sentence is
+    /// prepended as the one BEST_MATCH row (`:1283`, `:1626`), and before offset 0 it is the only
+    /// row. Pin capture of 2026-11-07, runs 1 and 2 identical, observations
+    /// `zhuyin-noguess-before/su3cl3@3,6` and `zhuyin-guess-before/su3cl3@0,3,6`; the row counts
+    /// are the pinned data's and are not asserted.
+    #[test]
+    fn only_a_guess_puts_a_sentence_row_in_the_before_cursor_window() {
+        for offset in [3, 6] {
+            let (context, instance) = open();
+            let text = cstr("su3cl3");
+            assert_eq!(zhuyin_parse_more_chewings(instance, text.as_ptr()), 6);
+            assert!(zhuyin_guess_candidates_before_cursor(instance, offset));
+            let unguessed = kinds(instance);
+            assert!(!unguessed.is_empty());
+            assert!(
+                unguessed
+                    .iter()
+                    .all(|kind| *kind == lookup_candidate_type_t::NORMAL_CANDIDATE_BEFORE_CURSOR),
+                "{offset}: {unguessed:?}"
+            );
+            assert!(zhuyin_guess_sentence(instance));
+            assert!(zhuyin_guess_candidates_before_cursor(instance, offset));
+            let guessed = kinds(instance);
+            assert_eq!(
+                guessed[0],
+                lookup_candidate_type_t::BEST_MATCH_CANDIDATE,
+                "{offset}"
+            );
+            assert!(
+                guessed[1..]
+                    .iter()
+                    .all(|kind| *kind == lookup_candidate_type_t::NORMAL_CANDIDATE_BEFORE_CURSOR),
+                "{offset}: {guessed:?}"
+            );
+            close(context, instance);
+        }
+        let (context, instance) = open();
+        let text = cstr("su3cl3");
+        assert_eq!(zhuyin_parse_more_chewings(instance, text.as_ptr()), 6);
+        assert!(zhuyin_guess_sentence(instance));
+        assert!(zhuyin_guess_candidates_before_cursor(instance, 0));
+        assert_eq!(
+            kinds(instance),
+            [lookup_candidate_type_t::BEST_MATCH_CANDIDATE]
+        );
+        close(context, instance);
+    }
+}
