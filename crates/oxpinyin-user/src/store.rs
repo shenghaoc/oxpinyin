@@ -5065,7 +5065,7 @@ mod tests {
             mod $mod {
                 use super::super::*;
                 use crate::{
-                    PHRASE_INDEX_LIBRARY_MASK, PHRASE_MASK, USER_DICTIONARY,
+                    PHRASE_INDEX_LIBRARY_MASK, USER_DICTIONARY,
                     phrase_index_make_token,
                 };
                 use oxpinyin_core::SyllableKey;
@@ -5091,25 +5091,6 @@ mod tests {
                 }
 
                 #[test]
-                fn open_creates_empty_store() {
-                    let path = temp_path("empty");
-                    let store = Store::create_standalone(&path).unwrap();
-                    assert!(!store.has_user_data());
-                    assert_eq!(store.write_generation(), 0);
-                    assert_eq!(store.bigram_count(1, 2).unwrap(), 0);
-                    assert_eq!(store.bigram_total(1).unwrap(), 0);
-                    assert_eq!(store.unigram_delta(2).unwrap(), 0);
-                    assert_eq!(store.unigram_total().unwrap(), 0);
-                    assert_eq!(store.count_delta(Some(1), 2).unwrap(), UserCountDelta::ZERO);
-                    assert_eq!(store.count_delta(None, 2).unwrap(), UserCountDelta::ZERO);
-                    assert!(
-                        store.count_cache().is_none(),
-                        "empty count_delta must not open a read transaction"
-                    );
-                    cleanup(&path);
-                }
-
-                #[test]
                 fn create_standalone_rejects_second_live_handle() {
                     let path = temp_path("second-live-handle");
                     let first = Store::create_standalone(&path).unwrap();
@@ -5118,73 +5099,6 @@ mod tests {
                         Err(UserStoreError::AlreadyOpen)
                     ));
                     drop(first);
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn cached_count_delta_refreshes_after_committed_writes() {
-                    let path = temp_path("cache-refresh");
-                    let mut store = Store::create_standalone(&path).unwrap();
-
-                    assert_eq!(
-                        store.count_delta(Some(1), 100).unwrap(),
-                        UserCountDelta::ZERO
-                    );
-                    assert_eq!(store.write_generation(), 0);
-
-                    store.observe_selection(1, 100).unwrap();
-                    let first_generation = store.write_generation();
-                    assert!(store.has_user_data());
-                    assert_eq!(
-                        store.count_delta(Some(1), 100).unwrap(),
-                        UserCountDelta {
-                            bigram_count: 69,
-                            bigram_total: 69,
-                            unigram_delta: 483,
-                            unigram_total_delta: 483,
-                            unigram_live: None,
-                        }
-                    );
-
-                    store.observe_selection(1, 100).unwrap();
-                    assert!(
-                        store.write_generation() > first_generation,
-                        "a committed write invalidates the cached count reads"
-                    );
-                    assert_eq!(
-                        store.count_delta(Some(1), 100).unwrap(),
-                        UserCountDelta {
-                            bigram_count: 207,
-                            bigram_total: 207,
-                            unigram_delta: 483 + 966,
-                            unigram_total_delta: 483 + 966,
-                            unigram_live: None,
-                        }
-                    );
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn mask_out_all_marks_store_empty_again() {
-                    let path = temp_path("empty-again");
-                    let mut store = Store::create_standalone(&path).unwrap();
-                    store.observe_selection(1, 100).unwrap();
-                    assert!(store.has_user_data());
-                    assert_ne!(
-                        store.count_delta(Some(1), 100).unwrap(),
-                        UserCountDelta::ZERO
-                    );
-
-                    store.mask_out(0, 0).unwrap();
-                    assert!(!store.has_user_data());
-                    assert_eq!(
-                        store.count_delta(Some(1), 100).unwrap(),
-                        UserCountDelta::ZERO
-                    );
-                    assert!(
-                        store.count_cache().is_none(),
-                        "an emptied store must not keep a cached read transaction"
-                    );
                     cleanup(&path);
                 }
 
@@ -5198,129 +5112,6 @@ mod tests {
                     let store = Store::create_standalone(&path).unwrap();
                     assert!(store.has_user_data());
                     assert_eq!(store.count_delta(Some(1), 100).unwrap().bigram_count, 69);
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn save_compacts_after_a_cached_read() {
-                    let path = temp_path("save-after-cache");
-                    let mut store = Store::create_standalone(&path).unwrap();
-                    store.observe_selection(1, 100).unwrap();
-                    assert_eq!(store.count_delta(Some(1), 100).unwrap().bigram_count, 69);
-                    assert!(store.save().unwrap());
-                    assert_eq!(store.count_delta(Some(1), 100).unwrap().bigram_count, 69);
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn observe_applies_pinned_seed_sequence() {
-                    let path = temp_path("seq");
-                    let mut store = Store::create_standalone(&path).unwrap();
-
-                    assert_eq!(store.observe_selection(1, 100).unwrap(), 69);
-                    assert_eq!(store.bigram_count(1, 100).unwrap(), 69);
-                    assert_eq!(store.bigram_total(1).unwrap(), 69);
-                    assert_eq!(store.unigram_delta(100).unwrap(), 483);
-                    assert_eq!(store.unigram_total().unwrap(), 483);
-
-                    assert_eq!(store.observe_selection(1, 100).unwrap(), 138);
-                    assert_eq!(store.bigram_count(1, 100).unwrap(), 207);
-                    assert_eq!(store.bigram_total(1).unwrap(), 207);
-                    assert_eq!(store.unigram_delta(100).unwrap(), 483 + 966);
-                    assert_eq!(store.unigram_total().unwrap(), 483 + 966);
-                    assert_eq!(
-                        store.count_delta(Some(1), 100).unwrap(),
-                        UserCountDelta {
-                            bigram_count: 207,
-                            bigram_total: 207,
-                            unigram_delta: 483 + 966,
-                            unigram_total_delta: 483 + 966,
-                            unigram_live: None,
-                        }
-                    );
-                    assert_eq!(
-                        store.count_delta(None, 100).unwrap(),
-                        UserCountDelta {
-                            bigram_count: 0,
-                            bigram_total: 0,
-                            unigram_delta: 483 + 966,
-                            unigram_total_delta: 483 + 966,
-                            unigram_live: None,
-                        }
-                    );
-
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn totals_accumulate_per_predecessor() {
-                    let path = temp_path("totals");
-                    let mut store = Store::create_standalone(&path).unwrap();
-                    assert_eq!(store.observe_selection(5, 10).unwrap(), 69);
-                    assert_eq!(store.observe_selection(5, 11).unwrap(), 69);
-                    assert_eq!(store.bigram_count(5, 10).unwrap(), 69);
-                    assert_eq!(store.bigram_count(5, 11).unwrap(), 69);
-                    assert_eq!(store.bigram_total(5).unwrap(), 138);
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn set_bigram_count_plants_filter_edge() {
-                    let path = temp_path("plant-edge");
-                    let mut store = Store::create_standalone(&path).unwrap();
-                    store.set_bigram_count(1, 10, 9).unwrap();
-                    store.set_bigram_count(1, 11, 10).unwrap();
-                    assert_eq!(store.bigram_count(1, 10).unwrap(), 9);
-                    assert_eq!(store.bigram_count(1, 11).unwrap(), 10);
-                    assert_eq!(store.bigram_total(1).unwrap(), 19);
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn predicted_path_is_flat_69() {
-                    let path = temp_path("pred");
-                    let mut store = Store::create_standalone(&path).unwrap();
-                    assert_eq!(store.observe_predicted(1, 200).unwrap(), 69);
-                    assert_eq!(store.observe_predicted(1, 200).unwrap(), 69);
-                    assert_eq!(store.bigram_count(1, 200).unwrap(), 138);
-                    assert_eq!(store.bigram_total(1).unwrap(), 138);
-                    assert_eq!(store.unigram_delta(200).unwrap(), 483 * 2);
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn predicted_prefix_invalidates_counts_without_training_a_bigram() {
-                    let path = temp_path("pred-prefix");
-                    let mut store = Store::create_standalone(&path).unwrap();
-                    store.set_bigram_count(1, 200, 10).unwrap();
-                    assert_eq!(store.count_delta(Some(1), 200).unwrap().unigram_delta, 0);
-                    let generation = store.generation();
-                    for _ in 0..2 {
-                        assert_eq!(store.observe_predicted_prefix(200).unwrap(), 69);
-                    }
-                    assert!(store.generation() > generation);
-                    assert_eq!(store.count_delta(Some(1), 200).unwrap().unigram_delta, 966);
-                    assert_eq!(store.unigram_total().unwrap(), 966);
-                    assert_eq!(store.bigram_count(1, 200).unwrap(), 10);
-                    assert_eq!(store.bigram_total(1).unwrap(), 10);
-                    assert!(!store.is_modified());
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn predicted_prefix_overflow_keeps_only_the_facade_total_increment() {
-                    let path = temp_path("pred-prefix-overflow");
-                    let mut store = Store::create_standalone(&path).unwrap();
-                    let token = store
-                        .add_phrase(&"你好".into(), &[10, 20], Some(1_431_655_631))
-                        .unwrap();
-                    let before = store.unigram_delta(token).unwrap();
-                    let total = store.unigram_total().unwrap();
-                    let error = store.observe_predicted_prefix(token).unwrap_err();
-                    assert!(matches!(error, UserStoreError::UnigramTotalOverflow));
-                    assert_eq!(store.unigram_delta(token).unwrap(), before);
-                    assert_eq!(store.unigram_total().unwrap(), total + 483);
-                    assert!(store.export_bigrams().unwrap().is_empty());
                     cleanup(&path);
                 }
 
@@ -5341,36 +5132,6 @@ mod tests {
                     assert_eq!(store.bigram_total(10).unwrap(), 207);
                     assert_eq!(store.unigram_delta(10).unwrap(), 483);
                     assert_eq!(store.unigram_delta(20).unwrap(), 1449);
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn dirty_gate_matches_m_modified_semantics() {
-                    let path = temp_path("dirty");
-                    let mut store = Store::create_standalone(&path).unwrap();
-
-                    assert!(!store.is_modified());
-                    assert!(!store.save().unwrap());
-                    assert!(!store.save().unwrap());
-
-                    store.observe_selection(SENTENCE_START, 10).unwrap();
-                    assert!(store.is_modified());
-                    assert!(store.save().unwrap());
-                    assert!(!store.is_modified());
-                    assert!(!store.save().unwrap());
-
-                    store.observe_predicted(10, 20).unwrap();
-                    assert!(!store.is_modified());
-                    assert!(!store.save().unwrap());
-                    store.add_phrase(&"你好".into(), &[1, 2], None).unwrap();
-                    assert!(!store.is_modified());
-                    assert!(!store.save().unwrap());
-
-                    store.observe_selection(SENTENCE_START, 10).unwrap();
-                    assert!(store.is_modified());
-                    assert!(store.save().unwrap());
-                    assert!(!store.is_modified());
-
                     cleanup(&path);
                 }
 
@@ -5428,106 +5189,6 @@ mod tests {
                 }
 
                 #[test]
-                fn first_allocation_is_first_user_token() {
-                    let path = temp_path("first-tok");
-                    let mut store = Store::create_standalone(&path).unwrap();
-                    assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN);
-                    let token = store.add_phrase(&"你好".into(), &[10, 20], None).unwrap();
-                    assert_eq!(token, FIRST_USER_TOKEN);
-                    assert_eq!(token, 0x0700_0001);
-                    assert!(phrase::is_user_token(token));
-                    assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN + 1);
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn allocation_increments_by_one_without_gap() {
-                    let path = temp_path("incr");
-                    let mut store = Store::create_standalone(&path).unwrap();
-                    let a = store.add_phrase(&"甲".into(), &[1], None).unwrap();
-                    let b = store.add_phrase(&"乙".into(), &[2], None).unwrap();
-                    let c = store.add_phrase(&"丙".into(), &[3], None).unwrap();
-                    assert_eq!(a, FIRST_USER_TOKEN);
-                    assert_eq!(b, a + 1);
-                    assert_eq!(c, a + 2);
-                    assert_eq!(store.next_user_token().unwrap(), a + 3);
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn user_token_is_distinguishable_from_system_token() {
-                    const SYSTEM: Token = 0x0100_0001;
-                    let path = temp_path("nibble");
-                    let mut store = Store::create_standalone(&path).unwrap();
-                    let user = store.add_phrase(&"词".into(), &[7], None).unwrap();
-                    assert!(phrase::is_user_token(user));
-                    assert!(!phrase::is_user_token(SYSTEM));
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn network_and_user_can_share_phrase_text() {
-                    let path = temp_path("two-nibbles");
-                    let mut store = Store::create_standalone(&path).unwrap();
-                    let user = store
-                        .add_phrase_in(phrase::USER_DICTIONARY, &"词".into(), &[7], Some(5))
-                        .unwrap();
-                    let net = store
-                        .add_phrase_in(phrase::NETWORK_DICTIONARY, &"词".into(), &[7], Some(5))
-                        .unwrap();
-                    assert_ne!(user, net);
-                    assert_eq!(phrase::phrase_index_library_index(user), 7);
-                    assert_eq!(phrase::phrase_index_library_index(net), 6);
-                    assert_eq!(store.export_phrases().unwrap().len(), 1);
-                    assert_eq!(store.export_phrases_in(6).unwrap().len(), 1);
-                    assert_eq!(store.next_user_token().unwrap(), user + 1);
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn add_phrase_seeds_unigram_with_count_times_three() {
-                    let path = temp_path("uni");
-                    let mut store = Store::create_standalone(&path).unwrap();
-                    let token = store.add_phrase(&"你好".into(), &[10, 20], None).unwrap();
-                    assert_eq!(store.unigram_delta(token).unwrap(), 15);
-                    assert_eq!(store.bigram_count(SENTENCE_START, token).unwrap(), 0);
-
-                    let token2 = store
-                        .add_phrase(&"世界".into(), &[30, 40], Some(10))
-                        .unwrap();
-                    assert_eq!(store.unigram_delta(token2).unwrap(), 30);
-                    cleanup(&path);
-                }
-
-                /// The sub-index refuses a unigram add that would overflow its
-                /// `guint32` total (`phrase_index.cpp:169-171`): training goes on
-                /// without the unigram, and an accepted predicted candidate
-                /// answers `ERROR_INTEGER_OVERFLOW` before its bigram
-                /// (`pinyin.cpp:2609-2612`).
-                #[test]
-                fn unigram_adds_stop_at_the_library_total() {
-                    let path = temp_path("uni-total");
-                    let mut store = Store::create_standalone(&path).unwrap();
-                    // 402 below `u32::MAX`: room for no 483 delta.
-                    let token = store
-                        .add_phrase(&"你好".into(), &[10, 20], Some(1_431_655_631))
-                        .unwrap();
-                    let full = store.unigram_delta(token).unwrap();
-                    assert_eq!(full, 4_294_966_893);
-
-                    let err = store.observe_predicted(SENTENCE_START, token).unwrap_err();
-                    assert!(matches!(err, UserStoreError::UnigramTotalOverflow));
-                    assert_eq!(store.bigram_count(SENTENCE_START, token).unwrap(), 0);
-                    assert_eq!(store.unigram_delta(token).unwrap(), full);
-
-                    // Training keeps its bigram and loses only the unigram.
-                    store.observe_selection(SENTENCE_START, token).unwrap();
-                    assert_eq!(store.bigram_count(SENTENCE_START, token).unwrap(), 69);
-                    assert_eq!(store.unigram_delta(token).unwrap(), full);
-                    cleanup(&path);
-                }
-
-                #[test]
                 fn phrase_generation_moves_only_on_phrase_writes() {
                     let path = temp_path("phrase-gen");
                     let mut store = Store::create_standalone(&path).unwrap();
@@ -5553,53 +5214,6 @@ mod tests {
                         before + 1,
                         "removal is a phrase write"
                     );
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn phrase_table_generation_keeps_readings_but_tracks_shared_token_edits() {
-                    let path = temp_path("phrase-table-gen");
-                    let mut store = Store::create_standalone(&path).unwrap();
-                    assert_eq!(store.phrase_table_generation(), 0);
-                    let token = store.add_phrase(&"你好".into(), &[10, 20], None).unwrap();
-                    assert_eq!(store.phrase_table_generation(), 1);
-                    let phrase_before = store.phrase_generation();
-                    assert_eq!(
-                        store.add_phrase(&"你好".into(), &[11, 20], None).unwrap(),
-                        token
-                    );
-                    assert_eq!(store.phrase_generation(), phrase_before + 1);
-                    assert_eq!(store.phrase_table_generation(), 1);
-                    store.observe_selection(SENTENCE_START, token).unwrap();
-                    assert_eq!(store.phrase_table_generation(), 1);
-
-                    let second = store.add_phrase(&"中国".into(), &[30, 40], None).unwrap();
-                    assert_eq!(store.phrase_table_generation(), 2);
-                    assert!(store.remove_user_phrase(second).unwrap());
-                    assert_eq!(store.phrase_table_generation(), 3);
-                    drop(store);
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn existing_phrase_merges_a_new_reading() {
-                    let path = temp_path("merge");
-                    let mut store = Store::create_standalone(&path).unwrap();
-                    let first = store.add_phrase(&"你好".into(), &[10, 20], None).unwrap();
-                    let again = store
-                        .add_phrase(&"你好".into(), &[11, 20], Some(8))
-                        .unwrap();
-                    assert_eq!(first, again);
-                    assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN + 1);
-                    assert_eq!(store.unigram_delta(first).unwrap(), 15);
-
-                    let got = store.phrase(first).unwrap().unwrap();
-                    assert_eq!(got.phrase_text().unwrap(), "你好");
-                    assert_eq!(got.pronunciations().len(), 2);
-                    assert_eq!(got.pronunciations()[0].keys(), &[10, 20]);
-                    assert_eq!(got.pronunciations()[0].count(), 5);
-                    assert_eq!(got.pronunciations()[1].keys(), &[11, 20]);
-                    assert_eq!(got.pronunciations()[1].count(), 8);
                     cleanup(&path);
                 }
 
@@ -5728,20 +5342,6 @@ mod tests {
                 }
 
                 #[test]
-                fn same_reading_accumulates_pronunciation_count() {
-                    let path = temp_path("same-read");
-                    let mut store = Store::create_standalone(&path).unwrap();
-                    let token = store.add_phrase(&"词".into(), &[7], Some(5)).unwrap();
-                    let again = store.add_phrase(&"词".into(), &[7], Some(5)).unwrap();
-                    assert_eq!(token, again);
-                    assert_eq!(store.unigram_delta(token).unwrap(), 15);
-                    let got = store.phrase(token).unwrap().unwrap();
-                    assert_eq!(got.pronunciations().len(), 1);
-                    assert_eq!(got.pronunciations()[0].count(), 10);
-                    cleanup(&path);
-                }
-
-                #[test]
                 fn phrase_roundtrip_reopen_preserves_cursor() {
                     let path = temp_path("phrase-rt");
                     let (t1, t2, next) = {
@@ -5780,40 +5380,6 @@ mod tests {
                     let t3 = store.add_phrase(&"中国".into(), &[50, 60], None).unwrap();
                     assert_eq!(t3, t2 + 1);
                     assert_eq!(t3, FIRST_USER_TOKEN + 2);
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn invalid_phrase_is_rejected_without_allocation() {
-                    let path = temp_path("invalid");
-                    let mut store = Store::create_standalone(&path).unwrap();
-                    assert!(matches!(
-                        store.add_phrase(&"".into(), &[], None),
-                        Err(UserStoreError::InvalidPhrase)
-                    ));
-                    assert!(matches!(
-                        store.add_phrase(&"你好".into(), &[10], None),
-                        Err(UserStoreError::InvalidPhrase)
-                    ));
-                    assert!(matches!(
-                        store.add_phrase(
-                            &oxpinyin_core::PhraseText::from(&"啊".repeat(16)),
-                            &[0; 16],
-                            None
-                        ),
-                        Err(UserStoreError::InvalidPhrase)
-                    ));
-                    assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN);
-                    assert!(store.token_for_phrase("你好").unwrap().is_none());
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn lookup_of_unknown_token_is_none() {
-                    let path = temp_path("miss");
-                    let store = Store::create_standalone(&path).unwrap();
-                    assert!(store.phrase(FIRST_USER_TOKEN).unwrap().is_none());
-                    assert!(store.phrase(0x0100_0001).unwrap().is_none());
                     cleanup(&path);
                 }
 
@@ -5950,63 +5516,6 @@ mod tests {
                 }
 
                 #[test]
-                fn export_phrases_render_the_pinned_triples() {
-                    let path = temp_path("export-phrases");
-                    let mut store = Store::create_standalone(&path).unwrap();
-                    let ni =
-                        u16::try_from(SyllableKey::from_text("ni").expect("frozen key").index())
-                            .expect("frozen syllable inventory fits u16");
-                    let hao =
-                        u16::try_from(SyllableKey::from_text("hao").expect("frozen key").index())
-                            .expect("frozen syllable inventory fits u16");
-                    let shi =
-                        u16::try_from(SyllableKey::from_text("shi").expect("frozen key").index())
-                            .expect("frozen syllable inventory fits u16");
-                    let jie =
-                        u16::try_from(SyllableKey::from_text("jie").expect("frozen key").index())
-                            .expect("frozen syllable inventory fits u16");
-
-                    store.add_phrase(&"你好".into(), &[ni, hao], None).unwrap();
-                    store
-                        .add_phrase(&"你好".into(), &[ni, hao], Some(7))
-                        .unwrap();
-                    store
-                        .add_phrase(&"世界".into(), &[shi, jie], Some(3))
-                        .unwrap();
-
-                    assert_eq!(
-                        store.export_phrases().unwrap(),
-                        vec![
-                            ExportedPhrase {
-                                text: "你好".chars().map(u32::from).collect(),
-                                pinyin: "ni'hao".to_owned(),
-                                count: 12,
-                            },
-                            ExportedPhrase {
-                                text: "世界".chars().map(u32::from).collect(),
-                                pinyin: "shi'jie".to_owned(),
-                                count: 3,
-                            },
-                        ]
-                    );
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn export_bigrams_lists_every_stored_row_raw() {
-                    let path = temp_path("export-bigrams");
-                    let mut store = Store::create_standalone(&path).unwrap();
-                    store.observe_selection(SENTENCE_START, 10).unwrap();
-                    store.observe_selection(10, 20).unwrap();
-                    store.observe_selection(10, 20).unwrap();
-
-                    let mut rows = store.export_bigrams().unwrap();
-                    rows.sort();
-                    assert_eq!(rows, vec![(SENTENCE_START, 10, 69), (10, 20, 207)]);
-                    cleanup(&path);
-                }
-
-                #[test]
                 fn bigram_successors_complete_across_256_boundary() {
                     let path = temp_path("succ-256");
                     let mut store = Store::create_standalone(&path).unwrap();
@@ -6079,191 +5588,6 @@ mod tests {
                 }
 
                 #[test]
-                fn mask_out_user_clear_deletes_user_entries_and_keeps_system() {
-                    let path = temp_path("mask-user");
-                    let (mut store, user_a) = mixed_store(&path);
-                    assert!(store.is_modified());
-                    assert!(store.save().unwrap());
-
-                    store
-                        .mask_out(
-                            PHRASE_INDEX_LIBRARY_MASK,
-                            phrase_index_make_token(USER_DICTIONARY, 0),
-                        )
-                        .unwrap();
-
-                    assert!(store.phrase(user_a).unwrap().is_none());
-                    assert!(store.token_for_phrase("你好").unwrap().is_none());
-                    assert_eq!(store.bigram_count(0x0100_0001, 0x0200_0001).unwrap(), 69);
-                    assert_eq!(store.bigram_total(0x0100_0001).unwrap(), 69);
-                    assert_eq!(store.bigram_count(user_a, 0x0200_0001).unwrap(), 0);
-                    assert_eq!(store.bigram_count(0x0100_0001, user_a).unwrap(), 0);
-                    assert_eq!(store.bigram_count(user_a, user_a + 1).unwrap(), 0);
-                    assert_eq!(store.unigram_delta(0x0200_0001).unwrap(), 966);
-                    assert_eq!(store.unigram_delta(user_a).unwrap(), 0);
-                    assert_eq!(store.unigram_total().unwrap(), 966);
-                    // The user sub-index is empty again, so `get_range` ends at 1
-                    // (`phrase_index.cpp:640-650`) and the next import reuses it.
-                    assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN);
-                    assert!(!store.is_modified());
-                    assert!(!store.save().unwrap());
-
-                    store.mask_out(0x0, 0x0).unwrap();
-                    assert_eq!(store.bigram_count(0x0100_0001, 0x0200_0001).unwrap(), 0);
-                    assert_eq!(store.bigram_total(0x0100_0001).unwrap(), 0);
-                    assert_eq!(store.unigram_total().unwrap(), 0);
-                    assert!(!store.is_modified());
-                    cleanup(&path);
-                }
-
-                /// `_add_phrase` takes `range.m_range_end` (`pinyin.cpp:587-595`) and
-                /// `get_range` drops trailing zero offsets (`phrase_index.cpp:624-650`):
-                /// the next token is one past the highest live token.
-                #[test]
-                fn next_user_token_follows_the_highest_live_token() {
-                    let path = temp_path("next-token");
-                    let mut store = Store::create_standalone(&path).unwrap();
-                    let a = store.add_phrase(&"你好".into(), &[10, 20], None).unwrap();
-                    let b = store.add_phrase(&"世界".into(), &[30, 40], None).unwrap();
-                    let c = store.add_phrase(&"再见".into(), &[50, 60], None).unwrap();
-                    assert_eq!((b, c), (a + 1, a + 2));
-
-                    // A hole below the top is not reused.
-                    store.mask_out(0xFFFF_FFFF, b).unwrap();
-                    assert_eq!(store.next_user_token().unwrap(), c + 1);
-
-                    // Masking the top frees it and every empty slot beneath it.
-                    store.mask_out(0xFFFF_FFFF, c).unwrap();
-                    assert_eq!(store.next_user_token().unwrap(), a + 1);
-                    assert_eq!(
-                        store.add_phrase(&"好的".into(), &[70, 80], None).unwrap(),
-                        a + 1
-                    );
-
-                    // A single removal frees the top the same way.
-                    assert!(store.remove_user_phrase(a + 1).unwrap());
-                    assert_eq!(store.next_user_token().unwrap(), a + 1);
-                    assert_eq!(
-                        store.add_phrase(&"再来".into(), &[90, 100], None).unwrap(),
-                        a + 1
-                    );
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn remove_user_phrase_deletes_everywhere_and_rejects_others() {
-                    let path = temp_path("remove");
-                    let (mut store, user_a) = mixed_store(&path);
-                    assert!(store.save().unwrap());
-
-                    assert!(store.remove_user_phrase(user_a).unwrap());
-                    assert!(store.phrase(user_a).unwrap().is_none());
-                    assert!(store.token_for_phrase("你好").unwrap().is_none());
-                    assert_eq!(store.bigram_count(user_a, 0x0200_0001).unwrap(), 0);
-                    assert_eq!(store.bigram_count(0x0100_0001, user_a).unwrap(), 0);
-                    assert_eq!(store.bigram_count(user_a, user_a + 1).unwrap(), 0);
-                    assert_eq!(store.bigram_count(0x0100_0001, 0x0200_0001).unwrap(), 69);
-                    assert_eq!(store.bigram_total(0x0100_0001).unwrap(), 69);
-                    assert_eq!(store.bigram_total(user_a).unwrap(), 0);
-                    assert_eq!(store.unigram_delta(user_a).unwrap(), 0);
-                    assert_eq!(store.unigram_total().unwrap(), 966 + 498);
-                    assert!(!store.is_modified());
-                    assert!(!store.remove_user_phrase(user_a).unwrap());
-                    assert!(!store.remove_user_phrase(0x0100_0001).unwrap());
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn bigram_removals_subtract_stored_totals_with_u32_wrap() {
-                    for remove_phrase in [false, true] {
-                        for (total, counts, removed, expected) in [
-                            (1_u32, [u32::MAX, 1], 1_u32, 0_u32),
-                            (0, [2, 3], 1, u32::MAX),
-                            (17, [2, 3], 4, 13),
-                            (17, [2, 3], 0, 17),
-                            (1, [0, 0], 1, 0),
-                            (1, [2, 3], u32::MAX, 2),
-                            (9, [2, 3], 4, 5),
-                        ] {
-                            let path = temp_path("remove-bigram-total");
-                            let mut store = Store::create_standalone(&path).unwrap();
-                            let token = store.add_phrase(&"你好".into(), &[10, 20], None).unwrap();
-                            let prev = 0x0100_0001;
-                            let kept = [0x0100_0002, 0x0100_0003];
-                            let gram = |total: u32, items: &[(Token, u32)]| {
-                                let mut bytes = total.to_le_bytes().to_vec();
-                                for (cur, count) in items {
-                                    bytes.extend_from_slice(&cur.to_le_bytes());
-                                    bytes.extend_from_slice(&count.to_le_bytes());
-                                }
-                                bytes
-                            };
-                            let planted = [
-                                (
-                                    prev,
-                                    gram(
-                                        total,
-                                        &[
-                                            (kept[0], counts[0]),
-                                            (kept[1], counts[1]),
-                                            (token, removed),
-                                        ],
-                                    ),
-                                ),
-                                // An independent untouched total, plus a selected
-                                // predecessor (also with reserved token bits) and
-                                // a gram whose last zero-frequency item is removed.
-                                (2, gram(17, &[(kept[0], 2)])),
-                                (token, gram(4, &[(kept[0], 4)])),
-                                (token | 0x8000_0000, gram(4, &[(kept[0], 4)])),
-                                (3, gram(0, &[(token, 0)])),
-                            ];
-                            store
-                                .database()
-                                .write(|txn| {
-                                    for (p, value) in &planted {
-                                        txn.put(BIGRAM_GRAM, &p.to_be_bytes(), value)?;
-                                    }
-                                    Ok(())
-                                })
-                                .unwrap();
-                            if remove_phrase {
-                                assert!(store.remove_user_phrase(token).unwrap());
-                            } else {
-                                store
-                                    .mask_out(PHRASE_INDEX_LIBRARY_MASK | PHRASE_MASK, token)
-                                    .unwrap();
-                            }
-                            assert_eq!(store.bigram_total(prev).unwrap(), u64::from(expected));
-                            assert_eq!(
-                                store.bigram_successors(prev).unwrap(),
-                                kept.into_iter()
-                                    .zip(counts.map(u64::from))
-                                    .collect::<Vec<_>>()
-                            );
-                            // The raw gram is the masked bytes, total wrapped.
-                            assert_eq!(
-                                store.bigram_row(prev).unwrap(),
-                                Some(gram(
-                                    expected,
-                                    &[(kept[0], counts[0]), (kept[1], counts[1])]
-                                ))
-                            );
-                            assert_eq!(store.bigram_total(2).unwrap(), 17);
-                            for removed_prev in [token, token | 0x8000_0000, 3] {
-                                assert!(store.bigram_row(removed_prev).unwrap().is_none());
-                            }
-                            drop(store);
-                            let reopened = Store::create_standalone(&path).unwrap();
-                            assert_eq!(reopened.bigram_total(prev).unwrap(), u64::from(expected));
-                            assert_eq!(reopened.bigram_total(2).unwrap(), 17);
-                            drop(reopened);
-                            cleanup(&path);
-                        }
-                    }
-                }
-
-                #[test]
                 fn mask_and_remove_survive_a_reopen() {
                     let path = temp_path("mask-rt");
                     let (mut store, user_a) = mixed_store(&path);
@@ -6293,103 +5617,6 @@ mod tests {
                             .index(),
                     )
                     .expect("frozen syllable inventory fits u16")
-                }
-
-                #[test]
-                fn add_phrase_reports_typed_token_space_exhaustion() {
-                    let path = temp_path("add-phrase-exhausted");
-                    let mut store = Store::create_standalone(&path).unwrap();
-                    let last = phrase_index_make_token(USER_DICTIONARY, PHRASE_MASK);
-                    {
-                        let db = store.database();
-                        db.write(|txn| {
-                            txn.put(
-                                ALLOC,
-                                &codec::encode_u8(USER_DICTIONARY),
-                                &codec::encode_token(last),
-                            )
-                        })
-                        .unwrap();
-                    }
-                    let err = store.add_phrase(&"你好".into(), &[1, 2], None).unwrap_err();
-                    assert!(matches!(err, UserStoreError::TokenSpaceExhausted));
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn promote_addon_phrase_reports_typed_token_space_exhaustion() {
-                    let path = temp_path("promote-addon-exhausted");
-                    let mut store = Store::create_standalone(&path).unwrap();
-                    let last = phrase_index_make_token(ADDON_DICTIONARY, PHRASE_MASK);
-                    {
-                        let db = store.database();
-                        db.write(|txn| {
-                            txn.put(
-                                ALLOC,
-                                &codec::encode_u8(ADDON_DICTIONARY),
-                                &codec::encode_token(last),
-                            )
-                        })
-                        .unwrap();
-                    }
-                    let err = store
-                        .promote_addon_phrase("二簧", &[(vec![1, 2], 100)], 100)
-                        .unwrap_err();
-                    assert!(matches!(err, UserStoreError::TokenSpaceExhausted));
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn promote_addon_phrase_allocates_nibble_5_and_copies_frequency() {
-                    let path = temp_path("promote-addon");
-                    let mut store = Store::create_standalone(&path).unwrap();
-                    let keys = [key("er"), key("huang")];
-
-                    let token = store
-                        .promote_addon_phrase("二簧", &[(keys.to_vec(), 100)], 100)
-                        .unwrap();
-                    assert_eq!(
-                        phrase_index_library_index(token),
-                        ADDON_DICTIONARY,
-                        "promotion lands in default nibble 5"
-                    );
-                    assert_eq!(token, phrase_index_make_token(ADDON_DICTIONARY, 1));
-                    assert_eq!(store.unigram_delta(token).unwrap(), 100);
-                    assert_eq!(store.unigram_total().unwrap(), 100);
-                    assert_eq!(
-                        store.token_for_phrase_in(ADDON_DICTIONARY, "二簧").unwrap(),
-                        Some(token)
-                    );
-                    let phrase = store.phrase(token).unwrap().unwrap();
-                    assert_eq!(phrase.phrase_text().unwrap(), "二簧");
-                    assert_eq!(phrase.pronunciations().len(), 1);
-                    assert_eq!(phrase.pronunciations()[0].keys(), keys);
-                    assert_eq!(phrase.pronunciations()[0].count(), 100);
-
-                    let again = store
-                        .promote_addon_phrase("二簧", &[(keys.to_vec(), 100)], 100)
-                        .unwrap();
-                    assert_eq!(again, token, "re-promotion reuses the nibble-5 token");
-                    assert_eq!(store.unigram_delta(token).unwrap(), 100);
-                    assert_eq!(store.unigram_total().unwrap(), 100);
-                    assert_eq!(
-                        store.phrase(token).unwrap().unwrap().pronunciations()[0].count(),
-                        200
-                    );
-
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn promote_addon_phrase_rejects_a_reading_of_the_wrong_length() {
-                    let path = temp_path("promote-addon-invalid");
-                    let mut store = Store::create_standalone(&path).unwrap();
-                    let err = store
-                        .promote_addon_phrase("二簧", &[(vec![key("er")], 100)], 100)
-                        .unwrap_err();
-                    assert!(matches!(err, UserStoreError::InvalidPhrase));
-                    assert!(!store.has_user_data());
-                    cleanup(&path);
                 }
 
                 /// A present item that is malformed reads back as the decode
@@ -6481,6 +5708,885 @@ mod tests {
         oxpinyin_store::DefaultStore,
         oxpinyin_store::DEFAULT_STORE_EXT
     );
+
+    // ── The libpinyin session: the constructors the C libraries reach ──
+
+    /// The store the shipped libraries open: `open_transient` is the pin's
+    /// NULL-user-directory session, `open_libpinyin` a session over a user
+    /// directory. Every value operation runs on the arena, the pin's user
+    /// bigram container and the live system items; nothing here reads a
+    /// DBM row. A unigram belongs to an item, as the pin's does
+    /// (074a2219 `phrase_index.cpp:150-161`: `add_unigram_frequency` of a
+    /// token without an item is `ERROR_NO_ITEM`), so a test that trains a
+    /// count allocates its token first.
+    mod session {
+        use super::super::*;
+        use crate::persistence::{SystemLibrary, SystemOriginals, UserConfLaw};
+        use crate::{
+            ADDON_DICTIONARY, NETWORK_DICTIONARY, PHRASE_INDEX_LIBRARY_MASK, PHRASE_MASK,
+            USER_DICTIONARY, phrase_index_make_token,
+        };
+        use oxpinyin_core::SyllableKey;
+        use oxpinyin_data::chunk_write::{ChunkItem, encode_phrase_item};
+        use oxpinyin_data::user_files::{SystemVersions, UserFileLayout};
+        use std::collections::BTreeMap;
+
+        fn versions() -> SystemVersions {
+            SystemVersions::for_this_build(7, 14)
+        }
+
+        /// No system library: the stock layout names the user, network
+        /// and addon `USER_FILE` libraries and nothing else.
+        fn no_originals() -> SystemOriginals {
+            SystemOriginals::new(Default::default(), UserFileLayout::stock())
+        }
+
+        /// The pin's NULL-user-directory session.
+        fn transient() -> UserStore {
+            UserStore::open_transient(no_originals(), versions(), UserConfLaw::Pinyin).unwrap()
+        }
+
+        /// A session over a user directory, for the tests that save: a
+        /// transient session has nowhere to write, so its `save` answers
+        /// `false` and leaves the dirty flag.
+        fn in_dir(originals: SystemOriginals) -> (tempfile::TempDir, UserStore) {
+            let dir = tempfile::tempdir().unwrap();
+            let store =
+                UserStore::open_libpinyin(dir.path(), originals, versions(), UserConfLaw::Pinyin)
+                    .unwrap();
+            (dir, store)
+        }
+
+        /// A user item with a zero unigram and one reading of count zero:
+        /// the token the pinned seed arithmetic is read on, bare.
+        fn bare_token(store: &mut UserStore, text: &str, keys: &[PinyinKey]) -> Token {
+            store.add_phrase(&text.into(), keys, Some(0)).unwrap()
+        }
+
+        fn key(text: &str) -> PinyinKey {
+            toned(text, 0)
+        }
+
+        fn toned(text: &str, tone: u8) -> PinyinKey {
+            crate::toned_key(
+                SyllableKey::from_text(text)
+                    .expect("frozen syllable")
+                    .index(),
+                tone,
+            )
+            .expect("frozen syllable inventory fits u16")
+        }
+
+        /// One item at `slot` of `library`'s arena, so its `get_range` end
+        /// is one past it. A slot far past the content takes the sparse
+        /// offset map, not the pin's dense offset array.
+        fn plant_item(store: &UserStore, library: u8, slot: u32) {
+            let bytes = encode_phrase_item(&ChunkItem {
+                phrase: vec![0x7532],
+                unigram: 0,
+                prons: Vec::new(),
+            })
+            .unwrap();
+            store
+                .session_target()
+                .expect("a session")
+                .phrases()
+                .libraries
+                .entry(library)
+                .or_default()
+                .replace(slot, &bytes)
+                .unwrap();
+        }
+
+        #[test]
+        fn open_creates_empty_store() {
+            let store = transient();
+            assert!(!store.has_user_data());
+            assert_eq!(store.write_generation(), 0);
+            assert_eq!(store.bigram_count(1, 2).unwrap(), 0);
+            assert_eq!(store.bigram_total(1).unwrap(), 0);
+            assert_eq!(store.unigram_delta(2).unwrap(), 0);
+            assert_eq!(store.unigram_total().unwrap(), 0);
+            assert_eq!(store.count_delta(Some(1), 2).unwrap(), UserCountDelta::ZERO);
+            assert_eq!(store.count_delta(None, 2).unwrap(), UserCountDelta::ZERO);
+            assert!(
+                store.count_cache().is_none(),
+                "empty count_delta must not build a count memo"
+            );
+        }
+
+        #[test]
+        fn cached_count_delta_refreshes_after_committed_writes() {
+            let mut store = transient();
+            let cur = bare_token(&mut store, "你", &[key("ni")]);
+            assert_eq!(
+                store.count_delta(Some(1), cur).unwrap(),
+                UserCountDelta::ZERO
+            );
+            let opened = store.write_generation();
+
+            store.observe_selection(1, cur).unwrap();
+            let first_generation = store.write_generation();
+            assert!(first_generation > opened);
+            assert!(store.has_user_data());
+            assert_eq!(
+                store.count_delta(Some(1), cur).unwrap(),
+                UserCountDelta {
+                    bigram_count: 69,
+                    bigram_total: 69,
+                    unigram_delta: 483,
+                    unigram_total_delta: 483,
+                    unigram_live: None,
+                }
+            );
+
+            store.observe_selection(1, cur).unwrap();
+            assert!(
+                store.write_generation() > first_generation,
+                "a committed write invalidates the cached count reads"
+            );
+            assert_eq!(
+                store.count_delta(Some(1), cur).unwrap(),
+                UserCountDelta {
+                    bigram_count: 207,
+                    bigram_total: 207,
+                    unigram_delta: 483 + 966,
+                    unigram_total_delta: 483 + 966,
+                    unigram_live: None,
+                }
+            );
+        }
+
+        #[test]
+        fn mask_out_all_marks_store_empty_again() {
+            let mut store = transient();
+            let cur = bare_token(&mut store, "你", &[key("ni")]);
+            store.observe_selection(1, cur).unwrap();
+            assert!(store.has_user_data());
+            assert_ne!(
+                store.count_delta(Some(1), cur).unwrap(),
+                UserCountDelta::ZERO
+            );
+
+            store.mask_out(0, 0).unwrap();
+            assert!(!store.has_user_data());
+            assert_eq!(
+                store.count_delta(Some(1), cur).unwrap(),
+                UserCountDelta::ZERO
+            );
+            assert!(
+                store.count_cache().is_none(),
+                "an emptied store must not keep a count memo"
+            );
+        }
+
+        #[test]
+        fn save_compacts_after_a_cached_read() {
+            let (_dir, mut store) = in_dir(no_originals());
+            store.observe_selection(1, 100).unwrap();
+            assert_eq!(store.count_delta(Some(1), 100).unwrap().bigram_count, 69);
+            assert!(store.save().unwrap());
+            assert_eq!(store.count_delta(Some(1), 100).unwrap().bigram_count, 69);
+        }
+
+        #[test]
+        fn observe_applies_pinned_seed_sequence() {
+            let mut store = transient();
+            let cur = bare_token(&mut store, "你", &[key("ni")]);
+
+            assert_eq!(store.observe_selection(1, cur).unwrap(), 69);
+            assert_eq!(store.bigram_count(1, cur).unwrap(), 69);
+            assert_eq!(store.bigram_total(1).unwrap(), 69);
+            assert_eq!(store.unigram_delta(cur).unwrap(), 483);
+            assert_eq!(store.unigram_total().unwrap(), 483);
+
+            assert_eq!(store.observe_selection(1, cur).unwrap(), 138);
+            assert_eq!(store.bigram_count(1, cur).unwrap(), 207);
+            assert_eq!(store.bigram_total(1).unwrap(), 207);
+            assert_eq!(store.unigram_delta(cur).unwrap(), 483 + 966);
+            assert_eq!(store.unigram_total().unwrap(), 483 + 966);
+            assert_eq!(
+                store.count_delta(Some(1), cur).unwrap(),
+                UserCountDelta {
+                    bigram_count: 207,
+                    bigram_total: 207,
+                    unigram_delta: 483 + 966,
+                    unigram_total_delta: 483 + 966,
+                    unigram_live: None,
+                }
+            );
+            assert_eq!(
+                store.count_delta(None, cur).unwrap(),
+                UserCountDelta {
+                    bigram_count: 0,
+                    bigram_total: 0,
+                    unigram_delta: 483 + 966,
+                    unigram_total_delta: 483 + 966,
+                    unigram_live: None,
+                }
+            );
+        }
+
+        #[test]
+        fn totals_accumulate_per_predecessor() {
+            let mut store = transient();
+            assert_eq!(store.observe_selection(5, 10).unwrap(), 69);
+            assert_eq!(store.observe_selection(5, 11).unwrap(), 69);
+            assert_eq!(store.bigram_count(5, 10).unwrap(), 69);
+            assert_eq!(store.bigram_count(5, 11).unwrap(), 69);
+            assert_eq!(store.bigram_total(5).unwrap(), 138);
+        }
+
+        #[test]
+        fn set_bigram_count_plants_filter_edge() {
+            let mut store = transient();
+            store.set_bigram_count(1, 10, 9).unwrap();
+            store.set_bigram_count(1, 11, 10).unwrap();
+            assert_eq!(store.bigram_count(1, 10).unwrap(), 9);
+            assert_eq!(store.bigram_count(1, 11).unwrap(), 10);
+            assert_eq!(store.bigram_total(1).unwrap(), 19);
+        }
+
+        #[test]
+        fn predicted_path_is_flat_69() {
+            let mut store = transient();
+            let cur = bare_token(&mut store, "你", &[key("ni")]);
+            assert_eq!(store.observe_predicted(1, cur).unwrap(), 69);
+            assert_eq!(store.observe_predicted(1, cur).unwrap(), 69);
+            assert_eq!(store.bigram_count(1, cur).unwrap(), 138);
+            assert_eq!(store.bigram_total(1).unwrap(), 138);
+            assert_eq!(store.unigram_delta(cur).unwrap(), 483 * 2);
+        }
+
+        #[test]
+        fn predicted_prefix_invalidates_counts_without_training_a_bigram() {
+            let mut store = transient();
+            let cur = bare_token(&mut store, "你", &[key("ni")]);
+            store.set_bigram_count(1, cur, 10).unwrap();
+            assert_eq!(store.count_delta(Some(1), cur).unwrap().unigram_delta, 0);
+            let generation = store.generation();
+            for _ in 0..2 {
+                assert_eq!(store.observe_predicted_prefix(cur).unwrap(), 69);
+            }
+            assert!(store.generation() > generation);
+            assert_eq!(store.count_delta(Some(1), cur).unwrap().unigram_delta, 966);
+            assert_eq!(store.unigram_total().unwrap(), 966);
+            assert_eq!(store.bigram_count(1, cur).unwrap(), 10);
+            assert_eq!(store.bigram_total(1).unwrap(), 10);
+            assert!(!store.is_modified());
+        }
+
+        #[test]
+        fn predicted_prefix_overflow_keeps_only_the_facade_total_increment() {
+            let mut store = transient();
+            let token = store
+                .add_phrase(
+                    &"你好".into(),
+                    &[key("ni"), key("hao")],
+                    Some(1_431_655_631),
+                )
+                .unwrap();
+            let before = store.unigram_delta(token).unwrap();
+            let total = store.unigram_total().unwrap();
+            let error = store.observe_predicted_prefix(token).unwrap_err();
+            assert!(matches!(error, UserStoreError::UnigramTotalOverflow));
+            assert_eq!(store.unigram_delta(token).unwrap(), before);
+            assert_eq!(store.unigram_total().unwrap(), total + 483);
+            assert!(store.export_bigrams().unwrap().is_empty());
+        }
+
+        #[test]
+        fn dirty_gate_matches_m_modified_semantics() {
+            let (_dir, mut store) = in_dir(no_originals());
+
+            assert!(!store.is_modified());
+            assert!(!store.save().unwrap());
+            assert!(!store.save().unwrap());
+
+            store.observe_selection(SENTENCE_START, 10).unwrap();
+            assert!(store.is_modified());
+            assert!(store.save().unwrap());
+            assert!(!store.is_modified());
+            assert!(!store.save().unwrap());
+
+            store.observe_predicted(10, 20).unwrap();
+            assert!(!store.is_modified());
+            assert!(!store.save().unwrap());
+            store
+                .add_phrase(&"你好".into(), &[key("ni"), key("hao")], None)
+                .unwrap();
+            assert!(!store.is_modified());
+            assert!(!store.save().unwrap());
+
+            store.observe_selection(SENTENCE_START, 10).unwrap();
+            assert!(store.is_modified());
+            assert!(store.save().unwrap());
+            assert!(!store.is_modified());
+        }
+
+        #[test]
+        fn first_allocation_is_first_user_token() {
+            let mut store = transient();
+            assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN);
+            let token = store
+                .add_phrase(&"你好".into(), &[key("ni"), key("hao")], None)
+                .unwrap();
+            assert_eq!(token, FIRST_USER_TOKEN);
+            assert_eq!(token, 0x0700_0001);
+            assert!(phrase::is_user_token(token));
+            assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN + 1);
+        }
+
+        #[test]
+        fn allocation_increments_by_one_without_gap() {
+            let mut store = transient();
+            let a = store.add_phrase(&"甲".into(), &[key("jia")], None).unwrap();
+            let b = store.add_phrase(&"乙".into(), &[key("yi")], None).unwrap();
+            let c = store
+                .add_phrase(&"丙".into(), &[key("bing")], None)
+                .unwrap();
+            assert_eq!(a, FIRST_USER_TOKEN);
+            assert_eq!(b, a + 1);
+            assert_eq!(c, a + 2);
+            assert_eq!(store.next_user_token().unwrap(), a + 3);
+        }
+
+        #[test]
+        fn user_token_is_distinguishable_from_system_token() {
+            const SYSTEM: Token = 0x0100_0001;
+            let mut store = transient();
+            let user = store.add_phrase(&"词".into(), &[key("ci")], None).unwrap();
+            assert!(phrase::is_user_token(user));
+            assert!(!phrase::is_user_token(SYSTEM));
+        }
+
+        #[test]
+        fn network_and_user_can_share_phrase_text() {
+            let mut store = transient();
+            let user = store
+                .add_phrase_in(USER_DICTIONARY, &"词".into(), &[key("ci")], Some(5))
+                .unwrap();
+            let net = store
+                .add_phrase_in(NETWORK_DICTIONARY, &"词".into(), &[key("ci")], Some(5))
+                .unwrap();
+            assert_ne!(user, net);
+            assert_eq!(phrase::phrase_index_library_index(user), 7);
+            assert_eq!(phrase::phrase_index_library_index(net), 6);
+            assert_eq!(store.export_phrases().unwrap().len(), 1);
+            assert_eq!(store.export_phrases_in(6).unwrap().len(), 1);
+            assert_eq!(store.next_user_token().unwrap(), user + 1);
+        }
+
+        #[test]
+        fn add_phrase_seeds_unigram_with_count_times_three() {
+            let mut store = transient();
+            let token = store
+                .add_phrase(&"你好".into(), &[key("ni"), key("hao")], None)
+                .unwrap();
+            assert_eq!(store.unigram_delta(token).unwrap(), 15);
+            assert_eq!(store.bigram_count(SENTENCE_START, token).unwrap(), 0);
+
+            let token2 = store
+                .add_phrase(&"世界".into(), &[key("shi"), key("jie")], Some(10))
+                .unwrap();
+            assert_eq!(store.unigram_delta(token2).unwrap(), 30);
+        }
+
+        /// The sub-index refuses a unigram add that would overflow its
+        /// `guint32` total (`phrase_index.cpp:169-171`): training goes on
+        /// without the unigram, and an accepted predicted candidate
+        /// answers `ERROR_INTEGER_OVERFLOW` before its bigram
+        /// (`pinyin.cpp:2609-2612`).
+        #[test]
+        fn unigram_adds_stop_at_the_library_total() {
+            let mut store = transient();
+            // 402 below `u32::MAX`: room for no 483 delta.
+            let token = store
+                .add_phrase(
+                    &"你好".into(),
+                    &[key("ni"), key("hao")],
+                    Some(1_431_655_631),
+                )
+                .unwrap();
+            let full = store.unigram_delta(token).unwrap();
+            assert_eq!(full, 4_294_966_893);
+
+            let err = store.observe_predicted(SENTENCE_START, token).unwrap_err();
+            assert!(matches!(err, UserStoreError::UnigramTotalOverflow));
+            assert_eq!(store.bigram_count(SENTENCE_START, token).unwrap(), 0);
+            assert_eq!(store.unigram_delta(token).unwrap(), full);
+
+            // Training keeps its bigram and loses only the unigram.
+            store.observe_selection(SENTENCE_START, token).unwrap();
+            assert_eq!(store.bigram_count(SENTENCE_START, token).unwrap(), 69);
+            assert_eq!(store.unigram_delta(token).unwrap(), full);
+        }
+
+        #[test]
+        fn phrase_table_generation_keeps_readings_but_tracks_shared_token_edits() {
+            let mut store = transient();
+            assert_eq!(store.phrase_table_generation(), 0);
+            let token = store
+                .add_phrase(&"你好".into(), &[key("ni"), key("hao")], None)
+                .unwrap();
+            assert_eq!(store.phrase_table_generation(), 1);
+            let phrase_before = store.phrase_generation();
+            assert_eq!(
+                store
+                    .add_phrase(&"你好".into(), &[key("ni"), toned("hao", 3)], None)
+                    .unwrap(),
+                token
+            );
+            assert_eq!(store.phrase_generation(), phrase_before + 1);
+            assert_eq!(store.phrase_table_generation(), 1);
+            store.observe_selection(SENTENCE_START, token).unwrap();
+            assert_eq!(store.phrase_table_generation(), 1);
+
+            let second = store
+                .add_phrase(&"中国".into(), &[key("zhong"), key("guo")], None)
+                .unwrap();
+            assert_eq!(store.phrase_table_generation(), 2);
+            assert!(store.remove_user_phrase(second).unwrap());
+            assert_eq!(store.phrase_table_generation(), 3);
+        }
+
+        #[test]
+        fn existing_phrase_merges_a_new_reading() {
+            let mut store = transient();
+            let first = store
+                .add_phrase(&"你好".into(), &[key("ni"), key("hao")], None)
+                .unwrap();
+            let again = store
+                .add_phrase(&"你好".into(), &[toned("ni", 3), key("hao")], Some(8))
+                .unwrap();
+            assert_eq!(first, again);
+            assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN + 1);
+            // The merge is a remove and an add of the same item
+            // (`pinyin.cpp:576-580`; `phrase_index.h:669`, `:691`): no
+            // unigram moves.
+            assert_eq!(store.unigram_delta(first).unwrap(), 15);
+
+            let got = store.phrase(first).unwrap().unwrap();
+            assert_eq!(got.phrase_text().unwrap(), "你好");
+            assert_eq!(got.pronunciations().len(), 2);
+            assert_eq!(got.pronunciations()[0].keys(), &[key("ni"), key("hao")]);
+            assert_eq!(got.pronunciations()[0].count(), 5);
+            assert_eq!(
+                got.pronunciations()[1].keys(),
+                &[toned("ni", 3), key("hao")]
+            );
+            assert_eq!(got.pronunciations()[1].count(), 8);
+        }
+
+        #[test]
+        fn same_reading_accumulates_pronunciation_count() {
+            let mut store = transient();
+            let token = store
+                .add_phrase(&"词".into(), &[key("ci")], Some(5))
+                .unwrap();
+            let again = store
+                .add_phrase(&"词".into(), &[key("ci")], Some(5))
+                .unwrap();
+            assert_eq!(token, again);
+            assert_eq!(store.unigram_delta(token).unwrap(), 15);
+            let got = store.phrase(token).unwrap().unwrap();
+            assert_eq!(got.pronunciations().len(), 1);
+            assert_eq!(got.pronunciations()[0].count(), 10);
+        }
+
+        #[test]
+        fn invalid_phrase_is_rejected_without_allocation() {
+            let mut store = transient();
+            assert!(matches!(
+                store.add_phrase(&"".into(), &[], None),
+                Err(UserStoreError::InvalidPhrase)
+            ));
+            assert!(matches!(
+                store.add_phrase(&"你好".into(), &[key("ni")], None),
+                Err(UserStoreError::InvalidPhrase)
+            ));
+            assert!(matches!(
+                store.add_phrase(
+                    &oxpinyin_core::PhraseText::from(&"啊".repeat(16)),
+                    &[key("a"); 16],
+                    None
+                ),
+                Err(UserStoreError::InvalidPhrase)
+            ));
+            assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN);
+            assert!(store.token_for_phrase("你好").unwrap().is_none());
+        }
+
+        #[test]
+        fn lookup_of_unknown_token_is_none() {
+            let store = transient();
+            assert!(store.phrase(FIRST_USER_TOKEN).unwrap().is_none());
+            assert!(store.phrase(0x0100_0001).unwrap().is_none());
+        }
+
+        #[test]
+        fn export_phrases_render_the_pinned_triples() {
+            let mut store = transient();
+            store
+                .add_phrase(&"你好".into(), &[key("ni"), key("hao")], None)
+                .unwrap();
+            store
+                .add_phrase(&"你好".into(), &[key("ni"), key("hao")], Some(7))
+                .unwrap();
+            store
+                .add_phrase(&"世界".into(), &[key("shi"), key("jie")], Some(3))
+                .unwrap();
+
+            assert_eq!(
+                store.export_phrases().unwrap(),
+                vec![
+                    ExportedPhrase {
+                        text: "你好".chars().map(u32::from).collect(),
+                        pinyin: "ni'hao".to_owned(),
+                        count: 12,
+                    },
+                    ExportedPhrase {
+                        text: "世界".chars().map(u32::from).collect(),
+                        pinyin: "shi'jie".to_owned(),
+                        count: 3,
+                    },
+                ]
+            );
+        }
+
+        #[test]
+        fn export_bigrams_lists_every_stored_row_raw() {
+            let mut store = transient();
+            store.observe_selection(SENTENCE_START, 10).unwrap();
+            store.observe_selection(10, 20).unwrap();
+            store.observe_selection(10, 20).unwrap();
+
+            let mut rows = store.export_bigrams().unwrap();
+            rows.sort();
+            assert_eq!(rows, vec![(SENTENCE_START, 10, 69), (10, 20, 207)]);
+        }
+
+        const SYSTEM_A: Token = 0x0100_0001;
+        const SYSTEM_B: Token = 0x0200_0001;
+
+        /// Libraries 1 and 2, each with the one item the mixed store trains.
+        fn two_system_libraries() -> SystemOriginals {
+            let library = |text: u32| SystemLibrary {
+                total: 100,
+                range_end: 2,
+                mapped: None,
+                items: BTreeMap::from([(
+                    1,
+                    ChunkItem {
+                        phrase: vec![text],
+                        unigram: 100,
+                        prons: Vec::new(),
+                    },
+                )]),
+            };
+            SystemOriginals::new(
+                BTreeMap::from([(1, library(0x4f60)), (2, library(0x597d))]),
+                UserFileLayout::stock(),
+            )
+        }
+
+        /// Two user phrases and four selections over them and two system
+        /// items, in a session over a user directory.
+        fn mixed_store() -> (tempfile::TempDir, UserStore, Token) {
+            let (dir, mut store) = in_dir(two_system_libraries());
+            let user_a = store
+                .add_phrase(&"你好".into(), &[key("ni"), key("hao")], None)
+                .unwrap();
+            let user_b = store
+                .add_phrase(&"世界".into(), &[key("shi"), key("jie")], None)
+                .unwrap();
+            store.observe_selection(SYSTEM_A, SYSTEM_B).unwrap();
+            store.observe_selection(SYSTEM_A, user_a).unwrap();
+            store.observe_selection(user_a, SYSTEM_B).unwrap();
+            store.observe_selection(user_a, user_b).unwrap();
+            (dir, store, user_a)
+        }
+
+        #[test]
+        fn mask_out_user_clear_deletes_user_entries_and_keeps_system() {
+            let (_dir, mut store, user_a) = mixed_store();
+            assert!(store.is_modified());
+            assert!(store.save().unwrap());
+
+            store
+                .mask_out(
+                    PHRASE_INDEX_LIBRARY_MASK,
+                    phrase_index_make_token(USER_DICTIONARY, 0),
+                )
+                .unwrap();
+
+            assert!(store.phrase(user_a).unwrap().is_none());
+            assert!(store.token_for_phrase("你好").unwrap().is_none());
+            assert_eq!(store.bigram_count(SYSTEM_A, SYSTEM_B).unwrap(), 69);
+            assert_eq!(store.bigram_total(SYSTEM_A).unwrap(), 69);
+            assert_eq!(store.bigram_count(user_a, SYSTEM_B).unwrap(), 0);
+            assert_eq!(store.bigram_count(SYSTEM_A, user_a).unwrap(), 0);
+            assert_eq!(store.bigram_count(user_a, user_a + 1).unwrap(), 0);
+            // A system item's training lands in the item itself
+            // (`phrase_index.h:628-635`, `phrase_index.cpp:150-176`): the
+            // session keeps no delta for it, and the mask of the user
+            // library leaves it.
+            assert_eq!(store.unigram_delta(SYSTEM_B).unwrap(), 0);
+            assert_eq!(store.system_unigram(SYSTEM_B), Some(100 + 966));
+            assert_eq!(store.unigram_delta(user_a).unwrap(), 0);
+            // `FacadePhraseIndex::mask_out` takes the user sub-index's old
+            // total out and its new one in (`phrase_index.cpp:713-715`):
+            // with every user item gone, nothing is left beyond the system
+            // libraries' totals.
+            assert_eq!(store.unigram_total().unwrap(), 0);
+            // The user sub-index is empty again, so `get_range` ends at 1
+            // (`phrase_index.cpp:624-646`) and the next import reuses it.
+            assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN);
+            assert!(!store.is_modified());
+            assert!(!store.save().unwrap());
+
+            store.mask_out(0x0, 0x0).unwrap();
+            assert_eq!(store.bigram_count(SYSTEM_A, SYSTEM_B).unwrap(), 0);
+            assert_eq!(store.bigram_total(SYSTEM_A).unwrap(), 0);
+            assert_eq!(store.unigram_total().unwrap(), 0);
+            assert!(!store.is_modified());
+        }
+
+        /// `_add_phrase` takes `range.m_range_end` (`pinyin.cpp:587-595`) and
+        /// `get_range` drops trailing zero offsets (`phrase_index.cpp:624-646`):
+        /// the next token is one past the highest live token.
+        #[test]
+        fn next_user_token_follows_the_highest_live_token() {
+            let mut store = transient();
+            let a = store
+                .add_phrase(&"你好".into(), &[key("ni"), key("hao")], None)
+                .unwrap();
+            let b = store
+                .add_phrase(&"世界".into(), &[key("shi"), key("jie")], None)
+                .unwrap();
+            let c = store
+                .add_phrase(&"再见".into(), &[key("zai"), key("jian")], None)
+                .unwrap();
+            assert_eq!((b, c), (a + 1, a + 2));
+
+            // A hole below the top is not reused.
+            store.mask_out(0xFFFF_FFFF, b).unwrap();
+            assert_eq!(store.next_user_token().unwrap(), c + 1);
+
+            // Masking the top frees it and every empty slot beneath it.
+            store.mask_out(0xFFFF_FFFF, c).unwrap();
+            assert_eq!(store.next_user_token().unwrap(), a + 1);
+            assert_eq!(
+                store
+                    .add_phrase(&"好的".into(), &[key("hao"), key("de")], None)
+                    .unwrap(),
+                a + 1
+            );
+
+            // A single removal frees the top the same way.
+            assert!(store.remove_user_phrase(a + 1).unwrap());
+            assert_eq!(store.next_user_token().unwrap(), a + 1);
+            assert_eq!(
+                store
+                    .add_phrase(&"再来".into(), &[key("zai"), key("lai")], None)
+                    .unwrap(),
+                a + 1
+            );
+        }
+
+        #[test]
+        fn remove_user_phrase_deletes_everywhere_and_rejects_others() {
+            let (_dir, mut store, user_a) = mixed_store();
+            assert!(store.save().unwrap());
+
+            assert!(store.remove_user_phrase(user_a).unwrap());
+            assert!(store.phrase(user_a).unwrap().is_none());
+            assert!(store.token_for_phrase("你好").unwrap().is_none());
+            assert_eq!(store.bigram_count(user_a, SYSTEM_B).unwrap(), 0);
+            assert_eq!(store.bigram_count(SYSTEM_A, user_a).unwrap(), 0);
+            assert_eq!(store.bigram_count(user_a, user_a + 1).unwrap(), 0);
+            assert_eq!(store.bigram_count(SYSTEM_A, SYSTEM_B).unwrap(), 69);
+            assert_eq!(store.bigram_total(SYSTEM_A).unwrap(), 69);
+            assert_eq!(store.bigram_total(user_a).unwrap(), 0);
+            assert_eq!(store.unigram_delta(user_a).unwrap(), 0);
+            // `remove_phrase_item` takes the removed item's unigram out of
+            // the facade total (`phrase_index.h:682-692`); the other user
+            // item keeps its `count * 3` and its one selection.
+            assert_eq!(store.unigram_total().unwrap(), 15 + 483);
+            // `pinyin_remove_user_candidate` (`pinyin.cpp:3726-3768`) sets
+            // no `m_modified`.
+            assert!(!store.is_modified());
+            assert!(!store.remove_user_phrase(user_a).unwrap());
+            assert!(!store.remove_user_phrase(SYSTEM_A).unwrap());
+        }
+
+        #[test]
+        fn bigram_removals_subtract_stored_totals_with_u32_wrap() {
+            for remove_phrase in [false, true] {
+                for (total, counts, removed, expected) in [
+                    (1_u32, [u32::MAX, 1], 1_u32, 0_u32),
+                    (0, [2, 3], 1, u32::MAX),
+                    (17, [2, 3], 4, 13),
+                    (17, [2, 3], 0, 17),
+                    (1, [0, 0], 1, 0),
+                    (1, [2, 3], u32::MAX, 2),
+                    (9, [2, 3], 4, 5),
+                ] {
+                    let mut store = transient();
+                    let token = store
+                        .add_phrase(&"你好".into(), &[key("ni"), key("hao")], None)
+                        .unwrap();
+                    let prev = SYSTEM_A;
+                    let kept = [0x0100_0002, 0x0100_0003];
+                    let gram = |total: u32, items: &[(Token, u32)]| {
+                        let mut bytes = total.to_le_bytes().to_vec();
+                        for (cur, count) in items {
+                            bytes.extend_from_slice(&cur.to_le_bytes());
+                            bytes.extend_from_slice(&count.to_le_bytes());
+                        }
+                        bytes
+                    };
+                    let planted = [
+                        (
+                            prev,
+                            gram(
+                                total,
+                                &[(kept[0], counts[0]), (kept[1], counts[1]), (token, removed)],
+                            ),
+                        ),
+                        // An independent untouched total, plus a selected
+                        // predecessor (also with reserved token bits) and
+                        // a gram whose last zero-frequency item is removed.
+                        (2, gram(17, &[(kept[0], 2)])),
+                        (token, gram(4, &[(kept[0], 4)])),
+                        (token | 0x8000_0000, gram(4, &[(kept[0], 4)])),
+                        (3, gram(0, &[(token, 0)])),
+                    ];
+                    for (p, value) in &planted {
+                        store.plant_raw_bigram(*p, value);
+                    }
+                    if remove_phrase {
+                        assert!(store.remove_user_phrase(token).unwrap());
+                    } else {
+                        store
+                            .mask_out(PHRASE_INDEX_LIBRARY_MASK | PHRASE_MASK, token)
+                            .unwrap();
+                    }
+                    assert_eq!(store.bigram_total(prev).unwrap(), u64::from(expected));
+                    assert_eq!(
+                        store.bigram_successors(prev).unwrap(),
+                        kept.into_iter()
+                            .zip(counts.map(u64::from))
+                            .collect::<Vec<_>>()
+                    );
+                    // The raw gram is the masked bytes, total wrapped.
+                    assert_eq!(
+                        store.bigram_row(prev).unwrap(),
+                        Some(gram(
+                            expected,
+                            &[(kept[0], counts[0]), (kept[1], counts[1])]
+                        ))
+                    );
+                    assert_eq!(store.bigram_total(2).unwrap(), 17);
+                    for removed_prev in [token, token | 0x8000_0000, 3] {
+                        assert!(store.bigram_row(removed_prev).unwrap().is_none());
+                    }
+                }
+            }
+        }
+
+        /// `_add_phrase` takes the user sub-index's `get_range` end as the
+        /// new token and never checks it (`pinyin.cpp:592-594`); past the
+        /// last slot `PHRASE_INDEX_MAKE_TOKEN` masks the end back to zero
+        /// and `token++` lands on slot 1 (`novel_types.h`). The store
+        /// refuses the add whose token has no successor in the library,
+        /// the same point the row store's cursor refused at.
+        #[test]
+        fn add_phrase_reports_typed_token_space_exhaustion() {
+            let mut store = transient();
+            plant_item(&store, USER_DICTIONARY, PHRASE_MASK - 1);
+            assert_eq!(
+                store.next_user_token().unwrap(),
+                phrase_index_make_token(USER_DICTIONARY, PHRASE_MASK),
+                "the next token is the library's last slot"
+            );
+            let err = store
+                .add_phrase(&"你好".into(), &[key("ni"), key("hao")], None)
+                .unwrap_err();
+            assert!(matches!(err, UserStoreError::TokenSpaceExhausted));
+            assert_eq!(store.phrases().unwrap().len(), 1, "nothing was added");
+        }
+
+        /// Addon promotion takes `ADDON_DICTIONARY`'s `get_range` end the
+        /// same way and assumes no overflow (`pinyin.cpp:2543-2545`).
+        #[test]
+        fn promote_addon_phrase_reports_typed_token_space_exhaustion() {
+            let mut store = transient();
+            plant_item(&store, ADDON_DICTIONARY, PHRASE_MASK - 1);
+            let err = store
+                .promote_addon_phrase("二簧", &[(vec![key("er"), key("huang")], 100)], 100)
+                .unwrap_err();
+            assert!(matches!(err, UserStoreError::TokenSpaceExhausted));
+            assert_eq!(store.phrases().unwrap().len(), 1, "nothing was added");
+        }
+
+        #[test]
+        fn promote_addon_phrase_allocates_nibble_5_and_copies_frequency() {
+            let mut store = transient();
+            let keys = [key("er"), key("huang")];
+
+            let token = store
+                .promote_addon_phrase("二簧", &[(keys.to_vec(), 100)], 100)
+                .unwrap();
+            assert_eq!(
+                phrase_index_library_index(token),
+                ADDON_DICTIONARY,
+                "promotion lands in default nibble 5"
+            );
+            assert_eq!(token, phrase_index_make_token(ADDON_DICTIONARY, 1));
+            assert_eq!(store.unigram_delta(token).unwrap(), 100);
+            assert_eq!(store.unigram_total().unwrap(), 100);
+            assert_eq!(
+                store.token_for_phrase_in(ADDON_DICTIONARY, "二簧").unwrap(),
+                Some(token)
+            );
+            let phrase = store.phrase(token).unwrap().unwrap();
+            assert_eq!(phrase.phrase_text().unwrap(), "二簧");
+            assert_eq!(phrase.pronunciations().len(), 1);
+            assert_eq!(phrase.pronunciations()[0].keys(), keys);
+            assert_eq!(phrase.pronunciations()[0].count(), 100);
+
+            // A second promotion searches nothing: it copies the item to
+            // the range end again (`pinyin.cpp:2543-2558`), so the facade
+            // total takes its unigram a second time and the first item
+            // keeps its reading count.
+            let again = store
+                .promote_addon_phrase("二簧", &[(keys.to_vec(), 100)], 100)
+                .unwrap();
+            assert_eq!(again, token + 1, "re-promotion takes the next range end");
+            assert_eq!(store.unigram_delta(token).unwrap(), 100);
+            assert_eq!(store.unigram_delta(again).unwrap(), 100);
+            assert_eq!(store.unigram_total().unwrap(), 200);
+            assert_eq!(
+                store.phrase(token).unwrap().unwrap().pronunciations()[0].count(),
+                100
+            );
+            assert_eq!(
+                store.phrase(again).unwrap().unwrap().pronunciations()[0].count(),
+                100
+            );
+        }
+
+        #[test]
+        fn promote_addon_phrase_rejects_a_reading_of_the_wrong_length() {
+            let mut store = transient();
+            let err = store
+                .promote_addon_phrase("二簧", &[(vec![key("er")], 100)], 100)
+                .unwrap_err();
+            assert!(matches!(err, UserStoreError::InvalidPhrase));
+            assert!(!store.has_user_data());
+        }
+    }
 
     // ── Cross-backend equivalence (one peer per build, all peers in CI) ──
 
@@ -6932,6 +7038,49 @@ mod tests {
             cache.unigram.get(&3),
             Some(&0),
             "a stored zero is a present row and stays cached"
+        );
+    }
+
+    /// The gram memo, the one a session's `count_delta` runs on: a present
+    /// gram is kept until the generation moves, an absent one reads as
+    /// `None` without entering the memo, and the map resets at the cap.
+    #[test]
+    fn bigram_memo_resets_at_the_capacity_bound() {
+        let mut cache = CountCache::new(0);
+        let gram = |prev: Token| {
+            let mut bytes = prev.to_le_bytes().to_vec();
+            bytes.extend_from_slice(&[0; 4]);
+            bytes
+        };
+        assert_eq!(cache.bigram_row(7, || Ok(None)).unwrap(), None);
+        assert!(
+            !cache.bigram_rows.contains_key(&7),
+            "an absent gram must not occupy memo space"
+        );
+        for prev in 1..=u32::try_from(COUNT_MEMO_MAX_ENTRIES + 10).unwrap() {
+            assert_eq!(
+                cache.bigram_row(prev, || Ok(Some(gram(prev)))).unwrap(),
+                Some(gram(prev).as_slice())
+            );
+        }
+        assert!(
+            cache.bigram_rows.len() <= COUNT_MEMO_MAX_ENTRIES,
+            "memo must not exceed the cap"
+        );
+        // A memoised gram is served without a load; a reset one loads again.
+        let served = cache
+            .bigram_row(u32::try_from(COUNT_MEMO_MAX_ENTRIES + 10).unwrap(), || {
+                panic!("the freshest gram is memoised")
+            })
+            .unwrap()
+            .map(<[u8]>::to_vec);
+        assert_eq!(
+            served,
+            Some(gram(u32::try_from(COUNT_MEMO_MAX_ENTRIES + 10).unwrap()))
+        );
+        assert_eq!(
+            cache.bigram_row(1, || Ok(Some(gram(1)))).unwrap(),
+            Some(gram(1).as_slice())
         );
     }
 

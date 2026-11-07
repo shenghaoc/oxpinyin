@@ -27,8 +27,10 @@ oxpinyin-capi = { path = "../crates/oxpinyin-capi", features = ["fuzz-api"] }
 # 2026-10-30), as capi-commands
 # does.
 oxpinyin-engine = { path = "../crates/oxpinyin-engine" }
-# user-store-ops: arbitrary mutation interleavings over UserStore.
+# user-store-ops: arbitrary mutation interleavings over UserStore, each
+# input over its own user directory (the root workspace's version).
 oxpinyin-user = { path = "../crates/oxpinyin-user" }
+tempfile = "3.27"
 
 [[bin]]
 name = "parser"

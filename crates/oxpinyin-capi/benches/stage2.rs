@@ -19,11 +19,11 @@
 use std::ffi::CString;
 use std::hint::black_box;
 use std::os::raw::{c_char, c_uint, c_void};
-use std::path::PathBuf;
 use std::time::Duration;
 
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
-use oxpinyin_user::{SENTENCE_START, UserStore};
+use oxpinyin_data::user_files::{SystemVersions, UserFileLayout};
+use oxpinyin_user::{SENTENCE_START, SystemOriginals, UserConfLaw, UserStore};
 
 #[path = "support/mod.rs"]
 mod support;
@@ -181,22 +181,15 @@ fn guess_sentence_get_sentence(criterion: &mut Criterion) {
     );
 }
 
-struct TempStorePath(PathBuf);
-
-impl Drop for TempStorePath {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
-    }
-}
-
 fn user_store_count_delta(criterion: &mut Criterion) {
-    let path = std::env::temp_dir().join(format!(
-        "oxpinyin-stage2-count-delta-{}.store",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_file(&path);
-    let guard = TempStorePath(path.clone());
-    let mut store = UserStore::open(&path).expect("user store opens");
+    // The pin's NULL-user-directory session, the store the C libraries
+    // hold behind `pinyin_init`.
+    let mut store = UserStore::open_transient(
+        SystemOriginals::new(Default::default(), UserFileLayout::stock()),
+        SystemVersions::for_this_build(7, 14),
+        UserConfLaw::Pinyin,
+    )
+    .expect("user session opens");
     store
         .observe_selection(SENTENCE_START, HOT_TOKEN)
         .expect("populate hot token");
@@ -210,7 +203,6 @@ fn user_store_count_delta(criterion: &mut Criterion) {
             )
         });
     });
-    drop(guard);
 }
 
 fn alloc_instance(criterion: &mut Criterion) {
