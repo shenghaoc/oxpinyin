@@ -69,27 +69,30 @@ job, which covers every point. Three builds at `-j1` on four CPUs ran slower
 than one at a time at `-j4`, so builds overlap only while each keeps two make
 jobs.
 
-The oracle libraries build reproducibly: inside the pin-reference image
-(`tools/oracle/Dockerfile.oracle`: `debian:trixie`, the current Debian stable
-codename, from the default mirrors with normal security updates)
-`build-oracle.sh --libs-only` produces byte-identical
-`libpinyin.so` and `libzhuyin.so` wherever it runs on the same platform, so
-their hashes are recorded once per platform in
-`tools/oracle/oracle-pin.txt` (`libpinyin_sha256_<dbm>`,
-`libzhuyin_sha256_<dbm>`). The historical unqualified fields are
-**linux/amd64**; linux/arm64 adds the same fields with a `_linux_arm64`
-suffix. `python -m tools.oracle.image pin-field --platform <platform> <field>` selects them;
-`tools/cloud/setup.sh` derives the platform from `uname -m` and refuses an
-architecture with no frozen hashes. The Dockerfile and the checks take
-`--platform`. The image holds the bdb, kc and tkrzw cells and is built on a
-native amd64 or arm64 host. The amd64 tags are the historical
+The oracle uses unpinned Debian testing (`tools/oracle/Dockerfile.oracle`).
+Debian is the only major distribution whose libpinyin uses tkrzw, oxpinyin's
+default backend; Fedora and Arch still link Kyoto Cabinet (the
+[release lanes table](../packaging.md#release-artifacts-release-packagesyml)). Debian testing's package
+is therefore the reference, and its updates trigger pin bumps. Both arms of a
+performance comparison run in the same container on the same base.
+
+Frozen contract captures remain valid until the next pin bump; this migration
+never rewrites them. Only pinned inputs stay frozen: upstream commits, model
+archive and libpinyin-data package hashes. Generated libraries and data depend
+on the rolling toolchain, so their hashes are recorded per prefix instead.
+Each prefix's `oracle-pin.txt` records the source commits, `recipe_sha256`,
+actual library hashes, installed-version record hash and generated data hashes.
+`versions.txt` records the installed versions. Reuse requires current pin and
+recipe identity and matching recorded bytes. The image holds bdb, kc and tkrzw
+cells and builds natively on amd64 or arm64.
+The amd64 tags are the historical
 
     ghcr.io/shenghaoc/oxpinyin-oracle:<tag>
 
 and arm64 publishes the siblings `<tag>-arm64` and `<tag>-deps-arm64`.
 `<tag>` is printed by `python -m tools.oracle.image image-tag`: the libpinyin
-commit and the base image codename (both from `oracle-pin.txt`) and a hash
-of `Dockerfile.oracle`, `build-oracle.sh`, the Bash floor, the version-check inputs and
+commit and the base image tag (both from `oracle-pin.txt`) and a hash
+of `Dockerfile.oracle`, `build-oracle.sh`, the Bash floor, the version-recording inputs and
 `oracle-pin.txt` itself, so it changes whenever the library hashes or their
 record can. The arm64 contract gate
 excludes the cases diagnosed in #1137; amd64 still
@@ -128,15 +131,9 @@ for cell in bdb kc tkrzw; do
 done
 ```
 
-Check the libraries against the recorded recipe hashes (a mismatch means
-the image is not this repository's recipe — stop and report it):
-
-```sh
-for lib in libpinyin libzhuyin; do
-    want=$(uv run --no-project --managed-python python -X lazy_imports=normal -m tools.oracle.image pin-field --platform "$platform" "${lib}_sha256_bdb")
-    echo "$want  $dest/bdb/lib/$lib.so" | sha256sum --check
-done
-```
+Check the image's current pin/recipe stamp and its own recorded library hashes
+with `python -m tools.oracle.image verify-image --platform "$platform" "$image"`.
+No built digest is compared with a frozen repository value.
 
 ### Regenerate the data (after every pull)
 
@@ -155,11 +152,10 @@ directory with the same configure arguments, runs the pin's data build
 (`data/Makefile.am`: `gen_binary_files`, `import_interpolation`,
 `gen_unigram`) over the model into a staging area beside the prefix, and
 computes `oracle-data.sha256`, `oracle-data-unstable.sha256` and the data
-fields of `oracle-pin.txt` there. **Only if the stable manifest's digest
-equals `data_manifest_sha256_<dbm>` in `tools/oracle/oracle-pin.txt`** does
-it swap `lib/libpinyin/data`, the data-build utilities and those files into
-the prefix — the pulled libraries are left as they are. On a mismatch it
-exits non-zero and the prefix is byte-for-byte what it was.
+fields of `oracle-pin.txt` there. It publishes the generated data, both
+manifests and their provenance together; pulled libraries stay unchanged.
+Both manifest digests and all listed files are checked against this prefix's
+record when reused, not against another toolchain's output.
 It needs the build dependencies of section 2 (the pinned image's `deps`
 stage has them: `docker build --target deps -f tools/oracle/Dockerfile.oracle
 .`). Use `--dbm kc` or `--dbm tkrzw` with the matching
@@ -179,21 +175,25 @@ local manifest before the pre-release real-installation checks below.
 
 ### Reproducing the libraries
 
-The recipe is `SOURCE_DATE_EPOCH` = the pin's commit time,
-`-ffile-prefix-map` and `-fdebug-prefix-map` on the source path, and
-`-Wl,--build-id=none`; the `.la` and `.pc` files still record the install
-prefix and are not part of the contract. When the recipe or the base image
-changes, rebuild each cell twice from different work directories and
-prefixes, confirm the two builds and the platform's `oracle-pin.txt` fields
-agree, and update the recorded hashes in the same commit.
+Inside `just performance`, run:
 
-The two-clean-builds reproducibility check is retired
-(2026-11-06 UTC): nothing runs it any more, so do the comparison above by hand
-when the recipe or base image changes. `python -m tools.oracle.image
-verify-image` still runs on a built image. It hashes each cell's
-`libpinyin.so` and `libzhuyin.so` in the image against the platform's
-`oracle-pin.txt` fields and rejects any model-derived data in the image. It
-does not rebuild anything, so it does not show that a build is reproducible.
+```sh
+uv run --no-project --managed-python python -X lazy_imports=normal -m tools.oracle.image check-reproducible --cells bdb kc tkrzw --work-dir /performance/repro-check
+```
+
+This builds each cell twice in distinct work directories, using the same install
+prefix in one environment, and compares only those two sets of library hashes. It never updates frozen input pins.
+Image verification separately checks current pin/recipe provenance, recorded
+library bytes and absence of model-derived data.
+
+For oracle-only provisioning in the same native container:
+
+```sh
+PINYIN_MODEL_CACHE=/performance/model20 uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev provision oracle --cache-dir /performance/provision --cells 'bdb kc tkrzw' --jobs 4
+```
+
+The actual provisioner rebuilds missing or stale pin/recipe prefixes, regenerates
+missing or damaged data, and validates all recorded outputs before returning.
 
 ## 3. Produce the export
 
@@ -270,8 +270,8 @@ The input identity authority is `tools/oracle/oracle-pin.txt`:
 | Input | Identity |
 | --- | --- |
 | Pin source | `libpinyin_commit` (`074a2219c90feaf962d0d24f034514033ece5f99`) |
-| Pin build, each cell | `libpinyin_sha256_<cell>` and `libzhuyin_sha256_<cell>` for the host platform (`_linux_arm64` for arm64; unqualified for amd64); the matching prefix's `oracle-pin.txt` records `shared_object_sha256` |
-| Real data, each cell | `data_manifest_sha256_<cell>` for the host platform, plus the prefix's own `data_unstable_manifest_sha256`; use the shared [data verification](cloud.md#data-verification) |
+| Pin build, each cell | Current commits, `recipe_sha256`, architecture, prefix-local `shared_object_sha256`, `zhuyin_shared_object_sha256` and `versions_sha256` |
+| Real data, each cell | The prefix's own `data_manifest_sha256` and `data_unstable_manifest_sha256`; use the shared [data verification](cloud.md#data-verification) |
 | Model20 archive | `model_archive_sha256` (`59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155`); use its verified extraction for `PINYIN_MODEL_DIR` |
 
 For each selected cell, run the read-only command in cloud setup's

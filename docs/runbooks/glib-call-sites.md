@@ -20,7 +20,7 @@ missing; it installs nothing itself.
 
 On Linux the same recipe needs `autoconf automake libtool bear g++ make pkg-config`,
 `libclang-21-dev`, and the development packages of GLib, Berkeley DB, Kyoto Cabinet and
-Tkrzw. Debian trixie has `libclang-21-dev` in `trixie-backports`.
+Tkrzw. Use Debian testing’s `libclang-21-dev` package.
 
 ## Run
 

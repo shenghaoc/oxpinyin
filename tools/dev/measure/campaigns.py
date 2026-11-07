@@ -13,8 +13,10 @@ samples; shipped-check and tree-recipe-control run theirs as units of one
 admitted pool, and perf-same-data builds in sequence because its two builds
 share one target directory.
 """
+import contextlib
 import glob
 import hashlib
+import io
 import argparse
 import json
 import os
@@ -1066,35 +1068,53 @@ RECIPES = {'perf-baseline': perf_baseline, 'perf-matrix': perf_matrix, 'perf-sam
            'steady-comparison': steady_comparison, 'stack-comparison': stack_comparison}
 
 
-def prepared_pin_matches(prefix, seed):
-    """Verify the existing builder's identity, the cached libraries and both data manifests before reuse."""
-    def fields(path):
-        return dict(line.split('=', 1) for line in path.read_text().splitlines() if '=' in line)
+def running_inventory():
+    """The running image's installed versions, from the versions.py code that records them."""
+    from tools.oracle import versions
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        versions.main(['--print'])
+    return output.getvalue()
+
+
+def prepared_pin_refusal(prefix, backend):
+    """What stops reuse of the prepared PREFIX, or None: prefix_ok for the libraries, the pinned
+    model, the running image's installed versions, so pin and subject share one base, and both
+    data manifests."""
+    from tools.oracle.image import fields, model_ok, prefix_ok
     try:
+        if not prefix_ok(prefix, backend):
+            return 'prefix_ok refused its pin commits, recipe, backend, architecture or recorded library or versions bytes'
         recorded = fields(prefix / 'oracle-pin.txt')
-        expected = fields(seed / 'oracle-pin.txt')
-        for key in ('pin_ref', 'libpinyin_commit', 'model_sha256', 'dbm',
-                    'shared_object_sha256', 'zhuyin_shared_object_sha256'):
-            if not expected.get(key) or recorded.get(key) != expected[key]:
-                return False
-        for library, key in (('libpinyin.so', 'shared_object_sha256'), ('libzhuyin.so', 'zhuyin_shared_object_sha256')):
-            if hashlib.sha256((prefix / 'lib' / library).read_bytes()).hexdigest() != recorded[key]:
-                return False
+        if not model_ok(prefix):
+            return f"model_sha256 is {recorded.get('model_sha256')}, not the pinned model_archive_sha256"
+        versions = (prefix / 'versions.txt').read_text()
+        inventory = running_inventory()
+        if versions != inventory:
+            differ = sorted(set(versions.splitlines()) ^ set(inventory.splitlines()))
+            return "versions.txt differs from the running image's inventory: " + '; '.join(differ)
         for manifest, key in (('oracle-data.sha256', 'data_manifest_sha256'),
                               ('oracle-data-unstable.sha256', 'data_unstable_manifest_sha256')):
             content = (prefix / manifest).read_bytes()
             if hashlib.sha256(content).hexdigest() != recorded.get(key):
-                return False
+                return f'{manifest} differs from its recorded {key}'
             for line in content.decode().splitlines():
                 digest, name = line.split('  ', 1)
                 path = prefix / name
                 if not path.resolve().is_relative_to(prefix.resolve()):
-                    return False
+                    return f'{manifest} lists {name}, outside the prefix'
                 if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
-                    return False
-        return (prefix / DATA_SUBDIRECTORY / 'table.conf').is_file()
-    except (OSError, ValueError, UnicodeError):
-        return False
+                    return f'{name} differs from {manifest}'
+        if not (prefix / DATA_SUBDIRECTORY / 'table.conf').is_file():
+            return f'{DATA_SUBDIRECTORY}/table.conf is missing'
+        return None
+    except (OSError, ValueError, UnicodeError) as error:
+        return str(error)
+
+
+def prepared_pin_matches(prefix, backend):
+    """Whether the prepared PREFIX may be reused."""
+    return prepared_pin_refusal(prefix, backend) is None
 
 
 def prepare(argv, env):
@@ -1118,13 +1138,16 @@ def prepare(argv, env):
     for backend in cells:
         seed = Path('/opt/pinyin-oracle') / backend
         prefix = Path('/performance/pinyin-oracle') / backend
-        if not prepared_pin_matches(prefix, seed):
+        if not prepared_pin_matches(prefix, backend):
             shutil.rmtree(prefix, ignore_errors=True)
             prefix.parent.mkdir(parents=True, exist_ok=True)
             shutil.copytree(seed, prefix, symlinks=True)
             bench.heavy(['bash', bench.ROOT / 'tools/oracle/build-oracle.sh', '--regen-data',
                          '--dbm', backend, '--enable-libzhuyin', '--prefix', prefix, '--model-dir', extracted,
                          '--work-dir', f'/performance/oracle-{backend}'], env=env)
+            refusal = prepared_pin_refusal(prefix, backend)
+            if refusal:
+                fail(f'preparation: the rebuilt {backend} prefix {prefix} does not match: {refusal}')
         alias = Path('/opt/libpinyin-' + backend)
         if alias.is_symlink():
             alias.unlink()

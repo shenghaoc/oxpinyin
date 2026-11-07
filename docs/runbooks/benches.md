@@ -18,8 +18,8 @@ once, on the operation that shows it.
 ## Where measurements run
 
 Pin comparisons run locally in the `performance` target of
-`tools/oracle/Dockerfile.oracle`, inheriting the oracle's Debian stable `deps`
-stage (currently `debian:trixie`). This covers `perf-baseline`, `perf-matrix`,
+`tools/oracle/Dockerfile.oracle`, inheriting the oracle's unpinned Debian testing `deps`
+stage (`debian:testing`). This covers `perf-baseline`, `perf-matrix`,
 `perf-same-data`, `callgrind-differential`, `steady-comparison`,
 `stack-comparison`, `shipped-check`, `tree-recipe-control`, `rss-diag` and
 `system-import-profile`. Build both the pin and subject inputs there. Never
@@ -41,9 +41,10 @@ remains for correctness captures only. The local Cargo/model cache uses a
 named volume (`--volume NAME` selects another); source is mounted read-only at `/repo`.
 All campaign defaults are `/performance/results/<recipe>/`; existing explicit
 output overrides remain supported. The harness and scratch builds live under
-`/performance`. Prepared pin prefixes persist there too: preparation checks the
-pin commit, model identity, the cached libraries against their recorded hashes and
-every file in both recorded data manifests before reuse. Changed or damaged inputs are rebuilt. Rosetta Python is refused; use native Python.
+`/performance`. Prepared pin prefixes persist there too: preparation validates the
+prefix with `tools.oracle.image.prefix_ok` (pin commits, recipe, cached libraries),
+requires its `versions.txt` to equal the running image's inventory, so pin and subject
+share one base, and checks every file in both recorded data manifests before reuse. Changed or damaged inputs are rebuilt. Rosetta Python is refused; use native Python.
 `--cells` is valid only with `oracle` preparation.
 
 Preparation lives in the existing `tools/dev/measure/campaigns.py`, not in
@@ -55,7 +56,7 @@ runtime check at it. The repository's tkrzw source build stays for CI and other 
 The matrix preparation creates separate oxpinyin-generated data, retaining
 its four-arm meaning. Callgrind preparation checks debug-info neutrality and
 collection anchors. Additional base/PR revisions for steady/stack/control
-campaigns must also be built in this stable environment, with separate Cargo
+campaigns must also be built in this testing environment, with separate Cargo
 target directories. Set the existing recipe options to their resulting paths.
 
 `startup`, `profile-w8`, `cold-qualify`, `just bench` and diagnostic probes

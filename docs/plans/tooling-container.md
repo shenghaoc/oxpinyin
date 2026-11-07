@@ -3,7 +3,7 @@
 Status: retired.
 Reconciled: 2026-10-21 UTC (`date -u`).
 
-Removed 2026-11-06 UTC: the compat launcher (`tools/dev/compat/`, `compat.sh`, `compat-inside.sh`, `Dockerfile.compat`) and the container compatibility route were deleted by maintainer ruling; nothing runs in containers except the pin oracle and CI. This plan is kept as a historical record; its links to deleted files are dead.
+Removed 2026-11-06 UTC: the compat launcher (`tools/dev/compat/`, `compat.sh`, `compat-inside.sh`, `Dockerfile.compat`) and the container compatibility route were deleted by maintainer ruling; containers are limited to the pin oracle, captures, local pin comparisons and CI; all Linux environments use unpinned Debian testing. This plan is kept as a historical record; its links to deleted files are dead.
 This layer builds on [native nextest](tooling-nextest.md).
 The shell compatibility route is implemented. It is not the planned Python service.
 
@@ -24,8 +24,9 @@ Historical findings keep their recorded heads and limitations.
 
 ## 1. Environment boundary
 
-Use the Debian trixie amd64 compatibility container for every pin, oracle, cell and
-contract-differential task. Apply this rule on Linux hosts too.
+The retired design used a compatibility container. The current oracle, capture
+and local pin-comparison environments use unpinned Debian testing on the host
+architecture. Apply this rule on Linux hosts too.
 Native Linux pin work is superseded by this ruling.
 The subject, pinned reference and harness run together inside the container.
 Never load a host oracle or reuse a host subject build for this comparison.
