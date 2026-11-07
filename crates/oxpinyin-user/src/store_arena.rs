@@ -201,12 +201,14 @@ impl<S: WriteStore> GenericUserStore<S> {
         let empty = UserLibrary::default();
         let library = phrases.libraries.get(&ADDON_DICTIONARY).unwrap_or(&empty);
         let slot = library.token_end();
-        let token = (u32::from(ADDON_DICTIONARY) << 24) | slot;
-        if phrase::next_library_token_after(ADDON_DICTIONARY, token).is_none() {
-            return Err(UserStoreError::TokenSpaceExhausted);
-        }
+        // `pinyin.cpp:2541-2545` takes `get_range`'s end as the token with no
+        // overflow check and no reserved-id bump; `FacadePhraseIndex::get_range`
+        // masks the end into the nibble (`phrase_index.cpp:620`), so a full
+        // library wraps to slot 0, whose offset word `add_phrase_item`
+        // overwrites (`phrase_index.cpp:208-217`; register row 119).
+        let token = phrase::phrase_index_make_token(ADDON_DICTIONARY, slot);
         let replacement = library
-            .prepare_replace(slot, bytes)
+            .prepare_add(token & PHRASE_MASK, bytes)
             .map_err(UserStoreError::Persistence)?;
         self.take_item_in(ADDON_DICTIONARY, unigram, false);
         let retained = get_u64_or(&*db, LIBRARY_OFFSET, &[ADDON_DICTIONARY], 0)? as u32;
@@ -401,13 +403,11 @@ impl<S: WriteStore> GenericUserStore<S> {
                 .get(&library)
                 .map_or(1, UserLibrary::token_end)
                 .max(range_end);
-            let raw = (u32::from(library) << 24) | end;
-            let Some(token) = phrase::canonicalize_library_token(library, raw) else {
-                return Ok(Err(UserStoreError::TokenSpaceExhausted));
-            };
-            if phrase::next_library_token_after(library, token).is_none() {
-                return Ok(Err(UserStoreError::TokenSpaceExhausted));
-            }
+            // `_add_phrase` takes `get_range`'s end, masked into the nibble
+            // (`phrase_index.cpp:620`), and bumps only a zero low word past
+            // the reserved id (`pinyin.cpp:589-594`): a full library wraps to
+            // slot 1, and nothing refuses (register row 119).
+            let token = phrase::add_phrase_token(library, end);
             let increment = delta.wrapping_mul(ADD_PHRASE_UNIGRAM_FACTOR_U32);
             let accepted = self
                 .library_total_of(txn, &phrases, library)?
@@ -426,7 +426,7 @@ impl<S: WriteStore> GenericUserStore<S> {
                 .libraries
                 .get(&library)
                 .unwrap_or(&empty)
-                .prepare_replace(token & PHRASE_MASK, bytes)
+                .prepare_add(token & PHRASE_MASK, bytes)
             {
                 Ok(replacement) => replacement,
                 Err(error) => return Ok(Err(UserStoreError::Persistence(error))),
@@ -554,12 +554,8 @@ impl<S: WriteStore> GenericUserStore<S> {
             return Ok(token);
         }
         let end = items.range_end(library, original);
-        let raw = (u32::from(library) << 24) | end;
-        let token = phrase::canonicalize_library_token(library, raw)
-            .ok_or(UserStoreError::TokenSpaceExhausted)?;
-        if phrase::next_library_token_after(library, token).is_none() {
-            return Err(UserStoreError::TokenSpaceExhausted);
-        }
+        // `_add_phrase`'s token (`pinyin.cpp:589-594`; register row 119).
+        let token = phrase::add_phrase_token(library, end);
         let bytes = encoded(&ChunkItem {
             phrase: words.to_vec(),
             unigram: 0,
