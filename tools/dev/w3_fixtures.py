@@ -243,16 +243,23 @@ def run_tool(path, args, cwd, environment, stdin=b''):
     return done.stdout
 
 
+def sequence(work):
+    """The pin's three-program sequence over WORK's text (`data/Makefile.am:60-62` at 074a2219), as
+    `(program, arguments, stdin)`, each run from the output directory."""
+    work = Path(work).resolve()
+    return (('gen_binary_files', ['--gen-punct-table', '--table-dir', str(work)], b''),
+            ('import_interpolation', ['--table-dir', str(work)], (work / 'interpolation2.text').read_bytes()),
+            ('gen_unigram', ['--table-dir', str(work)], b''))
+
+
 def produce(settings, tools, work, out, environment=None):
     """Run the pin's sequence over WORK's text into OUT, the way `data/Makefile.am` does."""
-    work, out = Path(work).resolve(), Path(out)
+    out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     environment = dict(os.environ if environment is None else environment)
     (out / 'table.conf').write_text(table_conf(settings.dbm_name, build=True), encoding='utf-8')
-    run_tool(tools['gen_binary_files'], ['--gen-punct-table', '--table-dir', str(work)], out, environment)
-    run_tool(tools['import_interpolation'], ['--table-dir', str(work)], out, environment,
-             stdin=(work / 'interpolation2.text').read_bytes())
-    run_tool(tools['gen_unigram'], ['--table-dir', str(work)], out, environment)
+    for program, arguments, stdin in sequence(work):
+        run_tool(tools[program], arguments, out, environment, stdin=stdin)
     run_tool(tools['gen_deleted_ngram'], ['--deleted-bigram-file', 'deleted_bigram.db'], out, environment,
              stdin=DELETED_CORPUS.encode())
     (out / 'table.conf').write_text(table_conf(settings.dbm_name), encoding='utf-8')

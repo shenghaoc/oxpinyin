@@ -3,7 +3,8 @@
 # no pin build and no model data. The interpreter is linked as python<major.minor>, the name a managed
 # interpreter has: the pin's assertion messages begin with the process name, and the recorded
 # observations hold `python3.15:`. (g++, pkg-config and the GLib headers build the OOM-injection
-# helper of the glib-924 cases); tools/oracle/capture-contract.sh mounts the checkout
+# helper of the glib-924 cases; db5.3_dump reads the BDB rows of tools/oracle/pin_capture.py's utility
+# runs); tools/oracle/capture-contract.sh mounts the checkout
 # read-only and the system data (libpinyin-data) beside it.
 #
 #   docker build -f tools/oracle/Dockerfile.capture \
@@ -20,7 +21,7 @@ RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
     fi; \
     apt-get "$@" update; \
     apt-get "$@" install -y --no-install-recommends \
-      ca-certificates curl python3 g++ libc6-dev pkg-config libglib2.0-dev libglib2.0-0t64 libdb5.3t64 libkyotocabinet16v5 libtkrzw1t64; \
+      ca-certificates curl python3 g++ libc6-dev pkg-config libglib2.0-dev libglib2.0-0t64 libdb5.3t64 db5.3-util libkyotocabinet16v5 libtkrzw1t64; \
     rm -rf /var/lib/apt/lists/*; \
     python3 /usr/local/bin/versions.py --print \
       --manifest /usr/local/share/oxpinyin/version-manifest.json \
