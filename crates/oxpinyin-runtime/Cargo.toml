@@ -12,8 +12,6 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
-# Installs dhat's allocator in the alloc_profile bench. Nothing that ships enables it.
-dhat = { version = "0.3", optional = true }
 oxpinyin-core.workspace = true
 # The workspace table carries default-features = false for the
 # store-reaching edges; the [features] block below forwards the backend
@@ -24,7 +22,6 @@ oxpinyin-input.workspace = true
 oxpinyin-user.workspace = true
 
 [dev-dependencies]
-criterion = "0.8"
 tempfile.workspace = true
 
 # These read the pinned libpinyin-data package, which is in tkrzw format
@@ -41,14 +38,6 @@ required-features = ["tkrzw"]
 name = "sentence_surface_parity"
 required-features = ["tkrzw"]
 
-[[bench]]
-name = "scan_perf"
-harness = false
-
-[[bench]]
-name = "alloc_profile"
-harness = false
-
 [features]
 # Nonshipping pin lookup program assembly.
 tools = ["oxpinyin-engine/tools", "oxpinyin-input/tools"]
@@ -59,9 +48,6 @@ default = ["tkrzw"]
 kyotocabinet = ["oxpinyin-user/kyotocabinet"]
 bdb = ["oxpinyin-user/bdb"]
 tkrzw = ["oxpinyin-user/tkrzw"]
-# Heap attribution in the alloc_profile bench; off so its other modes run on the
-# system allocator.
-dhat-heap = ["dep:dhat"]
 
 [lints.rust]
 unsafe_code = "forbid"

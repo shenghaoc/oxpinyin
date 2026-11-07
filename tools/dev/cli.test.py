@@ -180,7 +180,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(output.getvalue(), 'bisect\tgate\tbdb,kc,tkrzw\t'
                              'python:tools.dev\n')
         with contextlib.redirect_stdout(io.StringIO()) as output:
-            self.assertEqual(cli.main(['list', '--runners', 'perf-baseline']), 0)
+            self.assertEqual(cli.main(['list', '--runners', 'callgrind-differential']), 0)
         self.assertEqual(output.getvalue().split('\t')[-1], 'python:tools.dev\n')
         self.assertNotIn('registered', output.getvalue())
         self.assertNotIn('measurement recipe', output.getvalue())

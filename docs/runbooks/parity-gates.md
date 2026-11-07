@@ -118,11 +118,10 @@ fresh. Failure reasons are summarized from the runner's diagnostics. For a full
 native diagnostic, rerun the named runner directly with the same cell and
 artifacts.
 
-The eight measurement recipes are listed as `not-a-gate`: callgrind-differential,
-perf-baseline, perf-matrix, perf-same-data, rss-diag, shipped-check,
-system-import-profile and tree-recipe-control. They are unchanged, omitted from
-the default gate set, and rejected if selected for execution. For example,
-`--list --runners perf-baseline` reports its metadata without running it.
+The two measurement recipes are listed as `not-a-gate`: callgrind-differential
+and system-import-profile. They are omitted from the default gate set, and
+rejected if selected for execution. For example,
+`--list --runners callgrind-differential` reports its metadata without running it.
 
 Known failures stay observable. Bigram-export requires an instrumented oracle
 and reports FAIL when its patch marker is absent. Residue-A likewise requires

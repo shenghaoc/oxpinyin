@@ -1,68 +1,18 @@
-"""Report assembly for the measurement recipes (#1290).
+"""Report assembly for the callgrind differential (#1290).
 
-The perf-baseline, perf-matrix, perf-ci, perf-ratio and perf-decomp scripts own
-their summaries and are run through bench.report. These are the two summaries
-that were inline heredocs in the shell runners; they read a capture and return
-the text the runner printed. Medians only: the confidence intervals and ratios
-stay in perf-ci.py and perf-ratio.py, so there is one statistics engine.
-Standard library only.
+perf-ci.py owns its summary and runs through bench.report. This is the summary
+that was an inline heredoc in the shell runner; it reads a capture and returns
+the text the runner printed. Medians only: the confidence intervals stay in
+perf-ci.py, so there is one statistics engine. Standard library only.
 """
 import json
 import statistics
-from collections.abc import Callable
-
-
-def _med(values) -> float:
-    """The median, or NaN for no values."""
-    return statistics.median(values) if values else float('nan')
 
 
 def _jsonl(path) -> list[dict]:
     """The JSON object on each nonblank line of PATH."""
     with open(path, encoding='utf-8') as stream:
         return [json.loads(line) for line in map(str.strip, stream) if line]
-
-
-def _by_backend(path, load: Callable[[dict], dict] = lambda row: row) -> dict[str, list[dict]]:
-    """The capture's rows grouped by their `backend` label, in first-seen order."""
-    rows: dict[str, list[dict]] = {}
-    for row in _jsonl(path):
-        rows.setdefault(row['backend'], []).append(load(row))
-    return rows
-
-
-def _flatten(row: dict) -> dict:
-    """Lift the resident-set counters bisect nests into a row so every reader finds them.
-
-    bisect nests them: ram-init rows carry them in after_init, ram-cycle rows peak
-    in after_last (HWM is monotonic, so the last snapshot holds the process peak).
-    """
-    if 'rss_kib' not in row:
-        snapshot = row.get('after_init' if row.get('mode') == 'ram-init' else 'after_last', {})
-        row.update({key: snapshot[key] for key in ('rss_kib', 'hwm_kib') if key in snapshot})
-    return row
-
-
-def same_data_summary(speed, ram_init, ram_cycle) -> str:
-    """The same-data matrix's per-cell medians: init, alloc, cold and steady ms, then RSS and HWM in KiB."""
-    speed_rows = _by_backend(speed)
-    init_rows = _by_backend(ram_init, _flatten)
-    cycle_rows = _by_backend(ram_cycle, _flatten)
-
-    def field(rows, key):
-        return _med([row[key] for row in rows if key in row])
-    lines = [f"{'cell':<18}{'init ms':>10}{'alloc ms':>10}{'cold ms':>10}{'steady ms':>11}"
-             f"{'rss-init KiB':>14}{'hwm-init KiB':>14}{'rss-cycle KiB':>15}{'hwm-cycle KiB':>15}"]
-    for label, rows in speed_rows.items():
-        init = _med([row['init_ns'] for row in rows]) / 1e6
-        alloc = _med([row['alloc_ns'] for row in rows]) / 1e6
-        cold = _med([row['cycles_ns'][0] for row in rows]) / 1e6
-        steady = _med([cycle for row in rows for cycle in row['cycles_ns'][1:]]) / 1e6
-        before, after = init_rows.get(label, []), cycle_rows.get(label, [])
-        lines.append(f"{label:<18}{init:>10.3f}{alloc:>10.3f}{cold:>10.3f}{steady:>11.3f}"
-                     f"{field(before, 'rss_kib'):>14.0f}{field(before, 'hwm_kib'):>14.0f}"
-                     f"{field(after, 'rss_kib'):>15.0f}{field(after, 'hwm_kib'):>15.0f}")
-    return '\n'.join(lines) + '\n'
 
 
 def hardware_instructions(path) -> str:

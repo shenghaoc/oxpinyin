@@ -336,9 +336,7 @@ class PureTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'one or eight'):
             td.user_rows([], 2)
 
-    def test_startup_and_teardown_share_user_profile_names(self):
-        from tools.dev.measure import startup
-        self.assertEqual(startup.PROFILES, td.PROFILES)
+    def test_user_profile_names(self):
         self.assertTrue({'user', 'user8'}.issubset(td.PROFILES))
 
     def test_allocation_windows_count_freed_blocks_and_file_read_buffers(self):

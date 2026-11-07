@@ -29,8 +29,7 @@ handles the same data directory a libpinyin build on that backend uses,
 natively).
 
 **Older records (before 2026-10-14 UTC).** "Stage 2" meant performance
-work, for example the `stage2` bench and the `docs/perf/` records. That
-work kept compatibility, so it is also Stage 2 work under the current
+work. That work kept compatibility, so it is also Stage 2 work under the current
 rules. The records keep their wording. References to output-changing
 upgrades (typo edges, model changes) now say Stage 3.
 
@@ -210,8 +209,7 @@ parked.
   `perf-build-recipe-audit-2026-09-10`). Measured since on
   the shipping path: init at 1.16× (Tkrzw) / 1.12× (KC)
   (`perf-backend-matrix-2026-09`) and 4.9× after the
-  key-cost deferral moved work out of init
-  (`docs/perf/perf-baseline-kc-2026-09.md`).
+  key-cost deferral moved work out of init.
 
 - **W7 is flat, not a task stack.** One deliverable: classic text-format
   interop (import + export), through a standalone tool that the
@@ -449,13 +447,9 @@ compatibility gates. The record of what has landed is below.
 
 ### Performance work that has landed
 
-Entry point: `docs/perf/README.md` (dated snapshots;
-`perf-stage2-harness-2026-08.md` is the harness). What has landed so far
-is the size/speed/RAM work the constitution puts first, each change
+What has landed so far is the size/speed/RAM work the constitution puts first, each change
 measured against the pin in the same container:
 
-- **Measurement harness** (2026-08-19): Criterion groups on the C-ABI
-  surface, the `profiling` cargo profile, `just profile-w8`.
 - **P1–P6 data-layer inversion** (2026-09-01 → 2026-09-02): the runtime
   opens each backend's native files directly (W15 note above). Same data
   directory as the pin: init within ~1.1× (KC) / ~1.3× (tkrzw)
@@ -470,12 +464,10 @@ measured against the pin in the same container:
   noise and the improvement is real, but the two ends were not built the
   same way.
   ARM64/KC re-baseline: init 102 → 21 ms, RSS 72,652 → 28,388 KiB,
-  runtime data 101.80 → 36.88 MiB (`docs/perf/perf-baseline-kc-2026-09.md`).
-- **Release profile**: fat LTO + one codegen unit
-  (`docs/perf/perf-so-size-2026-09.md`); `panic = "abort"` was tried and
-  reverted (1b0c84a0, +5.7% keystroke cycle for −64 KiB — the revert's
-  commit subject says 5.5%; the records give +5.5–5.7% steady, the
-  baseline `docs/perf/perf-baseline-kc-2026-09.md` +5.7%).
+  runtime data 101.80 → 36.88 MiB.
+- **Release profile**: fat LTO + one codegen unit; `panic = "abort"` was
+  tried and reverted (1b0c84a0, +5.5–5.7% steady keystroke cycle for
+  −64 KiB).
 - **Store/user-crate optimisation** (2026-09-05 → 2026-09-06): redb
   and user-store hot paths, measured in
   `perf-store-opt-2026-09` (S5, F4).

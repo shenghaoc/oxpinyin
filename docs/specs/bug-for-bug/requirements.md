@@ -118,7 +118,6 @@ Complexity evidence is the default; measurement serves a concrete question.
 3. Register decision rules and falsifiers before the run.
    Check build provenance before accepting an amd64 result below 1.
 4. Do not make performance a PR gate.
-   Use the [nightly snapshot series](../../perf/ci-perf-size-gate-proposal-2026-09-09.md) for tracking.
 
 ### Requirement 6: Language artefacts and the math rule
 

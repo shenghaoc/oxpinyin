@@ -8,7 +8,7 @@ Stage 3 构建需显式启用。只改变可观察输出的 Stage 3 构建保留
 - Stage 2（当前）：在整个导出 ABI 范围内保持 bug-for-bug 兼容，同时进行内部改进。只要兼容性保持不变，就允许开展性能工作。该阶段尚未完成。未完成的工作由带 `bug-for-bug` 标签的开放 issue 跟踪；当前跟踪 issue 为 #870。
 - Stage 3（下一步）：需显式启用的、对 pin 的偏离，例如新的语言模型或不兼容的数据格式。默认构建仍保持 bug-for-bug 兼容。
 
-**状态：** Stage 1 已完成——1,571/1,571 条语料库记录；79/79 个导出符号；已在 Fedora rawhide、Debian testing 和 NixOS 上验证可作为 `libpinyin.so.15` 直接替换。当前处于 Stage 2（bug-for-bug）。第二轮审计已于 2026-10-17 结束（#573）。待完成的工作是初始化复杂度跟踪 issue（#870），之后是第三轮 bug-for-bug 排查（`ROADMAP.md`）。保持兼容性的性能工作仍在 Stage 2 继续（`docs/perf/`）。随后是 Stage 3（需显式启用的偏离）。
+**状态：** Stage 1 已完成——1,571/1,571 条语料库记录；79/79 个导出符号；已在 Fedora rawhide、Debian testing 和 NixOS 上验证可作为 `libpinyin.so.15` 直接替换。当前处于 Stage 2（bug-for-bug）。第二轮审计已于 2026-10-17 结束（#573）。待完成的工作是初始化复杂度跟踪 issue（#870），之后是第三轮 bug-for-bug 排查（`ROADMAP.md`）。保持兼容性的性能工作仍在 Stage 2 继续。随后是 Stage 3（需显式启用的偏离）。
 
 ## 平台
 
@@ -30,7 +30,6 @@ Stage 3 构建需显式启用。只改变可观察输出的 Stage 3 构建保留
 | [docs/source-policy.md](docs/source-policy.md) | 源码阅读方法、兼容性决策与阶段规则 |
 | `docs/runbooks/` | 操作指南：后端、oracle 与差分测试、基准测试、golden 与 pin、发布 |
 | `docs/findings/` | 决策、偏离记录、审计轨迹——已建立索引，并为每个文件标注状态 |
-| `docs/perf/` | 性能测量快照 |
 | `docs/testing/` | 语料库流水线、oracle 环境、fixture 格式 |
 | `docs/packaging.md` | cargo-c 打包与安装树布局 |
 | `docs/oxidation-journey.md` | 迄今为止将 libpinyin 转写为 Rust 的历程，以及由此总结出的方法 |
