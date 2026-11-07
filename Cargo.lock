@@ -690,6 +690,7 @@ dependencies = [
  "cc",
  "cxx",
  "cxx-build",
+ "sha2",
  "system-deps",
 ]
 

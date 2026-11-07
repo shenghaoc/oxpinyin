@@ -112,3 +112,35 @@ fn a_null_phrase_within_the_columns_answers_false() {
     assert_eq!(length, 7);
     close(context, instance);
 }
+
+// With no keys, fill_matrix leaves the matrix empty (phonetic_key_matrix.cpp:30-38).
+// The wrapped size-minus-one check reaches the column assertion
+// (zhuyin.cpp:1886-1895; phonetic_key_matrix.h:102-103 at 074a2219).
+macro_rules! full_pinyin_keyless_query_aborts {
+    ($name:ident, $input:literal, $length:expr) => {
+        #[test]
+        fn $name() {
+            assert_aborts(concat!("matrix_bound_tests::", stringify!($name)), || {
+                let user = TempUserDir::new(stringify!($name));
+                let (_context, instance) = open_with_user(&user.path);
+                assert_eq!(
+                    zhuyin_parse_more_full_pinyins(instance, cstr($input).as_ptr()),
+                    $length
+                );
+                assert_eq!(
+                    crate::parse::zhuyin_get_parsed_input_length(instance),
+                    $length
+                );
+                let mut key = ptr::null_mut();
+                crate::cursor::zhuyin_get_zhuyin_key(instance, 0, &raw mut key);
+            });
+        }
+    };
+}
+
+full_pinyin_keyless_query_aborts!(full_pinyin_one_separator_key_aborts, "'", 1);
+full_pinyin_keyless_query_aborts!(full_pinyin_two_separators_key_aborts, "''", 2);
+full_pinyin_keyless_query_aborts!(full_pinyin_three_separators_key_aborts, "'''", 3);
+full_pinyin_keyless_query_aborts!(full_pinyin_ni_separator_key_aborts, "ni'", 0);
+full_pinyin_keyless_query_aborts!(full_pinyin_ni_separator_invalid_key_aborts, "ni'!", 0);
+full_pinyin_keyless_query_aborts!(full_pinyin_ni_separator_i_key_aborts, "ni'i", 0);

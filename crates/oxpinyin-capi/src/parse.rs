@@ -196,9 +196,16 @@ mod tests {
 
     use super::{pinyin_get_parsed_input_length, pinyin_parse_more_full_pinyins};
     use crate::candidates::{pinyin_get_candidate, pinyin_get_n_candidate};
+    use crate::config::pinyin_set_options;
+    use crate::cursor::{
+        pinyin_get_pinyin_key, pinyin_get_pinyin_key_rest, pinyin_get_pinyin_key_rest_positions,
+        pinyin_get_pinyin_string,
+    };
     use crate::instance::pinyin_reset;
     use crate::sentence::pinyin_guess_candidates;
-    use crate::test_support::{DEFAULT_SORT, TempUserDir, cstr, open};
+    use crate::test_support::{DEFAULT_SORT, TempUserDir, cstr, key_slot_guard, open};
+    use crate::text::pinyin_get_full_pinyin_auxiliary_text;
+    use crate::types::{ChewingKey, ChewingKeyRest, GChar};
 
     /// An apostrophe-only parse under the default options. The pin's
     /// separator branch moves the parse one byte per `'` and places no key
@@ -318,6 +325,275 @@ mod tests {
         assert_eq!(pinyin_get_parsed_input_length(instance), 0);
         assert_eq!(pinyin_get_parsed_input_length(ptr::null_mut()), 0);
 
+        crate::instance::pinyin_free_instance(instance);
+        crate::context::pinyin_fini(context);
+    }
+
+    /// One offset of a key walk as `tools/oracle/pin_capture.py`'s `key_walk` observes it: the
+    /// key's packed word (`None` when the query answers false), the key rest's raw span (asked only
+    /// of a non-null rest) and the key's pinyin string (`None` when the renderer answers false).
+    #[derive(Debug, PartialEq)]
+    struct Step {
+        key: Option<u16>,
+        span: Option<(u16, u16)>,
+        pinyin: Option<String>,
+    }
+
+    fn step(key: Option<u16>, span: Option<(u16, u16)>, pinyin: Option<&str>) -> Step {
+        Step {
+            key,
+            span,
+            pinyin: pinyin.map(str::to_owned),
+        }
+    }
+
+    /// Every offset from 0 to the parsed length, the calls in `key_walk`'s order.
+    fn walk(instance: *mut crate::types::PinyinInstance, parsed: usize) -> Vec<Step> {
+        (0..=parsed)
+            .map(|offset| {
+                let mut key: *mut ChewingKey = ptr::null_mut();
+                let found = pinyin_get_pinyin_key(instance, offset, &raw mut key);
+                assert_eq!(
+                    found,
+                    !key.is_null(),
+                    "offset {offset}: answer and out-param"
+                );
+                let mut rest: *mut ChewingKeyRest = ptr::null_mut();
+                let rest_found = pinyin_get_pinyin_key_rest(instance, offset, &raw mut rest);
+                assert_eq!(
+                    rest_found,
+                    !rest.is_null(),
+                    "offset {offset}: rest and out-param"
+                );
+                let span = (!rest.is_null()).then(|| {
+                    let (mut begin, mut end) = (0_u16, 0_u16);
+                    assert!(pinyin_get_pinyin_key_rest_positions(
+                        instance,
+                        rest,
+                        &raw mut begin,
+                        &raw mut end
+                    ));
+                    (begin, end)
+                });
+                let (packed, pinyin) = if key.is_null() {
+                    (None, None)
+                } else {
+                    // SAFETY: a true answer points `key` at the instance's key slot.
+                    let packed = unsafe { (*key).packed };
+                    let mut text: *mut GChar = ptr::null_mut();
+                    let rendered = pinyin_get_pinyin_string(instance, key, &raw mut text);
+                    (
+                        Some(packed),
+                        rendered.then(|| crate::ffi::take_owned_cstr(text)),
+                    )
+                };
+                Step {
+                    key: packed,
+                    span,
+                    pinyin,
+                }
+            })
+            .collect()
+    }
+
+    /// A key query at offset 0 of an apostrophe-only parse aborts. The column holds the zero key,
+    /// so `_compute_pinyin_start` (`pinyin.cpp:2903-2919` at 074a2219) walks to the reserved
+    /// slot, where `get_item` asserts `row < column->len` (`storage/phonetic_key_matrix.h:115`,
+    /// reached from `pinyin.cpp:2933-2938`). Pin capture of 2026-11-07, runs 1 and 2 identical,
+    /// observations `key-abort/'`, `key-abort/''` and `key-abort/'''`: the parse and the parsed
+    /// length answer the input's length, then the key query ends in SIGABRT.
+    #[rstest]
+    #[case::one("'")]
+    #[case::two("''")]
+    #[case::three("'''")]
+    fn a_key_query_on_an_apostrophe_only_parse_aborts(#[case] input: &str) {
+        let case = ["one", "two", "three"][input.len() - 1];
+        let name = format!(
+            "parse::tests::a_key_query_on_an_apostrophe_only_parse_aborts::case_{}_{case}",
+            input.len()
+        );
+        crate::test_support::assert_aborts(&name, || {
+            let _slots = key_slot_guard();
+            let user_dir = TempUserDir::new("apostrophe-key-abort");
+            let (_context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+            let text = cstr(input);
+            assert_eq!(
+                pinyin_parse_more_full_pinyins(instance, text.as_ptr()),
+                input.len()
+            );
+            assert_eq!(pinyin_get_parsed_input_length(instance), input.len());
+            let mut key: *mut ChewingKey = ptr::null_mut();
+            pinyin_get_pinyin_key(instance, 0, &raw mut key);
+        });
+    }
+
+    /// The key walk of `ni` with a trailing apostrophe, then junk or a vowel the parse leaves.
+    /// Pin capture of 2026-11-07, runs 1 and 2 identical, observations `key-walk/ni'`,
+    /// `key-walk/ni'!` and `key-walk/ni'i`, on the default options:
+    /// - the parse consumes `ni'`, 3 bytes: `ni`, then the separator, which places the zero key
+    ///   (`storage/pinyin_parser2.cpp:238-250`);
+    /// - offset 0 is `ni`, packed 43, raw span 0..2;
+    /// - offset 1 is inside the key: no key and no rest (`pinyin.cpp:2930-2931`);
+    /// - offset 2 is the zero key's column: `_compute_pinyin_start` (`:2903-2919`) walks past it
+    ///   to the reserved slot, so the key is the zero key, its rest spans 3..4, and the zero key
+    ///   renders nothing (`storage/chewing_key.cpp:91-116`);
+    /// - offset 3 is the reserved slot, `offset >= matrix.size() - 1` (`:2927-2928`).
+    #[rstest]
+    #[case::trailing("ni'")]
+    #[case::junk("ni'!")]
+    #[case::vowel("ni'i")]
+    fn a_trailing_apostrophe_walks_as_the_pin_does(#[case] input: &str) {
+        let _slots = key_slot_guard();
+        let user_dir = TempUserDir::new("apostrophe-key-walk");
+        let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+        let text = cstr(input);
+        assert_eq!(pinyin_parse_more_full_pinyins(instance, text.as_ptr()), 3);
+        assert_eq!(pinyin_get_parsed_input_length(instance), 3);
+        assert_eq!(
+            walk(instance, 3),
+            vec![
+                step(Some(43), Some((0, 2)), Some("ni")),
+                step(None, None, None),
+                step(Some(0), Some((3, 4)), None),
+                step(None, None, None),
+            ]
+        );
+        crate::instance::pinyin_free_instance(instance);
+        crate::context::pinyin_fini(context);
+    }
+
+    /// `OPTION_BASE` of `tools/oracle/pin_capture.py`: PINYIN_INCOMPLETE | USE_DIVIDED_TABLE |
+    /// USE_RESPLIT_TABLE, option-sweep's base word.
+    const OPTION_BASE: u32 = 0x188;
+    /// PINYIN_CORRECT_ALL | PINYIN_AMB_S_SH | PINYIN_AMB_Z_ZH (`pinyin_custom2.h:51-52,79`).
+    const OPTION_GATES: u32 = 0x1FE0_1800;
+
+    /// The parser-table rows one option bit gates, each with its bit on, then with every other gate
+    /// bit on and its own off. A gated row is admitted only when its flag is in the options
+    /// (`storage/pinyin_parser2.cpp:49-55` at 074a2219); it then parses to its own key
+    /// (`:143-147`), and the DP prefers the fewest keys, then the least distance (`:298-309`).
+    /// With the row refused, PINYIN_INCOMPLETE (in the base word) lets an initial stand alone
+    /// (`:43-44`). The auxiliary text renders the keys at the parsed length
+    /// (`pinyin.cpp:3381-3437`). Pin capture of 2026-11-07, runs 1 and 2 identical, observations
+    /// `option-row/on/<input>`, `option-row/off/<input>` and `option-distance/chonga`.
+    #[rstest]
+    #[case::gn_ng_on("agn", OPTION_BASE | 1 << 21, 3, &[(512, 0, 3, "ang")], "ang |")]
+    #[case::gn_ng_off(
+        "agn",
+        (OPTION_BASE | OPTION_GATES) & !(1 << 21),
+        3,
+        &[(128, 0, 1, "a"), (7, 1, 2, "g"), (11, 2, 3, "n")],
+        "a g n |"
+    )]
+    #[case::gn_ng_target_outside_the_inventory("egn", OPTION_BASE | 1 << 21, 3, &[(1280, 0, 3, "eng")], "eng |")]
+    #[case::mg_ng_on("amg", OPTION_BASE | 1 << 22, 3, &[(512, 0, 3, "ang")], "ang |")]
+    #[case::mg_ng_off(
+        "amg",
+        (OPTION_BASE | OPTION_GATES) & !(1 << 22),
+        3,
+        &[(128, 0, 1, "a"), (10, 1, 2, "m"), (7, 2, 3, "g")],
+        "a m g |"
+    )]
+    #[case::iou_iu_on("diou", OPTION_BASE | 1 << 23, 4, &[(1956, 0, 4, "diu")], "diu |")]
+    #[case::iou_iu_off(
+        "diou",
+        (OPTION_BASE | OPTION_GATES) & !(1 << 23),
+        4,
+        &[(36, 0, 2, "di"), (1920, 2, 4, "ou")],
+        "di ou |"
+    )]
+    #[case::uei_ui_on("duei", OPTION_BASE | 1 << 24, 4, &[(1092, 0, 4, "dui")], "dui |")]
+    #[case::uei_ui_off(
+        "duei",
+        (OPTION_BASE | OPTION_GATES) & !(1 << 24),
+        4,
+        &[(68, 0, 2, "du"), (1024, 2, 4, "ei")],
+        "du ei |"
+    )]
+    #[case::uen_un_on("duen", OPTION_BASE | 1 << 25, 4, &[(1220, 0, 4, "dun")], "dun |")]
+    #[case::uen_un_off(
+        "duen",
+        (OPTION_BASE | OPTION_GATES) & !(1 << 25),
+        4,
+        &[(68, 0, 2, "du"), (1152, 2, 4, "en")],
+        "du en |"
+    )]
+    #[case::ue_ve_on("lue", OPTION_BASE | 1 << 26, 3, &[(876, 0, 3, "lve")], "lve |")]
+    #[case::ue_ve_off(
+        "lue",
+        (OPTION_BASE | OPTION_GATES) & !(1 << 26),
+        3,
+        &[(76, 0, 2, "lu"), (768, 2, 3, "e")],
+        "lu e |"
+    )]
+    #[case::v_u_on("jv", OPTION_BASE | 1 << 27, 2, &[(105, 0, 2, "ju")], "ju |")]
+    #[case::v_u_off("jv", (OPTION_BASE | OPTION_GATES) & !(1 << 27), 1, &[(9, 0, 1, "j")], "j |")]
+    #[case::on_ong_on("zon", OPTION_BASE | 1 << 28, 3, &[(1814, 0, 3, "zong")], "zong |")]
+    #[case::on_ong_off(
+        "zon",
+        (OPTION_BASE | OPTION_GATES) & !(1 << 28),
+        3,
+        &[(22, 0, 1, "z"), (1664, 1, 2, "o"), (11, 2, 3, "n")],
+        "z o n |"
+    )]
+    #[case::s_sh_on("sua", OPTION_BASE | 1 << 11, 3, &[(209, 0, 3, "shua")], "shua |")]
+    #[case::s_sh_off(
+        "sua",
+        (OPTION_BASE | OPTION_GATES) & !(1 << 11),
+        3,
+        &[(80, 0, 2, "su"), (128, 2, 3, "a")],
+        "su a |"
+    )]
+    #[case::z_zh_on("zua", OPTION_BASE | 1 << 12, 3, &[(215, 0, 3, "zhua")], "zhua |")]
+    #[case::z_zh_off(
+        "zua",
+        (OPTION_BASE | OPTION_GATES) & !(1 << 12),
+        3,
+        &[(86, 0, 2, "zu"), (128, 2, 3, "a")],
+        "zu a |"
+    )]
+    #[case::distance_tie(
+        "chonga",
+        OPTION_BASE | 1 << 28,
+        6,
+        &[(1795, 0, 5, "chong"), (128, 5, 6, "a")],
+        "chong a |"
+    )]
+    fn a_gated_parser_row_follows_its_option_bit(
+        #[case] input: &str,
+        #[case] options: u32,
+        #[case] parsed: usize,
+        #[case] keys: &[(u16, u16, u16, &str)],
+        #[case] aux: &str,
+    ) {
+        let _slots = key_slot_guard();
+        let user_dir = TempUserDir::new("gated-row");
+        let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+        assert!(pinyin_set_options(context, options));
+        let text = cstr(input);
+        assert_eq!(
+            pinyin_parse_more_full_pinyins(instance, text.as_ptr()),
+            parsed
+        );
+        let found: Vec<(u16, u16, u16, String)> = walk(instance, parsed)
+            .into_iter()
+            .filter_map(|step| {
+                let (begin, end) = step.span?;
+                Some((step.key?, begin, end, step.pinyin?))
+            })
+            .collect();
+        let expected: Vec<(u16, u16, u16, String)> = keys
+            .iter()
+            .map(|&(key, begin, end, pinyin)| (key, begin, end, pinyin.to_owned()))
+            .collect();
+        assert_eq!(found, expected);
+        let mut text: *mut GChar = ptr::null_mut();
+        assert!(pinyin_get_full_pinyin_auxiliary_text(
+            instance,
+            parsed,
+            &raw mut text
+        ));
+        assert_eq!(crate::ffi::take_owned_cstr(text), aux);
         crate::instance::pinyin_free_instance(instance);
         crate::context::pinyin_fini(context);
     }
