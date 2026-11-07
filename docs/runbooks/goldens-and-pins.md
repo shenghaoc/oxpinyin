@@ -21,9 +21,9 @@ it, with the before/after numbers in the message.
 
 The Rust capture programs were deleted on 2026-11-06 UTC, and Python is the
 capture side. Each of these needs a Python regenerator in the next pin capture,
-alongside the [user-profile interchange captures](oracle.md#user-profile-interchange)
-and the behaviours the live C drivers in `tools/bisection/` still cover alone.
-None of these regenerators exists yet:
+alongside the [user-profile interchange captures](oracle.md#user-profile-interchange).
+The behaviours the live C drivers in `tools/bisection/` still cover alone are observations
+of the [pin capture](pin-captures.md). None of these regenerators exists yet:
 
 | capture | file |
 | --- | --- |
@@ -36,7 +36,9 @@ None of these regenerators exists yet:
 The live utility differentials in `crates/oxpinyin-utils/tests/` were deleted on
 2026-11-07 UTC. The frozen utility cases cover what they compared, except for the
 observations below. Each runs the pin-built utility in a private copy of
-`fixtures/w3/<ext>/` on the bdb, kc and tkrzw cells:
+`fixtures/w3/<ext>/` on the bdb, kc and tkrzw cells, as the `utility/<cell>/kmm-import-unigram`,
+`utility/<cell>/gen-ngram` and `utility/<cell>/gen-deleted-ngram` observations of the
+[pin capture](pin-captures.md):
 
 | capture | records | becomes |
 | --- | --- | --- |
