@@ -183,8 +183,7 @@ jobs:
     # and never reaches the decode path does not count. The
     # alternate-backend children name the store's feature with
     # member/feature syntax because the root manifest is virtual. The
-    # children run in parallel; the historical single-job serialisation of
-    # these sweeps is gone.
+    # children run in parallel.
     name: store backend (${{ matrix.backend }})
     runs-on: *ubuntu
     container:
@@ -277,7 +276,7 @@ jobs:
       # indirection — ${{ }} inside a run: body is a template-injection
       # surface — and never spliced into a command.
       #
-      # The KMM crate is backend-dependent since 2026-10-31 UTC: its
+      # The KMM crate depends on the backend: its
       # operations run on the selected store backend and its integration
       # tests spawn the seven utilities against `fixtures/w3/<backend>`.
       # It therefore runs in this matrix. The training package stays too:
@@ -402,17 +401,15 @@ jobs:
     # under ASan and any finding kills the job. The adapter and cxx's
     # generated glue are compiled C++ translation units; the store's build
     # script passes -fsanitize=address -fno-omit-frame-pointer to them when
-    # CARGO_CFG_SANITIZE names address, as the Kyoto Cabinet bridge's does
-    # (#1531), so both sides of the bridge are instrumented. A UBSan arm ran
-    # here until 2026-10-22, when the backend had no C targets; it was
-    # removed then.
+    # CARGO_CFG_SANITIZE names address, as the Kyoto Cabinet bridge's does,
+    # so both sides of the bridge are instrumented.
     name: tkrzw FFI under address
     runs-on: *ubuntu
     container:
       image: debian:testing # deliberately unpinned; see the header comment
       # ASan requires syscall leeway no other job here needs: Docker's
-      # default seccomp profile blocks personality(2), which turned setarch's
-      # ASLR-off ASan wrapper into EPERM on the previous run. Unconfining
+      # default seccomp profile blocks personality(2), which turns setarch's
+      # ASLR-off ASan wrapper into EPERM. Unconfining
       # seccomp for THIS job alone restores standard sanitizer setups;
       # everything else stays under stock confinement.
       options: --security-opt seccomp=unconfined
@@ -420,11 +417,6 @@ jobs:
     defaults:
       run:
         shell: bash
-
-    # Feeds store-backends-gate since 2026-09-08 (it had been
-    # continue-on-error and outside that gate). The gate becomes required
-    # when the ruleset names it; until then only ci.yml's `ci-aggregate`
-    # is required.
 
     steps:
       - name: Bootstrap the bare runner essentials (apt)
