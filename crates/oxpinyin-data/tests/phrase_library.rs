@@ -1,6 +1,5 @@
-//! P1 reader tests: synthetic files in the exact upstream layout, the
-//! malformed-input refusals, and — when the environment points at one —
-//! the real files of a libpinyin installation.
+//! P1 reader tests: synthetic files in the exact upstream layout and the
+//! malformed-input refusals. `package_libraries.rs` reads the real files.
 //!
 //! The synthetic builder below is a faithful `SubPhraseIndex::store`
 //! counterpart (the seed of the P5 native emitter): chunk header with
@@ -580,94 +579,4 @@ fn addon_load_keeps_its_answer_and_reports_the_refusal() {
     // An index that names no addon library is `false`, not a refusal.
     assert!(matches!(addons.load_reporting(3, &dir), Ok(false)));
     let _ = std::fs::remove_dir_all(&dir);
-}
-
-// ── the real thing ──────────────────────────────────────────────────
-
-/// The pinned build's per-library files, when the environment points at
-/// them (`OXPINYIN_LIBPINYIN_DATA`). `#[ignore]`d: run it with
-/// `--include-ignored`, and absence is then a failure. Never a CI dependency: the model data is not
-/// redistributable, and the synthetic suite above carries the format
-/// contract.
-#[test]
-#[ignore = "needs a real libpinyin install (OXPINYIN_LIBPINYIN_DATA); run with --include-ignored"]
-fn reads_a_real_libpinyin_installation() {
-    let Some(dir) = std::env::var_os("OXPINYIN_LIBPINYIN_DATA")
-        .map(PathBuf::from)
-        .filter(|dir| dir.join("gb_char.bin").is_file())
-    else {
-        panic!("missing input: no real libpinyin data (set OXPINYIN_LIBPINYIN_DATA)")
-    };
-
-    let system = ["gb_char", "gbk_char", "opengram", "merged"];
-    let mut libraries = Vec::new();
-    let mut items = 0_u64;
-    for name in system {
-        let library = PhraseLibrary::open(&dir.join(format!("{name}.bin")))
-            .unwrap_or_else(|e| panic!("{name}.bin: {e}"));
-        assert!(library.total_freq() > 0, "{name} carries unigram mass");
-        assert_eq!(library.token_range().start, 1, "{name} tokens start at 1");
-        let count = library.items().count() as u64;
-        assert!(count > 0, "{name} has items");
-        items += count;
-        eprintln!(
-            "{name}: {} items, range {:?}, total_freq {}",
-            count,
-            library.token_range(),
-            library.total_freq()
-        );
-        libraries.push(library);
-    }
-    // The frozen oracle export carried exactly 138,096 phrase tokens
-    // across the four system libraries (`datagen-model20.md`), derived
-    // through the ABI from these very files.
-    assert_eq!(items, 138_096, "item count must match the frozen export");
-
-    // 的: token 0x010005DB. model20 carries two readings —
-    // `de 的 16778715 2213855` and `di 的 16778715 11000` — and the
-    // item must hold exactly those pronunciation counts verbatim (the
-    // .table count column, per `datagen-model20.md`'s equivalence).
-    let gb = &libraries[0];
-    let item = gb
-        .item(0x0100_05DB)
-        .unwrap_or_else(|| panic!("的 missing from gb_char"));
-    assert_eq!(
-        item.phrase_text().as_ref().and_then(|text| text.as_str()),
-        Some("的")
-    );
-    assert_eq!(item.n_pronunciations(), 2);
-    let mut freqs: Vec<u32> = item
-        .pronunciations()
-        .map(|pronunciation| pronunciation.freq)
-        .collect();
-    freqs.sort_unstable();
-    assert_eq!(
-        freqs,
-        vec![11_000, 2_213_855],
-        "的 carries its two .table readings"
-    );
-
-    // A single-reading cross-check: 锕, token 0x01000001, `a 锕 … 7`.
-    let item = gb.item(0x0100_0001).expect("锕 present");
-    assert_eq!(
-        item.phrase_text().as_ref().and_then(|text| text.as_str()),
-        Some("锕")
-    );
-    assert_eq!(item.n_pronunciations(), 1);
-    assert_eq!(
-        item.pronunciations()
-            .next()
-            .map(|pronunciation| pronunciation.freq),
-        Some(7)
-    );
-
-    // The addon chunk files ride the same format — when the
-    // installation carries them.
-    let art_path = dir.join("art.bin");
-    if art_path.is_file() {
-        let art = PhraseLibrary::open(&art_path).expect("addon art.bin");
-        assert!(art.items().count() > 0);
-    } else {
-        eprintln!("skipping art.bin check: not present under OXPINYIN_LIBPINYIN_DATA");
-    }
 }

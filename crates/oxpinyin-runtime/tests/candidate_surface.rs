@@ -14,6 +14,8 @@ use oxpinyin_engine::{Candidate, CandidateKind, EmptyConfigSource, Session};
 
 #[path = "common/candidate_fixture.rs"]
 mod candidate_fixture;
+#[path = "common/contract_data.rs"]
+mod contract_data;
 
 use candidate_fixture::{CandidateFixture, OracleCandidateType, STRUCTURE_FIXTURE};
 
@@ -22,28 +24,6 @@ const CAPTURE_DEPTH: usize = 10;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
-}
-
-/// Where `just fetch-contract-data` extracts the version
-/// `tools/oracle/libpinyin-data.json` pins.
-fn contract_data_dir() -> PathBuf {
-    let pin = std::fs::read_to_string(repo_root().join("tools/oracle/libpinyin-data.json"))
-        .expect("the data pin is committed");
-    let version = pin
-        .lines()
-        .find_map(|line| line.trim().strip_prefix("\"version\": \""))
-        .and_then(|rest| rest.strip_suffix("\","))
-        .expect("the data pin names a version");
-    let dir = repo_root()
-        .join("target/contract-data")
-        .join(version)
-        .join("libpinyin/data");
-    assert!(
-        dir.join(SystemDbm::Bigram.file_name()).is_file(),
-        "pinned system data missing at {}; run just fetch-contract-data",
-        dir.display()
-    );
-    dir
 }
 
 /// Every distinct input of the committed corpus, in bytewise order.
@@ -82,7 +62,7 @@ fn candidates_match_the_frozen_capture_over_the_corpus() {
         ));
     }
 
-    let dir = contract_data_dir();
+    let dir = contract_data::contract_data_dir();
     let dictionary = SystemDictionary::open(&dir).expect("the system dictionary opens");
     let mut model = BigramLanguageModel::open(
         &dir.join(SystemDbm::Bigram.file_name()),

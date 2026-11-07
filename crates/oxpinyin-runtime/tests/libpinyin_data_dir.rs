@@ -1,39 +1,20 @@
 //! The drop-in invariant at the Rust runtime seam: an **unmodified
 //! libpinyin data directory** opens through `Runtime::open` and decodes.
 //!
-//! Requires `OXPINYIN_LIBPINYIN_DATA_DIR`, a pin-built libpinyin install's
-//! `data/` with the same DBM as this crate's selected backend; the test's
-//! own `table.conf` check decides whether the directory matches. Ordinary
-//! `cargo test` leaves the test ignored; explicitly selecting it fails on
-//! a missing input, as `docs/testing/README.md` requires. With the
-//! matching cell's environment loaded and a separate target directory per
-//! cell, run from the root:
+//! The directory is the pinned libpinyin-data package
+//! (`just fetch-contract-data`), in tkrzw format, so this target requires
+//! that backend. Nothing here is converted, imported or copied: the directory
+//! is the test input.
 //!
-//! ```text
-//! just heavy -- cargo test --locked -p oxpinyin-runtime --no-default-features --features <backend> --test libpinyin_data_dir -- --include-ignored
-//! ```
-//!
-//! The oracle runbook's pre-release checks name the cells this test is
-//! owned on.
-//!
-//! The C-ABI half of the invariant — libpinyin.so and `libpinyin_capi.so`
-//! on the same directory, every driver's log identical — is
-//! `tools/bisection/run-same-data-dir-diff.sh`.
-//!
-//! Nothing here is converted, imported or copied: the directory is the
-//! test input.
-//!
-//! See the [oracle runbook](../../../docs/runbooks/oracle.md#pre-release-real-installation-checks)
-//! for execution owners and pre-release input identities.
-use std::path::PathBuf;
+//! The C-ABI half of the invariant is the contract suite's frozen references
+//! over the same package ([contract references](../../../docs/runbooks/contract-references.md)).
 
 use oxpinyin_core::{Dictionary, LanguageModel, PhraseToken, SyllableKey};
 use oxpinyin_engine::{EmptyConfigSource, KeyOutcome};
 use oxpinyin_runtime::Runtime;
 
-fn data_dir() -> Option<PathBuf> {
-    std::env::var_os("OXPINYIN_LIBPINYIN_DATA_DIR").map(PathBuf::from)
-}
+#[path = "common/contract_data.rs"]
+mod contract_data;
 
 fn syllables(text: &str) -> Vec<SyllableKey> {
     text.split('\'')
@@ -42,11 +23,8 @@ fn syllables(text: &str) -> Vec<SyllableKey> {
 }
 
 #[test]
-#[ignore = "needs a pin-built libpinyin data dir (OXPINYIN_LIBPINYIN_DATA_DIR); run with --include-ignored"]
 fn an_unmodified_libpinyin_data_directory_opens_and_decodes() {
-    let Some(dir) = data_dir() else {
-        panic!("OXPINYIN_LIBPINYIN_DATA_DIR unset")
-    };
+    let dir = contract_data::contract_data_dir();
     // The directory is libpinyin's own: its table.conf names the DBM the
     // install was built with, which must be this build's, and every file
     // keeps libpinyin's name.
@@ -72,7 +50,8 @@ fn an_unmodified_libpinyin_data_directory_opens_and_decodes() {
     let dict = runtime.dict();
     let lm = runtime.lm();
 
-    // The facade sizes are the pin's: 138,096 items over the four system
+    // The facade sizes of the model libpinyin 074a2219 builds
+    // (`docs/findings/datagen-model20.md`): 138,096 items over the four system
     // libraries, real corpus counts from the chunk items.
     assert_eq!(dict.visible_item_count(), 138_096);
     let total = LanguageModel::unigram_total(&lm)
@@ -113,8 +92,7 @@ fn an_unmodified_libpinyin_data_directory_opens_and_decodes() {
     assert!(!tokens.is_empty());
     for token in &tokens {
         assert_eq!(
-            dict.system()
-                .phrase_text(token.value())
+            dict.phrase_text_for_token(token.value())
                 .as_ref()
                 .and_then(|text| text.as_str()),
             Some("中国")
@@ -135,8 +113,7 @@ fn an_unmodified_libpinyin_data_directory_opens_and_decodes() {
         .expect("suggest");
     assert!(
         suggestions.iter().any(|&token| {
-            dict.system()
-                .phrase_text(token)
+            dict.phrase_text_for_token(token)
                 .is_some_and(|text| text == "中国")
         }),
         "中 suggests 中国: {} rows",

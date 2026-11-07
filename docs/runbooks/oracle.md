@@ -171,7 +171,7 @@ export PINYIN_ORACLE_DBM=bdb
 The six files in `oracle-data-unstable.sha256` are not reproducible
 upstream (`docs/findings/oracle-data-reproducibility.md`) and are not part
 of the cross-build digest comparison. Verify them against the prefix's
-local manifest before the pre-release real-installation checks below.
+local manifest before any run that reads the oracle prefix's data.
 
 ### Reproducing the libraries
 
@@ -219,16 +219,6 @@ export PINYIN_EXPORT_DIR=/tmp/oxpinyin-export
 
 ## 4. Run the differentials
 
-Run the `#[ignore]`d differential tests with `--include-ignored`
-(`libpinyin_data_dir` on tkrzw, KMM, segment, lambda, counter, and eval when
-its inputs exist), as in the tkrzw example under "Pre-release
-real-installation checks" below. Export `PINYIN_EXPORT_DIR` and
-`PINYIN_MODEL_DIR` from steps 1 and 3 and `OXPINYIN_LIBPINYIN_DATA_DIR`
-for the data directory the test opens unchanged. A test that panics with
-`missing input: …` names the input it lacked — that is a provisioning gap,
-not a divergence. The retired `just compat differentials` wrapper ran these
-suites and accumulated their statuses.
-
 The C-ABI drop-in gate, both libraries opened on one unchanged data
 directory:
 
@@ -243,97 +233,30 @@ Exit 0 is identical on every driver; 2 prints each divergence. The
 per-surface drivers (`tools/bisection/run-*-diff.sh`) run one surface
 each; their headers say what they prove.
 
-### Pre-release real-installation checks
+### Pre-release fixture check
 
-Before each release, run the three-cell sweep required by [verification rule 3](verification.md#3-sweep-and-release-coverage). The tkrzw suites above own
-`libpinyin_data_dir` on tkrzw. This pre-release procedure owns
-`bdb_libpinyin_files` (BDB),
-`reads_a_real_libpinyin_installation` (the BDB reference installation),
-`libpinyin_data_dir` on KC, and `just w3-fixtures check --cells
-bdb,kc,tkrzw` with model20, which regenerates `fixtures/w3` through the
-pin's program sequence built for each backend and compares records and
-chunk bytes with the committed tree. They need model20 or real installation
-files; the committed synthetic fixtures do not replace these inputs. Ordinary `cargo test` leaves them ignored. Explicitly selecting
-one fails when a required input is missing (`docs/testing/README.md`).
+Before each release, run the three-cell sweep required by [verification rule 3](verification.md#3-sweep-and-release-coverage).
+This pre-release procedure owns `just w3-fixtures check --cells bdb,kc,tkrzw` with
+model20, which regenerates `fixtures/w3` through the pin's program sequence built
+for each backend and compares records and chunk bytes with the committed tree.
+It needs model20; the committed fixtures do not replace that input.
 Report each result or outstanding input limitation before release.
 
-Use prefixes verified by `tools/cloud/setup.sh` ([remote Linux setup](cloud.md)),
-and set `TMPDIR` on disk with room for scratch data. On Ubuntu, tkrzw
-must use setup's sound libtkrzw, pass `tools/tkrzw/distro-probe.sh`, and
-resolve both the oracle and subject to that library with `ldd`
-(verification rule 9). Keep one target directory per cell. When setup is
-needed in a second worktree on the same host, set `OXPINYIN_ORACLE_ENV` to a
-worktree-private file; do not overwrite another worktree's environment registration.
-
-The input identity authority is `tools/oracle/oracle-pin.txt`:
-
-| Input | Identity |
-| --- | --- |
-| Pin source | `libpinyin_commit` (`074a2219c90feaf962d0d24f034514033ece5f99`) |
-| Pin build, each cell | Current commits, `recipe_sha256`, architecture, prefix-local `shared_object_sha256`, `zhuyin_shared_object_sha256` and `versions_sha256` |
-| Real data, each cell | The prefix's own `data_manifest_sha256` and `data_unstable_manifest_sha256`; use the shared [data verification](cloud.md#data-verification) |
-| Model20 archive | `model_archive_sha256` (`59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155`); use its verified extraction for `PINYIN_MODEL_DIR` |
-
-For each selected cell, run the read-only command in cloud setup's
-[data verification](cloud.md#data-verification) with its matching
-environment loaded. It uses the same `data_ok` function as setup to check
-both manifest digests and every listed file in that exact prefix, so the
-pre-release identity check follows setup's contract.
-
-Record the actual build and data-manifest digests, the model20 digest,
-host and cell with the results. The BDB real-file tests read `bigram.db`
-and `pinyin_index.bin`. The real-installation phrase-library test reads
-`gb_char.bin`, `gbk_char.bin`, `opengram.bin`, `merged.bin` and the
-installation's optional `art.bin`; these chunk files are backend-neutral,
-so the BDB reference installation carries this check. The runtime test
-opens the KC or tkrzw installation's complete data directory. The
-fixture check consumes model20 and produces its own backend files; it
-does not read the oracle's data directory or link libpinyin.
-
-From the repository root, choose the setup-verified prefixes below and
-run the exact commands. `target/real-installation/<cell>` is private to
-this checkout; reuse it when resuming. For the default setup cache:
+The input identity authority is `tools/oracle/oracle-pin.txt`. Its
+`model_archive_sha256` (`59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155`)
+identifies the archive; use its verified extraction for `PINYIN_MODEL_DIR`. Record
+the model20 digest, host and cell with the results. The fixture check consumes model20 and
+produces its own backend files; it does not read the oracle's data directory or
+link libpinyin. From the repository root:
 
 ```sh
-export TMPDIR="$PWD/target/real-installation/tmp"
-mkdir -p "$TMPDIR"
-prefix_bdb="$HOME/.cache/oxpinyin/oracle/bdb"
-prefix_kc="$HOME/.cache/oxpinyin/oracle/kc"
-export PINYIN_MODEL_DIR="$HOME/.cache/oxpinyin/model20/extracted"
-
-# Every backend: the pin's program sequence over the verified model20
-# extraction reproduces the committed fixtures (records and chunk bytes).
+export PINYIN_MODEL_DIR="$PWD/target/model20/extracted"
 just w3-fixtures check --cells bdb,kc,tkrzw
-
-# BDB: four real-file storage tests.
-OXPINYIN_LIBPINYIN_DATA_DIR="$prefix_bdb/lib/libpinyin/data" \
-CARGO_TARGET_DIR="$PWD/target/real-installation/bdb" \
-cargo test -p oxpinyin-store --no-default-features --features bdb \
-    --test bdb_libpinyin_files -- --include-ignored --nocapture
-
-# BDB reference installation: real per-library chunks.
-OXPINYIN_LIBPINYIN_DATA="$prefix_bdb/lib/libpinyin/data" \
-CARGO_TARGET_DIR="$PWD/target/real-installation/bdb" \
-cargo test -p oxpinyin-data --no-default-features --features bdb \
-    --test phrase_library -- reads_a_real_libpinyin_installation --exact --include-ignored --nocapture
-
-# KC: an unchanged pin-built data directory.
-OXPINYIN_LIBPINYIN_DATA_DIR="$prefix_kc/lib/libpinyin/data" \
-CARGO_TARGET_DIR="$PWD/target/real-installation/kc" \
-cargo test -p oxpinyin-runtime --no-default-features --features kyotocabinet \
-    --test libpinyin_data_dir -- --include-ignored --nocapture
 ```
 
-The tkrzw runtime suite can be run on its own with the same inputs, after
-loading setup's tkrzw environment:
-
-```sh
-export PINYIN_MODEL_DIR="$HOME/.cache/oxpinyin/model20/extracted"
-export OXPINYIN_LIBPINYIN_DATA_DIR="$PINYIN_ORACLE_PREFIX/lib/libpinyin/data"
-export CARGO_TARGET_DIR="$PWD/target/real-installation/tkrzw"
-cargo test -p oxpinyin-runtime \
-    --test libpinyin_data_dir -- --include-ignored --nocapture
-```
+The tkrzw `libpinyin_data_dir` and `sentence_surface_parity` tests, and
+`package_libraries` in `oxpinyin-data`, read the pinned libpinyin-data package
+(`just fetch-contract-data`) in every ordinary test run.
 
 ### The full default contract selection
 
@@ -412,11 +335,9 @@ parse, check full consumption and guess the sentence before training row 0
 
 ### User-profile interchange
 
-The two-way user-profile interchange property is no longer measured live. Its
-two ignored tests in `crates/oxpinyin-runtime/tests/user_dir_round_trip.rs`
-and the launcher that ran them are removed (2026-11-06 UTC). The property
-moves to frozen captures, to be added in the next pin capture. One capture
-certifies both directions:
+The two-way user-profile interchange property is no longer measured live. The
+property moves to frozen captures, to be added in the next pin capture. One
+capture certifies both directions:
 
 - **libpinyin to oxpinyin.** The capture holds a user directory written by the
   pin. oxpinyin reads it and renders the same results the pin recorded for it.

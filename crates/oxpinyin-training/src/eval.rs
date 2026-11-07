@@ -12,10 +12,7 @@
 //! now `oxpinyin_utils::training::estimate_interpolation`, and this module
 //! is the decode behind `oxpinyin-utils`' `eval_correction_rate`.
 //!
-//! The model cost mirrors the shipping decoder's LM
-//! (`oxpinyin_data::lm`), so the decode ranks exactly as the real engine
-//! would; the real-model path drives the same generic core over an
-//! [`oxpinyin_data::SystemDictionary`]. Never ships with the engine.
+//! Never ships with the engine.
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 // Constitution §4: keep these non-test denials. A permitted site needs the
@@ -29,28 +26,24 @@
 #![cfg_attr(not(test), deny(clippy::panic))]
 #![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
 
+mod counts;
 mod decode;
 mod error;
 mod model;
-mod phrases;
 
-pub use decode::{
-    EvalReport, NULL_TOKEN, PhraseSource, SENTENCE_START, correction_rate, parse_eval_corpus,
-};
+pub use counts::{Counts, parse_interpolation_dump};
+pub use decode::{EvalReport, PhraseSource, correction_rate};
 pub use error::EvalError;
 pub use model::EvalLanguageModel;
-pub use phrases::SystemPhraseSource;
 
-use crate::counter::Counts;
 use oxpinyin_core::PhraseToken;
 use oxpinyin_data::Lambda;
 
 /// Parses a candidate `interpolation2.text` into its unigram/bigram counts
-/// (`crate::counter::parse_interpolation_dump`), the input to the eval
-/// model.
+/// ([`parse_interpolation_dump`]), the input to the eval model.
 #[must_use]
 pub fn parse_interpolation2(text: &str) -> Counts {
-    crate::counter::parse_interpolation_dump(text)
+    parse_interpolation_dump(text)
 }
 
 /// Builds the native evaluation model from the candidate counts with λ

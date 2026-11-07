@@ -1,8 +1,7 @@
 //! Writes a `bigram.db` through the Berkeley DB backend's user-bigram
 //! seam so a reader that has no Rust in it can check the bytes.
 //!
-//! `tests/bdb_libpinyin_files.rs` proves the backend reads what libpinyin
-//! wrote. This is the other direction: a file this backend *created*,
+//! `tests/bdb_libpinyin_files.rs` reads a file libpinyin wrote. This is the other direction: a file this backend *created*,
 //! handed to `tools/bdb/hash-walk.c`, which drives libdb directly and
 //! checks every `SingleGram` invariant. If that walk is clean, the file
 //! is one libpinyin's own code can read.

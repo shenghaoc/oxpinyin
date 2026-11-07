@@ -4,16 +4,17 @@
 //! Read-only, no oracle FFI: `fixtures/w4/oracle-sentence-surface.txt` holds
 //! the pinned oracle's answer for every sampled input. The port's surface is
 //! reproduced through the same ibus call order the fixture captured
-//! (`guess_sentence` → `guess_candidates` → `get_sentence`) over the exported
-//! model20 tables. `docs/findings/sentence-surface.md` §12 is the write-up;
-//! this module is its reproduction and its gate.
+//! (`guess_sentence` → `guess_candidates` → `get_sentence`) over the pinned
+//! libpinyin-data package. `docs/findings/sentence-surface.md` §12 is
+//! the write-up; this module is its reproduction and its gate.
 
-use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use oxpinyin_data::lm::BigramTables;
 use oxpinyin_data::{BigramLanguageModel, SystemDbm, SystemDictionary};
 use oxpinyin_engine::{Candidate, CandidateKind, EmptyConfigSource, Session};
+
+use crate::sentence_fixture::{SENTENCE_FIXTURE, load_fixture, load_residuals};
 
 /// The concrete port session the measurement drives.
 pub struct PortSession {
@@ -53,142 +54,12 @@ impl PortSession {
     }
 }
 
-/// Fixture path, relative to the repository root.
-pub const SENTENCE_FIXTURE: &str = "fixtures/w4/oracle-sentence-surface.txt";
-
-/// Exact subject surfaces admitted by sentence-surface.md §12, in the same
-/// four-column format as the unchanged pin fixture.
-const RESIDUAL_FIXTURE: &str = "fixtures/w4/sentence-surface-residuals.txt";
-
 /// `max_index` the fixture generator read to (`observe_sentence_surface`'s
 /// caller passes 2 — the n-best cap minus one).
 const MAX_INDEX: u8 = 2;
 
 /// First-N candidate rows the fixture captured per input.
 const ROW_DEPTH: usize = 6;
-
-/// Repository root, from this crate's manifest directory.
-#[must_use]
-pub fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-}
-
-/// The exported-table directory, from `PINYIN_EXPORT_DIR` or the default,
-/// when it holds all three tables in the compiled-in backend's format.
-///
-/// The tables carry libpinyin's own file names on every backend
-/// (`SystemDbm::file_name`; tkrzw is the default build's);
-/// `None` otherwise (so callers can skip).
-#[must_use]
-pub fn export_dir() -> Option<PathBuf> {
-    let dir = std::env::var_os("PINYIN_EXPORT_DIR")
-        .map_or_else(|| PathBuf::from("/tmp/oxpinyin-export"), PathBuf::from);
-    [
-        SystemDbm::PinyinIndex,
-        SystemDbm::PhraseIndex,
-        SystemDbm::Bigram,
-    ]
-    .iter()
-    .all(|dbm| dir.join(dbm.file_name()).exists())
-    .then_some(dir)
-}
-
-/// Opens the port session over the exported tables with real unigrams, or
-/// `Ok(None)` when the exported tables or the model cache are simply absent —
-/// the self-skip the whole real-tables tier uses.
-///
-/// The model directory must be a **complete** extracted model20 (all 18
-/// files: the 17 phrase tables plus `interpolation2.text`); `locate_model_dir`
-/// rejects a partial directory such as the 4-file `~/.cache/oxpinyin-data`.
-/// Point `PINYIN_MODEL_DIR` at a full extract.
-///
-/// # Errors
-///
-/// Returns a message when a `PINYIN_MODEL_DIR` is **set but unusable** (a
-/// partial or non-directory model dir — surfaced rather than skipped, so a
-/// misconfiguration is not mistaken for "no tables present"), or when a
-/// located table cannot be opened or parsed.
-pub fn open_session_from_env() -> Result<Option<PortSession>, String> {
-    let Some(dir) = export_dir() else {
-        return Ok(None);
-    };
-    PortSession::open(&dir).map(Some)
-}
-
-/// One frozen oracle line: the ibus surface for one sampled input.
-#[derive(Debug, PartialEq, Eq)]
-struct OracleLine {
-    input: String,
-    guessed: bool,
-    /// `pinyin_get_sentence(0..=proven)`; `-` marks a `None` read.
-    sentences: Vec<String>,
-    /// First-6 candidates as `type-letter/nbest/text`.
-    rows: Vec<String>,
-}
-
-fn load_fixture(path: &Path) -> Result<Vec<OracleLine>, String> {
-    let raw = std::fs::read_to_string(path)
-        .map_err(|error| format!("cannot read fixture {}: {error}", path.display()))?;
-    let mut lines = Vec::new();
-    for line in raw.lines() {
-        if line.starts_with('#') || line.is_empty() {
-            continue;
-        }
-        let parts: Vec<_> = line.split('\t').collect();
-        let [input, guessed, sentences, rows] = parts.as_slice() else {
-            return Err(format!("expected four fixture columns: {line:?}"));
-        };
-        let input = (*input).to_owned();
-        let guessed = match *guessed {
-            "true" => true,
-            "false" => false,
-            _ => return Err(format!("invalid fixture guess status: {line:?}")),
-        };
-        let sentences = split_field(sentences);
-        let rows = split_field(rows);
-        lines.push(OracleLine {
-            input,
-            guessed,
-            sentences,
-            rows,
-        });
-    }
-    Ok(lines)
-}
-
-fn load_residuals(root: &Path, pin: &[OracleLine]) -> Result<BTreeMap<String, OracleLine>, String> {
-    let mut residuals = BTreeMap::new();
-    for residual in load_fixture(&root.join(RESIDUAL_FIXTURE))? {
-        let Some(original) = pin.iter().find(|line| line.input == residual.input) else {
-            return Err(format!(
-                "residual input absent from pin: {:?}",
-                residual.input
-            ));
-        };
-        if original.sentences.is_empty() || original == &residual {
-            return Err(format!(
-                "residual must differ on a comparable input: {:?}",
-                residual.input
-            ));
-        }
-        let input = residual.input.clone();
-        if residuals.insert(input.clone(), residual).is_some() {
-            return Err(format!("duplicate sentence residual: {input:?}"));
-        }
-    }
-    Ok(residuals)
-}
-
-/// A `\x01`-joined fixture field; empty string means an empty list.
-fn split_field(field: &str) -> Vec<String> {
-    if field.is_empty() {
-        Vec::new()
-    } else {
-        field.split('\u{1}').map(str::to_owned).collect()
-    }
-}
 
 /// The port's counterpart of one oracle line, observed through the same call
 /// order.
@@ -472,20 +343,4 @@ pub fn measure(session: &mut PortSession, root: &Path) -> Result<SentenceTailRep
     }
 
     Ok(report)
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn sentence_residual_fixture_binds_complete_pin_cases() {
-        let root = super::repo_root();
-        let pin = super::load_fixture(&root.join(super::SENTENCE_FIXTURE)).expect("pin fixture");
-        let residuals = super::load_residuals(&root, &pin).expect("valid residual fixture");
-        assert_eq!(residuals.len(), 9);
-        for residual in residuals.values() {
-            assert!(residual.guessed);
-            assert!((1..=3).contains(&residual.sentences.len()));
-            assert_eq!(residual.rows.len(), 6);
-        }
-    }
 }
