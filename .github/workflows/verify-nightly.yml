@@ -462,6 +462,7 @@ jobs:
           rustup-components: clippy
           rust-cache: 'true'
           cargo-nextest: 'true'
+          uv: 'true'
       - run: rustup show active-toolchain
       # vcpkg's binary cache, persisted across runs. vcpkg writes one zip per
       # built package, named by the package's ABI hash, to the files provider

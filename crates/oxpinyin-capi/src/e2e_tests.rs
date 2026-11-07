@@ -793,7 +793,6 @@ fn force_a_stale_phrase(instance: *mut PinyinInstance) -> u32 {
 /// (`phonetic_lookup.h:868`): a phrase forced after the last sentence lookup
 /// no longer matches the decoded result, and the process aborts as the
 /// pin's does (register row 6).
-#[cfg(unix)]
 #[test]
 fn training_a_stale_forcing_aborts() {
     crate::test_support::assert_aborts("e2e_tests::training_a_stale_forcing_aborts", || {
@@ -2893,7 +2892,6 @@ fn hold_nihao_in_libraries(context: *mut crate::types::PinyinContext, libraries:
 /// `g_array_append_vals` per loaded library (`phrase_index.h:762-772`).
 /// The pin then dies of the assert on five tokens (`pinyin.cpp:2664`), so
 /// the criticals come first. GLib's default handler writes them to stderr.
-#[cfg(unix)]
 #[test]
 fn lookup_tokens_into_a_null_array_logs_the_criticals_before_it_aborts() {
     let user_dir = TempUserDir::new("lookup-null-five");
@@ -2964,7 +2962,6 @@ fn init_at(user_dir: &std::path::Path) -> *mut crate::types::PinyinContext {
 /// Register row 91: init's library loop merges `gb_char.dbin` and
 /// `next_record` asserts on its non-null `MODIFY_HEADER` token
 /// (`phrase_index_logger.h:202`).
-#[cfg(unix)]
 #[test]
 fn init_aborts_on_a_log_header_token() {
     crate::test_support::assert_aborts("e2e_tests::init_aborts_on_a_log_header_token", || {
@@ -3006,7 +3003,6 @@ fn init_aborts_on_a_log_before_an_unmappable_library() {
 
 /// Register row 108: init's merge stores a one-byte ADD payload and
 /// `add_phrase_item` reads its unigram (`memory_chunk.h:390`).
-#[cfg(unix)]
 #[test]
 fn init_aborts_on_a_short_add_payload() {
     crate::test_support::assert_aborts("e2e_tests::init_aborts_on_a_short_add_payload", || {
@@ -3038,7 +3034,6 @@ fn init_completes_when_the_merge_stops_before_a_bad_header() {
 
 /// Register row 91 on the reload path: `pinyin_load_phrase_library` of the
 /// unloaded GBK library merges its saved `.dbin` (`pinyin.cpp:276`).
-#[cfg(unix)]
 #[test]
 fn reload_aborts_on_a_log_header_token() {
     crate::test_support::assert_aborts("e2e_tests::reload_aborts_on_a_log_header_token", || {
@@ -3057,7 +3052,6 @@ fn reload_aborts_on_a_log_header_token() {
 
 /// Register row 97: `mask_out` reloads library 1 and `_mask_out_records`
 /// appends a kept ADD with both chunk pointers (`phrase_index_logger.h:245`).
-#[cfg(unix)]
 #[test]
 fn mask_out_aborts_on_a_surviving_add() {
     crate::test_support::assert_aborts("e2e_tests::mask_out_aborts_on_a_surviving_add", || {
@@ -3077,7 +3071,6 @@ fn mask_out_aborts_on_a_surviving_add() {
 /// Register row 85: `pinyin_mask_out` loads token 1's gram, which the mask
 /// leaves alone, and `SingleGram::mask_out` reads its total from three bytes
 /// (`ngram.cpp:80`, `memory_chunk.h:390`).
-#[cfg(unix)]
 #[test]
 fn mask_out_aborts_on_a_short_bigram_value() {
     crate::test_support::assert_aborts(
@@ -3128,7 +3121,6 @@ fn mask_out_refuses_a_partial_bigram_tail() {
 /// (`pinyin.cpp:775-787`), and `has_next` loads each predecessor and
 /// `retrieve_all` reads its total (`:889`, `ngram.cpp:133-141`), so begin
 /// answers an iterator and the walk aborts where it loads the short gram.
-#[cfg(unix)]
 #[test]
 fn bigram_export_aborts_where_the_walk_loads_a_short_predecessor() {
     crate::test_support::assert_aborts(
@@ -3298,7 +3290,6 @@ fn addon_load_aborts_on_a_directory_library() {
 
 /// The predecessor tokens of the bigram export fixture, in the order the
 /// walk loads them (the backend's key order), and the successor both name.
-#[cfg(unix)]
 fn export_order_fixture() -> (u32, u32, u32) {
     let scratch = TempUserDir::new("export-order-probe");
     let (context, instance) = open(scratch.path.to_str().expect("UTF-8 path"));
@@ -3356,7 +3347,6 @@ fn export_order_fixture() -> (u32, u32, u32) {
 
 /// A gram with one item to `successor` at count 100: above the export
 /// threshold, so the walk hands out its row at count 200.
-#[cfg(unix)]
 fn whole_gram(successor: u32) -> Vec<u8> {
     [
         100_u32.to_le_bytes(),
@@ -3424,7 +3414,6 @@ fn bigram_get_next_writes_its_row_before_the_short_predecessor_aborts() {
 
 /// A partial item tail (`4 + 8k + 1` bytes): row 98's value, which the pin's
 /// `retrieve_all` reads past (class (b)).
-#[cfg(unix)]
 fn partial_gram(successor: u32) -> Vec<u8> {
     let mut gram = whole_gram(successor);
     gram.push(1);
@@ -3435,7 +3424,6 @@ fn partial_gram(successor: u32) -> Vec<u8> {
 /// (`pinyin.cpp:775-787`), so a short predecessor the walk loads before a
 /// partial one aborts at `has_next` (`:889`) and the partial one is never
 /// read.
-#[cfg(unix)]
 #[test]
 fn bigram_export_aborts_at_a_short_predecessor_before_a_partial_one() {
     let (first, second, successor) = export_order_fixture();

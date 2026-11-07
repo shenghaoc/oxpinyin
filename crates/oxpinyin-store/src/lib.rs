@@ -1283,7 +1283,7 @@ pub const DEFAULT_STORE_DB_FORMAT: &str = "BerkeleyDB";
 #[cfg(any(feature = "kyotocabinet", feature = "tkrzw", feature = "bdb"))]
 mod common;
 // The Berkeley DB attach death tests' re-run helper.
-#[cfg(all(test, unix, feature = "bdb"))]
+#[cfg(all(test, feature = "bdb"))]
 mod death_test;
 
 #[cfg(feature = "tkrzw")]

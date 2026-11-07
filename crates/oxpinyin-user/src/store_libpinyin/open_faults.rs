@@ -277,7 +277,8 @@ fn a_completed_open_finalizes() {
         drop(open::<PinSteps>(None, originals()).expect("open"));
     });
     assert!(status.success(), "{status:?} {stderr}");
-    assert_eq!(stderr, "write  failed.\n");
+    let newline = if cfg!(windows) { "\r\n" } else { "\n" };
+    assert_eq!(stderr, format!("write  failed.{newline}"));
     assert_eq!(open_counter(&dir), "0");
     std::fs::remove_dir_all(dir).unwrap();
 }
