@@ -176,6 +176,7 @@ class Provision:
         self.tkrzw_local = False
         self.tkrzw_host_library = ''
         self.ctr = ''
+        self.inside_image = False
         self.custom_ca = False
         self.empty_cache = False
         self.net_flags, self.env_flags = ['--network', 'host'], []
@@ -235,9 +236,7 @@ class Provision:
         arch = text(['uname', '-m'], env=self.env)
         self.platform = {'x86_64': 'linux/amd64', 'aarch64': 'linux/arm64', 'arm64': 'linux/arm64'}.get(arch, '')
         if not self.platform:
-            fail(f'No frozen oracle hashes for architecture {arch}; supported platforms are linux/amd64 and linux/arm64. See docs/runbooks/setup.md.', 2)
-        if not self.field('libpinyin_sha256_bdb'):
-            fail(f'No frozen oracle hashes for {self.platform} in {self.pin}. See docs/runbooks/setup.md.', 2)
+            fail(f'Unsupported oracle architecture {arch}; supported platforms are linux/amd64 and linux/arm64. See docs/runbooks/setup.md.', 2)
         if not self.cells:
             fail('at least one cell is required', 2)
         for cell in self.cells:
@@ -326,16 +325,49 @@ class Provision:
             print('ext4 paths: none accessible among mount targets, checkout, HOME, TMPDIR and cache; measurement gates cannot run without an ext4 path.')
         print('This report does not verify all measured files are on ext4; non-measurement setup may continue.')
 
+    def oracle(self, argv):
+        """Provision only oracle cells inside the native oracle performance image."""
+        self.options(argv)
+        if self.python_only or not str(self.jobs).isdecimal() or int(self.jobs) < 1:
+            fail('provision oracle needs positive --jobs and does not accept --python-only', 2)
+        marker = Path('/usr/local/share/oxpinyin/performance-os-release')
+        if (self.env.get('GITHUB_ACTIONS') == 'true' or not marker.is_file()
+                or marker.read_bytes() != Path('/etc/os-release').read_bytes()):
+            self.die('provision oracle runs locally inside just performance')
+        self.cache = self.cache.resolve()
+        self.cache.mkdir(parents=True, exist_ok=True)
+        self.model_cache = Path(self.env.get('PINYIN_MODEL_CACHE') or self.cache / 'model20')
+        self.inside_image, self.pull = True, False
+        self.oracle_root.mkdir(parents=True, exist_ok=True)
+        self.libraries()
+        child = dict(self.env, OXPINYIN_ORACLE_RECIPE_ROOT=str(self.root))
+        for backend in self.cells:
+            prefix = self.oracle_root / backend
+            common = ['bash', self.root / 'tools/oracle/build-oracle.sh', '--dbm', backend,
+                      '--prefix', prefix, '--enable-libzhuyin', '--jobs', self.jobs]
+            if not self.data_ok(backend):
+                extracted = model.fetch(self.model_cache, root=self.root, env=self.env)
+                run([*common, '--regen-data', '--model-dir', extracted,
+                     '--work-dir', self.cache / ('data-' + backend)], env=child, heavy=True)
+            if not self.data_ok(backend):
+                self.die(f'{backend}: generated data failed provenance validation')
+            self.log(f'{backend}: current pin/recipe, recorded library hashes and data manifests OK')
+        return 0
+
     def libs_ok(self, cell, prefix=None):
         prefix = Path(prefix) if prefix is not None else self.oracle_root / cell
-        return all((path := prefix / 'lib' / (lib + '.so')).is_file() and
-                   digest_file(path) == self.field(f'{lib}_sha256_{cell}') for lib in ('libpinyin', 'libzhuyin'))
+        return images.prefix_ok(prefix, cell, self.root, self.pin, self.platform)
 
     def data_ok(self, cell, prefix=None):
         """Check stable pin identity and prefix-local generated manifest provenance."""
         prefix = Path(prefix) if prefix is not None else self.oracle_root / cell
+        if not self.libs_ok(cell, prefix):
+            return False
+        if not images.model_ok(prefix, self.root, self.pin):
+            return False
+        record = images.fields(prefix / 'oracle-pin.txt')
         stable = prefix / 'oracle-data.sha256'
-        if not stable.is_file() or digest_file(stable) != self.field(f'data_manifest_sha256_{cell}'):
+        if not stable.is_file() or digest_file(stable) != record.get('data_manifest_sha256'):
             return False
         with open(os.devnull, 'wb') as null:
             if run(['sha256sum', '--check', '--quiet', stable.name], cwd=prefix, env=self.env,
@@ -373,7 +405,7 @@ class Provision:
                 continue
             prefix = previous.get(f'OXPINYIN_ORACLE_PREFIX_{cell.upper()}', '')
             if not prefix or not self.libs_ok(cell, prefix):
-                self.log(f'{cell}: removed from environment file; oracle-pin.txt library hash check failed')
+                self.log(f'{cell}: removed from environment file; current pin/recipe or recorded library bytes failed validation')
             elif not self.data_ok(cell, prefix):
                 self.log(f'{cell}: removed from environment file; data manifest check failed')
             else:
@@ -538,6 +570,8 @@ class Provision:
             self.log('  ' + line) if logged else print(line, file=sys.stderr)
 
     def build_deps_image(self):
+        if self.inside_image:
+            return
         with open(os.devnull, 'wb') as null:
             if not run([self.ctr, 'image', 'inspect', self.deps_image], env=self.env, stdout=null, stderr=null, check=False):
                 return
@@ -552,7 +586,7 @@ class Provision:
             if run([self.ctr, 'image', 'inspect', self.base_image], env=self.env, stdout=null, stderr=null, check=False):
                 self.log(f'pulling {self.base_image} for the local fallback build')
                 self.retry([self.ctr, 'pull', '--quiet', '--platform', self.platform, self.base_image])
-        self.log(f'building {self.deps_image} (the trixie pin-reference toolchain)')
+        self.log(f'building {self.deps_image} (the testing pin-reference toolchain)')
         flags = list(self.net_flags)
         if self.platform != 'linux/amd64':
             flags += ['--build-arg', f'ORACLE_PLATFORM={self.platform}']
@@ -567,6 +601,7 @@ class Provision:
     def in_image_command(self, args, flags=()):
         """The container command that runs build-oracle.sh with ARGS."""
         return [self.ctr, 'run', '--rm', '--platform', self.platform, *self.net_flags, *self.env_flags, *flags,
+                '-v', f'{self.root}:/opt/oracle-recipe:ro,z',
                 '-v', f'{self.root}/tools/oracle/build-oracle.sh:/usr/local/bin/build-oracle.sh:ro,z',
                 '-v', f'{self.root}/tools/lib/bash-floor.sh:/usr/local/lib/bash-floor.sh:ro,z',
                 '-v', f'{self.pin}:/usr/local/bin/oracle-pin.txt:ro,z',
@@ -575,6 +610,26 @@ class Provision:
 
     def pool_phase(self, label, cells, log, args):
         """Reuse #1233's exact pool phase and owned-container cancellation."""
+        if self.inside_image:
+            mappings = {'/opt/pinyin-oracle': self.oracle_root, '/build': self.cache / 'build',
+                        '/model-cache': self.model_cache}
+            for backend in cells:
+                arguments = []
+                for value in args:
+                    value = str(value).format(item=backend, jobs=self.jobs)
+                    for original, replacement in mappings.items():
+                        if value == original or value.startswith(original + '/'):
+                            value = str(replacement) + value[len(original):]
+                            break
+                    arguments.append(value)
+                self.log(f'{backend}: {label} with current pin/recipe')
+                with Path(str(log).format(item=backend)).open('wb') as output:
+                    status = run(['bash', self.root / 'tools/oracle/build-oracle.sh', *arguments],
+                                 env=dict(self.env, OXPINYIN_ORACLE_RECIPE_ROOT=str(self.root)),
+                                 stdout=output, heavy=True, check=False)
+                if status:
+                    return status
+            return 0
         flags = ['--name', f'oxpinyin-setup-{{token}}-{label}-{{item}}', '--label', 'oxpinyin.setup={token}',
                  '--cidfile', '{cidfile}', '--cpus', '{jobs}']
         owner = ['--container-runtime', shlex.quote(self.ctr), '--container-label', 'oxpinyin.setup']
@@ -589,7 +644,7 @@ class Provision:
         need = []
         for cell in self.cells:
             if self.libs_ok(cell):
-                self.log(f'{cell}: libraries already match oracle-pin.txt')
+                self.log(f'{cell}: libraries already match current pin/recipe and recorded bytes')
             else:
                 need.append(cell)
         if need and self.pull:
@@ -608,9 +663,9 @@ class Provision:
                 still = []
                 for cell in need:
                     if self.libs_ok(cell):
-                        self.log(f'{cell}: pulled libraries match oracle-pin.txt')
+                        self.log(f'{cell}: pulled libraries match current pin and recipe')
                     else:
-                        self.log(f'{cell}: pulled libraries do not match oracle-pin.txt; building instead')
+                        self.log(f'{cell}: pulled libraries have stale or invalid build provenance; building instead')
                         shutil.rmtree(self.oracle_root / cell, ignore_errors=True)
                         still.append(cell)
                 need = still
@@ -629,17 +684,9 @@ class Provision:
                                ['--libs-only', '--enable-libzhuyin', '--dbm', '{item}', '--work-dir', '/build/{item}',
                                 '--prefix', '/opt/pinyin-oracle/{item}', '--jobs', '{jobs}']):
                 self.die(f'the library build failed or was cancelled (logs: {self.cache}/build-<cell>.log)')
-        mismatch = False
         for cell in self.cells:
-            for library in ('libpinyin', 'libzhuyin'):
-                want = self.field(f'{library}_sha256_{cell}')
-                got = digest_file(self.oracle_root / cell / 'lib' / (library + '.so'))
-                if got != want:
-                    print(f'MISMATCH {cell} {library}\n  recorded: {want}\n  built:    {got}', file=sys.stderr)
-                    mismatch = True
-        if mismatch:
-            print(f'The recipe did not reproduce the recorded hashes on this host; the built\nlibraries are left in {self.oracle_root} for readelf/cmp against a reference.', file=sys.stderr)
-            raise Finished(3)
+            if not self.libs_ok(cell):
+                self.die(f'{cell}: stale pin/recipe or damaged build provenance after provisioning')
 
     def sound_tkrzw(self):
         if 'tkrzw' not in self.cells:
@@ -780,6 +827,9 @@ def main(argv=None):
     service = None
     try:
         with slot.cancellation_handlers():
+            if args[:1] == ['oracle']:
+                service = Provision()
+                return service.oracle(args[1:])
             if args[:1] == ['probe-host']:
                 library = probe_host(args[1] if len(args) > 1 else '')
                 if not library:

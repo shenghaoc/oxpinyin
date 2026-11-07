@@ -503,4 +503,125 @@ mod tests {
             )))
         ));
     }
+
+    /// A system store whose raw reads fail for chosen predecessors, with
+    /// the failure the pin's `Bigram::load` meets: an ordinary backend
+    /// failure, or Kyoto Cabinet's body read after a good size check. It
+    /// logs every read.
+    struct FailingStore {
+        backend: Vec<u32>,
+        after_check: Vec<u32>,
+        reads: Mutex<Vec<u32>>,
+    }
+
+    struct Shared(std::sync::Arc<FailingStore>);
+
+    impl oxpinyin_store::ReadStore for Shared {
+        fn open_read_only(_path: &Path) -> Result<Self, oxpinyin_store::StoreError> {
+            unreachable!("the double is built in memory")
+        }
+
+        fn get(
+            &self,
+            _table: &str,
+            key: &[u8],
+            value: &mut Vec<u8>,
+        ) -> Result<bool, oxpinyin_store::StoreError> {
+            oxpinyin_store::RawReadStore::get_raw(self, key, value)
+        }
+
+        fn scan(
+            &self,
+            _table: &str,
+            _lo: std::ops::Bound<&[u8]>,
+            _hi: std::ops::Bound<&[u8]>,
+            _visit: impl FnMut(&[u8], &[u8]) -> Result<oxpinyin_store::Flow, oxpinyin_store::StoreError>,
+        ) -> Result<(), oxpinyin_store::StoreError> {
+            unreachable!("the bigram reader never scans")
+        }
+
+        fn is_empty(&self, _table: &str) -> Result<bool, oxpinyin_store::StoreError> {
+            unreachable!("the bigram reader never asks")
+        }
+    }
+
+    impl oxpinyin_store::RawReadStore for Shared {
+        fn get_raw(
+            &self,
+            key: &[u8],
+            value: &mut Vec<u8>,
+        ) -> Result<bool, oxpinyin_store::StoreError> {
+            let token = u32::from_le_bytes(key.try_into().expect("a four-byte token key"));
+            self.0.reads.lock().unwrap().push(token);
+            value.extend_from_slice(b"stale");
+            if self.0.backend.contains(&token) {
+                return Err(oxpinyin_store::StoreError::Backend("injected".into()));
+            }
+            if self.0.after_check.contains(&token) {
+                return Err(oxpinyin_store::StoreError::ReadAfterCheck);
+            }
+            value.clear();
+            Ok(false)
+        }
+
+        fn contains_raw(&self, _key: &[u8]) -> Result<bool, oxpinyin_store::StoreError> {
+            unreachable!("the bigram reader never checks")
+        }
+    }
+
+    fn failing(
+        backend: &[u32],
+        after_check: &[u32],
+    ) -> (
+        BigramTable<crate::chewing_table::RawChewingDbm<Shared>>,
+        std::sync::Arc<FailingStore>,
+    ) {
+        let store = std::sync::Arc::new(FailingStore {
+            backend: backend.to_vec(),
+            after_check: after_check.to_vec(),
+            reads: Mutex::new(Vec::new()),
+        });
+        let table = BigramTable::new(crate::chewing_table::RawChewingDbm::new(Shared(
+            store.clone(),
+        )));
+        (table, store)
+    }
+
+    /// `Bigram::load` answers a failed read with false and a NULL gram
+    /// (`ngram_bdb.cpp:140-142`, `ngram_tkrzwdb.cpp:111-114` at 074a2219).
+    #[test]
+    fn a_failed_read_is_a_miss_with_the_value_cleared() {
+        let (table, _store) = failing(&[0x0100_0010], &[]);
+        let dbm = &table.dbm;
+        let mut value = b"left over".to_vec();
+        assert!(!ChewingDbm::get_bigram(dbm, &encode_token_key(0x0100_0010), &mut value).unwrap());
+        assert!(value.is_empty());
+        assert!(table.load_gram(0x0100_0010).unwrap().is_none());
+    }
+
+    /// The miss is not kept: the pin reads the handle on every load.
+    #[test]
+    fn a_failed_sentence_start_read_is_read_again() {
+        let (table, store) = failing(&[SENTENCE_START], &[]);
+        for _ in 0..3 {
+            assert!(table.load_gram(SENTENCE_START).unwrap().is_none());
+        }
+        assert_eq!(
+            *store.reads.lock().unwrap(),
+            [SENTENCE_START, SENTENCE_START, SENTENCE_START]
+        );
+    }
+
+    /// Kyoto Cabinet's body read after a good size check is the pin's
+    /// `check_result` assert (`ngram_kyotodb.cpp:138`): not a miss.
+    #[test]
+    fn a_read_after_check_failure_stays_an_error() {
+        let (table, _store) = failing(&[], &[0x0100_0010]);
+        assert!(matches!(
+            table.load_raw_successors(0x0100_0010),
+            Err(DictError::Table(crate::TableError::Store(
+                oxpinyin_store::StoreError::ReadAfterCheck
+            )))
+        ));
+    }
 }

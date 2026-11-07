@@ -36,28 +36,6 @@ partition of this API's string. The pin does not render item
 text during segmentation, so #894's text-output records cannot certify
 the token-result partition.
 
-## Backend failures during prefix consultation
-
-These baseline rows concern a reachable scalar prefix followed by a non-scalar,
-with consistent scalar phrase keys/items. They distinguish a returned
-read failure from process faults or invalid memory. The wrappers never
-write a gram during segmentation.
-
-| Failure point | Propagation and observable state | Verdict |
-| --- | --- | --- |
-| bdb `DB->get` returns an ordinary silent miss/error without poisoning its environment | `ngram_bdb.cpp:140-146` leaves the gram NULL. The other gram or unigram path may score the prefix, but final result stays false/zeros. | Identical for that explicitly silent, non-poisoning return. Not all bdb failures have these properties. |
-| bdb reaches a damaged hash key's format error | `__ham_getindex` -> `__db_pgfmt` prints diagnostics and poisons the environment; later reads can emit `DB_RUNRECOVERY` diagnostics. | [Separate source-established defect](918-prefix-bdb-format-error.md). The published amd64/arm64 libraries return from panic; this is not an abort/class-(c) escape. |
-| bdb unrecoverable OS read error | `src/mp/mp_bh.c:238-267` calls `__os_io`; `src/os/os_rw.c:21-115,145-185` falls back to the checked read path and reports its error through `__db_syserr`. The libpinyin wrapper's false return does not erase stderr. | Diagnostic difference is established for the reached error branch; no exact address-dependent diagnostic bytes or error frequency are asserted. No blanket quirk admission. |
-| kc first `check` fails | `ngram_kyotodb.cpp:130-134` returns no gram. `HashDB::read_record` errors (`kchashdb.h:2962-3015`) set private error/FFATAL, but default NULL loggers suppress its report calls. The system HashDB is read-only; its `accept` does not test FFATAL, and `close`/`synchronize_impl` write metadata only under `writer_` (`:556-600,933-956,2384-2418`). User StashDB reads are in-memory NOP visitors (`kcstashdb.h:1285-1348`). No public API reads these private error/flag slots. | Same final false/zeros and no public/persistent change for a returned first-check error, assuming the remaining reads are safe. This closes the earlier FFATAL-state question for this read-only system handle. |
-| kc first check succeeds, second get fails or changes size | `ngram_kyotodb.cpp:138-139` asserts the saved size equals get's result. A real later IO failure in `read_record` can return -1; source order is unambiguous. | [Defined assert, class (c)](918-prefix-kc-read-assert.md); shortcut skips the required warning. This is a distinct fault schedule from a short value, not a claim that an immutable healthy DB spontaneously changes size. No runtime injection performed. |
-| tkrzw metadata/body/file read returns Status failure | `HashRecord::ReadMetadataKey/ReadBody` (`tkrzw_dbm_hash_impl.cc:53-185`) returns the failure; HashDB's read-only `ProcessImpl` returns it without changing `healthy_` or invoking a writer/update logger (`tkrzw_dbm_hash.cc:1427-1480`). `MemoryMap{Parallel,Atomic}File::Read` (`tkrzw_file_mmap.cc:433-446,1004-1017`) returns status silently. libpinyin supplies no gram. | Same final false/zeros for these returning failures, with no observable learned/persistent state. Memory mapping SIGBUS, allocation termination or arbitrary corrupted-pointer execution is not a Status-return path. |
-
-The source distinguishes backing-store corruption from malformed gram
-**values** in an otherwise healthy DB. The latter reach the common
-`SingleGram` code and its existing class-(b)/(c) obligations regardless
-of backend. Replacing the shortcut's classifier cannot discard these
-obligations merely because the text is non-scalar.
-
 ## Every neighboring helper caller
 
 The caller list in the entry audit is complete for production references
@@ -239,45 +217,7 @@ The phrase-segment family's G1 partitions are source-complete with these
 verdicts. G1 as a whole remains partial for the other families in the
 ledger, and this closure is not a removal clearance.
 
-## Current prefix implementation and remaining gates
-
-The raw UCS-4 span DP replaces the unconditional bypass for the scalar
-prefix. It processes the prefix in the pin's order and can also match a
-raw non-scalar key; the short-gram path is identical under class (c), with
-the normal false/warning/old-result refusal. Sound completion publishes
-the full-length zero-token result silently; a raw key match publishes
-true/token. The [entry](918-prefix-lookup.md) names tests and gates.
-
-Returned backend failures keep their separate lifecycle. The pin wrappers
-above leave a failed gram NULL and continue. In Rust,
-`runtime/src/lib.rs::RuntimeLm::merged_row` first reads the user value,
-then `data/src/lm/mod.rs::BigramLanguageModel::load_merged_row` reads the
-system value. `data/src/bigram_table.rs::BigramTable::load_raw_successors`
-propagates backend errors and also rejects empty/partial system values.
-`store/src/bdb/ffi.rs::Db::get` maps every status except DB_NOTFOUND to an
-error and is a real libdb `DB->get`, so libdb's own diagnostic and
-environment panic happen; `kyotocabinet/ffi.rs::Db::get_bigram` performs
-the pin's `check`-then-`get` and reports a body failure after a successful
-check as `StoreError::ReadAfterCheck`; `tkrzw/mod.rs::db_get` propagates
-its status. `engine/src/phrase.rs::step_costs` converts an ordinary
-failure to `EngineError::Scoring` and a KC checked-read failure to
-`EngineError::ReadAfterCheck`. The facade warning helper recognizes the
-two lookup-gram refusal variants and `ReadAfterCheck`: the KC assert is
-class (c), false with exactly one warning and the old result kept. A bdb
-format error has already written its diagnostics and poisoned the handle;
-the propagated error preserves the old result while the pin may continue
-to its length-sized zero result. That surviving ordinary error-lifecycle
-difference is **unadmitted and separate**. The ten-case gate does not
-certify the same-data backend diagnostic/handle-state details.
-
-The row-85 warning does not require a new policy exception; the earlier
-scope conflict was resolved by the explicit prefix-processing ruling.
-No blanket ruling is inferred for the remaining error-lifecycle
-difference or the other neighboring callers. These are not grounds to
-remove the GLib call. Named baseline store-error paths and all listed
-caller boundaries have been traced; the adjacent NULL/zero-copy compiled
-outcome and whole-process allocation/extreme-size behavior are closed in
-the G1 section above. No unavailable artifact is asserted.
+## Completion gate
 
 Completion gate (2026-10-24 UTC, linux/amd64): `cells-for-diff.py`
 selected bdb, kc and tkrzw (store and backend-feature checks fired), and
@@ -287,6 +227,5 @@ cases and both raw-key cases DIFFER and the six controls MATCH; after
 restoring the raw span lookup and rebuilding, the same ten cases returned
 10/10 MATCH. `cargo test -p` for the eight changed crates, clippy on those
 crates and `cargo fmt --all -- --check` passed. Stripped shipping-library
-sizes are recorded in the PR. These results do not certify the separate
-error-lifecycle difference above, and full affected-family removal
-coverage is not claimed.
+sizes are recorded in the PR. Full affected-family removal coverage is
+not claimed.

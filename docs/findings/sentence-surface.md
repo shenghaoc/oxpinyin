@@ -1130,7 +1130,7 @@ sides and of `rongkan…` on the subject is therefore not read here.
 
 The unchanged `fixtures/w4/oracle-sentence-surface.txt` holds each complete
 pin observation, including the six candidate rows.
-`fixtures/w4/sentence-surface-residuals.txt` uses the same four-column TSV
+`crates/oxpinyin-runtime/tests/fixtures/sentence-surface/residuals.txt` uses the same four-column TSV
 format to bind all nine complete subject observations. `sentence_tail::measure`
 compares every comparable input to that binding, or to the pin where no
 residual is declared. The gate checks guessed status, the entire indexed
@@ -1254,7 +1254,7 @@ with n-best index 2.
 Both are POLICY-ACCEPTED under the existing S2 ruling, with the same
 disposition as `fupie` above. They exist only on the `phrases` profile,
 so the fresh-profile fixtures do not hold them and
-`fixtures/w4/sentence-surface-residuals.txt` is unchanged. The preflight
+`crates/oxpinyin-runtime/tests/fixtures/sentence-surface/residuals.txt` is unchanged. The preflight
 compares complete observations and has no policy verdict, so its
 `phrases` witness leaves both inputs out (`WITNESS_EXCLUSIONS`).
 

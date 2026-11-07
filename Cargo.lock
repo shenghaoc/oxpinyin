@@ -957,7 +957,6 @@ dependencies = [
  "oxpinyin-core",
  "oxpinyin-data",
  "oxpinyin-store",
- "tempfile",
 ]
 
 [[package]]

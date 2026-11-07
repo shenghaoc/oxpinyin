@@ -232,7 +232,7 @@ jobs:
           rust-cache: 'true'
           rust-cache-key: store-backend-${{ matrix.backend }}
           # The KC and BDB children also run the contract references (contract-verify); the
-          # tkrzw child fetches the system data of runtime's candidate_surface test.
+          # tkrzw child fetches the system data of the package tests in runtime and data.
           uv: ${{ needs.changes.outputs.reuse != 'true' }}
 
       - name: Install build dependencies (apt)
@@ -280,13 +280,11 @@ jobs:
       # The KMM crate is backend-dependent since 2026-10-31 UTC: its
       # operations run on the selected store backend and its integration
       # tests spawn the seven utilities against `fixtures/w3/<backend>`.
-      # It therefore runs in this matrix. The consolidated training package
-      # stays too: its segment and eval stages use the selected store
-      # backend, and the other stage modules compile against that selection.
+      # It therefore runs in this matrix. The training package stays too:
+      # its eval decode compiles against the selected store backend.
       # What stays is everything a backend choice can change: the store
       # itself, the user store, data readers, runtime, engine, facade, both
-      # C ABIs, the training package (segment and eval
-      # modules) and KMM.
+      # C ABIs, the training package and KMM.
       - name: Provide the pinned system data
         if: matrix.backend == 'tkrzw' && needs.changes.outputs.reuse != 'true'
         uses: ./.github/actions/contract-data

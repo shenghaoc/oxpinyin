@@ -1381,9 +1381,10 @@ fn import_iterators_add_per_phrase_and_arm_modified_at_end() {
     let user_dir = TempUserDir::new("import");
     let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
 
-    // Null-safety first: begin/add/end all tolerate null exactly like the
-    // export quartet.
-    assert!(pinyin_begin_add_phrases(ptr::null_mut(), 7).is_null());
+    // Null-safety first: add/end tolerate null exactly like the export
+    // quartet. `begin` with a NULL context is covered by
+    // `null_context_import_handle_is_returned_and_freed`: the pin returns an
+    // iterator there (`pinyin.cpp:506-512`).
     assert!(!pinyin_iterator_add_phrase(
         ptr::null_mut(),
         cstr("你好").as_ptr(),
@@ -3958,5 +3959,311 @@ fn user_gram_duplicate_export_lists_every_stored_item() {
             ExportStep::NoNext,
             ExportStep::NoNext,
         ]
+    );
+}
+
+// ---------------------------------------------------------------------
+// NULL arguments the pin never reads (row 41's non-crashing probes). Each
+// test hands valid objects and the one NULL argument the pin ignores; the
+// expectations are the pin's answer at 074a2219 (cited beside each), not a
+// pin run.
+// ---------------------------------------------------------------------
+
+/// A parsed pinyin key and key rest at offset 0 of `text`, borrowed from the
+/// process-wide key slots (hold `key_slot_guard`).
+fn parsed_key_and_rest(
+    instance: *mut PinyinInstance,
+    text: &str,
+) -> (
+    *mut crate::types::ChewingKey,
+    *mut crate::types::ChewingKeyRest,
+) {
+    let input = cstr(text);
+    assert_eq!(
+        pinyin_parse_more_full_pinyins(instance, input.as_ptr()),
+        text.len()
+    );
+    let mut key = ptr::null_mut();
+    assert!(crate::cursor::pinyin_get_pinyin_key(
+        instance,
+        0,
+        &raw mut key
+    ));
+    let mut rest = ptr::null_mut();
+    assert!(crate::cursor::pinyin_get_pinyin_key_rest(
+        instance,
+        0,
+        &raw mut rest
+    ));
+    (key, rest)
+}
+
+/// `pinyin_get_candidate_type` never reads `instance` (`pinyin.cpp:2866-2871`):
+/// it writes `*type` and answers `true`.
+#[test]
+fn null_instance_candidate_type_answers() {
+    let user = TempUserDir::new("null-instance-candidate-type");
+    let (_context, instance) = open(user.path.to_str().expect("UTF-8 path"));
+    let cand = candidate(instance, "nihao", 0);
+    let mut kind = lookup_candidate_type_t::ZOMBIE_CANDIDATE;
+    assert!(crate::candidates::pinyin_get_candidate_type(
+        ptr::null_mut(),
+        cand,
+        &raw mut kind
+    ));
+    assert_eq!(kind, lookup_candidate_type_t::NORMAL_CANDIDATE);
+}
+
+/// `pinyin_get_candidate_string` never reads `instance` (`pinyin.cpp:2873-2878`).
+#[test]
+fn null_instance_candidate_string_answers() {
+    let user = TempUserDir::new("null-instance-candidate-string");
+    let (_context, instance) = open(user.path.to_str().expect("UTF-8 path"));
+    let cand = candidate(instance, "nihao", 0);
+    let mut text = ptr::null();
+    assert!(crate::candidates::pinyin_get_candidate_string(
+        ptr::null_mut(),
+        cand,
+        &raw mut text
+    ));
+    assert!(!text.is_null());
+    // SAFETY: the candidate text is NUL-terminated and borrowed from the instance.
+    let text = unsafe { std::ffi::CStr::from_ptr(text) };
+    assert_eq!(text.to_str().expect("UTF-8"), "你好");
+}
+
+/// `pinyin_get_candidate_nbest_index` never reads `instance`
+/// (`pinyin.cpp:2880-2886`; the assert at `:2883` reads the candidate).
+#[test]
+fn null_instance_candidate_nbest_index_answers() {
+    let user = TempUserDir::new("null-instance-nbest-index");
+    let (_context, instance) = open(user.path.to_str().expect("UTF-8 path"));
+    let input = cstr("nihao");
+    assert_eq!(pinyin_parse_more_full_pinyins(instance, input.as_ptr()), 5);
+    assert!(pinyin_guess_sentence(instance));
+    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+    let mut cand = ptr::null_mut();
+    assert!(pinyin_get_candidate(instance, 0, &raw mut cand));
+    let mut index = u8::MAX;
+    assert!(crate::candidates::pinyin_get_candidate_nbest_index(
+        ptr::null_mut(),
+        cand,
+        &raw mut index
+    ));
+    assert_eq!(index, 0);
+}
+
+/// `pinyin_is_user_candidate` never reads `instance` (`pinyin.cpp:3712-3724`):
+/// a normal candidate in `USER_DICTIONARY` answers `true`.
+#[cfg(unix)]
+#[test]
+fn null_instance_is_user_candidate_answers() {
+    let user = TempUserDir::new("null-instance-is-user");
+    let (context, instance) = open(user.path.to_str().expect("UTF-8 path"));
+    let iter = pinyin_begin_add_phrases(context, USER_DICTIONARY);
+    assert!(pinyin_iterator_add_phrase(
+        iter,
+        cstr("你号").as_ptr(),
+        cstr("ni3'hao4").as_ptr(),
+        1
+    ));
+    pinyin_end_add_phrases(iter);
+    let _ = candidate(instance, "nihao", 0);
+    let mut count = 0;
+    assert!(crate::candidates::pinyin_get_n_candidate(
+        instance,
+        &raw mut count
+    ));
+    let mut found = false;
+    for index in 0..count {
+        let mut cand = ptr::null_mut();
+        assert!(pinyin_get_candidate(instance, index, &raw mut cand));
+        if pinyin_is_user_candidate(instance, cand) {
+            assert!(pinyin_is_user_candidate(ptr::null_mut(), cand));
+            found = true;
+        }
+    }
+    assert!(found, "the imported user phrase is a candidate");
+}
+
+/// The four string renderers never read `instance` (`pinyin.cpp:2707-2749`).
+#[test]
+fn null_instance_key_string_renderers_answer() {
+    let _slots = crate::test_support::key_slot_guard();
+    let user = TempUserDir::new("null-instance-key-strings");
+    let (_context, instance) = open(user.path.to_str().expect("UTF-8 path"));
+    let (key, _) = parsed_key_and_rest(instance, "ni3");
+    let render = |getter: extern "C" fn(
+        *mut PinyinInstance,
+        *mut crate::types::ChewingKey,
+        *mut *mut std::ffi::c_char,
+    ) -> bool| {
+        let mut out = ptr::null_mut();
+        assert!(getter(ptr::null_mut(), key, &raw mut out));
+        crate::ffi::take_owned_cstr(out)
+    };
+    assert_eq!(render(crate::cursor::pinyin_get_pinyin_string), "ni3"); // :2718-2727
+    assert_eq!(render(crate::cursor::pinyin_get_zhuyin_string), "ㄋㄧˇ"); // :2707-2716
+    assert_eq!(render(crate::keys::pinyin_get_luoma_pinyin_string), "ni3"); // :2729-2738
+    assert_eq!(
+        render(crate::keys::pinyin_get_secondary_zhuyin_string),
+        "ni3"
+    ); // :2740-2749
+}
+
+/// `pinyin_get_pinyin_strings` never reads `instance` (`pinyin.cpp:2751-2763`);
+/// each of `shengmu` and `yunmu` is optional.
+#[test]
+fn null_instance_pinyin_strings_answer() {
+    let _slots = crate::test_support::key_slot_guard();
+    let user = TempUserDir::new("null-instance-pinyin-strings");
+    let (_context, instance) = open(user.path.to_str().expect("UTF-8 path"));
+    let (key, _) = parsed_key_and_rest(instance, "ni3");
+    let (mut shengmu, mut yunmu) = (ptr::null_mut(), ptr::null_mut());
+    assert!(crate::cursor::pinyin_get_pinyin_strings(
+        ptr::null_mut(),
+        key,
+        &raw mut shengmu,
+        &raw mut yunmu
+    ));
+    assert_eq!(crate::ffi::take_owned_cstr(shengmu), "n");
+    assert_eq!(crate::ffi::take_owned_cstr(yunmu), "i");
+    assert!(crate::cursor::pinyin_get_pinyin_strings(
+        ptr::null_mut(),
+        key,
+        ptr::null_mut(),
+        ptr::null_mut()
+    ));
+}
+
+/// `pinyin_get_pinyin_is_incomplete` never reads `instance`
+/// (`pinyin.cpp:2765-2774`): an initial-only key answers `true`.
+#[test]
+fn null_instance_is_incomplete_answers() {
+    let _slots = crate::test_support::key_slot_guard();
+    let user = TempUserDir::new("null-instance-is-incomplete");
+    let (context, instance) = open(user.path.to_str().expect("UTF-8 path"));
+    assert!(pinyin_set_options(context, 0x28));
+    let (key, _) = parsed_key_and_rest(instance, "n");
+    assert!(crate::keys::pinyin_get_pinyin_is_incomplete(
+        ptr::null_mut(),
+        key
+    ));
+    let (complete, _) = parsed_key_and_rest(instance, "ni3");
+    assert!(!crate::keys::pinyin_get_pinyin_is_incomplete(
+        ptr::null_mut(),
+        complete
+    ));
+}
+
+/// `pinyin_get_pinyin_key_rest_positions` never reads `instance`, and reads
+/// `key_rest` only to fill a non-NULL `begin` or `end`
+/// (`pinyin.cpp:2967-2977`).
+#[test]
+fn key_rest_positions_follow_the_pins_reads() {
+    let _slots = crate::test_support::key_slot_guard();
+    let user = TempUserDir::new("key-rest-positions-null");
+    let (_context, instance) = open(user.path.to_str().expect("UTF-8 path"));
+    let (_, rest) = parsed_key_and_rest(instance, "ni3");
+    let (mut begin, mut end) = (u16::MAX, u16::MAX);
+    // NULL instance: answered (`:2967-2977` never reads it).
+    assert!(crate::cursor::pinyin_get_pinyin_key_rest_positions(
+        ptr::null_mut(),
+        rest,
+        &raw mut begin,
+        &raw mut end
+    ));
+    assert_eq!((begin, end), (0, 3));
+    // NULL `key_rest` with both outs NULL: no read, `true` (`:2970-2975`).
+    assert!(crate::cursor::pinyin_get_pinyin_key_rest_positions(
+        instance,
+        ptr::null_mut(),
+        ptr::null_mut(),
+        ptr::null_mut()
+    ));
+    // NULL `key_rest` with an out: the pin reads it (row 41), so this stays guarded.
+    begin = u16::MAX;
+    assert!(!crate::cursor::pinyin_get_pinyin_key_rest_positions(
+        instance,
+        ptr::null_mut(),
+        &raw mut begin,
+        ptr::null_mut()
+    ));
+    assert!(!crate::cursor::pinyin_get_pinyin_key_rest_positions(
+        instance,
+        ptr::null_mut(),
+        ptr::null_mut(),
+        &raw mut end
+    ));
+    assert_eq!(begin, u16::MAX);
+}
+
+/// `pinyin_get_pinyin_key_rest_length` never reads `instance`
+/// (`pinyin.cpp:2979-2984`).
+#[test]
+fn null_instance_key_rest_length_answers() {
+    let _slots = crate::test_support::key_slot_guard();
+    let user = TempUserDir::new("null-instance-key-rest-length");
+    let (_context, instance) = open(user.path.to_str().expect("UTF-8 path"));
+    let (_, rest) = parsed_key_and_rest(instance, "ni3");
+    let mut length = u16::MAX;
+    assert!(crate::cursor::pinyin_get_pinyin_key_rest_length(
+        ptr::null_mut(),
+        rest,
+        &raw mut length
+    ));
+    assert_eq!(length, 3);
+}
+
+/// `pinyin_begin_add_phrases` stores the context unread and returns the
+/// iterator (`pinyin.cpp:506-512`). `pinyin_iterator_add_phrase` returns
+/// `false` before it reads the context for a NULL phrase (`:624-625`) and
+/// where it would read it (`_add_phrase`, `:526`) the pin crashes (row 41);
+/// `pinyin_end_add_phrases` reads it at `:657` (row 41), so the handle is freed.
+#[test]
+fn null_context_import_handle_is_returned_and_freed() {
+    let iter = pinyin_begin_add_phrases(ptr::null_mut(), 1);
+    assert!(!iter.is_null());
+    assert!(!pinyin_iterator_add_phrase(
+        iter,
+        ptr::null(),
+        cstr("ni3'hao3").as_ptr(),
+        1
+    ));
+    assert!(!pinyin_iterator_add_phrase(
+        iter,
+        cstr("你好").as_ptr(),
+        cstr("ni3'hao3").as_ptr(),
+        1
+    ));
+    pinyin_end_add_phrases(iter);
+}
+
+/// The index assert (`pinyin.cpp:466`) precedes any read of the context, so a
+/// NULL context aborts for index 16; an in-range non-GBK index answers
+/// `false` (`:470-471`) without reading it.
+#[test]
+fn null_context_unload_phrase_library_orders_assert_first() {
+    assert!(!crate::config::pinyin_unload_phrase_library(
+        ptr::null_mut(),
+        2
+    ));
+    crate::test_support::assert_aborts(
+        "e2e_tests::null_context_unload_phrase_library_orders_assert_first",
+        || {
+            crate::config::pinyin_unload_phrase_library(ptr::null_mut(), 16);
+        },
+    );
+}
+
+/// `pinyin_unload_addon_phrase_library`: the assert at `pinyin.cpp:499`
+/// precedes the context read at `:502`.
+#[test]
+fn null_context_unload_addon_phrase_library_aborts_on_index_16() {
+    crate::test_support::assert_aborts(
+        "e2e_tests::null_context_unload_addon_phrase_library_aborts_on_index_16",
+        || {
+            crate::config::pinyin_unload_addon_phrase_library(ptr::null_mut(), 16);
+        },
     );
 }

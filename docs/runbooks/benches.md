@@ -15,6 +15,66 @@ Callgrind and Massif are attribution tools: a section that uses them is an
 attribution procedure, used only after a cheaper measurement shows a gap,
 once, on the operation that shows it.
 
+## Where measurements run
+
+Pin comparisons run locally in the `performance` target of
+`tools/oracle/Dockerfile.oracle`, inheriting the oracle's unpinned Debian testing `deps`
+stage (`debian:testing`). This covers `perf-baseline`, `perf-matrix`,
+`perf-same-data`, `callgrind-differential`, `steady-comparison`,
+`stack-comparison`, `shipped-check`, `tree-recipe-control`, `rss-diag` and
+`system-import-profile`. Build both the pin and subject inputs there. Never
+build or run the oracle on GitHub Actions.
+
+```sh
+just performance
+# Inside the shell (matrix also prepares the Tkrzw and Kyoto pin data):
+uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.measure.campaigns matrix
+PERF_RUNS=1 PERF_RAM_RUNS=1 PERF_CYCLES=2 MATRIX_OUT=/performance/smoke \
+  uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev measure perf-matrix
+```
+
+`just performance --build-only` builds without entering; `--skip-build` enters
+an already built matching image. Architecture follows the host, with no
+platform option. Conflicting platform environment overrides are refused;
+never collect timing or memory under emulation. The oracle's amd64 default
+remains for correctness captures only. The local Cargo/model cache uses a
+named volume (`--volume NAME` selects another); source is mounted read-only at `/repo`.
+All campaign defaults are `/performance/results/<recipe>/`; existing explicit
+output overrides remain supported. The harness and scratch builds live under
+`/performance`. Prepared pin prefixes persist there too: preparation validates the
+prefix with `tools.oracle.image.prefix_ok` (pin commits, recipe, cached libraries),
+requires its `versions.txt` to equal the running image's inventory, so pin and subject
+share one base, and checks every file in both recorded data manifests before reuse. Changed or damaged inputs are rebuilt. Rosetta Python is refused; use native Python.
+`--cells` is valid only with `oracle` preparation.
+
+Preparation lives in the existing `tools/dev/measure/campaigns.py`, not in
+image layers. Select `callgrind` for profiled/shipping/allocation Tkrzw arms,
+or `oracle --cells tkrzw` for pin data only. Model data remains local.
+Both arms load Debian's packaged libtkrzw: the pin links it in the `build` stage,
+the subject finds it through pkg-config, and `OXPINYIN_TKRZW_LIBRARY` points the
+runtime check at it. The repository's tkrzw source build stays for CI and other hosts.
+The matrix preparation creates separate oxpinyin-generated data, retaining
+its four-arm meaning. Callgrind preparation checks debug-info neutrality and
+collection anchors. Additional base/PR revisions for steady/stack/control
+campaigns must also be built in this testing environment, with separate Cargo
+target directories. Set the existing recipe options to their resulting paths.
+
+`startup`, `profile-w8`, `cold-qualify`, `just bench` and diagnostic probes
+remain native, unchanged. Ordinary development remains native.
+
+The nightly `perf-snapshot` measures only oxpinyin in a plain `debian:testing`
+container, like every other Linux CI job. No oracle stage runs on Actions.
+Snapshot provenance includes the container tag and OS release as well as
+compiler/libc/profiler versions. The baseline cache restores only the exact
+environment-key prefix, with no cross-environment fallback: changing the tag or
+release starts a separate series rather than reporting a false regression.
+There is no snapshot-only dispatch input; both platform-only inputs must be
+false, which also runs the other applicable nightly jobs.
+
+The nightly snapshot and `profile-w8` still depend on `bisect.c --perf`.
+The capture plan deletes the C drivers at its end, so those two need a
+replacement before `bisect.c` can go.
+
 ## Shipping measurement inputs
 
 Use ordinary shipping builds. See the [function-layout ruling](../packaging.md#function-layout).
@@ -1268,19 +1328,16 @@ byte-identical stdout against the historical executable.
 `just measure perf-baseline` measures speed, installed size
 and RSS with one dlopen harness (`bisect --perf`), alternating oracle
 and oxpinyin processes. It needs the pin-built oracle, `cargo-c` and
-the model cache. The reproducible form is the perf-matrix container, which
-carries uv and the managed interpreter (it has no `just`):
+the model cache. Enter `just performance`, prepare `oracle --cells tkrzw`
+as above, then run:
 
 ```sh
-docker build --platform linux/arm64 -f tools/bisection/Dockerfile.perf-matrix -t oxpinyin-matrix .
-docker run --rm -v /tmp/perf-out:/out -e PINYIN_ORACLE_PREFIX=/opt/libpinyin-tkrzw \
-    -e OXPINYIN_PERF_WORK=/out oxpinyin-matrix \
-    uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev measure perf-baseline
+uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev measure perf-baseline
 ```
 
 Knobs: `PERF_RUNS`, `PERF_CYCLES`, `PERF_RAM_RUNS`, `PERF_CPU` (pin a
 CPU; do it). `measure perf-matrix` is the four-backend
-form, and the image's default command. For a parent-vs-HEAD comparison use one `CARGO_TARGET_DIR` per
+form; prepare its arms with the `matrix` command above. For a parent-vs-HEAD comparison use one `CARGO_TARGET_DIR` per
 tree: cargo's freshness check is fooled by `git archive` mtimes and will
 reuse the wrong artifacts otherwise.
 

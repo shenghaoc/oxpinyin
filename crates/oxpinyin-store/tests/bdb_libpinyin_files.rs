@@ -1,168 +1,81 @@
-//! The Berkeley DB backend against files the real libpinyin wrote.
+//! The Berkeley DB backend against a file the real libpinyin wrote, and its
+//! user-bigram seam.
 //!
 //! Every other test in this crate reads files oxpinyin itself produced,
 //! which proves the backend is self-consistent and nothing about
-//! compatibility. These read a data directory a BerkeleyDB-built
-//! libpinyin actually installed — the same system libdb this backend
-//! links, through the same seams production uses
-//! (`RawReadStore::open_hash_read_only` for `bigram.db`,
-//! `ReadStore::open_read_only` for the B-tree index tables).
+//! compatibility. `fixtures/w3/db/k_mixture_model.db` is the pin's own
+//! `import_k_mixture_model` output (`fixtures/w3/README.md`): a `DB_HASH`
+//! file libpinyin's libdb wrote, read here through the seam production uses
+//! for `bigram.db` (`RawReadStore::open_hash_read_only`).
 //!
 //! The write gate is the other file: `examples/bdb_write_profile.rs`
 //! writes a `bigram.db` through the backend's own `write_user_bigram`
 //! seam for `tools/bdb/hash-walk.c`, a C harness with no Rust in it, to
 //! check — a drop-in that trains a user's profile writes back into
 //! libpinyin's files, and a mismatch there is silent corruption.
-//!
-//! # Presence
-//!
-//! These tests need a real installed data directory, so they are
-//! `#[ignore]`d: run them with `--include-ignored`, and a missing
-//! directory is then a **failure**, never a skip — the same discipline
-//! every other real-input test in the tree follows
-//! (`docs/testing/README.md`). Point `OXPINYIN_LIBPINYIN_DATA_DIR` at a
-//! BerkeleyDB-built libpinyin data directory (the pin's configure
-//! default; the oracle cell builds one, and a stock Debian/Ubuntu
-//! `libpinyin-data` install provides `/usr/lib/<triplet>/libpinyin/data`).
 
 #![cfg(feature = "bdb")]
 
 use std::ops::Bound;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use oxpinyin_store::{BdbStore, RawReadStore, ReadStore, StoreError, WriteStore};
 
-/// Where the distro installs libpinyin's runtime data: `$(libdir)`
-/// `/libpinyin/data` (`data/Makefile.am`'s `libpinyin_dbdir`) — a
-/// multiarch *library* path, not `$datadir`. Anything looking under
-/// `share` finds nothing.
-fn system_data_dir() -> PathBuf {
-    if let Some(dir) = std::env::var_os("OXPINYIN_LIBPINYIN_DATA_DIR") {
-        return PathBuf::from(dir);
-    }
-    for dir in [
-        "/usr/lib/x86_64-linux-gnu/libpinyin/data",
-        "/usr/lib/aarch64-linux-gnu/libpinyin/data",
-        "/usr/lib64/libpinyin/data",
-        "/usr/lib/libpinyin/data",
-    ] {
-        if Path::new(dir).join("bigram.db").is_file() {
-            return PathBuf::from(dir);
-        }
-    }
-    panic!(
-        "missing input: no libpinyin data directory found — set \
-         OXPINYIN_LIBPINYIN_DATA_DIR to a BerkeleyDB-built libpinyin's \
-         data dir (the oracle cell installs one; a stock Debian/Ubuntu \
-         libpinyin-data provides /usr/lib/<triplet>/libpinyin/data)"
-    );
+/// Native-endian `u32` words: the k-mixture records are arrays of them
+/// (`utils/training/k_mixture_model.h:110-154` at libpinyin 074a2219).
+fn words(values: &[u32]) -> Vec<u8> {
+    values
+        .iter()
+        .flat_map(|value| value.to_ne_bytes())
+        .collect()
 }
 
-/// Every row of the system `bigram.db`, sorted by key — the shape
-/// `persistence::load_bigram` consumes.
-fn bigram_rows(dir: &Path) -> Vec<(Vec<u8>, Vec<u8>)> {
-    let store = BdbStore::open_hash_read_only(&dir.join("bigram.db"))
-        .expect("the system bigram opens as a Berkeley DB hash");
+#[test]
+fn a_pin_written_hash_walks_whole_and_ordered() {
+    const START: u32 = 1;
+    const NIHAO: u32 = 16_802_309;
+    const ZHONGGUO: u32 = 16_817_937;
+    // `fixtures/w3/kmm/k_mixture_model.text` in the pin's record layout:
+    // an eight-byte zero key holding `KMMP` and the magic header `WC N
+    // total_freq` (`flexible_ngram_bdb.h:338-356` at 074a2219), then
+    // one token key per row holding `WC freq` and each item's `token WC
+    // N_n_0 n_1 Mr`, in token order.
+    let mut magic = b"KMMP".to_vec();
+    magic.extend(words(&[3, 1, 3]));
+    let expected: Vec<(Vec<u8>, Vec<u8>)> = vec![
+        (vec![0; 8], magic),
+        (
+            words(&[START]),
+            words(&[2, 0, NIHAO, 1, 1, 1, 1, ZHONGGUO, 1, 1, 1, 1]),
+        ),
+        (words(&[NIHAO]), words(&[0, 2])),
+        (words(&[ZHONGGUO]), words(&[1, 1, NIHAO, 1, 1, 1, 1])),
+    ];
+
+    let path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/w3/db/k_mixture_model.db");
+    let store = BdbStore::open_hash_read_only(&path).expect("a Berkeley DB hash");
     let mut rows = Vec::new();
     store
         .range_raw(Bound::Unbounded, Bound::Unbounded, |key, value| {
             rows.push((key.to_vec(), value.to_vec()));
             Ok(())
         })
-        .expect("the system bigram walks");
-    rows
-}
+        .expect("the file walks");
+    // Hash containers have no key order of their own; `range_raw`'s contract
+    // is ascending key bytes regardless.
+    let mut sorted = expected.clone();
+    sorted.sort();
+    assert_eq!(rows, sorted);
+    assert_eq!(store.count_raw().expect("count"), 4);
 
-#[test]
-#[ignore = "needs a real libpinyin BerkeleyDB data dir (OXPINYIN_LIBPINYIN_DATA_DIR); run with --include-ignored"]
-fn the_real_system_bigram_walks_whole_and_ordered() {
-    let rows = bigram_rows(&system_data_dir());
-    assert!(
-        !rows.is_empty(),
-        "an installed system bigram is never empty"
-    );
-    // Hash containers have no key order of their own; `range_raw`'s
-    // contract is ascending key bytes regardless, and the walk must be
-    // both complete and duplicate-free against `count_raw`'s count.
-    let mut sorted = rows.clone();
-    sorted.sort_by(|a, b| a.0.cmp(&b.0));
-    sorted.dedup_by(|a, b| a.0 == b.0);
-    assert_eq!(
-        rows, sorted,
-        "range_raw must walk a hash in ascending key order"
-    );
-    let store = BdbStore::open_hash_read_only(&system_data_dir().join("bigram.db"))
-        .expect("reopen for the count");
-    assert_eq!(store.count_raw().expect("count"), rows.len() as u64);
-}
-
-#[test]
-#[ignore = "needs a real libpinyin BerkeleyDB data dir (OXPINYIN_LIBPINYIN_DATA_DIR); run with --include-ignored"]
-fn the_real_system_bigram_carries_libpinyins_key_and_value_shapes() {
-    let rows = bigram_rows(&system_data_dir());
-    // `ngram_bdb.cpp`: the key is one raw `phrase_token_t` (4 bytes,
-    // native-endian — `db_key.data = &index; db_key.size =
-    // sizeof(phrase_token_t)`), and the value is a whole `SingleGram`
-    // chunk (`ngram.cpp:31-74`): a 4-byte `total_freq`, then 8-byte
-    // `SingleGramItem`s, the array kept ascending by token.
-    for (key, value) in &rows {
-        assert_eq!(key.len(), 4, "every bigram key is one phrase_token_t");
-        assert!(
-            value.len() >= 4 && (value.len() - 4) % 8 == 0,
-            "a SingleGram chunk is total_freq plus whole items: {} bytes",
-            value.len()
-        );
-    }
-    // A point read agrees with the walk on the same key.
-    let dir = system_data_dir();
-    let store = BdbStore::open_hash_read_only(&dir.join("bigram.db")).expect("open");
-    let (key, value) = &rows[0];
+    // A point read agrees with the walk.
     let mut read = Vec::new();
-    assert!(store.get_raw(key, &mut read).expect("point read"));
-    assert_eq!(&read, value, "get_raw must return the bytes the walk saw");
+    assert!(store.get_raw(&sorted[0].0, &mut read).expect("point read"));
+    assert_eq!(read, sorted[0].1);
 }
 
 #[test]
-#[ignore = "needs a real libpinyin BerkeleyDB data dir (OXPINYIN_LIBPINYIN_DATA_DIR); run with --include-ignored"]
-fn the_real_index_tree_walks_in_byte_order() {
-    let dir = system_data_dir();
-    // `phrase_large_table3_bdb.cpp` opens the phrase index as a
-    // `DB_BTREE` with no `set_bt_compare`, so the order is raw-byte
-    // `memcmp` — and the chewing index keys on packed 16-bit
-    // `ChewingKey` structs, so every key is a whole number of them.
-    for name in ["phrase_index.bin", "pinyin_index.bin"] {
-        let path = dir.join(name);
-        if !path.is_file() {
-            continue; // a partial install; the bigram tests covered presence
-        }
-        let store = BdbStore::open_read_only(&path)
-            .unwrap_or_else(|error| panic!("{name} opens as a DB_BTREE: {error}"));
-        let mut previous: Option<Vec<u8>> = None;
-        let mut count = 0_u64;
-        store
-            .range_raw(Bound::Unbounded, Bound::Unbounded, |key, _value| {
-                if let Some(previous) = &previous {
-                    assert!(
-                        previous.as_slice() < key,
-                        "{name}: keys must strictly ascend in byte order"
-                    );
-                }
-                previous = Some(key.to_vec());
-                count += 1;
-                Ok(())
-            })
-            .expect("walk");
-        assert!(count > 0, "{name} on a real install is populated");
-        assert_eq!(
-            store.count_raw().expect("count"),
-            count,
-            "{name}: the walk is complete"
-        );
-    }
-}
-
-#[test]
-#[ignore = "needs a real libpinyin BerkeleyDB data dir (OXPINYIN_LIBPINYIN_DATA_DIR); run with --include-ignored"]
 fn a_written_user_bigram_reads_back_through_the_user_seam() {
     // The write half, at the store tier: `write_user_bigram`'s default
     // (create_hash + put_raw + compact + rename) is the whole path a

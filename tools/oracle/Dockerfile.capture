@@ -1,4 +1,4 @@
-# The environment `contract-diff.py capture` runs in: Debian stable (trixie), the pin's
+# The environment `contract-diff.py capture` runs in: unpinned Debian testing, the pin's
 # libraries from the published oracle image, and the managed Python. It holds no source,
 # no pin build and no model data. The interpreter is linked as python<major.minor>, the name a managed
 # interpreter has: the pin's assertion messages begin with the process name, and the recorded
@@ -10,7 +10,7 @@
 #     --build-arg REFERENCE_IMAGE=ghcr.io/shenghaoc/oxpinyin-oracle:<tag> -t oxpinyin-capture:<tag> .
 ARG REFERENCE_IMAGE
 FROM ${REFERENCE_IMAGE} AS reference
-FROM debian:trixie
+FROM debian:testing
 COPY tools/oracle/version-manifest.json /usr/local/share/oxpinyin/version-manifest.json
 COPY tools/oracle/versions.py /usr/local/bin/versions.py
 RUN --mount=type=secret,id=cacert,required=false,mode=0444 \

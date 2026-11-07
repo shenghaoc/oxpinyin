@@ -11,7 +11,7 @@ differential, and a maintainer ruling recorded in the findings.
 | the mini data set, per backend | `fixtures/w3/<ext>/` | `just w3-fixtures generate --model-dir <model20 extraction>` (`tools/dev/w3_fixtures.py`): the Python subset of the model20 text, then `oxpinyin-utils`' `gen_binary_files` / `import_interpolation` / `gen_unigram` / `gen_deleted_ngram` built for each backend. `just w3-fixtures check` regenerates into a temporary directory and compares records and chunk bytes with the committed tree; `fixtures/w3/README.md` has the details |
 | W4 oracle goldens (candidate structure, sentence surface, paths, tie order) | `fixtures/w4/oracle-*.txt` | no regenerator today, except the tie order (`contract_sentence_ties.py`); see [the next pin capture](#the-next-pin-capture). `oracle-paths.txt` came from W2 logs that no longer exist and stays frozen |
 | parity corpus inputs | `tests/parity/corpus/inputs/` | frozen input files; a change is a deliberate edit, with the digests in `tools/bisection/axis-c-replacement.json` updated with it |
-| trainer manifests and goldens | `fixtures/w9/` (`segmenter-han.txt`, `segmenter-ngseg.txt`, `counter-ngram.manifest`, `interpolation2.manifest`, `lambda-estimate.manifest`) | the ignored differential tests in counter, emitter, lambda and segment compare against these; regenerate with the pin tool the test names and commit only when it agrees |
+| trainer manifests and goldens | `fixtures/w9/` (`segmenter-han.txt`, `segmenter-spseg-w3.txt`, `mergeseq-input.txt`, `segmenter-mergeseq-w3.txt`) | `oxpinyin-utils`' segmentation tests compare against these; regenerate with the pin tool the test names and commit only when it agrees |
 
 A missing golden is a test failure, never a skip (#373). Regenerate,
 diff, and commit the golden in the same change as the code that moved
@@ -33,6 +33,16 @@ None of these regenerators exists yet:
 | F-C | `fixtures/foundation/f-c.txt` |
 | ZH | `fixtures/w4/oracle-zhuyin-parse.txt` |
 
+The live utility differentials in `crates/oxpinyin-utils/tests/` were deleted on
+2026-11-07 UTC. The frozen utility cases cover what they compared, except for the
+observations below. Each runs the pin-built utility in a private copy of
+`fixtures/w3/<ext>/` on the bdb, kc and tkrzw cells:
+
+| capture | records | becomes |
+| --- | --- | --- |
+| KMM import, 1-gram only | `import_k_mixture_model` with no arguments and this stdin: `\data model "k mixture model" count 3 N 1 total_freq 3`, `\1-gram`, `\item 1 <start> count 2 freq 0`, `\item 16817937 中国 count 1 freq 1`, `\item 16802309 你好 count 0 freq 2`, `\end`, each line ending in `\n`; the exit status, stdout, stderr and whether the directory tree changed | the frozen case `kmm_import_unigram_only` in `kmm_tools.rs` |
+| training bigram rows | `gen_ngram` with no arguments, writing the default `bigram.db`, and `gen_deleted_ngram --deleted-bigram-file deleted.db`, each with stdin `16777219 阿`, `16777220 啊`, an empty line, `16777219 阿`; for each file, which of `START` (1), `阿` (16777219) and `啊` (16777220) has a row at all, and for each present row its total and every successor with its count. An absent row is recorded as absent, not as a zero-valued row: on this input `啊` has no row in `deleted.db` | row assertions in the frozen `gen_ngram` and `gen_deleted_ngram` cases in `training.rs` |
+
 The six apostrophe inputs `'`, `''`, `'''`, `ni'`, `ni'!` and `ni'i` have their own
 capture step, which stages proposed observations for review, and native C-API tests in
 the two capi crates: see [pin captures](pin-captures.md).
@@ -48,7 +58,7 @@ The candidate surface is asserted by `oxpinyin-runtime`'s `candidate_surface`
 test: all 97,442 captured rows over 10,037 inputs, identical to the pin. It reads
 the pinned libpinyin-data package (`just fetch-contract-data`). The sentence-surface
 residual (496 1-best, 492 distinct-set and 491 ordered of 500) is asserted by the
-ignored `sentence_surface_parity` test and recorded in
+`sentence_surface_parity` test, over the same package, and recorded in
 `docs/findings/sentence-surface.md` §12. A change that moves any of them:
 
 1. Run those tests and capture the new numbers.

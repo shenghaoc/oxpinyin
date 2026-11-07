@@ -1747,6 +1747,20 @@ pub struct RuntimeLm<'a> {
     bumps: &'a FacadeBumps,
 }
 
+/// `m_user_bigram->load`'s answer to a failed read: no gram, which
+/// `search_bigram2` ignores (`phrase_lookup.cpp:269-270` at 074a2219), so
+/// the system gram then stands alone (`ngram.cpp:292-296`). The checked-read
+/// failure is the pin's assert and stays an error.
+fn user_gram_or_none(
+    read: Result<Option<Vec<u8>>, UserStoreError>,
+) -> Result<Option<Vec<u8>>, LmError> {
+    match read {
+        Err(error) if error.is_read_after_check() => Err(LmError::User(error.to_string())),
+        Err(_) => Ok(None),
+        Ok(row) => Ok(row),
+    }
+}
+
 impl RuntimeLm<'_> {
     /// Whether the session holds an item for `token` that the shipped chunk
     /// does not: a SYSTEM_FILE ADD, absent from the immutable chunk but
@@ -1789,9 +1803,7 @@ impl RuntimeLm<'_> {
     fn merged_row(&self, prev: u32) -> Result<Option<MergedGram>, LmError> {
         let user = match self.user {
             None => None,
-            Some(store) => store
-                .bigram_row(prev)
-                .map_err(|error| LmError::User(error.to_string()))?,
+            Some(store) => user_gram_or_none(store.bigram_row(prev))?,
         };
         self.inner.load_merged_row(prev, user)
     }
@@ -3736,3 +3748,25 @@ mod tests {
 /// The standalone pin test programs use the same data and model readers.
 #[cfg(feature = "tools")]
 pub mod tool;
+
+#[cfg(test)]
+mod user_row_tests {
+    use super::{UserStoreError, user_gram_or_none};
+
+    /// `m_user_bigram->load` answers any failed read with no gram; a row
+    /// that reads passes through.
+    #[test]
+    fn a_failed_user_read_is_no_gram() {
+        let io = UserStoreError::Io(std::io::Error::other("injected"));
+        assert_eq!(user_gram_or_none(Err(io)).unwrap(), None);
+        assert_eq!(
+            user_gram_or_none(Err(UserStoreError::Decode)).unwrap(),
+            None
+        );
+        assert_eq!(
+            user_gram_or_none(Ok(Some(vec![1, 2]))).unwrap(),
+            Some(vec![1, 2])
+        );
+        assert_eq!(user_gram_or_none(Ok(None)).unwrap(), None);
+    }
+}

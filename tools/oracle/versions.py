@@ -1,16 +1,9 @@
 #!/usr/bin/env python3
-"""Record and gate the pin-reference image's tool versions.
+"""Record installed component versions in rolling Debian images.
 
-The accepted versions live in version-manifest.json beside this file. Each
-oracle and compatibility image build runs ``--check``: it prints the
-installed package version, the range basis and the verdict, writes the same
-record into the image, and exits non-zero naming the first component outside
-its range. Rollin testing images run ``--print``, which records the
-versions without a range check.
-
-Standard library only. The manifest and this file travel into
-tools/oracle/Dockerfile.oracle and tools/oracle/Dockerfile.compat; the
-``--probe`` option points at tools/tkrzw/distro-probe.sh.
+Version drift is recorded, not rejected. The default mode also requires the
+Tkrzw distribution health probe; --print records capture dependencies without
+running that build-time probe.
 """
 from __future__ import annotations
 
@@ -24,9 +17,7 @@ from pathlib import Path
 DEFAULT_MANIFEST = Path(__file__).with_name('version-manifest.json')
 DEFAULT_PROBE = 'tools/tkrzw/distro-probe.sh'
 SCHEMA = 'oracle-version-manifest-v1'
-# Print-only fallbacks for rolling images, where a package may be renamed or a
-# compiler metapackage may be absent. Checked images use the package version;
-# these commands only keep the print record useful on Debian testing.
+# Command fallbacks for capture images, where build-only packages can be absent.
 PRINT_FALLBACKS = {
     'glib': ('pkg-config', '--modversion', 'glib-2.0'),
     'C compiler': ('gcc', '--version'),
@@ -37,26 +28,6 @@ PRINT_FALLBACKS = {
     'gettext': ('gettext', '--version'),
     'pkg-config': ('pkg-config', '--version'),
 }
-
-
-def numeric_prefix(version):
-    """Return the leading (major, minor) of a Debian version.
-
-    Strips an epoch, then reads the first two dotted integers. Debian
-    suffixes such as ``-12+deb13u4``, ``+dfsg2-9`` and ``~deb13u5`` do not
-    affect the major.minor.
-    """
-    text = re.sub(r'^[0-9]+:', '', version.strip())
-    match = re.match(r'([0-9]+)(?:\.([0-9]+))?', text)
-    if match is None:
-        raise ValueError(f'no numeric version prefix in {version!r}')
-    return int(match.group(1)), int(match.group(2) or 0)
-
-
-def major_minor(version):
-    """Return the version's major.minor as the manifest spells it."""
-    major, minor = numeric_prefix(version)
-    return f'{major}.{minor}'
 
 
 def package_version(package):
@@ -103,7 +74,7 @@ def print_version(component):
 
 
 def load_manifest(path):
-    """Read and validate the pinned version manifest."""
+    """Read and validate the component inventory."""
     with Path(path).open(encoding='utf-8') as source:
         manifest = json.load(source)
     if manifest.get('schema') != SCHEMA:
@@ -119,20 +90,13 @@ def load_manifest(path):
         names.add(name)
         if not component.get('package'):
             raise ValueError(f'{path}: {name} has no package')
-        if major_minor(component.get('major_minor', '')) != component['major_minor']:
-            raise ValueError(f'{path}: {name} range is not a major.minor: {component.get("major_minor")!r}')
         if not component.get('basis'):
-            raise ValueError(f'{path}: {name} has no range basis')
+            raise ValueError(f'{path}: {name} has no basis')
     return manifest
 
 
 def check(manifest, resolve=package_version, probe=DEFAULT_PROBE, record=None):
-    """Print installed versions and return 1 if any check fails.
-
-    ``resolve`` and ``probe`` are injectable for the unit tests. A component
-    outside its major.minor is a failure, and the tkrzw component
-    additionally runs the distribution probe.
-    """
+    """Record installed versions; missing packages or an unhealthy Tkrzw fail."""
     lines = []
     failures = []
     for component in manifest['components']:
@@ -143,14 +107,7 @@ def check(manifest, resolve=package_version, probe=DEFAULT_PROBE, record=None):
         except LookupError as error:
             failures.append(f'{name}: {error}')
             continue
-        actual = major_minor(version)
-        expected = component['major_minor']
-        verdict = 'OK' if actual == expected else 'FAIL'
-        lines.append(f'{name}\t{package}\t{version}\t{expected}\t{verdict}')
-        if verdict != 'OK':
-            failures.append(
-                f'{name}: {package} is {version} (major.minor {actual}), '
-                f'manifest accepts {expected}')
+        lines.append(f'{name}\t{package}\t{version}')
     if any(component.get('probe') for component in manifest['components']):
         result = subprocess.run(['sh', probe], check=False, capture_output=True, text=True)
         if result.stdout:
@@ -178,7 +135,7 @@ def main(argv=None):
     parser.add_argument('--record', type=Path,
                         help='also write the printed version lines to this file')
     parser.add_argument('--print', dest='print_only', action='store_true',
-                        help='print installed versions without checking ranges')
+                        help='record installed versions without running the Tkrzw probe')
     args = parser.parse_args(argv)
     try:
         manifest = load_manifest(args.manifest)

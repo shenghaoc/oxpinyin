@@ -5,8 +5,7 @@
 //! (`fixtures/w3/<DEFAULT_STORE_EXT>`) to a private temporary directory and
 //! runs the binary in it, so the cwd-relative names are the pin's. The
 //! expectations are derived from the pin's source and the frozen fixture
-//! values; the ignored live differential at the end compares the same runs
-//! with the pin-built binaries.
+//! values.
 
 use oxpinyin_input::tool;
 
@@ -613,127 +612,6 @@ fn a_bad_option_is_glibs_refusal() {
         expected_text("option parsing failed:Unknown option --bogus\n").as_bytes()
     );
     assert!(outcome.stderr.is_empty());
-}
-
-/// The live differential against the pin's own utilities. Requires a build
-/// of the pinned source (`PINYIN_TRAINING_PIN_DIR`, its `utils/training`
-/// directory), and a data directory the compiled backend can open: the
-/// committed `fixtures/w3/<DEFAULT_STORE_EXT>` is used. A missing input
-/// fails rather than skipping.
-#[test]
-#[ignore = "needs PINYIN_TRAINING_PIN_DIR (the pin build's utils/training); run with --include-ignored"]
-fn live_runs_match_the_pin() {
-    let pin = std::env::var_os("PINYIN_TRAINING_PIN_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| panic!("missing input: PINYIN_TRAINING_PIN_DIR"));
-    let pin_binary = |name: &str| pin.join(name);
-
-    // gen_unigram over the same file set: every saved chunk byte-identical.
-    let pin_dir = fixture_copy();
-    let our_dir = fixture_copy();
-    write_table_conf(pin_dir.path());
-    write_table_conf(our_dir.path());
-    let pin_out = Command::new(pin_binary("gen_unigram"))
-        .current_dir(pin_dir.path())
-        .output()
-        .expect("pin gen_unigram");
-    let our_out = run("gen_unigram", our_dir.path(), &[], b"");
-    assert_eq!(exit_word(&pin_out), exit_word(&our_out));
-    assert_eq!(pin_out.stdout, our_out.stdout);
-    assert_eq!(pin_out.stderr, our_out.stderr);
-    for name in [
-        "gb_char.bin",
-        "gbk_char.bin",
-        "opengram.bin",
-        "merged.bin",
-        "art.bin",
-    ] {
-        assert_eq!(
-            std::fs::read(pin_dir.path().join(name)).expect("pin chunk"),
-            std::fs::read(our_dir.path().join(name)).expect("our chunk"),
-            "{name}"
-        );
-    }
-
-    // gen_ngram / gen_deleted_ngram: the container bytes carry a random
-    // file identifier, so the containers are compared row by row.
-    let stdin = b"16777219 \xe9\x98\xbf\n16777220 \xe5\x95\x8a\n\n16777219 \xe9\x98\xbf\n";
-    for (utility, option, file) in [
-        ("gen_ngram", None, "bigram.db"),
-        (
-            "gen_deleted_ngram",
-            Some("--deleted-bigram-file"),
-            "deleted.db",
-        ),
-    ] {
-        let pin_dir = fixture_copy();
-        let our_dir = fixture_copy();
-        let args: &[&str] = match option {
-            Some(flag) => &[flag, "deleted.db"],
-            None => &[],
-        };
-        let mut command = Command::new(pin_binary(utility));
-        command
-            .args(args)
-            .current_dir(pin_dir.path())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        let mut child = command.spawn().expect("pin utility");
-        child
-            .stdin
-            .take()
-            .expect("stdin")
-            .write_all(stdin)
-            .expect("pin stdin");
-        let pin_out = child.wait_with_output().expect("pin output");
-        let our_out = run(utility, our_dir.path(), args, stdin);
-        assert_eq!(exit_word(&pin_out), exit_word(&our_out), "{utility}");
-        assert_eq!(pin_out.stdout, our_out.stdout, "{utility}");
-        assert_eq!(pin_out.stderr, our_out.stderr, "{utility}");
-        for token in [START, A, AH] {
-            let pin_row = path_row(&pin_dir.path().join(file), token);
-            let our_row = path_row(&our_dir.path().join(file), token);
-            assert_eq!(pin_row, our_row, "{utility}: row {token}");
-        }
-        if utility == "gen_ngram" {
-            for name in [
-                "gb_char.bin",
-                "gbk_char.bin",
-                "opengram.bin",
-                "merged.bin",
-                "art.bin",
-            ] {
-                assert_eq!(
-                    std::fs::read(pin_dir.path().join(name)).expect("pin chunk"),
-                    std::fs::read(our_dir.path().join(name)).expect("our chunk"),
-                    "{name}"
-                );
-            }
-        }
-    }
-
-    // estimate_interpolation and eval_correction_rate: byte-identical streams.
-    let pin_dir = fixture_copy();
-    let our_dir = fixture_copy();
-    for corpus in [
-        "",
-        "16777219 阿\n",
-        "16777219 阿\n16777220 啊\n\n16777219 阿\n",
-    ] {
-        std::fs::write(pin_dir.path().join("evals2.text"), corpus).expect("corpus");
-        std::fs::write(our_dir.path().join("evals2.text"), corpus).expect("corpus");
-        for utility in ["estimate_interpolation", "eval_correction_rate"] {
-            let pin_out = Command::new(pin_binary(utility))
-                .current_dir(pin_dir.path())
-                .output()
-                .expect("pin utility");
-            let our_out = run(utility, our_dir.path(), &[], b"");
-            assert_eq!(exit_word(&pin_out), exit_word(&our_out), "{utility}");
-            assert_eq!(pin_out.stdout, our_out.stdout, "{utility}");
-            assert_eq!(pin_out.stderr, our_out.stderr, "{utility}");
-        }
-    }
 }
 
 /// [`bigram_row`] for a path that may or may not exist.

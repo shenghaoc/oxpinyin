@@ -584,8 +584,8 @@ storage + arithmetic land and be unit-tested before touching decode/parity.
 `export_interpolation` live in `utils/storage/` (build/training tools) and
 touch the **system** interpolation model, not the user store — confirmed by
 grep: no reference in `src/pinyin.cpp` or the runtime library. They are
-characterized under `docs/findings/training-algorithm.md` /
-`docs/findings/lambda-port.md` and are **not** a W6 task.
+characterized under `docs/findings/training-algorithm.md` and are **not** a
+W6 task.
 
 ---
 
@@ -699,7 +699,7 @@ project memory).
   (§6): upstream has no flush-on-shutdown; oxpinyin reproduces the call
   pattern, and its durable per-commit redb writes remove the loss window.
 - The exact numeric value of `lambda` is intentionally not restated here; it is
-  frozen in `docs/findings/scoring-spec.md` / `docs/findings/lambda-port.md`.
+  frozen in `docs/findings/scoring-spec.md`.
   §5 depends only on the *structure* (λ blends bigram-vs-unigram; user/system
   is an additive pre-merge), which is SHOWN.
 

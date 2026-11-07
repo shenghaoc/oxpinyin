@@ -1,16 +1,12 @@
-//! Source-derived checks of `k_mixture_model_to_interpolation` that CI runs
-//! without the pin; the frozen integration cases compare the rest with
-//! it. Pin citations are in the utility. The ignored `rust_kmm_matches_pin_*` gate
-//! compares the built utility with the pin-built one
-//! (`PINYIN_KMM_TO_INTERP`; `tools/oracle/run-differentials.sh`). Run it
-//! explicitly with `--include-ignored`; it fails on a missing input.
+//! Source-derived checks of `k_mixture_model_to_interpolation`; the frozen
+//! integration cases hold the pin's results for the rest. Pin citations are
+//! in the utility.
 
 use std::io::Write as _;
-use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
-fn run_binary(binary: &Path, stdin: &[u8]) -> Output {
-    let mut child = Command::new(binary)
+fn run(stdin: &[u8]) -> Output {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_k_mixture_model_to_interpolation"))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -22,13 +18,6 @@ fn run_binary(binary: &Path, stdin: &[u8]) -> Output {
     let output = child.wait_with_output().unwrap();
     writer.join().unwrap().unwrap();
     output
-}
-
-fn run(stdin: &[u8]) -> Output {
-    run_binary(
-        Path::new(env!("CARGO_BIN_EXE_k_mixture_model_to_interpolation")),
-        stdin,
-    )
 }
 
 fn stderr(output: &Output) -> String {
@@ -184,25 +173,6 @@ fn undefined_lines_are_refused_normally() {
         ),
         "{out:?}"
     );
-}
-
-#[test]
-#[ignore = "needs the pin-built k_mixture_model_to_interpolation (PINYIN_KMM_TO_INTERP); run with --include-ignored"]
-fn rust_kmm_matches_pin_to_interpolation() {
-    let Some(pin) = std::env::var_os("PINYIN_KMM_TO_INTERP")
-        .map(std::path::PathBuf::from)
-        .filter(|path| path.is_file())
-    else {
-        panic!("missing input for the live to-interpolation differential: set PINYIN_KMM_TO_INTERP")
-    };
-    let input = MERGED_KMM.as_bytes().to_vec();
-    let theirs = run_binary(&pin, &input);
-    let ours = run(&input);
-    assert_eq!(theirs.status.code(), Some(0), "pin to-interpolation failed");
-    assert_eq!(ours.status, theirs.status);
-    assert_eq!(ours.stdout, theirs.stdout);
-    assert_eq!(ours.stderr, theirs.stderr);
-    eprintln!("live parity: k_mixture_model_to_interpolation matches the pin");
 }
 
 #[cfg(unix)]

@@ -47,6 +47,18 @@ class TableTests(unittest.TestCase):
                 self.assertIn(name, recipes.NAMES)
 
 
+class EnvironmentTests(unittest.TestCase):
+    def test_native_measurements_and_diagnostics_are_outside_the_pin_scope(self):
+        for name in ('snapshot', 'profile-w8', 'startup', 'cold-qualify', 'probe-egress',
+                     'probe-debuginfo-neutrality', 'callgrind-control'):
+            self.assertNotIn(name, recipes.PIN_COMPARISONS)
+        self.assertEqual(len(recipes.PIN_COMPARISONS), 10)
+
+    def test_pin_comparison_refuses_on_actions_before_recipe_execution(self):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(Finished):
+            recipes.require_performance_environment({'GITHUB_ACTIONS': 'true'})
+
+
 class DispatchTests(unittest.TestCase):
     def test_a_recipe_gets_its_arguments_and_the_environment_and_returns_its_status(self):
         seen = []

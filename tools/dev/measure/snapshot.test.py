@@ -107,6 +107,7 @@ class FakeTools(snapshot.Tools):
                         ('git', 'log', '-1', '--format=%H', '--', *snapshot.MEASUREMENT_PATHS): HARNESS_COMMIT,
                         ('uname', '-srvm'): 'Linux 6.8.0 #1 SMP x86_64', ('rustc', '-V'): 'rustc 1.97.1',
                         ('cc', '--version'): 'cc (Debian 15.2.0) 15.2.0',
+                        ('cat', '/etc/os-release'): 'PRETTY_NAME="Debian GNU/Linux 13 (trixie)"',
                         ('ldd', '--version'): 'ldd (Debian GLIBC 2.42) 2.42',
                         ('valgrind', '--version'): 'valgrind-3.26.0', ('readelf', '--version'): 'GNU readelf 2.45'}
         self.answers.update(answers or {})
@@ -378,6 +379,14 @@ class SeriesInputTests(Scratch):
                 self.assertNotIn(changed, seen)
                 seen.add(changed)
 
+    def test_stable_container_gets_a_new_series_even_with_identical_tool_versions(self):
+        testing = self.doc(container_image='debian:testing', os_release='Debian testing')
+        stable = self.doc(container_image='debian:trixie', os_release='Debian trixie')
+        self.assertNotEqual(snapshot.environment_key(testing), snapshot.environment_key(stable))
+        stable['commit'] = 'another subject commit'
+        self.assertEqual(snapshot.environment_key(stable), snapshot.environment_key(
+            self.doc(container_image='debian:trixie', os_release='Debian trixie')))
+
     def test_the_inputs_split_flaggable_from_report_only(self):
         directory = self.base / 'inputs'
         snapshot.write_series_inputs(self.doc(), directory)
@@ -609,6 +618,7 @@ class RunTests(Scratch):
             'run_url': 'https://github.com/o/r/actions/runs/42',
             'environment': {
                 'kernel': 'Linux 6.8.0 #1 SMP x86_64', 'runner_image': 'ubuntu24/20261001.1',
+                'container_image': 'native', 'os_release': 'PRETTY_NAME="Debian GNU/Linux 13 (trixie)"',
                 'rustc': 'rustc 1.97.1', 'cc': 'cc (Debian 15.2.0) 15.2.0', 'glibc': 'ldd (Debian GLIBC 2.42) 2.42',
                 'valgrind': 'valgrind-3.26.0', 'binutils': 'GNU readelf 2.45', 'backend': 'tkrzw',
                 'fixture_sha256': digest, 'cpu_pinned': True, 'harness_commit': HARNESS_COMMIT},
