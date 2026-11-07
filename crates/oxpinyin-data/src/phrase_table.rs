@@ -146,16 +146,6 @@ impl<D: ChewingDbm> PhraseTable<D> {
         })?;
         Ok(tokens)
     }
-
-    /// Whether `text` exists as a key (empty or non-empty value).
-    #[cfg(test)]
-    pub(crate) fn has_key(&self, text: &str) -> Result<bool, DictError> {
-        if text.is_empty() {
-            return Ok(false);
-        }
-        let key = encode_ucs4_key(text);
-        self.dbm.contains(&key)
-    }
 }
 
 #[cfg(test)]
@@ -296,32 +286,6 @@ mod tests {
         let table = PhraseTable::new(dbm);
         let tokens = table.search("你").unwrap();
         assert!(tokens.is_empty());
-    }
-
-    #[test]
-    fn has_key_finds_existing() {
-        let dbm = MemoryDbm::new();
-        dbm.put(encode_ucs4_key("好"), encode_tokens(&[0x0100_0011]));
-
-        let table = PhraseTable::new(dbm);
-        assert!(table.has_key("好").unwrap());
-        assert!(!table.has_key("坏").unwrap());
-    }
-
-    #[test]
-    fn has_key_finds_prefix_marker() {
-        let dbm = MemoryDbm::new();
-        dbm.put(encode_ucs4_key("你"), Vec::new());
-
-        let table = PhraseTable::new(dbm);
-        assert!(table.has_key("你").unwrap());
-    }
-
-    #[test]
-    fn has_key_empty_returns_false() {
-        let dbm = MemoryDbm::new();
-        let table = PhraseTable::new(dbm);
-        assert!(!table.has_key("").unwrap());
     }
 
     #[test]

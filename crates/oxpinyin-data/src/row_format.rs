@@ -596,6 +596,28 @@ mod tests {
         assert_eq!(decoded, vec![item]);
     }
 
+    /// The bytes `encode_item` writes, pinned: the token as a
+    /// little-endian word, then each key as its packed `u16`
+    /// (`initial | middle << 5 | final << 7 | tone << 12`) in
+    /// little-endian order, then the stride's zero padding. A change to
+    /// the word or key byte order fails here.
+    #[test]
+    fn item_bytes_are_the_little_endian_token_then_the_packed_keys() {
+        use pinyin_index::encode_item;
+        // ni3: 14 | 7 << 7 | 3 << 12 = 0x338E.
+        let ni3 = ChewingKey::new(14, 0, 7, 3);
+        // hao3: 8 | 2 << 7 | 3 << 12 = 0x3108.
+        let hao3 = ChewingKey::new(8, 0, 2, 3);
+        assert_eq!(
+            encode_item(0x0100_0042, &[ni3]),
+            [0x42, 0x00, 0x00, 0x01, 0x8E, 0x33, 0x00, 0x00]
+        );
+        assert_eq!(
+            encode_item(0x0100_0099, &[ni3, hao3]),
+            [0x99, 0x00, 0x00, 0x01, 0x8E, 0x33, 0x08, 0x31]
+        );
+    }
+
     #[test]
     fn decode_items_rejects_misaligned_and_zero_length() {
         use pinyin_index::decode_items;

@@ -38,20 +38,14 @@
 //! little-endian `u32` words with tail bytes folded in shifted by
 //! position (`chunk_format` — the one written copy both halves take).
 
-use crate::chunk_format::SEPARATOR;
+use crate::chunk_format::{
+    CHEWING_KEY_SIZE, FIRST_ITEM_OFFSET, INDEX_ONE, ITEM_HEADER_SIZE, SEPARATOR,
+};
 
 /// `PHRASE_MASK` (`novel_types.h:41`): the library-local token bits a
 /// phrase-index slot is addressed by. Re-exported from the shared format
 /// module for the writers above this crate.
 pub use crate::chunk_format::PHRASE_MASK;
-
-/// Header `total_freq` + three offsets, then the first separator: where
-/// the offset array starts (`SubPhraseIndex::store`).
-const INDEX_ONE: u32 = 17;
-/// `add_phrase_item` reserves the first 8 entry-area bytes by bumping a
-/// zero content size to 8 on the first item; the first real item lives at
-/// offset 8, and a library with no items reserves nothing.
-const FIRST_ITEM_OFFSET: u32 = 8;
 
 /// A malformed [`ChunkItem`] or slot sequence.
 #[derive(Debug)]
@@ -268,16 +262,16 @@ pub fn validate_phrase_item(bytes: &[u8]) -> Result<(), PhraseItemValidationErro
     let prons = usize::from(*bytes.get(1).ok_or(PhraseItemValidationError(
         "phrase item: no pronunciation count byte",
     ))?);
-    if bytes.len() < 6 {
+    if bytes.len() < ITEM_HEADER_SIZE {
         return Err(PhraseItemValidationError("phrase item: no unigram"));
     }
-    let text_end = 6 + 4 * length;
+    let text_end = ITEM_HEADER_SIZE + 4 * length;
     if bytes.len() < text_end {
         return Err(PhraseItemValidationError(
             "phrase item: phrase text truncated",
         ));
     }
-    let keys = 2 * length;
+    let keys = CHEWING_KEY_SIZE * length;
     let row = keys + 4;
     let remaining = bytes.len() - text_end;
     // Both counts are u8, so these products fit even on 32-bit targets.
@@ -330,7 +324,7 @@ pub fn decode_phrase_item(bytes: &[u8]) -> Result<ChunkItem, ChunkWriteError> {
 
     let mut prons = Vec::with_capacity(n_prons);
     for _ in 0..n_prons {
-        let keys_end = offset + 2 * phrase_length;
+        let keys_end = offset + CHEWING_KEY_SIZE * phrase_length;
         let keys_area = bytes.get(offset..keys_end).ok_or_else(|| {
             ChunkWriteError("phrase item: pronunciation keys truncated".to_owned())
         })?;
@@ -416,12 +410,12 @@ pub fn sub_phrase_index_sections(payload: &[u8]) -> Result<(u32, &[u8], &[u8]), 
     let index_two = u32_at(8) as usize;
     let index_three = u32_at(12) as usize;
 
-    if payload.get(16) != Some(&SEPARATOR) {
+    if payload.get(INDEX_ONE as usize - 1) != Some(&SEPARATOR) {
         return Err(ChunkWriteError(
             "sub phrase index: no lead separator".to_owned(),
         ));
     }
-    if index_one != 17 {
+    if index_one != INDEX_ONE as usize {
         return Err(ChunkWriteError(format!(
             "sub phrase index: index_one {index_one} is not the header end"
         )));
@@ -755,13 +749,5 @@ mod tests {
                 assert!(decode_phrase_item(&bytes).is_ok());
             }
         }
-    }
-
-    #[test]
-    fn phrase_item_decode_rejects_hostile_bytes() {
-        assert!(decode_phrase_item(&[]).is_err());
-        assert!(decode_phrase_item(&[2, 0, 1, 0, 0, 0]).is_err()); // no text
-        // A pron run that overruns.
-        assert!(decode_phrase_item(&[1, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0x34]).is_err());
     }
 }

@@ -38,6 +38,8 @@ pub mod dict;
 pub mod interp;
 pub mod interp_grammar;
 pub mod lm;
+#[cfg(test)]
+pub(crate) mod memory_dbm;
 pub mod phrase_libraries;
 pub mod phrase_library;
 pub(crate) mod phrase_table;

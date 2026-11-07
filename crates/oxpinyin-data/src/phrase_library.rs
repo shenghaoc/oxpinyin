@@ -53,7 +53,8 @@ compile_error!(
 );
 
 use crate::chunk_format::{
-    CHEWING_KEY_SIZE, CHUNK_HEADER_SIZE, ITEM_HEADER_SIZE, PHRASE_MASK, SEPARATOR, chunk_checksum,
+    CHEWING_KEY_SIZE, CHUNK_HEADER_SIZE, INDEX_ONE, ITEM_HEADER_SIZE, PHRASE_MASK, SEPARATOR,
+    chunk_checksum,
 };
 
 use oxpinyin_core::PhraseText;
@@ -618,7 +619,9 @@ impl PhraseLibrary {
         // payload[16], then `index_two - 1`, then `index_three - 1`.
         // A payload of 16 bytes or fewer makes the first read leave the
         // chunk; the failure is the same one, reproduced without the read.
-        if payload_bytes.len() < 17 || payload_bytes[16] != SEPARATOR {
+        if payload_bytes.len() < INDEX_ONE as usize
+            || payload_bytes[INDEX_ONE as usize - 1] != SEPARATOR
+        {
             return Ok(layout(file, payload));
         }
         let index_one = u32_at(payload_bytes, 4).ok_or_else(|| bad("payload too short"))? as usize;

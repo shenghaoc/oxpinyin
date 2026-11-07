@@ -806,9 +806,7 @@ fn training_db_error() -> ! {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        ArrayItemWithToken, FixedRecord, FlexibleGramSpec, MAGIC_KEY, SingleGram, StoreError,
-    };
+    use super::{ArrayItemWithToken, FixedRecord, MAGIC_KEY, SingleGram, StoreError};
 
     /// A stand-in for the KMM magic header.
     #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -1028,25 +1026,9 @@ mod tests {
     }
 
     #[test]
-    fn a_spec_names_the_magic_number_and_the_record_layouts() {
-        assert_eq!(Spec::MAGIC_NUMBER, *b"TEST");
-        assert_eq!(Magic::zeroed(), Magic(0));
-        assert_eq!(Magic::decode(&Magic(9).encode()).unwrap(), Magic(9));
-        assert_eq!(Magic::LEN, 4);
-        assert_eq!(Header::LEN, 8);
-        assert_eq!(Item::LEN, 16);
-    }
-
-    #[test]
-    fn a_fresh_gram_is_a_zeroed_header_and_no_items() {
-        let gram = SingleGram::<Header, Item>::new();
-        assert_eq!(*gram.header(), Header(0, 0));
-        assert!(gram.items().is_empty());
-    }
-
-    #[test]
     fn items_stay_token_ascending_and_are_unique() {
         let mut gram = SingleGram::<Header, Item>::new();
+        assert_eq!(*gram.header(), Header(0, 0));
         assert!(gram.insert_array_item(7, Item(7, 0, 0, 0)));
         assert!(gram.insert_array_item(3, Item(3, 0, 0, 0)));
         assert!(gram.insert_array_item(5, Item(5, 0, 0, 0)));

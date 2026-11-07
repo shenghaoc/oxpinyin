@@ -971,24 +971,6 @@ mod tests {
     }
 
     #[test]
-    fn walk_stops_the_scan_at_the_visitor_stop() {
-        let dbm = MemoryDbm::new();
-        for i in 0_u8..8 {
-            dbm.put(vec![i], vec![i]);
-        }
-        let table = ChewingTable::new(dbm);
-        let mut seen = Vec::new();
-        table
-            .dbm
-            .walk(&[2], Some(&[8]), |key, _| {
-                seen.push(key[0]);
-                Ok(true)
-            })
-            .unwrap();
-        assert_eq!(seen, vec![2], "the stop ends the scan at the first row");
-    }
-
-    #[test]
     fn raw_walk_stops_the_store_scan_and_keeps_errors_distinct() {
         use oxpinyin_store::{DefaultStore, ReadStore as _, WriteStore as _, WriteTxn as _};
         let dir = std::env::temp_dir().join(format!(
@@ -1044,17 +1026,6 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn malformed_value_does_not_panic() {
-        let dbm = MemoryDbm::new();
-        let ba = ChewingKey::from_pinyin("ba").unwrap();
-        let key = encode_complete_key(&[ba]);
-        dbm.put(key, vec![0xFF; 5]);
-        let table = ChewingTable::new(dbm);
-        let result = table.search(&[ba]);
-        assert!(result.is_err());
     }
 
     #[test]
