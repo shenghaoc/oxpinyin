@@ -55,7 +55,7 @@ pub use bigram_table::BigramTable;
 pub use content::{ContentTable, LoadError, Record, TokenPair};
 pub use dict::{
     AddonDictionary, AddonPhraseItem, DictError, PhraseIndexTable, PinyinIndexTable,
-    SystemDictionary, ucs4_walk_key,
+    SystemDictionary,
 };
 pub use interp::{
     InterpolationError, UnigramTable, parse_interpolation2, parse_interpolation2_from_reader,

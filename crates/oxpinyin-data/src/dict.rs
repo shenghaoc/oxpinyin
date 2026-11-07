@@ -157,21 +157,6 @@ fn library_loaded(libraries: &PhraseLibraries, user_nibbles: u32, token: u32) ->
             .is_some_and(|bit| user_nibbles & bit != 0)
 }
 
-/// The byte-lexical sort key of a phrase text in a UCS-4 keyed DBM.
-///
-/// The little-endian `u32` scalars concatenated — the cursor order
-/// `PhraseLargeTable3` walks, which `pinyin_guess_predicted_candidates`
-/// exposes as the order of tied rows.
-///
-/// Public so the user seam's
-/// suggestions can be merged in the same order.
-#[must_use]
-pub fn ucs4_walk_key(text: &str) -> Vec<u8> {
-    // The walk key *is* the phrase index's DBM key — same encoder, so a
-    // change to the layout cannot reorder predictions here only.
-    crate::row_format::phrase_index::encode_ucs4_key(text)
-}
-
 /// The `SEARCH_CONTINUED` probe restricted to visible phrases: whether
 /// some phrase whose pinyin equals or extends `keys` has a token
 /// `visible` accepts and a loaded library item.

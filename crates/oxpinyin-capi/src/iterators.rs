@@ -593,9 +593,13 @@ pub extern "C" fn pinyin_iterator_get_next_phrase(
         // `pinyin.cpp:715-716`: the fallible `g_ucs4_to_utf8` conversion,
         // NULL on failure, unchecked.
         let text = (!phrase.is_null()).then(|| {
-            row.text_len().map_or(ptr::null_mut(), |len| {
-                malloc_cstr_with(len, |out| row.write_text(out))
+            row.with_text_bytes(|bytes| {
+                malloc_cstr_with(bytes.len(), |out| {
+                    out.copy_from_slice(bytes);
+                    bytes.len()
+                })
             })
+            .unwrap_or(ptr::null_mut())
         });
         // `:726-733`: the key strings joined by `g_strjoinv("'", …)`, which
         // GLib allocates.

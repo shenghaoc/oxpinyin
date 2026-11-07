@@ -3727,8 +3727,14 @@ mod tests {
         // point but after it by little-endian bytes (0x50 > 0x2D).
         let system = vec![0x0200_0001, 0x0100_0010];
         let user_rows = vec![
-            (0x0700_0001, oxpinyin_data::ucs4_walk_key("中乐")), // U+4E50
-            (0x0700_0002, oxpinyin_data::ucs4_walk_key("中伭")), // U+4F2D
+            (
+                0x0700_0001,
+                oxpinyin_data::row_format::phrase_index::encode_ucs4_key("中乐"),
+            ), // U+4E50
+            (
+                0x0700_0002,
+                oxpinyin_data::row_format::phrase_index::encode_ucs4_key("中伭"),
+            ), // U+4F2D
         ];
         let merged = merge_suggestion_rows(&system, &user_rows);
         assert_eq!(merged, [0x0100_0010, 0x0200_0001, 0x0700_0002, 0x0700_0001]);
