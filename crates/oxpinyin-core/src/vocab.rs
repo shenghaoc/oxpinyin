@@ -262,27 +262,31 @@ pub fn fuzzy_chewing_alternatives(key: ChewingKey, options: OptionBits) -> Vec<C
     }
     let mut out = initials.clone();
     for source in std::iter::once(key).chain(initials) {
-        for (bit, a, b) in [
-            (PINYIN_AMB_AN_ANG, "an", "ang"),
-            (PINYIN_AMB_EN_ENG, "en", "eng"),
-            (PINYIN_AMB_IN_ING, "in", "ing"),
-        ] {
+        for (bit, a, b) in FUZZY_FINALS {
             if !options.contains(bit) {
                 continue;
             }
-            if let (Some(a), Some(b)) = (ChewingKey::from_pinyin(a), ChewingKey::from_pinyin(b)) {
-                for (from, to) in [(a.final_, b.final_), (b.final_, a.final_)] {
-                    if source.final_ == from {
-                        let mut alternate = source;
-                        alternate.final_ = to;
-                        out.push(alternate);
-                    }
+            for (from, to) in [(a, b), (b, a)] {
+                if source.final_ == from {
+                    let mut alternate = source;
+                    alternate.final_ = to;
+                    out.push(alternate);
                 }
             }
         }
     }
     out
 }
+
+/// The final swaps of `fuzzy_syllable_step`
+/// (`phonetic_key_matrix.cpp:301-306`), as `ChewingFinal` values
+/// (`chewing_enum.h:67-68`, `:73-74`, `:80-81`). `in` and `ing` are no
+/// syllables of their own, so their finals cannot come from a spelling.
+const FUZZY_FINALS: [(u32, u8, u8); 3] = [
+    (PINYIN_AMB_AN_ANG, 3, 4),
+    (PINYIN_AMB_EN_ENG, 9, 10),
+    (PINYIN_AMB_IN_ING, 16, 17),
+];
 
 impl fmt::Display for SyllableKey {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -550,6 +554,22 @@ mod tests {
             texts.contains(&"nan") && texts.contains(&"lang") && texts.contains(&"nang"),
             "lan under L_N+AN_ANG must yield nan, lang, and chained nang, got {texts:?}"
         );
+    }
+
+    #[test]
+    fn fuzzy_alternatives_swap_in_and_ing() {
+        use crate::PINYIN_AMB_IN_ING;
+
+        let in_ing = OptionBits::from_bits(PINYIN_AMB_IN_ING);
+        for (from, to) in [("jin", "jing"), ("jing", "jin"), ("bin", "bing")] {
+            let key = SyllableKey::from_text(from).expect(from);
+            let texts: Vec<&str> = key
+                .fuzzy_alternatives(in_ing)
+                .iter()
+                .map(|k| k.text())
+                .collect();
+            assert_eq!(texts, [to], "{from} under AMB_IN_ING");
+        }
     }
 
     #[test]
