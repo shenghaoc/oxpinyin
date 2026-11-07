@@ -321,6 +321,7 @@ dependencies = [
  "oxpinyin-facade",
  "oxpinyin-input",
  "oxpinyin-runtime",
+ "oxpinyin-store",
  "oxpinyin-user",
 ]
 

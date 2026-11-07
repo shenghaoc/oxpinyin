@@ -8,7 +8,9 @@ rust-version.workspace = true
 description = "oxpinyin internal crate — no stability promise; use oxpinyin-engine."
 # Names no native library: the build script publishes the resolved Kyoto
 # Cabinet library directory as `DEP_OXPINYIN_STORE_LIB_DIR` for the one
-# package that links a final binary against it (oxpinyin-training).
+# package that links a final binary against it (oxpinyin-training), and the
+# backend's database-format token as `DEP_OXPINYIN_STORE_DATABASE_FORMAT`
+# for the two C-ABI crates' `.pc` files.
 links = "oxpinyin_store"
 
 [lints.rust]

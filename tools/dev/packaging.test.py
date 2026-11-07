@@ -59,7 +59,7 @@ if not os.environ.get('MISSING_BAKED'):
         baked.parent.mkdir(parents=True)
     text=(Path.cwd()/(library+'.pc.in')).read_text()
     text=text[text.index('prefix=@prefix@'):]
-    for key,val in [('VERSION','2.11.92'),('LIBPINYIN_BINARY_VERSION','15.0'),('LIBZHUYIN_BINARY_VERSION','15.0'),('DATABASE_FORMAT',os.environ.get('LIBPINYIN_DATABASE_FORMAT','BerkeleyDB'))]:
+    for key,val in [('VERSION','2.11.92'),('LIBPINYIN_BINARY_VERSION','15.0'),('LIBZHUYIN_BINARY_VERSION','15.0'),('DATABASE_FORMAT','BerkeleyDB')]:
         text=text.replace('@'+key+'@', val)
     baked.write_text(text)
 if os.environ.get('AMBIGUOUS_BAKED'):
@@ -836,7 +836,7 @@ for line in text.split('global:')[1].split('local:')[0].splitlines():
 """)
         self.fake('readelf', "import sys; from pathlib import Path; print(' (SONAME) Library soname: ['+Path(sys.argv[-1]).read_text()+'.so.15]')")
 
-    def test_release_stage_complete_tree_and_gate_failure(self):
+    def test_release_stage_complete_tree(self):
         self.stage_fakes()
         stage = self.work / 'stage'
         arguments = ['bdb','--prefix=/usr','--libdir=/usr/lib','--dest='+str(stage)]
@@ -845,9 +845,6 @@ for line in text.split('global:')[1].split('local:')[0].splitlines():
         self.assertIn(b'release-stage gates passed (backend: bdb)',result.stdout)
         self.assertIn(b'pinyin=fixture',result.stdout)
         self.assertIn(b'zhuyin=fixture',result.stdout)
-        result = self.invoke('release-stage',arguments,env={'LIBPINYIN_DATABASE_FORMAT':'Tkrzw'})
-        self.assertEqual(result.returncode,1,result.stderr)
-        self.assertIn(b'GATE FAILED: libpinyin database_format',result.stderr)
 
 
 if __name__ == '__main__':

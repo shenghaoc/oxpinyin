@@ -30,7 +30,7 @@ highlight = "simplest-path"
 # dependents only, so every crate that reaches storage is listed, and any new
 # edge into this set must be added here.
 deny = [
-  { crate = "oxpinyin-store", wrappers = ["oxpinyin-data", "oxpinyin-kmm", "oxpinyin-training", "oxpinyin-user", "oxpinyin-utils"] },
+  { crate = "oxpinyin-store", wrappers = ["oxpinyin-capi", "oxpinyin-data", "oxpinyin-kmm", "oxpinyin-training", "oxpinyin-user", "oxpinyin-utils", "oxpinyin-zhuyin-capi"] },
   { crate = "cxx", wrappers = ["oxpinyin-store"] },
   { crate = "cxx-build", wrappers = ["cxx", "oxpinyin-store"] },
   { crate = "bindgen", wrappers = ["oxpinyin-store"] },

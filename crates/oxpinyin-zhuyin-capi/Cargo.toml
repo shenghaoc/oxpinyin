@@ -30,9 +30,10 @@ tools = []
 # [features] for the model and precedence). Each peer feature forwards to
 # oxpinyin-facade, which carries it down facade -> runtime -> user -> data ->
 # store. The peer features stay on this crate because build.rs reads
-# `CARGO_FEATURE_<PEER>` of this crate to bake `database_format` into the
-# generated libzhuyin.pc, and because `cargo cinstall --features <peer>`
-# names them.
+# `CARGO_FEATURE_<PEER>` of this crate for the cxx backends' link setup, and
+# because `cargo cinstall --features <peer>` names them. The generated
+# libzhuyin.pc's `database_format` is oxpinyin-store's token
+# (`DEP_OXPINYIN_STORE_DATABASE_FORMAT`).
 default = ["tkrzw"]
 kyotocabinet = ["oxpinyin-facade/kyotocabinet"]
 bdb = ["oxpinyin-facade/bdb"]
@@ -63,6 +64,10 @@ oxpinyin-facade = { path = "../oxpinyin-facade", default-features = false }
 oxpinyin-data = { path = "../oxpinyin-data", default-features = false }
 oxpinyin-engine.workspace = true
 oxpinyin-runtime.workspace = true
+# Direct, for its `links` metadata: build.rs reads the backend's
+# database-format token as `DEP_OXPINYIN_STORE_DATABASE_FORMAT`. The backend
+# feature still arrives through oxpinyin-facade.
+oxpinyin-store.workspace = true
 oxpinyin-user.workspace = true
 glib-sys.workspace = true
 
