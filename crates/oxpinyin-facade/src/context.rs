@@ -3,6 +3,7 @@
 
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32};
 
 use oxpinyin_core::{DoublePinyinScheme, FullPinyinScheme, OptionBits, ZhuyinScheme};
 use oxpinyin_engine::{Config, ConfigValue};
@@ -278,7 +279,7 @@ fn null_chunk_refused(dir: &Path) {
     }
 }
 
-/// Bit 30 of [`LiveOptions::double_scheme`]: when set, the live
+/// Bit 30 of [`LiveOptionsInner::double_scheme`]: when set, the live
 /// scheme's fallback table is suppressed — upstream's half-mutation
 /// (`pinyin_parser2.cpp:580` + `:614`; `upstream-divergences.md`
 /// row 5b).  A valid-scheme store clears it implicitly (values 1–6
@@ -288,61 +289,56 @@ pub const FALLBACK_CLEARED_BIT: i32 = 1 << 30;
 
 /// The live option/scheme state a context owns and every instance it
 /// allocates shares: `set_options`/`set_*_scheme` on the context remask
-/// already-allocated instances through these handles.
+/// already-allocated instances through this one handle, as the pin's
+/// instances read their context through `m_context`.
 ///
-/// Both C-ABI facades carry the same seven fields; the seed word differs
+/// Both C-ABI facades carry the same fields; the seed word differs
 /// per facade and is the caller's choice at [`ContextCore::open`].
 #[derive(Clone)]
-pub struct LiveOptions {
+pub struct LiveOptions(Arc<LiveOptionsInner>);
+
+/// The shared atomics behind [`LiveOptions`].
+pub struct LiveOptionsInner {
     /// Live `PINYIN_INCOMPLETE` bit.
-    pub incomplete: Arc<std::sync::atomic::AtomicBool>,
+    pub incomplete: AtomicBool,
     /// Live double-pinyin scheme (header discriminant value, bits 0–29)
     /// with the fallback-cleared flag packed into bit 30
     /// ([`FALLBACK_CLEARED_BIT`]).
-    pub double_scheme: Arc<std::sync::atomic::AtomicI32>,
+    pub double_scheme: AtomicI32,
     /// Live Zhuyin scheme (header discriminant value).
-    pub zhuyin_scheme: Arc<std::sync::atomic::AtomicI32>,
+    pub zhuyin_scheme: AtomicI32,
     /// Live full-pinyin scheme (header discriminant value).
-    pub full_scheme: Arc<std::sync::atomic::AtomicI32>,
+    pub full_scheme: AtomicI32,
     /// Live `USE_TONE` bit.
-    pub use_tone: Arc<std::sync::atomic::AtomicBool>,
-    /// Live `FORCE_TONE` bit (nested under `USE_TONE` by the zhuyin
-    /// parser; written by both facades' `set_options`, read by neither —
-    /// the parsers take it off the option word itself).
-    pub force_tone: Arc<std::sync::atomic::AtomicBool>,
-    /// Live option word.
-    pub options: Arc<std::sync::atomic::AtomicU32>,
+    pub use_tone: AtomicBool,
+    /// Live option word. The parsers read `FORCE_TONE` off it.
+    pub options: AtomicU32,
+}
+
+impl core::ops::Deref for LiveOptions {
+    type Target = LiveOptionsInner;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 impl LiveOptions {
     /// Seeds the live state the way an init does: the bools derive off
-    /// `option_word` (so `pinyin_init`'s `USE_TONE` seeds incomplete OFF,
-    /// `zhuyin_init`'s `USE_TONE | FORCE_TONE` seeds both tone bits ON), and the three schemes start at the header defaults
-    /// both facades share (MS double, Standard zhuyin, Hanyu full).
+    /// `option_word` (so `pinyin_init`'s `USE_TONE` seeds incomplete OFF and
+    /// `zhuyin_init`'s `USE_TONE | FORCE_TONE` seeds `use_tone` ON), and the
+    /// three schemes start at the header defaults both facades share (MS
+    /// double, Standard zhuyin, Hanyu full).
     #[must_use]
     pub(crate) fn new(option_word: u32) -> Self {
         let bits = OptionBits::from_bits(option_word);
-        Self {
-            incomplete: Arc::new(std::sync::atomic::AtomicBool::new(
-                bits.contains(oxpinyin_core::PINYIN_INCOMPLETE),
-            )),
-            double_scheme: Arc::new(std::sync::atomic::AtomicI32::new(
-                DoublePinyinScheme::Ms as i32,
-            )),
-            zhuyin_scheme: Arc::new(std::sync::atomic::AtomicI32::new(
-                ZhuyinScheme::Standard as i32,
-            )),
-            full_scheme: Arc::new(std::sync::atomic::AtomicI32::new(
-                FullPinyinScheme::Hanyu as i32,
-            )),
-            use_tone: Arc::new(std::sync::atomic::AtomicBool::new(
-                bits.contains(oxpinyin_core::USE_TONE),
-            )),
-            force_tone: Arc::new(std::sync::atomic::AtomicBool::new(
-                bits.contains(oxpinyin_core::FORCE_TONE),
-            )),
-            options: Arc::new(std::sync::atomic::AtomicU32::new(option_word)),
-        }
+        Self(Arc::new(LiveOptionsInner {
+            incomplete: AtomicBool::new(bits.contains(oxpinyin_core::PINYIN_INCOMPLETE)),
+            double_scheme: AtomicI32::new(DoublePinyinScheme::Ms as i32),
+            zhuyin_scheme: AtomicI32::new(ZhuyinScheme::Standard as i32),
+            full_scheme: AtomicI32::new(FullPinyinScheme::Hanyu as i32),
+            use_tone: AtomicBool::new(bits.contains(oxpinyin_core::USE_TONE)),
+            options: AtomicU32::new(option_word),
+        }))
     }
 }
 
@@ -452,7 +448,6 @@ impl ContextCore {
     pub fn set_options(&mut self, options: u32) {
         let enabled = (options & oxpinyin_core::PINYIN_INCOMPLETE) != 0;
         let use_tone = (options & oxpinyin_core::USE_TONE) != 0;
-        let force_tone = (options & oxpinyin_core::FORCE_TONE) != 0;
         self.config
             .set("incomplete-pinyin", ConfigValue::Bool(enabled));
         let live = &self.live;
@@ -460,8 +455,6 @@ impl ContextCore {
             .store(enabled, std::sync::atomic::Ordering::Relaxed);
         live.use_tone
             .store(use_tone, std::sync::atomic::Ordering::Relaxed);
-        live.force_tone
-            .store(force_tone, std::sync::atomic::Ordering::Relaxed);
         live.options
             .store(options, std::sync::atomic::Ordering::Relaxed);
     }
