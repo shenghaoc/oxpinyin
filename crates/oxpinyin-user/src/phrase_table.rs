@@ -5,11 +5,7 @@
 //! duplicate tokens are state, including the KC/tkrzw mask visitor's retained
 //! suffix (`memory_chunk.h:290-296`); loading must not reconstruct these rows.
 
-use std::ops::Bound;
-
-use oxpinyin_store::{ReadStore, StoreError, WriteTxn};
-
-use crate::store::txn_get_bytes;
+use oxpinyin_store::StoreError;
 
 /// Internal table containing the pin's phrase records.
 pub const TABLE: &str = "user_phrase_table3";
@@ -17,17 +13,12 @@ pub const TABLE: &str = "user_phrase_table3";
 pub const SEARCH_NONE: i32 = 0;
 /// At least one enabled token was appended.
 pub const SEARCH_OK: i32 = 1;
-/// The exact key exists, even if its value is empty.
-pub const SEARCH_CONTINUED: i32 = 2;
 /// Successful entry operation.
 pub const ERROR_OK: i32 = 0;
 /// Insertion encountered the token before any greater token.
 pub const ERROR_INSERT_ITEM_EXISTS: i32 = 1;
 /// Removal did not find the token.
 pub const ERROR_REMOVE_ITEM_DONOT_EXISTS: i32 = 2;
-/// Pin's database-write failure code.
-pub const ERROR_FILE_CORRUPTION: i32 = 7;
-
 /// Search flags and tokens in stored traversal order.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct SearchResult {
@@ -187,205 +178,4 @@ pub(crate) fn validate(bytes: &[u8]) -> Result<(), StoreError> {
 
 fn decode(bytes: &[u8]) -> u32 {
     u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
-}
-
-/// Search an exact key with every library enabled.
-///
-/// # Errors
-/// Returns an incomplete-token error. Backend read failure is `SEARCH_NONE`,
-/// as at `phrase_large_table3_bdb.cpp:196-198` (pin 074a2219).
-pub fn search(db: &impl ReadStore, text: &str) -> Result<SearchResult, StoreError> {
-    search_key(db, &key(text))
-}
-
-/// Search an exact raw UCS-4 key with every library enabled — the
-/// non-scalar counterpart of [`search`].
-///
-/// # Errors
-/// Returns an incomplete-token error. Backend read failure is `SEARCH_NONE`,
-/// as at `phrase_large_table3_bdb.cpp:196-198` (pin 074a2219).
-pub fn search_ucs4(db: &impl ReadStore, words: &[u32]) -> Result<SearchResult, StoreError> {
-    search_key(db, &key_ucs4(words))
-}
-
-fn search_key(db: &impl ReadStore, key: &[u8]) -> Result<SearchResult, StoreError> {
-    let mut result = SearchResult::default();
-    let Ok(Some(searched)) = db.read_with(TABLE, key, |bytes| {
-        search_bytes(bytes, &mut result.tokens, |_| true)
-    }) else {
-        return Ok(SearchResult::default());
-    };
-    result.flags = SEARCH_CONTINUED | searched?;
-    Ok(result)
-}
-
-/// Search strictly longer phrases after an existing exact prefix record.
-///
-/// # Errors
-/// Returns an incomplete-token error. Backend failures end the search with
-/// the tokens accumulated so far (`phrase_large_table3_bdb.cpp:233-260`).
-pub fn search_suggestion(db: &impl ReadStore, text: &str) -> Result<SearchResult, StoreError> {
-    let prefix = key(text);
-    let mut result = SearchResult::default();
-    if !matches!(db.read_with(TABLE, &prefix, |_| ()), Ok(Some(()))) {
-        return Ok(result);
-    }
-    let mut upper = prefix.clone();
-    while upper.last() == Some(&u8::MAX) {
-        upper.pop();
-    }
-    let hi = if let Some(last) = upper.last_mut() {
-        *last += 1;
-        Bound::Excluded(upper.as_slice())
-    } else {
-        Bound::Unbounded
-    };
-    let mut malformed = None;
-    let _ = db.range(TABLE, Bound::Excluded(&prefix), hi, |_, bytes| {
-        match search_bytes(bytes, &mut result.tokens, |_| true) {
-            Ok(flags) => result.flags |= flags,
-            Err(error) => {
-                malformed = Some(error);
-                return Err(StoreError::InvalidInput("incomplete phrase table token"));
-            }
-        }
-        Ok(())
-    });
-    if let Some(error) = malformed {
-        return Err(error);
-    }
-    Ok(result)
-}
-
-/// Add a token, creating missing proper prefixes only for a new text key.
-///
-/// # Errors
-/// Returns incomplete-token errors or an empty-text error. Backend reads that
-/// fail take the missing-entry path; failed writes return
-/// `ERROR_FILE_CORRUPTION` (`phrase_large_table3_bdb.cpp:283-331`, KC
-/// `phrase_large_table3_kyotodb.cpp:267-310`, tkrzw
-/// `phrase_large_table3_tkrzwdb.cpp:202-239`, pin 074a2219).
-/// Callers following pin's `_add_phrase` intentionally ignore this numeric
-/// result and retain earlier changes (`pinyin.cpp:596-606`); it is not a
-/// transaction rollback request.
-pub fn add_index(txn: &mut impl WriteTxn, text: &str, token: u32) -> Result<i32, StoreError> {
-    add_index_words(txn, &text.chars().map(u32::from).collect::<Vec<_>>(), token)
-}
-
-/// Add a raw-word phrase without converting non-scalar words to characters.
-///
-/// # Errors
-/// Returns the same table and storage errors as [`add_index`].
-pub fn add_index_words(
-    txn: &mut impl WriteTxn,
-    words: &[u32],
-    token: u32,
-) -> Result<i32, StoreError> {
-    let key = key_ucs4(words);
-    if key.is_empty() {
-        return Err(StoreError::InvalidInput("phrase table text is empty"));
-    }
-    if let Ok(Some(bytes)) = txn_get_bytes(txn, TABLE, &key) {
-        let mut entry = PhraseTableEntry::from_bytes(bytes)?;
-        let result = entry.add_index(token);
-        if txn.put(TABLE, &key, entry.as_bytes()).is_err() {
-            return Ok(ERROR_FILE_CORRUPTION);
-        }
-        return Ok(result);
-    }
-    let mut entry = PhraseTableEntry::default();
-    entry.add_index(token);
-    if txn.put(TABLE, &key, entry.as_bytes()).is_err() {
-        return Ok(ERROR_FILE_CORRUPTION);
-    }
-    for length in (1..key.len() / 4).rev() {
-        let prefix = &key[..length * 4];
-        if matches!(txn.read_with(TABLE, prefix, |_| ()), Ok(Some(()))) {
-            return Ok(ERROR_OK);
-        }
-        if txn.put(TABLE, prefix, &[]).is_err() {
-            return Ok(ERROR_FILE_CORRUPTION);
-        }
-    }
-    Ok(ERROR_OK)
-}
-
-/// Remove one token, retaining the key even when its value becomes empty.
-///
-/// # Errors
-/// Returns an incomplete-token error. Initial read failure is missing-item;
-/// write failure is `ERROR_FILE_CORRUPTION`
-/// (`phrase_large_table3_bdb.cpp:349-366`, KC
-/// `phrase_large_table3_kyotodb.cpp:324-343`, tkrzw
-/// `phrase_large_table3_tkrzwdb.cpp:253-272`, pin 074a2219).
-pub fn remove_index(txn: &mut impl WriteTxn, text: &str, token: u32) -> Result<i32, StoreError> {
-    let key = key(text);
-    remove_index_key(txn, &key, token)
-}
-
-/// Remove a token under its exact stored words.
-///
-/// # Errors
-/// Returns an incomplete-token error, as [`remove_index`].
-pub fn remove_index_ucs4(
-    txn: &mut impl WriteTxn,
-    words: &[u32],
-    token: u32,
-) -> Result<i32, StoreError> {
-    remove_index_key(txn, &key_ucs4(words), token)
-}
-
-/// Whether [`remove_index_ucs4`] would answer `ERROR_OK`, without writing:
-/// the test `pinyin_remove_user_candidate` asserts on (`pinyin.cpp:3750`).
-///
-/// # Errors
-/// Returns store errors.
-pub fn index_removable_ucs4(
-    txn: &mut impl WriteTxn,
-    words: &[u32],
-    token: u32,
-) -> Result<bool, StoreError> {
-    let Ok(Some(bytes)) = txn_get_bytes(txn, TABLE, &key_ucs4(words)) else {
-        return Ok(false);
-    };
-    let mut entry = PhraseTableEntry::from_bytes(bytes)?;
-    Ok(entry.remove_index(token) == ERROR_OK)
-}
-
-fn remove_index_key(txn: &mut impl WriteTxn, key: &[u8], token: u32) -> Result<i32, StoreError> {
-    let Ok(Some(bytes)) = txn_get_bytes(txn, TABLE, key) else {
-        return Ok(ERROR_REMOVE_ITEM_DONOT_EXISTS);
-    };
-    let mut entry = PhraseTableEntry::from_bytes(bytes)?;
-    let result = entry.remove_index(token);
-    if result == ERROR_OK && txn.put(TABLE, key, entry.as_bytes()).is_err() {
-        return Ok(ERROR_FILE_CORRUPTION);
-    }
-    Ok(result)
-}
-
-/// Apply pin's backend-specific mask walk in ascending raw key order.
-///
-/// BDB resets each record; KC/tkrzw retain the previous post-mask suffix
-/// when the next record is shorter. Empty records participate in the walk.
-///
-/// # Errors
-/// Returns store errors or an incomplete-token error.
-pub fn mask_out(txn: &mut impl WriteTxn, mask: u32, value: u32) -> Result<bool, StoreError> {
-    let mut rows = Vec::new();
-    txn.for_each(TABLE, |key, bytes| {
-        rows.push((key.to_vec(), bytes.to_vec()));
-        Ok(())
-    })?;
-    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
-    let mut entry = PhraseTableEntry::default();
-    for (key, bytes) in rows {
-        #[cfg(feature = "bdb")]
-        let mut entry = PhraseTableEntry::from_bytes(bytes)?;
-        #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
-        entry.set_content(&bytes)?;
-        entry.mask_out(mask, value);
-        txn.put(TABLE, &key, entry.as_bytes())?;
-    }
-    Ok(true)
 }

@@ -98,24 +98,6 @@ pub fn decode_u64(bytes: &[u8]) -> Result<u64, DecodeError> {
     Ok(u64::from_be_bytes(fixed_prefix::<8>(bytes)?))
 }
 
-// ── phrase words ───────────────────────────────────────────────────
-
-/// Decode the internal phrase value's complete little-endian stored words.
-pub(crate) fn decode_words(bytes: &[u8]) -> Result<Vec<u32>, DecodeError> {
-    if !bytes.len().is_multiple_of(4) {
-        return Err(DecodeError::Truncated {
-            expected: bytes.len().saturating_add(3) / 4 * 4,
-            actual: bytes.len(),
-        });
-    }
-    Ok(bytes
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .map(|word| u32::from_le_bytes([word[0], word[1], word[2], word[3]]))
-        .collect())
-}
-
 // ── composite keys ─────────────────────────────────────────────────
 
 /// Encode a `(Token, &[u8])` key: 4 BE bytes, then raw tail.

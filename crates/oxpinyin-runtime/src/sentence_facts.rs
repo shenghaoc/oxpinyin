@@ -7,7 +7,7 @@ use oxpinyin_data::phrase_library::PhraseItemView;
 
 impl RuntimeDict<'_> {
     fn sentence_token(&self, token: u32, facts: &mut SentenceFacts) -> Option<TokenFacts> {
-        let user = self.user.filter(|user| user.is_libpinyin_session())?;
+        let user = self.user?;
         if !facts.validate(user.generation()) {
             return None;
         }
@@ -112,7 +112,7 @@ impl RuntimeLm<'_> {
         item: Option<(u32, u32)>,
         facts: &mut SentenceFacts,
     ) -> Option<Result<NbestStepCosts, LmError>> {
-        let user = self.user.filter(|user| user.is_libpinyin_session())?;
+        let user = self.user?;
         if !facts.validate(user.generation()) {
             return None;
         }

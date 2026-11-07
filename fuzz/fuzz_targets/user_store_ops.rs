@@ -177,12 +177,10 @@ fn check_phrase_index(store: &UserStore, freshest: Option<u32>) {
 /// can drop the row such a token names. `_add_phrase` then asserts at
 /// `pinyin.cpp:554` (two tokens in the library), `:568` (another length,
 /// or an absent row, which leaves a zero-length item) or `:571` (the same
-/// length, other characters); oxpinyin answers those sites' refusal,
-/// `InvalidPhrase`, so the add is refused, not crashed. Under the class (c)
-/// ruling (#1467) the Rust store keeps returning that error at the pin's
-/// point and only the C adapters abort, so this acceptance stays when class
-/// (c) retires those sites: this target drives `UserStore` directly. Only a
-/// harness that calls the C API must avoid these sequences once they abort.
+/// length, other characters); the Rust store returns that error at the
+/// pin's point, `InvalidPhrase`, and only the C adapters abort on it. This
+/// target drives `UserStore` directly, so the add is refused, not crashed;
+/// only a harness that calls the C API must avoid these sequences.
 fn holds_foreign_token(store: &UserStore, text: &str) -> bool {
     let words: Vec<u32> = text.chars().map(u32::from).collect();
     let tokens: Vec<u32> = store

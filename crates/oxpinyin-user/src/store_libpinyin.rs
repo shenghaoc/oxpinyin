@@ -30,7 +30,6 @@
 //!   the pin's own in-memory container, filled from `user_bigram.db` once
 //!   by `load_db` and written back by `save_db`, and every bigram
 //!   operation runs the pin's `SingleGram` code over its raw grams
-//!   ([`crate::store::BIGRAM_GRAM`] is the plain stores' equivalent).
 //! * user phrases and appended system items — each body lives once in an
 //!   owned `UserLibrary` arena, in the pin's packed item format. The user
 //!   pinyin index is an independent set; it never supplies item counts.
@@ -52,16 +51,13 @@ use oxpinyin_store::{
 };
 
 #[cfg(test)]
-use crate::store::{PHRASE, PHRASE_BY_LIB_TEXT, PHRASE_BY_TEXT, PRONUNCIATION};
+use crate::store::{PHRASE, PRONUNCIATION};
 
 use crate::codec;
 
 use crate::persistence::{self, PersistenceError, SystemOriginals, UserConfLaw, UserState};
-use crate::phrase::{self, phrase_index_library_index};
-use crate::store::{
-    ALLOC, ALLOC_CURSOR, GenericUserStore, LIBRARY_OFFSET, StoreInner, Token, UNIGRAM,
-    UserStoreError,
-};
+use crate::phrase;
+use crate::store::{GenericUserStore, LIBRARY_OFFSET, StoreInner, Token, UNIGRAM, UserStoreError};
 
 /// The persistence target a session store carries: the user dir, the
 /// original system chunks (the `.dbin` diff base), the conformance
@@ -141,9 +137,9 @@ impl Drop for FiniGuard {
 
 impl From<PersistenceError> for UserStoreError {
     fn from(error: PersistenceError) -> Self {
-        // The two class-(c) sites keep their own variants: neither is a
+        // The two abort sites keep their own variants: neither is a
         // degraded store — one is a failed open (see `persistence::load`),
-        // the other a failed save the facade must log.
+        // the other a failed save; the C adapters abort on both.
         match error {
             PersistenceError::UnknownDatabaseFormat => UserStoreError::UnknownDatabaseFormat,
             PersistenceError::ChunkHeaderWrite { field, .. } => {
@@ -433,13 +429,12 @@ impl GenericUserStore<DefaultStore> {
             db: std::sync::Mutex::new(db),
             dirty: std::sync::atomic::AtomicBool::new(false),
             write_generation: std::sync::atomic::AtomicU64::new(0),
-            phrase_generation: std::sync::atomic::AtomicU64::new(0),
             phrase_table_generation: std::sync::atomic::AtomicU64::new(0),
             has_user_data: std::sync::atomic::AtomicBool::new(has_user_data),
             has_library_offsets: std::sync::atomic::AtomicBool::new(!library_offsets.is_empty()),
             bigram_failed: oxpinyin_store::UserBigramDb::is_failed(&bigram_db),
-            bigram_db: Some(std::sync::Mutex::new(bigram_db)),
-            libpinyin: Some(target),
+            bigram_db: std::sync::Mutex::new(bigram_db),
+            libpinyin: target,
         });
         Ok(Self::from_parts(
             inner,
@@ -616,7 +611,6 @@ fn seed_txn_with_replay(
 ) -> Result<SeedTotals, StoreError> {
     // The unigrams seeded per library, as the facade would sum them.
     let mut seeded: BTreeMap<u8, u32> = BTreeMap::new();
-    let mut alloc_cursor: BTreeMap<u8, Token> = BTreeMap::new();
 
     // ADD records own text/index rows just like USER_FILE items. MODIFY
     // records do not gain index rows (pinyin.cpp:566-607 at 074a2219).
@@ -630,12 +624,6 @@ fn seed_txn_with_replay(
             )
         })
         .collect();
-    for (&nibble, original) in originals.iter() {
-        alloc_cursor.insert(
-            nibble,
-            (u32::from(nibble) << 24) | original.range_end.max(1).saturating_sub(1),
-        );
-    }
     for (&nibble, overrides) in &state.system_overrides {
         for (&slot, item) in overrides {
             let Some(item) = item else {
@@ -649,24 +637,18 @@ fn seed_txn_with_replay(
             }
         }
     }
-    let mut seed = |nibble: u8, slot: u32, item: SeedItem<'_>| -> Result<(), StoreError> {
-        let token = (u32::from(nibble) << 24) | slot;
+    let mut seed = |nibble: u8, item: SeedItem<'_>| {
         let sum = seeded.entry(nibble).or_insert(0);
         *sum = sum.wrapping_add(item.unigram());
-        let cursor = alloc_cursor.entry(nibble).or_insert(0);
-        if token > *cursor {
-            *cursor = token;
-        }
-        Ok(())
     };
     for (&nibble, items) in &libraries {
-        for (&slot, item) in items {
-            seed(nibble, slot, SeedItem::Owned(item))?;
+        for item in items.values() {
+            seed(nibble, SeedItem::Owned(item));
         }
     }
     for (&nibble, library) in user_libraries {
-        for (slot, item) in library.items() {
-            seed(nibble, slot, SeedItem::View(item))?;
+        for (_, item) in library.items() {
+            seed(nibble, SeedItem::View(item));
         }
     }
 
@@ -677,19 +659,6 @@ fn seed_txn_with_replay(
 
     system_override_mass(state, originals, &mut seeded);
 
-    // The alloc cursors: one past the highest loaded token per library.
-    for (nibble, max_token) in alloc_cursor {
-        let next = phrase::next_library_token_after(nibble, max_token)
-            .unwrap_or_else(|| phrase::first_library_token(nibble));
-        txn.put(ALLOC, &codec::encode_u8(nibble), &codec::encode_token(next))?;
-        if nibble == crate::phrase::USER_DICTIONARY {
-            txn.put(
-                ALLOC,
-                &codec::encode_u8(ALLOC_CURSOR),
-                &codec::encode_token(next),
-            )?;
-        }
-    }
     // The facade total is the sum of the loaded libraries' totals
     // (`phrase_index.cpp:237-248`). A system library's is its own scalar; a
     // user library's is kept as the difference from its items' sum, and the
@@ -740,31 +709,43 @@ fn seed_txn_with_replay(
 
 /// Reads the session values back into the persistence shape — the
 /// export half of the value mapping, [`GenericUserStore::save`]'s
-/// libpinyin branch.
+/// libpinyin branch — with the live system items as values, for the tests.
 #[cfg(test)]
 pub fn export_state<S: WriteStore>(
     store: &GenericUserStore<S>,
     originals: &impl crate::persistence::OriginalLibraries,
 ) -> Result<UserState, UserStoreError> {
-    export_session_state(store, originals, true)
+    let mut state = export_session_state(store, true)?;
+    // A session's system items are its live buffers: a save diffs them
+    // against the file on disk (`persistence`), and only this test-facing
+    // export reads them as values.
+    for (token, item) in store.live_system_changes(originals) {
+        state
+            .system_overrides
+            .entry(phrase::phrase_index_library_index(token))
+            .or_default()
+            .insert(token & crate::phrase::PHRASE_MASK, item);
+    }
+    Ok(state)
 }
 
+/// Reads the session values back into the persistence shape — the
+/// export half of the value mapping, [`GenericUserStore::save`]'s
+/// libpinyin branch.
 pub(crate) fn export_for_save<S: WriteStore>(
     store: &GenericUserStore<S>,
-    originals: &impl crate::persistence::OriginalLibraries,
 ) -> Result<UserState, UserStoreError> {
-    export_session_state(store, originals, false)
+    export_session_state(store, false)
 }
 
 fn export_session_state<S: WriteStore>(
     store: &GenericUserStore<S>,
-    originals: &impl crate::persistence::OriginalLibraries,
     user_items: bool,
 ) -> Result<UserState, UserStoreError> {
     let db = store.database();
 
-    // A standalone store keeps its unigram counts as stored deltas; a session
-    // holds them in its live items.
+    // A session holds its unigram counts in its live items; the rows are the
+    // seed's and the walk finds none.
     let mut unigrams: BTreeMap<Token, u64> = BTreeMap::new();
     db.for_each(UNIGRAM, |key, value| {
         let token = codec::decode_token(key)
@@ -775,12 +756,10 @@ fn export_session_state<S: WriteStore>(
         Ok(())
     })?;
 
-    let session = store.session_target().is_some();
     let mut state = UserState::default();
     // A session save writes the index and phrase-table arenas directly; the
-    // value model's sets are only needed by the standalone row path and by
-    // the test-facing export.
-    if user_items || !session {
+    // value model's sets are only needed by the test-facing export.
+    if user_items {
         state.indexed.extend(store.index_entries());
         db.for_each(crate::phrase_table::TABLE, |key, value| {
             state.phrase_table.insert(key.to_vec(), value.to_vec());
@@ -788,60 +767,27 @@ fn export_session_state<S: WriteStore>(
         })?;
     }
     drop(db);
-    if !session {
-        for (token, delta) in &unigrams {
-            let nibble = phrase_index_library_index(*token);
-            let slot = token & crate::phrase::PHRASE_MASK;
-            let Some(old) = originals
-                .get(&nibble)
-                .and_then(|library| library.item(slot))
-            else {
-                continue; // user tokens landed above; unknown libraries skip
-            };
-            let mut new_item = old.clone();
-            new_item.unigram = old.unigram.wrapping_add(*delta as u32);
-            state
-                .system_overrides
-                .entry(nibble)
-                .or_default()
-                .insert(slot, Some(new_item));
-        }
-    }
-    // A session's system items are its live buffers: a save diffs them
-    // against the file on disk (`persistence`), and only a test-facing export
-    // reads them as values.
-    #[cfg(test)]
-    if session && user_items {
-        for (token, item) in store.live_system_changes(originals) {
-            state
-                .system_overrides
-                .entry(phrase_index_library_index(token))
-                .or_default()
-                .insert(token & crate::phrase::PHRASE_MASK, item);
-        }
-    }
-    if let Some(target) = store.session_target() {
-        let phrases = target.phrases();
-        for (&nibble, library) in &phrases.libraries {
-            for (slot, view) in library.items() {
-                if !(1..=4).contains(&nibble) && !user_items {
-                    continue;
-                }
-                let item = oxpinyin_data::chunk_write::decode_phrase_item(view.as_bytes())
-                    .map_err(|e| UserStoreError::Persistence(e.to_string()))?;
-                if (1..=4).contains(&nibble) {
-                    state
-                        .system_overrides
-                        .entry(nibble)
-                        .or_default()
-                        .insert(slot, Some(item));
-                } else {
-                    state
-                        .libraries
-                        .entry(nibble)
-                        .or_default()
-                        .insert(slot, item);
-                }
+    let target = store.session_target();
+    let phrases = target.phrases();
+    for (&nibble, library) in &phrases.libraries {
+        for (slot, view) in library.items() {
+            if !(1..=4).contains(&nibble) && !user_items {
+                continue;
+            }
+            let item = oxpinyin_data::chunk_write::decode_phrase_item(view.as_bytes())
+                .map_err(|e| UserStoreError::Persistence(e.to_string()))?;
+            if (1..=4).contains(&nibble) {
+                state
+                    .system_overrides
+                    .entry(nibble)
+                    .or_default()
+                    .insert(slot, Some(item));
+            } else {
+                state
+                    .libraries
+                    .entry(nibble)
+                    .or_default()
+                    .insert(slot, item);
             }
         }
     }
@@ -901,7 +847,6 @@ pub(crate) fn pinyin_keys_to_packed(ids: &[crate::phrase::PinyinKey]) -> Option<
 mod tests {
     use super::*;
     use crate::persistence::SystemLibrary;
-    use crate::store::UNIGRAM_TOTAL;
 
     /// The container's gram under `key`, owned: `None` on a miss.
     fn gram(raw: &DefaultUserBigramDb, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
@@ -928,7 +873,7 @@ mod tests {
             .add_phrase_in(crate::USER_DICTIONARY, &"你".into(), &keys("ni"), Some(5))
             .unwrap();
         {
-            let target = store.session_target().unwrap();
+            let target = store.session_target();
             let mut phrases = target.phrases();
             let words: Vec<u32> = "他".chars().map(u32::from).collect();
             phrases
@@ -938,7 +883,7 @@ mod tests {
         }
         let snapshot = |store: &UserStore| {
             let db = store.database();
-            let rows = [crate::phrase_table::TABLE, UNIGRAM_TOTAL].map(|table| {
+            let rows = [crate::phrase_table::TABLE].map(|table| {
                 let mut rows = Vec::new();
                 db.for_each(table, |key, value| {
                     rows.push((key.to_vec(), value.to_vec()));
@@ -948,10 +893,7 @@ mod tests {
                 rows
             });
             drop(db);
-            (
-                rows,
-                format!("{:?}", store.session_target().unwrap().phrases()),
-            )
+            (rows, format!("{:?}", store.session_target().phrases()))
         };
         let before = snapshot(&store);
         let added = store.add_phrase_in(crate::USER_DICTIONARY, &"他".into(), &keys("ta"), Some(5));
@@ -1279,7 +1221,6 @@ mod tests {
         let unigram = |store: &UserStore, token: u32| {
             store
                 .session_target()
-                .unwrap()
                 .phrases()
                 .item(token)
                 .unwrap()
@@ -1314,7 +1255,6 @@ mod tests {
         let length = |store: &UserStore| {
             store
                 .session_target()
-                .unwrap()
                 .phrases()
                 .libraries
                 .get(&crate::USER_DICTIONARY)
@@ -1391,7 +1331,7 @@ mod tests {
             12
         );
         let db = store.database();
-        for table in [PHRASE, PHRASE_BY_TEXT, PHRASE_BY_LIB_TEXT, PRONUNCIATION] {
+        for table in [PHRASE, PRONUNCIATION] {
             assert!(db.is_empty(table).unwrap(), "retired session table {table}");
         }
         assert!(
@@ -1475,7 +1415,7 @@ mod tests {
             prons: vec![(vec![0x8000], 7)],
         };
         let library = UserLibrary::load(&build_chunk(&[(1, item)]).unwrap()).unwrap();
-        let target = store.session_target().unwrap();
+        let target = store.session_target();
         let mut phrases = target.phrases();
         phrases.libraries.insert(crate::USER_DICTIONARY, library);
         drop(phrases);
@@ -1674,16 +1614,8 @@ mod tests {
         // A replayed library's total lives in its buffer, not in the map.
         assert_eq!(before_offsets.offsets, after_offsets.offsets);
         assert_eq!(before_offsets.facade_extra, after_offsets.facade_extra);
-        // The allocation cursor of a library with an original is not read: its
-        // items live in its buffer, and a view is not seeded.
         let snapshot = |db: &SessionValues<DefaultStore>| match db {
-            SessionValues::Memory(tables) => {
-                let mut tables = tables.borrow().clone();
-                if let Some(alloc) = tables.get_mut(ALLOC) {
-                    alloc.remove(&codec::encode_u8(1).to_vec());
-                }
-                tables
-            }
+            SessionValues::Memory(tables) => tables.borrow().clone(),
             SessionValues::Native(_) => panic!("test uses session rows"),
         };
         assert_eq!(snapshot(&before), snapshot(&after));
@@ -3446,7 +3378,7 @@ mod tests {
                 "save compacts the sub-index only"
             );
             assert_eq!(facade(&store), 174, "the facade keeps what it held");
-            let exported = export_session_state(&store, &originals(), true).unwrap();
+            let exported = export_state(&store, &originals()).unwrap();
             assert_eq!(exported.system_overrides[&1][&9], Some(item.clone()));
             drop(store);
             let reopened =

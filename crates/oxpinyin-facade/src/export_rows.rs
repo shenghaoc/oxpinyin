@@ -138,7 +138,6 @@ pub enum ExportStep<R> {
 fn assert_for(error: &UserStoreError) -> Option<ExportAssert> {
     match error {
         UserStoreError::Decode => Some(ExportAssert::PhraseString),
-        UserStoreError::DecodePronunciation => Some(ExportAssert::NthPronunciation),
         _ => None,
     }
 }
@@ -244,9 +243,10 @@ impl ExportRow<'_> {
 
     /// The `get_pinyin_string` assert the pin dies at while rendering this
     /// row's keys (`pinyin.cpp:728`), if any: a `USER_FILE` key with a tone
-    /// past `MAX_KEY_TONE` or a syllable this engine has no spelling for. A
-    /// system item's packed keys are not sites: the chewing crate renders an
-    /// invalid pattern through its registered zero-row fallback.
+    /// past `MAX_KEY_TONE`. A session key always names a syllable, so the
+    /// content-table assert has no site. A system item's packed keys are not
+    /// sites either: the chewing crate renders an invalid pattern through its
+    /// registered zero-row fallback.
     #[must_use]
     pub fn key_assert(&self) -> Option<ExportAssert> {
         match &self.0 {
@@ -434,9 +434,8 @@ impl PhraseExportRead<'_> {
     }
 
     /// Re-reads the store-derived answers when the store's write generation
-    /// moved since they were taken. A libpinyin session answers the range
-    /// end from its arena; a standalone row store whose cursor cannot be
-    /// read ends the range at the library's first token.
+    /// moved since they were taken: the session answers the range end from
+    /// its arena.
     fn refresh(&mut self) {
         let Some(user) = self.user.as_ref() else {
             return;
@@ -572,11 +571,10 @@ impl PhraseExportRead<'_> {
         }
     }
 
-    /// The `USER_FILE` item under `token`, read from the session's arena,
-    /// or from a standalone row store once per token and generation.
-    /// `Ok(None)` is no item; `Err` is the assert site of a present item the
-    /// row store cannot decode. A row store that cannot be read at all has
-    /// no item there; a libpinyin session's arena read cannot fail.
+    /// The `USER_FILE` item under `token`: the session's arena item, or
+    /// else the item a system library's live buffer appended, held once per
+    /// token and generation. `Ok(None)` is no item; the `Err` arm is the
+    /// signature's, since a session's read cannot fail.
     fn with_user_item<R>(
         &mut self,
         token: u32,
@@ -1404,10 +1402,6 @@ mod phrase_cursor_tests {
         assert_eq!(
             assert_for(&UserStoreError::Decode),
             Some(ExportAssert::PhraseString)
-        );
-        assert_eq!(
-            assert_for(&UserStoreError::DecodePronunciation),
-            Some(ExportAssert::NthPronunciation)
         );
         assert_eq!(
             assert_for(&UserStoreError::Io(std::io::Error::other("unreadable"))),
