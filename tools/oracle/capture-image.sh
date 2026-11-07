@@ -8,12 +8,14 @@
 # the capture image (Dockerfile.capture) on top of it, and replaces the shell with COMMAND,
 # run by the image's managed Python. The checkout is mounted read-only at /work, OUT (a path
 # relative to the checkout) writable at /work/OUT, and the pinned libpinyin-data
-# (`just fetch-contract-data`) at /data. The container has no network.
+# (`just fetch-contract-data`) at /data. The container has no network. With
+# OXPINYIN_CAPTURE_PROVISION set to a directory, it is mounted read-only at /provision too, and
+# OXPINYIN_CAPTURE_MODEL, a model20 cache, at /model20.
 
 run_in_capture_image() {
     local out=$1 platform suffix expected_arch multiarch tag reference recipe capture actual_arch data image python
     local runtime=${OXPINYIN_CAPTURE_RUNTIME:-docker}
-    local -a build_pull run_user
+    local -a build_pull run_user mounts=()
     shift
     command -v "$runtime" >/dev/null || { echo "FAIL: $runtime is not installed" >&2; return 1; }
     case $(uname -m) in
@@ -47,9 +49,11 @@ run_in_capture_image() {
     image=$("$runtime" image inspect --format '{{.Id}}' "$capture")
     python=python$(sed -n 's/^\([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' .python-version)
     mkdir -p "$out"
+    [[ -z ${OXPINYIN_CAPTURE_PROVISION:-} ]] || mounts+=(-v "$OXPINYIN_CAPTURE_PROVISION:/provision:ro")
+    [[ -z ${OXPINYIN_CAPTURE_MODEL:-} ]] || mounts+=(-v "$OXPINYIN_CAPTURE_MODEL:/model20:ro")
     exec "$runtime" run --rm --platform "$platform" --network none "${run_user[@]}" \
         -e HOME=/tmp -e TMPDIR=/tmp -e PYTHONPYCACHEPREFIX=/tmp/pyc \
         -e "OXPINYIN_CAPTURE_IMAGE=$image" -e "OXPINYIN_TKRZW_LIBRARY=/usr/lib/$multiarch/libtkrzw.so.1" \
-        -v "$PWD:/work:ro" -v "$PWD/$out:/work/$out:rw" -v "$data:/data:ro" -w /work \
+        -v "$PWD:/work:ro" -v "$PWD/$out:/work/$out:rw" -v "$data:/data:ro" "${mounts[@]}" -w /work \
         "$image" "$python" -X lazy_imports=normal "$@"
 }
