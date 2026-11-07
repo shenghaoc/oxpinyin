@@ -32,7 +32,7 @@ Each had 1,571/1,571 rows.
 **Stage 2: current, not complete.**
 The round-2 audit closed on 2026-10-17 (#573).
 Remaining work is the init complexity tracker #870, followed by a third bug-for-bug sweep.
-The roadmap and [performance index](perf/README.md) record landed performance work.
+The roadmap records landed performance work.
 This includes P1–P6, fat LTO, the key-cost table and store/user hot paths.
 
 **Stage 3: after Stage 2.**

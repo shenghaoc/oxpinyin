@@ -33,15 +33,9 @@ bdb = ["oxpinyin-data/bdb"]
 tkrzw = ["oxpinyin-data/tkrzw"]
 
 [dev-dependencies]
-# Store micro-benches (benches/); workspace lock pins 0.8.
-criterion = "0.8"
 proptest = { version = "=1.12.0", default-features = false, features = ["std"] }
 tempfile.workspace = true
 # The session tests' failed Berkeley DB user bigram
 # (`BdbUserBigramDb::failed_container`), a test-only hook; a dev-dependency
 # feature never reaches the normal build.
 oxpinyin-store = { workspace = true, features = ["test-hooks"] }
-
-[[bench]]
-name = "export_phrases"
-harness = false

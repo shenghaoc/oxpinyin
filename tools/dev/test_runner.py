@@ -84,7 +84,6 @@ def memory_backed_tmpdir():
 PACKAGING_HARNESSES = (
     'tools/dev/packaging.test.py',
     'tools/bisection/teardown.test.py',
-    'tools/dev/measure/snapshot.test.py',
     'tools/dev/cli.test.py',
     'tools/dev/bash_floor.test.py',
 )
@@ -136,8 +135,7 @@ HARNESS_DEPENDENCIES = {
                                            'tools/bisection/contract-diff.test.py',
                                            'tools/dev/policy.test.py'),
     'tools/dev/policy.py': ('tools/dev/policy.test.py', 'tools/dev/cli.test.py'),
-    'tools/bisection/teardown.py': ('tools/bisection/teardown.test.py',
-                                  'tools/dev/measure/startup.test.py'),
+    'tools/bisection/teardown.py': ('tools/bisection/teardown.test.py',),
     'tools/bisection/system_import_profile.py': ('tools/bisection/system_import_profile.test.py',),
     'tools/dev/native.py': ('tools/dev/check.test.py', 'tools/dev/sanitize.test.py'),
     'tools/dev/check.py': ('tools/dev/check.test.py',
@@ -145,30 +143,22 @@ HARNESS_DEPENDENCIES = {
                            'tools/dev/cli.test.py'),
     'tools/dev/cli.py': ('tools/dev/cli.test.py', 'tools/dev/sanitize.test.py',
                          'tools/dev/lint-crate-cfg-placement.test.py'),
-    # The measure recipes (#1290). bench.py is every recipe module's service layer.
+    # The measure recipes (#1290). bench.py is the Valgrind recipes' service layer.
     'tools/dev/measure/bench.py': tuple(f'tools/dev/measure/{name}.test.py' for name in (
-        'bench', 'campaigns', 'neutrality', 'probes', 'profile', 'recipes', 'snapshot', 'valgrind')),
-    'tools/dev/measure/identity.py': ('tools/dev/measure/bench.test.py', 'tools/dev/measure/campaigns.test.py',
-                                      'tools/dev/measure/valgrind.test.py'),
-    'tools/dev/measure/reports.py': ('tools/dev/measure/bench.test.py', 'tools/dev/measure/campaigns.test.py',
-                                     'tools/dev/measure/valgrind.test.py'),
-    'tools/dev/measure/fake_world.py': ('tools/dev/measure/campaigns.test.py', 'tools/dev/measure/valgrind.test.py'),
-    'tools/dev/measure/campaigns.py': ('tools/dev/measure/campaigns.test.py',
-                                       'tools/bisection/system_import_profile.test.py'),
+        'bench', 'neutrality', 'recipes', 'sentence', 'valgrind')),
+    'tools/dev/measure/identity.py': ('tools/dev/measure/bench.test.py', 'tools/dev/measure/valgrind.test.py'),
+    'tools/dev/measure/reports.py': ('tools/dev/measure/bench.test.py', 'tools/dev/measure/valgrind.test.py'),
+    'tools/dev/measure/fake_world.py': ('tools/dev/measure/valgrind.test.py',),
+    'tools/dev/measure/prepare.py': ('tools/dev/measure/prepare.test.py',),
     # The oracle pin, image tag and runtime services; the importers of the shared process helpers.
     'tools/oracle/image.py': ('tools/oracle/image.test.py', 'tools/dev/provision.test.py'),
     'tools/dev/process.py': ('tools/oracle/image.test.py', 'tools/dev/provision.test.py',
-                             'tools/dev/model.test.py', 'tools/dev/measure/probes.test.py'),
-    'tools/dev/measure/valgrind.py': ('tools/dev/measure/neutrality.test.py', 'tools/dev/measure/valgrind.test.py', 'tools/dev/measure/campaigns.test.py',
+                             'tools/dev/model.test.py'),
+    'tools/dev/measure/valgrind.py': ('tools/dev/measure/neutrality.test.py', 'tools/dev/measure/valgrind.test.py',
                                       'tools/bisection/system_import_profile.test.py'),
     'tools/dev/measure/recipes.py': ('tools/dev/measure/recipes.test.py', 'tools/dev/cli.test.py'),
-    'tools/dev/measure/neutrality.py': ('tools/dev/measure/neutrality.test.py', 'tools/dev/measure/probes.test.py',
-                                        'tools/dev/measure/valgrind.test.py'),
-    'tools/dev/measure/probes.py': ('tools/dev/measure/probes.test.py',),
-    'tools/dev/measure/profile.py': ('tools/dev/measure/profile.test.py',),
-    'tools/dev/measure/snapshot.py': ('tools/dev/measure/snapshot.test.py',),
+    'tools/dev/measure/neutrality.py': ('tools/dev/measure/neutrality.test.py', 'tools/dev/measure/valgrind.test.py'),
     'tools/dev/w3_fixtures.py': ('tools/dev/w3_fixtures.test.py', 'tools/dev/cli.test.py'),
-    'tools/perf-gate/callgrind-ir.py': ('tools/perf-gate/callgrind-ir.test.py', 'tools/dev/measure/snapshot.test.py'),
 }
 # U3-owned oracle services and entry points only. Shared callers and
 # documentation stay unmapped: repository-wide audits read their tracked text.
@@ -177,7 +167,6 @@ COMPAT_HARNESS = (
     'tools/dev/bash_floor.test.py',
     'tools/bisection/cell-identity.test.py',
     'tools/dev/measure/bench.test.py',
-    'tools/dev/measure/profile.test.py',
 )
 HARNESS_DEPENDENCIES.update(dict.fromkeys((
     'tools/capture/run-capture.sh',
@@ -203,8 +192,7 @@ HARNESS_DEPENDENCIES.update(dict.fromkeys((
 ), PROVISION_HARNESS))
 
 # The model20 fetch and its callers; the retired script's path selects the same.
-MODEL_HARNESS = ('tools/dev/model.test.py', 'tools/dev/measure/profile.test.py',
-                 'tools/dev/provision.test.py')
+MODEL_HARNESS = ('tools/dev/model.test.py', 'tools/dev/provision.test.py')
 HARNESS_DEPENDENCIES.update(dict.fromkeys(('tools/dev/model.py', 'tools/model/fetch-model.sh'), MODEL_HARNESS))
 
 

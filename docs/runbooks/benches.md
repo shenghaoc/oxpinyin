@@ -1,12 +1,11 @@
-# Benches — criterion, the perf baseline, the RSS diagnosis, and profiles
+# Benches — Callgrind and Massif recipes
 
-Four tiers, none a per-change gate: the criterion benches for a component,
-the C-ABI perf baseline against the oracle, the RSS diagnosis that
-decomposes a resident set rather than sizing it, and a sampled profile of
-the keystroke cycle. The separate nightly `perf-snapshot` series records one
-tree sample and does not gate merges. Numbers are only comparable within one
-container on one host; every published snapshot (`docs/perf/`,
-`docs/findings/perf-*.md`) names both.
+The recipes here are attribution tools, none a per-change gate:
+`callgrind-control`, `callgrind-differential` (with its sentence and
+typing-sequence workloads) and `system-import-profile`, the teardown workload
+of `contract-diff.py`, and the per-call C-API costs. A plain timing is one
+ordinary command around the `bisect` driver. Numbers are only comparable within
+one container on one host.
 
 Performance evidence follows the [controlling rule](../source-policy.md#controlling-rule).
 The recipes below are existing tools, not required counts: a number they state
@@ -19,18 +18,14 @@ once, on the operation that shows it.
 
 Pin comparisons run locally in the `performance` target of
 `tools/oracle/Dockerfile.oracle`, inheriting the oracle's unpinned Debian testing `deps`
-stage (`debian:testing`). This covers `perf-baseline`, `perf-matrix`,
-`perf-same-data`, `callgrind-differential`, `steady-comparison`,
-`stack-comparison`, `shipped-check`, `tree-recipe-control`, `rss-diag` and
+stage (`debian:testing`). This covers `callgrind-differential` and
 `system-import-profile`. Build both the pin and subject inputs there. Never
 build or run the oracle on GitHub Actions.
 
 ```sh
 just performance
-# Inside the shell (matrix also prepares the Tkrzw and Kyoto pin data):
-uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.measure.campaigns matrix
-PERF_RUNS=1 PERF_RAM_RUNS=1 PERF_CYCLES=2 MATRIX_OUT=/performance/smoke \
-  uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev measure perf-matrix
+# Inside the shell:
+uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.measure.prepare callgrind
 ```
 
 `just performance --build-only` builds without entering; `--skip-build` enters
@@ -39,7 +34,7 @@ platform option. Conflicting platform environment overrides are refused;
 never collect timing or memory under emulation. The oracle's amd64 default
 remains for correctness captures only. The local Cargo/model cache uses a
 named volume (`--volume NAME` selects another); source is mounted read-only at `/repo`.
-All campaign defaults are `/performance/results/<recipe>/`; existing explicit
+Recipe outputs default to `/performance/results/<recipe>/`; explicit
 output overrides remain supported. The harness and scratch builds live under
 `/performance`. Prepared pin prefixes persist there too: preparation validates the
 prefix with `tools.oracle.image.prefix_ok` (pin commits, recipe, cached libraries),
@@ -47,101 +42,35 @@ requires its `versions.txt` to equal the running image's inventory, so pin and s
 share one base, and checks every file in both recorded data manifests before reuse. Changed or damaged inputs are rebuilt. Rosetta Python is refused; use native Python.
 `--cells` is valid only with `oracle` preparation.
 
-Preparation lives in the existing `tools/dev/measure/campaigns.py`, not in
-image layers. Select `callgrind` for profiled/shipping/allocation Tkrzw arms,
-or `oracle --cells tkrzw` for pin data only. Model data remains local.
+Preparation lives in `tools/dev/measure/prepare.py`, not in image layers.
+Select `callgrind` for profiled/shipping/allocation Tkrzw arms, or
+`oracle --cells tkrzw` for pin data only. Model data remains local.
 Both arms load Debian's packaged libtkrzw: the pin links it in the `build` stage,
 the subject finds it through pkg-config, and `OXPINYIN_TKRZW_LIBRARY` points the
 runtime check at it. The repository's tkrzw source build stays for CI and other hosts.
-The matrix preparation creates separate oxpinyin-generated data, retaining
-its four-arm meaning. Callgrind preparation checks debug-info neutrality and
-collection anchors. Additional base/PR revisions for steady/stack/control
-campaigns must also be built in this testing environment, with separate Cargo
-target directories. Set the existing recipe options to their resulting paths.
-
-`startup`, `profile-w8`, `cold-qualify`, `just bench` and diagnostic probes
-remain native, unchanged. Ordinary development remains native.
-
-The nightly `perf-snapshot` measures only oxpinyin in a plain `debian:testing`
-container, like every other Linux CI job. No oracle stage runs on Actions.
-Snapshot provenance includes the container tag and OS release as well as
-compiler/libc/profiler versions. The baseline cache restores only the exact
-environment-key prefix, with no cross-environment fallback: changing the tag or
-release starts a separate series rather than reporting a false regression.
-There is no snapshot-only dispatch input; both platform-only inputs must be
-false, which also runs the other applicable nightly jobs.
-
-The nightly snapshot and `profile-w8` still depend on `bisect.c --perf`.
-The capture plan deletes the C drivers at its end, so those two need a
-replacement before `bisect.c` can go.
+Callgrind preparation checks debug-info neutrality and collection anchors.
+Additional base/PR revisions must also be built in this testing environment,
+with separate Cargo target directories. Set the existing recipe options to
+their resulting paths. Ordinary development remains native.
 
 ## Shipping measurement inputs
 
 Use ordinary shipping builds. See the [function-layout ruling](../packaging.md#function-layout).
-Keep the backend, artifact identity, input-digest and runtime checks for each campaign.
-
-The measurement and profile tools were shell runners under `tools/bisection/`,
-`tools/perf-gate/`, `tools/env-probe/` and `tools/profile/`; each is now a
-recipe of `python -m tools.dev measure RECIPE [ARGS]` (`just measure RECIPE`; the
-measurement images have no `just` and run the `uv run` form). Their environment
-variables, options, output files and exit statuses are the shell runners' (the
-recorded differences are in `docs/plans/tooling-python.md`, unit U2), and a
-diagnostic still carries the old script name:
-
-| Recipe | Formerly |
-| --- | --- |
-| `perf-baseline` | `tools/bisection/run-perf-baseline.sh` |
-| `perf-matrix` | `tools/bisection/run-perf-matrix.sh` |
-| `perf-same-data` | `tools/bisection/run-perf-same-data.sh` |
-| `shipped-check` | `tools/bisection/run-shipped-check.sh` |
-| `tree-recipe-control` | `tools/bisection/run-tree-recipe-control.sh` |
-| `rss-diag` | `tools/bisection/run-rss-diag.sh` |
-| `callgrind-differential` | `tools/bisection/run-callgrind-differential.sh` |
-| `system-import-profile` | `tools/bisection/run-system-import-profile.sh` |
-| `snapshot` | `tools/perf-gate/snapshot.sh` |
-| `probe-debuginfo-neutrality` | `tools/env-probe/probe-debuginfo-neutrality.sh` |
-| `probe-egress` | `tools/env-probe/probe-egress.sh` |
-| `just profile-w8` | `tools/profile/run-w8-cycle.sh` |
-
+Keep the backend, artifact identity, input-digest and runtime checks for each recipe.
+Each recipe runs as `python -m tools.dev measure RECIPE [ARGS]` (`just measure RECIPE`;
+the measurement image has no `just` and runs the `uv run` form).
 The sampling loops are serial and interleave the arms one process at a time,
 because a timed or resident-set sample belongs to its arm only if nothing runs
-beside it. The builds are not samples: `shipped-check` and `tree-recipe-control`
-build their independent artifacts as units of one admitted pool.
+beside it.
 
-### Steady lookup comparison
+A plain timing needs no recipe. Build the `bisect` driver and run its `--perf`
+mode once per library; each run prints one JSON line:
 
-`steady-comparison` uses the existing `bisect --perf` workload and worker.
-It compares supplied shipping libraries in one job on one Linux host,
-rotating base, PR, pin and byte-identical base/PR controls serially. It also
-rotates separate base/PR `alloc-count` fixtures. Build those fixtures with
-`cargo build --locked --release -p oxpinyin-capi --no-default-features
---features <backend>,alloc-count`; they are never
-installed or reported as shipping artifacts.
-
-```bash
-just measure steady-comparison --cell bdb \
-  --base "$BASE_SO" --pr "$PR_SO" --pin "$PIN_SO" \
-  --base-alloc "$BASE_ALLOC_SO" --pr-alloc "$PR_ALLOC_SO" \
-  --system-dir "$DATA" --out "$WORK/steady"
+```sh
+cc -std=gnu11 -Wall -Wextra -Werror -O2 -o "$WORK/bisect" tools/bisection/bisect.c -ldl
+PERF_MODE=speed "$WORK/bisect" --perf "$SO" "$DATA"
 ```
 
-All libraries, data, work and `TMPDIR` must be on ext4. Each process performs
-eight cycles by default; the first is warmup and is excluded from every
-reported metric. Twenty native rounds report medians and ranges of time per
-steady cycle. Three allocation rounds report the requested Rust allocation
-count and bytes per cycle, excluding DBM/libc allocations; pin allocation
-counts are unavailable. Two Callgrind rounds report total instructions per
-cycle under the existing `bisect_perf_steady_unit` anchor, including external
-library work. Ir ranges are retained, never relabelled exact when controls
-vary. Compare the base/PR effect with the same-bytes control spread; overlapping
-ranges do not establish an instruction reduction.
-
-The worker's return/count checksum must be stable and agree between base,
-PR, controls and allocation fixtures. The pin checksum comparison is reported
-separately; full observable equivalence belongs to the contract differentials.
-This is a whole lookup workload, not an isolated measurement of a particular
-internal search. In particular, a workload without carried user entries
-does not establish a speedup for that rare edit path.
 
 ## Callgrind debug-info control
 
@@ -193,9 +122,7 @@ They never train or save. The default input is `nihaozhongguo`.
 | `sentence` | Reset and parse the complete input | `bisect_sentence_unit`: one `pinyin_guess_sentence` |
 | `typing-sequence` | One reset before the sequence | `bisect_typing_unit`: parse, `pinyin_guess_sentence`, then `pinyin_guess_candidates` at offset 0, sort `0x1e`, for each accumulated ASCII prefix |
 
-The sentence input/configuration are those of stage2's
-`guess_sentence_get_sentence_0/full_nbest_post_116`. Its collection measures
-sentence guessing alone: rank-0 retrieval and release happen afterwards.
+The sentence collection measures sentence guessing alone: rank-0 retrieval and release happen afterwards.
 Typing collects all 13 prefixes, from `n` through `nihaozhongguo`, in order.
 Output records each operation's returns, rank-0 sentence, and every typing
 candidate's text/type/N-best index in physical order. Observation, printing,
@@ -236,8 +163,7 @@ The pin observations are compared and reported separately; this campaign
 does not classify known pin divergences or replace the ranking/recount gates.
 Profiler creator/PID/command/Ir-only events and reconciled exclusive totals
 are required. Invalid controls, observations or collections return nonzero
-and suppress the per-invocation comparison. The startup RandomState range
-exception is not extended to the sentence workload. The typing sequence
+and suppress the per-invocation comparison. The typing sequence
 alone reports a varying control as `DIAGNOSTIC` (rule `randomstate`, ranges,
 no tolerance) when every varying function is `dedup_by_text_keep_first`,
 `prepend_nbest_rows` (packaged fat-LTO builds inline
@@ -270,295 +196,17 @@ is not permission for a product regression. Report the interval and control
 limits, rather than treating an interval containing one as proof of exact
 time equality. This phase measures no heap usage.
 
-The separate `probe-debuginfo-neutrality` diagnostic still compares independently
-compiled profiles and may fail. Changing Cargo's debug profile changes crate
-metadata, which can affect fat-LTO specialization as well as layout (#1337).
-That diagnostic does not create the campaign's control artifact.
-
-## Native startup measurement
-
-The 2026-10-22 UTC ruling (§7.8 in the tooling consolidation findings) places
-oxpinyin-only startup in `just measure startup`, also available as
-`just initbench`. Supply installed unstripped oxpinyin base and PR prefixes,
-one system directory and pin-provisioned profiles from
-the [native teardown provision stage](#native-teardown-workload). Native measurement only verifies
-these inputs; populated profiles need nonempty `witness.txt` files.
-
-```sh
-TMPDIR="$HOME/owned-startup-tmp" just initbench \
-  --base "$BASE" --pr "$PR" --system-dir "$DATA" --profiles-dir "$PROFILES"
-```
-
-Create the owned temporary parent first. Linux requires ext4 for every
-library, system file, profile and work path; macOS requires one APFS volume.
-The controller runs its worker build and the whole campaign itself.
-It uses private, equal-length base/PR/control library paths and fresh user
-copies, identifies each Linux arm's backend, and removes temporary inputs even after failure.
-It writes no profiler capture.
-Do not overlap measurement with builds.
-The PR control is always a byte-for-byte copy.
-
-Native verification compares U1–U6, the full script, witness answers,
-save/reopen observations, stderr, the user filename set and raw non-database
-file bytes. It never reads database rows. Python hashes the worker's exact
-canonical U1–U6 record including the final newline. The parent reads stopped
-child memory at every checkpoint. Linux reads `/proc`; macOS reads the shared
-Darwin libproc binding and reports Darwin-named fields: resident size and its
-peak, physical footprint and its interval/lifetime maxima, faults, page-ins,
-disk bytes read and written, and the host instruction and cycle counters.
-Memory sizes are KiB and counts stay counts; Linux-named fields stay
-unavailable on macOS, and Linux output is unchanged. The counters are
-`instructions` and `cycles`, each with
-`instructions_available` and `cycles_available`; they are raw XNU
-`rusage_info_v4` counts, not Valgrind Ir, and are never written to a
-Linux-named field. XNU fills them only when `CONFIG_PERVASIVE_CPI` is built
-and the host backs them; otherwise they are zero with no separate marker.
-Before trusting either one, the adapter probes the host by requiring the
-counter to advance across real work and a forced context switch. A counter
-that does not advance is reported unavailable, never as zero. The worker
-reports its own resident peak at each handshake; a controller-side task-port
-read is only a fallback. A value neither source provides is unavailable, never
-zero. Memory-run timings are excluded.
-
-`--stage verify` stops after verification and separate hostile probes.
-`--stage instrument` also checks Linux Callgrind Ir. Init uses two fresh
-processes per arm. The maintainer ruling of 2026-10-23 11:04 UTC identifies
-BDB init Ir as nondeterministic because libdb seeds `srandom_r` from PID, time
-and address. When every arm's checked `DT_NEEDED` backend is BDB, init reports
-each base/PR/control arm's process min–max as `bounds`, all original `counts`
-and raw profiles, with verdict `DIAGNOSTIC`, then continues.
-Non-BDB and unknown init backends retain the exact rule: any same-bytes
-variation returns 3 immediately. No tolerance is introduced.
-Under the 2026-10-24 UTC maintainer ruling (§7.5), first-candidate and steady
-Ir use five fresh processes per base/PR/control arm. Steady repeats the same
-candidate request on the initialized instance, in a separate profiler process.
-The control and PR min–max ranges must overlap for range qualification. The further 2026-10-24 UTC
-ruling removes the span limit entirely. Claims are bounds: base min minus
-PR max through base max minus PR min, never a point or exact difference. Every PR/control exclusive function count is checked
-against the single `tools.dev.measure.instructions::RANDOMSTATE_ALLOWLIST`
-definition. Under the additional 2026-10-24 UTC attribution ruling, init
-does not require complete function naming. Its exact and BDB diagnostic
-paths both validate creator, PID, command, Ir-only events and reconciled totals.
-For range metrics, unresolved sites use full object identity plus an offset
-from the object's load base, never raw ASLR addresses. The same-process worker
-reports loader PT_LOAD segments and load biases via `dl_iterate_phdr` after
-the units. The lowest runtime PT_LOAD address is the base; each unresolved
-object-relative instruction position plus its recorded load bias must map uniquely into an executable segment.
-Constant unresolved entries present in every PR/control process are allowed
-and reported by count and summed Ir. Varying or unmatched unresolved entries, missing
-or ambiguous loader mappings, other named variation, profiler identity
-failure, or unreconciled exclusive totals are INVALID (status 3), including
-for diagnostics. The RandomState exception applies only to first-candidate
-and steady scopes with variation confined to that allowlist: a differing
-same-bytes control reports each arm's min–max `bounds`, every original count,
-and verdict `DIAGNOSTIC`, then continues even when the ranges do not overlap.
-This is diagnostic output, not a qualified comparison. It does not relax
-deterministic scopes or the profiler creator/PID/command/events checks.
-Raw loader
-records and profiler instruction positions remain in the output. The
-[Callgrind format](https://valgrind.org/docs/manual/cl-format.html#cl-format.reference.header)
-specifies object-relative instruction positions for identified objects; the
-loader bias is added before checking the executable segment. Callgrind's
-anonymous `???` object has zero bias (`fn.c::new_obj_node`), and
-`dump.c::get_debug_pos` emits runtime address minus that bias. Its instruction
-position is therefore checked directly against same-process executable
-segments. In both cases the uniquely proven object's load base is subtracted
-to form the key. Unknown object names alone do not cause rejection; missing
-or ambiguous mappings still do. Failed parsing retains the sample PID, raw
-stdout/profile bytes and loader records in the INVALID report, even when no
-parsed function table exists. No earlier failure is retroactively attributed.
-Qualified comparisons report RANGE-QUALIFIED and their bounds, never exact;
-the diagnostic cases above report DIAGNOSTIC.
-Every original timing sample, scoped total, per-function count and raw
-profile is reported; no normalization, hash reseeding or retrospective
-attribution of earlier phase-total-only differences is allowed.
-Re-evaluate retained controller JSONL before repeating covered scopes:
-
-```sh
-just measure startup --recheck-instructions "$RETAINED_JSONL"
-# Then use the original initbench inputs and selection, adding:
-just initbench --base "$BASE" --pr "$PR" --system-dir "$DATA" \
-  --profiles-dir "$PROFILES" --instructions-from "$RETAINED_JSONL"
-```
-
-Replay requires one original start record, complete raw init profiles and
-complete range profiles with raw data, PIDs and loader records. It reparses
-originals and reports all counts and the new bounds; duplicate scopes/range
-PIDs or incomplete provenance refuse. Continuation additionally matches input
-digests, library hashes, worker source, binding and cache mode. Each qualified
-or validated diagnostic retained scope is skipped, while uncovered scopes
-(including zhuyin) still run. BDB init diagnostics require the recorded backend
-and the current checked backends to identify BDB; unknown backends stay exact.
-Fresh behavioral verification is a preflight; subsequent timing/memory are a
-separate measurement segment linked by the retained file SHA-256. Retained
-and new samples are never pooled or claimed as one original run.
-
-The default `--stage run` checks these counts before timing. Native macOS
-instruction counts are unavailable. Valgrind output stays in memory.
-The default run has 60 timing rounds plus 3 warm-ups and 30 memory rounds
-plus 2 warm-ups (`--bind lazy` defaults to 30 timing rounds). Subjects rotate
-within each round. `--rounds`, `--warmups`, `--memory-rounds` and
-`--memory-warmups` permit an explicitly reported smoke selection.
-
-Timing and residency use the 2026-10-21 UTC control rules and shared
-`tools.dev.measure.stats` helpers. An unstable metric is INCONCLUSIVE and
-gets no PR/base ratio. Fault counts are diagnostic, not residency ratios.
-The statuses are 0 completed (including INCONCLUSIVE), 1 failure/refusal,
-2 usage error, 3 NOT COMPARABLE or INVALID exact control, 130 cancelled.
-Pin rows require the Layer 4 container path. The startup worker and measurement
-services support Linux/macOS only.
-`--cache cold` runs on native macOS (APFS) and native Linux (ext4); any other
-host, and on Linux any input or work file off ext4, refuses with status 1.
-Maintainer ruling (2026-10-25
-UTC, recorded 2026-10-25 17:53 UTC): "the shared cold-mode rejection limit is 2
-rejected samples per arm and metric. A metric with more than 2 rejected samples
-is INCONCLUSIVE. The limit is a fixed constant and is never derived from or
-tuned against campaign output."
-
-On macOS the controller prepares every timing and memory sample through
-`tools.dev.measure.cold` ([APFS cold preparation](#apfs-cold-preparation))
-after the user copy is made and before the worker is spawned. A set still
-resident after the second preparation is rejected. Its `sample` record carries
-the rejection (`cold.verdict` `REJECTED`) and no worker output. The sample is
-excluded, never pooled and never rerun, so `--rounds` and `--warmups` still
-count attempted rounds. Every metric report in a cold run carries `cold`: the
-limit (`REJECTION_LIMIT` in `tools/dev/measure/cold.py`, the one constant
-both hosts read), the accepted and rejected counts of the measured samples
-per arm, and the rejected warm-ups, which never count toward the limit. A
-metric with more than 2 rejected samples in any arm, or with no round in which
-every arm was accepted, is INCONCLUSIVE with no summaries or ratio. Any other
-metric follows the usual rules over the rounds in which every arm was accepted,
-so paired ratios and controls compare like with like. Status stays 0. The
-Darwin metric is `darwin_resident_pages`; it appears in `cold` and
-`page-residency` records, never in a Linux-named field.
-
-On Linux the controller prepares every timing and memory sample through
-`tools.dev.measure.cold_linux` ([Linux cold preparation](#linux-cold-preparation))
-at the same point, and rejects, counts and pools exactly as above under the
-same limit of 2 per arm and metric. The Linux metric is
-`linux_resident_pages`; it is never written to the Darwin field.
-
-Linux KC smoke acceptance completed on 2026-10-24 UTC at 08:23 with controller
-`1cea405cf297e68da8ca3caf97594de45f467ef8` and retained shipping build
-`ebc9d4f5bf3edc6d08f254de39a6db46bb75c9b3`, not moving main. This was a
-retained-profile recheck followed by a separate continuation, both exit 0.
-`$INPUT` is the directory that held the retained shipping build's installed
-prefix (`stage`) and the provisioned profiles (`provision/profiles`).
-`$RETAINED` is the retained controller output (`measurements.jsonl`) of the
-earlier profiler segment. `$DATA` is the `lib/libpinyin/data` directory of the
-Kyoto Cabinet oracle prefix. `$TMPDIR` is an owned temporary parent directory on
-ext4 for the continuation's work files:
-
-```sh
-just measure startup --recheck-instructions "$RETAINED"
-TMPDIR="$TMPDIR" \
-  just initbench --base "$INPUT/stage" --pr "$INPUT/stage" \
-  --system-dir "$DATA" \
-  --profiles-dir "$INPUT/provision/profiles" --profiles empty \
-  --rounds 3 --warmups 1 --memory-rounds 2 --memory-warmups 1 \
-  --instructions-from "$RETAINED"
-```
-
-The continuation skipped all three covered pinyin profiler scopes. Init was
-exact across base/PR/control (two processes each): pinyin 6,922,434 Ir;
-zhuyin 3,472,152 Ir. All four first/steady metrics were RANGE-QUALIFIED:
-
-| Facade | Scope | Base minus PR bounds (Ir) |
-| --- | --- | --- |
-| pinyin | first candidate | −187 to 95 |
-| pinyin | steady | −468 to 341 |
-| zhuyin | first candidate | −166 to 132 |
-| zhuyin | steady | −375 to 149 |
-
-Every range overlapped its control; no named variation outside the allowlist
-or invalid unresolved entry was found. Each facade's first-candidate scope
-had 58 constant unresolved sites totalling 3,006 Ir; steady had 39 / 1,874 Ir.
-Both facade observations and digests were COMPARABLE, all 72 hostile probes
-returned 0, and all six arms passed ordering (326 pinyin / 306 zhuyin paths).
-The continuation reported 42 original timing/memory samples including warmups.
-All 20 timing metrics were INCONCLUSIVE with ratios withheld: no timing gain
-is established. Memory: pinyin 51 STABLE, five INCONCLUSIVE and 14 diagnostic;
-zhuyin 56 STABLE and 14 diagnostic. Pinyin's inconclusive metrics were
-lib_load RSS, RSS delta, peak RSS, file-backed and end file-backed.
-Child RSS and virtual size were positive at all seven handshakes.
-Raw records remain local and are not published. These segments do not prove
-one uninterrupted session or retrospectively attribute earlier failed captures.
-BDB instruction counts are diagnostic only
-(`libdb` seeds `srandom_r`); they are not reproducible exact controls.
-The maintainer reports bounded native macOS checks at `d4e9f54d`: initbench
-returned 0 with ELF ordering unavailable, four refusals returned 1, and
-parent memory reads were nonzero at all seven child handshakes. The macOS
-reader uses `ps` for RSS and virtual size (§7.7).
-[CI run 39892909515](https://github.com/shenghaoc/oxpinyin/actions/runs/39892909515)
-is green at that head. Unit tests and verification are not performance results.
-
-### APFS cold preparation
-
-`tools.dev.measure.cold` prepares the native controller's macOS sample inputs
-cold. For the copied facade, every system-data file and every regular file in
-the sample's private user copy, it makes a read-only `MAP_SHARED` mapping,
-touches one byte per host page, and calls `msync(MS_SYNC | MS_INVALIDATE)`
-before the worker is spawned. It then checks the whole set with `mincore` over
-`PROT_NONE` mappings. A resident page gets one more full preparation and
-check; a set still resident is rejected. The Darwin metric is
-`darwin_resident_pages`; zero qualifies. It is never written to a Linux
-cold-page field.
-
-Qualification on 2026-10-25 UTC on macOS 27.0.1 (build 26A434), arm64, APFS,
-16 KiB pages, with a 6.3 MB database file, a 2.9 MB Mach-O dylib and a 2 MiB
-user file:
-
-| file | bytes | pages | resident before | after `MS_SYNC` alone | after `MS_SYNC + MS_INVALIDATE` |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| `data.db` | 6,302,040 | 385 | 385 | 385 | 0 |
-| `libpinyin.dylib` | 2,968,416 | 182 | 182 | 182 | 0 |
-| `user.db` | 2,097,152 | 128 | 128 | 128 | 0 |
-| whole set | 11,397,608 | 695 | — | — | 0 (one preparation, no retry) |
-
-"Resident before" is after every page was touched and before `msync`.
-`msync(MS_SYNC)` alone left every page resident; adding `MS_INVALIDATE`
-dropped all of them, and `mincore` reported the drop. The whole-set
-preparation then qualified on its first attempt.
-
-```sh
-just cold-qualify /tmp/cold-qualify
-```
-
-`cold-qualify` is read-only: it maps and touches the named files and runs no
-worker. `--cache cold` on macOS prepares each sample's set the same way and
-applies the rejection limit above; the native controller's sample records carry
-the preparation record and metric. Files the sample does not own (libc, backend
-dylibs) stay out of the set, matching #1162's Linux scope.
-
-### Linux cold preparation
-
-`tools.dev.measure.cold_linux` prepares the native controller's Linux sample
-inputs cold, with the record shape of the APFS preparation. It first
-`fsync`s every regular file in the sample's private user copy, which was
-written just before the sample and whose dirty pages `POSIX_FADV_DONTNEED`
-would leave. It then evicts the copied facade, every system-data file and
-every user-copy file with `posix_fadvise(POSIX_FADV_DONTNEED)` and, after the
-whole set is evicted, checks it with `mincore` over `PROT_NONE` mappings
-through `tools.dev.mman`, the one `ctypes` binding of `mmap`, `munmap` and
-`mincore` that the APFS preparation also uses (Python has no `mincore`). A resident page
-gets one more eviction and check; a set still resident is rejected. Every
-file must be on ext4. Since Linux 5.2, `mincore` reports a file the caller
-cannot write as wholly resident, so a permission gap rejects samples instead
-of qualifying them. Files the sample does not own (libc, libstdc++, backend
-libraries) stay warm. Cold campaigns evict only named files; run them when
-no other measurement run shares the host's page cache.
-
 ## Native teardown workload
 
 `contract-diff.py --teardown` adds one workload to the existing driver. It
-builds `bisect.c` with its `teardown.h` mode; no external initbench is used.
+builds `bisect.c` with its `teardown.h` mode.
 Python provisions private profiles, interleaves subjects and reads the paused
 native child's memory. ABI calls are bracketed in C. Other bisect and contract
 modes keep their existing output.
 
 All stages (`provision`, `verify`, `pilot`, `confirm`, `repeat`, `multi`,
 `attribute`, `init-attribute`) support the selected cell, BDB, KC or tkrzw. Provisioning writes
-startup profiles through that cell's own pin. Comparison stages retain
+user profiles through that cell's own pin. Comparison stages retain
 backend-aware final-file and reopen equivalence before any ratios. KC user
 indexes and user bigram are snapshot streams; tkrzw indexes are TreeDBM
 and its user bigram is HashDBM. The existing contract worker reads every
@@ -749,7 +397,7 @@ a primary timing sample; report primary timings from `confirm`.
 
 ### Populated USER_FILE baseline
 
-The shared startup/teardown profiles also include `user`, `user8` and
+The teardown profiles also include `user`, `user8` and
 `usersparse`. The first two import the same 10,000 distinct two-or-more-character
 phrases from the pin's system export into library 7, at count 5, with one and
 eight readings per phrase. The original reading comes first; additional
@@ -852,58 +500,19 @@ its arena length and the proposed arena's garbage bounds are inapplicable
 until that representation exists. Neither file length nor total heap is
 relabeled as a measured arena peak.
 
-For an init-only comparison, `just measure startup --instruction-scopes init`
-captures only the requested instruction window. The default still captures
-init, first candidate and steady. Record selected windows with the results;
-selecting init does not qualify a failed first-candidate or steady scope.
-`--instructions-from` can reuse already qualified windows from a retained
-segment after checking its input, worker and shipping-library hashes.
-
 To measure a stack in one run, add one `--teardown-arm NAME=PINYIN_SO[:ZHUYIN_SO]`
 per further revision (NAME: one to four lowercase letters or digits) to the
 `confirm`, `init-attribute`, `user-verify` or `user-phrase` stage. It needs
 `--base-pinyin-so`. Each arm rotates with base, PR, control and pin, passes the
 same equivalence preflight, and its timing records carry `arm_ratios` against
 base and pin under the PR's same-bytes control. Its profiler rows are printed
-beside the others. `steady-comparison` takes the same arms as `--arm NAME=SO`
-(NAME: four of `[a-z0-9_]`); every arm reports `ratio_to_base` and
-`ratio_to_pin`, and its checksum must equal the base's.
-
-`just measure stack-comparison` runs a whole stack's gate in one job: the `user-phrase` write window on `user8`, `confirm` init with
-`--teardown-startup-heap` and `init-attribute` instructions on all seven
-profiles and both facades, then `steady-comparison` on the `user8` profile the
-first stage provisioned. Every workload runs base, PR, the pin and each
-`--arm`; each workload's records go to `WORK/<workload>.log`, and steady's
-result to `WORK/steady/result.json`. Supply installed shipping prefixes
-(`just packaging install`) and the two `alloc-count` fixtures:
-
-```bash
-just measure stack-comparison --cell tkrzw --pin-prefix "$PINYIN_ORACLE_PREFIX" \
-  --base-prefix "$BASE_PREFIX" --pr-prefix "$PR_PREFIX" \
-  --arm "m3a=$A_PREFIX" --arm "m3b=$B_PREFIX" \
-  --base-alloc "$BASE_ALLOC_SO" --pr-alloc "$PR_ALLOC_SO" --work "$WORK"
-```
-
-`--workloads write,init,init-ir,steady` selects a subset; steady then needs a
-`WORK` the write workload already provisioned.
+beside the others.
 
 With `--teardown-summary-dir`, `user-phrase` also keeps each arm's first
 write-window Callgrind profile (`pinyin-CASE-SIDE-user-write.callgrind`) and
 its Massif profile (`pinyin-CASE-SIDE-user-heap.massif`) for local diagnosis:
 `callgrind_annotate` gives instructions by function and `ms_print` the heap
 peak by allocation site.
-
-For the steady cycle, pass `--user-dir "$WORK/profiles/user/user"` (and then
-`user8/user`) to `just measure steady-comparison`. The controller snapshots
-the source once into `profile-input` before sampling and records its manifest
-digest as `user_profile_identity` in both environment and result reports.
-Every native, allocation and Callgrind launch gets a fresh private copy of
-that snapshot, removed by the controller. Output equal to or inside the
-resolved source profile is refused before output creation. Without this
-option an inherited `PERF_USER_DIR` is cleared to preserve the empty workload.
-The native startup controller accepts these same profile names through its
-existing `--profiles` selection; omitting that option still selects only
-`empty,modest,phrases,journals`. Missing manifests give a provisioning error.
 
 ## Per-page residency attribution
 
@@ -917,56 +526,7 @@ sections and `LC_SYMTAB` symbols (`macho_segments`, `macho_sections`,
 (`offset_range`). Universal Mach-O selects and identifies the host architecture
 slice; unsupported formats fall back to byte ranges with a reason.
 
-Two controllers report through it. Nothing is archived or uploaded.
-
-The native startup controller (`just measure startup --cache cold`, native
-Linux on ext4 and native macOS on APFS) reads each cold file of a cold memory
-sample at the worker's existing checkpoint pauses (`start`, `lib_load`,
-`init`, `config`, `alloc`, `first_candidate`, `end`), with
-`tools.dev.mman.vector`, the read that `tools.dev.measure.worker` makes while
-the child waits. The cold files are those its preparation evicted: the copied
-facade (`object`), each system-data file (`data/<path>`) and each private user
-file (`user/<path>`); libc and backend libraries stay warm and are not
-reported. Timing samples, warm samples and rejected samples collect no
-vectors. Once all memory rounds for one facade and profile finish, it prints
-one `page-residency` record per arm, accepted round and pair of neighbouring
-checkpoints. Rejected rounds have no vectors and are skipped. Each record has
-`facade`, `profile`, `arm`, `round`, `checkpoints`, `page_size`,
-`metric`, `limits` and `files`. The metric names the host:
-`linux_resident_pages` on Linux, `darwin_resident_pages` on macOS. Each file
-with a newly resident page carries that metric's page count and its `rows`; a
-file that appeared, disappeared or was replaced between the checkpoints
-carries a `reason` instead. `lib_load` to `init` is the teardown campaign's M0
-to I1. The facade is parsed after the rounds, from a descriptor whose device,
-inode, size and modification time match the checkpoint; otherwise its rows are
-byte ranges and `layout_error` names why. A universal Mach-O also names its
-`macho_slice`.
-
-```sh
-# The records of a native startup run whose standard output is in $startup_run:
-grep '"startup": "page-residency"' "$startup_run"
-```
-
-For memory attribution without timing or profiler sampling, select the native
-controller's `memory` stage. It keeps verification/reopen comparisons and the
-usual memory rounds and warmups, and emits no timing or instruction results.
-On Linux, each memory sample also retains the complete `/proc/<pid>/smaps`
-text in `checkpoints.lib_load.smaps_raw` and `checkpoints.init.smaps_raw`, read
-while the existing worker handshake pauses at M0 and I1. Shipping objects and
-the worker's behavior are unchanged.
-
-```sh
-just initbench --stage memory --cache cold --profiles modest --facades pinyin \
-  --base "$BASE" --pr "$PR" --system-dir "$DATA" --profiles-dir "$PROFILES"
-```
-
-Sum per-mapping `Pss` from those snapshots, distinguishing `[heap]`, other
-anonymous VMAs, the subject's access classes, data files and other mappings.
-Private anonymous/COW pages within file-named mappings remain in those mapping
-classes. The existing `pss` field comes from a separate `smaps_rollup` read;
-report its discrepancy from the sum explicitly. Kernel per-mapping rounding
-and the sequential reads need not give identical totals. Mincore page-cache
-records are not per-process RSS/PSS attribution.
+The teardown campaign reports through it. Nothing is archived or uploaded.
 
 The teardown campaign's cold mode (`--teardown-cache cold`, native Linux)
 reports the cold memory samples of `pilot` and `confirm`, and the cold init
@@ -1020,7 +580,7 @@ describe the teardown report:
 grep '"teardown": "page-residency"' "$cold_run"
 ```
 
-Three limits apply to every result of either controller, and every record
+Three limits apply to every result, and every record
 repeats them in `limits`:
 
 - A `mincore` difference includes readahead. A page that became resident
@@ -1033,113 +593,8 @@ repeats them in `limits`:
   rewritten shows its written pages as newly resident, whether or not anything
   read them.
 
-In a teardown record, a page with `in_rounds` below `rounds` was newly
-resident in only some of the rounds. A startup record holds one round.
-
-## Criterion benches
-
-| crate | bench | needs |
-| --- | --- | --- |
-| oxpinyin-capi | `stage2` | the export (`PINYIN_EXPORT_DIR`), the C-ABI surface |
-| oxpinyin-store | `backend_matrix_{tkrzw,kyotocabinet,bdb}` | `--features <backend>` (each is `required-features`-gated) |
-| oxpinyin-user | `export_phrases` | the export |
-| oxpinyin-runtime | `scan_perf`, `alloc_profile` | the export, model20 |
-
-Run one bench by name; without `--bench <name>` cargo also runs the lib
-under libtest, which rejects criterion flags:
-
-```sh
-cargo bench -p oxpinyin-store --bench backend_matrix_tkrzw
-cargo bench -p oxpinyin-capi --bench stage2 -- --profile-time 10
-```
-
-A backend-specific criterion bench — one that needs a peer's own
-build inputs, such as a system C library — must carry
-`required-features = ["<backend>"]` in its `[[bench]]` entry. CI runs
-`cargo clippy --workspace --all-targets` on the default backend, and
-without it the target fails to resolve the dependency instead of being
-skipped. Run one bench with `--bench <name>`; without it cargo also runs
-the lib under libtest, which rejects criterion flags such as
-`--profile-time`. To run a bench in debug mode: `cargo test --bench
-<name>` (see [verification](verification.md#procedure-specific-rules)).
-
-### `just bench` and `just bench-smoke`
-
-Maintainer ruling 2026-10-22 UTC. Both recipes:
-
-- `just bench [args ...]` runs
-  `cargo bench --workspace --benches <args>`.
-- `just bench-smoke` runs `just bench --no-run`. It builds every
-  selected harness and runs none. It needs no model20 cache.
-
-`--benches` selects every target with `bench = true`. That is each
-`[[bench]]` target plus each library and binary target, which keep the
-default `bench = true`. Library and binary harnesses run their unit
-tests under libtest. Criterion flags such as `--profile-time` are
-rejected there, so pass them to one bench directly, as
-above.
-
-`--benches` skips a target whose `required-features` are not enabled.
-With the default features it skips these three targets:
-
-| package | bench | run it with |
-| --- | --- | --- |
-| oxpinyin-store | `backend_matrix_kyotocabinet` | `cargo bench -p oxpinyin-store --no-default-features --features kyotocabinet --bench backend_matrix_kyotocabinet` |
-| oxpinyin-store | `backend_matrix_bdb` | `cargo bench -p oxpinyin-store --no-default-features --features bdb --bench backend_matrix_bdb` |
-
-`backend_matrix_tkrzw` needs the default backend feature, so it is
-selected.
-
-These default-feature benches load the model20 cache and panic when it is
-missing: `stage2` (oxpinyin-capi, `benches/support/mod.rs`), and
-`scan_perf` and `alloc_profile` (oxpinyin-runtime, `benches/support/mod.rs`).
-That is the repository's fail-on-missing-input rule
-([docs/testing/README.md](../testing/README.md)), not a defect, and no
-bench is excluded from the selection. Fetch the cache with
-`just fetch-model`.
-
-On a host with model20, `just bench -- --test` is the full start-up
-check. It runs every selected harness once: each Criterion bench runs
-once without measurement, and each library and binary harness runs its
-unit tests.
-
-### `alloc_profile` — heap attribution is opt-in
-
-`alloc_profile` is a custom harness, not a Criterion group. Its timing and
-probe-count modes run on the system allocator. Heap attribution
-(`--dhat`) needs the non-default `dhat-heap` feature, which installs
-`dhat`'s global allocator for the whole executable:
-
-```sh
-cargo bench -p oxpinyin-runtime --features dhat-heap --bench alloc_profile -- --dhat [--keystroke-only]
-cargo bench -p oxpinyin-runtime --bench alloc_profile -- --parity-timed
-```
-
-Each build rejects the other's modes: without the feature `--dhat` exits
-with this command, and with it every mode except `--dhat` exits rather than
-print timings the installed allocator would inflate. With the feature,
-`--dhat` combined with `--parity-timed` or `--repeats` also exits 2, because
-the profile would run a different workload from the one requested;
-`--dhat` alone and `--dhat --keystroke-only` are unchanged. `dhat` is an optional
-dependency of `oxpinyin-runtime` that nothing shipping enables, so ordinary test and
-bench builds do not compile it. Dormant, the wrapper took the allocator
-lock on every allocation: on the keystroke cycle it measured about 18% over
-no wrapper in one run on one host, which is a property of that run, not a
-factor to apply to older numbers. Timings that earlier snapshots took from
-this bench's non-`--dhat` modes came from the always-installed wrapper and
-stand as recorded.
-
-DHAT site counts and stack grouping are build-specific; compare matched
-workloads using allocation totals and reconciled source-level attribution,
-rather than treating raw site-count changes alone as allocation
-regressions.
-
-### `kyotocabinet_bnum` — retired
-
-The #402 time-side bench was retired with the Kyoto Cabinet CXX bridge
-(2026-11-02): the bridge binds no `tune_buckets`, which only that bench
-reached, and #402 is closed. Its recipe and results are in the history of
-`crates/oxpinyin-store/benches/kyotocabinet_bnum.rs` and of this section.
+A page with `in_rounds` below `rounds` was newly resident in only some of
+the rounds.
 
 ## BDB guess, training, and import profiles (#757–#759)
 
@@ -1323,70 +778,7 @@ digits, suffixes, library and count range errors, bad line endings, and an
 embedded NUL. Valid `+5`, `-5`, CRLF, and an EOF-terminated final row retained
 byte-identical stdout against the historical executable.
 
-## The perf baseline (oracle vs installed oxpinyin)
-
-`just measure perf-baseline` measures speed, installed size
-and RSS with one dlopen harness (`bisect --perf`), alternating oracle
-and oxpinyin processes. It needs the pin-built oracle, `cargo-c` and
-the model cache. Enter `just performance`, prepare `oracle --cells tkrzw`
-as above, then run:
-
-```sh
-uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev measure perf-baseline
-```
-
-Knobs: `PERF_RUNS`, `PERF_CYCLES`, `PERF_RAM_RUNS`, `PERF_CPU` (pin a
-CPU; do it). `measure perf-matrix` is the four-backend
-form; prepare its arms with the `matrix` command above. For a parent-vs-HEAD comparison use one `CARGO_TARGET_DIR` per
-tree: cargo's freshness check is fooled by `git archive` mtimes and will
-reuse the wrong artifacts otherwise.
-
-## RSS diagnosis (where the resident set actually sits)
-
-`bisect --perf` in `PERF_MODE=rss-diag` answers a different question from
-the RAM modes: not how large the resident set is, but what it is made of.
-At init and again after the keystroke cycles it reads
-`/proc/self/smaps_rollup` (anonymous vs file-backed, the clean/dirty
-split) and `mallinfo2()` (heap high-water, retained free chunks, arena
-count), then calls `malloc_trim(0)` and reads both again — the one call
-that separates allocator retention from memory genuinely held.
-
-`just measure rss-diag` drives the two cells round-robin over
-**one** data directory (the drop-in configuration: both engines open
-libpinyin's own installed `data/`) and writes `rounds.jsonl` plus an
-`identity.txt` naming every artifact by SHA-256:
-
-```sh
-just measure rss-diag \
-    --lp /opt/libpinyin-kc/lib/libpinyin.so.15.0.0 \
-    --ox <shipped oxpinyin .so> \
-    --data /opt/libpinyin-kc/lib/libpinyin/data \
-    --out /tmp/rss-diag --rounds 12 --cycles 8
-```
-
-Two rules the harness enforces and a reader must not undo:
-
-* **`RSS_DIAG_DIR` belongs in its own round.** Setting it makes `bisect`
-  write the `/proc/self/maps`, `/proc/self/smaps` and `malloc_info`
-  dumps, and writing them allocates — which moves the very RSS the
-  `malloc_trim` delta measures. The runner takes the measurement rounds
-  with it unset and one mapping round per cell with it set.
-* **RSS is backend-sensitive.** Two cells on one backend give a valid
-  ratio; the absolute figures describe that backend's configuration and
-  do not stand in for another's.
-
-`tools/bisection/rss-smaps.py` turns a dump into a per-mapping `Rss`
-table, and `--diff A B` into the per-mapping delta that names which
-mappings carry a gap. `docs/findings/rss-attribution-2026-09-09.md` is
-the worked example.
-
-For live and peak **live** bytes on the Rust side, build the artifact
-with the non-default `alloc-count` feature; `bisect` resolves the
-`oxpinyin_alloc_*` readers with `dlsym` and reports `-1` when they are
-absent, so the JSON shape does not change between cells. The feature is
-never in a shipped artifact — `nm -D` is the check.
-
-### Attributing a heap gap to callers
+## Attributing a heap gap to callers
 
 DHAT names the allocation *site*; naming its *caller* across the C-ABI
 boundary is where this goes wrong, and the failure looks like a result.
@@ -1400,10 +792,7 @@ does sit inside the function it names, so nothing looks broken. None of
 `--num-callers=24`, resolving at `addr - 1`, `debug = 2` with `lto =
 false`, or `-C force-frame-pointers=yes` changes it; all produce
 byte-identical stacks. Kyoto Cabinet debug symbols
-(`libkyotocabinet16v5-dbgsym`) do fix the KC half and nothing else. The
-worked case is
-`docs/findings/rss-attribution-2026-09-09.md`, "DHAT's cross-FFI stacks
-were wrong in a way that looked plausible".
+(`libkyotocabinet16v5-dbgsym`) do fix the KC half and nothing else.
 
 **Use callgrind caller→callee edges instead** — exact call counts, no
 stack walk. Two rules that produced wrong numbers before they were
@@ -1424,92 +813,6 @@ A profiling build may stand in for the shipped artifact here: block
 counts were identical across the shipped recipe, `debug = 2` with LTO
 off, and forced frame pointers.
 
-## Profiles
-
-```sh
-PINYIN_EXPORT_DIR="$EXPORT" PINYIN_MODEL_DIR="$MODEL" just profile-w8
-```
-
-The launcher stages oxpinyin-capi from the tkrzw cell through
-`cargo cinstall --profile profiling` (the `profiling` profile keeps line
-tables and thin LTO) and samples the keystroke cycle. It needs the exported
-tables, the pinned model20 cache, cargo-c, and a profiler. `PROFILE_REUSE_STAGE=1`
-skips the restage. Artifacts land in `target/profile/`. After a samply
-record, open the profile with `samply load target/profile/w8-cycle.profile.json.gz`.
-
-**Sample count.** A profile ranks stacks by how many samples each holds, so
-its order is only as good as the profile is long. samply takes one
-sample per CPU millisecond, so the total follows the work in a cycle. On the
-measuring host (Apple M5, macOS 27 arm64, samply 0.13.1) a steady cycle over
-the full model20 tkrzw export takes about 8 ms and yields about 8 samples; the
-small fixture exports take about 1 ms and yield about 1. Unset, samply runs
-`PERF_CYCLES=2048`: about 16,000 samples in about 17 s there, three times the
-level below, so a host up to three times faster per cycle still reaches it. A
-set `PERF_CYCLES` applies to every profiler. The other profilers keep their
-32-cycle default: Callgrind counts instructions exactly, and `perf record`
-stores a stack dump with every sample. The W8 cycle and `bisect --perf` are
-unchanged; the timing JSON it prints and the launcher saves has one entry per
-cycle, so it is longer at 2048.
-
-After a samply record the launcher prints the profile's path and the
-`samply load` command that opens it. It no longer counts samples or warns about
-a short profile. The flamegraph and perf fallbacks write no samply profile.
-A faster host or a smaller export takes fewer samples per cycle: aim for at
-least 5,000 samples, and raise `PERF_CYCLES` in proportion to any shortfall.
-
-The level comes from repeated runs. Each row is six runs at that
-`PERF_CYCLES` on the measuring host, ranked against the runs pooled at 4096:
-
-| `PERF_CYCLES` | samples (median) | top stack | top two, in order | top three, in order |
-| ---: | ---: | ---: | ---: | ---: |
-| 32 | 309 | 1/6 | 0/6 | 0/6 |
-| 64 | 563 | 6/6 | 2/6 | 0/6 |
-| 128 | 1,069 | 6/6 | 5/6 | 4/6 |
-| 256 | 2,106 | 6/6 | 6/6 | 4/6 |
-| 512 | 4,259 | 6/6 | 6/6 | 4/6 |
-| 1024 | 8,281 | 6/6 | 6/6 | 4/6 |
-| 2048 | 16,435 | 6/6 | 6/6 | 5/6 |
-| 4096 | 33,728 | 6/6 | 6/6 | 4/6 |
-
-The top two stacks, `core::slice::sort::stable::drift::sort` (6.1%) and
-`oxpinyin_data::dict::resolve_items` (4.0%), kept their places in every run
-from 256 cycles (about 2,100 samples) up. The level is 5,000, about twice that
-size. At the old 32-cycle default a tkrzw leaf-node read (`_platform_memmove`,
-a fixed cost of about 25 samples) led in five of six runs. Third place never
-settles. Its stack (`order_window_tail`, 2.7%) is within 0.2 points of the
-fourth, and in 5 of the 42 runs from 64 cycles up a `libsystem_malloc` frame
-calling `mach_absolute_time` took a top-three slot, which more samples do not
-prevent. Compare the counts as well as the ranks.
-To repeat the table, run `PERF_CYCLES=n PROFILE_REUSE_STAGE=1 just profile-w8`
-for each size and compare the first stacks in the viewer.
-
-The save-only profile is unsymbolicated. When the installed samply supports
-`--unstable-presymbolicate` (0.13.0 or later), the launcher passes it and
-samply writes `target/profile/w8-cycle.profile.json.syms.json` beside the
-profile. `samply load` maps each frame through the sidecar's per-library
-`known_addresses`; the names are samply's demangled symbols. No separate
-symbolizer or debug-file step is required. An older samply still records, with
-a warning, but the profile is then not self-contained: its symbol information is incomplete. The flag is unstable upstream, so
-the launcher probes the installed help instead of requiring a version. Raw
-profiles and sidecars are not committed.
-
-On Linux the profiler chain is unchanged: samply, then the flamegraph wrapper,
-then perf record, then Valgrind Callgrind. When Linux's samply supports the
-flag, it writes the same sidecar and the extractor reports the same way. On
-macOS samply is required and the recipe supplies Homebrew's GLib, Berkeley DB,
-tkrzw and codec paths. The
-launcher stages the tkrzw C ABI and uses `tools/tkrzw/runtime.py`'s `otool`
-resolution for the staged dylib; set `OXPINYIN_TKRZW_PREFIX` (the recipe does)
-when running the script directly. There is no `setarch`, `taskset` or
-`DYLD_LIBRARY_PATH`: disabling ASLR is unnecessary, Mach affinity is a cache
-hint rather than pinning, and the dylib's dependencies are absolute.
-
-`PERF_CPU` is refused on macOS for that affinity reason. `perf record` and
-its `perf_event_paranoid` hint are Linux-only and are skipped with a stated
-reason; the flamegraph and Valgrind fallbacks are likewise not used. A missing
-samply, cargo-c, export or model is a refusal, not a timing-only run. This
-macOS path has been exercised on arm64 only. The Linux profiler chain is
-unchanged.
 
 ## Writing it up
 
@@ -1534,10 +837,7 @@ machine, never a number carried over from another run.** It answers the
 with the arms and inputs relevant to it. When the question compares arms,
 build and run them in one job on one machine (same CPU, same data),
 **interleaving** them run by run, and report only those figures and the
-ratios between them. Interleaving the arms is the existing method when the
-question compares them, not a property of `just measure perf-same-data`,
-which interleaves two pin-built backends and two artifacts of the current
-tree and does not run a base artifact.
+ratios between them.
 New measurement tooling needs the maintainer's approval.
 Do not supply an out-of-tree measurement controller.
 No absolute figure from an earlier run, another host or another CPU is a
@@ -1590,30 +890,18 @@ This is not bookkeeping. `cargo cinstall` is the shipping path
 `cargo build` produces `libpinyin_capi.so`, a bisection fixture nothing
 installs — and the two do **not** run at the same speed. On the steady
 keystroke-cycle ratio the shipping artifact measures **0.064 to 0.087 ratio
-units lower on amd64 and 0.032 to 0.038 lower on arm64**
-(`docs/findings/perf-cycle-ir-differential-2026-09-08.md`, which publishes the
-signed form `Z÷L − Y÷L` — `Z` the cinstall cell, `Y` the cargo-build one — so
-its own tables read negative), with no mechanism established. A record that
+units lower on amd64 and 0.032 to 0.038 lower on arm64**, with no mechanism
+established. A record that
 does not say which one it built cannot be read as a statement about the
 product.
 
-Two shortcuts do not substitute for the command line, and both have already
-misled a reader:
+A shortcut does not substitute for the command line; it has already misled a
+reader:
 
 - **The artifact filename discriminates only after `d32557e3`
   (2026-08-29T16:33:26Z)**, which introduced the `libpinyin.so.15` SONAME.
   Before it, cargo-c installed under the same `libpinyin_capi.so` name the
   cargo build produces.
-- **Naming `perf-same-data` is not naming a recipe.** Its
-  `OXPINYIN_KC_SO` / `OXPINYIN_TKRZW_SO` variables take a prebuilt `.so` and
-  skip `build_capi` entirely.
-
-`just profile-w8` is a third case worth naming explicitly: it
-stages through `cargo cinstall` but with `--profile profiling` (thin LTO, line
-tables, `panic = "unwind"`), so it is neither the fixture nor the product.
-
-The audit of which existing records sit where is
-`docs/findings/perf-build-recipe-audit-2026-09-10.md`.
 
 ### Evidence: what is committed and what is not
 

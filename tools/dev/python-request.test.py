@@ -3,7 +3,7 @@
 
 Every other file lets that file decide, or reads or passes its contents on. A literal request
 anywhere else fails this test, including in a pull request that rebases onto this check. The
-dated records under docs/findings/ and docs/perf/ keep their wording. The fixtures below are
+dated records under docs/findings/ keep their wording. The fixtures below are
 assembled from pieces so this file states no request itself.
 """
 from pathlib import Path
@@ -15,7 +15,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
-ALLOWED = ('.python-version', 'docs/findings/', 'docs/perf/')
+ALLOWED = ('.python-version', 'docs/findings/')
 # A request in uv's forms: the implementation prefix with a version, or an explicit version given
 # to `uv python install|find|pin` or `--python`. Managed-install directory names
 # (cpython-3.x-linux...), prose such as "CPython 3.15" and version tuples are not requests.
@@ -79,7 +79,7 @@ class RequestLiteralTests(unittest.TestCase):
                 self.assertFalse(literals(line), line)
 
     def test_the_allowlist_is_exactly_the_file_and_the_dated_records(self):
-        self.assertEqual(ALLOWED, ('.python-version', 'docs/findings/', 'docs/perf/'))
+        self.assertEqual(ALLOWED, ('.python-version', 'docs/findings/'))
         self.assertRegex((ROOT / '.python-version').read_text().strip(), r'^\d+\.\d+$')
 
     def test_the_scan_sees_the_files_it_is_meant_to(self):
@@ -89,7 +89,7 @@ class RequestLiteralTests(unittest.TestCase):
             self.assertIn(expected, names)
         for excluded in ('.python-version',):
             self.assertNotIn(excluded, names)
-        self.assertFalse([name for name in names if name.startswith(('docs/findings/', 'docs/perf/'))])
+        self.assertFalse([name for name in names if name.startswith('docs/findings/')])
 
 
 class CheckoutInterpreterTests(unittest.TestCase):

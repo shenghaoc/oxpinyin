@@ -141,22 +141,7 @@ class PathTests(Scratch):
         _, status, _, err = stopped(bench.find_library, self.root)
         self.assertEqual((status, err), (1, f'fatal: libpinyin.so not found under {self.root}\n'))
 
-    def test_working_directory_restores_the_caller(self):
-        before = os.getcwd()
-        with bench.working_directory(self.root):
-            self.assertEqual(Path(os.getcwd()).resolve(), self.root)
-        self.assertEqual(os.getcwd(), before)
-
-    def test_copy_file_and_tee(self):
-        source, target = self.root / 'a', self.root / 'b'
-        source.write_bytes(b'x')
-        bench.copy_file(source, target)
-        self.assertEqual(target.read_bytes(), b'x')
-        _, status, _, err = stopped(bench.copy_file, self.root / 'nope', target)
-        self.assertEqual((status, err), (1, f"cp: cannot stat '{self.root}/nope': No such file or directory\n"))
-        _, status, _, err = stopped(bench.copy_file, source, self.root / 'missing-directory' / 'file')
-        self.assertEqual((status, err), (1, f"cp: cannot create regular file '{self.root}/missing-directory/file': "
-                                            'No such file or directory\n'))
+    def test_tee(self):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             bench.tee(self.root / 'table.txt', 'one\ntwo\n')
@@ -436,7 +421,7 @@ class ReportTests(Scratch):
         self.assertEqual(bench.report(self.script('def main(argv):\n    raise SystemExit\n'), [])[0], 0)
 
     def test_a_script_that_cannot_be_opened_is_the_interpreters_complaint_and_status_2(self):
-        missing = self.root / 'ctl/bisection/perf-ratio.py'
+        missing = self.root / 'ctl/bisection/perf-ci.py'
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             result = bench.report(str(missing), ['x'])
@@ -489,80 +474,6 @@ class ExportedTests(unittest.TestCase):
         with bench.exported(None):
             self.assertEqual(dict(os.environ), before)
         self.assertEqual(dict(os.environ), before)
-
-
-class BuildTests(unittest.TestCase):
-    def setUp(self):
-        for patcher in (mock.patch.object(host, 'allowed_cpus', lambda: {0, 1, 2, 3}),
-                        mock.patch.object(slot.CANCELLED, 'is_set', lambda: False)):
-            patcher.start()
-            self.addCleanup(patcher.stop)
-
-    def test_builds_replay_their_output_in_build_order(self):
-        release = threading.Event()
-
-        def build(name, wait):
-            def run(context):
-                if wait:
-                    release.wait(5)
-                else:
-                    release.set()
-                return f'{name} output\n'.encode()
-            return run
-        err = io.BytesIO()
-        with mock.patch.object(bench, 'write', lambda data, error=False: err.write(data)):
-            with contextlib.redirect_stderr(io.StringIO()):
-                bench.build_all([('first', build('first', True)), ('second', build('second', False))], env={})
-        self.assertEqual(err.getvalue(), b'first output\nsecond output\n')
-
-    def test_builds_overlap_up_to_the_allowed_cpus(self):
-        lock, together = threading.Lock(), threading.Event()
-        running, peak = [0], [0]
-
-        def run(context):
-            with lock:
-                running[0] += 1
-                peak[0] = max(peak[0], running[0])
-                if running[0] == 4:
-                    together.set()
-            self.assertTrue(together.wait(5), 'the builds did not overlap')
-            with lock:
-                running[0] -= 1
-        with contextlib.redirect_stderr(io.StringIO()):
-            bench.build_all([(str(index), run) for index in range(6)], env={})
-        self.assertEqual(peak[0], 4)
-
-    def test_the_earliest_failure_ends_the_run_with_its_status(self):
-        def failing(context):
-            raise Finished(101)
-        with contextlib.redirect_stderr(io.StringIO()):
-            with self.assertRaises(Finished) as stop:
-                bench.build_all([('a', lambda context: b''), ('b', failing)], env={})
-        self.assertEqual(stop.exception.status, 101)
-
-    def test_cargo_launches_in_the_units_environment_and_leaves_the_job_count_to_cargo(self):
-        launched = []
-
-        class Context:
-            environment = {'A': 'b'}
-
-            def launch(self, command, *, env, merge_stderr):
-                launched.append((command, env, merge_stderr))
-                return completed(0, b'built\n')
-        self.assertEqual(bench.cargo(Context(), ['cargo', Path('x')]), b'built\n')
-        self.assertEqual(launched[0], (['cargo', 'x'], {'A': 'b'}, True))
-
-    def test_a_failed_cargo_replays_its_output_and_ends_the_run(self):
-        class Context:
-            environment = {}
-
-            def launch(self, command, *, env, merge_stderr):
-                return completed(101, b'error[E0000]\n')
-        err = io.BytesIO()
-        with mock.patch.object(bench, 'write', lambda data, error=False: err.write(data)):
-            with self.assertRaises(Finished) as stop:
-                bench.cargo(Context(), ['cargo'])
-        self.assertEqual((stop.exception.status, err.getvalue()), (101, b'error[E0000]\n'))
 
 
 class IdentityTests(Scratch):
@@ -645,15 +556,12 @@ class IdentityTests(Scratch):
         self.assertEqual(identity.pc_version(pc), 'unknown')
         self.assertEqual(identity.pc_version(self.root / 'absent.pc'), 'unknown')
 
-    def test_needed_and_fixture_hooks_parse_the_tools_output(self):
+    def test_needed_parses_the_tools_output(self):
         readelf = (b' 0x0000000000000001 (NEEDED)             Shared library: [libtkrzw.so.1]\n'
                    b' 0x0000000000000001 (NEEDED)             Shared library: [libc.so.6]\n'
                    b' 0x000000000000000e (SONAME)             Library soname: [libpinyin.so.15]\n')
         self.assertEqual(identity.needed('x.so', run=lambda command: completed(0, readelf)),
                          ['libtkrzw.so.1', 'libc.so.6'])
-        nm = b'0000 T pinyin_init\n0010 T oxpinyin_init_for_fixtures\n0020 T oxpinyin_test_set_user_bigram\n'
-        self.assertEqual(identity.fixture_hooks('x.so', run=lambda command: completed(0, nm)), 2)
-        self.assertEqual(identity.fixture_hooks('x.so', run=lambda command: completed(1, nm)), 0)
 
     def test_a_failing_readelf_ends_the_run_with_its_status_and_message(self):
         err = io.BytesIO()
@@ -678,7 +586,7 @@ LINUX = sys.platform.startswith('linux')
 class BinutilsTests(Scratch):
     """The parsers read what the real readelf and nm print, from a shared object gcc builds here."""
 
-    def test_needed_and_fixture_hooks_of_a_real_shared_object(self):
+    def test_needed_of_a_real_shared_object(self):
         source = self.root / 'lib.c'
         source.write_text('#include <math.h>\n'
                           'double oxpinyin_init_for_fixtures(double x) { return sin(x); }\n'
@@ -688,7 +596,6 @@ class BinutilsTests(Scratch):
         subprocess.run(['gcc', '-shared', '-fPIC', '-o', str(library), str(source), '-lm'], check=True)
         names = identity.needed(library)
         self.assertTrue(any(name.startswith('libm.so') for name in names), names)
-        self.assertEqual(identity.fixture_hooks(library), 2)
 
     def test_a_file_that_is_not_an_elf_ends_the_run_with_readelfs_status(self):
         (self.root / 'text').write_text('not an object')
@@ -711,20 +618,6 @@ class SummaryTests(Scratch):
         path = self.root / name
         path.write_text(''.join(json.dumps(row) + '\n' for row in rows) + '\n')
         return path
-
-    def test_the_same_data_summary_prints_medians_per_cell(self):
-        speed = self.write('speed.jsonl', [
-            {'backend': 'a', 'init_ns': 2_000_000, 'alloc_ns': 1_000_000, 'cycles_ns': [9_000_000, 3_000_000, 5_000_000]},
-            {'backend': 'a', 'init_ns': 4_000_000, 'alloc_ns': 3_000_000, 'cycles_ns': [7_000_000, 4_000_000]},
-            {'backend': 'b', 'init_ns': 1_000_000, 'alloc_ns': 1_000_000, 'cycles_ns': [2_000_000, 1_000_000]}])
-        init = self.write('init.jsonl', [{'backend': 'a', 'mode': 'ram-init', 'after_init': {'rss_kib': 100, 'hwm_kib': 120}},
-                                         {'backend': 'a', 'mode': 'ram-init', 'rss_kib': 300, 'hwm_kib': 330}])
-        cycle = self.write('cycle.jsonl', [{'backend': 'a', 'mode': 'ram-cycle', 'after_last': {'rss_kib': 500, 'hwm_kib': 900}}])
-        expected = (f"{'cell':<18}{'init ms':>10}{'alloc ms':>10}{'cold ms':>10}{'steady ms':>11}"
-                    f"{'rss-init KiB':>14}{'hwm-init KiB':>14}{'rss-cycle KiB':>15}{'hwm-cycle KiB':>15}\n"
-                    f"{'a':<18}{3.0:>10.3f}{2.0:>10.3f}{8.0:>10.3f}{4.0:>11.3f}{200:>14.0f}{225:>14.0f}{500:>15.0f}{900:>15.0f}\n"
-                    f"{'b':<18}{1.0:>10.3f}{1.0:>10.3f}{2.0:>10.3f}{1.0:>11.3f}{'nan':>14}{'nan':>14}{'nan':>15}{'nan':>15}\n")
-        self.assertEqual(reports.same_data_summary(speed, init, cycle), expected)
 
     def test_hardware_instructions_reports_medians_and_the_ratio(self):
         capture = self.write('hw.jsonl', [

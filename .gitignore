@@ -75,7 +75,7 @@ __pycache__/
 
 # Profiling passes build the same crate under alternate debug/LTO/frame-pointer
 # settings into their own CARGO_TARGET_DIRs, so the shipped artifact's target
-# dir is never invalidated (docs/runbooks/benches.md, "RSS diagnosis").
+# dir is never invalidated.
 /target-dbg/
 /target-fp/
 

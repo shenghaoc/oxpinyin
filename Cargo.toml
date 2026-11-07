@@ -96,13 +96,12 @@ debug = 2
 
 # Release .so size/speed lever: fat LTO + one codegen unit lets the linker
 # drop cross-crate dead code and duplicate generic instantiations that
-# per-CGU codegen keeps. Measured effect: docs/perf/perf-so-size-2026-09.md.
+# per-CGU codegen keeps.
 #
 # panic = "abort" was added here on 2026-09-05 (a41605ea, −65,536 B
 # stripped on ARM64/KC) and removed the same day: with it the ARM64/KC
 # keystroke cycle measured +5.5% steady / +6.4% cold, and a back-to-back
-# rebuild without it recovers the time at +64 KiB
-# (docs/perf/perf-baseline-kc-2026-09.md, "Where the changes landed").
+# rebuild without it recovers the time at +64 KiB.
 # The panic discipline does not depend on the strategy. The lints
 # clippy::unwrap_used/expect_used/panic/panic_in_result_fn deny explicit
 # panic forms in every library crate's non-test scope. They do not make
@@ -111,9 +110,7 @@ debug = 2
 # "Unwinding"), so the removed catch sites stay removed under
 # either strategy. Re-adopting abort needs a keystroke-cycle number next
 # to the size number. The 116 KiB gimli/addr2line symbolizer is held by
-# std's default panic hook and is unaffected by either strategy (see the
-# "Symbolizer attribution — corrected" section of
-# docs/perf/perf-so-size-2026-09.md).
+# std's default panic hook and is unaffected by either strategy.
 # [profile.profiling] keeps its explicit `lto = "thin"` and `panic =
 # "unwind"` overrides and inherits codegen-units from here.
 [profile.release]

@@ -13,7 +13,7 @@ name: verify-nightly
 # were retired on 2026-09-01. There are
 # no continue-on-error lanes; every job in this workflow must be green.
 # Surviving lanes: fuzz-soak, overflow-lane, coverage (via
-# coverage.yml, also an advisory path-filtered PR check), perf-snapshot,
+# coverage.yml, also an advisory path-filtered PR check),
 # test-windows (moved from ci.yml
 # on 2026-10-22), test-macos (moved from ci.yml on 2026-10-31).
 # A separate nextest lane over the Kyoto Cabinet workspace was removed on
@@ -246,180 +246,6 @@ jobs:
     if: ${{ !inputs.windows_only && !inputs.macos_only }}
     uses: ./.github/workflows/coverage.yml
 
-  # Perf-and-size snapshot series. NOT a gate: it measures the tree once a
-  # night, compares tonight against the previous sample, and reports. Nothing
-  # here runs on the PR path and nothing here blocks a merge.
-  #
-  # The per-PR gate this replaces was rejected as infeasible — a gate is a
-  # before-and-after comparison and a PR run cannot produce a trustworthy
-  # pair. The decision, the reasons, and what this lane may and may not claim
-  # are in docs/perf/ci-perf-size-gate-proposal-2026-09-09.md. Three of its
-  # rules are load-bearing here:
-  #
-  #   - Record freely, threshold almost nothing. A flag means "a human should
-  #     look", never "this merge is bad".
-  #   - The series localizes WHEN a level moved, not WHY. The environment is
-  #     recorded with each sample and keys the stored baseline, so a move
-  #     across an environment change starts a new baseline rather than being
-  #     flagged.
-  #   - Only the schedule writes the series. A workflow_dispatch run measures
-  #     and reports, but must never become the predecessor the next real
-  #     night compares against.
-  #
-  # Wall clock is deliberately absent. The image stays unpinned like every
-  # other lane here: a size series that steps when the toolchain moves is
-  # reporting something true, and that is what this workflow is for.
-  perf-snapshot:
-    # Skipped by a windows_only or macos_only dispatch; runs on the schedule.
-    if: ${{ !inputs.windows_only && !inputs.macos_only }}
-    runs-on: *ubuntu
-    container:
-      image: debian:testing
-    timeout-minutes: 60
-    defaults:
-      run:
-        shell: bash
-    env:
-      DEBIAN_FRONTEND: noninteractive
-      OXPINYIN_MEASUREMENT_IMAGE: debian:testing
-    steps:
-      - name: Bootstrap the bare runner essentials (apt)
-        run: |
-          apt-get update -qq
-          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-      - uses: ./.github/actions/bootstrap
-        with:
-          safe-directory: 'true'
-          rustup: 'true'
-          uv: 'true'
-      # The snapshot runs tkrzw (the w3 fixture directory its tooling
-      # opens is the tkrzw one), the workspace default again since
-      # 2026-10-30, from the tkrzw action below. valgrind supplies the instruction
-      # count; it is optional by design — the snapshot recipe records null
-      # rather than zero when it is absent, so losing it degrades the sample
-      # instead of corrupting the series.
-      - name: Install build and measurement dependencies (apt)
-        run: |
-          apt-get install -y --no-install-recommends \
-            gcc g++ make pkg-config libclang-dev libglib2.0-dev libssl-dev \
-            binutils valgrind python3 util-linux
-      - name: Provision tkrzw (built at the setup.sh revision and cached)
-        uses: ./.github/actions/tkrzw
-      # libssl-dev above: cargo-c pulls openssl-sys through the cargo crate,
-      # and without it the build script dies with "Could not find directory of
-      # OpenSSL installation". Confirmed by dispatching this lane once
-      # without it.
-      # Exact on purpose (#1074): a fresh runner has nothing to reuse, and cargo-c's rust-version
-      # rises with each release (0.10.24 needs Rust 1.95, 0.10.26 needs 1.97), so an unpinned
-      # install would break once it passes the pinned Rust. Any cargo-c at or above the minimum
-      # that `just doctor` reports builds the same objects (docs/packaging.md, "Regeneration").
-      - run: cargo install cargo-c --version 0.10.25 --locked
-      - name: Measure
-        run: >
-          uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev
-          measure snapshot --out snapshot.json --backend tkrzw --series-dir perf-inputs
-      # The baseline lives in actions/cache under a key that carries the
-      # environment the snapshot records (runner image, toolchain, kernel,
-      # backend, fixtures, harness). A changed environment finds no entry, so
-      # tonight starts a new baseline instead of flagging a move the series
-      # cannot attribute. The key is read from the snapshot, so this restore
-      # follows the measurement.
-      # Its own cache namespace: perf-snapshot-v2-, disjoint from fuzz-corpus-.
-      # Same latest-wins shape the fuzz soak uses — the run-id key always
-      # misses so a save always happens, the prefix restore-key always loads
-      # the newest save for this environment. A miss is normal (first run, an
-      # eviction, or a new environment) and the lane reports "no predecessor"
-      # rather than failing.
-      # restore/save split rather than the combined actions/cache, because the
-      # combined action's post step is `post-if: success()`, which would skip
-      # the save after a flagged step and drop the very sample that was
-      # flagged. Save explicitly, with `if: always()`, and fail after it.
-      - name: Key the baseline by the recorded environment
-        id: baseline
-        run: echo "key=perf-snapshot-v2-$(cat perf-inputs/environment.key)" >> "$GITHUB_OUTPUT"
-      - name: Restore the baseline
-        id: restore
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .perf-series
-          key: ${{ steps.baseline.outputs.key }}-${{ github.run_id }}
-          restore-keys: |
-            ${{ steps.baseline.outputs.key }}-
-      - name: Note a missing predecessor
-        if: steps.restore.outputs.cache-matched-key == ''
-        run: |
-          {
-            echo "## Perf snapshot"
-            echo
-            echo "No predecessor for environment \`${KEY}\`: a first run, an evicted cache or a changed environment. Nothing is compared; a scheduled run records this sample as the baseline."
-          } >> "$GITHUB_STEP_SUMMARY"
-        env:
-          KEY: ${{ steps.baseline.outputs.key }}
-      # Two steps over one snapshot (tools/dev/measure/snapshot.py splits it).
-      # Only the deterministic metrics (section_sum, stripped_size,
-      # alloc_count_per_cycle, alloc_bytes_per_cycle, ir_oxpinyin_object) can
-      # fail the lane, at a 1% move; a metric the snapshot could not measure is
-      # absent from the input, never zero. The action appends this sample to
-      # its data file before it alerts, so a flagged sample is still saved
-      # below. It reads the commit from the API on schedule and dispatch
-      # events, so it gets the token and the exact SHA.
-      - name: Compare the deterministic metrics (can flag)
-        if: hashFiles('perf-inputs/flag.json') != ''
-        uses: benchmark-action/github-action-benchmark@4322e5726e6334590d251fc4f92bec0efafc45dc # v1.22.2
-        with:
-          name: perf-snapshot flagged
-          tool: customSmallerIsBetter
-          output-file-path: perf-inputs/flag.json
-          external-data-json-path: .perf-series/flag.json
-          max-items-in-chart: 30
-          alert-threshold: '101%'
-          fail-on-alert: true
-          summary-always: true
-          github-token: ${{ github.token }}
-          ref: ${{ github.sha }}
-      # RSS moves with the allocator, the kernel and the host: a trend to
-      # read, never a trigger. always() so a flagged step above does not hide
-      # this report; the missing-file guard covers a failed measurement.
-      - name: Report the trend metrics (never flags)
-        if: always() && hashFiles('perf-inputs/report.json') != ''
-        uses: benchmark-action/github-action-benchmark@4322e5726e6334590d251fc4f92bec0efafc45dc # v1.22.2
-        with:
-          name: perf-snapshot trend
-          tool: customSmallerIsBetter
-          output-file-path: perf-inputs/report.json
-          external-data-json-path: .perf-series/report.json
-          max-items-in-chart: 30
-          summary-always: true
-          github-token: ${{ github.token }}
-          ref: ${{ github.sha }}
-      # Only the schedule writes, so a workflow_dispatch run compares against
-      # the baseline but cannot become the predecessor the next real night
-      # compares against. Nothing to save when the measurement failed.
-      - name: Save the baseline
-        if: always() && github.event_name == 'schedule' && hashFiles('.perf-series/*.json') != ''
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .perf-series
-          key: ${{ steps.baseline.outputs.key }}-${{ github.run_id }}
-      # The durable copy. The cache is evictable; artifacts are not, so the
-      # history survives an eviction even though the night-over-night
-      # comparison skips that one night. Uploaded whether or not the compare
-      # step flagged something.
-      - name: Upload the snapshot
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: perf-snapshot-${{ github.run_id }}
-          path: snapshot.json
-          retention-days: 90
-          # The step is always() so a failed measurement still uploads what it
-          # got; when it got nothing, say so quietly instead of warning.
-          if-no-files-found: ignore
-
   # The full Windows workspace: clippy and the tests over the workspace
   # less WINDOWS_EXCLUDES, built with MSVC
   # and the tkrzw action, and GLib from vcpkg. Moved here from
@@ -602,8 +428,8 @@ jobs:
         uses: ./.github/actions/tkrzw
       - name: Install cargo-c for shipped macOS libraries
         run: |
-          # Same pinned version as perf-snapshot; a fresh prefix includes the
-          # actual provisioning cost rather than reusing a runner's cargo-c.
+          # Same pinned version as tools/oracle/Dockerfile.oracle; a fresh
+          # prefix keeps a runner's preinstalled cargo-c out of the build.
           cargo install cargo-c --version 0.10.25 --locked --root "$RUNNER_TEMP/cargo-c"
           echo "$RUNNER_TEMP/cargo-c/bin" >> "$GITHUB_PATH"
       - name: Check shipped macOS library exports

@@ -913,87 +913,6 @@
     ]
   },
   {
-    "name": "perf-baseline",
-    "kind": "not-a-gate",
-    "implementation": "python:tools.dev",
-    "issues": [
-      "370"
-    ],
-    "cells": [
-      "bdb",
-      "kc",
-      "tkrzw"
-    ],
-    "artifacts": [],
-    "required_inputs": [
-      "pin-built oracle at the selected cell",
-      "native compiler and runner prerequisites"
-    ],
-    "timeout": 900,
-    "exclusive_resources": [],
-    "command": [
-      "uv", "run", "--no-project", "--managed-python", "python", "-X",
-      "lazy_imports=normal", "-m", "tools.dev", "measure", "perf-baseline"
-    ],
-    "env": {},
-    "input_paths": [],
-    "reason": "measurement recipe; excluded from aggregate gates"
-  },
-  {
-    "name": "perf-matrix",
-    "kind": "not-a-gate",
-    "implementation": "python:tools.dev",
-    "issues": [
-      "measurement recipe"
-    ],
-    "cells": [
-      "bdb",
-      "kc",
-      "tkrzw"
-    ],
-    "artifacts": [],
-    "required_inputs": [
-      "pin-built oracle at the selected cell",
-      "native compiler and runner prerequisites"
-    ],
-    "timeout": 900,
-    "exclusive_resources": [],
-    "command": [
-      "uv", "run", "--no-project", "--managed-python", "python", "-X",
-      "lazy_imports=normal", "-m", "tools.dev", "measure", "perf-matrix"
-    ],
-    "env": {},
-    "input_paths": [],
-    "reason": "measurement recipe; excluded from aggregate gates"
-  },
-  {
-    "name": "perf-same-data",
-    "kind": "not-a-gate",
-    "implementation": "python:tools.dev",
-    "issues": [
-      "260"
-    ],
-    "cells": [
-      "bdb",
-      "kc",
-      "tkrzw"
-    ],
-    "artifacts": [],
-    "required_inputs": [
-      "pin-built oracle at the selected cell",
-      "native compiler and runner prerequisites"
-    ],
-    "timeout": 900,
-    "exclusive_resources": [],
-    "command": [
-      "uv", "run", "--no-project", "--managed-python", "python", "-X",
-      "lazy_imports=normal", "-m", "tools.dev", "measure", "perf-same-data"
-    ],
-    "env": {},
-    "input_paths": [],
-    "reason": "measurement recipe; excluded from aggregate gates"
-  },
-  {
     "name": "phrase-surface-diff",
     "kind": "gate",
     "implementation": "python:tools.dev",
@@ -1262,33 +1181,6 @@
     ]
   },
   {
-    "name": "rss-diag",
-    "kind": "not-a-gate",
-    "implementation": "python:tools.dev",
-    "issues": [
-      "measurement recipe"
-    ],
-    "cells": [
-      "bdb",
-      "kc",
-      "tkrzw"
-    ],
-    "artifacts": [],
-    "required_inputs": [
-      "pin-built oracle at the selected cell",
-      "native compiler and runner prerequisites"
-    ],
-    "timeout": 900,
-    "exclusive_resources": [],
-    "command": [
-      "uv", "run", "--no-project", "--managed-python", "python", "-X",
-      "lazy_imports=normal", "-m", "tools.dev", "measure", "rss-diag"
-    ],
-    "env": {},
-    "input_paths": [],
-    "reason": "measurement recipe; excluded from aggregate gates"
-  },
-  {
     "name": "same-data-dir-diff",
     "kind": "gate",
     "implementation": "python:tools.dev",
@@ -1426,33 +1318,6 @@
     "input_paths": [
       "{capi}"
     ]
-  },
-  {
-    "name": "shipped-check",
-    "kind": "not-a-gate",
-    "implementation": "python:tools.dev",
-    "issues": [
-      "measurement recipe"
-    ],
-    "cells": [
-      "bdb",
-      "kc",
-      "tkrzw"
-    ],
-    "artifacts": [],
-    "required_inputs": [
-      "pin-built oracle at the selected cell",
-      "native compiler and runner prerequisites"
-    ],
-    "timeout": 900,
-    "exclusive_resources": [],
-    "command": [
-      "uv", "run", "--no-project", "--managed-python", "python", "-X",
-      "lazy_imports=normal", "-m", "tools.dev", "measure", "shipped-check"
-    ],
-    "env": {},
-    "input_paths": [],
-    "reason": "measurement recipe; excluded from aggregate gates"
   },
   {
     "name": "system-import-profile",
@@ -1613,33 +1478,6 @@
     "input_paths": [
       "{capi}"
     ]
-  },
-  {
-    "name": "tree-recipe-control",
-    "kind": "not-a-gate",
-    "implementation": "python:tools.dev",
-    "issues": [
-      "measurement recipe"
-    ],
-    "cells": [
-      "bdb",
-      "kc",
-      "tkrzw"
-    ],
-    "artifacts": [],
-    "required_inputs": [
-      "pin-built oracle at the selected cell",
-      "native compiler and runner prerequisites"
-    ],
-    "timeout": 900,
-    "exclusive_resources": [],
-    "command": [
-      "uv", "run", "--no-project", "--managed-python", "python", "-X",
-      "lazy_imports=normal", "-m", "tools.dev", "measure", "tree-recipe-control"
-    ],
-    "env": {},
-    "input_paths": [],
-    "reason": "measurement recipe; excluded from aggregate gates"
   },
   {
     "name": "two-context-diff",
@@ -2496,40 +2334,5 @@
       "{root}/tools/dev/provision.py"
     ],
     "reason": "native sanitizer recipe; caller selects the backend; excluded from compatibility aggregate gates"
-  },
-  {
-    "name": "native-startup",
-    "kind": "not-a-gate",
-    "cells": [
-      "native"
-    ],
-    "command": [
-      "uv",
-      "run",
-      "--no-project",
-      "--managed-python",
-      "python",
-      "-X",
-      "lazy_imports=normal",
-      "-m",
-      "tools.dev",
-      "measure",
-      "startup"
-    ],
-    "implementation": "python:tools.dev",
-    "issues": [
-      "T2N"
-    ],
-    "required_inputs": [
-      "oxpinyin base and PR installed prefixes",
-      "system directory",
-      "pin-provisioned startup profiles"
-    ],
-    "reason": "native Linux/macOS oxpinyin-only information; pin rows require T11C container",
-    "artifacts": [],
-    "oracle": false,
-    "env": {},
-    "timeout": 1800,
-    "exclusive_resources": []
   }
 ]

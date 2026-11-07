@@ -346,7 +346,7 @@ Amended 2026-10-28 UTC: the language-artefact exception remains for
 internal behaviour but no longer applies to external I/O. Data formats
 and ABI remain unchanged.
 
-Earlier records use "Stage 2" for compatible performance work, including the `stage2` bench and `docs/perf/` records.
+Earlier records use "Stage 2" for compatible performance work.
 That work remains Stage 2 under this ruling.
 Keep those records' wording.
 References to output changes, such as `EdgeKind` Fuzzy/Typo/Abbrev variants or a model upgrade, now belong to Stage 3.

@@ -18,7 +18,6 @@ from ..runners import Finished, write
 from . import bench
 
 PROC = Path('/proc')
-FIXTURE_HOOKS = ('oxpinyin_init_for_fixtures', 'oxpinyin_test_set_user_bigram')
 NEEDED = re.compile(r'Shared library: \[(.*)\]')
 Run = Callable[..., 'bench.pool.Completed'] | None    # None: bench.capture, looked up at call time
 
@@ -138,13 +137,6 @@ def needed(library, *, run: Run = None) -> list[str]:
         raise Finished(done.status)
     return [match[1] for line in done.stdout.decode(errors='replace').split('\n')
             if (match := NEEDED.search(line))]
-
-
-def fixture_hooks(library, *, run: Run = None) -> int:
-    """How many exported lines name a fixture hook (`nm -D … | grep -c`); a failing nm counts none."""
-    done = (run or bench.capture)(['nm', '-D', str(library)])
-    lines = done.stdout.decode(errors='replace').split('\n') if done.status == 0 else []
-    return sum(any(hook in line for hook in FIXTURE_HOOKS) for line in lines)
 
 
 def realpath(path) -> str:

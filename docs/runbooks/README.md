@@ -11,7 +11,7 @@ the reasoning behind each procedure lives in the findings it links.
 | [`contract-references.md`](contract-references.md) | capturing the pin's contract observations and verifying oxpinyin against them |
 | [`pin-captures.md`](pin-captures.md) | staging the pin's observations of the apostrophe inputs for review |
 | [`cloud.md`](cloud.md) | provisioning a remote Linux host (container runtime, oracle, data) so every gate runs there |
-| [`benches.md`](benches.md) | running a criterion bench, the perf baseline, or a profile |
+| [`benches.md`](benches.md) | running a Callgrind or Massif recipe, or a plain timing |
 | [`glib-call-sites.md`](glib-call-sites.md) | regenerating the GLib and libc call-site list from the pin |
 | [`goldens-and-pins.md`](goldens-and-pins.md) | refreshing a committed golden, moving the oracle pin, re-freezing a pinned number |
 | [`axis-j-ledgers.md`](axis-j-ledgers.md) | what may be expected of an axis-J ledger at a later `main`, and when to regenerate one |

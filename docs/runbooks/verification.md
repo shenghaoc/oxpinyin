@@ -176,9 +176,6 @@ If none is available, report "tkrzw: not run (no sound libtkrzw on this host)" a
 - Follow the [test input rule](../testing/README.md#test-inputs).
 - Train an oracle C-API session by resetting, parsing, checking full consumption and guessing the sentence before `pinyin_train` on row 0.
   See the [oracle procedure](oracle.md).
-- Give backend-specific benches `required-features`.
-  Select a bench with `--bench <name>`.
-  See [benches](benches.md).
 - Report results and reproduction commands under the [reporting policy](../../CONTRIBUTING.md#results-and-reproduction).
   Use the benches procedure for measurement interpretation.
   Raw captures are not submission requirements.

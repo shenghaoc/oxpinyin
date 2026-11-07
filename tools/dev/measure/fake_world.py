@@ -1,7 +1,7 @@
 """A world without tools for the measurement recipes' tests (#1290).
 
-Every seam bench.py gives a recipe (capture, run, heavy, the
-libtkrzw check, the report scripts and the pool of builds) is replaced by a fake that writes an
+Every seam bench.py gives a recipe (capture, run, the libtkrzw check and
+the report scripts) is replaced by a fake that writes an
 ordered event log, so a test can pin what a runner did: its counts and banners, the order of arms
 and modes, the files it leaves and the statuses it stops with. Nothing needs taskset, binutils,
 cargo or /proc, so the tests that use it run on macOS and Linux. Not a test itself: the harness
@@ -16,7 +16,7 @@ import unittest
 from unittest import mock
 
 from tools.dev import pool, runners
-from tools.dev.measure import bench, campaigns, identity
+from tools.dev.measure import bench, identity
 
 
 class Stream(io.TextIOWrapper):
@@ -31,25 +31,22 @@ class Stream(io.TextIOWrapper):
 
 
 class World(unittest.TestCase):
-    """Replace every seam a campaign reaches its tools through, and log what it did in order."""
+    """Replace every seam a recipe reaches its tools through, and log what it did in order."""
 
     def setUp(self):
-        self.root = Path(self.enterContext(tempfile.TemporaryDirectory(prefix='campaigns-test-'))).resolve()
-        from . import campaigns, valgrind
+        self.root = Path(self.enterContext(tempfile.TemporaryDirectory(prefix='valgrind-test-'))).resolve()
+        from . import valgrind
         scratch = self.root / 'scratch'
         scratch.mkdir()
-        for module in (campaigns, valgrind):
-            self.enterContext(mock.patch.object(module, 'SCRATCH', scratch))
+        self.enterContext(mock.patch.object(valgrind, 'SCRATCH', scratch))
         self.log = []
         self.taskset = True
         self.worker_status = {}        # nth worker launch (1-based) -> exit status
         self.workers = 0
-        self.builds = []
         self.reports = []
         self.report_status = {}
-        fakes = dict(capture=self.fake_capture, run=self.fake_run, heavy=self.fake_heavy, check=self.fake_check,
-                     report=self.fake_report, build_all=self.fake_build_all,
-                     utc_now=lambda: '2026-10-27T00:00:00Z')
+        fakes = dict(capture=self.fake_capture, run=self.fake_run, check=self.fake_check,
+                     report=self.fake_report, utc_now=lambda: '2026-10-27T00:00:00Z')
         for name, fake in fakes.items():
             self.enterContext(mock.patch.object(bench, name, fake))
         self.enterContext(mock.patch('shutil.which', lambda name, path=None: '/usr/bin/taskset' if (
@@ -90,24 +87,6 @@ class World(unittest.TestCase):
             Path(command[command.index('-o') + 1]).write_bytes(b'\x7fELF harness')
         return 0
 
-    def fake_heavy(self, command, *, env=None, stdout=None, check_status=True):
-        command = [str(part) for part in command]
-        self.log.append(('heavy', command))
-        if command[1] == 'cinstall':
-            destdir = Path(next(part for part in command if part.startswith('--destdir=')).split('=', 1)[1])
-            (destdir / 'usr/lib/pkgconfig').mkdir(parents=True, exist_ok=True)
-            (destdir / 'usr/lib/pkgconfig/libpinyin.pc').write_text('Name: libpinyin\n')
-            (destdir / 'usr/lib/libpinyin.so').write_bytes(b'\x7fELF capi')
-            (destdir / 'usr/share/oxpinyin').mkdir(parents=True, exist_ok=True)
-            for name in campaigns.REQUIRED_DATA:
-                (destdir / 'usr/share/oxpinyin' / name).write_bytes(b'data')
-        if command[1] == 'build':
-            (self.target / 'release').mkdir(parents=True, exist_ok=True)
-            (self.target / 'release/libpinyin_capi.so').write_bytes(b'\x7fELF ' + command[command.index('--features') + 1].encode())
-        return 0
-
-    target = None
-
     def fake_check(self, cell, runner, side, obj, **kwargs):
         self.log.append(('check', cell, side, str(obj)))
 
@@ -118,26 +97,6 @@ class World(unittest.TestCase):
         self.reports.append((script, list(argv)))
         self.log.append(('report', Path(script).name, argv[0] if argv else ''))
         return self.report_status.get(Path(script).name, 0), f'REPORT {Path(script).name}\n'
-
-    def fake_build_all(self, builds, *, env=None):
-        class Context:
-            environment = {}
-
-            def launch(context, command, *, env, merge_stderr):
-                command = [str(part) for part in command]
-                self.builds.append(command)
-                flag = '--destdir' if '--destdir' in command else '--target-dir'
-                directory = Path(command[command.index(flag) + 1])
-                if command[1] == 'cinstall':
-                    (directory / 'usr/lib').mkdir(parents=True)
-                    (directory / 'usr/lib/libpinyin.so.15.0.0').write_bytes(b'\x7fELF ' + command[command.index('--features') + 1].encode())
-                else:
-                    (directory / 'release').mkdir(parents=True)
-                    (directory / 'release/libpinyin_capi.so').write_bytes(b'\x7fELF cargo')
-                return pool.Completed(0, b'cargo output\n', b'')
-        self.log.append(('builds', [name for name, _ in builds]))
-        for name, function in builds:
-            function(Context())
 
     # ── driver ─────────────────────────────────────────────────────────────────────────────
     def execute(self, recipe, argv=(), env=None):

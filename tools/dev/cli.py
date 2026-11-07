@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from . import abi, cell, check, doctor, pool, registry, test_runner
-from .measure import cold, recipes, startup
+from .measure import recipes
 
 
 def _selected(args, *, required=False):
@@ -52,10 +52,6 @@ def packaging_command(args):
 
 def measure_command(args):
     """Dispatch one measure recipe and return its status."""
-    if args.recipe == 'cold-qualify':
-        return cold.main(args.args)
-    if args.recipe == 'startup':
-        return startup.main(args.args)
     return recipes.main(args.recipe, args.args)
 
 
@@ -250,7 +246,7 @@ def build_parser():
     p.set_defaults(func=packaging_command)
 
     p = sub.add_parser('measure', help='measurement and profile recipes')
-    p.add_argument('recipe', choices=('startup', 'cold-qualify', *recipes.NAMES))
+    p.add_argument('recipe', choices=recipes.NAMES)
     p.add_argument('args', nargs=argparse.REMAINDER)
     p.set_defaults(func=measure_command)
 

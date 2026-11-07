@@ -1,6 +1,6 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """Tests for the measure recipe table and its dispatcher: the fixed name tuple matches what the
-modules contribute, a recipe runs under the shared failure ladder, and the CLI forwards to it."""
+module contributes, a recipe runs under the shared failure ladder, and the CLI forwards to it."""
 import contextlib
 import io
 from pathlib import Path
@@ -26,21 +26,19 @@ def dispatch(name, argv=(), table=None):
 
 
 class TableTests(unittest.TestCase):
-    def test_the_fixed_names_are_exactly_what_the_modules_contribute(self):
+    def test_the_fixed_names_are_exactly_what_the_module_contributes(self):
         self.assertEqual(sorted(recipes.NAMES), sorted(recipes.table()))
         self.assertEqual(list(recipes.NAMES), sorted(recipes.NAMES))
 
-    def test_every_recipe_takes_argv_and_env_and_is_not_a_startup_name(self):
+    def test_every_recipe_takes_argv_and_env(self):
         for name, function in recipes.table().items():
             with self.subTest(name=name):
-                self.assertNotIn(name, ('startup', 'cold-qualify'))
                 self.assertEqual(function.__code__.co_argcount, 2)
 
     def test_the_registry_rows_that_were_shell_runners_run_the_recipe_of_their_name(self):
         import json
         rows = {row['name']: row for row in json.loads((ROOT / 'tools/bisection/runners.json').read_text())}
-        for name in ('callgrind-differential', 'perf-baseline', 'perf-matrix', 'perf-same-data', 'rss-diag',
-                     'shipped-check', 'system-import-profile', 'tree-recipe-control'):
+        for name in ('callgrind-differential', 'system-import-profile'):
             with self.subTest(name=name):
                 self.assertEqual(rows[name]['implementation'], 'python:tools.dev')
                 self.assertEqual(rows[name]['command'][-3:], ['tools.dev', 'measure', name])
@@ -48,11 +46,8 @@ class TableTests(unittest.TestCase):
 
 
 class EnvironmentTests(unittest.TestCase):
-    def test_native_measurements_and_diagnostics_are_outside_the_pin_scope(self):
-        for name in ('snapshot', 'profile-w8', 'startup', 'cold-qualify', 'probe-egress',
-                     'probe-debuginfo-neutrality', 'callgrind-control'):
-            self.assertNotIn(name, recipes.PIN_COMPARISONS)
-        self.assertEqual(len(recipes.PIN_COMPARISONS), 10)
+    def test_the_control_is_outside_the_pin_scope(self):
+        self.assertEqual(recipes.PIN_COMPARISONS, {'callgrind-differential', 'system-import-profile'})
 
     def test_pin_comparison_refuses_on_actions_before_recipe_execution(self):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(Finished):
@@ -80,9 +75,9 @@ class DispatchTests(unittest.TestCase):
 
 
 class CommandLineTests(unittest.TestCase):
-    def test_measure_accepts_every_recipe_and_keeps_startup_and_cold_qualify(self):
+    def test_measure_accepts_every_recipe(self):
         parser = cli.build_parser()
-        for name in ('startup', 'cold-qualify', *recipes.NAMES):
+        for name in recipes.NAMES:
             with self.subTest(name=name):
                 args = parser.parse_args(['measure', name, '--out', 'x', '-h'])
                 self.assertEqual((args.recipe, args.args), (name, ['--out', 'x', '-h']))
