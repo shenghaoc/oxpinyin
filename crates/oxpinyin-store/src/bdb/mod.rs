@@ -1213,7 +1213,6 @@ mod tests {
 
     /// `ngram_bdb.cpp:51-52`: `assert(ret == 0)` after `db_create`. The
     /// process dies of SIGABRT, with no Rust panic text or other line.
-    #[cfg(unix)]
     #[test]
     fn a_failed_user_bigram_db_create_aborts_where_load_db_asserts() {
         let stderr = crate::death_test::assert_aborts(

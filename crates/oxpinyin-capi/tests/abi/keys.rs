@@ -433,7 +433,6 @@ fn pinyin_strings_contract() {
 /// A hand-crafted toned initial-only key: the pin asserts in
 /// `pinyin_get_pinyin_is_incomplete`'s true branch (`pinyin.cpp:2769`),
 /// and the facade aborts the process too (register row 4).
-#[cfg(unix)]
 #[test]
 fn toned_initial_only_key_aborts() {
     assert_aborts("keys::toned_initial_only_key_aborts", || {

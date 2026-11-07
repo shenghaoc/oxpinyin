@@ -119,7 +119,6 @@ fn an_empty_input_or_a_foreign_header_exits_with_enodata() {
 /// line outside its `switch`; neither writes a message (maintainer ruling
 /// 2026-10-31 UTC), and the lines `std::getline` flushed before stay on
 /// stdout.
-#[cfg(unix)]
 #[test]
 fn the_pins_assertions_and_abort_abort() {
     for input in [
@@ -127,9 +126,23 @@ fn the_pins_assertions_and_abort_abort() {
         format!("{HEADER}\\1-gram\n\\data model x\n"),
     ] {
         let out = run(input.as_bytes());
+        #[cfg(unix)]
         assert_eq!(signal(&out), Some(6), "{out:?}");
+        #[cfg(windows)]
+        // Rust's Windows abort uses __fastfail, not the Unix SIGABRT.
+        assert_eq!(
+            out.status.code(),
+            Some(i32::from_ne_bytes(0xC000_0409_u32.to_ne_bytes())),
+            "{out:?}"
+        );
         assert_eq!(stderr(&out), "");
-        assert_eq!(out.stdout, b"\\data model interpolation\n\\1-gram\n");
+        let expected = "\\data model interpolation\n\\1-gram\n";
+        let expected = if cfg!(windows) {
+            expected.replace('\n', "\r\n")
+        } else {
+            expected.to_owned()
+        };
+        assert_eq!(out.stdout, expected.as_bytes());
     }
 }
 

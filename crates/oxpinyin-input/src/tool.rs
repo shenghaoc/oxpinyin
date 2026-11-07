@@ -52,10 +52,10 @@ pub fn exit(status: c_int) -> ! {
     unsafe { libc::exit(status) }
 }
 
-/// `abort()`, where the pin aborts (constitution §4).
+/// Aborts where the pin aborts, using `std::process::abort()` as required by
+/// "The abort rule" in `docs/findings/compatibility-policy.md`.
 pub fn abort() -> ! {
-    // SAFETY: `abort` never returns.
-    unsafe { libc::abort() }
+    std::process::abort()
 }
 
 /// A store error that has no pin counterpart, such as an unsupported

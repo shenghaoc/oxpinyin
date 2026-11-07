@@ -20,7 +20,7 @@ adds `TkrzwStore::tool_set` under the `tools` feature and routes these two
 test programs through the existing `db_set_record` native setter. The
 nonshipping utils crate enables that feature. Existing utility callers
 keep their previous write path. `required` calls the existing
-`oxpinyin_input::tool::abort` (`libc::abort`) directly on save failure;
+`oxpinyin_input::tool::abort` (`std::process::abort`) directly on save failure;
 the attached handle stays in the caller, and no unwind, `Drop`, close or
 synchronize runs before the abort. The successful save/load path still
 closes the old handle after the save.

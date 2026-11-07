@@ -1121,7 +1121,6 @@ mod tests {
 
     /// Every pin attach dies where `db_create` fails, and so does this:
     /// SIGABRT, with no Rust panic text or other line before it.
-    #[cfg(unix)]
     #[test]
     fn a_failed_db_create_aborts_where_the_pin_asserts() {
         let stderr = crate::death_test::assert_aborts(

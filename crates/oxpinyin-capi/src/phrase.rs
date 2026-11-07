@@ -246,7 +246,6 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
     #[test]
     fn a_read_failure_after_the_size_check_aborts() {
         // Kyoto Cabinet's `Bigram::load` asserts where the body read fails

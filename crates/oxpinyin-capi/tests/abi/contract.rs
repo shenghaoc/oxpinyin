@@ -24,7 +24,6 @@ use crate::common::{TempUserDir, cstr, open};
 /// `DOUBLE_PINYIN_CUSTOMIZED`: upstream aborts inside
 /// `DoublePinyinParser2::set_scheme` (`pinyin_parser2.cpp:611`), and the
 /// facade aborts the process too (register row 5a).
-#[cfg(unix)]
 #[test]
 fn double_customized_aborts() {
     assert_aborts("contract::double_customized_aborts", || {
@@ -102,7 +101,6 @@ fn double_out_of_enum_reproduces_the_half_mutation() {
 /// and falls through into `default: abort()`
 /// (`zhuyin_parser2.cpp:291-295`); the facade aborts the process too
 /// (register row 5c).
-#[cfg(unix)]
 #[test]
 fn zhuyin_standard_dvorak_aborts() {
     assert_aborts("contract::zhuyin_standard_dvorak_aborts", || {
@@ -115,7 +113,6 @@ fn zhuyin_standard_dvorak_aborts() {
 /// Out-of-enum zhuyin values: upstream aborts at the API layer's
 /// `default:` (`pinyin.cpp:1189`), and so does the facade (register row
 /// 5d).
-#[cfg(unix)]
 #[test]
 fn zhuyin_out_of_enum_aborts() {
     assert_aborts("contract::zhuyin_out_of_enum_aborts", || {
@@ -128,7 +125,6 @@ fn zhuyin_out_of_enum_aborts() {
 /// Out-of-enum full-pinyin values: upstream aborts inside
 /// `FullPinyinParser2::set_scheme` (`pinyin_parser2.cpp:398`), and so does
 /// the facade (register row 5d).
-#[cfg(unix)]
 #[test]
 fn full_pinyin_out_of_enum_aborts() {
     assert_aborts("contract::full_pinyin_out_of_enum_aborts", || {

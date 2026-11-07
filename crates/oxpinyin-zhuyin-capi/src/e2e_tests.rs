@@ -535,7 +535,6 @@ fn a_choose_at_the_cursor_survives_the_next_guess_after_a_phrase() {
 /// The `ZHUYIN_STANDARD_DVORAK` slot aborts the process, as the pin's
 /// `set_scheme` falls through to `abort()` (`zhuyin_parser2.cpp:295`,
 /// register row 5c).
-#[cfg(unix)]
 #[test]
 fn the_dvorak_chewing_scheme_aborts() {
     crate::test_support::assert_aborts("e2e_tests::the_dvorak_chewing_scheme_aborts", || {
@@ -547,7 +546,6 @@ fn the_dvorak_chewing_scheme_aborts() {
 /// An out-of-enum keyboard (`zhuyin.cpp:736`) and a full-pinyin scheme
 /// outside 1-3 (`pinyin_parser2.cpp:398`) abort the process (register row
 /// 5d).
-#[cfg(unix)]
 #[test]
 fn an_out_of_enum_chewing_scheme_aborts() {
     crate::test_support::assert_aborts("e2e_tests::an_out_of_enum_chewing_scheme_aborts", || {
@@ -556,7 +554,6 @@ fn an_out_of_enum_chewing_scheme_aborts() {
     });
 }
 
-#[cfg(unix)]
 #[test]
 fn an_out_of_range_full_pinyin_scheme_aborts() {
     crate::test_support::assert_aborts(
@@ -570,7 +567,6 @@ fn an_out_of_range_full_pinyin_scheme_aborts() {
 
 /// An apostrophe in the single-key parser's input is the shared
 /// `parse_one_key` assert (`pinyin_parser2.cpp:170`, register row 21).
-#[cfg(unix)]
 #[test]
 fn a_single_key_apostrophe_aborts() {
     crate::test_support::assert_aborts("e2e_tests::a_single_key_apostrophe_aborts", || {
@@ -583,7 +579,6 @@ fn a_single_key_apostrophe_aborts() {
 
 /// An unload index of 16 or more is the unload's assert (`zhuyin.cpp:381`,
 /// register row 66).
-#[cfg(unix)]
 #[test]
 fn an_unload_index_past_the_sub_indices_aborts() {
     crate::test_support::assert_aborts(
@@ -677,7 +672,6 @@ fn hold_nihao_in_libraries(context: *mut crate::types::ZhuyinContext, libraries:
 /// `g_array_append_vals` per loaded library (`phrase_index.h:762-772`).
 /// The pin then dies of the assert on five tokens (`zhuyin.cpp:1690`), so
 /// the criticals come first. GLib's default handler writes them to stderr.
-#[cfg(unix)]
 #[test]
 fn lookup_tokens_into_a_null_array_logs_the_criticals_before_it_aborts() {
     let user_dir = TempUserDir::new("lookup-null-five");
@@ -746,7 +740,6 @@ fn init_at(user_dir: &std::path::Path) -> *mut crate::types::ZhuyinContext {
 /// Register row 91: init's library loop merges `gb_char.dbin` and
 /// `next_record` asserts on its non-null `MODIFY_HEADER` token
 /// (`phrase_index_logger.h:202`).
-#[cfg(unix)]
 #[test]
 fn init_aborts_on_a_log_header_token() {
     crate::test_support::assert_aborts("e2e_tests::init_aborts_on_a_log_header_token", || {
@@ -788,7 +781,6 @@ fn init_aborts_on_a_log_before_an_unmappable_library() {
 
 /// Register row 108: init's merge stores a one-byte ADD payload and
 /// `add_phrase_item` reads its unigram (`memory_chunk.h:390`).
-#[cfg(unix)]
 #[test]
 fn init_aborts_on_a_short_add_payload() {
     crate::test_support::assert_aborts("e2e_tests::init_aborts_on_a_short_add_payload", || {
@@ -820,7 +812,6 @@ fn init_completes_when_the_merge_stops_before_a_bad_header() {
 
 /// Register row 91 on the reload path: `zhuyin_load_phrase_library` of an
 /// unloaded library merges its saved `.dbin` (`zhuyin.cpp:219`).
-#[cfg(unix)]
 #[test]
 fn reload_aborts_on_a_log_header_token() {
     crate::test_support::assert_aborts("e2e_tests::reload_aborts_on_a_log_header_token", || {
@@ -840,7 +831,6 @@ fn reload_aborts_on_a_log_header_token() {
 
 /// Register row 97: `mask_out` reloads library 1 and `_mask_out_records`
 /// appends a kept ADD with both chunk pointers (`phrase_index_logger.h:245`).
-#[cfg(unix)]
 #[test]
 fn mask_out_aborts_on_a_surviving_add() {
     crate::test_support::assert_aborts("e2e_tests::mask_out_aborts_on_a_surviving_add", || {
@@ -861,7 +851,6 @@ fn mask_out_aborts_on_a_surviving_add() {
 /// Register row 85: `zhuyin_mask_out` loads token 1's gram, which the mask
 /// leaves alone, and `SingleGram::mask_out` reads its total from three bytes
 /// (`ngram.cpp:80`, `memory_chunk.h:390`).
-#[cfg(unix)]
 #[test]
 fn mask_out_aborts_on_a_short_bigram_value() {
     crate::test_support::assert_aborts(
