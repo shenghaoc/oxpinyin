@@ -1,5 +1,5 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
-"""Shipping-size gate, recipe key, export check, report and orchestration; no builds."""
+"""Shipping-size recipe key, export check, report and orchestration; no builds."""
 import contextlib
 import io
 import json
@@ -50,43 +50,7 @@ class Repo:
         return self.git('rev-parse', 'HEAD')
 
 
-class GateTests(unittest.TestCase):
-    def setUp(self):
-        self.directory = tempfile.TemporaryDirectory()
-        self.repo = Repo(self.directory.name)
-        self.base = self.repo.commit({'README': 'r\n', 'crates/oxpinyin-core/lib': 'a\n', 'crates/oxpinyin-corpus/lib': 'a\n', 'Cargo.lock': 'l\n'})
-
-    def tearDown(self):
-        self.directory.cleanup()
-
-    def gate(self):
-        return ship_sizes.gate(self.base, self.repo.root)
-
-    def test_missing_or_unknown_base_runs_the_job(self):
-        self.assertTrue(ship_sizes.gate('', self.repo.root))
-        self.assertTrue(ship_sizes.gate('0' * 40, self.repo.root))
-
-    def test_docs_and_non_shipping_crates_skip(self):
-        self.repo.commit({'docs/note': 'x\n', 'crates/oxpinyin-corpus/lib': 'b\n'})
-        self.assertFalse(self.gate())
-
-    def test_each_input_class_runs_the_job(self):
-        for path in ('crates/oxpinyin-core/lib', 'crates/oxpinyin-capi/build.rs',
-                     'tools/dev/packaging.py', 'rust-toolchain.toml', 'Cargo.toml',
-                     'tools/dev/ship_sizes.py', 'justfile'):
-            with self.subTest(path=path):
-                self.repo.git('reset', '-q', '--hard', self.base)
-                self.repo.commit({path: 'changed\n'})
-                self.assertTrue(self.gate())
-
-    def test_every_input_is_covered_by_the_ci_path_gate(self):
-        text = (ROOT / '.github/workflows/ci.yml').read_text()
-        gate = text.split('changed=$(git diff --name-only', 1)[1].split(')', 1)[0]
-        covered = gate.replace('\\\n', ' ').split()
-        for path in (*ship_sizes.INPUTS, *ship_sizes.REPORT_INPUTS):
-            with self.subTest(path=path):
-                self.assertTrue(any(path == item or path.startswith(item + '/') for item in covered), path)
-
+class ClosureTests(unittest.TestCase):
     def test_shipping_crates_are_the_capi_dependency_closure(self):
         self.assertEqual(set(ship_sizes.SHIPPING_CRATES), ship_sizes.shipping_closure(ROOT))
         for name in ship_sizes.SHIPPING_CRATES:
@@ -370,7 +334,6 @@ class WiringTests(unittest.TestCase):
         self.assertRegex(job, r'just packaging sizes key --commit')
         self.assertIn('actions/cache/restore@', job)
         self.assertIn('actions/cache/save@', job)
-        self.assertIn("python3 -m tools.dev.ship_sizes gate", text)
 
 
 if __name__ == '__main__':
