@@ -31,15 +31,11 @@ asks for it.
    bash tools/oracle/capture-pin.sh 2
    ```
 
-   Each run, `tools/oracle/pin_capture.py`, first records `capture.json`:
-   - the pin commit in the prefix's build record;
-   - the SHA-256 of the `libpinyin.so` it loads;
-   - the identity of the system data.
-
-   It refuses the run unless these are the repository's pins:
-   - `libpinyin_commit` in `tools/oracle/oracle-pin.txt`;
-   - this platform's `libpinyin_sha256_tkrzw` in `tools/oracle/oracle-pin.txt`;
-   - `content_sha256` in `tools/oracle/libpinyin-data.json`.
+   Each run, `tools/oracle/pin_capture.py`, first refuses the capture unless:
+   - `tools.oracle.image.prefix_ok` accepts the tkrzw prefix;
+   - the SHA-256 of the `libpinyin.so` it loads equals the prefix's recorded
+     `shared_object_sha256`;
+   - the data's digest equals `content_sha256` in `tools/oracle/libpinyin-data.json`.
 
    Only then does it make the C API calls of each observation in `OBSERVATIONS`. Each runs on
    the image's tkrzw cell, in a fresh process with a fresh user directory. An observation that
@@ -47,6 +43,9 @@ asks for it.
 
    The run writes `target/pin-observations/<run>/capture.json` and `observations.json`, and
    nothing else. A run directory that already exists is refused.
+
+   `capture.json` is provenance, not frozen values: the source commit, the recipe hash, the
+   loaded library's SHA-256, `versions_sha256`, the capture image and the data identity.
 
 2. The two runs' `observations.json` must be equal:
 
@@ -59,7 +58,8 @@ asks for it.
    into the Rust tests as literals, each citing its run and source line. No test reads the
    staging directory.
 
-`tools/oracle/pin_capture.test.py` holds the two refusals: a capture of another pin, another
-library or other data, and a capture that would write outside its staging directory.
+`tools/oracle/pin_capture.test.py` holds the two refusals: a capture of a prefix `prefix_ok`
+rejects, a loaded library that differs from the prefix's record or other data, and a capture
+that would write outside its staging directory.
 
 A new observation goes into `OBSERVATIONS` in `pin_capture.py`.

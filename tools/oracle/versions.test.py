@@ -26,22 +26,6 @@ def component(name, package, major_minor, probe=False):
     return entry
 
 
-class VersionParsingTest(unittest.TestCase):
-    def test_debian_suffixes_keep_major_minor(self):
-        for version, expected in (
-                ('2.41-12+deb13u4', '2.41'),
-                ('2.84.4-3~deb13u5', '2.84'),
-                ('5.3.28+dfsg2-9', '5.3'),
-                ('1:1.17-4', '1.17'),
-                ('14.2.0-19', '14.2'),
-                ('1.8.1-4', '1.8')):
-            self.assertEqual(versions.major_minor(version), expected)
-
-    def test_no_numeric_prefix_is_an_error(self):
-        with self.assertRaises(ValueError):
-            versions.numeric_prefix('version-unknown')
-
-
 class ManifestTest(unittest.TestCase):
     def test_checked_in_manifest_is_valid_and_complete(self):
         loaded = versions.load_manifest(versions.DEFAULT_MANIFEST)
@@ -74,18 +58,18 @@ class CheckTest(unittest.TestCase):
                                         probe=path)
         return status
 
-    def test_inside_range_passes(self):
+    def test_installed_version_is_recorded(self):
         self.assertEqual(self.run_check([component('glibc', 'libc6', '2.41')],
                                         {'libc6': '2.41-12+deb13u4'}), 0)
 
-    def test_outside_range_names_the_component(self):
+    def test_version_drift_is_recorded_without_rejection(self):
         stderr = io.StringIO()
-        with redirect_stdout(io.StringIO()), redirect_stderr(stderr):
+        with redirect_stdout(io.StringIO()) as stdout, redirect_stderr(stderr):
             status = versions.check(manifest([component('C compiler', 'gcc-14', '14.2')]),
                                     resolve=lambda package: '15.2.0-1', probe='/bin/true')
-        self.assertEqual(status, 1)
-        self.assertIn('C compiler', stderr.getvalue())
-        self.assertIn('15.2', stderr.getvalue())
+        self.assertEqual(status, 0)
+        self.assertIn('C compiler\tgcc-14\t15.2.0-1', stdout.getvalue())
+        self.assertEqual(stderr.getvalue(), '')
 
     def test_failed_tkrzw_probe_fails_the_build(self):
         with tempfile.TemporaryDirectory() as tmp:

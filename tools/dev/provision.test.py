@@ -23,6 +23,23 @@ from tools.dev.native import NativeRefused, Tools
 from tools.dev.runners import Finished
 
 
+def record_prefix(prefix, backend, root=ROOT, pin=None, architecture=None):
+    record = provision.images.fields(pin or root / 'tools/oracle/oracle-pin.txt')
+    values = {key: record[key] for key in ('libpinyin_commit', 'ibus_libpinyin_commit')}
+    values.update(architecture=architecture or platform.machine(), recipe_sha256=provision.images.recipe_hash(root),
+                  dbm=provision.backend_cell.BACKEND_FORMATS[provision.backend_cell.CELL_TO_BACKEND[backend]],
+                  model_sha256=record['model_archive_sha256'],
+                  shared_object_sha256=digest_file(prefix / 'lib/libpinyin.so'),
+                  zhuyin_shared_object_sha256=digest_file(prefix / 'lib/libzhuyin.so'))
+    (prefix / 'versions.txt').write_text('recorded installed versions\n')
+    values['versions_sha256'] = digest_file(prefix / 'versions.txt')
+    for file, key in (('oracle-data.sha256', 'data_manifest_sha256'),
+                      ('oracle-data-unstable.sha256', 'data_unstable_manifest_sha256')):
+        if (prefix / file).exists():
+            values[key] = digest_file(prefix / file)
+    (prefix / 'oracle-pin.txt').write_text(''.join(f'{key}={value}\n' for key, value in values.items()))
+
+
 @unittest.skipUnless(sys.platform.startswith('linux'), 'Linux cloud provisioning fixtures')
 class ProvisionTests(unittest.TestCase):
     def setUp(self):
@@ -40,7 +57,7 @@ class ProvisionTests(unittest.TestCase):
         self.service.model_cache = self.work / 'model20'
         self.service.uv_dir = str(self.work / "uv '$`")
         self.service.pin = self.work / 'pin'
-        self.service.pin.touch()
+        self.service.pin.write_bytes((ROOT / 'tools/oracle/oracle-pin.txt').read_bytes())
         self.service.platform = 'linux/amd64'
         self.service.cells = ['bdb', 'kc', 'tkrzw']
         self.service.tkrzw_local = True
@@ -55,8 +72,6 @@ class ProvisionTests(unittest.TestCase):
         for library in ('libpinyin', 'libzhuyin'):
             path = prefix / 'lib' / (library + '.so')
             path.write_text(f'{cell} {library}\n')
-            with self.service.pin.open('a') as pin:
-                pin.write(f'{library}_sha256_{cell}={digest_file(path)}\n')
         (data / 'table.conf').write_text(cell + '\n')
         (prefix / 'oracle-data.sha256').write_text(f'{digest_file(data / "table.conf")}  lib/libpinyin/data/table.conf\n')
         unstable = []
@@ -65,9 +80,22 @@ class ProvisionTests(unittest.TestCase):
             path.write_text(f'{cell} {name}\n')
             unstable.append(f'{digest_file(path)}  lib/libpinyin/data/{name}\n')
         (prefix / 'oracle-data-unstable.sha256').write_text(''.join(unstable))
-        (prefix / 'oracle-pin.txt').write_text('data_unstable_manifest_sha256=' + digest_file(prefix / 'oracle-data-unstable.sha256') + '\n')
-        with self.service.pin.open('a') as pin:
-            pin.write(f'data_manifest_sha256_{cell}={digest_file(prefix / "oracle-data.sha256")}\n')
+        record_prefix(prefix, cell, pin=self.service.pin, architecture='x86_64')
+
+    def test_library_provenance_refuses_old_pin_recipe_versions_and_damaged_bytes(self):
+        prefix = self.service.oracle_root / 'bdb'
+        pin = prefix / 'oracle-pin.txt'
+        original = pin.read_text()
+        for key in ('libpinyin_commit', 'ibus_libpinyin_commit', 'recipe_sha256', 'architecture'):
+            pin.write_text(re.sub(r'^' + key + '=.*$', key + '=different', original, flags=re.M))
+            self.assertFalse(self.service.libs_ok('bdb'), key)
+            pin.write_text(original)
+        for path in (prefix / 'lib/libpinyin.so', prefix / 'lib/libzhuyin.so', prefix / 'versions.txt'):
+            data = path.read_bytes()
+            path.write_bytes(data + b'damaged')
+            self.assertFalse(self.service.libs_ok('bdb'), str(path))
+            path.write_bytes(data)
+        self.assertTrue(self.service.libs_ok('bdb'))
 
     def source(self, cell, path=None):
         command = 'source "$1" || exit; printf "%s\\0" "$PINYIN_ORACLE_PREFIX" "$OXPINYIN_LIBPINYIN_DATA_DIR" "${OXPINYIN_TKRZW_PREFIX:-}" "${OXPINYIN_TKRZW_LIBRARY:-}" "$PATH" "${LD_LIBRARY_PATH:-}" "${PKG_CONFIG_PATH:-}"'
@@ -474,8 +502,6 @@ elif name in ('curl','apt-get','sudo'):
     def test_cached_full_setup_preserves_result_order_files_and_selection(self):
         cache = self.work / 'cache'
         pin = self.root / 'tools/oracle/oracle-pin.txt'
-        fields = pin.read_text()
-        suffix = '_linux_arm64' if platform.machine() in ('aarch64', 'arm64') else ''
         for cell in ('bdb', 'kc'):
             prefix = cache / 'oracle' / cell
             data = prefix / 'lib/libpinyin/data'
@@ -485,16 +511,11 @@ elif name in ('curl','apt-get','sudo'):
             for library in ('libpinyin', 'libzhuyin'):
                 path = prefix / 'lib' / (library + '.so')
                 path.write_text(cell + ' ' + library + '\n')
-                fields = re.sub(r'^' + library + '_sha256_' + cell + suffix + r'=.*$',
-                                library + '_sha256_' + cell + suffix + '=' + digest_file(path), fields, flags=re.M)
             (data / 'table.conf').write_text('synthetic\n')
             (prefix / 'oracle-data.sha256').write_text(digest_file(data / 'table.conf') + '  lib/libpinyin/data/table.conf\n')
             (data / 'bigram.db').write_text('synthetic generated\n')
             (prefix / 'oracle-data-unstable.sha256').write_text(digest_file(data / 'bigram.db') + '  lib/libpinyin/data/bigram.db\n')
-            (prefix / 'oracle-pin.txt').write_text('data_unstable_manifest_sha256=' + digest_file(prefix / 'oracle-data-unstable.sha256') + '\n')
-            fields = re.sub(r'^data_manifest_sha256_' + cell + suffix + r'=.*$',
-                            'data_manifest_sha256_' + cell + suffix + '=' + digest_file(prefix / 'oracle-data.sha256'), fields, flags=re.M)
-        pin.write_text(fields)
+            record_prefix(prefix, cell, self.root)
         self.env['FAKE_RUNTIME_READY'] = '1'
         (self.bin / 'kchashmgr').symlink_to('/bin/true')
         current = self.check_entry(['--cells', 'kc bdb'], 0)
@@ -518,12 +539,12 @@ elif name in ('curl','apt-get','sudo'):
         (extracted / 'interpolation2.text').touch()
         (model / 'verified').write_text('sha256=59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155\n')
 
-    def test_cold_no_pull_library_hash_mismatch_keeps_status_three(self):
+    def test_cold_no_pull_unrecorded_library_is_rejected(self):
         self.verified_model()
         self.env.update(FAKE_POOL='1', FAKE_RUNTIME_READY='1')
         done = self.run_entry(['--cells', 'bdb', '--no-pull', '--jobs', '1'])
-        self.assertEqual(done.returncode, 3, done.stderr.decode())
-        self.assertIn(b'MISMATCH bdb libpinyin', done.stderr)
+        self.assertEqual(done.returncode, 1, done.stderr.decode())
+        self.assertIn(b'stale pin/recipe or damaged build provenance', done.stderr)
         for library in ('libpinyin', 'libzhuyin'):
             self.assertTrue((self.work / 'cache/oracle/bdb/lib' / (library + '.so')).is_file())
 

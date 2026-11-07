@@ -6,9 +6,11 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import contract_operations
 import contract_reference as ref
 from contract_verdict import NO_ABORT
 
@@ -32,6 +34,18 @@ def row(s, **changes):
 
 
 class IdentityTests(unittest.TestCase):
+    def test_capture_import_gates_pin_and_data_but_not_recorded_build_hashes(self):
+        current = spec()
+        captured = row(current)
+        captured['identity']['pin']['library_sha256'] = 'a hash from another toolchain'
+        captured['identity']['system_data'] = dict(kind=ref.PACKAGE, digest='data')
+        ref.check_row(captured, current, 'tkrzw', 'data', NO_ABORT)
+        with self.assertRaises(ref.ReferenceError):
+            ref.check_row(captured, current, 'tkrzw', 'different-data', NO_ABORT)
+        captured['identity']['pin']['commit'] = 'different-pin'
+        with self.assertRaises(ref.ReferenceError):
+            ref.check_row(captured, current, 'tkrzw', 'data', NO_ABORT)
+
     def test_inputs_digest_keeps_an_option_set_to_zero(self):
         # `0 == False`: an option at 0 or 0.0 is an input, only None, False and empty containers are defaults.
         self.assertNotEqual(ref.inputs_digest(spec(abort=0), NO_ABORT), ref.inputs_digest(spec(abort=None), NO_ABORT))
@@ -221,13 +235,47 @@ class ProfileTests(unittest.TestCase):
                     ref.decode_profile({'profile.db': payload}, directory)
 
 
+class CapturePrefixTests(unittest.TestCase):
+    def test_a_prefix_without_versions_txt_is_refused_before_any_case_runs(self):
+        with tempfile.TemporaryDirectory() as directory, \
+             mock.patch.object(ref, 'require_capture_environment'), mock.patch.object(ref, 'data_identity'):
+            prefix = Path(directory)
+            (prefix / 'oracle-pin.txt').write_text(f'pin_ref=libpinyin-2.11.92-{ref.PIN_COMMIT}+dbm-tkrzw\n')
+            driver = mock.MagicMock()
+            argv = ['tkrzw', str(prefix), '--data', directory]
+            with self.assertRaisesRegex(AssertionError, 'versions.txt'):
+                contract_operations.capture(driver, argv)
+            driver.run_capture.assert_not_called()
+            (prefix / 'versions.txt').write_text('installed versions\n')
+            with self.assertRaisesRegex(AssertionError, 'libpinyin.so'):  # the next prefix check
+                contract_operations.capture(driver, argv)
+            driver.run_capture.assert_not_called()
+
+
 class CaptureEnvironmentTests(unittest.TestCase):
-    def test_capture_refuses_a_host_that_is_not_the_stable_pin_image(self):
-        release = Path('/etc/os-release')
-        if release.is_file() and 'VERSION_CODENAME=trixie' in release.read_text():
-            self.skipTest('this host is the pin image')
-        with self.assertRaisesRegex(ref.ReferenceError, 'trixie'):
-            ref.require_capture_environment()
+    def test_capture_refuses_a_host_that_is_not_the_testing_pin_image(self):
+        for content in ('ID=debian\nVERSION_CODENAME=trixie\n', 'ID=ubuntu\n', ''):
+            with mock.patch.object(ref.Path, 'is_file', return_value=True), \
+                 mock.patch.object(ref.Path, 'read_text', return_value=content), \
+                 self.assertRaisesRegex(ref.ReferenceError, 'testing'):
+                ref.require_capture_environment()
+
+
+    def test_testing_codename_moves_without_a_guard_change(self):
+        for codename in ('forky', 'future'):
+            content = f'ID=debian\nVERSION_CODENAME={codename}\nPRETTY_NAME="Debian GNU/Linux {codename}/sid"\n'
+            with mock.patch.object(ref.Path, 'is_file', return_value=True), \
+                 mock.patch.object(ref.Path, 'read_text', return_value=content), \
+                 mock.patch.dict(ref.os.environ, {'OXPINYIN_CAPTURE_IMAGE': 'local-testing'}):
+                ref.require_capture_environment()
+
+    def test_capture_identity_contains_both_installed_version_records(self):
+        with mock.patch.object(ref, 'glib_version', return_value='2.90'), \
+             mock.patch.object(ref, 'glibc_version', return_value='2.43'), \
+             mock.patch.object(ref.Path, 'is_file', return_value=True), \
+             mock.patch.object(ref.Path, 'read_text', side_effect=['oracle versions', 'capture versions']):
+            self.assertEqual(ref.environment(None)['versions'],
+                             dict(oracle='oracle versions', capture='capture versions'))
 
 
 if __name__ == '__main__':

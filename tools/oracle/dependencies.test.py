@@ -28,7 +28,7 @@ class OracleDependenciesTests(unittest.TestCase):
         self.assertIn('py_oracle verify-image', build)
         pattern = r'^COPY tools/(oracle/(version-manifest.json|versions.py)|tkrzw/distro-probe.sh|lib/bash-floor.sh) '
         docker = (ROOT / 'tools/oracle/Dockerfile.oracle').read_text().split('FROM deps AS build', 1)[0]
-        copies = [line for line in docker.splitlines() if line.startswith('COPY ')]
+        copies = [line for line in docker.splitlines() if line.startswith('COPY ') and '/opt/oracle-recipe/' not in line]
         self.assertTrue(copies)
         for line in copies:
             self.assertRegex(line, pattern)

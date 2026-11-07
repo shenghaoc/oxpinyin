@@ -3,7 +3,7 @@
 Pin-comparison campaigns use the local oracle `performance` stage; see
 [where measurements run](benches.md#where-measurements-run). Native development
 and native-only measurements are unchanged. The oxpinyin-only nightly snapshot
-uses plain Debian stable; other Linux CI stays on unpinned Debian testing.
+uses plain unpinned Debian testing, like every other Linux environment.
 
 
 Start from [CONTRIBUTING](../../CONTRIBUTING.md). These instructions build
@@ -653,9 +653,9 @@ of completing a contribution.
   2,875 / 20 / 4, tkrzw 2,877 / 18 / 4. Each cell's SKIPs include the 13
   arm64-only #1137 exclusions; same-data was identical on 15/15 drivers.
   See [the arm64 oracle finding](../findings/oracle-arm64-1132.md).
-- Canonical Debian/Linux amd64 compatibility environment (debian:trixie,
-  glibc 2.41, GLib 2.84): the oracle and compat images rebuilt on trixie.
-  Historical, at `8ba13c53` (preserved on wip/1229-pre-squash), before `0x.`
+- Historical Debian/Linux amd64 compatibility run (glibc 2.41, GLib 2.84).
+  The current oracle uses unpinned `debian:testing`; the compat launcher is retired.
+  At `8ba13c53` (preserved on wip/1229-pre-squash), before `0x.`
   was registered with `host_scanf`: `contract-diff` on 3,017 cases per cell
   reported bdb 2,988 MATCH / 15 POLICY-ACCEPTED / 10 HOST-DEPENDENT / 2 SKIP
   / 2 DIFFER, kc 2,983 / 15 / 10 / 7 / 2, tkrzw 2,985 / 15 / 10 / 5 / 2. The

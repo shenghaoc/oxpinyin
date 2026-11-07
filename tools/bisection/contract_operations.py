@@ -219,6 +219,7 @@ def capture(driver, argv):
     driver.os.environ['CONTRACT_DIFF_CELL'] = args.cell
     lib = args.prefix / 'lib'
     require_pin_build(args.prefix, args.cell)
+    assert (args.prefix / 'versions.txt').is_file(), 'missing input: %s' % (args.prefix / 'versions.txt')
     libraries = {'pinyin': lib / 'libpinyin.so', 'zhuyin': lib / 'libzhuyin.so'}
     for library in libraries.values():
         assert library.is_file(), 'missing input: %s' % library
@@ -284,7 +285,8 @@ def capture(driver, argv):
                            identity=dict(
                                inputs=reference.inputs_digest(spec, driver.NO_ABORT),
                                pin=dict(commit=reference.PIN_COMMIT,
-                                        library_sha256=None if pinned else reference.file_sha256(pin_so)),
+                                        library_sha256=None if pinned else reference.file_sha256(pin_so),
+                                        build=reference.build_provenance(args.prefix)),
                                backend=args.cell,
                                system_data=dict(kind=reference.PACKAGE, digest=digest) if used
                                else dict(kind=reference.SYNTHETIC),

@@ -1,11 +1,12 @@
 # Reproducible build of the pin-built oracle's LIBRARIES (issue #818).
 #
-# Stage `deps` is the pin-reference build environment: Debian stable by
-# codename, debian:trixie, from the default mirrors with normal security
-# updates. A move to the next Debian release is a deliberate codename change,
-# never automatic. Tools/oracle/version-manifest.json names every component
-# that affects reference results; versions.py records the installed versions
-# and fails the build, naming the component, when one is outside its range.
+# Stage `deps` uses unpinned Debian testing. Debian is the only major
+# distribution whose libpinyin uses tkrzw, oxpinyin's default backend;
+# Fedora and Arch still link Kyoto Cabinet (docs/packaging.md, release lanes).
+# Debian testing's libpinyin package is therefore the reference, and its
+# updates trigger pin bumps. Both performance arms run on this same base.
+# version-manifest.json names the components whose installed versions are
+# recorded in the image and capture identity; version drift is not a build gate.
 # Stage `build` runs tools/oracle/build-oracle.sh --libs-only once per DBM
 # backend at fixed in-image paths. The final stage is the published image:
 # libpinyin.so, libzhuyin.so, headers, pkg-config files, oracle-pin.txt per
@@ -19,11 +20,11 @@
 
 # Every stage follows ORACLE_PLATFORM. It defaults to linux/amd64, so the
 # amd64 build command is unchanged; arm64 callers pass
-# --build-arg ORACLE_PLATFORM=linux/arm64. The frozen hashes are selected per
-# platform; the build and run commands pass --platform as well.
+# --build-arg ORACLE_PLATFORM=linux/arm64. Build provenance records the actual
+# architecture; the build and run commands pass --platform as well.
 ARG ORACLE_PLATFORM=linux/amd64
 
-FROM --platform=$ORACLE_PLATFORM debian:trixie AS deps
+FROM --platform=$ORACLE_PLATFORM debian:testing AS deps
 
 # Behind a TLS-intercepting egress proxy (a cloud session: tools/cloud/setup.sh)
 # the proxy arrives as the predefined build arg https_proxy and its CA as the
@@ -56,6 +57,12 @@ RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
         --probe /usr/local/bin/distro-probe.sh \
         --record /opt/oracle-versions.txt
 
+# Source-only identity inputs; these carry no model data.
+COPY tools/oracle/Dockerfile.oracle tools/oracle/build-oracle.sh tools/oracle/version-manifest.json tools/oracle/versions.py tools/oracle/oracle-pin.txt /opt/oracle-recipe/tools/oracle/
+COPY tools/tkrzw/distro-probe.sh /opt/oracle-recipe/tools/tkrzw/
+COPY tools/lib/bash-floor.sh /opt/oracle-recipe/tools/lib/
+ENV OXPINYIN_ORACLE_RECIPE_ROOT=/opt/oracle-recipe
+
 FROM deps AS build
 
 COPY tools/oracle/build-oracle.sh /usr/local/bin/build-oracle.sh
@@ -68,7 +75,7 @@ RUN set -eu; \
     done
 
 # Local performance environment. Never build or run this target on GitHub Actions.
-# It shares the oracle's stable base; model data and subject builds are prepared
+# It shares the oracle's testing base; model data and subject builds are prepared
 # after entering the container, never included in this reusable image.
 FROM deps AS performance
 COPY --from=build /opt/pinyin-oracle /opt/pinyin-oracle
