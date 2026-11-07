@@ -133,7 +133,7 @@ mod tests {
         )
         .unwrap();
         let prefix = PhraseText::from("龘");
-        let dict = ctx.runtime.as_ref().unwrap().dict();
+        let dict = ctx.runtime.dict();
         assert!(merged_suggestions(&dict, ctx.user_store(), &prefix).is_empty());
         let key = toned_key(SyllableKey::from_text("da").unwrap().index(), 2).unwrap();
         let token = ctx
@@ -141,11 +141,7 @@ mod tests {
             .unwrap()
             .add_phrase(&PhraseText::from("龘龘"), &[key, key], Some(7))
             .unwrap();
-        let rows = merged_suggestions(
-            &ctx.runtime.as_ref().unwrap().dict(),
-            ctx.user_store(),
-            &prefix,
-        );
+        let rows = merged_suggestions(&ctx.runtime.dict(), ctx.user_store(), &prefix);
         assert!(rows.iter().any(|(found, _)| *found == token), "{rows:?}");
     }
 }

@@ -17,10 +17,6 @@ use std::collections::{HashMap, VecDeque};
 
 use crate::ContextCore;
 
-/// Upstream's first training seed (`initial_seed`, 23·3): the §9 bigram
-/// export threshold — counts at or above it export, below it stay.
-const INITIAL_SEED: u64 = 23 * 3;
-
 /// The pin's `export_iterator_t` (`pinyin.cpp:124-130` at 074a2219): the
 /// sub-index, the token the next call reads (`null_token` when there is
 /// none) and the pronunciation it reads. `pinyin_begin_get_phrases` probes
@@ -352,7 +348,7 @@ impl ItemRef<'_> {
 
 struct PhraseExportRead<'a> {
     cursor: &'a mut PhraseExportCursor,
-    system: Option<RuntimeDict<'a>>,
+    system: RuntimeDict<'a>,
     user: Option<&'a UserStore>,
 }
 
@@ -372,7 +368,7 @@ impl PhraseExportCursor {
     fn read<'a>(&'a mut self, context: &'a ContextCore) -> PhraseExportRead<'a> {
         PhraseExportRead {
             cursor: self,
-            system: context.runtime.as_ref().map(|runtime| runtime.dict()),
+            system: context.runtime.dict(),
             user: context.user_store(),
         }
     }
@@ -454,8 +450,8 @@ impl PhraseExportRead<'_> {
             generation: Some(generation),
             appended_end: self
                 .system
-                .as_ref()
-                .and_then(|dict| dict.live_items_ignoring_mask().overlay_end(self.index))
+                .live_items_ignoring_mask()
+                .overlay_end(self.index)
                 .unwrap_or(NULL_TOKEN),
             user_end,
         };
@@ -468,11 +464,7 @@ impl PhraseExportRead<'_> {
     fn probe_from(&mut self, start: u32) {
         self.next_token = NULL_TOKEN;
         self.refresh();
-        if self
-            .system
-            .as_ref()
-            .is_some_and(|dict| dict.is_system_library(self.index))
-        {
+        if self.system.is_system_library(self.index) {
             self.probe_system(start);
         } else if matches!(
             self.index,
@@ -488,9 +480,7 @@ impl PhraseExportRead<'_> {
     /// session's appended items, whichever is further; then the forward
     /// probe. An unloaded library is `ERROR_NO_SUB_PHRASE_INDEX`: no token.
     fn probe_system(&mut self, start: u32) {
-        let Some(dict) = self.system.as_ref() else {
-            return;
-        };
+        let dict = &self.system;
         if !dict.library_visible(u32::from(self.index)) {
             return;
         }
@@ -551,12 +541,9 @@ impl PhraseExportRead<'_> {
         read: impl FnOnce(ItemRef<'_>) -> R,
     ) -> Result<Option<R>, ExportAssert> {
         self.refresh();
-        if let Some(dict) = self
-            .system
-            .as_ref()
-            .filter(|dict| dict.is_system_library(self.index))
-        {
-            return Ok(dict
+        if self.system.is_system_library(self.index) {
+            return Ok(self
+                .system
                 .live_items_ignoring_mask()
                 .read(token, |item| read(ItemRef::from(item)))
                 .found());
@@ -647,36 +634,6 @@ impl ContextCore {
         cursor
     }
 
-    /// §9 bigram-export materialization with upstream's filters and
-    /// rendering (`pinyin_begin_get_bigram_phrases` in `pinyin.cpp`):
-    /// skip `sentence_start` predecessors and counts at or below the
-    /// first-seed threshold (`initial_seed − 1` = 68); phrase = prev text +
-    /// next text; pinyin = prev pinyin + `'` + next pinyin (one row per
-    /// pronunciation combination); count = stored × 2 (upstream's local
-    /// `unigram_factor`).
-    ///
-    /// False when this context cannot render every exportable bigram row
-    /// (user-store-only, and at least one stored pair needs the system
-    /// phrase index). Callers must fail the snapshot rather than skip those
-    /// rows into an incomplete file.
-    #[must_use]
-    pub fn can_render_export_bigrams(&self) -> bool {
-        if self.runtime.is_some() {
-            return true;
-        }
-        let Some(store) = self.user_store() else {
-            return true;
-        };
-        let Ok(raw) = store.export_bigrams() else {
-            return false;
-        };
-        !raw.iter().any(|(prev, cur, count)| {
-            *prev != SENTENCE_START
-                && *count >= INITIAL_SEED
-                && (!is_user_file_token(*prev) || !is_user_file_token(*cur))
-        })
-    }
-
     /// The pin's bigram export iterator over this context
     /// (`pinyin_begin_get_bigram_phrases`, `pinyin.cpp:775-787`): the
     /// predecessors in the user bigram container's walk order
@@ -696,11 +653,11 @@ impl ContextCore {
 }
 
 /// What a [`BigramExportWalk`] loads grams and renders tokens from: the
-/// context's user store, and its system dictionary when it has one.
+/// context's user store and its system dictionary.
 #[derive(Clone)]
 struct ExportSource<'a> {
     user: &'a oxpinyin_user::UserStore,
-    dict: Option<oxpinyin_runtime::RuntimeDict<'a>>,
+    dict: oxpinyin_runtime::RuntimeDict<'a>,
 }
 
 impl ExportSource<'_> {
@@ -732,8 +689,8 @@ impl ExportSource<'_> {
         let is_system =
             u8::try_from(token >> 24).is_ok_and(|index| self.user.is_system_library(index));
         if is_system {
-            let dict = self.dict.as_ref()?;
-            return dict
+            return self
+                .dict
                 .live_items()
                 .read(token, |item| {
                     let text = item.phrase_text()?;
@@ -881,10 +838,7 @@ impl BigramExportWalk {
         let source = context.and_then(|context| {
             context.user_store().map(|user| ExportSource {
                 user,
-                dict: context
-                    .runtime
-                    .as_ref()
-                    .map(oxpinyin_runtime::Runtime::dict),
+                dict: context.runtime.dict(),
             })
         });
         if self.pair.is_some() && self.pinyin_index < self.pinyins.len() {
@@ -1424,7 +1378,7 @@ mod phrase_cursor_tests {
             cursor.next_pronunciation, 0,
             "the next token's first reading"
         );
-        let dict = ctx.runtime.as_ref().unwrap().dict();
+        let dict = ctx.runtime.dict();
         let (text, spellings, stored) = dict
             .live_items()
             .read(next, |item| {

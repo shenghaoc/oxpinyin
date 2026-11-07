@@ -367,12 +367,11 @@ pub struct ContextCore {
     /// The layered configuration instances are opened with (the pinned
     /// upstream defaults).
     pub config: Config,
-    /// The shared concrete assembly; `None` under a user-store-only
-    /// context.
-    pub runtime: Option<Runtime>,
-    /// Store for a context without system tables. Production contexts keep
-    /// their sole store in `runtime`; instances borrow it per operation.
-    pub user: Option<UserStore>,
+    /// The shared concrete assembly and the context's sole user store;
+    /// instances borrow it per operation. `pinyin_init` answers NULL when
+    /// the system tables do not load (`pinyin.cpp:337-339`), so every
+    /// context has one.
+    pub runtime: Runtime,
     /// The live option/scheme word, shared with every instance.
     pub live: LiveOptions,
 }
@@ -381,12 +380,7 @@ impl ContextCore {
     /// Run public context fini now; retained C handles may still borrow the
     /// same runtime afterwards. Releasing the last owner does not repeat it.
     pub fn finish(&mut self) {
-        if let Some(runtime) = self.runtime.as_mut() {
-            runtime.finish();
-        }
-        if let Some(user) = self.user.as_mut() {
-            user.finish();
-        }
+        self.runtime.finish();
     }
 
     /// Opens a context the way an init does: system tables plus the
@@ -451,8 +445,7 @@ impl ContextCore {
         })?;
         Ok(Self {
             config: Config::default(),
-            runtime: Some(runtime),
-            user: None,
+            runtime,
             live: LiveOptions::new(option_word),
         })
     }
@@ -479,10 +472,10 @@ impl ContextCore {
     }
 
     /// Allocates one instance's orchestration state over this context's
-    /// assembly. `None` without a runtime (nothing to decode with).
+    /// assembly. `None` when the session cannot be built.
     #[must_use]
     pub fn alloc_instance(&self) -> Option<crate::instance::InstanceCore> {
-        let runtime = self.runtime.as_ref()?;
+        let runtime = &self.runtime;
         let mut session = runtime.new_session(&self.config).ok()?;
         runtime.session(&mut session).set_defer_list_builds(true);
         Some(crate::instance::InstanceCore::new(
@@ -523,7 +516,7 @@ impl ContextCore {
         // `zhuyin.cpp:554`); the failed empty sub-index's local total
         // becomes zero, while the facade aggregate already excludes it.
         let compacted = self.compact_layout_failed();
-        let unloaded = self.runtime.as_ref().map(Runtime::unloaded_libraries);
+        let unloaded = self.runtime.unloaded_libraries();
         let Some(store) = self.user_store_mut() else {
             return SaveOutcome::NotSaved;
         };
@@ -537,9 +530,6 @@ impl ContextCore {
         let baseline = |nibble: u8,
                         originals: &oxpinyin_user::SystemOriginals|
          -> oxpinyin_user::SaveBaseline {
-            let Some(unloaded) = unloaded else {
-                return oxpinyin_user::SaveBaseline::Keep;
-            };
             match Runtime::read_save_baseline(originals, unloaded, nibble) {
                 Ok(baseline) => baseline,
                 Err(oxpinyin_runtime::SaveRemapFault::Layout(fault)) => {
@@ -582,10 +572,7 @@ impl ContextCore {
     /// library order ([`c_stderr::mmap_failed`]). The pin dies on the first;
     /// nothing here does, and the call answers what it answered before.
     fn check_system_libraries(&self, only: Option<u8>) -> bool {
-        let Some(runtime) = &self.runtime else {
-            return false;
-        };
-        let checked = runtime.check_system_libraries(only);
+        let checked = self.runtime.check_system_libraries(only);
         if checked.chunk_header_fault {
             return true;
         }
@@ -602,10 +589,7 @@ impl ContextCore {
     /// `zhuyin.cpp:829`). Returns the compacted nibbles.
     #[must_use]
     pub fn compact_layout_failed(&mut self) -> Vec<u8> {
-        self.runtime
-            .as_mut()
-            .map(oxpinyin_runtime::Runtime::compact_layout_failed)
-            .unwrap_or_default()
+        self.runtime.compact_layout_failed()
     }
 
     /// `mask_out`'s body: the store-level deletion, or
@@ -651,7 +635,8 @@ impl ContextCore {
         let mut logs = MaskLogs::default();
         let mut walk = None;
         let mut stop = None;
-        if let (Some(runtime), Some(store)) = (&self.runtime, self.user_store()) {
+        if let Some(store) = self.runtime.user_store() {
+            let runtime = &self.runtime;
             let mut remap = runtime.begin_system_remap();
             while let Some(step) = runtime.remap_next(&mut remap) {
                 match step {
@@ -691,14 +676,12 @@ impl ContextCore {
         // directory the pin asserts on (`memory_chunk.h:493`, register row
         // 96) ends the loop after the libraries before it were mapped and
         // merged, and a merge of theirs that asserts comes first.
-        if let (Some(runtime), Some(remap)) = (self.runtime.as_mut(), walk) {
-            let mut originals = runtime.finish_system_remap(remap);
+        if let Some(remap) = walk {
+            let mut originals = self.runtime.finish_system_remap(remap);
             let replay = self.user_store_mut().map_or(Ok(()), |store| {
                 store.reload_system_libraries_prefetched(&mut originals, mask, value, logs)
             });
-            if let Some(runtime) = self.runtime.as_mut() {
-                runtime.install_baselines(originals);
-            }
+            self.runtime.install_baselines(originals);
             // The replay stops at the first library whose merge asserts, so
             // a fault the walk found comes after the merges before it.
             match (replay, stop) {
@@ -742,7 +725,7 @@ impl ContextCore {
     /// SIGSEGV (policy row 76): the library stays unloaded behind its mask,
     /// the call answers `true`, and the next load maps the file again.
     /// Nothing is written to disk, and nothing that can fail is: the pin has
-    /// no failing site here (policy row 103). `false` without a runtime.
+    /// no failing site here (policy row 103).
     ///
     /// # Errors
     ///
@@ -755,9 +738,7 @@ impl ContextCore {
     /// saved `.dbin`'s merge reaches an assert, with the library still
     /// unloaded.
     pub fn load_phrase_library(&mut self, index: u32) -> Result<bool, LibraryLoadFault> {
-        let Some(runtime) = self.runtime.as_ref() else {
-            return Ok(false);
-        };
+        let runtime = &self.runtime;
         let Ok(row_index) = u8::try_from(index) else {
             return Ok(false);
         };
@@ -795,10 +776,7 @@ impl ContextCore {
         // 108, `pinyin.cpp:276`, `zhuyin.cpp:219`): that is returned with
         // nothing replaced and the library still unloaded.
         let user_file = matches!(row.file_type, FileType::UserFile);
-        let Some(runtime) = self.runtime.as_mut() else {
-            return Ok(false);
-        };
-        let mut originals = runtime.reload_system_library(row_index);
+        let mut originals = self.runtime.reload_system_library(row_index);
         // The mask clears only for a library the remap mapped. A system row
         // is mapped again whether or not it names a user file
         // (`pinyin.cpp:246-264`); a file that cannot be mapped is the pin's
@@ -823,29 +801,22 @@ impl ContextCore {
         } else {
             Ok(())
         };
-        if let Some(runtime) = self.runtime.as_mut() {
-            runtime.install_baselines(originals);
-        }
+        self.runtime.install_baselines(originals);
         replay.map_err(LibraryLoadFault::Journal)?;
-        Ok(self
-            .runtime
-            .as_mut()
-            .is_some_and(|runtime| runtime.load_library(index)))
+        Ok(self.runtime.load_library(index))
     }
 
     /// `load_addon_phrase_library`'s body: the runtime's addon load, with
     /// the `mmap %s failed!` line the pin writes when the library file does
     /// not map (`pinyin.cpp:290`); the answer is the runtime's, `false` for
-    /// a failure. `false` without a runtime.
+    /// a failure.
     ///
     /// # Errors
     ///
     /// The [`LibraryRowAssert`] the pin dies on: the addon row is neither
     /// `DICTIONARY` nor `NOT_USED` (`pinyin.cpp:491`), or names no chunk.
     pub fn load_addon_phrase_library(&mut self, index: u8) -> Result<bool, LibraryRowAssert> {
-        let Some(runtime) = self.runtime.as_mut() else {
-            return Ok(false);
-        };
+        let runtime = &mut self.runtime;
         match runtime.load_system_addon_reporting(index) {
             Ok(loaded) => Ok(loaded),
             Err(oxpinyin_runtime::LibraryError::Row(fault)) => Err(match fault {
@@ -875,14 +846,11 @@ impl ContextCore {
     /// facade total, the runtime's visibility mask sets, and the call
     /// answers the runtime's `true`. Nothing is written to disk: a save
     /// skips the library while it is unloaded (`pinyin.cpp:928-933`), and
-    /// the pin has no failing site here (policy row 103). `false` without a
-    /// runtime. Which indices a facade lets through is the C adapters'
-    /// rule.
+    /// the pin has no failing site here (policy row 103). Which indices a
+    /// facade lets through is the C adapters' rule.
     #[must_use]
     pub fn unload_phrase_library(&mut self, index: u8) -> bool {
-        let Some(runtime) = self.runtime.as_ref() else {
-            return false;
-        };
+        let runtime = &self.runtime;
         // `unload` deletes the sub-index and takes its total out of the
         // facade (`phrase_index.cpp:261-268`): the session's changes to the
         // library and its saved log's share go now, not at the next load.
@@ -902,26 +870,18 @@ impl ContextCore {
                 store.reset_system_library(index);
             }
         }
-        self.runtime
-            .as_mut()
-            .is_some_and(|runtime| runtime.unload_library(u32::from(index)))
+        self.runtime.unload_library(u32::from(index))
     }
 
     /// Borrow the context's user store for one read operation.
     #[must_use]
     pub fn user_store(&self) -> Option<&UserStore> {
-        self.runtime
-            .as_ref()
-            .and_then(Runtime::user_store)
-            .or(self.user.as_ref())
+        self.runtime.user_store()
     }
 
     /// Borrow the sole learning-store owner for a write operation.
     pub fn user_store_mut(&mut self) -> Option<&mut UserStore> {
-        match self.runtime.as_mut() {
-            Some(runtime) => runtime.user_store_mut(),
-            None => self.user.as_mut(),
-        }
+        self.runtime.user_store_mut()
     }
 
     /// Train retained composition after re-borrowing the current storage.
@@ -930,9 +890,7 @@ impl ContextCore {
         instance: &crate::InstanceCore,
         index: u8,
     ) -> Result<bool, oxpinyin_engine::EngineError> {
-        self.runtime.as_mut().map_or(Ok(false), |runtime| {
-            runtime.train_session(&instance.session, index)
-        })
+        self.runtime.train_session(&instance.session, index)
     }
 }
 
@@ -1028,7 +986,7 @@ mod library_transition_tests {
     /// The first token of `library` and its text.
     fn first_item(ctx: &ContextCore, library: u8) -> (u32, PhraseText) {
         let token = (u32::from(library) << 24) | 1;
-        let dict = ctx.runtime.as_ref().expect("runtime").dict();
+        let dict = ctx.runtime.dict();
         let text = dict.token_text(token).expect("text");
         (token, PhraseText::from(text.as_str().expect("scalar text")))
     }
@@ -1050,8 +1008,6 @@ mod library_transition_tests {
     /// The readings the session holds for `token` beyond the chunk's own.
     fn readings(ctx: &ContextCore, token: u32) -> usize {
         ctx.runtime
-            .as_ref()
-            .expect("runtime")
             .dict()
             .live_items()
             .read(token, |item| item.n_pronunciations())
@@ -1186,13 +1142,7 @@ mod library_transition_tests {
         assert!(saved > 0);
         for _ in 0..2 {
             assert!(ctx.unload_phrase_library(GBK));
-            assert!(
-                !ctx.runtime
-                    .as_ref()
-                    .expect("runtime")
-                    .dict()
-                    .library_visible(u32::from(GBK))
-            );
+            assert!(!ctx.runtime.dict().library_visible(u32::from(GBK)));
             assert_eq!(ctx.load_phrase_library(u32::from(GBK)), Ok(true));
             assert_eq!(readings(&ctx, gbk), saved);
         }
@@ -1266,19 +1216,11 @@ mod library_transition_tests {
         let scratch = tempfile::tempdir().expect("scratch");
         let system = system_with_gbk_naming_no_user_file(scratch.path());
         let mut ctx = ContextCore::open(&system, None, WORD, UserConfLaw::Pinyin).expect("opens");
-        let visible = |ctx: &ContextCore| {
-            ctx.runtime
-                .as_ref()
-                .expect("runtime")
-                .dict()
-                .library_visible(u32::from(GBK))
-        };
+        let visible = |ctx: &ContextCore| ctx.runtime.dict().library_visible(u32::from(GBK));
         // The total of the chunk the library is mapped from: another file's
         // mapping changes it.
         let mapped_total = |ctx: &ContextCore| {
             ctx.runtime
-                .as_ref()
-                .expect("runtime")
                 .dict()
                 .system()
                 .libraries()
@@ -1289,7 +1231,7 @@ mod library_transition_tests {
         assert_ne!(shipped, 7);
 
         // The mask-out loop still skips the row, and maps the others.
-        let runtime = ctx.runtime.as_ref().expect("runtime");
+        let runtime = &ctx.runtime;
         let mut walk = runtime.begin_system_remap();
         let mut mask_loop = Vec::new();
         while let Some(step) = runtime.remap_next(&mut walk) {

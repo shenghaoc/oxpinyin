@@ -66,7 +66,7 @@ impl CapiContext {
         // BEST_MATCH row from `zhuyin_get_sentence` (always the 1-best), so
         // the observable list carries exactly one sentence row — see
         // `Session::set_collapse_sentence_rows_to_best`.
-        let runtime = self.core.runtime.as_ref()?;
+        let runtime = &self.core.runtime;
         let mut session = runtime.session(&mut core.session);
         session.set_collapse_sentence_rows_to_best(true);
         // libzhuyin sorts its candidate lists with
@@ -319,9 +319,7 @@ pub unsafe fn instance_ref<'a>(ptr: *mut ZhuyinInstance) -> CapiInstanceRead<'a>
     let instance = unsafe { handles::instance_ref(ptr) };
     // SAFETY: the instance retains the allocation; the C caller excludes concurrent mutation.
     let context = unsafe { owner_ref(&instance.owner) };
-    let Some(runtime) = context.core.runtime.as_ref() else {
-        std::process::abort();
-    };
+    let runtime = &context.core.runtime;
     CapiInstance {
         context: instance.context,
         owner: &instance.owner,
@@ -338,9 +336,7 @@ pub unsafe fn instance_mut<'a>(ptr: *mut ZhuyinInstance) -> CapiInstanceMut<'a> 
     let instance = unsafe { handles::instance_mut(ptr) };
     // SAFETY: the instance retains the allocation; the C caller excludes runtime mutation.
     let context = unsafe { owner_ref(&instance.owner) };
-    let Some(runtime) = context.core.runtime.as_ref() else {
-        std::process::abort();
-    };
+    let runtime = &context.core.runtime;
     CapiInstance {
         context: instance.context,
         owner: &instance.owner,
