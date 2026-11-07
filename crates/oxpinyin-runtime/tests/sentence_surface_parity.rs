@@ -1,38 +1,38 @@
 //! The measured sentence-surface gate recorded in
-//! `docs/findings/sentence-surface.md` §12. Passing this gate does not classify
-//! the remaining rows or freeze unattributed defects permanently. Only the
-//! current exact selection residuals have the registered S1/S2/S3 disposition.
+//! `docs/findings/sentence-surface.md` §12, over the pinned libpinyin-data
+//! package (`just fetch-contract-data`), in tkrzw format. Passing this gate does
+//! not classify the remaining rows or freeze unattributed defects permanently.
+//! Only the current exact selection residuals have the registered S1/S2/S3
+//! disposition.
 //!
-//! This ignored real-table test fails if its required inputs are absent.
-//! Provision `PINYIN_EXPORT_DIR` with exported tables and `PINYIN_MODEL_DIR`
-//! with the complete extracted model20 directory (all 18 files), then run
-//! with `--include-ignored`.
+//! `sentence_fixtures.rs` checks the fixtures themselves on every backend.
 //!
 //! Approved repairs update these measured numbers and §12 in the same PR.
 //! A pin move also requires regenerating the oracle fixture and re-measuring
 //! (`docs/runbooks/goldens-and-pins.md`).
 
+#[path = "common/contract_data.rs"]
+mod contract_data;
+#[path = "common/sentence_fixture.rs"]
+mod sentence_fixture;
 #[path = "common/sentence_tail.rs"]
 mod sentence_tail;
+
+use sentence_tail::PortSession;
+
+/// The port over the pinned package.
+fn open_session() -> PortSession {
+    PortSession::open(&contract_data::contract_data_dir()).expect("the package opens")
+}
 
 /// The §12 measured residual, over the 500 comparable inputs of the frozen
 /// W2 sample. Re-measure and obtain approval before updating these numbers
 /// and §12 together; do not silently change the expected surface.
 #[test]
-#[ignore = "needs the system-table export and the model20 cache (PINYIN_EXPORT_DIR, PINYIN_MODEL_DIR); run with --include-ignored"]
 fn sentence_surface_matches_the_declared_residual() {
-    let mut session = match sentence_tail::open_session_from_env() {
-        Ok(Some(session)) => session,
-        Ok(None) => {
-            panic!(
-                "exported tables or model cache absent sentence-surface parity \
-                 (set PINYIN_EXPORT_DIR + PINYIN_MODEL_DIR to run it)"
-            )
-        }
-        Err(error) => panic!("cannot open port session: {error}"),
-    };
+    let mut session = open_session();
 
-    let report = sentence_tail::measure(&mut session, &sentence_tail::repo_root())
+    let report = sentence_tail::measure(&mut session, &sentence_fixture::repo_root())
         .expect("the sentence-surface measurement runs");
     eprintln!("sentence-surface measurement: {report:#?}");
 
@@ -79,14 +79,14 @@ fn sentence_surface_matches_the_declared_residual() {
 }
 
 /// A per-step score mutation can leave the visible surface unchanged.
-/// Keep exact f32 accumulation checks for #574's recovered corpus inputs.
+/// Keep exact f32 accumulation checks for #574's recovered corpus inputs:
+/// the `gfloat m_poss` of the pin's `PhoneticLookup` (libpinyin 074a2219
+/// `src/lookup/phonetic_lookup.h`), bits recorded in
+/// `docs/findings/float-scoring-1378.md`.
 #[test]
-#[ignore = "needs the system-table export and the model20 cache (PINYIN_EXPORT_DIR, PINYIN_MODEL_DIR); run with --include-ignored"]
 fn sentence_surface_detects_per_step_score_shift() {
-    let mut session = sentence_tail::open_session_from_env()
-        .expect("system-table export and model20 must open")
-        .expect("system-table export and model20 must be present");
-    let mut session = session.session();
+    let mut owner = open_session();
+    let mut session = owner.session();
     let actual: Vec<_> = [
         "yaomeichong",
         "xiehenshuaitong",
@@ -119,178 +119,15 @@ fn sentence_surface_detects_per_step_score_shift() {
     );
 }
 
-// The §12 current selection-residual table is the membership source;
-// this supplementary gate must not introduce another list of names.
-fn declared_sentence_residuals(root: &std::path::Path) -> std::collections::BTreeSet<String> {
-    let doc = std::fs::read_to_string(root.join("docs/findings/sentence-surface.md"))
-        .expect("the frozen sentence-surface declaration must be present");
-    let section = doc
-        .split_once("### #1378 current sentence-selection residuals")
-        .expect("the current selection residual declaration must be present")
-        .1;
-    let table = section
-        .split_once("| Input | Disposition |\n")
-        .expect("the current residual table must be present")
-        .1;
-    let mut lines = table.lines();
-    assert!(
-        lines
-            .next()
-            .expect("table separator")
-            .replace(' ', "")
-            .starts_with("|---")
-    );
-    let mut names = std::collections::BTreeSet::new();
-    for line in lines.take_while(|line| line.starts_with('|')) {
-        let columns: Vec<_> = line.trim_matches('|').split('|').collect();
-        assert_eq!(columns.len(), 2, "residual declaration format changed");
-        let name = columns[0].trim().trim_matches('`');
-        assert!(!name.is_empty() && names.insert(name.to_owned()));
-    }
-    assert_eq!(names.len(), 156, "declared residual membership count moved");
-    names
-}
-
-#[derive(Debug, PartialEq, Eq)]
-struct TieSurface {
-    indexed: Vec<String>,
-    // Every row has NBEST type 1; keep its original tail index and text.
-    rows: Vec<(u8, String)>,
-}
-
-struct TieCase {
-    input: String,
-    occurrences: usize,
-    guessed: bool,
-    pin: TieSurface,
-    residual: Option<TieSurface>,
-}
-
-fn decode_tie_surface(pool: &[&str], indexed: &str, rows: &str) -> TieSurface {
-    let text = |id: &str| {
-        pool.get(id.parse::<usize>().expect("numeric pool ID"))
-            .expect("pool ID must be in range")
-            .to_string()
-    };
-    let indexed: Vec<_> = if indexed.is_empty() {
-        Vec::new()
-    } else {
-        indexed.split(',').map(text).collect()
-    };
-    assert!(indexed.len() <= 3, "pinyin n-best cap moved");
-    let rows: Vec<_> = if rows.is_empty() {
-        Vec::new()
-    } else {
-        rows.split(',')
-            .map(|row| {
-                let (rank, id) = row.split_once(':').expect("rank:pool-ID row");
-                (rank.parse::<u8>().expect("numeric tail rank"), text(id))
-            })
-            .collect()
-    };
-    let mut seen = std::collections::BTreeSet::new();
-    let complete: Vec<_> = indexed
-        .iter()
-        .enumerate()
-        .filter(|(_, value)| seen.insert((*value).clone()))
-        .map(|(rank, value)| (u8::try_from(rank).expect("n-best rank fits"), value.clone()))
-        .collect();
-    assert_eq!(
-        rows, complete,
-        "fixture must retain the complete NBEST surface"
-    );
-    TieSurface { indexed, rows }
-}
-
-fn load_tie_cases(root: &std::path::Path) -> Vec<TieCase> {
-    let raw = std::fs::read_to_string(root.join("fixtures/w4/oracle-sentence-tie-order.txt"))
-        .expect("the supplementary tie fixture must be present");
-    assert!(
-        raw.lines()
-            .any(|line| line == "# format=sentence-tie-order-v1")
-    );
-    let declared = declared_sentence_residuals(root);
-    let mut names = std::collections::BTreeSet::new();
-    let mut recorded_residuals = std::collections::BTreeSet::new();
-    let mut cases = Vec::new();
-    for line in raw.lines().filter(|line| !line.starts_with('#')) {
-        let columns: Vec<_> = line.split('\t').collect();
-        assert_eq!(columns.len(), 9, "compact fixture column count moved");
-        let input = columns[0].to_owned();
-        assert!(names.insert(input.clone()), "duplicate fixture input");
-        let occurrences = columns[1].parse().expect("numeric corpus occurrence count");
-        assert!(occurrences > 0);
-        let costs: Vec<_> = columns[2]
-            .split(',')
-            .map(|cost| cost.parse::<i64>().expect("numeric native selection cost"))
-            .collect();
-        assert!((2..=3).contains(&costs.len()));
-        let guessed = match columns[3] {
-            "0" => false,
-            "1" => true,
-            _ => panic!("fixture guess status must be 0 or 1"),
-        };
-        let pool: Vec<_> = columns[4].split('\u{1}').collect();
-        let pin = decode_tie_surface(&pool, columns[5], columns[6]);
-        let residual = if declared.contains(&input) {
-            assert!(!columns[7].is_empty() && !columns[8].is_empty());
-            assert!(recorded_residuals.insert(input.clone()));
-            let surface = decode_tie_surface(&pool, columns[7], columns[8]);
-            assert_ne!(
-                surface, pin,
-                "a declared residual silently became pin-equal"
-            );
-            Some(surface)
-        } else {
-            assert!(
-                matches!(columns[7], "" | "-") && matches!(columns[8], "" | "-"),
-                "an undeclared subject expectation was added for {input}"
-            );
-            None
-        };
-        cases.push(TieCase {
-            input,
-            occurrences,
-            guessed,
-            pin,
-            residual,
-        });
-    }
-    assert_eq!(
-        recorded_residuals, declared,
-        "declared inputs must all be checked"
-    );
-    assert_eq!(cases.len(), 8592, "selected distinct-input count moved");
-    assert_eq!(
-        cases.iter().map(|case| case.occurrences).sum::<usize>(),
-        8744
-    );
-    assert_eq!(
-        cases.iter().map(|case| case.pin.rows.len()).sum::<usize>(),
-        22038
-    );
-    cases
-}
-
-/// Check fixture completeness and bind its subject expectations to the
-/// existing frozen declaration even when CI has no real tables.
-#[test]
-fn sentence_tie_fixture_uses_only_the_declared_residuals() {
-    let _ = load_tie_cases(&sentence_tail::repo_root());
-}
-
 /// Supplementary #747 coverage, reported separately from the frozen 500.
 /// Every ordinary input matches the pin row for row. The current §12
 /// selection residuals match their exact recorded subject surfaces; changes
 /// within those cases fail too. No new exception membership lives here.
 #[test]
-#[ignore = "needs the matching system-table export (PINYIN_EXPORT_DIR); run with --include-ignored"]
 fn sentence_surface_matches_supplementary_tie_order() {
-    let cases = load_tie_cases(&sentence_tail::repo_root());
-    let mut session = sentence_tail::open_session_from_env()
-        .expect("system-table export must open")
-        .expect("system-table export must be present");
-    let mut session = session.session();
+    let cases = sentence_fixture::load_tie_cases(&sentence_fixture::repo_root());
+    let mut owner = open_session();
+    let mut session = owner.session();
     session
         .set_options(oxpinyin_core::OptionBits::from_bits(0x18a))
         .expect("capture options must apply");
@@ -308,7 +145,7 @@ fn sentence_surface_matches_supplementary_tie_order() {
             session.guess_sentence().expect("guess must run"),
             case.guessed
         );
-        let actual = TieSurface {
+        let actual = sentence_fixture::TieSurface {
             indexed: (0..3)
                 .filter_map(|rank| {
                     session

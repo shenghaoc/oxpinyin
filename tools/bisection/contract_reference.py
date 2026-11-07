@@ -1,6 +1,6 @@
 """Frozen pin references for the contract differential (contract-diff.py).
 
-`capture` runs selected cases on the pin in the Debian stable pin environment
+`capture` runs selected cases on the pin in the Debian testing pin environment
 and writes one reference row per case and cell; `verify` runs the same cases on
 oxpinyin only and compares with those rows. A row stores the pin's complete
 observation exactly as `Runner.run_worker` returns it (exit, result, userfiles,
@@ -177,18 +177,33 @@ def glibc_version():
     return libc.gnu_get_libc_version().decode()
 
 
+def build_provenance(prefix):
+    """Record observed build outputs without turning them into reference gates."""
+    prefix = Path(prefix)
+    record = dict(line.split('=', 1) for line in (prefix / 'oracle-pin.txt').read_text().splitlines()
+                  if '=' in line and not line.startswith('#'))
+    return dict(record=record, versions=(prefix / 'versions.txt').read_text())
+
+
 def environment(library):
     """The environment a row was captured in, or the host's when verifying; LIBRARY is a facade."""
+    versions = {}
+    for name, filename in (('oracle', '/opt/reference/versions.txt'),
+                           ('capture', '/opt/oxpinyin-capture-versions.txt')):
+        path = Path(filename)
+        if path.is_file():
+            versions[name] = path.read_text()
     return dict(glib=glib_version(library), glibc=glibc_version(), arch=platform.machine(),
-                image=os.environ.get('OXPINYIN_CAPTURE_IMAGE'))
+                image=os.environ.get('OXPINYIN_CAPTURE_IMAGE'), versions=versions)
 
 
 def require_capture_environment():
-    """Capture only runs in the Debian stable pin image; refuse any other host."""
+    """Capture only runs in the Debian testing pin image; refuse any other host."""
     release = Path('/etc/os-release')
-    codename = re.search(r'^VERSION_CODENAME=(\S+)$', release.read_text(), re.M) if release.is_file() else None
-    if not codename or codename[1] != 'trixie':
-        raise ReferenceError('capture runs in the Debian stable (trixie) pin image: see tools/oracle/capture-contract.sh')
+    content = release.read_text() if release.is_file() else ''
+    # Rolling Debian identifies itself as <testing codename>/sid; do not pin that codename.
+    if not re.search(r'^ID=debian$', content, re.M) or not re.search(r'^PRETTY_NAME="Debian GNU/Linux [^"]+/sid"$', content, re.M):
+        raise ReferenceError('capture runs in the Debian testing pin image: see tools/oracle/capture-contract.sh')
     if not os.environ.get('OXPINYIN_CAPTURE_IMAGE'):
         raise ReferenceError('capture needs OXPINYIN_CAPTURE_IMAGE, the image identity (set by capture-contract.sh)')
 

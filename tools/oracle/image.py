@@ -7,8 +7,10 @@ capture-contract.sh, build-contract-image.sh and cloud provisioning:
     python -m tools.oracle.image pin-field [--platform PLATFORM] KEY
     python -m tools.oracle.image verify-image [--engine docker|podman] [--platform PLATFORM] IMAGE
 """
+import argparse
 import hashlib
 import os
+import platform
 from pathlib import Path
 import re
 import shutil
@@ -26,7 +28,7 @@ from tools.dev.runners import Finished, guarded
 VERIFY_IMAGE_USAGE = '''Check a built oracle image against tools/oracle/oracle-pin.txt (issue #818).
 
 For each cell (bdb, kc, tkrzw) the image's libpinyin.so and libzhuyin.so
-must hash to the recorded recipe values, and the image must carry NO
+must match their own recorded hashes and the current pin/recipe, and the image must carry NO
 model-derived data (docs/findings/model-provenance.md): no
 lib/libpinyin/data directory and no *.bin, *.table, *.text or bigram.db
 file anywhere under /opt/pinyin-oracle.
@@ -46,7 +48,7 @@ def fields(path):
 
 
 def platform_field(pin, platform, key):
-    """Read a frozen platform field; unsupported platforms have no value."""
+    """Read a platform input field; unsupported platforms have no value."""
     suffix = {'linux/amd64': '', 'linux/arm64': '_linux_arm64'}.get(platform)
     return '' if suffix is None else fields(pin).get(key + suffix, '')
 
@@ -65,12 +67,49 @@ def image_tag(root=ROOT):
         fail(f'FAIL: {pin} still records an apt snapshot; snapshots are not pins')
     if base not in (directory / 'Dockerfile.oracle').read_text():
         fail(f'FAIL: Dockerfile.oracle does not use base_image {base}')
+    slug = re.sub(r'[^A-Za-z0-9_.-]', '-', base)
+    return f'{commit[:12]}-{slug}-{recipe_hash(root)[:12]}'
+
+
+def recipe_hash(root=ROOT):
+    """Hash the recipe inputs in the same order as build-oracle.sh."""
+    directory = Path(root) / 'tools/oracle'
     digest = hashlib.sha256()
     for name in ('Dockerfile.oracle', 'build-oracle.sh', 'version-manifest.json', 'versions.py',
                  '../tkrzw/distro-probe.sh', '../lib/bash-floor.sh', 'oracle-pin.txt'):
         digest.update((directory / name).read_bytes())
-    slug = re.sub(r'[^A-Za-z0-9_.-]', '-', base)
-    return f'{commit[:12]}-{slug}-{digest.hexdigest()[:12]}'
+    return digest.hexdigest()
+
+
+def prefix_ok(prefix, backend, root=ROOT, pin=None, expected_platform=None):
+    """Validate current pin/recipe provenance and the prefix's recorded bytes."""
+    prefix = Path(prefix)
+    try:
+        expected = fields(pin or Path(root) / 'tools/oracle/oracle-pin.txt')
+        record = fields(prefix / 'oracle-pin.txt')
+        if any(record.get(key) != expected[key] for key in ('libpinyin_commit', 'ibus_libpinyin_commit')):
+            return False
+        if record.get('recipe_sha256') != recipe_hash(root) or record.get('dbm') != cell.BACKEND_FORMATS[cell.CELL_TO_BACKEND[backend]]:
+            return False
+        architecture = {'x86_64': 'linux/amd64', 'AMD64': 'linux/amd64',
+                        'arm64': 'linux/arm64', 'aarch64': 'linux/arm64'}
+        wanted = expected_platform or architecture.get(platform.machine())
+        if wanted is None or architecture.get(record.get('architecture')) != wanted:
+            return False
+        if record.get('patches_manifest_sha256'):
+            return False
+        for library, key in (('libpinyin', 'shared_object_sha256'), ('libzhuyin', 'zhuyin_shared_object_sha256')):
+            if digest_file(prefix / 'lib' / (library + '.so')) != record.get(key):
+                return False
+        return digest_file(prefix / 'versions.txt') == record.get('versions_sha256')
+    except (OSError, KeyError, ValueError):
+        return False
+
+
+def model_ok(prefix, root=ROOT, pin=None):
+    """The prefix's recorded model20 archive is the repository's pinned one."""
+    expected = fields(pin or Path(root) / 'tools/oracle/oracle-pin.txt')
+    return fields(Path(prefix) / 'oracle-pin.txt').get('model_sha256') == expected.get('model_archive_sha256')
 
 
 def parse_options(argv, names, *, positional=False):
@@ -93,7 +132,7 @@ def parse_options(argv, names, *, positional=False):
 
 
 def valid_platform(value):
-    """Refuse platforms without a frozen oracle record."""
+    """Refuse unsupported oracle platforms."""
     if value not in ('linux/amd64', 'linux/arm64'):
         fail(f'unsupported platform: {value} (use linux/amd64 or linux/arm64)', 2)
     return value
@@ -120,7 +159,7 @@ def pin_field(argv, *, root=ROOT):
 
 
 def verify_image(argv, *, root=ROOT):
-    """Copy a scratch image's libraries, check frozen hashes and reject model data."""
+    """Copy a scratch image and check build provenance and absence of model data."""
     values = parse_options(argv, ('--engine', '--platform'), positional=True)
     if values.get('help'):
         print(VERIFY_IMAGE_USAGE, end='')
@@ -149,11 +188,10 @@ def verify_image(argv, *, root=ROOT):
                     except OSError as error:
                         print(f'sha256sum: {path}: {error.strerror}', file=sys.stderr)
                         raise Finished(1) from error
-                    recorded = platform_field(Path(root) / 'tools/oracle/oracle-pin.txt', platform, f'{library}_sha256_{dbm}')
                     print(dbm, library, actual)
-                    if not recorded or recorded != actual:
-                        print(f'FAIL: {dbm} {library} is {actual}, oracle-pin.txt records {recorded or "nothing"}', file=sys.stderr)
-                        status = 1
+                if not prefix_ok(Path(scratch) / 'oracle' / dbm, dbm, root, expected_platform=platform):
+                    print(f'FAIL: {dbm}: stale pin/recipe or damaged recorded build', file=sys.stderr)
+                    status = 1
             leaks = [str(path) for path in (Path(scratch) / 'oracle').rglob('*')
                      if str(path).endswith('/lib/libpinyin/data') or path.name == 'bigram.db'
                      or path.suffix in ('.bin', '.table', '.text')]
@@ -190,11 +228,105 @@ def select_runtime(override='', *, env=None, host=None, output=print):
     return selected
 
 
+def performance(argv, *, root=ROOT):
+    """Build and enter the local performance environment, on the host architecture."""
+    parser = argparse.ArgumentParser(prog='just performance')
+    parser.add_argument('--engine', choices=('container', 'docker', 'podman'))
+    build_mode = parser.add_mutually_exclusive_group()
+    build_mode.add_argument('--build-only', action='store_true')
+    build_mode.add_argument('--skip-build', action='store_true')
+    parser.add_argument('--volume', help='persistent local Cargo/model cache volume')
+    parser.add_argument('command', nargs=argparse.REMAINDER)
+    args = parser.parse_args(argv)
+    if os.environ.get('GITHUB_ACTIONS') == 'true':
+        fail('the oracle performance environment is local-only; never run it on GitHub Actions', 2)
+    if platform.system() == 'Darwin':
+        translated = subprocess.run(['/usr/sbin/sysctl', '-n', 'sysctl.proc_translated'],
+                                    check=False, capture_output=True)
+        if translated.returncode == 0 and translated.stdout.strip() == b'1':
+            fail('performance measurements require native Python; this interpreter runs under Rosetta', 2)
+    native = {'arm64': 'arm64', 'aarch64': 'arm64', 'x86_64': 'amd64', 'AMD64': 'amd64'}.get(platform.machine())
+    if native is None:
+        fail(f'unsupported native performance architecture: {platform.machine()}', 2)
+    selected_platform = f'linux/{native}'
+    for variable in ('DOCKER_DEFAULT_PLATFORM', 'CONTAINER_DEFAULT_PLATFORM', 'ORACLE_PLATFORM'):
+        if os.environ.get(variable) not in (None, '', selected_platform):
+            fail(f'{variable} forces a non-native performance platform; unset it', 2)
+    engine = args.engine or select_runtime()
+    inputs = hashlib.sha256()
+    for name in ('.python-version', 'rust-toolchain.toml'):
+        inputs.update((Path(root) / name).read_bytes())
+    tag = f'oxpinyin-performance:{image_tag(root)}-{inputs.hexdigest()[:12]}-{native}'
+    resources = ['--cpus', '4', '--memory', '6G'] if Path(engine).name == 'container' else []
+    if not args.skip_build:
+        run([engine, 'build', *resources, '--platform', selected_platform, '--build-arg', f'ORACLE_PLATFORM={selected_platform}',
+             '--target', 'performance', '-f', Path(root) / 'tools/oracle/Dockerfile.oracle', '-t', tag, root])
+    if args.build_only:
+        return 0
+    command = args.command
+    if command[:1] == ['--']:
+        command = command[1:]
+    cache = args.volume or f'oxpinyin-performance-{selected_platform.split("/")[1]}'
+    flags = ['-it'] if not command and sys.stdin.isatty() else []
+    flags += resources
+    common = text(['git', '-C', root, 'rev-parse', '--path-format=absolute', '--git-common-dir'])
+    flags += ['-v', f'{common}:{common}:ro']
+    return run([engine, 'run', '--rm', '--platform', selected_platform, *flags,
+                '-v', f'{Path(root).resolve()}:/repo:ro', '-v', f'{cache}:/performance',
+                '-e', 'CARGO_TARGET_DIR=/performance/target', '-e', 'TMPDIR=/performance/tmp',
+                '-e', 'PYTHONDONTWRITEBYTECODE=1', '-w', '/repo', tag, *(command or ['bash'])], check=False)
+
+
+def check_reproducible(argv, *, root=ROOT):
+    """Build twice in distinct paths and compare only those two builds."""
+    from tools.dev.measure.recipes import require_performance_environment
+    require_performance_environment(os.environ)
+    parser = argparse.ArgumentParser(prog='check-reproducible')
+    parser.add_argument('--cells', nargs='+', choices=cell.CELLS, default=list(cell.CELLS))
+    parser.add_argument('--work-dir', type=Path, required=True)
+    parser.add_argument('--jobs', default='2')
+    args = parser.parse_args(argv)
+    child = dict(os.environ, OXPINYIN_ORACLE_RECIPE_ROOT=str(root))
+    for backend in args.cells:
+        builds = []
+        prefix = args.work_dir / backend / 'prefix'
+        directories = [args.work_dir / f'{backend}-{number}' for number in (1, 2)]
+        # Refused before the first build, so the cleanup below removes only this run's paths.
+        if prefix.exists():
+            fail(f'reproducibility prefix already exists: {prefix}')
+        for directory in directories:
+            if directory.exists():
+                fail(f'reproducibility work directory already exists: {directory}')
+        try:
+            for directory in directories:
+                run(['bash', Path(root) / 'tools/oracle/build-oracle.sh', '--libs-only', '--enable-libzhuyin',
+                     '--dbm', backend, '--work-dir', directory / 'build', '--prefix', prefix,
+                     '--jobs', args.jobs], env=child, heavy=True)
+                saved = directory / 'libraries'
+                shutil.copytree(prefix / 'lib', saved, symlinks=True)
+                builds.append(saved)
+                shutil.rmtree(prefix)
+            for library in ('libpinyin', 'libzhuyin'):
+                hashes = [digest_file(directory / (library + '.so')) for directory in builds]
+                print(backend, library, *hashes)
+                if hashes[0] != hashes[1]:
+                    fail(f'{backend} {library}: two builds differ')
+        except BaseException:
+            for path in (prefix, *directories):
+                shutil.rmtree(path, ignore_errors=True)
+            raise
+    return 0
+
+
 def main(argv=None):
-    """Dispatch image-tag, pin-field or verify-image; return the shell status."""
+    """Dispatch oracle image operations and the local performance environment."""
     args = list(sys.argv[1:] if argv is None else argv)
 
     def call():
+        if args[:1] == ['check-reproducible']:
+            return check_reproducible(args[1:])
+        if args[:1] == ['performance']:
+            return performance(args[1:])
         if args[:1] == ['image-tag']:
             print(image_tag())
             return 0
@@ -202,7 +334,7 @@ def main(argv=None):
             return pin_field(args[1:])
         if args[:1] == ['verify-image']:
             return verify_image(args[1:])
-        print('usage: python -m tools.oracle.image image-tag|pin-field|verify-image ...', file=sys.stderr)
+        print('usage: python -m tools.oracle.image image-tag|pin-field|verify-image|performance ...', file=sys.stderr)
         return 2
     return guarded(call)
 

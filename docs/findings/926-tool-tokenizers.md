@@ -30,7 +30,7 @@ command-line option or diagnostic matches, and not Rust API stability.
   `parse_segmented_line`, then `Counter::count` → `Counts::dump` → output.
   Counter, emitter, lambda and their tests use this parser; held-out lambda
   parsing also calls `parse_ngseg` directly. The promise is integer model
-  values on the segmenter's output (`counter-port.md`), not identical output
+  values on the segmenter's output, not identical output
   file representation: the pin writes phrase-index/DBM files and Rust emits
   a count dump. The pin reads LF-delimited records at
   `utils/training/gen_ngram.cpp:77-90`, validates with

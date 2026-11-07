@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Capture contract-diff references from the pin, in the Debian stable pin environment.
+# Capture contract-diff references from the pin, in the Debian testing pin environment.
 #
 #   bash tools/oracle/capture-contract.sh CELL [capture options]
 #

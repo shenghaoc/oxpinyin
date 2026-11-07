@@ -35,9 +35,9 @@ use crate::eval::error::EvalError;
 use crate::eval::model::EvalLanguageModel;
 
 /// `sentence_start` (`novel_types.h:122`).
-pub const SENTENCE_START: u32 = 1;
+const SENTENCE_START: u32 = 1;
 /// `null_token` (`novel_types.h:121`).
-pub const NULL_TOKEN: u32 = 0;
+const NULL_TOKEN: u32 = 0;
 /// Longest phrase the decoder considers, in keys (`MAX_PHRASE_LENGTH`).
 const MAX_PHRASE_KEYS: usize = 16;
 /// Beam width per step (`phonetic_lookup.h:37`, `nbeam`).
@@ -71,61 +71,6 @@ pub struct EvalReport {
     pub rate: f64,
     /// The `(expected, decoded)` text of each failed sentence.
     pub mismatches: Vec<(String, String)>,
-}
-
-impl EvalReport {
-    /// The `correction rate:%f` line `evaluate.py` parses.
-    #[must_use]
-    pub fn correction_rate_line(&self) -> String {
-        // Finite rates keep six decimals; an empty test set prints Rust's NaN.
-        let rate = self.passed as f64 / self.tested as f64;
-        format!(
-            "correction rate:{}",
-            crate::numeric::format_six_decimals(rate)
-        )
-    }
-}
-
-/// Parses an evaluation corpus (segmented token lines, `null_token`
-/// separated) into sentences (`eval_correction_rate.cpp:175-205`).
-///
-/// # Errors
-///
-/// Returns [`EvalError::Malformed`] when a non-empty line is not a
-/// `token …` record.
-pub fn parse_eval_corpus(text: &str) -> Result<Vec<Vec<PhraseToken>>, EvalError> {
-    let mut sentences = Vec::new();
-    let mut current = Vec::new();
-    for line in text.lines() {
-        let token = if line.is_empty() {
-            NULL_TOKEN
-        } else {
-            parse_token(line)?
-        };
-        if token == NULL_TOKEN {
-            if !current.is_empty() {
-                sentences.push(std::mem::take(&mut current));
-            }
-        } else {
-            current.push(PhraseToken::new(token));
-        }
-    }
-    if !current.is_empty() {
-        sentences.push(current);
-    }
-    Ok(sentences)
-}
-
-/// The complete decimal token of one segmented record.
-fn parse_token(line: &str) -> Result<u32, EvalError> {
-    let (head, _) = line
-        .split_once([' ', '\t'])
-        .ok_or_else(|| EvalError::Malformed {
-            detail: format!("no separator in {line:?}"),
-        })?;
-    crate::numeric::decimal_field::<u32>(head.as_bytes()).map_err(|error| EvalError::Malformed {
-        detail: error.to_string(),
-    })
 }
 
 /// Evaluates the correction rate over `sentences`, decoding each with the
@@ -516,63 +461,15 @@ fn i32_from_step(step: usize) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{PhraseSource, correction_rate, parse_eval_corpus};
-    use crate::counter::Counts;
+    use super::{PhraseSource, correction_rate};
+    use crate::eval::counts::Counts;
     use crate::eval::model::EvalLanguageModel;
     use oxpinyin_core::{PhraseToken, SyllableKey};
     use oxpinyin_data::Lambda;
     use std::collections::BTreeMap;
 
-    // The full decode is exercised by the crate's integration tests (the
-    // hand-computable homophone fixture) and the live pin gate; here we pin
-    // the corpus parser and the error paths.
-
-    #[test]
-    fn the_correction_rate_line_is_format_six_decimals_of_passed_over_tested() {
-        let report = super::EvalReport {
-            tested: 4,
-            passed: 3,
-            ..super::EvalReport::default()
-        };
-        assert_eq!(report.correction_rate_line(), "correction rate:0.750000");
-        // No test: `0.0 / 0.0` prints as glibc's `%f` prints a NaN.
-        let none = super::EvalReport::default();
-        let line = none.correction_rate_line();
-        assert_eq!(line, "correction rate:NaN");
-    }
-
-    #[test]
-    fn corpus_tokens_require_complete_decimals() {
-        for field in ["7x", "4294967305", "-1", "abc"] {
-            assert!(parse_eval_corpus(&format!("{field} 甲\n")).is_err());
-        }
-    }
-
-    #[test]
-    fn corpus_splits_on_null_tokens() {
-        let corpus = "1 甲\n2 乙\n0 \n3 丙\n0 \n";
-        let sentences = parse_eval_corpus(corpus).expect("parse");
-        assert_eq!(sentences.len(), 2);
-        assert_eq!(sentences[0], vec![PhraseToken::new(1), PhraseToken::new(2)]);
-        assert_eq!(sentences[1], vec![PhraseToken::new(3)]);
-    }
-
-    #[test]
-    fn an_empty_line_is_a_sentence_separator() {
-        assert_eq!(
-            parse_eval_corpus("1 甲\n\n2 乙\n").unwrap(),
-            vec![vec![PhraseToken::new(1)], vec![PhraseToken::new(2)]]
-        );
-    }
-
-    #[test]
-    fn a_trailing_sentence_without_a_separator_is_kept() {
-        let sentences = parse_eval_corpus("5 戊\n6 己\n").expect("parse");
-        assert_eq!(
-            sentences,
-            vec![vec![PhraseToken::new(5), PhraseToken::new(6)]]
-        );
-    }
+    // The full decode is exercised by the crate's integration test (the
+    // hand-computable homophone fixture); here we pin the error paths.
 
     /// A minimal map-backed `PhraseSource` for the error tests: keys and text
     /// per token, either absent.

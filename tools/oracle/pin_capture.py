@@ -3,15 +3,15 @@
 
     pin_capture.py capture RUN --prefix PREFIX --data DATA [--staging DIR]
 
-`capture` runs in the capture image (tools/oracle/capture-pin.sh). It first records what it
-runs, capture.json: the pin commit of the prefix's build record, the SHA-256 of the
-libpinyin.so it loads and the identity of the system data. It refuses the capture unless all
-three are this repository's pins: `libpinyin_commit` and this platform's
-`libpinyin_sha256_tkrzw` in tools/oracle/oracle-pin.txt, and `content_sha256` in
+`capture` runs in the capture image (tools/oracle/capture-pin.sh). It first refuses the capture
+unless `tools.oracle.image.prefix_ok` accepts the prefix, the libpinyin.so it loads has the
+prefix's recorded `shared_object_sha256`, and the data's digest is `content_sha256` in
 tools/oracle/libpinyin-data.json. Only then does it make the C API calls of each observation
-below, each in a fresh process with a fresh user directory, and write DIR/RUN/capture.json
-and DIR/RUN/observations.json (DIR defaults to target/pin-observations). An observation that
-ends in the pin's abort keeps the results of the calls before it.
+below, each in a fresh process with a fresh user directory, and write DIR/RUN/observations.json
+and DIR/RUN/capture.json (DIR defaults to target/pin-observations). capture.json is provenance,
+not frozen values: the source commit, recipe hash, loaded library's SHA-256, installed-version
+identity, capture image and data identity. An observation that ends in the pin's abort keeps
+the results of the calls before it.
 
 These are proposed observations. Nothing here writes outside the staging directory or reads
 back into a test: a person reviews two runs and writes the values into the Rust tests.
@@ -178,37 +178,35 @@ def observe(name, library, data):
 
 # ── capture.json and its check ───────────────────────────────────────────
 
-def identify(prefix, data):
-    """capture.json for the pin at PREFIX on the system data DATA."""
+def checked_identity(prefix, library, data, root=ROOT):
+    """capture.json for LIBRARY at PREFIX on the system data DATA; refuse any other pin or data."""
+    if not image.prefix_ok(prefix, BACKEND, root):
+        raise CaptureError(f'{prefix}: prefix_ok refused it: another pin or recipe, or damaged recorded bytes')
     record = image.fields(Path(prefix) / 'oracle-pin.txt')
+    loaded = image.digest_file(library)
+    if loaded != record['shared_object_sha256']:
+        raise CaptureError(f'{library}: the loaded library is {loaded}, '
+                           f"the prefix records {record['shared_object_sha256']}")
+    digest = reference.data_identity(data)
+    pinned = json.loads((Path(root) / 'tools/oracle/libpinyin-data.json').read_text())['content_sha256']
+    if digest != pinned:
+        raise CaptureError(f'{data}: the data digest is {digest}, the repository pins {pinned}')
     return {'schema': SCHEMA, 'family': FAMILY, 'backend': BACKEND,
             'platform': PLATFORMS.get(platform.machine(), platform.machine()),
             'image': os.environ.get('OXPINYIN_CAPTURE_IMAGE'),
-            'pin_commit': record.get('libpinyin_commit'),
-            'library_sha256': image.digest_file(Path(prefix) / 'lib/libpinyin.so'),
-            'data': {'kind': reference.PACKAGE, 'digest': reference.data_identity(data)}}
+            'pin_commit': record['libpinyin_commit'],
+            'recipe_sha256': record['recipe_sha256'],
+            'library_sha256': loaded,
+            'versions_sha256': record['versions_sha256'],
+            'data': {'kind': reference.PACKAGE, 'digest': digest}}
 
 
-def check_capture(capture, root=ROOT):
-    """Refuse a capture of another pin, another library or other data."""
-    pins = Path(root) / 'tools/oracle/oracle-pin.txt'
-    data = json.loads((Path(root) / 'tools/oracle/libpinyin-data.json').read_text())
-    library = image.platform_field(pins, capture.get('platform'), f'libpinyin_sha256_{BACKEND}')
-    for label, got, wanted in (
-        ('pin commit', capture.get('pin_commit'), image.fields(pins).get('libpinyin_commit')),
-        ('library SHA-256', capture.get('library_sha256'), library),
-        ('data identity', capture.get('data'), {'kind': reference.PACKAGE, 'digest': data['content_sha256']}),
-    ):
-        if not wanted or got != wanted:
-            raise CaptureError(f'capture.json: the {label} is {got!r}, the repository pins {wanted!r}')
-
-
-def capture(run, identity, staging, take, root=ROOT):
-    """Check IDENTITY, take each observation with TAKE, and stage both under STAGING/RUN."""
+def capture(run, prefix, library, data, staging, take, root=ROOT):
+    """Check the pin and data, take each observation with TAKE, and stage both under STAGING/RUN."""
     separators = {'/', os.sep, os.altsep} - {None}
     if run in ('', '.', '..') or any(separator in run for separator in separators):
         raise CaptureError(f'the run name {run!r} is not a single path component')
-    check_capture(identity, root)
+    identity = checked_identity(prefix, library, data, root)
     directory = Path(staging) / run
     if directory.exists():
         raise CaptureError(f'{directory} exists: stage each run once')
@@ -235,7 +233,7 @@ def main(argv):
     try:
         reference.require_capture_environment()
         library = Path(args.prefix) / 'lib/libpinyin.so'
-        return capture(args.run, identify(args.prefix, args.data), args.staging,
+        return capture(args.run, args.prefix, library, args.data, args.staging,
                        lambda name: observe(name, library, args.data))
     except (CaptureError, reference.ReferenceError, OSError) as error:
         print(f'FAIL: {error}', file=sys.stderr)

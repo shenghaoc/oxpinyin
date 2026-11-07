@@ -4,8 +4,8 @@
 #   bash tools/oracle/capture-pin.sh RUN
 #
 # RUN names the run (1, 2, ...). The pin is the image's tkrzw cell on the pinned libpinyin-data.
-# tools/oracle/pin_capture.py checks capture.json (the pin commit, the library hash and the data
-# identity) against the repository's pins, then stages the proposed observations in
+# tools/oracle/pin_capture.py checks the prefix, the loaded library against the prefix's record and
+# the data against its pin, then stages the proposed observations and capture.json in
 # target/pin-observations/RUN/. Nothing else is written (docs/runbooks/pin-captures.md).
 
 # shellcheck source=../lib/bash-floor.sh

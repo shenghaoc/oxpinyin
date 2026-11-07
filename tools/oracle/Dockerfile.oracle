@@ -1,11 +1,12 @@
 # Reproducible build of the pin-built oracle's LIBRARIES (issue #818).
 #
-# Stage `deps` is the pin-reference build environment: Debian stable by
-# codename, debian:trixie, from the default mirrors with normal security
-# updates. A move to the next Debian release is a deliberate codename change,
-# never automatic. Tools/oracle/version-manifest.json names every component
-# that affects reference results; versions.py records the installed versions
-# and fails the build, naming the component, when one is outside its range.
+# Stage `deps` uses unpinned Debian testing. Debian is the only major
+# distribution whose libpinyin uses tkrzw, oxpinyin's default backend;
+# Fedora and Arch still link Kyoto Cabinet (docs/packaging.md, release lanes).
+# Debian testing's libpinyin package is therefore the reference, and its
+# updates trigger pin bumps. Both performance arms run on this same base.
+# version-manifest.json names the components whose installed versions are
+# recorded in the image and capture identity; version drift is not a build gate.
 # Stage `build` runs tools/oracle/build-oracle.sh --libs-only once per DBM
 # backend at fixed in-image paths. The final stage is the published image:
 # libpinyin.so, libzhuyin.so, headers, pkg-config files, oracle-pin.txt per
@@ -19,11 +20,11 @@
 
 # Every stage follows ORACLE_PLATFORM. It defaults to linux/amd64, so the
 # amd64 build command is unchanged; arm64 callers pass
-# --build-arg ORACLE_PLATFORM=linux/arm64. The frozen hashes are selected per
-# platform; the build and run commands pass --platform as well.
+# --build-arg ORACLE_PLATFORM=linux/arm64. Build provenance records the actual
+# architecture; the build and run commands pass --platform as well.
 ARG ORACLE_PLATFORM=linux/amd64
 
-FROM --platform=$ORACLE_PLATFORM debian:trixie AS deps
+FROM --platform=$ORACLE_PLATFORM debian:testing AS deps
 
 # Behind a TLS-intercepting egress proxy (a cloud session: tools/cloud/setup.sh)
 # the proxy arrives as the predefined build arg https_proxy and its CA as the
@@ -56,6 +57,12 @@ RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
         --probe /usr/local/bin/distro-probe.sh \
         --record /opt/oracle-versions.txt
 
+# Source-only identity inputs; these carry no model data.
+COPY tools/oracle/Dockerfile.oracle tools/oracle/build-oracle.sh tools/oracle/version-manifest.json tools/oracle/versions.py tools/oracle/oracle-pin.txt /opt/oracle-recipe/tools/oracle/
+COPY tools/tkrzw/distro-probe.sh /opt/oracle-recipe/tools/tkrzw/
+COPY tools/lib/bash-floor.sh /opt/oracle-recipe/tools/lib/
+ENV OXPINYIN_ORACLE_RECIPE_ROOT=/opt/oracle-recipe
+
 FROM deps AS build
 
 COPY tools/oracle/build-oracle.sh /usr/local/bin/build-oracle.sh
@@ -66,6 +73,120 @@ RUN set -eu; \
             --jobs "$(nproc)"; \
         rm -rf "/build/$dbm"; \
     done
+
+# Local performance environment. Never build or run this target on GitHub Actions.
+# It shares the oracle's testing base; model data and subject builds are prepared
+# after entering the container, never included in this reusable image.
+FROM deps AS performance
+COPY --from=build /opt/pinyin-oracle /opt/pinyin-oracle
+COPY --from=build /opt/oracle-versions.txt /opt/pinyin-oracle/versions.txt
+COPY tools/oracle/build-oracle.sh /usr/local/bin/build-oracle.sh
+RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
+    set -eu; set --; \
+    if [ -s /run/secrets/cacert ]; then \
+        set -- -o Acquire::https::CaInfo=/run/secrets/cacert; \
+    fi; \
+    apt-get "$@" update; \
+    apt-get "$@" install -y --no-install-recommends \
+        autopoint gettext libsqlite3-dev sqlite3 libibus-1.0-dev \
+        libclang-dev libssl-dev liblzma-dev liblz4-dev libzstd-dev \
+        zlib1g-dev util-linux valgrind binutils; \
+    rm -rf /var/lib/apt/lists/*
+
+# rustup-init is per-arch: take the build host's own binary and verify it
+# against the pinned checksum for that arch
+# (static.rust-lang.org/rustup/archive/1.29.0/<arch>/rustup-init.sha256).
+# Exact on purpose (#1074): rustup-init installs from a checksum, and a checksum
+# is only known for a known version; the stable toolchain's output depends on its
+# version (keep it equal to the channel in rust-toolchain.toml).
+RUN set -eu; \
+    case "$(uname -m)" in \
+        x86_64)  rustup_arch=x86_64-unknown-linux-gnu; \
+                 rustup_sha=4acc9acc76d5079515b46346a485974457b5a79893cfb01112423c89aeb5aa10 ;; \
+        aarch64) rustup_arch=aarch64-unknown-linux-gnu; \
+                 rustup_sha=9732d6c5e2a098d3521fca8145d826ae0aaa067ef2385ead08e6feac88fa5792 ;; \
+        *) echo "unsupported build arch: $(uname -m)" >&2; exit 1 ;; \
+    esac; \
+    curl --proto '=https' --tlsv1.2 -sSfL \
+        "https://static.rust-lang.org/rustup/archive/1.29.0/$rustup_arch/rustup-init" \
+        -o /tmp/rustup-init \
+    && echo "$rustup_sha  /tmp/rustup-init" \
+    | sha256sum -c - \
+    && chmod +x /tmp/rustup-init \
+    && /tmp/rustup-init -y --default-toolchain 1.99.1 --profile minimal \
+       --component clippy,rustfmt \
+    && rm /tmp/rustup-init
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Cargo parallelism, capped for small build VMs. This image's target hosts
+# include a Docker Desktop VM with its default ~8 GiB, where nproc-wide
+# jobs during the fat-LTO / codegen-units=1 link stages can exhaust memory
+# before any single job fails cleanly. Modest default; raise per host:
+#   docker build --target performance --build-arg cargo_jobs=8 -f tools/oracle/Dockerfile.oracle .
+ARG cargo_jobs=4
+ENV CARGO_BUILD_JOBS=${cargo_jobs}
+
+# Exact on purpose (#1074): a fresh image, and cargo-c's rust-version rises with
+# each release (0.10.24 needs Rust 1.95, 0.10.26 needs 1.97), so an unpinned
+# install would break once it passes the pinned Rust. Any cargo-c at or above
+# the minimum that `just doctor` reports builds the same objects
+# (docs/packaging.md, "Regeneration").
+RUN cargo install cargo-c@0.10.25 --locked
+
+# uv 0.13.1 and the managed interpreter that .python-version names: the entry point
+# below is `python -m tools.dev measure ...`. The file is copied in because the build
+# has no checkout as its working directory yet; the version is not restated here.
+# The libtkrzw runtime check stays the shell resolver
+# (tools/tkrzw/runtime.py); installing uv does not establish trust in a runtime.
+COPY .python-version /opt/python-pin/.python-version
+# Archive digest: https://github.com/astral-sh/uv/releases/download/0.13.1/sha256.sum.
+# Exact on purpose (#1074): this image installs from a checksum, and a checksum
+# is only known for a known version.
+ENV UV_INSTALL_DIR=/opt/uv/bin UV_PYTHON_INSTALL_DIR=/opt/uv/python UV_CACHE_DIR=/opt/uv/cache
+RUN set -eu; \
+    [ "$(uname -s)" = Linux ]; \
+    case $(uname -m) in \
+      x86_64) uv_target=x86_64-unknown-linux-gnu; \
+              uv_sha256=eadd9d27c134ab5ac1ffd4473b97a741407f3ea238288f03121fc4deddf90220 ;; \
+      aarch64 | arm64) uv_target=aarch64-unknown-linux-gnu; \
+              uv_sha256=9041c73c99fdc5892cf128140beb354eca9231d502068cc36e6cb53a8e59ad14 ;; \
+      *) printf 'no uv target for architecture %s\n' "$(uname -m)" >&2; exit 1 ;; \
+    esac; \
+    uv_payload=$(curl --fail --location --retry 3 "https://github.com/astral-sh/uv/releases/download/0.13.1/uv-$uv_target.tar.gz" | base64); \
+    uv_actual=$(printf '%s' "$uv_payload" | base64 -d | sha256sum); \
+    [ "${uv_actual%% *}" = "$uv_sha256" ] || { printf 'uv archive checksum mismatch\n' >&2; exit 1; }; \
+    uv_tmp=$(mktemp -d); \
+    trap 'rm -rf "$uv_tmp"' EXIT; \
+    trap 'exit 1' HUP INT TERM; \
+    printf '%s' "$uv_payload" | base64 -d | tar -xz -C "$uv_tmp" "uv-$uv_target/uv" "uv-$uv_target/uvx"; \
+    mkdir -p /opt/uv/bin; \
+    install -m755 "$uv_tmp/uv-$uv_target/uv" "$uv_tmp/uv-$uv_target/uvx" /opt/uv/bin/; \
+    unset uv_payload; \
+    export PATH="/opt/uv/bin:$PATH"; \
+    /opt/uv/bin/uv --version | grep -q '^uv 0\.13\.1 '; \
+    cd /opt/python-pin; \
+    /opt/uv/bin/uv python install; \
+    /opt/uv/bin/uv run --no-project --managed-python python -X lazy_imports=normal \
+      -c 'from pathlib import Path; import subprocess, sys, sysconfig; assert sys.implementation.name == "cpython"; assert sys.version_info.releaselevel == "final" and (3, 15, 0) <= sys.version_info[:3] < (3, 16, 0); assert sysconfig.get_config_var("Py_GIL_DISABLED") == 0; assert sys._is_gil_enabled(); managed = subprocess.check_output(["uv", "python", "find", "--managed-python"], text=True).strip(); assert Path(sys.executable).resolve() == Path(managed).resolve()'
+ENV PATH=/opt/uv/bin:$PATH
+
+# Both arms use Debian's packaged libtkrzw, the library the `build` stage linked the
+# pin against: the subject finds it through pkg-config, and the runtime check
+# (tools/tkrzw/runtime.py) certifies each arm against it through this per-arch link.
+RUN mkdir -p /usr/local/share/oxpinyin && \
+    ln -s "/usr/lib/$(dpkg-architecture -qDEB_HOST_MULTIARCH)/libtkrzw.so.1" \
+        /usr/local/share/oxpinyin/libtkrzw.so.1 && \
+    test -f /usr/local/share/oxpinyin/libtkrzw.so.1 && \
+    cp /etc/os-release /usr/local/share/oxpinyin/performance-os-release
+ENV OXPINYIN_TKRZW_LIBRARY=/usr/local/share/oxpinyin/libtkrzw.so.1
+ENV PINYIN_ORACLE_PREFIX=/performance/pinyin-oracle/tkrzw
+ENV PINYIN_EXPORT_DIR=/performance/pinyin-oracle/tkrzw/lib/libpinyin/data
+ENV SRC_CURR=/repo CTLTOOLS=/repo/tools
+RUN git config --system --add safe.directory /repo
+RUN mkdir -p /performance/tmp /performance/bin /performance/results
+WORKDIR /repo
+ENTRYPOINT ["bash", "-c", "mkdir -p /performance/tmp /performance/results && exec \"$@\"", "--"]
+CMD ["bash"]
 
 FROM --platform=$ORACLE_PLATFORM scratch
 COPY --from=build /opt/pinyin-oracle /opt/pinyin-oracle

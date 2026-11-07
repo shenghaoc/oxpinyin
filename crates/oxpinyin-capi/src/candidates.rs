@@ -89,11 +89,12 @@ pub extern "C" fn pinyin_get_candidate(
 /// ```
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_candidate_type(
-    instance: *mut PinyinInstance,
+    _instance: *mut PinyinInstance,
     candidate: *mut LookupCandidate,
     candidate_type: *mut lookup_candidate_type_t,
 ) -> bool {
-    if instance.is_null() || candidate.is_null() {
+    // The pin never reads `instance` (`pinyin.cpp:2866-2871`).
+    if candidate.is_null() {
         return false;
     }
 
@@ -122,11 +123,12 @@ pub extern "C" fn pinyin_get_candidate_type(
 /// Out-param `utf8_str` is instance-borrowed (never freed by caller).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_candidate_string(
-    instance: *mut PinyinInstance,
+    _instance: *mut PinyinInstance,
     candidate: *mut LookupCandidate,
     utf8_str: *mut *const GChar,
 ) -> bool {
-    if instance.is_null() || candidate.is_null() {
+    // The pin never reads `instance` (`pinyin.cpp:2873-2878`).
+    if candidate.is_null() {
         return false;
     }
 
@@ -157,11 +159,12 @@ pub extern "C" fn pinyin_get_candidate_string(
 /// pin's `assert`, and the process aborts (register row 64).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_candidate_nbest_index(
-    instance: *mut PinyinInstance,
+    _instance: *mut PinyinInstance,
     candidate: *mut LookupCandidate,
     index: *mut u8,
 ) -> bool {
-    if instance.is_null() || candidate.is_null() {
+    // The pin never reads `instance` (`pinyin.cpp:2880-2886`).
+    if candidate.is_null() {
         return false;
     }
 
@@ -199,10 +202,11 @@ pub extern "C" fn pinyin_get_candidate_nbest_index(
 /// predicted prefix token names the user library.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_is_user_candidate(
-    instance: *mut PinyinInstance,
+    _instance: *mut PinyinInstance,
     candidate: *mut LookupCandidate,
 ) -> bool {
-    if instance.is_null() || candidate.is_null() {
+    // The pin never reads `instance` (`pinyin.cpp:3712-3724`).
+    if candidate.is_null() {
         return false;
     }
 

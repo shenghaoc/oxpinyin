@@ -124,7 +124,6 @@ fn correction_rate_is_lambda_independent_here() {
             "λ={value} rate {}",
             report.rate
         );
-        assert_eq!(report.correction_rate_line(), "correction rate:0.500000");
         // The one failure is 钟 decoded as the more frequent homophone 中.
         assert_eq!(report.mismatches, vec![("钟".to_owned(), "中".to_owned())]);
     }

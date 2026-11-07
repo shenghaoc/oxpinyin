@@ -27,10 +27,18 @@ oxpinyin-user.workspace = true
 criterion = "0.8"
 tempfile.workspace = true
 
-# Reads the pinned libpinyin-data package, which is in tkrzw format
+# These read the pinned libpinyin-data package, which is in tkrzw format
 # (`just fetch-contract-data`).
 [[test]]
 name = "candidate_surface"
+required-features = ["tkrzw"]
+
+[[test]]
+name = "libpinyin_data_dir"
+required-features = ["tkrzw"]
+
+[[test]]
+name = "sentence_surface_parity"
 required-features = ["tkrzw"]
 
 [[bench]]

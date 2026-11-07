@@ -1,5 +1,11 @@
 # Remote Linux development
 
+Pin-comparison campaigns use the local oracle `performance` stage; see
+[where measurements run](benches.md#where-measurements-run). Native development
+and native-only measurements are unchanged. The oxpinyin-only nightly snapshot
+uses plain unpinned Debian testing, like every other Linux environment.
+
+
 A remote Linux host that meets the requirements below can run every
 non-measurement gate; measurement gates also need the ext4 paths below.
 Provision it with `tools/cloud/setup.sh`, which also installs Valgrind for
@@ -9,13 +15,13 @@ and does not need a remote host.
 The host may be a root container, may supply its own container runtime, and
 may reach the network only through an HTTPS proxy. The provisioner handles
 each case, scopes custom trust to an existing proxy certificate or an
-explicit CA path, and verifies the same frozen oracle and data contracts.
+explicit CA path, and verifies current pin/recipe provenance and recorded build/data bytes.
 No particular editor or IDE is required. Give each worktree its own
 `OXPINYIN_ORACLE_ENV` and `--cache-dir` paths when several share a host.
 
 ## Host requirements
 
-Full setup requires Linux on a platform with frozen oracle hashes:
+Full setup requires Linux on a supported native platform:
 linux/amd64 or linux/arm64. `tools/cloud/setup.sh` selects the platform from
 `uname -m` and refuses any other architecture.
 The script also requires:
@@ -114,7 +120,7 @@ export PATH="${UV_INSTALL_DIR:-$HOME/.local/bin}:$PATH"
 uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev doctor
 ```
 
-This mode runs the existing Linux and frozen-platform checks, then the
+This mode runs the existing Linux and supported-platform checks, then the
 same uv and managed CPython (3.15 series, GIL build) provisioning and
 interpreter verification as full setup. Neither is installed when it is
 already present at or above its minimum; `just doctor` reports both. It
@@ -144,7 +150,7 @@ PINYIN_ORACLE_DBM=kc . ~/.oxpinyin-oracle.env  # another cell
 
 A subset run, such as `--cells bdb`, keeps the other cells named by the
 existing file when their saved prefixes still pass the library hashes in
-`oracle-pin.txt` and the pinned data-manifest checks. A cell that fails
+current pin/recipe provenance and prefix-local data-manifest checks. A cell that fails
 either check is removed with one diagnostic naming the cell and check.
 The file contains the verified retained cells plus this run's cells, even
 when they use different cache directories. A retained tkrzw cell also
@@ -165,7 +171,7 @@ provision stops the `source` with an error. The file needs bash.
 `Provision.data_ok` in `tools/dev/provision.py` checks the same data contract when setup
 reuses a cache, verifies regenerated data, or retains an existing cell in
 the environment file. It compares the SHA-256 of `oracle-data.sha256`
-with `data_manifest_sha256_<cell>` in the repository's pin file and checks
+with `data_manifest_sha256` in that prefix's own `oracle-pin.txt` and checks
 every listed stable file. It also compares the SHA-256 of
 `oracle-data-unstable.sha256` with `data_unstable_manifest_sha256` in that
 prefix's own `oracle-pin.txt`, then checks every generated file it lists.
@@ -289,17 +295,17 @@ uv run --no-project --managed-python python -B -X lazy_imports=normal tools/tkrz
    root and no `sudo`: `podman info` must answer, and the pulls, the
    `deps` build and the data runs are the same commands rootless.
 2. Pulls the `base_image` tag of `tools/oracle/oracle-pin.txt`
-   (`debian:trixie`, the current Debian stable codename) only when an
+   (`debian:testing`, deliberately unpinned) only when an
    uncached local fallback build needs it. Published artifacts/cached stages
    avoid that pull. Registry retries retain the existing 2, 4, 8 and 16 s
    backoff.
 3. Gets the libraries for bdb, kc and tkrzw (the host platform, linux/amd64 or linux/arm64, whose
-   frozen hashes the pin records). If
+   built hashes and installed versions are recorded per prefix). If
    `ghcr.io/shenghaoc/oxpinyin-oracle:<tag>` exists for amd64, or
    `<tag>-arm64` for arm64, with `<tag>` printed by
-   `python -m tools.oracle.image image-tag` (pin, base image codename and a hash
+   `python -m tools.oracle.image image-tag` (pin, base image tag and a hash
    of the recipe and `oracle-pin.txt`), it is pulled and the cells are copied out of it. A cell
-   whose pulled hashes do not match `oracle-pin.txt` is discarded and built
+   whose pin/recipe stamp or recorded bytes fail validation is discarded and built
    instead, as is every cell when no image exists: the pinned image's
    `deps` stage is built and `tools/oracle/build-oracle.sh --libs-only
    --enable-libzhuyin --dbm <cell>` runs inside it, at the same in-image
@@ -318,11 +324,9 @@ uv run --no-project --managed-python python -B -X lazy_imports=normal tools/tkrz
    never created a container leaves nothing to remove, and a same-named
    container this run did not create is never touched. Logs stay per cell in
    `<cache>/build-<cell>.log` and `<cache>/data-<cell>.log`.
-   Whichever way the libraries arrived, the script then compares
-   `libpinyin.so` and `libzhuyin.so` with `libpinyin_sha256_<cell>` and
-   `libzhuyin_sha256_<cell>` in `oracle-pin.txt` and **stops with exit 3
-   after printing both values** if any differs: a library that was *built*
-   here and differs means the recipe is not reproducible on this host.
+   Setup validates the current pin/recipe stamp and the prefix's recorded
+   library hashes and installed-version record. Stale or damaged provenance
+   stops provisioning; there is no frozen output digest.
    3b. The tkrzw cell's host library. `tools/tkrzw/distro-probe.sh` is run
    against the host's `libtkrzw` (`tkrzw_dbm_util` on `PATH`). If it
    exits 0 nothing more happens. If it reports a defect, or finds no
@@ -344,10 +348,9 @@ uv run --no-project --managed-python python -B -X lazy_imports=normal tools/tkrz
    `<cache>/model20`, runs `build-oracle.sh --regen-data` per cell inside
    the image, and re-verifies the installed files with the shared
    [data verification](#data-verification). The data is generated in a
-   staging area and swapped
-   in only if the regenerated stable manifest equals
-   `data_manifest_sha256_<cell>`; otherwise the step fails and the prefix is
-   untouched.
+   staging area and published with its own manifest hashes. Reuse checks these
+   recorded hashes and every listed file; no generated output is frozen in
+   the repository pin.
 5. Rewrites the prefixes' `.pc` files to the host location, writes the
    environment file above and prints the per-cell lines.
 
@@ -383,7 +386,7 @@ setup contacts, and what one host showed on 2026-10-16 UTC:
 
 | Host | Used for | Seen |
 | --- | --- | --- |
-| `registry-1.docker.io`, `auth.docker.io`, `production.cloudflare.docker.com` | the `debian:trixie` base image | reachable (429 under load; retried) |
+| `registry-1.docker.io`, `auth.docker.io`, `production.cloudflare.docker.com` | Debian base image (historical reachability; current tag: `debian:testing`) | reachable (429 under load; retried) |
 | `snapshot.debian.org` | the apt snapshot the toolchain was installed from | reachable once allowed (403 before) |
 | `github.com` | libpinyin at the pinned commit (`git fetch --depth=1 <url> <sha>`) | reachable |
 | `github.com`, `release-assets.githubusercontent.com` | uv fallback archive and uv-managed CPython release assets | required when uncached; no fresh download measured for #1055 |
@@ -397,13 +400,13 @@ host. The #1055 report records a host refusing
 change from the environment owner or use an already verified local cache;
 model20 must not be mirrored or published by the project.
 
-**Current package mirror.** The trixie toolchain installs from
-`deb.debian.org`, the Debian stable package mirror, which the host's network
+**Current package mirror.** The testing toolchain installs from
+`deb.debian.org`, the Debian testing package mirror, which the host's network
 policy has to allow; setup no longer contacts `snapshot.debian.org`. No
 host has been recorded reaching `deb.debian.org`, so that access is
 unverified. Observed on a remote host on 2026-10-25 UTC: `deb.debian.org`
 was blocked and `snapshot.debian.org` was reachable. The host's network
-policy therefore has to allow `deb.debian.org` for the trixie image builds;
+policy therefore has to allow `deb.debian.org` for the testing image builds;
 reaching `snapshot.debian.org` does not substitute for it. `--regen-data` compiles the pin's data build, so both the library
 build and the data step need the `deps` image. The normal image workflow now
 also publishes that exact `deps` stage as
@@ -425,7 +428,7 @@ re-verifies and finishes in a few seconds. A full setup adds about 2 GB:
 the model20 cache (about 105 MB), the three oracle prefixes (about 195 MB
 together, with data) and the container images and build cache (about 1 GB
 each, sharing layers). `docker builder prune -af` after setup drops the
-build-cache copy. These figures predate the move to the trixie base image.
+build-cache copy. These figures predate the move to the testing base image.
 
 ### tkrzw step and the CI child
 

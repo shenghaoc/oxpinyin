@@ -1205,3 +1205,163 @@ fn table_conf_919_short_row_merged() {
         fresh_user_conf_line(&run.user_dir)
     );
 }
+
+// ---------------------------------------------------------------------
+// NULL arguments the pin never reads (row 41's non-crashing probes). Each
+// test hands valid objects and the one NULL argument the pin ignores; the
+// expectations are the pin's answer at 074a2219 (cited beside each), not a
+// pin run.
+// ---------------------------------------------------------------------
+
+/// `zhuyin_get_candidate_type` never reads `instance` (`zhuyin.cpp:1858-1863`).
+#[test]
+fn null_instance_candidate_type_answers() {
+    let (context, instance) = open();
+    let cand = candidate(instance, "su3cl3", 0);
+    let mut kind = crate::types::lookup_candidate_type_t::ZOMBIE_CANDIDATE;
+    assert!(crate::candidates::zhuyin_get_candidate_type(
+        ptr::null_mut(),
+        cand,
+        &raw mut kind
+    ));
+    assert_eq!(
+        kind,
+        crate::types::lookup_candidate_type_t::NORMAL_CANDIDATE_AFTER_CURSOR
+    );
+    close(context, instance);
+}
+
+/// `zhuyin_get_candidate_string` never reads `instance` (`zhuyin.cpp:1865-1870`).
+#[test]
+fn null_instance_candidate_string_answers() {
+    let (context, instance) = open();
+    let cand = candidate(instance, "su3cl3", 0);
+    let mut text = ptr::null();
+    assert!(crate::candidates::zhuyin_get_candidate_string(
+        ptr::null_mut(),
+        cand,
+        &raw mut text
+    ));
+    assert!(!text.is_null());
+    // SAFETY: the candidate text is NUL-terminated and borrowed from the instance.
+    let text = unsafe { std::ffi::CStr::from_ptr(text) };
+    assert_eq!(text.to_str().expect("UTF-8"), "你好");
+    close(context, instance);
+}
+
+/// `zhuyin_get_zhuyin_string` never reads `instance` (`zhuyin.cpp:1732-1741`).
+#[test]
+fn null_instance_zhuyin_string_answers() {
+    let (context, instance) = open();
+    let mut key = crate::types::ChewingKey::ZERO;
+    assert!(crate::keys::zhuyin_parse_chewing(
+        instance,
+        cstr("su3").as_ptr(),
+        &raw mut key
+    ));
+    let mut out = ptr::null_mut();
+    assert!(crate::keys::zhuyin_get_zhuyin_string(
+        ptr::null_mut(),
+        &raw mut key,
+        &raw mut out
+    ));
+    assert_eq!(take_sentence(out), "ㄋㄧˇ");
+    close(context, instance);
+}
+
+/// `zhuyin_get_zhuyin_key_rest_positions` reads `key_rest` only to fill a
+/// non-NULL `begin` or `end` (`zhuyin.cpp:1930-1940`).
+#[test]
+fn key_rest_positions_follow_the_pins_reads() {
+    let (context, instance) = open();
+    assert_eq!(
+        zhuyin_parse_more_chewings(instance, cstr("su3cl3").as_ptr()),
+        6
+    );
+    let mut rest = ptr::null_mut();
+    assert!(crate::cursor::zhuyin_get_zhuyin_key_rest(
+        instance,
+        0,
+        &raw mut rest
+    ));
+    // NULL `key_rest` with both outs NULL: no read, `true` (`:1933-1938`).
+    assert!(crate::cursor::zhuyin_get_zhuyin_key_rest_positions(
+        instance,
+        ptr::null_mut(),
+        ptr::null_mut(),
+        ptr::null_mut()
+    ));
+    assert!(crate::cursor::zhuyin_get_zhuyin_key_rest_positions(
+        ptr::null_mut(),
+        ptr::null_mut(),
+        ptr::null_mut(),
+        ptr::null_mut()
+    ));
+    // NULL `key_rest` with an out: the pin reads it (row 41), so this stays guarded.
+    let mut begin = u16::MAX;
+    assert!(!crate::cursor::zhuyin_get_zhuyin_key_rest_positions(
+        instance,
+        ptr::null_mut(),
+        &raw mut begin,
+        ptr::null_mut()
+    ));
+    assert_eq!(begin, u16::MAX);
+    let mut end = u16::MAX;
+    assert!(!crate::cursor::zhuyin_get_zhuyin_key_rest_positions(
+        instance,
+        ptr::null_mut(),
+        ptr::null_mut(),
+        &raw mut end
+    ));
+    // A real rest with a NULL instance fills both.
+    let (mut begin, mut end) = (u16::MAX, u16::MAX);
+    assert!(crate::cursor::zhuyin_get_zhuyin_key_rest_positions(
+        ptr::null_mut(),
+        rest,
+        &raw mut begin,
+        &raw mut end
+    ));
+    assert_eq!((begin, end), (0, 3));
+    close(context, instance);
+}
+
+/// `zhuyin_begin_add_phrases` stores the context unread and returns the
+/// iterator (`zhuyin.cpp:392-398`). `zhuyin_iterator_add_phrase` answers
+/// `false` before it reads the context for a NULL phrase (`:509-510`), and
+/// where it would read it (`_add_phrase`, `:412`) the pin crashes (row 41);
+/// `zhuyin_end_add_phrases` reads it at `:542` (row 41), so the handle is freed.
+#[test]
+fn null_context_import_handle_is_returned_and_freed() {
+    let iter = zhuyin_begin_add_phrases(ptr::null_mut(), 1);
+    assert!(!iter.is_null());
+    assert!(!zhuyin_iterator_add_phrase(
+        iter,
+        ptr::null(),
+        cstr("ㄋㄧˇ ㄏㄠˇ").as_ptr(),
+        1
+    ));
+    assert!(!zhuyin_iterator_add_phrase(
+        iter,
+        cstr("你好").as_ptr(),
+        cstr("ㄋㄧˇ ㄏㄠˇ").as_ptr(),
+        1
+    ));
+    zhuyin_end_add_phrases(iter);
+}
+
+/// The index assert (`zhuyin.cpp:381`) precedes any read of the context, so a
+/// NULL context aborts for index 16; the `tsi.bin` refusal answers `false`
+/// (`:385-386`) without reading it.
+#[test]
+fn null_context_unload_phrase_library_orders_assert_first() {
+    assert!(!crate::config::zhuyin_unload_phrase_library(
+        ptr::null_mut(),
+        1 // TSI_DICTIONARY
+    ));
+    crate::test_support::assert_aborts(
+        "e2e_tests::null_context_unload_phrase_library_orders_assert_first",
+        || {
+            crate::config::zhuyin_unload_phrase_library(ptr::null_mut(), 16);
+        },
+    );
+}
