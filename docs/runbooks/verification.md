@@ -173,11 +173,7 @@ If none is available, report "tkrzw: not run (no sound libtkrzw on this host)" a
   Provision Python with `just python`.
   Do not repeat the version elsewhere.
   See [setup](setup.md).
-- Mark tests that need inputs unavailable in CI with `#[ignore = "needs …"]`.
-  Fail when an input is missing.
-  Do not add self-skipping tests.
-  Examples include model20, system-table exports, pin-built tools and opencc.
-  See [testing](../testing/README.md).
+- Follow the [test input rule](../testing/README.md#test-inputs).
 - Train an oracle C-API session by resetting, parsing, checking full consumption and guessing the sentence before `pinyin_train` on row 0.
   See the [oracle procedure](oracle.md).
 - Give backend-specific benches `required-features`.

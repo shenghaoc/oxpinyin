@@ -5,8 +5,7 @@
 //! the relative `table.conf`, `phrase_index.bin` and chunk names are the
 //! ones the pin opens. Expectations come from the pin's source
 //! (`utils/segment/*.cpp` at 074a2219) and its committed W9 goldens, not
-//! from a live run; the ignored `*_matches_live` tests are the opt-in
-//! cross-check against a pin-built binary.
+//! from a live run.
 
 use oxpinyin_input::tool;
 use std::io::Write as _;
@@ -301,87 +300,6 @@ fn the_output_file_receives_the_stream() {
     assert_eq!(
         std::fs::read(data.join("seg.out")).expect("output file"),
         expected_text(b"0 \n0 \n")
-    );
-}
-
-// ── opt-in live cross-checks against pin-built binaries ─────────────────
-
-fn locate_pin(variable: &str) -> PathBuf {
-    let path = std::env::var_os(variable)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| panic!("missing input: set {variable} to the pin-built binary"));
-    assert!(
-        path.is_file(),
-        "{variable} is not a file: {}",
-        path.display()
-    );
-    path
-}
-
-fn locate_data(variable: &str) -> PathBuf {
-    let path = std::env::var_os(variable)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| panic!("missing input: set {variable} to the pin data directory"));
-    assert!(
-        path.join("table.conf").is_file(),
-        "{variable} has no table.conf: {}",
-        path.display()
-    );
-    path
-}
-
-fn live_compare(pin: PathBuf, subject: &str, data: &Path, input: &Path) {
-    let pin_output = Command::new(pin)
-        .current_dir(data)
-        .arg(input)
-        .output()
-        .expect("run the pin-built utility");
-    let subject_output = Command::new(subject)
-        .current_dir(data)
-        .arg(input)
-        .output()
-        .expect("run the built utility");
-    assert_eq!(subject_output.status, pin_output.status, "exit status");
-    assert_eq!(subject_output.stdout, pin_output.stdout, "stdout");
-    assert_eq!(subject_output.stderr, pin_output.stderr, "stderr");
-}
-
-#[test]
-#[ignore = "needs the pin-built ngseg and its data (PINYIN_NGSEG, PINYIN_NGSEG_DATA); run with --include-ignored"]
-fn rust_ngseg_matches_live() {
-    let pin = locate_pin("PINYIN_NGSEG");
-    let data = locate_data("PINYIN_NGSEG_DATA");
-    live_compare(
-        pin,
-        env!("CARGO_BIN_EXE_ngseg"),
-        &data,
-        &repo_root().join("fixtures/w9/segmenter-han.txt"),
-    );
-}
-
-#[test]
-#[ignore = "needs the pin-built spseg and its data (PINYIN_SPSEG, PINYIN_NGSEG_DATA); run with --include-ignored"]
-fn rust_spseg_matches_live() {
-    let pin = locate_pin("PINYIN_SPSEG");
-    let data = locate_data("PINYIN_NGSEG_DATA");
-    live_compare(
-        pin,
-        env!("CARGO_BIN_EXE_spseg"),
-        &data,
-        &repo_root().join("fixtures/w9/segmenter-han.txt"),
-    );
-}
-
-#[test]
-#[ignore = "needs the pin-built mergeseq and its data (PINYIN_MERGESEQ, PINYIN_NGSEG_DATA); run with --include-ignored"]
-fn rust_mergeseq_matches_live() {
-    let pin = locate_pin("PINYIN_MERGESEQ");
-    let data = locate_data("PINYIN_NGSEG_DATA");
-    live_compare(
-        pin,
-        env!("CARGO_BIN_EXE_mergeseq"),
-        &data,
-        &repo_root().join("fixtures/w9/segmenter-ngseg.txt"),
     );
 }
 

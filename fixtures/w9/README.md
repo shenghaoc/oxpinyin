@@ -15,16 +15,12 @@ phrase_index** (`fixtures/w3/phrase_index.<backend>`) rather than the full
 system export. The W3 table is a real, committed system table but a
 *subset* of the shipped dictionary, so some single Han characters segment
 as unknown (`0 …`) runs. Because that table is committed, the `spseg`
-differential (`crates/oxpinyin-utils/tests/segmentation.rs`) runs unconditionally on CI; the
-live cross-check against pin-built `spseg` runs only when `PINYIN_SPSEG`
-and the full oracle data dir are set.
+differential (`crates/oxpinyin-utils/tests/segmentation.rs`) runs unconditionally on CI.
 
 `mergeseq-input.txt` is a small hand-built segmented stream over the W3
 vocabulary — `中`(16786821) + `国`(16780275), a separator, then a
 pass-through `你好`(16802309) — chosen so the merge to `中国`(16817937) is
 exercised. `segmenter-mergeseq-w3.txt` is the `mergeseq` reproduction over
-it (again against the committed W3 phrase_index). The live cross-check
-against pin-built `mergeseq` (`PINYIN_MERGESEQ`) uses the full-dict
-`segmenter-ngseg.txt` as its shared input instead.
+it (again against the committed W3 phrase_index).
 
 No model bytes are tracked here.
