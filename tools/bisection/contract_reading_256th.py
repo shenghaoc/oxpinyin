@@ -1,4 +1,10 @@
-"""256th pronunciation reading cases."""
+"""256th pronunciation reading cases.
+
+Both cases are also Rust tests (`contract_data/reading_256th.rs` in both capi
+crates). They stay registered here because `contract_measurement`'s per-call
+mode runs `wrap-256th-reading` by name; they go with that mode's retirement
+(#1507 item 1).
+"""
 import ctypes as C
 import hashlib
 import json
@@ -220,22 +226,10 @@ def _(k):
     return wrap_256th_reading(k, _wrap_pinyin_readings(), same_iterator=False)
 
 
-@case('wrap-256th-reading-same-iterator', issues=('804',))
-def _(k):
-    """Observe pinyin reading-count wrap with the 257th add in the same iterator."""
-    return wrap_256th_reading(k, _wrap_pinyin_readings(), same_iterator=True)
-
-
 @case('wrap-256th-reading-zhuyin', mode='zhuyin', issues=('804',))
 def _(k):
     """Observe zhuyin reading-count wrap with the 257th add in a new iterator."""
     return wrap_256th_reading(k, _wrap_zhuyin_readings(), same_iterator=False)
-
-
-@case('wrap-256th-reading-zhuyin-same-iterator', mode='zhuyin', issues=('804',))
-def _(k):
-    """Observe zhuyin reading-count wrap with the 257th add in the same iterator."""
-    return wrap_256th_reading(k, _wrap_zhuyin_readings(), same_iterator=True)
 
 
 def register(driver_case):

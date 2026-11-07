@@ -174,33 +174,16 @@ import contract_registry
 from contract_registry import case_spec  # registration metadata and checks
 import contract_measurement
 import contract_axis_c
-import contract_alloc_after_fini
-import contract_default_options
-import contract_invalid_input_bytes
-import contract_negative_remember
-import contract_input_length_cap
-import contract_key_positions_past_65535
-import contract_non_utf8_directories
-import contract_axis_j
-import contract_predicted_types
-import contract_facade_total
-import contract_stored_count_headers
-import contract_issue542_remaining
 import contract_pinyin_out_parameters
-import contract_candidate_lookup_offsets
-import contract_remember_tone
 import contract_allocator_register
 import contract_cursor_sentence_refusals
-import contract_duplicate_phrase_add
 import contract_zhuyin_facade_twins
 import contract_scheme_library_refusals
 import contract_row54_empty_forcing
 import contract_zero_consumption
-import contract_glib_arrays
 import contract_reading_256th
 import contract_auxiliary_text
 import contract_combined_import_nbest
-import contract_stored_total_overflow
 import contract_zhuyin_per_entry
 import contract_case_helpers
 # Helpers several case families share (#1175). Each is re-exported by assignment, not
@@ -262,7 +245,6 @@ import contract_bigram_mask_prediction
 import contract_sort_pinyin_length
 import contract_system_mask_out
 import contract_phrase_index_logger
-import contract_phrase_table_mask
 import contract_punctuation
 import contract_missing_system_dbm
 import contract_training_constraints
@@ -284,7 +266,6 @@ import contract_matrix_resplit_windows
 import contract_library_reload
 import contract_user_conf_overlong_index
 import contract_row58_ranking
-import contract_zhuyin_null_arguments
 import contract_save_failures_stderr
 save_929_marker_interrupt = contract_save_failures_stderr.save_929_marker_interrupt
 save_929_physical_files = contract_save_failures_stderr.save_929_physical_files
@@ -551,11 +532,9 @@ def items_system(k, items, total=200, *, isolated=False):
 
 
 # The #532 default-option cases stay at their original point in the registration sequence.
-contract_default_options.register(case)
 
 
 # The #587 invalid-byte cases stay at their original point in the registration sequence.
-contract_invalid_input_bytes.register(case)
 
 
 contract_zero_key_guess.register(case)
@@ -576,7 +555,6 @@ contract_token_unigram_training.register(case)
 # batch2 group 8: choose_predicted_candidate's return table (PR 8, #542, #540)
 
 
-contract_predicted_types.register(case, predicted_rows=predicted_rows)
 
 
 contract_punctuation.register(case, _craft_db=_craft_db)
@@ -584,19 +562,15 @@ contract_missing_system_dbm.register(case)
 
 
 # The remember-count cases stay at their original point in the registration sequence.
-contract_negative_remember.register(case)
 
 
 # The #540 input-length cases stay at their original point in the registration sequence.
-contract_input_length_cap.register(case)
 
 
 # The #1501 key-position cases past byte 65535 follow the input-length cases.
-contract_key_positions_past_65535.register(case)
 
 
 # The #528 case stays at its original point in the registration sequence.
-contract_alloc_after_fini.register(case)
 
 
 # The #573 double-fini cases moved to Rust tests: crates/oxpinyin-capi and crates/oxpinyin-zhuyin-capi,
@@ -606,7 +580,6 @@ contract_alloc_after_fini.register(case)
 # batch2 group 11: the facade unigram total wraps like the pin's (PR 11, #540)
 
 
-contract_facade_total.register(case, wrap_total_to_zero=wrap_total_to_zero)
 
 
 # batch2 group 12a: library-index, scheme and iterator refusals (PR 12a, #525)
@@ -674,7 +647,7 @@ contract_bigram_mask_prediction.register(
 contract_token_reuse_addon_import.register(case, token_reuse_sequence=token_reuse_sequence)
 
 
-contract_before_cursor_dedup.register(case, addon_promote_sequence=addon_promote_sequence, items_system=items_system)
+contract_before_cursor_dedup.register(case)
 
 
 contract_user_index_phrase_mask.register(
@@ -699,12 +672,9 @@ contract_toned_keys_zhuyin_refusals.register_2(case)
 # the reserved slot past the parse — answers the LONGER row alone.
 
 
-contract_candidate_lookup_offsets.register(
-    case, guess_rows=guess_rows, zhuyin_guess_rows=zhuyin_guess_rows)
 
 
 # The #587 directory-name cases stay at their original point in the registration sequence.
-contract_non_utf8_directories.register(case)
 
 
 contract_zhuyin_facade_twins.register(case, Rest=Rest)
@@ -731,13 +701,11 @@ contract_library_loading.register(case, items_system=items_system, craft_db=_cra
 # --------------------------------------------------------------------------
 
 
-contract_remember_tone.register_tones(case, remember_export=remember_export)
 
 
 contract_glib_path_construction.register(case)
 
 
-contract_remember_tone.register_review(case, remember_export=remember_export)
 
 
 # #642: NULL is transient state, not an absent user index. Snapshot both
@@ -755,7 +723,6 @@ contract_combined_import_nbest.register(
 
 
 # The axis J controls stay at their original point in the registration sequence.
-contract_axis_j.register(case)
 
 
 # Timing consumers and tests patch this list through the driver at call time.
@@ -864,10 +831,8 @@ contract_journal_replay.register(case)
 # (`phrase_large_table3_tkrzwdb.cpp:83`).
 
 
-contract_duplicate_phrase_add.register(case, _craft_db=_craft_db, _ucs4_key=_ucs4_key)
 
 
-contract_phrase_table_mask.register(case, _craft_db=_craft_db, index_file_rows=index_file_rows)
 
 
 # #540 / D-18. Small boundary fixtures, never a repeated-training workload.
@@ -877,25 +842,6 @@ contract_phrase_table_mask.register(case, _craft_db=_craft_db, index_file_rows=i
 
 
 contract_integer_limits_d18.register(case)
-
-
-contract_glib_arrays.register_array(case)
-
-
-# #924: source-derived fatal GArray growth, sharing the ABI failure harness.
-# Pin pinyin.cpp:2801-2818 / zhuyin.cpp:1793-1810; GLib 2.89.4
-# garray.c:1071-1100 and gmem.c:164-177. The harness checks injection,
-# GLib error and fatal signal; successful exit alone is insufficient.
-glib_924_oom_array = contract_glib_arrays.glib_924_oom_array
-
-
-contract_glib_arrays.register_oom(case, glib_924_oom_array=glib_924_oom_array)
-
-
-contract_glib_arrays.register_null(case)
-
-
-contract_issue542_remaining.register(case)
 
 
 contract_bigram_removal.register(case)
@@ -921,9 +867,6 @@ contract_facade_totals_counts.register(case, items_system=items_system, _craft_d
 contract_library_reload.register(case)
 
 
-contract_stored_total_overflow.register(
-    case, FACADE_TOTAL=FACADE_TOTAL, _stored_library_total=_stored_library_total,
-    _facade_total_out=_facade_total_out, _modify_header=_modify_header, _write_log=_write_log)
 
 
 contract_gram_lookup.register(case, _craft_db=_craft_db)
@@ -978,13 +921,11 @@ contract_prefix_conversion.register(case, items_system=items_system)
 contract_user_stored_words.register(case, phrase_text_system=phrase_text_system)
 
 
-contract_stored_count_headers.register(case, _chunk=_chunk)
 
 
 contract_reading_256th.register(case)
 
 
-contract_zhuyin_null_arguments.register(case)
 
 
 # The sentence-tie fixture regeneration lives in contract_sentence_ties (#1175).
