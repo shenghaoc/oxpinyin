@@ -145,10 +145,9 @@ fn bump_counter(
 pub fn run_observe_commit<S: WriteStore>(store: &S, i: u64) {
     store
         .write(|txn| {
-            // `encode_token_pair(last, cur)` is the two tokens'
-            // big-endian halves, so `[..4]` is `last` and `[4..]` is
-            // `cur` — the same two keys `update` derives separately
-            // with `encode_token`. Keying the unigram off anything else
+            // The bigram key is the two tokens' big-endian halves, so
+            // `[..4]` is `last` and `[4..]` is `cur` — the same two
+            // keys `update` derives separately with `encode_token`. Keying the unigram off anything else
             // would break the correlation production has between a
             // bigram's second half and the unigram it bumps.
             let (pair_key, _) = bigram_row(SEED, i);

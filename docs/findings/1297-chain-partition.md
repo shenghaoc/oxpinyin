@@ -14,7 +14,7 @@ the key precedence. All initials across the phrase precede middle/final
 pairs per syllable, which precede all tones. Token and padding are not
 part of this comparison.
 
-`pinyin_chain::Entry::equal_range` dispatches lengths 1–16 over their
+`user_index::Entry::equal_range` dispatches lengths 1–16 over their
 eight bounded strides to `as_chunks::<N>()`. Two `partition_point` calls
 search whole borrowed records; the upper bound is taken over the suffix
 after the lower bound. The comparator reads packed keys in place. There
@@ -42,8 +42,7 @@ the replacement's contract and parity evidence; it has no divergence-register
 entry, case `policy_record` link or digest block. `just policy-record`
 records differences and rejects parity pairs.
 
-D's user-crate gates run at D with the kyotocabinet feature, which compiles
-pinyin_chain: 230 unit tests and 23 integration tests pass, as does strict
+D's user-crate gates ran at D with the kyotocabinet feature: 230 unit tests and 23 integration tests pass, as does strict
 Clippy. Tests cover every supported length/stride, sorted duplicate keys,
 both-end misses, empty records, all partial-tail lengths, stored-order
 preservation, packed-key field precedence, and ignored padding bits.

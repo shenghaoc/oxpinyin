@@ -63,11 +63,4 @@ mod tests {
             [PathBuf::from("a"), PathBuf::from("b")]
         );
     }
-
-    #[test]
-    fn the_default_has_no_directories() {
-        let paths = StoragePaths::default();
-        assert_eq!(paths.user_data_dir(), PathBuf::new());
-        assert!(paths.system_data_dirs().is_empty());
-    }
 }

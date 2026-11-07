@@ -98,22 +98,7 @@ pub fn decode_u64(bytes: &[u8]) -> Result<u64, DecodeError> {
     Ok(u64::from_be_bytes(fixed_prefix::<8>(bytes)?))
 }
 
-// ── identity types ─────────────────────────────────────────────────
-
-/// Encode a `&str` as raw UTF-8 bytes (identity).
-#[must_use]
-pub const fn encode_str(s: &str) -> &[u8] {
-    s.as_bytes()
-}
-
-/// Decode a `&str` from raw UTF-8 bytes (identity).
-///
-/// # Errors
-///
-/// Returns [`DecodeError`] when the buffer is too short or not valid UTF-8.
-pub fn decode_str(bytes: &[u8]) -> Result<&str, DecodeError> {
-    std::str::from_utf8(bytes).map_err(|_| DecodeError::InvalidUtf8)
-}
+// ── phrase words ───────────────────────────────────────────────────
 
 /// Decode the internal phrase value's complete little-endian stored words.
 pub(crate) fn decode_words(bytes: &[u8]) -> Result<Vec<u32>, DecodeError> {
@@ -131,64 +116,7 @@ pub(crate) fn decode_words(bytes: &[u8]) -> Result<Vec<u32>, DecodeError> {
         .collect())
 }
 
-/// Encode `&[u8]` (identity — returns the same slice).
-#[must_use]
-pub const fn encode_bytes(b: &[u8]) -> &[u8] {
-    b
-}
-
-/// Decode `&[u8]` (identity — returns the same slice).
-#[must_use]
-pub const fn decode_bytes(b: &[u8]) -> &[u8] {
-    b
-}
-
 // ── composite keys ─────────────────────────────────────────────────
-
-/// Encode a `(Token, Token)` key as 8 big-endian bytes.
-#[must_use]
-pub fn encode_token_pair(a: Token, b: Token) -> [u8; 8] {
-    let mut out = [0u8; 8];
-    out[..4].copy_from_slice(&a.to_be_bytes());
-    out[4..].copy_from_slice(&b.to_be_bytes());
-    out
-}
-
-/// Decode a `(Token, Token)` key from 8 big-endian bytes.
-///
-/// # Errors
-///
-/// Returns [`DecodeError`] when the buffer is too short.
-pub fn decode_token_pair(bytes: &[u8]) -> Result<(Token, Token), DecodeError> {
-    let [a0, a1, a2, a3, b0, b1, b2, b3] = fixed_prefix::<8>(bytes)?;
-    Ok((
-        Token::from_be_bytes([a0, a1, a2, a3]),
-        Token::from_be_bytes([b0, b1, b2, b3]),
-    ))
-}
-
-/// Encode a `(u8, &str)` key: one byte prefix, then raw UTF-8.
-#[must_use]
-pub fn encode_u8_str(v: u8, s: &str) -> Vec<u8> {
-    let mut out = Vec::with_capacity(1 + s.len());
-    out.push(v);
-    out.extend_from_slice(s.as_bytes());
-    out
-}
-
-/// Decode a `(u8, &str)` key: one byte prefix, then raw UTF-8.
-///
-/// # Errors
-///
-/// Returns [`DecodeError`] when the buffer is too short or the string is not valid UTF-8.
-pub fn decode_u8_str(bytes: &[u8]) -> Result<(u8, &str), DecodeError> {
-    let (&v, tail) = bytes.split_first().ok_or(DecodeError::Truncated {
-        expected: 1,
-        actual: 0,
-    })?;
-    let s = std::str::from_utf8(tail).map_err(|_| DecodeError::InvalidUtf8)?;
-    Ok((v, s))
-}
 
 /// Encode a `(Token, &[u8])` key: 4 BE bytes, then raw tail.
 #[must_use]
@@ -252,43 +180,6 @@ mod tests {
     }
 
     #[test]
-    fn str_roundtrip_fixed() {
-        for s in ["", "hello", "你好", "ni'hao"] {
-            assert_eq!(decode_str(encode_str(s)).unwrap(), s);
-        }
-    }
-
-    #[test]
-    fn bytes_roundtrip_fixed() {
-        let cases: &[&[u8]] = &[&[], &[0], &[1, 2, 3], &[0xff; 16]];
-        for b in cases {
-            assert_eq!(decode_bytes(encode_bytes(b)), *b);
-        }
-    }
-
-    #[test]
-    fn token_pair_roundtrip_fixed() {
-        let cases = [(0, 0), (1, 2), (Token::MAX, 0), (0, Token::MAX)];
-        for (a, b) in cases {
-            assert_eq!(decode_token_pair(&encode_token_pair(a, b)).unwrap(), (a, b));
-        }
-    }
-
-    #[test]
-    fn token_pair_encoding_layout() {
-        let buf = encode_token_pair(0x0000_0001, 0x0000_0002);
-        assert_eq!(buf, [0, 0, 0, 1, 0, 0, 0, 2]);
-    }
-
-    #[test]
-    fn u8_str_roundtrip_fixed() {
-        let cases = [(0u8, ""), (7, "你好"), (255, "ni'hao")];
-        for (v, s) in cases {
-            assert_eq!(decode_u8_str(&encode_u8_str(v, s)).unwrap(), (v, s));
-        }
-    }
-
-    #[test]
     fn token_bytes_roundtrip_fixed() {
         let cases: &[(Token, &[u8])] = &[(0, &[]), (1, &[0xff]), (Token::MAX, &[1, 2, 3])];
         for &(token, tail) in cases {
@@ -333,35 +224,6 @@ mod tests {
     }
 
     #[test]
-    fn decode_str_invalid_utf8() {
-        for bytes in [&[0xff][..], &[0xc0, 0x80]] {
-            assert_eq!(decode_str(bytes), Err(DecodeError::InvalidUtf8));
-        }
-    }
-
-    #[test]
-    fn decode_token_pair_too_short() {
-        for bytes in [&[][..], &[0; 4], &[0; 7]] {
-            assert!(matches!(
-                decode_token_pair(bytes),
-                Err(DecodeError::Truncated { expected: 8, .. })
-            ));
-        }
-    }
-
-    #[test]
-    fn decode_u8_str_rejects_empty_and_invalid_utf8() {
-        assert!(matches!(
-            decode_u8_str(&[]),
-            Err(DecodeError::Truncated {
-                expected: 1,
-                actual: 0
-            })
-        ));
-        assert_eq!(decode_u8_str(&[7, 0xff]), Err(DecodeError::InvalidUtf8));
-    }
-
-    #[test]
     fn decode_token_bytes_too_short() {
         for bytes in [&[][..], &[0, 1, 2]] {
             assert!(matches!(
@@ -391,29 +253,6 @@ mod tests {
             #[test]
             fn u64_roundtrip(v: u64) {
                 prop_assert_eq!(decode_u64(&encode_u64(v)).unwrap(), v);
-            }
-
-            #[test]
-            fn str_roundtrip(s in "\\PC{0,64}") {
-                prop_assert_eq!(decode_str(encode_str(&s)).unwrap(), s.as_str());
-            }
-
-            #[test]
-            fn bytes_roundtrip(b in proptest::collection::vec(any::<u8>(), 0..64)) {
-                prop_assert_eq!(decode_bytes(encode_bytes(&b)), b.as_slice());
-            }
-
-            #[test]
-            fn token_pair_roundtrip(a: u32, b: u32) {
-                prop_assert_eq!(decode_token_pair(&encode_token_pair(a, b)).unwrap(), (a, b));
-            }
-
-            #[test]
-            fn u8_str_roundtrip(v: u8, s in "\\PC{0,64}") {
-                let enc = encode_u8_str(v, &s);
-                let (dv, ds) = decode_u8_str(&enc).unwrap();
-                prop_assert_eq!(dv, v);
-                prop_assert_eq!(ds, s.as_str());
             }
 
             #[test]

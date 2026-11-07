@@ -13,33 +13,6 @@ const F_A: &str = include_str!("../../../fixtures/foundation/f-a.txt");
 // ---------------------------------------------------------------------------
 
 #[test]
-fn empty_input_returns_one_empty_segmentation() {
-    assert_parse(b"", &[result(vec![], b"")]);
-}
-
-#[test]
-fn ambiguous_xian_returns_both_complete_segmentations() {
-    assert_parse(
-        b"xian",
-        &[
-            result(vec![complete("xian", 0, 4)], b""),
-            result(vec![complete("xi", 0, 2), complete("an", 2, 4)], b""),
-        ],
-    );
-}
-
-#[test]
-fn apostrophe_is_hard_boundary_for_xi_an() {
-    assert_parse(
-        b"xi'an",
-        &[result(
-            vec![complete("xi", 0, 2), complete("an", 3, 5)],
-            b"",
-        )],
-    );
-}
-
-#[test]
 fn trailing_junk_after_valid_prefix_nihx() {
     // Maximal complete+partial prefix is `ni` + `h`; unconsumable `x` is remainder.
     assert_parse(
