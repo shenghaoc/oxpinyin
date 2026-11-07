@@ -28,7 +28,7 @@ The [roadmap](../ROADMAP.md) records the stages and their status.
    - Forbid `unsafe` in oxpinyin-core/data/user/engine/runtime.
    - Permit scoped unsafe modules in the bidirectional `oxpinyin-input` boundary.
    - Deny `unsafe` in `oxpinyin-store`, with scoped backend allows.
-   - Keep public C ABI marshalling in capi/oracle.
+   - Keep public C ABI marshalling in `oxpinyin-capi` and `oxpinyin-zhuyin-capi`.
    - Give every unsafe block a `// SAFETY:` comment.
 
    The system/addon mapping boundary is active: data uses the input mapping API
@@ -58,7 +58,6 @@ The shared Rust facade returns the error at the pin's point, after the pin's pre
 The pin's `assert` message is not rebuilt; its absence is `POLICY-ACCEPTED`.
 See the [class (c) retirement](findings/compatibility-policy.md#amendment--class-c-retired-pin-aborts-reproduced-2026-10-31-utc).
 The [panic amendment](findings/compatibility-policy.md#amendment--pin-matched-panics-and-error-handling) states the scoped lint expectations and their limits.
-See also [safety-profile Layer 3](safety/oxpinyin-safety-profile.md).
 
 ## External interfaces
 

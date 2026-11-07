@@ -8,7 +8,7 @@
 //! contract_tests.rs; here a finding is any abort, panic, or sanitizer
 //! report (cargo-fuzz's default `-s address` instrumentation includes
 //! LeakSanitizer on Linux). Mispaired iterator lifecycles are UB by
-//! contract (audit F-6), so every begin reaches its end within the same
+//! contract, so every begin reaches its end within the same
 //! command: the bug classes hunted are caller-visible mispairings, not
 //! contract violations.
 //!

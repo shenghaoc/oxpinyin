@@ -1,6 +1,5 @@
-# cargo-deny policy — the single supply-chain gate (docs/safety/
-# oxpinyin-safety-profile.md layer 6). Advisories share the RustSec DB with
-# cargo-audit; running both in CI would be redundant.
+# cargo-deny policy — the single supply-chain gate. Advisories share the
+# RustSec DB with cargo-audit; running both in CI would be redundant.
 
 [graph]
 # Audit the default build. Feature-gated dependency subtrees (tkrzw)
