@@ -7,8 +7,6 @@
 
 use oxpinyin_store::StoreError;
 
-/// Internal table containing the pin's phrase records.
-pub const TABLE: &str = "user_phrase_table3";
 /// No matching enabled token or existing key.
 pub const SEARCH_NONE: i32 = 0;
 /// At least one enabled token was appended.

@@ -103,15 +103,6 @@ impl OpenSteps for Planted {
     }
 }
 
-/// The session store's seed write fails.
-struct SeedFails;
-
-impl OpenSteps for SeedFails {
-    fn seeded(_: super::SeedWrite) -> super::SeedWrite {
-        Err(injected())
-    }
-}
-
 /// The user bigram's container answers an error: what remains of one once
 /// the backend has ended the process for a container it cannot create, an
 /// unsupported library.
@@ -280,14 +271,6 @@ fn a_completed_open_finalizes() {
     assert_eq!(stderr, format!("write  failed.{newline}"));
     assert_eq!(open_counter(&dir), "0");
     std::fs::remove_dir_all(dir).unwrap();
-}
-
-#[test]
-fn a_failed_seed_write_leaves_without_finalizing() {
-    leaves_without_finalizing::<SeedFails>(
-        "store_libpinyin::open_faults::a_failed_seed_write_leaves_without_finalizing",
-        "seed",
-    );
 }
 
 #[test]

@@ -177,7 +177,7 @@ returns `false` before any bigram write. A prefix row then returns `true`
 its predecessor's total (`:2618-2639`). These choices leave `m_modified`
 unchanged.
 
-`GenericUserStore<S>::observe_predicted_prefix(&mut self, cur: Token) ->
+`UserStore::observe_predicted_prefix(&mut self, cur: Token) ->
 Result<u64, UserStoreError>` implements the prefix arm. Its returned `u64`
 is the **seed 69**, not the unigram increment 483 or the resulting counter.
 The actual caller, `pinyin_choose_predicted_candidate` in the C facade,
@@ -794,12 +794,12 @@ Architecture — a session scratch behind the value engine:
   through the *system* bigram's hash path answers
   `kcdbopen: missing magic data of the file` on Kyoto Cabinet.
 * `oxpinyin_user::store_libpinyin` — `UserStore::open_libpinyin`: the
-  profile seeds a **session store in process memory** (the backend's
-  own on-memory ordered container — Kyoto Cabinet `ProtoTreeDB`, tkrzw
-  `BabyDBM`, Berkeley DB a null-file-name `DB_BTREE` —
-  `WriteStore::create_in_memory`), every W6 value operation runs
-  unchanged against it, and `save()` exports the session values back
-  into the file set. **Amendment (2026-10-01, #546, #531):** this
+  profile is read into the **session's state in process memory** (the
+  user library arenas, the pinyin index and phrase table, the pin's user
+  bigram container, the live system items and the libraries'
+  stored-total offsets), every W6 value operation runs against that
+  state, and `save()` exports the session back into the file set.
+  **Amendment (2026-10-01, #546, #531):** this
   replaced a temp-file scratch under `std::env::temp_dir()`. The pin
   reads no temp variable and opens no temp file anywhere under `src` at
   074a2219 (its context holds the loaded profile in memory,
