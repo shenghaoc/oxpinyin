@@ -1619,7 +1619,7 @@ mod tests {
     };
     use std::cell::RefCell;
 
-    use crate::config::EmptyConfigSource;
+    use crate::SessionSettings;
     use crate::error::EngineError;
     use crate::fixture_doubles::{FixtureDictionary, FixtureLanguageModel};
     use crate::session::build_scan_matrix;
@@ -2579,7 +2579,7 @@ mod tests {
     #[test]
     fn session_types_compose() {
         let session = crate::Session::<FixtureDictionary, FixtureLanguageModel>::new(
-            &EmptyConfigSource,
+            SessionSettings::default(),
             FixtureDictionary::default(),
             FixtureLanguageModel::default(),
         )

@@ -59,7 +59,7 @@ use oxpinyin_data::{
     AddonDictionary, BigramLanguageModel, DictError, LmError, PunctTable, SystemDbm,
     SystemDictionary,
 };
-use oxpinyin_engine::{ConfigSource, EngineError, Session, StoragePaths};
+use oxpinyin_engine::{EngineError, Session, SessionSettings, StoragePaths};
 use oxpinyin_user::{
     ItemOrigin, LibraryLoopRows, LibraryLoopStop, LiveSystemItems, PinyinKey, SaveBaseline,
     SystemLibrary, UnigramAdd, UserConfLaw, UserLookup, UserStore, UserStoreError,
@@ -2364,10 +2364,9 @@ impl Runtime {
     /// Builds retained composition state for this backend set. Operations
     /// bind it to current readers through [`Self::session`].
     ///
-    /// Configuration arrives per call (`oxpinyin-capi` passes its
-    /// `Config`; simple embedders pass
-    /// [`EmptyConfigSource`](oxpinyin_engine::EmptyConfigSource)), because the
-    /// session reads it once at construction.
+    /// Settings arrive per call (the facade passes its context's; simple
+    /// embedders pass [`SessionSettings::default`]), because the session
+    /// reads them once at construction.
     ///
     /// # Errors
     ///
@@ -2377,9 +2376,9 @@ impl Runtime {
     /// key-cost walk and reads no dictionary or model records.
     pub fn new_session(
         &self,
-        config: &impl ConfigSource,
+        settings: SessionSettings,
     ) -> Result<oxpinyin_engine::SessionState, EngineError> {
-        Session::new(config, self.dict(), self.lm()).map(Session::into_state)
+        Session::new(settings, self.dict(), self.lm()).map(Session::into_state)
     }
 
     /// Borrow the merged dictionary for one operation.

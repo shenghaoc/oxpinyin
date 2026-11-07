@@ -102,7 +102,7 @@ use oxpinyin_core::{
 };
 
 use super::{KeyOutcome, Selection, Session};
-use crate::config::EmptyConfigSource;
+use crate::SessionSettings;
 use crate::error::{EngineError, TrainingSpanFault};
 use crate::fixture_doubles::{
     FixtureDictionary, FixtureError, FixtureLanguageModel, FrequencyFixtureModel,
@@ -138,7 +138,8 @@ impl LanguageModel for Silent {
 }
 
 fn session() -> Session<Silent, Silent> {
-    Session::new(&EmptyConfigSource, Silent, Silent).expect("opening a session cannot fail yet")
+    Session::new(SessionSettings::default(), Silent, Silent)
+        .expect("opening a session cannot fail yet")
 }
 
 fn type_text(session: &mut Session<Silent, Silent>, text: &str) {
@@ -372,7 +373,7 @@ fn a_longer_row_surfaces_when_bit_2_clear_and_vanishes_when_set() {
     // production frequency-ranked construction
     // (`has_real_unigrams`, `lookup.rs`).
     let mut session = Session::new(
-        &EmptyConfigSource,
+        SessionSettings::default(),
         FixtureDictionary::parse(LONGER_VOCAB).expect("authored fixture"),
         FrequencyFixtureModel::parse(LONGER_VOCAB, "").expect("authored fixture"),
     )
@@ -424,7 +425,7 @@ fn a_longer_row_surfaces_when_bit_2_clear_and_vanishes_when_set() {
 /// eagerly or, as the C facades do, defers it to the first reader.
 fn longer_session(defer: bool) -> Session<FixtureDictionary, FrequencyFixtureModel> {
     let mut session = Session::new(
-        &EmptyConfigSource,
+        SessionSettings::default(),
         FixtureDictionary::parse(LONGER_VOCAB).expect("authored fixture"),
         FrequencyFixtureModel::parse(LONGER_VOCAB, "").expect("authored fixture"),
     )
@@ -530,7 +531,7 @@ impl Dictionary for Flaky {
 fn a_failed_deferred_build_stays_stale_and_is_retried() {
     let open = |defer: bool| {
         let mut session = Session::new(
-            &EmptyConfigSource,
+            SessionSettings::default(),
             Flaky {
                 inner: FixtureDictionary::parse(LONGER_VOCAB).expect("authored fixture"),
                 failures: core::cell::Cell::new(0),
@@ -571,7 +572,7 @@ fn a_longer_row_rides_an_empty_column_and_the_reserved_slot() {
     // composition (`prefix_len = m_parsed_key_len`, `pinyin.cpp:1876`)
     // regardless of the lookup offset.
     let mut session = Session::new(
-        &EmptyConfigSource,
+        SessionSettings::default(),
         FixtureDictionary::parse(LONGER_VOCAB).expect("authored fixture"),
         FrequencyFixtureModel::parse(LONGER_VOCAB, "").expect("authored fixture"),
     )
@@ -626,7 +627,7 @@ impl UserModel for Recorder {
 
 fn train_session() -> Session<FixtureDictionary, FixtureLanguageModel> {
     Session::new(
-        &EmptyConfigSource,
+        SessionSettings::default(),
         FixtureDictionary::parse(TRAIN_VOCAB).expect("authored fixture"),
         FixtureLanguageModel::parse(TRAIN_VOCAB, "").expect("authored fixture"),
     )
@@ -1546,7 +1547,7 @@ fn dynamic_adjust_run(
         })
         .collect();
     let mut session = Session::new(
-        &EmptyConfigSource,
+        SessionSettings::default(),
         SystemPhrases(phrases),
         CountingBigrams {
             unigrams: FixedUnigrams {
@@ -1920,7 +1921,7 @@ impl LanguageModel for FixedUnigrams {
 #[test]
 fn real_unigrams_skip_the_key_cost_walk_but_the_fallback_keeps_it() {
     let real = Session::new(
-        &EmptyConfigSource,
+        SessionSettings::default(),
         Silent,
         FixedUnigrams {
             system: 14,
@@ -1936,7 +1937,7 @@ fn real_unigrams_skip_the_key_cost_walk_but_the_fallback_keeps_it() {
         "a real-frequency model must not walk the key inventory it cannot read"
     );
 
-    let fallback = Session::new(&EmptyConfigSource, Silent, Silent).expect("Session::new");
+    let fallback = Session::new(SessionSettings::default(), Silent, Silent).expect("Session::new");
     assert!(!fallback.model.has_real_unigrams());
     assert_eq!(
         fallback.key_costs.len(),
@@ -1955,7 +1956,7 @@ fn real_unigrams_skip_the_key_cost_walk_but_the_fallback_keeps_it() {
 fn fallback_model_with_an_empty_key_cost_table_is_rejected() {
     // The harmful direction: without the table the fallback scorer prices
     // every edge at UNKNOWN_COST and decodes wrongly in silence.
-    let _ = Session::new_with_key_costs(&EmptyConfigSource, Silent, Silent, Vec::new());
+    let _ = Session::new_with_key_costs(SessionSettings::default(), Silent, Silent, Vec::new());
 }
 
 #[cfg(debug_assertions)]
@@ -1965,7 +1966,7 @@ fn real_unigram_model_with_a_populated_key_cost_table_is_rejected() {
     // The wasteful direction: this is what reverting either gate looks like
     // from the constructor's side.
     let _ = Session::new_with_key_costs(
-        &EmptyConfigSource,
+        SessionSettings::default(),
         Silent,
         FixedUnigrams {
             system: 14,
@@ -1989,7 +1990,7 @@ fn addon_candidates_rank_on_their_own_amplified_scale() {
     // branch over the addon facade's. The same stored 14 therefore
     // lands on 3 over 51,051,831 but 6 over the half-size addon total.
     let session = Session::new(
-        &EmptyConfigSource,
+        SessionSettings::default(),
         Silent,
         FixedUnigrams {
             system: 14,
@@ -2041,7 +2042,7 @@ fn candidate_frequencies_price_a_captured_live_unigram_without_the_model() {
     // model as before; and a captured count runs through the same
     // arithmetic as the model's answer would.
     let session = Session::new(
-        &EmptyConfigSource,
+        SessionSettings::default(),
         Silent,
         FixedUnigrams {
             system: 999_999,
@@ -2124,7 +2125,7 @@ fn a_window_ranked_after_a_training_write_prices_the_rewritten_item() {
 
     let live = std::rc::Rc::new(std::cell::Cell::new((5_000_000, 10_000_000)));
     let mut session = Session::new(
-        &EmptyConfigSource,
+        SessionSettings::default(),
         LiveUnigramDict {
             live: std::rc::Rc::clone(&live),
         },
@@ -2184,7 +2185,7 @@ fn window_scan_emits_system_candidates_before_addon_candidates() {
     // addon facade's, the array order `_append_items`
     // (`pinyin.cpp:1769-1791`) lays down.
     let mut session = Session::new(
-        &EmptyConfigSource,
+        SessionSettings::default(),
         TwoFacadeDict {
             system: PhraseEntry::new(PhraseToken::new(0x0100_0001), "系".to_owned()),
             addon: PhraseEntry::new(PhraseToken::new(0x0500_0002), "附".to_owned()),
@@ -2373,7 +2374,7 @@ impl LanguageModel for TrellisModel {
 
 fn trellis_session() -> Session<FixtureDictionary, TrellisModel> {
     Session::new(
-        &EmptyConfigSource,
+        SessionSettings::default(),
         FixtureDictionary::parse(TRAIN_VOCAB).expect("authored fixture"),
         TrellisModel {
             blended: 100,
@@ -3354,7 +3355,7 @@ fn candidates_at_a_divided_split_column_answers_the_split_window() {
                                token=3\tkeys=e\ttext=恶\tunigram=800\n";
     let split_session = || {
         Session::new(
-            &EmptyConfigSource,
+            SessionSettings::default(),
             FixtureDictionary::parse(SPLIT_VOCAB).expect("authored fixture"),
             FixtureLanguageModel::parse(SPLIT_VOCAB, "").expect("authored fixture"),
         )
@@ -3800,7 +3801,7 @@ fn choosing_behind_the_composition_moves_the_record_back() {
                          token=2\tkeys=hao\ttext=好\tunigram=900\n\
                          token=3\tkeys=ni,hao\ttext=你好\tunigram=800\n";
     let mut session = Session::new(
-        &EmptyConfigSource,
+        SessionSettings::default(),
         FixtureDictionary::parse(VOCAB).expect("authored fixture"),
         FixtureLanguageModel::parse(VOCAB, "").expect("authored fixture"),
     )
@@ -3878,7 +3879,7 @@ fn typed_tones_keep_only_user_phrases_with_a_matching_stored_tone() {
     // stored as ni3'hao3 while `ni3hao3` and toneless `nihao` do.
     let texts = |input: &str| -> Vec<String> {
         let mut session = Session::new(
-            &EmptyConfigSource,
+            SessionSettings::default(),
             StoredTone3,
             FixedUnigrams {
                 system: 14,
@@ -4017,7 +4018,7 @@ fn chained_resplit_and_divided_windows_read_the_retained_matrix() {
                               token=2\tkeys=ang\ttext=昂\tunigram=900\n";
     for (raw, offset, wanted, end) in [("banangang", 6, "昂", 9), ("lianai", 2, "安", 4)] {
         let mut session = Session::new(
-            &EmptyConfigSource,
+            SessionSettings::default(),
             FixtureDictionary::parse(HALF_VOCAB).expect("fixture"),
             FixedUnigrams {
                 system: 1000,
@@ -4047,7 +4048,7 @@ fn changing_sentence_collapse_rebuilds_full_pinyin_split_windows() {
                               token=2\tkeys=ang\ttext=昂\tunigram=900\n";
     for (raw, offset, wanted, end) in [("banangang", 6, "昂", 9), ("lianai", 2, "安", 4)] {
         let mut session = Session::new(
-            &EmptyConfigSource,
+            SessionSettings::default(),
             FixtureDictionary::parse(HALF_VOCAB).expect("fixture"),
             FixedUnigrams {
                 system: 1000,
@@ -4146,7 +4147,7 @@ fn retained_exact_key_windows_search_the_reserved_end_slot() {
                                token=2\tkeys=hao\ttext=好\tunigram=900\n";
 
     let mut session = Session::new(
-        &EmptyConfigSource,
+        SessionSettings::default(),
         FixtureDictionary::parse(EXACT_VOCAB).expect("fixture"),
         FixedUnigrams {
             system: 1000,
@@ -4645,7 +4646,7 @@ fn wide_abbreviation_session(
     item: Option<oxpinyin_core::PronunciationRows>,
 ) -> Session<ItemDictionary, TrellisModel> {
     let mut session = Session::new(
-        &EmptyConfigSource,
+        SessionSettings::default(),
         ItemDictionary {
             inner: FixtureDictionary::parse(TRAIN_VOCAB).expect("authored fixture"),
             items: item.into_iter().map(|rows| (7, rows)).collect(),
@@ -4772,7 +4773,7 @@ fn candidate_collection_uses_unpriced_system_and_addon_operations() {
     }
     let dictionary = CandidateDict;
     let session = Session::new_with_key_costs(
-        &EmptyConfigSource,
+        SessionSettings::default(),
         &dictionary,
         Silent,
         vec![oxpinyin_core::cost::UNKNOWN_COST; oxpinyin_core::SYLLABLE_KEY_COUNT],
@@ -4811,7 +4812,7 @@ fn a_searched_row_the_dedup_removes_is_still_a_ranked_row() {
     // only searched row, 你, duplicates the sentence row: the window keeps
     // the sentence row alone, and still reports the ranked row.
     let mut session = Session::new(
-        &EmptyConfigSource,
+        SessionSettings::default(),
         FixtureDictionary::parse(ONE_PHRASE_VOCAB).expect("authored fixture"),
         FrequencyFixtureModel::parse(ONE_PHRASE_VOCAB, "").expect("authored fixture"),
     )

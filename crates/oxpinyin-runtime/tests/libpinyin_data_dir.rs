@@ -10,7 +10,7 @@
 //! over the same package ([contract references](../../../docs/runbooks/contract-references.md)).
 
 use oxpinyin_core::{Dictionary, LanguageModel, PhraseToken, SyllableKey};
-use oxpinyin_engine::{EmptyConfigSource, KeyOutcome};
+use oxpinyin_engine::{KeyOutcome, SessionSettings};
 use oxpinyin_runtime::Runtime;
 
 #[path = "common/contract_data.rs"]
@@ -136,7 +136,9 @@ fn an_unmodified_libpinyin_data_directory_opens_and_decodes() {
     assert!(art.iter().any(|entry| entry.text() == "二簧"), "{art:?}");
 
     // A session decodes over the same handles.
-    let mut session = runtime.new_session(&EmptyConfigSource).expect("session");
+    let mut session = runtime
+        .new_session(SessionSettings::default())
+        .expect("session");
     let mut session = runtime.session(&mut session);
     assert_eq!(
         session.type_pinyin("nihao").expect("typing"),

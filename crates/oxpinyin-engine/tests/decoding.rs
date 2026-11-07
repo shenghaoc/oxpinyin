@@ -7,7 +7,7 @@
 
 use std::collections::BTreeSet;
 
-use oxpinyin_engine::{Candidate, CandidateKind, EmptyConfigSource, Selection, Session};
+use oxpinyin_engine::{Candidate, CandidateKind, Selection, Session, SessionSettings};
 
 #[path = "../../oxpinyin-core/tests/common/fixture_doubles.rs"]
 mod fixture_doubles;
@@ -26,7 +26,7 @@ type Fixtures = Session<FixtureDictionary, FixtureLanguageModel>;
 
 fn session() -> Fixtures {
     Session::new(
-        &EmptyConfigSource,
+        SessionSettings::default(),
         FixtureDictionary::parse(VOCAB).expect("committed fixture"),
         FixtureLanguageModel::parse(VOCAB, BIGRAM).expect("committed fixtures"),
     )
@@ -45,7 +45,7 @@ fn typed(text: &str) -> Fixtures {
 
 fn session_from(vocab: &str) -> Fixtures {
     Session::new(
-        &EmptyConfigSource,
+        SessionSettings::default(),
         FixtureDictionary::parse(vocab).expect("test vocabulary"),
         FixtureLanguageModel::parse(vocab, "# no bigrams\n").expect("test model"),
     )
@@ -373,7 +373,7 @@ fn type_pinyin_b_hash_ing_prefers_bu_family_not_bing() {
     // Oracle fixture rank-1 for b#ing is 不 (b-family), not 并 (bing).
     // Re-filtering junk in type_pinyin would collapse to bing and regress.
     let mut session = Session::new(
-        &EmptyConfigSource,
+        SessionSettings::default(),
         FixtureDictionary::parse(JUNK_VOCAB).expect("junk vocab"),
         FixtureLanguageModel::parse(JUNK_VOCAB, "").expect("junk unigrams"),
     )
@@ -396,7 +396,7 @@ fn type_pinyin_b_hash_ing_prefers_bu_family_not_bing() {
 
     // Contrast: filtered collapse would type as bing and prefer 并.
     let mut collapsed = Session::new(
-        &EmptyConfigSource,
+        SessionSettings::default(),
         FixtureDictionary::parse(JUNK_VOCAB).expect("junk vocab"),
         FixtureLanguageModel::parse(JUNK_VOCAB, "").expect("junk unigrams"),
     )
@@ -438,12 +438,10 @@ fn every_candidate_reports_a_span_it_could_really_absorb() {
 
 #[test]
 fn turning_incomplete_pinyin_off_stops_at_the_initial() {
-    use oxpinyin_engine::{Config, ConfigValue};
-
-    let mut config = Config::default();
-    config.set("incomplete-pinyin", ConfigValue::Bool(false));
     let mut session = Session::new(
-        &config,
+        SessionSettings {
+            incomplete_pinyin: false,
+        },
         FixtureDictionary::parse(VOCAB).expect("committed fixture"),
         FixtureLanguageModel::parse(VOCAB, BIGRAM).expect("committed fixtures"),
     )

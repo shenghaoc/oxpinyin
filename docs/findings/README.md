@@ -100,5 +100,5 @@ A parenthetical after a status is a note about scope or provenance, not a new st
 | [`trellis-adjusted-cost-s1-s2`](trellis-adjusted-cost-s1-s2.md) | Pinyin trellis adjusted-cost comparison | policy record |
 | [`upstream-divergences`](upstream-divergences.md) | Upstream divergences | register (living) |
 | [`upstream-report-drafts`](upstream-report-drafts.md) | Upstream report drafts — the libpinyin report-back batch | open (drafts, not filed) |
-| [`upstream-schema`](upstream-schema.md) | Findings — upstream GSettings schema | historical (pre-P6); machine-read |
+| [`upstream-schema`](upstream-schema.md) | Findings — upstream GSettings schema | historical (pre-P6) |
 | [`user-store`](user-store.md) | libpinyin user store — behaviour characterization (W6-T0) | characterization (W6) |

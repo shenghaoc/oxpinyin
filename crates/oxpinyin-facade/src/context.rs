@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32};
 
 use oxpinyin_core::{DoublePinyinScheme, FullPinyinScheme, OptionBits, ZhuyinScheme};
-use oxpinyin_engine::{Config, ConfigValue};
+use oxpinyin_engine::SessionSettings;
 use oxpinyin_runtime::{
     FileType, OpenError, RemapStep, RowFault, Runtime, TableConfError, directory_reads_as_a_chunk,
 };
@@ -355,9 +355,9 @@ impl LiveOptions {
 /// raised counter on disk. Drop also finalises a store that was not explicitly
 /// finished; a later drop never repeats the marker write.
 pub struct ContextCore {
-    /// The layered configuration instances are opened with (the pinned
-    /// upstream defaults).
-    pub config: Config,
+    /// The settings instances are opened with: incomplete pinyin on until
+    /// the first `set_options`, then that word's bit.
+    pub settings: SessionSettings,
     /// The shared concrete assembly and the context's sole user store;
     /// instances borrow it per operation. `pinyin_init` answers NULL when
     /// the system tables do not load (`pinyin.cpp:337-339`), so every
@@ -435,21 +435,20 @@ impl ContextCore {
             OpenFailure::Runtime(error)
         })?;
         Ok(Self {
-            config: Config::default(),
+            settings: SessionSettings::default(),
             runtime,
             live: LiveOptions::new(option_word),
         })
     }
 
     /// `set_options`'s law: the word is stored, the bools it carries are
-    /// mirrored into their live flags, and the `incomplete-pinyin`
-    /// configuration key follows the word so sessions opened later agree
-    /// with sessions already allocated.
+    /// mirrored into their live flags, and the incomplete-pinyin setting
+    /// follows the word so sessions opened later agree with sessions
+    /// already allocated.
     pub fn set_options(&mut self, options: u32) {
         let enabled = (options & oxpinyin_core::PINYIN_INCOMPLETE) != 0;
         let use_tone = (options & oxpinyin_core::USE_TONE) != 0;
-        self.config
-            .set("incomplete-pinyin", ConfigValue::Bool(enabled));
+        self.settings.incomplete_pinyin = enabled;
         let live = &self.live;
         live.incomplete
             .store(enabled, std::sync::atomic::Ordering::Relaxed);
@@ -464,7 +463,7 @@ impl ContextCore {
     #[must_use]
     pub fn alloc_instance(&self) -> Option<crate::instance::InstanceCore> {
         let runtime = &self.runtime;
-        let mut session = runtime.new_session(&self.config).ok()?;
+        let mut session = runtime.new_session(self.settings).ok()?;
         runtime.session(&mut session).set_defer_list_builds(true);
         Some(crate::instance::InstanceCore::new(
             session,

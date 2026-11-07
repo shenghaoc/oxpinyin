@@ -29,7 +29,7 @@ A shell supplies platform facts as **data** and receives platform-free results:
 |---|---|
 | `KeyInput` — logical key, modifiers, committed text | `KeyOutcome` |
 | `StoragePaths` — where user and system data live | preedit spans + candidates |
-| a `ConfigSource` — typed settings by key | deterministic commits |
+| `SessionSettings` — the typed settings a session opens with | deterministic commits |
 
 ## Deliberately absent
 
@@ -38,9 +38,9 @@ place a portable API usually leaks:
 
 - **No keysyms.** `LogicalKey` is an abstract key, never an IBus/X11 keyval.
   Translation from `IBUS_KEY_*` lives in `oxpinyin-capi` and nowhere else.
-- **No GSettings, no dconf, no registry.** Configuration arrives through
-  `ConfigSource`. The layered `Config` that satisfies it is W4-T0c; a GSettings
-  backend is a shell concern outside both.
+- **No GSettings, no dconf, no registry.** Settings arrive as a
+  `SessionSettings` value; a settings store is a shell concern outside the
+  engine.
 - **No path discovery.** The engine never calls `dirs`, `XDG_*`, `%APPDATA%`
   or `NSSearchPathForDirectoriesInDomains`. It uses the `StoragePaths` it is
   handed.
@@ -113,21 +113,14 @@ re-deriving it.
 ```rust
 pub struct StoragePaths { user_data_dir: PathBuf, system_data_dirs: Vec<PathBuf> }
 
-pub enum ConfigValue { Bool(bool), Int(i32), Int64(i64), Text(String) }  // #[non_exhaustive]
-pub trait ConfigSource {
-    fn get(&self, key: &str) -> Option<&ConfigValue>;
-    // defaulted typed readers: bool / int / int64 / text
-}
+pub struct SessionSettings { pub incomplete_pinyin: bool }   // Default: true
 ```
 
-The four `ConfigValue` variants mirror the GSettings types actually used by the
-upstream schema frozen in `docs/findings/upstream-schema.md` (`b`, `i`, `x`,
-`s`). `ConfigSource` was object-safe and grew only by defaulted methods; that
-constraint was Rust-source compatibility only and is retired (2026-10-18 UTC).
-
-W4-T0c supplies the concrete layered `Config`, its captured upstream defaults
-and the pure merge function. The replay harness (W4-T4b) is the second
-consumer, with a file-backed source for test scenarios.
+A session opens under `PINYIN_INCOMPLETE | USE_DIVIDED_TABLE |
+USE_RESPLIT_TABLE`, with `PINYIN_INCOMPLETE` taken from `incomplete_pinyin`.
+Every other option bit arrives through `Session::set_options` from the C ABI's
+option word. The keyed `ConfigSource`, the layered `Config` and its captured
+upstream defaults were removed; see the correction log.
 
 ## Session
 
@@ -141,7 +134,7 @@ where
     L: LanguageModel<Token = PhraseToken>,
     L::Error: Display,
 {
-    pub fn new(config: &dyn ConfigSource, paths: StoragePaths, dictionary: D, model: L)
+    pub fn new(settings: SessionSettings, dictionary: D, model: L)
         -> Result<Self, EngineError>;
 
     pub fn process_key(&mut self, input: &KeyInput) -> Result<KeyOutcome, EngineError>;
@@ -227,9 +220,8 @@ and nothing else.
   `Space` and `select` meaningful at every stage.
 - Every method is deterministic for the same (input, state, config).
 
-`EmptyConfigSource` is supplied for callers that have no configuration yet:
-every key is absent and every session setting falls back to its documented
-default.
+`SessionSettings::default()` serves callers that have no settings of their
+own: incomplete pinyin on, with the divided and resplit tables.
 
 ## Errors
 
@@ -302,3 +294,12 @@ for a signature change no longer bind. Its behavioural contract (candidate
 order, preedit coverage, selection and commit semantics, error conditions that
 the C facades surface) stays in force. Entries above are history and are not
 rewritten.
+
+**2026-11-07 UTC — configuration framework removed (maintainer ruling).** The
+ibus-libpinyin defaults do not belong in oxpinyin. `Config`, `ConfigValue`,
+`ConfigSource`, `EmptyConfigSource` and the 69 captured upstream defaults
+are gone; `Session::new` and `Runtime::new_session` take a
+`SessionSettings` value. The session's default options, each C facade's
+initial option word and the point at which an option change reaches existing
+instances are unchanged. `upstream-schema.md` stays as a historical finding
+that no code reads.

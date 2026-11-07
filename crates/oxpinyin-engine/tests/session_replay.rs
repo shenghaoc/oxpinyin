@@ -10,7 +10,7 @@
 //! `cfg(target_os)` appears anywhere beneath it.
 
 use oxpinyin_core::{Dictionary, SyllableKey};
-use oxpinyin_engine::{EmptyConfigSource, EngineError, Selection, Session};
+use oxpinyin_engine::{EngineError, Selection, Session, SessionSettings};
 
 #[path = "../../oxpinyin-core/tests/common/fixture_doubles.rs"]
 mod fixture_doubles;
@@ -46,7 +46,7 @@ fn session() -> Fixtures {
     }
 
     Session::new(
-        &EmptyConfigSource,
+        SessionSettings::default(),
         dictionary,
         FixtureLanguageModel::parse(VOCAB, BIGRAM).expect("committed fixtures"),
     )
