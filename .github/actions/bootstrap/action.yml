@@ -8,14 +8,13 @@ description: |-
   profile), optional CI tools (uv through astral-sh/setup-uv, with the
   managed Python and its build check; just,
   cargo-nextest, cargo-llvm-cov and cargo-deny through
-  taiki-e/install-action), and an optional Swatinem/rust-cache
+  taiki-e/install-action, and cargo-c through cargo install), and an optional Swatinem/rust-cache
   restore/save (its post step runs with the composite's completion).
 
   The actions/checkout step stays inline in every calling job. A local
-  `./` action introduced by a PR cannot wrap the checkout that would
-  make it visible: pull_request runs resolve it before any checkout
-  exists, so a bootstrap-owned checkout died at step 1 with "Can't find
-  'action.yml'" in every job. Call this right after checkout instead.
+  `./` action cannot run the checkout that makes it visible: a job
+  resolves it only after a checkout exists. Call this right after
+  checkout.
 
   The optional Rust and tool steps default to off, so a bare call only
   installs and checks Bash.
@@ -70,6 +69,13 @@ inputs:
     description: >-
       Install cargo-deny with taiki-e/install-action. String 'true'/'false'
       (composite-action inputs are strings).
+    required: false
+    default: 'false'
+  cargo-c:
+    description: >-
+      Install cargo-c with cargo install into a fresh prefix and put it on
+      PATH. Needs the Rust toolchain. String 'true'/'false' (composite-action
+      inputs are strings).
     required: false
     default: 'false'
   rust-cache:
@@ -193,6 +199,18 @@ runs:
       with:
         tool: cargo-deny@0.20
         fallback: none
+
+    # Exact on purpose: a fresh runner has nothing to reuse, and cargo-c's
+    # rust-version rises with each release (0.10.24 needs Rust 1.95, 0.10.26
+    # needs 1.97), so an unpinned install breaks once it passes the pinned
+    # Rust. Any cargo-c at or above the minimum that `just doctor` reports
+    # builds the same objects (docs/packaging.md, "Regeneration").
+    - name: Install cargo-c
+      if: inputs.cargo-c == 'true'
+      shell: bash
+      run: |
+        cargo install cargo-c --version 0.10.25 --locked --root "$RUNNER_TEMP/cargo-c"
+        printf '%s/cargo-c/bin\n' "$RUNNER_TEMP" >> "$GITHUB_PATH"
 
     # Pinned to the v2.9.2 tag commit (do not bump without re-verifying).
     - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2

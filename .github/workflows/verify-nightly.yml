@@ -1,26 +1,12 @@
 name: verify-nightly
 
-# Tier-3 scheduled verification (docs/safety/ci-strategy.md): everything
-# too slow or too nightly for the PR gate. Findings here open issues;
-# nothing here blocks a merge, because branch protection requires only
-# ci.yml's `ci-aggregate`. The coverage floor also runs as an advisory PR
-# check (coverage.yml). Lizard's CCN limit moved to ci.yml's lint job on
-# 2026-09-08 — seconds of runtime, so it gates the PR. The public-API snapshot ratchet
-# was retired on 2026-10-18 UTC: the C APIs/ABIs are the only supported
-# external interfaces (AGENTS.md, "External interfaces").
+# Scheduled verification (docs/safety/ci-strategy.md): the checks too slow
+# for the PR gate. Findings here open issues. Nothing here blocks a merge,
+# because branch protection requires only ci.yml's `ci-aggregate`.
 #
-# No trial lanes remain: the Miri, cargo-mutants and cargo-geiger jobs
-# were retired on 2026-09-01. There are
-# no continue-on-error lanes; every job in this workflow must be green.
-# Surviving lanes: fuzz-soak, overflow-lane, coverage (via
-# coverage.yml, also an advisory path-filtered PR check), perf-snapshot,
-# test-windows (moved from ci.yml
-# on 2026-10-22), test-macos (moved from ci.yml on 2026-10-31).
-# A separate nextest lane over the Kyoto Cabinet workspace was removed on
-# 2026-10-22: overflow-lane runs the same workspace test inventory under
-# Kyoto Cabinet, and ci.yml's Linux test job already runs nextest.
-# test-windows has run nextest too since 2026-10-30, and test-macos since
-# before it moved here.
+# Jobs: the oracle and differentials, fuzz-soak, overflow-lane, coverage
+# (coverage.yml, also an advisory PR check), perf-snapshot, test-windows and
+# test-macos. No job may fail: there are no continue-on-error jobs.
 #
 # Every Linux job runs in a debian:testing container in the
 # store-backends.yml style (test-windows runs on windows-latest,
@@ -89,15 +75,12 @@ jobs:
         with:
           cell: tkrzw
 
-  # Every fuzz target, 3 minutes each, ASan+LSan on by default with
-  # cargo-fuzz 0.13.2. The only fuzz lane: ci.yml's per-PR build and
-  # smoke pass moved here on 2026-09-23, so a target that no longer
-  # compiles or initializes surfaces here, the night after it lands.
-  # The list comes from `cargo fuzz list`, so a new target cannot be
-  # left out of the soak:
-  # the five-name literal this replaced silently skipped the three targets
-  # added on 2026-09-08. The dict-loader corpus is seeded from the
-  # committed w3 tables so the decoder starts from valid headers.
+  # Every fuzz target, 3 minutes each, with ASan and LSan on by default. This
+  # is the only fuzz job, so a target that does not compile or initialize
+  # fails here, the night after it lands. The list comes from
+  # `cargo fuzz list`, so a new target cannot be left out. The dict-loader
+  # corpus is seeded from the committed w3 tables, so the decoder starts
+  # from valid headers.
   fuzz-soak:
     # Skipped by a windows_only or macos_only dispatch; runs on the schedule.
     if: ${{ !inputs.windows_only && !inputs.macos_only }}
@@ -144,7 +127,7 @@ jobs:
           printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
           . "$HOME/.cargo/env"
           rustup toolchain install
-      # Exact on purpose (#1074): cargo-fuzz passes unstable flags to the pinned nightly above, so the two are pinned together.
+      # Exact on purpose: cargo-fuzz passes unstable flags to the pinned nightly above, so the two move together.
       - run: cargo install cargo-fuzz --version 0.13.2 --locked
         working-directory: fuzz
       # Fuzzing memory, half one: the corpora persist across nightly runs
@@ -250,11 +233,9 @@ jobs:
   # night, compares tonight against the previous sample, and reports. Nothing
   # here runs on the PR path and nothing here blocks a merge.
   #
-  # The per-PR gate this replaces was rejected as infeasible — a gate is a
-  # before-and-after comparison and a PR run cannot produce a trustworthy
-  # pair. The decision, the reasons, and what this lane may and may not claim
-  # are in docs/perf/ci-perf-size-gate-proposal-2026-09-09.md. Three of its
-  # rules are load-bearing here:
+  # A PR run cannot produce a trustworthy before-and-after pair, so this is a
+  # series, not a gate (docs/perf/ci-perf-size-gate-proposal-2026-09-09.md).
+  # Three rules apply:
   #
   #   - Record freely, threshold almost nothing. A flag means "a human should
   #     look", never "this merge is bad".
@@ -296,9 +277,8 @@ jobs:
           safe-directory: 'true'
           rustup: 'true'
           uv: 'true'
-      # The snapshot runs tkrzw (the w3 fixture directory its tooling
-      # opens is the tkrzw one), the workspace default again since
-      # 2026-10-30, from the tkrzw action below. valgrind supplies the instruction
+      # The snapshot runs tkrzw, the workspace default, from the tkrzw action
+      # below: its tooling opens the tkrzw w3 fixture directory. valgrind supplies the instruction
       # count; it is optional by design — the snapshot recipe records null
       # rather than zero when it is absent, so losing it degrades the sample
       # instead of corrupting the series.
@@ -311,13 +291,10 @@ jobs:
         uses: ./.github/actions/tkrzw
       # libssl-dev above: cargo-c pulls openssl-sys through the cargo crate,
       # and without it the build script dies with "Could not find directory of
-      # OpenSSL installation". Confirmed by dispatching this lane once
-      # without it.
-      # Exact on purpose (#1074): a fresh runner has nothing to reuse, and cargo-c's rust-version
-      # rises with each release (0.10.24 needs Rust 1.95, 0.10.26 needs 1.97), so an unpinned
-      # install would break once it passes the pinned Rust. Any cargo-c at or above the minimum
-      # that `just doctor` reports builds the same objects (docs/packaging.md, "Regeneration").
-      - run: cargo install cargo-c --version 0.10.25 --locked
+      # OpenSSL installation".
+      - uses: ./.github/actions/bootstrap
+        with:
+          cargo-c: 'true'
       - name: Measure
         run: >
           uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev
@@ -422,9 +399,8 @@ jobs:
 
   # The full Windows workspace: clippy and the tests over the workspace
   # less WINDOWS_EXCLUDES, built with MSVC
-  # and the tkrzw action, and GLib from vcpkg. Moved here from
-  # ci.yml on 2026-10-22: it runs every night and on manual dispatch, not on
-  # every PR. Dispatch it on the branch (windows_only: true) before merging
+  # and the tkrzw action, and GLib from vcpkg. It runs every night and on
+  # manual dispatch, not on every PR. Dispatch it on the branch (windows_only: true) before merging
   # changes to Windows-sensitive storage, filesystem or native-build code,
   # toolchain or relevant dependency updates, and releases
   # (docs/runbooks/setup.md, "Native Windows"). Not skipped by windows_only;
@@ -567,8 +543,7 @@ jobs:
   # shipped macOS libraries are also built
   # and checked separately. The tools Python harness runs after the Rust steps.
   #
-  # Moved here from ci.yml on 2026-10-31: platforms other than Linux are
-  # unstable but not unusable (maintainer decision), so the job runs every
+  # Platforms other than Linux are unstable but usable, so the job runs every
   # night and on manual dispatch, not on every PR. Dispatch it on the branch
   # (macos_only: true) before merging macOS-sensitive changes
   # (docs/runbooks/setup.md, "When the macOS job runs"). Not skipped by
@@ -601,11 +576,9 @@ jobs:
       - name: Provision tkrzw (built at the setup.sh revision and cached)
         uses: ./.github/actions/tkrzw
       - name: Install cargo-c for shipped macOS libraries
-        run: |
-          # Same pinned version as perf-snapshot; a fresh prefix includes the
-          # actual provisioning cost rather than reusing a runner's cargo-c.
-          cargo install cargo-c --version 0.10.25 --locked --root "$RUNNER_TEMP/cargo-c"
-          echo "$RUNNER_TEMP/cargo-c/bin" >> "$GITHUB_PATH"
+        uses: ./.github/actions/bootstrap
+        with:
+          cargo-c: 'true'
       - name: Check shipped macOS library exports
         run: |
           stage="$RUNNER_TEMP/macos-shipped"
