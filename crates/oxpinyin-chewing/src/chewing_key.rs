@@ -66,6 +66,25 @@ impl ChewingKey {
         self
     }
 
+    /// Whether the initial, middle and final lie inside the table
+    /// dimensions that `_ChewingKey::get_table_index` asserts
+    /// (`chewing_key.cpp:28-32`). A key packed from caller memory can carry
+    /// more (initial 24..=31, final 18..=31).
+    #[must_use]
+    pub const fn elements_in_dims(self) -> bool {
+        (self.initial as usize) < NUM_INITIALS
+            && (self.middle as usize) < NUM_MIDDLES
+            && (self.final_ as usize) < NUM_FINALS
+    }
+
+    /// Whether the tone is below `CHEWING_NUMBER_OF_TONES` (6), which the
+    /// pin's string renderers assert (`chewing_key.cpp:40`, `:75`, `:92`,
+    /// `:105`). The packed tone field holds 0..=7.
+    #[must_use]
+    pub const fn tone_in_dims(self) -> bool {
+        self.tone < 6
+    }
+
     /// `_ChewingKey::get_table_index` (`chewing_key.cpp:27-35`): the
     /// `content_table` row for this key's elements, 0 for the zero key
     /// and for every combination the table marks invalid (`-1`).
@@ -132,8 +151,13 @@ impl ChewingKey {
         }
     }
 
-    /// The row's canonical spelling without the tone — what
-    /// `_ChewingKey::get_pinyin_string` renders before its `%d`.
+    /// Canonical pinyin spelling of this key.
+    #[must_use]
+    pub fn text(self) -> &'static str {
+        self.pinyin_spelling()
+    }
+
+    /// The row's canonical spelling without tone.
     #[must_use]
     pub fn pinyin_spelling(self) -> &'static str {
         self.content_string(0)

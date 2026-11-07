@@ -153,15 +153,10 @@ impl SyllableKey {
     /// final bit compose (`can` → `chang` under `AMB_C_CH` + `AMB_AN_ANG`).
     #[must_use]
     pub fn fuzzy_alternatives(self, options: OptionBits) -> Vec<Self> {
-        let text = self.text();
-        let mut initials = Vec::new();
-        apply_initial_swaps(text, options, &mut initials);
-        let mut out = initials.clone();
-        apply_final_swaps(text, options, &mut out);
-        for key in &initials {
-            apply_final_swaps(key.text(), options, &mut out);
-        }
-        out
+        fuzzy_chewing_alternatives(self.chewing_key(), options)
+            .into_iter()
+            .filter_map(Self::from_chewing_key)
+            .collect()
     }
 
     /// Returns the key with dense id `index`, or `None` when out of range.
@@ -236,74 +231,57 @@ impl SyllableKey {
     }
 }
 
-fn apply_initial_swaps(text: &str, options: OptionBits, out: &mut Vec<SyllableKey>) {
-    if options.contains(PINYIN_AMB_C_CH) {
-        swap_initial(text, "c", "ch", out);
-        swap_initial(text, "ch", "c", out);
+/// The pin's initial and final swaps on the stored key, including invalid
+/// final combinations, which the pin appends without a table check.
+#[must_use]
+pub fn fuzzy_chewing_alternatives(key: ChewingKey, options: OptionBits) -> Vec<ChewingKey> {
+    let mut initials = Vec::new();
+    for (bit, a, b) in [
+        (PINYIN_AMB_C_CH, "c", "ch"),
+        (PINYIN_AMB_Z_ZH, "z", "zh"),
+        (PINYIN_AMB_S_SH, "s", "sh"),
+        (PINYIN_AMB_L_R, "l", "r"),
+        (PINYIN_AMB_L_N, "l", "n"),
+        (PINYIN_AMB_F_H, "f", "h"),
+        (PINYIN_AMB_G_K, "g", "k"),
+    ] {
+        if !options.contains(bit) {
+            continue;
+        }
+        if let (Some(a), Some(b)) = (ChewingKey::from_pinyin(a), ChewingKey::from_pinyin(b)) {
+            for (from, to) in [(a.initial, b.initial), (b.initial, a.initial)] {
+                if key.initial == from {
+                    let mut alternate = key;
+                    alternate.initial = to;
+                    if alternate.table_index() != 0 {
+                        initials.push(alternate);
+                    }
+                }
+            }
+        }
     }
-    if options.contains(PINYIN_AMB_Z_ZH) {
-        swap_initial(text, "z", "zh", out);
-        swap_initial(text, "zh", "z", out);
+    let mut out = initials.clone();
+    for source in std::iter::once(key).chain(initials) {
+        for (bit, a, b) in [
+            (PINYIN_AMB_AN_ANG, "an", "ang"),
+            (PINYIN_AMB_EN_ENG, "en", "eng"),
+            (PINYIN_AMB_IN_ING, "in", "ing"),
+        ] {
+            if !options.contains(bit) {
+                continue;
+            }
+            if let (Some(a), Some(b)) = (ChewingKey::from_pinyin(a), ChewingKey::from_pinyin(b)) {
+                for (from, to) in [(a.final_, b.final_), (b.final_, a.final_)] {
+                    if source.final_ == from {
+                        let mut alternate = source;
+                        alternate.final_ = to;
+                        out.push(alternate);
+                    }
+                }
+            }
+        }
     }
-    if options.contains(PINYIN_AMB_S_SH) {
-        swap_initial(text, "s", "sh", out);
-        swap_initial(text, "sh", "s", out);
-    }
-    if options.contains(PINYIN_AMB_L_R) {
-        swap_initial(text, "l", "r", out);
-        swap_initial(text, "r", "l", out);
-    }
-    if options.contains(PINYIN_AMB_L_N) {
-        swap_initial(text, "l", "n", out);
-        swap_initial(text, "n", "l", out);
-    }
-    if options.contains(PINYIN_AMB_F_H) {
-        swap_initial(text, "f", "h", out);
-        swap_initial(text, "h", "f", out);
-    }
-    if options.contains(PINYIN_AMB_G_K) {
-        swap_initial(text, "g", "k", out);
-        swap_initial(text, "k", "g", out);
-    }
-}
-
-fn apply_final_swaps(text: &str, options: OptionBits, out: &mut Vec<SyllableKey>) {
-    if options.contains(PINYIN_AMB_AN_ANG) {
-        swap_final(text, "an", "ang", out);
-        swap_final(text, "ang", "an", out);
-    }
-    if options.contains(PINYIN_AMB_EN_ENG) {
-        swap_final(text, "en", "eng", out);
-        swap_final(text, "eng", "en", out);
-    }
-    if options.contains(PINYIN_AMB_IN_ING) {
-        swap_final(text, "in", "ing", out);
-        swap_final(text, "ing", "in", out);
-    }
-}
-
-fn swap_initial(text: &str, from: &str, to: &str, out: &mut Vec<SyllableKey>) {
-    let Some(rest) = text.strip_prefix(from) else {
-        return;
-    };
-    let mut candidate = String::with_capacity(to.len() + rest.len());
-    candidate.push_str(to);
-    candidate.push_str(rest);
-    if let Some(key) = SyllableKey::from_canonical_text(&candidate) {
-        out.push(key);
-    }
-}
-
-fn swap_final(text: &str, from: &str, to: &str, out: &mut Vec<SyllableKey>) {
-    let Some(prefix) = text.strip_suffix(from) else {
-        return;
-    };
-    let mut candidate = String::with_capacity(prefix.len() + to.len());
-    candidate.push_str(prefix);
-    candidate.push_str(to);
-    if let Some(key) = SyllableKey::from_canonical_text(&candidate) {
-        out.push(key);
-    }
+    out
 }
 
 impl fmt::Display for SyllableKey {

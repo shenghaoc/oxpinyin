@@ -628,6 +628,15 @@ pub(crate) fn build_scan_matrix_over(
     // Both exact-key paths still run fill then fuzzy: double pinyin at
     // pinyin.cpp:1557-1559 and chewing at :1602-1604 (pin 074a2219).
 
+    extend_matrix(&mut columns, options, divided);
+
+    columns
+}
+
+/// Steps 2 to 4 of [`build_scan_matrix`] over a matrix whose selected keys
+/// are already placed: the resplit and divided passes when `divided`, then
+/// the fuzzy additions, then the identical-path collapse.
+fn extend_matrix(columns: &mut [Vec<ScanKey>], options: OptionBits, divided: bool) {
     // 2. Resplit every key in each column, including right halves that an
     // earlier column appended during this pass. A pair only resplits when
     // the two keys share a boundary with no apostrophe between them: the
@@ -639,7 +648,7 @@ pub(crate) fn build_scan_matrix_over(
     // `options & USE_RESPLIT_TABLE` (`phonetic_key_matrix.cpp:89`) and
     // returns false without it. At `0x0` neither table bit is set.
     if divided && options.has_resplit_table() {
-        resplit_step(&mut columns);
+        resplit_step(columns);
     }
 
     // 3. Divided syllables over every key collected so far. The split parts
@@ -654,7 +663,7 @@ pub(crate) fn build_scan_matrix_over(
     // returns false without it. At `0x0` the bit is clear, so `xian`'s
     // divided pairs (`xi` + `an`) are not in the inventory.
     if divided && options.has_divided_table() {
-        inner_split_step(&mut columns);
+        inner_split_step(columns);
     }
 
     // 4. `fuzzy_syllable_step`. Upstream `PhoneticTable::append` is a bag
@@ -664,12 +673,120 @@ pub(crate) fn build_scan_matrix_over(
     // collapse here is #103. The tone rides the alternate — upstream
     // copies the whole key before swapping the initial or final
     // (`phonetic_key_matrix.cpp:250-259`).
-    for addition in &fuzzy_additions(&columns, options) {
+    for addition in &fuzzy_additions(columns, options) {
         columns[addition.from].push(*addition);
     }
-    keep_first_in_column(&mut columns);
+    keep_first_in_column(columns);
+}
 
-    columns
+/// The pin's parse-time matrix for keys a parser placed outside the
+/// session's own graph (the index-parsed full pinyin, double pinyin and
+/// chewing seams): each key sits at its syllable start, then the same
+/// steps the pin runs after `fill_matrix` for that entry point.
+///
+/// `divided` selects the full-pinyin entry point's resplit and divided
+/// passes (`pinyin.cpp:1514-1520`); double pinyin and chewing run
+/// `fill_matrix` and `fuzzy_syllable_step` only (`:1557-1559`,
+/// `:1602-1604`). Every alternative keeps its source key's tone, column and
+/// end. The result is in column order; no keys leave the matrix empty.
+#[must_use]
+pub fn parse_time_keys(
+    keys: &[crate::cursor::MatrixKey],
+    parsed_len: usize,
+    options: OptionBits,
+    divided: bool,
+) -> Vec<crate::cursor::MatrixKey> {
+    if keys.is_empty() {
+        return Vec::new();
+    }
+    let mut columns = vec![Vec::new(); parsed_len + 1];
+    for &key in keys {
+        if let Some(column) = columns.get_mut(key.syllable_start()) {
+            column.push(key);
+        }
+    }
+    if divided && options.has_resplit_table() {
+        for index in 0..parsed_len {
+            for key in columns[index].clone() {
+                let Some(next_keys) = columns.get(key.end()).cloned() else {
+                    continue;
+                };
+                for next in next_keys {
+                    if key.tone() != 0 || next.tone() != 0 || next.syllable_start() != key.end() {
+                        continue;
+                    }
+                    if let Some((_, _, left, right)) = RESPLIT_TABLE.iter().find(|(a, b, _, _)| {
+                        oxpinyin_core::ChewingKey::from_pinyin(a) == Some(key.key())
+                            && oxpinyin_core::ChewingKey::from_pinyin(b) == Some(next.key())
+                    }) {
+                        append_matrix_split(&mut columns, key, next.end(), left, right);
+                    }
+                }
+            }
+        }
+    }
+    if divided && options.has_divided_table() {
+        for index in 0..columns.len() {
+            for key in columns[index].clone() {
+                if key.tone() != 0 {
+                    continue;
+                }
+                if let Some((_, left, right)) = DIVIDED_TABLE
+                    .iter()
+                    .find(|(a, _, _)| oxpinyin_core::ChewingKey::from_pinyin(a) == Some(key.key()))
+                {
+                    append_matrix_split(&mut columns, key, key.end(), left, right);
+                }
+            }
+        }
+    }
+    for column in &mut columns {
+        let snapshot = column.clone();
+        for key in snapshot {
+            for alternate in oxpinyin_core::fuzzy_chewing_alternatives(key.key(), options) {
+                column.push(crate::cursor::MatrixKey::from_chewing(
+                    alternate,
+                    key.syllable_start(),
+                    key.end(),
+                ));
+            }
+        }
+        let mut unique = Vec::new();
+        for &key in column.iter() {
+            if !unique.contains(&key) {
+                unique.push(key);
+            }
+        }
+        *column = unique;
+    }
+    columns.into_iter().flatten().collect()
+}
+
+fn append_matrix_split(
+    columns: &mut [Vec<crate::cursor::MatrixKey>],
+    key: crate::cursor::MatrixKey,
+    end: usize,
+    left: &str,
+    right: &str,
+) {
+    let (Some(left_key), Some(right_key)) = (
+        oxpinyin_core::ChewingKey::from_pinyin(left),
+        oxpinyin_core::ChewingKey::from_pinyin(right),
+    ) else {
+        return;
+    };
+    let split = key.syllable_start() + left.len();
+    if split >= columns.len() {
+        return;
+    }
+    columns[key.syllable_start()].push(crate::cursor::MatrixKey::from_chewing(
+        left_key,
+        key.syllable_start(),
+        split,
+    ));
+    columns[split].push(crate::cursor::MatrixKey::from_chewing(
+        right_key, split, end,
+    ));
 }
 
 /// The pin's forward resplit pass (074a2219,

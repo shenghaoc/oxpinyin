@@ -70,7 +70,9 @@ pub use syllables::{
     option_alias_canonical, phonetic_initial, syllable_initial,
 };
 pub use ucs4::{OutwardWords, PhraseText, PhraseTextConcat};
-pub use vocab::{PhraseEntry, PhraseToken, SYLLABLE_KEY_COUNT, SyllableKey};
+pub use vocab::{
+    PhraseEntry, PhraseToken, SYLLABLE_KEY_COUNT, SyllableKey, fuzzy_chewing_alternatives,
+};
 
 /// Deterministic signed cost used by scoring seams.
 ///

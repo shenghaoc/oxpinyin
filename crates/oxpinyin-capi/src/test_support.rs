@@ -361,6 +361,39 @@ pub fn plant_bigram(user_dir: &std::path::Path, rows: Vec<(Vec<u8>, Vec<u8>)>) {
     .expect("write the profile");
 }
 
+/// Sets one row of the user phrase table (`user_phrase_index.bin`) to
+/// `tokens`, keyed by the UCS-4 text of `phrase`, in the profile under
+/// `user_dir`: the stored state is loaded when a profile exists (a fresh
+/// directory starts empty), the row replaced, and the profile saved again
+/// in the running backend's format. This is the crafted index of register
+/// row 93, whose tokens the library never wrote.
+pub fn set_phrase_table_row(user_dir: &std::path::Path, phrase: &str, tokens: &[u32]) {
+    let conf = oxpinyin_data::table_info::TableConf::load_from_dir(&system_dir())
+        .expect("fixture table.conf");
+    let versions = oxpinyin_data::user_files::SystemVersions::from_conf(&conf);
+    let originals = oxpinyin_user::SystemOriginals::from(std::collections::BTreeMap::new());
+    let (mut state, open_counter) = if user_dir.join("user.conf").exists() {
+        let loaded = oxpinyin_user::persistence::load(
+            user_dir,
+            &originals,
+            &versions,
+            oxpinyin_user::persistence::UserConfLaw::Pinyin,
+        )
+        .expect("load the profile");
+        (loaded.state, loaded.open_counter)
+    } else {
+        (oxpinyin_user::persistence::UserState::default(), 1)
+    };
+    let key = phrase
+        .chars()
+        .flat_map(|c| (c as u32).to_le_bytes())
+        .collect();
+    let value = tokens.iter().flat_map(|t| t.to_le_bytes()).collect();
+    state.phrase_table.insert(key, value);
+    oxpinyin_user::persistence::save(user_dir, &state, &originals, &versions, open_counter)
+        .expect("write the profile");
+}
+
 /// A private system directory under `parent`: every fixture file linked in,
 /// so a test can replace one library (register row 96).
 #[cfg(unix)]

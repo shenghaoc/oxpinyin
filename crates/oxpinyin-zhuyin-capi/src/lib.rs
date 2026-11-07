@@ -102,6 +102,8 @@ pub use sentence::{
 #[cfg(test)]
 mod e2e_tests;
 #[cfg(test)]
+mod matrix_bound_tests;
+#[cfg(test)]
 mod test_support;
 
 #[cfg(test)]

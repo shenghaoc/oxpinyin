@@ -33,7 +33,10 @@ mod storage;
 pub use session::tool;
 
 pub use candidate::{Candidate, CandidateKind, CandidateList, rank_by_frequency};
-pub use char_offset::{character_offset_over_keys, character_offset_with_walk_over_keys};
+pub use char_offset::{
+    MatrixColumns, character_offset_over_keys, character_offset_with_walk_over_keys,
+    key_pronounced_by, matrix_columns, remember_walk,
+};
 pub use config::{Config, ConfigSource, ConfigValue, EmptyConfigSource, UPSTREAM_DEFAULT_COUNT};
 pub use cursor::{
     KeySpans, MatrixKey, left_word_offset, left_word_offset_over_spans, lookup_offset_for_cursor,
@@ -43,6 +46,6 @@ pub use error::{EngineError, TrainingSpanFault};
 pub use nbest::NbestShape;
 pub use session::{
     CandidateRanking, KeyOutcome, Selection, Session, SessionState, TrainingPlan,
-    amplified_frequency, check_lookup_offset_range, normalize_lookup_offset,
+    amplified_frequency, check_lookup_offset_range, normalize_lookup_offset, parse_time_keys,
 };
 pub use storage::StoragePaths;

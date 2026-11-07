@@ -101,10 +101,10 @@ struct ImportHandle {
     owner: Option<ContextOwner>,
 }
 
-struct ImportRead<'a> {
-    index: u8,
-    user: Option<&'a UserStore>,
-    dict: Option<oxpinyin_runtime::RuntimeDict<'a>>,
+pub(crate) struct ImportRead<'a> {
+    pub(crate) index: u8,
+    pub(crate) user: Option<&'a UserStore>,
+    pub(crate) dict: Option<oxpinyin_runtime::RuntimeDict<'a>>,
 }
 
 /// Begin adding phrases to an index.
@@ -261,7 +261,7 @@ pub extern "C" fn pinyin_iterator_add_phrase(
 }
 
 /// What [`pinyin_iterator_add_phrase`] does with one pair before it writes.
-enum ImportPlan {
+pub(crate) enum ImportPlan {
     /// The pin's ordinary `false`.
     Refuse,
     /// A phrase-table lookup failed outright: no pin counterpart, one
@@ -321,6 +321,20 @@ fn plan_import(
     if length == 0 || length >= MAX_PHRASE_LENGTH || length != keys.len() {
         return ImportPlan::Refuse;
     }
+    plan_add(handle, user, phrase, keys)
+}
+
+/// `_add_phrase` (`pinyin.cpp:514-611`) up to its add calls: the phrase-table
+/// search and the asserts it carries, for the library `handle.index`. The
+/// import path and `pinyin_remember_user_input` (through
+/// `_remember_phrase_recur`, `pinyin.cpp:3702`) both reach it.
+pub(crate) fn plan_add(
+    handle: &ImportRead<'_>,
+    user: &UserStore,
+    phrase: oxpinyin_core::PhraseText,
+    keys: Vec<PinyinKey>,
+) -> ImportPlan {
+    let length = phrase.phrase_length();
     // Search once and preserve both tables' token multiplicity before
     // reduce_tokens validates the combined count (074a2219
     // phrase_large_table3.h:77-95).

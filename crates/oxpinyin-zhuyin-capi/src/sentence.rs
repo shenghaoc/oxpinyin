@@ -241,6 +241,14 @@ pub extern "C" fn zhuyin_get_character_offset(
     // SAFETY: `instance` is non-null and was produced by the facade's
     // alloc entry point.
     let inst = unsafe { instance_ref(instance) };
+    // `assert(offset < matrix.size())` follows the empty-matrix `false`,
+    // before the phrase is converted.
+    if let Ok(columns) = inst.core.pin_matrix_columns()
+        && columns > 0
+        && offset >= columns
+    {
+        std::process::abort();
+    }
     // SAFETY: Null-checked inside; invalid UTF-8 refuses like the pin's
     // `g_utf8_to_ucs4` NULL answer.
     let text =
@@ -345,6 +353,14 @@ fn validated_lookup_offset(
     inst: &crate::state::CapiInstanceRead<'_>,
     offset: usize,
 ) -> Option<usize> {
+    // The matrix has `parsed_len + 1` columns, fewer than the input has bytes
+    // when the parse stopped early; `_check_offset` reads column
+    // `offset - 1`, and past the last column `get_column_size` asserts.
+    if let Ok(columns) = inst.core.pin_matrix_columns()
+        && offset > columns
+    {
+        std::process::abort();
+    }
     match inst.core.validate_abi_lookup_offset(offset, true) {
         Ok(normalized) => Some(normalized),
         Err(

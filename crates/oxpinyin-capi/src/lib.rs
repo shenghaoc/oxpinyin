@@ -553,6 +553,8 @@ mod e2e_tests;
 #[cfg(test)]
 mod guess_offset_tests;
 #[cfg(test)]
+mod matrix_bound_tests;
+#[cfg(test)]
 mod test_support;
 #[cfg(test)]
 mod union_e2e_tests;
