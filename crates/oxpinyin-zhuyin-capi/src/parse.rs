@@ -140,3 +140,46 @@ pub extern "C" fn zhuyin_in_chewing_keyboard(
     }
     !mapped.is_empty()
 }
+
+#[cfg(test)]
+mod tests {
+    use rstest::rstest;
+
+    use super::{zhuyin_get_parsed_input_length, zhuyin_parse_more_full_pinyins};
+    use crate::test_support::{close, cstr, open};
+
+    /// An apostrophe-only parse under the default options. libzhuyin's
+    /// full-pinyin parse runs the same separator branch, which moves the
+    /// parse one byte per `'` and places no key
+    /// (`storage/pinyin_parser2.cpp:238-250` at 074a2219);
+    /// `zhuyin_parse_more_full_pinyins` answers that length and stores it for
+    /// `zhuyin_get_parsed_input_length` (`zhuyin.cpp:1030`, `:1034`, `:1042`,
+    /// `:1083-1085`). Each case holds the pin's consumed and parsed lengths
+    /// from its record in
+    /// `fixtures/contract-refs/tkrzw/contract_zero_key_guess.jsonl`
+    /// (`pin.result.fresh`, pin 074a2219, the pinned libpinyin-data). No
+    /// database is read, so every cell runs this.
+    #[rstest]
+    // zero-key-guess/zhuyin/default/'/guess_sentence; pinyin_parser2.cpp:238-250.
+    #[case::one("'", 1, 1)]
+    // zero-key-guess/zhuyin/default/''/guess_sentence; pinyin_parser2.cpp:238-250.
+    #[case::two("''", 2, 2)]
+    // zero-key-guess/zhuyin/default/'''/guess_sentence; pinyin_parser2.cpp:238-250.
+    #[case::three("'''", 3, 3)]
+    fn an_apostrophe_only_parse_matches_the_pin(
+        #[case] input: &str,
+        #[case] consumed: usize,
+        #[case] parsed_length: usize,
+    ) {
+        let (context, instance) = open();
+
+        let text = cstr(input);
+        assert_eq!(
+            zhuyin_parse_more_full_pinyins(instance, text.as_ptr()),
+            consumed
+        );
+        assert_eq!(zhuyin_get_parsed_input_length(instance), parsed_length);
+
+        close(context, instance);
+    }
+}

@@ -192,11 +192,49 @@ pub extern "C" fn pinyin_in_chewing_keyboard(
 mod tests {
     use std::ptr;
 
+    use rstest::rstest;
+
     use super::{pinyin_get_parsed_input_length, pinyin_parse_more_full_pinyins};
     use crate::candidates::{pinyin_get_candidate, pinyin_get_n_candidate};
     use crate::instance::pinyin_reset;
     use crate::sentence::pinyin_guess_candidates;
     use crate::test_support::{DEFAULT_SORT, TempUserDir, cstr, open};
+
+    /// An apostrophe-only parse under the default options. The pin's
+    /// separator branch moves the parse one byte per `'` and places no key
+    /// (`storage/pinyin_parser2.cpp:238-250` at 074a2219);
+    /// `pinyin_parse_more_full_pinyins` answers that length and stores it for
+    /// `pinyin_get_parsed_input_length` (`pinyin.cpp:1507-1511`, `:1524`,
+    /// `:1611-1613`). Each case holds the pin's consumed and parsed lengths
+    /// from its record in
+    /// `fixtures/contract-refs/tkrzw/contract_zero_key_guess.jsonl`
+    /// (`pin.result.fresh`, pin 074a2219, the pinned libpinyin-data). No
+    /// database is read, so every cell runs this.
+    #[rstest]
+    // zero-key-guess/pinyin/default/'/guess_sentence; pinyin_parser2.cpp:238-250.
+    #[case::one("'", 1, 1)]
+    // zero-key-guess/pinyin/default/''/guess_sentence; pinyin_parser2.cpp:238-250.
+    #[case::two("''", 2, 2)]
+    // zero-key-guess/pinyin/default/'''/guess_sentence; pinyin_parser2.cpp:238-250.
+    #[case::three("'''", 3, 3)]
+    fn an_apostrophe_only_parse_matches_the_pin(
+        #[case] input: &str,
+        #[case] consumed: usize,
+        #[case] parsed_length: usize,
+    ) {
+        let user_dir = TempUserDir::new("apostrophe-parse");
+        let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+
+        let text = cstr(input);
+        assert_eq!(
+            pinyin_parse_more_full_pinyins(instance, text.as_ptr()),
+            consumed
+        );
+        assert_eq!(pinyin_get_parsed_input_length(instance), parsed_length);
+
+        crate::instance::pinyin_free_instance(instance);
+        crate::context::pinyin_fini(context);
+    }
 
     /// A re-parse clears the candidate snapshot even when no guess follows —
     /// upstream's `begin_parse` reset law, which a reads-between-parse-and-

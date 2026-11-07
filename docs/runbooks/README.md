@@ -9,6 +9,7 @@ the reasoning behind each procedure lives in the findings it links.
 | [`backends.md`](backends.md) | building and testing under a store backend other than the default |
 | [`oracle.md`](oracle.md) | building the pin-built libpinyin and running the differentials against it |
 | [`contract-references.md`](contract-references.md) | capturing the pin's contract observations and verifying oxpinyin against them |
+| [`pin-captures.md`](pin-captures.md) | staging the pin's observations of the apostrophe inputs for review |
 | [`cloud.md`](cloud.md) | provisioning a remote Linux host (container runtime, oracle, data) so every gate runs there |
 | [`benches.md`](benches.md) | running a criterion bench, the perf baseline, or a profile |
 | [`glib-call-sites.md`](glib-call-sites.md) | regenerating the GLib and libc call-site list from the pin |

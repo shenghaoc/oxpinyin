@@ -119,16 +119,79 @@ pub fn open(user_dir: &str) -> (*mut PinyinContext, *mut PinyinInstance) {
 /// binary runs.
 const DEATH_TEST: &str = "OXPINYIN_CAPI_DEATH_TEST";
 
+/// How long a death-test child may run. Each body is a few facade calls
+/// over the mini fixture; the limit only stops a hung child.
+const CHILD_LIMIT: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// How a death-test child ended.
+#[derive(Debug, PartialEq, Eq)]
+enum ChildEnd {
+    /// The expected abort: SIGABRT on Unix, fast-fail on Windows.
+    Aborted,
+    /// `body` returned and the child exited 0.
+    Returned,
+    /// The test harness reported a panic (libtest exits 101).
+    Panicked,
+    /// The child ran past [`CHILD_LIMIT`] and was killed. Never an abort.
+    TimedOut,
+    /// Any other end, as the status prints it.
+    Other(String),
+}
+
+fn child_end(status: std::process::ExitStatus, elapsed: std::time::Duration) -> ChildEnd {
+    #[cfg(unix)]
+    use std::os::unix::process::ExitStatusExt;
+    #[cfg(unix)]
+    let aborted = status.signal() == Some(6);
+    // Rust 1.99.1, library/std/src/sys/pal/windows/mod.rs:269, implements
+    // __fastfail(FAST_FAIL_FATAL_APP_EXIT) with int 0x29 (arm64:275, brk).
+    // https://github.com/rust-lang/rust/blob/1.99.1/library/std/src/sys/pal/windows/mod.rs#L269
+    // User-mode __fastfail raises 0xC0000409 (STATUS_STACK_BUFFER_OVERRUN):
+    // https://learn.microsoft.com/en-us/cpp/intrinsics/fastfail
+    // https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-erref/596a1078-e883-4972-9bbc-49e60bebca55
+    #[cfg(windows)]
+    let aborted = status.code() == Some(i32::from_ne_bytes(0xC000_0409_u32.to_ne_bytes()));
+    if aborted {
+        ChildEnd::Aborted
+    } else if elapsed >= CHILD_LIMIT {
+        ChildEnd::TimedOut
+    } else {
+        match status.code() {
+            Some(0) => ChildEnd::Returned,
+            Some(101) => ChildEnd::Panicked,
+            _ => ChildEnd::Other(format!("{status}")),
+        }
+    }
+}
+
+/// Runs the death-test child `command` for the test `name` and requires
+/// that it aborted. Answers its output.
+fn wait_for_abort(name: &str, command: std::process::Command) -> std::process::Output {
+    let started = std::time::Instant::now();
+    let output = assert_cmd::Command::from_std(command)
+        .timeout(CHILD_LIMIT)
+        .output()
+        .unwrap_or_else(|error| panic!("{name}: the death-test child did not start: {error}"));
+    let end = child_end(output.status, started.elapsed());
+    assert_eq!(
+        end,
+        ChildEnd::Aborted,
+        "{name} must abort: {}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output
+}
+
 /// Runs `body` in a child process and requires an abort:
 /// SIGABRT on Unix, fast-fail on Windows. This is how
 /// the facade reproduces a pin `assert`/`abort()` (the class (c) rows
 /// retired 2026-10-31 UTC). `name` is the calling test's full path as
 /// libtest prints it (`module::test`): the test binary is re-executed with
 /// `--exact name`, and in that child `body` runs and must not return.
-/// Answers the child's stderr.
+/// A normal return, a panic, a timeout and a child that does not start
+/// each fail with their own message. Answers the child's stderr.
 pub fn assert_aborts(name: &str, body: impl FnOnce()) -> Vec<u8> {
-    #[cfg(unix)]
-    use std::os::unix::process::ExitStatusExt;
     if std::env::var_os(DEATH_TEST).is_some_and(|value| value == name) {
         body();
         // Reached only when `body` did not abort.
@@ -137,33 +200,12 @@ pub fn assert_aborts(name: &str, body: impl FnOnce()) -> Vec<u8> {
     // The child's scratch directories outlive its abort; keep them under
     // one this process removes.
     let scratch = tempfile::tempdir().expect("death-test scratch");
-    let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+    let mut command = std::process::Command::new(std::env::current_exe().expect("test binary"));
+    command
         .args(["--exact", name, "--test-threads=1"])
         .env(DEATH_TEST, name)
-        .env(if cfg!(windows) { "TMP" } else { "TMPDIR" }, scratch.path())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::piped())
-        .output()
-        .expect("re-run the test binary");
-    #[cfg(unix)]
-    assert_eq!(
-        output.status.signal(),
-        Some(6),
-        "{name} must die of SIGABRT"
-    );
-    #[cfg(windows)]
-    // Rust 1.99.1, library/std/src/sys/pal/windows/mod.rs:269, implements
-    // __fastfail(FAST_FAIL_FATAL_APP_EXIT) with int 0x29 (arm64:275, brk).
-    // https://github.com/rust-lang/rust/blob/1.99.1/library/std/src/sys/pal/windows/mod.rs#L269
-    // User-mode __fastfail raises 0xC0000409 (STATUS_STACK_BUFFER_OVERRUN):
-    // https://learn.microsoft.com/en-us/cpp/intrinsics/fastfail
-    // https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-erref/596a1078-e883-4972-9bbc-49e60bebca55
-    assert_eq!(
-        output.status.code(),
-        Some(i32::from_ne_bytes(0xC000_0409_u32.to_ne_bytes())),
-        "{name} must die of STATUS_STACK_BUFFER_OVERRUN"
-    );
-    output.stderr
+        .env(if cfg!(windows) { "TMP" } else { "TMPDIR" }, scratch.path());
+    wait_for_abort(name, command).stderr
 }
 
 /// The environment variable that names the user directory a
@@ -241,7 +283,6 @@ pub const SHARED_PAGE: usize = 4096;
 #[cfg(unix)]
 pub fn assert_aborts_sharing(name: &str, init: &[u8], body: impl FnOnce(*mut u8)) -> Vec<u8> {
     use std::os::unix::ffi::OsStrExt as _;
-    use std::os::unix::process::ExitStatusExt;
     if std::env::var_os(DEATH_TEST).is_some_and(|value| value == name) {
         let path = std::env::var_os(DEATH_TEST_PAGE).expect("the shared page's file");
         let path = CString::new(path.as_bytes()).expect("a path without NUL");
@@ -270,16 +311,13 @@ pub fn assert_aborts_sharing(name: &str, init: &[u8], body: impl FnOnce(*mut u8)
     let mut bytes = init.to_vec();
     bytes.resize(SHARED_PAGE, 0);
     std::fs::write(&page, &bytes).expect("write the shared page");
-    let status = std::process::Command::new(std::env::current_exe().expect("test binary"))
+    let mut command = std::process::Command::new(std::env::current_exe().expect("test binary"));
+    command
         .args(["--exact", name, "--test-threads=1"])
         .env(DEATH_TEST, name)
         .env(DEATH_TEST_PAGE, &page)
-        .env("TMPDIR", scratch.path())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .expect("re-run the test binary");
-    assert_eq!(status.signal(), Some(6), "{name} must die of SIGABRT");
+        .env("TMPDIR", scratch.path());
+    wait_for_abort(name, command);
     std::fs::read(&page).expect("read the shared page")
 }
 
