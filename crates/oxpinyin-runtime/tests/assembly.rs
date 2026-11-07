@@ -693,6 +693,35 @@ fn fresh_nbest_step_observes_training_store_writes_and_mask_out() {
 }
 
 #[test]
+fn a_predecessor_missing_from_the_system_table_merges_the_user_gram_alone() {
+    use oxpinyin_core::LanguageModel;
+    let tmp = scratch_dir("oxpinyin-user-gram-alone-");
+    let dir = tmp.path().to_path_buf();
+    let mut runtime = Runtime::open(&w3_dir(), Some(&dir)).unwrap();
+    let keys: Vec<_> = ["ni", "hao"]
+        .into_iter()
+        .map(|text| SyllableKey::from_text(text).unwrap().index() as PinyinKey)
+        .collect();
+    let user = runtime.user_store_mut().unwrap();
+    let prev = user.add_phrase(&"你鎄".into(), &keys, Some(5)).unwrap();
+    let next = user.add_phrase(&"你鎬".into(), &keys, Some(5)).unwrap();
+    user.set_bigram_count(prev, next, 7).unwrap();
+    // A user phrase has no row in the system table: `Bigram::load` leaves
+    // the system gram NULL, and `merge_single_gram` takes the user's alone
+    // (`ngram.cpp:286-290` at 074a2219).
+    let stored = user.bigram_row(prev).unwrap().expect("the user gram");
+    let merged = runtime
+        .lm()
+        .merged_successors(&PhraseToken::new(prev))
+        .unwrap()
+        .expect("the user gram stands alone");
+    assert_eq!(merged.to_bytes(), stored);
+    assert_eq!(merged.get_freq(next), Ok(Some(7)));
+    drop(runtime);
+    tmp.close().unwrap();
+}
+
+#[test]
 fn cached_nbest_row_observes_a_reborrowed_stores_committed_write() {
     use oxpinyin_core::{NbestStepRow, NbestSuccessors};
     let tmp = scratch_dir("oxpinyin-nbest-snapshot-");

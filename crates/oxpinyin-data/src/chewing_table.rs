@@ -196,11 +196,25 @@ impl<S: oxpinyin_store::RawReadStore + Send + Sync> ChewingDbm for RawChewingDbm
         }
     }
 
+    /// `Bigram::load` over the system gram: every backend answers a failed
+    /// read with false and a NULL gram, and `search_bigram2` ignores it
+    /// (`ngram_bdb.cpp:140-142`, `ngram_kyotodb.cpp:131-134`,
+    /// `ngram_tkrzwdb.cpp:111-114`, `phrase_lookup.cpp:268-269` at
+    /// 074a2219). The one failure that is not a miss is Kyoto Cabinet's
+    /// body read after a good size check, the pin's `check_result` assert
+    /// (`ngram_kyotodb.cpp:138`).
     fn get_bigram(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, DictError> {
         match &self.state {
-            DbmState::Open(store) => store
-                .get_bigram_raw(key, value)
-                .map_err(|e| DictError::Table(e.into())),
+            DbmState::Open(store) => match store.get_bigram_raw(key, value) {
+                Err(oxpinyin_store::StoreError::ReadAfterCheck) => Err(DictError::Table(
+                    oxpinyin_store::StoreError::ReadAfterCheck.into(),
+                )),
+                Err(_) => {
+                    value.clear();
+                    Ok(false)
+                }
+                Ok(found) => Ok(found),
+            },
             DbmState::Unopened(db) => {
                 value.clear();
                 db.read(key);
