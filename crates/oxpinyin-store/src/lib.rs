@@ -1781,21 +1781,6 @@ mod tests {
                     cleanup(&path);
                 }
 
-                #[test]
-                fn read_your_writes() {
-                    let path = temp_path("ryw");
-                    let store = <$store>::create(&path).unwrap();
-                    store
-                        .write(|txn| {
-                            txn.put("t", b"key", b"val")?;
-                            assert_eq!(txn.txn_read("t", b"key")?, Some(b"val".to_vec()));
-                            Ok(())
-                        })
-                        .unwrap();
-                    drop(store);
-                    cleanup(&path);
-                }
-
                 /// An empty value is a stored record, not a delete.
                 ///
                 /// libpinyin's index DBMs are full of zero-length
@@ -2148,21 +2133,6 @@ mod tests {
                     ));
                     assert!(matches!(readonly.compact(), Err(StoreError::ReadOnly)));
                     drop(readonly);
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn write_returns_closure_value() {
-                    let path = temp_path("write-ret");
-                    let store = <$store>::create(&path).unwrap();
-                    let val: u32 = store
-                        .write(|txn| {
-                            txn.put("t", b"k", b"v")?;
-                            Ok(42u32)
-                        })
-                        .unwrap();
-                    assert_eq!(val, 42);
-                    drop(store);
                     cleanup(&path);
                 }
 

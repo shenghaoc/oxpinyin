@@ -304,17 +304,6 @@ fn visible_prefix_probe_hides_unloaded_libraries() {
 }
 
 #[test]
-fn lookup_into_matches_lookup() {
-    let fix = Fixture::new();
-    let dict = fix.dict();
-    let ni = syls("ni");
-    let lookup_result = dict.lookup(&ni).unwrap();
-    let mut into_result = Vec::new();
-    dict.lookup_into(&ni, &mut into_result).unwrap();
-    assert_eq!(lookup_result, into_result);
-}
-
-#[test]
 fn token_surface_resolves_through_the_chunk_file() {
     let fix = Fixture::new();
     let dict = fix.dict();

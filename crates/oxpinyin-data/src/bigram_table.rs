@@ -226,49 +226,9 @@ impl<D: ChewingDbm> BigramTable<D> {
 mod tests {
     use super::*;
 
-    use std::collections::BTreeMap;
     use std::sync::Mutex;
 
-    struct MemoryDbm {
-        data: Mutex<BTreeMap<Vec<u8>, Vec<u8>>>,
-    }
-
-    impl MemoryDbm {
-        fn new() -> Self {
-            Self {
-                data: Mutex::new(BTreeMap::new()),
-            }
-        }
-
-        fn put(&self, key: Vec<u8>, value: Vec<u8>) {
-            self.data.lock().unwrap().insert(key, value);
-        }
-    }
-
-    impl ChewingDbm for MemoryDbm {
-        fn get(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, DictError> {
-            value.clear();
-            let data = self.data.lock().unwrap();
-            let stored = data.get(key);
-            if let Some(stored) = stored {
-                value.extend_from_slice(stored);
-            }
-            Ok(stored.is_some())
-        }
-
-        fn contains(&self, key: &[u8]) -> Result<bool, DictError> {
-            Ok(self.data.lock().unwrap().contains_key(key))
-        }
-
-        fn walk(
-            &self,
-            _lo: &[u8],
-            _hi: Option<&[u8]>,
-            _visit: impl FnMut(&[u8], &[u8]) -> Result<bool, DictError>,
-        ) -> Result<(), DictError> {
-            unreachable!("the bigram reader never walks")
-        }
-    }
+    use crate::memory_dbm::MemoryDbm;
 
     #[test]
     fn load_successors_finds_row() {

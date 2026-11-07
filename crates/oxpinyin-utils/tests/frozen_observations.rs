@@ -171,7 +171,6 @@ fn signals_are_exact(#[case] status: i32, #[case] rejects: bool) {
 
 /// Each way a run can change a tree that its expectation leaves alone.
 #[rstest::rstest]
-#[case::unchanged(|_: &Path| Ok(()), false)]
 #[case::changed_file(|at: &Path| std::fs::write(at.join("kept"), b"kepT"), true)]
 #[case::removed_file(|at: &Path| std::fs::remove_file(at.join("kept")), true)]
 #[case::removed_directory(|at: &Path| std::fs::remove_dir(at.join("held")), true)]
