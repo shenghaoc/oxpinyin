@@ -1,13 +1,13 @@
-//! The libpinyin-file user store — [`crate::GenericUserStore`] over the
-//! pin's own user-dir file set (drop-in task 9's wiring half).
+//! The libpinyin-file user store — [`crate::UserStore`] over the pin's own
+//! user-dir file set (drop-in task 9's wiring half).
 //!
 //! [`UserStore::open_libpinyin`] opens a user *directory* (not a store
-//! file): [`crate::persistence`] reads the profile, the loaded values
-//! seed a **session store in process memory** (the backend's own
-//! on-memory ordered container, [`WriteStore::create_in_memory`]), and
-//! every existing value operation — training, phrase adds, exports,
-//! masking — runs against that session exactly as before.
-//! [`UserStore::save`] then exports the session values back through
+//! file): [`crate::persistence`] reads the profile into the session's
+//! state in process memory — the user library arenas, the pinyin index
+//! and phrase table, the user bigram container, the live system items and
+//! the libraries' stored-total offsets — and every value operation —
+//! training, phrase adds, exports, masking — runs against that state.
+//! [`UserStore::save`] then exports the session back through
 //! [`crate::persistence`] into the pin's files. The durability shape is
 //! therefore the pin's own: in memory between saves, as the pin's
 //! context holds its loaded profile (`pinyin.cpp:326-444` at 074a2219),
@@ -26,19 +26,19 @@
 //!
 //! The value mapping, both directions:
 //!
-//! * bigram — not a value of the session store at all: the session keeps
+//! * bigram — not a value the session exports at all: the session keeps
 //!   the pin's own in-memory container, filled from `user_bigram.db` once
 //!   by `load_db` and written back by `save_db`, and every bigram
 //!   operation runs the pin's `SingleGram` code over its raw grams
 //! * user phrases and appended system items — each body lives once in an
 //!   owned `UserLibrary` arena, in the pin's packed item format. The user
 //!   pinyin index is an independent set; it never supplies item counts.
-//! * system tokens — a `.dbin` MODIFY record is the original item with
-//!   `unigram + UNIGRAM[token]`; a replayed REMOVE enters the live removal
-//!   set. The session retains replayed originals in a private mapped view,
-//!   decoding an item on its first use. That item holds its reading counts:
-//!   opening and training write no `PRONUNCIATION` rows. Training updates
-//!   the live item's counts, which lookup, export and save all observe.
+//! * system tokens — a `.dbin` MODIFY record is the original item with its
+//!   new unigram; a replayed REMOVE enters the live removal set. The
+//!   session retains replayed originals in a private mapped view, decoding
+//!   an item on its first use. That item holds its reading counts, and
+//!   training updates them in place, which lookup, export and save all
+//!   observe.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -46,18 +46,11 @@ use std::sync::Arc;
 
 use oxpinyin_data::chunk_write::ChunkItem;
 use oxpinyin_data::user_files::SystemVersions;
-use oxpinyin_store::{
-    DefaultStore, DefaultUserBigramDb, ReadStore, StoreError, UserBigramDb, WriteStore, WriteTxn,
-};
-
-#[cfg(test)]
-use crate::store::{PHRASE, PRONUNCIATION};
-
-use crate::codec;
+use oxpinyin_store::{DefaultUserBigramDb, UserBigramDb};
 
 use crate::persistence::{self, PersistenceError, SystemOriginals, UserConfLaw, UserState};
 use crate::phrase;
-use crate::store::{GenericUserStore, LIBRARY_OFFSET, StoreInner, Token, UNIGRAM, UserStoreError};
+use crate::store::{StoreInner, UserStore, UserStoreError};
 
 /// The persistence target a session store carries: the user dir, the
 /// original system chunks (the `.dbin` diff base), the conformance
@@ -96,7 +89,7 @@ impl Target {
 /// The facade fini's `user.conf` write ([`persistence::fini`]): libpinyin
 /// lowers the open counter its init raised and writes the marker, saved
 /// or not (`pinyin_fini`, `pinyin.cpp:1194-1200`); libzhuyin writes
-/// nothing. Armed on the handle [`GenericUserStore::open_libpinyin`]
+/// nothing. Armed on the handle [`UserStore::open_libpinyin`]
 /// returns, so it runs once per open — every open runs its own
 /// `check_format` — at explicit context fini, or on drop if unfinished. A process that dies before then leaves the raised
 /// counter on disk, as upstream's does.
@@ -153,11 +146,11 @@ impl From<PersistenceError> for UserStoreError {
     }
 }
 
-impl GenericUserStore<DefaultStore> {
+impl UserStore {
     /// Open the user store on a libpinyin user directory: read the
     /// profile ([`crate::persistence::load`]) under `law`, seed an
     /// in-memory session store with its values, and carry the persistence target so
-    /// [`GenericUserStore::save`] writes the pin's files back. Dropping the
+    /// [`UserStore::save`] writes the pin's files back. Dropping the
     /// returned owner is the facade's fini: it
     /// makes the law's fini-time `user.conf` write
     /// ([`crate::persistence::fini`]).
@@ -271,13 +264,6 @@ impl GenericUserStore<DefaultStore> {
             &crate::library_loop::LibraryLoopRows<'_>,
         )>,
     ) -> Result<Self, UserStoreError> {
-        // Create the session's own container before touching the
-        // profile, so a failure here cannot follow a `check_format` that
-        // already raised the open counter and wiped a non-conforming
-        // profile. It is this session's alone: process memory, shared
-        // with no other open and no other process.
-        let db = crate::session_values::SessionValues::<DefaultStore>::transient();
-
         let profile = if let Some(dir) = user_dir {
             match checked {
                 // The library loop's fault: the open returns here, after
@@ -336,20 +322,13 @@ impl GenericUserStore<DefaultStore> {
             fini.abandon();
             UserStoreError::SessionSeed(error.to_string())
         };
-        let (has_user_data, seeded_totals) = db
-            .write(|txn| {
-                let seeded = seed_txn_with_replay(
-                    txn,
-                    &loaded.state,
-                    originals,
-                    &loaded.library_totals,
-                    &replayed,
-                    &user_libraries,
-                )
-                .and_then(|seeded| Ok((count_tables(txn)?, seeded)));
-                P::seeded(seeded)
-            })
-            .map_err(|error| seed_fault(&error))?;
+        let seeded_totals = seed_totals(
+            &loaded.state,
+            originals,
+            &loaded.library_totals,
+            &replayed,
+            &user_libraries,
+        );
         {
             let mut phrases = target.phrases();
             phrases.libraries = user_libraries;
@@ -399,10 +378,9 @@ impl GenericUserStore<DefaultStore> {
             )
             .exists()
         });
-        let has_user_data = has_user_data
-            || replayed
-                .values()
-                .any(crate::replay::ReplayedLibrary::has_added)
+        let has_user_data = replayed
+            .values()
+            .any(crate::replay::ReplayedLibrary::has_added)
             || has_bigram_file
             || target
                 .phrases()
@@ -426,12 +404,12 @@ impl GenericUserStore<DefaultStore> {
             system_items: std::sync::Mutex::new(system_items),
             has_removed_system_items: std::sync::atomic::AtomicBool::new(has_removed_system_items),
             count_cache: std::sync::Mutex::new(None),
-            db: std::sync::Mutex::new(db),
+            has_library_offsets: std::sync::atomic::AtomicBool::new(!library_offsets.is_empty()),
+            offsets: std::sync::Mutex::new(library_offsets),
             dirty: std::sync::atomic::AtomicBool::new(false),
             write_generation: std::sync::atomic::AtomicU64::new(0),
             phrase_table_generation: std::sync::atomic::AtomicU64::new(0),
             has_user_data: std::sync::atomic::AtomicBool::new(has_user_data),
-            has_library_offsets: std::sync::atomic::AtomicBool::new(!library_offsets.is_empty()),
             bigram_failed: oxpinyin_store::UserBigramDb::is_failed(&bigram_db),
             bigram_db: std::sync::Mutex::new(bigram_db),
             libpinyin: target,
@@ -460,12 +438,6 @@ trait OpenSteps {
     #[inline]
     fn profile(_profile: &mut persistence::LoadedProfile) {}
 
-    /// The session store's seed write, given the real write's answer.
-    #[inline]
-    fn seeded(seeded: SeedWrite) -> SeedWrite {
-        seeded
-    }
-
     /// A loaded item's encoding ([`persistence::encode_persisted_item`]).
     #[inline]
     fn encode(item: &ChunkItem) -> Result<Vec<u8>, oxpinyin_data::chunk_write::ChunkWriteError> {
@@ -493,23 +465,13 @@ trait OpenSteps {
     }
 }
 
-/// The seed write's answer: whether the store holds user data, and the
-/// seeded totals.
-type SeedWrite = Result<(bool, SeedTotals), StoreError>;
-
 /// The real [`OpenSteps`]: every production open.
 struct PinSteps;
 
 impl OpenSteps for PinSteps {}
 
-/// `init_and_wrap`'s `has_user_data` probe, against a seeded session
-/// store; the user bigram lives in the container, which the caller asks.
-fn count_tables(txn: &mut impl WriteTxn) -> Result<bool, StoreError> {
-    Ok(!txn.is_empty(UNIGRAM)?)
-}
-
-/// Writes the loaded profile's values into a fresh session store — the
-/// seed half of the value mapping.
+/// The totals the loaded profile seeds the session with — the seed half of
+/// the value mapping.
 ///
 /// A replayed MODIFY of a shipped item seeds its unigram delta and no reading
 /// row: the session holds the item whole (`StoreInner::system_items`) and its
@@ -530,14 +492,12 @@ fn count_tables(txn: &mut impl WriteTxn) -> Result<bool, StoreError> {
 /// `compact` rebuilds the libraries' totals and never the facade's
 /// (074a2219 `phrase_index.cpp:648-675`).
 #[cfg(test)]
-pub(crate) fn seed_txn(
-    txn: &mut impl WriteTxn,
+pub(crate) fn seed_totals_plain(
     state: &UserState,
     originals: &impl crate::persistence::OriginalLibraries,
     library_totals: &BTreeMap<u8, u32>,
-) -> Result<SeedTotals, StoreError> {
-    seed_txn_with_replay(
-        txn,
+) -> SeedTotals {
+    seed_totals(
         state,
         originals,
         library_totals,
@@ -601,14 +561,13 @@ pub(crate) struct SeedTotals {
     pub(crate) facade_extra: u64,
 }
 
-fn seed_txn_with_replay(
-    txn: &mut impl WriteTxn,
+fn seed_totals(
     state: &UserState,
     originals: &impl crate::persistence::OriginalLibraries,
     library_totals: &BTreeMap<u8, u32>,
     replayed: &BTreeMap<u8, crate::replay::ReplayedLibrary>,
     user_libraries: &BTreeMap<u8, crate::user_library::UserLibrary>,
-) -> Result<SeedTotals, StoreError> {
+) -> SeedTotals {
     // The unigrams seeded per library, as the facade would sum them.
     let mut seeded: BTreeMap<u8, u32> = BTreeMap::new();
 
@@ -652,11 +611,6 @@ fn seed_txn_with_replay(
         }
     }
 
-    // load_db copies records without normalizing tokens or recreating prefixes.
-    for (key, value) in &state.phrase_table {
-        txn.put(crate::phrase_table::TABLE, key, value)?;
-    }
-
     system_override_mass(state, originals, &mut seeded);
 
     // The facade total is the sum of the loaded libraries' totals
@@ -673,11 +627,6 @@ fn seed_txn_with_replay(
         let items = seeded.get(&nibble).copied().unwrap_or(0);
         let offset = total.wrapping_sub(items);
         if offset != 0 {
-            txn.put(
-                LIBRARY_OFFSET,
-                &codec::encode_u8(nibble),
-                &codec::encode_u64(u64::from(offset)),
-            )?;
             offsets.insert(nibble, offset);
         }
         facade_extra = facade_extra.wrapping_add(u64::from(total));
@@ -700,22 +649,25 @@ fn seed_txn_with_replay(
             totals.insert(nibble, total);
         }
     }
-    Ok(SeedTotals {
+    SeedTotals {
         offsets,
         totals,
         facade_extra,
-    })
+    }
 }
 
-/// Reads the session values back into the persistence shape — the
-/// export half of the value mapping, [`GenericUserStore::save`]'s
-/// libpinyin branch — with the live system items as values, for the tests.
+/// Reads the session back into the persistence shape — the export half of
+/// the value mapping, [`UserStore::save`]'s — with the live system items
+/// as values, for the tests.
 #[cfg(test)]
-pub fn export_state<S: WriteStore>(
-    store: &GenericUserStore<S>,
+pub fn export_state(
+    store: &UserStore,
     originals: &impl crate::persistence::OriginalLibraries,
 ) -> Result<UserState, UserStoreError> {
     let mut state = export_session_state(store, true)?;
+    state
+        .phrase_table
+        .extend(store.session_target().phrases().phrase_table.rows());
     // A session's system items are its live buffers: a save diffs them
     // against the file on disk (`persistence`), and only this test-facing
     // export reads them as values.
@@ -729,44 +681,20 @@ pub fn export_state<S: WriteStore>(
     Ok(state)
 }
 
-/// Reads the session values back into the persistence shape — the
-/// export half of the value mapping, [`GenericUserStore::save`]'s
-/// libpinyin branch.
-pub(crate) fn export_for_save<S: WriteStore>(
-    store: &GenericUserStore<S>,
-) -> Result<UserState, UserStoreError> {
+/// Reads the session back into the persistence shape — the export half of
+/// the value mapping, [`UserStore::save`]'s.
+pub(crate) fn export_for_save(store: &UserStore) -> Result<UserState, UserStoreError> {
     export_session_state(store, false)
 }
 
-fn export_session_state<S: WriteStore>(
-    store: &GenericUserStore<S>,
-    user_items: bool,
-) -> Result<UserState, UserStoreError> {
-    let db = store.database();
-
-    // A session holds its unigram counts in its live items; the rows are the
-    // seed's and the walk finds none.
-    let mut unigrams: BTreeMap<Token, u64> = BTreeMap::new();
-    db.for_each(UNIGRAM, |key, value| {
-        let token = codec::decode_token(key)
-            .map_err(|_| StoreError::Backend("corrupt unigram key".into()))?;
-        let delta = codec::decode_u64(value)
-            .map_err(|_| StoreError::Backend("corrupt unigram value".into()))?;
-        unigrams.insert(token, delta);
-        Ok(())
-    })?;
-
+fn export_session_state(store: &UserStore, user_items: bool) -> Result<UserState, UserStoreError> {
     let mut state = UserState::default();
     // A session save writes the index and phrase-table arenas directly; the
-    // value model's sets are only needed by the test-facing export.
+    // value model's sets are only needed by the test-facing export. Read
+    // before the phrase guard below: `index_entries` takes it too.
     if user_items {
         state.indexed.extend(store.index_entries());
-        db.for_each(crate::phrase_table::TABLE, |key, value| {
-            state.phrase_table.insert(key.to_vec(), value.to_vec());
-            Ok(())
-        })?;
     }
-    drop(db);
     let target = store.session_target();
     let phrases = target.phrases();
     for (&nibble, library) in &phrases.libraries {
@@ -847,6 +775,7 @@ pub(crate) fn pinyin_keys_to_packed(ids: &[crate::phrase::PinyinKey]) -> Option<
 mod tests {
     use super::*;
     use crate::persistence::SystemLibrary;
+    use oxpinyin_store::{DefaultStore, StoreError, WriteStore};
 
     /// The container's gram under `key`, owned: `None` on a miss.
     fn gram(raw: &DefaultUserBigramDb, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
@@ -881,20 +810,7 @@ mod tests {
                 .push_record(&crate::phrase_table::key_ucs4(&words), &[1, 0, 0, 7, 9]);
             phrases.phrase_table.finish_load();
         }
-        let snapshot = |store: &UserStore| {
-            let db = store.database();
-            let rows = [crate::phrase_table::TABLE].map(|table| {
-                let mut rows = Vec::new();
-                db.for_each(table, |key, value| {
-                    rows.push((key.to_vec(), value.to_vec()));
-                    Ok(())
-                })
-                .unwrap();
-                rows
-            });
-            drop(db);
-            (rows, format!("{:?}", store.session_target().phrases()))
-        };
+        let snapshot = |store: &UserStore| format!("{:?}", store.session_target().phrases());
         let before = snapshot(&store);
         let added = store.add_phrase_in(crate::USER_DICTIONARY, &"他".into(), &keys("ta"), Some(5));
         assert!(
@@ -1330,16 +1246,6 @@ mod tests {
             store.phrase(token).unwrap().unwrap().pronunciations()[0].count(),
             12
         );
-        let db = store.database();
-        for table in [PHRASE, PRONUNCIATION] {
-            assert!(db.is_empty(table).unwrap(), "retired session table {table}");
-        }
-        assert!(
-            db.read_with(UNIGRAM, &codec::encode_token(token), |_| ())
-                .unwrap()
-                .is_none()
-        );
-        drop(db);
         assert!(store.phrase_exists(token).unwrap());
         assert_eq!(store.phrase_length(token).unwrap(), Some(1));
         assert_eq!(store.nth_pronunciation(token, 0).unwrap(), Some(keys));
@@ -1386,13 +1292,6 @@ mod tests {
             library + 483
         );
         assert_eq!(store.unigram_total().unwrap(), total + 483);
-        let db = store.database();
-        assert!(
-            db.read_with(UNIGRAM, &codec::encode_token(token), |_| ())
-                .unwrap()
-                .is_none()
-        );
-        drop(db);
         drop(store);
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -1531,7 +1430,6 @@ mod tests {
 
     #[test]
     fn user_library_and_add_views_seed_identical_rows_to_owned_items() {
-        use crate::session_values::SessionValues;
         use crate::user_library::UserLibrary;
         use oxpinyin_data::chunk_write::{build_chunk, encode_phrase_item};
         use oxpinyin_data::user_files::LogRecord;
@@ -1601,24 +1499,11 @@ mod tests {
         assert!(skipped.is_empty());
         let replayed = BTreeMap::from([(1, retained.unwrap())]);
         let totals = BTreeMap::from([(1, 117), (5, 1000), (7, 24)]);
-        let before = SessionValues::<DefaultStore>::transient();
-        let after = SessionValues::<DefaultStore>::transient();
-        let before_offsets = before
-            .write(|txn| seed_txn(txn, &legacy, &originals, &totals))
-            .unwrap();
-        let after_offsets = after
-            .write(|txn| {
-                seed_txn_with_replay(txn, &views, &originals, &totals, &replayed, &libraries)
-            })
-            .unwrap();
+        let before_offsets = seed_totals_plain(&legacy, &originals, &totals);
+        let after_offsets = seed_totals(&views, &originals, &totals, &replayed, &libraries);
         // A replayed library's total lives in its buffer, not in the map.
         assert_eq!(before_offsets.offsets, after_offsets.offsets);
         assert_eq!(before_offsets.facade_extra, after_offsets.facade_extra);
-        let snapshot = |db: &SessionValues<DefaultStore>| match db {
-            SessionValues::Memory(tables) => tables.borrow().clone(),
-            SessionValues::Native(_) => panic!("test uses session rows"),
-        };
-        assert_eq!(snapshot(&before), snapshot(&after));
     }
 
     fn tempdir(name: &str) -> PathBuf {
@@ -3798,18 +3683,6 @@ mod tests {
         readings
     }
 
-    fn pronunciation_rows(store: &UserStore) -> usize {
-        use oxpinyin_store::ReadStore as _;
-        let mut rows = 0_usize;
-        let db = store.database();
-        db.for_each(PRONUNCIATION, |_, _| {
-            rows += 1;
-            Ok(())
-        })
-        .expect("rows");
-        rows
-    }
-
     /// The pin stores `npron + 1` in a `guint8` (`phrase_index.cpp:28`,
     /// `:88`), so the 256th reading leaves a count of 0 and the call still
     /// succeeds. Reads size the item from that count (`:203-204`) and the
@@ -3845,14 +3718,12 @@ mod tests {
                     .add_system_phrase_in(1, Some(token), &"拟".into(), &dense(packed), Some(5))
                     .expect("reading within the 255 limit");
             }
-            assert_eq!(pronunciation_rows(&store), 0);
             assert_eq!(store.user_pronunciation_count(token), Some(255));
             unigram = store.unigram_delta(token).expect("unigram");
             assert_eq!(unigram, 15);
             store
                 .add_system_phrase_in(1, Some(token), &"拟".into(), &dense(readings[255]), Some(5))
                 .expect("the 256th reading is accepted");
-            assert_eq!(pronunciation_rows(&store), 0);
             assert_eq!(
                 store.with_effective_system_item(token, |item| item.prons.len()),
                 Some(0)

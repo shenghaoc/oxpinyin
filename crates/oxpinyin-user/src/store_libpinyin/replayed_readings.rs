@@ -2,9 +2,9 @@
 //!
 //! A `.dbin` MODIFY record changes the item the sub-index holds in place
 //! (`phrase_index.cpp:477-501` at 074a2219). The session keeps that item whole
-//! in its live system-item view, [`seed_txn`] writes no `PRONUNCIATION` row for
-//! it, and the readings' counts are read from the item: training starts from
-//! them, writes the row for the readings it moves, and the save writes them.
+//! in its live system-item view, and the readings' counts are read from the
+//! item: training starts from them, moves them in place, and the save writes
+//! them.
 //! These tests hold what that must not change. The item is a list of (keys,
 //! count) entries in the file's order, as the pin keeps it: an import adds to
 //! the first entry with the keys (`PhraseItem::add_pronunciation`,
@@ -204,17 +204,6 @@ fn exported(store: &UserStore, base: &SystemOriginals, slot: u32) -> Vec<u32> {
         .collect()
 }
 
-fn pronunciation_rows(store: &UserStore) -> usize {
-    let mut rows = 0_usize;
-    let db = store.database();
-    oxpinyin_store::ReadStore::for_each(&*db, crate::store::PRONUNCIATION, |_, _| {
-        rows += 1;
-        Ok(())
-    })
-    .expect("rows");
-    rows
-}
-
 fn train(store: &mut UserStore, slot: u32, reading: ChewingKey, paths: usize) {
     let mut readings = (0..paths).map(|_| vec![reading]);
     UserModel::observe_with_keys(store, &[], &PhraseToken::new(LIBRARY | slot), &mut readings)
@@ -239,7 +228,6 @@ fn a_replayed_item_opens_without_reading_rows_and_trains_from_its_counts() {
         &base,
         &[header(100, 150), modify(1, &old, &new)],
     );
-    assert_eq!(pronunciation_rows(&store), 0);
     assert_eq!(counts(&store, 1), [107, 40]);
     assert_eq!(exported(&store, &base, 1), [107, 40]);
     // The unigram is the live field: pricing and the totals read it.
@@ -250,7 +238,6 @@ fn a_replayed_item_opens_without_reading_rows_and_trains_from_its_counts() {
     // One accepted path adds the seed to the matching live reading alone.
     // Session training no longer writes pronunciation rows.
     train(&mut store, 1, key("ni", 3), 1);
-    assert_eq!(pronunciation_rows(&store), 0);
     assert_eq!(counts(&store, 1), [176, 40]);
     assert_eq!(exported(&store, &base, 1), [176, 40]);
     assert!(store.save().expect("save"));
@@ -259,7 +246,6 @@ fn a_replayed_item_opens_without_reading_rows_and_trains_from_its_counts() {
     // The saved profile replays to the same item, again with no row; a second
     // training starts from the replayed count and not from the original.
     let mut store = open(&dir, &base);
-    assert_eq!(pronunciation_rows(&store), 0);
     assert_eq!(counts(&store, 1), [176, 40]);
     train(&mut store, 1, key("ni", 3), 1);
     // The seed of a second training is twice the first: the predecessor's
@@ -374,7 +360,6 @@ fn entries_with_the_same_keys_stay_separate_through_import_save_and_reopen() {
             modify(2, &two, &two_new),
         ],
     );
-    assert_eq!(pronunciation_rows(&store), 0);
     assert_eq!(counts(&store, 1), [100, 160]);
     assert_eq!(exported(&store, &base, 1), [100, 160]);
     assert_eq!(counts(&store, 2), [30, 40]);
@@ -516,7 +501,6 @@ fn a_populated_user_library_and_an_independent_index_beside_a_replayed_item() {
 
     let mut store = open(&dir, &base);
     // Both the user arena and the replayed item own their reading counts.
-    assert_eq!(pronunciation_rows(&store), 0);
     assert_eq!(counts(&store, 1), [130]);
     assert_eq!(view, user_view(&store));
     let phrases = store
@@ -660,7 +644,6 @@ fn a_mixed_profile_keeps_shipped_appended_and_user_state_apart() {
     );
     let tokens = [LIBRARY | 1, LIBRARY | 2, LIBRARY | 3];
     // The appended item has one arena body; no session pronunciation rows.
-    assert_eq!(pronunciation_rows(&store), 0);
     assert_eq!(counts(&store, 1), [107]);
     assert_eq!(counts(&store, 2), [50]);
     assert_eq!(counts(&store, 3), [33]);

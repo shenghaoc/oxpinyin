@@ -35,7 +35,6 @@
 #![cfg_attr(not(test), deny(clippy::panic))]
 #![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
 
-pub mod codec;
 pub mod phrase;
 pub mod phrase_table;
 pub mod seed;
@@ -46,7 +45,6 @@ mod lookup;
 mod model;
 pub mod persistence;
 mod replay;
-mod session_values;
 mod store;
 pub(crate) mod store_libpinyin;
 mod system_items;
@@ -73,8 +71,8 @@ pub use phrase::{
 };
 pub use replay::{JournalFault, UnigramAdd};
 pub use store::{
-    ExportedPhrase, GenericUserStore, SENTENCE_START, SaveReport, Token, TrainingCheck,
-    TrainingFault, UserStore, UserStoreError, add_system_reading,
+    ExportedPhrase, SENTENCE_START, SaveReport, Token, TrainingCheck, TrainingFault, UserStore,
+    UserStoreError, add_system_reading,
 };
 
 #[cfg(feature = "tools")]

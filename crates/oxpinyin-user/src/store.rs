@@ -13,18 +13,15 @@
 //! [`oxpinyin_core::UserCountDelta`]; the save cycle is the §4 `m_modified`
 //! gate and the persistence point behind `pinyin_save`.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use oxpinyin_core::{ChewingKey, Completeness, SyllableKey, UserCountDelta, single_gram};
-use oxpinyin_store::{
-    DefaultStore, DefaultUserBigramDb, ReadStore, StoreError, UserBigramDb, WriteStore, WriteTxn,
-};
+use oxpinyin_store::{DefaultUserBigramDb, StoreError, UserBigramDb};
 
-use crate::codec;
 use crate::persistence::ChunkHeaderField;
 use crate::phrase::{
     self, ADD_PHRASE_UNIGRAM_FACTOR, ADDON_DICTIONARY, DEFAULT_PHRASE_COUNT,
@@ -34,7 +31,6 @@ use crate::phrase::{
 use crate::phrase_table;
 use crate::replay::UnigramAdd;
 use crate::seed;
-use crate::session_values::SessionValues;
 use crate::store_libpinyin::FiniGuard;
 
 #[path = "store_arena.rs"]
@@ -50,7 +46,7 @@ pub type Token = u32;
 /// printed (`rename %s to %s failed.`, `pinyin.cpp:1061`…`:1123`), the
 /// marker write fails and is printed (`write %s failed.`,
 /// `table_info.cpp:382`), and the save answers `true`
-/// (`pinyin.cpp:1132-1147`). [`GenericUserStore::save_reporting`] prints
+/// (`pinyin.cpp:1132-1147`). [`UserStore::save_reporting`] prints
 /// each line where the pin does, as the failure happens, and also returns
 /// the failures.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -84,17 +80,6 @@ pub struct ExportedPhrase {
 /// sentence (`docs/findings/user-store.md` §2; `novel_types.h:122`).
 pub const SENTENCE_START: Token = 1;
 
-// ── table names ───────────────────────────────────────────────────
-
-/// Per library, how far the total the pin's sub-index holds lies from the
-/// one the seeded rows make, a wrapping `guint32` keyed by nibble: the
-/// difference a stored header or a `.dbin` replay left, until the next
-/// `compact` rebuilds the library's total from its items. A row exists
-/// only for a non-zero difference.
-pub(crate) const LIBRARY_OFFSET: &str = "library_offset";
-pub const UNIGRAM: &str = "user_unigram";
-pub const PHRASE: &str = "user_phrase";
-pub const PRONUNCIATION: &str = "user_pronunciation";
 /// Which seed rule an update applies.
 #[derive(Clone, Copy)]
 enum SeedPolicy {
@@ -199,8 +184,8 @@ pub enum UserStoreError {
     /// the pin asserts on the failed removal (`pinyin.cpp:3759`).
     UserReadingRemoval,
     /// The open could not build the session once the system libraries
-    /// were handed to it: the session store's seed write, a loaded item's
-    /// encoding or its placement, or the user bigram's container. The
+    /// were handed to it: a loaded item's encoding or its placement, or
+    /// the user bigram's container. The
     /// pin's counterparts die: an allocation that throws `std::bad_alloc`,
     /// or the asserts of its in-memory loads (`ngram_bdb.cpp:51-52`,
     /// `bdb_utils.h:61`, `tkrzwdb_utils.h:45`). The C adapters abort.
@@ -383,50 +368,6 @@ fn index_projection(syllables: &[SyllableKey]) -> Option<Vec<u16>> {
             })
             .collect(),
     )
-}
-
-// ── codec helpers ─────────────────────────────────────────────────
-
-fn get_u64_or(
-    store: &impl ReadStore,
-    table: &str,
-    key: &[u8],
-    default: u64,
-) -> Result<u64, UserStoreError> {
-    store
-        .read_with(table, key, codec::decode_u64)?
-        .transpose()
-        .map_err(|_| UserStoreError::Decode)
-        .map(|value| value.unwrap_or(default))
-}
-
-fn txn_get_u64(txn: &impl WriteTxn, table: &str, key: &[u8]) -> Result<Option<u64>, StoreError> {
-    txn.read_with(table, key, codec::decode_u64)?
-        .transpose()
-        .map_err(|_| StoreError::Backend("corrupt u64 value".into()))
-}
-
-pub fn txn_get_u64_or(
-    txn: &impl WriteTxn,
-    table: &str,
-    key: &[u8],
-    default: u64,
-) -> Result<u64, StoreError> {
-    Ok(txn_get_u64(txn, table, key)?.unwrap_or(default))
-}
-
-/// A library transition's write to a libpinyin session's own values. The
-/// pin's transitions are in memory and cannot fail (`FacadePhraseIndex::load`
-/// and `unload`, `phrase_index.cpp:237-268` at 074a2219), and neither can
-/// these: the session's values are process memory
-/// ([`SessionValues::Memory`](crate::session_values::SessionValues), made by
-/// `open_session`, the only constructor of a libpinyin target), whose
-/// transaction refuses only an empty or NUL table name or a re-entrant
-/// borrow, and whose rows the store's codec wrote itself. The generic table
-/// API still carries a `Result`; on this path it is always `Ok`, so the
-/// transition answers no refusal (policy row 103).
-fn in_session<R>(written: Result<R, impl Sized>) -> Option<R> {
-    written.ok()
 }
 
 /// [`ADD_PHRASE_UNIGRAM_FACTOR`] as `_add_phrase`'s `guint32`
@@ -750,15 +691,7 @@ fn phrase_fits_keys(words: &[u32], keys: &[PinyinKey]) -> bool {
     !words.is_empty() && words.len() < crate::MAX_PHRASE_LENGTH && words.len() == keys.len()
 }
 
-/// Whether the store holds any user data, evaluated inside `txn`.
-///
-/// `||` short-circuits, so each table is probed with a first-row
-/// `WriteTxn::is_empty` check and full-table scans are avoided.
-fn has_user_data_in_write_txn(txn: &impl WriteTxn) -> Result<bool, StoreError> {
-    Ok(!txn.is_empty(UNIGRAM)? || !txn.is_empty(PHRASE)? || !txn.is_empty(PRONUNCIATION)?)
-}
-
-// ── GenericUserStore ─────────────────────────────────────────────
+// ── UserStore ───────────────────────────────────────────────────
 
 /// Decode-time memo of the user bigram's raw grams, valid for one write
 /// generation: a gram is loaded from the container the first time its
@@ -778,8 +711,15 @@ pub struct CountCache {
     pub(crate) bigram_rows: HashMap<Token, Vec<u8>>,
 }
 
+/// Per library, how far the total the pin's sub-index holds lies from the
+/// one its items make, a wrapping `guint32` keyed by nibble: the
+/// difference a stored header or a `.dbin` replay left, until the next
+/// `compact` rebuilds the library's total from its items. An entry exists
+/// only for a non-zero difference.
+pub(crate) type Offsets = BTreeMap<u8, u32>;
+
 /// The state one session's handles share.
-pub struct StoreInner<S: WriteStore> {
+pub struct StoreInner {
     pub(crate) has_system_items: AtomicBool,
     // When nested, acquire the session phrase-arena mutex before
     // `system_items`; never reverse this order.
@@ -790,12 +730,15 @@ pub struct StoreInner<S: WriteStore> {
     /// holds the item and the phrase table the token. The library's live
     /// buffer is the record; this only gates the per-token check.
     pub(crate) has_removed_system_items: AtomicBool,
-    /// Decode-time count memo. Declared before `db` so it is dropped
+    /// Decode-time count memo. Declared before `offsets` so it is dropped
     /// first (struct fields drop in declaration order).
     pub(crate) count_cache: Mutex<Option<CountCache>>,
-    pub(crate) db: Mutex<crate::session_values::SessionValues<S>>,
+    /// The user libraries' stored-total differences ([`Offsets`]). Its
+    /// mutex serializes every write to the session, so a reader that holds
+    /// it sees one side of a commit.
+    pub(crate) offsets: Mutex<Offsets>,
     pub(crate) dirty: AtomicBool,
-    /// Bumped after every committed user-data write transaction, which
+    /// Bumped after every committed user-data write, which
     /// retires any `count_cache` built against an older generation.
     ///
     /// Future raw-write paths, including legacy migration import, must call
@@ -810,26 +753,26 @@ pub struct StoreInner<S: WriteStore> {
     /// this stamp alone, so repeated text queries can retain their row.
     pub(crate) phrase_table_generation: AtomicU64,
     /// First gate on the decode read path: `false` answers `count_delta` and
-    /// `unigram_delta` with zero from this one atomic, taking no mutex and
-    /// opening no store transaction. Recomputed at `open` and maintained only
+    /// `unigram_delta` with zero from this one atomic, taking no mutex.
+    /// Recomputed at `open` and maintained only
     /// by `UserStore::mark_committed_write`.
     pub(crate) has_user_data: AtomicBool,
     /// Whether any library still carries its own share of that difference
-    /// in [`LIBRARY_OFFSET`]: from the load until the next
+    /// in [`Self::offsets`]: from the load until the next
     /// `compact` (a save, the end of an import, a mask_out), which
     /// rebuilds each library's total from its items.
     pub(crate) has_library_offsets: AtomicBool,
     /// The libpinyin session metadata (optional directory, system originals).
     /// Transient sessions retain originals without a directory; others use the
     /// pin's own file shapes (`open_libpinyin`): `save()` exports the
-    /// session values and writes the file set.
+    /// session and writes the file set.
     pub(crate) libpinyin: std::sync::Arc<crate::store_libpinyin::Target>,
     /// The pin's own in-memory user bigram container (`Bigram::m_db`
     /// after `load_db`): the session's only copy of the user bigram, the
     /// raw `SingleGram` values every bigram operation reads and writes, so
     /// its walk order — the export's order and the saved file's layout —
-    /// is the pin's. A writer takes the database guard first, then this one,
-    /// and bumps `write_generation` before releasing the database guard.
+    /// is the pin's. A writer takes the offsets guard first, then this one,
+    /// and bumps `write_generation` before releasing the offsets guard.
     pub(crate) bigram_db: Mutex<oxpinyin_store::DefaultUserBigramDb>,
     /// Whether [`Self::bigram_db`] is the failed Berkeley DB container
     /// ([`oxpinyin_store::UserBigramDb::is_failed`]), recorded when it is
@@ -839,17 +782,19 @@ pub struct StoreInner<S: WriteStore> {
 }
 
 /// The libpinyin session store: one per open, over the arena, the pin's
-/// user bigram container and the live system items.
+/// user bigram container and the live system items. The user files are
+/// read and written with the compiled-in backend (tkrzw, Kyoto Cabinet or
+/// Berkeley DB, one per binary; see `oxpinyin-store`).
 ///
 /// The context owns the store and lends it to each operation. System chunk
 /// originals belong to this owner; sessions and cursors cannot retain them.
-/// The database mutex serializes access to the session values, while
-/// public mutations require an exclusive borrow of this store.
-pub struct GenericUserStore<S: WriteStore> {
+/// The offsets mutex serializes every write to the session, while public
+/// mutations require an exclusive borrow of this store.
+pub struct UserStore {
     /// The facade fini's `user.conf` write: armed only on the handle a
     /// libpinyin open returned ([`FiniGuard`]).
     _fini: FiniGuard,
-    inner: Arc<StoreInner<S>>,
+    inner: Arc<StoreInner>,
     pub(crate) originals: crate::persistence::SystemOriginals,
     /// This handle's current training call's step checks.
     training: TrainingCheck,
@@ -886,16 +831,7 @@ impl TrainingCheck {
     }
 }
 
-/// Default user store backed by [`DefaultStore`] — whichever peer
-/// backend (Kyoto Cabinet, tkrzw, Berkeley DB) the build was
-/// compiled against.
-///
-/// tkrzw is the default selection under the workspace's default
-/// feature set (since 2026-10-30); the others are selected with
-/// `--no-default-features --features {kyotocabinet|bdb}`.
-pub type UserStore = GenericUserStore<DefaultStore>;
-
-impl<S: WriteStore> GenericUserStore<S> {
+impl UserStore {
     /// Run the context's fini marker write once, while retaining its live data
     /// for handles that outlive the public context (compatibility row 42).
     pub fn finish(&mut self) {
@@ -906,7 +842,7 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// ([`crate::store_libpinyin`]), which runs in memory and arms
     /// the fini guard of the open that raised the counter.
     pub(crate) fn from_parts(
-        inner: Arc<StoreInner<S>>,
+        inner: Arc<StoreInner>,
         fini: FiniGuard,
         originals: crate::persistence::SystemOriginals,
     ) -> Self {
@@ -919,9 +855,9 @@ impl<S: WriteStore> GenericUserStore<S> {
     }
 }
 
-impl<S: WriteStore> fmt::Debug for GenericUserStore<S> {
+impl fmt::Debug for UserStore {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("GenericUserStore").finish_non_exhaustive()
+        f.debug_struct("UserStore").finish_non_exhaustive()
     }
 }
 
@@ -933,7 +869,7 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
-impl<S: WriteStore> GenericUserStore<S> {
+impl UserStore {
     /// Borrow the uniquely owned init baselines for a read operation.
     pub const fn originals(&self) -> &crate::persistence::SystemOriginals {
         &self.originals
@@ -959,12 +895,12 @@ impl<S: WriteStore> GenericUserStore<S> {
         &mut self.originals
     }
 
-    /// Locks the shared store handle, recovering from a poisoned lock
-    /// (constitution §4: nothing here panics, so a poisoned mutex must not
-    /// brick the store either).
-    pub(crate) fn database(&self) -> MutexGuard<'_, SessionValues<S>> {
+    /// Locks the session's offsets, the guard every write takes first,
+    /// recovering from a poisoned lock (constitution §4: nothing here
+    /// panics, so a poisoned mutex must not brick the store either).
+    pub(crate) fn offsets(&self) -> MutexGuard<'_, Offsets> {
         self.inner
-            .db
+            .offsets
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
@@ -989,7 +925,7 @@ impl<S: WriteStore> GenericUserStore<S> {
     }
 
     /// The pin's in-memory user bigram container, locked. Taken after the
-    /// database guard when both are held, never before it.
+    /// offsets guard when both are held, never before it.
     fn container(&self) -> MutexGuard<'_, DefaultUserBigramDb> {
         self.inner
             .bigram_db
@@ -1023,7 +959,7 @@ impl<S: WriteStore> GenericUserStore<S> {
     }
 
     /// [`Self::bigram_row`] without the user-data gate, for a caller that
-    /// holds the database guard.
+    /// holds the offsets guard.
     fn gram_in(&self, prev: Token) -> Result<Option<Vec<u8>>, UserStoreError> {
         Ok(container_gram(&self.container(), prev)?)
     }
@@ -1116,7 +1052,7 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// `pinyin.cpp:1230`, `zhuyin.cpp:765`, `pinyin.cpp:3766`) all reach
     /// the same walk.
     fn bigram_mask_fault(&self, mask: Token, value: Token) -> Option<UserStoreError> {
-        let _db = self.database();
+        let _offsets = self.offsets();
         let keys = self.container_keys();
         self.bigram_mask_fault_over(&keys, mask, value)
     }
@@ -1124,7 +1060,7 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// The session container's `Bigram::get_all_items` walk
     /// (`ngram_tkrzwdb.cpp:161-172` and its Kyoto Cabinet and Berkeley DB
     /// twins at 074a2219). A mask takes it once and hands it to both its
-    /// fault check and its walk. The caller holds the database guard from
+    /// fault check and its walk. The caller holds the offsets guard from
     /// before this walk until the mask has run, so no other handle's
     /// `set_bigram_count` adds a gram the walk missed.
     fn container_keys(&self) -> Result<Vec<Option<Token>>, StoreError> {
@@ -1143,7 +1079,7 @@ impl<S: WriteStore> GenericUserStore<S> {
     }
 
     /// [`Self::bigram_mask_fault`] over the container keys
-    /// [`Self::container_keys`] collected, with the database guard held by
+    /// [`Self::container_keys`] collected, with the offsets guard held by
     /// the caller.
     fn bigram_mask_fault_over(
         &self,
@@ -1296,8 +1232,9 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// Runs `read` against the count cache for the current write
     /// generation, discarding a cache built against an older one first.
     ///
-    /// The database guard is taken for the whole call, in the lock order
-    /// every write path uses — cache first, then db, then the container.
+    /// The offsets guard is taken for the whole call, in the lock order
+    /// every write path uses — cache first, then offsets, then the
+    /// container.
     /// `write_generation` is read under that guard, so cache validation
     /// is ordered against the same critical section every commit bumps
     /// in: the observed state and generation always belong to one side of
@@ -1310,30 +1247,30 @@ impl<S: WriteStore> GenericUserStore<S> {
         read: impl FnOnce(&mut CountCache) -> Result<T, UserStoreError>,
     ) -> Result<T, UserStoreError> {
         let mut cache = self.count_cache();
-        let db = self.database();
+        let offsets = self.offsets();
         let generation = self.write_generation();
         let mut current = match cache.take() {
             Some(cached) if cached.generation == generation => cached,
             _ => CountCache::new(generation),
         };
         let out = read(&mut current);
-        drop(db);
+        drop(offsets);
         *cache = Some(current);
         out
     }
 
     /// Invalidate cached reads after a committed user-data write.
     ///
-    /// The generation bump lands while the database guard is still held:
+    /// The generation bump lands while the offsets guard is still held:
     /// paired with [`Self::with_count_cache`] reading the generation under
     /// the same guard, no reader can observe post-commit rows against a
     /// pre-commit generation (or vice versa).
-    fn mark_committed_write(&self, db: MutexGuard<'_, SessionValues<S>>, has_user_data: bool) {
+    fn mark_committed_write(&self, offsets: MutexGuard<'_, Offsets>, has_user_data: bool) {
         self.inner
             .has_user_data
             .store(has_user_data, Ordering::Release);
         self.inner.write_generation.fetch_add(1, Ordering::AcqRel);
-        drop(db);
+        drop(offsets);
         *self.count_cache() = None;
     }
 
@@ -1341,24 +1278,20 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// and pronunciation merges, which keep the phrase table's
     /// text-to-token rows (074a2219 pinyin.cpp:563-582), take
     /// [`Self::mark_committed_write`].
-    fn mark_committed_phrase_write(
-        &self,
-        db: MutexGuard<'_, SessionValues<S>>,
-        has_user_data: bool,
-    ) {
+    fn mark_committed_phrase_write(&self, offsets: MutexGuard<'_, Offsets>, has_user_data: bool) {
         self.inner
             .phrase_table_generation
             .fetch_add(1, Ordering::AcqRel);
-        self.mark_committed_write(db, has_user_data);
+        self.mark_committed_write(offsets, has_user_data);
     }
 
     // Keep the import memo's publication separate from whether this write
     // changed the exact-text row; reading-only merges retain queried rows.
-    fn mark_committed_import_write(&self, db: MutexGuard<'_, SessionValues<S>>, added_token: bool) {
+    fn mark_committed_import_write(&self, offsets: MutexGuard<'_, Offsets>, added_token: bool) {
         if added_token {
-            self.mark_committed_phrase_write(db, true);
+            self.mark_committed_phrase_write(offsets, true);
         } else {
-            self.mark_committed_write(db, true);
+            self.mark_committed_write(offsets, true);
         }
     }
 
@@ -1427,7 +1360,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         cur: Token,
         count: u64,
     ) -> Result<(), UserStoreError> {
-        let db = self.database();
+        let offsets = self.offsets();
         let mut gram = self
             .gram_in(prev)?
             .filter(|gram| gram.len() >= single_gram::TOTAL_LEN)
@@ -1448,12 +1381,12 @@ impl<S: WriteStore> GenericUserStore<S> {
             .min(u64::from(u32::MAX));
         single_gram::set_total_freq(&mut gram, new_total as u32);
         self.store_gram(prev, &gram)?;
-        self.mark_committed_write(db, true);
+        self.mark_committed_write(offsets, true);
         Ok(())
     }
 
     /// `Bigram::store(prev, gram)` on the pin's container, with the
-    /// database guard held by the caller.
+    /// offsets guard held by the caller.
     fn store_gram(&self, prev: Token, gram: &[u8]) -> Result<(), UserStoreError> {
         self.container().store(&prev.to_le_bytes(), gram)?;
         Ok(())
@@ -1539,7 +1472,7 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// context dirty (`pinyin.cpp:2836-2843`, `zhuyin.cpp:1828-1835`).
     ///
     /// # Errors
-    /// Returns the store error if the in-memory transaction fails.
+    /// None: the `Result` is the callers' signature.
     pub fn add_system_unigram_frequency(
         &mut self,
         token: Token,
@@ -1554,14 +1487,14 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// (`pinyin.cpp:2528`).
     ///
     /// # Errors
-    /// Returns the store error if the in-memory transaction fails.
+    /// None: the `Result` is the callers' signature.
     pub fn add_system_unigram_outcome(
         &mut self,
         token: Token,
         delta: u32,
     ) -> Result<UnigramAdd, UserStoreError> {
-        let db = self.database();
-        Ok(db.write(|txn| self.arena_add_unigram_outcome(txn, token, delta))?)
+        let offsets = self.offsets();
+        Ok(self.arena_add_unigram_outcome(&offsets, token, delta))
     }
 
     /// What the user side adds to the facade's unigram total: everything of
@@ -1610,10 +1543,9 @@ impl<S: WriteStore> GenericUserStore<S> {
     ///
     /// # Errors
     ///
-    /// Returns [`UserStoreError`] when the store cannot be read.
+    /// None: the `Result` is the callers' signature.
     pub fn unigram_library_total(&self, library: u8) -> Result<u32, UserStoreError> {
-        let db = self.database();
-        let offset = get_u64_or(&*db, LIBRARY_OFFSET, &codec::encode_u8(library), 0)? as u32;
+        let offset = self.offsets().get(&library).copied().unwrap_or(0);
         Ok(self
             .inner
             .libpinyin
@@ -1628,13 +1560,12 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// `0` once compacted or when the two agree.
     ///
     /// # Errors
-    /// Returns the store error if the row cannot be read.
+    /// None: the `Result` is the callers' signature.
     pub fn library_offset(&self, library: u8) -> Result<u32, UserStoreError> {
         if !self.inner.has_library_offsets.load(Ordering::SeqCst) {
             return Ok(0);
         }
-        let db = self.database();
-        Ok(get_u64_or(&*db, LIBRARY_OFFSET, &codec::encode_u8(library), 0)? as u32)
+        Ok(self.offsets().get(&library).copied().unwrap_or(0))
     }
 
     /// `FacadePhraseIndex::compact` (074a2219 `phrase_index.cpp:648-675`):
@@ -1645,12 +1576,11 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// (`pinyin.cpp:1139`, `:657`, `:1294`; `zhuyin.cpp:554`, `:542`,
     /// `:829`).
     pub fn compact_libraries(&mut self) {
-        // Flag invariant: `has_library_offsets` is never false while a
-        // LIBRARY_OFFSET row exists (true with no rows is harmless: the row
-        // read gives 0). `library_offset` reads the flag without the lock,
-        // so the flag is cleared only after the rows are gone, under the
-        // database lock that every offset writer also holds, and stays set
-        // if the write fails.
+        // Flag invariant: `has_library_offsets` is never false while an
+        // offset entry exists (true with no entries is harmless: the read
+        // gives 0). `library_offset` reads the flag without the lock, so the
+        // flag is cleared only after the entries are gone, under the offsets
+        // lock that every offset writer also holds.
         let target = Arc::clone(&self.inner.libpinyin);
         // Each system library's total becomes the sum of its live readable
         // items; the facade total keeps what the libraries held, so the
@@ -1676,29 +1606,17 @@ impl<S: WriteStore> GenericUserStore<S> {
                 items.add_facade_extra(u64::from(old.wrapping_sub(new)));
             }
         }
-        let db = self.database();
-        let cleared = db.write(|txn| {
-            let mut keys = Vec::new();
-            txn.for_each(LIBRARY_OFFSET, |key, _| {
-                keys.push(key.to_vec());
-                Ok(())
-            })?;
-            for key in keys {
-                txn.remove(LIBRARY_OFFSET, &key)?;
-            }
-            Ok(())
-        });
-        if cleared.is_ok() {
-            for library in target.phrases().libraries.values_mut() {
-                library.compact();
-            }
-            self.inner
-                .has_library_offsets
-                .store(false, Ordering::SeqCst);
+        let mut offsets = self.offsets();
+        offsets.clear();
+        for library in target.phrases().libraries.values_mut() {
+            library.compact();
         }
+        self.inner
+            .has_library_offsets
+            .store(false, Ordering::SeqCst);
     }
 
-    /// One-transaction §5 overlay for scoring `token` after `prev`.
+    /// The §5 overlay for scoring `token` after `prev`, read under one guard.
     ///
     /// # Errors
     ///
@@ -1787,11 +1705,9 @@ impl<S: WriteStore> GenericUserStore<S> {
     pub fn observe_predicted_prefix(&mut self, cur: Token) -> Result<u64, UserStoreError> {
         let seed = seed::predicted_seed();
         let delta = seed::unigram_delta(seed) as u32;
-        let db = self.database();
-        // An arena-resident item holds its own unigram; a row would be
-        // missed by `unigram_delta` while the total still took the delta.
-        let accepted = db.write(|txn| self.arena_add_unigram(txn, cur, delta))?;
-        self.mark_committed_write(db, true);
+        let offsets = self.offsets();
+        let accepted = self.arena_add_unigram(&offsets, cur, delta);
+        self.mark_committed_write(offsets, true);
         if !accepted {
             return Err(UserStoreError::UnigramTotalOverflow);
         }
@@ -1807,7 +1723,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         cur: Token,
         policy: SeedPolicy,
     ) -> Result<u64, UserStoreError> {
-        let db = self.database();
+        let offsets = self.offsets();
         let row = self.gram_in(last)?;
         // Class (b), register row 100: the pin's `get_freq`/`insert_freq`/
         // `set_freq` walks read past a partial item (`ngram.cpp:190`,
@@ -1828,8 +1744,8 @@ impl<S: WriteStore> GenericUserStore<S> {
             if matches!(policy, SeedPolicy::Predicted) {
                 let delta =
                     u32::try_from(seed::unigram_delta(seed::predicted_seed())).unwrap_or(u32::MAX);
-                let accepted = db.write(|txn| self.arena_add_unigram(txn, cur, delta))?;
-                self.mark_committed_write(db, true);
+                let accepted = self.arena_add_unigram(&offsets, cur, delta);
+                self.mark_committed_write(offsets, true);
                 if !accepted {
                     return Err(UserStoreError::UnigramTotalOverflow);
                 }
@@ -1840,25 +1756,21 @@ impl<S: WriteStore> GenericUserStore<S> {
             SeedPolicy::Training => trained_gram(row, cur)?,
             SeedPolicy::Predicted => (seed::predicted_seed(), Some(predicted_gram(row, cur)?)),
         };
-        let accepted = db.write(|txn| {
-            // `seed * unigram_factor` in `guint32`; the seeds are small.
-            let delta = u32::try_from(seed::unigram_delta(seed)).unwrap_or(u32::MAX);
-            if matches!(policy, SeedPolicy::Predicted)
-                && !self.arena_add_unigram(txn, cur, delta)?
-            {
-                // The unigram add comes first and its overflow ends the
-                // call before any bigram is trained (`pinyin.cpp:2609-2612`);
-                // the facade total has already taken the delta.
-                return Ok(false);
+        // `seed * unigram_factor` in `guint32`; the seeds are small.
+        let delta = u32::try_from(seed::unigram_delta(seed)).unwrap_or(u32::MAX);
+        let accepted = match policy {
+            // The unigram add comes first and its overflow ends the call
+            // before any bigram is trained (`pinyin.cpp:2609-2612`); the
+            // facade total has already taken the delta.
+            SeedPolicy::Predicted => self.arena_add_unigram(&offsets, cur, delta),
+            // `train_result3` ignores the sub-index's refusal
+            // (`phonetic_lookup.h:928-929`): the item stops growing once its
+            // library's `guint32` total would overflow.
+            SeedPolicy::Training => {
+                self.arena_add_unigram(&offsets, cur, delta);
+                true
             }
-            if matches!(policy, SeedPolicy::Training) {
-                // `train_result3` ignores the sub-index's refusal
-                // (`phonetic_lookup.h:928-929`): the item stops growing
-                // once its library's `guint32` total would overflow.
-                self.arena_add_unigram(txn, cur, delta)?;
-            }
-            Ok(true)
-        })?;
+        };
         // `m_user_bigram->store(last_token, user)` (`phonetic_lookup.h:904`,
         // `pinyin.cpp:2638`): one store of the predecessor's gram, skipped
         // by training's overflow guard.
@@ -1867,7 +1779,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         } else {
             Ok(())
         };
-        self.mark_committed_write(db, true);
+        self.mark_committed_write(offsets, true);
         match stored {
             Ok(()) => {}
             // The failed container's `store` answers false.
@@ -2399,10 +2311,8 @@ impl<S: WriteStore> GenericUserStore<S> {
         if !self.is_modified() {
             return Ok(false);
         }
-        // The libpinyin branch: export the session values and write the
-        // pin's whole file set (`.tmp` + rename). The session store's
-        // compaction below still runs — it keeps the in-memory session
-        // tidy — but the durable write is the file set, not the session.
+        // Export the session and write the pin's whole file set (`.tmp` +
+        // rename): the durable write is the file set, not the session.
         let target = Arc::clone(&self.inner.libpinyin);
         let Some(dir) = target.dir.as_deref() else {
             return Ok(false);
@@ -2436,15 +2346,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             Some(&*bigram_db),
         )?;
         drop(bigram_db);
-        // Dropping the cache is no longer forced by the backend — no read
-        // view outlives a call, so nothing pins pages against compaction —
-        // but it is kept so `save` leaves exactly the state it always did.
-        let mut cache = self.count_cache();
-        *cache = None;
-        let mut db = self.database();
-        db.compact()?;
-        drop(db);
-        drop(cache);
+        *self.count_cache() = None;
         self.inner.dirty.store(false, Ordering::Relaxed);
         Ok(true)
     }
@@ -2459,9 +2361,8 @@ impl<S: WriteStore> GenericUserStore<S> {
     ///
     /// # Errors
     ///
-    /// Returns [`UserStoreError`] when the session values cannot be
-    /// exported or encoded, or the in-memory session store cannot be
-    /// compacted — failures the pin has no counterpart for. A filesystem
+    /// Returns [`UserStoreError`] when the session cannot be exported or
+    /// encoded — failures the pin has no counterpart for. A filesystem
     /// failure is never one.
     pub fn save_reporting(&mut self) -> Result<SaveReport, UserStoreError> {
         self.save_reporting_compacted(&[])
@@ -2545,12 +2446,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             )?;
         }
         drop(bigram_db);
-        let mut cache = self.count_cache();
-        *cache = None;
-        let mut db = self.database();
-        db.compact()?;
-        drop(db);
-        drop(cache);
+        *self.count_cache() = None;
         self.inner.dirty.store(false, Ordering::Relaxed);
         Ok(report)
     }
@@ -2570,7 +2466,7 @@ impl<S: WriteStore> GenericUserStore<S> {
 
     /// `Bigram::mask_out(mask, value)` on the pin's container over the keys
     /// [`Self::container_keys`] collected before the mask's fault check,
-    /// with the database guard held ([`mask_grams_over`]). Answers whether a
+    /// with the offsets guard held ([`mask_grams_over`]). Answers whether a
     /// gram remains.
     fn mask_container_over(
         &self,
@@ -2744,9 +2640,9 @@ impl<S: WriteStore> GenericUserStore<S> {
 
     /// The session side of a system library transition: each reloaded
     /// library's live buffer and total are replaced by the one its replay
-    /// left in `replayed` (none when its log left the chunk as it is). A
-    /// libpinyin session's values are process memory (see [`in_session`]), so
-    /// this cannot fail, as `FacadePhraseIndex::load`/`unload` cannot.
+    /// left in `replayed` (none when its log left the chunk as it is). The
+    /// session's state is process memory, so this cannot fail, as
+    /// `FacadePhraseIndex::load`/`unload` cannot (policy row 103).
     fn replace_system_libraries(
         &mut self,
         originals: crate::persistence::SystemOriginals,
@@ -2798,25 +2694,17 @@ impl<S: WriteStore> GenericUserStore<S> {
         library_totals: &std::collections::BTreeMap<u8, u32>,
     ) {
         let target = Arc::clone(&self.inner.libpinyin);
-        let db = self.database();
-        // Flag invariant (see `compact_libraries`): set before the rows can
-        // exist, and cleared below only once the transaction leaves none,
-        // still under the database lock.
+        let mut offsets = self.offsets();
+        // Flag invariant (see `compact_libraries`): set before the entries
+        // can exist, and cleared below only once none is left, still under
+        // the offsets lock.
         self.inner.has_library_offsets.store(true, Ordering::SeqCst);
-        let written = db.write(|txn| {
-            // A reloaded library has no stored total difference any more: its
-            // total is the one its replay left, held in the live scalar below.
-            for nibble in originals.keys() {
-                txn.remove(LIBRARY_OFFSET, &codec::encode_u8(*nibble))?;
-            }
-            Ok((
-                has_user_data_in_write_txn(txn)?,
-                !txn.is_empty(LIBRARY_OFFSET)?,
-            ))
-        });
-        // Unreachable `None`: keep the offsets flag set and the user-data
-        // gate open, the answers that read every row there is.
-        let (has_user_data, offsets_left) = in_session(written).unwrap_or((true, true));
+        // A reloaded library has no stored total difference any more: its
+        // total is the one its replay left, held in the live scalar below.
+        for nibble in originals.keys() {
+            offsets.remove(nibble);
+        }
+        let offsets_left = !offsets.is_empty();
         {
             // A library with an original keeps its items in its live buffer;
             // the arenas of the reloaded libraries hold nothing.
@@ -2872,10 +2760,9 @@ impl<S: WriteStore> GenericUserStore<S> {
                 .values()
                 .any(|library| !library.is_empty())
         } || buffer_live;
-        // A session's grams live in the container, not in the tables the
-        // transaction probed: they are user data too.
+        // A session's grams are user data too.
         let has_grams = self.container().is_empty().is_ok_and(|empty| !empty);
-        self.mark_committed_phrase_write(db, has_user_data || has_grams || arena_live);
+        self.mark_committed_phrase_write(offsets, has_grams || arena_live);
     }
 
     /// The faults [`Self::mask_out`] reaches before it changes anything, in
@@ -2900,7 +2787,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             .phrase_table
             .check_mask()
             .map_err(|error| UserStoreError::Persistence(error.to_string()))?;
-        let _db = self.database();
+        let _offsets = self.offsets();
         let container_keys = self.collect_container_keys();
         match self.bigram_mask_fault_over(&container_keys, mask, value) {
             Some(error) => Err(error),
@@ -2935,13 +2822,12 @@ impl<S: WriteStore> GenericUserStore<S> {
         // The bigram walk's faults, in the pin's order: a non-token key
         // (`get_all_items`), then a short value (`get_total_freq`), then a
         // mask residual (`get_length`). The one `get_all_items` walk serves
-        // the check and the mask below, under one database guard.
-        let db = self.database();
+        // the check and the mask below, under one offsets guard.
+        let offsets = self.offsets();
         let container_keys = self.container_keys();
         if let Some(error) = self.bigram_mask_fault_over(&container_keys, mask, value) {
             return Err(error);
         }
-        let has_user_data = db.write(|txn| has_user_data_in_write_txn(txn))?;
         // The pin's mask walk edits every record of the user pinyin index,
         // arena or overlay; the next save writes the table as it stands.
         {
@@ -2959,7 +2845,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         // `m_user_bigram->mask_out(mask, value)` (`pinyin.cpp:1230`,
         // `zhuyin.cpp:765`).
         let grams_left = self.mask_container_over(container_keys, mask, value)?;
-        self.mark_committed_phrase_write(db, has_user_data || grams_left || self.arena_has_items());
+        self.mark_committed_phrase_write(offsets, grams_left || self.arena_has_items());
         Ok(())
     }
 
@@ -3015,7 +2901,7 @@ impl CountCache {
     }
 }
 
-impl<S: WriteStore> GenericUserStore<S> {
+impl UserStore {
     /// The system items the live buffers hold that differ from the originals.
     #[cfg(test)]
     pub(crate) fn live_system_changes(
@@ -3346,7 +3232,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             packed: &packed,
             delta,
         };
-        let db = self.database();
+        let offsets = self.offsets();
         let mut items = self
             .inner
             .system_items
@@ -3378,7 +3264,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         }
         drop(items);
         self.inner.has_system_items.store(true, Ordering::Relaxed);
-        self.mark_committed_import_write(db, false);
+        self.mark_committed_import_write(offsets, false);
         Ok(token)
     }
 }
