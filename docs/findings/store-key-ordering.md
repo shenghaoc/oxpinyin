@@ -98,7 +98,7 @@ order gives the logical order that layer needs.
 
 | Layer | Site | Integer encoding | memcmp of those bytes gives | Why |
 |---|---|---|---|---|
-| `oxpinyin-data` | `table.rs` (`LeByteKey`) | `to_le_bytes()` | **byte order — deliberately NOT integer order** | matches the frozen exported tables (`data-layer-export.md`: "all multi-byte integers are little-endian; entries written in ascending key order") |
+| `oxpinyin-data` | `table.rs` (`LeByteKey`) | `to_le_bytes()` | **byte order — deliberately NOT integer order** | matches the frozen exported tables (`data-layer-export`: "all multi-byte integers are little-endian; entries written in ascending key order") |
 | `oxpinyin-user` | `codec.rs` (`encode_token`, `encode_u64`, `encode_token_pair`, …) | `to_be_bytes()` | **integer order** | so memcmp reproduces libpinyin's integer `phrase_token_t` order (and redb's typed-integer order); successor/range scans are integer-meaningful |
 | `oxpinyin-user` | `phrase.rs` (`encode_keys`) | `to_le_bytes()` u16 tail | byte order of the tail | it is a *payload* inside the composite pronunciation **key**, collected by a token-prefix range; its internal order carries no cross-key meaning |
 
@@ -280,7 +280,7 @@ overwrite the wanted prefix and store it back
 `flexible_ngram_tkrzwdb.h:402-430`). The layer writes the same final bytes
 on every backend, so an array-header write leaves the items intact and a
 missing token becomes a header-only record, as the pin's 074a2219 Tkrzw
-`set_array_header` does (see `kmm-arithmetic-audit.md`).
+`set_array_header` does (see `kmm-arithmetic-audit`).
 
 ### Order
 

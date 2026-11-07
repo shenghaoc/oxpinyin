@@ -33,7 +33,7 @@ Three separate reasons, and each one alone would be enough:
 
 ## What F-B would have been, and why this is not it
 
-`spec-derivation.md` reserves family **F-B** for "corpus utterances →
+`spec-derivation` reserves family **F-B** for "corpus utterances →
 candidate lists to depth 10", feeding W4 acceptance. F-B was never captured;
 Phase 0 produced F-A and F-C only. This fixture is the stand-in, and it is
 narrower than F-B in a way worth stating plainly: it is a *vocabulary*, not a

@@ -307,8 +307,7 @@ jobs:
           # code (e.g. `user_store_tests!(<peer>, ...)` in
           # oxpinyin-user) skipped even while `DefaultStore`
           # resolves to the peer. The bare-name form here is the
-          # documented public interface — see
-          # `docs/findings/backend-selection-audit.md`. The
+          # documented public interface. The
           # exactly-one-backend invariant is unchanged.
           bdb)
             echo "--- bdb (explicit) ---"

@@ -220,7 +220,7 @@ These are independent and move for different reasons:
    scripts read (and check their `[package.metadata.capi]` tables against)
    and `just packaging pc-version` prints for package assembly.
 4. **Parity pins** — `10190 / 10190 / 98930` of `98930` candidate symbols,
-   `0` absent, `0` tie-swaps (per `pin-refreeze-2026-08.md`
+   `0` absent, `0` tie-swaps (per `pin-refreeze-2026-08`
    2026-08-22 amendment). These freeze the decode/predict output the
    oracle is held to; packaging must not move them.
 
@@ -400,8 +400,8 @@ Do not add PGO, BOLT, linker call-graph sorting or another layout system in thei
 
 Checking or regenerating the six policies needed six fat-LTO release builds: two facades on each of bdb, kc and tkrzw.
 For this one-person project, that development cost is larger than the recorded benefit.
-The [Linux bdb findings](findings/backend-function-order-1076.md) recorded resident text of 512 KiB with ordering and 1,800 KiB without ordering, a reduction of about 1.3 MiB.
-The [M5 findings](findings/macho-function-order-m5-2026-10-27.md) recorded cold first-candidate times of 12.72 ms with ordering and 13.73 ms without ordering, with identical stripped size.
+The Linux bdb findings recorded resident text of 512 KiB with ordering and 1,800 KiB without ordering, a reduction of about 1.3 MiB.
+The M5 findings recorded cold first-candidate times of 12.72 ms with ordering and 13.73 ms without ordering, with identical stripped size.
 These are historical results. They were not measured again for the removal.
 
 Linux keeps the versioned relink described in [Export gate](#export-gate), including the version script and `-Wl,-z,defs`.

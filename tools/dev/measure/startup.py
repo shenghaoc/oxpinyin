@@ -418,8 +418,8 @@ def verify(campaign, libraries, facade, name, profiles):
 def instruction_range_result(counts, profiles):
     """Keep RandomState attribution validation while reporting nonexact controls diagnostically."""
     result = instructions.qualify(counts, profiles)
-    # The 2026-10-23 UTC diagnostic ruling (init-gap-1090-2026-10-23.md,
-    # "Rulings") and the native RandomState exception (§7.5 of the tooling
+    # The 2026-10-23 UTC diagnostic ruling
+    # and the native RandomState exception (§7.5 of the tooling
     # consolidation findings) do not make a varying control an exact gate.
     # Only first-candidate/steady use this path. Identity, exclusive accounting,
     # the named allowlist and constant unresolved sites still have to pass.
@@ -442,7 +442,7 @@ def instrument(campaign, libraries, facade, name, user, references, *, completed
         emit('instructions', facade=facade, profile=name, verdict='unavailable', reason='native macOS Callgrind unavailable')
         return
     # 2026-10-23 11:04 UTC ruling: BDB init Ir varies with libdb's srandom_r
-    # seeding. See docs/findings/init-gap-1090-2026-10-23.md, "Rulings".
+    # seeding.
     # Select BDB only from every arm's checked DT_NEEDED backend, never an env
     # default. Unknown and non-BDB init scopes keep the exact rule and STOP.
     bdb_init = backends is not None and all(backends.get(arm) == 'bdb' for arm in ARMS)

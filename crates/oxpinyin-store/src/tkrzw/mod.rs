@@ -14,8 +14,7 @@
 //! and it calls the library without copying or emulating any of it.
 //!
 //! The table's comparator is the class default: no pin call sets a tuning
-//! parameter, comparator, update logger or file processor
-//! (`docs/findings/tkrzw-native-call-inventory.md`), so `TreeDBM` and
+//! parameter, comparator, update logger or file processor, so `TreeDBM` and
 //! `BabyDBM` sort by `LexicalKeyComparator` — plain unsigned byte order —
 //! and oxpinyin's big-endian key codec keeps the ordering the byte-order
 //! contract demands.
@@ -97,8 +96,7 @@
 //! mmap-backed and the sync is two `msync(MS_SYNC)` calls over the whole
 //! mapped region (~539 KiB) however few records the batch touched — a
 //! 13–31× per-commit regression on a path the C ABI runs synchronously
-//! from a keystroke. `docs/findings/perf-train-commit-fsync-2026-09-09.md`
-//! carries the measurement and the decision.
+//! from a keystroke. The maintainer chose this split on 2026-09-10.
 //!
 //! `compact` is no longer where `pinyin_save` reaches storage, though.
 //! `UserStore::save` still calls it, but since the libpinyin session moved
@@ -1351,8 +1349,7 @@ impl crate::UserBigramDb for TkrzwUserBigramDb {
             // `copy_tkrzwdb` copies nothing from a file with no live
             // record, but its HashDBM iterator still reads every bucket
             // slot, and `save_db` writes 1,048,583 of them whatever the
-            // rows: about 329M instructions per init
-            // (`docs/findings/tkrzw-init-1099.md`). A file that holds no
+            // rows: about 329M instructions per init. A file that holds no
             // record leaves the container exactly as that copy would, so
             // it is not walked; every other file is.
             if holds_no_record(&file, path) {
@@ -1750,8 +1747,7 @@ mod tests {
     #[test]
     fn a_file_saved_with_no_rows_holds_no_record_and_loads_empty() {
         // What every profile the pin saves before learning a bigram holds:
-        // 1,048,583 buckets and nothing after them, 4,198,400 bytes
-        // (`docs/findings/tkrzw-init-1099.md`).
+        // 1,048,583 buckets and nothing after them, 4,198,400 bytes.
         let dir = TempDir::new("no-rows");
         let path = dir.0.join("user_bigram.db");
         TkrzwUserBigramDb::empty().unwrap().save_db(&path).unwrap();

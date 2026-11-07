@@ -61,7 +61,7 @@ No change to `FullPinyinParser`, `parser-spec.md`, or `session-api.md`. The deco
 originally shared the `type_pinyin` filter, which silently dropped space, control,
 and non-ASCII bytes before the decoder saw them — the engine "parsed
 past" bytes the pin stops at (class B2 of
-`uncovered-surface-differentials.md`: `ni hao` → 5 vs the pin's 2,
+`uncovered-surface-differentials`: `ni hao` → 5 vs the pin's 2,
 `，nihao` → 5 vs 0). The filter is now a `type_pinyin`-only property:
 `replace_raw` keeps every character so the decoder hard-stops on them,
 exactly the pin's emergent termination. The split is load-bearing: the

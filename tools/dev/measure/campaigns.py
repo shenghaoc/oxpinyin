@@ -37,8 +37,8 @@ from .bench import Arm, Bench, fail, setting
 BASELINE, MATRIX, SAME_DATA = 'run-perf-baseline.sh', 'run-perf-matrix.sh', 'run-perf-same-data.sh'
 SHIPPED, TREE, RSS = 'run-shipped-check.sh', 'run-tree-recipe-control.sh', 'run-rss-diag.sh'
 ORACLE_PIN = 'libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99'
-# The record's own documented Tkrzw artifact (docs/findings/perf-steady-cycle-cross-host-2026-09-07.md,
-# amd64 capi-artifacts row).
+# The record's own documented Tkrzw artifact (the amd64
+# capi-artifacts row of the 2026-09-07 cross-host record).
 RECORD_X_SHA = 'bf8d3b5707b5bc1bafc09670185b96770b73f596dd2eb57b8a9cba46bad4aec8'
 # These two runners compile the image's own harness, not the running tree's: the timed unit has to be
 # the one the record was taken with (the image's run_perf_unit is byte-identical to the record's).
@@ -575,7 +575,7 @@ def tree_recipe_control(argv: Sequence[str], env: Mapping[str, str]) -> int:
         hooks, needed = elf_hooks_and_needed(so)
         lines.append(f'{tag}: {identity.sha256(real)} {os.path.getsize(real)} B  fixture-hooks: {hooks}  '
                      f'NEEDED: {"".join(name + " " for name in needed)}')
-    lines += [f'record X: {RECORD_X_SHA} 1688840 B (docs/findings/perf-steady-cycle-cross-host-2026-09-07.md)',
+    lines += [f'record X: {RECORD_X_SHA} 1688840 B',
               'fixture-hook expectation: Z 2, S 0 (the shipped feature compiles them out)']
     bench.tee(out / 'build-identity.txt', '\n'.join(lines) + '\n')
 

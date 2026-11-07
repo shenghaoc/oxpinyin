@@ -2,8 +2,7 @@
 //!
 //! Each table is a store database with a single `data` table mapping raw
 //! `&[u8]` keys to raw `&[u8]` values.  These are committed under
-//! `fixtures/w3/` (frozen; no longer regenerated in-tree) per
-//! `docs/findings/data-layer-export.md`.
+//! `fixtures/w3/` (frozen; no longer regenerated in-tree).
 //!
 //! # Backend selection
 //!

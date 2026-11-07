@@ -12,8 +12,6 @@
 //! Every lookup is one point read; nothing is walked at open. Upstream's
 //! `pinyin_init` ignores a failed `PunctTable::attach`, so a missing or
 //! unopenable file is an empty table ([`PunctTable::open_optional`]).
-//!
-//! See `docs/findings/prediction-punct.md`.
 
 use std::path::Path;
 

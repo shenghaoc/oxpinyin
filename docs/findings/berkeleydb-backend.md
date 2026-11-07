@@ -12,8 +12,8 @@ the Sleepycat license, the surveyed version — with the two
 (18.1, AGPL-3.0-only) remains unusable. Recipe:
 `docs/runbooks/backends.md`.
 
-Phase 1's survey is `berkeleydb-compat-phase1.md` and its checklist is
-`berkeleydb-compat-open-items.md`; the shelved first implementation on
+Phase 1's survey is `berkeleydb-compat-phase1` and its checklist is
+`berkeleydb-compat-open-items`; the shelved first implementation on
 `feat/bdb-backend` (2026-08-28) supplied the FFI layer's shape and the
 byte-layout evidence. Everything below was re-derived against the pin at
 `074a2219` (the storage files are byte-identical at the default-branch

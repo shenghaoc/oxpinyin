@@ -26,7 +26,7 @@ For an existing empty file, KC and tkrzw can initialize it on the first
 open, then refuse its missing signature. The test aborts without closing
 it. BDB's create retry can instead succeed. The tkrzw abort case registers
 its specific unclosed-container timestamp in
-[the timestamp finding](eio-test-dbm-abort-timestamp.md).
+the timestamp finding.
 
 ## Magic-header reads
 

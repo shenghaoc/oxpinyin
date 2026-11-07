@@ -45,7 +45,7 @@ carries a prebuilt oracle at `/opt/libpinyin-tkrzw` for the perf work.
 ## How work proceeds
 
 1. **Freeze behaviour** into `docs/findings/` SPECs and golden fixtures
-   (characterisation of the pin first; see `docs/findings/spec-derivation.md`).
+   (characterisation of the pin first; see `spec-derivation`).
 2. **Implement** under the [source policy](docs/source-policy.md), with frozen SPECs and fixtures as the gate.
 3. **Prove** with fixture tests everywhere; live oracle diff on Linux is the
    verification tier for Stage 1 gates.
@@ -124,7 +124,7 @@ ran 2026-09-16 — all eight implemented keyboards IDENTICAL).
 `README.md` states Stage 1 the same way.
 
 Parked, not open: the W12 live-typing behaviours the parity sequence does
-not exercise (`docs/findings/live-typing.md`, no pin gates). The
+not exercise (`live-typing`, no pin gates). The
 BerkeleyDB backend (drop-in task 10) landed 2026-09-12 and is no longer
 parked.
 
@@ -182,7 +182,7 @@ parked.
   route (oracle ABI export + verbatim Tkrzw conversion) was proven
   unnecessary by the native compilation.
   Architecture and the canonical-source invariant:
-  `docs/findings/datagen-model20.md`.
+  `datagen-model20`.
 
   **P1–P6 (2026-09-01 → 2026-09-02) changed what those tables are.**
   the data directory is the one libpinyin's own build produces — the sixteen per-library chunk files (byte-exact
@@ -190,12 +190,12 @@ parked.
   `punct.bin`, the `addon_*` pair and `table.conf` — through the selected
   backend; on Kyoto Cabinet, tkrzw and Berkeley DB under libpinyin's
   names
-  (`docs/findings/datagen-compat-2026-09-01.md`; the pre-P6 native
+  (`datagen-compat-2026-09-01`; the pre-P6 native
   schema and its serializers are gone). The production runtime reads
   those files directly through lazy readers — a handle plus a mmap per
   table, nothing scanned at open — so `Runtime::open` and `pinyin_init`
   open a system directory the way libpinyin does
-  (`docs/findings/runtime-direct-libpinyin-data-2026-09-02.md`).
+  (`runtime-direct-libpinyin-data-2026-09-02`).
   `interpolation2.text` is consumed by `import_interpolation` only and
   is no longer emitted or read at runtime (3f0f0f36). The drop-in invariant is gated
   end to end by `tools/bisection/run-same-data-dir-diff.sh`: the
@@ -203,13 +203,13 @@ parked.
   libpinyin `data/` and are byte-identical on every surface but the two
   registered divergences — the predicted-candidate tie order and the
   single `union-diff` bigram-prediction row (policy row 20). Init fell from ~100× the pin to within ~1.3×
-  (`docs/findings/runtime-direct-libpinyin-data-2026-09-02.md`, whose
+  (`runtime-direct-libpinyin-data-2026-09-02`, whose
   oxpinyin cells were built by `cargo build`, not the shipping
   `cargo cinstall`; the two ends of that ~100× were built differently, so it
   is not a like-for-like quotient — see
-  `docs/findings/perf-build-recipe-audit-2026-09-10.md`). Measured since on
+  `perf-build-recipe-audit-2026-09-10`). Measured since on
   the shipping path: init at 1.16× (Tkrzw) / 1.12× (KC)
-  (`docs/findings/perf-backend-matrix-2026-09.md`) and 4.9× after the
+  (`perf-backend-matrix-2026-09`) and 4.9× after the
   key-cost deferral moved work out of init
   (`docs/perf/perf-baseline-kc-2026-09.md`).
 
@@ -225,7 +225,7 @@ parked.
   the pattern is fresh start plus the text-format interchange for users
   who care. Binary legacy-DB migration was investigated
   (`feat/w7-t2-legacy-migrate`, shelved with findings at
-  `docs/findings/legacy-migration.md`) and cancelled per that precedent.
+  `legacy-migration`) and cancelled per that precedent.
   No T-numbering here — one deliverable delivered in one PR, flat like the
   decoder-λ fix (PR #55).
 
@@ -374,7 +374,7 @@ parked.
   species — closed 2026-08-22 by porting the pin's tie law (the amplified
   f32 frequency key and the array order its stable sort keeps,
   `docs/testing/corpus-tail.md`,
-  `docs/findings/pin-refreeze-2026-08.md` third amendment). The completion criterion was diagnosis-driven, and every
+  `pin-refreeze-2026-08` third amendment). The completion criterion was diagnosis-driven, and every
   diagnosed class is now zero. Also parked
   here: the live-typing behaviors the parity sequence doesn't yet
   exercise (deep paging, mid-composition edits, punctuation modes).
@@ -439,7 +439,7 @@ own improvements are kept apart (`docs/pinned-behaviour.md`,
 `docs/oxpinyin-improvements.md`). Work, in order
 (`docs/specs/bug-for-bug/tasks.md`; the issues are the tracker):
 1. The round-2 audit issues
-   (`docs/findings/bug-for-bug-audit-r2-2026-09-23.md`). Done: the audit
+   (`bug-for-bug-audit-r2-2026-09-23`). Done: the audit
    tracker #573 closed on 2026-10-17.
 2. Init complexity against the pin (axis L): tracker #870.
 3. A third bug-for-bug sweep on all three cells.
@@ -460,12 +460,12 @@ measured against the pin in the same container:
   opens each backend's native files directly (W15 note above). Same data
   directory as the pin: init within ~1.1× (KC) / ~1.3× (tkrzw)
   of the pin, from ~100× before
-  (`docs/findings/runtime-direct-libpinyin-data-2026-09-02.md` — a
+  (`runtime-direct-libpinyin-data-2026-09-02` — a
   `cargo build` artifact, not the shipping `cargo cinstall` one, so it reads
   high, and it states no host architecture;
-  `docs/findings/perf-build-recipe-audit-2026-09-10.md`). The "~100× before"
+  `perf-build-recipe-audit-2026-09-10`). The "~100× before"
   is **cross-recipe and not like-for-like**: its baseline is the `cinstall`
-  #260 matrix (`docs/findings/perf-backend-matrix-2026-08-31.md`) and its
+  #260 matrix (`perf-backend-matrix-2026-08-31`) and its
   endpoint the `cargo build` figure above. At that magnitude the recipe is
   noise and the improvement is real, but the two ends were not built the
   same way.
@@ -478,21 +478,21 @@ measured against the pin in the same container:
   baseline `docs/perf/perf-baseline-kc-2026-09.md` +5.7%).
 - **Store/user-crate optimisation** (2026-09-05 → 2026-09-06): redb
   and user-store hot paths, measured in
-  `docs/findings/perf-store-opt-2026-09.md` (S5, F4).
+  `perf-store-opt-2026-09` (S5, F4).
 
 The two targets the P6 finding named have both moved on, and its figures for
 them should not be quoted as current. The per-instance `pinyin_alloc_instance`
 key-cost table (P6: ~16.5 ms) was deferred to first `new_session` on 2026-09-04
 and then **eliminated** on 2026-09-07 (`6886dc1f`,
-`docs/findings/perf-keycost-first-alloc-2026-09-07.md`). The steady-state
+`perf-keycost-first-alloc-2026-09-07`). The steady-state
 candidate lookup (P6: ~1.5× the pin) has been re-measured three times since —
 at parity on amd64, ~1.16× on arm64, and below 1 on the current tree
-(`docs/findings/perf-backend-matrix-2026-09.md`,
-`docs/findings/perf-keycost-first-alloc-2026-09-07.md`,
-`docs/findings/perf-cycle-ir-differential-2026-09-08.md`); P6's own figure
+(`perf-backend-matrix-2026-09`,
+`perf-keycost-first-alloc-2026-09-07`,
+`perf-cycle-ir-differential-2026-09-08`); P6's own figure
 additionally reads high because its artifact was a `cargo build` fixture rather
 than the shipping `cargo cinstall` library
-(`docs/findings/perf-build-recipe-audit-2026-09-10.md`). The next measured
+(`perf-build-recipe-audit-2026-09-10`). The next measured
 target is allocation churn on the steady cycle, per the IR differential. The
 internal items of the 2026-09 direction are Stage 2 work
 (`docs/specs/bug-for-bug/design.md`, "Internal improvement").

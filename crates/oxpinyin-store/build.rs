@@ -201,8 +201,7 @@ mod native {
 /// that the classes' own locking permits (Rust/C++ interoperability
 /// ruling, 2026-11-02, `docs/findings/compatibility-policy.md`).
 /// `kclangc.h` reached every class through `PolyDB`, whose dispatch and
-/// unopened classes kept libkyotocabinet text resident
-/// (`docs/findings/kc-shim-1118.md`). The system libkyotocabinet still
+/// unopened classes kept libkyotocabinet text resident. The system libkyotocabinet still
 /// supplies the out-of-line code, as it does for libpinyin.
 ///
 /// The bridge is compiled as `native::configure` describes; the include
@@ -348,7 +347,7 @@ mod tkrzw {
 /// No maintained Rust binding links the system library either — the
 /// `libdb`/`libdb-sys` crates (last published 2020) compile and
 /// statically link their own vendored copy, which is exactly the wrong
-/// shape (`docs/findings/berkeleydb-compat-phase1.md`).
+/// shape.
 ///
 /// # Why generated fresh, not checked in
 ///

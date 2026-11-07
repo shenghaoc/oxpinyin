@@ -135,7 +135,7 @@ where
     /// run, where propagation stops), and the bigram predecessor advances
     /// over **every** phrase, trained or not. A user who forces 你 for
     /// "ni" and commits the decoded 好 therefore trains 你→好, not just
-    /// `sentence_start→你` (the L3 surface, `docs/findings/live-typing.md`).
+    /// `sentence_start→你` (the L3 surface).
     ///
     /// Without a decoded result — the fixture fallback models, or no
     /// lookup since the last reset — the selection history stands in: one

@@ -13,7 +13,7 @@ Date: 2026-08-09 · Status: **frozen for W4-T3, constants provisional**
 
 ## Why the constants cannot be derived yet
 
-`docs/findings/spec-derivation.md` lists "interpolation formula + constants"
+`spec-derivation` lists "interpolation formula + constants"
 under *what still requires reading*, with the reason: internal arithmetic. The
 pinned oracle exposes candidate **order** at its public API and never a
 probability. Its probabilities live in `interpolation2.text`, which
@@ -34,7 +34,7 @@ upstream implementation.
 Maintainer ruling, 2026-10-29 UTC; recorded 2026-10-29T08:32:25Z (`date -u`).
 The normative cost scale below applies to the pre-frequency fallback
 scorer only. Real-table sentence and phrase scoring follows
-[float-scoring-1378.md](float-scoring-1378.md): pre-log f32/f64 pieces,
+`float-scoring-1378`: pre-log f32/f64 pieces,
 Rust std `f64::ln`, and f32 accumulation. The fallback's cost scale,
 constants, sign convention, tie rules and fixtures are unchanged.
 
@@ -195,7 +195,7 @@ evaluation above (a value `> 1` is rejected and `model_cost` uses checked
 arithmetic, so a malformed config floors at `UNKNOWN_COST`, never panics).
 Ranking impact is path-specific — the real-unigram three-key order is
 λ-insensitive (the parity pins hold), while the export-ABI `model_cost` path is
-not; see `scoring-constant-sweep.md`. The functional form, cost scale, sign
+not; see `scoring-constant-sweep`. The functional form, cost scale, sign
 convention, tie-break and totality rules in this SPEC are unchanged.
 
 **2026-09-02 — `P_unigram` reads the phrase item's stored field, not the
@@ -222,5 +222,5 @@ sign convention, tie-break and totality rules are unchanged.
 The paragraph above said an incomplete key stood for every complete key it is
 a proper prefix of. That leaked `n` into `ng` and `z`/`c`/`s` into
 `zh`/`ch`/`sh`. Lookup now uses `phonetic_initial` (the `m_initial` index);
-see `docs/findings/pin-refreeze-2026-08.md`. The Cartesian-product bound and
+see `pin-refreeze-2026-08`. The Cartesian-product bound and
 empty-on-overflow rule are unchanged.

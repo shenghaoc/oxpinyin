@@ -90,7 +90,7 @@ uses a qsort-style comparison and promises a stable sort. The captured
 triple violates the consistent total ordering requirement in
 [C11 N1570 §7.22.5 paragraph 4](https://www.open-std.org/jtc1/sc22/wg14/www/docs/n1570.pdf).
 This is a reachable triple, not the illustrative arbitrary-score triple
-in `docs/findings/921-927-glib-sorts.md`.
+in `921-927-glib-sorts`.
 
 ## Inputs and environment
 

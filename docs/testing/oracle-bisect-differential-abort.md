@@ -192,7 +192,7 @@ COMPUTED result, `pinyin.cpp:3090` inside `get_right_pinyin_offset` —
 sees column 11's lone zero key and asserts.
 
 **Correction, recorded not silently applied:** the uncovered-surface
-measurement (PR #174, `uncovered-surface-differentials.md` harness note)
+measurement (PR #174, `uncovered-surface-differentials` harness note)
 attributed the tail-cursor abort to `get_left_pinyin_offset(11)` via the
 left walk's second check (`pinyin.cpp:3055`). That is wrong: `get_left(11)`
 genuinely does not abort — its walk halts at column 10 (the `e` key ends

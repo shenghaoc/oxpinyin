@@ -9,7 +9,7 @@ design claim into a run on three operating systems.
 
 ## What this stands in for
 
-`spec-derivation.md` reserves family **F-D** for "guess → choose → re-guess
+`spec-derivation` reserves family **F-D** for "guess → choose → re-guess
 remainder", feeding the engine API and the capi templates. F-D was never
 captured; Phase 0 produced F-A and F-C only.
 

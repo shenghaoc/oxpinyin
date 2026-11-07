@@ -38,7 +38,7 @@
 //! the device. [`WriteStore::compact`] is the hard `synchronize(true)`,
 //! the one point at which a file-backed store reaches stable storage.
 //! The tkrzw backend documents the same split and the measurement
-//! behind it (`docs/findings/perf-train-commit-fsync-2026-09-09.md`).
+//! behind it.
 //!
 //! `compact` is no longer where `pinyin_save` reaches storage, though.
 //! `UserStore::save` still calls it, but since the libpinyin session

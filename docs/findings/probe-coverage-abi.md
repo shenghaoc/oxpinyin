@@ -392,7 +392,7 @@ selection arm, unchanged by the widening; (3) a fresh instance's train
 with no guess and no choose — still `false` on both; each phase
 dumping the user store's bigram/unigram state as the ABI probe does.
 That differential is owed work under register row 38
-(`compatibility-policy.md`; `revert-plan.md` §15), deliberately not
+(`compatibility-policy.md`; `revert-plan` §15), deliberately not
 built in PR #496.
 
 ## Amendment — residue classification (2026-09-19 UTC)
@@ -451,7 +451,7 @@ stored user state and compounds with use.
 
 **Class.** **REVERT TARGET** — missing "no OneStep ⇒ observe nothing"
 guard; not (a)/(b)/(c). Registered as compatibility-policy row 33;
-work order `revert-plan.md` §10.
+work order `revert-plan` §10.
 
 **Fix shape (do not implement).** Drop the history fallback whenever
 no OneStep cell is present — `Session::train` observes nothing, as
@@ -616,7 +616,7 @@ ABI probe (`residue-a-tail-diff.c`, phases X/B/D):
   window at `0x1e` in this state.
 
 **Class.** **REVERT TARGET** — registered as compatibility-policy
-row 35 (maintainer ruling 2026-09-19); work order `revert-plan.md`
+row 35 (maintainer ruling 2026-09-19); work order `revert-plan`
 §12, **executed and closed 2026-09-19**. At its true width: every
 user-library token was
 refused an n-best step cost, so no imported or learned phrase could
@@ -881,7 +881,7 @@ after both trains), which `residue-a-tail-diff` phase B prints. Row 34
 (C) survives unchanged: its `0x1f` probe has the same outcome with or
 without A.
 
-**Consequence for the work order (`revert-plan.md`).** Ruled
+**Consequence for the work order (`revert-plan`).** Ruled
 2026-09-19: A executes first (§12), then 10, 11, 9 — a one-line
 ordering fix inside an invariant the same function already documents
 for the bigram path, blocking a whole feature rather than perturbing
@@ -975,7 +975,7 @@ is reached, a frontend offers the wrong window — the remaining
 input's phrases, or one candidate where libpinyin offers 128.
 
 **Class.** **REVERT TARGET** — registered as compatibility-policy
-row 37 (maintainer ruling 2026-09-19); work order `revert-plan.md`
+row 37 (maintainer ruling 2026-09-19); work order `revert-plan`
 §14, executing second. At its worst measured point: `(0, 0x1f)` after
 a whole-composition choose answers 127 candidates on the pin and 0 —
 an empty list — on oxpinyin; at the ordinary partial choose oxpinyin
@@ -1016,7 +1016,7 @@ offset 0, 301 at offset 5) are the A-independent half of the same
 gate.
 
 **Amendment (2026-09-27, maintainer ruling of that date).** Both legs landed
-(`revert-plan.md` §14 amendment): the display leg re-anchors at any
+(`revert-plan` §14 amendment): the display leg re-anchors at any
 offset other than the composition's, and the choose leg no longer hits
 `SelectionAnchorBeforeComposition` for a token-bearing row — the span is
 forced over the overlapped forcings and the record moves back. The E3
@@ -1050,7 +1050,7 @@ value; the export contents are identical.
 
 **Class.** **REVERT TARGET** — a plain ABI return-value divergence;
 not (a)/(b)/(c). Registered as compatibility-policy row 36; work order
-`revert-plan.md` §13.
+`revert-plan` §13.
 
 **Fix shape (do not implement).** Return `handle.index <
 handle.rows.len()` after the increment. Pre-registered differential:
@@ -1124,7 +1124,7 @@ show live sentence rows and oxpinyin rebuilds phrase-only.
 
 **Class.** **REVERT TARGET** — nbest lifetime and candidate-rebuild
 mismatch; not (a)/(b)/(c). Registered as compatibility-policy row 34;
-work order `revert-plan.md` §11.
+work order `revert-plan` §11.
 
 **Fix shape (do not implement).** (1) Keep nbest across parse; clear
 only on full reset / a new `guess_sentence`, matching the pin.

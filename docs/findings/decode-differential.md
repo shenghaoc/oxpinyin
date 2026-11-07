@@ -2,14 +2,14 @@
 
 Date: 2026-08-09 · Status: **frozen for W4-T4**
 
-`docs/findings/differential-log.md` froze the parse-level comparison and said
+`differential-log` froze the parse-level comparison and said
 plainly what it was not doing:
 
 > Candidate lists and their ranking are **not** compared … Candidate parity
 > belongs to W4, against F-B.
 
 This finding is that comparison. It is a new document rather than an edit:
-`differential-log.md` is frozen, its schema is in use, and a decoder does not
+`differential-log` is frozen, its schema is in use, and a decoder does not
 change what a parser run measured.
 
 ## Two populations, because the pin answers two different questions
@@ -82,11 +82,11 @@ decode differential — candidates, F-A and F-C
 The 483 incomplete-key divergences are gone: every one of those paths is now a
 graph path and the decoder reaches it. The two that remain are the leading-
 and doubled-apostrophe cases that maintainer decision 3 in
-`parser-spec-contradiction-incomplete-keys.md` leaves open, and the graph
+`parser-spec-contradiction-incomplete-keys` leaves open, and the graph
 deliberately does not settle.
 
 `tie-swap` also acquires its real meaning here for the first time.
-`divergence-taxonomy.md` said it could not be assessed until a decoder existed,
+`divergence-taxonomy` said it could not be assessed until a decoder existed,
 because at parse level it compared the pin's *choice* against our *first
 enumerated path* and no parser change could legitimately move it. It is now
 both sides choosing, and it fell from 468 to 338 — against an auto-accept

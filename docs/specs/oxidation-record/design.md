@@ -62,7 +62,7 @@ The earlier design said to resolve `log` as the pin build does.
 The 2026-10-29 UTC maintainer ruling qualifies that:
 oxpinyin uses Rust's standard maths (`f64::ln`), records any last-bit difference from the pin's `log` as class (a),
 and does not imitate the arm64 compiler's contraction with `mul_add`.
-See [float scoring §5](../../findings/float-scoring-1378.md#5-compatibility-policy-disposition--ruled-2026-10-29-utc).
+See float scoring §5.
 
 Historical: the design proposed either replacing the fixed-point scale in `oxpinyin-core/src/cost.rs` or adding a parallel float path.
 What was implemented is the replacement on the real-table sentence path:

@@ -86,12 +86,12 @@ Compatible items from the 2026-09 direction include:
 
 Recorded measurement leads remain:
 
-- Steady-cycle allocation churn, from `docs/findings/perf-cycle-ir-differential-2026-09-08.md`.
-- Arm64 is about 10% behind the pin where amd64 reaches parity, in `docs/findings/perf-steady-cycle-cross-host-2026-09-07.md`.
+- Steady-cycle allocation churn, from `perf-cycle-ir-differential-2026-09-08`.
+- Arm64 is about 10% behind the pin where amd64 reaches parity, in `perf-steady-cycle-cross-host-2026-09-07`.
   Open leads are memory ordering and scan-matrix fan-out: 4.11 versus 1.32 paths per window.
-  See `docs/findings/scan-matrix-fanout-2026-09-10.md`.
+  See `scan-matrix-fanout-2026-09-10`.
 - The RSS gap follows 3.07× dictionary probes that fault Kyoto Cabinet leaf pages.
-  See `docs/findings/rss-attribution-2026-09-09.md`.
+  See `rss-attribution-2026-09-09`.
 
 ## Gating
 

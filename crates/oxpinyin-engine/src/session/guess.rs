@@ -71,8 +71,7 @@ where
     /// Anything else with a non-empty raw buffer walks the **full**
     /// matrix: a constrained composition (the §3 gates, the chosen
     /// prefix forced) or a fully-consumed one (upstream's walk still
-    /// answers a terminal choose — the L1 surface,
-    /// `docs/findings/live-typing.md`), which the remaining-input model
+    /// answers a terminal choose — the L1 surface), which the remaining-input model
     /// structurally cannot.
     ///
     /// Returns whether a lookup ran at all (upstream returns the lookup's

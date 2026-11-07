@@ -11,8 +11,7 @@
  * row per observation; the runner diffs two such logs (pin vs oxpinyin)
  * line by line.
  *
- * Oracle caller contracts (uncovered-surface-differentials.md
- * § Reproduction) are honoured throughout:
+ * Oracle caller contracts are honoured throughout:
  *   - pinyin_get_sentence is asked only for proved indices — row 0
  *     after a successful guess, and an NBEST row's own
  *     pinyin_get_candidate_nbest_index value;

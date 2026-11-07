@@ -98,7 +98,7 @@ fn candidates_come_from_every_segmentation_not_only_the_selected_one() {
     //
     // Only the first two ranks are asserted exactly. This test once asserted
     // the exact top-3 `西安 西岸 锡安`; freezing ScoringConfig to seg=750
-    // inc=999 bonus=1000 (docs/findings/scoring-constant-sweep.md, the same
+    // inc=999 bonus=1000 (the same
     // commit that relaxed this) reordered ranks 3-4, so this decoder now offers
     // `西安 西岸 县 锡安 …` where the pin has `西安 西岸 锡安 县` — the single-key
     // 县 overtakes the two-key 锡安. Rank-3 is scorer-dependent and would

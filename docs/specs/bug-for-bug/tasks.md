@@ -7,7 +7,7 @@ This file records the sequence, not a duplicate issue list.
 
 ## Tasks
 
-- [x] 1. Close the [round-2 audit phase](../../findings/bug-for-bug-audit-r2-2026-09-23.md).
+- [x] 1. Close the round-2 audit phase.
   Tracker #573 closed on 2026-10-17.
   Execution was partial; phase closure does not mean every finding is fixed.
   The guess-path axis L findings, #757 and its siblings, are fixed.

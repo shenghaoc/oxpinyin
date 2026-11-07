@@ -212,6 +212,7 @@ Stop and report a call or behaviour that has no equivalent with the same documen
 The drop-in and pin-call rules (external I/O uses the pin's calls; observable behaviour matches the pin) bind Linux only.
 libpinyin is developed and used on Linux; its Windows and macOS support is an afterthought.
 On Windows and macOS, oxpinyin builds and is tested, and may use portable Rust abstractions (for example `memmap2` and `std::fs`) instead of the pin's calls.
+Do not start a Windows libpinyin build project.
 Differences that come from a platform's native facilities (file and mapping APIs, text mode, C runtime streams) are platform-dependent behaviour, recorded where known and tested where practical.
 This does not cover platform-independent product behaviour (ranking, parsing, training, data handling), safety, determinism, the C API/ABI, its symbol names and its ownership and lifetime rules, or persistent file formats, which must be the same on every platform.
 The [interoperability ruling](findings/compatibility-policy.md#rust-cpp-interoperability) applies on every platform.

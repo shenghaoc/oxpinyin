@@ -391,8 +391,7 @@ fn predicted_bigram_filter_drops_9_keeps_10() {
 /// The pin slices the predicted prefix candidate's phrase string from
 /// `m_begin = prefix_len` (`pinyin.cpp:1976-1980, 2018-2023`): the user
 /// already committed the prefix, so the suggestion must carry only the
-/// remainder — both frontends commit the library string verbatim
-/// (`docs/findings/uncovered-surface-differentials.md` B1).
+/// remainder — both frontends commit the library string verbatim.
 #[test]
 fn predicted_prefix_candidates_slice_the_prefix_from_the_text() {
     let user_dir = TempUserDir::new("predict-slice");

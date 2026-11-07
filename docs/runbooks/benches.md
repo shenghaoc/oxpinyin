@@ -322,11 +322,11 @@ zero. Memory-run timings are excluded.
 
 `--stage verify` stops after verification and separate hostile probes.
 `--stage instrument` also checks Linux Callgrind Ir. Init uses two fresh
-processes per arm. The [2026-10-23 11:04 UTC ruling](../findings/init-gap-1090-2026-10-23.md#rulings)
-identifies BDB init Ir as nondeterministic because libdb seeds `srandom_r`
-from PID, time and address. When every arm's checked `DT_NEEDED` backend is
-BDB, init reports each base/PR/control arm's process min–max as `bounds`, all
-original `counts` and raw profiles, with verdict `DIAGNOSTIC`, then continues.
+processes per arm. The maintainer ruling of 2026-10-23 11:04 UTC identifies
+BDB init Ir as nondeterministic because libdb seeds `srandom_r` from PID, time
+and address. When every arm's checked `DT_NEEDED` backend is BDB, init reports
+each base/PR/control arm's process min–max as `bounds`, all original `counts`
+and raw profiles, with verdict `DIAGNOSTIC`, then continues.
 Non-BDB and unknown init backends retain the exact rule: any same-bytes
 variation returns 3 immediately. No tolerance is introduced.
 Under the 2026-10-24 UTC maintainer ruling (§7.5), first-candidate and steady

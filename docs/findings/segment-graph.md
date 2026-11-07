@@ -2,7 +2,7 @@
 
 Date: 2026-08-09 · Status: **frozen for W4-T1**
 
-`docs/findings/parser-spec-contradiction-incomplete-keys.md` ends with a
+`parser-spec-contradiction-incomplete-keys` ends with a
 decision rather than a fix: mid-position incomplete keys are **not** to be
 enumerated by the foundation parser, because explicit enumeration is
 exponential, and are to be represented as edges on W4's graph instead. This
@@ -125,7 +125,7 @@ and the edge covers both. Two cases are deliberately excluded:
 
 The pin consumes both; `parser-path-set.md` freezes both as
 remainder-starting; and maintainer decision 3 in
-`parser-spec-contradiction-incomplete-keys.md` leaves the disagreement open.
+`parser-spec-contradiction-incomplete-keys` leaves the disagreement open.
 The graph follows the frozen SPEC. These are the only two corpus inputs where
 the graph and the pin disagree, they are named in
 `crates/pinyin-oracle/tests/graph_paths.rs`, and that list is where the
@@ -189,7 +189,7 @@ Measured by `crates/pinyin-oracle/tests/graph_paths.rs`, in portable CI:
 | Paths with a non-final initial-only key, all walking | **483** |
 | Consumed length agreeing with the pin | 10,457 of 10,459 |
 
-The 483 is the population `parser-spec-contradiction-incomplete-keys.md`
+The 483 is the population `parser-spec-contradiction-incomplete-keys`
 measured. It is the number this graph was built to move, and it moved to zero
 outstanding.
 

@@ -16,7 +16,7 @@ with `P = 1.2_f32.ln()` (#1416; the pin's folded `0x3e3ab283` on this
 host, class (a) elsewhere), separate f32 multiplication and
 subtraction, larger S first, NaN last, and signed zeros equivalent.
 The node compares S alone; S1/S2 complete ties with earlier batch position.
-See [the approved float-scoring record](float-scoring-1378.md#pr-b-re-measurement-2026-10-29-utc).
+See the approved float-scoring record.
 
 `src/lookup/phonetic_lookup.h:39,65-91 at 074a2219` provides the adjacent-length
 margin. The amendment completes it as `cost_add(cost, 263 * length)`, best first:

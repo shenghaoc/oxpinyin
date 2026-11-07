@@ -373,7 +373,7 @@ fn unigram_availability_survives_a_total_that_wraps_to_zero() {
     assert!(!lm.has_unigrams(), "no visible library holds an item");
 }
 
-/// The §12 presence gate (revert-plan.md §12, register #35): the pin's
+/// The §12 presence gate (register #35): the pin's
 /// `unigram_gen_next_step` prices any *loaded* sub-index's item
 /// (`get_phrase_item`), and the three `USER_FILE` sub-indexes (nibbles
 /// 5/6/7 — promoted addon, network, user) live in the default facade

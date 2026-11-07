@@ -62,7 +62,7 @@ Core carries `#![forbid(unsafe_code)]`.
 
 Frozen fixtures make Lane-P acceptance mechanical without an oracle.
 
-1. Emit F-A–F-F JSON records from the capture harness under `docs/findings/spec-derivation.md`.
+1. Emit F-A–F-F JSON records from the capture harness under `spec-derivation`.
 2. Keep all 13 cases in the F-E register, with reproducible evidence in each applicable lane.
 
 ### Requirement R6: Core trait seam defined

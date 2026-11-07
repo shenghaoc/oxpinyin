@@ -114,12 +114,12 @@ and its selected segmentation do not reorder or remove portable parser paths.
   single separator when the right group consumes at least one byte; matches
   the pin (`fixtures/w4/oracle-candidates.txt` `ni''hao` top-1 `你好`).
   Cross-referenced in `parser-spec.md` architect correction log
-  (2026-08-21) and `parser-spec-contradiction-incomplete-keys.md`
+  (2026-08-21) and `parser-spec-contradiction-incomplete-keys`
   (decision 3, doubled half now closed).
 - 2026-08-21, W12 decision 3 leading half: `'ni` and `''ni` added.
   A leading run of consecutive apostrophes is consumed when the group
   after it consumes at least one byte, matching the pin's zero-width
   step-propagation at position 0. Cross-referenced in `parser-spec.md`
   architect correction log (2026-08-21, leading apostrophe) and
-  `parser-spec-contradiction-incomplete-keys.md` (decision 3, leading
+  `parser-spec-contradiction-incomplete-keys` (decision 3, leading
   half now closed).

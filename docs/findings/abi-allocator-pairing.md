@@ -343,7 +343,7 @@ reverted afterwards; each is reproducible from the description alone:
   backend library allocates internally is outside the Rust `GlobalAlloc`
   traffic `alloc_count.rs` measures and outside this gate's per-call window by
   construction (it is absorbed by the warm pass). RSS attribution is
-  `docs/findings/rss-attribution-2026-09-09.md`'s subject, not this one's.
+  `rss-attribution-2026-09-09`'s subject, not this one's.
 - **Non-Linux hosts.** LeakSanitizer's stop-the-world does not run under
   macOS's sandbox. `--static-only` is the portable half; the C ABIs are
   Linux-first regardless (../../CONTRIBUTING.md).

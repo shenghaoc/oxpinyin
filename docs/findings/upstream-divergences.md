@@ -50,7 +50,7 @@ what used to differ.
 
 ### Non-scalar stored phrase text — CLOSED, ordinary MATCH (#894)
 
-- **Record:** [894-non-scalar-phrase-text](894-non-scalar-phrase-text.md)
+- **Record:** `894-non-scalar-phrase-text`
   (dated superseded note, 2026-10-24 UTC).
 - **Former classification:** decision-order limb 3, not class (b) merely
   because Rust `str` cannot contain a non-scalar. GLib 2.84.4-3~deb13u5
@@ -70,7 +70,7 @@ what used to differ.
 
 ### Embedded zero in stored phrase text — CLOSED, ordinary MATCH (#894)
 
-- **Record:** [894-nul-phrase-text](894-nul-phrase-text.md) (dated
+- **Record:** `894-nul-phrase-text` (dated
   superseded note, 2026-10-24 UTC).
 - **Former classification:** decision-order limb 3. GLib truncates each
   phrase at zero; the old Rust path retained the full internal text.
@@ -265,7 +265,7 @@ what used to differ.
   compatibility. The full value surface is reachable only below the public
   iterators; the one-time migration tool that would have read it (linking
   the pinned `libstorage.a` through a dump shim,
-  `docs/findings/legacy-migration.md` §3) was cancelled — that document is
+  `legacy-migration` §3) was cancelled — that document is
   SHELVED and the implementation stays on the parked branch
   `feat/w7-t2-legacy-migrate`.
 - **Externally observable:** yes — the C ABI surface matches the pin's
@@ -524,11 +524,11 @@ line.)
   re-parse an extension with no reset): `pinyin_clear_constraint(0)`
   answers 1 on both sides post-revert, 0 on the engine pre-revert
   (DIVERGENT), so the probe flips to IDENTICAL with the change
-  (`live-typing.md`). The frozen pins held bit-identical (candidates
+  (`live-typing`). The frozen pins held bit-identical (candidates
   10,190/10,190/absent 0/order-only 0/prefix-10 98,930; sentence
   488/385/379), the scheme sweep is byte-identical to the pre-change
   baseline (its standing §5 tie class), and the backspace ladder is
-  unchanged (`live-typing.md` §"Backspace-after-choose"). The three
+  unchanged (`live-typing` §"Backspace-after-choose"). The three
   #141 cursor flows that pinned the fresh start were re-based onto the
   continued-store contract (the committed-reparse store test, the
   post-separator choose law, the Luoma offset law); the
@@ -902,7 +902,7 @@ Text, candidate type and counts cannot.
   and at a snapped (syllable-aligned) offset the windows are identical. A
   caller that bypasses the snap now sees the pin's empty-column window on
   both engines. This closes the residue the 2026-08-27 amendment of
-  `uncovered-surface-differentials.md` recorded as not chased.
+  `uncovered-surface-differentials` recorded as not chased.
 
 ### The cursor helpers' `_check_offset` aborts answer `false` — not the pin's abort, not post-`95e3af7` upstream's discarded-`false` true
 
@@ -958,9 +958,8 @@ Text, candidate type and counts cannot.
 
 **Amendment — 2026-09-06 UTC, oracle pin 0c5e80e1 → 074a2219 (runtime
 verification).** The pin bump re-measured this entry's shape with a
-fork-per-probe C driver against the oracle at BOTH pins and the port
-(evidence: `docs/findings/oracle-pin-074a221-evidence/`). Two
-narrowings, no new divergences:
+fork-per-probe C driver against the oracle at BOTH pins and the port.
+Two narrowings, no new divergences:
 
 1. **The legal-boundary arm is CLOSED by upstream.** At an offset one
    past a lone zero-key column (e.g. `pinyin_guess_candidates("ni'", 3)`,
@@ -978,7 +977,7 @@ narrowings, no new divergences:
    six of ten sites), while the port keeps answering `false` — the
    already-registered abort-on-caller-input class answered by the
    no-abort policy. Not a new finding; see
-   `docs/findings/oracle-pin-074a221-verification.md` §V3.
+   `oracle-pin-074a221-verification` §V3.
 
 Also corrected by the same measurement: of 074a221's four bare
 `_check_offset` call sites, `pinyin.cpp:3251` is dead code (`#if 0`),
@@ -1033,7 +1032,7 @@ seen in the same probe is a separate parity defect: issue #356.
   `pinyin_get_right_pinyin_offset` return `false` where the pin
   aborts (`ZeroKeyOffsetCheck`) — the left helper also answers
   `true, 0` at offset 0 only. This is the parser-stop-consumption surface —
-  class B2 of `uncovered-surface-differentials.md` ("where does the
+  class B2 of `uncovered-surface-differentials` ("where does the
   parser stop consuming"), recorded here so B2's closing work INHERITS
   it instead of rediscovering it; the sibling abort on the same input
   (`pinyin_get_pinyin_key`) remains F-E-14 in
@@ -2097,7 +2096,7 @@ table in the file.
 
 The entries below were registered by the round-2 register
 reconciliation (#573; the audit report is
-`docs/findings/bug-for-bug-audit-r2-2026-09-23.md`). Each carries its
+`bug-for-bug-audit-r2-2026-09-23`). Each carries its
 `compatibility-policy.md` row number. Pin cites are at `074a2219`,
 oxpinyin cites at `main` @ `e1d915d0`; both were re-read for this
 section.
@@ -2146,7 +2145,7 @@ section.
   exception, maintainer ruling 2026-10-03), not a numbered exception
   class — `compatibility-policy.md`, "Registered standing divergences". Registered here 2026-09-27 UTC (#551); the full
   record, with the ruling's process note, is
-  `docs/findings/tkrzw-langc-exception-classification.md`.
+  `tkrzw-langc-exception-classification`.
 - **Upstream source cite:** none in libpinyin: the pin's tkrzw backend
   (`src/storage/*_tkrzwdb.cpp`) calls tkrzw's C++ API. The cite is
   tkrzw's `tkrzw_langc.cc` at 1.0.32 (every wrapper's
@@ -2182,7 +2181,7 @@ section.
 - **Status:** closed; `run-option-sweep.sh` with the `0x0` and
   divided-contrast cases ran 2026-09-16, 24/24 PASS. Registered here
   2026-09-27 UTC (#548): until then the row's only record was the
-  parked paragraph in `all-off-tails.md`.
+  parked paragraph in `all-off-tails`.
 
 ### Sort-option input of `pinyin_guess_candidates` — CLOSED in code, reopened 2026-09-27 (#582) and closed 2026-10-03 (policy row 32)
 
@@ -2225,7 +2224,7 @@ section.
   this mechanism (see row 20).
 - **Status:** **CLOSED** in code 2026-10-03: #614 (merge commit `33e2e54d`, code
   `750b8cb6`) and #616 (`fd293e53`); the choose-every-row differential is
-  identical on tkrzw, bdb and kc. Work order `revert-plan.md`.
+  identical on tkrzw, bdb and kc. Work order `revert-plan`.
 
 ### Imported user phrase lost after `guess_sentence` (policy row 34)
 
@@ -4214,17 +4213,17 @@ probes as MATCH, and their records are no longer registered by any case.
 The punctuation record's undefined-read safety treatment stands under
 class (b)/(c); do not reproduce the pin's unsafe surrounding defect.
 
-- [Decimal lambda grammar](1297-table-floats.md): reverted at stage 1, host `fscanf` `%f` on the pin stream.
-- [Representable version fields](1297-table-decimals.md): reverted at stage 1, host `fscanf` `%d`.
-- [Configuration line boundaries](1297-table-lines.md): reverted at stage 1, pin's ordered stream formats.
-- [Addon indexes in the library range](1297-addon-index.md): reverted at stage 1, host `atoi` and pin conversion.
-- [Nonconforming decimal markers reset profiles](1297-user-decimals.md): reverted at stage 1, marker `fscanf` `%d`.
-- [Exact database marker tokens](1297-user-token.md): reverted at stage 1, `%255s` and `strcmp`.
+- Decimal lambda grammar: reverted at stage 1, host `fscanf` `%f` on the pin stream.
+- Representable version fields: reverted at stage 1, host `fscanf` `%d`.
+- Configuration line boundaries: reverted at stage 1, pin's ordered stream formats.
+- Addon indexes in the library range: reverted at stage 1, host `atoi` and pin conversion.
+- Nonconforming decimal markers reset profiles: reverted at stage 1, marker `fscanf` `%d`.
+- Exact database marker tokens: reverted at stage 1, `%255s` and `strcmp`.
 - [Punctuation values contain whole words](1297-punct-words.md): not superseded; the existing class (b)/(c) safety treatment stands under the 2026-10-28 UTC ruling.
-- [Complete chunk payload writes](1297-chunk-payload.md): superseded (2026-10-29 UTC) by the 2026-10-28 UTC external-I/O ruling; revert target at stage 2, one host `write`.
-- [Complete tool decimal fields](1297-tool-decimals.md): superseded (2026-10-29 UTC) by the 2026-10-28 UTC external-I/O ruling and the tools drop-in ruling; revert target at stage 5, host `atoi`/`atol`.
-- [Native nonfinite tool formatting](1297-tool-special-values.md): superseded (2026-10-29 UTC) by the 2026-10-28 UTC external-I/O ruling and the tools drop-in ruling; revert target at stage 5, pin's formatted call.
-- [Complete table words and exact enum tokens](1297-table-words.md): reverted at stage 1, `%255s` and C-string comparisons.
+- Complete chunk payload writes: superseded (2026-10-29 UTC) by the 2026-10-28 UTC external-I/O ruling; revert target at stage 2, one host `write`.
+- Complete tool decimal fields: superseded (2026-10-29 UTC) by the 2026-10-28 UTC external-I/O ruling and the tools drop-in ruling; revert target at stage 5, host `atoi`/`atol`.
+- Native nonfinite tool formatting: superseded (2026-10-29 UTC) by the 2026-10-28 UTC external-I/O ruling and the tools drop-in ruling; revert target at stage 5, pin's formatted call.
+- Complete table words and exact enum tokens: reverted at stage 1, `%255s` and C-string comparisons.
 
 ## Pinyin trellis adjusted cost — S1/S2 repair (2026-10-28 UTC)
 
@@ -4241,7 +4240,7 @@ node front eviction, frequency wrap and lambda validation are unchanged.
 
 ## Stable raw-cost tail ordering — S3 repair (2026-10-28 UTC)
 
-[Stable raw-cost tail ordering](trellis-tail-sort-s3.md) records the S3
+Stable raw-cost tail ordering records the S3
 repair authorized by the witnessed algorithm-precondition amendment:
 stable raw possibility descending, equal-cost input order preserved and
 NaN last. Both facades share the final sort; zhuyin selects at most one tail.

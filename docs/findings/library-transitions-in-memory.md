@@ -170,7 +170,7 @@ The export iterator cases are those whose names contain `iterator`.
   declares the class (c) `abort=False` matcher. Member 4 reproduced the
   pin's abort at `zhuyin.cpp:454` (row 104); the case needs `sigabrt=True`
   on that member.
-- Arena-limit behavior: see [#1514 user content offset wrap](1514-user-content-offset-wrap.md).
+- Arena-limit behavior: see #1514 user content offset wrap.
 
 The pin's `pinyin_mask_out` is sequential: it masks the tables and bigrams,
 then loads and merges each library before compacting

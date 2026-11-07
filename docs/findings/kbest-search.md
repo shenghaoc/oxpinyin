@@ -7,7 +7,7 @@ documented, and nothing enumerates paths.
 
 ## What "k-best" has to mean here
 
-`docs/findings/divergence-taxonomy.md` measured 468 corpus inputs where the
+`divergence-taxonomy` measured 468 corpus inputs where the
 pin selected a segmentation our frozen greedy order does not put first, and
 recorded that number as the W4 baseline for the `tie-swap` class. Reproducing
 the pin's *choice* is what a decoder is for, and a choice needs an ordered set

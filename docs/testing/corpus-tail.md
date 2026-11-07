@@ -53,7 +53,7 @@ after the Class A comparator port:
 | prefix-10 gap | **4,059 of 98,930** | **4,058 of 98,930** | **0 of 98,930** | same (94,871 → 94,872 → **98,930** overlap) |
 
 The 2026-08-22 re-freeze is recorded in
-`docs/findings/pin-refreeze-2026-08.md` as its third amendment. Sentence
+`pin-refreeze-2026-08` as its third amendment. Sentence
 pins the same day: row-0 and full-list agreement hold (488 / 385), the
 first-6 candidate rows rise 370 → **379** (`sentence_surface_reports_
 parity`) — the candidate list is the first-6 rows' tail, so closing the
@@ -166,13 +166,13 @@ step-propagation, so any run of consecutive apostrophes acts as a
 single separator when the group after it consumes at least one byte.
 `oxpinyin-core::FullPinyinParser::parse` and `SegmentGraph::key_start`
 now do the same; the leading-apostrophe half of maintainer decision 3
-(`parser-spec-contradiction-incomplete-keys.md`) stays open.
+(`parser-spec-contradiction-incomplete-keys`) stays open.
 
 **Freeze move.** `real_tables_session_reports_parity` re-freezes from
 10,177 / 10,189 / 94,871 of 98,930 / absent 1 to
 **10,178 / 10,190 / 94,872 of 98,930 / absent 0**; tie-swaps stay at
 1,036. Deliberate re-freeze, recorded in
-`docs/findings/pin-refreeze-2026-08.md` 2026-08-21 amendment and
+`pin-refreeze-2026-08` 2026-08-21 amendment and
 `docs/findings/parser-spec.md` architect correction log 2026-08-21.
 
 ## The 1 top-5 / 1 absent
@@ -219,7 +219,7 @@ outside the W2 corpus, measured through the C ABI top-10 by
 These are the prefix-10 residual class showing up in the option-sweep
 window rather than in the W2 corpus fixture. Each input's all-off parse,
 top-1, divergence rank, and class are enumerated in
-`docs/findings/all-off-tails.md` (reproduced with
+`all-off-tails` (reproduced with
 `bin/corpus-tail --all-off-tails`, no live oracle). The `option-sweep.sh`
 gate already excludes them from W10's STOP set
 (`run-option-sweep.sh:116-124,151-155`); no additional gate is added
@@ -229,7 +229,7 @@ here.
 Class A port closed on the corpus — the table above is the pre-`e941090`
 measurement. Re-measured post-port (fixture path, live oracle at `0x0`,
 and the full 21-case sweep), all six are bit-identical to the pin and
-the exclusion list never fires; see `docs/findings/all-off-tails.md`
+the exclusion list never fires; see `all-off-tails`
 §"Closure".
 
 ## Live-typing coverage

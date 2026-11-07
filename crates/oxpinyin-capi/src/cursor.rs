@@ -721,8 +721,7 @@ mod preedit_key_tests {
         crate::ffi::take_owned_cstr(p)
     }
 
-    /// The expectation table established from the pin in
-    /// `docs/findings/preedit-key-accessor-phase1.md` §d: `nihao` parses as
+    /// The expectation table established from the pin: `nihao` parses as
     /// `ni|hao`, so keys start at byte 0 and byte 2 and every other offset
     /// answers `false` — offsets 1/3/4 are empty mid-syllable columns and 5
     /// is the reserved slot (`offset >= matrix.size() - 1`).

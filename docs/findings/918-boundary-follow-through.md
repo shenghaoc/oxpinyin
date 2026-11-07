@@ -1,7 +1,7 @@
 # #918 — remaining input, caller and store partitions
 
 Source investigation · 2026-10-24 UTC. This extends the
-[entry/result audit](918-phrase-segment-source-audit.md), retaining its
+entry/result audit, retaining its
 exact pin, dependency versions and Rust baseline. Baseline conclusions
 are distinguished below from the new row-85 prefix processing. The GLib
 conversion and neighboring shared helpers remain; this is not removal
@@ -19,8 +19,8 @@ pin's `int` lookup interface unless the row explicitly says otherwise.
 | GLib-rejected malformed/overlong/partial encoding, length walk stays inside the allocation and reaches NUL | Pin count is positive, `items_written` remains zero, false plus the exact precondition critical, old phrase result preserved. Rust matches. GLib's `g_set_error_literal` with NULL error returns immediately (`glib/gerror.c:518-530`), so conversion adds no second warning. | Source complete for these conditions; compiled length/conversion order checked on both architectures. |
 | The lead-byte walk leaves the supplied allocation | Pin's load is out of bounds; no deterministic return/result/stderr can be assigned. Avoiding that walk is class (b), not an unclassified runtime quirk. | Source and amd64/arm64 instructions establish the illegal load. Possible process outcomes are undefined, not an unread policy question. No new crash probe. |
 | GLib-accepted non-scalar, sound consistent scalar-only keys/items and grams | False/all-zero length-sized result, no warning or observable prefix state; identical. | Complete bounded source argument in the entry audit. |
-| GLib-accepted non-scalar with a bounded matching raw phrase key and item | Identical: the pin returns true and a token; the raw `u32` key path returns the same true/token, with no `char`/`str` built from the non-scalar. | [Identical record](918-nonscalar-token-result.md); contract cases MATCH on both facades. |
-| Reached user gram shorter than a total, with a system gram | Defined assert; existing class-(c) rule. The raw span DP uses the ordinary warning/false/old-result refusal, identical under class (c). | [G1 prefix entry](918-prefix-lookup.md), both facades/all three wrappers; native checks passed; bdb/kc/tkrzw contract gates 10/10 each and the named bdb mutation passed. |
+| GLib-accepted non-scalar with a bounded matching raw phrase key and item | Identical: the pin returns true and a token; the raw `u32` key path returns the same true/token, with no `char`/`str` built from the non-scalar. | Identical record; contract cases MATCH on both facades. |
+| Reached user gram shorter than a total, with a system gram | Defined assert; existing class-(c) rule. The raw span DP uses the ordinary warning/false/old-result refusal, identical under class (c). | G1 prefix entry, both facades/all three wrappers; native checks passed; bdb/kc/tkrzw contract gates 10/10 each and the named bdb mutation passed. |
 | Reached partial gram item, or sub-total row without a system gram | The merge/get-frequency walk can read outside the row. Existing row 98 explicitly covers these lookup sites; class (b), not a new quirk. The raw span walk routes reached `UnsafeLookupPredecessor` through its existing one-warning refusal. | Exact unsafe shapes and safe early exits are already source-traced by row 98 and `single_gram.rs::{checked_get_freq,checked_search}`. The raw path can encounter these existing Rust refusals; this audit claims no new runtime witness for them. No deterministic pin result is claimed. |
 | Structurally bounded but unsorted/duplicate/zero-total/wrapping-frequency grams | They can change prefix scores, but cannot create a path across a non-scalar when keys/items remain scalar and consistent. No persistent update occurs. | Same final-step proof applies provided the actual merge/search walk stays in bounds and no assert is reached; unsafe/asserting shapes belong to the preceding rows. |
 | Inconsistent key/item length, truncated item storage or malformed token-array bounds | `PhraseTableEntry::search` walks four-byte tokens to the raw byte end (`storage/phrase_large_table3.cpp:29-51`); `get_phrase_item` creates a view using declared length (`phrase_index.cpp:180-208`); `save_next_step` indexes by that length (`phrase_lookup.cpp:348-377`). Out-of-range accesses are class (b); an in-range mismatched length can manufacture a complete path and a different token result, an unadmitted difference under limb 4. | Source hazards established. Not admitted by the bounded non-scalar record, which requires matching lengths and valid storage. Exact output of arbitrary corrupt lengths is deliberately not normalized. |
@@ -186,7 +186,7 @@ through the existing one-warning refusal.
 ### The broad values/items/readings partition outside #894
 
 - Stored phrase values `>= 0x80000000`: `phrase_segment` with a matching
-  raw key is identical ([record](918-nonscalar-token-result.md)). The
+  raw key is identical (record). The
   text consumers still differ: `PhraseItem::get_phrase_string` copies raw
   words (`storage/phrase_index.cpp:103-111`); `_token_get_phrase` returns
   true with the declared length and the NULL from `g_ucs4_to_utf8`

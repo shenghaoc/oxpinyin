@@ -10,7 +10,7 @@ name: verify-nightly
 # external interfaces (AGENTS.md, "External interfaces").
 #
 # No trial lanes remain: the Miri, cargo-mutants and cargo-geiger jobs
-# were retired on 2026-09-01 (docs/findings/verify-nightly.md). There are
+# were retired on 2026-09-01. There are
 # no continue-on-error lanes; every job in this workflow must be green.
 # Surviving lanes: fuzz-soak, overflow-lane, coverage (via
 # coverage.yml, also an advisory path-filtered PR check), perf-snapshot,
