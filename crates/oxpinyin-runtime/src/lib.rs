@@ -507,7 +507,7 @@ impl<'a> RuntimeDict<'a> {
         // does not read the item a second time. A removed item or a masked
         // library leaves no entry; a shipped or user-table entry captures
         // nothing and the ranking reads as before.
-        let capture = self.user.is_some_and(UserStore::is_libpinyin_session);
+        let capture = self.user.is_some();
         let unreadable = self.system.lookup_with_live(
             syllables,
             out,
@@ -1780,7 +1780,7 @@ impl RuntimeLm<'_> {
                 .map_err(|error| LmError::User(error.to_string()))?,
         };
         delta.unigram_delta = delta.unigram_delta.saturating_add(self.bumps.token(token));
-        if let Some(store) = self.user.filter(|store| store.is_libpinyin_session()) {
+        if let Some(store) = self.user {
             delta.unigram_total_delta =
                 store.unigram_total_over(|nibble| self.inner.is_visible(nibble));
         }
@@ -1887,15 +1887,9 @@ impl LanguageModel for RuntimeLm<'_> {
         if !self.inner.has_real_unigrams() {
             return Ok(None);
         }
-        let user_total = match self.user {
-            None => 0,
-            Some(store) if store.is_libpinyin_session() => {
-                store.unigram_total_over(|nibble| self.inner.is_visible(nibble))
-            }
-            Some(store) => store
-                .unigram_total()
-                .map_err(|error| LmError::User(error.to_string()))?,
-        };
+        let user_total = self.user.map_or(0, |store| {
+            store.unigram_total_over(|nibble| self.inner.is_visible(nibble))
+        });
         Ok(Some(self.inner.facade_total(self.total_extra(user_total))))
     }
 

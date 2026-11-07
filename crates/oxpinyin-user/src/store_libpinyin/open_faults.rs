@@ -162,7 +162,6 @@ fn a_planted_item_is_placed() {
     let store = open::<Planted>(Some(&dir), originals()).expect("open");
     let placed = store
         .session_target()
-        .expect("session")
         .phrases()
         .libraries
         .get(&7)

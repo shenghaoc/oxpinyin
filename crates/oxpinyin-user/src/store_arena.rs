@@ -1,4 +1,4 @@
-//! Session phrase operations. Standalone stores retain their row persistence.
+//! Session phrase operations over the arenas and the live system items.
 
 use super::*;
 use crate::replay::UnigramAdd;
@@ -87,11 +87,8 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// [`in_session`]), so this cannot fail, as `FacadePhraseIndex::load`
     /// and `unload` cannot.
     pub(super) fn replace_user_arena(&mut self, nibble: u8, library: Option<UserLibrary>) {
-        let Some(target) = &self.inner.libpinyin else {
-            return;
-        };
         let db = self.database();
-        let mut phrases = target.phrases();
+        let mut phrases = self.inner.libpinyin.phrases();
         let sum = |library: &UserLibrary| {
             library.items().fold(0_u64, |sum, (_, item)| {
                 sum.wrapping_add(u64::from(item.unigram()))
@@ -142,27 +139,25 @@ impl<S: WriteStore> GenericUserStore<S> {
         self.inner
             .has_library_offsets
             .store(offsets_left, Ordering::SeqCst);
-        let grams_live = self
-            .container()
-            .is_some_and(|container| container.keys().is_ok_and(|keys| !keys.is_empty()));
+        let grams_live = self.container().keys().is_ok_and(|keys| !keys.is_empty());
         self.mark_committed_phrase_write(db, arena_live || tables_live || grams_live);
     }
 
     /// Whether the session holds an item beyond the shipped chunks: an arena
     /// item of a user library, or one a system library's live buffer added.
     pub(super) fn arena_has_items(&self) -> bool {
-        self.inner.libpinyin.as_ref().is_some_and(|target| {
-            target
-                .phrases()
-                .libraries
-                .values()
-                .any(|library| !library.is_empty())
-        }) || self
-            .inner
-            .system_items
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .has_added()
+        self.inner
+            .libpinyin
+            .phrases()
+            .libraries
+            .values()
+            .any(|library| !library.is_empty())
+            || self
+                .inner
+                .system_items
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .has_added()
     }
 
     /// Addon selection copies the complete item to the current range end,
@@ -174,11 +169,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         readings: &[&(Vec<PinyinKey>, u64)],
         unigram: u32,
     ) -> Result<Token, UserStoreError> {
-        let target = self
-            .inner
-            .libpinyin
-            .as_ref()
-            .ok_or(UserStoreError::InvalidPhrase)?;
+        let target = &self.inner.libpinyin;
         let item = ChunkItem {
             phrase: phrase.chars().map(u32::from).collect(),
             unigram,
@@ -230,8 +221,8 @@ impl<S: WriteStore> GenericUserStore<S> {
         Ok(token)
     }
 
-    pub(crate) fn session_target(&self) -> Option<&crate::store_libpinyin::Target> {
-        self.inner.libpinyin.as_deref()
+    pub(crate) fn session_target(&self) -> &crate::store_libpinyin::Target {
+        &self.inner.libpinyin
     }
 
     pub(super) fn arena_train(
@@ -240,13 +231,8 @@ impl<S: WriteStore> GenericUserStore<S> {
         readings: impl Iterator<Item = Vec<ChewingKey>>,
         delta: u32,
     ) -> Result<(), UserStoreError> {
-        let target = self
-            .inner
-            .libpinyin
-            .as_ref()
-            .ok_or(UserStoreError::InvalidPhrase)?;
         let db = self.database();
-        let mut phrases = target.phrases();
+        let mut phrases = self.inner.libpinyin.phrases();
         // The unloaded sub-index owns no item. The pin instead uses its
         // stale context cache here (phonetic_lookup.h:924-927); the
         // unloaded-cache ruling in compatibility-policy.md skips that write.
@@ -297,7 +283,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         token: Token,
         read: impl FnOnce(PhraseItemView<'_>) -> R,
     ) -> Option<R> {
-        let phrases = self.inner.libpinyin.as_ref()?.phrases();
+        let phrases = self.inner.libpinyin.phrases();
         match phrases.item(token) {
             Some(view) => Some(read(view)),
             None => self.with_appended_item(token, read),
@@ -347,11 +333,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         if self.originals.contains_key(&library) {
             return self.buffer_add_phrase(library, words, keys, delta, selected);
         }
-        let target = self
-            .inner
-            .libpinyin
-            .as_ref()
-            .ok_or(UserStoreError::InvalidPhrase)?;
+        let target = &self.inner.libpinyin;
         let packed = packed(keys)?;
         let db = self.database();
         let mut phrases = target.phrases();
@@ -471,11 +453,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         delta: u32,
         selected: Option<Option<Token>>,
     ) -> Result<Token, UserStoreError> {
-        let target = self
-            .inner
-            .libpinyin
-            .as_ref()
-            .ok_or(UserStoreError::InvalidPhrase)?;
+        let target = &self.inner.libpinyin;
         let original = self
             .originals
             .get(&library)
@@ -596,9 +574,6 @@ impl<S: WriteStore> GenericUserStore<S> {
         token: Token,
         delta: u32,
     ) -> Result<bool, StoreError> {
-        if self.inner.libpinyin.is_none() {
-            return add_unigram_frequency(txn, phrase_index_library_index(token), token, delta);
-        }
         // Only the sub-index's overflow is the pin's `ERROR_INTEGER_OVERFLOW`;
         // a missing item answers another error that callers do not act on.
         Ok(self.arena_add_unigram_outcome(txn, token, delta)? != UnigramAdd::Refused)
@@ -616,11 +591,8 @@ impl<S: WriteStore> GenericUserStore<S> {
         token: Token,
         delta: u32,
     ) -> Result<UnigramAdd, StoreError> {
-        let Some(target) = &self.inner.libpinyin else {
-            return Ok(UnigramAdd::Missing);
-        };
         let library = phrase_index_library_index(token);
-        let mut phrases = target.phrases();
+        let mut phrases = self.inner.libpinyin.phrases();
         // phrase_index.h:631-632 returns before the facade total changes.
         if phrases.unloaded.contains(&library) {
             return Ok(UnigramAdd::Missing);
@@ -674,13 +646,8 @@ impl<S: WriteStore> GenericUserStore<S> {
         // Hold the database guard from the snapshot through the mask.
         let db = self.database();
         let container_keys = self.container_keys();
-        let bigram_fault = self.bigram_mask_fault_over(&db, container_keys.as_ref(), mask, token);
-        let target = self
-            .inner
-            .libpinyin
-            .as_ref()
-            .ok_or(UserStoreError::InvalidPhrase)?;
-        let mut phrases = target.phrases();
+        let bigram_fault = self.bigram_mask_fault_over(&container_keys, mask, token);
+        let mut phrases = self.inner.libpinyin.phrases();
         let Some(view) = phrases.item(token) else {
             return Ok(false);
         };
@@ -739,7 +706,9 @@ impl<S: WriteStore> GenericUserStore<S> {
         drop(phrases);
         let grams_left = self.mask_container_over(container_keys, mask, token)?;
         let has = db.write(|txn| has_user_data_in_write_txn(txn))?
-            || !target
+            || !self
+                .inner
+                .libpinyin
                 .phrases()
                 .libraries
                 .values()
@@ -749,10 +718,7 @@ impl<S: WriteStore> GenericUserStore<S> {
     }
 
     pub(super) fn mask_arena(&self, mask: Token, value: Token) -> Result<(), UserStoreError> {
-        let Some(target) = &self.inner.libpinyin else {
-            return Ok(());
-        };
-        let mut phrases = target.phrases();
+        let mut phrases = self.inner.libpinyin.phrases();
         for (&nibble, library) in &mut phrases.libraries {
             let selected = |slot: u32| (((u32::from(nibble) << 24) | slot) & mask) == value;
             // `FacadePhraseIndex::mask_out` takes the old sub-index total out

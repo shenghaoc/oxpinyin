@@ -80,11 +80,11 @@ const USER_CONF: &str = "user.conf";
 /// against the reset defaults, so the profile reads as non-conforming and is
 /// wiped — [`load`] does the same.
 ///
-/// `Err` is the class-(c) site: the `database format:` directive reached
+/// `Err` is the pin's abort site: the `database format:` directive reached
 /// `to_table_database_format_type`, which `abort()`s upstream
 /// (`:122-133`, called at `:353-354`). No profile is judged and nothing
-/// is written or cleaned — the open fails, as `check_format` never gets
-/// to run.
+/// is written or cleaned — the open fails here, as `check_format` never
+/// gets to run, and the C adapters abort on it.
 fn load_user_conf(filename: &Path) -> Result<Option<UserTableInfo>, PersistenceError> {
     match UserTableInfo::load_path(filename) {
         Ok(info) => Ok(Some(info)),
@@ -703,7 +703,7 @@ impl UserState {
 /// (`memory_chunk.h:543`) or the `checksum` word (`:547`). Both sit under
 /// `pinyin_save` / `zhuyin_save`, and the pin is built with asserts live,
 /// so a full filesystem or an `RLIMIT_FSIZE` that cuts the header kills the
-/// process. The class-(c) answer keeps only the failure.
+/// process. The save answers the failure, typed, and the C adapters abort.
 pub use oxpinyin_input::chunk::ChunkHeaderField;
 
 /// A persistence failure: I/O, a container, or a byte stream that does
@@ -737,9 +737,8 @@ pub enum PersistenceError {
     SystemRemapFailed,
     /// `user.conf` names a database format upstream's
     /// `to_table_database_format_type` does not know, where that function
-    /// `abort()`s (`table_info.cpp:122-133`). The class-(c) answer: the
-    /// open fails instead of the process dying, and nothing is cleaned or
-    /// written.
+    /// `abort()`s (`table_info.cpp:122-133`). The open fails here, with
+    /// nothing cleaned or written, and the C adapters abort.
     UnknownDatabaseFormat,
     /// A bulk copy into a fresh chunk reaches the pin's unsafe threshold
     /// (register row 112, #1514): the save stops there and answers `false`,
@@ -982,9 +981,9 @@ const fn token_of(nibble: u8, slot: u32) -> u32 {
 ///
 /// # Errors
 ///
-/// Returns [`PersistenceError::UnknownDatabaseFormat`] for the
-/// `database format:` abort point — the class-(c) refusal, raised before
-/// any judgement, wipe or write (see `load_user_conf`). A marker that
+/// Returns [`PersistenceError::UnknownDatabaseFormat`] at the
+/// `database format:` abort point, before any judgement, wipe or write
+/// (see `load_user_conf`). A marker that
 /// cannot be written is not an error, as the pin ignores it; unparsable
 /// profile files degrade per-file (see [`Loaded::skipped`]), as upstream's
 /// do.
@@ -3039,9 +3038,9 @@ fn stage_chunk(
 
 /// `MemoryChunk::save` (`memory_chunk.h:536-557`), made by the boundary's
 /// chunk save: the pin's `open`, two header `write`s, one payload `write`,
-/// `g_fsync` and `close`. A short header write is the class-(c) refusal
-/// the pin `assert`s on; the open and a short payload write are the pin's
-/// soft `false`, carried as `Io`.
+/// `g_fsync` and `close`. A short header write is the failure the pin
+/// `assert`s on, returned typed; the open and a short payload write are
+/// the pin's soft `false`, carried as `Io`.
 fn write_chunk_file(path: &Path, bytes: &[u8]) -> Result<(), PersistenceError> {
     match oxpinyin_input::chunk::save(path, bytes) {
         Ok(()) => Ok(()),
@@ -3527,7 +3526,7 @@ mod tests {
         rows
     }
 
-    /// The class-(c) marker: a `database format:` field upstream's
+    /// The abort marker: a `database format:` field upstream's
     /// `to_table_database_format_type` does not know, which `abort()`s the
     /// pin's process (`table_info.cpp:122-133`, reached from `:353-354`).
     /// `load` answers `Err` and leaves the user dir byte-identical — no
@@ -4255,7 +4254,7 @@ mod tests {
     /// write the filesystem refuses, and `/dev/full` refuses every write.
     /// The reporting save is the one place the pin's "carry on" stops, so
     /// the failure has to come back typed, naming the header word, for the
-    /// facade to turn into its class-(c) warning.
+    /// C adapters to abort on.
     #[test]
     #[cfg(target_os = "linux")]
     fn reporting_save_stops_at_a_chunk_header_write() {

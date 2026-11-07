@@ -250,8 +250,8 @@ impl UserIndex {
         }
     }
 
-    /// Builds an index from value-model rows (the standalone store's
-    /// derived table).
+    /// Builds an index from the rows of `user_pinyin_index.bin` (the
+    /// loaded profile's table).
     pub(crate) fn from_entries(entries: Vec<(Vec<u8>, Vec<u8>)>) -> Self {
         let mut index = Self::new();
         for (key, value) in &entries {

@@ -159,38 +159,6 @@ pub const fn first_library_token(library: u8) -> Token {
     phrase_index_make_token(library, 1)
 }
 
-/// Apply the reserved-zero skip and reject a token that has left `library`.
-#[must_use]
-pub(crate) fn canonicalize_library_token(library: u8, token: Token) -> Option<Token> {
-    let token = if token & PHRASE_MASK == 0 {
-        token.checked_add(1)?
-    } else {
-        token
-    };
-    (phrase_index_library_index(token) == library).then_some(token)
-}
-
-/// Apply the reserved-zero skip and reject a token that has left
-/// [`USER_DICTIONARY`].
-#[cfg_attr(not(test), allow(dead_code))]
-#[must_use]
-pub(crate) fn canonicalize_user_token(token: Token) -> Option<Token> {
-    canonicalize_library_token(USER_DICTIONARY, token)
-}
-
-/// Next token after `token` under "max + 1" inside `library`.
-#[must_use]
-pub(crate) fn next_library_token_after(library: u8, token: Token) -> Option<Token> {
-    canonicalize_library_token(library, token.checked_add(1)?)
-}
-
-/// Next token after `token` under "max + 1" inside [`USER_DICTIONARY`].
-#[cfg_attr(not(test), allow(dead_code))]
-#[must_use]
-pub(crate) fn next_user_token_after(token: Token) -> Option<Token> {
-    next_library_token_after(USER_DICTIONARY, token)
-}
-
 /// The token `_add_phrase` allocates from a sub-index whose `get_range` end
 /// is `end` (`pinyin.cpp:589-594` at 074a2219). `FacadePhraseIndex::get_range`
 /// masks the sub-index end into the library nibble (`phrase_index.cpp:620`,
@@ -207,25 +175,6 @@ pub(crate) fn add_phrase_token(library: u8, end: u32) -> Token {
     } else {
         token
     }
-}
-
-/// Little-endian `u16` packing of a key sequence, stored as `&[u8]`.
-#[must_use]
-pub(crate) fn encode_keys(keys: &[PinyinKey]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(keys.len().saturating_mul(2));
-    out.extend(keys.iter().flat_map(|key| key.to_le_bytes()));
-    out
-}
-
-/// Inverse of [`encode_keys`]. An odd trailing byte is dropped (`chunks_exact`).
-#[must_use]
-pub(crate) fn decode_keys(bytes: &[u8]) -> Vec<PinyinKey> {
-    bytes
-        .as_chunks::<2>()
-        .0
-        .iter()
-        .map(|chunk| PinyinKey::from_le_bytes([chunk[0], chunk[1]]))
-        .collect()
 }
 
 /// A user-phrase pronunciation: the pinyin key sequence, its stored count,
@@ -435,30 +384,12 @@ mod tests {
     #[test]
     fn allocation_increments_by_one_inside_user_dictionary() {
         let first = FIRST_USER_TOKEN;
-        let second = next_user_token_after(first).unwrap();
-        let third = next_user_token_after(second).unwrap();
+        let second = add_phrase_token(USER_DICTIONARY, 2);
+        let third = add_phrase_token(USER_DICTIONARY, 3);
         assert_eq!(second, first + 1);
         assert_eq!(third, first + 2);
         assert!(is_user_token(second));
         assert!(is_user_token(third));
-    }
-
-    #[test]
-    fn reserved_zero_id_is_skipped() {
-        // token = 0x07000000 → low 24 bits zero → bump to 0x07000001.
-        assert_eq!(
-            canonicalize_user_token(phrase_index_make_token(USER_DICTIONARY, 0)),
-            Some(FIRST_USER_TOKEN)
-        );
-    }
-
-    #[test]
-    fn allocation_stops_at_the_user_nibble_boundary() {
-        // 0x07FFFFFF + 1 leaves USER_DICTIONARY (library 8).
-        let last = phrase_index_make_token(USER_DICTIONARY, PHRASE_MASK);
-        assert_eq!(last, 0x07FF_FFFF);
-        assert!(is_user_token(last));
-        assert_eq!(next_user_token_after(last), None);
     }
 
     /// The session's allocation has no such boundary (register row 119):
@@ -492,12 +423,5 @@ mod tests {
         assert!(!phrase_and_keys_valid("你好", &[1]));
         assert!(!phrase_and_keys_valid(&"啊".repeat(16), &[0; 16]));
         assert!(phrase_and_keys_valid(&"啊".repeat(15), &[0; 15]));
-    }
-
-    #[test]
-    fn key_roundtrip_is_little_endian_u16() {
-        let keys = [0x0001, 0x0100, 0xFFFF];
-        assert_eq!(decode_keys(&encode_keys(&keys)), keys);
-        assert_eq!(encode_keys(&keys), vec![1, 0, 0, 1, 0xFF, 0xFF]);
     }
 }

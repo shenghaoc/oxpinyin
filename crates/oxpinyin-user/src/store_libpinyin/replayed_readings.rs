@@ -869,14 +869,8 @@ fn a_replayed_add_and_the_imports_live_only_in_the_buffer() {
             new_item: encode_phrase_item(&added).expect("added"),
         }],
     );
-    let arena_library = |store: &UserStore| {
-        store
-            .session_target()
-            .expect("session")
-            .phrases()
-            .libraries
-            .contains_key(&1)
-    };
+    let arena_library =
+        |store: &UserStore| store.session_target().phrases().libraries.contains_key(&1);
     let appended = LIBRARY | 5;
     // The replayed ADD: the buffer's item, no arena copy, no decoded copy.
     assert!(!arena_library(&store));
