@@ -96,7 +96,9 @@ impl Drop for BigramHandle {
 /// borrows storage only for the operation, including after public context fini.
 struct ImportHandle {
     index: u8,
-    owner: ContextOwner,
+    /// `None` for the handle `pinyin_begin_add_phrases(NULL, …)` returns: the
+    /// pin stores the NULL context and never reads it (`pinyin.cpp:506-512`).
+    owner: Option<ContextOwner>,
 }
 
 struct ImportRead<'a> {
@@ -113,12 +115,17 @@ struct ImportRead<'a> {
 ///                                              guint8 index);
 /// ```
 ///
-/// Returns a handle for any non-null context, matching the export iterator
-/// shape; caller must call `pinyin_end_add_phrases` to free it. Adds target
+/// Returns a handle for any context, matching the export iterator shape (a
+/// NULL context gets a handle that holds none, as at the pin); caller must call `pinyin_end_add_phrases` to free it. Adds target
 /// the loaded system libraries 1–4 and USER_FILE libraries 5–7.
 pub fn begin_add_phrases_impl(context: *mut PinyinContext, index: u8) -> *mut ImportIterator {
     if context.is_null() {
-        return ptr::null_mut();
+        // The pin allocates the iterator and stores the context unread
+        // (`pinyin.cpp:506-512`, `zhuyin.cpp:392-398`). Every later use that
+        // reads the context is a NULL dereference (row 41): `add_phrase`
+        // answers `false` and `end_add_phrases` frees the handle.
+        let handle = ImportHandle { index, owner: None };
+        return Box::into_raw(Box::new(handle)).cast();
     }
 
     // SAFETY: `context` is non-null and was produced by `pinyin_init`; the
@@ -130,7 +137,10 @@ pub fn begin_add_phrases_impl(context: *mut PinyinContext, index: u8) -> *mut Im
     let _compacted = ctx.core.compact_layout_failed();
     // SAFETY: the public context is live for this serialized constructor call.
     let owner = unsafe { context_owner(context) };
-    let handle = ImportHandle { index, owner };
+    let handle = ImportHandle {
+        index,
+        owner: Some(owner),
+    };
     Box::into_raw(Box::new(handle)).cast()
 }
 
@@ -191,9 +201,14 @@ pub extern "C" fn pinyin_iterator_add_phrase(
     // SAFETY: `iter` is non-null and was produced by
     // `pinyin_begin_add_phrases`; the unique borrow lasts for this call.
     let handle = unsafe { &mut *(iter.cast::<ImportHandle>()) };
+    // A NULL-context handle: `_add_phrase` would read the NULL context
+    // (`pinyin.cpp:526`), and the early returns before it answer `false`.
+    let Some(owner) = handle.owner.as_ref() else {
+        return false;
+    };
     let plan = {
         // SAFETY: the iterator retains the allocation; the C caller excludes concurrent mutation.
-        let context = unsafe { owner_ref(&handle.owner) };
+        let context = unsafe { owner_ref(owner) };
         plan_import(&import_read(handle, context), phrase, pinyin)
     };
     let (phrase, keys, original) = match plan {
@@ -212,8 +227,11 @@ pub extern "C" fn pinyin_iterator_add_phrase(
             original,
         } => (phrase, keys, original),
     };
+    let Some(owner) = handle.owner.as_mut() else {
+        return false;
+    };
     // SAFETY: the planning readers ended above; this call now owns the context mutation.
-    let context = unsafe { owner_mut(&mut handle.owner) };
+    let context = unsafe { owner_mut(owner) };
     let is_system = context
         .core
         .runtime
@@ -381,9 +399,12 @@ pub fn oxpinyin_import_aborts(
     // SAFETY: `iter` is non-null and was produced by
     // `pinyin_begin_add_phrases`; the shared borrow lasts for this call.
     let handle = unsafe { &*(iter.cast::<ImportHandle>()) };
+    let Some(owner) = handle.owner.as_ref() else {
+        return false;
+    };
     {
         // SAFETY: the iterator retains the allocation; the C caller excludes concurrent mutation.
-        let context = unsafe { owner_ref(&handle.owner) };
+        let context = unsafe { owner_ref(owner) };
         matches!(
             plan_import(&import_read(handle, context), phrase, pinyin),
             ImportPlan::Abort
@@ -460,8 +481,13 @@ pub extern "C" fn pinyin_end_add_phrases(iter: *mut ImportIterator) {
     // `Box::into_raw`; the caller transfers ownership back here and
     // only here.
     let mut handle = unsafe { Box::from_raw(iter.cast::<ImportHandle>()) };
+    // A NULL-context handle: the pin reads the context here
+    // (`pinyin.cpp:657`), so the handle is only freed (row 41).
+    let Some(owner) = handle.owner.as_mut() else {
+        return;
+    };
     // SAFETY: the iterator retains the allocation; serialized C calls grant exclusive access.
-    let context = unsafe { owner_mut(&mut handle.owner) };
+    let context = unsafe { owner_mut(owner) };
     if let Some(user) = context.core.user_store_mut() {
         // The compact (`pinyin.cpp:657`) rebuilds each library's total from
         // its items.

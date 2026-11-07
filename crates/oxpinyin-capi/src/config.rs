@@ -220,6 +220,10 @@ pub extern "C" fn pinyin_unload_addon_phrase_library(
     context: *mut PinyinContext,
     index: u8,
 ) -> bool {
+    if index >= PHRASE_INDEX_LIBRARY_COUNT {
+        // `pinyin.cpp:499`: `assert`, before the context is read at `:502`.
+        std::process::abort();
+    }
     if context.is_null() {
         return false;
     }
@@ -298,20 +302,22 @@ pub extern "C" fn pinyin_load_phrase_library(context: *mut PinyinContext, index:
 /// (`:473-474`), so a repeat unload answers `true` as well.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_unload_phrase_library(context: *mut PinyinContext, index: u8) -> bool {
+    if index >= PHRASE_INDEX_LIBRARY_COUNT {
+        // Register row 21, `pinyin.cpp:466`: `assert`, before the context is
+        // read, so a NULL context aborts as well.
+        std::process::abort();
+    }
+    // Only the GBK table can be unloaded (`pinyin.cpp:468-470`), and the
+    // refusal precedes the context read at `:473`.
+    if index != GBK_DICTIONARY {
+        return false;
+    }
     if context.is_null() {
         return false;
     }
 
     // SAFETY: `context` is non-null and was produced by `pinyin_init`.
     let ctx = unsafe { crate::state::context_mut(context) };
-    if index >= PHRASE_INDEX_LIBRARY_COUNT {
-        // Register row 21, `pinyin.cpp:466`: `assert`.
-        std::process::abort();
-    }
-    // Only the GBK table can be unloaded (`pinyin.cpp:468-470`).
-    if index != GBK_DICTIONARY {
-        return false;
-    }
     // `FacadePhraseIndex::unload` is in memory and the pin answers `true`
     // (policy row 103): the session drops the library and its visibility
     // mask sets, with nothing written and nothing that can fail.

@@ -223,21 +223,23 @@ pub extern "C" fn zhuyin_load_phrase_library(context: *mut ZhuyinContext, index:
 /// ```
 #[unsafe(no_mangle)]
 pub extern "C" fn zhuyin_unload_phrase_library(context: *mut ZhuyinContext, index: u8) -> bool {
+    if index >= PHRASE_INDEX_LIBRARY_COUNT {
+        // Register row 66, `zhuyin.cpp:381`: `assert`, before the context is
+        // read, so a NULL context aborts as well.
+        std::process::abort();
+    }
+    // `tsi.bin` can't be unloaded (`zhuyin.cpp:383-385`), and the refusal
+    // precedes the context read at `:388`; any other library is unloaded,
+    // and the pin ignores what `unload` returns.
+    if index == TSI_DICTIONARY {
+        return false;
+    }
     if context.is_null() {
         return false;
     }
 
     // SAFETY: `context` is non-null and was produced by `zhuyin_init`.
     let ctx = unsafe { crate::state::context_mut(context) };
-    if index >= PHRASE_INDEX_LIBRARY_COUNT {
-        // Register row 66, `zhuyin.cpp:381`: `assert`.
-        std::process::abort();
-    }
-    // `tsi.bin` can't be unloaded (`zhuyin.cpp:383-385`); any other library
-    // is, and the pin ignores what `unload` returns.
-    if index == TSI_DICTIONARY {
-        return false;
-    }
     // `FacadePhraseIndex::unload` is in memory (policy row 103): the
     // session drops the library and its visibility mask sets, with nothing
     // written and nothing that can fail.

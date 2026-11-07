@@ -171,16 +171,11 @@ pub extern "C" fn pinyin_parse_chewing(
 /// for the first tone (`chewing_key.cpp:91-105`); caller-owned string.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_luoma_pinyin_string(
-    instance: *mut PinyinInstance,
+    _instance: *mut PinyinInstance,
     key: *mut ChewingKey,
     utf8_str: *mut *mut GChar,
 ) -> bool {
-    display_string_getter(
-        instance,
-        key,
-        utf8_str,
-        oxpinyin_core::ChewingKey::luoma_pinyin_text,
-    )
+    display_string_getter(key, utf8_str, oxpinyin_core::ChewingKey::luoma_pinyin_text)
 }
 
 /// Get the secondary zhuyin string of a chewing key.
@@ -196,12 +191,11 @@ pub extern "C" fn pinyin_get_luoma_pinyin_string(
 /// its digit (`chewing_key.cpp:107-121`); caller-owned string.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_secondary_zhuyin_string(
-    instance: *mut PinyinInstance,
+    _instance: *mut PinyinInstance,
     key: *mut ChewingKey,
     utf8_str: *mut *mut GChar,
 ) -> bool {
     display_string_getter(
-        instance,
         key,
         utf8_str,
         oxpinyin_core::ChewingKey::secondary_zhuyin_text,
@@ -213,12 +207,13 @@ pub extern "C" fn pinyin_get_secondary_zhuyin_string(
 /// out the rendering made with the pin's `g_strdup`/`g_strdup_printf`
 /// call (`chewing_key.cpp:97-114`), caller-owned (`g_free`).
 fn display_string_getter(
-    instance: *mut PinyinInstance,
     key: *mut ChewingKey,
     utf8_str: *mut *mut GChar,
     render: impl FnOnce(oxpinyin_core::ChewingKey) -> oxpinyin_chewing::KeyText,
 ) -> bool {
-    if instance.is_null() || key.is_null() || utf8_str.is_null() {
+    // The pin never reads `instance` (`pinyin.cpp:2729-2749`); it writes
+    // `*utf8_str` before any check, so a NULL out stays guarded (row 41).
+    if key.is_null() || utf8_str.is_null() {
         return false;
     }
 
@@ -252,10 +247,11 @@ fn display_string_getter(
 /// aborts here too (register row 4).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_pinyin_is_incomplete(
-    instance: *mut PinyinInstance,
+    _instance: *mut PinyinInstance,
     key: *mut ChewingKey,
 ) -> bool {
-    if instance.is_null() || key.is_null() {
+    // The pin never reads `instance` (`pinyin.cpp:2765-2774`).
+    if key.is_null() {
         return false;
     }
 
