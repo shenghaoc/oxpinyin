@@ -310,7 +310,7 @@ impl<
     /// (`:1557-1559`, `:1602-1604`). The remember walk reads it later,
     /// whatever the options have become since.
     fn keep_parse_matrix(&mut self, divided: bool) {
-        let keys = crate::cursor::matrix_keys_of(&self.mode_key_list().unwrap_or_default());
+        let keys = crate::cursor::matrix_keys_of(&self.parser_key_list());
         self.parse_matrix =
             oxpinyin_engine::parse_time_keys(&keys, self.parsed_len, self.options(), divided);
     }

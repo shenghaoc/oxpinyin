@@ -244,7 +244,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
             return Some(SpanSource {
                 input: self.zhuyin_input.as_bytes(),
                 parsed: parse.consumed(),
-                spans: ModeKeys::Zhuyin(parse.keys()),
+                spans: ModeKeys::Matrix(&self.parse_matrix),
                 separators: false,
             });
         }
@@ -252,14 +252,14 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
             return Some(SpanSource {
                 input: self.double_input.as_bytes(),
                 parsed: parse.consumed(),
-                spans: ModeKeys::Double(parse.keys()),
+                spans: ModeKeys::Matrix(&self.parse_matrix),
                 separators: false,
             });
         }
         self.full_parse.as_ref().map(|parse| SpanSource {
             input: self.full_input.as_bytes(),
             parsed: parse.consumed(),
-            spans: ModeKeys::Full(parse.keys()),
+            spans: ModeKeys::Matrix(&self.parse_matrix),
             separators: true,
         })
     }
@@ -418,22 +418,36 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
         }
     }
 
-    /// The active parse mode's keys in place, in input order. Plain full
-    /// pinyin reads the session's scan-matrix keys, which the session
-    /// builds once per input and option word.
+    /// The keys the active parser itself placed, before the pin's
+    /// post-fill steps: the input of `parse_matrix`'s construction.
+    /// Empty for plain full pinyin, which keeps no parser keys.
+    pub(crate) fn parser_key_list(&self) -> Vec<KeyAt> {
+        if let Some(parse) = self.zhuyin_parse.as_ref() {
+            ModeKeys::Zhuyin(parse.keys()).iter().collect()
+        } else if let Some(parse) = self.double_parse.as_ref() {
+            ModeKeys::Double(parse.keys()).iter().collect()
+        } else if let Some(parse) = self.full_parse.as_ref() {
+            ModeKeys::Full(parse.keys()).iter().collect()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// The active parse mode's matrix keys in place, in input order. Plain
+    /// full pinyin reads the session's scan-matrix keys, which the session
+    /// builds once per input and option word; the index-parsed full pinyin,
+    /// double pinyin and chewing modes read the matrix kept with the parse
+    /// (`parse_matrix`), with the pin's fuzzy, resplit and divided additions.
     ///
     /// # Errors
     ///
     /// Forwards [`EngineError`] from the session's matrix read.
     pub fn mode_key_source(&self) -> Result<ModeKeys<'_>, EngineError> {
-        if let Some(parse) = self.zhuyin_parse.as_ref() {
-            return Ok(ModeKeys::Zhuyin(parse.keys()));
-        }
-        if let Some(parse) = self.double_parse.as_ref() {
-            return Ok(ModeKeys::Double(parse.keys()));
-        }
-        if let Some(parse) = self.full_parse.as_ref() {
-            return Ok(ModeKeys::Full(parse.keys()));
+        // The three parsed modes keep the matrix the pin built at the parse,
+        // with its fuzzy, resplit and divided additions, as plain full
+        // pinyin's session does.
+        if self.zhuyin_parse.is_some() || self.double_parse.is_some() || self.full_parse.is_some() {
+            return Ok(ModeKeys::Matrix(&self.parse_matrix));
         }
         let (keys, _) = self.session.matrix_keys()?;
         Ok(ModeKeys::Matrix(keys))

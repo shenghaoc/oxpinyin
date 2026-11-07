@@ -104,6 +104,8 @@ mod e2e_tests;
 #[cfg(test)]
 mod matrix_bound_tests;
 #[cfg(test)]
+mod parse_matrix_tests;
+#[cfg(test)]
 mod test_support;
 
 #[cfg(test)]
