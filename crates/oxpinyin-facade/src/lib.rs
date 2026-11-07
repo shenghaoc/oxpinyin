@@ -46,7 +46,7 @@ mod snapshot;
 
 pub use context::{
     ContextCore, FALLBACK_CLEARED_BIT, LibraryLoadFault, LibraryRowAssert, LiveOptions,
-    MaskOutOutcome, OpenFailure, SaveOutcome, null_chunk_asserts,
+    LiveOptionsInner, MaskOutOutcome, OpenFailure, SaveOutcome, null_chunk_asserts,
 };
 pub use cursor::{KeyAt, ModeKeys, SpanSource};
 pub use export_rows::{
