@@ -32,7 +32,7 @@ def row(case='family/case', cell='bdb', pin=PIN, subject=SUBJECT, userdir=False,
 
 def spec(**overrides):
     return dict(dict(mode='pinyin', control=False, abort=contract_verdict.NO_ABORT, stderr=True, crash=None,
-                     userdir=False, cells=('bdb', 'kc', 'tkrzw'), either=False, host_scanf=(),
+                     userdir=False, cells=('bdb', 'kc', 'tkrzw'), either=False,
                      abort_logs=None, fatal=False, both_abort=False,
                      issues=(), policy_record='rec.md', case_id='family/case', pin_not_run=None), **overrides)
 

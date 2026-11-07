@@ -1,0 +1,1 @@
+M(&[("bytes", S("01000300")), ("get_parsed_input_length", I(7)), ("guess_sentence", B(true)), ("length", I(2)), ("length_ret", B(true)), ("logs", L(&[])), ("parse_return_consumed", I(7)), ("pointer", S("key")), ("positions", L(&[I(1), I(3)])), ("positions_ret", B(true)), ("ret", B(true))])

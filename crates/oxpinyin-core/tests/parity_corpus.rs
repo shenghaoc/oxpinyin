@@ -1,8 +1,8 @@
 //! The committed parity corpus: frozen input files, their documented sizes, and
 //! their line discipline.
 //!
-//! The corpus holds inputs only and is not regenerated. Its bytes are also pinned
-//! by the digests in `tools/bisection/axis-c-replacement.json`.
+//! The corpus holds inputs only and is not regenerated. Its bytes are recorded by
+//! the digests in `docs/testing/parity-corpus.md`.
 
 use std::path::PathBuf;
 

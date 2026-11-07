@@ -1,7 +1,7 @@
 //! A stored library total near the `guint32` wrap (#802) and chained MODIFY_HEADER logs.
 
 use crate::facade;
-use crate::fixtures::{chunk, write_user_conf};
+use crate::fixtures::{modify_header, write_log, write_user_conf};
 pub use crate::readers::FacadeOut;
 use crate::readers::{facade_total_out, import_rows, tokens_of, unigram_of};
 use crate::support::Kit;
@@ -17,25 +17,12 @@ fn stored_library_total(k: &Kit, name: &str) -> u32 {
     u32::from_le_bytes(bytes[8..12].try_into().expect("a total"))
 }
 
-/// One `LOG_MODIFY_HEADER` record: type 4, the token, a `u16` length, then the
-/// old and new totals.
-fn modify_header(old: u32, new: u32) -> Vec<u8> {
-    [
-        &4_u32.to_le_bytes()[..],
-        &0_u32.to_le_bytes(),
-        &4_u16.to_le_bytes(),
-        &old.to_le_bytes(),
-        &new.to_le_bytes(),
-    ]
-    .concat()
-}
-
 /// Closes the cached context and plants `log` as gb_char.dbin under a conforming user.conf.
 fn plant_log(k: &mut Kit, log: &[u8]) {
     facade::fini(k.ctx());
     k.forget();
     write_user_conf(k);
-    std::fs::write(k.user.join("gb_char.dbin"), chunk(log)).expect("gb_char.dbin");
+    write_log(k, log, "gb_char.dbin");
 }
 
 #[derive(Debug, PartialEq)]
@@ -56,7 +43,7 @@ pub struct Overflow {
 /// save compacts the totals (`phrase_index.cpp:170-174`, `pinyin.cpp:1139`).
 pub fn stored_total_overflow(k: &mut Kit, refused: bool, after_save: bool) -> Overflow {
     let total = stored_library_total(k, "gb_char.bin");
-    plant_log(k, &modify_header(total, STORED_GAP.wrapping_neg()));
+    plant_log(k, &modify_header(0, total, STORED_GAP.wrapping_neg()));
     let delta = if refused {
         STORED_GAP
             .checked_add(
@@ -111,14 +98,14 @@ pub fn log_headers(k: &mut Kit, chained: bool) -> Headers {
     let log = if chained {
         let first = total.wrapping_add(1_000_000_000);
         [
-            modify_header(total, first),
-            modify_header(first, total.wrapping_add(shift)),
+            modify_header(0, total, first),
+            modify_header(0, first, total.wrapping_add(shift)),
         ]
         .concat()
     } else {
         [
-            modify_header(total, total.wrapping_add(shift)),
-            modify_header(total, total),
+            modify_header(0, total, total.wrapping_add(shift)),
+            modify_header(0, total, total),
         ]
         .concat()
     };

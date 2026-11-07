@@ -89,19 +89,12 @@ def register(case, *, CASES):
                      lambda k, text=_text, options=_options: glib_sort_tails(k, (text,), options))
 
     # Keep the full diagnostic envelope when registering the intentional S1/S2 differences:
-    # the special-cost completion (lambda above one, and negative lambda since #1400) and
-    # the S2 tie rule (the gb table.conf cases, #1400).
-    for _name in ('nbest-user-table-order-pinyin', 'table-conf-lambda-one-and-a-half',
-                  'table-conf-lambda-negative-half', 'table-conf-lambda-negative-two',
-                  'table-conf-row-removed-gb'):
-        CASES[_name].update(stderr=True, policy_record='trellis-adjusted-cost-s1-s2.md')
+    # the special-cost completion and the S2 tie rule (#1400).
+    CASES['nbest-user-table-order-pinyin'].update(stderr=True, policy_record='trellis-adjusted-cost-s1-s2.md')
 
 
     # #1378 applies the 2026-10-29 length/raw-score/batch zhuyin key.
-    for _name in ('nbest-user-table-order-zhuyin',
-                  'table-conf-lambda-one-and-a-half-zhuyin',
-                  'table-conf-lambda-two-zhuyin', 'table-conf-lambda-million-zhuyin'):
-        CASES[_name].update(stderr=True, policy_record='1378-zhuyin-selection.md')
+    CASES['nbest-user-table-order-zhuyin'].update(stderr=True, policy_record='1378-zhuyin-selection.md')
 
     # #1275: the pin's SORT_BY_PINYIN_LENGTH key is `guint8 len = m_end -
     # m_begin` (074a2219 `pinyin.cpp:1692-1694`). Any run of apostrophes parses

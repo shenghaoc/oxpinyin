@@ -8,6 +8,9 @@
 
 // Links the facade: the cases call its exported C symbols, not Rust paths.
 use zhuyin_capi as _;
+// Links libpinyin: the cases export a saved profile through its export iterator
+// (`common/contract/libpinyin.rs`).
+use pinyin_capi as _;
 
 #[macro_use]
 #[path = "../../oxpinyin-capi/tests/common/contract/support.rs"]
@@ -79,6 +82,8 @@ mod facade {
     }
 }
 
+#[path = "../../oxpinyin-capi/tests/common/contract/libpinyin.rs"]
+mod libpinyin;
 #[path = "../../oxpinyin-capi/tests/common/contract/readers.rs"]
 mod readers;
 

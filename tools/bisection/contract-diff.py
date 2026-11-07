@@ -102,8 +102,7 @@ registered tags; it never falls back to the default suite. --list-tags
 prints the tag index as JSON (`tags`: tag to case IDs, with `family/<F>`
 entries; `modes`: every registered case ID to facade). Before running, the plan goes to stderr: the
 selected IDs and why each was selected, the facades and the artifacts the
-selection needs; --plan-only stops there. Axis C cases carry no tags and are
-never selected by tag; they run through --axis-c-replacement.
+selection needs; --plan-only stops there.
 
 Timing. The last stdout line is `{"timing": ...}`: the number of cases and
 workers and the seconds spent in each phase, summed over the run — worker
@@ -164,8 +163,7 @@ import contract_verdict
 from contract_verdict import (  # comparison and verdict rules
     META_OFFSET_TIMESTAMP, NO_ABORT, TKRZW_HASH_METADATA_SIZE, TKRZW_TIMESTAMP_WIDTH, WARNING_DOMAIN,
     _FATAL_GLIB_PREFIX, abort_answered, fatal_stderr,
-    host_scanf_verdict, observed, policy_observation, policy_pin_abort, policy_side,
-
+    observed, policy_observation, policy_pin_abort, policy_side,
     registered_termination, tkrzw_saved_bigram_bytes, tkrzw_saved_bigram_equal,
     valid_observation)
 import contract_selection
@@ -173,7 +171,6 @@ from contract_selection import SelectionError, case_names, family_of, normal_tag
 import contract_registry
 from contract_registry import case_spec  # registration metadata and checks
 import contract_measurement
-import contract_axis_c
 import contract_pinyin_out_parameters
 import contract_allocator_register
 import contract_cursor_sentence_refusals
@@ -272,12 +269,6 @@ save_929_physical_files = contract_save_failures_stderr.save_929_physical_files
 import contract_integer_limits_d18
 import contract_c_string_inputs
 import contract_gram_lookup
-import contract_library_loading
-import contract_table_conf_scanner
-hash_path_fixture = contract_table_conf_scanner.hash_path_fixture
-import contract_journal_replay
-import contract_axis_c_cases
-import contract_separator_before_cursor
 import contract_cell_fixtures
 import contract_sentence_ties
 import contract_kit
@@ -350,14 +341,6 @@ def case(name, *args, **kwargs):
     `either=True` (with both `abort=` and `crash=`) is for a fixture whose
     pin site depends on the file system: the pin's own signal picks the
     matcher, SIGABRT the class (c) one and anything else the class (b) one.
-    `host_scanf=<spellings>` is legacy metadata for `%f` inputs whose pin
-    acceptance varies by host libc. Current scanner cases use discrepancy
-    records instead. The pin reads them with the host libc, so on a host whose scanner
-    accepts one
-    the pin loads what the subject refuses. Only that difference (the pin
-    created its context; the subject refused `table.conf`) prints
-    `HOST-DEPENDENT` instead of `DIFFER` outside `--expect-parent` and is
-    not a failure; any other difference stays a DIFFER. A MATCH is reported as such on any host.
     `sigabrt=True` (with `abort=`) marks a pin `assert` or `abort()` site
     that oxpinyin reproduces since class (c) was retired (2026-10-31 UTC):
     both sides must die of SIGABRT, the subject must have written the pin's
@@ -392,7 +375,7 @@ def case(name, *args, **kwargs):
 # The selection rules are in contract_selection. These keep their names and
 # signatures and select from the CASES this module holds when they are called.
 def tag_index():
-    """issue tag -> sorted case IDs, and 'family/<F>' -> IDs; axis C excluded (contract_selection)."""
+    """issue tag -> sorted case IDs, and 'family/<F>' -> IDs (contract_selection)."""
     return contract_selection.tag_index(CASES)
 
 
@@ -427,8 +410,8 @@ def worker(mode, so, data, name):
     In profile-rows mode, instead read the container at data using name as its
     kind, print JSON rows and return normally. Validate the tkrzw reader anchor
     when applicable; an uncertified anchor raises ValueError."""
-    # The driver's spawn time, popped so a nested worker (axis C's reopen)
-    # neither inherits it nor prints a timing line into a parsed stdout.
+    # The driver's spawn time, popped so a nested worker neither inherits it
+    # nor prints a timing line into a parsed stdout.
     spawned = os.environ.pop('CONTRACT_DIFF_SPAWNED', None)
     entered = time.monotonic()
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
@@ -442,21 +425,12 @@ def worker(mode, so, data, name):
         rows = index_file_rows(data, kind=name, allow_empty=True, library=runtime)
         print(json.dumps(dict(rows=rows)), flush=True)
         return
-    if name.startswith('axis-c-') and sys.platform == 'linux':
-        # Fedora's pipe core_pattern can invoke systemd-coredump even when
-        # RLIMIT_CORE is zero. This guard prevents routing these deliberate
-        # pin faults into a host capture service; descendants inherit it.
-        libc = C.CDLL(None, use_errno=True)
-        libc.prctl.argtypes, libc.prctl.restype = [I, C.c_ulong, C.c_ulong, C.c_ulong, C.c_ulong], I
-        assert libc.prctl(4, 0, 0, 0, 0) == 0, ('PR_SET_DUMPABLE failed', C.get_errno())
     scratch = os.environ['TMPDIR']
     kit = Kit(mode, so, data, scratch)
     built = time.monotonic()
     result = CASES[name]['fn'](kit)
     finished = time.monotonic()
     result['logs'] = kit.logs
-    if name.startswith('axis-c-'):
-        result['log_messages'] = kit.log_messages
     if spawned is not None:
         # One line the driver reads and nothing compares: `run_worker` keeps
         # only `{`-lines as results and this is not part of the observation.
@@ -694,10 +668,6 @@ contract_save_failures_stderr.register(
 # files are never touched.
 
 
-contract_library_loading.register(case, items_system=items_system, craft_db=_craft_db,
-                                  index_file_rows=index_file_rows)
-
-
 # --------------------------------------------------------------------------
 
 
@@ -749,9 +719,6 @@ case_jobs = _RUNNER.case_jobs
 case_results = _RUNNER.case_results
 
 
-contract_separator_before_cursor.register(case)
-
-
 contract_allocator_register.register(case)
 
 
@@ -778,9 +745,6 @@ contract_matrix_resplit_windows.register(case)
 # Every case runs on a private copy of the oracle's system directory whose
 # `table.conf` is rewritten; the data files are links to the oracle's.
 # --------------------------------------------------------------------------
-
-
-contract_table_conf_scanner.register(case, CASES=CASES, WORKER=WORKER)
 
 
 contract_final_step_surface.register(case)
@@ -815,9 +779,6 @@ contract_system_mask_out.register(case)
 
 
 contract_phrase_index_logger.register(case)
-
-
-contract_journal_replay.register(case)
 
 
 # Batch F (#525): `zhuyin.cpp`'s phrase-table walk in `_add_phrase`. A token
@@ -938,49 +899,6 @@ def regenerate_sentence_ties(prefix, fixture):
     return contract_sentence_ties.regenerate_sentence_ties(prefix, fixture, Kit=Kit)
 
 
-# The replacement definition loader and the battery live in contract_axis_c (#1175).
-axis_c_definition = contract_axis_c.axis_c_definition
-
-
-# The registration tables of the axis C family, built anew by every load of this driver.
-AXIS_C_GROUPS = {name: [] for name in ('options', 'encoding', 'layouts')}
-AXIS_C_DEFINITION = axis_c_definition()
-# The invalid scheme numbers whose abort the pin takes and the register already
-# classifies (rows 5c/5d). These layout cases are matched with the classic
-# class (c) `abort=` expectation at the nested-observation level and counted as
-# covered, not DIFFER, exactly as `abort-zhuyin-chewing-scheme-*` is.
-AXIS_C_LAYOUT_COVERED = {}
-
-
-contract_axis_c_cases.register(
-    case, AXIS_C_DEFINITION=AXIS_C_DEFINITION, AXIS_C_GROUPS=AXIS_C_GROUPS, AXIS_C_LAYOUT_COVERED=AXIS_C_LAYOUT_COVERED, WORKER=WORKER)
-
-
-# The battery's comparison rules read no driver state and are re-exported. The
-# snapshot check and the battery keep their signatures and pass the registry,
-# the worker and the tables the registration above built, as they are when called.
-axis_c_canonical = contract_axis_c.axis_c_canonical
-axis_c_normalize_diagnostics = contract_axis_c.axis_c_normalize_diagnostics
-AXIS_C_ABORT_ROW_FIELDS = contract_axis_c.AXIS_C_ABORT_ROW_FIELDS
-axis_c_live = contract_axis_c.axis_c_live
-axis_c_reproduced_abort = contract_axis_c.axis_c_reproduced_abort
-axis_c_first_difference = contract_axis_c.axis_c_first_difference
-axis_c_envelope = contract_axis_c.axis_c_envelope
-axis_c_verdict = contract_axis_c.axis_c_verdict
-
-
-def check_axis_c_snapshots(args):
-    """Compare allocation with fork snapshots through the driver's run_worker (contract_axis_c)."""
-    return contract_axis_c.check_axis_c_snapshots(args, run_worker=run_worker)
-
-
-def run_axis_c(args, names):
-    """Run the battery over the driver's CASES, worker and axis C tables (contract_axis_c)."""
-    return contract_axis_c.run_axis_c(args, names, CASES=CASES, run_worker=run_worker,
-                                      AXIS_C_LAYOUT_COVERED=AXIS_C_LAYOUT_COVERED,
-                                      AXIS_C_DEFINITION=AXIS_C_DEFINITION)
-
-
 POLICY_ROOT = Path(__file__).resolve().parents[2] / 'docs/findings'
 
 
@@ -1055,17 +973,8 @@ def run_per_call(args, parser):
 # Diagnosis: #1137. The contract gate excludes them on arm64 only.
 ARM64_DIAGNOSIS_ISSUE = 1137
 ARM64_EXCLUDED_CASES = (
-    'replay-modify-header-overlong-pinyin',
-    'replay-modify-header-overlong-zhuyin',
-    'replay-touched-duplicate-invalid-pinyin',
-    'replay-touched-duplicate-invalid-zhuyin',
-    'replay-touched-many-invalid-pinyin',
-    'replay-touched-many-invalid-zhuyin',
     'row58-unsigned-score-off',
     'row58-unsigned-score-on',
-    'table-conf-lambda-million-zhuyin',
-    'table-conf-lambda-one-and-a-half-zhuyin',
-    'table-conf-lambda-two-zhuyin',
 )
 ARM64_EXCLUSION_REASON = (
     '#1137: the pin crashes or orders candidates differently on arm64; '
@@ -1084,9 +993,9 @@ def platform_skips(spec):
     return bool(platforms) and HOST_ORACLE_PLATFORM is not None and HOST_ORACLE_PLATFORM not in platforms
 
 
-def run_capture(spec, pin_so, data, name, scratch, timeout, companion=None):
+def run_capture(spec, pin_so, data, name, scratch, timeout):
     """One case on the pin alone: (observation, handoff profile, read the package data) (contract_runner)."""
-    return _RUNNER.capture_case(spec, pin_so, data, name, scratch, timeout, companion)
+    return _RUNNER.capture_case(spec, pin_so, data, name, scratch, timeout)
 
 
 def host_field_only(spec, case_id, pin, subject):
@@ -1099,7 +1008,6 @@ def host_field_only(spec, case_id, pin, subject):
             side.pop('capture_glibc', None)
             side.pop('capture_glib', None)
             side.pop('capture_reads_as_chunk', None)
-            side.pop('capture_scanf', None)
             side.pop('measurement_roots', None)
             side.pop('measurement_abort_flush', None)
             side.pop('exit', None)
@@ -1160,19 +1068,12 @@ def run_main():
     parser.add_argument('--list-tags', action='store_true', help='print the tag index as JSON and exit')
     parser.add_argument('--regenerate-sentence-ties', type=Path,
                         help='regenerate pin expectations in the supplementary #747 source fixture')
-    axis_c_mode = parser.add_mutually_exclusive_group()
-    axis_c_mode.add_argument('--axis-c-mutation', choices=['C-m1-r', 'C-m3-r'])
-    axis_c_mode.add_argument('--axis-c-snapshot-check', action='store_true')
-    parser.add_argument('--axis-c-mutant-pinyin-so', type=Path)
-    parser.add_argument('--axis-c-mutant-zhuyin-so', type=Path)
     args = parser.parse_args()
     if args.list_tags:
         print(json.dumps(dict(tags=tag_index(), modes={name: spec['mode'] for name, spec in CASES.items()}), indent=1))
         return 0
     if not (args.cell and args.prefix and args.pinyin_so):
         parser.error('CELL, PREFIX and PINYIN_SO are required')
-    if (args.axis_c_mutant_pinyin_so or args.axis_c_mutant_zhuyin_so) and not args.axis_c_mutation:
-        parser.error('--axis-c-mutant-pinyin-so/--axis-c-mutant-zhuyin-so require --axis-c-mutation')
     os.environ['CONTRACT_DIFF_CELL'] = args.cell
     lib = args.prefix / 'lib'
     data = lib / 'libpinyin/data'
@@ -1194,18 +1095,6 @@ def run_main():
         return run_per_call(args, parser)
     if args.base_pinyin_so or args.base_zhuyin_so or args.per_call_attribution or args.per_call_operations:
         parser.error('base paths, attribution and operation selection require --per-call')
-    if args.axis_c_mutation or args.axis_c_snapshot_check:
-        assert not args.regenerate_sentence_ties, 'axis C modes cannot be combined with regeneration'
-        # Hash the committed source fixtures once, here, before any Axis C
-        # worker is launched; the loader no longer does it at import.
-        axis_c_definition(verify_sources=True)
-        if args.axis_c_snapshot_check:
-            return check_axis_c_snapshots(args)
-        # The fork-snapshot protocol is preregistered; a caller-provided
-        # AXIS_C_ALLOCATE_EACH must never silently switch the battery over to
-        # per-child allocation (that is the snapshot check's private half).
-        os.environ.pop('AXIS_C_ALLOCATE_EACH', None)
-        return run_axis_c(args, AXIS_C_DEFINITION['mutations'][args.axis_c_mutation]['controls'])
     if args.regenerate_sentence_ties:
         assert args.cell == 'bdb', '#747 fixture regeneration is bdb only'
         assert args.pinyin_so.resolve() == (lib / 'libpinyin.so').resolve(), \
@@ -1281,14 +1170,6 @@ def run_cases(args, parser, data, default_names=None, keep=None):
                     continue
                 pin, subject = pair
                 check_cancelled()
-                spelling = contract_reference.scanner_spelling(spec)
-                if (spelling is not None and getattr(args, 'references', None) is not None
-                        and pin.get('capture_scanf') is None):
-                    verdict_counts['NO-REFERENCE'] = verdict_counts.get('NO-REFERENCE', 0) + 1
-                    failures += 1
-                    print(json.dumps(dict(cell=args.cell, case=n, verdict='NO-REFERENCE', expected_ok=False,
-                                          message=f'{n}: reference has no capture_scanf'), sort_keys=True), flush=True)
-                    continue
                 if args.observations:
                     with args.observations.open('a') as capture:
                         capture.write(json.dumps(dict(cell=args.cell, case=n, userdir=spec['userdir'],
@@ -1297,39 +1178,17 @@ def run_cases(args, parser, data, default_names=None, keep=None):
                                                       subject=policy_side(spec, subject)),
                                                  ensure_ascii=True) + '\n')
                 compared = time.monotonic()
-                axis_c = (n.startswith('axis-c-') and getattr(args, 'references', None) is not None
-                          and spec['policy_record'] is None)
-                if axis_c and not any(side['exit'] == 'TIMEOUT' for side in (pin, subject)):
-                    verdict, differing = axis_c_verdict(n, axis_c_envelope(pin), axis_c_envelope(subject),
-                                                        AXIS_C_LAYOUT_COVERED.get(n))
-                    expected = (verdict == 'MATCH') != bool(args.expect_parent and not spec['control'])
-                    same = verdict == 'MATCH'
-                    if verdict == 'DIFFER' and not args.expect_parent:
-                        print(json.dumps(dict(case=n, first=axis_c_first_difference(axis_c_envelope(pin), axis_c_envelope(subject))),
-                                         ensure_ascii=True), flush=True)
-                elif (any(side['exit'] == 'TIMEOUT' for side in (pin, subject))
+                if (any(side['exit'] == 'TIMEOUT' for side in (pin, subject))
                         and (not args.expect_parent or not registered_termination(spec)
                              or spec.get('pin_not_run') is not None)):
                     verdict, expected, same = 'TIMEOUT', False, False
                 else:
                     verdict, expected, same = verdict_for(spec, pin, subject, args.expect_parent)
                 compare_seconds += time.monotonic() - compared
-                scanner_verdicts = None
-                if spelling is not None:
-                    host_scanner = host_scanf_verdict(spelling)
-                    capture_scanner = (pin['capture_scanf'] if getattr(args, 'references', None) is not None
-                                       else pin.get('capture_scanf') or host_scanner)
-                    scanner_verdicts = dict(capture=capture_scanner,
-                                            host=host_scanner)
-                host_dependent = (verdict == 'DIFFER' and not args.expect_parent
-                                  and scanner_verdicts is not None
-                                  and scanner_verdicts['capture'] != scanner_verdicts['host'])
                 # A frozen reference holds on the libraries it was captured on. The comparison always
                 # comes first: equal observations are MATCH (or POLICY-ACCEPTED) on any host. Only a
-                # lambda scanner case whose captured and current libc scanner verdicts differ,
-                # or a GLib fatal-critical case whose registered signal changes, is
-                # HOST-DEPENDENT. A matching scanner verdict leaves the exact comparison intact.
-                host_dependent = host_dependent or (
+                # GLib fatal-critical case whose registered signal changes is HOST-DEPENDENT.
+                host_dependent = (
                     verdict == 'DIFFER' and not args.expect_parent and (
                         spec['fatal']
                         and pin.get('capture_glib') not in (None, contract_reference.glib_version(args.pinyin_so)))
@@ -1341,8 +1200,6 @@ def run_cases(args, parser, data, default_names=None, keep=None):
                 row = dict(cell=args.cell, case=n, verdict=verdict, expected_ok=expected,
                            exit=[pin['exit'], subject['exit']],
                            stderr_lines=[pin['stderr_lines'], subject['stderr_lines']])
-                if scanner_verdicts is not None:
-                    row['scanner_verdicts'] = scanner_verdicts
                 if spec['policy_record'] is not None:
                     row.update(record=spec['policy_record'], pin=pin, subject=subject)
                     if verdict == 'DIFFER':

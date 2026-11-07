@@ -74,6 +74,8 @@ macro_rules! shared_abi {
             fn get_zhuyin_string(instance: P, key: P, utf8_str: *mut *mut c_char) -> bool;
             fn get_pinyin_string(instance: P, key: P, utf8_str: *mut *mut c_char) -> bool;
             fn mask_out(context: P, mask: u32, value: u32) -> bool;
+            fn load_phrase_library(context: P, index: u8) -> bool;
+            fn unload_phrase_library(context: P, index: u8) -> bool;
             $($($extra)*)?
         }
     };

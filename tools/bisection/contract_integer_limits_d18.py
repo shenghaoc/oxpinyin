@@ -46,9 +46,8 @@ for _count in (715827882, 715827883, 1431655765, 1431655766):
     case(f'd18-remember-multiply-{_count}', control=True, issues=('540',))(d18_remember((_count,)))
 
 
-# #752: reuse the preregistered full-pinyin NUL-middle case below,
-# axis-c-encoding-pinyin-remember_user_input-nul-middle. These are its
-# transformed-parser twins and a known-character NUL-termination control.
+# #752: the transformed-parser twins of the full-pinyin NUL-middle remember
+# input, and a known-character NUL-termination control.
 # 074a2219 pinyin.cpp:3115-3121, 3688-3694 refuses a character with no token;
 # bytes after the first NUL cannot change the visible phrase.
 def remember_nul(parse_name, input_text, phrase):

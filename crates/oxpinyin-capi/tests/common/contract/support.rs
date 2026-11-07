@@ -251,6 +251,25 @@ fn intern(domain: &str) -> &'static str {
     }
 }
 
+/// A file name as the old runner's text: UTF-8, with each byte that is not
+/// valid UTF-8 written as Python's `surrogateescape` code point, spelled `\udcXX`.
+pub fn os_text(name: &std::ffi::OsStr) -> String {
+    surrogate_text(name.as_encoded_bytes())
+}
+
+/// Bytes as the old runner's text ([`os_text`]): valid UTF-8 as it is, each
+/// other byte as `\udcXX`.
+pub fn surrogate_text(bytes: &[u8]) -> String {
+    let mut text = String::new();
+    for chunk in bytes.utf8_chunks() {
+        text.push_str(chunk.valid());
+        for byte in chunk.invalid() {
+            text.push_str(&format!("\\udc{byte:02x}"));
+        }
+    }
+    text
+}
+
 /// A path as the C string the facade takes (Unix: its bytes).
 pub fn path_c(path: &Path) -> CString {
     #[cfg(unix)]
@@ -536,11 +555,7 @@ fn parent(name: &str, expect: Expect) {
             .iter()
             .map(|(file, entry)| ((*file).to_owned(), *entry))
             .collect();
-        assert_eq!(
-            listing(&scratch.path().join("user-X")),
-            files,
-            "{name}: user files"
-        );
+        assert_eq!(listing(scratch.path()), files, "{name}: user files");
     }
 }
 
@@ -572,23 +587,37 @@ fn scratch_relative(stderr: &[u8], scratch: &Path) -> Vec<u8> {
     out
 }
 
-/// The user directory as the old runner listed it, in name order.
-fn listing(user: &Path) -> Vec<(String, UserFile)> {
-    let mut names: Vec<_> = std::fs::read_dir(user)
-        .expect("the user directory")
-        .map(|entry| {
-            entry
-                .expect("user entry")
-                .file_name()
-                .into_string()
-                .expect("UTF-8 name")
+/// The user directories as the old runner listed them
+/// (`contract_execution.user_dir_listing`): every `user-*` directory under the
+/// scratch directory, in name order, flattened by file name so that a later
+/// directory's file replaces an earlier one's; the result in name order.
+fn listing(scratch: &Path) -> Vec<(String, UserFile)> {
+    let mut directories: Vec<PathBuf> = std::fs::read_dir(scratch)
+        .expect("the scratch directory")
+        .map(|entry| entry.expect("scratch entry").path())
+        .filter(|path| {
+            path.is_dir()
+                && path
+                    .file_name()
+                    .is_some_and(|name| name.as_encoded_bytes().starts_with(b"user-"))
         })
         .collect();
-    names.sort();
-    names
-        .into_iter()
-        .map(|name| {
+    directories.sort();
+    let mut files = std::collections::BTreeMap::new();
+    for user in directories {
+        let mut names: Vec<_> = std::fs::read_dir(&user)
+            .expect("the user directory")
+            .map(|entry| entry.expect("user entry").file_name())
+            .collect();
+        names.sort();
+        for name in names {
             let path = user.join(&name);
+            files.insert(os_text(&name), path);
+        }
+    }
+    files
+        .into_iter()
+        .map(|(name, path)| {
             let entry = if !path.is_file() {
                 UserFile::NotFile
             } else if name == "user.conf" {
@@ -636,6 +665,8 @@ pub enum Raw {
     /// A tuple, struct, vector or map (a slice of key-value pairs), or a
     /// present `Option` (one element) or enum variant (the index, then its fields).
     L(&'static [Raw]),
+    /// A [`J`] map: its keys in order and their values.
+    M(&'static [(&'static str, Raw)]),
     /// An absent `Option`.
     Nil,
 }
@@ -809,4 +840,412 @@ macro_rules! fixture_enum {
             }
         }
     };
+}
+
+/// A case's result as the old harness's JSON document held it: what the
+/// families whose bodies return a document (`run_j`) compare. A Python tuple is
+/// a list; a string that held a byte that is not UTF-8 spells it `\udcXX`
+/// ([`surrogate_text`]).
+#[derive(Clone, PartialEq, Eq)]
+pub enum J {
+    /// `null`: Python's `None`.
+    Null,
+    /// A boolean.
+    B(bool),
+    /// An integer.
+    I(i64),
+    /// A string.
+    S(String),
+    /// A list.
+    L(Vec<J>),
+    /// An object, by key.
+    M(std::collections::BTreeMap<String, J>),
+}
+
+impl Debug for J {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            J::Null => f.write_str("null"),
+            J::B(value) => write!(f, "{value}"),
+            J::I(value) => write!(f, "{value}"),
+            J::S(value) => write!(f, "{value:?}"),
+            J::L(items) => {
+                f.write_str("[")?;
+                for (index, item) in items.iter().enumerate() {
+                    if index > 0 {
+                        f.write_str(", ")?;
+                    }
+                    write!(f, "{item:?}")?;
+                }
+                f.write_str("]")
+            }
+            J::M(map) => {
+                f.write_str("{")?;
+                for (index, (key, value)) in map.iter().enumerate() {
+                    if index > 0 {
+                        f.write_str(", ")?;
+                    }
+                    write!(f, "{key:?}: {value:?}")?;
+                }
+                f.write_str("}")
+            }
+        }
+    }
+}
+
+impl J {
+    /// An empty object.
+    #[must_use]
+    pub fn map() -> Self {
+        J::M(std::collections::BTreeMap::new())
+    }
+
+    /// Sets `key` in an object.
+    pub fn set(&mut self, key: impl Into<String>, value: impl Into<J>) {
+        match self {
+            J::M(map) => {
+                map.insert(key.into(), value.into());
+            }
+            other => panic!("set {:?} on a non-object {other:?}", key.into()),
+        }
+    }
+
+    /// The value of `key` in an object.
+    #[must_use]
+    pub fn get(&self, key: &str) -> Option<&J> {
+        match self {
+            J::M(map) => map.get(key),
+            _ => None,
+        }
+    }
+
+    /// A list's items.
+    #[must_use]
+    pub fn items(&self) -> &[J] {
+        match self {
+            J::L(items) => items,
+            other => panic!("{other:?} is not a list"),
+        }
+    }
+
+    /// An integer's value.
+    #[must_use]
+    pub fn int(&self) -> i64 {
+        match self {
+            J::I(value) => *value,
+            other => panic!("{other:?} is not an integer"),
+        }
+    }
+
+    /// Python's truth value of the JSON value.
+    #[must_use]
+    pub fn truthy(&self) -> bool {
+        match self {
+            J::Null => false,
+            J::B(value) => *value,
+            J::I(value) => *value != 0,
+            J::S(value) => !value.is_empty(),
+            J::L(items) => !items.is_empty(),
+            J::M(map) => !map.is_empty(),
+        }
+    }
+}
+
+impl From<J> for String {
+    fn from(value: J) -> Self {
+        match value {
+            J::S(text) => text,
+            other => panic!("{other:?} is not a string"),
+        }
+    }
+}
+
+impl From<bool> for J {
+    fn from(value: bool) -> Self {
+        J::B(value)
+    }
+}
+
+macro_rules! j_integers {
+    ($($t:ty),*) => {$(
+        impl From<$t> for J {
+            fn from(value: $t) -> Self {
+                J::I(i64::try_from(value).expect("an integer in i64's range"))
+            }
+        }
+    )*};
+}
+j_integers!(u8, u16, u32, u64, usize, i8, i16, i32, i64, isize);
+
+impl From<&str> for J {
+    fn from(value: &str) -> Self {
+        J::S(value.to_owned())
+    }
+}
+
+impl From<String> for J {
+    fn from(value: String) -> Self {
+        J::S(value)
+    }
+}
+
+impl From<&String> for J {
+    fn from(value: &String) -> Self {
+        J::S(value.clone())
+    }
+}
+
+impl<T: Into<J>> From<Option<T>> for J {
+    fn from(value: Option<T>) -> Self {
+        value.map_or(J::Null, Into::into)
+    }
+}
+
+impl<T: Into<J>> From<Vec<T>> for J {
+    fn from(value: Vec<T>) -> Self {
+        J::L(value.into_iter().map(Into::into).collect())
+    }
+}
+
+impl<T: Into<J> + Clone> From<&[T]> for J {
+    fn from(value: &[T]) -> Self {
+        J::L(value.iter().cloned().map(Into::into).collect())
+    }
+}
+
+impl<T: Into<J>> From<std::collections::BTreeMap<String, T>> for J {
+    fn from(value: std::collections::BTreeMap<String, T>) -> Self {
+        J::M(
+            value
+                .into_iter()
+                .map(|(key, item)| (key, item.into()))
+                .collect(),
+        )
+    }
+}
+
+macro_rules! j_tuples {
+    ($(($($t:ident $i:tt),+)),*) => {$(
+        impl<$($t: Into<J>),+> From<($($t,)+)> for J {
+            fn from(value: ($($t,)+)) -> Self {
+                J::L(vec![$(value.$i.into()),+])
+            }
+        }
+    )*};
+}
+j_tuples!(
+    (A 0),
+    (A 0, B 1),
+    (A 0, B 1, C 2),
+    (A 0, B 1, C 2, D 3),
+    (A 0, B 1, C 2, D 3, E 4),
+    (A 0, B 1, C 2, D 3, E 4, F 5),
+    (A 0, B 1, C 2, D 3, E 4, F 5, G 6),
+    (A 0, B 1, C 2, D 3, E 4, F 5, G 6, H 7)
+);
+
+impl From<Log> for J {
+    fn from(value: Log) -> Self {
+        J::L(vec![value.0.into(), value.1.into()])
+    }
+}
+
+impl Fixture for J {
+    fn build(raw: &Raw) -> Self {
+        match raw {
+            Raw::Nil => J::Null,
+            Raw::B(value) => J::B(*value),
+            Raw::I(value) => J::I(*value),
+            Raw::S(value) => J::S((*value).to_owned()),
+            Raw::Y(bytes) => J::L(bytes.iter().map(|byte| J::I(i64::from(*byte))).collect()),
+            Raw::L(items) => J::L(items.iter().map(J::build).collect()),
+            Raw::M(pairs) => J::M(
+                pairs
+                    .iter()
+                    .map(|(key, value)| ((*key).to_owned(), J::build(value)))
+                    .collect(),
+            ),
+        }
+    }
+}
+
+/// A [`J`] object: `obj! { "key" => value, ... }`.
+#[allow(unused_macros)]
+macro_rules! obj {
+    ($($key:expr => $value:expr),* $(,)?) => {{
+        #[allow(unused_mut)]
+        let mut object = $crate::support::J::map();
+        $( object.set($key, $value); )*
+        object
+    }};
+}
+
+/// The [`J`] a fixture's static data describes: `raw!(L(&[...]))` or
+/// `raw!(include!("fixtures/<family>/<digest>.rs"))`.
+#[allow(unused_macros)]
+macro_rules! raw {
+    ($raw:expr) => {{
+        #[allow(unused_imports)]
+        use $crate::support::Raw::*;
+        static RAW: $crate::support::Raw = $raw;
+        $crate::support::fixture::<$crate::support::J>(&RAW)
+    }};
+}
+
+/// The GLib records so far as the old worker added them to every result
+/// document (`result['logs']`): `[domain or null, level]` pairs.
+pub fn logs_j(kit: &Kit) -> J {
+    J::L(kit.logs().into_iter().map(J::from).collect())
+}
+
+/// The messages so far (`result['log_messages']`, the axis C cases).
+pub fn messages_j(kit: &Kit) -> J {
+    J::L(kit.messages().into_iter().map(J::from).collect())
+}
+
+/// Runs a case whose body returns its result document, as the old worker ran
+/// it: the body's object gains `logs` ([`logs_j`]), and its keys that start with
+/// `~` are left out of the comparison (`contract_verdict.observed`). With
+/// `keys`, only those keys are compared: a pin crash site's or a not-run pin's
+/// declared fields.
+pub fn run_j(
+    name: &str,
+    expect: Expect,
+    body: impl FnOnce(&mut Kit) -> J,
+    expected: J,
+    keys: Option<&[&str]>,
+) {
+    if let Some(scratch) = child_scratch(name) {
+        let mut kit = Kit::new(&scratch);
+        let mut result = body(&mut kit);
+        result.set("logs", logs_j(&kit));
+        let J::M(map) = result else {
+            panic!("{name}: the body's result is not an object")
+        };
+        let observed: std::collections::BTreeMap<String, J> = map
+            .into_iter()
+            .filter(|(key, _)| !key.starts_with('~'))
+            .filter(|(key, _)| keys.is_none_or(|keys| keys.contains(&key.as_str())))
+            .collect();
+        assert_eq!(J::M(observed), expected, "{name}: result");
+        std::process::exit(0);
+    }
+    parent(name, expect);
+}
+
+/// File descriptor 2 redirected to an anonymous file until [`StderrCapture::finish`].
+pub struct StderrCapture {
+    saved: i32,
+    file: std::fs::File,
+}
+
+impl StderrCapture {
+    /// Redirects file descriptor 2.
+    #[cfg(unix)]
+    #[must_use]
+    pub fn start() -> Self {
+        use std::os::fd::AsRawFd as _;
+        let file = tempfile::tempfile().expect("a stderr capture file");
+        // SAFETY: duplicates the process's own stderr descriptor; `finish` restores
+        // and closes the copy.
+        let saved = unsafe { libc::dup(2) };
+        assert!(saved >= 0, "dup stderr");
+        // SAFETY: both descriptors are open for the call.
+        let redirected = unsafe { libc::dup2(file.as_raw_fd(), 2) };
+        assert!(redirected >= 0, "redirect stderr");
+        Self { saved, file }
+    }
+
+    /// Redirects file descriptor 2.
+    #[cfg(not(unix))]
+    #[must_use]
+    pub fn start() -> Self {
+        unimplemented!("the stderr capture uses dup2, which this platform lacks")
+    }
+
+    /// Restores stderr and answers what was written, as the old runner decoded it.
+    #[must_use]
+    pub fn finish(mut self) -> String {
+        use std::io::{Read as _, Seek as _};
+        // SAFETY: `saved` is the stderr descriptor `start` duplicated, restored and
+        // closed once.
+        unsafe {
+            assert!(libc::dup2(self.saved, 2) >= 0, "restore stderr");
+            libc::close(self.saved);
+        }
+        let mut bytes = Vec::new();
+        self.file
+            .seek(std::io::SeekFrom::Start(0))
+            .expect("rewind the capture");
+        self.file.read_to_end(&mut bytes).expect("read the capture");
+        surrogate_text(&bytes)
+    }
+}
+
+/// What a libpinyin export ([`libpinyin_export`]) answered.
+#[derive(Debug)]
+pub struct Export {
+    /// What it wrote to stderr, with the user directory written `USER`.
+    pub stderr: String,
+    /// Its document: `rows`, `logs` and `log_messages`.
+    pub document: J,
+}
+
+/// Exports user library 7 of a saved user directory through libpinyin's C API
+/// (`crate::libpinyin`), as the old `axis-c-export-user` worker did: libzhuyin
+/// has no export iterator. Opens `data` and `user`, walks
+/// `pinyin_begin_get_phrases(context, 7)` as `[ret, phrase, reading, count]` rows
+/// and leaves the context open, as the worker did. The document's `logs` and
+/// `log_messages` are the export's own: the case's records before it are set
+/// aside and restored after it, and the export's are not added to them.
+pub fn libpinyin_export(data: &Path, user: &Path) -> Export {
+    let before = std::mem::take(
+        &mut *LOGS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+    );
+    let capture = StderrCapture::start();
+    let system = path_c(data);
+    let user_c = path_c(user);
+    let ctx = crate::libpinyin::init(system.as_ptr(), user_c.as_ptr());
+    assert!(!ctx.is_null(), "the export's init failed");
+    let iter = crate::libpinyin::begin_get_phrases(ctx, 7);
+    let mut rows = Vec::new();
+    while crate::libpinyin::iterator_has_next_phrase(iter) {
+        let mut phrase: *mut c_char = std::ptr::null_mut();
+        let mut reading: *mut c_char = std::ptr::null_mut();
+        let mut count = i32::from_ne_bytes(UNTOUCHED.to_ne_bytes());
+        let ret = crate::libpinyin::iterator_get_next_phrase(
+            iter,
+            &raw mut phrase,
+            &raw mut reading,
+            &raw mut count,
+        );
+        rows.push(J::from((ret, take_text(phrase), take_text(reading), count)));
+    }
+    crate::libpinyin::end_get_phrases(iter);
+    let stderr = capture.finish();
+    let records = std::mem::replace(
+        &mut *LOGS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+        before,
+    );
+    let logs: Vec<J> = records
+        .iter()
+        .map(|(domain, level, _)| J::from((domain.clone(), *level)))
+        .collect();
+    let messages: Vec<J> = records
+        .into_iter()
+        .map(|(_, _, message)| J::from(message))
+        .collect();
+    let mut document = J::map();
+    document.set("rows", rows);
+    document.set("logs", logs);
+    document.set("log_messages", messages);
+    let user_text = surrogate_text(path_c(user).as_bytes());
+    Export {
+        stderr: stderr.replace(&user_text, "USER"),
+        document,
+    }
 }

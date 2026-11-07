@@ -1,0 +1,1 @@
+M(&[("logs", L(&[])), ("merged", L(&[I(26), S("8ac7679f1c49c436e73595048a3d412f68357800a18444cecc5cf9977b345b74"), L(&[I(1001), I(1001)])])), ("records", M(&[("add", I(0)), ("header", I(1)), ("modify", I(0)), ("remove", I(0))])), ("save", B(true)), ("train", B(true))])

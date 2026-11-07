@@ -23,7 +23,6 @@ def entry(mode='pinyin', cells=ALL, issues=()):
 REGISTRY = {
     'plain': entry(issues=('532',)),
     'zero-key/b': entry(mode='zhuyin', issues=('640', 'row:54')),
-    'axis-c-options': entry(issues=('640',)),
     'zero-key/a': entry(issues=('640',)),
     'kc-only': entry(cells=('kc',), issues=('532',)),
     'separator/1/x': entry(issues=()),
@@ -45,7 +44,7 @@ class TagTests(unittest.TestCase):
         self.assertEqual(selection.family_of('/x'), '')
         self.assertIsNone(selection.family_of('plain'))
 
-    def test_the_index_lists_sorted_ids_per_tag_and_family_and_leaves_axis_c_out(self):
+    def test_the_index_lists_sorted_ids_per_tag_and_family(self):
         self.assertEqual(selection.tag_index(REGISTRY), {
             '532': ['kc-only', 'plain'],
             '640': ['zero-key/a', 'zero-key/b'],
@@ -71,16 +70,16 @@ class SelectTests(unittest.TestCase):
     def select(self, *args, **kwargs):
         return selection.select_cases(REGISTRY, *args, **kwargs)
 
-    def test_with_no_selector_every_case_but_axis_c_is_chosen_in_sorted_order(self):
+    def test_with_no_selector_every_case_is_chosen_in_sorted_order(self):
         names, reasons = self.select()
         self.assertEqual(names, ['kc-only', 'plain', 'separator/1/x', 'zero-key/a', 'zero-key/b'])
         self.assertEqual(set(map(tuple, reasons.values())), {('default suite',)})
         self.assertEqual(self.select(None), (names, reasons))
         self.assertEqual(self.select(None, (), ()), (names, reasons))
 
-    def test_explicit_ids_keep_their_order_once_and_may_name_axis_c(self):
-        names, reasons = self.select('zero-key/b,plain,zero-key/b,axis-c-options')
-        self.assertEqual(names, ['zero-key/b', 'plain', 'axis-c-options'])
+    def test_explicit_ids_keep_their_order_once(self):
+        names, reasons = self.select('zero-key/b,plain,zero-key/b,kc-only')
+        self.assertEqual(names, ['zero-key/b', 'plain', 'kc-only'])
         self.assertEqual(reasons['zero-key/b'], ['--cases', '--cases'])
 
     def test_issues_and_families_add_sorted_ids_and_every_reason(self):
@@ -95,12 +94,9 @@ class SelectTests(unittest.TestCase):
         self.assertEqual(names, ['zero-key/a', 'zero-key/b'])
         self.assertEqual(reasons['zero-key/a'], ['issue 640', 'issue 640'])
 
-    def test_an_axis_c_case_is_never_chosen_by_tag(self):
-        self.assertNotIn('axis-c-options', self.select(issues=['640'])[0])
-
     def test_prefixes_select_the_full_registry_without_tags_or_slashes(self):
-        names, reasons = self.select(prefixes='axis-c-,kc-,separator/')
-        self.assertEqual(names, ['axis-c-options', 'kc-only', 'separator/1/x'])
+        names, reasons = self.select(prefixes='kc-,separator/')
+        self.assertEqual(names, ['kc-only', 'separator/1/x'])
         self.assertEqual(reasons['separator/1/x'], ['prefix separator/'])
 
     def test_prefixes_union_with_ids_issues_and_families_in_selection_order(self):
@@ -162,7 +158,7 @@ class PlanTests(unittest.TestCase):
     def test_the_default_suite_is_a_count_and_the_artifacts_with_no_per_case_lines(self):
         names, reasons = selection.select_cases(REGISTRY)
         self.assertEqual(self.plan(names, reasons), [
-            'plan: 5 cases (default suite: every registered non-axis-C case); cell bdb; facades: pinyin 4, zhuyin 1',
+            'plan: 5 cases (default suite: every registered case); cell bdb; facades: pinyin 4, zhuyin 1',
             '  1 case skip on this cell (fixture in another backend\'s format)',
             '  artifacts: subject /s/libpinyin_capi.so; pin /pin/lib/libpinyin.so; system tables /pin/lib/libpinyin/data'
             '; subject --zhuyin-so (missing); pin /pin/lib/libzhuyin.so'])

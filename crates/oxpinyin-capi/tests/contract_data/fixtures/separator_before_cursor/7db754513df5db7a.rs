@@ -1,0 +1,1 @@
+M(&[("get_parsed_input_length", I(12)), ("guess_sentence", B(true)), ("logs", L(&[])), ("parse_return_consumed", I(12)), ("pointer", S("null")), ("ret", B(false)), ("untouched_or_null_pointer", B(true))])

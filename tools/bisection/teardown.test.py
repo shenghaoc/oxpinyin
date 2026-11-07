@@ -39,8 +39,7 @@ class PureTests(unittest.TestCase):
             (root / 'ox-libzhuyin.so').write_bytes(b'ox zhuyin')
             args = SimpleNamespace(cell='bdb', teardown_stage='provision', per_call=None, cases='', issue=[],
                                    family=[], expect_parent=False, observations=None, plan_only=False,
-                                   axis_c_replacement=None, axis_c_mutation=None,
-                                   axis_c_snapshot_check=False, regenerate_sentence_ties=None,
+                                   regenerate_sentence_ties=None,
                                    teardown_work_dir=root, teardown_cases='empty',
                                    teardown_cpu=min(os.sched_getaffinity(0)), teardown_facades='zhuyin',
                                    pinyin_so=None, zhuyin_so=root / 'ox-libzhuyin.so', prefix=root)
@@ -65,7 +64,7 @@ class PureTests(unittest.TestCase):
         """What `run` refuses with. The defaults pass every scope check, so the
         refusal is then the missing work directory."""
         values = dict(cell='bdb', teardown_stage='provision', per_call=None,
-                      axis_c_mutation=None, axis_c_snapshot_check=False, regenerate_sentence_ties=None,
+                      regenerate_sentence_ties=None,
                       teardown_work_dir=None)
         values.update(overrides)
 
@@ -114,12 +113,11 @@ class PureTests(unittest.TestCase):
                     self.assertIn('--teardown-work-dir', self.refusal(cell=cell, teardown_stage=stage))
 
     def test_contract_and_profiler_modes_are_refused_on_every_cell(self):
-        # The selector options (--cases, --issue, --family, --expect-parent, --observations, --plan-only,
-        # --axis-c-replacement) are no longer options of the top-level parser; verify takes them, and
+        # The selector options (--cases, --issue, --family, --expect-parent, --observations, --plan-only)
+        # are no longer options of the top-level parser; verify takes them, and
         # contract-diff.test.py (SelectionTests) checks that the top-level parser rejects them and
         # that verify takes no --teardown.
-        modes = dict(per_call='wrap', axis_c_mutation='m', axis_c_snapshot_check=True,
-                     regenerate_sentence_ties='t')
+        modes = dict(per_call='wrap', regenerate_sentence_ties='t')
         for cell in ('bdb', 'kc', 'tkrzw'):
             for mode, value in modes.items():
                 with self.subTest(cell=cell, mode=mode):
