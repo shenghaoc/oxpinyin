@@ -373,17 +373,17 @@ impl<
     /// The double-pinyin batch seam — pinyin-facade-only (libzhuyin has
     /// no double-pinyin surface), carried here because it is the same
     /// orchestration shape: parse through the live scheme under the full
-    /// option word (the frozen double-pinyin SPEC's Tone section), apply
-    /// the live incomplete bit to the session, then drive the decoder
-    /// with the exact segments.
+    /// option word (the frozen double-pinyin SPEC's Tone section), with the
+    /// session under that same word, then drive the decoder with the exact
+    /// segments.
     ///
     /// Returns the original-input bytes consumed, 0 on failure or empty
     /// input.
     #[must_use]
     pub fn parse_double_more(&mut self, text: &str) -> usize {
         self.begin_parse(text.as_bytes());
-        // Match fill-then-fuzzy under the whole context word, not merely
-        // the incomplete mirror below (pinyin.cpp:1549-1559, pin 074a2219).
+        // Match fill-then-fuzzy under the whole context word, applied once
+        // per parse (pinyin.cpp:1543-1559, pin 074a2219).
         if self.session.set_options(self.options()).is_err() {
             return 0;
         }
@@ -393,7 +393,6 @@ impl<
         let Some(scheme) = double_scheme(raw & !crate::context::FALLBACK_CLEARED_BIT) else {
             return 0;
         };
-        let allow_incomplete = self.live.incomplete.load(Ordering::Relaxed);
         let parser = {
             let p = DoublePinyinParser::with_scheme(scheme);
             if fallback_cleared {
@@ -408,14 +407,6 @@ impl<
             // The same fill_matrix empty-input law as full pinyin.
             let _ = self.session.replace_raw("");
             self.parsed_len = 0;
-            return 0;
-        }
-
-        if self
-            .session
-            .set_incomplete_pinyin(allow_incomplete)
-            .is_err()
-        {
             return 0;
         }
 

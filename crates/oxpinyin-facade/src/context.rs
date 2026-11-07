@@ -134,9 +134,6 @@ impl MaskOutOutcome {
 /// can log it; the return value stays NULL either way.
 #[derive(Debug)]
 pub enum OpenFailure {
-    /// Legacy empty-path failure, retained for source compatibility.
-    /// Current opens resolve an empty system path against the working directory.
-    EmptySystemDir,
     /// The runtime could not open the system directory.
     Runtime(OpenError),
 }
@@ -144,7 +141,6 @@ pub enum OpenFailure {
 impl core::fmt::Display for OpenFailure {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::EmptySystemDir => f.write_str("system directory is empty"),
             Self::Runtime(error) => write!(f, "{error}"),
         }
     }
@@ -153,7 +149,6 @@ impl core::fmt::Display for OpenFailure {
 impl std::error::Error for OpenFailure {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::EmptySystemDir => None,
             Self::Runtime(error) => Some(error),
         }
     }
@@ -192,7 +187,7 @@ impl OpenFailure {
     pub fn table_conf_error(&self) -> Option<TableConfError> {
         match self {
             Self::Runtime(oxpinyin_runtime::OpenError::TableConf(error)) => Some(*error),
-            Self::EmptySystemDir | Self::Runtime(_) => None,
+            Self::Runtime(_) => None,
         }
     }
 
@@ -215,7 +210,7 @@ impl OpenFailure {
     pub fn journal_fault(&self) -> Option<JournalFault> {
         match self {
             Self::Runtime(oxpinyin_runtime::OpenError::Journal(fault)) => Some(*fault),
-            Self::EmptySystemDir | Self::Runtime(_) => None,
+            Self::Runtime(_) => None,
         }
     }
 }
@@ -940,9 +935,7 @@ mod open_failure_tests {
         let failure = ContextCore::try_open(&dir, None, WORD, UserConfLaw::Pinyin)
             .err()
             .expect("a missing system dir cannot open");
-        let OpenFailure::Runtime(error) = &failure else {
-            panic!("expected a runtime failure, got {failure:?}");
-        };
+        let OpenFailure::Runtime(error) = &failure;
         // `SystemTableInfo2::load` is the first step (maintainer ruling
         // 2026-10-28 UTC, D3); its `open %s failed.` line and the init's
         // `load %s failed!` name the file.
