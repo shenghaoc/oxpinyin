@@ -1,7 +1,6 @@
-//! Helpers shared by the backends that frame every table into one
-//! keyspace (Kyoto Cabinet, tkrzw, Berkeley DB) and by the file-backed
-//! ones that hand a path to a C library (tkrzw, Berkeley DB). One
-//! definition each: the framing scheme, the range-bound test and the
+//! Helpers shared by the backends' raw walks (Kyoto Cabinet, tkrzw,
+//! Berkeley DB) and by the file-backed ones that hand a path to a C
+//! library (tkrzw). One definition each: the range-bound test and the
 //! path check used to live once per backend, byte-identical, and a fix
 //! to one copy could miss the others.
 //!
@@ -16,82 +15,10 @@ use std::path::Path;
 
 #[cfg(feature = "tkrzw")]
 use crate::StoreError;
-#[cfg(feature = "tkrzw")]
-use crate::validate_table_name;
-
-/// The byte between a table name and its keys: `table || 0x00 || key`.
-/// `validate_table_name` rejects names containing NUL, which is exactly
-/// what makes the framing prefix-free — no table's prefix is a prefix of
-/// another's, so every table is a contiguous run of the ordered keyspace
-/// whose internal order is the caller's key order.
-#[cfg(any(feature = "kyotocabinet", feature = "tkrzw", feature = "bdb"))]
-pub const SEPARATOR: u8 = 0;
 
 /// One owned `(key, value)` row.
 #[cfg(feature = "bdb")]
 pub(crate) type Row = (Vec<u8>, Vec<u8>);
-
-/// A write transaction's buffered slot read into the caller's buffer, with
-/// the point-read contract: `value` is cleared, then filled when the slot
-/// is a pending write (`Some`); a pending removal (`None`) is a miss.
-#[cfg(any(feature = "tkrzw", feature = "bdb"))]
-pub(crate) fn fill_buffered(slot: Option<&[u8]>, value: &mut Vec<u8>) -> bool {
-    value.clear();
-    slot.is_some_and(|bytes| {
-        value.reserve_exact(bytes.len());
-        value.extend_from_slice(bytes);
-        true
-    })
-}
-
-/// `table || 0x00 || key`. The caller has validated `table`.
-#[cfg(any(feature = "kyotocabinet", feature = "bdb"))]
-pub(crate) fn frame(table: &str, key: &[u8]) -> Vec<u8> {
-    let mut framed = Vec::with_capacity(table.len() + 1 + key.len());
-    framed.extend_from_slice(table.as_bytes());
-    framed.push(SEPARATOR);
-    framed.extend_from_slice(key);
-    framed
-}
-
-/// `table || 0x00` — the prefix every one of `table`'s rows carries.
-/// The caller has validated `table`.
-#[cfg(any(feature = "kyotocabinet", feature = "bdb"))]
-pub(crate) fn prefix(table: &str) -> Vec<u8> {
-    frame(table, &[])
-}
-
-/// `table || 0x00`, validating the table name first (the empty name and
-/// a name containing NUL are refused, which is what keeps the framing
-/// prefix-free).
-///
-/// # Errors
-///
-/// [`StoreError::InvalidInput`] for an invalid table name.
-#[cfg(feature = "tkrzw")]
-pub fn table_prefix(table: &str) -> Result<Vec<u8>, StoreError> {
-    validate_table_name(table)?;
-    let mut prefix = Vec::with_capacity(table.len() + 1);
-    prefix.extend_from_slice(table.as_bytes());
-    prefix.push(SEPARATOR);
-    Ok(prefix)
-}
-
-/// `prefix || key` for a prefix from [`table_prefix`].
-#[cfg(feature = "tkrzw")]
-pub fn framed(prefix: &[u8], key: &[u8]) -> Vec<u8> {
-    let mut framed = Vec::with_capacity(prefix.len() + key.len());
-    framed.extend_from_slice(prefix);
-    framed.extend_from_slice(key);
-    framed
-}
-
-/// The caller's key inside a framed one, or `None` if the framed key
-/// belongs to another table.
-#[cfg(any(feature = "kyotocabinet", feature = "bdb"))]
-pub(crate) fn unframe<'a>(prefix: &[u8], framed: &'a [u8]) -> Option<&'a [u8]> {
-    framed.strip_prefix(prefix)
-}
 
 /// Whether `key` falls inside the `[lo, hi]` range — the one reading of
 /// `Bound` every backend's `range` shares. An empty-slice bound needs no

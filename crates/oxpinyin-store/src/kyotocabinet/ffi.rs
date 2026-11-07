@@ -264,44 +264,6 @@ impl Record {
     }
 }
 
-/// A table's rows, copied into one buffer by the cursor walks of
-/// `WriteTxn::scan`.
-pub(crate) struct Rows {
-    bytes: Vec<u8>,
-    /// `(start, key length, value length)` per record.
-    spans: Vec<(usize, usize, usize)>,
-}
-
-impl Rows {
-    pub(crate) const fn new() -> Self {
-        Self {
-            bytes: Vec::new(),
-            spans: Vec::new(),
-        }
-    }
-
-    /// Appends one record.
-    pub(crate) fn push(&mut self, key: &[u8], value: &[u8]) {
-        self.spans.push((self.bytes.len(), key.len(), value.len()));
-        self.bytes.extend_from_slice(key);
-        self.bytes.extend_from_slice(value);
-    }
-
-    /// Record `index`'s key and value.
-    pub(crate) fn get(&self, index: usize) -> (&[u8], &[u8]) {
-        let (start, key_len, value_len) = self.spans[index];
-        let key_end = start + key_len;
-        (
-            &self.bytes[start..key_end],
-            &self.bytes[key_end..key_end + value_len],
-        )
-    }
-
-    pub(crate) fn len(&self) -> usize {
-        self.spans.len()
-    }
-}
-
 /// A native call on one object, as the tests observe it.
 #[cfg(test)]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -906,11 +868,6 @@ impl Cursor<'_> {
     #[cfg(test)]
     pub(crate) fn next_key(&mut self) -> Result<bool, StoreError> {
         self.read(false, true)
-    }
-
-    /// Reads the key at the cursor without moving it.
-    pub(crate) fn peek_key(&mut self) -> Result<bool, StoreError> {
-        self.read(false, false)
     }
 
     /// The key of the last record read.

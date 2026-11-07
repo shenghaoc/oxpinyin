@@ -6,10 +6,10 @@
 //! (`cargo test -p oxpinyin-store --no-default-features --features kyotocabinet`).
 #![cfg(feature = "kyotocabinet")]
 
-use std::ops::{Bound, ControlFlow};
+use std::ops::Bound;
 use std::path::PathBuf;
 
-use oxpinyin_store::{KcStore, RawReadStore, ReadStore, StoreError, WriteStore, WriteTxn};
+use oxpinyin_store::{KcStore, RawReadStore, StoreError, WriteStore, WriteTxn};
 
 /// A scratch directory removed on drop.
 struct Scratch(PathBuf);
@@ -96,77 +96,33 @@ fn a_deferred_write_on_a_read_only_handle_is_refused() {
 }
 
 #[test]
-fn a_deferred_write_reads_back_its_own_buffered_writes() {
+fn a_deferred_write_applies_its_puts_and_removes() {
     // The pin's `store` and `remove` act on `m_db` at once
-    // (flexible_ngram_kyotodb.h:227-252 at 074a2219), so every later `load`
-    // (:192-ff) or `get_all_items` `iterate` (:262-272) sees them: a
-    // buffered put shadows the stored record, a buffered removal hides it,
-    // and the walk is the stored rows with the buffer laid over them.
-    let dir = Scratch::new("deferred-overlay");
+    // (flexible_ngram_kyotodb.h:227-252 at 074a2219): after the closure the
+    // stored rows carry every put, a removal deletes its record, and the
+    // flag reports whether every removal found one (:251).
+    let dir = Scratch::new("deferred-apply");
     let store = KcStore::create(&dir.file("flex.kct")).expect("create");
     store
         .write(|txn| {
-            txn.put("rows", b"a", b"1")?;
-            txn.put("rows", b"b", b"2")?;
-            txn.put("rows", b"c", b"3")?;
-            txn.put("other", b"z", b"9")?;
-            txn.put("gone", b"x", b"1")
+            txn.put_raw(b"a", b"1")?;
+            txn.put_raw(b"b", b"2")?;
+            txn.put_raw(b"c", b"3")
         })
         .expect("seed");
 
-    let (seen, found) = store
+    let ((), found) = store
         .write_deferred(|txn| {
-            txn.put("rows", b"a", b"A")?;
-            txn.put("rows", b"d", b"4")?;
-            txn.remove("rows", b"b")?;
-            txn.remove("gone", b"x")?;
-
-            let mut value = Vec::new();
-            let mut read = |key: &[u8]| -> Result<Option<Vec<u8>>, StoreError> {
-                Ok(txn.get("rows", key, &mut value)?.then(|| value.clone()))
-            };
-            assert_eq!(read(b"a")?, Some(b"A".to_vec()), "buffered put shadows");
-            assert_eq!(read(b"b")?, None, "buffered removal hides");
-            assert_eq!(read(b"c")?, Some(b"3".to_vec()), "stored row falls through");
-            assert_eq!(read(b"d")?, Some(b"4".to_vec()), "buffered insert");
-
-            let walk = |lo: Bound<&[u8]>, hi: Bound<&[u8]>| -> Result<Vec<Vec<u8>>, StoreError> {
-                let mut keys = Vec::new();
-                txn.scan("rows", lo, hi, |key, _| {
-                    keys.push(key.to_vec());
-                    Ok(ControlFlow::Continue(()))
-                })?;
-                Ok(keys)
-            };
-            let all = walk(Bound::Unbounded, Bound::Unbounded)?;
-            let bounded = walk(Bound::Excluded(b"a"), Bound::Included(b"c"))?;
-            let mut first = Vec::new();
-            txn.scan("rows", Bound::Unbounded, Bound::Unbounded, |key, _| {
-                first.push(key.to_vec());
-                Ok(ControlFlow::Break(()))
-            })?;
-            // "other" holds one stored row; "gone" had its only row removed.
-            let flags = (
-                txn.is_empty("rows")?,
-                txn.is_empty("other")?,
-                txn.is_empty("gone")?,
-                txn.is_empty("never")?,
-            );
-            Ok((all, bounded, first, flags))
+            txn.put_raw(b"a", b"A")?;
+            txn.put_raw(b"d", b"4")?;
+            txn.remove_raw(b"b")
         })
         .expect("deferred write");
-    let (all, bounded, first, flags) = seen;
-    let keys = |names: &[&[u8]]| -> Vec<Vec<u8>> { names.iter().map(|k| k.to_vec()).collect() };
-    assert_eq!(all, keys(&[b"a", b"c", b"d"]));
-    assert_eq!(bounded, keys(&[b"c"]));
-    assert_eq!(first, keys(&[b"a"]), "a break stops the merged walk");
-    assert_eq!(flags, (false, false, true, true));
-    assert!(found, "both removals found a record (:251)");
+    assert!(found, "the removal found a record (:251)");
 
-    // After the closure the buffer is applied to the database.
     let mut rows = Vec::new();
     store
-        .range("rows", Bound::Unbounded, Bound::Unbounded, |key, value| {
+        .range_raw(Bound::Unbounded, Bound::Unbounded, |key, value| {
             rows.push((key.to_vec(), value.to_vec()));
             Ok(())
         })
@@ -179,7 +135,6 @@ fn a_deferred_write_reads_back_its_own_buffered_writes() {
             (b"d".to_vec(), b"4".to_vec()),
         ]
     );
-    assert!(store.is_empty("gone").expect("is_empty"));
 }
 
 #[test]

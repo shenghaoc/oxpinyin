@@ -95,7 +95,7 @@ impl Tree {
     /// `attach(filename, ATTACH_READONLY)`.
     pub(crate) fn open_read_only(path: &Path) -> Result<Self, StoreError> {
         Ok(Self {
-            store: <DefaultStore as oxpinyin_store::ReadStore>::open_read_only(path)?,
+            store: <DefaultStore as oxpinyin_store::RawReadStore>::open_read_only(path)?,
             plain_set: false,
         })
     }

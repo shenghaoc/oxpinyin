@@ -476,36 +476,11 @@ mod tests {
 
     struct Shared(std::sync::Arc<FailingStore>);
 
-    impl oxpinyin_store::ReadStore for Shared {
+    impl oxpinyin_store::RawReadStore for Shared {
         fn open_read_only(_path: &Path) -> Result<Self, oxpinyin_store::StoreError> {
             unreachable!("the double is built in memory")
         }
 
-        fn get(
-            &self,
-            _table: &str,
-            key: &[u8],
-            value: &mut Vec<u8>,
-        ) -> Result<bool, oxpinyin_store::StoreError> {
-            oxpinyin_store::RawReadStore::get_raw(self, key, value)
-        }
-
-        fn scan(
-            &self,
-            _table: &str,
-            _lo: std::ops::Bound<&[u8]>,
-            _hi: std::ops::Bound<&[u8]>,
-            _visit: impl FnMut(&[u8], &[u8]) -> Result<oxpinyin_store::Flow, oxpinyin_store::StoreError>,
-        ) -> Result<(), oxpinyin_store::StoreError> {
-            unreachable!("the bigram reader never scans")
-        }
-
-        fn is_empty(&self, _table: &str) -> Result<bool, oxpinyin_store::StoreError> {
-            unreachable!("the bigram reader never asks")
-        }
-    }
-
-    impl oxpinyin_store::RawReadStore for Shared {
         fn get_raw(
             &self,
             key: &[u8],
@@ -526,6 +501,15 @@ mod tests {
 
         fn contains_raw(&self, _key: &[u8]) -> Result<bool, oxpinyin_store::StoreError> {
             unreachable!("the bigram reader never checks")
+        }
+
+        fn scan_raw(
+            &self,
+            _lo: std::ops::Bound<&[u8]>,
+            _hi: std::ops::Bound<&[u8]>,
+            _visit: impl FnMut(&[u8], &[u8]) -> Result<oxpinyin_store::Flow, oxpinyin_store::StoreError>,
+        ) -> Result<(), oxpinyin_store::StoreError> {
+            unreachable!("the bigram reader never scans")
         }
     }
 

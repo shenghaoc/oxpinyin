@@ -972,7 +972,7 @@ mod tests {
 
     #[test]
     fn raw_walk_stops_the_store_scan_and_keeps_errors_distinct() {
-        use oxpinyin_store::{DefaultStore, ReadStore as _, WriteStore as _, WriteTxn as _};
+        use oxpinyin_store::{DefaultStore, RawReadStore as _, WriteStore as _, WriteTxn as _};
         let dir = std::env::temp_dir().join(format!(
             "oxpinyin-raw-walk-stop-{}-{}",
             std::process::id(),

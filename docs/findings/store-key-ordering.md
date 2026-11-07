@@ -14,6 +14,8 @@ Status:
 **audit finding** (verification + tests only; no key encoding changed) ·
 Branch: `audit/store-key-ordering`.
 
+> **Named-table tier removed (2026-11-07 UTC).** `ReadStore` and the `table || 0x00 || key` framing are gone: each store file is one raw keyspace, as each pin DBM file is one database opened with no subdatabase name. `open_read_only` moved to `RawReadStore`, and `WriteStore` now extends `RawReadStore`. The byte-order rule below holds for the raw walks (`scan_raw`, `range_raw`); mentions of `ReadStore`, its `range`/`for_each`/`is_empty` and the framing describe the earlier tier.
+
 `oxpinyin-store` is an ordered byte key–value store, its interface split into
 a [`ReadStore`] tier (point get, ranged scan, full scan, emptiness) and a
 [`WriteStore`] tier (creation, atomic writes, compaction). This note states,

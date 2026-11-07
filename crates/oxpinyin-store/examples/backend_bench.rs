@@ -27,16 +27,8 @@
 //! operation order on every backend, which is what makes cross-build
 //! comparisons of the printed figures meaningful.
 //!
-//! Sizes via env vars (defaults in parentheses): `BACKEND_BENCH_N`
-//! (`100_000` bigram rows; pron = N/2, phrase = N/4), `BACKEND_BENCH_GETS`
-//! (`50_000`), `BACKEND_BENCH_PREFIXES` (128), `BACKEND_BENCH_READONLY`
+//! Sizes via env vars (defaults in parentheses): `BACKEND_BENCH_READONLY`
 //! (`400_000`), `BACKEND_BENCH_SEED`.
-//!
-//! Compaction is backend-dependent and best-effort: tkrzw rebuilds the
-//! `TreeDBM` into a fresh file, reclaiming space at the price of a full
-//! rewrite. The `save_compact` scenario reports timings and sizes; across
-//! backends the numbers do not measure the same operation, which is the
-//! point of comparing them across builds.
 //!
 //! On Unix, on-disk sizes report both apparent length (`st_size`) and
 //! allocated blocks (`st_blocks` × 512) of the data file only; allocated is
@@ -54,29 +46,11 @@ use oxpinyin_store::BdbStore;
 use oxpinyin_store::KcStore;
 #[cfg(feature = "tkrzw")]
 use oxpinyin_store::TkrzwStore;
-use oxpinyin_store::{ReadStore, WriteStore, WriteTxn};
+use oxpinyin_store::{RawReadStore, WriteStore, WriteTxn};
 
-const SCENARIOS: [&str; 5] = [
-    "bulk_load",
-    "point_get",
-    "prefix_scan",
-    "save_compact",
-    "readonly_scan",
-];
-
-// Table names and key shapes mirror the user store's tables: bigram keys
-// are (prev, cur) big-endian token pairs, pron keys are a token plus
-// variable-length u16 syllable keys, phrase keys are bare tokens.
-const BIGRAM: &str = "user_bigram";
-const PRON: &str = "user_pronunciation";
-const PHRASE: &str = "user_phrase";
-const SYSTEM: &str = "system_bigram";
+const SCENARIOS: [&str; 1] = ["readonly_scan"];
 
 const TOKEN_BASE: u64 = 0x0100_0000;
-const PREV_DOMAIN: u64 = 2048;
-const CUR_DOMAIN: u64 = 60_000;
-const PRON_TOKEN_DOMAIN: u64 = 30_000;
-const PHRASE_TOKEN_DOMAIN: u64 = 50_000;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -111,10 +85,7 @@ fn parent() {
         "backend_bench — {} on the store tier traits",
         compiled_backend()
     );
-    println!(
-        "n={} (pron {}/2, phrase {}/4)  gets={}  prefixes={}  readonly={}  seed={:#x}",
-        cfg.n, cfg.n, cfg.n, cfg.gets, cfg.prefixes, cfg.readonly, cfg.seed
-    );
+    println!("readonly={}  seed={:#x}", cfg.readonly, cfg.seed);
     println!("one fresh process per scenario; VmHWM per scenario");
     println!("compare across builds: the workload is a pure function of the seed");
     println!();
@@ -181,154 +152,12 @@ fn run_child(backend: &str, scenario: &str) {
 
 fn dispatch<S: WriteStore>(scenario: &str) {
     match scenario {
-        "bulk_load" => bulk_load::<S>(),
-        "point_get" => point_get::<S>(),
-        "prefix_scan" => prefix_scan::<S>(),
-        "save_compact" => save_compact::<S>(),
         "readonly_scan" => readonly_scan::<S>(),
         other => {
             eprintln!("unknown scenario {other:?}");
             std::process::exit(2);
         }
     }
-}
-
-fn bulk_load<S: WriteStore>() {
-    let cfg = config();
-    let path = work_path("bulk-load");
-    let started = Instant::now();
-    let store = load_all::<S>(&cfg, &path);
-    let load = started.elapsed();
-
-    emit_ms("load_ms", load);
-    emit("rows_bigram", count_rows(&store, BIGRAM));
-    emit("rows_pron", count_rows(&store, PRON));
-    emit("rows_phrase", count_rows(&store, PHRASE));
-    let (live_apparent, live_alloc) = file_sizes(&path);
-    emit("live_apparent_bytes", live_apparent);
-    emit("live_alloc_bytes", live_alloc);
-    finish();
-    drop(store);
-    remove_db(&path);
-}
-
-fn point_get<S: WriteStore>() {
-    let cfg = config();
-    let path = work_path("point-get");
-    let store = load_all::<S>(&cfg, &path);
-
-    let started = Instant::now();
-    let (hits, bytes, value_sum) = measure_point_gets(&store, &cfg);
-    let gets = started.elapsed();
-    std::hint::black_box((hits, bytes));
-
-    emit("gets", cfg.gets);
-    emit("hits", hits);
-    emit("value_sum", value_sum);
-    emit_ms("gets_ms", gets);
-    emit(
-        "us_per_get",
-        gets.as_secs_f64() * 1e6 / f64::from(u32::try_from(cfg.gets).unwrap_or(u32::MAX)),
-    );
-    let (live_apparent, live_alloc) = file_sizes(&path);
-    emit("live_apparent_bytes", live_apparent);
-    emit("live_alloc_bytes", live_alloc);
-    finish();
-    drop(store);
-    remove_db(&path);
-}
-
-fn prefix_scan<S: WriteStore>() {
-    let cfg = config();
-    let path = work_path("prefix-scan");
-    let store = load_all::<S>(&cfg, &path);
-
-    let started = Instant::now();
-    let (rows, bigram_sum, pron_sum) = measure_prefix_scans(&store, &cfg);
-    let scan = started.elapsed();
-    std::hint::black_box(rows);
-
-    emit("prefixes", cfg.prefixes);
-    emit("rows_hit", rows);
-    emit("bigram_sum", bigram_sum);
-    emit("pron_sum", pron_sum);
-    emit_ms("scan_ms", scan);
-    let (live_apparent, live_alloc) = file_sizes(&path);
-    emit("live_apparent_bytes", live_apparent);
-    emit("live_alloc_bytes", live_alloc);
-    finish();
-    drop(store);
-    remove_db(&path);
-}
-
-fn save_compact<S: WriteStore>() {
-    let cfg = config();
-    let path = work_path("save-compact");
-    let mut store = load_all::<S>(&cfg, &path);
-
-    // Churn rows before the backend-dependent best-effort compact step:
-    // overwrite a slice of bigram rows and remove a slice of pron rows.
-    store
-        .write(|txn| {
-            let replacement = 997_u64.to_be_bytes();
-            for i in 0..(cfg.n / 10) as u64 {
-                let (key, _) = bigram_row(cfg.seed, i);
-                txn.put(BIGRAM, &key, &replacement)?;
-            }
-            for i in 0..(cfg.n / 20) as u64 {
-                let (key, _) = pron_row(cfg.seed, i);
-                txn.remove(PRON, &key)?;
-            }
-            Ok(())
-        })
-        .expect("churn");
-
-    let (live_apparent, live_alloc) = file_sizes(&path);
-    let started = Instant::now();
-    store.compact().expect("compact");
-    let compact = started.elapsed();
-    let (compacted_apparent, compacted_alloc) = file_sizes(&path);
-
-    // Post-timing verification: the overwritten bigram slice must read
-    // back with the replacement value and the removed pron slice must be
-    // gone; the survivor checksum is compared across backends.
-    let mut churn_sum = 0_u64;
-    let mut value = Vec::new();
-    for i in 0..(cfg.n / 10) as u64 {
-        let (key, _) = bigram_row(cfg.seed, i);
-        let found = store
-            .get(BIGRAM, &key, &mut value)
-            .expect("get after compact");
-        match found {
-            true if value == 997_u64.to_be_bytes() => {
-                churn_sum = fold_bytes(churn_sum, &value);
-            }
-            _ => {
-                eprintln!("bigram row {i} wrong or missing after compact");
-                std::process::exit(1);
-            }
-        }
-    }
-    for i in 0..(cfg.n / 20) as u64 {
-        let (key, _) = pron_row(cfg.seed, i);
-        if store
-            .get(PRON, &key, &mut value)
-            .expect("get after compact")
-        {
-            eprintln!("pron row {i} still present after removal + compact");
-            std::process::exit(1);
-        }
-    }
-
-    emit("live_apparent_bytes", live_apparent);
-    emit("live_alloc_bytes", live_alloc);
-    emit("compacted_apparent_bytes", compacted_apparent);
-    emit("compacted_alloc_bytes", compacted_alloc);
-    emit_ms("compact_ms", compact);
-    emit("churn_sum", churn_sum);
-    finish();
-    drop(store);
-    remove_db(&path);
 }
 
 fn readonly_scan<S: WriteStore>() {
@@ -341,7 +170,7 @@ fn readonly_scan<S: WriteStore>() {
         .write(|txn| {
             for i in 0..cfg.readonly as u64 {
                 let (key, value) = readonly_row(cfg.seed, i);
-                txn.put(SYSTEM, &key, &value)?;
+                txn.put_raw(&key, &value)?;
             }
             Ok(())
         })
@@ -355,7 +184,7 @@ fn readonly_scan<S: WriteStore>() {
     let open = started.elapsed();
 
     let started = Instant::now();
-    let (rows, key_bytes, value_sum) = measure_full_scan(&ro, SYSTEM);
+    let (rows, key_bytes, value_sum) = measure_full_scan(&ro);
     let scan = started.elapsed();
     std::hint::black_box((rows, key_bytes));
 
@@ -374,80 +203,17 @@ fn readonly_scan<S: WriteStore>() {
 
 // ── measured read work (read tier) ────────────────────────────────
 //
-// The fixture is laid down through `WriteStore`, but every timed read
-// below needs nothing beyond `ReadStore` — so each is bound to that tier
-// and would run unchanged against a read-only backend handed the file.
+// The fixture is laid down through `WriteStore`, but the timed read below
+// needs nothing beyond `RawReadStore` — so it is bound to that tier and
+// would run unchanged against a read-only backend handed the file.
 
-/// Returns `(hits, value bytes, value checksum)`.
-fn measure_point_gets<S: ReadStore>(store: &S, cfg: &Config) -> (u64, u64, u64) {
-    let mut hits = 0_u64;
-    let mut bytes = 0_u64;
-    let mut value_sum = 0_u64;
-    let mut value = Vec::new();
-    for i in 0..cfg.gets as u64 {
-        let idx = row_hash(cfg.seed ^ 0xDEAD_BEEF, i) % cfg.n as u64;
-        let (key, _) = bigram_row(cfg.seed, idx);
-        if store.get(BIGRAM, &key, &mut value).expect("get") {
-            hits += 1;
-            bytes += value.len() as u64;
-            value_sum = fold_bytes(value_sum, &value);
-        }
-    }
-    (hits, bytes, value_sum)
-}
-
-/// Returns `(rows visited, bigram checksum, pron checksum)`.
-fn measure_prefix_scans<S: ReadStore>(store: &S, cfg: &Config) -> (u64, u64, u64) {
-    let mut rows = 0_u64;
-    let mut bigram_sum = 0_u64;
-    let mut pron_sum = 0_u64;
-    for i in 0..cfg.prefixes as u64 {
-        let h = row_hash(cfg.seed ^ 0xFEED_FACE, i);
-
-        // bigram (prev, *): the successor-set lookup
-        let prev = TOKEN_BASE + h % PREV_DOMAIN;
-        let lo = u32::try_from(prev).unwrap().to_be_bytes();
-        let hi = (u32::try_from(prev).unwrap() + 1).to_be_bytes();
-        store
-            .range(
-                BIGRAM,
-                Bound::Included(&lo[..]),
-                Bound::Excluded(&hi[..]),
-                |key, value| {
-                    rows += 1;
-                    bigram_sum = fold_bytes(fold_bytes(bigram_sum, key), value);
-                    Ok(())
-                },
-            )
-            .expect("bigram range");
-
-        // pron (token, *): the pronunciation-set lookup
-        let token = TOKEN_BASE + (h >> 16) % PRON_TOKEN_DOMAIN;
-        let lo = u32::try_from(token).unwrap().to_be_bytes();
-        let hi = (u32::try_from(token).unwrap() + 1).to_be_bytes();
-        store
-            .range(
-                PRON,
-                Bound::Included(&lo[..]),
-                Bound::Excluded(&hi[..]),
-                |key, value| {
-                    rows += 1;
-                    pron_sum = fold_bytes(fold_bytes(pron_sum, key), value);
-                    Ok(())
-                },
-            )
-            .expect("pron range");
-    }
-    (rows, bigram_sum, pron_sum)
-}
-
-/// Returns `(rows, key bytes, value checksum)` for one full-table walk.
-fn measure_full_scan<S: ReadStore>(store: &S, table: &str) -> (u64, u64, u64) {
+/// Returns `(rows, key bytes, value checksum)` for one full walk.
+fn measure_full_scan<S: RawReadStore>(store: &S) -> (u64, u64, u64) {
     let mut rows = 0_u64;
     let mut key_bytes = 0_u64;
     let mut value_sum = 0_u64;
     store
-        .for_each(table, |key, value| {
+        .range_raw(Bound::Unbounded, Bound::Unbounded, |key, value| {
             rows += 1;
             key_bytes += key.len() as u64;
             value_sum = fold_bytes(value_sum, value);
@@ -459,42 +225,9 @@ fn measure_full_scan<S: ReadStore>(store: &S, table: &str) -> (u64, u64, u64) {
 
 // ── shared setup ──────────────────────────────────────────────────
 
-fn load_all<S: WriteStore>(cfg: &Config, path: &Path) -> S {
-    let store = fresh::<S>(path);
-    store
-        .write(|txn| {
-            for i in 0..cfg.n as u64 {
-                let (key, value) = bigram_row(cfg.seed, i);
-                txn.put(BIGRAM, &key, &value)?;
-            }
-            for i in 0..(cfg.n / 2) as u64 {
-                let (key, value) = pron_row(cfg.seed, i);
-                txn.put(PRON, &key, &value)?;
-            }
-            for i in 0..(cfg.n / 4) as u64 {
-                let (key, text) = phrase_row(cfg.seed, i);
-                txn.put(PHRASE, &key, text.as_bytes())?;
-            }
-            Ok(())
-        })
-        .expect("bulk load");
-    store
-}
-
 fn fresh<S: WriteStore>(path: &Path) -> S {
     remove_db(path);
     S::create(path).expect("create store")
-}
-
-fn count_rows<S: ReadStore>(store: &S, table: &str) -> u64 {
-    let mut rows = 0_u64;
-    store
-        .for_each(table, |_key, _value| {
-            rows += 1;
-            Ok(())
-        })
-        .expect("count rows");
-    rows
 }
 
 // ── deterministic workload rows ───────────────────────────────────
@@ -515,41 +248,6 @@ fn fold_bytes(mut sum: u64, bytes: &[u8]) -> u64 {
         sum = sum.wrapping_mul(0x100_0000_01B3).wrapping_add(u64::from(b));
     }
     sum
-}
-
-fn bigram_row(seed: u64, i: u64) -> ([u8; 8], [u8; 8]) {
-    let h = row_hash(seed, i);
-    let prev = TOKEN_BASE + h % PREV_DOMAIN;
-    let cur = TOKEN_BASE + (h / PREV_DOMAIN) % CUR_DOMAIN;
-    let mut key = [0_u8; 8];
-    key[..4].copy_from_slice(&u32::try_from(prev).unwrap().to_be_bytes());
-    key[4..].copy_from_slice(&u32::try_from(cur).unwrap().to_be_bytes());
-    (key, (1 + h % 97).to_be_bytes())
-}
-
-fn pron_row(seed: u64, i: u64) -> (Vec<u8>, [u8; 8]) {
-    let h = row_hash(seed, i ^ 0xA5A5_A5A5);
-    let token = TOKEN_BASE + h % PRON_TOKEN_DOMAIN;
-    let syllable_count = 1 + h % 3;
-    let mut key = Vec::with_capacity(4 + 2 * usize::try_from(syllable_count).unwrap());
-    key.extend_from_slice(&u32::try_from(token).unwrap().to_be_bytes());
-    for k in 0..syllable_count {
-        let syllable = ((h >> (16 * k + 8)) & 0xFFFF) as u16;
-        key.extend_from_slice(&syllable.to_be_bytes());
-    }
-    (key, (1 + (h >> 3) % 997).to_be_bytes())
-}
-
-fn phrase_row(seed: u64, i: u64) -> ([u8; 4], String) {
-    let h = row_hash(seed, i ^ 0x5A5A_5A5A);
-    let token = TOKEN_BASE + i % PHRASE_TOKEN_DOMAIN;
-    let char_count = 2 + h % 3;
-    let mut text = String::with_capacity(3 * usize::try_from(char_count).unwrap());
-    for k in 0..char_count {
-        let code = 0x4E00 + ((h >> (9 * k + 4)) & 0x1FF);
-        text.push(char::from_u32(u32::try_from(code).unwrap()).unwrap_or('词'));
-    }
-    (u32::try_from(token).unwrap().to_be_bytes(), text)
 }
 
 fn readonly_row(seed: u64, i: u64) -> ([u8; 8], [u8; 16]) {
@@ -574,32 +272,15 @@ fn readonly_row(seed: u64, i: u64) -> ([u8; 8], [u8; 16]) {
 // ── config, metrics, paths ────────────────────────────────────────
 
 struct Config {
-    n: usize,
-    gets: usize,
-    prefixes: usize,
     readonly: usize,
     seed: u64,
 }
 
 fn config() -> Config {
-    let cfg = Config {
-        n: env_usize("BACKEND_BENCH_N", 100_000),
-        gets: env_usize("BACKEND_BENCH_GETS", 50_000),
-        prefixes: env_usize("BACKEND_BENCH_PREFIXES", 128),
+    Config {
         readonly: env_usize("BACKEND_BENCH_READONLY", 400_000),
         seed: env_u64("BACKEND_BENCH_SEED", 0x0BB5_EED1),
-    };
-    // phrase_row keys on i % PHRASE_TOKEN_DOMAIN, so a phrase workload
-    // larger than the token domain would wrap and overwrite its own rows.
-    if cfg.n / 4 > usize::try_from(PHRASE_TOKEN_DOMAIN).unwrap() {
-        eprintln!(
-            "BACKEND_BENCH_N too large: n/4 = {} exceeds the phrase \
-             token domain {PHRASE_TOKEN_DOMAIN}; phrase keys would collide",
-            cfg.n / 4
-        );
-        std::process::exit(2);
     }
-    cfg
 }
 
 fn env_usize(name: &str, default: usize) -> usize {

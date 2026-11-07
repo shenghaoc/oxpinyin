@@ -16,7 +16,7 @@
 use std::path::Path;
 
 use oxpinyin_core::PhraseText;
-use oxpinyin_store::{DefaultStore, ReadStore};
+use oxpinyin_store::{DefaultStore, RawReadStore};
 
 use crate::chewing_table::{ChewingDbm, DefaultDbm, RawChewingDbm};
 use crate::dict::DictError;

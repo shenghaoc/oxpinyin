@@ -26,7 +26,7 @@ use oxpinyin_core::{
     ChewingKey, Dictionary, PhraseEntry, PhraseIndexRanges, PhraseItemRead, PhraseText,
     PhraseToken, SyllableKey, TrellisItem,
 };
-use oxpinyin_store::{DefaultStore, ReadStore};
+use oxpinyin_store::{DefaultStore, RawReadStore};
 
 use crate::chewing_table::{ChewingTable, RawChewingDbm, prefix_keys_match};
 use crate::phrase_libraries::PhraseLibraries;

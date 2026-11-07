@@ -10,7 +10,7 @@ use std::ops::Bound;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 
-use oxpinyin_store::{BdbStore, RawReadStore, ReadStore, StoreError, WriteStore, WriteTxn};
+use oxpinyin_store::{BdbStore, RawReadStore, StoreError, WriteStore, WriteTxn};
 
 /// A scratch directory removed on drop.
 struct Scratch(PathBuf);
@@ -56,17 +56,6 @@ fn raw_keys(store: &BdbStore, lo: Bound<&[u8]>, hi: Bound<&[u8]>) -> Vec<Vec<u8>
     keys
 }
 
-fn table_keys(store: &BdbStore, table: &str, lo: Bound<&[u8]>, hi: Bound<&[u8]>) -> Vec<Vec<u8>> {
-    let mut keys = Vec::new();
-    store
-        .range(table, lo, hi, |key, _| {
-            keys.push(key.to_vec());
-            Ok(())
-        })
-        .expect("table range");
-    keys
-}
-
 #[test]
 fn a_user_index_is_created_as_a_mode_0600_btree() {
     // `ChewingLargeTable2::save_db` / `PhraseLargeTable3::save_db` create the
@@ -79,8 +68,8 @@ fn a_user_index_is_created_as_a_mode_0600_btree() {
     let store = BdbStore::create_user(&path).expect("create_user");
     store
         .write(|txn| {
-            txn.put("rows", b"k1", b"v1")?;
-            txn.put("rows", b"k2", b"v2")
+            txn.put_raw(b"k1", b"v1")?;
+            txn.put_raw(b"k2", b"v2")
         })
         .expect("write");
     drop(store);
@@ -90,7 +79,7 @@ fn a_user_index_is_created_as_a_mode_0600_btree() {
     // refused by the hash seam (`DB->open` with DB_HASH on a btree file).
     let tree = BdbStore::open_read_only(&path).expect("a btree file");
     let mut value = Vec::new();
-    assert!(tree.get("rows", b"k2", &mut value).expect("get"));
+    assert!(tree.get_raw(b"k2", &mut value).expect("get"));
     assert_eq!(value, b"v2");
     assert!(BdbStore::open_hash_read_only(&path).is_err());
 }
@@ -158,22 +147,20 @@ fn a_tree_walk_after_an_excluded_key_starts_at_the_next_record() {
     // with `DB_SET` and then reads "the next entry" with `DB_NEXT`
     // (chewing_large_table2_bdb.cpp:579-595 at 074a2219): the records
     // strictly after the key, ending where `bdb_chewing_continue_search`
-    // stops. That is the walk an `Excluded` lower bound asks the seam for,
-    // on the raw keyspace and inside a framed table.
+    // stops. That is the walk an `Excluded` lower bound asks the seam for
+    // on the raw keyspace.
     let dir = Scratch::new("excluded-tree");
     let store = BdbStore::create(&dir.file("tree.db")).expect("create");
     store
         .write(|txn| {
             for key in [b"a", b"b", b"c", b"d"] {
                 txn.put_raw(key, b"raw")?;
-                txn.put("rows", key, b"framed")?;
             }
             Ok(())
         })
         .expect("write");
 
     let keys = |names: &[&[u8]]| -> Vec<Vec<u8>> { names.iter().map(|k| k.to_vec()).collect() };
-    // Raw keyspace: the framed rows share the file, so the walk bounds it.
     assert_eq!(
         raw_keys(&store, Bound::Excluded(b"b"), Bound::Included(b"d")),
         keys(&[b"c", b"d"]),
@@ -186,22 +173,20 @@ fn a_tree_walk_after_an_excluded_key_starts_at_the_next_record() {
         raw_keys(&store, Bound::Excluded(b"b"), Bound::Included(b"b")),
         Vec::<Vec<u8>>::new(),
     );
-    // Framed table: the lower bound never leaks into the neighbouring
-    // table, and the upper bound ends the walk.
     assert_eq!(
-        table_keys(&store, "rows", Bound::Excluded(b"b"), Bound::Unbounded),
+        raw_keys(&store, Bound::Excluded(b"b"), Bound::Unbounded),
         keys(&[b"c", b"d"]),
     );
     assert_eq!(
-        table_keys(&store, "rows", Bound::Excluded(b"a"), Bound::Excluded(b"c")),
+        raw_keys(&store, Bound::Excluded(b"a"), Bound::Excluded(b"c")),
         keys(&[b"b"]),
     );
     assert_eq!(
-        table_keys(&store, "rows", Bound::Excluded(b"d"), Bound::Unbounded),
+        raw_keys(&store, Bound::Excluded(b"d"), Bound::Unbounded),
         Vec::<Vec<u8>>::new(),
     );
     assert_eq!(
-        table_keys(&store, "rows", Bound::Excluded(b"a"), Bound::Included(b"b")),
+        raw_keys(&store, Bound::Excluded(b"a"), Bound::Included(b"b")),
         keys(&[b"b"]),
     );
 }
@@ -373,7 +358,7 @@ fn a_walk_from_a_key_longer_than_the_cursor_buffer_finds_the_next_record() {
     // The `DB_SET` + `DB_NEXT` walk of `search_suggestion`
     // (chewing_large_table2_bdb.cpp:579-595 at 074a2219) does not depend on
     // the key's length; the seek key here is longer than the 4096 bytes a
-    // fresh cursor reads into, on the raw keyspace and inside a framed table.
+    // fresh cursor reads into, on the raw keyspace.
     let dir = Scratch::new("long-seek");
     let store = BdbStore::create(&dir.file("tree.db")).expect("create");
     let low = vec![1_u8; 5000];
@@ -381,30 +366,20 @@ fn a_walk_from_a_key_longer_than_the_cursor_buffer_finds_the_next_record() {
     store
         .write(|txn| {
             txn.put_raw(&low, b"low")?;
-            txn.put_raw(&high, b"high")?;
-            txn.put("rows", &low, b"low")?;
-            txn.put("rows", &high, b"high")
+            txn.put_raw(&high, b"high")
         })
         .expect("write");
 
     assert_eq!(
-        raw_keys(&store, Bound::Included(&low), Bound::Unbounded)
-            .into_iter()
-            .filter(|key| key.len() == 5000)
-            .collect::<Vec<_>>(),
+        raw_keys(&store, Bound::Included(&low), Bound::Unbounded),
         vec![low.clone(), high.clone()]
     );
     assert_eq!(
-        table_keys(&store, "rows", Bound::Excluded(&low), Bound::Unbounded),
+        raw_keys(&store, Bound::Excluded(&low), Bound::Unbounded),
         vec![high.clone()]
     );
     assert_eq!(
-        table_keys(
-            &store,
-            "rows",
-            Bound::Included(&low),
-            Bound::Excluded(&high)
-        ),
+        raw_keys(&store, Bound::Included(&low), Bound::Excluded(&high)),
         vec![low]
     );
 }

@@ -247,7 +247,7 @@ fn gen_binary_files_builds_the_indexes_and_chunks() {
 
     // The phrase index stores each phrase's token and every proper prefix
     // as an empty continuation marker.
-    use oxpinyin_store::{RawReadStore as _, ReadStore as _};
+    use oxpinyin_store::RawReadStore as _;
     let store = oxpinyin_store::DefaultStore::open_read_only(&dir.path().join("phrase_index.bin"))
         .expect("phrase index");
     let mut value = Vec::new();

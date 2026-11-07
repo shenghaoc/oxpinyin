@@ -9,19 +9,17 @@
 //! `store-backends.yml` matrix runs this file once per peer by running
 //! the whole workspace sweep under each backend feature. The laws:
 //!
-//! - **ordered iteration**: `for_each` visits keys in ascending byte
+//! - **ordered iteration**: the raw walk visits keys in ascending byte
 //!   order regardless of insertion order;
-//! - **prefix-scan boundaries**: a half-open `range` yields exactly the
+//! - **prefix-scan boundaries**: a half-open raw range yields exactly the
 //!   keys whose bytes fall inside it — the plan's `[b"a", b"a\xff"]`
 //!   under `b"a"..b"b"` law;
-//! - **empty key**: every peer stores it, reads it back, and sorts it
-//!   before all other keys;
 //! - **max key length**: a 511-byte and a 512-byte key are legal
 //!   everywhere and round-trip;
 //! - **reopen equality**: rows written through one handle read back
 //!   identically through a fresh `open_read_only` handle;
-//! - **transaction semantics**: read-your-writes inside `write`, and a
-//!   closure returning `Err` rolls the whole transaction back.
+//! - **transaction semantics**: a closure returning `Err` rolls the whole
+//!   transaction back.
 //!
 //! No backend leaves a file beside the store: tkrzw locks the data file
 //! itself with `fcntl` (`tkrzw_file_mmap.cc:124-133` at 1.0.34), Berkeley
@@ -31,7 +29,7 @@
 use std::ops::Bound;
 
 use oxpinyin_store::{
-    DEFAULT_STORE_EXT, DefaultStore, RawReadStore, ReadStore, StoreError, WriteStore, WriteTxn,
+    DEFAULT_STORE_EXT, DefaultStore, RawReadStore, StoreError, WriteStore, WriteTxn,
 };
 
 /// Owns a temporary store path and removes the data file or directory
@@ -53,9 +51,9 @@ impl Drop for TempPath {
 }
 
 /// A point read as an owned value: `None` on a miss.
-fn read(store: &DefaultStore, table: &str, key: &[u8]) -> Option<Vec<u8>> {
+fn read(store: &DefaultStore, key: &[u8]) -> Option<Vec<u8>> {
     let mut value = Vec::new();
-    store.get(table, key, &mut value).unwrap().then_some(value)
+    store.get_raw(key, &mut value).unwrap().then_some(value)
 }
 
 fn cleanup(path: &std::path::Path) {
@@ -108,25 +106,23 @@ fn hash_paths_create_and_reopen_tree_and_hash_files() {
     }
 }
 
-/// The assessment's example row set. The empty key is storable on
-/// every peer, so the row set is unconditional.
+/// The assessment's example row set.
 fn seeded_keys(store: &DefaultStore) {
     store
         .write(|txn| {
             for (key, value) in [
                 (&b"a\xff"[..], &b"v-high"[..]),
-                (b"".as_slice(), b"v-empty".as_slice()),
                 (b"b".as_slice(), b"v-b".as_slice()),
                 (b"a".as_slice(), b"v-a".as_slice()),
             ] {
-                txn.put("laws", key, value)?;
+                txn.put_raw(key, value)?;
             }
             Ok(())
         })
         .unwrap();
 }
 
-/// `for_each` visits keys in ascending byte order whatever order they
+/// The raw walk visits keys in ascending byte order whatever order they
 /// were inserted in, and the half-open `a..b` scan returns exactly the
 /// keys whose bytes fall inside it.
 #[test]
@@ -137,20 +133,19 @@ fn iteration_is_ordered_and_prefix_scans_respect_boundaries() {
 
     let mut seen = Vec::new();
     store
-        .for_each("laws", |key, _| {
+        .range_raw(Bound::Unbounded, Bound::Unbounded, |key, _| {
             seen.push(key.to_vec());
             Ok(())
         })
         .unwrap();
-    let expected = vec![Vec::new(), b"a".to_vec(), b"a\xff".to_vec(), b"b".to_vec()];
+    let expected = vec![b"a".to_vec(), b"a\xff".to_vec(), b"b".to_vec()];
     assert_eq!(seen, expected, "iteration must be ascending byte order");
 
     // The plan's law: exactly the two `a…` keys, `b` excluded by the
     // exclusive bound and everything below `a` by the low bound.
     let mut in_range = Vec::new();
     store
-        .range(
-            "laws",
+        .range_raw(
             Bound::Included(b"a".as_slice()),
             Bound::Excluded(b"b".as_slice()),
             |key, _| {
@@ -164,8 +159,7 @@ fn iteration_is_ordered_and_prefix_scans_respect_boundaries() {
     // Inclusive upper bound flips `b` in.
     let mut through_b = Vec::new();
     store
-        .range(
-            "laws",
+        .range_raw(
             Bound::Included(b"a".as_slice()),
             Bound::Included(b"b".as_slice()),
             |key, _| {
@@ -187,42 +181,29 @@ fn point_reads_round_trip_arbitrary_bytes() {
     let path = temp_path("roundtrip");
     let store = DefaultStore::create(&path).unwrap();
     store
-        .write(|txn| {
-            txn.put("laws", b"k\x00\x01\xff", &[0u8, 255, 0, 1])?;
-            Ok(())
-        })
+        .write(|txn| txn.put_raw(b"k\x00\x01\xff", &[0u8, 255, 0, 1]))
         .unwrap();
-    assert_eq!(
-        read(&store, "laws", b"k\x00\x01\xff"),
-        Some(vec![0u8, 255, 0, 1])
-    );
-    assert_eq!(read(&store, "laws", b"absent"), None);
+    assert_eq!(read(&store, b"k\x00\x01\xff"), Some(vec![0u8, 255, 0, 1]));
+    assert_eq!(read(&store, b"absent"), None);
 }
 
-/// The empty key and the 511/512-byte boundary, at the documented
-/// edges: every peer accepts all three.
+/// The 511/512-byte key boundary: every peer accepts both.
 #[test]
 fn key_length_edges_follow_the_documented_contract() {
     let path = temp_path("key-length");
     let store = DefaultStore::create(&path).unwrap();
 
-    // The closure's own Result is the transaction result: a `put` error
-    // surfaces as `write`'s Err directly.
-    let empty = store.write(|txn| txn.put("laws", b"", b"v"));
-    assert!(empty.is_ok(), "the empty key must be storable");
-    assert_eq!(read(&store, "laws", b""), Some(b"v".to_vec()));
-
     let key_511 = vec![b'k'; 511];
     store
-        .write(|txn| txn.put("laws", &key_511, b"edge-511"))
+        .write(|txn| txn.put_raw(&key_511, b"edge-511"))
         .expect("a 511-byte key is legal on every peer");
-    assert_eq!(read(&store, "laws", &key_511), Some(b"edge-511".to_vec()));
+    assert_eq!(read(&store, &key_511), Some(b"edge-511".to_vec()));
 
     let key_512 = vec![b'k'; 512];
     store
-        .write(|txn| txn.put("laws", &key_512, b"edge-512"))
+        .write(|txn| txn.put_raw(&key_512, b"edge-512"))
         .expect("a 512-byte key is legal on every peer");
-    assert_eq!(read(&store, "laws", &key_512), Some(b"edge-512".to_vec()));
+    assert_eq!(read(&store, &key_512), Some(b"edge-512".to_vec()));
 }
 
 /// Rows written through one handle read back identically through a
@@ -238,71 +219,42 @@ fn rows_survive_reopen_through_a_read_only_handle() {
     let reader = DefaultStore::open_read_only(&path).unwrap();
     let mut seen = Vec::new();
     reader
-        .for_each("laws", |key, value| {
+        .range_raw(Bound::Unbounded, Bound::Unbounded, |key, value| {
             seen.push((key.to_vec(), value.to_vec()));
             Ok(())
         })
         .unwrap();
     let expected = vec![
-        (Vec::new(), b"v-empty".to_vec()),
         (b"a".to_vec(), b"v-a".to_vec()),
         (b"a\xff".to_vec(), b"v-high".to_vec()),
         (b"b".to_vec(), b"v-b".to_vec()),
     ];
     assert_eq!(seen, expected);
-    assert_eq!(read(&reader, "laws", b"a\xff"), Some(b"v-high".to_vec()));
+    assert_eq!(read(&reader, b"a\xff"), Some(b"v-high".to_vec()));
 }
 
-/// A transaction sees its own writes, and an `Err` out of the closure
-/// rolls the whole transaction back — `WriteTxn`'s atomicity contract.
+/// An `Err` out of the closure rolls the whole transaction back —
+/// `WriteTxn`'s atomicity contract.
 #[test]
-fn transactions_see_their_writes_and_roll_back_on_err() {
+fn transactions_roll_back_on_err() {
     let path = temp_path("txn");
     let store = DefaultStore::create(&path).unwrap();
-
-    // Read-your-writes inside the closure.
-    store
-        .write(|txn| {
-            txn.put("laws", b"ryw", b"1")?;
-            let mut value = Vec::new();
-            assert!(txn.get("laws", b"ryw", &mut value)?);
-            assert_eq!(value, b"1");
-            Ok(())
-        })
-        .unwrap();
+    store.write(|txn| txn.put_raw(b"kept", b"1")).unwrap();
 
     // The whole transaction unwinds when the closure fails, including
     // writes that preceded the failure.
     let blown: Result<(), StoreError> = store.write(|txn| {
-        txn.put("laws", b"doomed", b"1")?;
-        txn.put("laws", b"also-doomed", b"2")?;
+        txn.put_raw(b"doomed", b"1")?;
+        txn.put_raw(b"also-doomed", b"2")?;
         Err(StoreError::InvalidInput("deliberate failure"))
     });
     assert!(blown.is_err());
-    assert_eq!(read(&store, "laws", b"ryw"), Some(b"1".to_vec()));
-    assert_eq!(read(&store, "laws", b"doomed"), None);
-    assert_eq!(read(&store, "laws", b"also-doomed"), None);
+    assert_eq!(read(&store, b"kept"), Some(b"1".to_vec()));
+    assert_eq!(read(&store, b"doomed"), None);
+    assert_eq!(read(&store, b"also-doomed"), None);
 
     // Removing an absent key is a no-op, not an error.
     store
-        .write(|txn| txn.remove("laws", b"never-there"))
+        .write(|txn| txn.remove_raw(b"never-there"))
         .expect("removing an absent key must succeed");
-}
-
-/// A table no transaction ever touched reads as empty everywhere —
-/// absent is a legal steady state, not an error.
-#[test]
-fn an_untouched_table_reads_empty() {
-    let path = temp_path("absent-table");
-    let store = DefaultStore::create(&path).unwrap();
-    assert_eq!(read(&store, "never-touched", b"k"), None);
-    assert!(store.is_empty("never-touched").unwrap());
-    let mut rows = 0;
-    store
-        .for_each("never-touched", |_, _| {
-            rows += 1;
-            Ok(())
-        })
-        .unwrap();
-    assert_eq!(rows, 0);
 }

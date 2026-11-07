@@ -21,6 +21,8 @@ tip `55e9051`, which the host checkout holds).
 
 ## What was built
 
+> **Named-table tier removed (2026-11-07 UTC).** `BdbStore`'s framed `DB_BTREE` container and the `ReadStore` tier are gone; every file is one raw keyspace, read through `RawReadStore` and written through `put_raw`/`remove_raw`. Mentions of the framed container below describe the earlier tier.
+
 The fifth store peer, behind the `bdb` cargo feature, exactly one per
 binary like the other four:
 

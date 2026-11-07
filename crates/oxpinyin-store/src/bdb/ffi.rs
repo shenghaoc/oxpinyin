@@ -1374,11 +1374,11 @@ mod tests {
 
     #[test]
     fn empty_and_missing_ranges_remain_empty_after_buffer_reuse() {
-        use crate::{BdbStore, ReadStore, WriteStore, WriteTxn};
+        use crate::{BdbStore, RawReadStore, WriteStore, WriteTxn};
         use std::ops::Bound::{Excluded, Included, Unbounded};
         let store = BdbStore::create_in_memory().unwrap();
-        assert!(store.is_empty("rows").unwrap());
-        store.write(|txn| txn.put("rows", b"b", b"value")).unwrap();
+        assert_eq!(store.count_raw().unwrap(), 0);
+        store.write(|txn| txn.put_raw(b"b", b"value")).unwrap();
         for _ in 0..2 {
             for (lo, hi) in [
                 (Unbounded, Excluded(b"b".as_slice())),
@@ -1387,7 +1387,7 @@ mod tests {
             ] {
                 let mut count = 0;
                 store
-                    .range("rows", lo, hi, |_, _| {
+                    .range_raw(lo, hi, |_, _| {
                         count += 1;
                         Ok(())
                     })
@@ -1396,13 +1396,12 @@ mod tests {
             }
             let mut seen = Vec::new();
             store
-                .range("rows", Included(b"a"), Unbounded, |key, value| {
+                .range_raw(Included(b"a"), Unbounded, |key, value| {
                     seen.push((key.to_vec(), value.to_vec()));
                     Ok(())
                 })
                 .unwrap();
             assert_eq!(seen, vec![(b"b".to_vec(), b"value".to_vec())]);
-            assert!(store.is_empty("missing").unwrap());
         }
     }
 
