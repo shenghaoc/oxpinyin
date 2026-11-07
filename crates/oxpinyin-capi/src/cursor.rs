@@ -145,31 +145,33 @@ fn abort_on_empty_matrix_below(inst: &crate::state::CapiInstanceRead<'_>, offset
 /// ```
 ///
 /// Either `begin` or `end` may be NULL to skip. The pin answers `true`
-/// unconditionally and dereferences `key_rest` without a null check
-/// (`pinyin.cpp`); a null one answers `false` here rather than crashing.
+/// and dereferences `key_rest` only to fill a non-NULL `begin` or `end`
+/// (`pinyin.cpp:2967-2977`): a NULL `key_rest` answers `true` when both are
+/// NULL, and `false` here rather than crashing when either is not.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_pinyin_key_rest_positions(
-    instance: *mut PinyinInstance,
+    _instance: *mut PinyinInstance,
     key_rest: *mut ChewingKeyRest,
     begin: *mut u16,
     end: *mut u16,
 ) -> bool {
-    if instance.is_null() || key_rest.is_null() {
+    // The pin never reads `instance`, and reads `key_rest` only to fill a
+    // non-NULL `begin` or `end` (`pinyin.cpp:2967-2977`).
+    if key_rest.is_null() && (!begin.is_null() || !end.is_null()) {
         return false;
     }
 
-    // SAFETY: Non-null and produced by `pinyin_get_pinyin_key_rest`.
-    let rest = unsafe { &*key_rest };
     if !begin.is_null() {
-        // SAFETY: Null-checked above.
+        // SAFETY: `begin` is non-null, so `key_rest` is non-null (checked
+        // above) and was produced by `pinyin_get_pinyin_key_rest`.
         unsafe {
-            *begin = rest.begin;
+            *begin = (*key_rest).begin;
         }
     }
     if !end.is_null() {
-        // SAFETY: Null-checked above.
+        // SAFETY: As for `begin`.
         unsafe {
-            *end = rest.end;
+            *end = (*key_rest).end;
         }
     }
     true
@@ -191,11 +193,12 @@ pub extern "C" fn pinyin_get_pinyin_key_rest_positions(
 /// (`eim.cpp:473`).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_pinyin_key_rest_length(
-    instance: *mut PinyinInstance,
+    _instance: *mut PinyinInstance,
     key_rest: *mut ChewingKeyRest,
     length: *mut u16,
 ) -> bool {
-    if instance.is_null() || key_rest.is_null() {
+    // The pin never reads `instance` (`pinyin.cpp:2979-2984`).
+    if key_rest.is_null() {
         return false;
     }
 
@@ -224,18 +227,13 @@ pub extern "C" fn pinyin_get_pinyin_key_rest_length(
 /// unset key — which an unpopulated slot reproduces.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_pinyin_string(
-    instance: *mut PinyinInstance,
+    _instance: *mut PinyinInstance,
     key: *mut ChewingKey,
     utf8_str: *mut *mut GChar,
 ) -> bool {
     // `_ChewingKey::get_pinyin_string` (chewing_key.cpp:47-58): the
     // canonical spelling, tone digit appended for a non-zero tone.
-    render_key(
-        instance,
-        key,
-        utf8_str,
-        oxpinyin_chewing::ChewingKey::pinyin_text,
-    )
+    render_key(key, utf8_str, oxpinyin_chewing::ChewingKey::pinyin_text)
 }
 
 /// Render a pinyin key as its Zhuyin spelling.
@@ -252,16 +250,11 @@ pub extern "C" fn pinyin_get_pinyin_string(
 /// (`eim.cpp:512-515`), which the `false` return preserves.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_zhuyin_string(
-    instance: *mut PinyinInstance,
+    _instance: *mut PinyinInstance,
     key: *mut ChewingKey,
     utf8_str: *mut *mut GChar,
 ) -> bool {
-    render_key(
-        instance,
-        key,
-        utf8_str,
-        oxpinyin_chewing::ChewingKey::zhuyin_text,
-    )
+    render_key(key, utf8_str, oxpinyin_chewing::ChewingKey::zhuyin_text)
 }
 
 /// Render a pinyin key as its shengmu / yunmu pair.
@@ -279,12 +272,13 @@ pub extern "C" fn pinyin_get_zhuyin_string(
 /// is the case fcitx substitutes an apostrophe for (`eim.cpp:478-479`).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_pinyin_strings(
-    instance: *mut PinyinInstance,
+    _instance: *mut PinyinInstance,
     key: *mut ChewingKey,
     shengmu: *mut *mut GChar,
     yunmu: *mut *mut GChar,
 ) -> bool {
-    if instance.is_null() || key.is_null() {
+    // The pin never reads `instance` (`pinyin.cpp:2751-2763`).
+    if key.is_null() {
         return false;
     }
 
@@ -309,12 +303,12 @@ pub extern "C" fn pinyin_get_pinyin_strings(
 /// The shared body of the single-string renderers: the rendering made with
 /// the pin's `g_strdup`/`g_strdup_printf` call (`chewing_key.cpp:47-88`).
 fn render_key(
-    instance: *mut PinyinInstance,
     key: *mut ChewingKey,
     utf8_str: *mut *mut GChar,
     render: impl Fn(oxpinyin_chewing::ChewingKey) -> oxpinyin_chewing::KeyText,
 ) -> bool {
-    if instance.is_null() || key.is_null() {
+    // The pin never reads `instance` (`pinyin.cpp:2707-2727`).
+    if key.is_null() {
         return false;
     }
     if !utf8_str.is_null() {

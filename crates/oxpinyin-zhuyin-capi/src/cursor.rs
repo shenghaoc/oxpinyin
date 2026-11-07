@@ -144,8 +144,9 @@ pub extern "C" fn zhuyin_get_zhuyin_key_rest(
 /// ```
 ///
 /// The pin's body never reads the instance (`zhuyin.cpp:1930-1941`): a NULL
-/// instance is a defined call there, so it is unused here. Only the
-/// key-rest pointer is read, and both out-params are optional.
+/// instance is a defined call there, so it is unused here. The key-rest
+/// pointer is read only to fill a non-NULL `begin` or `end`, so a NULL one
+/// answers `true` when both are NULL and `false` (row 41) when either is not.
 #[unsafe(no_mangle)]
 pub extern "C" fn zhuyin_get_zhuyin_key_rest_positions(
     _instance: *mut ZhuyinInstance,
@@ -153,22 +154,23 @@ pub extern "C" fn zhuyin_get_zhuyin_key_rest_positions(
     begin: *mut u16,
     end: *mut u16,
 ) -> bool {
-    if key_rest.is_null() {
+    // The pin reads `key_rest` only to fill a non-NULL `begin` or `end`
+    // (`zhuyin.cpp:1930-1940`).
+    if key_rest.is_null() && (!begin.is_null() || !end.is_null()) {
         return false;
     }
 
-    // SAFETY: Non-null and produced by `zhuyin_get_zhuyin_key_rest`.
-    let rest = unsafe { &*key_rest };
     if !begin.is_null() {
-        // SAFETY: Null-checked above.
+        // SAFETY: `begin` is non-null, so `key_rest` is non-null (checked
+        // above) and was produced by `zhuyin_get_zhuyin_key_rest`.
         unsafe {
-            *begin = rest.begin;
+            *begin = (*key_rest).begin;
         }
     }
     if !end.is_null() {
-        // SAFETY: Null-checked above.
+        // SAFETY: As for `begin`.
         unsafe {
-            *end = rest.end;
+            *end = (*key_rest).end;
         }
     }
     true
