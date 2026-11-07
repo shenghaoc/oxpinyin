@@ -193,8 +193,9 @@ mod tests {
         assert!(zhuyin_get_n_candidate(instance, &raw mut count));
         assert!(count > 1, "the before-cursor window carries several rows");
 
-        // Row 0 is the prepended BEST_MATCH sentence row (你好); row 1 is
-        // the first phrase row of the spans ending at the cursor.
+        // No sentence was guessed, so nothing is prepended
+        // (`zhuyin.cpp:1277-1278`): every row is a phrase row of the spans
+        // ending at the cursor (`:1594`), and row 1 is the second of them.
         let displayed = candidate_text(instance, 1);
         assert_eq!(displayed, "好", "the fixture's before(6) row 1");
         let mut cand: *mut LookupCandidate = ptr::null_mut();
@@ -265,9 +266,10 @@ mod tests {
         assert!(zhuyin_guess_candidates_before_cursor(instance, 3));
         let mut count = 0;
         assert!(zhuyin_get_n_candidate(instance, &raw mut count));
-        // Row 0 is the prepended BEST_MATCH sentence row; row 1 is the
-        // first phrase row of the spans ending at 3, all of which start
-        // at 0 (nothing precedes the first key).
+        // No sentence was guessed, so nothing is prepended
+        // (`zhuyin.cpp:1277-1278`): every row is a phrase row of the spans
+        // ending at 3, all of which start at 0 (nothing precedes the first
+        // key), and row 1 is the second of them.
         assert!(count > 1);
         let mut cand: *mut LookupCandidate = ptr::null_mut();
         assert!(zhuyin_get_candidate(instance, 1, &raw mut cand));
