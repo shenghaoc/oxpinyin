@@ -1880,3 +1880,38 @@ declarations with the existing side-digest format; there is no recorded
 or replayed pin result. Ordinary discrepancy pairs still reject parity.
 
 Policy evidence is in [compatibility-policy.json](../../fixtures/contract-policy/compatibility-policy.json).
+
+## Amendment — save file modes: pin behaviour reproduced (2026-11-07 UTC)
+
+Observation D12 of the C-driver retirement (`file-modes/dbm-after-chmod`
+in `tools/oracle/pin_capture.py`) asks what mode each user file has after
+`pinyin_save` when the files were chmod'ed beforehand. The pin at
+`074a2219` writes each DBM and chunk to a `.tmp` and renames it
+(`src/pinyin.cpp:966-1124`), so each comes back with its create mode less
+the umask:
+
+- Berkeley DB: `DB_CREATE, 0600` (`src/storage/ngram_bdb.cpp:94-95`; the
+  `save_db` of `phrase_large_table3_bdb.cpp` and
+  `chewing_large_table2_bdb.cpp`, e.g. `:148-149`).
+- Kyoto Cabinet: `dump_snapshot` (`src/storage/ngram_kyotodb.cpp:90`),
+  which writes through a `std::ofstream`, 0666.
+- tkrzw: `Open(dbfile, true, File::OPEN_DEFAULT)`
+  (`src/storage/ngram_tkrzwdb.cpp:75`), tkrzw's default 0644.
+- Chunks: `MemoryChunk::save`, `open(..., 0644)`
+  (`src/include/memory_chunk.h:537`).
+- `user.conf` is rewritten in place with `fopen(filename, "w")`
+  (`src/storage/table_info.cpp:380`), so a mode set on it survives.
+
+oxpinyin already reproduces these modes (#544):
+`crates/oxpinyin-store/src/bdb/ffi.rs:381` (0600),
+`crates/oxpinyin-store/src/kyotocabinet/mod.rs:561` (0666), tkrzw's own
+0644, and the chunk writer in `crates/oxpinyin-user/src/persistence.rs`.
+`user_files_take_the_pins_creation_modes` in that file holds it at the
+engine level. `a_save_recreates_every_file_but_user_conf_with_its_create_mode`
+in `crates/oxpinyin-capi/src/e2e_tests.rs` now holds it at the C API with
+umask 022, and asserts modes only. The pin's tkrzw values are from the
+2026-11-07 capture. The Berkeley DB and Kyoto Cabinet values come from the
+source lines above. No code changed.
+
+This is pin behaviour reproduced. It is not a divergence. The reported
+divergence compared oxpinyin on Berkeley DB against the pin on tkrzw.

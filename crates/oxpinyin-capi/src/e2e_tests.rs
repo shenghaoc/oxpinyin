@@ -4726,3 +4726,86 @@ fn the_bigram_export_crosses_both_items_readings() {
         ]
     );
 }
+
+/// D12: the modes of the profile's files after a save, then after `chmod 0640` on every file
+/// and a modified save, under umask 022. The pin writes each DBM file anew and renames it into
+/// place, so it takes its backend's create mode again: Berkeley DB opens it `DB_CREATE, 0600`
+/// (`ngram_bdb.cpp`, `phrase_large_table3_bdb.cpp`, `chewing_large_table2_bdb.cpp` `save_db` at
+/// 074a2219); Kyoto Cabinet's `dump_snapshot` writes through a `std::ofstream`, 0666
+/// (`kcdb.h:2316-2319`); tkrzw opens it with its default 0644
+/// (`ngram_tkrzwdb.cpp`, `*_tkrzwdb.cpp` `save_db`). A chunk is written by
+/// `MemoryChunk::save`, `open(..., 0644)` (`include/memory_chunk.h:537`), into a `.tmp` that is
+/// renamed (`pinyin.cpp:966`). `user.conf` is rewritten in place (`table_info.cpp:378`), so it
+/// keeps 0640. Each mode is less the umask. Pin capture of 2026-11-07 on tkrzw, runs 1 and 2
+/// identical, observation `file-modes/dbm-after-chmod`; the bdb and kc DBM modes are from the
+/// source lines above. Modes only: container sizes are the backend's layout.
+#[cfg(unix)]
+#[test]
+fn a_save_recreates_every_file_but_user_conf_with_its_create_mode() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let run = crate::test_support::run_in_child(
+        "e2e_tests::a_save_recreates_every_file_but_user_conf_with_its_create_mode",
+        |user| {
+            // SAFETY: the child runs this test alone; umask touches only its own process.
+            unsafe { libc::umask(0o022) };
+            let modes = || -> Vec<(String, u32)> {
+                let mut found: Vec<(String, u32)> = std::fs::read_dir(user)
+                    .expect("user directory")
+                    .map(|entry| {
+                        let entry = entry.expect("entry");
+                        let mode =
+                            entry.metadata().expect("metadata").permissions().mode() & 0o7777;
+                        (entry.file_name().to_string_lossy().into_owned(), mode)
+                    })
+                    .collect();
+                found.sort();
+                found
+            };
+            let dbm = match oxpinyin_data::DEFAULT_STORE_EXT {
+                "db" => 0o600,
+                "kct" => 0o666 & !0o022,
+                _ => 0o644,
+            };
+            let expected = |conf: u32| -> Vec<(String, u32)> {
+                [
+                    ("addon.bin", 0o644),
+                    ("gb_char.dbin", 0o644),
+                    ("gbk_char.dbin", 0o644),
+                    ("merged.dbin", 0o644),
+                    ("network.bin", 0o644),
+                    ("opengram.dbin", 0o644),
+                    ("user.bin", 0o644),
+                    ("user.conf", conf),
+                    ("user_bigram.db", dbm),
+                    ("user_phrase_index.bin", dbm),
+                    ("user_pinyin_index.bin", dbm),
+                ]
+                .into_iter()
+                .map(|(name, mode)| (name.to_owned(), mode))
+                .collect()
+            };
+            let context = init_at(user);
+            assert!(!context.is_null());
+            assert_eq!(import_batch(context, 7, &[("你好", "nihao", 1)]), [true]);
+            assert!(pinyin_save(context));
+            assert_eq!(modes(), expected(0o644), "after the first save");
+            for (name, _) in modes() {
+                std::fs::set_permissions(user.join(name), std::fs::Permissions::from_mode(0o640))
+                    .expect("chmod");
+            }
+            assert_eq!(import_batch(context, 7, &[("世界", "shijie", 1)]), [true]);
+            assert!(pinyin_save(context));
+            assert_eq!(
+                modes(),
+                expected(0o640),
+                "after chmod 0640 and a modified save"
+            );
+            crate::context::pinyin_fini(context);
+        },
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stderr),
+        fresh_user_conf_line(&run.user_dir)
+    );
+}
