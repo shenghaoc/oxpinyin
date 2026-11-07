@@ -510,8 +510,7 @@ than by having been checked.
   `crates/oxpinyin-engine/src/session/tests.rs:1304` — the "42–57 ms first-alloc"
   figure, one of them in **published rustdoc**. Source:
   `perf-backend-matrix-2026-09.md`, cinstall.
-- `docs/safety/enforcement-matrix.md:31` and
-  `docs/safety/executive-summary.md:132-137` — the same size and cycle figures,
+- The safety study's enforcement matrix and executive summary — the same size and cycle figures,
   used to settle a governance question. Sources cinstall.
 
 One carries an **original** figure that no delegation resolves:

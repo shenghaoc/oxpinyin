@@ -1,6 +1,5 @@
 #![no_main]
-//! Hostile bytes through the libpinyin-format table decoder — audit F-3's
-//! class (`docs/safety/oxpinyin-audit.md`): `ContentTable::load` must
+//! Hostile bytes through the libpinyin-format table decoder: `ContentTable::load` must
 //! return a value on every input (no panic, no allocator abort) and stay
 //! deterministic. The committed regression test pins the clamp; this
 //! target hunts the rest of the header/record state space.

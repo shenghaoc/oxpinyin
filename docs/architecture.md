@@ -148,6 +148,7 @@ See the [native Rust policy](findings/compatibility-policy.md#native-rust-implem
 
 The [interface ruling](constitution.md#external-interfaces) sets the supported interfaces: the C APIs/ABIs and the pin-compatible tools, with every crate's Rust interface internal.
 The export check in `ci.yml` gates the C export set.
+The allocator-pairing check in `ci.yml` gates the release function of every pointer the C ABI returns or writes to an out-parameter, including the borrowed ones the caller must not free; see the [record](findings/abi-allocator-pairing.md).
 
 ## Configuration
 

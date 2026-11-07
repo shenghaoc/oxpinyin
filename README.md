@@ -57,7 +57,6 @@ storage backend and gives each platform's packages and settings for it.
 | `docs/findings/` | Decisions, divergence records, audit trail — indexed with a status per file |
 | `docs/perf/` | Performance measurement snapshots |
 | `docs/testing/` | Corpus pipeline, oracle environment, fixture formats |
-| `docs/safety/` | MISRA-Rust mapping, audit, safety profile |
 | `docs/packaging.md` | cargo-c packaging and installed-tree layout |
 | `docs/oxidation-journey.md` | How libpinyin has been turned into Rust so far, and the method that follows from it |
 | `tools/oracle/` | Pin build recipe (`docs/runbooks/oracle.md`) |

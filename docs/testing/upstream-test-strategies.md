@@ -47,7 +47,7 @@ merge paths, `data/lm` ngram math, `data/dict`+`table` phrase storage,
 complexity audit: the `user/store.rs` quartet (CCN 38/33/31/22) is exactly
 where libpinyin has the most granular per-storage tests and oxpinyin has
 the fewest per-function ones — that correlation drives the coverage/mutation
-priority in `../safety/ci-strategy.md`.
+priority.
 
 ## libchewing `tests/`
 
@@ -125,7 +125,7 @@ with the best historical yield for an IME:
    `oxpinyin-capi`'s own 79-symbol ABI (bytes → `process_key`-equivalents,
    guess, candidate walks, config setters, iterator begin/end pairings in
    adversarial orders — double-`end` and use-after-`end` are exactly the
-   trust boundary documented in `../safety/oxpinyin-audit.md` F-6). This exercises
+   trust boundary of the C ABI). This exercises
    the FFI conversion/ownership layer that the parser target cannot
    reach. Implementation note: lives in the existing nightly `fuzz/`
    workspace; the nightly CI soak is Linux-only, and the macOS recipe runs
@@ -168,7 +168,7 @@ with the best historical yield for an IME:
    `oxpinyin-data`'s decode path (the F-3 class), the trieloader
    translated to oxpinyin's formats.
 
-Both were already proposed in `../safety/tooling-evaluation.md` §16 on trust-boundary
+Both were already proposed on trust-boundary
 grounds; the libchewing study adds empirical weight (these are the shapes a
 decade of IME fuzzing converged on) and the config-mutation trick (fold
 `pinyin_set_*` setters into the command alphabet).

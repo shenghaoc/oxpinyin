@@ -11,6 +11,9 @@ Update the toolchain in a dedicated PR.
 
 The [constitution](constitution.md) (§5) sets which crates forbid, deny or scope `unsafe`; the [crate table](architecture.md#crates) shows each crate's current level.
 
+A store module waiver is an `#![expect(unsafe_code, reason = "...")]` rather than an `allow`, so a waiver that stops being needed draws `unfulfilled_lint_expectations`, an error under `-D warnings`.
+In a crate that denies `clippy::undocumented_unsafe_blocks`, Clippy enforces that a `// SAFETY:` comment is present, not that it is true; review verifies it.
+
 ## Panics and errors
 
 The [constitution](constitution.md) (§4) decides where a panic is permitted: only where the pin asserts or aborts on the corresponding condition. These lint conventions apply it.
@@ -23,6 +26,9 @@ Do not add broad module suppressions or relax crate-wide denials.
 Do not add `arithmetic_side_effects` or `indexing_slicing` restrictions.
 An `#[expect]` proves only that Clippy saw the construct.
 Review must still establish correspondence with the pin's failure condition.
+
+Assertions, including `debug_assert!`, follow §4; a comment calling something an internal invariant is not by itself proof.
+Assertions in tests remain unrestricted.
 
 A permitted panic's message can differ from the pin's C assertion message; that is a [language artefact](source-policy.md#internal-language-artefacts), so do not imitate glibc's assertion format.
 
@@ -48,6 +54,7 @@ It panics in debug builds.
 Use `checked_*` where the pin checks and refuses.
 Use checked or widened arithmetic for missing bounds where overflow would be memory-unsafe, under class (b).
 This includes sizes, offsets and indexes computed from external input.
+Shipped profiles keep `overflow-checks` off.
 
 ## Determinism, backends and dependencies
 
@@ -82,4 +89,5 @@ Use the applicable test kinds:
 
 Derive behaviour from the pin's source as the [source policy](source-policy.md#stage-2) describes; a differential verifies it and never discovers it.
 Use `cargo fmt --check` and `clippy -D warnings`.
+Formatting uses rustfmt's stable defaults; there is no `rustfmt.toml`.
 Follow the [verification procedure](runbooks/verification.md) for applicable checks.

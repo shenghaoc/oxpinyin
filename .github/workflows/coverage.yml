@@ -5,10 +5,9 @@ name: coverage
 # from one job body. It is not a required check: branch protection
 # requires only ci.yml's `ci-aggregate`, which does not depend on this
 # workflow, so a red result here does not block a merge on its own. On a
-# pull request it runs only when a library-path crate changes
-# (docs/safety/ci-strategy.md, Tier 2): a full-workspace llvm-cov run is
-# too slow for a docs PR, and these crates are where a dropped
-# branch is a parity risk. verify-nightly.yml calls it unconditionally
+# pull request it runs only when a library-path crate changes: a
+# full-workspace llvm-cov run is too slow for a docs PR, and these crates
+# are where a dropped branch is a parity risk. verify-nightly.yml calls it unconditionally
 # (workflow_call) so the whole-tree number is measured every night
 # regardless of which paths a PR touched.
 #

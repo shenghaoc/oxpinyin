@@ -388,7 +388,7 @@ impl FixtureLanguageModel {
         // λ·b/bt + (1 − λ)·u/ut over a common denominator. The u128
         // products still overflow when the u64 totals approach their cap,
         // so mirror the production LM (`data::lm::interpolate_ratio`) and
-        // degrade to UNKNOWN_COST instead of wrapping (audit F-2).
+        // degrade to UNKNOWN_COST instead of wrapping.
         let (bigram_count, bigram_total) = bigram;
         let numerator = LAMBDA_NUMERATOR
             .checked_mul(bigram_count)

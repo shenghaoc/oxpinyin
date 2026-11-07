@@ -2,8 +2,7 @@
 
 #[test]
 fn extreme_counts_saturate_and_degrade_to_unknown_cost() {
-    // Regression (docs/safety/oxpinyin-audit.md F-1/F-2): two
-    // u64::MAX counts sharing a prev used to wrap the bigram total
+    // Regression: two u64::MAX counts sharing a prev used to wrap the bigram total
     // (overflow panic in debug, silent wrap in release), and the u128
     // interpolation products overflowed unchecked. Parsing must
     // saturate the totals and the cost must fall back to

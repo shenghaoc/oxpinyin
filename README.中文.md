@@ -32,7 +32,6 @@ Stage 3 构建需显式启用。只改变可观察输出的 Stage 3 构建保留
 | `docs/findings/` | 决策、偏离记录、审计轨迹——已建立索引，并为每个文件标注状态 |
 | `docs/perf/` | 性能测量快照 |
 | `docs/testing/` | 语料库流水线、oracle 环境、fixture 格式 |
-| `docs/safety/` | MISRA-Rust 映射、审计、安全规范 |
 | `docs/packaging.md` | cargo-c 打包与安装树布局 |
 | `docs/oxidation-journey.md` | 迄今为止将 libpinyin 转写为 Rust 的历程，以及由此总结出的方法 |
 | `tools/oracle/` | pin 构建配方（`docs/runbooks/oracle.md`） |

@@ -8,7 +8,7 @@ register) + audit (§2)
 is owned by exactly one side and released by exactly one function. Until this
 change nothing held the library to that: `tools/abi/check-exports.sh` froze
 *which* symbols cross the boundary, and nothing froze *what crosses with
-them*. `docs/safety/oxpinyin-safety-profile.md` said so at Layer 8, listing
+them*. The safety profile said so at Layer 8, listing
 "the `g_free`/malloc pairing assumption" among the things that remain
 judgment rather than a gate.
 
@@ -84,7 +84,7 @@ needs no change.
 The one difference on this path is the NULL-argument guard: upstream
 dereferences `utf8_str` unconditionally in the four neighbours, while oxpinyin
 checks it first — the established memory-safety property of every entry point
-(`docs/safety/oxpinyin-safety-profile.md`), not a behaviour change on any
+([compatibility policy, row 41](compatibility-policy.md)), not a behaviour change on any
 non-NULL call. Where the pin guards its out-params, as it does here, oxpinyin's
 guard matches it exactly.
 

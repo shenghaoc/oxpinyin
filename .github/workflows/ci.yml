@@ -110,8 +110,7 @@ concurrency:
 # The macOS and Windows workspace jobs run in verify-nightly.yml (nightly
 # and on manual dispatch), not on every PR.
 #   deny — supply-chain gate: RustSec advisories, licenses, sources,
-#          duplicate-version drift (docs/safety/oxpinyin-safety-profile.md
-#          layer 6)
+#          duplicate-version drift
 # Fuzzing is not a PR lane: every target builds and soaks nightly in
 # verify-nightly.yml's fuzz-soak (moved there 2026-09-23 — the per-PR
 # build-and-smoke of every target cost more than it caught).
