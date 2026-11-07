@@ -237,7 +237,7 @@ mod existing {
         for unit in [0x2026_u32, 0x2026, 0, 0xFF1F, 0] {
             value.extend_from_slice(&word(unit));
         }
-        let attached = <DefaultStore as oxpinyin_store::ReadStore>::open_read_only(Path::new(
+        let attached = <DefaultStore as oxpinyin_store::RawReadStore>::open_read_only(Path::new(
             "/tmp/punct.bin",
         ))
         .expect("punct.bin");

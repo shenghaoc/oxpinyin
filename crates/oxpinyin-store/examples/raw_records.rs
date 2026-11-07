@@ -27,7 +27,7 @@ use std::ops::Bound;
 use std::path::Path;
 use std::process::ExitCode;
 
-use oxpinyin_store::{BackendError, DefaultStore, RawReadStore, ReadStore, StoreError};
+use oxpinyin_store::{BackendError, DefaultStore, RawReadStore, StoreError};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -50,7 +50,7 @@ fn main() -> ExitCode {
 fn dump(kind: &str, path: &Path) -> Result<(), StoreError> {
     let mut rows: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
     if kind == "tree" {
-        let store = <DefaultStore as ReadStore>::open_read_only(path)?;
+        let store = <DefaultStore as RawReadStore>::open_read_only(path)?;
         store.range_raw(Bound::Unbounded, Bound::Unbounded, |key, value| {
             rows.push((key.to_vec(), value.to_vec()));
             Ok(())

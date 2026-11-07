@@ -153,7 +153,7 @@ parked.
   unbuildable from source on the primary development machine). The
   supported oxpinyin store backends — tkrzw, Kyoto Cabinet and
   Berkeley DB —
-  are peer implementations behind one `ReadStore`/`WriteStore` trait
+  are peer implementations behind one `RawReadStore`/`WriteStore` trait
   surface, and any single build compiles in exactly one of them
   (`DefaultStore`; `oxpinyin-store` refuses a build with zero or more
   than one backend feature at compile time), as libpinyin selects one

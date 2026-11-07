@@ -339,8 +339,8 @@ entries plus their owned bytes, rather than another copy of all source rows.
 This keeps the session's logical values in owned memory, as the pin does
 for phrase items, while using ordered maps and staged writes instead of
 the pin's packed items and native in-memory DBs. Standalone stores use
-`SessionValues::Native` and retain their backend transactions and
-`table\0key` framing (`oxpinyin-store/src/common.rs`). The session's
+`SessionValues::Native` and retain their backend transactions over the
+file's raw keyspace. The session's
 `UserBigramDb` and file persistence still use the selected native backend.
 At save, the pin's files are produced in the pin's formats; the logical
 session maps themselves are not written to disk.
@@ -1058,8 +1058,8 @@ and stored readings, with output storage proportional to the returned data.
 oxpinyin's `UserStore::phrases` and `UserStore::export_phrases_in`
 (`crates/oxpinyin-user/src/store.rs`) read separate PHRASE and PRONUNCIATION
 tables. Both keys begin with the same four big-endian token bytes
-(`codec::encode_token`, `codec::encode_token_bytes`). The store's `table\0key`
-framing preserves that order. BDB's framed store uses a default-comparator
+(`codec::encode_token`, `codec::encode_token_bytes`). The store's raw byte
+order preserves that order. BDB's store uses a default-comparator
 DB_BTREE, KC uses TreeDB's lexical comparator, and tkrzw uses TreeDBM's default
 LexicalKeyComparator; each walk advances its ordered cursor. SessionValues'
 BTreeMaps and the transaction scans preserve the same order. Extra key tails

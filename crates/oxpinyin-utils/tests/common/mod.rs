@@ -1,7 +1,7 @@
 //! Byte-exact helpers for ordinary utility integration tests. No capture or fixture writer.
 #![allow(dead_code)]
 pub mod expected;
-use oxpinyin_store::{DefaultStore, RawReadStore as _, ReadStore as _};
+use oxpinyin_store::{DefaultStore, RawReadStore as _};
 use regex::bytes::Regex;
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};

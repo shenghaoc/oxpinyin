@@ -1,10 +1,9 @@
 //! Backend-agnostic ordered key–value store for oxpinyin tables.
 //!
-//! This crate defines an ordered byte-KV interface split into two
-//! capability tiers — [`ReadStore`] (point get, ranged scan, full scan,
-//! emptiness check) and [`WriteStore`] (creation, multi-table
-//! writes, compaction) — and provides the peer implementations behind
-//! it:
+//! This crate defines an ordered byte-KV interface over each DBM file's raw
+//! keyspace, split into two capability tiers — [`RawReadStore`] (open, point
+//! get, ranged scan, native walk, count) and [`WriteStore`] (creation, raw
+//! writes, compaction) — and provides the peer implementations behind it:
 // Each peer's type exists only under its own feature, so a build links the one
 // it compiles and names the other two in code spans (#1129).
 #![cfg_attr(feature = "kyotocabinet", doc = " [`KcStore`] on Kyoto Cabinet,")]
@@ -211,9 +210,8 @@ pub type RecordSink<'a> = dyn FnMut(&[u8], &[u8]) -> Result<(), StoreError> + 'a
 
 // ── traits ─────────────────────────────────────────────────────────
 
-/// A write transaction over one or more tables.
+/// A write transaction over a store file's raw keyspace.
 ///
-/// Operations see their own writes (read-your-writes within the closure).
 /// An `Err` from the closure writes nothing provided the rollback succeeds.
 /// Kyoto Cabinet's `KcStore::roll_back` (`kyotocabinet/mod.rs`) discards the
 /// rollback's own error, so a failed rollback can leave the closure's
@@ -226,250 +224,25 @@ pub type RecordSink<'a> = dyn FnMut(&[u8], &[u8]) -> Result<(), StoreError> + 'a
 /// [Berkeley DB]: https://github.com/shenghaoc/oxpinyin/blob/main/crates/oxpinyin-store/src/bdb/mod.rs
 /// [tkrzw]: https://github.com/shenghaoc/oxpinyin/blob/main/crates/oxpinyin-store/src/tkrzw/mod.rs
 /// [Kyoto Cabinet]: https://github.com/shenghaoc/oxpinyin/blob/main/crates/oxpinyin-store/src/kyotocabinet/mod.rs
-///
-/// Opening a table inside a write transaction creates it when absent, so
-/// read-side methods ([`WriteTxn::get`], [`WriteTxn::range`],
-/// [`WriteTxn::for_each`], [`WriteTxn::is_empty`]) never observe a
-/// missing-table condition: an untouched table reads as empty.
 pub trait WriteTxn {
-    /// Read a single key from `table` into `value`, the transaction's own
-    /// writes included. The read contract is [`ReadStore::get`]'s:
-    /// `value` is cleared, then filled on a hit; the answer is whether
-    /// the key was found.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError`] when the backend read fails.
-    fn get(&self, table: &str, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError>;
-
-    /// [`ReadStore::read_with`] inside the transaction, its own writes
-    /// included.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError`] when the backend read fails.
-    fn read_with<R>(
-        &self,
-        table: &str,
-        key: &[u8],
-        read: impl FnOnce(&[u8]) -> R,
-    ) -> Result<Option<R>, StoreError> {
-        let mut value = Vec::new();
-        Ok(self.get(table, key, &mut value)?.then(|| read(&value)))
-    }
-
-    /// Insert or overwrite `key` → `value` in `table`.
+    /// Insert or overwrite a raw `key` → `value` in the file's bare
+    /// keyspace — the write half of [`RawReadStore::get_raw`]. Rows
+    /// written here are what `get_raw` / [`RawReadStore::range_raw`] read
+    /// back on the same backend: what libpinyin's own DBMs store and what
+    /// `oxpinyin-utils`' storage utilities write.
     ///
     /// # Errors
     ///
     /// Returns [`StoreError`] when the backend write fails.
-    fn put(&mut self, table: &str, key: &[u8], value: &[u8]) -> Result<(), StoreError>;
+    fn put_raw(&mut self, key: &[u8], value: &[u8]) -> Result<(), StoreError>;
 
-    /// Insert or overwrite a raw (unframed) `key` → `value` — the write
-    /// half of [`RawReadStore::get_raw`]. Rows written here are what
-    /// `get_raw` / [`RawReadStore::range_raw`] read back on the same
-    /// backend, with no table-name framing.
-    ///
-    /// Backends without a flat keyspace would delegate to the
-    /// well-known [`RAW_TABLE`], the same delegation the raw reads use,
-    /// so the round trip holds on every backend. KC, Tkrzw and BDB
-    /// override this to write the file's bare keyspace — what libpinyin's own
-    /// DBMs store and what `oxpinyin-utils`' storage utilities write.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError`] when the backend write fails.
-    fn put_raw(&mut self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
-        self.put(RAW_TABLE, key, value)
-    }
-
-    /// Remove a raw (unframed) `key` — the write half of
-    /// [`RawReadStore::get_raw`] and the removal counterpart of
+    /// Remove a raw `key` — the removal counterpart of
     /// [`WriteTxn::put_raw`]. No-op when the key is absent.
     ///
-    /// Backends with a flat keyspace override this to delete the file's
-    /// bare key; a backend without one delegates to the well-known
-    /// [`RAW_TABLE`], the same delegation the raw reads and writes use.
-    ///
     /// # Errors
     ///
     /// Returns [`StoreError`] when the backend write fails.
-    fn remove_raw(&mut self, key: &[u8]) -> Result<(), StoreError> {
-        self.remove(RAW_TABLE, key)
-    }
-
-    /// Remove `key` from `table` (no-op if absent).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError`] when the backend write fails.
-    fn remove(&mut self, table: &str, key: &[u8]) -> Result<(), StoreError>;
-
-    /// Visit rows of `table` whose keys fall in the `[lo, hi]` range,
-    /// ascending key-byte order, until `visit` answers [`ControlFlow::Break`]
-    /// (which ends the scan with `Ok(())`) or fails (which aborts it and
-    /// propagates). The one required scan: [`WriteTxn::range`] and
-    /// [`WriteTxn::for_each`] are built on it.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError`] when the backend scan fails or `visit` does.
-    fn scan(
-        &self,
-        table: &str,
-        lo: Bound<&[u8]>,
-        hi: Bound<&[u8]>,
-        visit: impl FnMut(&[u8], &[u8]) -> Result<Flow, StoreError>,
-    ) -> Result<(), StoreError>;
-
-    /// Visit rows of `table` whose keys fall in the `[lo, hi]` range,
-    /// ascending key-byte order.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError`] when the backend scan fails.
-    fn range(
-        &self,
-        table: &str,
-        lo: Bound<&[u8]>,
-        hi: Bound<&[u8]>,
-        mut visit: impl FnMut(&[u8], &[u8]) -> Result<(), StoreError>,
-    ) -> Result<(), StoreError> {
-        self.scan(table, lo, hi, |key, value| {
-            visit(key, value).map(|()| ControlFlow::Continue(()))
-        })
-    }
-
-    /// Visit every row of `table` in ascending key-byte order.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError`] when the backend scan fails.
-    fn for_each(
-        &self,
-        table: &str,
-        visit: impl FnMut(&[u8], &[u8]) -> Result<(), StoreError>,
-    ) -> Result<(), StoreError> {
-        self.range(table, Bound::Unbounded, Bound::Unbounded, visit)
-    }
-
-    /// Whether `table` has no rows (an absent table counts as empty).
-    ///
-    /// Implementations must stop at the first row instead of scanning
-    /// the whole table.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError`] when the backend read fails.
-    fn is_empty(&self, table: &str) -> Result<bool, StoreError>;
-}
-
-/// The read tier of an ordered byte-KV store.
-///
-/// This is the base capability every backend provides: open an existing
-/// file read-only, point get, ranged scan, full scan, and an emptiness
-/// check.  A backend that can only read — no writer at all —
-/// implements this and nothing else, and the system-table loader binds
-/// to exactly this tier.
-pub trait ReadStore {
-    /// Open an existing store file in read-only mode.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError`] when the store cannot be opened read-only.
-    fn open_read_only(path: &Path) -> Result<Self, StoreError>
-    where
-        Self: Sized;
-
-    /// Read a single key from `table` into `value`, a buffer the caller
-    /// owns: `value` is cleared, then holds the stored bytes on a hit.
-    /// Answers whether the key was found; an absent table is a miss.
-    ///
-    /// The buffer keeps its capacity, so a caller that passes one buffer
-    /// to successive reads allocates only when a value outgrows it — the
-    /// chunk libpinyin's tables reuse across reads (`m_chunk.set_size`
-    /// then `get` into it, `ngram_kyotodb.cpp:136-139` at 074a2219).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError`] when the backend read fails.
-    fn get(&self, table: &str, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError>;
-
-    /// A point read lent to a decoder: `read` receives the stored bytes and
-    /// its answer comes back, `None` when the key is absent. The default
-    /// reads into one local buffer; a store that holds its rows in memory
-    /// lends them in place instead. `read` must not reach the store.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError`] when the backend read fails.
-    fn read_with<R>(
-        &self,
-        table: &str,
-        key: &[u8],
-        read: impl FnOnce(&[u8]) -> R,
-    ) -> Result<Option<R>, StoreError> {
-        let mut value = Vec::new();
-        Ok(self.get(table, key, &mut value)?.then(|| read(&value)))
-    }
-
-    /// Visit rows of `table` whose keys fall in the `[lo, hi]` range,
-    /// ascending, borrowing each row, until `visit` answers
-    /// [`ControlFlow::Break`] (the scan ends with `Ok(())`) or fails (the
-    /// scan aborts and propagates). An absent table is treated as empty.
-    /// The one required scan: [`ReadStore::range`] and
-    /// [`ReadStore::for_each`] are built on it.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError`] when the backend scan fails or `visit` does.
-    fn scan(
-        &self,
-        table: &str,
-        lo: Bound<&[u8]>,
-        hi: Bound<&[u8]>,
-        visit: impl FnMut(&[u8], &[u8]) -> Result<Flow, StoreError>,
-    ) -> Result<(), StoreError>;
-
-    /// Visit rows of `table` whose keys fall in the `[lo, hi]` range,
-    /// ascending.  An absent table is treated as empty.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError`] when the backend scan fails.
-    fn range(
-        &self,
-        table: &str,
-        lo: Bound<&[u8]>,
-        hi: Bound<&[u8]>,
-        mut visit: impl FnMut(&[u8], &[u8]) -> Result<(), StoreError>,
-    ) -> Result<(), StoreError> {
-        self.scan(table, lo, hi, |key, value| {
-            visit(key, value).map(|()| ControlFlow::Continue(()))
-        })
-    }
-
-    /// Visit every `(key, value)` of `table` in ascending key-byte order,
-    /// borrowing each row (no per-row clone).  Stops early on visitor
-    /// `Err`.  An absent table is treated as empty.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError`] when the backend scan fails.
-    fn for_each(
-        &self,
-        table: &str,
-        visit: impl FnMut(&[u8], &[u8]) -> Result<(), StoreError>,
-    ) -> Result<(), StoreError> {
-        self.range(table, Bound::Unbounded, Bound::Unbounded, visit)
-    }
-
-    /// Whether `table` has no rows (an absent table counts as empty).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError`] when the backend read fails.
-    fn is_empty(&self, table: &str) -> Result<bool, StoreError>;
+    fn remove_raw(&mut self, key: &[u8]) -> Result<(), StoreError>;
 }
 
 /// The pin's `attach` flags for a hash container: `ATTACH_READONLY`,
@@ -500,11 +273,11 @@ pub enum HashAttach<B> {
     Created(B, bool),
 }
 
-/// The write tier: creation, multi-table writes, and compaction.
+/// The write tier: creation, raw writes, and compaction.
 ///
-/// Adds mutation on top of [`ReadStore`], whose reads a writable backend
+/// Adds mutation on top of [`RawReadStore`], whose reads a writable backend
 /// necessarily also provides.
-pub trait WriteStore: ReadStore {
+pub trait WriteStore: RawReadStore {
     /// The backend's write transaction, handed to the closure of
     /// [`WriteStore::write`] by mutable reference. Each backend names
     /// its own concrete type, so the transaction's methods are called
@@ -795,28 +568,39 @@ pub trait WriteStore: ReadStore {
     fn compact(&mut self) -> Result<(), StoreError>;
 }
 
-// ── Raw (unframed) read tier ──────────────────────────────────────
+// ── Read tier ─────────────────────────────────────────────────────
 //
 // libpinyin's DBM files (pinyin_index.bin, phrase_index.bin, bigram.db,
-// punct.bin) use raw byte keys — no table-name framing. This trait
-// exposes the same `open_read_only` handle with key lookups that bypass
-// the `table || 0x00 || key` framing the multi-table [`ReadStore`]
-// uses.
-//
-// Needed so oxpinyin can directly consume a libpinyin-generated data
-// directory without importing or converting its files.
+// punct.bin) are each one database opened with no subdatabase name, with
+// raw byte keys. This trait reads that keyspace as it is, so oxpinyin can
+// consume a libpinyin-generated data directory without importing or
+// converting its files.
 
-/// Read-only access to a store file with raw (unframed) keys.
+/// Read-only access to a store file's raw keyspace.
 ///
-/// Extends [`ReadStore`] with methods that bypass table-name framing,
-/// matching libpinyin's single-keyspace DBM layout. The KC, Tkrzw and
-/// BDB backends implement this by calling the underlying library with the
-/// caller's key verbatim; a backend without a flat-keyspace concept
-/// would delegate to a well-known table name instead.
-pub trait RawReadStore: ReadStore {
-    /// Read a single raw key into `value`, with [`ReadStore::get`]'s
-    /// buffer contract: `value` is cleared, then holds the stored bytes on
-    /// a hit; the answer is whether the key was found.
+/// The KC, Tkrzw and BDB backends implement this by calling the underlying
+/// library with the caller's key verbatim, matching libpinyin's
+/// single-keyspace DBM layout. A backend that can only read implements
+/// this and nothing else; the system-table loader binds to exactly this
+/// tier.
+pub trait RawReadStore {
+    /// Open an existing store file in read-only mode.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the store cannot be opened read-only.
+    fn open_read_only(path: &Path) -> Result<Self, StoreError>
+    where
+        Self: Sized;
+
+    /// Read a single raw key into `value`, a buffer the caller owns:
+    /// `value` is cleared, then holds the stored bytes on a hit; the
+    /// answer is whether the key was found.
+    ///
+    /// The buffer keeps its capacity, so a caller that passes one buffer
+    /// to successive reads allocates only when a value outgrows it — the
+    /// chunk libpinyin's tables reuse across reads (`m_chunk.set_size`
+    /// then `get` into it, `ngram_kyotodb.cpp:136-139` at 074a2219).
     ///
     /// # Errors
     ///
@@ -901,9 +685,7 @@ pub trait RawReadStore: ReadStore {
     /// exactly this for its `search_suggestion` continuation walk
     /// (`phrase_large_table3_tkrzwdb.cpp:155-190`).
     ///
-    /// Backends without a flat keyspace would delegate to the
-    /// well-known [`RAW_TABLE`], the same delegation [`Self::get_raw`]
-    /// uses; KC, Tkrzw and BDB walk the file's real keyspace.
+    /// KC, Tkrzw and BDB walk the file's real keyspace.
     ///
     /// # Errors
     ///
@@ -916,9 +698,7 @@ pub trait RawReadStore: ReadStore {
         lo: Bound<&[u8]>,
         hi: Bound<&[u8]>,
         visit: impl FnMut(&[u8], &[u8]) -> Result<Flow, StoreError>,
-    ) -> Result<(), StoreError> {
-        self.scan(RAW_TABLE, lo, hi, visit)
-    }
+    ) -> Result<(), StoreError>;
 
     /// [`Self::scan_raw`] for a visitor that never stops the walk early.
     ///
@@ -988,7 +768,7 @@ pub trait RawReadStore: ReadStore {
     ///
     /// libpinyin's `bigram.db` uses KC **`HashDB`** / Tkrzw **`HashDBM`**,
     /// while the other DBM files use TreeDB/TreeDBM. The default
-    /// implementation delegates to [`ReadStore::open_read_only`] (correct
+    /// implementation delegates to [`RawReadStore::open_read_only`] (correct
     /// for a backend with no hash/tree distinction). KC and
     /// Tkrzw override this to select the hash container class.
     ///
@@ -1076,7 +856,7 @@ pub trait UserBigramDb: Sized {
     fn load_db(path: &Path) -> Result<Self, StoreError>;
 
     /// `Bigram::load`'s read: the stored value for `key`, into `value`
-    /// with [`ReadStore::get`]'s buffer contract — cleared, filled on a
+    /// with [`RawReadStore::get_raw`]'s buffer contract — cleared, filled on a
     /// hit, and the answer is whether `key` was found. The pin reads into
     /// the chunk the `Bigram` owns and reuses (`ngram_kyotodb.cpp:136-139`
     /// at 074a2219).
@@ -1167,39 +947,13 @@ pub(crate) fn sibling_temp(path: &Path) -> std::path::PathBuf {
     path.with_file_name(name)
 }
 
-// ── Shared: table-name validation ──────────────────────────────────
-//
-// Backend-independent: every peer's frame/prefix machinery needs to
-// refuse an empty or NUL-bearing table name up front.
-
-pub(crate) fn validate_table_name(table: &str) -> Result<(), StoreError> {
-    if table.is_empty() {
-        return Err(StoreError::InvalidInput("empty table name"));
-    }
-    if table.contains('\0') {
-        return Err(StoreError::InvalidInput("table name contains NUL"));
-    }
-    Ok(())
-}
-
-/// The well-known table name the default raw-path delegations use.
-///
-/// Every backend in the tree has a flat keyspace and overrides the raw
-/// path with the file's real keyspace; this table exists for a
-/// hypothetical table-oriented backend, whose
-/// [`RawReadStore::get_raw`] / [`WriteTxn::put_raw`] defaults would
-/// delegate to it so fixtures written through
-/// `WriteStore::write(|txn| txn.put(RAW_TABLE, key, value))` stay
-/// readable by the raw path.
-pub const RAW_TABLE: &str = "data";
-
 // ── The default backend: compile-time selection ───────────────────────
 //
 // One backend per oxpinyin binary. The backend implementations
 // (Kyoto Cabinet, tkrzw, Berkeley DB) are peers behind the
 // store's trait interface, so `DefaultStore` resolves to a single
 // concrete type at compile time and everything above it is already
-// generic over `ReadStore` / `WriteStore`. The cfg chain below is
+// generic over `RawReadStore` / `WriteStore`. The cfg chain below is
 // exactly that selection: it picks the enabled backend feature; a
 // multi-feature build resolves deterministically along the chain order
 // (kyotocabinet > tkrzw > bdb). The chain order is a
@@ -1278,7 +1032,7 @@ pub const DEFAULT_STORE_DB_FORMAT: &str = "Tkrzw";
 #[cfg(feature = "bdb")]
 pub const DEFAULT_STORE_DB_FORMAT: &str = "BerkeleyDB";
 
-/// Helpers shared by the framed and file-backed backends; every item is
+/// Helpers shared by the backends' raw walks and path checks; every item is
 /// gated to the backends that use it (see the module docs).
 #[cfg(any(feature = "kyotocabinet", feature = "tkrzw", feature = "bdb"))]
 mod common;
@@ -1314,17 +1068,6 @@ pub use system_attach::{SystemAttachment, UnopenedSystemDbm};
 /// Owned-result forms of the buffer-filling point reads, for the unit
 /// tests' assertions.
 #[cfg(test)]
-pub(crate) trait ReadOwned: ReadStore {
-    fn read(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
-        let mut value = Vec::new();
-        Ok(self.get(table, key, &mut value)?.then_some(value))
-    }
-}
-
-#[cfg(test)]
-impl<S: ReadStore + ?Sized> ReadOwned for S {}
-
-#[cfg(test)]
 pub(crate) trait RawReadOwned: RawReadStore {
     fn read_raw(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         let mut value = Vec::new();
@@ -1334,17 +1077,6 @@ pub(crate) trait RawReadOwned: RawReadStore {
 
 #[cfg(test)]
 impl<S: RawReadStore + ?Sized> RawReadOwned for S {}
-
-#[cfg(test)]
-pub(crate) trait TxnReadOwned: WriteTxn {
-    fn txn_read(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
-        let mut value = Vec::new();
-        Ok(self.get(table, key, &mut value)?.then_some(value))
-    }
-}
-
-#[cfg(test)]
-impl<T: WriteTxn + ?Sized> TxnReadOwned for T {}
 
 #[cfg(test)]
 pub(crate) trait GramReadOwned: UserBigramDb {
@@ -1367,9 +1099,9 @@ mod tests {
     use std::ops::Bound;
 
     #[cfg(feature = "tkrzw")]
-    use super::ReadOwned;
+    use super::RawReadOwned;
     #[cfg(feature = "tkrzw")]
-    use super::ReadStore;
+    use super::RawReadStore;
     #[cfg(feature = "tkrzw")]
     use super::StoreError;
     #[cfg(feature = "tkrzw")]
@@ -1425,9 +1157,9 @@ mod tests {
         };
     }
 
-    /// The read tier: everything a bare [`ReadStore`] must answer.
+    /// The read tier: everything a bare [`RawReadStore`] must answer.
     ///
-    /// `$store` is exercised through [`ReadStore`] alone. `$writer` is a
+    /// `$store` is exercised through [`RawReadStore`] alone. `$writer` is a
     /// [`WriteStore`] used only to lay down the fixture file that `$store`
     /// then opens read-only — a read-only backend supplies whichever
     /// writer produces its file format, and runs this group unchanged
@@ -1452,34 +1184,18 @@ mod tests {
                 }
 
                 #[test]
-                fn multi_table_get() {
-                    let path = temp_path("multi-table-get");
-                    let store = seeded(&path, |txn| {
-                        txn.put("alpha", b"k1", b"v1")?;
-                        txn.put("beta", b"k2", b"v2")?;
-                        Ok(())
-                    });
-                    assert_eq!(store.read("alpha", b"k1").unwrap(), Some(b"v1".to_vec()));
-                    assert_eq!(store.read("beta", b"k2").unwrap(), Some(b"v2".to_vec()));
-                    assert_eq!(store.read("alpha", b"k2").unwrap(), None);
-                    drop(store);
-                    cleanup(&path);
-                }
-
-                #[test]
                 fn range_included_included() {
                     let path = temp_path("range-ii");
                     let store = seeded(&path, |txn| {
-                        txn.put("t", b"a", b"1")?;
-                        txn.put("t", b"b", b"2")?;
-                        txn.put("t", b"c", b"3")?;
-                        txn.put("t", b"d", b"4")?;
+                        txn.put_raw(b"a", b"1")?;
+                        txn.put_raw(b"b", b"2")?;
+                        txn.put_raw(b"c", b"3")?;
+                        txn.put_raw(b"d", b"4")?;
                         Ok(())
                     });
                     let mut rows = Vec::new();
                     store
-                        .range(
-                            "t",
+                        .range_raw(
                             Bound::Included(b"b".as_slice()),
                             Bound::Included(b"c".as_slice()),
                             |k, v| {
@@ -1501,22 +1217,17 @@ mod tests {
                 fn range_included_unbounded() {
                     let path = temp_path("range-iu");
                     let store = seeded(&path, |txn| {
-                        txn.put("t", b"a", b"1")?;
-                        txn.put("t", b"b", b"2")?;
-                        txn.put("t", b"c", b"3")?;
+                        txn.put_raw(b"a", b"1")?;
+                        txn.put_raw(b"b", b"2")?;
+                        txn.put_raw(b"c", b"3")?;
                         Ok(())
                     });
                     let mut keys = Vec::new();
                     store
-                        .range(
-                            "t",
-                            Bound::Included(b"b".as_slice()),
-                            Bound::Unbounded,
-                            |k, _v| {
-                                keys.push(k.to_vec());
-                                Ok(())
-                            },
-                        )
+                        .range_raw(Bound::Included(b"b".as_slice()), Bound::Unbounded, |k, _v| {
+                            keys.push(k.to_vec());
+                            Ok(())
+                        })
                         .unwrap();
                     assert_eq!(keys, vec![b"b".to_vec(), b"c".to_vec()]);
                     drop(store);
@@ -1531,14 +1242,14 @@ mod tests {
                     let path = temp_path("scan-break");
                     let store = seeded(&path, |txn| {
                         for key in [b"a", b"b", b"c", b"d"] {
-                            txn.put("t", key, b"v")?;
+                            txn.put_raw(key, b"v")?;
                         }
                         Ok(())
                     });
                     for stop in 1..=4_usize {
                         let mut seen = Vec::new();
                         store
-                            .scan("t", Bound::Unbounded, Bound::Unbounded, |k, _v| {
+                            .scan_raw(Bound::Unbounded, Bound::Unbounded, |k, _v| {
                                 seen.push(k.to_vec());
                                 Ok(if seen.len() == stop {
                                     ControlFlow::Break(())
@@ -1551,7 +1262,7 @@ mod tests {
                         assert_eq!(seen, all[..stop], "break after {stop} rows");
                     }
                     let mut visited = 0;
-                    let outcome = store.scan("t", Bound::Unbounded, Bound::Unbounded, |_k, _v| {
+                    let outcome = store.scan_raw(Bound::Unbounded, Bound::Unbounded, |_k, _v| {
                         visited += 1;
                         if visited == 2 {
                             Err(StoreError::Backend("visitor failed".into()))
@@ -1569,49 +1280,20 @@ mod tests {
                 }
 
                 #[test]
-                fn is_empty_lifecycle() {
-                    let path = temp_path("empty");
-                    let store = seeded(&path, |_| Ok(()));
-                    assert!(store.is_empty("t").unwrap());
-                    drop(store);
-
+                fn excluded_empty_lower_bound_is_safe() {
+                    let path = temp_path("excluded-empty");
                     let store = seeded(&path, |txn| {
-                        txn.put("t", b"k", b"v")?;
-                        Ok(())
-                    });
-                    assert!(!store.is_empty("t").unwrap());
-                    drop(store);
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn missing_table_scans_are_empty_and_excluded_empty_bound_is_safe() {
-                    let path = temp_path("missing-scan");
-                    let store = seeded(&path, |txn| {
-                        txn.put("t", b"a", b"1")?;
+                        txn.put_raw(b"a", b"1")?;
                         Ok(())
                     });
                     let mut rows = Vec::new();
                     store
-                        .for_each("missing", |key, value| {
-                            rows.push((key.to_vec(), value.to_vec()));
+                        .range_raw(Bound::Excluded(&[]), Bound::Unbounded, |key, _| {
+                            rows.push(key.to_vec());
                             Ok(())
                         })
                         .unwrap();
-                    assert!(rows.is_empty());
-
-                    store
-                        .range(
-                            "t",
-                            Bound::Excluded(&[]),
-                            Bound::Unbounded,
-                            |key, _| {
-                                rows.push((key.to_vec(), Vec::new()));
-                                Ok(())
-                            },
-                        )
-                        .unwrap();
-                    assert_eq!(rows, vec![(b"a".to_vec(), Vec::new())]);
+                    assert_eq!(rows, vec![b"a".to_vec()]);
                     drop(store);
                     cleanup(&path);
                 }
@@ -1620,14 +1302,14 @@ mod tests {
                 fn empty_bounds_never_match_or_error() {
                     let path = temp_path("empty-bounds");
                     let store = seeded(&path, |txn| {
-                        txn.put("t", b"a", b"1")?;
-                        txn.put("t", b"b", b"2")?;
+                        txn.put_raw(b"a", b"1")?;
+                        txn.put_raw(b"b", b"2")?;
                         Ok(())
                     });
 
                     let mut keys = Vec::new();
                     store
-                        .range("t", Bound::Included(&[]), Bound::Unbounded, |k, _| {
+                        .range_raw(Bound::Included(&[]), Bound::Unbounded, |k, _| {
                             keys.push(k.to_vec());
                             Ok(())
                         })
@@ -1637,7 +1319,7 @@ mod tests {
                     for hi in [Bound::<&[u8]>::Excluded(&[]), Bound::Included(&[])] {
                         let mut upper_empty_keys = Vec::new();
                         store
-                            .range("t", Bound::Unbounded, hi, |k, _| {
+                            .range_raw(Bound::Unbounded, hi, |k, _| {
                                 upper_empty_keys.push(k.to_vec());
                                 Ok(())
                             })
@@ -1647,59 +1329,18 @@ mod tests {
                     drop(store);
                     cleanup(&path);
                 }
-
-                #[test]
-                fn empty_and_nul_table_names_are_rejected_by_reads() {
-                    fn assert_invalid<T>(result: Result<T, StoreError>) {
-                        assert!(matches!(result, Err(StoreError::InvalidInput(_))));
-                    }
-
-                    let path = temp_path("invalid-table");
-                    let store = seeded(&path, |_| Ok(()));
-                    for table in ["", "bad\0name"] {
-                        assert_invalid(store.read(table, b"key"));
-                        assert_invalid(store.for_each(table, |_, _| Ok(())));
-                        assert_invalid(store.range(
-                            table,
-                            Bound::Unbounded,
-                            Bound::Unbounded,
-                            |_, _| Ok(()),
-                        ));
-                        assert_invalid(store.is_empty(table));
-                    }
-                    drop(store);
-                    cleanup(&path);
-                }
             }
         };
     }
 
-    /// The write tier: creation, multi-table writes, compaction,
-    /// and the read-only handle's refusal to mutate.
+    /// The write tier: creation, raw writes, compaction, and the
+    /// read-only handle's refusal to mutate.
     macro_rules! store_write_tests {
         ($mod:ident, $store:ty, $ext:literal) => {
             mod $mod {
                 use super::super::*;
 
                 store_test_paths!($mod, $ext);
-
-                #[test]
-                fn multi_table_write() {
-                    let path = temp_path("multi-table");
-                    let store = <$store>::create(&path).unwrap();
-                    store
-                        .write(|txn| {
-                            txn.put("alpha", b"k1", b"v1")?;
-                            txn.put("beta", b"k2", b"v2")?;
-                            Ok(())
-                        })
-                        .unwrap();
-                    assert_eq!(store.read("alpha", b"k1").unwrap(), Some(b"v1".to_vec()));
-                    assert_eq!(store.read("beta", b"k2").unwrap(), Some(b"v2".to_vec()));
-                    assert_eq!(store.read("alpha", b"k2").unwrap(), None);
-                    drop(store);
-                    cleanup(&path);
-                }
 
                 /// The user-bigram seam round trips on every backend, and
                 /// is its own pair rather than a plain hash open: libpinyin
@@ -1764,9 +1405,9 @@ mod tests {
                     let path = temp_path("rollback");
                     let store = <$store>::create(&path).unwrap();
                     let result: Result<(), _> = store.write(|txn| {
-                        txn.put("t", b"a", b"1")?;
-                        txn.put("t", b"b", b"2")?;
-                        txn.put("u", b"c", b"3")?;
+                        txn.put_raw(b"a", b"1")?;
+                        txn.put_raw(b"b", b"2")?;
+                        txn.put_raw(b"c", b"3")?;
                         Err(StoreError::Backend("deliberate rollback".into()))
                     });
                     assert!(result.is_err());
@@ -1774,9 +1415,36 @@ mod tests {
                         result,
                         Err(StoreError::Backend(ref e)) if e.to_string() == "deliberate rollback"
                     ));
-                    assert_eq!(store.read("t", b"a").unwrap(), None);
-                    assert_eq!(store.read("t", b"b").unwrap(), None);
-                    assert_eq!(store.read("u", b"c").unwrap(), None);
+                    assert_eq!(store.read_raw(b"a").unwrap(), None);
+                    assert_eq!(store.read_raw(b"b").unwrap(), None);
+                    assert_eq!(store.read_raw(b"c").unwrap(), None);
+                    drop(store);
+                    cleanup(&path);
+                }
+
+                /// Every point read clears the caller's buffer and refills
+                /// it: a longer value than the buffer holds (past Berkeley
+                /// DB's first `DB_DBT_USERMEM` size), then a shorter one,
+                /// then a miss, through one buffer.
+                #[test]
+                fn point_reads_refill_one_buffer() {
+                    let path = temp_path("buffer-reuse");
+                    let store = <$store>::create(&path).unwrap();
+                    store
+                        .write(|txn| {
+                            txn.put_raw(b"long", &[7; 5000])?;
+                            txn.put_raw(b"short", b"ab")?;
+                            Ok(())
+                        })
+                        .unwrap();
+                    let mut value = Vec::new();
+                    assert!(store.get_raw(b"long", &mut value).unwrap());
+                    assert_eq!(value, [7; 5000]);
+                    assert!(store.get_raw(b"short", &mut value).unwrap());
+                    assert_eq!(value, b"ab");
+                    value.extend_from_slice(b"stale");
+                    assert!(!store.get_raw(b"none", &mut value).unwrap());
+                    assert!(value.is_empty());
                     drop(store);
                     cleanup(&path);
                 }
@@ -1791,59 +1459,6 @@ mod tests {
                 /// Cabinet reads as its `Visitor::REMOVE` sentinel (see
                 /// `bytes` in `kyotocabinet/adapter.cc`); a `b""` literal has a real
                 /// address and never trips it.
-                /// Every point read clears the caller's buffer and refills
-                /// it: a longer value than the buffer holds (past Berkeley
-                /// DB's first `DB_DBT_USERMEM` size), then a shorter one,
-                /// then a miss, through one buffer.
-                #[test]
-                fn point_reads_refill_one_buffer() {
-                    let path = temp_path("buffer-reuse");
-                    let store = <$store>::create(&path).unwrap();
-                    store
-                        .write(|txn| {
-                            txn.put("t", b"long", &[7; 5000])?;
-                            txn.put("t", b"short", b"ab")?;
-                            txn.put_raw(b"raw", b"xyz")?;
-                            Ok(())
-                        })
-                        .unwrap();
-                    let mut value = Vec::new();
-                    assert!(store.get("t", b"long", &mut value).unwrap());
-                    assert_eq!(value, [7; 5000]);
-                    assert!(store.get("t", b"short", &mut value).unwrap());
-                    assert_eq!(value, b"ab");
-                    assert!(!store.get("t", b"none", &mut value).unwrap());
-                    assert!(value.is_empty());
-                    assert!(store.get_raw(b"raw", &mut value).unwrap());
-                    assert_eq!(value, b"xyz");
-                    assert_eq!(
-                        store.read_with("t", b"short", <[u8]>::to_vec).unwrap(),
-                        Some(b"ab".to_vec())
-                    );
-                    assert_eq!(store.read_with("t", b"none", <[u8]>::len).unwrap(), None);
-                    value.extend_from_slice(b"stale");
-                    assert!(!store.get_raw(b"none", &mut value).unwrap());
-                    assert!(value.is_empty());
-                    store
-                        .write(|txn| {
-                            let mut value = b"stale".to_vec();
-                            txn.put("t", b"pending", b"new")?;
-                            assert!(txn.get("t", b"pending", &mut value)?);
-                            assert_eq!(value, b"new");
-                            assert!(txn.get("t", b"long", &mut value)?);
-                            assert_eq!(value, [7; 5000]);
-                            assert!(!txn.get("t", b"none", &mut value)?);
-                            assert!(value.is_empty());
-                            assert_eq!(txn.read_with("t", b"pending", <[u8]>::len)?, Some(3));
-                            txn.remove("t", b"short")?;
-                            value.extend_from_slice(b"stale");
-                            assert!(!txn.get("t", b"short", &mut value)?);
-                            assert!(value.is_empty());
-                            Ok(())
-                        })
-                        .unwrap();
-                }
-
                 #[test]
                 fn empty_value_is_a_record() {
                     let path = temp_path("empty-value");
@@ -1851,27 +1466,23 @@ mod tests {
                     let empty: Vec<u8> = Vec::new();
                     store
                         .write(|txn| {
-                            txn.put("t", b"marker", &empty)?;
-                            txn.put("t", b"full", b"v")?;
-                            txn.put_raw(b"raw-marker", &empty)?;
+                            txn.put_raw(b"marker", &empty)?;
+                            txn.put_raw(b"full", b"v")?;
                             Ok(())
                         })
                         .unwrap();
-                    assert_eq!(store.read("t", b"marker").unwrap(), Some(Vec::new()));
-                    assert_eq!(store.read_raw(b"raw-marker").unwrap(), Some(Vec::new()));
+                    assert_eq!(store.read_raw(b"marker").unwrap(), Some(Vec::new()));
                     // The existence query counts an empty value; a miss is
                     // no key.
-                    assert!(store.contains_raw(b"raw-marker").unwrap());
-                    assert!(!store.contains_raw(b"raw-absent").unwrap());
+                    assert!(store.contains_raw(b"marker").unwrap());
+                    assert!(!store.contains_raw(b"absent").unwrap());
                     // Overwriting a full record with an empty value keeps
-                    // the record; only `remove` deletes.
-                    store
-                        .write(|txn| txn.put("t", b"full", &empty))
-                        .unwrap();
-                    assert_eq!(store.read("t", b"full").unwrap(), Some(Vec::new()));
+                    // the record; only `remove_raw` deletes.
+                    store.write(|txn| txn.put_raw(b"full", &empty)).unwrap();
+                    assert_eq!(store.read_raw(b"full").unwrap(), Some(Vec::new()));
                     let mut rows = Vec::new();
                     store
-                        .for_each("t", |key, value| {
+                        .range_raw(Bound::Unbounded, Bound::Unbounded, |key, value| {
                             rows.push((key.to_vec(), value.to_vec()));
                             Ok(())
                         })
@@ -1885,235 +1496,17 @@ mod tests {
                 }
 
                 #[test]
-                fn write_txn_is_empty() {
-                    let path = temp_path("wtxn-empty");
-                    let store = <$store>::create(&path).unwrap();
-                    // An absent table counts as empty. Whether the probe
-                    // leaves the table behind is the backend's business;
-                    // the contract is only the answer.
-                    assert!(store.write(|txn| txn.is_empty("t")).unwrap());
-                    store
-                        .write(|txn| {
-                            txn.put("t", b"k", b"v")?;
-                            assert!(!txn.is_empty("t")?);
-                            txn.remove("t", b"k")?;
-                            assert!(txn.is_empty("t")?);
-                            Ok(())
-                        })
-                        .unwrap();
-                    drop(store);
-                    cleanup(&path);
-                }
-
-                /// `Break` and `Err` in the write transaction's merged view
-                /// (stored rows with the transaction's puts and removes laid
-                /// over them) stop at exactly the requested row, wherever it
-                /// falls: a buffered insert, an overridden stored row or a
-                /// trailing insert.
-                #[test]
-                fn write_txn_scan_break_and_error_stop_the_merged_walk() {
-                    let path = temp_path("wtxn-scan-break");
-                    let store = <$store>::create(&path).unwrap();
-                    store
-                        .write(|txn| {
-                            for key in [b"a", b"c", b"e"] {
-                                txn.put("t", key, b"stored")?;
-                            }
-                            Ok(())
-                        })
-                        .unwrap();
-                    store
-                        .write(|txn| {
-                            txn.put("t", b"b", b"new")?;
-                            txn.put("t", b"c", b"over")?;
-                            txn.put("t", b"f", b"new")?;
-                            txn.remove("t", b"e")?;
-                            let all: [&[u8]; 4] = [b"a", b"b", b"c", b"f"];
-                            for stop in 1..=all.len() {
-                                let mut seen: Vec<Vec<u8>> = Vec::new();
-                                txn.scan("t", Bound::Unbounded, Bound::Unbounded, |k, _v| {
-                                    seen.push(k.to_vec());
-                                    Ok(if seen.len() == stop {
-                                        ControlFlow::Break(())
-                                    } else {
-                                        ControlFlow::Continue(())
-                                    })
-                                })?;
-                                let want: Vec<Vec<u8>> =
-                                    all[..stop].iter().map(|k| k.to_vec()).collect();
-                                assert_eq!(seen, want, "break after {stop} rows");
-                            }
-                            for fail_at in 1..=all.len() {
-                                let mut visited = 0;
-                                let outcome =
-                                    txn.scan("t", Bound::Unbounded, Bound::Unbounded, |_k, _v| {
-                                        visited += 1;
-                                        if visited == fail_at {
-                                            Err(StoreError::Backend("visitor failed".into()))
-                                        } else {
-                                            Ok(ControlFlow::Continue(()))
-                                        }
-                                    });
-                                assert!(matches!(
-                                    outcome,
-                                    Err(StoreError::Backend(ref e)) if e.message() == "visitor failed"
-                                ));
-                                assert_eq!(visited, fail_at);
-                            }
-                            Ok(())
-                        })
-                        .unwrap();
-                    drop(store);
-                    cleanup(&path);
-                }
-
-                /// The write transaction's merged scan equals a model map for
-                /// every overlay of {absent, put, remove} on every stored
-                /// subset of four keys, under no bounds and under a bounded
-                /// range, running to the end (`stop` 0) and stopping after
-                /// each row in turn.
-                #[test]
-                fn write_txn_scan_matches_a_model_for_every_small_overlay() {
-                    use std::collections::BTreeMap;
-                    const KEYS: [&[u8]; 4] = [b"a", b"b", b"c", b"d"];
-                    let bounded = (Bound::Included(b"b".as_slice()), Bound::Excluded(b"d".as_slice()));
-                    let unbounded = (Bound::Unbounded, Bound::Unbounded);
-                    for stored_mask in 0_u32..16 {
-                        for overlay in 0_u32..81 {
-                            let store = <$store>::create_in_memory().unwrap();
-                            let mut model: BTreeMap<Vec<u8>, Vec<u8>> = BTreeMap::new();
-                            store
-                                .write(|txn| {
-                                    for (index, key) in KEYS.iter().enumerate() {
-                                        if stored_mask >> index & 1 == 1 {
-                                            txn.put("t", key, b"stored")?;
-                                            model.insert(key.to_vec(), b"stored".to_vec());
-                                        }
-                                    }
-                                    Ok(())
-                                })
-                                .unwrap();
-                            store
-                                .write(|txn| {
-                                    let mut code = overlay;
-                                    for key in KEYS {
-                                        match code % 3 {
-                                            1 => {
-                                                txn.put("t", key, b"buffered")?;
-                                                model.insert(key.to_vec(), b"buffered".to_vec());
-                                            }
-                                            2 => {
-                                                txn.remove("t", key)?;
-                                                model.remove(key);
-                                            }
-                                            _ => {}
-                                        }
-                                        code /= 3;
-                                    }
-                                    for (lo, hi) in [unbounded, bounded] {
-                                        let want: Vec<(Vec<u8>, Vec<u8>)> = model
-                                            .range::<[u8], _>((lo, hi))
-                                            .map(|(k, v)| (k.clone(), v.clone()))
-                                            .collect();
-                                        for stop in 0..=want.len() {
-                                            let mut seen = Vec::new();
-                                            txn.scan("t", lo, hi, |k, v| {
-                                                seen.push((k.to_vec(), v.to_vec()));
-                                                Ok(if seen.len() == stop {
-                                                    ControlFlow::Break(())
-                                                } else {
-                                                    ControlFlow::Continue(())
-                                                })
-                                            })?;
-                                            let upto = if stop == 0 { want.len() } else { stop };
-                                            assert_eq!(
-                                                seen,
-                                                want[..upto],
-                                                "stored {stored_mask:#06b} overlay {overlay} stop {stop}"
-                                            );
-                                        }
-                                        assert_eq!(txn.is_empty("t")?, model.is_empty());
-                                    }
-                                    Ok(())
-                                })
-                                .unwrap();
-                        }
-                    }
-                }
-
-                #[test]
                 fn remove_in_write() {
                     let path = temp_path("remove");
                     let store = <$store>::create(&path).unwrap();
                     store
                         .write(|txn| {
-                            txn.put("t", b"k", b"v")?;
-                            txn.remove("t", b"k")?;
+                            txn.put_raw(b"k", b"v")?;
+                            txn.remove_raw(b"k")?;
                             Ok(())
                         })
                         .unwrap();
-                    assert_eq!(store.read("t", b"k").unwrap(), None);
-                    drop(store);
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn write_txn_empty_bounds_never_match_or_error() {
-                    let path = temp_path("wtxn-empty-bounds");
-                    let store = <$store>::create(&path).unwrap();
-                    store
-                        .write(|txn| {
-                            txn.put("t", b"a", b"1")?;
-                            txn.put("t", b"b", b"2")?;
-                            Ok(())
-                        })
-                        .unwrap();
-
-                    let mut visited = Vec::new();
-                    store
-                        .write(|txn| {
-                            txn.range(
-                                "t",
-                                Bound::Included(&[]),
-                                Bound::Excluded(&[]),
-                                |key, _| {
-                                    visited.push(key.to_vec());
-                                    Ok(())
-                                },
-                            )
-                        })
-                        .unwrap();
-                    assert!(
-                        visited.is_empty(),
-                        "empty bounds matched {visited:?}"
-                    );
-                    drop(store);
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn empty_and_nul_table_names_are_rejected_by_writes() {
-                    fn assert_invalid<T>(result: Result<T, StoreError>) {
-                        assert!(matches!(result, Err(StoreError::InvalidInput(_))));
-                    }
-
-                    let path = temp_path("invalid-table");
-                    let store = <$store>::create(&path).unwrap();
-                    for table in ["", "bad\0name"] {
-                        assert_invalid(store.write(|txn| txn.txn_read(table, b"key")));
-                        assert_invalid(store.write(|txn| txn.put(table, b"key", b"value")));
-                        assert_invalid(store.write(|txn| txn.remove(table, b"key")));
-                        assert_invalid(store.write(|txn| {
-                            txn.range(
-                                table,
-                                Bound::Unbounded,
-                                Bound::Unbounded,
-                                |_, _| Ok(()),
-                            )
-                        }));
-                        assert_invalid(store.write(|txn| txn.for_each(table, |_, _| Ok(()))));
-                        assert_invalid(store.write(|txn| txn.is_empty(table)));
-                    }
+                    assert_eq!(store.read_raw(b"k").unwrap(), None);
                     drop(store);
                     cleanup(&path);
                 }
@@ -2122,11 +1515,11 @@ mod tests {
                 fn read_only_reopen_preserves_reads_and_rejects_mutation() {
                     let path = temp_path("read-only");
                     let store = <$store>::create(&path).unwrap();
-                    store.write(|txn| txn.put("t", b"key", b"value")).unwrap();
+                    store.write(|txn| txn.put_raw(b"key", b"value")).unwrap();
                     drop(store);
 
                     let mut readonly = <$store>::open_read_only(&path).unwrap();
-                    assert_eq!(readonly.read("t", b"key").unwrap(), Some(b"value".to_vec()));
+                    assert_eq!(readonly.read_raw(b"key").unwrap(), Some(b"value".to_vec()));
                     assert!(matches!(
                         readonly.write(|_| Ok(())),
                         Err(StoreError::ReadOnly)
@@ -2140,14 +1533,9 @@ mod tests {
                 fn compact_preserves_data() {
                     let path = temp_path("compact");
                     let mut store = <$store>::create(&path).unwrap();
-                    store
-                        .write(|txn| {
-                            txn.put("t", b"k", b"v")?;
-                            Ok(())
-                        })
-                        .unwrap();
+                    store.write(|txn| txn.put_raw(b"k", b"v")).unwrap();
                     store.compact().unwrap();
-                    assert_eq!(store.read("t", b"k").unwrap(), Some(b"v".to_vec()));
+                    assert_eq!(store.read_raw(b"k").unwrap(), Some(b"v".to_vec()));
                     drop(store);
                     cleanup(&path);
                 }
@@ -2159,21 +1547,19 @@ mod tests {
                 #[test]
                 fn in_memory_store_behaves_as_a_tree_store() {
                     let mut store = <$store>::create_in_memory().unwrap();
-                    assert!(store.write(|txn| txn.is_empty("t")).unwrap());
+                    assert_eq!(store.count_raw().unwrap(), 0);
                     store
                         .write(|txn| {
-                            txn.put("t", b"b", b"2")?;
-                            txn.put("t", b"a", b"1")?;
-                            txn.put("t", b"c", b"3")?;
-                            txn.put("u", b"a", b"other")?;
+                            txn.put_raw(b"b", b"2")?;
+                            txn.put_raw(b"a", b"1")?;
+                            txn.put_raw(b"c", b"3")?;
                             Ok(())
                         })
                         .unwrap();
-                    assert_eq!(store.read("t", b"a").unwrap(), Some(b"1".to_vec()));
-                    assert_eq!(store.read("u", b"a").unwrap(), Some(b"other".to_vec()));
+                    assert_eq!(store.read_raw(b"a").unwrap(), Some(b"1".to_vec()));
                     let mut walked = Vec::new();
                     store
-                        .for_each("t", |k, v| {
+                        .range_raw(Bound::Unbounded, Bound::Unbounded, |k, v| {
                             walked.push((k.to_vec(), v.to_vec()));
                             Ok(())
                         })
@@ -2188,30 +1574,25 @@ mod tests {
                     );
                     let mut ranged = Vec::new();
                     store
-                        .range(
-                            "t",
-                            Bound::Included(&b"b"[..]),
-                            Bound::Unbounded,
-                            |k, _| {
-                                ranged.push(k.to_vec());
-                                Ok(())
-                            },
-                        )
+                        .range_raw(Bound::Included(&b"b"[..]), Bound::Unbounded, |k, _| {
+                            ranged.push(k.to_vec());
+                            Ok(())
+                        })
                         .unwrap();
                     assert_eq!(ranged, vec![b"b".to_vec(), b"c".to_vec()]);
                     // An `Err` rolls the transaction back.
                     let rolled: Result<(), StoreError> = store.write(|txn| {
-                        txn.put("t", b"d", b"4")?;
-                        txn.remove("t", b"a")?;
+                        txn.put_raw(b"d", b"4")?;
+                        txn.remove_raw(b"a")?;
                         Err(StoreError::Backend("deliberate rollback".into()))
                     });
                     assert!(rolled.is_err());
-                    assert_eq!(store.read("t", b"d").unwrap(), None);
-                    assert_eq!(store.read("t", b"a").unwrap(), Some(b"1".to_vec()));
+                    assert_eq!(store.read_raw(b"d").unwrap(), None);
+                    assert_eq!(store.read_raw(b"a").unwrap(), Some(b"1".to_vec()));
                     store.compact().unwrap();
-                    assert_eq!(store.read("t", b"c").unwrap(), Some(b"3".to_vec()));
-                    store.write(|txn| txn.remove("t", b"c")).unwrap();
-                    assert_eq!(store.read("t", b"c").unwrap(), None);
+                    assert_eq!(store.read_raw(b"c").unwrap(), Some(b"3".to_vec()));
+                    store.write(|txn| txn.remove_raw(b"c")).unwrap();
+                    assert_eq!(store.read_raw(b"c").unwrap(), None);
                 }
             }
         };
@@ -2390,7 +1771,7 @@ mod tests {
                 // Inserted out of order, so the walk order is the store's
                 // and not the insertion sequence.
                 for key in [keys[2], keys[4], keys[0], keys[3], keys[1]] {
-                    txn.put("t", key, b"x")?;
+                    txn.put_raw(key, b"x")?;
                 }
                 Ok(())
             })
@@ -2398,7 +1779,7 @@ mod tests {
 
         let mut walked = Vec::new();
         store
-            .for_each("t", |key, _value| {
+            .range_raw(Bound::Unbounded, Bound::Unbounded, |key, _value| {
                 walked.push(key.to_vec());
                 Ok(())
             })
@@ -2413,8 +1794,7 @@ mod tests {
         // is the half a signed comparison would misplace.
         let mut ranged = Vec::new();
         store
-            .range(
-                "t",
+            .range_raw(
                 Bound::Included(&[0x80][..]),
                 Bound::Included(&[0xfe][..]),
                 |key, _value| {
@@ -2424,102 +1804,6 @@ mod tests {
             )
             .unwrap();
         assert_eq!(ranged, vec![vec![0x80], vec![0xfe]]);
-        drop(store);
-    }
-
-    #[cfg(feature = "tkrzw")]
-    #[test]
-    fn tkrzw_keeps_tables_apart_when_one_name_prefixes_another() {
-        // TreeDBM is one keyspace, so the backend frames records as
-        // `table || 0x00 || key`. The framing is prefix-free only
-        // because table names are validated NUL-free; pin that, since a
-        // regression would silently merge `a` into `ab`'s scans.
-        let path = std::env::temp_dir().join(format!(
-            "oxpinyin-store-tkrzw-prefix-{}.tkrzw",
-            std::process::id(),
-        ));
-        let _ = std::fs::remove_file(&path);
-        let _cleanup = RemoveTkrzw(path.clone());
-        let store = TkrzwStore::create(&path).unwrap();
-        store
-            .write(|txn| {
-                txn.put("a", b"k", b"in-a")?;
-                txn.put("ab", b"k", b"in-ab")?;
-                txn.put("a\u{1}b", b"k", b"in-a1b")?;
-                Ok(())
-            })
-            .unwrap();
-
-        for (table, expected) in [("a", "in-a"), ("ab", "in-ab"), ("a\u{1}b", "in-a1b")] {
-            assert_eq!(
-                store.read(table, b"k").unwrap(),
-                Some(expected.as_bytes().to_vec())
-            );
-            let mut rows = 0_usize;
-            store
-                .for_each(table, |_key, value| {
-                    assert_eq!(value, expected.as_bytes());
-                    rows += 1;
-                    Ok(())
-                })
-                .unwrap();
-            assert_eq!(rows, 1, "{table} must scan only its own rows");
-        }
-        drop(store);
-    }
-
-    #[cfg(feature = "tkrzw")]
-    #[test]
-    fn tkrzw_write_txn_scan_merges_buffer_over_stored_rows() {
-        // `merged_visit` lays a transaction's buffer over stored rows and
-        // streams the merge in ascending key order: a buffered value
-        // overrides its stored twin, a buffered tombstone hides it, and
-        // buffered inserts slot in around both. Seed three rows, then
-        // buffer one of each mutation — insert before a stored key, update,
-        // tombstone, insert after the last stored key — and scan inside the
-        // transaction before anything commits.
-        let path = std::env::temp_dir().join(format!(
-            "oxpinyin-store-tkrzw-merge-scan-{}.tkrzw",
-            std::process::id(),
-        ));
-        let _ = std::fs::remove_file(&path);
-        let _cleanup = RemoveTkrzw(path.clone());
-        let store = TkrzwStore::create(&path).unwrap();
-        store
-            .write(|txn| {
-                txn.put("t", b"b", b"stored-b")?;
-                txn.put("t", b"d", b"stored-d")?;
-                txn.put("t", b"f", b"stored-f")?;
-                Ok(())
-            })
-            .unwrap();
-
-        store
-            .write(|txn| {
-                txn.put("t", b"a", b"insert-a")?; // before the first stored key
-                txn.put("t", b"b", b"update-b")?; // overwrites a stored key
-                txn.remove("t", b"d")?; // tombstones a stored key
-                txn.put("t", b"g", b"insert-g")?; // after the last stored key
-
-                let mut rows = Vec::new();
-                txn.for_each("t", |key, value| {
-                    rows.push((key.to_vec(), value.to_vec()));
-                    Ok(())
-                })?;
-                assert_eq!(
-                    rows,
-                    vec![
-                        (b"a".to_vec(), b"insert-a".to_vec()),
-                        (b"b".to_vec(), b"update-b".to_vec()),
-                        (b"f".to_vec(), b"stored-f".to_vec()),
-                        (b"g".to_vec(), b"insert-g".to_vec()),
-                    ],
-                    "merged scan must be ascending, apply buffered puts, \
-                     and hide the tombstoned row"
-                );
-                Ok(())
-            })
-            .unwrap();
         drop(store);
     }
 
@@ -2556,7 +1840,7 @@ mod tests {
         store
             .write(|txn| {
                 for i in 0..RECORDS {
-                    txn.put("t", &i.to_be_bytes(), &expected_value(i))?;
+                    txn.put_raw(&i.to_be_bytes(), &expected_value(i))?;
                 }
                 Ok(())
             })
@@ -2564,7 +1848,7 @@ mod tests {
 
         let mut seen = 0u32;
         store
-            .for_each("t", |key, value| {
+            .range_raw(Bound::Unbounded, Bound::Unbounded, |key, value| {
                 let i = u32::from_be_bytes(key.try_into().unwrap());
                 assert_eq!(i, seen, "scan must visit keys in ascending order");
                 assert_eq!(
@@ -2610,15 +1894,15 @@ mod tests {
         fn check(class: &str, mut store: TkrzwStore) {
             store
                 .write(|txn| {
-                    txn.put("t", b"kept", b"v")?;
-                    txn.put("t", b"removed", b"v")
+                    txn.put_raw(b"kept", b"v")?;
+                    txn.put_raw(b"removed", b"v")
                 })
                 .unwrap();
 
             // NOOP: the callback's answer for a record that is not there.
-            store.write(|txn| txn.remove("t", b"absent")).unwrap();
+            store.write(|txn| txn.remove_raw(b"absent")).unwrap();
             assert_eq!(
-                store.read("t", b"absent").unwrap(),
+                store.read_raw(b"absent").unwrap(),
                 None,
                 "{class}: removing an absent record stored one: {CAUSE}"
             );
@@ -2626,9 +1910,9 @@ mod tests {
             // REMOVE: its answer for a record that is. A separate
             // transaction from the put, so the record is really stored
             // when the removal reaches the library.
-            store.write(|txn| txn.remove("t", b"removed")).unwrap();
+            store.write(|txn| txn.remove_raw(b"removed")).unwrap();
             assert_eq!(
-                store.read("t", b"removed").unwrap(),
+                store.read_raw(b"removed").unwrap(),
                 None,
                 "{class}: a removed record is still stored: {CAUSE}"
             );
@@ -2639,7 +1923,7 @@ mod tests {
             if let Err(error) = store.compact() {
                 panic!("{class}: compact failed ({error}): {CAUSE}");
             }
-            assert_eq!(store.read("t", b"kept").unwrap(), Some(b"v".to_vec()));
+            assert_eq!(store.read_raw(b"kept").unwrap(), Some(b"v".to_vec()));
         }
 
         let file_classes: [(&str, Create); 2] = [
@@ -2749,29 +2033,29 @@ mod tests {
         }
 
         /// Insert `keys` (each mapped to a 1-byte value) and return the
-        /// `for_each` walk as owned rows.
+        /// raw walk as owned rows.
         fn insert_and_walk<S: WriteStore>(path: &Path, keys: &[Vec<u8>]) -> Rows {
             let store = S::create(path).expect("create store");
             store
                 .write(|txn| {
                     for key in keys {
-                        txn.put("data", key, b"v")?;
+                        txn.put_raw(key, b"v")?;
                     }
                     Ok(())
                 })
                 .expect("bulk insert");
             let mut rows = Rows::new();
             store
-                .for_each("data", |key, value| {
+                .range_raw(Bound::Unbounded, Bound::Unbounded, |key, value| {
                     rows.push((key.to_vec(), value.to_vec()));
                     Ok(())
                 })
-                .expect("for_each walk");
+                .expect("raw walk");
             drop(store);
             rows
         }
 
-        /// Insert `keys` and return the `range` walk over `[lo, hi)`.
+        /// Insert `keys` and return the raw range walk over `[lo, hi)`.
         fn insert_and_range<S: WriteStore>(
             path: &Path,
             keys: &[Vec<u8>],
@@ -2782,22 +2066,17 @@ mod tests {
             store
                 .write(|txn| {
                     for key in keys {
-                        txn.put("data", key, b"v")?;
+                        txn.put_raw(key, b"v")?;
                     }
                     Ok(())
                 })
                 .expect("bulk insert");
             let mut rows = Rows::new();
             store
-                .range(
-                    "data",
-                    Bound::Included(lo),
-                    Bound::Excluded(hi),
-                    |key, value| {
-                        rows.push((key.to_vec(), value.to_vec()));
-                        Ok(())
-                    },
-                )
+                .range_raw(Bound::Included(lo), Bound::Excluded(hi), |key, value| {
+                    rows.push((key.to_vec(), value.to_vec()));
+                    Ok(())
+                })
                 .expect("range walk");
             drop(store);
             rows
@@ -2882,14 +2161,14 @@ mod tests {
         // peer build through CI proves the cross-peer equivalence.
 
         #[test]
-        fn for_each_matches_the_byte_ordered_sequence_be_keys() {
+        fn raw_walk_matches_the_byte_ordered_sequence_be_keys() {
             let path = TempPath::new("xback-be");
             let rows = insert_and_walk::<DefaultStore>(&path.0, &be_keys());
             let keys: Vec<Vec<u8>> = rows.iter().map(|(k, _)| k.clone()).collect();
             assert_eq!(
                 keys,
                 sorted_by_bytes(&be_keys()),
-                "the peer's for_each must be the byte-ordered walk",
+                "the peer's raw walk must be the byte-ordered walk",
             );
             let tokens: Vec<u32> = rows
                 .iter()
@@ -2920,7 +2199,7 @@ mod tests {
             assert_eq!(
                 out,
                 sorted_by_bytes(&keys),
-                "the peer's for_each must be the byte-ordered walk",
+                "the peer's raw walk must be the byte-ordered walk",
             );
             let pairs: Vec<(u32, u32)> = rows
                 .iter()

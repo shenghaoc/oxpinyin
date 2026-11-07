@@ -80,10 +80,8 @@ use std::collections::BTreeMap;
 use std::ops::Bound;
 use std::path::Path;
 
-use crate::common::{frame, in_bounds, prefix, unframe};
-use crate::{
-    AttachMode, Flow, HashAttach, ReadStore, StoreError, WriteStore, WriteTxn, validate_table_name,
-};
+use crate::common::in_bounds;
+use crate::{AttachMode, Flow, HashAttach, StoreError, WriteStore, WriteTxn};
 
 use ffi::{Db, DbType};
 
@@ -176,53 +174,6 @@ impl KcStore {
         let _ = self.db.end_transaction(false);
     }
 
-    /// Walks `table`'s rows in ascending key order within `[lo, hi]`.
-    ///
-    /// One cursor, positioned once with `kccurjumpkey` and advanced by
-    /// `kccuraccept`'s own step, stopping at the first key outside the
-    /// table's framed prefix — so a scan costs the rows it returns and one
-    /// more.
-    fn walk(
-        &self,
-        table: &str,
-        lo: Bound<&[u8]>,
-        hi: Bound<&[u8]>,
-        mut visit: impl FnMut(&[u8], &[u8]) -> Result<Flow, StoreError>,
-    ) -> Result<(), StoreError> {
-        // The cursor logic is `TableRows::next`, one copy shared by every
-        // call site; each visitor's instantiation is only this loop.
-        let mut rows = self.table_rows(table, lo, hi)?;
-        while let Some(row) = rows.next()? {
-            if visit(row.key, row.value)?.is_break() {
-                break;
-            }
-        }
-        Ok(())
-    }
-
-    /// The row stream behind [`Self::walk`].
-    fn table_rows<'b>(
-        &self,
-        table: &str,
-        lo: Bound<&'b [u8]>,
-        hi: Bound<&'b [u8]>,
-    ) -> Result<TableRows<'_, 'b>, StoreError> {
-        validate_table_name(table)?;
-        let table_prefix = prefix(table);
-        let start = match lo {
-            Bound::Unbounded => table_prefix.clone(),
-            Bound::Included(key) | Bound::Excluded(key) => frame(table, key),
-        };
-        Ok(TableRows {
-            cursor: self.db.cursor(),
-            positioned: false,
-            start,
-            table_prefix,
-            lo,
-            hi,
-        })
-    }
-
     /// Every row of the file, sorted by key. Not generic, so the many
     /// visitors share one copy of the iteration and the sort.
     #[inline(never)]
@@ -276,120 +227,15 @@ impl KcStore {
         }
         Ok(())
     }
-
-    /// Every row of `table` in `[lo, hi]`, copied out in key order.
-    fn collect_rows(
-        &self,
-        table: &str,
-        lo: Bound<&[u8]>,
-        hi: Bound<&[u8]>,
-    ) -> Result<ffi::Rows, StoreError> {
-        let mut out = ffi::Rows::new();
-        let mut rows = self.table_rows(table, lo, hi)?;
-        while let Some(row) = rows.next()? {
-            out.push(row.key, row.value);
-        }
-        Ok(out)
-    }
 }
 
-/// A table's rows in ascending key order within `[lo, hi]`: one cursor,
-/// positioned once with `kccurjumpkey` and advanced by `kccuraccept`'s own
-/// step, ending at the first key outside the table's framed prefix — so a
-/// walk costs the rows it returns and one more.
-///
-/// The stepping is a method of this concrete type rather than a loop in
-/// each generic visitor, so the many `scan` call sites share one copy of
-/// it and each instantiation is only a thin `while let`.
-struct TableRows<'db, 'b> {
-    cursor: ffi::Cursor<'db>,
-    positioned: bool,
-    start: Vec<u8>,
-    table_prefix: Vec<u8>,
-    lo: Bound<&'b [u8]>,
-    hi: Bound<&'b [u8]>,
-}
-
-/// One row of a [`TableRows`] walk, borrowed from the cursor's buffer
-/// until the next step: the key without the table's framing prefix.
-struct TableRow<'r> {
-    key: &'r [u8],
-    value: &'r [u8],
-}
-
-impl TableRows<'_, '_> {
-    /// The next row inside the table and bounds, or `None` at the end of
-    /// the walk.
-    #[inline(never)]
-    fn next(&mut self) -> Result<Option<TableRow<'_>>, StoreError> {
-        if !self.positioned {
-            self.positioned = true;
-            if !self.cursor.jump_to(&self.start)? {
-                return Ok(None);
-            }
-        }
-        loop {
-            if !self.cursor.next()? {
-                return Ok(None);
-            }
-            let Some(key) = unframe(&self.table_prefix, self.cursor.key()) else {
-                // Past the last row of this table.
-                return Ok(None);
-            };
-            if matches!(self.lo, Bound::Excluded(bound) if key == bound) {
-                continue;
-            }
-            if !in_bounds(key, Bound::Unbounded, self.hi) {
-                return Ok(None);
-            }
-            break;
-        }
-        Ok(Some(TableRow {
-            key: self
-                .cursor
-                .key()
-                .get(self.table_prefix.len()..)
-                .unwrap_or(&[]),
-            value: self.cursor.value(),
-        }))
-    }
-}
-
-impl ReadStore for KcStore {
+impl crate::RawReadStore for KcStore {
     fn open_read_only(path: &Path) -> Result<Self, StoreError> {
         Ok(Self {
             db: Db::open(path, DbType::Tree, true, false)?,
         })
     }
 
-    fn get(&self, table: &str, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> {
-        validate_table_name(table)?;
-        self.db.get(&frame(table, key), value)
-    }
-
-    fn scan(
-        &self,
-        table: &str,
-        lo: Bound<&[u8]>,
-        hi: Bound<&[u8]>,
-        visit: impl FnMut(&[u8], &[u8]) -> Result<Flow, StoreError>,
-    ) -> Result<(), StoreError> {
-        self.walk(table, lo, hi, visit)
-    }
-
-    fn is_empty(&self, table: &str) -> Result<bool, StoreError> {
-        validate_table_name(table)?;
-        let table_prefix = prefix(table);
-        let mut cursor = self.db.cursor();
-        if !cursor.jump_to(&table_prefix)? {
-            return Ok(true);
-        }
-        // Reads the first key at or after the prefix, and nothing else.
-        Ok(!cursor.peek_key()? || unframe(&table_prefix, cursor.key()).is_none())
-    }
-}
-
-impl crate::RawReadStore for KcStore {
     fn get_raw_bounded(&self, key: &[u8], value: &mut [u8]) -> Result<Option<usize>, StoreError> {
         self.db.get_bounded(key, value)
     }
@@ -713,34 +559,13 @@ impl KcTxn<'_> {
 
 impl WriteTxn for KcTxn<'_> {
     // The point operations stay out of line: the user store calls them from
-    // hundreds of sites, and inlining each one's validation, framing and
-    // buffer insert (or FFI call) into every caller costs far more code
-    // than a direct call. Dispatch is static either way.
-    #[inline(never)]
-    fn get(&self, table: &str, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> {
-        validate_table_name(table)?;
-        let framed = frame(table, key);
-        if let Some(slot) = self.buffer.as_ref().and_then(|buffer| buffer.get(&framed)) {
-            value.clear();
-            let Some(bytes) = slot else {
-                return Ok(false);
-            };
-            value.extend_from_slice(bytes);
-            return Ok(true);
-        }
-        self.store.db.get(&framed, value)
-    }
-
-    #[inline(never)]
-    fn put(&mut self, table: &str, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
-        validate_table_name(table)?;
-        self.apply(frame(table, key), Some(value))
-    }
-
+    // hundreds of sites, and inlining each one's buffer insert (or FFI
+    // call) into every caller costs far more code than a direct call.
+    // Dispatch is static either way.
     #[inline(never)]
     fn put_raw(&mut self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
-        // The file's bare keyspace, no table-name framing — what
-        // `get_raw`/`range_raw` read back on this backend.
+        // The file's bare keyspace — what `get_raw`/`range_raw` read back
+        // on this backend.
         self.apply(key.to_vec(), Some(value))
     }
 
@@ -748,71 +573,6 @@ impl WriteTxn for KcTxn<'_> {
     fn remove_raw(&mut self, key: &[u8]) -> Result<(), StoreError> {
         // The removal half of `put_raw`, on the same bare keyspace.
         self.apply(key.to_vec(), None)
-    }
-
-    #[inline(never)]
-    fn remove(&mut self, table: &str, key: &[u8]) -> Result<(), StoreError> {
-        validate_table_name(table)?;
-        self.apply(frame(table, key), None)
-    }
-
-    fn scan(
-        &self,
-        table: &str,
-        lo: Bound<&[u8]>,
-        hi: Bound<&[u8]>,
-        mut visit: impl FnMut(&[u8], &[u8]) -> Result<Flow, StoreError>,
-    ) -> Result<(), StoreError> {
-        // A cursor inside the transaction sees the transaction's writes.
-        // The rows are collected first: the visitor may itself call back
-        // into the store, and holding a cursor across that is what the
-        // borrow of `self.store.db` would otherwise allow.
-        let rows = self.store.collect_rows(table, lo, hi)?;
-        let Some(buffer) = self.buffer.as_ref() else {
-            for index in 0..rows.len() {
-                let (key, value) = rows.get(index);
-                if visit(key, value)?.is_break() {
-                    break;
-                }
-            }
-            return Ok(());
-        };
-        // Under `write_deferred` the buffered writes are laid over the
-        // stored rows, in key order.
-        let table_prefix = prefix(table);
-        let mut merged: BTreeMap<&[u8], &[u8]> =
-            (0..rows.len()).map(|index| rows.get(index)).collect();
-        for (framed, slot) in buffer {
-            let Some(key) = unframe(&table_prefix, framed) else {
-                continue;
-            };
-            if !in_bounds(key, lo, hi) {
-                continue;
-            }
-            match slot {
-                Some(value) => merged.insert(key, value),
-                None => merged.remove(key),
-            };
-        }
-        for (key, value) in merged {
-            if visit(key, value)?.is_break() {
-                break;
-            }
-        }
-        Ok(())
-    }
-
-    #[inline(never)]
-    fn is_empty(&self, table: &str) -> Result<bool, StoreError> {
-        if self.buffer.is_none() {
-            return self.store.is_empty(table);
-        }
-        let mut empty = true;
-        self.scan(table, Bound::Unbounded, Bound::Unbounded, |_, _| {
-            empty = false;
-            Ok(Flow::Break(()))
-        })?;
-        Ok(empty)
     }
 }
 
@@ -903,9 +663,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{KcStore, KcUserBigramDb};
-    use crate::{
-        GramReadOwned, RawReadOwned, RawReadStore, ReadStore, UserBigramDb, WriteStore, WriteTxn,
-    };
+    use crate::{GramReadOwned, RawReadOwned, RawReadStore, UserBigramDb, WriteStore, WriteTxn};
 
     /// A file under the temp directory, removed on drop.
     struct Temp(PathBuf);

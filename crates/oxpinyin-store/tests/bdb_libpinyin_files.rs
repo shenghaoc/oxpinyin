@@ -19,7 +19,7 @@
 use std::ops::Bound;
 use std::path::Path;
 
-use oxpinyin_store::{BdbStore, RawReadStore, ReadStore, StoreError, WriteStore};
+use oxpinyin_store::{BdbStore, RawReadStore, StoreError, WriteStore};
 
 /// Native-endian `u32` words: the k-mixture records are arrays of them
 /// (`utils/training/k_mixture_model.h:110-154` at libpinyin 074a2219).

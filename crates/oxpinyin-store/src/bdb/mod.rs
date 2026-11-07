@@ -2,22 +2,17 @@
 //! drop-in set (drop-in task 10).
 //!
 //! Enabled by the `bdb` cargo feature. One type, [`BdbStore`], serves
-//! both roles the architecture asks of a libpinyin-DBM backend:
-//!
-//! * the framed **container** (`DB_BTREE`, one file, `table || 0x00 ||
-//!   key` like the Kyoto Cabinet and tkrzw backends) behind
-//!   [`crate::ReadStore`] / [`crate::WriteStore`] — the session scratch
-//!   store, the benches;
-//! * the **raw** keyspace of libpinyin's own files behind
-//!   [`crate::RawReadStore`]: `create_hash`/`open_hash_read_only` are
-//!   the `DB_HASH` form of `bigram.db`/`user_bigram.db`, and the
-//!   `put_raw`/`get_raw`/`range_raw` seam is what `stage_dbm`'s tree
-//!   containers (`pinyin_index.bin`, `phrase_index.bin`, `punct.bin`)
-//!   and the user-dir bigram writer are written through. On this
-//!   backend the system and user bigrams are the same container — a
-//!   `DB_HASH` file — so the trait's default `open_user_bigram`
-//!   (delegate to `open_hash_read_only`) is correct and neither
-//!   override that Kyoto Cabinet needs applies.
+//! the raw keyspace of libpinyin's own files behind
+//! [`crate::RawReadStore`] / [`crate::WriteStore`], each file one database
+//! opened with no subdatabase name: `create_hash`/`open_hash_read_only`
+//! are the `DB_HASH` form of `bigram.db`/`user_bigram.db`, and the
+//! `put_raw`/`get_raw`/`range_raw` seam is what `stage_dbm`'s tree
+//! containers (`pinyin_index.bin`, `phrase_index.bin`, `punct.bin`), the
+//! session scratch store and the user-dir bigram writer are written
+//! through. On this backend the system and user bigrams are the same
+//! container — a `DB_HASH` file — so the trait's default
+//! `open_user_bigram` (delegate to `open_hash_read_only`) is correct and
+//! neither override that Kyoto Cabinet needs applies.
 //!
 //! # Key ordering
 //!
@@ -89,22 +84,17 @@
 mod ffi;
 
 use std::collections::BTreeMap;
+use std::marker::PhantomData;
 use std::ops::Bound;
 use std::path::Path;
 
-use crate::common::{Row, fill_buffered, frame, in_bounds, prefix, unframe};
-use crate::{
-    AttachMode, Flow, HashAttach, RawReadStore, ReadStore, StoreError, WriteStore, WriteTxn,
-    validate_table_name,
-};
+use crate::common::{Row, in_bounds};
+use crate::{AttachMode, Flow, HashAttach, RawReadStore, StoreError, WriteStore, WriteTxn};
 
 use ffi::{Seek, SharedDb as Db};
 
-/// One borrowed `(key, value)` row.
-type BorrowedRow<'a> = (&'a [u8], &'a [u8]);
-
 /// A Berkeley DB store: a `DB_BTREE` container when opened by
-/// [`ReadStore::open_read_only`] / [`WriteStore::create`], a `DB_HASH`
+/// [`RawReadStore::open_read_only`] / [`WriteStore::create`], a `DB_HASH`
 /// raw keyspace when opened by the hash constructors.
 pub struct BdbStore {
     db: Db,
@@ -222,80 +212,6 @@ impl BdbStore {
         Ok(found)
     }
 
-    /// Walks `table`'s rows in ascending key order, within `[lo, hi]`,
-    /// handing each to `visit`.
-    ///
-    /// One cursor, positioned once with `DB_SET_RANGE` and advanced with
-    /// `DB_NEXT`; the walk stops at the first key outside the table's
-    /// framed prefix, so a scan costs the rows it returns and one more.
-    ///
-    /// **Assumes a `DB_BTREE` handle.** `DB_SET_RANGE` is Btree-only —
-    /// libdb answers `EINVAL` on a `DB_HASH` — so unlike
-    /// [`Self::range_raw`] this does not branch on [`ffi::Db::is_hash`].
-    /// That holds because the framed tier is reached only through a
-    /// tree-opened store: every caller of the hash constructors
-    /// (`create_hash` / `open_hash_read_only` / `open_user_bigram`) uses
-    /// the raw tier alone. Nothing in the type system enforces it — the
-    /// hash constructors return the same `Self` the tree ones do. See the
-    /// Stage 2 section of `docs/findings/store-key-ordering.md`.
-    fn walk(
-        &self,
-        table: &str,
-        lo: Bound<&[u8]>,
-        hi: Bound<&[u8]>,
-        mut visit: impl FnMut(&[u8], &[u8]) -> Result<Flow, StoreError>,
-    ) -> Result<(), StoreError> {
-        // The cursor logic is `TableRows::next`, one copy shared by every
-        // call site; each visitor's instantiation is only this loop.
-        let mut rows = self.table_rows(table, lo, hi)?;
-        while let Some((key, value)) = rows.next()? {
-            if visit(&key, &value)?.is_break() {
-                break;
-            }
-        }
-        Ok(())
-    }
-
-    /// The row stream behind [`Self::walk`].
-    fn table_rows<'b>(
-        &self,
-        table: &str,
-        lo: Bound<&'b [u8]>,
-        hi: Bound<&'b [u8]>,
-    ) -> Result<TableRows<'_, 'b>, StoreError> {
-        validate_table_name(table)?;
-        let table_prefix = prefix(table);
-        let start = match lo {
-            Bound::Unbounded => table_prefix.clone(),
-            Bound::Included(key) | Bound::Excluded(key) => frame(table, key),
-        };
-        Ok(TableRows {
-            cursor: self.db.cursor()?,
-            started: false,
-            start,
-            table_prefix,
-            lo,
-            hi,
-        })
-    }
-
-    /// Whether `table` has any row at all — one cursor positioning, never
-    /// a scan.
-    ///
-    /// Assumes a `DB_BTREE` handle for the same reason [`Self::walk`]
-    /// does, and on the same grounds.
-    fn first_key_of(&self, table: &str) -> Result<bool, StoreError> {
-        validate_table_name(table)?;
-        let table_prefix = prefix(table);
-        let mut cursor = self.db.cursor()?;
-        Ok(
-            match cursor.get(Seek::AtOrAfter(table_prefix.as_slice()))? {
-                None => false,
-                Some(row) => unframe(&table_prefix, row.key).is_some(),
-            },
-        )
-    }
-
     /// The raw keyspace in ascending key order — the ordered (`DB_BTREE`)
     /// half of [`Self::range_raw`]: one cursor from the lower bound,
     /// streaming rows and stopping at the first key above `hi`.
@@ -377,90 +293,13 @@ impl BdbStore {
     }
 }
 
-/// A table's rows in ascending key order, within `[lo, hi]`: one cursor,
-/// positioned once with `DB_SET_RANGE` and advanced with `DB_NEXT`,
-/// ending at the first key outside the table's framed prefix or bounds,
-/// so a walk costs the rows it returns and one more.
-///
-/// The stepping is a method of this concrete type rather than a loop in
-/// each generic visitor, so the many `scan` call sites share one copy of
-/// it and each instantiation is only a thin `while let`.
-struct TableRows<'db, 'b> {
-    cursor: ffi::Cursor<'db>,
-    started: bool,
-    start: Vec<u8>,
-    table_prefix: Vec<u8>,
-    lo: Bound<&'b [u8]>,
-    hi: Bound<&'b [u8]>,
-}
-
-impl TableRows<'_, '_> {
-    /// The next `(key, value)` inside the table and bounds, copied out of
-    /// the cursor's buffers, or `None` at the end of the walk.
-    #[inline(never)]
-    fn next(&mut self) -> Result<Option<Row>, StoreError> {
-        loop {
-            let seek = if self.started {
-                Seek::Next
-            } else {
-                self.started = true;
-                Seek::AtOrAfter(self.start.as_slice())
-            };
-            // The row borrows the cursor, so everything this iteration
-            // keeps is copied out before the next `get` — which is what
-            // makes the borrow check the enforcement of libdb's rule.
-            let (key, value) = match self.cursor.get(seek)? {
-                None => return Ok(None),
-                Some(row) => {
-                    let Some(key) = unframe(&self.table_prefix, row.key) else {
-                        // Past the last row of this table.
-                        return Ok(None);
-                    };
-                    (key.to_vec(), row.value.to_vec())
-                }
-            };
-            if matches!(self.lo, Bound::Excluded(bound) if key.as_slice() == bound) {
-                continue;
-            }
-            match self.hi {
-                Bound::Unbounded => {}
-                Bound::Included(bound) if key.as_slice() <= bound => {}
-                Bound::Excluded(bound) if key.as_slice() < bound => {}
-                _ => return Ok(None),
-            }
-            return Ok(Some((key, value)));
-        }
-    }
-}
-
-impl ReadStore for BdbStore {
+impl RawReadStore for BdbStore {
     fn open_read_only(path: &Path) -> Result<Self, StoreError> {
         Ok(Self {
             db: Db::open(path, ffi::DB_BTREE, true, false, ffi::SYSTEM_FILE_MODE)?,
         })
     }
 
-    fn get(&self, table: &str, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> {
-        validate_table_name(table)?;
-        self.db.get(&frame(table, key), value)
-    }
-
-    fn scan(
-        &self,
-        table: &str,
-        lo: Bound<&[u8]>,
-        hi: Bound<&[u8]>,
-        visit: impl FnMut(&[u8], &[u8]) -> Result<Flow, StoreError>,
-    ) -> Result<(), StoreError> {
-        self.walk(table, lo, hi, visit)
-    }
-
-    fn is_empty(&self, table: &str) -> Result<bool, StoreError> {
-        Ok(!self.first_key_of(table)?)
-    }
-}
-
-impl RawReadStore for BdbStore {
     fn get_raw(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> {
         self.db.get(key, value)
     }
@@ -569,7 +408,7 @@ impl WriteStore for BdbStore {
 
     /// libdb's in-memory database (`DB->open` with a null file name, the
     /// form `ngram_bdb.cpp:51-56` uses for the user bigram), as a
-    /// `DB_BTREE` so the table framing's ordered walks hold.
+    /// `DB_BTREE` so the ordered raw walks hold.
     fn create_in_memory() -> Result<Self, StoreError> {
         Ok(Self {
             db: Db::open_in_memory_tree()?,
@@ -622,7 +461,7 @@ impl WriteStore for BdbStore {
             return Err(StoreError::ReadOnly);
         }
         let mut txn = BdbTxn {
-            store: self,
+            store: PhantomData,
             buffer: BTreeMap::new(),
         };
         let out = f(&mut txn)?;
@@ -642,7 +481,7 @@ impl WriteStore for BdbStore {
             return Err(StoreError::ReadOnly);
         }
         let mut txn = BdbTxn {
-            store: self,
+            store: PhantomData,
             buffer: BTreeMap::new(),
         };
         let out = f(&mut txn)?;
@@ -670,35 +509,18 @@ impl WriteStore for BdbStore {
 
 /// The buffered write transaction described in the module note.
 pub struct BdbTxn<'store> {
-    store: &'store BdbStore,
-    /// Key (framed for table rows, bare for `put_raw` rows) → new value,
-    /// or `None` for a removal. Ordered so the apply pass touches keys
-    /// in B-tree order.
+    /// The transaction borrows its store for its lifetime.
+    store: PhantomData<&'store BdbStore>,
+    /// Raw key → new value, or `None` for a removal. Ordered so the apply
+    /// pass touches keys in B-tree order.
     buffer: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
 }
 
 impl WriteTxn for BdbTxn<'_> {
     // The point operations stay out of line: the user store calls them from
-    // hundreds of sites, and inlining each one's validation, framing and
-    // buffer insert (or FFI call) into every caller costs far more code
-    // than a direct call. Dispatch is static either way.
-    #[inline(never)]
-    fn get(&self, table: &str, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> {
-        validate_table_name(table)?;
-        let framed = frame(table, key);
-        // Read-your-writes: the buffer wins over the database.
-        match self.buffer.get(&framed) {
-            Some(slot) => Ok(fill_buffered(slot.as_deref(), value)),
-            None => self.store.db.get(&framed, value),
-        }
-    }
-
-    #[inline(never)]
-    fn put(&mut self, table: &str, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
-        validate_table_name(table)?;
-        self.buffer.insert(frame(table, key), Some(value.to_vec()));
-        Ok(())
-    }
+    // hundreds of sites, and inlining each one's buffer insert into every
+    // caller costs far more code than a direct call. Dispatch is static
+    // either way.
 
     /// The bare-keyspace half of the raw seam: what `stage_dbm`'s tree
     /// containers and the user-bigram writer write through, and what
@@ -709,208 +531,11 @@ impl WriteTxn for BdbTxn<'_> {
         Ok(())
     }
 
-    /// The removal half of [`WriteTxn::put_raw`]: a bare key, no framing.
+    /// The removal half of [`WriteTxn::put_raw`].
     #[inline(never)]
     fn remove_raw(&mut self, key: &[u8]) -> Result<(), StoreError> {
         self.buffer.insert(key.to_vec(), None);
         Ok(())
-    }
-
-    #[inline(never)]
-    fn remove(&mut self, table: &str, key: &[u8]) -> Result<(), StoreError> {
-        validate_table_name(table)?;
-        self.buffer.insert(frame(table, key), None);
-        Ok(())
-    }
-
-    fn scan(
-        &self,
-        table: &str,
-        lo: Bound<&[u8]>,
-        hi: Bound<&[u8]>,
-        visit: impl FnMut(&[u8], &[u8]) -> Result<Flow, StoreError>,
-    ) -> Result<(), StoreError> {
-        self.merged_walk(table, lo, hi, visit)
-    }
-
-    #[inline(never)]
-    fn is_empty(&self, table: &str) -> Result<bool, StoreError> {
-        let mut empty = true;
-        self.merged_walk(table, Bound::Unbounded, Bound::Unbounded, |_, _| {
-            empty = false;
-            // Stop at the first row rather than walking the table.
-            Ok(Flow::Break(()))
-        })?;
-        Ok(empty)
-    }
-}
-
-impl BdbTxn<'_> {
-    /// A walk that reads the database and the buffer as one table.
-    ///
-    /// The buffer is small (one closure's writes) while the table may be
-    /// large, so the merge collects the buffer's rows for this table and
-    /// walks the database once, splicing them in by key order and
-    /// skipping database rows the buffer has overwritten or removed.
-    fn merged_walk(
-        &self,
-        table: &str,
-        lo: Bound<&[u8]>,
-        hi: Bound<&[u8]>,
-        mut visit: impl FnMut(&[u8], &[u8]) -> Result<Flow, StoreError>,
-    ) -> Result<(), StoreError> {
-        let mut rows = self.merged_rows(table, lo, hi)?;
-        while let Some((key, value)) = rows.next()? {
-            if visit(key, value)?.is_break() {
-                break;
-            }
-        }
-        Ok(())
-    }
-
-    /// The row stream behind [`Self::merged_walk`].
-    fn merged_rows<'t, 'b>(
-        &'t self,
-        table: &'t str,
-        lo: Bound<&'b [u8]>,
-        hi: Bound<&'b [u8]>,
-    ) -> Result<MergedRows<'t, 'b>, StoreError> {
-        validate_table_name(table)?;
-        let table_prefix = prefix(table);
-
-        let mut pending: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
-        for (framed, value) in &self.buffer {
-            let Some(key) = unframe(&table_prefix, framed) else {
-                continue;
-            };
-            if let Some(value) = value
-                && in_bounds(key, lo, hi)
-            {
-                pending.push((key.to_vec(), value.clone()));
-            }
-        }
-        // `buffer` is a BTreeMap over framed keys, and every key here
-        // shares one prefix, so `pending` is already in key order.
-        Ok(MergedRows {
-            stored: self.store.table_rows(table, lo, hi)?,
-            table,
-            buffer: &self.buffer,
-            pending,
-            next_pending: 0,
-            stored_done: false,
-            held: None,
-            spent: false,
-        })
-    }
-}
-
-/// Which buffer of a [`MergedRows`] holds the row [`MergedRows::advance`]
-/// settled on.
-enum Settled {
-    End,
-    /// The held stored row.
-    Stored,
-    /// `pending[index]`.
-    Pending(usize),
-}
-
-/// A transaction's view of one table: the database's rows and the
-/// transaction's buffered writes read as one table, in key order.
-///
-/// The buffer is small (one closure's writes) while the table may be
-/// large, so the merge holds the buffer's live rows for this table in
-/// `pending` and streams the database once, splicing them in by key
-/// order and skipping database rows the buffer has overwritten or
-/// removed. Like [`TableRows`] it is a concrete stepper, so the merge
-/// exists once and each visitor's instantiation is a thin loop.
-struct MergedRows<'t, 'b> {
-    stored: TableRows<'t, 'b>,
-    table: &'t str,
-    buffer: &'t BTreeMap<Vec<u8>, Option<Vec<u8>>>,
-    pending: Vec<(Vec<u8>, Vec<u8>)>,
-    next_pending: usize,
-    stored_done: bool,
-    /// A stored row read ahead and not yet settled against `pending`.
-    held: Option<(Vec<u8>, Vec<u8>)>,
-    /// The held row was handed out by the last call; drop it before
-    /// settling the next one.
-    spent: bool,
-}
-
-impl MergedRows<'_, '_> {
-    /// The next merged `(key, value)`, borrowed from this stream until the
-    /// following call, or `None` at the end.
-    #[inline(never)]
-    fn next(&mut self) -> Result<Option<BorrowedRow<'_>>, StoreError> {
-        Ok(match self.advance()? {
-            Settled::End => None,
-            Settled::Stored => self
-                .held
-                .as_ref()
-                .map(|(key, value)| (key.as_slice(), value.as_slice())),
-            Settled::Pending(index) => self
-                .pending
-                .get(index)
-                .map(|(key, value)| (key.as_slice(), value.as_slice())),
-        })
-    }
-
-    /// Settles which row comes next: buffered inserts below the next
-    /// stored key first; then the stored row itself unless the buffer
-    /// overrides or removes it; past the last stored row, the remaining
-    /// buffered inserts.
-    fn advance(&mut self) -> Result<Settled, StoreError> {
-        if self.spent {
-            self.held = None;
-            self.spent = false;
-        }
-        loop {
-            if self.held.is_none() && !self.stored_done {
-                match self.stored.next()? {
-                    Some(row) => self.held = Some(row),
-                    None => self.stored_done = true,
-                }
-            }
-            let Some((stored_key, _)) = &self.held else {
-                // Past the last stored row, whatever buffering remains is
-                // all inserts.
-                return Ok(self.take_pending());
-            };
-            if let Some((pending_key, _)) = self.pending.get(self.next_pending)
-                && pending_key < stored_key
-            {
-                return Ok(self.take_pending());
-            }
-            let overwritten = self.buffer.contains_key(&frame(self.table, stored_key));
-            if !overwritten {
-                self.spent = true;
-                return Ok(Settled::Stored);
-            }
-            // Either removed, or already emitted from `pending`.
-            let emitted = self.next_pending > 0
-                && self
-                    .pending
-                    .get(self.next_pending - 1)
-                    .is_some_and(|(key, _)| key == stored_key);
-            let overridden = self
-                .pending
-                .get(self.next_pending)
-                .is_some_and(|(key, _)| key == stored_key);
-            self.held = None;
-            if !emitted && overridden {
-                return Ok(self.take_pending());
-            }
-        }
-    }
-
-    /// The next buffered insert, or the end when none remains.
-    fn take_pending(&mut self) -> Settled {
-        if self.next_pending < self.pending.len() {
-            self.next_pending += 1;
-            Settled::Pending(self.next_pending - 1)
-        } else {
-            Settled::End
-        }
     }
 }
 
@@ -1114,7 +739,7 @@ impl BdbStore {
 #[cfg(test)]
 mod tests {
     use super::BdbStore;
-    use crate::{RawReadStore as _, ReadStore as _, WriteStore as _, WriteTxn as _};
+    use crate::{RawReadStore as _, WriteStore as _, WriteTxn as _};
     use std::ops::{Bound, ControlFlow};
     use std::sync::{Arc, Barrier};
 
