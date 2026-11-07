@@ -277,6 +277,19 @@ pub extern "C" fn zhuyin_get_zhuyin_offset(
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
+    // The pin clamps the cursor to the parsed length and reads
+    // `get_column_size` at each position from there down. A parse that
+    // consumed bytes but placed no key (apostrophes only) leaves the matrix
+    // empty (`fill_matrix`, `phonetic_key_matrix.cpp:34-38`), and the first
+    // read asserts (`phonetic_key_matrix.h:103`; register row 66).
+    if inst
+        .core
+        .pin_matrix_columns()
+        .is_ok_and(|columns| columns == 0)
+        && cursor.min(inst.core.pin_parsed_len().unwrap_or(0)) >= 1
+    {
+        std::process::abort();
+    }
     let Ok(normalized) = inst.core.lookup_offset(cursor) else {
         return false;
     };
@@ -287,6 +300,21 @@ pub extern "C" fn zhuyin_get_zhuyin_offset(
         }
     }
     true
+}
+
+/// The pin reads matrix column `index` with `get_column_size`, which asserts
+/// `index < size` (`phonetic_key_matrix.h:103`). The matrix has
+/// `parsed_len + 1` columns, fewer than the input has bytes when the parse
+/// stopped early, and none while it placed no key; the process aborts for a
+/// column outside it (register row 66).
+fn abort_past_matrix(inst: &crate::state::CapiInstanceRead<'_>, index: usize) {
+    if inst
+        .core
+        .pin_matrix_columns()
+        .is_ok_and(|columns| index >= columns)
+    {
+        std::process::abort();
+    }
 }
 
 /// Get the left offset from a lookup offset.
@@ -312,7 +340,7 @@ pub extern "C" fn zhuyin_get_left_zhuyin_offset(
     // `_check_offset` reads column `offset - 1` (`zhuyin.cpp:1449`), which
     // an empty matrix does not have; offset 0 reads no column and answers 0.
     if offset > 0 {
-        abort_on_empty_matrix(&inst.read());
+        abort_past_matrix(&inst.read(), offset - 1);
     }
     let result = match inst.core.abi_left_offset(offset, true) {
         Ok(result) => result,
@@ -360,6 +388,9 @@ pub extern "C" fn zhuyin_get_right_zhuyin_offset(
     // `zhuyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
     abort_on_empty_matrix(&inst.read());
+    // The loop reads column `offset` and `_check_offset` column `offset - 1`
+    // (`pinyin.cpp:3067`, `zhuyin.cpp:1556`).
+    abort_past_matrix(&inst.read(), offset);
     let result = match inst.core.right_offset(offset) {
         Ok(Some(result)) => result,
         // The pin's own graceful `false` (`zhuyin.cpp:2050-2051`).

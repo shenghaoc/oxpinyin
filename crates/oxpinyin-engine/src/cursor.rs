@@ -25,27 +25,31 @@
 //! ## The column model
 //!
 //! The pin's `PhoneticKeyMatrix` holds, per byte position, the keys the
-//! parser placed there plus zero-key entries. Measured first-hand on the
-//! rebuilt pin (fork-per-probe, every offset in its own child so an abort
-//! is a datum):
+//! parser placed there plus zero-key entries (`fill_matrix`,
+//! `phonetic_key_matrix.cpp:30-83` at 074a2219, read from the source):
 //!
 //! - Real keys sit at their syllable start — the position after any
 //!   apostrophe they cross — with their raw end as the span.
-//! - Every `'` separator strictly inside the parsed span holds a lone zero
-//!   key (raw end one past it), EXCEPT the buffer's leading apostrophe run
-//!   when the parse contains real keys — the pin's DP propagates over a
-//!   leading run without placing zero keys there (`'ni` has an empty
-//!   column 0; an all-apostrophe parse like `'''` places zero keys at
-//!   every consumed position instead).
-//! - A zero-key tail run fills every position from the parsed length to
-//!   the buffer end INCLUSIVE — the unconsumed tail of an early-stopping
-//!   parse (`ni2hao` zeros columns 2..=6) and the pin's reserved extra
-//!   slot at the buffer end. The tail zero is what makes
-//!   `get_right_pinyin_offset(parsed end)` abort on the pin: the zero's
-//!   raw end is one past the buffer, and the second `_check_offset` sees
-//!   the tail zero column.
+//! - The matrix has `parsed_len + 1` columns, the last a reserved slot
+//!   holding a lone zero key. A parse that placed no key returns before
+//!   `set_size` (`:37-38`), so the matrix stays empty whatever
+//!   `m_parsed_len` is: `'''` consumes 3 bytes and has no column at all,
+//!   and the pin's first `get_column_size(1)` asserts
+//!   (`phonetic_key_matrix.h:103`). The C adapters abort there before this
+//!   model is asked (register row 66).
+//! - Every `'` between two keys holds a lone zero key (raw end one past it).
+//!   The apostrophes before the first key hold none: the fill loop starts
+//!   at the first key's end, so `'ni` has an empty column 0.
+//! - No column lies past `parsed_len`, so an early-stopping parse
+//!   (`ni2hao` parses 2) has the columns `0..=2` and a read of column 3 or
+//!   beyond asserts. This model keeps a zero-key tail run up to the buffer
+//!   end, which no C entry reaches: the adapters abort first.
 //! - An empty input is a truly empty matrix (no parse ever ran): every
 //!   column is empty and no zero keys exist.
+//!
+//! An earlier version of this header attributed the all-apostrophe and
+//! tail-run shapes to a first-hand measurement of the pin; the source does
+//! not support them.
 
 use std::ops::Range;
 
@@ -457,8 +461,7 @@ fn matrix_spans(
 /// substring), so the syllable start is the value that matches.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct MatrixKey {
-    key: SyllableKey,
-    tone: u8,
+    key: oxpinyin_core::ChewingKey,
     syllable_start: usize,
     end: usize,
 }
@@ -468,10 +471,19 @@ impl MatrixKey {
     /// (the facade's non-full-pinyin parse modes) whose keys come from a
     /// parse other than the session's own scan matrix.
     #[must_use]
-    pub const fn new(key: SyllableKey, tone: u8, syllable_start: usize, end: usize) -> Self {
+    pub fn new(key: SyllableKey, tone: u8, syllable_start: usize, end: usize) -> Self {
+        Self::from_chewing(key.chewing_key().with_tone(tone), syllable_start, end)
+    }
+
+    /// Retains the parser key and its original span.
+    #[must_use]
+    pub const fn from_chewing(
+        key: oxpinyin_core::ChewingKey,
+        syllable_start: usize,
+        end: usize,
+    ) -> Self {
         Self {
             key,
-            tone,
             syllable_start,
             end,
         }
@@ -479,14 +491,14 @@ impl MatrixKey {
 
     /// The syllable this key matched.
     #[must_use]
-    pub const fn key(self) -> SyllableKey {
+    pub const fn key(self) -> oxpinyin_core::ChewingKey {
         self.key
     }
 
     /// The tone consumed with this key under `USE_TONE`, or 0.
     #[must_use]
     pub const fn tone(self) -> u8 {
-        self.tone
+        self.key.tone
     }
 
     /// Byte offset where the key's own text begins — the pin's

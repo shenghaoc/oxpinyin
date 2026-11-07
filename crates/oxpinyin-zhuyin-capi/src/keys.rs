@@ -186,8 +186,14 @@ fn display_string_getter(
     }
     // SAFETY: Null-checked above.
     let core = unsafe { *key }.to_core();
+    if !core.elements_in_dims() {
+        std::process::abort();
+    }
     if core.table_index() == 0 {
         return false;
+    }
+    if !core.tone_in_dims() {
+        std::process::abort();
     }
     // SAFETY: Null-checked above.
     unsafe {

@@ -285,6 +285,7 @@ pub extern "C" fn pinyin_get_pinyin_strings(
     // SAFETY: Non-null and produced by `pinyin_get_pinyin_key`.
     let slot = unsafe { &*key };
     let decoded = slot.to_core();
+    abort_on_elements_outside_dims(decoded);
     if decoded.table_index() == 0 {
         return false;
     }
@@ -298,6 +299,25 @@ pub extern "C" fn pinyin_get_pinyin_strings(
         unsafe { *yunmu = strdup(decoded.yunmu_string()) };
     }
     true
+}
+
+/// `_ChewingKey::get_table_index` asserts the initial, middle and final
+/// against the table dimensions (`chewing_key.cpp:28-32`), and the string
+/// renderers assert the tone (`:40`, `:75`, `:92`, `:105`): a key packed from
+/// caller memory with a field outside them aborts the process, as the pin
+/// does (register row 4).
+fn abort_on_elements_outside_dims(key: oxpinyin_chewing::ChewingKey) {
+    if !key.elements_in_dims() {
+        std::process::abort();
+    }
+}
+
+/// The tone half of [`abort_on_elements_outside_dims`], asserted after the
+/// `get_table_index` guard by every renderer that prints a tone.
+fn abort_on_tone_outside_dims(key: oxpinyin_chewing::ChewingKey) {
+    if !key.tone_in_dims() {
+        std::process::abort();
+    }
 }
 
 /// The shared body of the single-string renderers: the rendering made with
@@ -321,9 +341,11 @@ fn render_key(
     // SAFETY: Non-null and produced by `pinyin_get_pinyin_key`.
     let slot = unsafe { &*key };
     let decoded = slot.to_core();
+    abort_on_elements_outside_dims(decoded);
     if decoded.table_index() == 0 {
         return false;
     }
+    abort_on_tone_outside_dims(decoded);
     if !utf8_str.is_null() {
         // SAFETY: Null-checked above.
         unsafe {
@@ -360,6 +382,19 @@ pub extern "C" fn pinyin_get_pinyin_offset(
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
+    // The pin clamps the cursor to the parsed length and reads
+    // `get_column_size` at each position from there down. A parse that
+    // consumed bytes but placed no key (apostrophes only) leaves the matrix
+    // empty (`fill_matrix`, `phonetic_key_matrix.cpp:34-38`), and the first
+    // read asserts (`phonetic_key_matrix.h:103`; register row 66).
+    if inst
+        .core
+        .pin_matrix_columns()
+        .is_ok_and(|columns| columns == 0)
+        && cursor.min(inst.core.pin_parsed_len().unwrap_or(0)) >= 1
+    {
+        std::process::abort();
+    }
     let Ok(normalized) = inst.core.lookup_offset(cursor) else {
         return false;
     };
@@ -370,6 +405,21 @@ pub extern "C" fn pinyin_get_pinyin_offset(
         }
     }
     true
+}
+
+/// The pin reads matrix column `index` with `get_column_size`, which asserts
+/// `index < size` (`phonetic_key_matrix.h:103`). The matrix has
+/// `parsed_len + 1` columns, fewer than the input has bytes when the parse
+/// stopped early, and none while it placed no key; the process aborts for a
+/// column outside it (register row 66).
+fn abort_past_matrix(inst: &crate::state::CapiInstanceRead<'_>, index: usize) {
+    if inst
+        .core
+        .pin_matrix_columns()
+        .is_ok_and(|columns| index >= columns)
+    {
+        std::process::abort();
+    }
 }
 
 /// Get the left offset from a lookup offset.
@@ -399,6 +449,10 @@ pub extern "C" fn pinyin_get_left_pinyin_offset(
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
+    // `_check_offset` reads column `offset - 1` first (`pinyin.cpp:3035`).
+    if offset >= 1 {
+        abort_past_matrix(&inst.read(), offset - 1);
+    }
     let result = match inst.core.left_offset(offset) {
         Ok(result) => result,
         // Register row 14: `assert(_check_offset(...))`, `pinyin.cpp:3035`,
@@ -452,6 +506,9 @@ pub extern "C" fn pinyin_get_right_pinyin_offset(
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
+    // The loop reads column `offset` and `_check_offset` column `offset - 1`
+    // (`pinyin.cpp:3067`, `zhuyin.cpp:1556`).
+    abort_past_matrix(&inst.read(), offset);
     let result = match inst.core.right_offset(offset) {
         Ok(Some(result)) => result,
         // The pin's own graceful `false`, `pinyin.cpp:3085-3086`, except
