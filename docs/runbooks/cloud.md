@@ -247,8 +247,6 @@ by the inherited value. The remaining overwrites were classified as follows:
 | --- | --- |
 | `gcov_measure.py`: same-data and user-store environments | Defects; preserve inheritance and check the actual object/executable. |
 | `measure callgrind-differential`: all five launch sites | Defects; use each selected object's directory, then inheritance. |
-| `measure perf-baseline`, `perf-matrix`, `perf-same-data` | Defects, including reused stages and both taskset branches; preserve inheritance. |
-| `measure shipped-check`, `tree-recipe-control` | Defects; use the selected object's directory, then inheritance. |
 | `release-stage.sh` and `capture/run-capture.sh` | Additional defects; linked smoke/capture processes also need inheritance and the check. |
 | `just runner cpp-smoke`: cleared-path `ldd` assertion | Intentional SONAME/RPATH test; the subsequent executable launch is checked with its actual environment. |
 | `build-oracle.sh`: generation-prefix assignment | Intentional isolation in the pinned build recipe; not a differential launch. |

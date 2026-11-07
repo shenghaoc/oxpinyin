@@ -30,10 +30,6 @@ must_use_candidate = "warn"
 # interoperability ruling, 2026-11-02): generated glue over the pin's
 # concrete classes.
 cxx = { version = "1.0.205", optional = true }
-[dev-dependencies]
-# Backend micro-benches (benches/); workspace lock pins 0.8.
-criterion = "0.8"
-
 [build-dependencies]
 bindgen = { workspace = true, optional = true }
 # The C++ compiler probe both bridges' include handling uses.
@@ -93,22 +89,3 @@ kyotocabinet = ["dep:cc", "dep:cxx", "dep:cxx-build", "dep:system-deps"]
 # libdb 5.3 the distro already ships (Debian libdb-dev, Fedora
 # libdb-devel), the same library that wrote the files it must read.
 bdb = ["dep:bindgen", "dep:system-deps"]
-
-# backend_matrix: one target per backend (b8aff564 convention), all driving
-# the same benches/support/mod.rs over the store-tier traits. Exactly one is
-# built per `--no-default-features --features <backend>` invocation, matching
-# the crate's one-backend-per-binary compile_error! rule.
-[[bench]]
-name = "backend_matrix_tkrzw"
-harness = false
-required-features = ["tkrzw"]
-
-[[bench]]
-name = "backend_matrix_kyotocabinet"
-harness = false
-required-features = ["kyotocabinet"]
-
-[[bench]]
-name = "backend_matrix_bdb"
-harness = false
-required-features = ["bdb"]

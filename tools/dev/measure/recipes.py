@@ -1,4 +1,4 @@
-"""The measurement and profile recipes behind `python -m tools.dev measure` (#1290).
+"""The Valgrind recipes behind `python -m tools.dev measure` (#1290).
 
 Each module below contributes a RECIPES mapping of recipe name to
 `function(argv, env) -> status`. A recipe composes the services in bench.py,
@@ -13,31 +13,23 @@ from collections.abc import Mapping, Sequence
 from .. import runners
 
 
-# The names `measure` accepts besides its own startup and cold-qualify. A fixed
-# tuple keeps every `tools.dev` command from importing the recipe modules;
-# recipes.test.py checks it against what the modules contribute.
-NAMES = ('callgrind-control', 'callgrind-differential', 'perf-baseline', 'perf-matrix', 'perf-same-data',
-         'probe-debuginfo-neutrality', 'probe-egress', 'profile-w8', 'rss-diag',
-         'shipped-check', 'snapshot', 'stack-comparison', 'steady-comparison', 'system-import-profile',
-         'tree-recipe-control')
+# The names `measure` accepts. A fixed tuple keeps every `tools.dev` command
+# from importing the recipe module; recipes.test.py checks it against what the
+# module contributes.
+NAMES = ('callgrind-control', 'callgrind-differential', 'system-import-profile')
 
 
 def table() -> dict:
-    """Every recipe by name; the modules load on first use."""
-    from . import campaigns, probes, profile, snapshot, valgrind
-    recipes = {}
-    for module in (campaigns, probes, profile, snapshot, valgrind):
-        recipes.update(module.RECIPES)
-    return recipes
+    """Every recipe by name; the module loads on first use."""
+    from . import valgrind
+    return dict(valgrind.RECIPES)
 
 
-PIN_COMPARISONS = frozenset(('perf-baseline', 'perf-matrix', 'perf-same-data',
-    'callgrind-differential', 'steady-comparison', 'stack-comparison', 'shipped-check',
-    'tree-recipe-control', 'rss-diag', 'system-import-profile'))
+PIN_COMPARISONS = frozenset(('callgrind-differential', 'system-import-profile'))
 
 
 def require_performance_environment(env):
-    """Only pin-comparison campaigns require the local oracle performance stage."""
+    """Only pin comparisons require the local oracle performance stage."""
     from pathlib import Path
     from ..runners import Finished
     marker = Path('/usr/local/share/oxpinyin/performance-os-release')

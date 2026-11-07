@@ -10,8 +10,7 @@
  *
  * Usage:
  *   ./bisect <path-to-so> <systemdir> [--right-tail-case]
- *   ./bisect --perf <path-to-so> <systemdir>   # perf/RAM JSON line;
- *                                              # see run-perf-baseline.sh
+ *   ./bisect --perf <path-to-so> <systemdir>   # perf/RAM JSON line
  *
  * The output is a structured text log of return values, candidate strings,
  * and ownership-contract exercises (caller-owned strings are freed after
@@ -375,8 +374,8 @@ static const char *TEST_INPUTS[] = {
 };
 static const size_t N_INPUTS = sizeof(TEST_INPUTS) / sizeof(TEST_INPUTS[0]);
 
-/* ── Performance-baseline inputs (same 20-input corpus as the Criterion
- * keystroke-cycle bench: crates/oxpinyin-runtime/benches/support/mod.rs) ─── */
+/* ── Performance-baseline inputs (the 20-input keystroke-cycle corpus;
+ * crates/oxpinyin-engine/src/session/tests.rs::CYCLE_INPUTS holds the same) ─── */
 
 static const char *PERF_CYCLE_INPUTS[] = {
     "ni",

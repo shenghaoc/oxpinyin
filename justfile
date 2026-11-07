@@ -179,47 +179,6 @@ clippy *args:
 clippy *args:
     @{{windows_args}} cargo clippy @forwarded; exit $LASTEXITCODE
 
-# Run the workspace benches.
-[unix]
-bench *args:
-    @cargo bench --workspace --benches "$@"
-
-[windows]
-bench *args:
-    @{{windows_args}} cargo bench --workspace --benches @forwarded; exit $LASTEXITCODE
-
-# Build every selected bench harness without running it.
-[unix]
-bench-smoke:
-    @just bench --no-run
-
-[windows]
-bench-smoke:
-    @{{windows_args}} just bench --no-run; exit $LASTEXITCODE
-
-# Profile the W8 keystroke cycle with samply. macOS uses Homebrew's native
-# build inputs; tools.dev.measure.profile refuses Linux-only pinning and
-# fallbacks there.
-[linux]
-profile-w8 *args: python
-    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev measure profile-w8 "$@"
-
-[macos]
-profile-w8 *args: python
-    @env \
-        SYSTEM_DEPS_BDB_NO_PKG_CONFIG=1 \
-        SYSTEM_DEPS_BDB_LIB=db \
-        SYSTEM_DEPS_BDB_SEARCH_NATIVE="$(brew --prefix berkeley-db@5)/lib" \
-        SYSTEM_DEPS_BDB_INCLUDE="$(brew --prefix berkeley-db@5)/include" \
-        PKG_CONFIG_PATH="$(brew --prefix glib)/lib/pkgconfig:$(brew --prefix kyoto-cabinet)/lib/pkgconfig:$(brew --prefix tkrzw)/lib/pkgconfig" \
-        LIBRARY_PATH="$(brew --prefix berkeley-db@5)/lib:$(brew --prefix kyoto-cabinet)/lib:$(brew --prefix tkrzw)/lib:$(brew --prefix lz4)/lib:$(brew --prefix xz)/lib:$(brew --prefix zstd)/lib" \
-        OXPINYIN_TKRZW_PREFIX="$(brew --prefix tkrzw)" \
-        uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev measure profile-w8 "$@"
-
-[windows]
-profile-w8 *args:
-    @{{windows_args}} echo "profile-w8: native macOS and Linux only; Windows is unsupported." >&2; exit 1
-
 # Run one caller-selected fuzz target with the nightly workflow's ASLR wrapper.
 # cargo fuzz runs in fuzz/, where rustup selects the nightly that
 # fuzz/rust-toolchain.toml names. No recipe names the nightly.
@@ -331,29 +290,14 @@ plan *args: python
 plan *args: python
     @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev plan @forwarded; exit $LASTEXITCODE
 
-# Run a measure recipe: startup, cold-qualify, or a measurement
-# or profile recipe such as perf-baseline or snapshot (the list is tools/dev/measure/recipes.py).
+# Run a Valgrind recipe (tools/dev/measure/recipes.py).
 [unix]
 measure recipe *args: python
     @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev measure "$@"
 
-# Startup measurement requires the Linux/macOS worker and measurement services.
-[unix]
-initbench *args: python
-    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev measure startup "$@"
-
-# Qualify APFS cold preparation on named files; read-only, runs no worker.
-[unix]
-cold-qualify *paths: python
-    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev measure cold-qualify "$@"
-
 [windows]
 measure recipe *args: python
     @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev measure @forwarded; exit $LASTEXITCODE
-
-[windows]
-initbench *args: python
-    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev measure startup @forwarded; exit $LASTEXITCODE
 
 # Build and enter the local oracle-based performance environment on the host architecture.
 [unix]

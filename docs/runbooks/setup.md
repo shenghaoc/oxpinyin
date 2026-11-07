@@ -151,8 +151,7 @@ arguments. This preserves the caller's working directory; its `.python-version`
 does not decide the interpreter. Direct-run Python
 harness files rely on their `uv` shebang and a working directory inside the
 checkout. The check `tools/dev/python-request.test.py` fails when a version request
-appears anywhere else, outside the dated records in `docs/findings/` and
-`docs/perf/`.
+appears anywhere else, outside the dated records in `docs/findings/`.
 
 **Rule (#1230).** Provision the repository's managed Python interpreter
 through `just python`. Do not substitute another interpreter. A later series is a deliberate change: the tooling

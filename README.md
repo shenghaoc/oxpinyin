@@ -25,7 +25,7 @@ symbols; drop-in as `libpinyin.so.15` verified on Fedora rawhide, Debian
 testing, and NixOS. Stage 2 (bug-for-bug) is current. The round-2 audit
 closed on 2026-10-17 (#573). The open work is the init complexity
 tracker (#870), then a third bug-for-bug sweep (`ROADMAP.md`). Performance
-work that keeps compatibility continues in Stage 2 (`docs/perf/`). Stage 3
+work that keeps compatibility continues in Stage 2. Stage 3
 (opt-in departures) follows.
 
 (中文文档在 [这里](README.中文.md), 快看过来!)
@@ -53,9 +53,8 @@ storage backend and gives each platform's packages and settings for it.
 | `ROADMAP.md` | Stages, pin, workstream names |
 | [docs/constitution.md](docs/constitution.md) | Project rules and supported external interfaces |
 | [docs/source-policy.md](docs/source-policy.md) | Source-reading method, compatibility decisions and stage rules |
-| `docs/runbooks/` | How to: backends, the oracle and differentials, benches, goldens and pins, releases |
+| `docs/runbooks/` | How to: backends, the oracle and differentials, Callgrind and Massif recipes, goldens and pins, releases |
 | `docs/findings/` | Decisions, divergence records, audit trail — indexed with a status per file |
-| `docs/perf/` | Performance measurement snapshots |
 | `docs/testing/` | Corpus pipeline, oracle environment, fixture formats |
 | `docs/packaging.md` | cargo-c packaging and installed-tree layout |
 | `docs/oxidation-journey.md` | How libpinyin has been turned into Rust so far, and the method that follows from it |

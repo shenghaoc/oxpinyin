@@ -128,7 +128,6 @@ Unit tests, contract differentials, revert-and-check, sanitizers, CI gates and b
 Serialise a test only for a stated shared-state or resource reason.
 Report stripped shipping-library sizes and increases over base under constitution §2 ([shipping-library sizes](packaging.md#shipping-library-sizes)).
 Take the sizes from the `shipping-sizes` CI job summary.
-The nightly performance snapshot workflow stays.
 
 ## Compatibility decision order
 
@@ -346,7 +345,7 @@ Amended 2026-10-28 UTC: the language-artefact exception remains for
 internal behaviour but no longer applies to external I/O. Data formats
 and ABI remain unchanged.
 
-Earlier records use "Stage 2" for compatible performance work, including the `stage2` bench and `docs/perf/` records.
+Earlier records use "Stage 2" for compatible performance work.
 That work remains Stage 2 under this ruling.
 Keep those records' wording.
 References to output changes, such as `EdgeKind` Fuzzy/Typo/Abbrev variants or a model upgrade, now belong to Stage 3.

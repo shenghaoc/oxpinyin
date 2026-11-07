@@ -85,8 +85,8 @@ class ImplementationTests(unittest.TestCase):
                 ('legacy:tools/oracle/build-oracle.sh',
                  ['bash', (ROOT / 'tools/oracle/build-oracle.sh').as_posix()]),
                 ('legacy:./tools/oracle/build-oracle.sh', ['{root}/tools/oracle/build-oracle.sh', 'x']),
-                ('instrument:tools/bisection/perf-baseline.py',
-                 ['python', '{root}/tools/bisection/perf-baseline.py']),
+                ('instrument:tools/bisection/perf-ci.py',
+                 ['python', '{root}/tools/bisection/perf-ci.py']),
                 ('python:tools.dev.registry', [*python, 'tools.dev.registry', 'list']),
                 ('python:tools.dev', [*python, 'tools.dev'])):
             with self.subTest(implementation=implementation, command=command):
@@ -98,8 +98,8 @@ class ImplementationTests(unittest.TestCase):
                 ('legacy:tools/oracle/build-oracle.sh', ['bash', '{root}/tools/bisection/run-w11-diff.sh']),
                 ('legacy:tools/oracle/build-oracle.sh', ['bash', '{root}/tools/oracle/build-oracle.sh.bak']),
                 ('legacy:tools/oracle/build-oracle.sh', ['bash', '-c', '{root}/tools/oracle/build-oracle.sh x']),
-                ('instrument:tools/bisection/perf-baseline.py',
-                 ['python', '{prefix}/tools/bisection/perf-baseline.py'])):
+                ('instrument:tools/bisection/perf-ci.py',
+                 ['python', '{prefix}/tools/bisection/perf-ci.py'])):
             with self.subTest(implementation=implementation, command=command):
                 with self.assertRaises(registry.RegistryError) as raised:
                     self.load([row(implementation=implementation) | {'command': command}])
@@ -143,7 +143,7 @@ class ImplementationTests(unittest.TestCase):
 
     def test_path_outside_the_checkout(self):
         for implementation in ('legacy:/bin/sh', 'legacy:../oxpinyin/tools/oracle/build-oracle.sh',
-                               'instrument:tools\\bisection\\perf-baseline.py'):
+                               'instrument:tools\\bisection\\perf-ci.py'):
             with self.subTest(implementation=implementation):
                 self.rejects(implementation,
                              f"registry row 'fixture' implementation {implementation!r} must be a "
@@ -227,8 +227,6 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual([row['name'] for row in chosen], ['bisect', 'union-diff'])
 
     def test_cells_select_rows_supporting_any_requested_cell(self):
-        self.assertEqual([row['name'] for row in registry.select(self.rows, cells=['native'])],
-                         ['native-startup'])
         self.assertNotIn('fuzz', [row['name'] for row in registry.select(self.rows, cells=['kc'])])
         self.assertIn('fuzz', [row['name'] for row in registry.select(self.rows, cells=['bdb'])])
 

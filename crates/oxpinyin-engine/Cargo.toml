@@ -18,14 +18,6 @@ oxpinyin-core = { path = "../oxpinyin-core" }
 smallvec.workspace = true
 compact_str.workspace = true
 
-[dev-dependencies]
-# Micro-benches (benches/); workspace lock pins 0.8.
-criterion = "0.8"
-
-[[bench]]
-name = "session_keystroke"
-harness = false
-
 [features]
 # Off-by-default gate for the scan-matrix fan-out diagnostic driven by
 # issue #403: enables one test that prints per-input matrix and path
