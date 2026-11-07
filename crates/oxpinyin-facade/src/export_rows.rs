@@ -234,7 +234,7 @@ fn user_key_assert(key: PinyinKey) -> Option<ExportAssert> {
 
 impl ExportRow<'_> {
     /// The row's stored phrase text. The C encoding is applied only in
-    /// [`Self::text_len`] and [`Self::write_text`].
+    /// [`Self::with_text_bytes`].
     fn phrase_text(&self) -> Option<PhraseText> {
         match &self.0 {
             RowSource::Mapped { item, .. } => item.phrase_text(),
@@ -244,12 +244,12 @@ impl ExportRow<'_> {
         }
     }
 
-    /// The phrase's outward length in bytes, or `None` where the pin's
-    /// `g_ucs4_to_utf8` hands the caller a NULL phrase (`pinyin.cpp:715-716`),
-    /// the row's other fields intact.
-    #[must_use]
-    pub fn text_len(&self) -> Option<usize> {
-        Some(phrase_text_bytes(&self.phrase_text()?).len())
+    /// Lends the phrase's outward bytes, encoded once, to `with`, or answers
+    /// `None` where the pin's `g_ucs4_to_utf8` hands the caller a NULL phrase
+    /// (`pinyin.cpp:715-716`), the row's other fields intact.
+    pub fn with_text_bytes<R>(&self, with: impl FnOnce(&[u8]) -> R) -> Option<R> {
+        let text = self.phrase_text()?;
+        Some(with(&phrase_text_bytes(&text)))
     }
 
     /// The `get_pinyin_string` assert the pin dies at while rendering this
@@ -269,18 +269,6 @@ impl ExportRow<'_> {
             }),
             RowSource::Mapped { .. } => None,
         }
-    }
-
-    /// Writes the phrase's outward bytes to the front of `out`, which holds
-    /// at least [`Self::text_len`] bytes, and returns how many it wrote.
-    pub fn write_text(&self, out: &mut [u8]) -> usize {
-        let Some(text) = self.phrase_text() else {
-            return 0;
-        };
-        let bytes = phrase_text_bytes(&text);
-        let width = bytes.len().min(out.len());
-        out[..width].copy_from_slice(&bytes[..width]);
-        width
     }
 
     /// The pronunciation's key strings, each the bytes of
@@ -1312,9 +1300,7 @@ mod phrase_cursor_tests {
     /// The row through the writers `pinyin_iterator_get_next_phrase`
     /// uses; `None` for a NULL phrase.
     fn render(row: &ExportRow<'_>) -> Option<Row> {
-        let mut text = vec![0; row.text_len()?];
-        let written = row.write_text(&mut text);
-        assert_eq!(written, text.len());
+        let text = row.with_text_bytes(<[u8]>::to_vec)?;
         let pinyin: Vec<String> = row
             .pinyin_strings()
             .map(|(spelling, digit)| {

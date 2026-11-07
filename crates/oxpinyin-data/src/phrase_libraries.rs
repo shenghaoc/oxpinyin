@@ -299,48 +299,6 @@ impl PhraseLibraries {
         Ok(true)
     }
 
-    /// Replaces a loaded sub-index with a fresh mapping of its system
-    /// chunk, as `mask_out` does at 074a2219 (`pinyin.cpp:1253-1273`,
-    /// `zhuyin.cpp:788-808`). An unloaded library stays unloaded.
-    ///
-    /// # Errors
-    /// Returns [`LibraryError`] when the chunk cannot be mapped or decoded.
-    pub fn reload(&mut self, nibble: u8, path: &Path) -> Result<bool, LibraryError> {
-        let Some(slot) = self.by_nibble.get_mut(usize::from(nibble)) else {
-            return Ok(false);
-        };
-        let Some(old) = slot.as_ref().map(|loaded| loaded.library.total_freq()) else {
-            return Ok(false);
-        };
-        let library = PhraseLibrary::open_retaining_layout(path)?;
-        if library.is_layout_failed() {
-            self.total = self.total.wrapping_sub(old);
-            self.stocked &= !(1 << nibble);
-            *slot = Some(Loaded {
-                library,
-                path: path.to_path_buf(),
-                item_count: OnceLock::new(),
-            });
-            return Ok(true);
-        }
-        // The old sub-index's total leaves and the new one's enters, as
-        // `FacadePhraseIndex::load` does over a loaded slot.
-        self.total = self
-            .total
-            .wrapping_add(library.total_freq().wrapping_sub(old));
-        if library.has_items() {
-            self.stocked |= 1 << nibble;
-        } else {
-            self.stocked &= !(1 << nibble);
-        }
-        *slot = Some(Loaded {
-            library,
-            path: path.to_path_buf(),
-            item_count: OnceLock::new(),
-        });
-        Ok(true)
-    }
-
     /// Drops library `nibble` — `FacadePhraseIndex::unload`. `true` when
     /// a library was loaded there.
     pub fn unload(&mut self, nibble: u8) -> bool {
