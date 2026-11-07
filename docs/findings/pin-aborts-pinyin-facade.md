@@ -244,7 +244,7 @@ Each of these carried the old refusal's predicate or order into the abort:
   SIGSEGV on its empty chunk (row 76, class (b)) before a later row is
   reached, so the order shows only after that class (b) outcome. Held by
   `a_default_dictionary_row_reports_only_the_libraries_before_it`.
-- Row 81: `UserStore::remove_user_phrase` (both its arena and table paths)
+- Row 81: `UserStore::remove_user_phrase`
   decides the removal asserts (`pinyin.cpp:3743`, `:3750`, `:3759`) before the
   bigram fault of the `mask_out` that follows (`:3766`), with nothing changed
   before either (`phrase_table::index_removable_ucs4` reads `:3750`'s test
