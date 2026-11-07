@@ -379,6 +379,47 @@ def _chunk(payload):
             (checksum & 0xFFFFFFFF).to_bytes(4, 'little') + payload)
 
 
+# The journal records `SubPhraseIndex::merge` replays (`phrase_index.cpp:439-517` at 074a2219).
+_LOG_ADD, _LOG_REMOVE, _LOG_MODIFY = 1, 2, 3
+
+
+def _log_record(kind, token, old=b'', new=b''):
+    """One record as `PhraseIndexLogger::next_record` reads it
+    (`phrase_index_logger.h:160-209`): ADD and REMOVE carry one length and
+    one chunk, MODIFY both lengths and both chunks."""
+    head = kind.to_bytes(4, 'little') + token.to_bytes(4, 'little')
+    if kind == _LOG_ADD:
+        return head + len(new).to_bytes(2, 'little') + new
+    if kind == _LOG_REMOVE:
+        return head + len(old).to_bytes(2, 'little') + old
+    return head + len(old).to_bytes(2, 'little') + len(new).to_bytes(2, 'little') + old + new
+
+
+def _item_size(item):
+    """`get_phrase_item`'s length from the header bytes alone."""
+    length, prons = item[0], item[1]
+    return 6 + 4 * length + prons * (2 * length + 4)
+
+
+def _system_items(k, name='gb_char.bin'):
+    """A system chunk's total, its items `{slot: bytes}` at their header
+    length, and the item-area offsets `{slot: offset}`."""
+    payload = Path(k.data, name).read_bytes()[8:]
+    word = lambda offset: int.from_bytes(payload[offset:offset + 4], 'little')
+    total, index, content = word(0), word(4), word(8)
+    items, offsets = {}, {}
+    for slot in range((content - index - 1) // 4):
+        offset = word(index + slot * 4)
+        if offset:
+            start = content + offset
+            # Only the two header bytes size an item; copying the remaining
+            # chunk here for every slot makes fixture setup quadratic.
+            size = _item_size(payload[start:start + 2])
+            items[slot] = payload[start:start + size]
+            offsets[slot] = offset
+    return total, items, offsets
+
+
 def _modify_header(token, old_total, new_total):
     """One `LOG_MODIFY_HEADER` record: the type (4), the token, a `u16`
     length, then the old and new total runs."""

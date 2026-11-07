@@ -7,10 +7,9 @@ from pathlib import Path
 
 from contract_abi import Arr, B, I, P, S, U, Z, sentence_out, tokens_of, unigram_of
 from contract_case_helpers import (
-    FACADE_TOTAL, _chunk, _facade_total_out, _modify_header, _reload_pron_keys,
-    _stored_library_total, _write_log, guess_rows, token_phrase_of, train_selected_top)
+    FACADE_TOTAL, _chunk, _facade_total_out, _log_record, _modify_header, _reload_pron_keys,
+    _stored_library_total, _system_items, _write_log, guess_rows, token_phrase_of, train_selected_top)
 from contract_fixtures import _write_user_conf, import_rows
-from contract_journal_replay import _log_record, _system_items
 
 
 _REGISTRATIONS = []

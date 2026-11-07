@@ -78,22 +78,6 @@ class ContractIntegrationTests(unittest.TestCase):
         self.assertEqual(worker.call_args.args, tuple(arguments))
         self.assertIn('wrap-256th-reading', worker.call_args.kwargs['CASES'])
 
-    def test_the_axis_c_cases_register_from_their_family_into_the_tables_this_driver_built(self):
-        definition = sys.modules['contract_axis_c'].axis_c_definition()
-        self.assertEqual(driver.AXIS_C_DEFINITION, definition)
-        names = [name for name in driver.CASES if name.startswith('axis-c-')]
-        self.assertCountEqual(names, ['axis-c-export-user', *sum(driver.AXIS_C_GROUPS.values(), [])])
-        self.assertLessEqual(set(driver.AXIS_C_LAYOUT_COVERED), set(driver.AXIS_C_GROUPS['layouts']))
-
-    def test_every_driver_load_builds_its_own_axis_c_tables(self):
-        spec = importlib.util.spec_from_file_location('contract_diff_again', HERE / 'contract-diff.py')
-        again = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(again)
-        for table in ('AXIS_C_GROUPS', 'AXIS_C_LAYOUT_COVERED'):
-            with self.subTest(table=table):
-                self.assertIsNot(getattr(again, table), getattr(driver, table))
-                self.assertEqual(getattr(again, table), getattr(driver, table))
-
     def test_timing_summary_totals_the_timings_the_driver_holds_now(self):
         with patch.object(driver, 'TIMINGS', [dict(execute=2, side='pin'), dict(execute=3)]):
             summary = driver.timing_summary(['a'], 0, 1)

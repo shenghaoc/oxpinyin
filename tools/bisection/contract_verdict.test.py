@@ -24,7 +24,7 @@ import contract_verdict as verdict
 def spec(**overrides):
     """A registration spec with the defaults of the driver's case_spec."""
     return dict(dict(mode='pinyin', control=False, abort=verdict.NO_ABORT, stderr=False, crash=None, userdir=False,
-                     cells=('bdb', 'kc', 'tkrzw'), either=False, host_scanf=(),
+                     cells=('bdb', 'kc', 'tkrzw'), either=False,
                      abort_logs=None, fatal=False, both_abort=False, issues=(),
                      policy_record=None, case_id='probe', pin_not_run=None, sigabrt=False), **overrides)
 
@@ -377,12 +377,6 @@ class PolicyTests(unittest.TestCase):
 
 
 class HostTests(unittest.TestCase):
-    def test_host_scanf_verdict_records_acceptance_and_bits(self):
-        self.assertEqual(verdict.host_scanf_verdict('1.5'),
-                         dict(input='1.5', accepted=True, value_bits='3fc00000'))
-        self.assertEqual(verdict.host_scanf_verdict('abc'),
-                         dict(input='abc', accepted=False, value_bits=None))
-
     def test_the_saved_bigram_mask_covers_only_the_timestamp_bytes(self):
         raw = bytes(range(256))
         masked = verdict.tkrzw_saved_bigram_bytes(raw)

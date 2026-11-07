@@ -30,6 +30,78 @@ pub fn chunk(payload: &[u8]) -> Vec<u8> {
     [&length.to_le_bytes()[..], &checksum.to_le_bytes(), payload].concat()
 }
 
+/// `_modify_header`: one `LOG_MODIFY_HEADER` record: type 4, the token, a `u16`
+/// length, then the old and new totals.
+pub fn modify_header(token: u32, old: u32, new: u32) -> Vec<u8> {
+    [
+        &4_u32.to_le_bytes()[..],
+        &token.to_le_bytes(),
+        &4_u16.to_le_bytes(),
+        &old.to_le_bytes(),
+        &new.to_le_bytes(),
+    ]
+    .concat()
+}
+
+/// `_write_log`: the user directory's journal `name` (`gb_char.dbin`, ...) as a
+/// chunk holding `payload`.
+pub fn write_log(k: &Kit, payload: &[u8], name: &str) {
+    std::fs::write(k.user.join(name), chunk(payload)).expect("write the journal");
+}
+
+/// `log_walk`: the `.dbin` chunk's first MODIFY_HEADER totals and its record
+/// counts (`PhraseIndexLogger::next_record`, `phrase_index_logger.h:158-211`).
+/// The eight-byte framing header is skipped unchecked; the walk stops at an
+/// unknown type, fewer than ten bytes or an incomplete header record.
+pub fn log_walk(data: &[u8]) -> (crate::support::J, crate::support::J) {
+    let payload = &data[8..];
+    // `int.from_bytes` of a slice the payload's end cuts short.
+    let read = |at: usize, width: usize| {
+        let bytes = payload
+            .get(at..payload.len().min(at + width))
+            .unwrap_or(&[]);
+        bytes
+            .iter()
+            .rev()
+            .fold(0_u32, |value, byte| (value << 8) | u32::from(*byte))
+    };
+    let half = |at: usize| usize::try_from(read(at, 2)).expect("an offset");
+    let mut pos = 0;
+    let mut header = crate::support::J::Null;
+    let mut counts: std::collections::BTreeMap<String, u32> = ["add", "remove", "modify", "header"]
+        .into_iter()
+        .map(|name| (name.to_owned(), 0))
+        .collect();
+    let mut count = |name: &str| *counts.get_mut(name).expect("a record kind") += 1;
+    while pos + 10 <= payload.len() {
+        match read(pos, 4) {
+            4 => {
+                let length = half(pos + 8);
+                if pos + 10 + 2 * length > payload.len() {
+                    break;
+                }
+                if header == crate::support::J::Null {
+                    header = crate::support::J::from((read(pos + 10, 4), read(pos + 14, 4)));
+                }
+                count("header");
+                pos += 10 + 2 * length;
+            }
+            kind @ (1 | 2) => {
+                let length = half(pos + 8);
+                count(if kind == 1 { "add" } else { "remove" });
+                pos += 10 + length;
+            }
+            3 => {
+                let (old, new) = (half(pos + 8), half(pos + 10));
+                count("modify");
+                pos += 12 + old + new;
+            }
+            _ => break,
+        }
+    }
+    (header, crate::support::J::from(counts))
+}
+
 /// `_write_user_conf`: a `user.conf` conforming to the system data's table.conf,
 /// with open counter 0.
 pub fn write_user_conf(k: &Kit) {
@@ -253,4 +325,45 @@ pub fn items_system(k: &mut Kit, items: &[(&[u32], &[u16], u32)], total: u32, is
     }
     write_user_conf(k);
     k.data = system;
+}
+
+/// `user_listing`: the files of `directory` (the user directory when `None`) by
+/// name, each name's bytes read as Latin-1: `"dir"` for a directory, `user.conf`
+/// by its text with `|` for each newline, a `.bin`/`.dbin` library chunk by its
+/// size, one named `user_*` by `"chunk"` when its length word is its size less
+/// the 8-byte header and `"dbm"` otherwise, any other file by `null`.
+pub fn user_listing(k: &Kit, directory: Option<&Path>) -> crate::support::J {
+    use crate::support::J;
+    let directory = directory.unwrap_or(&k.user);
+    let mut listing = J::map();
+    for entry in std::fs::read_dir(directory).expect("the listed directory") {
+        let entry = entry.expect("a listed entry");
+        let name = entry.file_name();
+        let bytes = name.as_encoded_bytes();
+        let key: String = bytes.iter().map(|&byte| char::from(byte)).collect();
+        let path = entry.path();
+        let value = if path.is_dir() {
+            J::from("dir")
+        } else if bytes == b"user.conf" {
+            J::from(
+                std::fs::read_to_string(&path)
+                    .expect("user.conf")
+                    .replace('\n', "|"),
+            )
+        } else if bytes.ends_with(b".bin") || bytes.ends_with(b".dbin") {
+            let data = std::fs::read(&path).expect("a library file");
+            if bytes.starts_with(b"user_") {
+                let framed = data.len() >= 8
+                    && u64::from(u32::from_le_bytes(data[..4].try_into().expect("a word")))
+                        == data.len() as u64 - 8;
+                J::from(if framed { "chunk" } else { "dbm" })
+            } else {
+                J::from(data.len())
+            }
+        } else {
+            J::Null
+        };
+        listing.set(key, value);
+    }
+    listing
 }

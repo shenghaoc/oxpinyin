@@ -96,8 +96,7 @@ class AdapterTests(unittest.TestCase):
             with driver.case_results(arguments, ['only'], '/data', '/scratch', 1) as results:
                 self.assertEqual(list(results), [('only', 'pair')])
         store.row.assert_called_once_with(registry['only'])
-        verify.assert_called_once_with(registry['only'], {'pin': 'row'}, Path(__file__), '/data', 'only', '/isolated', 1,
-                                       companion=Path(__file__))
+        verify.assert_called_once_with(registry['only'], {'pin': 'row'}, Path(__file__), '/data', 'only', '/isolated', 1)
 
 
 class ReferenceRunTests(unittest.TestCase):
@@ -124,7 +123,7 @@ class ReferenceRunTests(unittest.TestCase):
         with tempfile_dir() as scratch:
             pin, subject = self.runner(worker).verify_case(spec, row, Path('/subject/libpinyin.so'), '/data', 'plain', scratch, 30)
         self.assertEqual(calls, ['libpinyin.so'])
-        for key in ('capture_glibc', 'capture_glib', 'capture_scanf'):
+        for key in ('capture_glibc', 'capture_glib'):
             self.assertIsNone(pin.pop(key))
         self.assertEqual((pin, subject), (row['pin'], self.observation(ret=1)))
 

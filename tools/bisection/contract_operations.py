@@ -83,9 +83,9 @@ def _without_package_data(driver, names, cell, references):
 
 
 def default_suite(driver):
-    """The unselected suite: every registered case but axis C (the opt-in battery) and its helper."""
+    """The unselected suite: every registered case."""
     names, _ = driver.select_cases(None, (), (), None)
-    return [name for name in names if name not in reference.HELPER_CASES]
+    return names
 
 
 def case_list(parser, value):
@@ -139,7 +139,7 @@ def verify(driver, argv):
     args.references = reference.Store(args.references, args.cell, digest, driver.NO_ABORT)
 
     def keep(names):
-        names = [name for name in _in_cell(driver, names, args.cell) if name not in reference.HELPER_CASES]
+        names = _in_cell(driver, names, args.cell)
         names, package = _without_package_data(driver, names, args.cell, args.references.root)
         if package:
             print('%d case%s read the package data and run on the tkrzw cell only' % (
@@ -229,7 +229,7 @@ def capture(driver, argv):
             names = default_suite(driver)
         else:
             names, _ = driver.select_cases(args.cases, args.issue, args.family, args.cases_prefix)
-        names = [name for name in _in_cell(driver, names, args.cell) if name not in reference.HELPER_CASES]
+        names = _in_cell(driver, names, args.cell)
         names, package = _without_package_data(driver, names, args.cell, args.references or args.out)
     except (SelectionError, reference.ReferenceError) as error:
         parser.error(str(error))
@@ -250,12 +250,7 @@ def capture(driver, argv):
             observations = []
             for _ in range(args.runs):
                 with tempfile.TemporaryDirectory(prefix='case-', dir=scratch) as isolated:
-                    captured = driver.run_capture(spec, pin_so, args.data, name, isolated, args.case_timeout,
-                                                  companion=libraries['pinyin'])
-                    if name.startswith('axis-c-'):
-                        # The battery compares diagnostics with generated paths normalised.
-                        captured[0].update(driver.axis_c_normalize_diagnostics(
-                            driver.axis_c_envelope(captured[0]), isolated))
+                    captured = driver.run_capture(spec, pin_so, args.data, name, isolated, args.case_timeout)
                     observations.append(captured)
             first = observations[0]
             stable = all(reference.comparable(spec, other, driver.observed, driver.fatal_stderr)
@@ -294,9 +289,6 @@ def capture(driver, argv):
                            pin=reference.stable_pin(observation))
                 if profile is not None:
                     row['profile'] = profile
-                spelling = reference.scanner_spelling(spec)
-                if spelling is not None:
-                    row['scanner_verdict'] = driver.host_scanf_verdict(spelling)
                 written.setdefault(reference.module_of(spec), {})[name] = row
             else:
                 failures += 1

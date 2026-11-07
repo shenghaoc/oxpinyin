@@ -390,7 +390,7 @@ def contracts(prefix, pinyin, zhuyin, out, pin, progress=None, names=None, cell=
     """Run reference, subject, and instrumented workers and attribute only MATCH execution.
 
     Verify the prefix, create temporary profiles, and clear counters per case.
-    Default to registered non-axis-c cases; skip unsupported cells. Return
+    Default to every registered case; skip unsupported cells. Return
     attributed identities, nonmatching identities, incomplete labels, and
     case verdicts. Invoke progress with each measured observation and decoded
     counts before attribution; counter/flush limits withhold affected credit.
@@ -401,9 +401,8 @@ def contracts(prefix, pinyin, zhuyin, out, pin, progress=None, names=None, cell=
     attributed, nonmatch, incomplete, results = defaultdict(set), set(), set(), []
     data = prefix / 'lib/libpinyin/data'
     with tempfile.TemporaryDirectory(prefix='j-contract-') as scratch:
-        # Match the shared driver's ordinary default. Axis C is an explicit
-        # separately owned battery, not an implicit addition to this sweep.
-        selected = sorted(name for name in module.CASES if not name.startswith('axis-c-')) if names is None else sorted(names)
+        # Match the shared driver's ordinary default.
+        selected = sorted(module.CASES) if names is None else sorted(names)
         for index, name in enumerate(selected, 1):
             spec = module.CASES[name]
             if cell not in spec['cells']:

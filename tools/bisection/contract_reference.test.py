@@ -165,18 +165,6 @@ class CheckRowTests(unittest.TestCase):
         with self.assertRaisesRegex(ref.ReferenceError, 'handoff profile'):
             self.check(s, value)
 
-    def test_lambda_reference_requires_its_captured_scanner_verdict(self):
-        def probe():
-            pass
-        s = spec(case_id='table-conf-lambda-probe')
-        s['fn'] = probe
-        s['fn'].config_edits = (('lambda parameter:0.312699', 'lambda parameter:1e'),)
-        value = row(s, case=s['case_id'])
-        with self.assertRaisesRegex(ref.ReferenceError, 'capture scanner verdict'):
-            self.check(s, value)
-        value['scanner_verdict'] = dict(input='1e', accepted=False, value_bits=None)
-        self.check(s, value)
-
 
 class StoreTests(unittest.TestCase):
     def test_rows_merge_sorted_and_a_missing_one_is_an_error_naming_the_file(self):

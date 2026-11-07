@@ -233,39 +233,8 @@ def decode_profile(files, directory):
         Path(directory, name).write_bytes(content)
 
 
-# The lambda scanner cases read `%f` with the host's libc (maintainer ruling 2026-10-28): a
-# reference captured on glibc 2.41 may differ on another glibc: a mismatch there (never an equal
-# result) is reported as HOST-DEPENDENT, the documented cross-host difference.
-HOST_LIBC_PREFIXES = ('table-conf-lambda-', 'table-conf-919-lambda-')
 REVERSE_CROSS_OPEN_CASES = ('issue1114-collision-load-save-pinyin', 'issue1114-collision-load-save-zhuyin',
                             'save-929-logical-cross-open-pinyin', 'save-929-logical-cross-open-zhuyin')
-
-
-def host_libc_sensitive(case_id):
-    return isinstance(case_id, str) and case_id.startswith(HOST_LIBC_PREFIXES)
-
-
-def scanner_spelling(spec):
-    """The lambda text installed by a registered scanner case, or None if it removes the line."""
-    if not host_libc_sensitive(spec['case_id']):
-        return None
-    fn = spec['fn']
-    seen = set()
-    while id(fn) not in seen:
-        seen.add(id(fn))
-        edits = getattr(fn, 'config_edits', None)
-        if edits is not None:
-            values = [edit[1].split('lambda parameter:', 1)[1]
-                      for edit in edits if len(edit) == 2 and edit[1].startswith('lambda parameter:')]
-            if len(values) > 1:
-                raise ReferenceError(f'{spec["case_id"]}: more than one lambda scanner input')
-            return values[0] if values else None
-        nested = [cell.cell_contents for cell in (getattr(fn, '__closure__', None) or ())
-                  if callable(cell.cell_contents) and hasattr(cell.cell_contents, 'config_edits')]
-        if not nested:
-            break
-        fn = nested[0]
-    raise ReferenceError(f'{spec["case_id"]}: no registered lambda config edits')
 
 
 def module_of(spec):
@@ -341,16 +310,6 @@ def check_row(row, spec, cell, data_digest, NO_ABORT):
                              f'this run uses {data_digest}')
     if not identity.get('environment', {}).get('image'):
         raise ReferenceError(f'{case}: reference does not name its capture image')
-    spelling = scanner_spelling(spec)
-    if spelling is not None:
-        scanner = row.get('scanner_verdict')
-        if (not isinstance(scanner, dict) or set(scanner) != {'input', 'accepted', 'value_bits'}
-                or scanner.get('input') != spelling
-                or type(scanner.get('accepted')) is not bool
-                or (scanner['accepted'] and (not isinstance(scanner['value_bits'], str)
-                                             or not re.fullmatch(r'[0-9a-f]{8}', scanner['value_bits'])))
-                or (not scanner['accepted'] and scanner.get('value_bits') is not None)):
-            raise ReferenceError(f'{case}: reference has no valid capture scanner verdict')
     pin = row.get('pin')
     if not isinstance(pin, dict) or set(pin) != set(OBSERVATION_KEYS):
         raise ReferenceError(f'{case}: reference holds no complete pin observation')
@@ -412,7 +371,5 @@ class Store:
         return lookup(self.root, self.cell, spec, self.data_digest, self.no_abort, self.modules[module])
 
 
-# Not cases of their own: the nested worker the axis C import cases start.
-HELPER_CASES = ('axis-c-export-user',)
 
 # The handoff case IDs are declared above for reference validation.
