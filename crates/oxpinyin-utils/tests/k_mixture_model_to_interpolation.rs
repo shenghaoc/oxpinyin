@@ -36,6 +36,7 @@ const HEADER: &str = "\\data model \"k mixture model\" count 1 N 1 total_freq 1\
 /// document with five `甲 乙` sentences then `丙 丁`, and one with three.
 /// Source-derived from `gen_k_mixture_model.cpp:65-311` and
 /// `merge_k_mixture_model.cpp:38-129`; also the `kti-merged` tool case.
+#[cfg(unix)]
 const MERGED_KMM: &str = "\\data model \"k mixture model\" count 20 N 2 total_freq 20\n\
 \\1-gram\n\
 \\item 1 <start> count 10 freq 0\n\
