@@ -255,6 +255,12 @@ pub extern "C" fn zhuyin_get_character_offset(
         oxpinyin_capi_marshal::input::utf8_to_ucs4(oxpinyin_capi_marshal::borrow_c_string!(phrase))
             .unwrap_or_default();
     let char_count = match inst.core.character_offset(&text, offset) {
+        // Pin behaviour: the zhuyin `_get_char_offset_recur` has no zero-key
+        // branch, so at `offset == parsed_len` the walk reaches the last
+        // column's zero key (`zhuyin.cpp:2108-2117`), reads `cached_tokens`
+        // at index `phrase_length` (the array's zero terminator, token 0,
+        // `:2122-2123`), and the empty item fails the pronunciation test
+        // (`:2124-2128`): the call answers `false` with `*plength = 0`.
         Ok((Some(_), true)) if offset == inst.core.parsed_len => {
             if !length.is_null() {
                 // SAFETY: Null-checked above; caller supplied the output.
