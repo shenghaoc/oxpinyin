@@ -101,7 +101,8 @@ impl LmError {
     /// Whether this is the checked-read failure: a record the size check
     /// found and the body read then failed or sized differently. Kyoto
     /// Cabinet's `Bigram::load` asserts there (`ngram_kyotodb.cpp:131-139`
-    /// at 074a2219); the engine substitutes a class-(c) refusal.
+    /// at 074a2219); the engine reports `ReadAfterCheck` and the C adapters
+    /// abort (register row 110).
     #[must_use]
     pub fn is_read_after_check(&self) -> bool {
         matches!(

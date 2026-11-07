@@ -244,9 +244,8 @@ which is the fresh-composition contract) and its own oracle
 differential — under the same exclusions as every W12 differential
 (pin `0c5e80e`; never send zhuyin scheme 7, double scheme 30, or a
 toned incomplete key such as `n4` under `USE_TONE | PINYIN_INCOMPLETE`
-to the oracle, per `upstream-divergences.md` "Tone digit on an
-initial-only key aborts the pin's phrase search" and "Scheme setters
-abort or half-mutate on the no-op slots").
+to the oracle: the pin aborts or half-mutates on them, compatibility policy
+rows 4 and 5a–5d).
 
 Not implemented here; recorded so a later live-typing card knows the
 existing corpus is not the venue.

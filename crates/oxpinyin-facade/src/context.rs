@@ -40,8 +40,8 @@ fn mask_error_outcome(error: &UserStoreError) -> MaskOutOutcome {
 /// Upstream's save never stops at a filesystem failure and answers `true`
 /// (`pinyin.cpp:1132-1147`); the one failure it *does* stop at is the
 /// chunk header `assert` (`memory_chunk.h:543`/`:547`), where it dies.
-/// The class (c) answer is that failure alone, so it must be told apart
-/// from the quiet `false` and from the pin's `true`.
+/// The facade reports that failure alone, so it can be told apart from the
+/// quiet `false` and from the pin's `true`; the C adapters abort on it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SaveOutcome {
     /// No user directory, nothing modified, or an internal encode/compact
@@ -51,8 +51,7 @@ pub enum SaveOutcome {
     /// The file set was written and renamed: the pin's `true`.
     Saved,
     /// A chunk file's `MemoryChunk::save` header write failed; the pin
-    /// `assert`s and dies of SIGABRT. The C ABI answers `false` and the
-    /// facade logs exactly one warning in its own domain.
+    /// `assert`s and dies of SIGABRT. The C adapters abort.
     ChunkWriteFailed(ChunkHeaderField),
     /// A loaded system library's file is a directory the pin maps again and
     /// asserts on (`memory_chunk.h:493`, `_write_files`' diff of each system
@@ -79,21 +78,19 @@ impl SaveOutcome {
 /// answer; the user table's `mask_out` walks every `user_pinyin_index.bin`
 /// record and dies of SIGABRT at the `switch` whose `default` is
 /// `abort()` when a key is past `MAX_PHRASE_LENGTH` syllables
-/// (`chewing_large_table2_bdb.cpp:529`). The class (c) answer is that
-/// failure alone, told apart from the quiet `true`/`false`.
+/// (`chewing_large_table2_bdb.cpp:529`). The facade reports that failure
+/// alone, told apart from the quiet `true`/`false`; the C adapters abort on it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MaskOutOutcome {
     /// The store's mask ran (`bool` is its own success), or there is no
     /// user store to mask (the pin's `false`).
     Done(bool),
     /// The user pinyin index carried a key past `MAX_PHRASE_LENGTH`
-    /// syllables; the C ABI answers `false` and the facade logs one
-    /// warning in its own domain.
+    /// syllables; the C adapters abort, as the pin does.
     OverlongIndexKey,
     /// The user bigram carried a key that is not a four-byte
     /// `phrase_token_t`; the pin's `get_all_items` asserts
-    /// (`ngram_bdb.cpp:199`). The C ABI answers `false` and logs one
-    /// warning.
+    /// (`ngram_bdb.cpp:199`). The C adapters abort, as the pin does.
     NonTokenUserBigramKey,
     /// The user bigram carried a value shorter than a `guint32`
     /// `total_freq` under a key the mask leaves to be loaded: the pin's
@@ -109,8 +106,7 @@ pub enum MaskOutOutcome {
     /// Masking the user bigram removed every item of a gram whose total
     /// its items did not cover, leaving a residual `total_freq`; the pin's
     /// `get_length` asserts (`ngram.cpp:70`, from `Bigram::mask_out`,
-    /// `ngram_bdb.cpp:243`). The C ABI answers `false` and logs one
-    /// warning.
+    /// `ngram_bdb.cpp:243`). The C adapters abort.
     ResidualUserBigramGram,
     /// A loaded system library's file is a directory the pin reloads and
     /// asserts on (`memory_chunk.h:493`, `pinyin.cpp:1265`,

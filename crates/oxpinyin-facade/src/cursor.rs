@@ -5,7 +5,7 @@
 //! moves port the pin's matrix laws over the engine's positional data —
 //! `oxpinyin_engine::lookup_offset_over_spans` and the `*_word_offset`
 //! pair. Where the pin's `_check_offset` aborts, these answer an error
-//! the C layers turn into `false` (the no-abort policy).
+//! for the C layers to act on.
 //!
 //! Parse-mode dispatch mirrors [`InstanceView::validate_lookup_offset`]:
 //! plain full pinyin runs the law over the session's own buffer; LUOMA /
@@ -274,8 +274,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
     ///
     /// # Errors
     ///
-    /// Forwards [`EngineError`] where the pin aborts (the no-abort
-    /// policy's refusal).
+    /// Forwards [`EngineError`] where the pin aborts.
     pub fn lookup_offset(&self, cursor: usize) -> Result<usize, EngineError> {
         match self.span_source() {
             Some(source) => oxpinyin_engine::lookup_offset_over_spans(
@@ -452,8 +451,8 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
     ///
     /// # Errors
     ///
-    /// Forwards [`EngineError`] where the pin asserts (the no-abort
-    /// policy's refusal) and the dictionary's backend failure.
+    /// Forwards [`EngineError`] where the pin asserts and the dictionary's
+    /// backend failure.
     pub fn character_offset(
         &self,
         phrase: &oxpinyin_core::PhraseText,

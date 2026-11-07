@@ -5,8 +5,11 @@
 //! (`pinyin.cpp:3008-3095` at the pin) over the engine's positional
 //! data — `oxpinyin_engine::lookup_offset_for_cursor` and the
 //! `*_word_offset` pair. Where the pin's `_check_offset` aborts
-//! (`pinyin.cpp:2175`), these answer `false` per the no-abort policy
-//! (`docs/findings/upstream-divergences.md`).
+//! (`pinyin.cpp:2175`), the left and right moves abort too (register row 14);
+//! `pinyin_get_pinyin_offset` aborts only over an empty matrix with a parsed
+//! length above 0 and a cursor of 1 or more; a cursor of 0, or a parsed length
+//! of 0, answers `true` with offset 0. `pinyin_get_right_pinyin_offset` aborts
+//! on an empty matrix, as row 66 records.
 //!
 //! Parse-mode dispatch mirrors `CapiInstance::validate_lookup_offset`:
 //! plain full pinyin runs the law over the session's own buffer; LUOMA /
@@ -367,8 +370,8 @@ fn render_key(
 /// The pin clamps the cursor to the parsed length, walks back to the
 /// nearest non-empty matrix column, extends back over the zero-key run
 /// before it, and validates (`pinyin.cpp:3008-3027`). A mid-syllable
-/// cursor normalizes to the syllable start; the validation abort is
-/// answered as `false` (the no-abort policy).
+/// cursor normalizes to the syllable start; the engine's validation error is
+/// answered as `false`.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_pinyin_offset(
     instance: *mut PinyinInstance,

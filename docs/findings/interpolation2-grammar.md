@@ -8,7 +8,7 @@ into a scratch checkout and verified with `git rev-parse`.
 
 Amendment 2026-10-29 UTC: the constitution §4 quotation below is historical;
 current guidance is [the pin-matched panic amendment](compatibility-policy.md#amendment--pin-matched-panics-and-error-handling).
-The recorded typed refusals, class (b)/(c) dispositions and results below
+The recorded typed refusals, class (b) dispositions and results below
 remain unchanged. The new policy reverses none of these decisions.
 
 ## What this is about
@@ -43,7 +43,7 @@ surface:
   datagen, the emitter, the trainer, the eval harness and test/bench
   staging touch the text export.
 
-So nothing here is a class (a)/(b)/(c) entry, nothing here belongs in
+So nothing here is a class (a)/(b) entry, nothing here belongs in
 `upstream-divergences.md`, and the register is deliberately not amended.
 What does govern it is the source policy — *external interface
 behaviour must be unchanged* — applied to the **format**: the grammar the

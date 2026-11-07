@@ -429,7 +429,7 @@ only when some `last_result` span sits on a OneStep cell (`:314-318`);
 otherwise it falls through to the selection-history record that the
 row choose still filled (`:197-218`, `:333-337`). That fallback is the
 divergence — not a different notion of "constrained run", and not a
-deliberate class-(a)/(b)/(c) exception: it is a missing guard that
+deliberate class-(a)/(b) exception: it is a missing guard that
 "no OneStep ⇒ observe nothing", matching `train_result3`.
 
 **Re-measured (same-dir, 2026-09-19).** After import 你好世界 / parse
@@ -450,7 +450,7 @@ oxpinyin and not on the pin. This is the only residue that corrupts
 stored user state and compounds with use.
 
 **Class.** **REVERT TARGET** — missing "no OneStep ⇒ observe nothing"
-guard; not (a)/(b)/(c). Registered as compatibility-policy row 33;
+guard; not (a)/(b). Registered as compatibility-policy row 33;
 work order `revert-plan` §10.
 
 **Fix shape (do not implement).** Drop the history fallback whenever
@@ -1049,7 +1049,7 @@ pin's last row and completes on oxpinyin. Release builds discard the
 value; the export contents are identical.
 
 **Class.** **REVERT TARGET** — a plain ABI return-value divergence;
-not (a)/(b)/(c). Registered as compatibility-policy row 36; work order
+not (a)/(b). Registered as compatibility-policy row 36; work order
 `revert-plan` §13.
 
 **Fix shape (do not implement).** Return `handle.index <
@@ -1123,7 +1123,7 @@ pin and may not on oxpinyin; after re-parse + `0x1e` the pin can still
 show live sentence rows and oxpinyin rebuilds phrase-only.
 
 **Class.** **REVERT TARGET** — nbest lifetime and candidate-rebuild
-mismatch; not (a)/(b)/(c). Registered as compatibility-policy row 34;
+mismatch; not (a)/(b). Registered as compatibility-policy row 34;
 work order `revert-plan` §11.
 
 **Fix shape (do not implement).** (1) Keep nbest across parse; clear

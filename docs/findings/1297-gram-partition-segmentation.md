@@ -25,7 +25,7 @@ Sorted and predicate-partitioned records keep first-not-less semantics,
 including duplicates and misses at both ends. Unpartitioned input has
 std's unspecified result; the recorded observations name Rust 1.97.1
 (`rust-toolchain.toml`), without a cross-toolchain promise. This is a
-recorded library implementation difference, outside classes (a)–(c),
+recorded library implementation difference, outside classes (a)–(b),
 not a product ranking change or a change to a persistent format.
 
 ## Segmentation difference and evidence

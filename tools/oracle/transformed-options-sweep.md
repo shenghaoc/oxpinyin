@@ -84,7 +84,7 @@ checks all offsets 0 through input length for the same seven inputs at
 0x2/0x20/0x28: cursor normalization, left/right, packed key, key-rest
 positions/length, and character offset. Each family checks 38 positions
 per option word. Cursor calls are isolated so the pin's right-offset
-asserts are recorded; each requires the subject's established class-(c)
-false return and exactly one warning. Other results and out-parameters
+asserts are recorded; each requires the subject to abort (SIGABRT) too, with no warning the pin does not print.
+Other results and out-parameters
 must match. Output includes complete observations; retain it outside the
 repository as evidence.

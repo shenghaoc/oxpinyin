@@ -1259,8 +1259,8 @@ impl ZhuyinParser {
     /// `FORCE_TONE` rejects a toneless match — nested under `USE_TONE`
     /// for Simple and CP26 (`:178`, `:602`), unconditional for Discrete
     /// (`:373`, `:387`). `None` is the upstream `false`, including the
-    /// out-of-keyboard and assert shapes the no-abort policy renders as
-    /// refusal.
+    /// out-of-keyboard and assert shapes; the C adapters abort on the
+    /// ones where the pin asserts.
     #[must_use]
     pub fn parse_one_key(&self, options: u32, input: &[u8]) -> Option<ChewingKey> {
         zhuyin_parse_one_key(self.scheme, options, input)
@@ -1796,8 +1796,8 @@ mod tests {
     }
 
     /// Empty input is refused on every keyboard family (upstream reads
-    /// `str[-1]` under `USE_TONE` on the Simple law — the no-abort
-    /// policy refuses instead), and the `StandardDvorak` slot parses
+    /// `str[-1]` under `USE_TONE` on the Simple law, a read outside the
+    /// string; this function refuses instead), and the `StandardDvorak` slot parses
     /// nothing.
     #[test]
     fn chewing_one_key_refuses_empty_and_dvorak() {
