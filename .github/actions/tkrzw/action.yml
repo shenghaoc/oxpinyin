@@ -2,9 +2,8 @@ name: 'tkrzw'
 description: |-
   Upstream tkrzw at the revision tools/cloud/setup.sh provisions
   (tools/tkrzw/build.py, TKRZW_REV), built by that recipe and cached, on
-  Linux, macOS and Windows. CI always uses this build (maintainer decision
-  2026-10-30 UTC); the fixed upstream release is not yet in every distro
-  (docs/findings/tkrzw-distro-compat.md).
+  Linux, macOS and Windows. CI always uses this build: the fixed upstream
+  release is not yet in every distro (docs/findings/tkrzw-distro-compat.md).
 
   The cache key names everything the build depends on: the tkrzw revision,
   the OS and architecture, the runner image (compiler and SDK), the

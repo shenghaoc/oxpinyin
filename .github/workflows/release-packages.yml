@@ -21,8 +21,7 @@
 # package the takeover removes, so the Arch lane fetches that package and
 # ships its data directory inside ours — see just packaging release-arch.
 #
-# Image choice: each lane builds on the distro's rolling branch
-# (maintainer ruling 2026-10-27 UTC): Debian testing, Fedora Rawhide and
+# Image choice: each lane builds on the distro's rolling branch: Debian testing, Fedora Rawhide and
 # Arch. For Debian that is testing (forky): stable (trixie, what
 # debian:latest resolves to) still ships libpinyin 2.8.1 on BerkeleyDB,
 # whose bigram.db no oxpinyin backend can read, so a tkrzw build there could
