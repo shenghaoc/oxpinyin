@@ -24,7 +24,7 @@ test-threads = 4
 max-threads = 1
 
 [[profile.default.overrides]]
-filter = 'binary(bdb_libpinyin_files) | binary(trait_laws) | binary(user_store_acid) | binary(user_store_semantics) | binary(assembly) | binary(empty_user_dir) | binary(libpinyin_data_dir) | binary(dbm_programs)'
+filter = 'binary(bdb_libpinyin_files) | binary(trait_laws) | binary(user_store_semantics) | binary(assembly) | binary(empty_user_dir) | binary(libpinyin_data_dir) | binary(dbm_programs)'
 test-group = 'store-backend'
 
 # Cases that read a real libpinyin data tree, the pin-built user profile, or

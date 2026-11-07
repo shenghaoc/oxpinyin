@@ -21,7 +21,7 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::ops::Bound;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -39,7 +39,6 @@ use crate::phrase::{
     phrase_index_library_index,
 };
 use crate::phrase_table;
-use crate::registry::{self, CountCache, RegistryLease, StandaloneLease, StoreInner};
 use crate::replay::UnigramAdd;
 use crate::seed;
 use crate::session_values::SessionValues;
@@ -142,8 +141,6 @@ pub enum UserStoreError {
     /// (corrupt or incompatible): the item exists, one of its readings does
     /// not read back.
     DecodePronunciation,
-    /// A standalone store at this path is already live in this process.
-    AlreadyOpen,
     /// Phrase text is empty, too long, or its key count does not match its
     /// Unicode scalar length (`docs/findings/user-store.md` §3.1–3.2).
     InvalidPhrase,
@@ -266,7 +263,6 @@ impl fmt::Display for UserStoreError {
             Self::DecodePronunciation => {
                 write!(f, "stored pronunciation could not be decoded")
             }
-            Self::AlreadyOpen => write!(f, "standalone user store is already open"),
             Self::InvalidPhrase => {
                 write!(f, "invalid phrase (empty, too long, or key count mismatch)")
             }
@@ -363,7 +359,6 @@ impl std::error::Error for UserStoreError {
             Self::Store(e) => Some(e),
             Self::Decode
             | Self::DecodePronunciation
-            | Self::AlreadyOpen
             | Self::InvalidPhrase
             | Self::TokenSpaceExhausted
             | Self::Persistence(_)
@@ -1516,12 +1511,111 @@ fn has_user_data_in_write_txn(txn: &impl WriteTxn) -> Result<bool, StoreError> {
 
 // ── GenericUserStore ─────────────────────────────────────────────
 
-/// An ordered-store-backed store of user-learning counts.
+/// Decode-time memo of the unigram count tables and the user bigram's raw
+/// grams, valid for one write generation.
+///
+/// The store used to answer these reads through an MVCC read snapshot
+/// held open across calls. Nothing in this deployment shares a store
+/// file with a concurrent writer — one user, own files, one process —
+/// so the isolation that bought was never load-bearing; what was
+/// load-bearing is that a read repeated inside one generation costs
+/// nothing and answers the same value every time. A plain memo gives
+/// both: a key is fetched from the store the first time it is asked
+/// for and served from memory afterwards, and the whole cache is
+/// dropped the moment `write_generation` moves.
+///
+/// This is the freshness contract [`crate::lookup::UserLookup`]
+/// already runs on — keyed by generation, rebuilt when it moves, no
+/// MVCC anywhere. The difference is that the count tables are the large
+/// ones, so rows are memoised on demand rather than slurped in bulk: a
+/// write costs no rebuild scan, and the cache never grows past the keys
+/// decode actually asked about between two writes. An absent row
+/// memoises as `0`, exactly what the store read it replaces returned.
+#[derive(Debug)]
+pub struct CountCache {
+    /// The `write_generation` this cache was built for; a mismatch
+    /// retires it wholesale.
+    pub(crate) generation: u64,
+    /// `UNIGRAM[token]`.
+    pub(crate) unigram: HashMap<Token, u64>,
+    /// `UNIGRAM_TOTAL`'s single row.
+    pub(crate) unigram_total: Option<u64>,
+    /// The raw gram under each predecessor scored since the last write
+    /// that has one. Counts and totals are read from the bytes as the pin
+    /// reads them (`get_freq`, `get_total_freq`).
+    pub(crate) bigram_rows: HashMap<Token, Vec<u8>>,
+}
+
+/// The state one session's handles share.
+pub struct StoreInner<S: WriteStore> {
+    pub(crate) has_system_items: AtomicBool,
+    // When nested, acquire the session phrase-arena mutex before
+    // `system_items`; never reverse this order.
+    pub(crate) system_items: Mutex<crate::system_items::SystemItems>,
+    /// Whether a journal REMOVE took out an item of a loaded system library:
+    /// `get_phrase_item` fails for it from then on (074a2219
+    /// `phrase_index.cpp:180-206`, `:219-236`), though the shipped chunk still
+    /// holds the item and the phrase table the token. The library's live
+    /// buffer is the record; this only gates the per-token check.
+    pub(crate) has_removed_system_items: AtomicBool,
+    /// Decode-time count memo. Declared before `db` so it is dropped
+    /// first (struct fields drop in declaration order).
+    pub(crate) count_cache: Mutex<Option<CountCache>>,
+    pub(crate) db: Mutex<crate::session_values::SessionValues<S>>,
+    pub(crate) dirty: AtomicBool,
+    /// Bumped after every committed user-data write transaction, which
+    /// retires any `count_cache` built against an older generation.
+    ///
+    /// Future raw-write paths, including legacy migration import, must call
+    /// `UserStore::mark_committed_write` after commit rather than touching
+    /// this counter directly. Bumping the generation alone refreshes the
+    /// cache but leaves `has_user_data` as it was, and that flag is
+    /// consulted *first* — an import that only bumped the generation would
+    /// leave the store reporting `UserCountDelta::ZERO` for every candidate,
+    /// silently and permanently, however much data it wrote.
+    pub(crate) write_generation: AtomicU64,
+    /// Bumped only by writes that change the phrase or pronunciation
+    /// tables; the reverse index keys its cache on this, so count-only
+    /// training writes never trigger a rebuild.
+    pub(crate) phrase_generation: AtomicU64,
+    /// Exact text-to-token rows changed. Pronunciation-only merges leave
+    /// this stamp alone, so repeated text queries can retain their row.
+    pub(crate) phrase_table_generation: AtomicU64,
+    /// First gate on the decode read path: `false` answers `count_delta` and
+    /// `unigram_delta` with zero from this one atomic, taking no mutex and
+    /// opening no store transaction. Recomputed at `open` and maintained only
+    /// by `UserStore::mark_committed_write`.
+    pub(crate) has_user_data: AtomicBool,
+    /// Whether any library still carries its own share of that difference
+    /// in [`LIBRARY_OFFSET`]: from the load until the next
+    /// `compact` (a save, the end of an import, a mask_out), which
+    /// rebuilds each library's total from its items.
+    pub(crate) has_library_offsets: AtomicBool,
+    /// The libpinyin session metadata (optional directory, system originals).
+    /// Transient sessions retain originals without a directory; others use the
+    /// pin's own file shapes (`open_libpinyin`): `save()` exports the
+    /// session values and writes the file set.
+    pub(crate) libpinyin: Option<std::sync::Arc<crate::store_libpinyin::Target>>,
+    /// The pin's own in-memory user bigram container (`Bigram::m_db`
+    /// after `load_db`): the session's only copy of the user bigram, the
+    /// raw `SingleGram` values every bigram operation reads and writes, so
+    /// its walk order — the export's order and the saved file's layout —
+    /// is the pin's. A writer takes the database guard first, then this one,
+    /// and bumps `write_generation` before releasing the database guard.
+    pub(crate) bigram_db: Option<Mutex<oxpinyin_store::DefaultUserBigramDb>>,
+    /// Whether [`Self::bigram_db`] is the failed Berkeley DB container
+    /// ([`oxpinyin_store::UserBigramDb::is_failed`]), recorded when it is
+    /// created: it never changes, so a training step reads it without the
+    /// container's lock.
+    pub(crate) bigram_failed: bool,
+}
+
+/// The libpinyin session store: one per open, over the arena, the pin's
+/// user bigram container and the live system items.
 ///
 /// The context owns the store and lends it to each operation. System chunk
 /// originals belong to this owner; sessions and cursors cannot retain them.
-/// The database handle and dirty flag remain shared with the standalone-path
-/// registry. Its mutex serializes backend access, including compaction, while
+/// The database mutex serializes access to the session values, while
 /// public mutations require an exclusive borrow of this store.
 pub struct GenericUserStore<S: WriteStore> {
     /// The facade fini's `user.conf` write: armed only on the handle a
@@ -1529,12 +1623,8 @@ pub struct GenericUserStore<S: WriteStore> {
     _fini: FiniGuard,
     inner: Arc<StoreInner<S>>,
     pub(crate) originals: crate::persistence::SystemOriginals,
-    /// Keeps the standalone path reserved while this owner is alive.
-    _standalone_lease: Option<Arc<StandaloneLease>>,
     /// This handle's current training call's step checks.
     training: TrainingCheck,
-    /// Last field so [`RegistryLease`] drains after this handle's `Arc` dies.
-    _lease: RegistryLease,
 }
 
 /// Which pin abort or read-past a training step's store check met, with
@@ -1589,7 +1679,6 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// the fini guard of the open that raised the counter.
     pub(crate) fn from_parts(
         inner: Arc<StoreInner<S>>,
-        lease: Option<Arc<StandaloneLease>>,
         fini: FiniGuard,
         originals: crate::persistence::SystemOriginals,
     ) -> Self {
@@ -1597,9 +1686,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             _fini: fini,
             originals,
             inner,
-            _standalone_lease: lease,
             training: TrainingCheck::default(),
-            _lease: RegistryLease,
         }
     }
 }
@@ -2126,74 +2213,6 @@ impl<S: WriteStore> GenericUserStore<S> {
         {
             target.phrases().index.note_suggestion(&keys);
         }
-    }
-
-    fn init_and_wrap(db: S) -> Result<Arc<StoreInner<S>>, UserStoreError> {
-        let has_user_data = db.write(|txn| {
-            let total_key = codec::encode_u8(UNIGRAM_TOTAL_KEY);
-            if txn.read_with(UNIGRAM_TOTAL, &total_key, |_| ())?.is_none() {
-                let mut sum = 0_u64;
-                txn.for_each(UNIGRAM, |_k, v| {
-                    let delta = codec::decode_u64(v)
-                        .map_err(|_| StoreError::Backend("corrupt unigram value".into()))?;
-                    sum = sum.saturating_add(delta);
-                    Ok(())
-                })?;
-                txn.put(UNIGRAM_TOTAL, &total_key, &codec::encode_u64(sum))?;
-            }
-
-            let alloc_key = codec::encode_u8(ALLOC_CURSOR);
-            if txn.read_with(ALLOC, &alloc_key, |_| ())?.is_none() {
-                txn.put(ALLOC, &alloc_key, &codec::encode_token(FIRST_USER_TOKEN))?;
-            }
-
-            has_user_data_in_write_txn(txn)
-        })?;
-
-        Ok(Arc::new(StoreInner {
-            has_system_items: AtomicBool::new(false),
-            system_items: std::sync::Mutex::new(crate::system_items::SystemItems::default()),
-            has_removed_system_items: AtomicBool::new(false),
-            count_cache: Mutex::new(None),
-            standalone_lookup: Mutex::new(None),
-            db: Mutex::new(SessionValues::Native(db)),
-            dirty: AtomicBool::new(false),
-            write_generation: AtomicU64::new(0),
-            phrase_generation: AtomicU64::new(0),
-            phrase_table_generation: AtomicU64::new(0),
-            has_user_data: AtomicBool::new(has_user_data),
-            has_library_offsets: AtomicBool::new(false),
-            libpinyin: None,
-            bigram_db: None,
-            bigram_failed: false,
-        }))
-    }
-
-    /// Open or create the one standalone store at `path` for this process.
-    ///
-    /// This bypasses [`UserStore::open`]'s shared-handle registry, but a
-    /// second live `create_standalone` call for the same path returns
-    /// [`UserStoreError::AlreadyOpen`].
-    ///
-    /// # Errors
-    ///
-    /// Returns [`UserStoreError`] when the store cannot be created at `path`.
-    pub fn create_standalone(path: &Path) -> Result<Self, UserStoreError> {
-        let standalone_lease =
-            Arc::new(registry::acquire_standalone(path).ok_or(UserStoreError::AlreadyOpen)?);
-        let db = S::create(path)?;
-        let inner = Self::init_and_wrap(db)?;
-        Ok(Self {
-            _fini: FiniGuard::disarmed(),
-            originals: crate::persistence::SystemOriginals::new(
-                Default::default(),
-                oxpinyin_data::user_files::UserFileLayout::stock(),
-            ),
-            inner,
-            _standalone_lease: Some(standalone_lease),
-            training: TrainingCheck::default(),
-            _lease: RegistryLease,
-        })
     }
 
     /// `SingleGram::get_freq(cur)` on `prev`'s raw gram — the first match
@@ -2845,32 +2864,17 @@ impl<S: WriteStore> GenericUserStore<S> {
         Ok(phrases)
     }
 
-    /// Borrows the session's canonical tables, or reuses the standalone
-    /// store's derived lookup until a phrase write invalidates it.
+    /// Borrows the session's canonical tables.
     ///
     /// # Errors
-    /// Returns an error when standalone phrase rows cannot be read.
+    /// None: the `Result` is the callers' signature.
     pub fn lookup(&self) -> Result<crate::UserLookup<'_>, UserStoreError> {
-        if let Some(target) = self.inner.libpinyin.as_ref() {
-            return Ok(crate::UserLookup::session(
-                &target.phrases,
-                &self.inner.system_items,
-            ));
-        }
-        let mut cache = self
+        Ok(self
             .inner
-            .standalone_lookup
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let generation = self.phrase_generation();
-        if cache.as_ref().is_none_or(|(seen, _)| *seen != generation) {
-            let lookup = crate::lookup::StandaloneLookup::from_phrases(self.phrases()?);
-            *cache = Some((generation, Arc::new(lookup)));
-        }
-        Ok(cache
+            .libpinyin
             .as_ref()
-            .map_or_else(crate::UserLookup::empty, |(_, lookup)| {
-                crate::UserLookup::standalone(Arc::clone(lookup))
+            .map_or_else(crate::UserLookup::empty, |target| {
+                crate::UserLookup::session(&target.phrases, &self.inner.system_items)
             }))
     }
 
@@ -4467,56 +4471,6 @@ impl<S: WriteStore> GenericUserStore<S> {
     }
 }
 
-impl GenericUserStore<DefaultStore> {
-    /// Open the user store at `path`, creating an empty database if absent.
-    ///
-    /// Count tables and phrase-index tables are created eagerly so that reads
-    /// issued before any write succeed with zero / `None` rather than a
-    /// "table does not exist" error. A missing allocation cursor is
-    /// initialised to [`FIRST_USER_TOKEN`]. A freshly opened store is clean:
-    /// [`Self::save`] is a no-op until a training update records a change.
-    ///
-    /// Opening a path that is already open in this process returns a clone of
-    /// the live handle (shared counts and shared §4 dirty flag) rather than a
-    /// second database handle.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`UserStoreError`] when the store cannot be opened at `path`.
-    pub fn open(path: &Path) -> Result<Self, UserStoreError> {
-        let key = registry::registry_key(path);
-        let mut reg = registry::lock_registry();
-        if let Some(inner) = reg.get(&key).and_then(std::sync::Weak::upgrade) {
-            return Ok(Self {
-                _fini: FiniGuard::disarmed(),
-                originals: crate::persistence::SystemOriginals::new(
-                    Default::default(),
-                    oxpinyin_data::user_files::UserFileLayout::stock(),
-                ),
-                inner,
-                _standalone_lease: None,
-                training: TrainingCheck::default(),
-                _lease: RegistryLease,
-            });
-        }
-
-        let db = DefaultStore::create(path)?;
-        let inner = Self::init_and_wrap(db)?;
-        reg.insert(key, Arc::downgrade(&inner));
-        Ok(Self {
-            _fini: FiniGuard::disarmed(),
-            originals: crate::persistence::SystemOriginals::new(
-                Default::default(),
-                oxpinyin_data::user_files::UserFileLayout::stock(),
-            ),
-            inner,
-            _standalone_lease: None,
-            training: TrainingCheck::default(),
-            _lease: RegistryLease,
-        })
-    }
-}
-
 /// Entry cap per count-memo map. Bounds memo memory to O(cap) no matter
 /// how many distinct keys a session scores against; the value sits far
 /// above any trained store's working set. On overflow the map resets —
@@ -5073,655 +5027,6 @@ mod tests {
         apply_system_reading(&mut item, &reading, change);
         assert_eq!(item.prons[1].1, 10, "overflow refuses the increment");
     }
-
-    macro_rules! user_store_tests {
-        ($mod:ident, $backend:ty, $ext:expr) => {
-            mod $mod {
-                use super::super::*;
-                use crate::{
-                    PHRASE_INDEX_LIBRARY_MASK, USER_DICTIONARY,
-                    phrase_index_make_token,
-                };
-                use oxpinyin_core::SyllableKey;
-
-                type Store = GenericUserStore<$backend>;
-
-                fn temp_path(tag: &str) -> std::path::PathBuf {
-                    let path = std::env::temp_dir().join(format!(
-                        "oxpinyin-user-{}-{tag}-{}.{}",
-                        $ext,
-                        std::process::id(),
-                        $ext,
-                    ));
-                    cleanup(&path);
-                    path
-                }
-
-                fn cleanup(path: &std::path::Path) {
-                    let _ = std::fs::remove_file(path);
-                    let mut lock = path.as_os_str().to_os_string();
-                    lock.push("-lock");
-                    let _ = std::fs::remove_file(std::path::Path::new(&lock));
-                }
-
-                #[test]
-                fn create_standalone_rejects_second_live_handle() {
-                    let path = temp_path("second-live-handle");
-                    let first = Store::create_standalone(&path).unwrap();
-                    assert!(matches!(
-                        Store::create_standalone(&path),
-                        Err(UserStoreError::AlreadyOpen)
-                    ));
-                    drop(first);
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn reopen_of_populated_store_sets_has_user_data() {
-                    let path = temp_path("reopen-populated");
-                    {
-                        let mut store = Store::create_standalone(&path).unwrap();
-                        store.observe_selection(1, 100).unwrap();
-                    }
-                    let store = Store::create_standalone(&path).unwrap();
-                    assert!(store.has_user_data());
-                    assert_eq!(store.count_delta(Some(1), 100).unwrap().bigram_count, 69);
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn roundtrip_reopen_reads_identical() {
-                    let path = temp_path("roundtrip");
-                    {
-                        let mut store = Store::create_standalone(&path).unwrap();
-                        store.observe_selection(SENTENCE_START, 10).unwrap();
-                        store.observe_selection(10, 20).unwrap();
-                        store.observe_selection(10, 20).unwrap();
-                    }
-
-                    let store = Store::create_standalone(&path).unwrap();
-                    assert_eq!(store.bigram_count(SENTENCE_START, 10).unwrap(), 69);
-                    assert_eq!(store.bigram_count(10, 20).unwrap(), 207);
-                    assert_eq!(store.bigram_total(SENTENCE_START).unwrap(), 69);
-                    assert_eq!(store.bigram_total(10).unwrap(), 207);
-                    assert_eq!(store.unigram_delta(10).unwrap(), 483);
-                    assert_eq!(store.unigram_delta(20).unwrap(), 1449);
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn save_reopen_roundtrip_preserves_counts_cursor_and_total() {
-                    let path = temp_path("save-rt");
-                    {
-                        let mut store = Store::create_standalone(&path).unwrap();
-                        store.observe_selection(SENTENCE_START, 10).unwrap();
-                        store.observe_selection(10, 20).unwrap();
-                        store.observe_selection(10, 20).unwrap();
-                        let token = store.add_phrase(&"你好".into(), &[10, 20], None).unwrap();
-                        assert_eq!(token, FIRST_USER_TOKEN);
-                        assert!(store.is_modified());
-                        assert!(store.save().unwrap());
-                        assert!(!store.is_modified());
-                    }
-
-                    let mut store = Store::create_standalone(&path).unwrap();
-                    assert!(!store.is_modified());
-                    assert!(!store.save().unwrap(), "a reopen starts clean");
-
-                    assert_eq!(store.bigram_count(SENTENCE_START, 10).unwrap(), 69);
-                    assert_eq!(store.bigram_count(10, 20).unwrap(), 207);
-                    assert_eq!(store.bigram_total(SENTENCE_START).unwrap(), 69);
-                    assert_eq!(store.bigram_total(10).unwrap(), 207);
-                    assert_eq!(store.unigram_delta(10).unwrap(), 483);
-                    assert_eq!(store.unigram_delta(20).unwrap(), 1449);
-                    assert_eq!(store.unigram_total().unwrap(), 483 + 1449 + 15);
-                    assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN + 1);
-                    assert_eq!(
-                        store.token_for_phrase("你好").unwrap(),
-                        Some(FIRST_USER_TOKEN)
-                    );
-                    let phrase = store
-                        .phrase(FIRST_USER_TOKEN)
-                        .unwrap()
-                        .expect("phrase stored");
-                    assert_eq!(phrase.phrase_text().unwrap(), "你好");
-                    assert_eq!(phrase.pronunciations()[0].keys(), &[10, 20]);
-                    assert_eq!(phrase.pronunciations()[0].count(), 5);
-
-                    assert_eq!(
-                        store.count_delta(Some(10), 20).unwrap(),
-                        UserCountDelta {
-                            bigram_count: 207,
-                            bigram_total: 207,
-                            unigram_delta: 1449,
-                            unigram_total_delta: 483 + 1449 + 15,
-                            unigram_live: None,
-                        }
-                    );
-                    assert_eq!(store.count_delta(None, 20).unwrap().bigram_count, 0);
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn phrase_generation_moves_only_on_phrase_writes() {
-                    let path = temp_path("phrase-gen");
-                    let mut store = Store::create_standalone(&path).unwrap();
-                    assert_eq!(store.phrase_generation(), 0);
-                    let token = store.add_phrase(&"你好".into(), &[10, 20], None).unwrap();
-                    assert_eq!(store.phrase_generation(), 1, "add_phrase is a phrase write");
-                    let before = store.phrase_generation();
-                    let write_before = store.generation();
-                    store.observe_selection(SENTENCE_START, token).unwrap();
-                    store.set_bigram_count(SENTENCE_START, token, 7).unwrap();
-                    assert!(
-                        store.generation() > write_before,
-                        "counts moved the write generation"
-                    );
-                    assert_eq!(
-                        store.phrase_generation(),
-                        before,
-                        "training and bigram writes must not move the phrase generation"
-                    );
-                    assert!(store.remove_user_phrase(token).unwrap());
-                    assert_eq!(
-                        store.phrase_generation(),
-                        before + 1,
-                        "removal is a phrase write"
-                    );
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn phrase_table_membership_keeps_each_token_text_pair() {
-                    // The pin's `m_phrase_table` lists a token under every
-                    // text it indexes, and `remove_index` matches the exact
-                    // `(token, text)` pair (`pinyin.cpp:3750`). A later row
-                    // for the same token must not evict the phrase's own
-                    // membership, or the phrase would stop being removable.
-                    let path = temp_path("pair-set");
-                    let mut store = Store::create_standalone(&path).unwrap();
-                    let token = store.add_phrase(&"甲".into(), &[7], None).unwrap();
-                    // A later-walked phrase-index entry: same token, new text.
-                    store
-                        .database()
-                        .write(|txn| phrase_table::add_index(txn, "乙", token))
-                        .unwrap();
-
-                    // The own pair is still present, so removal succeeds and
-                    // drops only that pair; the unrelated membership stays.
-                    assert!(store.remove_user_phrase(token).unwrap());
-                    assert!(store.phrase(token).unwrap().is_none());
-                    assert!(
-                        get_bytes(
-                            &*store.database(),
-                            phrase_table::TABLE,
-                            &phrase_table::key("乙")
-                        )
-                        .unwrap()
-                        .is_some(),
-                        "removing the phrase drops only its own pair"
-                    );
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn reopening_a_standalone_store_preserves_missing_phrase_table() {
-                    // Standalone schema changes have no migration. Reopening
-                    // must not synthesize membership absent from the table.
-                    let path = temp_path("backfill");
-                    let token = {
-                        let mut store = Store::create_standalone(&path).unwrap();
-                        let token = store.add_phrase(&"你好".into(), &[10, 20], None).unwrap();
-                        // Parent-written shape: drop the membership row.
-                        store
-                            .database()
-                            .write(|txn| {
-                                txn.remove(phrase_table::TABLE, &phrase_table::key("你好"))
-                            })
-                            .unwrap();
-                        assert!(
-                            get_bytes(
-                                &*store.database(),
-                                phrase_table::TABLE,
-                                &phrase_table::key("你好")
-                            )
-                            .unwrap()
-                            .is_none()
-                        );
-                        token
-                    };
-
-                    let mut reopened = Store::create_standalone(&path).unwrap();
-                    assert!(reopened.phrase(token).unwrap().is_some());
-                    assert!(
-                        !reopened.remove_user_phrase(token).unwrap(),
-                        "the reopen must not backfill the phrase table"
-                    );
-                    assert!(reopened.phrase(token).unwrap().is_some());
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn new_reading_appends_after_legacy_and_exhausted_sequences() {
-                    for legacy in [true, false] {
-                        let path = temp_path("legacy-pron-order");
-                        let mut store = Store::create_standalone(&path).unwrap();
-                        let token = store.add_phrase(&"你".into(), &[20], Some(5)).unwrap();
-                        store
-                            .database()
-                            .write(|txn| {
-                                let value = if legacy {
-                                    codec::encode_u64(5).to_vec()
-                                } else {
-                                    super::super::PronValue {
-                                        count: 5,
-                                        seq: u32::MAX,
-                                        indexed: false,
-                                    }
-                                    .encode()
-                                    .to_vec()
-                                };
-                                txn.put(
-                                    PRONUNCIATION,
-                                    &codec::encode_token_bytes(token, &phrase::encode_keys(&[20])),
-                                    &value,
-                                )
-                            })
-                            .unwrap();
-                        store.add_phrase(&"你".into(), &[10], Some(7)).unwrap();
-                        store.add_phrase(&"你".into(), &[15], Some(9)).unwrap();
-                        let item = store.phrase(token).unwrap().unwrap();
-                        assert_eq!(
-                            item.pronunciations()
-                                .iter()
-                                .map(|p| p.keys().to_vec())
-                                .collect::<Vec<_>>(),
-                            vec![vec![20], vec![10], vec![15]]
-                        );
-
-                        let encoded = get_bytes(
-                            &*store.database(),
-                            PRONUNCIATION,
-                            &codec::encode_token_bytes(token, &phrase::encode_keys(&[20])),
-                        )
-                        .unwrap()
-                        .unwrap();
-                        assert_eq!(PronValue::decode(&encoded).unwrap().indexed, legacy);
-                        drop(store);
-                        let reopened = Store::create_standalone(&path).unwrap();
-                        assert_eq!(reopened.phrase(token).unwrap().unwrap(), item);
-                        drop(reopened);
-                        cleanup(&path);
-                    }
-                }
-
-                #[test]
-                fn phrase_roundtrip_reopen_preserves_cursor() {
-                    let path = temp_path("phrase-rt");
-                    let (t1, t2, next) = {
-                        let mut store = Store::create_standalone(&path).unwrap();
-                        let t1 = store.add_phrase(&"你好".into(), &[10, 20], None).unwrap();
-                        let t2 = store
-                            .add_phrase(&"世界".into(), &[30, 40], Some(9))
-                            .unwrap();
-                        store
-                            .add_phrase(&"你好".into(), &[11, 20], Some(2))
-                            .unwrap();
-                        (t1, t2, store.next_user_token().unwrap())
-                    };
-
-                    let store = Store::create_standalone(&path).unwrap();
-                    assert_eq!(store.next_user_token().unwrap(), next);
-                    assert_eq!(next, FIRST_USER_TOKEN + 2);
-
-                    let p1 = store.phrase(t1).unwrap().unwrap();
-                    assert_eq!(p1.phrase_text().unwrap(), "你好");
-                    assert_eq!(p1.pronunciations().len(), 2);
-                    assert_eq!(p1.pronunciations()[0].keys(), &[10, 20]);
-                    assert_eq!(p1.pronunciations()[0].count(), 5);
-                    assert_eq!(p1.pronunciations()[1].keys(), &[11, 20]);
-                    assert_eq!(p1.pronunciations()[1].count(), 2);
-                    assert_eq!(store.unigram_delta(t1).unwrap(), 15);
-                    assert_eq!(store.unigram_total().unwrap(), 15 + 27);
-
-                    let p2 = store.phrase(t2).unwrap().unwrap();
-                    assert_eq!(p2.phrase_text().unwrap(), "世界");
-                    assert_eq!(p2.pronunciations()[0].keys(), &[30, 40]);
-                    assert_eq!(p2.pronunciations()[0].count(), 9);
-                    assert_eq!(store.unigram_delta(t2).unwrap(), 27);
-
-                    let mut store = store;
-                    let t3 = store.add_phrase(&"中国".into(), &[50, 60], None).unwrap();
-                    assert_eq!(t3, t2 + 1);
-                    assert_eq!(t3, FIRST_USER_TOKEN + 2);
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn bulk_join_preserves_token_groups_reading_order_and_duplicates() {
-                    for memory in [false, true] {
-                        let path = temp_path(&format!("bulk-join-order-{memory}"));
-                        let store = Store::create_standalone(&path).unwrap();
-                        if memory {
-                            *store.database() = SessionValues::transient();
-                        }
-                        store.database().write(|txn| {
-                            for (token, tail, word) in [
-                                (u32::MAX, &[][..], 0x4e94_u32),
-                                (256, &[0][..], 0x4e09),
-                                (255, &[][..], 0x4e8c),
-                                (1, &[][..], 0x4e00),
-                                (256, &[][..], 0x56db),
-                            ] {
-                                txn.put(PHRASE, &codec::encode_token_bytes(token, tail), &word.to_le_bytes())?;
-                            }
-                            for (token, keys, count, seq, indexed) in [
-                                (1, &[1, 0][..], 11, 5, false),
-                                (1, &[2, 0][..], 22, 1, true),
-                                (1, &[3, 0][..], 33, 1, false),
-                                (1, &[3, 0, 127][..], 44, 1, true),
-                                (256, &[9, 0][..], u64::MAX, 0, false),
-                                (u32::MAX, &[][..], 55, 0, true),
-                            ] {
-                                txn.put(PRONUNCIATION, &codec::encode_token_bytes(token, keys),
-                                    &PronValue { count, seq, indexed }.encode())?;
-                            }
-                            txn.put(PRONUNCIATION, &codec::encode_token_bytes(256, &[8, 0]),
-                                &codec::encode_u64(99))?;
-                            // Values outside the selected tokens are not decoded.
-                            txn.put(PRONUNCIATION, &codec::encode_token_bytes(2, &[1]), &[0])
-                        }).unwrap();
-                        let first = vec![
-                            UserPronunciation::new(vec![2], 22, true),
-                            UserPronunciation::new(vec![3], 33, false),
-                            UserPronunciation::new(vec![3], 44, true),
-                            UserPronunciation::new(vec![1], 11, false),
-                        ];
-                        let middle = vec![
-                            UserPronunciation::new(vec![9], u64::MAX, false),
-                            UserPronunciation::new(vec![8], 99, true),
-                        ];
-                        assert_eq!(store.phrases().unwrap(), vec![
-                            UserPhrase::new(1, vec![0x4e00], first),
-                            UserPhrase::new(255, vec![0x4e8c], vec![]),
-                            UserPhrase::new(256, vec![0x56db], middle.clone()),
-                            UserPhrase::new(256, vec![0x4e09], middle),
-                            UserPhrase::new(u32::MAX, vec![0x4e94], vec![UserPronunciation::new(vec![], 55, true)]),
-                        ]);
-                        drop(store);
-                        cleanup(&path);
-                    }
-                }
-
-                #[test]
-                fn bulk_join_keeps_corrupt_record_errors_and_empty_fast_path() {
-                    for memory in [false, true] {
-                        for (tag, phrase_key, phrase_value, pron_key, pron_value, expected) in [
-                            ("empty", None, vec![], vec![255], vec![], None),
-                            ("phrase-key", Some(vec![0]), vec![0], vec![255], vec![], Some("corrupt phrase token")),
-                            ("phrase-value", Some(codec::encode_token(1).to_vec()), vec![0], vec![0], vec![], Some("corrupt phrase text")),
-                            ("pron-key-before", Some(codec::encode_token(1).to_vec()), vec![], vec![0], vec![], Some("corrupt pronunciation key")),
-                            ("pron-key-after", Some(codec::encode_token(1).to_vec()), vec![], vec![255], vec![], Some("corrupt pronunciation key")),
-                            ("pron-value", Some(codec::encode_token(1).to_vec()), vec![], codec::encode_token(1).to_vec(), vec![0; 12], Some("corrupt pronunciation value")),
-                            ("unselected-before", Some(codec::encode_token(1).to_vec()), vec![], codec::encode_token(0).to_vec(), vec![], None),
-                            ("unselected-after", Some(codec::encode_token(1).to_vec()), vec![], codec::encode_token(u32::MAX).to_vec(), vec![], None),
-                        ] {
-                            let path = temp_path(&format!("bulk-join-{tag}-{memory}"));
-                            let store = Store::create_standalone(&path).unwrap();
-                            if memory {
-                                *store.database() = SessionValues::transient();
-                            }
-                            store.database().write(|txn| {
-                                if let Some(key) = &phrase_key {
-                                    txn.put(PHRASE, key, &phrase_value)?;
-                                }
-                                txn.put(PRONUNCIATION, &pron_key, &pron_value)
-                            }).unwrap();
-                            match (store.phrases(), expected) {
-                                (Err(UserStoreError::Store(StoreError::Backend(message))), Some(expected)) => assert_eq!(message.message(), expected),
-                                (Ok(rows), None) => assert_eq!(rows.len(), usize::from(phrase_key.is_some())),
-                                (result, expected) => panic!("{tag}: {result:?}, expected {expected:?}"),
-                            }
-                            drop(store);
-                            cleanup(&path);
-                        }
-                    }
-                }
-
-                #[test]
-                fn bulk_join_mask_key_collection_preserves_order_and_multiplicity() {
-                    let path = temp_path("bulk-join-mask-keys");
-                    let store = Store::create_standalone(&path).unwrap();
-                    let tokens = [1, 1, 256];
-                    store.database().write(|txn| {
-                        for (token, tail) in [(1, &[1, 0][..]), (1, &[1, 0, 127][..]), (2, &[][..]), (256, &[0][..]), (u32::MAX, &[][..])] {
-                            txn.put(PRONUNCIATION, &codec::encode_token_bytes(token, tail), &[])?;
-                        }
-                        assert_eq!(collect_pronunciation_keys_from_txn(txn, tokens.into_iter())?, vec![
-                            (1, vec![1, 0]), (1, vec![1, 0, 127]), (256, vec![0]),
-                        ]);
-                        txn.put(PRONUNCIATION, &[255], &[])?;
-                        assert!(matches!(collect_pronunciation_keys_from_txn(txn, tokens.into_iter()), Err(StoreError::Backend(message)) if message.message() == "corrupt pronunciation key"));
-                        assert!(collect_pronunciation_keys_from_txn(txn, std::iter::empty())?.is_empty());
-                        Ok(())
-                    }).unwrap();
-                    drop(store);
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn bulk_join_export_filters_before_decoding_other_library_text() {
-                    let path = temp_path("bulk-join-export");
-                    let store = Store::create_standalone(&path).unwrap();
-                    let ni = u16::try_from(SyllableKey::from_text("ni").unwrap().index()).unwrap();
-                    store.database().write(|txn| {
-                        txn.put(PHRASE, &codec::encode_token(FIRST_USER_TOKEN), &0x4f60_u32.to_le_bytes())?;
-                        txn.put(PHRASE, &codec::encode_token(first_library_token(NETWORK_DICTIONARY)), &[0])?;
-                        txn.put(PRONUNCIATION, &codec::encode_token_bytes(FIRST_USER_TOKEN, &phrase::encode_keys(&[ni])),
-                            &PronValue { count: 5, seq: 0, indexed: true }.encode())?;
-                        txn.put(PRONUNCIATION, &codec::encode_token(first_library_token(NETWORK_DICTIONARY)), &[0])
-                    }).unwrap();
-                    assert_eq!(store.export_phrases().unwrap(), vec![ExportedPhrase {
-                        text: vec![0x4f60], pinyin: "ni".into(), count: 5,
-                    }]);
-                    assert!(matches!(store.phrases(), Err(UserStoreError::Store(StoreError::Backend(message))) if message.message() == "corrupt phrase text"));
-                    drop(store);
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn bigram_successors_complete_across_256_boundary() {
-                    let path = temp_path("succ-256");
-                    let mut store = Store::create_standalone(&path).unwrap();
-
-                    // Successors of `prev` spanning below and above 256 (and
-                    // above it in a higher byte), so integer order and byte
-                    // order genuinely differ. `prev` itself is 256.
-                    let prev: Token = 0x0000_0100;
-                    let succ_counts: [(Token, u64); 6] = [
-                        (0x0000_0001, 11),
-                        (0x0000_0002, 12),
-                        (0x0000_00FF, 13),
-                        (0x0000_0100, 14),
-                        (0x0000_0101, 15),
-                        (0x0001_0000, 16),
-                    ];
-                    for &(cur, count) in &succ_counts {
-                        store.set_bigram_count(prev, cur, count).unwrap();
-                    }
-
-                    // Neighbouring prevs that bracket `prev` in byte order
-                    // must NOT leak into the scan: prev-1, prev+1, a prev whose
-                    // low byte crosses 256, and a prev in a higher byte.
-                    store.set_bigram_count(prev - 1, 0x0000_0100, 99).unwrap();
-                    store.set_bigram_count(prev + 1, 0x0000_00FF, 99).unwrap();
-                    store
-                        .set_bigram_count(0x0000_00FF, 0x0000_0100, 99)
-                        .unwrap();
-                    store
-                        .set_bigram_count(0x0001_0000, 0x0000_0001, 99)
-                        .unwrap();
-
-                    // Complete and correctly ordered: exactly prev's
-                    // successors, ascending by integer cur (the big-endian key
-                    // property), with no neighbour rows.
-                    let got = store.bigram_successors(prev).unwrap();
-                    let mut expected = succ_counts.to_vec();
-                    expected.sort_by_key(|&(cur, _)| cur);
-                    assert_eq!(
-                        got, expected,
-                        "successor scan must be complete and integer-ordered"
-                    );
-
-                    // Non-vacuity: the successor set crosses 256, so a
-                    // little-endian pair encoding would order these
-                    // differently — this fixture would catch that drift.
-                    let mut le_order: Vec<Token> =
-                        succ_counts.iter().map(|&(cur, _)| cur).collect();
-                    le_order.sort_by_key(|cur| cur.to_le_bytes());
-                    let got_tokens: Vec<Token> = got.iter().map(|&(cur, _)| cur).collect();
-                    assert_ne!(
-                        le_order, got_tokens,
-                        "fixture must cross 256 so LE and BE successor orders differ"
-                    );
-
-                    cleanup(&path);
-                }
-
-                fn mixed_store(path: &std::path::Path) -> (Store, Token) {
-                    const SYSTEM_A: Token = 0x0100_0001;
-                    const SYSTEM_B: Token = 0x0200_0001;
-                    let mut store = Store::create_standalone(path).unwrap();
-                    let user_a = store.add_phrase(&"你好".into(), &[10, 20], None).unwrap();
-                    let user_b = store.add_phrase(&"世界".into(), &[30, 40], None).unwrap();
-                    store.observe_selection(SYSTEM_A, SYSTEM_B).unwrap();
-                    store.observe_selection(SYSTEM_A, user_a).unwrap();
-                    store.observe_selection(user_a, SYSTEM_B).unwrap();
-                    store.observe_selection(user_a, user_b).unwrap();
-                    (store, user_a)
-                }
-
-                #[test]
-                fn mask_and_remove_survive_a_reopen() {
-                    let path = temp_path("mask-rt");
-                    let (mut store, user_a) = mixed_store(&path);
-                    store
-                        .mask_out(
-                            PHRASE_INDEX_LIBRARY_MASK,
-                            phrase_index_make_token(USER_DICTIONARY, 0),
-                        )
-                        .unwrap();
-                    let other = store.add_phrase(&"中国".into(), &[50, 60], None).unwrap();
-                    store.remove_user_phrase(other).unwrap();
-                    drop(store);
-
-                    let store = Store::create_standalone(&path).unwrap();
-                    assert!(store.token_for_phrase("你好").unwrap().is_none());
-                    assert!(store.token_for_phrase("中国").unwrap().is_none());
-                    assert_eq!(store.bigram_count(0x0100_0001, 0x0200_0001).unwrap(), 69);
-                    assert_eq!(store.unigram_delta(user_a).unwrap(), 0);
-                    assert_eq!(store.unigram_total().unwrap(), 966);
-                    cleanup(&path);
-                }
-
-                fn key(text: &str) -> PinyinKey {
-                    PinyinKey::try_from(
-                        SyllableKey::from_text(text)
-                            .expect("frozen syllable")
-                            .index(),
-                    )
-                    .expect("frozen syllable inventory fits u16")
-                }
-
-                /// A present item that is malformed reads back as the decode
-                /// failure that names the malformed part, never as a backend
-                /// failure: the export cursor refuses the item at the pin's
-                /// assert site for the one and propagates the other.
-                #[test]
-                fn phrase_tells_an_undecodable_text_and_pronunciation_apart() {
-                    let path = temp_path("decode-apart");
-                    let mut store = Store::create_standalone(&path).unwrap();
-                    let token = store
-                        .add_phrase(&"甲".into(), &[key("jia")], Some(3))
-                        .unwrap();
-                    let text_key = codec::encode_token(token);
-                    // Text bytes that are not UTF-8.
-                    store
-                        .database()
-                        .write(|txn| txn.put(PHRASE, &text_key, &[0xff, 0xfe]))
-                        .unwrap();
-                    assert!(matches!(store.phrase(token), Err(UserStoreError::Decode)));
-                    assert!(store.phrase_exists(token).unwrap());
-                    assert!(matches!(store.phrase_length(token), Err(UserStoreError::Decode)));
-                    assert!(matches!(
-                        store.phrase_text(token),
-                        Err(UserStoreError::Decode)
-                    ));
-                    // The text restored; a pronunciation value of a length the
-                    // codec does not know.
-                    store
-                        .database()
-                        .write(|txn| txn.put(PHRASE, &text_key, &phrase_table::key("甲")))
-                        .unwrap();
-                    let pron_key =
-                        codec::encode_token_bytes(token, &phrase::encode_keys(&[key("jia")]));
-                    store
-                        .database()
-                        .write(|txn| txn.put(PRONUNCIATION, &pron_key, &[1, 2, 3]))
-                        .unwrap();
-                    assert!(matches!(
-                        store.phrase(token),
-                        Err(UserStoreError::DecodePronunciation)
-                    ));
-                    assert_eq!(
-                        store.phrase_text(token).unwrap().as_deref(),
-                        Some(&[0x7532][..])
-                    );
-                    assert_eq!(store.phrase_length(token).unwrap(), Some(1));
-                    assert!(matches!(store.nth_pronunciation(token, 0), Err(UserStoreError::DecodePronunciation)));
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn nth_reading_keeps_sequence_gaps_ties_and_legacy_tail() {
-                    let path = temp_path("nth-reading");
-                    let mut store = Store::create_standalone(&path).unwrap();
-                    let token = store.add_phrase(&"甲".into(), &[key("jia")], Some(3)).unwrap();
-                    store.database().write(|txn| {
-                        remove_pronunciations(txn, token)?;
-                        // Sequence ties retain table-key order; legacy rows
-                        // follow every sequenced row, also in table order.
-                        for (keys, seq) in [(vec![9], Some(8)), (vec![3], Some(2)),
-                                            (vec![5], Some(2)), (vec![1], None), (vec![2], None)] {
-                            let row = codec::encode_token_bytes(token, &phrase::encode_keys(&keys));
-                            let value = seq.map_or_else(|| codec::encode_u64(1).to_vec(), |seq|
-                                PronValue { count: 1, seq, indexed: true }.encode().to_vec());
-                            txn.put(PRONUNCIATION, &row, &value)?;
-                        }
-                        Ok(())
-                    }).unwrap();
-                    for (nth, key) in [3, 5, 9, 1, 2].into_iter().enumerate() {
-                        assert_eq!(store.nth_pronunciation(token, nth).unwrap(), Some(vec![key]));
-                    }
-                    assert_eq!(store.nth_pronunciation(token, 5).unwrap(), None);
-                    assert_eq!(store.nth_pronunciation(token, usize::MAX).unwrap(), None);
-                    assert!(!store.phrase_exists(token + 1).unwrap());
-                    assert_eq!(store.phrase_length(token + 1).unwrap(), None);
-                    cleanup(&path);
-                }
-            }
-        };
-    }
-
-    // Exactly-one-backend: the store's compile-time guards refuse
-    // combined builds, so `DefaultStore` is the one peer this build
-    // links, and this suite exercises the generic user store's contract
-    // over it; CI runs every peer build.
-    user_store_tests!(
-        default_store,
-        oxpinyin_store::DefaultStore,
-        oxpinyin_store::DEFAULT_STORE_EXT
-    );
 
     // ── The libpinyin session: the constructors the C libraries reach ──
 
@@ -6668,81 +5973,6 @@ mod tests {
 
     // ── Cross-backend equivalence (one peer per build, all peers in CI) ──
 
-    /// Under exactly-one-backend, cross-peer comparisons cannot happen
-    /// in-process. Instead each build proves the *current* peer, driven
-    /// through the generic user store, produces bigram walks and
-    /// successor scans in ascending (prev, cur) integer order — the
-    /// big-endian key property. Running every peer build (KC
-    /// / Tkrzw / BDB) through CI gives the same equivalence
-    /// coverage the earlier in-process check gave.
-    #[test]
-    fn bigram_walks_and_successors_follow_be_integer_order() {
-        const PREVS: &[Token] = &[
-            0x0000_00FF,
-            0x0000_0100,
-            0x0000_0101,
-            0x0001_0000,
-            SENTENCE_START,
-        ];
-        let rows: &[(Token, Token, u64)] = &[
-            (0x0000_00FF, 0x0000_0100, 1),
-            (0x0000_0100, 0x0000_00FF, 2),
-            (0x0000_0100, 0x0001_0000, 3),
-            (0x0000_0100, 0x0000_0001, 4),
-            (0x0000_0101, 0x0000_0100, 5),
-            (0x0001_0000, 0x0000_00FF, 6),
-            (SENTENCE_START, 0x0000_0100, 7),
-        ];
-
-        let path =
-            std::env::temp_dir().join(format!("oxpinyin-user-xback-{}.db", std::process::id(),));
-        let _ = std::fs::remove_file(&path);
-        let mut store = UserStore::create_standalone(&path).unwrap();
-        for &(prev, cur, count) in rows {
-            store.set_bigram_count(prev, cur, count).unwrap();
-        }
-
-        let walk = store.export_bigrams().unwrap();
-        let pairs: Vec<(Token, Token)> = walk.iter().map(|&(p, c, _)| (p, c)).collect();
-        assert!(
-            pairs.is_sorted(),
-            "big-endian bigram keys must walk in integer order",
-        );
-
-        // The set the peer holds must equal the set written — no
-        // duplicates dropped, no rows manufactured.
-        let mut expected: Vec<(Token, Token, u64)> = rows.to_vec();
-        expected.sort_by_key(|&(p, c, _)| (p, c));
-        assert_eq!(walk, expected, "the peer's walk must be the sorted rows");
-
-        // Each `prev`'s successors are the peer's own iteration order
-        // for that group, and must be a strictly-ascending prefix of
-        // the full walk (by `cur`).
-        for &prev in PREVS {
-            let succ = store.bigram_successors(prev).unwrap();
-            let curs: Vec<Token> = succ.iter().map(|&(c, _)| c).collect();
-            assert!(
-                curs.is_sorted(),
-                "successors of {prev:#x} must be ascending by cur",
-            );
-        }
-
-        drop(store);
-        let mut lock = path.as_os_str().to_os_string();
-        lock.push("-lock");
-        let _ = std::fs::remove_file(std::path::Path::new(&lock));
-        let _ = std::fs::remove_file(&path);
-    }
-
-    // ── Registry-specific tests (DefaultStore, whichever backend) ───────
-
-    fn temp_path(tag: &str) -> std::path::PathBuf {
-        let path =
-            std::env::temp_dir().join(format!("oxpinyin-user-{tag}-{}.store", std::process::id()));
-        let _ = std::fs::remove_file(&path);
-        path
-    }
-
     #[test]
     fn reporting_save_guards_preserve_unigram_overflow() {
         use crate::persistence::{SystemLibrary, SystemOriginals, UserConfLaw};
@@ -6898,155 +6128,6 @@ mod tests {
         });
     }
 
-    #[test]
-    fn a_write_through_one_handle_invalidates_another_handles_cache() {
-        let path = temp_path("clone-cache");
-        let mut writer = UserStore::open(&path).unwrap();
-        let reader = UserStore::open(&path).unwrap();
-
-        assert_eq!(
-            reader.count_delta(Some(1), 100).unwrap(),
-            UserCountDelta::ZERO
-        );
-
-        writer.observe_selection(1, 100).unwrap();
-        assert!(
-            reader.has_user_data(),
-            "the flag lives on the shared inner, not the writing handle"
-        );
-        assert_eq!(reader.count_delta(Some(1), 100).unwrap().bigram_count, 69);
-
-        writer.observe_selection(1, 100).unwrap();
-        assert_eq!(reader.count_delta(Some(1), 100).unwrap().bigram_count, 207);
-
-        writer.mask_out(0, 0).unwrap();
-        assert!(!reader.has_user_data());
-        assert_eq!(
-            reader.count_delta(Some(1), 100).unwrap(),
-            UserCountDelta::ZERO
-        );
-        assert_eq!(reader.unigram_delta(100).unwrap(), 0);
-        assert!(
-            reader.count_cache().is_none(),
-            "an emptied store must not keep a cached read transaction"
-        );
-
-        drop(writer);
-        drop(reader);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn shared_open_handles_keep_session_lock_order_during_compact_and_reload() {
-        use crate::persistence::{SystemOriginals, UserConfLaw};
-        use oxpinyin_data::user_files::{SystemVersions, UserFileLayout};
-        let path = temp_path("shared-session-lock-order");
-        let seed = UserStore::open_transient(
-            SystemOriginals::new(Default::default(), UserFileLayout::stock()),
-            SystemVersions::for_this_build(7, 14),
-            UserConfLaw::Pinyin,
-        )
-        .unwrap();
-        // Session constructors make independent inners. Seed the registry
-        // with one session inner to exercise these methods through two actual
-        // same-path `open` handles sharing its mutexes.
-        registry::lock_registry()
-            .insert(registry::registry_key(&path), Arc::downgrade(&seed.inner));
-        let mut first = UserStore::open(&path).unwrap();
-        let mut second = UserStore::open(&path).unwrap();
-        assert!(Arc::ptr_eq(&first.inner, &second.inner));
-        let start = std::sync::Barrier::new(2);
-        std::thread::scope(|scope| {
-            scope.spawn(|| {
-                start.wait();
-                for _ in 0..500 {
-                    first.compact_libraries();
-                }
-            });
-            scope.spawn(|| {
-                start.wait();
-                for _ in 0..500 {
-                    second.reset_system_library(1);
-                }
-            });
-        });
-        drop((first, second, seed));
-        assert!(!registry::contains_key(&path));
-    }
-
-    #[test]
-    fn second_open_of_same_path_shares_the_handle() {
-        let path = temp_path("shared-handle");
-        let mut first = UserStore::open(&path).unwrap();
-        let mut second = UserStore::open(&path).unwrap();
-
-        assert_eq!(first.observe_selection(1, 100).unwrap(), 69);
-        assert_eq!(second.bigram_count(1, 100).unwrap(), 69);
-
-        assert!(second.save().unwrap());
-        assert!(!first.save().unwrap());
-
-        drop(first);
-        drop(second);
-        assert!(
-            !registry::contains_key(&path),
-            "last drop must empty the registry entry"
-        );
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn last_drop_removes_registry_entry_and_allows_reopen() {
-        let path = temp_path("drain-reopen");
-
-        let first = UserStore::open(&path).unwrap();
-        let second = UserStore::open(&path).unwrap();
-        assert!(registry::contains_key(&path));
-
-        drop(first);
-        assert!(registry::contains_key(&path), "second clone is still live");
-        drop(second);
-        assert!(!registry::contains_key(&path));
-
-        let reopened = UserStore::open(&path).unwrap();
-        assert_eq!(reopened.bigram_count(1, 100).unwrap(), 0);
-        drop(reopened);
-        assert!(!registry::contains_key(&path));
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn standalone_rejects_second_open_through_a_symlink_alias() {
-        let real = temp_path("alias-real");
-        let link = temp_path("alias-link");
-        let first = UserStore::create_standalone(&real).unwrap();
-        std::os::unix::fs::symlink(&real, &link).unwrap();
-
-        assert!(
-            matches!(
-                UserStore::create_standalone(&link),
-                Err(UserStoreError::AlreadyOpen)
-            ),
-            "the symlink resolves to the same leased file"
-        );
-
-        drop(first);
-        let reopened = UserStore::create_standalone(&link).unwrap();
-        assert!(matches!(
-            UserStore::create_standalone(&real),
-            Err(UserStoreError::AlreadyOpen)
-        ));
-        drop(reopened);
-
-        for stale in [&real, &link] {
-            let mut lock = stale.as_os_str().to_os_string();
-            lock.push("-lock");
-            let _ = std::fs::remove_file(std::path::Path::new(&lock));
-            let _ = std::fs::remove_file(stale);
-        }
-    }
-
     /// Only the checked-read failure is the pin's assert; every other
     /// store or I/O failure is an ordinary failed read.
     #[test]
@@ -7062,7 +6143,7 @@ mod tests {
     struct MemoDb(BTreeMap<Vec<u8>, u64>);
 
     impl ReadStore for MemoDb {
-        fn open_read_only(_path: &Path) -> Result<Self, StoreError> {
+        fn open_read_only(_path: &std::path::Path) -> Result<Self, StoreError> {
             Err(StoreError::Backend("stub opens nothing".into()))
         }
 

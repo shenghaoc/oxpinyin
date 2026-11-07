@@ -58,9 +58,9 @@ use crate::codec;
 
 use crate::persistence::{self, PersistenceError, SystemOriginals, UserConfLaw, UserState};
 use crate::phrase::{self, phrase_index_library_index};
-use crate::registry::StoreInner;
 use crate::store::{
-    ALLOC, ALLOC_CURSOR, GenericUserStore, LIBRARY_OFFSET, Token, UNIGRAM, UserStoreError,
+    ALLOC, ALLOC_CURSOR, GenericUserStore, LIBRARY_OFFSET, StoreInner, Token, UNIGRAM,
+    UserStoreError,
 };
 
 /// The persistence target a session store carries: the user dir, the
@@ -109,12 +109,6 @@ impl Target {
 pub(crate) struct FiniGuard(Option<Arc<Target>>);
 
 impl FiniGuard {
-    /// A guard that writes nothing: every handle but the one an open
-    /// returned.
-    pub(crate) const fn disarmed() -> Self {
-        Self(None)
-    }
-
     /// Leave without the fini write: an open that fails where the pin dies
     /// ([`UserStoreError::SessionSeed`]) never reaches `pinyin_fini`.
     fn abandon(&mut self) {
@@ -436,7 +430,6 @@ impl GenericUserStore<DefaultStore> {
             system_items: std::sync::Mutex::new(system_items),
             has_removed_system_items: std::sync::atomic::AtomicBool::new(has_removed_system_items),
             count_cache: std::sync::Mutex::new(None),
-            standalone_lookup: std::sync::Mutex::new(None),
             db: std::sync::Mutex::new(db),
             dirty: std::sync::atomic::AtomicBool::new(false),
             write_generation: std::sync::atomic::AtomicU64::new(0),
@@ -450,7 +443,6 @@ impl GenericUserStore<DefaultStore> {
         });
         Ok(Self::from_parts(
             inner,
-            None,
             fini,
             std::mem::replace(
                 originals,

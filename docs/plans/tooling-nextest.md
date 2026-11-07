@@ -82,8 +82,8 @@ Do not narrow test discovery through an unreviewed default filter.
 
 Use named test groups with `max-threads` for tests that interfere or use much
 memory. The implemented `store-backend` group has a ceiling of 1. Its binary
-filters are `assembly`, `empty_user_dir`, `trait_laws`, `user_store_acid`,
-`user_store_semantics`, `bdb_libpinyin_files` and `libpinyin_data_dir`.
+filters are `assembly`, `empty_user_dir`, `trait_laws`, `user_store_semantics`,
+`bdb_libpinyin_files` and `libpinyin_data_dir`.
 These cases create or recover backend files, fork or
 change process state. Independent logic and in-memory tests stay outside.
 Name other shared resources before adding groups. Any extension must list
