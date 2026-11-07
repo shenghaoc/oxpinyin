@@ -67,12 +67,7 @@ impl CapiContext {
         )?;
         // `table_info.cpp:220` scans λ straight into a `gfloat`; the exact
         // rational the decoder may hold is not that value.
-        let predicted_lambda = core
-            .runtime
-            .as_ref()
-            .map_or(oxpinyin_data::PINNED_LAMBDA, |runtime| {
-                runtime.table_conf().lambda_f32()
-            });
+        let predicted_lambda = core.runtime.table_conf().lambda_f32();
         Ok(Self {
             predicted_lambda,
             core,
@@ -97,8 +92,7 @@ impl CapiContext {
     }
 
     /// `pinyin_unload_phrase_library`'s read side: GBK-only, `true` on
-    /// every unload of GBK; `false` without a runtime (a user-store-only context
-    /// never loaded GBK — upstream's sub-index is NULL there too).
+    /// every unload of GBK.
     pub(crate) fn unload_phrase_library(&mut self, index: u8) -> bool {
         self.core.unload_phrase_library(index)
     }
@@ -126,8 +120,7 @@ impl CapiContext {
     /// (`novel_types.h:43`, 1<<4) on the load path (`pinyin.cpp:479-480`),
     /// and so does this. Without it an out-of-range index would silently load a
     /// stray `addon_{index}_*` table on disk (whichever backend's
-    /// extension `default_store_file` names) rather than being refused. A
-    /// user-store-only context has no runtime, so it loads nothing.
+    /// extension `default_store_file` names) rather than being refused.
     pub(crate) fn load_addon(&mut self, index: u8) -> bool {
         if index >= PHRASE_INDEX_LIBRARY_COUNT {
             return false;
@@ -147,8 +140,7 @@ impl CapiContext {
                 if self
                     .core
                     .runtime
-                    .as_ref()
-                    .and_then(oxpinyin_runtime::Runtime::system_dir)
+                    .system_dir()
                     .is_none_or(oxpinyin_facade::null_chunk_asserts) =>
             {
                 std::process::abort()
@@ -178,16 +170,7 @@ impl CapiContext {
         if index >= PHRASE_INDEX_LIBRARY_COUNT {
             std::process::abort();
         }
-        self.core
-            .runtime
-            .as_mut()
-            .is_some_and(|runtime| runtime.unload_system_addon(index))
-    }
-
-    /// §9 bigram-export renderability, shared: [`ContextCore::
-    /// can_render_export_bigrams`].
-    pub(crate) fn can_render_export_bigrams(&self) -> bool {
-        self.core.can_render_export_bigrams()
+        self.core.runtime.unload_system_addon(index)
     }
 
     /// The pin's bigram export iterator over this context, shared:
@@ -452,9 +435,7 @@ pub unsafe fn instance_ref<'a>(ptr: *mut PinyinInstance) -> CapiInstanceRead<'a>
     let instance = unsafe { handles::instance_ref(ptr) };
     // SAFETY: the instance retains the allocation; the C caller excludes concurrent mutation.
     let context = unsafe { owner_ref(&instance.owner) };
-    let Some(runtime) = context.core.runtime.as_ref() else {
-        std::process::abort();
-    };
+    let runtime = &context.core.runtime;
     CapiInstance {
         context: instance.context,
         owner: &instance.owner,
@@ -471,9 +452,7 @@ pub unsafe fn instance_mut<'a>(ptr: *mut PinyinInstance) -> CapiInstanceMut<'a> 
     let instance = unsafe { handles::instance_mut(ptr) };
     // SAFETY: the instance retains the allocation; the C caller excludes runtime mutation.
     let context = unsafe { owner_ref(&instance.owner) };
-    let Some(runtime) = context.core.runtime.as_ref() else {
-        std::process::abort();
-    };
+    let runtime = &context.core.runtime;
     CapiInstance {
         context: instance.context,
         owner: &instance.owner,

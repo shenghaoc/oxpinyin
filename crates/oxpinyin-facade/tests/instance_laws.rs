@@ -44,23 +44,10 @@ fn zhuyin_instance() -> (ContextCore, InstanceCore) {
 #[test]
 fn a_fresh_instance_is_empty_and_answers_nothing() {
     let (mut context, mut inst) = pinyin_instance();
-    assert_eq!(inst.bind(context.runtime.as_ref().unwrap()).parsed_len, 0);
-    assert!(
-        inst.bind(context.runtime.as_ref().unwrap())
-            .anchored_window
-            .is_none()
-    );
-    assert!(
-        !inst
-            .bind(context.runtime.as_ref().unwrap())
-            .session
-            .is_composing()
-    );
-    assert!(
-        inst.bind(context.runtime.as_ref().unwrap())
-            .key_at(0)
-            .is_none()
-    );
+    assert_eq!(inst.bind(&context.runtime).parsed_len, 0);
+    assert!(inst.bind(&context.runtime).anchored_window.is_none());
+    assert!(!inst.bind(&context.runtime).session.is_composing());
+    assert!(inst.bind(&context.runtime).key_at(0).is_none());
     assert!(
         !context.train(&inst, 0).expect("fresh train"),
         "no user store and no selection: train refuses"
@@ -70,37 +57,25 @@ fn a_fresh_instance_is_empty_and_answers_nothing() {
 #[test]
 fn full_pinyin_parse_consumes_and_keys_sit_at_their_syllable_starts() {
     let (context, mut inst) = pinyin_instance();
-    assert_eq!(
-        inst.bind(context.runtime.as_ref().unwrap())
-            .parse_full_more("nihao"),
-        5
-    );
-    assert_eq!(inst.bind(context.runtime.as_ref().unwrap()).parsed_len, 5);
-    assert!(
-        inst.bind(context.runtime.as_ref().unwrap())
-            .session
-            .is_composing()
-    );
+    assert_eq!(inst.bind(&context.runtime).parse_full_more("nihao"), 5);
+    assert_eq!(inst.bind(&context.runtime).parsed_len, 5);
+    assert!(inst.bind(&context.runtime).session.is_composing());
     let ni = inst
-        .bind(context.runtime.as_ref().unwrap())
+        .bind(&context.runtime)
         .key_at(0)
         .expect("a key starts at 0");
     assert_eq!((ni.text, ni.begin, ni.end), ("ni", 0, 2));
     let hao = inst
-        .bind(context.runtime.as_ref().unwrap())
+        .bind(&context.runtime)
         .key_at(2)
         .expect("a key starts at 2");
     assert_eq!((hao.text, hao.begin, hao.end), ("hao", 2, 5));
     assert!(
-        inst.bind(context.runtime.as_ref().unwrap())
-            .key_at(1)
-            .is_none(),
+        inst.bind(&context.runtime).key_at(1).is_none(),
         "a mid-syllable column is empty"
     );
     assert!(
-        inst.bind(context.runtime.as_ref().unwrap())
-            .key_at(5)
-            .is_none(),
+        inst.bind(&context.runtime).key_at(5).is_none(),
         "the reserved slot answers nothing"
     );
 }
@@ -108,14 +83,10 @@ fn full_pinyin_parse_consumes_and_keys_sit_at_their_syllable_starts() {
 #[test]
 fn full_pinyin_skips_a_consumed_separator_column() {
     let (context, mut inst) = pinyin_instance();
-    assert_eq!(
-        inst.bind(context.runtime.as_ref().unwrap())
-            .parse_full_more("ni'hao"),
-        6
-    );
+    assert_eq!(inst.bind(&context.runtime).parse_full_more("ni'hao"), 6);
     // Offset 2 is the apostrophe: a lone zero-key column the pin walks past.
     let hao = inst
-        .bind(context.runtime.as_ref().unwrap())
+        .bind(&context.runtime)
         .key_at(2)
         .expect("the walk lands on `hao`");
     assert_eq!((hao.text, hao.begin, hao.end), ("hao", 3, 6));
@@ -124,24 +95,20 @@ fn full_pinyin_skips_a_consumed_separator_column() {
 #[test]
 fn lookup_offset_validation_follows_the_active_mode() {
     let (context, mut inst) = pinyin_instance();
-    assert_eq!(
-        inst.bind(context.runtime.as_ref().unwrap())
-            .parse_full_more("nihao"),
-        5
-    );
+    assert_eq!(inst.bind(&context.runtime).parse_full_more("nihao"), 5);
     // Plain full pinyin: in range, normalised by the session's own law.
     assert!(
-        inst.bind(context.runtime.as_ref().unwrap())
+        inst.bind(&context.runtime)
             .validate_lookup_offset(0)
             .is_ok()
     );
     assert!(
-        inst.bind(context.runtime.as_ref().unwrap())
+        inst.bind(&context.runtime)
             .validate_lookup_offset(5)
             .is_ok()
     );
     assert!(
-        inst.bind(context.runtime.as_ref().unwrap())
+        inst.bind(&context.runtime)
             .validate_lookup_offset(6)
             .is_err(),
         "past one-past-end"
@@ -150,28 +117,28 @@ fn lookup_offset_validation_follows_the_active_mode() {
     let (zhuyin_context, mut zhuyin) = zhuyin_instance();
     assert_eq!(
         zhuyin
-            .bind(zhuyin_context.runtime.as_ref().unwrap())
+            .bind(&zhuyin_context.runtime)
             .parse_chewing_more("su3cl3", ToneForwarding::ZhuyinFacade),
         6
     );
     // The zhuyin mode validates against the parse's consumed length.
     assert_eq!(
         zhuyin
-            .bind(zhuyin_context.runtime.as_ref().unwrap())
+            .bind(&zhuyin_context.runtime)
             .validate_lookup_offset(3)
             .expect("in range"),
         3
     );
     assert_eq!(
         zhuyin
-            .bind(zhuyin_context.runtime.as_ref().unwrap())
+            .bind(&zhuyin_context.runtime)
             .validate_lookup_offset(6)
             .expect("terminal"),
         6
     );
     assert!(
         zhuyin
-            .bind(zhuyin_context.runtime.as_ref().unwrap())
+            .bind(&zhuyin_context.runtime)
             .validate_lookup_offset(7)
             .is_err()
     );
@@ -180,25 +147,21 @@ fn lookup_offset_validation_follows_the_active_mode() {
 #[test]
 fn cursor_laws_step_by_key_in_both_modes() {
     let (context, mut inst) = pinyin_instance();
+    assert_eq!(inst.bind(&context.runtime).parse_full_more("nihao"), 5);
     assert_eq!(
-        inst.bind(context.runtime.as_ref().unwrap())
-            .parse_full_more("nihao"),
-        5
-    );
-    assert_eq!(
-        inst.bind(context.runtime.as_ref().unwrap())
+        inst.bind(&context.runtime)
             .lookup_offset(0)
             .expect("cursor 0"),
         0
     );
     assert_eq!(
-        inst.bind(context.runtime.as_ref().unwrap())
+        inst.bind(&context.runtime)
             .left_offset(2)
             .expect("left of hao"),
         0
     );
     assert_eq!(
-        inst.bind(context.runtime.as_ref().unwrap())
+        inst.bind(&context.runtime)
             .right_offset(0)
             .expect("right of ni"),
         Some(2)
@@ -207,11 +170,11 @@ fn cursor_laws_step_by_key_in_both_modes() {
     let (zhuyin_context, mut zhuyin) = zhuyin_instance();
     assert_eq!(
         zhuyin
-            .bind(zhuyin_context.runtime.as_ref().unwrap())
+            .bind(&zhuyin_context.runtime)
             .parse_chewing_more("su3cl3", ToneForwarding::ZhuyinFacade),
         6
     );
-    let read = zhuyin.bind(zhuyin_context.runtime.as_ref().unwrap());
+    let read = zhuyin.bind(&zhuyin_context.runtime);
     let source = read.span_source().expect("a zhuyin parse is active");
     let spans: Vec<_> = source
         .spans
@@ -222,20 +185,20 @@ fn cursor_laws_step_by_key_in_both_modes() {
     assert!(!source.separators, "zhuyin holds no zero-key columns");
     assert_eq!(
         zhuyin
-            .bind(zhuyin_context.runtime.as_ref().unwrap())
+            .bind(&zhuyin_context.runtime)
             .left_offset(3)
             .expect("left of the second key"),
         0
     );
     assert_eq!(
         zhuyin
-            .bind(zhuyin_context.runtime.as_ref().unwrap())
+            .bind(&zhuyin_context.runtime)
             .right_offset(0)
             .expect("right of the first key"),
         Some(3)
     );
     let ni = zhuyin
-        .bind(zhuyin_context.runtime.as_ref().unwrap())
+        .bind(&zhuyin_context.runtime)
         .key_at(0)
         .expect("first key");
     assert_eq!((ni.text, ni.tone, ni.begin, ni.end), ("ni", 3, 0, 3));
@@ -244,120 +207,56 @@ fn cursor_laws_step_by_key_in_both_modes() {
 #[test]
 fn a_re_parse_that_extends_the_buffer_continues_the_composition() {
     let (context, mut inst) = pinyin_instance();
-    assert_eq!(
-        inst.bind(context.runtime.as_ref().unwrap())
-            .parse_full_more("ni"),
-        2
-    );
+    assert_eq!(inst.bind(&context.runtime).parse_full_more("ni"), 2);
     // The frontend re-sends the whole buffer every keystroke.
-    inst.bind(context.runtime.as_ref().unwrap())
-        .begin_parse(b"nihao");
-    assert_eq!(
-        inst.bind(context.runtime.as_ref().unwrap())
-            .parse_full_more("nihao"),
-        5
-    );
-    assert_eq!(inst.bind(context.runtime.as_ref().unwrap()).parsed_len, 5);
+    inst.bind(&context.runtime).begin_parse(b"nihao");
+    assert_eq!(inst.bind(&context.runtime).parse_full_more("nihao"), 5);
+    assert_eq!(inst.bind(&context.runtime).parsed_len, 5);
     // Backspace: the buffer shrinks into the composition and stays open.
-    inst.bind(context.runtime.as_ref().unwrap())
-        .begin_parse(b"niha");
-    assert_eq!(
-        inst.bind(context.runtime.as_ref().unwrap())
-            .parse_full_more("niha"),
-        4
-    );
-    assert_eq!(inst.bind(context.runtime.as_ref().unwrap()).parsed_len, 4);
+    inst.bind(&context.runtime).begin_parse(b"niha");
+    assert_eq!(inst.bind(&context.runtime).parse_full_more("niha"), 4);
+    assert_eq!(inst.bind(&context.runtime).parsed_len, 4);
 }
 
 #[test]
 fn a_divergent_buffer_starts_a_fresh_composition() {
     let (context, mut inst) = pinyin_instance();
-    assert_eq!(
-        inst.bind(context.runtime.as_ref().unwrap())
-            .parse_full_more("nihao"),
-        5
-    );
-    inst.bind(context.runtime.as_ref().unwrap())
-        .begin_parse(b"women");
-    assert_eq!(
-        inst.bind(context.runtime.as_ref().unwrap())
-            .parse_full_more("women"),
-        5
-    );
-    assert_eq!(
-        inst.bind(context.runtime.as_ref().unwrap())
-            .session
-            .raw_input(),
-        "women"
-    );
-    assert_eq!(
-        inst.bind(context.runtime.as_ref().unwrap())
-            .session
-            .composition_offset(),
-        0
-    );
+    assert_eq!(inst.bind(&context.runtime).parse_full_more("nihao"), 5);
+    inst.bind(&context.runtime).begin_parse(b"women");
+    assert_eq!(inst.bind(&context.runtime).parse_full_more("women"), 5);
+    assert_eq!(inst.bind(&context.runtime).session.raw_input(), "women");
+    assert_eq!(inst.bind(&context.runtime).session.composition_offset(), 0);
 }
 
 #[test]
 fn the_parse_reset_keeps_the_session_and_the_full_reset_clears_it() {
     let (context, mut inst) = pinyin_instance();
-    assert_eq!(
-        inst.bind(context.runtime.as_ref().unwrap())
-            .parse_full_more("nihao"),
-        5
-    );
-    inst.bind(context.runtime.as_ref().unwrap())
-        .reset_parse_state();
-    assert_eq!(inst.bind(context.runtime.as_ref().unwrap()).parsed_len, 0);
-    assert!(
-        inst.bind(context.runtime.as_ref().unwrap())
-            .anchored_window
-            .is_none()
-    );
+    assert_eq!(inst.bind(&context.runtime).parse_full_more("nihao"), 5);
+    inst.bind(&context.runtime).reset_parse_state();
+    assert_eq!(inst.bind(&context.runtime).parsed_len, 0);
+    assert!(inst.bind(&context.runtime).anchored_window.is_none());
     // The parse path resets the composition's parse state only: the raw
     // buffer (which the frontend re-sends every keystroke), the selection
     // record and the constraint store survive.
-    assert!(
-        inst.bind(context.runtime.as_ref().unwrap())
-            .session
-            .is_composing()
-    );
-    assert_eq!(
-        inst.bind(context.runtime.as_ref().unwrap())
-            .session
-            .raw_input(),
-        "nihao"
-    );
-    assert_eq!(
-        inst.bind(context.runtime.as_ref().unwrap())
-            .parse_full_more("nihao"),
-        5
-    );
-    inst.bind(context.runtime.as_ref().unwrap()).full_reset();
-    assert_eq!(inst.bind(context.runtime.as_ref().unwrap()).parsed_len, 0);
-    assert!(
-        !inst
-            .bind(context.runtime.as_ref().unwrap())
-            .session
-            .is_composing()
-    );
-    assert!(
-        inst.bind(context.runtime.as_ref().unwrap())
-            .phrase_result
-            .is_empty()
-    );
+    assert!(inst.bind(&context.runtime).session.is_composing());
+    assert_eq!(inst.bind(&context.runtime).session.raw_input(), "nihao");
+    assert_eq!(inst.bind(&context.runtime).parse_full_more("nihao"), 5);
+    inst.bind(&context.runtime).full_reset();
+    assert_eq!(inst.bind(&context.runtime).parsed_len, 0);
+    assert!(!inst.bind(&context.runtime).session.is_composing());
+    assert!(inst.bind(&context.runtime).phrase_result.is_empty());
 }
 
 #[test]
 fn one_key_probes_follow_the_live_schemes() {
     let (context, mut inst) = pinyin_instance();
     assert!(
-        inst.bind(context.runtime.as_ref().unwrap())
+        inst.bind(&context.runtime)
             .parse_one_full_pinyin("ni", false)
             .is_some()
     );
     assert!(
-        inst.bind(context.runtime.as_ref().unwrap())
+        inst.bind(&context.runtime)
             .parse_one_full_pinyin("xyz", false)
             .is_none()
     );
@@ -365,19 +264,19 @@ fn one_key_probes_follow_the_live_schemes() {
     // Standard keyboard: `s` is ㄋ; `q` is not a chewing symbol.
     assert!(
         !zhuyin
-            .bind(zhuyin_context.runtime.as_ref().unwrap())
+            .bind(&zhuyin_context.runtime)
             .in_keyboard(b's')
             .is_empty()
     );
     assert!(
         zhuyin
-            .bind(zhuyin_context.runtime.as_ref().unwrap())
+            .bind(&zhuyin_context.runtime)
             .parse_one_chewing("su3")
             .is_some()
     );
     assert!(
         zhuyin
-            .bind(zhuyin_context.runtime.as_ref().unwrap())
+            .bind(&zhuyin_context.runtime)
             .parse_one_chewing("")
             .is_none()
     );
@@ -448,13 +347,9 @@ fn a_short_start_gram_refuses_the_guess_before_any_training() {
             .has_short_bigram_value_for(SENTENCE_START)
     );
     let mut inst = context.alloc_instance().expect("instance");
-    assert_eq!(
-        inst.bind(context.runtime.as_ref().unwrap())
-            .parse_full_more("nihao"),
-        5
-    );
+    assert_eq!(inst.bind(&context.runtime).parse_full_more("nihao"), 5);
     let list = inst
-        .bind(context.runtime.as_ref().unwrap())
+        .bind(&context.runtime)
         .session
         .candidates_at(0)
         .expect("candidates");
@@ -462,15 +357,13 @@ fn a_short_start_gram_refuses_the_guess_before_any_training() {
         .iter()
         .position(|candidate| candidate.text() == "你")
         .expect("你 is a candidate");
-    inst.bind(context.runtime.as_ref().unwrap())
+    inst.bind(&context.runtime)
         .session
         .select(index)
         .expect("choose 你");
     let generation = context.user_store().expect("user store").generation();
     assert_eq!(
-        inst.bind(context.runtime.as_ref().unwrap())
-            .session
-            .guess_sentence(),
+        inst.bind(&context.runtime).session.guess_sentence(),
         Err(EngineError::UnsafeLookupPredecessor {
             token: SENTENCE_START
         })
@@ -510,13 +403,9 @@ fn unsorted_gram_reads_and_training_are_deterministic_without_reordering() {
         )
         .expect("context");
         let mut inst = context.alloc_instance().expect("instance");
-        assert_eq!(
-            inst.bind(context.runtime.as_ref().unwrap())
-                .parse_full_more("nihao"),
-            5
-        );
+        assert_eq!(inst.bind(&context.runtime).parse_full_more("nihao"), 5);
         let list = inst
-            .bind(context.runtime.as_ref().unwrap())
+            .bind(&context.runtime)
             .session
             .candidates_at(0)
             .expect("candidates");
@@ -579,13 +468,9 @@ fn unsorted_gram_reads_and_training_are_deterministic_without_reordering() {
             );
         }
         let mut inst = context.alloc_instance().expect("instance");
-        assert_eq!(
-            inst.bind(context.runtime.as_ref().unwrap())
-                .parse_full_more("nihao"),
-            5
-        );
+        assert_eq!(inst.bind(&context.runtime).parse_full_more("nihao"), 5);
         let list = inst
-            .bind(context.runtime.as_ref().unwrap())
+            .bind(&context.runtime)
             .session
             .candidates_at(0)
             .expect("candidates");
@@ -593,12 +478,12 @@ fn unsorted_gram_reads_and_training_are_deterministic_without_reordering() {
             .iter()
             .position(|candidate| candidate.text() == "你")
             .expect("你 is a candidate");
-        inst.bind(context.runtime.as_ref().unwrap())
+        inst.bind(&context.runtime)
             .session
             .select(index)
             .expect("choose 你");
         assert!(
-            inst.bind(context.runtime.as_ref().unwrap())
+            inst.bind(&context.runtime)
                 .session
                 .guess_sentence()
                 .expect("guess")
@@ -667,14 +552,10 @@ fn ni_and_hao(system: &std::path::Path) -> (u32, u32) {
     )
     .expect("context");
     let mut inst = context.alloc_instance().expect("instance");
-    assert_eq!(
-        inst.bind(context.runtime.as_ref().unwrap())
-            .parse_full_more("nihao"),
-        5
-    );
+    assert_eq!(inst.bind(&context.runtime).parse_full_more("nihao"), 5);
     let token = |inst: &mut InstanceCore, offset: usize, text: &str| {
         let list = inst
-            .bind(context.runtime.as_ref().unwrap())
+            .bind(&context.runtime)
             .session
             .candidates_at(offset)
             .expect("candidates");
@@ -728,13 +609,9 @@ fn train_two_steps(
     )
     .expect("context");
     let mut inst = context.alloc_instance().expect("instance");
-    assert_eq!(
-        inst.bind(context.runtime.as_ref().unwrap())
-            .parse_full_more("nihao"),
-        5
-    );
+    assert_eq!(inst.bind(&context.runtime).parse_full_more("nihao"), 5);
     let list = inst
-        .bind(context.runtime.as_ref().unwrap())
+        .bind(&context.runtime)
         .session
         .candidates_at(0)
         .expect("candidates");
@@ -742,20 +619,16 @@ fn train_two_steps(
         .iter()
         .position(|candidate| candidate.text() == "你")
         .expect("你 is a candidate");
-    inst.bind(context.runtime.as_ref().unwrap())
+    inst.bind(&context.runtime)
         .session
         .select(index)
         .expect("choose 你");
     let generation = context.user_store().expect("user store").generation();
-    let result = match inst
-        .bind(context.runtime.as_ref().unwrap())
-        .session
-        .guess_sentence()
-    {
+    let result = match inst.bind(&context.runtime).session.guess_sentence() {
         Ok(guessed) => {
             assert!(guessed, "guess");
             if let Some(text) = reparse {
-                inst.bind(context.runtime.as_ref().unwrap())
+                inst.bind(&context.runtime)
                     .session
                     .replace_raw(text)
                     .expect("re-parse");
@@ -796,23 +669,19 @@ fn a_short_start_gram_leaves_the_parse_and_refuses_the_candidate_guess() {
     )
     .expect("context");
     let mut inst = context.alloc_instance().expect("instance");
-    assert_eq!(
-        inst.bind(context.runtime.as_ref().unwrap())
-            .parse_full_more("nihao"),
-        5
-    );
+    assert_eq!(inst.bind(&context.runtime).parse_full_more("nihao"), 5);
     let refusal = Err(EngineError::ShortLookupPredecessor {
         token: SENTENCE_START,
     });
     assert_eq!(
-        inst.bind(context.runtime.as_ref().unwrap())
+        inst.bind(&context.runtime)
             .session
             .candidates_at(0)
             .map(|list| list.len()),
         refusal
     );
     assert_eq!(
-        inst.bind(context.runtime.as_ref().unwrap())
+        inst.bind(&context.runtime)
             .session
             .candidates_ending_at(5)
             .map(|list| list.len()),

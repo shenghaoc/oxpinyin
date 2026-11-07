@@ -648,8 +648,6 @@ fn choosing_a_sole_missing_prefix_row_advances_the_facade_total() {
         unsafe { crate::state::context_mut(context) }
             .core
             .runtime
-            .as_mut()
-            .unwrap()
             .unload_library(1)
     );
     // SAFETY: re-borrow the live instance after the owner write.

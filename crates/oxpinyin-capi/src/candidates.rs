@@ -419,12 +419,7 @@ pub extern "C" fn pinyin_choose_candidate(
         // SAFETY: the instance read is finished; this serialized C operation
         // exclusively borrows its live context for the unigram write.
         let ctx = unsafe { crate::state::context_mut(context) };
-        return unigram_leg_answer(
-            ctx.core
-                .runtime
-                .as_mut()
-                .map(|runtime| runtime.add_unigram_outcome(token.value(), 483)),
-        );
+        return unigram_leg_answer(ctx.core.runtime.add_unigram_outcome(token.value(), 483));
     }
     let context = inst.context;
     // SAFETY: the prior view is no longer used. Promotion borrows the live
@@ -452,12 +447,7 @@ pub extern "C" fn pinyin_choose_candidate(
         // SAFETY: the instance read is finished; this serialized C operation
         // exclusively borrows its live context for the unigram write.
         let ctx = unsafe { crate::state::context_mut(context) };
-        return unigram_leg_answer(
-            ctx.core
-                .runtime
-                .as_mut()
-                .map(|runtime| runtime.add_unigram_outcome(token.value(), 483)),
-        );
+        return unigram_leg_answer(ctx.core.runtime.add_unigram_outcome(token.value(), 483));
     }
     let source_index = inst.state.candidates[index].source_index as usize;
     // The chosen row's end in the window the caller saw — the pin's
@@ -543,13 +533,11 @@ pub extern "C" fn pinyin_choose_candidate(
 /// (`pinyin.cpp:2523-2531`, `:2565-2575`). The pin returns `false`, the `int`
 /// `0`, for `ERROR_INTEGER_OVERFLOW` alone and `true`, the `int` `1`, for every
 /// other answer: a library with no sub-index (`ERROR_NO_SUB_PHRASE_INDEX`) and
-/// a missing item (`ERROR_NO_ITEM`) among them. `None` is a context without a
-/// runtime, which the pin has no case for.
-fn unigram_leg_answer(outcome: Option<UnigramAdd>) -> c_int {
+/// a missing item (`ERROR_NO_ITEM`) among them.
+fn unigram_leg_answer(outcome: UnigramAdd) -> c_int {
     match outcome {
-        Some(UnigramAdd::Refused) => 0,
-        Some(_) => 1,
-        None => -1,
+        UnigramAdd::Refused => 0,
+        _ => 1,
     }
 }
 
@@ -719,9 +707,7 @@ pub extern "C" fn pinyin_choose_predicted_candidate(
             // SAFETY: the read view is no longer used; the live context is
             // exclusively borrowed for this serialized unigram mutation.
             let ctx = unsafe { crate::state::context_mut(context) };
-            if let Some(runtime) = ctx.core.runtime.as_mut() {
-                let _ = runtime.add_unigram_delta(token.value(), 483);
-            }
+            let _ = ctx.core.runtime.add_unigram_delta(token.value(), 483);
         }
         return true;
     }

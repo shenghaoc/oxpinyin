@@ -39,26 +39,16 @@ fn context_finish_finalizes_failed_attachments_while_an_instance_holds_the_runti
     .expect("the pin ignores a failed system attach");
     let instance = context.alloc_instance().expect("instance");
     {
-        let runtime = context.runtime.as_ref().expect("runtime");
+        let runtime = &context.runtime;
         assert!(runtime.pinyin_attachment_failed());
         assert!(!runtime.failed_attachments_finished());
     }
     // Public context fini, with the instance still alive.
     context.finish();
-    let runtime = context
-        .runtime
-        .as_ref()
-        .expect("runtime survives for the instance");
-    assert!(runtime.failed_attachments_finished());
+    assert!(context.runtime.failed_attachments_finished());
     // A second fini is inert.
     context.finish();
-    assert!(
-        context
-            .runtime
-            .as_ref()
-            .expect("runtime")
-            .failed_attachments_finished()
-    );
+    assert!(context.runtime.failed_attachments_finished());
     drop(instance);
     drop(context);
 }

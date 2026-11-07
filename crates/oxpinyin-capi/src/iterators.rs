@@ -232,18 +232,9 @@ pub extern "C" fn pinyin_iterator_add_phrase(
     };
     // SAFETY: the planning readers ended above; this call now owns the context mutation.
     let context = unsafe { owner_mut(owner) };
-    let is_system = context
-        .core
-        .runtime
-        .as_ref()
-        .is_some_and(|runtime| runtime.dict().is_system_library(handle.index));
-    if is_system
-        && !context
-            .core
-            .runtime
-            .as_ref()
-            .is_some_and(|runtime| runtime.dict().library_visible(u32::from(handle.index)))
-    {
+    let dict = context.core.runtime.dict();
+    let is_system = dict.is_system_library(handle.index);
+    if is_system && !dict.library_visible(u32::from(handle.index)) {
         return false;
     }
     let Some(user) = context.core.user_store_mut() else {
@@ -291,7 +282,7 @@ fn import_read<'a>(
     ImportRead {
         index: handle.index,
         user: context.core.user_store(),
-        dict: context.core.runtime.as_ref().map(|runtime| runtime.dict()),
+        dict: Some(context.core.runtime.dict()),
     }
 }
 
@@ -725,9 +716,6 @@ pub extern "C" fn pinyin_begin_get_bigram_phrases(
 
     // SAFETY: `context` is non-null and was produced by `pinyin_init`.
     let ctx = unsafe { context_ref(context) };
-    if !ctx.can_render_export_bigrams() {
-        return ptr::null_mut();
-    }
     // Register row 86, `ngram_bdb.cpp:199` (kc `:173`, tkrzw `:150`): the
     // user bigram carries a key that is not a phrase_token_t and the pin's
     // `get_all_items` assert dies.

@@ -148,7 +148,7 @@ fn add_remembered_path(
         let read = ImportRead {
             index: oxpinyin_user::USER_DICTIONARY,
             user: ctx.core.user_store(),
-            dict: ctx.core.runtime.as_ref().map(|runtime| runtime.dict()),
+            dict: Some(ctx.core.runtime.dict()),
         };
         let Some(user) = read.user else {
             return false;
