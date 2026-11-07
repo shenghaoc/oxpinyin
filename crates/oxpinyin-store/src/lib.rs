@@ -1021,16 +1021,11 @@ pub fn default_store_file(stem: &str) -> String {
 /// conformance check compares (`table_info.cpp`'s
 /// `to/from_table_database_format_type`: exactly `BerkeleyDB`,
 /// `KyotoCabinet`, `Tkrzw` upstream), so a same-backend pair stays
-/// conform and every cross-backend pair answers non-conform.
-#[cfg(feature = "kyotocabinet")]
-pub const DEFAULT_STORE_DB_FORMAT: &str = "KyotoCabinet";
-/// See the Kyoto Cabinet definition: tkrzw is upstream's third token.
-#[cfg(feature = "tkrzw")]
-pub const DEFAULT_STORE_DB_FORMAT: &str = "Tkrzw";
-/// See the Kyoto Cabinet definition: Berkeley DB is upstream's original
-/// token — the DBM a bare `./configure` libpinyin builds against.
-#[cfg(feature = "bdb")]
-pub const DEFAULT_STORE_DB_FORMAT: &str = "BerkeleyDB";
+/// conform and every cross-backend pair answers non-conform. The build
+/// script selects it once from the backend feature, the pin's
+/// `DATABASE_FORMAT`, and hands the same value to both `.pc` files.
+#[cfg(any(feature = "kyotocabinet", feature = "tkrzw", feature = "bdb"))]
+pub const DEFAULT_STORE_DB_FORMAT: &str = env!("OXPINYIN_STORE_DATABASE_FORMAT");
 
 /// Helpers shared by the backends' raw walks and path checks; every item is
 /// gated to the backends that use it (see the module docs).

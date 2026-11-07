@@ -29,9 +29,31 @@
 //! DB without pkg-config (`AC_CHECK_HEADER([db.h])` and
 //! `AC_SEARCH_LIBS([db_create], [db])`).
 
+/// The backend's `database format` token, the pin's `DATABASE_FORMAT`:
+/// `configure.ac:134-135` sets it once from `--with-dbm` and substitutes it
+/// into both `libpinyin.pc.in` and `libzhuyin.pc.in`, and `user.conf`'s
+/// conformance check compares the same string (`table_info.cpp`'s
+/// `to/from_table_database_format_type`: exactly `BerkeleyDB`,
+/// `KyotoCabinet`, `Tkrzw` upstream). This is the one mapping from backend
+/// feature to token. The library reads it as `DEFAULT_STORE_DB_FORMAT`, and
+/// the C-ABI crates' build scripts read it as
+/// `DEP_OXPINYIN_STORE_DATABASE_FORMAT` (this package's `links`). The
+/// exactly-one-backend guard in `src/lib.rs` refuses any build that enables
+/// two backend features, so the chain's order picks nothing.
+#[cfg(any(feature = "tkrzw", feature = "kyotocabinet", feature = "bdb"))]
+const DATABASE_FORMAT: &str = if cfg!(feature = "kyotocabinet") {
+    "KyotoCabinet"
+} else if cfg!(feature = "tkrzw") {
+    "Tkrzw"
+} else {
+    "BerkeleyDB"
+};
+
 #[cfg(any(feature = "tkrzw", feature = "kyotocabinet", feature = "bdb"))]
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:database_format={DATABASE_FORMAT}");
+    println!("cargo:rustc-env=OXPINYIN_STORE_DATABASE_FORMAT={DATABASE_FORMAT}");
     #[cfg(feature = "bdb")]
     bdb::pin_defaults();
     let dependencies = probe();

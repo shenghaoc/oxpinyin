@@ -19,102 +19,20 @@
 //! (run by `tools/packaging/install.sh` on Linux) when it relinks the
 //! installed object from the staticlib under upstream's symbol versioning.
 
-use std::env;
-use std::fs;
-use std::path::{Path, PathBuf};
-
-// The pin-version reader `oxpinyin-capi`'s build script uses, so both
-// `.pc` files and both header subdirectories follow the one pin record.
+// The pin-version reader and the build steps `oxpinyin-capi`'s build script
+// uses, so both `.pc` files and both header subdirectories follow the one
+// pin record, and both `.pc` files carry the one database-format token.
+#[path = "../oxpinyin-capi/build_capi.rs"]
+mod build_capi;
 #[path = "../oxpinyin-capi/build_pin_version.rs"]
 mod build_pin_version;
 
-// Mirrors the libtool ABI version in Cargo.toml. The `.pc` version comes
-// from the pin record through `build_pin_version`.
-const PC_BINARY_VERSION: &str = "15.0";
-
 fn main() {
-    let manifest_dir =
-        PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by cargo"));
-    println!("cargo:rerun-if-changed=build.rs");
-    println!("cargo:rerun-if-changed=../oxpinyin-capi/build_pin_version.rs");
-    println!("cargo:rerun-if-changed=Cargo.toml");
-    println!("cargo:rerun-if-changed=libzhuyin.pc.in");
-    println!(
-        "cargo:rerun-if-changed={}",
-        build_pin_version::pin_record_path(&manifest_dir).display()
-    );
-
-    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
-        println!("cargo:rustc-cdylib-link-arg=-Wl,-soname,libzhuyin.so.15");
-        // The tkrzw and Kyoto Cabinet backends' cxx bridges link the `cxx`
-        // crate, whose Rust runtime defines `#[export_name]` symbols
-        // (`cxxbridge1$slice$*`, `cxxbridge1$string$*`, ...) that rustc lists
-        // as C-level exports of every cdylib in the graph. They are not part
-        // of the libpinyin ABI (docs/packaging.md#export-gate). The symbols
-        // live in rlib archives, and GNU ld's `--exclude-libs` gives every symbol
-        // defined in an archive hidden visibility, which a version script
-        // cannot override; this crate's own `pinyin_*` symbols come from
-        // its object files and are untouched. The shipped library is
-        // relinked under `libzhuyin.ver` and needs none of this.
-        if env::var_os("CARGO_FEATURE_TKRZW").is_some()
-            || env::var_os("CARGO_FEATURE_KYOTOCABINET").is_some()
-        {
-            println!("cargo:rustc-cdylib-link-arg=-Wl,--exclude-libs,ALL");
-        }
-    }
-    // glib-2.0 linking is handled by glib-sys's build script (system-deps).
-    // Constrained builders: use SYSTEM_DEPS_GLIB_2_0_SEARCH_NATIVE,
-    // SYSTEM_DEPS_GLIB_2_0_LIB, and SYSTEM_DEPS_GLIB_2_0_NO_PKG_CONFIG
-    // in place of the former GLIB_LIBS override.
-
-    let pc_version = build_pin_version::pin_version(&manifest_dir);
-    bake_pkg_config_template(&manifest_dir, &pc_version);
-}
-
-/// Bakes the build-time fields of `libzhuyin.pc.in` — `@VERSION@`,
-/// `@LIBPINYIN_BINARY_VERSION@`, `@DATABASE_FORMAT@` — leaving the
-/// install-time `@prefix@` / `@libdir@` for the wrapper.
-fn bake_pkg_config_template(manifest_dir: &Path, pc_version: &str) {
-    let template_path = manifest_dir.join("libzhuyin.pc.in");
-    let template = fs::read_to_string(&template_path)
-        .unwrap_or_else(|e| panic!("read {}: {e}", template_path.display()));
-
-    let substituted = template
-        .replace("@VERSION@", pc_version)
-        .replace("@LIBPINYIN_BINARY_VERSION@", PC_BINARY_VERSION)
-        .replace("@DATABASE_FORMAT@", &database_format());
-
-    let body: String = substituted
-        .lines()
-        .filter(|line| !line.trim_start().starts_with('#'))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let baked = format!("{}\n", body.trim_start_matches('\n'));
-
-    let out_dir = env::var("OUT_DIR").expect("OUT_DIR is set by cargo");
-    let out_path = Path::new(&out_dir).join("libzhuyin.pc.in.baked");
-    fs::write(&out_path, &baked).unwrap_or_else(|e| panic!("write {}: {e}", out_path.display()));
-
-    if let Some(profile_dir) = target_profile_dir(&out_dir) {
-        let _ = fs::write(profile_dir.join("libzhuyin.pc.in.baked"), &baked);
-    }
-}
-
-fn database_format() -> String {
-    if let Ok(explicit) = env::var("LIBPINYIN_DATABASE_FORMAT")
-        && !explicit.trim().is_empty()
-    {
-        return explicit;
-    }
-    if env::var_os("CARGO_FEATURE_KYOTOCABINET").is_some() {
-        "KyotoCabinet".to_owned()
-    } else if env::var_os("CARGO_FEATURE_TKRZW").is_some() {
-        "Tkrzw".to_owned()
-    } else {
-        "BerkeleyDB".to_owned()
-    }
-}
-
-fn target_profile_dir(out_dir: &str) -> Option<PathBuf> {
-    Path::new(out_dir).ancestors().nth(3).map(Path::to_path_buf)
+    build_capi::run(&build_capi::Library {
+        name: "libzhuyin",
+        template: "libzhuyin.pc.in",
+        soname: "libzhuyin.so.15",
+        shared_source: "../oxpinyin-capi/build_capi.rs",
+        pin_version_source: "../oxpinyin-capi/build_pin_version.rs",
+    });
 }

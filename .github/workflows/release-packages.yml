@@ -249,6 +249,7 @@ jobs:
           PCVER="$(uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev packaging pc-version)"
           [ "$(pkg-config --modversion libpinyin)" = "$PCVER" ] || fail "libpinyin modversion"
           [ "$(pkg-config --variable=database_format libpinyin)" = "$DBFMT" ] || fail "database_format"
+          [ "$(pkg-config --variable=database_format libzhuyin)" = "$DBFMT" ] || fail "libzhuyin database_format"
           [ -n "$(pkg-config --variable=pkgdatadir libpinyin)" ] || fail "pkgdatadir"
           pkg-config --libs libpinyin | grep -qw -- "-lpinyin" || fail "libpinyin --libs"
           pkg-config --cflags libpinyin | grep -q -- "libpinyin-$PCVER" || fail "libpinyin --cflags"

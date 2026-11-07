@@ -153,11 +153,12 @@ feature is selected via `--no-default-features --features <peer>`.
 DB, so the token is `BerkeleyDB` (`crates/oxpinyin-capi/build.rs:150-165`);
 Kyoto Cabinet and tkrzw are peers, and the LMDB and redb peers were
 removed 2026-09-20. Q1 ruling, `compatibility-policy.md`, "Amendment —
-rulings recorded".)* A
-packager shipping data in a specific engine's format who wants to
-override that mapping sets `LIBPINYIN_DATABASE_FORMAT=<name>` at build
-time; otherwise the variable reads whichever peer the library was
-compiled against.
+rulings recorded".)* The variable reads whichever peer the library was
+compiled against. *(Amended 2026-11-07 UTC: `oxpinyin-store`'s build script
+selects the token once from its backend feature, as the pin's
+`configure.ac:134-135` sets one `DATABASE_FORMAT`, and both `.pc` files
+read it through `DEP_OXPINYIN_STORE_DATABASE_FORMAT`; there is no build-time
+override.)*
 
 **Gate.** After `tools/packaging/install.sh libpinyin --prefix=$P` (with
 `PKG_CONFIG_PATH=$P/lib/pkgconfig`):
