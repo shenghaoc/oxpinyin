@@ -628,6 +628,65 @@ mod tests {
         assert_eq!(*model.0.borrow(), [(1, 3), (1, 4), (3, 5), (4, 5)]);
     }
 
+    /// A missing row (a failed system read is one at the data layer):
+    /// `search_bigram2` loads it once per predecessor for the span, however
+    /// many tokens the span holds, and `search_unigram2` still runs
+    /// (`phrase_lookup.cpp:145-146,263-270`), so `final_step` finds the path.
+    #[test]
+    fn a_missing_row_is_read_once_per_span_and_the_unigram_branch_goes_on() {
+        use oxpinyin_core::{NbestStepRow, NbestSuccessors};
+
+        struct Missing(std::cell::RefCell<Vec<u32>>);
+        impl LanguageModel for Missing {
+            type Token = PhraseToken;
+            type Error = core::convert::Infallible;
+
+            fn score(
+                &self,
+                _: &[PhraseToken],
+                _: &PhraseToken,
+                _: i64,
+            ) -> Result<i64, Self::Error> {
+                Ok(0)
+            }
+
+            fn nbest_successors_in_row<'a>(
+                &self,
+                prev: &PhraseToken,
+                row: &'a mut NbestStepRow,
+            ) -> Result<Option<NbestSuccessors<'a>>, Self::Error> {
+                row.get_or_try_init::<Self::Error>(|| {
+                    self.0.borrow_mut().push(prev.value());
+                    Ok(None)
+                })?;
+                Ok(Some(NbestSuccessors::Miss))
+            }
+
+            fn nbest_item_costs_in_row(
+                &self,
+                _: &PhraseToken,
+                _: &PhraseToken,
+                _: Option<(u32, u32)>,
+                _: &mut NbestStepRow,
+            ) -> Result<NbestStepCosts, Self::Error> {
+                Ok(NbestStepCosts {
+                    blended: None,
+                    unigram: Some(0.25),
+                    unigram_lambda: 1.0,
+                })
+            }
+        }
+
+        let dictionary = Dict::parse(&[("a", 3), ("a", 5), ("b", 4)]);
+        let model = Missing(std::cell::RefCell::default());
+        let (matched, result) = phrase_segment(&dictionary, &model, "ab").unwrap();
+        assert!(matched);
+        assert_eq!(result, [PhraseToken::new(3), PhraseToken::new(4)]);
+        // Sentence start once for "a" (two tokens), then one row per node
+        // of the next step for "b".
+        assert_eq!(*model.0.borrow(), [1, 3, 5]);
+    }
+
     #[test]
     fn failed_match_leaves_a_sized_all_null_array() {
         // No dictionary phrase covers anything: the last step is empty,

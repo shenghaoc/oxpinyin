@@ -72,5 +72,6 @@ path; the fault schedule itself is not injected.
 
 Reproduce the derivation with `git show
 074a2219:src/storage/ngram_kyotodb.cpp` and the cited patched kc source.
-See the [backend partition table](918-boundary-follow-through.md#backend-failures-during-prefix-consultation)
-for normal returned failures and the distinct short-value assertion.
+The backend rows of the [source audit](918-phrase-segment-source-audit.md)
+cover normal returned failures, which read as no gram
+(`ngram_kyotodb.cpp:131-134`), and the distinct short-value assertion.

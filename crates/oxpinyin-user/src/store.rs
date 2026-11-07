@@ -386,6 +386,17 @@ impl std::error::Error for UserStoreError {
     }
 }
 
+impl UserStoreError {
+    /// Whether this is the checked-read failure, the one read failure the
+    /// pin's `Bigram::load` does not answer with a NULL gram: Kyoto
+    /// Cabinet's body read after a good size check asserts
+    /// (`ngram_kyotodb.cpp:138` at 074a2219).
+    #[must_use]
+    pub const fn is_read_after_check(&self) -> bool {
+        matches!(self, Self::Store(StoreError::ReadAfterCheck))
+    }
+}
+
 impl From<StoreError> for UserStoreError {
     fn from(e: StoreError) -> Self {
         match e {
@@ -6850,6 +6861,16 @@ mod tests {
             let _ = std::fs::remove_file(std::path::Path::new(&lock));
             let _ = std::fs::remove_file(stale);
         }
+    }
+
+    /// Only the checked-read failure is the pin's assert; every other
+    /// store or I/O failure is an ordinary failed read.
+    #[test]
+    fn only_a_read_after_check_is_the_checked_read_failure() {
+        assert!(UserStoreError::Store(StoreError::ReadAfterCheck).is_read_after_check());
+        assert!(!UserStoreError::Store(StoreError::Backend("x".into())).is_read_after_check());
+        assert!(!UserStoreError::Io(std::io::Error::other("x")).is_read_after_check());
+        assert!(!UserStoreError::Decode.is_read_after_check());
     }
 
     /// An in-memory [`ReadStore`] over 8-byte-encoded counts, so memo
