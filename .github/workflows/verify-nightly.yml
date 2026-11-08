@@ -293,10 +293,11 @@ jobs:
       #
       # Restore and save are separate steps. The save runs right after
       # `vcpkg install`, before the build and tests, so a red test run still
-      # keeps the archives it built; it is skipped when the restore matched
-      # the primary key exactly, because that entry already exists. The
-      # restore comes before the tkrzw action, so its pkgconf install reads
-      # the cache too.
+      # keeps the archives it built. It runs only on main and is skipped when
+      # the restore matched the primary key exactly, because that entry
+      # already exists. A branch dispatch restores main's entry through the
+      # restore keys and writes nothing. The restore comes before the tkrzw
+      # action, so its pkgconf install reads the cache too.
       - name: Compute the vcpkg binary cache key
         id: vcpkg-cache-key
         run: |
@@ -328,6 +329,13 @@ jobs:
           restore-keys: |
             ${{ steps.vcpkg-cache-key.outputs.key }}-
             ${{ steps.vcpkg-cache-key.outputs.prefix }}
+      - name: Report the vcpkg binary cache restore
+        env:
+          REQUESTED_KEY: ${{ steps.vcpkg-cache-key.outputs.key }}-pkgs-${{ steps.vcpkg-cache-key.outputs.packages }}-manifest-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-overlays/**', 'triplets/**') || 'none' }}
+          MATCHED_KEY: ${{ steps.vcpkg-cache-restore.outputs.cache-matched-key }}
+        run: |
+          printf 'vcpkg cache: requested=%s restored=%s image=%s/%s\n' \
+            "$REQUESTED_KEY" "$MATCHED_KEY" "${ImageOS:?}" "${ImageVersion:?}"
       # nmake in the Visual Studio developer environment, a static tkrzw.lib
       # with the DLL C runtime, and a tkrzw.pc the store build script finds
       # through PKG_CONFIG_PATH (tools/tkrzw/build.py). It also installs
@@ -349,7 +357,7 @@ jobs:
           echo "$installed/bin" >> "$GITHUB_PATH"
           PKG_CONFIG_PATH="$PKG_CONFIG_PATH;$installed/lib/pkgconfig" "$PKG_CONFIG" --modversion --cflags --libs glib-2.0
       - name: Save the vcpkg binary cache
-        if: steps.vcpkg-cache-restore.outputs.cache-hit != 'true'
+        if: steps.vcpkg-cache-restore.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ steps.vcpkg-cache-key.outputs.dir }}
