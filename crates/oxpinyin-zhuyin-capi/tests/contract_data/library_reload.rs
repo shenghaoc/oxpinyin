@@ -14,7 +14,9 @@ fn reload_dangling_token_candidates_zhuyin() {
             b"open SCRATCH/user-X/user.conf failed."
         }),
         |k| b::case(k, "reload-dangling-token-candidates-zhuyin"),
-        raw!(include!("fixtures/library_reload/fe7fea593e105de4.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/library_reload/fe7fea593e105de4.rs"
+        )),
         Some(&["candidates", "readings", "tokens", "unigram"]),
     );
 }
@@ -26,7 +28,9 @@ fn reload_drops_session_zhuyin_new_item() {
         "library_reload::reload_drops_session_zhuyin_new_item",
         Expect::RESULT,
         |k| b::case(k, "reload-drops-session-zhuyin-new-item"),
-        raw!(include!("fixtures/library_reload/cf09b08497065324.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/library_reload/cf09b08497065324.rs"
+        )),
         None,
     );
 }
@@ -62,7 +66,9 @@ fn reload_keeps_saved_zhuyin_new_item() {
         "library_reload::reload_keeps_saved_zhuyin_new_item",
         Expect::RESULT,
         |k| b::case(k, "reload-keeps-saved-zhuyin-new-item"),
-        raw!(include!("fixtures/library_reload/d7b1b8c30839a08c.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/library_reload/d7b1b8c30839a08c.rs"
+        )),
         None,
     );
 }
@@ -98,7 +104,9 @@ fn reload_persisted_empty_add_plain_zhuyin() {
         "library_reload::reload_persisted_empty_add_plain_zhuyin",
         Expect::RESULT,
         |k| b::case(k, "reload-persisted-empty-add-plain-zhuyin"),
-        raw!(include!("fixtures/library_reload/c9de5e7e0b3872b9.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/library_reload/c9de5e7e0b3872b9.rs"
+        )),
         None,
     );
 }
@@ -110,7 +118,9 @@ fn reload_persisted_empty_add_pronunciations_zhuyin() {
         "library_reload::reload_persisted_empty_add_pronunciations_zhuyin",
         Expect::RESULT,
         |k| b::case(k, "reload-persisted-empty-add-pronunciations-zhuyin"),
-        raw!(include!("fixtures/library_reload/f1c095584c00e549.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/library_reload/f1c095584c00e549.rs"
+        )),
         None,
     );
 }

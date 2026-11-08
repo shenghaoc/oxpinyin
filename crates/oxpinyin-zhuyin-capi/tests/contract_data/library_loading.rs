@@ -10,7 +10,9 @@ fn aliased_offset_unigram_zhuyin() {
         "library_loading::aliased_offset_unigram_zhuyin",
         Expect::RESULT,
         |k| b::case(k, "aliased-offset-unigram-zhuyin"),
-        raw!(include!("fixtures/library_loading/740fb419c4088ae3.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/library_loading/740fb419c4088ae3.rs"
+        )),
         None,
     );
 }
@@ -220,7 +222,9 @@ fn save_fatal_valid_to_invalid_zhuyin() {
         ])
         .with_env(FATAL_CRITICALS),
         |k| b::case(k, "save-fatal-valid-to-invalid-zhuyin"),
-        raw!(include!("fixtures/library_loading/68c0969a67e323ae.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/library_loading/68c0969a67e323ae.rs"
+        )),
         None,
     );
 }
@@ -298,7 +302,9 @@ fn save_replacement_valid_to_different_valid_zhuyin() {
             ("user_pinyin_index.bin", UserFile::Size(529408)),
         ]),
         |k| b::case(k, "save-replacement-valid-to-different-valid-zhuyin"),
-        raw!(include!("fixtures/library_loading/b3d58b9f5728eddc.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/library_loading/b3d58b9f5728eddc.rs"
+        )),
         None,
     );
 }
@@ -376,7 +382,9 @@ fn save_replacement_valid_to_invalid_zhuyin() {
             ("user_pinyin_index.bin", UserFile::Size(529408)),
         ]),
         |k| b::case(k, "save-replacement-valid-to-invalid-zhuyin"),
-        raw!(include!("fixtures/library_loading/68c0969a67e323ae.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/library_loading/68c0969a67e323ae.rs"
+        )),
         None,
     );
 }
@@ -792,7 +800,9 @@ fn unloaded_library_import_zhuyin() {
         "library_loading::unloaded_library_import_zhuyin",
         Expect::RESULT,
         |k| b::case(k, "unloaded-library-import-zhuyin"),
-        raw!(include!("fixtures/library_loading/71ed666955e60673.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/library_loading/71ed666955e60673.rs"
+        )),
         None,
     );
 }
@@ -804,7 +814,9 @@ fn unloaded_library_token_zhuyin() {
         "library_loading::unloaded_library_token_zhuyin",
         Expect::RESULT,
         |k| b::case(k, "unloaded-library-token-zhuyin"),
-        raw!(include!("fixtures/library_loading/c737d76fb9f07077.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/library_loading/c737d76fb9f07077.rs"
+        )),
         None,
     );
 }
@@ -828,7 +840,9 @@ fn unloaded_library_train_zhuyin() {
         "library_loading::unloaded_library_train_zhuyin",
         Expect::RESULT,
         |k| b::case(k, "unloaded-library-train-zhuyin"),
-        raw!(include!("fixtures/library_loading/2cbb4584496902be.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/library_loading/2cbb4584496902be.rs"
+        )),
         None,
     );
 }

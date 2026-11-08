@@ -50,7 +50,9 @@ fn user_gram_duplicate_train_save_zhuyin() {
         "stored_user_gram::user_gram_duplicate_train_save_zhuyin",
         Expect::RESULT,
         |k| b::case(k, "user-gram-duplicate-train-save-zhuyin"),
-        raw!(include!("fixtures/stored_user_gram/e65ebdf2512fa063.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/stored_user_gram/e65ebdf2512fa063.rs"
+        )),
         None,
     );
 }

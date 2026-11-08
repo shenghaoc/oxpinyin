@@ -1,5 +1,0 @@
-{
-    use crate::support::Raw::*;
-    static RAW: crate::support::Raw = L(&[L(&[B(true), L(&[L(&[L(&[S("GLib")]), I(8)]), L(&[L(&[S("GLib")]), I(8)])]), L(&[L(&[S("g_array_set_size: assertion 'array' failed")]), L(&[S("g_array_append_vals: assertion 'array' failed")])])]), L(&[B(false), L(&[L(&[L(&[S("GLib")]), I(8)])]), L(&[L(&[S("g_array_set_size: assertion 'array' failed")])])])]);
-    crate::support::fixture(&RAW)
-}

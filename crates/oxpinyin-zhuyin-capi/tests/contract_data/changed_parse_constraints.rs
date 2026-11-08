@@ -11,7 +11,7 @@ fn parse_constraints_zhuyin_changed_suffix_direct() {
         Expect::RESULT,
         |k| b::case(k, "parse-constraints-zhuyin-changed-suffix-direct"),
         raw!(include!(
-            "fixtures/changed_parse_constraints/c92bd594ed7dd085.rs"
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/changed_parse_constraints/c92bd594ed7dd085.rs"
         )),
         None,
     );
@@ -25,7 +25,7 @@ fn parse_constraints_zhuyin_edit_within_span_direct() {
         Expect::RESULT,
         |k| b::case(k, "parse-constraints-zhuyin-edit-within-span-direct"),
         raw!(include!(
-            "fixtures/changed_parse_constraints/46975bc7715ea076.rs"
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/changed_parse_constraints/46975bc7715ea076.rs"
         )),
         None,
     );
@@ -39,7 +39,7 @@ fn parse_constraints_zhuyin_span_past_end_direct() {
         Expect::RESULT,
         |k| b::case(k, "parse-constraints-zhuyin-span-past-end-direct"),
         raw!(include!(
-            "fixtures/changed_parse_constraints/735f93626e804278.rs"
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/changed_parse_constraints/735f93626e804278.rs"
         )),
         None,
     );
@@ -58,7 +58,7 @@ fn parse_constraints_zhuyin_temporary_shorter_intermediate_guess() {
             )
         },
         raw!(include!(
-            "fixtures/changed_parse_constraints/b559aba92f22572a.rs"
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/changed_parse_constraints/b559aba92f22572a.rs"
         )),
         None,
     );
