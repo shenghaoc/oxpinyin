@@ -40,7 +40,8 @@ deny = [
   { crate = "oxpinyin-training", wrappers = ["oxpinyin-utils"] },
   { crate = "oxpinyin-runtime", wrappers = ["oxpinyin-capi", "oxpinyin-facade", "oxpinyin-utils", "oxpinyin-zhuyin-capi"] },
   { crate = "oxpinyin-facade", wrappers = ["oxpinyin-capi", "oxpinyin-zhuyin-capi"] },
-  { crate = "oxpinyin-capi", wrappers = ["oxpinyin-fuzz", "oxpinyin-utils"] },
+  # The zhuyin capi crate's edge is dev-only: its contract tests export a saved profile through libpinyin.
+  { crate = "oxpinyin-capi", wrappers = ["oxpinyin-fuzz", "oxpinyin-utils", "oxpinyin-zhuyin-capi"] },
   { crate = "oxpinyin-zhuyin-capi", wrappers = ["oxpinyin-utils"] },
   # Leaves: nothing may depend on them. The wrapper names the crate itself,
   # a dependency no crate can have, so any new dependent fails.

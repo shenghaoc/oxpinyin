@@ -1,0 +1,1 @@
+M(&[("exit", I(0)), ("result", M(&[("candidates", L(&[])), ("consumed", I(0)), ("get_n_candidate", B(true)), ("guess_candidates", B(false)), ("guess_sentence", B(false)), ("log_messages", L(&[])), ("logs", L(&[])), ("n", I(0)), ("parsed", I(0))])), ("stderr", S(""))])

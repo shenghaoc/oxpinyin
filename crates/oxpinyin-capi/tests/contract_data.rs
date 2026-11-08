@@ -48,8 +48,16 @@ mod facade {
         fn set_zhuyin_scheme(context: P, scheme: i32) -> bool;
         fn set_double_pinyin_scheme(context: P, scheme: i32) -> bool;
         fn load_addon_phrase_library(context: P, index: u8) -> bool;
+        fn unload_addon_phrase_library(context: P, index: u8) -> bool;
         fn is_user_candidate(instance: P, candidate: P) -> bool;
         fn remove_user_candidate(instance: P, candidate: P) -> bool;
+        fn get_character_offset(instance: P, phrase: *const c_char, offset: usize, length: *mut usize) -> bool;
+        fn get_pinyin_offset(instance: P, cursor: usize, offset: *mut usize) -> bool;
+        fn get_left_pinyin_offset(instance: P, offset: usize, left: *mut usize) -> bool;
+        fn get_right_pinyin_offset(instance: P, offset: usize, right: *mut usize) -> bool;
+        fn get_luoma_pinyin_string(instance: P, key: P, utf8_str: *mut *mut c_char) -> bool;
+        fn get_secondary_zhuyin_string(instance: P, key: P, utf8_str: *mut *mut c_char) -> bool;
+        fn get_pinyin_strings(instance: P, key: P, shengmu: *mut *mut c_char, yunmu: *mut *mut c_char) -> bool;
     }
 
     /// Trains n-best result 0 (`pinyin_train(instance, 0)`).
@@ -77,9 +85,21 @@ mod facade {
         fn get_zhuyin_key_rest_positions(instance: P, key_rest: P, begin: *mut u16, end: *mut u16) -> bool;
         fn get_zhuyin_key_rest_length(instance: P, key_rest: P, length: *mut u16) -> bool;
         fn set_chewing_scheme(context: P, scheme: i32) -> bool;
+        fn get_zhuyin_offset(instance: P, cursor: usize, offset: *mut usize) -> bool;
+        fn get_left_zhuyin_offset(instance: P, offset: usize, left: *mut usize) -> bool;
+        fn get_right_zhuyin_offset(instance: P, offset: usize, right: *mut usize) -> bool;
     }
 }
 
+/// libpinyin's export iterator for the export child (`support::libpinyin_export`):
+/// this target links the pinyin facade itself.
+mod libpinyin {
+    #[allow(unused_imports)]
+    pub use crate::facade::{
+        begin_get_phrases, end_get_phrases, init, iterator_get_next_phrase,
+        iterator_has_next_phrase,
+    };
+}
 #[path = "common/contract/readers.rs"]
 mod readers;
 
@@ -92,6 +112,7 @@ mod fixtures;
 #[path = "common/contract/bodies"]
 mod bodies {
     pub mod alloc_after_fini;
+    pub mod axis_c;
     pub mod axis_j;
     pub mod before_cursor_dedup;
     pub mod candidate_lookup_offsets;
@@ -103,15 +124,19 @@ mod bodies {
     pub mod input_length_cap;
     pub mod invalid_input_bytes;
     pub mod issue542_remaining;
+    pub mod journal_replay;
     pub mod key_positions_past_65535;
+    pub mod library_loading;
     pub mod negative_remember;
     pub mod non_utf8_directories;
     pub mod phrase_table_mask;
     pub mod predicted_types;
     pub mod reading_256th;
     pub mod remember_tone;
+    pub mod separator_before_cursor;
     pub mod stored_count_headers;
     pub mod stored_total_overflow;
+    pub mod table_conf_scanner;
 }
 
 #[path = "contract_data/fixtures/types.rs"]
@@ -119,6 +144,8 @@ mod fixture_types;
 
 #[path = "contract_data/alloc_after_fini.rs"]
 mod alloc_after_fini;
+#[path = "contract_data/axis_c.rs"]
+mod axis_c;
 #[path = "contract_data/axis_j.rs"]
 mod axis_j;
 #[path = "contract_data/before_cursor_dedup.rs"]
@@ -141,8 +168,12 @@ mod input_length_cap;
 mod invalid_input_bytes;
 #[path = "contract_data/issue542_remaining.rs"]
 mod issue542_remaining;
+#[path = "contract_data/journal_replay.rs"]
+mod journal_replay;
 #[path = "contract_data/key_positions_past_65535.rs"]
 mod key_positions_past_65535;
+#[path = "contract_data/library_loading.rs"]
+mod library_loading;
 #[path = "contract_data/negative_remember.rs"]
 mod negative_remember;
 #[path = "contract_data/non_utf8_directories.rs"]
@@ -155,7 +186,11 @@ mod predicted_types;
 mod reading_256th;
 #[path = "contract_data/remember_tone.rs"]
 mod remember_tone;
+#[path = "contract_data/separator_before_cursor.rs"]
+mod separator_before_cursor;
 #[path = "contract_data/stored_count_headers.rs"]
 mod stored_count_headers;
 #[path = "contract_data/stored_total_overflow.rs"]
 mod stored_total_overflow;
+#[path = "contract_data/table_conf_scanner.rs"]
+mod table_conf_scanner;

@@ -158,8 +158,7 @@ byte-identical files, which is the W2-T2 acceptance criterion.
 ## Reproducibility contract
 
 The corpus is frozen input files. Its generator was deleted on 2026-11-06 UTC with
-`pinyin-oracle`, and the digests above stay the byte record; `contract_axis_c.py`
-also checks them through `tools/bisection/axis-c-replacement.json`.
+`pinyin-oracle`, and the digests above stay the byte record.
 `crates/oxpinyin-core/tests/parity_corpus.rs` checks that the directory holds exactly
 the committed strata, that the per-stratum counts match the table above, and that no
 line carries edge whitespace or a control byte.

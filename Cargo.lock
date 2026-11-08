@@ -747,6 +747,7 @@ dependencies = [
  "assert_cmd",
  "glib-sys",
  "libc",
+ "oxpinyin-capi",
  "oxpinyin-capi-marshal",
  "oxpinyin-chewing",
  "oxpinyin-core",

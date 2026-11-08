@@ -202,8 +202,7 @@ class ControllerTests(TestCase):
             for path in (pin, base, subject):
                 path.write_bytes(path.name.encode())
             args = Namespace(cases=None, issue=[], family=[], expect_parent=False, observations=None, plan_only=False,
-                             regenerate_sentence_ties=None, axis_c_replacement=None, axis_c_mutation=None,
-                             axis_c_snapshot_check=False, per_call='wrap', per_call_facades='pinyin', per_call_cpu=4,
+                             regenerate_sentence_ties=None, per_call='wrap', per_call_facades='pinyin', per_call_cpu=4,
                              prefix=prefix, per_call_operations=None, per_call_attribution=False,
                              per_call_attribution_limit=25, pinyin_so=subject, zhuyin_so=None,
                              base_pinyin_so=base, base_zhuyin_so=None)

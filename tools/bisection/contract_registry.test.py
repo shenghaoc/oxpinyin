@@ -23,14 +23,13 @@ class CaseSpecTests(unittest.TestCase):
     def test_defaults(self):
         self.assertEqual(registry.case_spec(), dict(
             fn=None, mode='pinyin', control=False, abort=NO_ABORT, stderr=False, crash=None, userdir=False,
-            cells=('bdb', 'kc', 'tkrzw'), either=False, host_scanf=(),
+            cells=('bdb', 'kc', 'tkrzw'), either=False,
             abort_logs=None, fatal=False, both_abort=False, issues=(),
             policy_record=None, case_id=None, pin_not_run=None, sigabrt=False))
 
     def test_crash_enables_stderr_and_sequences_become_tuples(self):
-        spec = registry.case_spec(crash={'ret': 0}, host_scanf=['1e'], issues=['#532', ' Row 54', 'W11'])
+        spec = registry.case_spec(crash={'ret': 0}, issues=['#532', ' Row 54', 'W11'])
         self.assertIs(spec['stderr'], True)
-        self.assertEqual(spec['host_scanf'], ('1e',))
         self.assertEqual(spec['issues'], ('532', 'row:54', 'w11'))
 
     def test_positional_options_keep_their_order(self):
@@ -59,7 +58,7 @@ class RegisterTests(unittest.TestCase):
         invalid = (dict(either=True), dict(either=True, abort=0), dict(both_abort=True),
                    dict(crash_stderr_pattern='mmap'),
                    dict(pin_not_run={}, stderr=True), dict(pin_not_run={}, policy_record='r.md'),
-                   dict(policy_record='r.md', host_scanf=('1e',)), dict(policy_record='r.md', crash={}),
+                   dict(policy_record='r.md', crash={}),
                    dict(policy_record='r.md', fatal=True, both_abort=True), dict(sigabrt=True),
                    dict(sigabrt=True, abort=0, abort_logs=[]), dict(sigabrt=True, abort=0, policy_record='r.md'))
         for options in invalid:
