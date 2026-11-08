@@ -34,7 +34,6 @@ case $out in
 esac
 out=${out%/}
 case $cell in bdb | kc | tkrzw) ;; *) echo "FAIL: unknown backend: $cell" >&2; exit 2 ;; esac
-# shellcheck source=capture-image.sh
-. tools/oracle/capture-image.sh
-run_in_capture_image "$out" tools/bisection/contract-diff.py capture "$cell" \
+exec uv run --no-project --managed-python python -X lazy_imports=normal -m tools.oracle.image run-in-capture-image \
+    "$out" tools/bisection/contract-diff.py capture "$cell" \
     "/opt/reference/$cell" --data /data --out "/work/$out" "${args[@]}"

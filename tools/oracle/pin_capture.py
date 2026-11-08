@@ -4,7 +4,7 @@
     pin_capture.py capture RUN --prefix PREFIX --data DATA --provision-cache CACHE --model-dir MODEL
                            [--staging DIR]
 
-`capture` runs in the capture image (tools/oracle/capture-pin.sh). Before any observation it
+`capture` runs in the capture image (`just capture-pin`). Before any observation it
 refuses the run unless:
 - `tools.oracle.image.prefix_ok` accepts PREFIX, the image's tkrzw cell;
 - the libpinyin.so and libzhuyin.so it loads have the prefix's recorded `shared_object_sha256`

@@ -503,9 +503,8 @@ $env:PATH = "DIR\bin;$installed\bin;$env:PATH"
 ```
 
 The `bin` directories put the GLib and tkrzw DLLs on the test binaries'
-path. Bash scripts, such as the [WSL container](#native-windows-and-wsl-containers)
-tasks, run from the same session through Git for Windows' `bash.exe`
-(`& 'C:\Program Files\Git\bin\bash.exe' tools/oracle/capture-pin.sh 1`).
+path. Bash scripts run from the same session through Git for Windows'
+`bash.exe` (`& 'C:\Program Files\Git\bin\bash.exe' SCRIPT`).
 
 **When the Windows job runs:** the full Windows workspace job is the
 `test-windows` job in `verify-nightly.yml`. It runs every night and on manual
@@ -545,18 +544,16 @@ of them starts a container. `sanitize` is Linux and Darwin only.
 The pin runs only in a Linux container. On Windows that container is a
 [WSL container](https://learn.microsoft.com/en-us/windows/wsl/wsl-container)
 driven by `wslc`. Run these from Developer PowerShell after
-`$env:OXPINYIN_CAPTURE_RUNTIME = 'wslc'`. Bash scripts run through Git for
-Windows' `C:\Program Files\Git\bin\bash.exe`, not the WSL `bash.exe` in
-`System32`:
+`$env:OXPINYIN_CAPTURE_RUNTIME = 'wslc'`:
 
 | Task | Command |
 | --- | --- |
 | Build and verify the oracle image | `uv run --no-project --managed-python python -X lazy_imports=normal -m tools.oracle.image build-image` |
 | Verify an oracle image | `uv run --no-project --managed-python python -X lazy_imports=normal -m tools.oracle.image verify-image --engine wslc IMAGE` |
-| Pin capture ([pin-captures.md](pin-captures.md)) | `& 'C:\Program Files\Git\bin\bash.exe' tools/oracle/capture-pin.sh RUN` |
+| Pin capture ([pin-captures.md](pin-captures.md)) | `just capture-pin RUN` |
 
-`tools/oracle/image.py` and `tools/oracle/capture-image.sh` translate the
-docker commands for `wslc`; docker and podman get the commands unchanged.
+`tools/oracle/image.py` translates the docker commands for `wslc`; docker and
+podman get the commands unchanged.
 The `wslc` limits that apply:
 
 - **No `--platform`.** The adapter drops the flag. Every image runs at the
@@ -572,12 +569,10 @@ The `wslc` limits that apply:
   only `opt/pinyin-oracle` from the tar. Containers are removed with
   `wslc remove -f`.
 - **`build --pull` is an on/off switch.** Capture builds pass no pull flag.
-- **Mounts need Windows paths.** Git Bash rewrites `/c/...:/work:ro` as a
-  path list, and `wslc` rejects it. Without that rewrite, `wslc` reads
+- **Mounts need Windows paths.** `wslc` reads an MSYS path such as
   `/c/...` as a path inside its VM and mounts an empty directory. The capture
-  script passes the checkout and data as `C:/...` (`cygpath -m`) and sets
-  `MSYS2_ARG_CONV_EXCL='*'`. `:ro` and a read-write mount nested in a
-  read-only one both work.
+  launcher passes the checkout and data as native Windows paths. `:ro` and a
+  read-write mount nested in a read-only one both work.
 
 Cloud provisioning (`just provision`, `tools/dev/provision.py`) is Linux only
 and refuses `wslc`.
