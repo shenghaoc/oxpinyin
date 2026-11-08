@@ -19,7 +19,7 @@ Linux only. The model20 archive is not redistributable
 (`docs/findings/model-provenance.md`): no CI job fetches it, and nothing
 below that needs it runs on GitHub-hosted runners. No workflow in this
 repository builds the reference image. It is built on a host with
-`tools/oracle/build-contract-image.sh`; the image holds the libraries only and
+`uv run --no-project --managed-python python -X lazy_imports=normal -m tools.oracle.image build-image`; the image holds the libraries only and
 ships no model-derived data (section 2a).
 
 ## 1. Fetch the model (once per machine)
@@ -90,7 +90,7 @@ The amd64 tags are the historical
     ghcr.io/shenghaoc/oxpinyin-oracle:<tag>
 
 and arm64 publishes the siblings `<tag>-arm64` and `<tag>-deps-arm64`.
-`<tag>` is printed by `python -m tools.oracle.image image-tag`: the libpinyin
+`<tag>` is printed by `uv run --no-project --managed-python python -X lazy_imports=normal -m tools.oracle.image image-tag`: the libpinyin
 commit and the base image tag (both from `oracle-pin.txt`) and a hash
 of `Dockerfile.oracle`, `build-oracle.sh`, the Bash floor, the version-recording inputs and
 `oracle-pin.txt` itself, so it changes whenever the library hashes or their
@@ -132,7 +132,7 @@ done
 ```
 
 Check the image's current pin/recipe stamp and its own recorded library hashes
-with `python -m tools.oracle.image verify-image --platform "$platform" "$image"`.
+with `uv run --no-project --managed-python python -X lazy_imports=normal -m tools.oracle.image verify-image --platform "$platform" "$image"`.
 No built digest is compared with a frozen repository value.
 
 ### Regenerate the data (after every pull)

@@ -114,17 +114,17 @@ bash tools/oracle/capture-contract.sh tkrzw                       # the default 
 bash tools/oracle/capture-contract.sh kc --cases NAME[,NAME]
 ```
 
-On x86_64 it uses the oracle tag from `python -m tools.oracle.image image-tag`; on aarch64 it uses that tag
+On x86_64 it uses the oracle tag from `uv run --no-project --managed-python python -X lazy_imports=normal -m tools.oracle.image image-tag`; on aarch64 it uses that tag
 with `-arm64`. It refuses other architectures and runs no image under emulation. If the
 expected image exists locally, it uses it; otherwise it pulls the published image. If neither
 is available, build the image locally with:
 
 ```sh
-bash tools/oracle/build-contract-image.sh
+uv run --no-project --managed-python python -X lazy_imports=normal -m tools.oracle.image build-image
 ```
 
 The local command builds `tools/oracle/Dockerfile.oracle` for the host architecture and
-checks the resulting libraries against `tools/oracle/oracle-pin.txt` using `python -m tools.oracle.image verify-image`.
+checks the resulting libraries against `tools/oracle/oracle-pin.txt` using `uv run --no-project --managed-python python -X lazy_imports=normal -m tools.oracle.image verify-image`.
 The Dockerfile runs the existing `build-oracle.sh`. No GitHub Actions job participates in
 this path. Capture builds the small capture image
 on Debian stable (`Dockerfile.capture`: the pin's libraries, GLib, the DBM libraries and the

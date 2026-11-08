@@ -96,6 +96,10 @@ asks for it.
    OXPINYIN_PROVISION_CACHE=CACHE PINYIN_MODEL_CACHE=MODEL bash tools/oracle/capture-pin.sh 2
    ```
 
+   On Windows, run them from Developer PowerShell with `OXPINYIN_CAPTURE_RUNTIME=wslc`,
+   through Git for Windows' `bash.exe`
+   (the [WSL container limits](setup.md#native-windows-and-wsl-containers) apply).
+
    Each run first refuses the capture unless:
    - `tools.oracle.image.prefix_ok` accepts the image's tkrzw prefix;
    - the SHA-256 of the `libpinyin.so` and `libzhuyin.so` it loads equal the prefix's recorded

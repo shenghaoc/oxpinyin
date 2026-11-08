@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 from unittest import mock
@@ -245,6 +246,192 @@ if sys.argv[1]=='cp': sys.exit(19)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn('selected:' + expected, result.stdout)
 
+
+class WslcAdapterTests(unittest.TestCase):
+    """The wslc translation of each kept command; no container runs."""
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.directory = Path(directory.name)
+
+    def test_a_captured_childs_stderr_is_forwarded(self):
+        # wslc and fetch-contract-data write diagnostics to stderr while their stdout is captured.
+        import tools.dev.process as process
+        done = mock.Mock(stdout=b'out', stderr=b'diagnostic\n', status=0)
+        stream = io.TextIOWrapper(io.BytesIO(), encoding='utf-8')
+        with mock.patch.object(process.bench, 'capture', return_value=done), mock.patch.object(sys, 'stderr', stream):
+            self.assertIs(process.capture(['child']), done)
+            stream.flush()
+            self.assertEqual(stream.buffer.getvalue(), b'diagnostic\n')
+
+    def test_docker_and_podman_commands_pass_through_unchanged(self):
+        for engine in ('docker', '/usr/bin/podman', 'wslc-like'):
+            command = [engine, 'create', '--pull=never', '--platform', 'linux/amd64', 'image', '/none']
+            self.assertEqual(images.wslc_command(command), command)
+            self.assertEqual(images.wslc_command([engine, 'rm', '-f', 'id']), [engine, 'rm', '-f', 'id'])
+
+    def test_wslc_drops_platform_and_renames_rm(self):
+        for engine in ('wslc', 'C:/Program Files/WSL/wslc.exe', 'WSLC.EXE'):
+            with self.subTest(engine=engine):
+                self.assertEqual(images.wslc_command([engine, 'create', '--pull=never', '--platform', 'linux/amd64', 'image', '/none']),
+                                 [engine, 'create', '--pull=never', 'image', '/none'])
+                self.assertEqual(images.wslc_command([engine, 'pull', '--platform=linux/arm64', 'image']), [engine, 'pull', 'image'])
+                self.assertEqual(images.wslc_command([engine, 'rm', '-f', 'id']), [engine, 'remove', '-f', 'id'])
+                self.assertEqual(images.wslc_command([engine, 'run', '--rm', 'image', 'rm']), [engine, 'run', '--rm', 'image', 'rm'])
+
+    def test_image_field_reads_wslc_json_and_docker_templates(self):
+        calls = []
+
+        def fake(command, **kwargs):
+            calls.append(command)
+            return mock.Mock(stdout=json.dumps([{'Architecture': 'arm64', 'Id': 'sha256:abc'}]).encode(), status=0)
+        with mock.patch.object(images, 'capture', fake):
+            self.assertEqual(images.image_field('wslc', 'Architecture', 'image'), 'arm64')
+            self.assertEqual(images.image_field('wslc.exe', 'Id', 'image'), 'sha256:abc')
+        self.assertEqual(calls, [['wslc', 'image', 'inspect', '--format', 'json', 'image'],
+                                 ['wslc.exe', 'image', 'inspect', '--format', 'json', 'image']])
+        with mock.patch.object(images, 'text', return_value='amd64') as text:
+            self.assertEqual(images.image_field('docker', 'Architecture', 'image'), 'amd64')
+        text.assert_called_once_with(['docker', 'image', 'inspect', '--format', '{{.Architecture}}', 'image'], env=None)
+
+    def verify_through_export(self, removal_status=0):
+        """verify-image on wslc over a synthetic export; answer status, calls, stderr and the removal mock."""
+        calls, archive = [], self.directory / 'export.tar'
+        source = self.directory / 'tree'
+        for dbm in images.cell.CELLS:
+            (source / 'opt/pinyin-oracle' / dbm / 'lib/libpinyin/data').mkdir(parents=True)
+            for library in ('libpinyin', 'libzhuyin'):
+                (source / 'opt/pinyin-oracle' / dbm / 'lib' / (library + '.so')).write_text(dbm + library)
+        (source / 'etc').mkdir()
+        (source / 'etc/passwd').write_text('outside the oracle\n')
+        with tarfile.open(archive, 'w') as tar:
+            tar.add(source / 'opt', 'opt')
+            tar.add(source / 'etc', 'etc')
+
+        def fake_capture(command, **kwargs):
+            calls.append(command)
+            return mock.Mock(stdout=b'owned-id\n', status=0)
+
+        def fake_run(command, **kwargs):
+            calls.append([str(part) for part in command])
+            shutil.copyfile(archive, command[command.index('-o') + 1])
+            return 0
+        platform = images.host_platform() or 'linux/amd64'
+        with (mock.patch.object(images, 'capture', fake_capture), mock.patch.object(images, 'run', fake_run),
+              mock.patch.object(images, 'host_platform', return_value=platform),
+              mock.patch.object(images.subprocess, 'run', return_value=mock.Mock(returncode=removal_status)) as remove,
+              contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as error):
+            status = images.verify_image(['--engine', 'wslc', '--platform', platform, 'image'])
+        return status, calls, error.getvalue(), remove
+
+    def test_wslc_verify_image_exports_instead_of_copying(self):
+        status, calls, error, remove = self.verify_through_export()
+        self.assertEqual(status, 1)
+        self.assertIn('FAIL: bdb: stale pin/recipe', error)
+        self.assertRegex(error, r'(?m)export/opt/pinyin-oracle/bdb/lib/libpinyin/data$')
+        self.assertNotIn('passwd', error)
+        self.assertNotIn('WARNING', error)
+        self.assertEqual(calls[0], ['wslc', 'create', '--pull=never', 'image', '/none'])
+        self.assertEqual(calls[1][:3], ['wslc', 'export', '-o'])
+        self.assertEqual(calls[1][4:], ['owned-id'])
+        self.assertEqual(remove.call_args.args[0], ['wslc', 'remove', '-f', 'owned-id'])
+        self.assertIs(remove.call_args.kwargs['check'], False)
+
+    def test_failed_container_removal_warns_with_its_id_and_keeps_the_status(self):
+        status, _, error, remove = self.verify_through_export(removal_status=125)
+        self.assertEqual(status, 1)
+        remove.assert_called_once()
+        self.assertIn('WARNING: could not remove container owned-id (wslc exited 125)', error)
+
+    def test_container_is_wslcs_alias_only_on_windows(self):
+        for host, wslc in (('Windows', True), ('Darwin', False), ('Linux', False)):
+            with self.subTest(host=host), mock.patch.object(images, 'host_system', return_value=host):
+                self.assertIs(images.is_wslc('container'), wslc)
+                self.assertIs(images.is_wslc('C:/Program Files/WSL/container.exe'), wslc)
+                self.assertIs(images.is_wslc('wslc.exe'), True)
+        with mock.patch.object(images, 'host_system', return_value='Windows'):
+            self.assertEqual(images.wslc_command(['container.exe', 'create', '--platform', 'linux/amd64', 'i', '/none']),
+                             ['container.exe', 'create', 'i', '/none'])
+
+    def test_verify_image_runs_only_the_host_architecture(self):
+        calls = []
+
+        def fake_capture(command, **kwargs):
+            calls.append(command)
+            return mock.Mock(stdout=b'cid\n', status=0)
+        with (mock.patch.object(images, 'host_platform', return_value='linux/arm64'),
+              mock.patch.object(images, 'capture', fake_capture),
+              mock.patch.object(images, 'run', return_value=0), mock.patch.object(images, 'digest_file', return_value='0'),
+              mock.patch.object(images, 'prefix_ok', return_value=True),
+              mock.patch.object(images.subprocess, 'run', return_value=mock.Mock(returncode=0)),
+              contextlib.redirect_stdout(io.StringIO())):
+            self.assertEqual(images.verify_image(['--engine', 'docker', 'image']), 0)
+        self.assertEqual(calls[0][calls[0].index('--platform') + 1], 'linux/arm64')
+        for engine in ('docker', 'podman', 'wslc'):
+            with (self.subTest(engine=engine), mock.patch.object(images, 'host_platform', return_value='linux/arm64'),
+                  mock.patch.object(images, 'capture') as capture, mock.patch.object(images, 'run') as run,
+                  contextlib.redirect_stderr(io.StringIO()) as error, self.assertRaises(images.Finished) as raised):
+                images.verify_image(['--engine', engine, '--platform', 'linux/amd64', 'image'])
+            self.assertEqual(raised.exception.status, 2)
+            self.assertIn('every image runs at the host architecture (linux/arm64), with no emulation', error.getvalue())
+            capture.assert_not_called()
+            run.assert_not_called()
+
+    def test_wslc_verify_image_refuses_a_foreign_platform(self):
+        with mock.patch.object(images, 'host_platform', return_value='linux/amd64'), mock.patch.object(images, 'capture') as capture, \
+                contextlib.redirect_stderr(io.StringIO()), self.assertRaises(images.Finished) as raised:
+            images.verify_image(['--engine', 'wslc', '--platform', 'linux/arm64', 'image'])
+        self.assertEqual(raised.exception.status, 2)
+        capture.assert_not_called()
+
+    def build_calls(self, runtime, machine):
+        calls = []
+        env = dict(OXPINYIN_CAPTURE_RUNTIME=runtime, OXPINYIN_CAPTURE_BUILD_FLAGS='--network host',
+                   PATH=str(self.directory))
+        (self.directory / runtime).write_text('')
+        (self.directory / runtime).chmod(0o755)
+        architecture = images.ARCHITECTURES[machine]
+        with (mock.patch.object(images.platform, 'machine', return_value=machine),
+              mock.patch.object(images, 'image_tag', return_value='TAG'),
+              mock.patch.object(images, 'run', lambda command, **kwargs: calls.append(command) or 0),
+              mock.patch.object(images, 'image_field', return_value=architecture) as field,
+              mock.patch.object(images, 'verify_image', return_value=0) as verify,
+              mock.patch.object(images.shutil, 'which', return_value=str(self.directory / runtime)),
+              contextlib.redirect_stdout(io.StringIO()) as output):
+            self.assertEqual(images.build_image([], env=env), 0)
+        return calls, field.call_args, verify.call_args, output.getvalue()
+
+    def test_build_image_keeps_the_docker_command_and_translates_wslc(self):
+        calls, field, verify, output = self.build_calls('docker', 'x86_64')
+        image = 'ghcr.io/shenghaoc/oxpinyin-oracle:TAG'
+        self.assertEqual(calls, [['docker', 'build', '--platform', 'linux/amd64', '--build-arg', 'ORACLE_PLATFORM=linux/amd64',
+                                  '--network', 'host', '-f', 'tools/oracle/Dockerfile.oracle', '-t', image, '.']])
+        self.assertEqual(field.args, ('docker', 'Architecture', image))
+        self.assertEqual(verify.args[0], ['--engine', 'docker', '--platform', 'linux/amd64', image])
+        self.assertEqual(output, image + '\n')
+        calls, field, verify, output = self.build_calls('wslc', 'aarch64')
+        self.assertEqual(calls, [['wslc', 'build', '--build-arg', 'ORACLE_PLATFORM=linux/arm64',
+                                  '--network', 'host', '-f', 'tools/oracle/Dockerfile.oracle', '-t', image + '-arm64', '.']])
+        self.assertEqual(verify.args[0], ['--engine', 'wslc', '--platform', 'linux/arm64', image + '-arm64'])
+
+    def test_build_image_refuses_another_architecture_before_building(self):
+        with (mock.patch.object(images.platform, 'machine', return_value='riscv64'),
+              mock.patch.object(images.shutil, 'which', return_value='docker'),
+              mock.patch.object(images, 'run') as run, contextlib.redirect_stderr(io.StringIO()),
+              self.assertRaises(images.Finished) as raised):
+            images.build_image([], env={})
+        self.assertEqual(raised.exception.status, 2)
+        run.assert_not_called()
+
+    def test_wslc_is_selected_first_on_windows_and_reports_its_version_line(self):
+        def fake(command, **kwargs):
+            return mock.Mock(stdout=b'wslc 3.0.3.0\nCopyright (c) Microsoft Corporation.\n', status=0)
+        printed = []
+        with mock.patch.object(images.shutil, 'which', side_effect=lambda name, path=None: name), \
+                mock.patch.object(images, 'capture', fake):
+            selected = images.select_runtime(env={'PATH': ''}, host='MINGW64_NT-10.0', output=printed.append)
+        self.assertEqual(selected, 'wslc')
+        self.assertEqual(printed, ['Runtime: wslc; wslc 3.0.3.0'])
 
 if __name__ == '__main__':
     unittest.main()

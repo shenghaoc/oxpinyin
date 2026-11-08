@@ -1,21 +1,30 @@
 """Oracle pin fields, image tag, image verification and runtime selection.
 
 Standard library plus the shared tools.dev process helpers. Used by
-capture-contract.sh, build-contract-image.sh and cloud provisioning:
+capture-image.sh, capture-contract.sh and cloud provisioning:
 
     python -m tools.oracle.image image-tag
     python -m tools.oracle.image pin-field [--platform PLATFORM] KEY
-    python -m tools.oracle.image verify-image [--engine docker|podman] [--platform PLATFORM] IMAGE
+    python -m tools.oracle.image verify-image [--engine docker|podman|wslc] [--platform PLATFORM] IMAGE
+    python -m tools.oracle.image build-image
+    python -m tools.oracle.image image-field ENGINE FIELD IMAGE
+
+docker and podman take each command as written. wslc (WSL containers, Windows) has no
+--platform, no cp and no rm, and its image inspect prints only JSON; wslc_command and
+the wslc branches below translate those calls (docs/runbooks/setup.md, native Windows).
 """
+import json
 import argparse
 import hashlib
 import os
 import platform
+import platform as platform_module
 from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 
 if __name__ == '__main__' and __package__ in (None, ''):
@@ -32,7 +41,60 @@ must match their own recorded hashes and the current pin/recipe, and the image m
 model-derived data (docs/findings/model-provenance.md): no
 lib/libpinyin/data directory and no *.bin, *.table, *.text or bigram.db
 file anywhere under /opt/pinyin-oracle.
+
+Every image runs at the host's architecture, with no emulation: PLATFORM defaults to
+the host's (linux/amd64 on x86_64, linux/arm64 on aarch64), and any other is refused.
 '''
+
+
+ARCHITECTURES = {'x86_64': 'amd64', 'AMD64': 'amd64', 'aarch64': 'arm64', 'arm64': 'arm64', 'ARM64': 'arm64'}
+REGISTRY = 'ghcr.io/shenghaoc/oxpinyin-oracle'
+
+
+def host_system():
+    """The host OS as platform.system() names it: Linux, Darwin or Windows."""
+    return platform.system()
+
+
+def is_wslc(engine):
+    """True for the WSL containers CLI, by any path or with its .exe suffix.
+
+    On Windows wslc also ships as container.exe, so container and container.exe count there."""
+    name = Path(str(engine)).name.lower()
+    return name in ('wslc', 'wslc.exe') or (name in ('container', 'container.exe') and host_system() == 'Windows')
+
+
+def wslc_command(command):
+    """Translate one docker-grammar command for wslc; other engines pass through unchanged.
+
+    wslc runs only the host architecture and has no --platform, so the flag and its value are
+    dropped (callers check the host architecture first). rm is remove there."""
+    if not is_wslc(command[0]):
+        return list(command)
+    translated, rest = [command[0]], list(command[1:])
+    if rest[:1] == ['rm']:
+        rest[0] = 'remove'
+    while rest:
+        part = rest.pop(0)
+        if part == '--platform':
+            rest.pop(0)
+        elif not str(part).startswith('--platform='):
+            translated.append(part)
+    return translated
+
+
+def host_platform():
+    """The linux/ platform of this host's architecture, or None for another architecture."""
+    architecture = ARCHITECTURES.get(platform.machine())
+    return architecture and 'linux/' + architecture
+
+
+def image_field(engine, field, image, *, env=None):
+    """One top-level field of an image's inspect record: Go template, or wslc's JSON."""
+    if is_wslc(engine):
+        done = capture([engine, 'image', 'inspect', '--format', 'json', image], env=env)
+        return str(json.loads(done.stdout.decode())[0][field])
+    return text([engine, 'image', 'inspect', '--format', '{{.' + field + '}}', image], env=env)
 
 
 def digest_file(path):
@@ -166,34 +228,40 @@ def verify_image(argv, *, root=ROOT):
         return 0
     image = values.get('positional')
     if not image:
-        fail('usage: verify-oracle-image.sh [--engine docker|podman] [--platform PLATFORM] IMAGE', 2)
-    platform = valid_platform(values.get('platform', 'linux/amd64'))
+        fail('usage: verify-oracle-image.sh [--engine docker|podman|wslc] [--platform PLATFORM] IMAGE', 2)
+    native = host_platform()
+    if native is None:
+        fail(f'FAIL: verify-image supports only native x86_64 and aarch64 hosts, not {platform_module.machine()}', 2)
+    platform = valid_platform(values.get('platform') or native)
+    if platform != native:
+        fail(f'every image runs at the host architecture ({native}), with no emulation; not {platform}', 2)
     engine = values.get('engine') or next((e for e in ('docker', 'podman') if shutil.which(e)), '')
     if not engine:
         fail('neither docker nor podman found')
     cid = ''
     with tempfile.TemporaryDirectory() as scratch:
         try:
-            created = capture([engine, 'create', '--pull=never', '--platform', platform, image, '/none'], check=False)
-            cid = created.stdout.decode().rstrip('\n')
+            created = capture(wslc_command([engine, 'create', '--pull=never', '--platform', platform, image, '/none']),
+                              check=False)
+            cid = created.stdout.decode().rstrip('\r\n')  # wslc ends its lines with CRLF
             if created.status:
                 raise Finished(created.status)
-            run([engine, 'cp', f'{cid}:/opt/pinyin-oracle', f'{scratch}/oracle'], stdout=subprocess.DEVNULL)
+            oracle = copy_oracle(engine, cid, scratch)
             status = 0
             for dbm in cell.CELLS:
                 for library in ('libpinyin', 'libzhuyin'):
-                    path = Path(scratch) / 'oracle' / dbm / 'lib' / (library + '.so')
+                    path = oracle / dbm / 'lib' / (library + '.so')
                     try:
                         actual = digest_file(path)
                     except OSError as error:
                         print(f'sha256sum: {path}: {error.strerror}', file=sys.stderr)
                         raise Finished(1) from error
                     print(dbm, library, actual)
-                if not prefix_ok(Path(scratch) / 'oracle' / dbm, dbm, root, expected_platform=platform):
+                if not prefix_ok(oracle / dbm, dbm, root, expected_platform=platform):
                     print(f'FAIL: {dbm}: stale pin/recipe or damaged recorded build', file=sys.stderr)
                     status = 1
-            leaks = [str(path) for path in (Path(scratch) / 'oracle').rglob('*')
-                     if str(path).endswith('/lib/libpinyin/data') or path.name == 'bigram.db'
+            leaks = [path.as_posix() for path in oracle.rglob('*')
+                     if path.as_posix().endswith('/lib/libpinyin/data') or path.name == 'bigram.db'
                      or path.suffix in ('.bin', '.table', '.text')]
             if leaks:
                 print('FAIL: model-derived data in the image:\n' + '\n'.join(leaks), file=sys.stderr)
@@ -201,16 +269,79 @@ def verify_image(argv, *, root=ROOT):
             return status
         finally:
             if cid:
-                subprocess.run([engine, 'rm', '-f', cid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                removed = subprocess.run(wslc_command([engine, 'rm', '-f', cid]), stdout=subprocess.DEVNULL,
+                                         stderr=subprocess.DEVNULL, check=False)
+                if removed.returncode:
+                    print(f'WARNING: could not remove container {cid} ({engine} exited {removed.returncode}); '
+                          'remove it by hand', file=sys.stderr)
+
+
+def copy_oracle(engine, cid, scratch):
+    """Copy the container's /opt/pinyin-oracle into SCRATCH; answer the copy's path.
+
+    wslc has no cp: it exports the container's filesystem as a tar, and only the
+    opt/pinyin-oracle members are extracted, under the tar module's data filter."""
+    if not is_wslc(engine):
+        run([engine, 'cp', f'{cid}:/opt/pinyin-oracle', f'{scratch}/oracle'], stdout=subprocess.DEVNULL)
+        return Path(scratch) / 'oracle'
+    archive = Path(scratch) / 'container.tar'
+    run([engine, 'export', '-o', archive, cid], stdout=subprocess.DEVNULL)
+    with tarfile.open(archive) as tar:
+        members = [member for member in tar.getmembers()
+                   if member.name.removeprefix('./').startswith('opt/pinyin-oracle/')]
+        tar.extractall(Path(scratch) / 'export', members=members, filter='data')
+    archive.unlink()
+    return Path(scratch) / 'export/opt/pinyin-oracle'
+
+
+BUILD_IMAGE_USAGE = '''Build the pinned oracle image for this host's architecture and verify it.
+
+    python -m tools.oracle.image build-image
+
+OXPINYIN_CAPTURE_RUNTIME names the runtime (docker by default; podman or wslc).
+OXPINYIN_CAPTURE_BUILD_FLAGS carries site flags for the build, such as --network host
+or --secret id=cacert,src=... behind a TLS-intercepting egress proxy (no quoting inside).
+The image is tagged ghcr.io/shenghaoc/oxpinyin-oracle:TAG (TAG-arm64 on aarch64), checked
+with verify-image, and its reference printed last. Nothing is pushed.
+'''
+
+
+def build_image(argv, *, root=ROOT, env=None):
+    """Build Dockerfile.oracle on the host architecture, check it and verify it."""
+    environment = os.environ if env is None else env
+    if argv[:1] in (['-h'], ['--help']):
+        print(BUILD_IMAGE_USAGE, end='')
+        return 0
+    if argv:
+        fail(f'unknown option: {argv[0]}', 2)
+    runtime = environment.get('OXPINYIN_CAPTURE_RUNTIME') or 'docker'
+    if not shutil.which(runtime, path=environment.get('PATH')):
+        fail(f'FAIL: {runtime} is not installed')
+    selected = host_platform()
+    if selected is None:
+        fail('FAIL: the oracle image build supports only native x86_64 and aarch64', 2)
+    expected = selected.split('/', 1)[1]
+    image = f'{REGISTRY}:{image_tag(root)}' + ('-arm64' if expected == 'arm64' else '')
+    flags = environment.get('OXPINYIN_CAPTURE_BUILD_FLAGS', '').split()
+    run(wslc_command([runtime, 'build', '--platform', selected, '--build-arg', f'ORACLE_PLATFORM={selected}',
+                      *flags, '-f', 'tools/oracle/Dockerfile.oracle', '-t', image, '.']), cwd=root, env=environment)
+    actual = image_field(runtime, 'Architecture', image, env=environment)
+    if actual != expected:
+        fail(f'FAIL: built {image} for {actual}, expected {expected}')
+    status = verify_image(['--engine', runtime, '--platform', selected, image], root=root)
+    if status:
+        return status
+    print(image)
+    return 0
 
 
 def select_runtime(override='', *, env=None, host=None, output=print):
-    """Preserve platform runtime order, explicit override, and unverified refusals."""
+    """Preserve platform runtime order and an explicit override; wslc is preferred on Windows."""
     environment = os.environ if env is None else env
-    host = host or text(['uname', '-s'], env=environment)
+    host = host or ('Windows' if os.name == 'nt' else text(['uname', '-s'], env=environment))
     if host == 'Darwin':
         candidates = ['container', 'podman', 'docker']
-    elif host.startswith(('MINGW', 'MSYS', 'CYGWIN')) or environment.get('WSL_DISTRO_NAME'):
+    elif host.startswith(('Windows', 'MINGW', 'MSYS', 'CYGWIN')) or environment.get('WSL_DISTRO_NAME'):
         candidates = ['wslc', 'podman', 'docker']
     else:
         candidates = ['podman', 'docker']
@@ -218,13 +349,14 @@ def select_runtime(override='', *, env=None, host=None, output=print):
     selected = override or next((name for name in candidates if shutil.which(name, path=environment.get('PATH'))), '')
     if not selected or not shutil.which(selected, path=environment.get('PATH')):
         fail(f'FAIL: no runtime available; candidates in order: {" ".join(candidates)} (override: {override or "none"})')
-    if Path(selected).name == 'wslc':
-        fail(f'Runtime: {selected}; version unavailable (adapter not yet verified)\n'
-             'FAIL: wslc adapter not yet verified; select an exercised runtime explicitly with OXPINYIN_CONTAINER or --runtime')
     done = capture([selected, '--version'], env=environment, check=False)
     if done.status:
         fail(f'FAIL: cannot query runtime version: {selected}')
-    output(f'Runtime: {selected}; {done.stdout.decode().rstrip(chr(10))}')
+    version = done.stdout.decode().rstrip(chr(10))
+    if is_wslc(selected):
+        # wslc --version follows its version line with copyright and privacy lines.
+        version = version.splitlines()[0] if version else version
+    output(f'Runtime: {selected}; {version}')
     return selected
 
 
@@ -334,7 +466,13 @@ def main(argv=None):
             return pin_field(args[1:])
         if args[:1] == ['verify-image']:
             return verify_image(args[1:])
-        print('usage: python -m tools.oracle.image image-tag|pin-field|verify-image|performance ...', file=sys.stderr)
+        if args[:1] == ['build-image']:
+            return build_image(args[1:])
+        if args[:1] == ['image-field'] and len(args) == 4:
+            print(image_field(*args[1:]))
+            return 0
+        print('usage: python -m tools.oracle.image image-tag|pin-field|verify-image|build-image|image-field|performance ...',
+              file=sys.stderr)
         return 2
     return guarded(call)
 

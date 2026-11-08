@@ -5,7 +5,7 @@ import sys
 
 from . import slot
 from .native import launch_status, shell_status
-from .runners import Finished
+from .runners import Finished, write
 from .measure import bench
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -39,7 +39,7 @@ def capture(command, *, env=None, cwd=None, check=True, stderr=True):
     """Capture a small host command with the shared cancellable process adapter."""
     done = bench.capture(command, env=env, cwd=cwd)
     if stderr and done.stderr:
-        bench.write(done.stderr, error=True)
+        write(done.stderr, error=True)
     if check and done.status:
         raise Finished(done.status)
     return done

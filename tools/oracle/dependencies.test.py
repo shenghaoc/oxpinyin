@@ -23,9 +23,10 @@ class OracleDependenciesTests(unittest.TestCase):
         self.assertTrue(set(groups['full']).isdisjoint(actual))
 
     def test_local_build_accepts_exact_reference_stage_copies(self):
-        build = (ROOT / 'tools/oracle/build-contract-image.sh').read_text()
-        self.assertIn('-f tools/oracle/Dockerfile.oracle', build)
-        self.assertIn('py_oracle verify-image', build)
+        source = (ROOT / 'tools/oracle/image.py').read_text()
+        build = source.split('\ndef build_image(', 1)[1].split('\ndef ', 1)[0]
+        self.assertIn("'-f', 'tools/oracle/Dockerfile.oracle'", build)
+        self.assertIn('verify_image(', build)
         pattern = r'^COPY tools/(oracle/(version-manifest.json|versions.py)|tkrzw/distro-probe.sh|lib/bash-floor.sh) '
         docker = (ROOT / 'tools/oracle/Dockerfile.oracle').read_text().split('FROM deps AS build', 1)[0]
         copies = [line for line in docker.splitlines() if line.startswith('COPY ') and '/opt/oracle-recipe/' not in line]
