@@ -17,9 +17,10 @@ const GBK_DICTIONARY: u8 = 2;
 /// bool pinyin_set_options(pinyin_context_t * context, pinyin_option_t options);
 /// ```
 ///
-/// Decodes the full option word into the live context. `PINYIN_INCOMPLETE`
-/// and `USE_TONE` stay extracted for the W13 scheme parsers; the rest of
-/// the word remasks already-allocated full-pinyin sessions.
+/// Stores the full option word in the live context. `PINYIN_INCOMPLETE`
+/// updates the setting sessions opened later use; the parsers read
+/// `USE_TONE` off the stored word. The rest of the word remasks
+/// already-allocated full-pinyin sessions.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_set_options(context: *mut PinyinContext, options: PinyinOptionT) -> bool {
     if context.is_null() {
@@ -28,7 +29,7 @@ pub extern "C" fn pinyin_set_options(context: *mut PinyinContext, options: Pinyi
 
     // SAFETY: `context` is non-null and was produced by `pinyin_init`.
     let ctx = unsafe { context_mut(context) };
-    // The shared set_options law (word, mirrored bools, config key);
+    // The shared set_options law (stored word and incomplete setting);
     // the zhuyin facade's setter runs the same body.
     ctx.core.set_options(options);
     true

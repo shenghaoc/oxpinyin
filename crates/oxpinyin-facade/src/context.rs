@@ -3,9 +3,9 @@
 
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32};
+use std::sync::atomic::{AtomicI32, AtomicU32};
 
-use oxpinyin_core::{DoublePinyinScheme, FullPinyinScheme, OptionBits, ZhuyinScheme};
+use oxpinyin_core::{DoublePinyinScheme, FullPinyinScheme, ZhuyinScheme};
 use oxpinyin_engine::SessionSettings;
 use oxpinyin_runtime::{
     FileType, OpenError, RemapStep, RowFault, Runtime, TableConfError, directory_reads_as_a_chunk,
@@ -299,8 +299,6 @@ pub struct LiveOptions(Arc<LiveOptionsInner>);
 
 /// The shared atomics behind [`LiveOptions`].
 pub struct LiveOptionsInner {
-    /// Live `PINYIN_INCOMPLETE` bit.
-    pub incomplete: AtomicBool,
     /// Live double-pinyin scheme (header discriminant value, bits 0–29)
     /// with the fallback-cleared flag packed into bit 30
     /// ([`FALLBACK_CLEARED_BIT`]).
@@ -309,9 +307,8 @@ pub struct LiveOptionsInner {
     pub zhuyin_scheme: AtomicI32,
     /// Live full-pinyin scheme (header discriminant value).
     pub full_scheme: AtomicI32,
-    /// Live `USE_TONE` bit.
-    pub use_tone: AtomicBool,
-    /// Live option word. The parsers read `FORCE_TONE` off it.
+    /// Live option word. The parsers read `FORCE_TONE`, `USE_TONE` and
+    /// `PINYIN_INCOMPLETE` off it.
     pub options: AtomicU32,
 }
 
@@ -323,20 +320,15 @@ impl core::ops::Deref for LiveOptions {
 }
 
 impl LiveOptions {
-    /// Seeds the live state the way an init does: the bools derive off
-    /// `option_word` (so `pinyin_init`'s `USE_TONE` seeds incomplete OFF and
-    /// `zhuyin_init`'s `USE_TONE | FORCE_TONE` seeds `use_tone` ON), and the
-    /// three schemes start at the header defaults both facades share (MS
-    /// double, Standard zhuyin, Hanyu full).
+    /// Seeds the live state the way an init does: the option word is the
+    /// caller's seed word, and the three schemes start at the header
+    /// defaults both facades share (MS double, Standard zhuyin, Hanyu full).
     #[must_use]
     pub(crate) fn new(option_word: u32) -> Self {
-        let bits = OptionBits::from_bits(option_word);
         Self(Arc::new(LiveOptionsInner {
-            incomplete: AtomicBool::new(bits.contains(oxpinyin_core::PINYIN_INCOMPLETE)),
             double_scheme: AtomicI32::new(DoublePinyinScheme::Ms as i32),
             zhuyin_scheme: AtomicI32::new(ZhuyinScheme::Standard as i32),
             full_scheme: AtomicI32::new(FullPinyinScheme::Hanyu as i32),
-            use_tone: AtomicBool::new(bits.contains(oxpinyin_core::USE_TONE)),
             options: AtomicU32::new(option_word),
         }))
     }
@@ -441,20 +433,15 @@ impl ContextCore {
         })
     }
 
-    /// `set_options`'s law: the word is stored, the bools it carries are
-    /// mirrored into their live flags, and the incomplete-pinyin setting
-    /// follows the word so sessions opened later agree with sessions
-    /// already allocated.
+    /// `set_options`'s law: the word is stored, and the incomplete-pinyin
+    /// setting follows the word so sessions opened later agree with
+    /// sessions already allocated. The parsers read the option bits off
+    /// the stored word.
     pub fn set_options(&mut self, options: u32) {
         let enabled = (options & oxpinyin_core::PINYIN_INCOMPLETE) != 0;
-        let use_tone = (options & oxpinyin_core::USE_TONE) != 0;
         self.settings.incomplete_pinyin = enabled;
-        let live = &self.live;
-        live.incomplete
-            .store(enabled, std::sync::atomic::Ordering::Relaxed);
-        live.use_tone
-            .store(use_tone, std::sync::atomic::Ordering::Relaxed);
-        live.options
+        self.live
+            .options
             .store(options, std::sync::atomic::Ordering::Relaxed);
     }
 
