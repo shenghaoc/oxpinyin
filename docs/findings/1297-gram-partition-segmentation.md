@@ -70,11 +70,13 @@ just policy-record docs/findings/1297-gram-partition-segmentation.md "obs-$CELL.
   --cases user-gram-unsorted-phrase-segment
 ```
 
-The cases are the capi crates' `gram_lookup` contract tests.
+`oxpinyin-capi`'s `pinned_data_tests::the_segmenter_reads_an_unsorted_user_gram_as_stored` holds the case.
 C's original core tests cover sorted duplicates, empty/short headers,
 both-end misses, all partial-tail lengths and stored-order preservation.
-The original broader selection, issues 757 and 785, is now Rust contract tests;
-its unchanged scope and the base/PR/pin comparison are documented in the
+The tests of `oxpinyin-core`'s `single_gram` module and `oxpinyin-capi`'s
+`e2e_tests::user_gram_unsorted_export_follows_the_stored_order` and
+`e2e_tests::user_gram_duplicate_export_lists_every_stored_item` now hold the
+original broader selection, issues 757 and 785. Its unchanged scope and the base/PR/pin comparison are documented in the
 bench runbook. No raw captures or verification logs are committed.
 
 Policy evidence is in [1297-gram-partition-segmentation.json](../../fixtures/contract-policy/1297-gram-partition-segmentation.json).

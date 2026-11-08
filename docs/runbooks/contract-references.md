@@ -1,9 +1,12 @@
 # Contract references
 
-The contract cases are ordinary Rust tests in `crates/oxpinyin-capi/tests` and
-`crates/oxpinyin-zhuyin-capi/tests`. They compare oxpinyin with the pin's frozen
-observations and never run the pin. `just fetch-contract-data` supplies the
-pinned system data for the tkrzw cases.
+The C-boundary tests are ordinary Rust tests in the `src` test modules of
+`crates/oxpinyin-capi` and `crates/oxpinyin-zhuyin-capi`: `boundary_tests.rs` on the
+w3 mini fixture and `pinned_data_tests.rs` on the pinned package. Their expected values
+are the pin's frozen observations, inline in each test, and they never run the pin.
+`just fetch-contract-data` supplies the pinned system data for the tkrzw tests.
+`testdata/pin-profiles.txt` in each crate holds the two pin-written profiles that its
+handoff tests read.
 
 At a pin bump, a changed contract expectation is derived from the pin's source
 diff. Use a `pin_capture.py` observation only where the source does not settle
@@ -12,8 +15,8 @@ the result. `pin_capture.py` is the only capture tool; its procedure is
 
 ## Reverse cross-open (local only)
 
-The frozen observations cover the pin's file read by oxpinyin. The other
-direction needs the pin, so it is a local command:
+The handoff tests cover the pin's file read by oxpinyin. The other direction
+needs the pin, so it is a local command:
 
 ```sh
 uv run --no-project --managed-python python -X lazy_imports=normal \

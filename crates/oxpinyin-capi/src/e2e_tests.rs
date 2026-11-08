@@ -983,7 +983,8 @@ fn mask_out_clears_user_entries_and_leaves_the_flag_alone() {
     // remove_user_candidate: a null candidate reports false. A system-token
     // candidate is the pin's `assert(USER_DICTIONARY == index)`
     // (`pinyin.cpp:3738`) and aborts the process;
-    // `abort-remove-user-candidate-normal-system-token` holds it.
+    // `boundary_tests::remove_user_candidate_aborts_on_a_system_token` holds
+    // it.
     assert!(!pinyin_remove_user_candidate(instance, ptr::null_mut()));
 
     crate::instance::pinyin_free_instance(instance);
@@ -1513,8 +1514,8 @@ fn exported_phrase_rows_are_token_ordered(context: *mut crate::types::PinyinCont
     );
     // Exhaustion: has_next false. A get_next past it is the pin's
     // `assert(ERROR_OK == retval)` (`pinyin.cpp:709`) and aborts the
-    // process; `abort-iterator-get-next-phrase` of `contract-diff.py`
-    // holds it.
+    // process; `export_iterator_aborts_on_a_reading_it_cannot_spell` holds
+    // the abort arm.
     assert!(!crate::iterators::pinyin_iterator_has_next_phrase(iter));
     crate::iterators::pinyin_end_get_phrases(iter);
 

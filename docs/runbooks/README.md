@@ -8,7 +8,7 @@ the reasoning behind each procedure lives in the findings it links.
 | --- | --- |
 | [`backends.md`](backends.md) | building and testing under a store backend other than the default |
 | [`oracle.md`](oracle.md) | building the pin-built libpinyin and running the differentials against it |
-| [`contract-references.md`](contract-references.md) | the frozen contract expectations, the pin-bump rule and the local cross-open check |
+| [`contract-references.md`](contract-references.md) | the C-boundary tests' frozen expectations, the pin-bump rule and the local cross-open check |
 | [`pin-captures.md`](pin-captures.md) | staging the pin's observations of the apostrophe inputs for review |
 | [`cloud.md`](cloud.md) | provisioning a remote Linux host (container runtime, oracle, data) so every gate runs there |
 | [`benches.md`](benches.md) | running a Callgrind or Massif recipe, or a plain timing |

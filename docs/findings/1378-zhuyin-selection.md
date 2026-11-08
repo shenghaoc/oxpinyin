@@ -38,7 +38,9 @@
 - **Contract preserved:** C ABI/layout, real GLib ownership, exported symbols,
   persistent bytes/formats, data ownership, diagnostics and process effects
   are unchanged. Only the ruled sentence tie differs.
-- **Tests:** `nbest-user-table-order-zhuyin` is POLICY-ACCEPTED; the pinyin
+- **Tests:** `nbest-user-table-order-zhuyin` is POLICY-ACCEPTED. `oxpinyin-engine`'s
+  `nbest::tests::selection_uses_batch_ties_and_zhuyin_length_first_nan_last` and
+  `nbest::tests::the_zhuyin_shape_keeps_one_tail_with_batch_ties` hold it. The pinyin
   counterpart retains its existing S2 record. `glib-sort-tails-zhuyin` and
   `table-conf-lambda-one-zhuyin` are controls. Unit tests cover NaN, signed
   zero and earlier batch position; the full BDB contract run covers the

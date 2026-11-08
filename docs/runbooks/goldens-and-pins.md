@@ -45,13 +45,14 @@ observations below. Each runs the pin-built utility in a private copy of
 | KMM import, 1-gram only | `import_k_mixture_model` with no arguments and this stdin: `\data model "k mixture model" count 3 N 1 total_freq 3`, `\1-gram`, `\item 1 <start> count 2 freq 0`, `\item 16817937 中国 count 1 freq 1`, `\item 16802309 你好 count 0 freq 2`, `\end`, each line ending in `\n`; the exit status, stdout, stderr and whether the directory tree changed | the frozen case `kmm_import_unigram_only` in `kmm_tools.rs` |
 | training bigram rows | `gen_ngram` with no arguments, writing the default `bigram.db`, and `gen_deleted_ngram --deleted-bigram-file deleted.db`, each with stdin `16777219 阿`, `16777220 啊`, an empty line, `16777219 阿`; for each file, which of `START` (1), `阿` (16777219) and `啊` (16777220) has a row at all, and for each present row its total and every successor with its count. An absent row is recorded as absent, not as a zero-valued row: on this input `啊` has no row in `deleted.db` | row assertions in the frozen `gen_ngram` and `gen_deleted_ngram` cases in `training.rs` |
 
-These contract cases are registered for the bdb cell only and hold no frozen pin
-observation in `fixtures/contract-refs/bdb/` and no policy digest. Each is captured on the
-bdb cell through `tools/oracle/pin_capture.py` staging and then converted to a Rust test:
+These cases are registered for the bdb cell only and hold no frozen pin observation
+and no policy digest. Each is captured on the bdb cell through
+`tools/oracle/pin_capture.py` staging and then converted to a C-boundary test in the
+facade crate's `src` test modules:
 
-| case | family |
+| case | facade |
 | --- | --- |
-| `removed-predict-stale-skip-pinyin` | `journal_replay` |
+| `removed-predict-stale-skip-pinyin` | pinyin |
 
 The six apostrophe inputs `'`, `''`, `'''`, `ni'`, `ni'!` and `ni'i` have their own
 capture step, which stages proposed observations for review, and native C-API tests in
@@ -91,7 +92,8 @@ model SHA-256, DBM) are one identity; change every field together. The
    verifies the fetched commit by `git rev-parse`.
 2. Re-run the W2 candidate surface (must stay byte-identical unless the
    upstream change is the point), the sentence-surface counts, the
-   `_check_offset` and abort families, and the Rust contract suite.
+   `_check_offset` and abort families, and the C-boundary tests
+   ([oracle](oracle.md#the-c-boundary-tests)).
 3. Record what moved, what did not, and what is build-nondeterministic
    (the six DBM-backed data files are; issue #358) in a verification
    finding; amend `oracle-environment.md`.

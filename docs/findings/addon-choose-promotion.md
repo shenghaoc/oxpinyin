@@ -162,11 +162,16 @@ start 4 a predecessor, while separator starts 2 and 3 have none
 text in libraries 6 and 7 with readings `xi'an` and `xian'ni`. Each new
 item gets its own pinyin index entry (`src/pinyin.cpp:584-605`).
 
-The contract cases are `addon-promoted-listing-unsorted` and
+The pin observations are `addon-promoted-listing-unsorted` and
 `addon-promoted-listing-by-frequency` (issue 913). The second case is
 a control: a keep-first dedup also gives the pin's row there.
 The cases `before-cursor-frequency-dedup` and
-`longer-normal-frequency-dedup` cover the combined slices and LONGER.
+`longer-normal-frequency-dedup` show the combined slices and LONGER.
+`oxpinyin-capi`'s `union_e2e_tests::chosen_addon_candidate_is_promoted_into_default_nibble_5`
+holds the promotion. `oxpinyin-engine`'s
+`session::tests::the_string_dedup_keeps_the_larger_m_freq_and_the_earlier_tie`
+and `session::tests::a_longer_row_surfaces_when_bit_2_clear_and_vanishes_when_set`
+hold the dedup and LONGER.
 Each has a `frequency-tie` case with DYNAMIC_ADJUST clear. The before-cursor
 tie is a control. The LONGER tie also needs the fix: the old path omitted
 the final dedup when sentence rows were suppressed. `longer-normal-disabled`

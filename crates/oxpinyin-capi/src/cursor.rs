@@ -640,9 +640,10 @@ mod tests {
         // there). Offset 11 of nihaoshijie (the second _check_offset on the
         // trailing zero key, pinyin.cpp:3092) and a left move past
         // one-past-end are its asserts, and the process aborts:
-        // `abort-get-right-pinyin-offset-nihao-5` and the
-        // `separator/pinyin/*/left|right/*` cases of `contract-diff.py`
-        // hold those shapes.
+        // `boundary_tests::right_offset_aborts_after_a_separator` holds the
+        // right move's abort arm and
+        // `matrix_bound_tests::the_left_move_past_an_early_stopped_parse_aborts`
+        // the left move past the matrix.
         let (context, instance, _user_dir) = parity_instance("cursor-aborts");
         assert_eq!(parse(instance, "nihaoshijie"), 11);
 
@@ -673,7 +674,8 @@ mod tests {
         // ni'hao: cursor 3 normalizes back over the apostrophe-run zero
         // key to 2; the right move at offset 2 skips the zero run to the
         // end of hao. The left move at offset 3 sits one past that zero,
-        // the pin's assert (`abort-get-left-pinyin-offset-after-separator`).
+        // the pin's assert
+        // (`boundary_tests::left_offset_aborts_after_a_separator`).
         let (context, instance, _user_dir) = parity_instance("cursor-separator");
         assert_eq!(parse(instance, "ni'hao"), 6);
 

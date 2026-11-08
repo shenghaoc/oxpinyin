@@ -177,8 +177,8 @@ are in that G3 table; this record is the acceptance summary.
 | Acceptance item | Result | Evidence already in the tree |
 | --- | --- | --- |
 | Valid configured paths | Unchanged: `pin_join` keeps a row name beneath the directory (`/x`, `//x`, `sub//x`), and an empty `dir` or `name` gives the other part. The pin's only path constructor is `g_build_filename(dir, name, NULL)` (`pinyin.cpp:395,400`, `zhuyin.cpp:337,342`, `table_info.cpp:201,332`). | unit `file_names_stay_beneath_their_directory` (`table_info.rs`); `glib-922-dir-*`, `glib-922-row-*` |
-| User directory identity | Unchanged: `""` is the working directory, NULL is none, the bytes are the caller's (`g_strdup` at `pinyin.cpp:332`, `zhuyin.cpp:276`). `cstr_to_path` is a byte copy into `OsStr`; non-UTF-8 bytes survive. | `glib-922-dir-*`, `stderr-non-utf8-user-dir`, #619/#642/#643 cases |
-| Consumer-visible diagnostics | The printed join is the pin's: one separator after the directory, trailing separators of the name kept, separator-only parts kept whole. `build_filename` and `user_file` both go through `join_bytes`. | unit `build_filename_joins_as_glib_does` (`pin_stderr.rs`), `user_conf_path_is_the_join_the_pin_writes` (`persistence.rs`); `glib-922-table-conf-*`, `glib-922-save-write-failed-dup-trailing-*`, `glib-922-fini-write-failed-dup-trailing-pinyin` |
+| User directory identity | Unchanged: `""` is the working directory, NULL is none, the bytes are the caller's (`g_strdup` at `pinyin.cpp:332`, `zhuyin.cpp:276`). `cstr_to_path` is a byte copy into `OsStr`; non-UTF-8 bytes survive. | `tests/userdir_arg.rs` of both capi crates; unit `paths_are_written_as_their_bytes` (`c_stderr.rs`); #619/#642/#643 cases |
+| Consumer-visible diagnostics | The printed join is the pin's: one separator after the directory, trailing separators of the name kept, separator-only parts kept whole. `build_filename` and `user_file` both go through `join_bytes`. | unit `build_filename_joins_as_glib_does` (`pin_stderr.rs`), `user_conf_path_is_the_join_the_pin_writes` (`persistence.rs`); `glib-922-table-conf-*` |
 | Remaining discrepancy | **None.** Every difference found was a defect fixed (the user directory's `Path::join`, `218b0a4c`). The Windows separator set follows GLib but has no pin run; Unix is complete. `..`, `.`, duplicate separators and `\` on Unix are ordinary bytes in both. | G3 table; `tools/bisection/run-contract-diff.sh ... -- --issue 922` |
 
 ### G4 and G9 — containers, allocation and the ABI
@@ -450,9 +450,10 @@ the `int` store, so `4294967303` reads as 7 and `-9223372036854775808` as
 then decide user state. The one difference found was a NUL inside the
 `database format:` token: `%255s` keeps the bytes, but the pin compares
 with `strcmp`, so a known token followed by NUL+bytes still conforms. The
-reader now truncates at the first NUL; contract cases retain trained and
-imported state for wrapped conforming markers and compare the wipe for
-non-conforming ones, with every fixture value read from the cell's
+reader now truncates at the first NUL; `oxpinyin-capi`'s
+`pinned_data_tests::user_conf_versions_past_int_take_the_scanners_int`
+retains trained and imported state for a wrapped conforming marker and
+compares the wipe for a non-conforming one, with every fixture value read from the cell's
 `table.conf` (no backend literal). The signed `%d` writer from #1178
 round-trips the integer fields. The 24,687-string `%d` corpus from #919
 is confirmation only here; it is not the basis.
@@ -926,8 +927,10 @@ inventory items C, D and B below.
    `guint8 len = m_end - m_begin` (`src/pinyin.cpp:1692-1697`). With
    `ni`, 251 apostrophes and `hao`, the span is 256 bytes and the key
    wraps to 0. Under `SORT_BY_PINYIN_LENGTH` the pin ranks 你好 after 你;
-   the full span would rank it first. The existing cases are
-   `pinyin-length-wrap/span-256`, `span-257` and `span-512`.
+   the full span would rank it first. The pin observations are
+   `pinyin-length-wrap/span-256`, `span-257` and `span-512`;
+   `oxpinyin-engine`'s `session::tests::the_pinyin_length_key_wraps_at_eight_bits`
+   holds the wrap.
    Replacement and record remain.
 5. **The pinyin `heap_*` port.** Inventory item B.
 

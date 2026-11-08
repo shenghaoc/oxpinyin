@@ -13,8 +13,7 @@ The apostrophe inputs are tested natively in the crates that own the behaviour.
 `crates/oxpinyin-capi/src/parse.rs` and `crates/oxpinyin-zhuyin-capi/src/parse.rs` hold the
 parse and parsed length of `'`, `''` and `'''`:
 - the values are Rust literals;
-- each case cites its frozen observation, held by the `zero_key_guess` contract tests,
-  and the pin source line behind it;
+- each case cites the pin's frozen observation and the pin source line behind it;
 - the tests need no pin, no container, no Python and no environment variable, and read no file;
 - they read no database, so they run on every cell.
 

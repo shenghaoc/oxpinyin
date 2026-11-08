@@ -213,8 +213,8 @@ mod tests {
     /// `pinyin_parse_more_full_pinyins` answers that length and stores it for
     /// `pinyin_get_parsed_input_length` (`pinyin.cpp:1507-1511`, `:1524`,
     /// `:1611-1613`). Each case holds the pin's consumed and parsed lengths
-    /// from its frozen observation, now the `zero_key_guess` contract tests'
-    /// `fresh` value (pin 074a2219, the pinned libpinyin-data). No
+    /// from its frozen observation (pin 074a2219, the pinned
+    /// libpinyin-data). No
     /// database is read, so every cell runs this.
     #[rstest]
     // zero-key-guess/pinyin/default/'/guess_sentence; pinyin_parser2.cpp:238-250.

@@ -163,7 +163,7 @@ fn an_offset_one_past_the_reserved_slot_finds_nothing() {
     // The one-past-end offset is the matrix's reserved extra slot and
     // stays valid. Two or more past it, `get_column_size` asserts in the
     // pin's `_check_offset` and the process aborts (register row 66,
-    // `abort-guess-candidates-past-matrix` of `contract-diff.py`).
+    // `matrix_bound_tests::guess_candidates_past_an_early_stopped_parse_aborts`).
     let user_dir = TempUserDir::new("guess-zero-range");
     let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
 

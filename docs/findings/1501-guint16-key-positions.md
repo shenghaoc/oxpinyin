@@ -13,7 +13,7 @@
 - **Why accepted:** the ruling: a ring of 65536 columns puts syllables 65536 bytes apart in one column, which no IME composition reaches.
 - **Contract preserved:** C ABI and layout unchanged; positions past 65535 reach the caller wrapped, as the pin's do.
 - **Affected inputs:** double-pinyin and chewing compositions longer than 65535 bytes, on both facades.
-- **Tests:** `contract-diff.py`: MATCH `key-position-past-65535/{double-pinyin,chewing-zhuyin}-crossing-key`; POLICY-ACCEPTED `key-position-past-65535/{double-pinyin,chewing-zhuyin}-past-key`; unit test `oxpinyin_capi::cursor::preedit_key_tests::key_rest_positions_past_byte_65535_wrap`.
+- **Tests:** unit tests `oxpinyin_capi::cursor::preedit_key_tests::key_rest_positions_past_byte_65535_wrap` and `oxpinyin_zhuyin_capi::e2e_tests::key_rest_positions_past_byte_65535_wrap`. `contract-diff.py` recorded MATCH `key-position-past-65535/{double-pinyin,chewing-zhuyin}-crossing-key` and POLICY-ACCEPTED `key-position-past-65535/{double-pinyin,chewing-zhuyin}-past-key`.
 - **Prior rulings:** none reversed; the 2026-11-01 UTC `gint16` decision stands.
 - **Evidence:** `just runner contract-diff <cell> "$PINYIN_ORACLE_PREFIX" <capi.so> <zhuyin.so> -- --cases key-position-past-65535/double-pinyin-past-key,key-position-past-65535/chewing-zhuyin-past-key --observations obs.jsonl`, then `just policy-record docs/findings/1501-guint16-key-positions.md obs.jsonl`, independently for bdb, kc and tkrzw with each cell's own prefix, libraries and capture.
 - **Conclusion:** accepted. Maintainer ruling 2026-11-01 UTC (#1501).

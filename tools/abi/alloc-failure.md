@@ -59,8 +59,11 @@ partitions are recorded in the [#924 follow-through ledger](../../docs/findings/
 A failed `GArray` growth has no contract case: both facades grow a
 caller's array only through GLib's `g_array_set_size` and
 `g_array_append_vals`, so the failure happens inside GLib's `g_realloc`
-on both sides, and `glib-924-array-lifecycle-{pinyin,zhuyin}` cover
-oxpinyin's part, returning a real GLib-owned `GArray`. The full ABI
+on both sides, and `oxpinyin-capi`'s
+`boundary_tests::lookup_tokens_resets_the_callers_array` and
+`oxpinyin-zhuyin-capi`'s
+`boundary_tests::caller_arrays_keep_their_metadata_and_clear_through_the_callback`
+cover oxpinyin's part, returning a real GLib-owned `GArray`. The full ABI
 harness is a source-derived
 defect audit, not a blanket parity gate: it labels silent NULL returns as
 confirmed defects. No policy exception or expected contract result is

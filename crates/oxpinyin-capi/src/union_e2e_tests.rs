@@ -83,7 +83,9 @@ fn addon_library_load_is_idempotent_and_surfaces_addon_candidates() {
     // unconditional `true` in range, including for a library that was never
     // loaded, and a reload afterwards must succeed again. The pin's
     // `assert(index < PHRASE_INDEX_LIBRARY_COUNT)` (`:499`) aborts the
-    // process; `abort-unload-addon-phrase-library-16` holds it.
+    // process;
+    // `e2e_tests::null_context_unload_addon_phrase_library_aborts_on_index_16`
+    // holds it.
     assert!(pinyin_unload_addon_phrase_library(context, 4));
     assert!(
         pinyin_unload_addon_phrase_library(context, 4),

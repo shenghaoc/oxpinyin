@@ -219,9 +219,9 @@ export PINYIN_EXPORT_DIR=/tmp/oxpinyin-export
 
 ## 4. Run the differentials
 
-The pin-versus-oxpinyin comparison of the C ABI is the Rust contract suite
-(below). The per-call C drivers it replaced retired with their frozen Rust
-tests; see [pin captures](pin-captures.md).
+The C-boundary tests (below) hold the pin's frozen observations of the C
+ABI. The per-call C drivers retired with their frozen Rust tests; see
+[pin captures](pin-captures.md).
 
 ### Pre-release fixture check
 
@@ -248,14 +248,13 @@ The tkrzw `libpinyin_data_dir` and `sentence_surface_parity` tests, and
 `package_libraries` in `oxpinyin-data`, read the pinned libpinyin-data package
 (`just fetch-contract-data`) in every ordinary test run.
 
-### The Rust contract suite
+### The C-boundary tests
 
-The frozen contract cases are ordinary Rust tests in `crates/oxpinyin-capi/tests`
-and `crates/oxpinyin-zhuyin-capi/tests`; they never run the pin. Run the tkrzw
-set with `cargo test -p oxpinyin-capi --test contract` and
-`cargo test -p oxpinyin-zhuyin-capi --test contract` after
-`just fetch-contract-data`. The local-only cross-open check is in
-[contract references](contract-references.md).
+The C-boundary tests with the pin's frozen observations are ordinary Rust tests in the
+`src` test modules of `crates/oxpinyin-capi` and `crates/oxpinyin-zhuyin-capi`; they
+never run the pin. Run them with `cargo test -p oxpinyin-capi --lib` and
+`cargo test -p oxpinyin-zhuyin-capi --lib` after `just fetch-contract-data`. The
+local-only cross-open check is in [contract references](contract-references.md).
 
 ### Training through the C API
 

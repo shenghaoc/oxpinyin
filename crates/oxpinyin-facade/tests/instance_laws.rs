@@ -408,7 +408,9 @@ fn a_short_start_gram_refuses_the_guess_before_any_training() {
 /// An unpartitioned gram has no promised search position. Reads preserve
 /// its bytes and order and return only valid items; repeating the same
 /// lookup and training from the same state gives the same result. The
-/// pin's observable difference is covered by the policy contract cases.
+/// pin's observable difference is held by `oxpinyin-capi`'s
+/// `boundary_tests::training_over_an_unsorted_start_gram_answers_true` and
+/// `pinned_data_tests::the_segmenter_reads_an_unsorted_user_gram_as_stored`.
 #[test]
 fn unsorted_gram_reads_and_training_are_deterministic_without_reordering() {
     let system = fixture_dir();

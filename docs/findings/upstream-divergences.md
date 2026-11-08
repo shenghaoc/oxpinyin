@@ -786,7 +786,9 @@ Text, candidate type and counts cannot.
   Since #902, the zhuyin facade's `guess_sentence`,
   `guess_sentence_with_prefix`, `guess_candidates_after_cursor` and
   `guess_candidates_before_cursor` return `false` on a zero-key matrix,
-  as the pin does, and the tag-902 contract cases hold that behaviour.
+  as the pin does, and `oxpinyin-zhuyin-capi`'s
+  `boundary_tests::a_keyless_parse_refuses_the_guess_and_keeps_the_sentence`
+  holds that behaviour.
 
 - **Upstream source cite:** at `074a2219`,
   `src/storage/pinyin_parser2.cpp:238-250` propagates each `'` with an
@@ -2139,7 +2141,9 @@ tkrzw oracles (linux/amd64) against `main` @ `8cd06566`.
   carries the same unchecked index (`src/pinyin.cpp:589`), but the
   audit recorded library 255 *accepted* there (D-12), so that side is
   not a stable crash and is not part of this entry.
-- **Held by:** `zhuyin-add-phrase-library-16` of `contract-diff.py`
+- **Held by:** `oxpinyin-zhuyin-capi`'s
+  `boundary_tests::null_arguments_answer_the_declared_value`. The pin
+  observation `zhuyin-add-phrase-library-16` of `contract-diff.py`
   (added 2026-10-11 UTC, #563): on bdb the pin exits -11 (SIGSEGV) at
   library 16 after writing the same stderr bytes the subject writes, and
   the subject answers `false` with no warning. The case builds no fixture,
@@ -2233,8 +2237,9 @@ tkrzw oracles (linux/amd64) against `main` @ `8cd06566`.
 - **The zhuyin twin (lane C, PR 14):** `zhuyin_alloc_instance` reads the
   freed context the same way (`zhuyin.cpp:845-857`). `zhuyin_init` and
   `zhuyin_fini` keep their own registry (`crates/oxpinyin-zhuyin-capi/src/live.rs`)
-  and the call answers NULL, silently; `zhuyin-alloc-instance-after-fini`
-  holds the exit status.
+  and the call answers NULL, silently (the pin observation
+  `zhuyin-alloc-instance-after-fini`); `oxpinyin-zhuyin-capi`'s
+  `live::tests::a_context_is_live_from_init_to_fini` holds the answer.
 
 
 ### Empty system directory (#643; row 71, closed 2026-10-08 UTC)
@@ -2256,8 +2261,10 @@ reading at 100003; the pre-fix subject exported toned 100000 plus toneless 3.
 `capi/src/user_data.rs` dropped tone while projecting selected syllables.
 The fix retains parsed tones without changing the selected syllable sequence.
 No public interface, ABI or dependency changes. Both Zhuyin libraries lack
-remember/export symbols. Existing contract driver cases remember-tones-pinyin
-and remember-api-absent-zhuyin verify this distinction on BDB.
+remember/export symbols. The contract driver cases remember-tones-pinyin
+and remember-api-absent-zhuyin showed this distinction on BDB.
+`oxpinyin-capi`'s `boundary_tests::remember_keeps_the_parse_time_tones` holds
+the pinyin side.
 Source read from /home/sheng/work/libpinyin at the pin, pinyin.cpp blob
 f27f7cf776724ead8d55e14b4af390e790054a91. This is plain parity.
 
@@ -2769,8 +2776,9 @@ previous token's gram).
 - **Separate pre-existing defect:** the same implementation applies the
   pin's `pinyin_is_user_candidate` type gate (`src/pinyin.cpp:3713-3715`).
   Before it, a predicted-bigram or predicted-prefix row whose token was in
-  `USER_DICTIONARY` answered true; `predicted-bigram-is-user-candidate`
-  holds the pin's false.
+  `USER_DICTIONARY` answered true; `oxpinyin-capi`'s
+  `boundary_tests::a_predicted_bigram_row_is_not_a_user_candidate` holds the
+  pin's false.
 - **Not changed:** the zhuyin facade has no predicted-candidate path.
 
 ## Pin portability defects found on arm64 (#1137, 2026-10-24 UTC; amended 2026-10-30 UTC, #1416)
@@ -2832,9 +2840,10 @@ texts are in
   the pin's own result differs between x86-64 and AArch64; oxpinyin's
   saturating store is the language's defined result and is not tuned to
   either target. Also a pin portability defect to report upstream.
-- **Held by:** `row58-unsigned-score-off` and `row58-unsigned-score-on`,
-  `oxpinyin-capi`'s `row58_ranking` contract tests, which hold oxpinyin's
-  value; it was `POLICY-ACCEPTED` on bdb, kc and sound tkrzw against the amd64 pin,
+- **Held by:** `oxpinyin-engine`'s
+  `session::tests::candidate_scores_follow_rusts_saturating_conversion`,
+  which holds oxpinyin's value. The pin observations `row58-unsigned-score-off`
+  and `row58-unsigned-score-on` were `POLICY-ACCEPTED` on bdb, kc and sound tkrzw against the amd64 pin,
   with the digests in
   [`arm64-pin-portability-1137.md`](arm64-pin-portability-1137.md)
   (recorded 2026-10-30 UTC, #1416; before #1416 they were MATCH on the

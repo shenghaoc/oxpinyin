@@ -150,8 +150,8 @@ Each of these carried the old refusal's predicate or order into the abort:
   `offset >= SIZE_MAX`, so `SIZE_MAX` answers `false` with the out-param
   NULLed and only a smaller offset reaches `get_column_size`'s assert
   (`cursor.rs` `abort_on_empty_matrix_below`). Held by
-  `the_key_getters_answer_false_at_size_max_on_an_empty_matrix` and
-  `get-pinyin-key-size-max-empty-matrix`. The right-offset call keeps the
+  `e2e_tests::the_key_getters_answer_false_at_size_max_on_an_empty_matrix`.
+  The right-offset call keeps the
   abort at every offset: `_check_offset` or its loop asserts first
   (`:3067-3075`).
 - Rows 74 and 93: `plan_import` walks the tokens and decides `:554`, `:568`
@@ -165,8 +165,10 @@ Each of these carried the old refusal's predicate or order into the abort:
   ([1501-gint16-input-cap](1501-gint16-input-cap.md)). `pinyin.cpp:614-650`
   does no observable work before `_add_phrase`, so the asserts follow on the
   parsed keys.
-  Held by `combined-library-sixth-add-long-reading-pinyin` (a 70008-byte
-  reading reaches the abort on both sides). In
+  Held by `boundary_tests::an_import_reading_parses_past_long_separator_runs`
+  (a 70008-byte reading parses whole to its two keys) and
+  `boundary_tests::an_import_aborts_on_five_tokens_before_the_library_refusal`
+  (the token walk's abort). In
   `combined-library-sixth-add-key-past-parse-bound-pinyin`, the 40007-byte
   reading `ni3` + 40000 apostrophes + `hao3` parses to one key: the backward
   scan in `final_step` starts at step 40007 and stops at the first step whose
@@ -232,9 +234,9 @@ Each of these carried the old refusal's predicate or order into the abort:
   phrase, but `Session::plan_spans` walked every span and aborted on it at
   `:663`. The walk now stops at the store's length. A span right after a
   forcing starts at the forcing's end, so with the bound the surviving
-  forcing changes nothing the walk does. Held by
-  `train-after-reparse-and-choose-control`: `nihaoma` with 好 forced at 2..5,
-  re-parsed to `niha`, 你 chosen at 0, then trained.
+  forcing changes nothing the walk does. Held by `oxpinyin-engine`'s
+  `session::tests::train_after_a_reparse_and_a_choose_stops_the_walk_at_the_store_length`:
+  `nihaoma` with 好 forced at 2..5, re-parsed to `niha`, 你 chosen at 0, then trained.
 - Row 79: the default rows are checked in index order, and the libraries the
   pin's loop maps before the fatal row write their `mmap %s failed!` lines
   first (`pinyin.cpp:253-256`, then `:388`; through the row itself for a row

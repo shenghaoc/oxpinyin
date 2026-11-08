@@ -76,9 +76,9 @@ Notes:
   and the pin answers with its ordinary candidates. oxpinyin's zhuyin
   facade never clears `SORT_WITHOUT_LONGER_CANDIDATE` (the session keeps
   its `0x1e` sort word), so the engine never runs the walk and
-  `EngineError::OverlongUserIndexKey` cannot reach the zhuyin guesses. The
-  new control `zhuyin-guess-candidates-overlong-index-key` holds the two
-  answers equal.
+  `EngineError::OverlongUserIndexKey` cannot reach the zhuyin guesses.
+  `boundary_tests::cursor_guesses_ignore_an_overlong_user_index_key` holds
+  the two answers equal.
 - Row 66's empty-matrix predicate is `cursor::matrix_has_keys`: false
   exactly when the active parse placed no key, which is when the pin's
   `fill_matrix` leaves the matrix at size 0
@@ -115,8 +115,7 @@ Notes:
   `offset >= SIZE_MAX`, so `SIZE_MAX` answers `false` with the out-param
   NULLed and only a smaller offset reaches `get_column_size`'s assert
   (`cursor.rs` `abort_on_empty_matrix_below`). Held by
-  `the_key_accessors_answer_false_at_size_max_on_an_empty_matrix` and
-  `zhuyin-get-zhuyin-key{,-rest}-size-max-empty-matrix`.
+  `e2e_tests::the_key_accessors_answer_false_at_size_max_on_an_empty_matrix`.
 - Row 74's other `reduce_tokens` callers (2026-11-01 UTC). oxpinyin completed
   each one silently:
   - `zhuyin_lookup_tokens` (`zhuyin.cpp:1690`) now aborts above four
@@ -135,8 +134,8 @@ Notes:
   the pin's `get_range` in its `else` branch, comes after. A reading of any
   length reaches the walk: `parse_zhuyin_direct` is unbounded, as the pin's
   `ZhuyinDirectParser2::parse` is (`zhuyin_parser2.cpp:914-961`, `int`
-  indices). Held by `combined-library-sixth-add-long-reading-zhuyin`
-  (2026-11-01 UTC).
+  indices). Held by `oxpinyin-core`'s
+  `scheme::tests::zhuyin_direct_parse_has_no_length_bound`.
 - Row 4's search assert (`pinyin_phrase3.h:152`) is reached by the zhuyin
   guesses through the same engine searches as the pinyin facade's
   (`EngineError::TonedIncompleteKey`); `refuse_lookup_gram` aborts on it.
