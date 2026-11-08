@@ -31,7 +31,8 @@ Follow the [source method](../../source-policy.md#method): record, design and an
   None does: RuntimeLm forwards to BigramLanguageModel, which always reports real unigrams (§11, 2026-10-16 UTC).
   _Requirements: 2.3_
 
-- [ ] 4a. Remove the k-best fallback and fitted ScoringConfig weights, or replace them with a pin-derived rule.
+- [x] 4a. Remove the k-best fallback and fitted ScoringConfig weights, or replace them with a pin-derived rule.
+  Done: the fallback, `kbest.rs`, `Scorer`, `ScoringConfig` and `has_real_unigrams` are deleted.
   Leave no fitted coefficient in the tree.
   This is internal work, not a compatibility gate.
   The weights affect neither C ABI.

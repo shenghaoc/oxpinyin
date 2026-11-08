@@ -1880,14 +1880,7 @@ impl LanguageModel for RuntimeLm<'_> {
             .unigram_freq_with_user_delta(token.value(), live, extra))
     }
 
-    fn has_real_unigrams(&self) -> bool {
-        self.inner.has_real_unigrams()
-    }
-
     fn unigram_total(&self) -> Result<Option<u64>, Self::Error> {
-        if !self.inner.has_real_unigrams() {
-            return Ok(None);
-        }
         let user_total = self.user.map_or(0, |store| {
             store.unigram_total_over(|nibble| self.inner.is_visible(nibble))
         });
@@ -2371,9 +2364,7 @@ impl Runtime {
     /// # Errors
     ///
     /// Forwards any [`EngineError`] from session construction, currently
-    /// infallible for the runtime's [`BigramLanguageModel`]. It always has
-    /// real unigram frequencies, so [`Session::new`] skips the fallback
-    /// key-cost walk and reads no dictionary or model records.
+    /// infallible for the runtime's [`BigramLanguageModel`]. [`Session::new`] reads no dictionary or model records.
     pub fn new_session(
         &self,
         settings: SessionSettings,

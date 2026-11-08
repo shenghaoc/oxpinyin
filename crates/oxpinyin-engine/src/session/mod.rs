@@ -10,33 +10,20 @@ use std::collections::{HashMap, HashSet};
 use smallvec::SmallVec;
 
 use oxpinyin_core::graph::{Edge, EdgeKind, ExactSegment, SegmentGraph};
-use oxpinyin_core::kbest::{DecodedPath, k_best};
-use oxpinyin_core::scoring::{Scorer, ScoringConfig, ScoringError, expand_keys, key_cost_table};
+use oxpinyin_core::scoring::{ScoringError, expand_keys};
 use oxpinyin_core::{
-    Completeness, Cost, Dictionary, LanguageModel, MergedGram, OptionBits, PhraseEntry, PhraseText,
+    Completeness, Dictionary, LanguageModel, MergedGram, OptionBits, PhraseEntry, PhraseText,
     PhraseTextConcat, PhraseToken, SyllableKey, UserModel,
 };
 
 use crate::candidate::{Candidate, CandidateKind, CandidateList};
 use crate::error::EngineError;
 
-/// How many segmentations the decoder keeps.
-///
-/// The pin's own candidate lists mix segmentations — `xian` opens with
-/// `西安` (`xi` + `an`) while its selected path is the single key `xian` — so
-/// one segmentation is not enough to reproduce a candidate list.
-const SEGMENTATION_K: usize = 8;
-
-/// Longest phrase, in keys, the sentence builder will look back for.
-const MAX_PHRASE_KEYS: usize = 8;
-
 /// Longest key sequence the window scan searches: the pin's phrase-length
 /// cap. Paths beyond it are not searched.
 pub const MAX_PHRASE_LENGTH: usize = 16;
 
-/// The window scan's own expansion bound, separate from
-/// [`oxpinyin_core::scoring::ScoringConfig::expansion_limit`] which the
-/// pre-frequency fallback shares. Measured over the W2 corpus, the largest
+/// The window scan's expansion bound. Measured over the W2 corpus, the largest
 /// expansion that hits real phrases is a three-initial `q|q|q` span
 /// (14^3 = `2_744` — the pin's `qqq…` offers `请求权`); `4_096` covers it with
 /// headroom. Larger products yield nothing: no stored phrase matches a
@@ -122,21 +109,6 @@ pub struct Session<D, L, S = SessionState> {
 #[derive(Clone, Debug)]
 pub struct SessionState {
     settings: Settings,
-    scoring: ScoringConfig,
-    /// Per-key costs for the pre-frequency fallback scorer, and **empty
-    /// whenever [`LanguageModel::has_real_unigrams`] holds**.
-    ///
-    /// The only readers are the two [`Scorer::with_key_costs`] sites, both
-    /// on the `else` of a `has_real_unigrams()` gate, so a model carrying
-    /// real frequencies can never consult this table — the pinned
-    /// construction prices candidates inline instead. Filling it for such a
-    /// model would walk the whole frozen key inventory to produce a value
-    /// nothing reads, which is what made the first `new_session` cost
-    /// 42–57 ms. Upstream
-    /// has no analogue in any configuration: `pinyin_alloc_instance`
-    /// allocates instance state and performs no dictionary or model read
-    /// (`src/pinyin.cpp:1310-1333` at the pin `0c5e80e1`).
-    key_costs: Vec<Cost>,
     /// Whether the prepended sentence rows collapse onto the 1-best row —
     /// libzhuyin's display law, set per surface via
     /// [`Session::set_collapse_sentence_rows_to_best`]; off (the pinyin

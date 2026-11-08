@@ -74,7 +74,6 @@ pub(crate) fn refuse_lookup_gram(name: &str, error: &oxpinyin_engine::EngineErro
         | oxpinyin_engine::EngineError::ReduceTokensCount { .. }
         | oxpinyin_engine::EngineError::UserModel(_)
         | oxpinyin_engine::EngineError::Graph(_)
-        | oxpinyin_engine::EngineError::Decode(_)
         | oxpinyin_engine::EngineError::Scoring(_) => return false,
     };
     crate::ffi::log_warning(&format!("{name}: {message}"));
@@ -384,12 +383,9 @@ fn validated_lookup_offset(
 
 /// Whether the facade's `guint32` unigram total is zero: the loaded
 /// libraries' sum, the user store's deltas and the accepted
-/// `zhuyin_token_add_unigram_frequency` deltas, wrapped. A model without real
-/// unigrams has no total to divide by.
+/// `zhuyin_token_add_unigram_frequency` deltas, wrapped.
 fn facade_total_is_zero(inst: &crate::state::CapiInstanceRead<'_>) -> bool {
-    use oxpinyin_core::LanguageModel as _;
-
-    inst.core.lm.has_real_unigrams() && inst.core.lm.amplified_total() == 0
+    inst.core.lm.amplified_total() == 0
 }
 
 /// The shared candidate-build shell over the engine's `candidates_at` /

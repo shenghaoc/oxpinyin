@@ -3,7 +3,6 @@
 use core::fmt;
 
 use oxpinyin_core::graph::GraphError;
-use oxpinyin_core::kbest::DecodeError;
 use oxpinyin_core::scoring::ScoringError;
 
 /// Which `increase_pronunciation_possibility` precondition a stale
@@ -225,8 +224,6 @@ pub enum EngineError {
     UserModel(String),
     /// The input could not be represented as a segment graph.
     Graph(GraphError),
-    /// The k-best search refused its parameters.
-    Decode(DecodeError),
     /// Scoring failed.
     Scoring(ScoringError),
 }
@@ -354,7 +351,6 @@ impl fmt::Display for EngineError {
             }
             Self::UserModel(message) => write!(formatter, "user model error: {message}"),
             Self::Graph(error) => write!(formatter, "graph error: {error}"),
-            Self::Decode(error) => write!(formatter, "decode error: {error}"),
             Self::Scoring(error) => write!(formatter, "scoring error: {error}"),
         }
     }
@@ -364,7 +360,6 @@ impl std::error::Error for EngineError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Graph(error) => Some(error),
-            Self::Decode(error) => Some(error),
             Self::Scoring(error) => Some(error),
             Self::CandidateIndexOutOfRange { .. }
             | Self::LookupOffsetPastSeparator { .. }
@@ -393,12 +388,6 @@ impl std::error::Error for EngineError {
 impl From<GraphError> for EngineError {
     fn from(error: GraphError) -> Self {
         Self::Graph(error)
-    }
-}
-
-impl From<DecodeError> for EngineError {
-    fn from(error: DecodeError) -> Self {
-        Self::Decode(error)
     }
 }
 
@@ -530,13 +519,10 @@ mod tests {
     #[test]
     fn core_errors_convert_at_the_engine_boundary() {
         use oxpinyin_core::graph::GraphError;
-        use oxpinyin_core::kbest::DecodeError;
         use oxpinyin_core::scoring::ScoringError;
 
         let graph: EngineError = GraphError::InputTooLong { len: 1, limit: 0 }.into();
         assert!(matches!(graph, EngineError::Graph(_)));
-        let decode: EngineError = DecodeError::KTooLarge { k: 99, limit: 8 }.into();
-        assert!(matches!(decode, EngineError::Decode(_)));
         let scoring: EngineError = ScoringError::Dictionary("closed".to_owned()).into();
         assert!(matches!(scoring, EngineError::Scoring(_)));
     }

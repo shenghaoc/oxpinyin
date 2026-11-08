@@ -22,7 +22,7 @@
 //! reading (红 read `gong`) from outranking the common phrase.
 //!
 //! It deliberately does not reuse `oxpinyin_engine`'s sentence decode:
-//! that path ranks through `Scorer`'s typing heuristics (segmentation
+//! an earlier decode ranked through typing heuristics (segmentation
 //! penalties, phrase bonuses, integer costs), which are not the pin's
 //! probabilities, and the live `eval_correction_rate` gate showed the
 //! difference (0.52 vs 0.88 on a 25-sentence corpus).

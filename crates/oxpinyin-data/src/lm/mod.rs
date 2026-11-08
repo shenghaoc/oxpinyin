@@ -989,10 +989,6 @@ impl<
         Ok(Some(self.unigram_count(token.value()).unwrap_or(0)))
     }
 
-    fn has_real_unigrams(&self) -> bool {
-        true
-    }
-
     fn unigram_total(&self) -> Result<Option<u64>, Self::Error> {
         Ok(Some(u64::from(self.unigram_total())))
     }

@@ -102,11 +102,7 @@ fn main() {
     }
     let dict = runtime.dict();
     let lm = runtime.lm();
-    println!(
-        "has_real_unigrams = {}; unigram_total = {:?}",
-        lm.has_real_unigrams(),
-        lm.unigram_total().ok().flatten()
-    );
+    println!("unigram_total = {:?}", lm.unigram_total().ok().flatten());
     for (phrase, token) in &user_tokens {
         println!(
             "user token 0x{token:08x} ({phrase}): unigram_freq = {:?}; tokens_for_text = {:?}",

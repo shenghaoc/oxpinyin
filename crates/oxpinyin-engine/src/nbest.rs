@@ -126,9 +126,9 @@ pub struct NbestRow {
     pub(crate) keys: usize,
     /// Bytes of the input the sentence spans.
     pub(crate) span: usize,
-    /// Cost of a pre-frequency fallback row; zero for real-table rows.
+    /// Integer cost of the row; zero for every trellis row.
     pub(crate) cost: Cost,
-    /// Real-table accumulated log possibility; absent for fallback rows.
+    /// Accumulated log possibility of a trellis row.
     pub(crate) poss: Option<f32>,
 }
 

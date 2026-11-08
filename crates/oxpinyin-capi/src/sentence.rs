@@ -3,8 +3,6 @@
 use oxpinyin_capi_marshal::phrase_text::{phrase_text_bytes, phrase_text_len};
 use std::os::raw::c_char;
 
-use oxpinyin_core::LanguageModel as _;
-
 use crate::state::{CapiCandidate, instance_mut, instance_ref};
 use crate::types::{GUint, PinyinInstance, lookup_candidate_type_t};
 
@@ -86,7 +84,6 @@ pub(crate) fn refuse_lookup_gram(name: &str, error: &oxpinyin_engine::EngineErro
         | oxpinyin_engine::EngineError::ReduceTokensCount { .. }
         | oxpinyin_engine::EngineError::UserModel(_)
         | oxpinyin_engine::EngineError::Graph(_)
-        | oxpinyin_engine::EngineError::Decode(_)
         | oxpinyin_engine::EngineError::Scoring(_) => return false,
     };
     crate::ffi::log_warning(&format!("{name}: {message}"));
@@ -95,10 +92,9 @@ pub(crate) fn refuse_lookup_gram(name: &str, error: &oxpinyin_engine::EngineErro
 
 /// Whether the facade's `guint32` unigram total is zero: the loaded
 /// libraries' sum, the user store's deltas and the accepted
-/// `pinyin_token_add_unigram_frequency` deltas, wrapped. A model without real
-/// unigrams has no total to divide by.
+/// `pinyin_token_add_unigram_frequency` deltas, wrapped.
 fn facade_total_is_zero(inst: &crate::state::CapiInstanceRead<'_>) -> bool {
-    inst.core.lm.has_real_unigrams() && inst.core.lm.amplified_total() == 0
+    inst.core.lm.amplified_total() == 0
 }
 
 /// The normalized lookup offset, or `None` where the lookup is refused.

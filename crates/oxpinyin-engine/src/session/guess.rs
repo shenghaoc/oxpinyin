@@ -57,10 +57,8 @@ where
     /// Runs the n-best sentence lookup and stores its rows
     /// (`pinyin_guess_sentence`, `pinyin.cpp:1373-1385`).
     ///
-    /// With real unigrams this is the trellis port of upstream's
-    /// `PhoneticLookup<2, 3>` (`crate::nbest`); without them the
-    /// pre-frequency per-path DP supplies up to three rows so the surface
-    /// exists for every model. Rows survive further typing and selections
+    /// This is the trellis port of upstream's `PhoneticLookup<2, 3>`
+    /// (`crate::nbest`). Rows survive further typing and selections
     /// until the next [`Session::guess_sentence`] or [`Session::reset`] —
     /// upstream's `m_nbest_results` is cleared nowhere else — and
     /// [`Session::candidates`] prepends them while they live.
@@ -92,13 +90,8 @@ where
             return Ok(false);
         }
         let remaining_empty = self.record.consumed() >= self.input.len();
-        if !remaining_empty && (!self.constraints.is_active() || !self.model.has_real_unigrams()) {
+        if !remaining_empty && !self.constraints.is_active() {
             return self.guess_over_remaining();
-        }
-        if !self.model.has_real_unigrams() {
-            // The pre-frequency fallback has no constrained form; with the
-            // input consumed there is nothing to fall back to either.
-            return Ok(false);
         }
 
         let bound = self.retained_parse()?.matrix.bound;
@@ -268,60 +261,30 @@ where
         }
 
         let offset = self.record.consumed();
-        self.sentence.rows = if self.model.has_real_unigrams() {
-            // The whole-input window reads the retained scan and topology;
-            // a later anchor has its own suffix graph, scanned under the
-            // same facade rule.
-            let suffix;
-            let (matrix, topology) = if offset == 0 {
-                let retained = self.retained_parse()?;
-                (&retained.scan, Some(&retained.matrix))
-            } else {
-                suffix = build_scan_matrix(&graph, self.settings.options, self.scan_divided());
-                (&suffix, None)
-            };
-            crate::nbest::nbest_sentences_generation(
-                crate::nbest::GenerationInput {
-                    matrix,
-                    bound,
-                    physical_separators: self.input.physical_separators(),
-                    topology,
-                },
-                &self.dictionary,
-                &self.model,
-                self.record.history(),
-                None,
-                self.nbest_shape,
-            )?
+        // The whole-input window reads the retained scan and topology;
+        // a later anchor has its own suffix graph, scanned under the
+        // same facade rule.
+        let suffix;
+        let (matrix, topology) = if offset == 0 {
+            let retained = self.retained_parse()?;
+            (&retained.scan, Some(&retained.matrix))
         } else {
-            let scorer = Scorer::with_key_costs(
-                self.scoring,
-                &self.dictionary,
-                &self.model,
-                self.key_costs.clone(),
-            );
-            let paths = k_best(&graph, &scorer, SEGMENTATION_K)?;
-            let mut sentences: Vec<(Candidate, Vec<PhraseToken>)> = Vec::new();
-            for path in &paths {
-                sentences.extend(self.collect_sentences_with_tokens(&graph, &scorer, path)?);
-            }
-            sentences.sort_by_key(|(candidate, _)| candidate.cost());
-            let mut seen: HashSet<PhraseText> = HashSet::new();
-            sentences
-                .into_iter()
-                .filter(|(candidate, _)| seen.insert(candidate.text().clone()))
-                .take(self.nbest_shape.nbest())
-                .map(|(candidate, tokens)| crate::nbest::NbestRow {
-                    text: candidate.text().clone(),
-                    tokens,
-                    spans: Vec::new(),
-                    keys: candidate.consumed_keys(),
-                    span: candidate.consumed_bytes(),
-                    cost: candidate.cost(),
-                    poss: None,
-                })
-                .collect()
+            suffix = build_scan_matrix(&graph, self.settings.options, self.scan_divided());
+            (&suffix, None)
         };
+        self.sentence.rows = crate::nbest::nbest_sentences_generation(
+            crate::nbest::GenerationInput {
+                matrix,
+                bound,
+                physical_separators: self.input.physical_separators(),
+                topology,
+            },
+            &self.dictionary,
+            &self.model,
+            self.record.history(),
+            None,
+            self.nbest_shape,
+        )?;
         // The rows were seeded with the history as it stands right here;
         // a later row selection restores this snapshot before extending
         // the record with the row's own tokens.

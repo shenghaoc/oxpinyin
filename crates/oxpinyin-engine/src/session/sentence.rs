@@ -63,8 +63,7 @@ impl SentenceState {
     /// and `null_token` elsewhere (`extract_result`,
     /// `lookup/phonetic_lookup.h:370-396`). A row the trellis decoded
     /// carries those phrases as its spans, after any prepended selection
-    /// pieces; a pre-frequency fallback row, which has no pin counterpart,
-    /// is one piece.
+    /// pieces.
     pub(super) fn phrases<'a>(
         &'a self,
         row: &'a NbestRow,

@@ -1964,8 +1964,7 @@ fn the_forcing_survives_the_reparse_and_clears_by_offset() {
 /// backspace-after-choose contract: constraints are instance state that
 /// only `pinyin_reset` clears; `validate` drops a forcing only when it
 /// stops spelling under the shrunk buffer. The fixture model cannot run
-/// the constrained walk (the pre-frequency fallback has no constrained
-/// form), so this test pins the LIFETIME: the forcing's cell is still
+/// the constrained walk, so this test pins the LIFETIME: the forcing's cell is still
 /// clearable after the whole ladder and the re-type. The walk-level
 /// proof runs on real tables — the differential's bp phase — and at the
 /// engine level with the trellis fixture model.

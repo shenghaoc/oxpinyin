@@ -88,7 +88,6 @@ fn unigrams_are_the_chunk_item_fields() {
     assert_eq!(lm.unigram_count(0x0300_0001), None, "no such library");
     assert_eq!(lm.unigram_total(), 16 + 3, "Σ item over both chunks");
     assert!(lm.has_unigrams());
-    assert!(lm.has_real_unigrams());
     assert_eq!(
         LanguageModel::unigram_freq(&lm, &PhraseToken::new(NI)).unwrap(),
         Some(10)

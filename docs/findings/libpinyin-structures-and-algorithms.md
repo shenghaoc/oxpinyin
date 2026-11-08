@@ -639,9 +639,8 @@ source derivation and supersession.
 | Value | Where it acts | Parity path? | Status |
 | --- | --- | --- | --- |
 | `SCAN_EXPANSION_LIMIT = 4096` (`oxpinyin-engine/src/session/mod.rs`) — chosen by measuring the W2 corpus | (1) the window scan's expansion in `scan_parsed_paths` (`session/lookup.rs`), taken only when the dictionary does not handle partial keys; the runtime's does. (2) `lookup_finds_token` (`nbest.rs`), the constraint revalidation fallback for a dictionary that keeps no phrase items (the test doubles); the runtime's dictionaries read their items instead. (3) `oxpinyin-engine/src/char_offset.rs`, behind `pinyin_get_character_offset`, which expands one key at a time, so the product never approaches the cap. Until #828 it was also reached through `span_finds_token` in constraint revalidation (§11) | (1) no; (2) no; (3) yes, cap unreachable | off path or unreachable since #828 |
-| `MAX_PHRASE_KEYS = 8` (`session/mod.rs`) | `Session::candidates_ending_at`, which libzhuyin's facade calls for its before-cursor candidates (`oxpinyin-zhuyin-capi/src/sentence.rs`) | yes (libzhuyin) | unverified — no pin counterpart found yet |
 | `MAX_INPUT_BYTES = 32767` (`session/mod.rs`), `MAX_GRAPH_INPUT = 65535` (`oxpinyin-core/src/graph.rs`) | input clamps | removed (#1501) | the first was the pin's `gint16` parse steps, a language artefact ([record](1501-gint16-input-cap.md)); the second had no pin counterpart |
-| `SEGMENTATION_K = 8` (`session/mod.rs`), `ScoringConfig.expansion_limit = 64` and the other `ScoringConfig` weights (`oxpinyin-core/src/scoring.rs`), `UNIGRAM_TIEBREAK_SCALE = 16` (`oxpinyin-data/src/lm/mod.rs`) | the k-best fallback and `LanguageModel::score`, read only when the model has no real unigram data | no — see §11 | fitted; removal is internal work (spec task 4a) |
+| `UNIGRAM_TIEBREAK_SCALE = 16` (`oxpinyin-data/src/lm/mod.rs`) | `LanguageModel::score`'s unigram term | no — see §11 | fitted |
 | `COUNT_MEMO_MAX_ENTRIES = 8192` (`oxpinyin-user/src/store.rs`) | size of a count cache | no output effect | cache bound only |
 
 ## 10. Where oxpinyin keeps the pin's code shape
@@ -773,26 +772,17 @@ cross-platform determinism, not a language limit.
   its NBEST row. A forcing over a phrase of the pinned model whose
   abbreviation passes the cap has not been run (spec task 12b).
 
-**Fitted coefficients still in the tree — off the parity path.**
-`ScoringConfig::default` (`oxpinyin-core/src/scoring.rs`) carries `segmentation_penalty`,
-`incomplete_penalty` and `phrase_key_bonus` values chosen by sweeping
-against the oracle (`scoring-constant-sweep`, 2026-08-10), and the
-engine `Session` still holds a `ScoringConfig`. These are not pin values.
-The session reads them in two places, both on the branch taken when the
-language model has no real unigram data (`has_real_unigrams` false): the
-candidate scan in `session/lookup.rs` and the sentence guess in
-`session/guess.rs`, each falling back to `k_best`. Through either C ABI
-that branch is never taken: both facades build on `InstanceCore`, whose
-session is `Session<RuntimeDict, RuntimeLm>` (`oxpinyin-runtime/src/lib.rs`,
-`RuntimeSession`); `RuntimeLm` forwards `has_real_unigrams` to its
-`BigramLanguageModel`, and that returns `true` unconditionally
-(`oxpinyin-data/src/lm/mod.rs`). So the fitted weights reach no output
-of either ABI; they act only for sessions built on models without
-unigram data (test doubles and oracle tools). These weights do not affect either C ABI under the established runtime
-configuration, so their removal is not required to close a C-ABI
-compatibility gap. Removal remains internal-work scope (spec task 4a),
-subject to checking in-tree Rust callers and test and tool consumers
-(a Rust interface change needs no approval since 2026-10-18 UTC).
+**Fitted coefficients — deleted.**
+`ScoringConfig` carried `segmentation_penalty`, `incomplete_penalty` and
+`phrase_key_bonus` values chosen by sweeping against the oracle
+(`scoring-constant-sweep`, 2026-08-10). The engine read them only on the
+branch taken when the language model had no real unigram data, falling
+back to `k_best`. Through either C ABI that branch was never taken: both
+facades build on `InstanceCore`, whose session is
+`Session<RuntimeDict, RuntimeLm>`, and `RuntimeLm` forwarded to a
+`BigramLanguageModel` that reported real unigrams unconditionally. The
+branch, `k_best`, `Scorer`, `ScoringConfig` and the trait method
+`has_real_unigrams` are deleted (spec task 4a).
 
 **The value inventory is not yet proven complete.** §9's second table
 came from a search of the runtime crates for numeric constants; limits

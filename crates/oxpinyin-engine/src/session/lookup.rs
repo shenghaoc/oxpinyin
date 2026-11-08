@@ -198,11 +198,6 @@ where
         &self,
         gate_overlong: bool,
     ) -> Result<Option<(RankKey, Candidate)>, EngineError> {
-        if !self.model.has_real_unigrams() {
-            // The pre-frequency construction never runs the pin's prepend:
-            // its candidate rows carry no amplified frequency at all.
-            return Ok(None);
-        }
         // `prefix_len` is `m_parsed_key_len` — the parser's key count for
         // the WHOLE composition (`pinyin.cpp:1512`), not the remaining
         // slice's. The suggestion matrix walk starts at column 0 of the
@@ -607,157 +602,6 @@ where
             }
         }
         Ok(())
-    }
-
-    /// Offers every phrase spelling a prefix of `path`.
-    ///
-    /// Only the pre-frequency fallback uses this: the pinned construction
-    /// collects through the window scan instead. Kept verbatim so a missing
-    /// model cache reproduces the prior behaviour exactly.
-    pub(super) fn collect_prefix_phrases(
-        &self,
-        graph: &SegmentGraph,
-        scorer: &Scorer<'_, D, L>,
-        path: &DecodedPath,
-        into: &mut Vec<Candidate>,
-    ) -> Result<(), EngineError> {
-        let (keys, kinds, ends) = self.walk(graph, path);
-
-        // A dictionary phrase never spans more than MAX_PHRASE_KEYS keys, so
-        // looking further is both pointless and quadratic in the input.
-        for length in 1..=keys.len().min(MAX_PHRASE_KEYS) {
-            let ranked =
-                scorer.rank_phrases(self.record.history(), &keys[..length], &kinds[..length])?;
-            for (entry, cost) in ranked {
-                let token = entry.token();
-                into.push(Candidate::new(
-                    entry.into_text(),
-                    CandidateKind::Phrase,
-                    length,
-                    ends[length - 1],
-                    cost,
-                    Some(token),
-                    None,
-                ));
-            }
-        }
-        Ok(())
-    }
-
-    /// Offers the cheapest sequence of phrases covering the whole of `path`.
-    ///
-    /// Only the pre-frequency fallback uses this: when the model carries no
-    /// real unigram table the session reproduces its prior behaviour exactly,
-    /// sentence candidates included. The real-frequency construction emits
-    /// pooled phrase candidates only until [`Session::guess_sentence`] runs.
-    pub(super) fn collect_sentence(
-        &self,
-        graph: &SegmentGraph,
-        scorer: &Scorer<'_, D, L>,
-        path: &DecodedPath,
-        into: &mut Vec<Candidate>,
-    ) -> Result<(), EngineError> {
-        for (candidate, _) in self.collect_sentences_with_tokens(graph, scorer, path)? {
-            into.push(candidate);
-        }
-        Ok(())
-    }
-
-    /// [`Self::collect_sentence`] with each sentence's token path, which a
-    /// chosen fallback row records like a trellis row does.
-    pub(super) fn collect_sentences_with_tokens(
-        &self,
-        graph: &SegmentGraph,
-        scorer: &Scorer<'_, D, L>,
-        path: &DecodedPath,
-    ) -> Result<Vec<(Candidate, Vec<PhraseToken>)>, EngineError> {
-        let (keys, kinds, ends) = self.walk(graph, path);
-        if keys.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        // best[i] is the cheapest way to spell keys[..i].
-        let mut best: Vec<Option<(Cost, PhraseText, Vec<PhraseToken>)>> =
-            vec![None; keys.len() + 1];
-        best[0] = Some((0, PhraseText::from(""), self.record.history().to_vec()));
-
-        for end in 1..=keys.len() {
-            let first = end.saturating_sub(MAX_PHRASE_KEYS);
-            // The cell being written (`best[end]`) sits strictly after every
-            // cell read in this round (`best[start]`, `start < end`), so the
-            // table splits into a read half and a write slot; the prefix is
-            // borrowed, not cloned, and only an improving span allocates.
-            let (settled, open) = best.split_at_mut(end);
-            let cell = &mut open[0];
-            for (start, prefix) in settled.iter().enumerate().skip(first) {
-                let Some((prefix_cost, prefix_text, prefix_history)) = prefix.as_ref() else {
-                    continue;
-                };
-                let ranked =
-                    scorer.rank_phrases(prefix_history, &keys[start..end], &kinds[start..end])?;
-                let Some((entry, cost)) = ranked.first() else {
-                    continue;
-                };
-
-                let total = prefix_cost.saturating_add(*cost);
-                if cell.as_ref().is_none_or(|(seen, ..)| total < *seen) {
-                    let mut text = PhraseTextConcat::new();
-                    text.push(prefix_text);
-                    text.push(entry.text());
-                    let mut history = Vec::with_capacity(prefix_history.len() + 1);
-                    history.extend_from_slice(prefix_history);
-                    history.push(entry.token());
-                    *cell = Some((total, text.finish(), history));
-                }
-            }
-        }
-
-        if let Some((cost, text, tokens)) = best.pop().flatten()
-            && !text.is_empty()
-        {
-            let tokens = tokens[self.record.history().len()..].to_vec();
-            return Ok(vec![(
-                Candidate::new(
-                    text,
-                    CandidateKind::Sentence,
-                    keys.len(),
-                    ends[keys.len() - 1],
-                    cost,
-                    None,
-                    None,
-                ),
-                tokens,
-            )]);
-        }
-        Ok(Vec::new())
-    }
-
-    /// The keys, edge kinds and end offsets along one decoded path.
-    ///
-    /// An `Incomplete` edge is dropped when the configuration turns
-    /// initial-only keys off, which is the `PINYIN_INCOMPLETE` bit the parity
-    /// profile sets.
-    pub(super) fn walk(
-        &self,
-        graph: &SegmentGraph,
-        path: &DecodedPath,
-    ) -> (Vec<SyllableKey>, Vec<EdgeKind>, Vec<usize>) {
-        let mut keys = Vec::with_capacity(path.len());
-        let mut kinds = Vec::with_capacity(path.len());
-        let mut ends = Vec::with_capacity(path.len());
-
-        for id in path.edges() {
-            let Some(edge) = graph.edge(*id) else {
-                continue;
-            };
-            if !self.settings.incomplete() && edge.kind() == EdgeKind::Incomplete {
-                break;
-            }
-            keys.push(edge.key());
-            kinds.push(edge.kind());
-            ends.push(edge.to());
-        }
-        (keys, kinds, ends)
     }
 
     /// The expanding-window scan of the pinned candidate collection.
@@ -1170,139 +1014,104 @@ where
         let collected = out;
 
         let remaining = &self.input.as_str()[anchor..];
-        let real_unigrams = self.model.has_real_unigrams();
-        let graph = if real_unigrams {
-            self.build_graph_at(0, self.input.as_bytes())?
-        } else {
-            self.build_graph_at(anchor, remaining.as_bytes())?
-        };
-        // Production windows scan the retained matrix. Their parse-length
-        // query can start at the anchor on the shared graph too, without
-        // reparsing spellings or rebasing/copying edges. The fallback scorer
-        // still needs its independent graph's relative edge coordinates.
-        // At anchor zero either graph is the whole-input one, so the
-        // stored selected path answers.
+        let graph = self.build_graph_at(0, self.input.as_bytes())?;
+        // Windows scan the retained matrix. Their parse-length query can
+        // start at the anchor on the shared graph too, without reparsing
+        // spellings or rebasing/copying edges. At anchor zero the stored
+        // selected path answers.
         let parsed_prefix = if anchor == 0 {
             self.selected_path()?.parsed_len
-        } else if real_unigrams {
-            self.window_parsed_len(&graph, anchor)
         } else {
-            apostrophe_extended(
-                remaining.as_bytes(),
-                graph
-                    .fewest_keys(self.settings.incomplete())
-                    .last()
-                    .map_or(0, Edge::to),
-            )
+            self.window_parsed_len(&graph, anchor)
         };
 
-        // When the model carries the phrase index's real unigram
-        // frequencies, the pinned construction runs — the expanding-window
-        // scan, the three-key order (text length, pinyin span, frequency),
+        // The pinned construction: the expanding-window scan, the
+        // three-key order (text length, pinyin span, frequency),
         // frequency-aware dedup, and a raw-input fallback for an empty
-        // scan. Without real frequencies the session reproduces its
-        // pre-frequency behaviour exactly: k-best prefixes, sentence
-        // candidates, cost order, adjacent dedup.
-        let mut empty_phrase_scan = false;
-        if real_unigrams {
-            // Upstream's Gates 1 and 2 (`pinyin.cpp:2200-2216`,
-            // `zhuyin.cpp:1474-1489`), before the search exactly as the pin
-            // orders them and hoisted out of the candidate loop as it hoists
-            // them: the previous token is resolved once, and the system and
-            // user grams are merged once, for the whole guess. Indexing that
-            // row per candidate is Gate 3.
-            let gram = self.dynamic_adjust_gram(anchor, gate)?;
-            {
-                let mut unreadable = false;
-                let mut scratch = ScanScratch {
-                    unreadable: &mut unreadable,
-                    path: &mut path,
-                    entries: &mut entries,
-                    window_addon: &mut window_addon,
-                    explicit: gate,
-                };
-                self.collect_window_scan(remaining.as_bytes(), collected, &mut scratch)?;
-                self.scan_unreadable = unreadable;
-            }
-            // The rows the pin's `_compute_frequency_of_items` runs on: the
-            // freshly searched list, before its sort, the LONGER and
-            // sentence prepends and `_remove_duplicated_items_by_phrase_string`
-            // (`pinyin.cpp:2283` against `:2300`, `zhuyin.cpp:1526` against
-            // `:1537`). Its `0 < total_freq` assert (`pinyin.cpp:1859`,
-            // `zhuyin.cpp:1261`) runs for every row but an addon or predicted
-            // prefix row (`pinyin.cpp:1812-1840`); libzhuyin skips none.
-            self.scan_ranked_phrase = collected
-                .iter()
-                .any(|candidate| candidate.kind() == CandidateKind::Phrase);
-
-            // The scan's result stands even when it found nothing. Tokens the
-            // table lacks rank as zero rather than falling back.
-            self.candidate_frequencies(
-                collected,
-                gram.as_ref().map(|(prev, row)| (*prev, row)),
-                gate,
-                &mut frequencies,
-            )?;
-            // `Session::rank_word`: the sort word, or libzhuyin's fixed
-            // comparator (`zhuyin.cpp:1129-1144`) on a zhuyin facade.
-            let rank_word = self.rank_word();
-            // One key row per candidate, sorted and applied in place: the
-            // candidates never leave `collected`, and the key rows, kept in
-            // the session scratch, are the only buffer of this stage.
-            rank_keys.clear();
-            rank_keys.extend(
-                collected
-                    .iter()
-                    .zip(frequencies.iter().copied())
-                    .enumerate()
-                    .map(|(index, (candidate, frequency))| {
-                        // `compare_item_with_sort_option` compares a key
-                        // only while its bit is set and returns 0 — a tie —
-                        // once it is clear (`pinyin.cpp:1678-1709`): zeroing
-                        // a disabled field makes every candidate equal on
-                        // it, which is that comparator exactly.
-                        let key = RankKey::for_sort_word(
-                            candidate.phrase_length(),
-                            candidate.consumed_bytes(),
-                            frequency,
-                            rank_word,
-                        );
-                        (key, index as u32)
-                    }),
-            );
-
-            // Stable sort, all three keys descending: an all-equal tie keeps
-            // the collection order, which the scan now lays down in the
-            // pin's array order (per window, token-ascending).
-            rank_candidates(collected, &mut rank_keys);
-
-            // The pin prepends LONGER before the frequency dedup
-            // (`pinyin.cpp:2292-2300`). Keep its unigram-only `m_freq`:
-            // a same-text NORMAL row can have a larger bigram term.
-            empty_phrase_scan = collected.is_empty();
-            if self.lookup.sort_word & SORT_WITHOUT_LONGER_CANDIDATE == 0
-                && let Some((key, row)) = self.longer_candidate(gate)?
-            {
-                collected.insert(0, row);
-                // The index half is spent once the rows are in order.
-                rank_keys.insert(0, (key, 0));
-            }
-            dedup_ranked_by_text(collected, &rank_keys);
-        } else {
-            let scorer = Scorer::with_key_costs(
-                self.scoring,
-                &self.dictionary,
-                &self.model,
-                self.key_costs.clone(),
-            );
-            let paths = k_best(&graph, &scorer, SEGMENTATION_K)?;
-            for path in &paths {
-                self.collect_prefix_phrases(&graph, &scorer, path, collected)?;
-                self.collect_sentence(&graph, &scorer, path, collected)?;
-            }
-            collected.sort_by_key(Candidate::cost);
-            collected.dedup_by(|left, right| left.text() == right.text());
+        // scan.
+        // Upstream's Gates 1 and 2 (`pinyin.cpp:2200-2216`,
+        // `zhuyin.cpp:1474-1489`), before the search exactly as the pin
+        // orders them and hoisted out of the candidate loop as it hoists
+        // them: the previous token is resolved once, and the system and
+        // user grams are merged once, for the whole guess. Indexing that
+        // row per candidate is Gate 3.
+        let gram = self.dynamic_adjust_gram(anchor, gate)?;
+        {
+            let mut unreadable = false;
+            let mut scratch = ScanScratch {
+                unreadable: &mut unreadable,
+                path: &mut path,
+                entries: &mut entries,
+                window_addon: &mut window_addon,
+                explicit: gate,
+            };
+            self.collect_window_scan(remaining.as_bytes(), collected, &mut scratch)?;
+            self.scan_unreadable = unreadable;
         }
+        // The rows the pin's `_compute_frequency_of_items` runs on: the
+        // freshly searched list, before its sort, the LONGER and
+        // sentence prepends and `_remove_duplicated_items_by_phrase_string`
+        // (`pinyin.cpp:2283` against `:2300`, `zhuyin.cpp:1526` against
+        // `:1537`). Its `0 < total_freq` assert (`pinyin.cpp:1859`,
+        // `zhuyin.cpp:1261`) runs for every row but an addon or predicted
+        // prefix row (`pinyin.cpp:1812-1840`); libzhuyin skips none.
+        self.scan_ranked_phrase = collected
+            .iter()
+            .any(|candidate| candidate.kind() == CandidateKind::Phrase);
+
+        // The scan's result stands even when it found nothing. Tokens the
+        // table lacks rank as zero rather than falling back.
+        self.candidate_frequencies(
+            collected,
+            gram.as_ref().map(|(prev, row)| (*prev, row)),
+            gate,
+            &mut frequencies,
+        )?;
+        // `Session::rank_word`: the sort word, or libzhuyin's fixed
+        // comparator (`zhuyin.cpp:1129-1144`) on a zhuyin facade.
+        let rank_word = self.rank_word();
+        // One key row per candidate, sorted and applied in place: the
+        // candidates never leave `collected`, and the key rows, kept in
+        // the session scratch, are the only buffer of this stage.
+        rank_keys.clear();
+        rank_keys.extend(
+            collected
+                .iter()
+                .zip(frequencies.iter().copied())
+                .enumerate()
+                .map(|(index, (candidate, frequency))| {
+                    // `compare_item_with_sort_option` compares a key
+                    // only while its bit is set and returns 0 — a tie —
+                    // once it is clear (`pinyin.cpp:1678-1709`): zeroing
+                    // a disabled field makes every candidate equal on
+                    // it, which is that comparator exactly.
+                    let key = RankKey::for_sort_word(
+                        candidate.phrase_length(),
+                        candidate.consumed_bytes(),
+                        frequency,
+                        rank_word,
+                    );
+                    (key, index as u32)
+                }),
+        );
+
+        // Stable sort, all three keys descending: an all-equal tie keeps
+        // the collection order, which the scan now lays down in the
+        // pin's array order (per window, token-ascending).
+        rank_candidates(collected, &mut rank_keys);
+
+        // The pin prepends LONGER before the frequency dedup
+        // (`pinyin.cpp:2292-2300`). Keep its unigram-only `m_freq`:
+        // a same-text NORMAL row can have a larger bigram term.
+        let empty_phrase_scan = collected.is_empty();
+        if self.lookup.sort_word & SORT_WITHOUT_LONGER_CANDIDATE == 0
+            && let Some((key, row)) = self.longer_candidate(gate)?
+        {
+            collected.insert(0, row);
+            // The index half is spent once the rows are in order.
+            rank_keys.insert(0, (key, 0));
+        }
+        dedup_ranked_by_text(collected, &rank_keys);
 
         if collected.is_empty() || empty_phrase_scan {
             let remaining = &self.input.as_str()[anchor..];
