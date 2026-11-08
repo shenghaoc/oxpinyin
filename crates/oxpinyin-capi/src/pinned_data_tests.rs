@@ -505,3 +505,520 @@ fn training_one_past_the_nbest_results_aborts() {
         },
     );
 }
+
+// ── C-boundary decisions that need the full tables ─────────────────────────
+
+/// A context on the pinned data and `user`; NULL when init refuses.
+fn init_pinned_at(system: &std::path::Path, user: &std::path::Path) -> *mut PinyinContext {
+    let system = cstr(system.to_str().expect("UTF-8 path"));
+    let user = cstr(user.to_str().expect("UTF-8 path"));
+    crate::context::pinyin_init(system.as_ptr(), user.as_ptr())
+}
+
+/// A private system under `parent`: every pinned file linked in.
+fn private_pinned_system(parent: &std::path::Path) -> PathBuf {
+    let dir = parent.join("system");
+    std::fs::create_dir_all(&dir).expect("private system dir");
+    for entry in std::fs::read_dir(contract_data_dir()).expect("pinned data") {
+        let entry = entry.expect("pinned entry");
+        if entry.file_type().expect("file type").is_file() {
+            crate::test_support::link_file(&entry.path(), &dir.join(entry.file_name()));
+        }
+    }
+    dir
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// The rows of a user container as hex pairs, sorted.
+fn hex_rows(path: &std::path::Path, hash: bool) -> Vec<(String, String)> {
+    crate::test_support::store_rows(path, hash)
+        .iter()
+        .map(|(key, value)| (hex(key), hex(value)))
+        .collect()
+}
+
+fn pairs(rows: &[(&str, &str)]) -> Vec<(String, String)> {
+    rows.iter()
+        .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+        .collect()
+}
+
+fn import(context: *mut PinyinContext, library: u8, phrase: &str, reading: &str, count: i32) {
+    assert_eq!(
+        crate::e2e_tests::import_batch(context, library, &[(phrase, reading, count)]),
+        [true]
+    );
+}
+
+fn unigram(instance: *mut PinyinInstance, token: u32) -> (bool, u32) {
+    let mut freq = 0x00AB_CDEF;
+    let ret = crate::dict::pinyin_token_get_unigram_frequency(instance, token, &raw mut freq);
+    (ret, freq)
+}
+
+/// A first chunk header word and the record counts of a `.dbin` journal
+/// (`PhraseIndexLogger::next_record`, `phrase_index_logger.h:158-211`):
+/// `(first header totals, [header, add, remove, modify])`.
+fn journal_walk(data: &[u8]) -> (Option<(u32, u32)>, [u32; 4]) {
+    let payload = &data[8..];
+    let word = |at: usize| u32::from_le_bytes(payload[at..at + 4].try_into().expect("a word"));
+    let half = |at: usize| usize::from(u16::from_le_bytes([payload[at], payload[at + 1]]));
+    let (mut at, mut header, mut counts) = (0, None, [0; 4]);
+    while at + 10 <= payload.len() {
+        match word(at) {
+            4 => {
+                header.get_or_insert((word(at + 10), word(at + 14)));
+                counts[0] += 1;
+                at += 10 + 2 * half(at + 8);
+            }
+            kind @ (1 | 2) => {
+                counts[kind as usize] += 1;
+                at += 10 + half(at + 8);
+            }
+            3 => {
+                counts[3] += 1;
+                at += 12 + half(at + 8) + half(at + 10);
+            }
+            _ => break,
+        }
+    }
+    (header, counts)
+}
+
+/// A save over a library replaced by a chunk whose layout fails diffs
+/// against an empty sub-index: true, no GLib critical, and every original
+/// item is journalled as added (fixtures/contract-policy record
+/// 1297-layout-criticals.md).
+#[test]
+fn a_save_over_a_failed_layout_journals_against_an_empty_index() {
+    let run = crate::test_support::run_in_child(
+        "pinned_data_tests::a_save_over_a_failed_layout_journals_against_an_empty_index",
+        |user| {
+            let system = private_pinned_system(user.parent().expect("scratch"));
+            let context = init_pinned_at(&system, user);
+            assert!(!context.is_null());
+            let instance = pinyin_alloc_instance(context);
+            assert_eq!(
+                pinyin_parse_more_full_pinyins(instance, c"nihao".as_ptr()),
+                5
+            );
+            assert!(pinyin_guess_sentence(instance));
+            assert!(pinyin_train(instance, 0));
+            crate::instance::pinyin_free_instance(instance);
+            let mut payload = [0_u8; 32];
+            for (at, value) in [(0, 123_u32), (4, 17), (8, 20), (12, 24)] {
+                payload[at..at + 4].copy_from_slice(&value.to_le_bytes());
+            }
+            payload[16] = b'#';
+            payload[19] = b'!';
+            let library = system.join("merged.bin");
+            let staged = system.join("merged.bin.new");
+            std::fs::write(
+                &staged,
+                oxpinyin_data::chunk_format::build_memory_chunk(&payload).expect("frame"),
+            )
+            .expect("write the replacement");
+            std::fs::rename(&staged, &library).expect("replace merged.bin");
+            assert!(crate::context::pinyin_save(context));
+        },
+    );
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(!stderr.contains("CRITICAL"), "{stderr}");
+    let journal = std::fs::read(run.user_dir.join("merged.dbin")).expect("merged.dbin");
+    assert_eq!(journal.len(), 38_252);
+    let digest = {
+        use sha2::Digest as _;
+        hex(&sha2::Sha256::digest(&journal))
+    };
+    assert_eq!(
+        digest,
+        "59eed2f9ef43edc1f6e62b72a6f83c6ac2b83e4a56f9956a19c0452dce92a34a"
+    );
+    assert_eq!(journal_walk(&journal), (Some((123, 1001)), [1, 1001, 0, 0]));
+}
+
+/// The pin's saved profile (#929) opens with its logical records: the
+/// three user containers' rows and the user tokens, and a save after a
+/// count-zero import of a known phrase changes no record.
+#[test]
+fn the_pins_saved_profile_opens_with_its_records() {
+    let user = TempUserDir::new("save-929-cross-open");
+    crate::test_support::write_pin_profile("save-929-logical-cross-open-pinyin", &user.path);
+    let logs = crate::test_support::LogCapture::new();
+    let context = init_pinned_at(&contract_data_dir(), &user.path);
+    assert!(!context.is_null());
+    let rows = || {
+        [
+            hex_rows(&user.path.join("user_bigram.db"), true),
+            hex_rows(&user.path.join("user_phrase_index.bin"), false),
+            hex_rows(&user.path.join("user_pinyin_index.bin"), false),
+        ]
+    };
+    let before = rows();
+    assert_eq!(
+        before[0],
+        pairs(&[("01000007", "250000000200000725000000")])
+    );
+    assert_eq!(
+        before[1],
+        pairs(&[
+            ("969f0000", ""),
+            ("969f0000969f0000", "02000007"),
+            ("989f0000", ""),
+            ("989f0000989f0000", "01000007"),
+        ])
+    );
+    assert_eq!(
+        before[2],
+        pairs(&[
+            ("0400", ""),
+            ("04000400", "0100000784208420"),
+            ("1200", ""),
+            ("12001200", "0200000792409240"),
+            ("8400", ""),
+            ("84008400", "0100000784208420"),
+            ("9200", ""),
+            ("92009200", "0200000792409240"),
+        ])
+    );
+    let instance = pinyin_alloc_instance(context);
+    let tokens = ["龘龘", "龖龖", "靐靐"].map(|text| crate::test_support::lookup(instance, text));
+    assert_eq!(tokens, [vec![0x0700_0001], vec![0x0700_0002], vec![]]);
+    crate::instance::pinyin_free_instance(instance);
+    import(context, 7, "龘龘", "da2'da2", 0);
+    assert!(crate::context::pinyin_save(context));
+    assert_eq!(rows(), before);
+    crate::context::pinyin_fini(context);
+    assert!(logs.take().is_empty());
+}
+
+/// The three user grams of #1114 whose keys collide in one TinyDBM bucket.
+fn collision_rows() -> Vec<(Vec<u8>, Vec<u8>)> {
+    [
+        (0x0100_0d46_u32, 1_u32),
+        (0x0100_4404, 6),
+        (0x0100_4dd8, 100),
+    ]
+    .into_iter()
+    .map(|(token, degree)| {
+        let items: Vec<(u32, u32)> = (0x0100_0001..0x0100_0001 + degree)
+            .map(|item| (item, 69))
+            .collect();
+        (
+            token.to_le_bytes().to_vec(),
+            crate::test_support::gram_bytes(69 * degree, &items),
+        )
+    })
+    .collect()
+}
+
+/// Saved HashDBM bytes with the timestamp (`META_OFFSET_TIMESTAMP`, bytes
+/// 48 to 56) zeroed.
+fn masked(raw: &[u8]) -> Vec<u8> {
+    assert!(raw.len() >= 128, "the HashDBM metadata");
+    let mut masked = raw.to_vec();
+    masked[48..56].fill(0);
+    masked
+}
+
+/// Two cycles on the profile under `user`: an import, a save whose user
+/// bigram keeps `rows` (and, with `original`, its masked bytes), a fini and
+/// a reinit. Answers the size and masked SHA-256 of each save.
+fn collision_cycles(
+    user: &std::path::Path,
+    rows: &[(Vec<u8>, Vec<u8>)],
+    original: Option<&[u8]>,
+) -> Vec<(usize, String)> {
+    let path = user.join("user_bigram.db");
+    let expected: Vec<(String, String)> = {
+        let mut expected: Vec<_> = rows
+            .iter()
+            .map(|(key, value)| (hex(key), hex(value)))
+            .collect();
+        expected.sort();
+        expected
+    };
+    let mut context = init_pinned_at(&contract_data_dir(), user);
+    assert!(!context.is_null());
+    let mut saves = Vec::new();
+    for (text, reading) in [("达达", "da2'da2"), ("你你", "ni3'ni3")] {
+        import(context, 7, text, reading, 100);
+        assert!(crate::context::pinyin_save(context));
+        let raw = std::fs::read(&path).expect("the saved bigram");
+        if let Some(original) = original {
+            assert_eq!(
+                masked(&raw),
+                masked(original),
+                "the reload changed the saved bytes"
+            );
+        }
+        assert_eq!(hex_rows(&path, true), expected);
+        let digest = {
+            use sha2::Digest as _;
+            hex(&sha2::Sha256::digest(masked(&raw)))
+        };
+        saves.push((raw.len(), digest));
+        crate::context::pinyin_fini(context);
+        context = init_pinned_at(&contract_data_dir(), user);
+        assert!(!context.is_null());
+    }
+    crate::context::pinyin_fini(context);
+    saves
+}
+
+/// Colliding user grams (#1114) survive loads and saves: the saved user
+/// bigram keeps the rows and equals the pin's bytes outside the timestamp,
+/// and the pin's own profile reloads and saves to the same bytes.
+#[test]
+fn colliding_user_grams_survive_load_and_save() {
+    let rows = collision_rows();
+    let own = TempUserDir::new("issue1114-own");
+    let context = init_pinned_at(&contract_data_dir(), &own.path);
+    assert!(!context.is_null());
+    crate::context::pinyin_fini(context);
+    crate::test_support::craft_hash(&own.path.join("user_bigram.db"), &rows);
+    crate::test_support::write_user_conf(&own.path, &contract_data_dir());
+    let saved = (
+        4_199_312,
+        "44042431c088b786e90ee01b493aa01661912dda345a8cc5f758a41c682f7c22".to_owned(),
+    );
+    assert_eq!(
+        collision_cycles(&own.path, &rows, None),
+        [saved.clone(), saved]
+    );
+
+    let donor = TempUserDir::new("issue1114-pin");
+    crate::test_support::write_pin_profile("issue1114-collision-load-save-pinyin", &donor.path);
+    let bigram = |dir: &std::path::Path| std::fs::read(dir.join("user_bigram.db")).expect("bigram");
+    assert!(masked(&bigram(&donor.path)) == masked(&bigram(&own.path)));
+    let original = bigram(&donor.path);
+    let logs = crate::test_support::LogCapture::new();
+    collision_cycles(&donor.path, &rows, Some(&original));
+    assert!(logs.take().is_empty());
+}
+
+/// The user.conf versions are the host scanner's `%d`: a value 2^32 above
+/// the table.conf version converts to it on every host (oxpinyin-input
+/// native.rs `fscanf`), so the profile conforms and keeps its trained and
+/// imported state; one more makes it non-conforming and the init wipes it
+/// (#920).
+#[test]
+fn user_conf_versions_past_int_take_the_scanners_int() {
+    let session = |user: &std::path::Path, extra: i64| -> [(bool, u32); 2] {
+        let context = init_pinned_at(&contract_data_dir(), user);
+        assert!(!context.is_null());
+        let instance = pinyin_alloc_instance(context);
+        let trained = 0x0100_3e57;
+        assert_eq!(crate::test_support::lookup(instance, "癫痫"), [trained]);
+        assert_eq!(
+            pinyin_parse_more_full_pinyins(instance, c"dian4xian4".as_ptr()),
+            10
+        );
+        assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+        let index = capture_rows(instance)
+            .iter()
+            .position(|(kind, text, _)| *kind == NORMAL && text == "癫痫")
+            .expect("a NORMAL 癫痫 row");
+        let cand = candidate_at(instance, u32::try_from(index).expect("small index"));
+        assert!(pinyin_choose_candidate(instance, 0, cand) > 0);
+        assert!(pinyin_guess_sentence(instance));
+        assert!(pinyin_train(instance, 0));
+        assert_eq!(unigram(instance, trained), (true, 550));
+        import(context, 7, "你好你好", "ni3'hao3'ni3'hao3", 9);
+        let imported = crate::test_support::lookup(instance, "你好你好")
+            .into_iter()
+            .find(|token| token >> 24 == 7)
+            .expect("the imported token");
+        assert_eq!(unigram(instance, imported), (true, 27));
+        assert!(crate::context::pinyin_save(context));
+        close(context, instance);
+        let conf_path = user.join("user.conf");
+        let conf = std::fs::read_to_string(&conf_path).expect("user.conf");
+        let edited: String = conf
+            .split_inclusive('\n')
+            .map(|line| {
+                for key in ["binary format version:", "model data version:"] {
+                    if let Some(rest) = line.strip_prefix(key) {
+                        let value: i64 = rest.trim().parse().expect("a version");
+                        return format!("{key}{}\n", value + (1 << 32) + extra);
+                    }
+                }
+                line.to_owned()
+            })
+            .collect();
+        std::fs::write(&conf_path, edited).expect("write user.conf");
+        let context = init_pinned_at(&contract_data_dir(), user);
+        assert!(!context.is_null());
+        let instance = pinyin_alloc_instance(context);
+        let after = [unigram(instance, trained), unigram(instance, imported)];
+        close(context, instance);
+        after
+    };
+    let conforms = TempUserDir::new("user-conf-920-conforms");
+    assert_eq!(session(&conforms.path, 0), [(true, 550), (true, 27)]);
+    let wiped = TempUserDir::new("user-conf-920-nonconforms");
+    assert_eq!(session(&wiped.path, 1), [(true, 67), (false, 0)]);
+}
+
+/// A system chunk's total and its items by slot (`_system_items`).
+fn system_items(name: &str) -> (u32, std::collections::BTreeMap<u32, Vec<u8>>) {
+    let bytes = std::fs::read(contract_data_dir().join(name)).expect("a system library");
+    let payload = &bytes[8..];
+    let word = |at: usize| u32::from_le_bytes(payload[at..at + 4].try_into().expect("a word"));
+    let (total, index, content) = (word(0), word(4) as usize, word(8) as usize);
+    let mut items = std::collections::BTreeMap::new();
+    for slot in 0..(content - index - 1) / 4 {
+        let offset = word(index + slot * 4);
+        if offset != 0 {
+            let start = content + offset as usize;
+            let (length, prons) = (usize::from(payload[start]), usize::from(payload[start + 1]));
+            let size = 6 + 4 * length + prons * (2 * length + 4);
+            let end = (start + size).min(payload.len());
+            items.insert(
+                u32::try_from(slot).expect("a slot"),
+                payload[start..end].to_vec(),
+            );
+        }
+    }
+    (total, items)
+}
+
+/// The reading key bytes of each pronunciation of a stored item.
+fn item_readings(item: &[u8]) -> Vec<&[u8]> {
+    let (length, prons) = (usize::from(item[0]), usize::from(item[1]));
+    let start = 6 + 4 * length;
+    let stride = 2 * length + 4;
+    (0..prons)
+        .map(|nth| {
+            let at = (start + stride * nth).min(item.len());
+            &item[at..(at + 2 * length).min(item.len())]
+        })
+        .collect()
+}
+
+/// A merged-library item removed by the journal adds no candidate, and
+/// the search over its reading answers normally (fixtures/contract-policy
+/// record compatibility-policy.md, row 102).
+#[test]
+fn a_journal_removed_item_adds_no_candidate() {
+    let (total, items) = system_items("merged.bin");
+    let mut longer = std::collections::BTreeSet::new();
+    for name in ["merged.bin", "opengram.bin", "gb_char.bin", "gbk_char.bin"] {
+        for item in system_items(name).1.values() {
+            if item[0] > 4 {
+                longer.extend(
+                    item_readings(item)
+                        .iter()
+                        .map(|reading| reading[..8.min(reading.len())].to_vec()),
+                );
+            }
+        }
+    }
+    let (slot, item) = items
+        .iter()
+        .find(|(_, item)| item[0] == 4 && item[1] == 1 && !longer.contains(item_readings(item)[0]))
+        .expect("a four-character item no longer phrase extends");
+    let token = 0x0400_0000 | slot;
+    let user = TempUserDir::new("removed-candidate");
+    let (context, instance) = open_pinned(&user);
+    let (mut length, mut text) = (0_u32, ptr::null_mut());
+    assert!(crate::dict::pinyin_token_get_phrase(
+        instance,
+        token,
+        &raw mut length,
+        &raw mut text
+    ));
+    let phrase = crate::ffi::take_owned_cstr(text);
+    let reading: String = item_readings(item)[0]
+        .chunks(2)
+        .map(|key| {
+            let mut key = u16::from_le_bytes([key[0], key[1]]);
+            let mut out = ptr::null_mut();
+            assert!(crate::cursor::pinyin_get_pinyin_string(
+                instance,
+                (&raw mut key).cast(),
+                &raw mut out
+            ));
+            crate::ffi::take_owned_cstr(out)
+        })
+        .collect();
+    close(context, instance);
+    crate::test_support::write_user_conf(&user.path, &contract_data_dir());
+    let mut remove = 2_u32.to_le_bytes().to_vec();
+    remove.extend(token.to_le_bytes());
+    remove.extend(u16::try_from(item.len()).expect("a length").to_le_bytes());
+    remove.extend(item);
+    let log = [crate::test_support::modify_header(0, total, total), remove].concat();
+    std::fs::write(
+        user.path.join("merged.dbin"),
+        oxpinyin_data::chunk_format::build_memory_chunk(&log).expect("frame"),
+    )
+    .expect("write the journal");
+    let (context, instance) = open_pinned(&user);
+    let (mut length, mut text) = (0_u32, ptr::null_mut());
+    assert!(!crate::dict::pinyin_token_get_phrase(
+        instance,
+        token,
+        &raw mut length,
+        &raw mut text
+    ));
+    assert_eq!((length, text.is_null()), (0, true));
+    let input = cstr(&reading);
+    assert_eq!(
+        pinyin_parse_more_full_pinyins(instance, input.as_ptr()),
+        reading.len()
+    );
+    assert!(pinyin_guess_sentence(instance));
+    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+    assert!(
+        !capture_rows(instance)
+            .iter()
+            .any(|(kind, text, _)| *kind == NORMAL && *text == phrase),
+        "{phrase} is listed"
+    );
+    close(context, instance);
+}
+
+/// The segmenter reads an unsorted sentence-start user gram as stored
+/// (fixtures/contract-policy record 1297-gram-partition-segmentation.md).
+#[test]
+fn the_segmenter_reads_an_unsorted_user_gram_as_stored() {
+    let user = TempUserDir::new("unsorted-segment");
+    let (context, instance) = open_pinned(&user);
+    close(context, instance);
+    let gram = crate::test_support::gram_bytes(
+        (1 << 31) + 2,
+        &[(16_800_245, 1 << 31), (16_800_252, 1), (16_800_244, 1)],
+    );
+    crate::test_support::craft_hash(
+        &user.path.join("user_bigram.db"),
+        &[(1_u32.to_le_bytes().to_vec(), gram)],
+    );
+    crate::test_support::write_user_conf(&user.path, &contract_data_dir());
+    let (context, instance) = open_pinned(&user);
+    assert!(crate::phrase::pinyin_phrase_segment(
+        instance,
+        c"今天天气很好".as_ptr()
+    ));
+    let mut count = 0;
+    assert!(crate::phrase::pinyin_get_n_phrase(instance, &raw mut count));
+    let tokens: Vec<u32> = (0..count)
+        .map(|index| {
+            let mut token = 0;
+            assert!(crate::phrase::pinyin_get_phrase_token(
+                instance,
+                index,
+                &raw mut token
+            ));
+            token
+        })
+        .collect();
+    assert_eq!(
+        tokens,
+        [16_800_245, 0, 16_810_538, 0, 16_779_492, 16_779_429]
+    );
+    close(context, instance);
+}

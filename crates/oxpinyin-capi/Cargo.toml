@@ -116,8 +116,9 @@ oxpinyin-user.workspace = true
 glib-sys.workspace = true
 
 [dev-dependencies]
-# Dev-only: `open` and `mmap` for the death tests' shared page. Never a
-# dependency of the C ABI itself.
+# Dev-only: `open` and `mmap` for the death tests' shared page, and the
+# file-size limit of the interrupted-save test. Never a dependency of the C
+# ABI itself.
 libc.workspace = true
 # Dev-only: the death-test helpers wait for their child with a time limit.
 assert_cmd = "2.2"
@@ -126,7 +127,8 @@ rstest = { version = "0.28", default-features = false }
 # Dev-only: scratch dirs for the test fixtures. Never a dependency of the
 # C ABI itself.
 tempfile.workspace = true
-# Dev-only: the contract cases list chunk files by SHA-256.
+# Dev-only: the pinned-data tests compare a saved journal and a saved user
+# bigram with the pin's by SHA-256.
 sha2 = "0.11"
 
 

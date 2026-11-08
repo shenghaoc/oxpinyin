@@ -548,6 +548,8 @@ pub fn pinyin_remember_user_input(
 // internals purely for test inspection or weakening the assertions, so
 // they stay at the unit layer (docs/testing/upstream-test-coverage.md).
 #[cfg(test)]
+mod boundary_tests;
+#[cfg(test)]
 mod e2e_tests;
 #[cfg(test)]
 mod guess_offset_tests;
