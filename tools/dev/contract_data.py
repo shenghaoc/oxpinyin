@@ -4,7 +4,9 @@ The data is Debian forky's `libpinyin-data` package at the one version named in
 tools/oracle/libpinyin-data.json, downloaded from snapshot.debian.org by its
 SHA-1 and verified by SHA-256 and by the content digest of the extracted files.
 It is the system data of both `capture` (in the pin image) and `verify`; model20
-is not read. Idempotent: a verified extraction is left untouched.
+is not read. Idempotent: a verified extraction is left untouched. Its files are
+read-only (the write bits cleared; on Windows the read-only attribute), a guard
+against a case writing into the data through a link, not a security boundary.
 """
 import argparse
 import hashlib
@@ -14,6 +16,7 @@ import os
 from pathlib import Path
 import platform
 import shutil
+import stat
 import sys
 import tarfile
 import time
@@ -37,6 +40,30 @@ def content_digest(directory):
                   for file in Path(directory).iterdir() if file.is_file())
     text = json.dumps(rows, sort_keys=True, separators=(',', ':'), ensure_ascii=True)
     return hashlib.sha256(text.encode('ascii')).hexdigest()
+
+
+def protect(directory):
+    """Clear the write bits of every regular file directly under DIRECTORY.
+
+    `os.lstat` does not follow links, so only the dataset's own files change; on
+    Windows `os.chmod` without the write bits sets the read-only attribute.
+    """
+    for path in Path(directory).iterdir():
+        st = os.lstat(path)
+        if stat.S_ISREG(st.st_mode):
+            os.chmod(path, stat.S_IMODE(st.st_mode) & ~(stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH))
+
+
+def remove_tree(directory):
+    """Remove DIRECTORY whole, protected files included: an entry that refuses
+    removal gets its owner's write bit back (never group's or others') and is
+    removed again. A missing tree is not an error."""
+    def retry(function, path, _error):
+        if function in (os.unlink, os.remove, os.rmdir) and os.path.lexists(path):
+            os.chmod(path, stat.S_IMODE(os.lstat(path).st_mode) | stat.S_IWUSR)
+            function(path)
+    if os.path.lexists(directory):
+        shutil.rmtree(directory, onexc=retry)
 
 
 def deb_members(payload):
@@ -74,6 +101,7 @@ def fetch(cache, architecture=None, pin=None):
     entry = pin['archives'][architecture]
     destination = Path(cache) / pin['version'] / 'libpinyin/data'
     if destination.is_dir() and content_digest(destination) == pin['content_sha256']:
+        protect(destination)
         return destination
     url = SNAPSHOT + entry['snapshot_sha1']
     print(f'downloading {url}', file=sys.stderr, flush=True)
@@ -91,11 +119,13 @@ def fetch(cache, architecture=None, pin=None):
             time.sleep(2 ** attempt)
     if hashlib.sha256(payload).hexdigest() != entry['sha256']:
         raise SystemExit('fetch-contract-data: package SHA-256 differs from tools/oracle/libpinyin-data.json')
-    shutil.rmtree(destination.parent, ignore_errors=True)
+    # A damaged copy is replaced whole: no write into its read-only files.
+    remove_tree(destination.parent)
     extract(payload, entry['data_dir'], destination)
     if content_digest(destination) != pin['content_sha256']:
-        shutil.rmtree(destination.parent, ignore_errors=True)
+        remove_tree(destination.parent)
         raise SystemExit('fetch-contract-data: extracted files differ from the pinned content digest')
+    protect(destination)
     return destination
 
 
