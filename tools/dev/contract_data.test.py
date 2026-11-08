@@ -1,7 +1,9 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """The pinned contract system data: package extraction and the identity digest."""
 import io
+import os
 from pathlib import Path
+import stat
 import sys
 import tarfile
 import tempfile
@@ -62,6 +64,39 @@ class PinTests(unittest.TestCase):
             contract_data.extract(payload, 'usr/lib/x/libpinyin/data', target)
             self.assertEqual(sorted(file.name for file in target.iterdir()), ['a.bin', 'table.conf'])
             self.assertEqual(contract_data.content_digest(target), contract_reference.data_identity(target))
+
+    def test_staged_files_are_read_only_and_a_damaged_read_only_copy_is_replaced(self):
+        files = {'usr/lib/x/libpinyin/data/table.conf': b'c', 'usr/lib/x/libpinyin/data/a.bin': b'1'}
+        payload = deb(files)
+        with tempfile.TemporaryDirectory() as directory:
+            expected = Path(directory, 'expected')
+            contract_data.extract(payload, 'usr/lib/x/libpinyin/data', expected)
+            pin = dict(version='test', content_sha256=contract_data.content_digest(expected),
+                       archives={'amd64': dict(snapshot_sha1='a' * 40, sha256=hashlib.sha256(payload).hexdigest(),
+                                               data_dir='usr/lib/x/libpinyin/data')})
+            write_bits = stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH
+            with patch.object(contract_data.urllib.request, 'urlopen', return_value=io.BytesIO(payload)) as open_url:
+                target = contract_data.fetch(Path(directory, 'cache'), 'amd64', pin)
+                self.assertEqual(open_url.call_count, 1)
+            for name in ('table.conf', 'a.bin'):
+                self.assertEqual(os.lstat(target / name).st_mode & write_bits, 0, name)
+            with patch.object(contract_data.urllib.request, 'urlopen') as open_url:
+                self.assertEqual(contract_data.fetch(Path(directory, 'cache'), 'amd64', pin), target)
+                open_url.assert_not_called()
+            # Damage one read-only file as a writer with the owner's bit would, then
+            # protect it again: the next fetch finds the digest wrong and replaces the
+            # copy whole, read-only files included.
+            damaged = target / 'a.bin'
+            os.chmod(damaged, stat.S_IMODE(os.lstat(damaged).st_mode) | stat.S_IWUSR)
+            damaged.write_bytes(b'2')
+            os.chmod(damaged, stat.S_IMODE(os.lstat(damaged).st_mode) & ~write_bits)
+            with patch.object(contract_data.urllib.request, 'urlopen', return_value=io.BytesIO(payload)) as open_url:
+                self.assertEqual(contract_data.fetch(Path(directory, 'cache'), 'amd64', pin), target)
+                self.assertEqual(open_url.call_count, 1)
+            self.assertEqual(damaged.read_bytes(), b'1')
+            self.assertEqual(contract_data.content_digest(target), pin['content_sha256'])
+            for name in ('table.conf', 'a.bin'):
+                self.assertEqual(os.lstat(target / name).st_mode & write_bits, 0, name)
 
     def test_fetch_retries_only_transient_errors_and_keeps_checksum_gate(self):
         payload = deb({'usr/lib/x/libpinyin/data/table.conf': b'c'})
