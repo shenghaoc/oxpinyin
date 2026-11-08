@@ -77,7 +77,8 @@ Repository Python uses uv and its managed CPython 3.15 series with the GIL.
 
 `just doctor` is the one check of every tool's minimum: Bash 5.0, uv,
 CPython, just, cargo-nextest, cargo-c, cargo-fuzz, cargo-llvm-cov, and
-ShellCheck 0.11.0. ShellCheck is advisory because only the lint job needs it.
+ShellCheck 0.11.0. ShellCheck is advisory; run it when a shell script
+changes ([verification rule 5](verification.md#5-local-test-gate)).
 On Linux it also checks GNU ld, gcov and Valgrind. Each line names the resolved
 executable, the minimum and the version found. A newer tool passes, an older
 required tool fails, and a missing one comes with its install command.
@@ -549,39 +550,17 @@ libraries and retain their existing debug settings.
 
 ## Contribution checks
 
-CI is the routine Clippy and Rust-test gate ([verification rule 5](verification.md#5-local-test-gate)):
-a passing CI run on your final source tree satisfies those checks, so do not
-repeat them locally. Run `just fmt --all --check` locally; it is cheap. From the
-native repository root, use the `just` commands below to reproduce a CI failure
-or for iteration feedback on a touched package. For a changed file under `crates/`,
-find the containing package's `Cargo.toml` and copy its `[package]` → `name` value
-into the `-p` argument; the example below uses `oxpinyin-core`. For
-documentation-only edits, check the changed text,
-instructions/links and `git diff --check`; no Rust formatter, build, tests,
-Clippy or backend selection is needed. Source-comment edits also run fmt.
-For repository build/config changes, identify affected packages or ask the maintainer when
-scope is unclear; CI owns the full workspace sweep:
+Run the local checks in [verification rule 5](verification.md#5-local-test-gate); they scale with the change and its stage.
 
-```bash
-just fmt --all --check
-just clippy --locked -p oxpinyin-core --all-targets -- -D warnings
-cargo test --locked -p oxpinyin-core
-```
-
-For a storage-dependent package on a non-default backend, use the explicit
-backend arguments:
-
-```bash
-just clippy --locked -p oxpinyin-store --all-targets --no-default-features --features bdb -- -D warnings
-cargo test --locked -p oxpinyin-store --no-default-features --features bdb
-```
+CI is the full gate: a passing CI run on your final source tree satisfies the required checks. For a changed file under `crates/`, find the containing package's `Cargo.toml` and use its `[package]` → `name` value as the `-p` argument in the iteration commands in verification rule 5. For a storage-dependent package on a non-default backend, add `--no-default-features --features bdb` to the Clippy and nextest iteration commands in verification rule 5. For documentation-only edits, follow the Markdown-only and source-comment rules in verification rule 5.
+For repository build/config changes, identify affected packages or ask the maintainer when scope is unclear; CI stays the full gate.
 
 `--no-default-features` turns off the [default selection](backends.md);
 `--features bdb` selects Berkeley DB explicitly (exactly one backend is allowed).
 Clippy's `--` separates Cargo options from the lint options that follow.
 Use your preferred native editor/debugger with this same toolchain and
 terminal environment; no particular IDE or container is required. CI owns
-full workspace sweeps. Use separate target and user-data directories
+the full workspace test sweep. Use separate target and user-data directories
 when changing backends; see [backends](backends.md). Ordinary native tests
 are not proof of bug-for-bug compatibility with upstream.
 
