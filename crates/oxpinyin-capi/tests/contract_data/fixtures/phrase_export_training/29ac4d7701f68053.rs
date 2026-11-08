@@ -1,1 +1,0 @@
-M(&[("added", L(&[B(true), B(true)])), ("has_next", B(true)), ("has_next_after", B(false)), ("logs", L(&[])), ("rows", L(&[L(&[B(true), S("你好"), S("ni'hao"), I(5)]), L(&[B(true), S("你好"), S("ni2'hao2"), I(3)]), L(&[B(true), S("好你"), S("hao'ni"), I(7)])])), ("seed", L(&[B(true)]))])

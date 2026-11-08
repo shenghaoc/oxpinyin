@@ -85,20 +85,7 @@ tempfile.workspace = true
 sha2 = "0.11"
 # Dev-only: the contract cases read a refused directory name's errno.
 libc.workspace = true
-# Dev-only: libzhuyin has no export iterator, so the contract cases export a saved
-# profile through libpinyin's. No default features: the backend is this crate's.
-oxpinyin-capi = { path = "../oxpinyin-capi", default-features = false }
 
-# The frozen pin contract cases with references on every backend cell.
-[[test]]
-name = "contract"
-
-# The frozen pin contract cases whose references hold the tkrzw cell only:
-# they read the pinned libpinyin-data package (`just fetch-contract-data`),
-# which is in tkrzw format.
-[[test]]
-name = "contract_data"
-required-features = ["tkrzw"]
 
 # cargo-c packaging metadata. See docs/packaging.md for the rationale and the
 # upstream libzhuyin.pc.in this mirrors.

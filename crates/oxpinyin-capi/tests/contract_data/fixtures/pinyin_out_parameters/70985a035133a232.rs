@@ -1,1 +1,0 @@
-M(&[("empty", L(&[B(true), L(&[B(true), S("你好")]), L(&[B(true), S("你好")])])), ("invalid", L(&[B(true), L(&[B(true), S("你好")]), L(&[B(true), S("你好")])])), ("logs", L(&[])), ("tail-invalid", L(&[B(true), L(&[B(true), S("你好")]), L(&[B(true), S("你好")])])), ("valid", L(&[B(true), L(&[B(true), S("你好")]), L(&[B(true), S("你好")])]))])

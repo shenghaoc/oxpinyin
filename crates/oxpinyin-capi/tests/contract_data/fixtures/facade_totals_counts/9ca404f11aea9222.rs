@@ -1,1 +1,0 @@
-M(&[("added", L(&[B(true)])), ("count", I(1415305155)), ("guessed", B(true)), ("logs", L(&[])), ("parsed", I(8)), ("segment", M(&[("你好", L(&[B(true), L(&[I(16781861), I(16779429)])]))])), ("sentences", L(&[S("你好"), S("你好"), S("你号")]))])

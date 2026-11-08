@@ -1,1 +1,0 @@
-M(&[("incomplete n", L(&[B(true), I(11), B(true)])), ("incomplete ni", L(&[B(true), I(43), B(false)])), ("incomplete ni4", L(&[B(true), I(16427), B(false)])), ("logs", L(&[])), ("n", L(&[I(1), B(true), B(true)])), ("ni4", L(&[I(3), B(true), B(true)])), ("ni4hao", L(&[I(6), B(true), B(true)])), ("nin", L(&[I(3), B(true), B(true)]))])

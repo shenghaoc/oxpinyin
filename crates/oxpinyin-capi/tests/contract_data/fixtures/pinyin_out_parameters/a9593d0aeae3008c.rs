@@ -1,1 +1,0 @@
-M(&[("first key now", S("8602")), ("first rest now", S("00000300")), ("key after free", S("8602")), ("key same pointer", B(true)), ("logs", L(&[])), ("rest after free", S("00000300")), ("rest same pointer", B(true)), ("ret", L(&[B(true), B(true), B(true), B(true)]))])

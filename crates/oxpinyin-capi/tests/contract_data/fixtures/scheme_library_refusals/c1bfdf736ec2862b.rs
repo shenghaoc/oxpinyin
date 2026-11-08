@@ -1,1 +1,0 @@
-M(&[("double 6", B(true)), ("double 99", B(true)), ("full 1", B(true)), ("full 3", B(true)), ("load 1", B(false)), ("load 16", B(false)), ("load 255", B(false)), ("load 7", B(false)), ("load addon 16", B(false)), ("logs", L(&[])), ("unload 1", B(false)), ("unload 15", B(false)), ("unload addon 15", B(true)), ("zhuyin 1", B(true)), ("zhuyin 9", B(true))])

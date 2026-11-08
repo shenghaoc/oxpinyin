@@ -1,1 +1,0 @@
-M(&[("kinds", L(&[I(8), I(8), I(8), I(8), I(5), I(5)])), ("logs", L(&[])), ("others", I(168)), ("puncts", L(&[S("f4908080"), S("f888808080"), S("fc8480808080"), S("ffbfbfbfbfbf")])), ("ret", B(true))])
