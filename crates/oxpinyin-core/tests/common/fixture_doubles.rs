@@ -259,7 +259,6 @@ impl FixtureDictionary {
 }
 
 impl Dictionary for FixtureDictionary {
-    type Entry = PhraseEntry;
     type Error = FixtureError;
     type PathMemo = ();
     type Syllable = SyllableKey;

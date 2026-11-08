@@ -105,7 +105,7 @@ fn build_columns(
 /// pin's `pinyin_compare_with_tones` accepts every final for one.
 fn pronounces<D>(dictionary: &D, key: MatrixKey, token: PhraseToken) -> Result<bool, EngineError>
 where
-    D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+    D: Dictionary<Syllable = SyllableKey>,
     D::Error: core::fmt::Display,
 {
     let Some(syllable) = SyllableKey::from_chewing_key(key.key()) else {
@@ -168,7 +168,7 @@ pub fn key_pronounced_by<D>(
     token: PhraseToken,
 ) -> Result<bool, EngineError>
 where
-    D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+    D: Dictionary<Syllable = SyllableKey>,
     D::Error: core::fmt::Display,
 {
     pronounces(dictionary, key, token)
@@ -291,7 +291,7 @@ fn walk<D>(
     length: usize,
 ) -> Result<Option<usize>, EngineError>
 where
-    D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+    D: Dictionary<Syllable = SyllableKey>,
     D::Error: core::fmt::Display,
 {
     if start > offset {
@@ -361,7 +361,7 @@ pub fn character_offset_over_keys<D>(
     offset: usize,
 ) -> Result<Option<usize>, EngineError>
 where
-    D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+    D: Dictionary<Syllable = SyllableKey>,
     D::Error: core::fmt::Display,
 {
     character_offset_with_walk_over_keys(
@@ -386,7 +386,7 @@ pub fn character_offset_with_walk_over_keys<D>(
     offset: usize,
 ) -> Result<(Option<usize>, bool), EngineError>
 where
-    D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+    D: Dictionary<Syllable = SyllableKey>,
     D::Error: core::fmt::Display,
 {
     // `0 == matrix.size()`: no parse ran, or the parse placed no key —
@@ -444,7 +444,6 @@ mod tests {
 
     impl Dictionary for Dict {
         type Syllable = SyllableKey;
-        type Entry = PhraseEntry;
         type Error = core::convert::Infallible;
         type PathMemo = ();
 

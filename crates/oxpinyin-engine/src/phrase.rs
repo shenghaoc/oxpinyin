@@ -30,8 +30,8 @@ use std::collections::HashMap;
 use crate::error::EngineError;
 use crate::nbest::SENTENCE_START;
 use oxpinyin_core::{
-    Dictionary, LanguageModel, NbestStepCosts, NbestStepRow, NbestSuccessors, PhraseEntry,
-    PhraseToken, SyllableKey,
+    Dictionary, LanguageModel, NbestStepCosts, NbestStepRow, NbestSuccessors, PhraseToken,
+    SyllableKey,
 };
 
 /// The span cap: upstream `MAX_PHRASE_LENGTH` (16, `oxpinyin-user`'s
@@ -148,7 +148,7 @@ pub fn phrase_segment<D, L>(
     sentence: &str,
 ) -> Result<(bool, Vec<PhraseToken>), EngineError>
 where
-    D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+    D: Dictionary<Syllable = SyllableKey>,
     D::Error: core::fmt::Display,
     L: LanguageModel<Token = PhraseToken>,
     L::Error: core::fmt::Display,
@@ -170,7 +170,7 @@ pub fn phrase_segment_ucs4<D, L>(
     sentence: &[u32],
 ) -> Result<(bool, Vec<PhraseToken>), EngineError>
 where
-    D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+    D: Dictionary<Syllable = SyllableKey>,
     D::Error: core::fmt::Display,
     L: LanguageModel<Token = PhraseToken>,
     L::Error: core::fmt::Display,
@@ -305,10 +305,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::{phrase_segment, phrase_segment_ucs4};
+    use oxpinyin_core::PhraseEntry;
 
-    use oxpinyin_core::{
-        Dictionary, LanguageModel, NbestStepCosts, PhraseEntry, PhraseToken, SyllableKey,
-    };
+    use oxpinyin_core::{Dictionary, LanguageModel, NbestStepCosts, PhraseToken, SyllableKey};
 
     /// A tiny dictionary: the text → tokens reverse map the span DP
     /// probes, plus a model whose step costs come from per-token
@@ -331,11 +330,10 @@ mod tests {
 
     impl Dictionary for Dict {
         type Syllable = SyllableKey;
-        type Entry = PhraseEntry;
         type Error = core::convert::Infallible;
         type PathMemo = ();
 
-        fn lookup(&self, _syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error> {
+        fn lookup(&self, _syllables: &[Self::Syllable]) -> Result<Vec<PhraseEntry>, Self::Error> {
             Ok(Vec::new())
         }
 
@@ -355,11 +353,10 @@ mod tests {
 
     impl Dictionary for RawDict {
         type Syllable = SyllableKey;
-        type Entry = PhraseEntry;
         type Error = core::convert::Infallible;
         type PathMemo = ();
 
-        fn lookup(&self, _syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error> {
+        fn lookup(&self, _syllables: &[Self::Syllable]) -> Result<Vec<PhraseEntry>, Self::Error> {
             Ok(Vec::new())
         }
 

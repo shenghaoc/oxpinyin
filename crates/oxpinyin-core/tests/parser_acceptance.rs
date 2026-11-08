@@ -1,7 +1,7 @@
 //! Frozen F-A acceptance, structured path-set cases, and arbitrary-byte properties.
 
 use oxpinyin_core::{
-    Completeness, FULL_PINYIN_SYLLABLE_COUNT, FullPinyinParser, InputParser, MAX_PARSE_RESULTS,
+    Completeness, FULL_PINYIN_SYLLABLE_COUNT, FullPinyinParser, MAX_PARSE_RESULTS, OptionBits,
     ParseError, ParseResult, ParsedSyllable, full_pinyin_syllables,
 };
 use proptest::prelude::*;
@@ -43,7 +43,7 @@ fn every_table_syllable_round_trips_as_complete_identity() {
     let parser = FullPinyinParser;
     for syllable in full_pinyin_syllables() {
         let paths = parser
-            .parse(syllable.as_bytes())
+            .parse_with_options(syllable.as_bytes(), OptionBits::default())
             .unwrap_or_else(|error| panic!("syllable {syllable:?} failed: {error}"));
 
         // Round-trip: the greedy first path is exactly one Complete segment
@@ -93,7 +93,7 @@ fn frozen_f_a_selected_paths_are_portable_paths() {
             remainder: unescape(field(line, "remainder")),
         };
         let paths = parser
-            .parse(&input)
+            .parse_with_options(&input, OptionBits::default())
             .unwrap_or_else(|error| panic!("F-A case {case} failed to parse: {error}"));
 
         assert!(
@@ -119,7 +119,7 @@ proptest! {
         input in prop::collection::vec(any::<u8>(), 0..=4_096),
     ) {
         let parser = FullPinyinParser;
-        match parser.parse(&input) {
+        match parser.parse_with_options(&input, OptionBits::default()) {
             Ok(paths) => {
                 prop_assert!(!paths.is_empty());
                 prop_assert!(paths.len() <= MAX_PARSE_RESULTS);
@@ -144,8 +144,8 @@ proptest! {
         input in prop::collection::vec(any::<u8>(), 0..=4_096),
     ) {
         let parser = FullPinyinParser;
-        let first = parser.parse(&input);
-        let second = parser.parse(&input);
+        let first = parser.parse_with_options(&input, OptionBits::default());
+        let second = parser.parse_with_options(&input, OptionBits::default());
         prop_assert_eq!(first, second);
     }
 
@@ -157,8 +157,8 @@ proptest! {
             .join("'")
             .into_bytes();
         let parser = FullPinyinParser;
-        let first = parser.parse(&input);
-        let second = parser.parse(&input);
+        let first = parser.parse_with_options(&input, OptionBits::default());
+        let second = parser.parse_with_options(&input, OptionBits::default());
 
         prop_assert_eq!(&first, &second);
         prop_assert_eq!(
@@ -228,7 +228,7 @@ fn assert_path_invariants(
 
 fn assert_parse(input: &[u8], expected: &[ParseResult]) {
     let actual = FullPinyinParser
-        .parse(input)
+        .parse_with_options(input, OptionBits::default())
         .expect("structured acceptance cases stay below the path limit");
     assert_eq!(actual, expected, "input: {input:?}");
 }

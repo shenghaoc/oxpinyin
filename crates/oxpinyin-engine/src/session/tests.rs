@@ -112,7 +112,6 @@ use crate::fixture_doubles::{
 struct Silent;
 
 impl Dictionary for Silent {
-    type Entry = PhraseEntry;
     type Error = EngineError;
     type PathMemo = ();
     type Syllable = SyllableKey;
@@ -496,7 +495,6 @@ struct Flaky {
 }
 
 impl Dictionary for Flaky {
-    type Entry = PhraseEntry;
     type Error = FixtureError;
     type PathMemo = ();
     type Syllable = SyllableKey;
@@ -1366,7 +1364,6 @@ fn no_frozen_option_word_sets_dynamic_adjust() {
 struct SystemPhrases(Vec<PhraseEntry>);
 
 impl Dictionary for SystemPhrases {
-    type Entry = PhraseEntry;
     type Error = EngineError;
     type PathMemo = ();
     type Syllable = SyllableKey;
@@ -1946,7 +1943,6 @@ struct LiveUnigramDict {
 }
 
 impl Dictionary for LiveUnigramDict {
-    type Entry = PhraseEntry;
     type Error = EngineError;
     type PathMemo = ();
     type Syllable = SyllableKey;
@@ -2009,7 +2005,6 @@ struct TwoFacadeDict {
 }
 
 impl Dictionary for TwoFacadeDict {
-    type Entry = PhraseEntry;
     type Error = EngineError;
     type PathMemo = ();
     type Syllable = SyllableKey;
@@ -3674,7 +3669,6 @@ fn choosing_behind_the_composition_moves_the_record_back() {
 struct StoredTone3;
 
 impl Dictionary for StoredTone3 {
-    type Entry = PhraseEntry;
     type Error = EngineError;
     type PathMemo = ();
     type Syllable = SyllableKey;
@@ -4416,7 +4410,6 @@ struct ItemDictionary {
 }
 
 impl Dictionary for ItemDictionary {
-    type Entry = PhraseEntry;
     type Error = EngineError;
     type PathMemo = ();
     type Syllable = SyllableKey;
@@ -4581,7 +4574,6 @@ fn a_fitting_forcing_whose_item_read_fails_surfaces_the_error() {
 fn candidate_collection_uses_unpriced_system_and_addon_operations() {
     struct CandidateDict;
     impl Dictionary for CandidateDict {
-        type Entry = PhraseEntry;
         type Error = EngineError;
         type PathMemo = ();
         type Syllable = SyllableKey;

@@ -4,7 +4,7 @@ use core::fmt;
 
 use crate::options::{FORCE_TONE, PINYIN_INCOMPLETE, USE_TONE};
 use crate::{CHEWING_ZERO_TONE, ChewingKey};
-use crate::{InputParser, MAX_SYLLABLE_LEN, OptionBits, SyllableKey, full_pinyin_syllables};
+use crate::{MAX_SYLLABLE_LEN, OptionBits, SyllableKey, full_pinyin_syllables};
 
 const OVER_LIMIT: usize = MAX_PARSE_RESULTS + 1;
 
@@ -68,20 +68,11 @@ impl fmt::Display for ParseError {
 
 impl std::error::Error for ParseError {}
 
-impl InputParser for FullPinyinParser {
-    type Parse = ParseResult;
-    type Error = ParseError;
-
-    fn parse(&self, input: &[u8]) -> Result<Vec<Self::Parse>, Self::Error> {
-        parse_input(input, OptionBits::default())
-    }
-}
-
 impl FullPinyinParser {
     /// Parses `input` under parser option bits.
     ///
-    /// The [`InputParser::parse`] implementation is this method with
-    /// [`OptionBits::default`], so the frozen all-off path is unchanged.
+    /// The former no-options entry point was equivalent to calling this
+    /// method with the default option word.
     /// Correction aliases and the parser-table ambiguity aliases become
     /// complete syllables only when their bit is set; matrix-level fuzzy
     /// alternates are not parser paths.
@@ -559,7 +550,7 @@ mod tests {
         Completeness, FullPinyinParser, MAX_PARSE_RESULTS, ParseError, ParseResult, ParsedSyllable,
     };
     use crate::ChewingKey;
-    use crate::InputParser;
+    use crate::OptionBits;
     use crate::options::{FORCE_TONE, PINYIN_CORRECT_GN_NG, PINYIN_INCOMPLETE, USE_TONE};
 
     /// `FullPinyinParser2::parse_one_key`: the whole stripped input is
@@ -780,7 +771,10 @@ mod tests {
             b"ni!hao",
             &[0xff, b'a'],
         ] {
-            assert_eq!(parser.parse(input), parser.parse(input));
+            assert_eq!(
+                parser.parse_with_options(input, OptionBits::default()),
+                parser.parse_with_options(input, OptionBits::default())
+            );
         }
     }
 
@@ -790,7 +784,7 @@ mod tests {
         let parser = FullPinyinParser;
         assert_eq!(
             parser
-                .parse(&at_limit)
+                .parse_with_options(&at_limit, OptionBits::default())
                 .expect("twelve two-way groups are exactly at the limit")
                 .len(),
             MAX_PARSE_RESULTS
@@ -798,7 +792,7 @@ mod tests {
 
         let over_limit = repeated_ambiguous_groups(13);
         assert_eq!(
-            parser.parse(&over_limit),
+            parser.parse_with_options(&over_limit, OptionBits::default()),
             Err(ParseError::TooManyAlternatives {
                 limit: MAX_PARSE_RESULTS
             })
@@ -807,7 +801,7 @@ mod tests {
 
     fn assert_parse(input: &[u8], expected: &[ParseResult]) {
         let actual = FullPinyinParser
-            .parse(input)
+            .parse_with_options(input, OptionBits::default())
             .expect("frozen examples stay below the path limit");
         assert_eq!(actual, expected, "input: {input:?}");
     }

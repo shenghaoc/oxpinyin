@@ -10,7 +10,7 @@ use super::*;
 
 impl<D, L, S: std::borrow::Borrow<SessionState>> Session<D, L, S>
 where
-    D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+    D: Dictionary<Syllable = SyllableKey>,
     D::Error: Display,
     L: LanguageModel<Token = PhraseToken>,
     L::Error: Display,
@@ -49,7 +49,7 @@ where
 
 impl<D, L, S: std::borrow::BorrowMut<SessionState>> Session<D, L, S>
 where
-    D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+    D: Dictionary<Syllable = SyllableKey>,
     D::Error: Display,
     L: LanguageModel<Token = PhraseToken>,
     L::Error: Display,
