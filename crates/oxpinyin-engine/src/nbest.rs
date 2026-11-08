@@ -37,8 +37,8 @@ use oxpinyin_core::PhraseText;
 use oxpinyin_core::graph::{GraphError, MAX_GRAPH_POSITION};
 use oxpinyin_core::scoring::{ScoringError, expand_keys};
 use oxpinyin_core::{
-    ChewingKey, Completeness, Cost, Dictionary, LanguageModel, NbestSuccessors, PhraseEntry,
-    PhraseIndexRanges, PhraseItemRead, PhraseToken, PronunciationRows, SyllableKey,
+    ChewingKey, Completeness, Cost, Dictionary, LanguageModel, NbestSuccessors, PhraseIndexRanges,
+    PhraseItemRead, PhraseToken, PronunciationRows, SyllableKey,
 };
 use smallvec::SmallVec;
 
@@ -467,7 +467,7 @@ impl Trellis {
         facts: &RefCell<SentenceFacts>,
     ) -> Result<Option<PhraseText>, EngineError>
     where
-        D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+        D: Dictionary<Syllable = SyllableKey>,
         D::Error: core::fmt::Display,
     {
         if let Some(text) = cache.get(&token) {
@@ -502,7 +502,7 @@ impl Trellis {
         facts: &RefCell<SentenceFacts>,
     ) -> Result<Option<PhraseText>, EngineError>
     where
-        D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+        D: Dictionary<Syllable = SyllableKey>,
         D::Error: core::fmt::Display,
     {
         let mut text = oxpinyin_core::PhraseTextConcat::new();
@@ -632,7 +632,7 @@ struct Pricing<'a, D: Dictionary> {
 
 impl<'a, D> Pricing<'a, D>
 where
-    D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+    D: Dictionary<Syllable = SyllableKey>,
     D::Error: core::fmt::Display,
 {
     /// `slot`'s entry for `token`; `None` when the dictionary reads no
@@ -705,7 +705,7 @@ pub fn nbest_sentences<D, L>(
     shape: NbestShape,
 ) -> Result<Vec<NbestRow>, EngineError>
 where
-    D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+    D: Dictionary<Syllable = SyllableKey>,
     D::Error: core::fmt::Display,
     L: LanguageModel<Token = PhraseToken>,
     L::Error: core::fmt::Display,
@@ -734,7 +734,7 @@ pub(super) fn nbest_sentences_generation<D, L>(
     shape: NbestShape,
 ) -> Result<Vec<NbestRow>, EngineError>
 where
-    D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+    D: Dictionary<Syllable = SyllableKey>,
     D::Error: core::fmt::Display,
     L: LanguageModel<Token = PhraseToken>,
     L::Error: core::fmt::Display,
@@ -779,7 +779,7 @@ pub(super) fn nbest_sentences_with_seeds_generation<D, L>(
     shape: NbestShape,
 ) -> Result<Vec<NbestRow>, EngineError>
 where
-    D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+    D: Dictionary<Syllable = SyllableKey>,
     D::Error: core::fmt::Display,
     L: LanguageModel<Token = PhraseToken>,
     L::Error: core::fmt::Display,
@@ -965,7 +965,7 @@ impl GenerationView<'_> {
         into: &mut SpanRanges<D::PathMemo>,
     ) -> Result<bool, EngineError>
     where
-        D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+        D: Dictionary<Syllable = SyllableKey>,
         D::Error: core::fmt::Display,
     {
         let Some(column) = self.columns.get(start) else {
@@ -999,7 +999,7 @@ impl GenerationView<'_> {
         continued: &mut bool,
     ) -> Result<(), EngineError>
     where
-        D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+        D: Dictionary<Syllable = SyllableKey>,
         D::Error: core::fmt::Display,
     {
         if start > end {
@@ -1088,7 +1088,7 @@ fn widen_free_span<D, L>(
     trellis: &mut Trellis,
 ) -> Result<(), EngineError>
 where
-    D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+    D: Dictionary<Syllable = SyllableKey>,
     D::Error: core::fmt::Display,
     L: LanguageModel<Token = PhraseToken>,
     L::Error: core::fmt::Display,
@@ -1200,7 +1200,7 @@ impl<'a> ConstraintSpelling<'a> {
         length: usize,
     ) -> Result<bool, EngineError>
     where
-        D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+        D: Dictionary<Syllable = SyllableKey>,
         D::Error: core::fmt::Display,
     {
         let dictionary_error =
@@ -1296,7 +1296,7 @@ fn lookup_finds_token<D>(
     token: PhraseToken,
 ) -> Result<bool, EngineError>
 where
-    D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+    D: Dictionary<Syllable = SyllableKey>,
     D::Error: core::fmt::Display,
 {
     let Some(path) = reading
@@ -1354,7 +1354,7 @@ fn expand_entries<D, L>(
     one_step: Option<u32>,
 ) -> Result<(), EngineError>
 where
-    D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+    D: Dictionary<Syllable = SyllableKey>,
     D::Error: core::fmt::Display,
     L: LanguageModel<Token = PhraseToken>,
     L::Error: core::fmt::Display,
@@ -1612,10 +1612,10 @@ where
 mod tests {
     use super::{NbestRow, NbestShape, Trellis, Value, nbest_sentences};
     use crate::session::ScanKey;
+    use oxpinyin_core::PhraseEntry;
     use oxpinyin_core::graph::SegmentGraph;
     use oxpinyin_core::{
-        Cost, Dictionary, LanguageModel, NbestStepCosts, OptionBits, PhraseEntry, PhraseToken,
-        SyllableKey,
+        Cost, Dictionary, LanguageModel, NbestStepCosts, OptionBits, PhraseToken, SyllableKey,
     };
     use std::cell::RefCell;
 
@@ -1639,11 +1639,10 @@ mod tests {
 
     impl Dictionary for TextDictionary {
         type Syllable = SyllableKey;
-        type Entry = PhraseEntry;
         type Error = TextError;
         type PathMemo = ();
 
-        fn lookup(&self, _syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error> {
+        fn lookup(&self, _syllables: &[Self::Syllable]) -> Result<Vec<PhraseEntry>, Self::Error> {
             Ok(vec![PhraseEntry::new(PhraseToken::new(1), "你好")])
         }
     }

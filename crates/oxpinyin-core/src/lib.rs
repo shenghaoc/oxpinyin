@@ -123,9 +123,6 @@ pub trait Dictionary {
     /// Syllable representation accepted by this dictionary.
     type Syllable;
 
-    /// Entry representation returned by this dictionary.
-    type Entry;
-
     /// Lookup failure reported by this dictionary.
     type Error;
 
@@ -140,7 +137,7 @@ pub trait Dictionary {
     /// # Errors
     ///
     /// Returns [`Self::Error`] when the dictionary backend cannot serve the lookup.
-    fn lookup(&self, syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error>;
+    fn lookup(&self, syllables: &[Self::Syllable]) -> Result<Vec<PhraseEntry>, Self::Error>;
 
     /// Returns every matching pronunciation index record in library, range,
     /// and item order, retaining repeated tokens for the sentence trellis.
@@ -156,7 +153,7 @@ pub trait Dictionary {
         &self,
         syllables: &[Self::Syllable],
         _tones: &[u8],
-    ) -> Result<Vec<Self::Entry>, Self::Error> {
+    ) -> Result<Vec<PhraseEntry>, Self::Error> {
         self.lookup(syllables)
     }
 
@@ -184,15 +181,12 @@ pub trait Dictionary {
         syllables: &[Self::Syllable],
         tones: &[u8],
         ranges: &mut PhraseIndexRanges<()>,
-    ) -> Result<(), Self::Error>
-    where
-        Self::Entry: PhraseIndexToken,
-    {
+    ) -> Result<(), Self::Error> {
         let entries = self.trellis_records(syllables, tones)?;
         ranges.convert(
             entries
                 .iter()
-                .map(|entry| (entry.phrase_index_token(), Some(()))),
+                .map(|entry| (entry.token().value(), Some(()))),
         );
         Ok(())
     }
@@ -220,10 +214,7 @@ pub trait Dictionary {
         tones: &[u8],
         ranges: &mut PhraseIndexRanges<()>,
         _scratch: &mut Vec<u8>,
-    ) -> Result<bool, Self::Error>
-    where
-        Self::Entry: PhraseIndexToken,
-    {
+    ) -> Result<bool, Self::Error> {
         self.trellis_ranges(syllables, tones, ranges)?;
         self.phrase_prefix_exists(syllables)
     }
@@ -245,16 +236,16 @@ pub trait Dictionary {
         syllables: &[Self::Syllable],
         tones: &[u8],
         token: u32,
-    ) -> Result<Option<TrellisItem>, Self::Error>
-    where
-        Self::Entry: PhraseIndexToken,
-    {
+    ) -> Result<Option<TrellisItem>, Self::Error> {
         Ok(self
             .trellis_records(syllables, tones)?
             .iter()
             .rev()
-            .find(|entry| entry.phrase_index_token() == token)
-            .map(PhraseIndexToken::phrase_index_item))
+            .find(|entry| entry.token().value() == token)
+            .map(|entry| TrellisItem {
+                chars: entry.phrase_length().try_into().unwrap_or(u32::MAX),
+                pronunciation: entry.pronunciation_possibility(),
+            }))
     }
 
     /// [`Self::trellis_item`], given the `memo` the caller keeps for this
@@ -276,10 +267,7 @@ pub trait Dictionary {
         tones: &[u8],
         token: u32,
         memo: &Self::PathMemo,
-    ) -> Result<Option<TrellisItem>, Self::Error>
-    where
-        Self::Entry: PhraseIndexToken,
-    {
+    ) -> Result<Option<TrellisItem>, Self::Error> {
         let _ = memo;
         self.trellis_item(syllables, tones, token)
     }
@@ -294,10 +282,7 @@ pub trait Dictionary {
         token: u32,
         memo: &Self::PathMemo,
         _facts: &mut sentence_facts::SentenceFacts,
-    ) -> Result<Option<TrellisItem>, Self::Error>
-    where
-        Self::Entry: PhraseIndexToken,
-    {
+    ) -> Result<Option<TrellisItem>, Self::Error> {
         self.trellis_item_on_path(syllables, tones, token, memo)
     }
 
@@ -310,10 +295,7 @@ pub trait Dictionary {
         tones: &[u8],
         token: u32,
         _facts: &mut sentence_facts::SentenceFacts,
-    ) -> Result<Option<PhraseText>, Self::Error>
-    where
-        Self::Entry: PhraseIndexToken,
-    {
+    ) -> Result<Option<PhraseText>, Self::Error> {
         self.trellis_text(syllables, tones, token)
     }
 
@@ -328,16 +310,13 @@ pub trait Dictionary {
         syllables: &[Self::Syllable],
         tones: &[u8],
         token: u32,
-    ) -> Result<Option<PhraseText>, Self::Error>
-    where
-        Self::Entry: PhraseIndexToken,
-    {
+    ) -> Result<Option<PhraseText>, Self::Error> {
         Ok(self
             .trellis_records(syllables, tones)?
             .iter()
             .rev()
-            .find(|entry| entry.phrase_index_token() == token)
-            .map(PhraseIndexToken::phrase_index_text))
+            .find(|entry| entry.token().value() == token)
+            .map(|entry| entry.text().clone()))
     }
 
     /// [`Self::lookup`] into a caller-owned buffer, which keeps capacity
@@ -353,7 +332,7 @@ pub trait Dictionary {
     fn lookup_into(
         &self,
         syllables: &[Self::Syllable],
-        out: &mut Vec<Self::Entry>,
+        out: &mut Vec<PhraseEntry>,
     ) -> Result<(), Self::Error> {
         let entries = self.lookup(syllables)?;
         out.clear();
@@ -374,7 +353,7 @@ pub trait Dictionary {
     fn lookup_into_flagged(
         &self,
         syllables: &[Self::Syllable],
-        out: &mut Vec<Self::Entry>,
+        out: &mut Vec<PhraseEntry>,
     ) -> Result<bool, Self::Error> {
         self.lookup_into(syllables, out)?;
         Ok(false)
@@ -391,7 +370,7 @@ pub trait Dictionary {
     fn lookup_candidates_into(
         &self,
         syllables: &[Self::Syllable],
-        out: &mut Vec<Self::Entry>,
+        out: &mut Vec<PhraseEntry>,
     ) -> Result<bool, Self::Error> {
         self.lookup_into_flagged(syllables, out)
     }
@@ -408,7 +387,7 @@ pub trait Dictionary {
         &self,
         _syllables: &[Self::Syllable],
         _tones: &[u8],
-        _out: &mut Vec<Self::Entry>,
+        _out: &mut Vec<PhraseEntry>,
     ) -> Result<Option<(bool, bool)>, Self::Error> {
         Ok(None)
     }
@@ -421,7 +400,7 @@ pub trait Dictionary {
     fn lookup_addon_candidates_into(
         &self,
         syllables: &[Self::Syllable],
-        out: &mut Vec<Self::Entry>,
+        out: &mut Vec<PhraseEntry>,
     ) -> Result<(), Self::Error> {
         self.lookup_addon_into(syllables, out)
     }
@@ -506,7 +485,7 @@ pub trait Dictionary {
     /// # Errors
     ///
     /// Returns [`Self::Error`] when the addon backend cannot serve the lookup.
-    fn lookup_addon(&self, _syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error> {
+    fn lookup_addon(&self, _syllables: &[Self::Syllable]) -> Result<Vec<PhraseEntry>, Self::Error> {
         Ok(Vec::new())
     }
 
@@ -518,7 +497,7 @@ pub trait Dictionary {
     fn lookup_addon_into(
         &self,
         syllables: &[Self::Syllable],
-        out: &mut Vec<Self::Entry>,
+        out: &mut Vec<PhraseEntry>,
     ) -> Result<(), Self::Error> {
         let entries = self.lookup_addon(syllables)?;
         out.clear();
@@ -759,37 +738,6 @@ impl<T> TrellisPathMemo<T> {
         }
         let value = init()?;
         Ok(self.0.get_or_init(|| value))
-    }
-}
-
-/// The phrase token a trellis entry stands for, so
-/// [`Dictionary::trellis_ranges`]' default can file it into a range, and
-/// what [`Dictionary::trellis_item`]'s default reads of it.
-pub trait PhraseIndexToken {
-    /// The entry's raw phrase token.
-    fn phrase_index_token(&self) -> u32;
-
-    /// The entry's [`TrellisItem`].
-    fn phrase_index_item(&self) -> TrellisItem;
-
-    /// The entry's phrase text.
-    fn phrase_index_text(&self) -> PhraseText;
-}
-
-impl PhraseIndexToken for PhraseEntry {
-    fn phrase_index_token(&self) -> u32 {
-        self.token().value()
-    }
-
-    fn phrase_index_item(&self) -> TrellisItem {
-        TrellisItem {
-            chars: self.phrase_length().try_into().unwrap_or(u32::MAX),
-            pronunciation: self.pronunciation_possibility(),
-        }
-    }
-
-    fn phrase_index_text(&self) -> PhraseText {
-        self.text().clone()
     }
 }
 
@@ -1631,25 +1579,6 @@ impl NbestStepCosts {
             (None, None) => None,
         }
     }
-}
-
-/// Total byte-input parsing seam.
-pub trait InputParser {
-    /// One owned parse alternative.
-    type Parse;
-
-    /// Parser backend or resource-limit failure (for example too many alternatives).
-    ///
-    /// Malformed, junk, and partial caller input are represented in parse
-    /// outputs rather than as this error.
-    type Error;
-
-    /// Returns every valid segmentation of `input` in frozen path-set order.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Self::Error`] when the input cannot be parsed under the scheme.
-    fn parse(&self, input: &[u8]) -> Result<Vec<Self::Parse>, Self::Error>;
 }
 
 #[cfg(test)]

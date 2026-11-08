@@ -1232,11 +1232,10 @@ struct PricedToken {
 
 impl Dictionary for RuntimeDict<'_> {
     type Syllable = SyllableKey;
-    type Entry = PhraseEntry;
     type Error = DictError;
     type PathMemo = TrellisPathMemo<PathPricing>;
 
-    fn lookup(&self, syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error> {
+    fn lookup(&self, syllables: &[Self::Syllable]) -> Result<Vec<PhraseEntry>, Self::Error> {
         let mut entries = Vec::new();
         self.lookup_into(syllables, &mut entries)?;
         Ok(entries)
@@ -1246,7 +1245,7 @@ impl Dictionary for RuntimeDict<'_> {
         &self,
         syllables: &[Self::Syllable],
         tones: &[u8],
-    ) -> Result<Vec<Self::Entry>, Self::Error> {
+    ) -> Result<Vec<PhraseEntry>, Self::Error> {
         let mut ranges = PhraseIndexRanges::new();
         self.trellis_ranges(syllables, tones, &mut ranges)?;
         let mut out = Vec::new();
@@ -1393,7 +1392,7 @@ impl Dictionary for RuntimeDict<'_> {
     fn lookup_into(
         &self,
         syllables: &[Self::Syllable],
-        out: &mut Vec<Self::Entry>,
+        out: &mut Vec<PhraseEntry>,
     ) -> Result<(), Self::Error> {
         self.lookup_into_flagged(syllables, out).map(|_| ())
     }
@@ -1401,7 +1400,7 @@ impl Dictionary for RuntimeDict<'_> {
     fn lookup_into_flagged(
         &self,
         syllables: &[Self::Syllable],
-        out: &mut Vec<Self::Entry>,
+        out: &mut Vec<PhraseEntry>,
     ) -> Result<bool, Self::Error> {
         self.fill_lookup(syllables, out, true)
     }
@@ -1409,7 +1408,7 @@ impl Dictionary for RuntimeDict<'_> {
     fn lookup_candidates_into(
         &self,
         syllables: &[Self::Syllable],
-        out: &mut Vec<Self::Entry>,
+        out: &mut Vec<PhraseEntry>,
     ) -> Result<bool, Self::Error> {
         self.fill_lookup(syllables, out, false)
     }
@@ -1418,7 +1417,7 @@ impl Dictionary for RuntimeDict<'_> {
         &self,
         syllables: &[Self::Syllable],
         tones: &[u8],
-        out: &mut Vec<Self::Entry>,
+        out: &mut Vec<PhraseEntry>,
     ) -> Result<Option<(bool, bool)>, Self::Error> {
         if !self.system.pinyin_attachment_failed() {
             return Ok(None);
@@ -1563,7 +1562,7 @@ impl Dictionary for RuntimeDict<'_> {
                 .is_some_and(|store| store.phrase_table_contains_ucs4(words).unwrap_or(false))
     }
 
-    fn lookup_addon(&self, syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error> {
+    fn lookup_addon(&self, syllables: &[Self::Syllable]) -> Result<Vec<PhraseEntry>, Self::Error> {
         let mut entries = Vec::new();
         self.lookup_addon_into(syllables, &mut entries)?;
         Ok(entries)
@@ -1572,7 +1571,7 @@ impl Dictionary for RuntimeDict<'_> {
     fn lookup_addon_into(
         &self,
         syllables: &[Self::Syllable],
-        out: &mut Vec<Self::Entry>,
+        out: &mut Vec<PhraseEntry>,
     ) -> Result<(), Self::Error> {
         let addons = self
             .addons
@@ -1584,7 +1583,7 @@ impl Dictionary for RuntimeDict<'_> {
     fn lookup_addon_candidates_into(
         &self,
         syllables: &[Self::Syllable],
-        out: &mut Vec<Self::Entry>,
+        out: &mut Vec<PhraseEntry>,
     ) -> Result<(), Self::Error> {
         let addons = self
             .addons

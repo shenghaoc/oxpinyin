@@ -888,7 +888,6 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
     for SystemDictionary<L, T>
 {
     type Syllable = SyllableKey;
-    type Entry = PhraseEntry;
     type Error = DictError;
     type PathMemo = ();
 

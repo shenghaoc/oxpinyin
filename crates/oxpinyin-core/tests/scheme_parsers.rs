@@ -18,7 +18,7 @@
 //! invariants live in `tests/parser_acceptance.rs`.
 
 use oxpinyin_core::{
-    DoublePinyinParser, DoublePinyinScheme, FullPinyinParser, FullPinyinScheme, InputParser,
+    DoublePinyinParser, DoublePinyinScheme, FullPinyinParser, FullPinyinScheme, OptionBits,
     SyllableKey, ZhuyinParser, ZhuyinScheme, luoma_pinyin_index, parse_full_pinyin_index,
     secondary_zhuyin_index,
 };
@@ -49,7 +49,8 @@ fn parser_accepts_spellings(parser: &FullPinyinParser, joined: &str) -> bool {
     joined
         .split('\'')
         .all(|spelling| spelling.is_empty() || SyllableKey::from_text(spelling).is_some())
-        && !InputParser::parse(parser, joined.as_bytes())
+        && !parser
+            .parse_with_options(joined.as_bytes(), OptionBits::default())
             .unwrap()
             .is_empty()
 }

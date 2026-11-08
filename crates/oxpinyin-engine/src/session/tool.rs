@@ -118,7 +118,7 @@ pub fn lookup<D, L>(
     model: &L,
 ) -> Result<Vec<LookupRow>, crate::EngineError>
 where
-    D: oxpinyin_core::Dictionary<Syllable = SyllableKey, Entry = oxpinyin_core::PhraseEntry>,
+    D: oxpinyin_core::Dictionary<Syllable = SyllableKey>,
     D::Error: core::fmt::Display,
     L: oxpinyin_core::LanguageModel<Token = oxpinyin_core::PhraseToken>,
     L::Error: core::fmt::Display,
@@ -160,7 +160,7 @@ pub fn phrase_lookup<D, L>(
     model: &L,
 ) -> Result<Vec<oxpinyin_core::PhraseToken>, crate::EngineError>
 where
-    D: oxpinyin_core::Dictionary<Syllable = SyllableKey, Entry = oxpinyin_core::PhraseEntry>,
+    D: oxpinyin_core::Dictionary<Syllable = SyllableKey>,
     D::Error: core::fmt::Display,
     L: oxpinyin_core::LanguageModel<Token = oxpinyin_core::PhraseToken>,
     L::Error: core::fmt::Display,

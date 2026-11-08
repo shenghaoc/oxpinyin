@@ -276,7 +276,6 @@ struct EvalDictionary<'a> {
 
 impl Dictionary for EvalDictionary<'_> {
     type Syllable = SyllableKey;
-    type Entry = PhraseEntry;
     type Error = DictError;
     type PathMemo = ();
 

@@ -89,7 +89,7 @@ pub fn correction_rate<D, P>(
     sentences: &[Vec<PhraseToken>],
 ) -> Result<EvalReport, EvalError>
 where
-    D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+    D: Dictionary<Syllable = SyllableKey>,
     D::Error: core::fmt::Display,
     P: PhraseSource,
 {
@@ -221,7 +221,7 @@ fn get_nbest_match<D>(
     keys: &[SyllableKey],
 ) -> Result<Vec<PhraseToken>, EvalError>
 where
-    D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+    D: Dictionary<Syllable = SyllableKey>,
     D::Error: core::fmt::Display,
 {
     if keys.is_empty() {
