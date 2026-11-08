@@ -13,6 +13,16 @@ use crate::sentence::zhuyin_guess_candidates_after_cursor;
 use crate::state::instance_mut;
 use crate::types::{LookupCandidate, ZhuyinContext, ZhuyinInstance};
 
+/// Serialises the tests that read the pin's process-wide key slots
+/// (`zhuyin_get_zhuyin_key`, `zhuyin_get_zhuyin_key_rest`): the slots are
+/// statics, so two such tests running on different threads overwrite each
+/// other's answers. Hold the guard for the whole test.
+pub fn key_slot_guard() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// The committed mini fixture (`fixtures/w3/<backend ext>`), the same
 /// data directory the pinyin crate's e2e tests open.
 pub fn system_dir() -> PathBuf {
@@ -288,21 +298,9 @@ pub struct ChildRun {
 /// test's full path as libtest prints it (`module::test`). A child that
 /// panics or dies fails the parent's assertion on its exit status.
 pub fn run_in_child(name: &str, body: impl FnOnce(&Path)) -> ChildRun {
-    if std::env::var_os(DEATH_TEST).is_some_and(|value| value == name) {
-        let dir = std::env::var_os(CHILD_DIR).expect("the child's user directory");
-        body(Path::new(&dir));
-        std::process::exit(0);
-    }
-    let scratch = tempfile::tempdir().expect("child scratch");
-    let user_dir = scratch.path().join("user");
-    std::fs::create_dir(&user_dir).expect("child user directory");
-    let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
-        .args(["--exact", name, "--test-threads=1"])
-        .env(DEATH_TEST, name)
-        .env(CHILD_DIR, &user_dir)
-        .env("TMPDIR", scratch.path())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
+    let (command, user_dir, scratch) = child_command(name, body);
+    let output = assert_cmd::Command::from_std(command)
+        .timeout(CHILD_LIMIT)
         .output()
         .expect("re-run the test binary");
     // libtest reports a child's panic on stdout.
@@ -320,19 +318,49 @@ pub fn run_in_child(name: &str, body: impl FnOnce(&Path)) -> ChildRun {
     }
 }
 
+/// [`assert_aborts`] with the user directory of [`run_in_child`]: `body`
+/// gets a fresh user directory that stays on disk for the parent, so a test
+/// can read the files the child left before its abort.
+pub fn abort_in_child(name: &str, body: impl FnOnce(&Path)) -> ChildRun {
+    let (command, user_dir, scratch) = child_command(name, body);
+    let output = wait_for_abort(name, command);
+    ChildRun {
+        stderr: output.stderr,
+        user_dir,
+        _scratch: scratch,
+    }
+}
+
+/// In the child, runs `body` on its user directory and exits 0. In the
+/// parent, makes the scratch and user directories and answers the command
+/// that re-runs the test `name` as that child.
+fn child_command(
+    name: &str,
+    body: impl FnOnce(&Path),
+) -> (std::process::Command, PathBuf, tempfile::TempDir) {
+    if std::env::var_os(DEATH_TEST).is_some_and(|value| value == name) {
+        let dir = std::env::var_os(CHILD_DIR).expect("the child's user directory");
+        body(Path::new(&dir));
+        std::process::exit(0);
+    }
+    let scratch = tempfile::tempdir().expect("child scratch");
+    let user_dir = scratch.path().join("user");
+    std::fs::create_dir(&user_dir).expect("child user directory");
+    let mut command = std::process::Command::new(std::env::current_exe().expect("test binary"));
+    command
+        .args(["--exact", name, "--test-threads=1"])
+        .env(DEATH_TEST, name)
+        .env(CHILD_DIR, &user_dir)
+        .env(if cfg!(windows) { "TMP" } else { "TMPDIR" }, scratch.path());
+    (command, user_dir, scratch)
+}
+
 /// Writes a conforming `user.conf` for the fixture data set and `payload`,
 /// framed as a `MemoryChunk`, as the user `.dbin` named `file`: the shape a
 /// journal-replay test needs, since a non-conforming profile is wiped
 /// before any library loads.
 pub fn plant_log(user_dir: &std::path::Path, file: &str, payload: &[u8]) {
-    let conf = oxpinyin_data::table_info::TableConf::load_from_dir(&system_dir())
-        .expect("fixture table.conf");
-    let versions = oxpinyin_data::user_files::SystemVersions::from_conf(&conf);
-    std::fs::write(
-        user_dir.join("user.conf"),
-        oxpinyin_data::user_files::UserTableInfo::conform_to(&versions).to_text(),
-    )
-    .expect("write user.conf");
+    write_user_conf(user_dir, &system_dir());
     std::fs::write(
         user_dir.join(file),
         oxpinyin_data::chunk_format::build_memory_chunk(payload).expect("frame"),
@@ -358,6 +386,223 @@ pub fn plant_bigram(user_dir: &std::path::Path, rows: Vec<(Vec<u8>, Vec<u8>)>) {
         1,
     )
     .expect("write the profile");
+}
+
+/// Writes a `user.conf` in `user_dir` that conforms to the `table.conf` of
+/// `system`, so the next init keeps the user files beside it.
+pub fn write_user_conf(user_dir: &Path, system: &Path) {
+    let conf = oxpinyin_data::table_info::TableConf::load_from_dir(system).expect("table.conf");
+    let versions = oxpinyin_data::user_files::SystemVersions::from_conf(&conf);
+    std::fs::write(
+        user_dir.join("user.conf"),
+        oxpinyin_data::user_files::UserTableInfo::conform_to(&versions).to_text(),
+    )
+    .expect("write user.conf");
+}
+
+/// Replaces the tree DBM at `path` with one that holds exactly `rows`, raw
+/// keys and values that the library may never write: a system table. Only
+/// the tkrzw pinned-data tests craft system tables.
+#[cfg(feature = "tkrzw")]
+pub fn craft_tree(path: &Path, rows: &[(Vec<u8>, Vec<u8>)]) {
+    use oxpinyin_store::{WriteStore as _, WriteTxn as _};
+    if path.exists() {
+        std::fs::remove_file(path).expect("replace the DBM");
+    }
+    let store = oxpinyin_store::DefaultStore::create(path).expect("create the DBM");
+    store
+        .write(|txn| {
+            for (key, value) in rows {
+                txn.put_raw(key, value)?;
+            }
+            Ok(())
+        })
+        .expect("write the DBM rows");
+}
+
+/// Replaces the user index at `path` with one that holds exactly `rows`,
+/// raw keys and values that the library may never write. It is written as
+/// the library's own save writes a user index: a snapshot on Kyoto
+/// Cabinet, a tree file on tkrzw and Berkeley DB.
+pub fn craft_user_index(path: &Path, rows: &[(Vec<u8>, Vec<u8>)]) {
+    use oxpinyin_store::WriteStore as _;
+    if path.exists() {
+        std::fs::remove_file(path).expect("replace the user index");
+    }
+    oxpinyin_store::DefaultStore::write_user_index(path, |sink| {
+        for (key, value) in rows {
+            sink(key, value)?;
+        }
+        Ok(())
+    })
+    .expect("write the user index");
+}
+
+/// Each character of `text` as a little-endian UCS-4 word: the key of the
+/// user phrase index.
+pub fn ucs4_key(text: &str) -> Vec<u8> {
+    text.chars()
+        .flat_map(|ch| u32::from(ch).to_le_bytes())
+        .collect()
+}
+
+/// `zhuyin_init` on `system` with `user` (NULL when `None`). The answer can
+/// be NULL.
+pub fn init_on(system: &Path, user: Option<&Path>) -> *mut ZhuyinContext {
+    let system = cstr(system.to_str().expect("UTF-8 path"));
+    let user = user.map(|user| cstr(user.to_str().expect("UTF-8 path")));
+    zhuyin_init(
+        system.as_ptr(),
+        user.as_ref().map_or(std::ptr::null(), |user| user.as_ptr()),
+    )
+}
+
+/// Imports `text` with the chewing `reading` and `count` into `library`.
+/// Answers the add.
+pub fn import(
+    context: *mut ZhuyinContext,
+    library: u8,
+    text: &str,
+    reading: &[u8],
+    count: i32,
+) -> bool {
+    let iter = crate::iterators::zhuyin_begin_add_phrases(context, library);
+    assert!(!iter.is_null(), "the import iterator");
+    let text = cstr(text);
+    let reading = std::ffi::CString::new(reading).expect("no interior NUL");
+    let added =
+        crate::iterators::zhuyin_iterator_add_phrase(iter, text.as_ptr(), reading.as_ptr(), count);
+    crate::iterators::zhuyin_end_add_phrases(iter);
+    added
+}
+
+/// The tokens `zhuyin_lookup_tokens` finds for `text`.
+pub fn tokens_of(instance: *mut ZhuyinInstance, text: &str) -> Vec<u32> {
+    // SAFETY: a fresh GArray of four-byte elements, freed below.
+    let array = unsafe { glib_sys::g_array_new(0, 0, 4) };
+    crate::dict::zhuyin_lookup_tokens(instance, cstr(text).as_ptr(), array);
+    // SAFETY: the array is live and holds `len` four-byte elements.
+    let tokens = unsafe {
+        let view = &*array;
+        (0..view.len as usize)
+            .map(|index| view.data.cast::<u32>().add(index).read_unaligned())
+            .collect()
+    };
+    // SAFETY: the array was allocated above and is freed once.
+    unsafe { glib_sys::g_array_free(array, 1) };
+    tokens
+}
+
+/// One GLib log record: its domain and its level bits.
+pub type LogRecord = (Option<String>, u32);
+
+thread_local! {
+    static CAPTURED: std::cell::RefCell<Option<Vec<LogRecord>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// The process default GLib handler while a test captures: it records on a
+/// capturing thread and forwards to GLib's own handler on every other thread.
+unsafe extern "C" fn capture_log(
+    domain: *const c_char,
+    level: glib_sys::GLogLevelFlags,
+    message: *const c_char,
+    data: glib_sys::gpointer,
+) {
+    let captured = CAPTURED.with(|logs| {
+        let mut logs = logs.borrow_mut();
+        let Some(logs) = logs.as_mut() else {
+            return false;
+        };
+        let domain = (!domain.is_null()).then(|| {
+            // SAFETY: GLib supplies a live NUL-terminated domain.
+            unsafe { std::ffi::CStr::from_ptr(domain) }
+                .to_string_lossy()
+                .into_owned()
+        });
+        logs.push((domain, level & glib_sys::G_LOG_LEVEL_MASK));
+        true
+    });
+    if !captured {
+        // SAFETY: GLib's unchanged arguments, for a thread that does not capture.
+        unsafe { glib_sys::g_log_default_handler(domain, level, message, data) };
+    }
+}
+
+/// Captures the GLib log records this thread makes until it is dropped.
+pub struct LogCapture;
+
+impl LogCapture {
+    /// Starts the capture on this thread.
+    pub fn new() -> Self {
+        static INSTALL: std::sync::Once = std::sync::Once::new();
+        INSTALL.call_once(|| {
+            // SAFETY: the handler is a plain function for the life of the
+            // process and `user_data` is unused.
+            unsafe { glib_sys::g_log_set_default_handler(Some(capture_log), std::ptr::null_mut()) };
+        });
+        CAPTURED.with(|logs| *logs.borrow_mut() = Some(Vec::new()));
+        Self
+    }
+
+    /// The records since the start or the last take.
+    pub fn take(&self) -> Vec<LogRecord> {
+        CAPTURED.with(|logs| {
+            logs.borrow_mut()
+                .as_mut()
+                .map(std::mem::take)
+                .unwrap_or_default()
+        })
+    }
+}
+
+impl Drop for LogCapture {
+    fn drop(&mut self) {
+        CAPTURED.with(|logs| *logs.borrow_mut() = None);
+    }
+}
+
+/// Writes the pin-written profile `case_id` of `testdata/pin-profiles.txt`
+/// into `dir`: each file at its size, the listed bytes at their offsets, and
+/// zero elsewhere.
+/// The profiles hold tkrzw files, so only the tkrzw pinned-data tests read them.
+#[cfg(feature = "tkrzw")]
+pub fn write_pin_profile(case_id: &str, dir: &Path) {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/pin-profiles.txt");
+    let text = std::fs::read_to_string(&path).expect("testdata/pin-profiles.txt");
+    let mut active = false;
+    let mut file: Option<(PathBuf, Vec<u8>)> = None;
+    let flush = |file: &mut Option<(PathBuf, Vec<u8>)>| {
+        if let Some((name, bytes)) = file.take() {
+            std::fs::write(name, bytes).expect("write a profile file");
+        }
+    };
+    for line in text.lines().filter(|line| !line.starts_with('#')) {
+        if let Some(id) = line.strip_prefix("profile ") {
+            flush(&mut file);
+            active = id == case_id;
+            continue;
+        }
+        if !active {
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("file ") {
+            flush(&mut file);
+            let (name, size) = rest.split_once(' ').expect("file <name> <size>");
+            let size = size.parse().expect("a file size");
+            file = Some((dir.join(name), vec![0; size]));
+        } else {
+            let (offset, hex) = line.split_once(' ').expect("<offset> <hex>");
+            let offset: usize = offset.parse().expect("a byte offset");
+            let (_, bytes) = file.as_mut().expect("a run follows its file line");
+            for (at, pair) in hex.as_bytes().chunks(2).enumerate() {
+                let pair = std::str::from_utf8(pair).expect("hex");
+                bytes[offset + at] = u8::from_str_radix(pair, 16).expect("hex");
+            }
+        }
+    }
+    flush(&mut file);
+    assert!(dir.join("user.conf").is_file(), "no profile {case_id}");
 }
 
 /// A private system directory under `parent`: every fixture file linked in,
