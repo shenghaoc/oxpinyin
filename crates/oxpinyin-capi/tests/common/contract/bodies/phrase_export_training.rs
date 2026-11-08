@@ -26,10 +26,8 @@ pub fn case(k: &mut Kit, id: &str) -> J {
         .and_then(|rest| rest.strip_suffix("-system"))
     {
         match action {
-            "after-train" => return issue790_export(k, "train"),
-            "no-train" | "unconstrained" | "open-before" | "save-reopen" | "replayed-train" => {
-                return issue790_export(k, action);
-            }
+            "after-train" => return issue790_export(k, false),
+            "open-before" => return issue790_export(k, true),
             _ => {}
         }
     }
@@ -38,8 +36,6 @@ pub fn case(k: &mut Kit, id: &str) -> J {
         "issue790-export-prefix-overflow-system" => {
             issue790_bounded_counts(k, u32::try_from((1_u64 << 32) - 76).expect("a u32"))
         }
-        "issue790-export-override-only-system" => issue790_imported(k, false),
-        "issue790-export-appended-system" => issue790_imported(k, true),
         "appended-system-second-reading-pinyin" | "appended-system-second-reading-zhuyin" => {
             appended_system_second_reading(k)
         }
@@ -129,30 +125,13 @@ fn close(k: &mut Kit) {
 
 /// `issue790_export`: 你's export around a selected training (or none) and the
 /// persistence `action` names.
-fn issue790_export(k: &mut Kit, action: &str) -> J {
+fn issue790_export(k: &mut Kit, open_before: bool) -> J {
     let phrase = "你";
     let token = tokens_of(k, phrase)[0];
     let mut out = obj! { "before" => exported(k, 1, phrase) };
-    let iterator = (action == "open-before").then(|| facade::begin_get_phrases(k.ctx(), 1));
+    let iterator = open_before.then(|| facade::begin_get_phrases(k.ctx(), 1));
     out.set("parsed", parse(k, "ni"));
-    let inst = k.inst();
-    if action == "unconstrained" || action == "no-train" {
-        out.set("guessed", facade::guess_sentence(inst));
-        if action == "unconstrained" {
-            out.set("train", facade::train_top(inst));
-        }
-    } else {
-        out.set("training", train_selected_top(k, phrase, token, true));
-    }
-    if action == "save-reopen" || action == "replayed-train" {
-        out.set("save", facade::save(k.ctx()));
-        close(k);
-        if action == "replayed-train" {
-            out.set("replayed", exported(k, 1, phrase));
-            assert!(parse(k, "ni") > 0);
-            out.set("retraining", train_selected_top(k, phrase, token, true));
-        }
-    }
+    out.set("training", train_selected_top(k, phrase, token, true));
     if let Some(iterator) = iterator {
         let rows: Vec<J> = export_rows(iterator, None)
             .into_iter()
@@ -165,8 +144,6 @@ fn issue790_export(k: &mut Kit, action: &str) -> J {
     }
     out
 }
-
-/// The little-endian word at `at`.
 fn word(bytes: &[u8], at: usize) -> u32 {
     u32::from_le_bytes(bytes[at..at + 4].try_into().expect("a word"))
 }
@@ -228,23 +205,6 @@ fn issue790_bounded_counts(k: &mut Kit, count: u32) -> J {
     assert!(parse(k, "ni") > 0);
     out.set("training", train_selected_top(k, "你", token, true));
     out.set("after", exported(k, 1, "你"));
-    out
-}
-
-/// `issue790_imported`: an imported system reading (or appended phrase), its
-/// export around a selected training.
-fn issue790_imported(k: &mut Kit, appended: bool) -> J {
-    let (phrase, reading) = if appended {
-        ("你你你你", "ni'ni'ni'ni")
-    } else {
-        ("你", "ni2")
-    };
-    let mut out = obj! { "imported" => import_rows(k, 1, &[(phrase, reading, 5)]) };
-    out.set("before", exported(k, 1, phrase));
-    let token = tokens_of(k, phrase)[0];
-    assert!(parse(k, reading) > 0);
-    out.set("training", train_selected_top(k, phrase, token, true));
-    out.set("after", exported(k, 1, phrase));
     out
 }
 

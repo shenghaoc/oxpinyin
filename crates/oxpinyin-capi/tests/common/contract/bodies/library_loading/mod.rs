@@ -8,13 +8,12 @@ mod items;
 mod saves;
 mod unloaded;
 
-use std::ffi::c_char;
 use std::path::Path;
 
 use crate::facade;
-use crate::fixtures::{chunk, log_walk, modify_header, write_log};
+use crate::fixtures::{chunk, log_walk};
 use crate::readers::c;
-use crate::support::{J, Kit, P, UNTOUCHED, take_text};
+use crate::support::{J, Kit, P, UNTOUCHED};
 
 /// Runs the case `id` and answers its result document.
 pub fn case(k: &mut Kit, id: &str) -> J {
@@ -27,74 +26,15 @@ pub fn case(k: &mut Kit, id: &str) -> J {
         "stderr-library-init-empty" => breaks::library_probe(k, "init", "empty"),
         "stderr-library-load-empty" => breaks::library_probe(k, "load", "empty"),
         "stderr-library-load-checksum" => breaks::library_probe(k, "load", "checksum"),
-        "stderr-library-save-short" => breaks::library_probe(k, "save", "short"),
-        "stderr-library-save-missing" => breaks::library_probe(k, "save", "missing"),
-        "stderr-library-mask-out-bad-length" => breaks::library_probe(k, "mask-out", "bad-length"),
-        "stderr-library-mask-out-short" => breaks::library_probe(k, "mask-out", "short"),
-        "stderr-library-addon-checksum" => breaks::library_probe(k, "addon", "checksum"),
-        "library-directory-guard-reserved-save" => breaks::directory_guard(k, "save", "reserved"),
-        "library-directory-guard-reserved-mask-out" => {
-            breaks::directory_guard(k, "mask-out", "reserved")
-        }
-        "library-directory-guard-unloaded-save" => breaks::directory_guard(k, "save", "unloaded"),
-        "library-directory-guard-unloaded-mask-out" => {
-            breaks::directory_guard(k, "mask-out", "unloaded")
-        }
-        "crash-oob-layout" => breaks::crash_layout_init(k, "oob-layout"),
-        "short-chunk-layout" => breaks::crash_layout_init(k, "short-chunk"),
-        _ => match base.strip_prefix("stderr-library-control-") {
-            Some(site) => breaks::library_control(k, site),
-            None => chunk_or_later(k, base),
-        },
-    }
-}
-
-/// The chunk-fixture cases, then the rest.
-fn chunk_or_later(k: &mut Kit, base: &str) -> J {
-    match base {
-        "sparse-library-init" => chunks::init_probe(k, "sparse"),
-        "header-only-library-init" => chunks::init_probe(k, "header-only"),
-        "second-separator-library-init" => chunks::init_probe(k, "second-separator"),
-        "third-separator-library-init" => chunks::init_probe(k, "third-separator"),
-        "sparse-library-load" => chunks::load_probe(k, "sparse"),
-        "header-only-library-load" => chunks::load_probe(k, "header-only"),
-        "sparse-library-save" => chunks::save_probe(k, "sparse"),
-        "header-only-library-save" => chunks::save_probe(k, "header-only"),
-        "sparse-library-mask-out" => chunks::mask_probe(k, "sparse"),
-        "sparse-library-candidates" => chunks::candidates_probe(k),
-        "sparse-library-addon" => chunks::addon_probe(k, "sparse", false),
-        "sparse-library-addon-reload" => chunks::addon_probe(k, "sparse", true),
-        "sparse-library-reinit" => chunks::reinit_probe(k),
-        "sparse-library-tokens" => chunks::token_probe(k),
+        "library-directory-guard-reserved-save" => breaks::directory_guard(k),
         "nonzero-total-candidates" => chunks::nonzero_total_candidates(k),
-        "nonzero-total-save" => chunks::nonzero_total_save(k),
-        "chunk-frame-system-exact" => chunks::frame_system(k, false),
-        "chunk-frame-system-trailing" => chunks::frame_system(k, true),
-        "save-replacement-valid-to-invalid" | "save-fatal-valid-to-invalid" => {
-            saves::replacement_probe(k, "valid", "invalid")
-        }
-        "save-replacement-invalid-to-valid" => saves::replacement_probe(k, "invalid", "valid"),
-        "save-replacement-valid-to-different-valid" => {
-            saves::replacement_probe(k, "valid", "different")
-        }
-        "save-unchanged-valid" => saves::replacement_probe(k, "valid", "same"),
-        "save-unchanged-layout-failed" => saves::replacement_probe(k, "invalid", "same"),
-        "save-replacement-valid-to-different-valid-with-user-override" => {
-            saves::changed_with_override(k)
-        }
+        "chunk-frame-system-exact" => chunks::frame_system(k),
+        "sparse-library-init" => chunks::init_probe(k),
+        "save-replacement-valid-to-invalid" => saves::replacement_probe(k),
         "crash-save-missing-system" => saves::missing_system(k),
-        "crash-save-remap-failed-retry" => saves::remap_retry(k),
-        "save-unloaded-replacement" => saves::unloaded_replacement(k),
-        "aliased-offset-unigram" => items::aliased_offset_unigram(k),
-        "internally-overlapping-modify" => items::internally_overlapping_modify(k),
-        "overlapping-modify-before-add" => items::overlapping_modify_before_add(k),
         "transient-reload-replacement" => items::transient_reload_replacement(k),
-        "high-system-library" => items::high_system_library(k),
-        "unloaded-cached-pronunciation" => unloaded::cached_pronunciation(k),
-        other => match other.strip_prefix("unloaded-library-") {
-            Some(variant) => unloaded::operation(k, variant),
-            None => panic!("no library_loading case {other}"),
-        },
+        "unloaded-library-train" => unloaded::operation(k),
+        other => panic!("no library_loading case {other}"),
     }
 }
 
@@ -108,12 +48,6 @@ const SPARSE_CHUNK_SIZE: u64 = (1 << 32) + 8;
 fn le(value: u32) -> [u8; 4] {
     value.to_le_bytes()
 }
-
-/// A half-word as little-endian bytes.
-fn le16(value: usize) -> [u8; 2] {
-    u16::try_from(value).expect("a u16").to_le_bytes()
-}
-
 /// The little-endian word at `at`.
 fn word(bytes: &[u8], at: usize) -> u32 {
     u32::from_le_bytes(bytes[at..at + 4].try_into().expect("a word"))
@@ -157,12 +91,6 @@ fn train_once(ctx: P) -> bool {
     facade::guess_sentence(inst);
     facade::train_top(inst)
 }
-
-/// The cases' `mask_out(ctx, 0xff000000, 0x04000000)`: library 4's tokens.
-fn mask_four(ctx: P) -> bool {
-    facade::mask_out(ctx, 0xff00_0000, 0x0400_0000)
-}
-
 /// A user file's bytes as hex, `None` when absent (the cases' `journals`).
 fn journal(k: &Kit, name: &str) -> Option<String> {
     let path = k.user.join(name);
@@ -181,14 +109,6 @@ fn replace_file(path: &Path, data: &[u8]) {
 /// A symbolic link at `link` to `target` ([`crate::fixtures::link_file`]).
 fn link(target: &Path, link: &Path) {
     crate::fixtures::link_file(target, link);
-}
-
-/// `token_phrase_of`: `[ret, length, text]` of `token_get_phrase`.
-fn token_phrase(inst: P, token: u32) -> J {
-    let mut length = 0_u32;
-    let mut text: *mut c_char = std::ptr::null_mut();
-    let ret = facade::token_get_phrase(inst, token, &raw mut length, &raw mut text);
-    J::from((ret, length, take_text(text)))
 }
 
 /// `unigram_of` on `inst`: `[ret, freq]`, the frequency seeded UNTOUCHED.

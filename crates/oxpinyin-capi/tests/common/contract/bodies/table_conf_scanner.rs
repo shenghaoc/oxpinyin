@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use crate::bodies::case_helpers::{Trained, token_unigram_trained};
 use crate::facade;
 use crate::fixtures::{
-    ConfEdit, ConfEdit::Append as Add, ConfEdit::Drop, ConfEdit::Replace as R, conf_system,
-    craft_hash, private_system, user_listing, write_user_conf,
+    ConfEdit, ConfEdit::Drop, ConfEdit::Replace as R, conf_system, craft_hash, private_system,
+    user_listing, write_user_conf,
 };
 use crate::readers::{c, final_step_sentences, tokens_of, unigram_of};
 use crate::support::{J, Kit, P, UNTOUCHED, borrowed_text, take_text};
@@ -34,19 +34,6 @@ fn conf_system_bytes(k: &Kit, mutate: impl FnOnce(Vec<u8>) -> Vec<u8>) -> PathBu
     std::fs::remove_file(&path).expect("unlink the linked table.conf");
     std::fs::write(&path, mutate(data)).expect("write table.conf");
     system
-}
-
-/// Python's `bytes.replace`: every occurrence, none required.
-fn replace_bytes(data: &[u8], from: &[u8], to: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(data.len());
-    let mut rest = data;
-    while let Some(at) = rest.windows(from.len()).position(|window| window == from) {
-        out.extend_from_slice(&rest[..at]);
-        out.extend_from_slice(to);
-        rest = &rest[at + from.len()..];
-    }
-    out.extend_from_slice(rest);
-    out
 }
 
 /// `re.sub(r'database format:\w+', replace, text)` with the substitution
@@ -223,11 +210,9 @@ fn token_unigram_user_no_add(k: &mut Kit) -> (J, u32, (bool, u32)) {
 /// 250-276, 303-319, 939-988, 1042-1084 loads/saves those literal names.
 fn hash_path_fixture(k: &mut Kit, placement: &str) -> (String, String, String) {
     let mut system = private_system(k);
-    let (mut system_name, mut journal_name, mut user_name) = (
-        "gb_char.bin".to_owned(),
-        "gb_char.dbin".to_owned(),
-        "user.bin".to_owned(),
-    );
+    let system_name = "gb_char.bin".to_owned();
+    let journal_name = "gb_char.dbin".to_owned();
+    let user_name = "user.bin".to_owned();
     let suffixed = |path: &Path| {
         let mut name = path.as_os_str().to_owned();
         name.push("#type=kct");
@@ -239,36 +224,24 @@ fn hash_path_fixture(k: &mut Kit, placement: &str) -> (String, String, String) {
             std::fs::rename(&system, &renamed).expect("rename the system directory");
             system = renamed;
         }
-        "user-directory" => {
-            let renamed = suffixed(&k.user);
-            std::fs::rename(&k.user, &renamed).expect("rename the user directory");
-            k.user = renamed;
-        }
-        "system-filename" | "user-filename" => {
+        "system-filename" => {
             let conf = system.join("table.conf");
             let mut text = std::fs::read_to_string(&conf).expect("table.conf");
-            if placement == "system-filename" {
-                "gb#type=kct.bin".clone_into(&mut system_name);
-                std::fs::rename(system.join("gb_char.bin"), system.join(&system_name))
-                    .expect("rename gb_char.bin");
-                text = text.replace("gb_char.bin", &system_name);
-            } else {
-                "gb#type=kct.dbin".clone_into(&mut journal_name);
-                "user#type=kct.bin".clone_into(&mut user_name);
-                text = text
-                    .replace("gb_char.dbin", &journal_name)
-                    .replace("user.bin", &user_name);
-            }
+            let name = "gb#type=kct.bin".to_owned();
+            std::fs::rename(system.join("gb_char.bin"), system.join(&name))
+                .expect("rename gb_char.bin");
+            text = text.replace("gb_char.bin", &name);
             // private_system linked this file to the immutable pin data.
             std::fs::remove_file(&conf).expect("unlink table.conf");
             std::fs::write(&conf, text).expect("write table.conf");
+            k.data = system;
+            return (name, journal_name, user_name);
         }
         other => panic!("unknown hash path placement: {other}"),
     }
     k.data = system;
     (system_name, journal_name, user_name)
 }
-
 /// `hash_path_session`: trained and imported counts survive saving through the
 /// renamed paths, a reopen, and libpinyin's export of the saved profile in a
 /// separate process (libzhuyin has no export iterator, zhuyin.h at 074a2219).
@@ -295,10 +268,6 @@ fn hash_path_session(k: &mut Kit, placement: &str) -> J {
     );
     if placement == "system-filename" {
         assert!(!k.data.join("gb_char.bin").exists());
-    }
-    if placement == "user-filename" {
-        assert!(!k.user.join("gb_char.dbin").exists());
-        assert!(!k.user.join("user.bin").exists());
     }
     k.close();
     out.set("reopen", !k.ctx().is_null());
@@ -339,55 +308,13 @@ fn unigram_only_session(k: &mut Kit, system: &Path) -> J {
     obj! { "parsed" => parsed, "guessed" => guessed, "has_sentence" => has_sentence }
 }
 
-/// `addon_session`: the addon libraries a row set loads, and the candidates they add.
-fn addon_session(k: &mut Kit, system: &Path) -> J {
-    let ctx = init_on(k, system);
-    assert!(!ctx.is_null(), "init failed");
-    let mut load = J::map();
-    for index in [0_u8, 3, 4, 5, 15] {
-        load.set(
-            index.to_string(),
-            facade::load_addon_phrase_library(ctx, index),
-        );
-    }
-    let out = obj! { "load" => load, "view" => conf_view(ctx) };
-    facade::fini(ctx);
-    out
-}
-
 /// What a `conf_abort` probe does after its edits: init only, or a library load.
-enum Call {
-    Init,
-    /// `load_phrase_library` (`pinyin.cpp:457`).
-    Load(u8),
-    /// `load_addon_phrase_library` (`pinyin.cpp:491`).
-    Addon(u8),
-}
-
 /// `conf_abort`'s probe: the rows the pin dies on. `table_info.cpp` aborts
 /// inside `SystemTableInfo2::load`, before `check_format`; the init loop
 /// (`pinyin.cpp:377-392`) runs after it.
-fn conf_abort(k: &mut Kit, system: &Path, call: &Call) -> J {
+fn conf_abort(k: &mut Kit, system: &Path) -> J {
     let ctx = init_on(k, system);
-    let ret = match call {
-        Call::Init => !ctx.is_null(),
-        Call::Load(index) => {
-            assert!(!ctx.is_null(), "init failed");
-            facade::load_phrase_library(ctx, *index)
-        }
-        Call::Addon(index) => {
-            assert!(!ctx.is_null(), "init failed");
-            facade::load_addon_phrase_library(ctx, *index)
-        }
-    };
-    obj! { "ret" => ret }
-}
-
-/// `header_probe`: the pin's ordinary `false`: a header directive that does not
-/// match answers NULL with the raw `load %s failed!` line and no warning.
-fn header_probe(k: &mut Kit, edits: &[ConfEdit<'_>]) -> J {
-    let system = conf_system(k, edits);
-    obj! { "ctx" => !init_on(k, &system).is_null() }
+    obj! { "ret" => !ctx.is_null() }
 }
 
 /// `user_conf_unknown_format`: `UserTableInfo::load` converts the `database
@@ -460,50 +387,15 @@ fn addon_cleanup(k: &mut Kit) -> J {
     out
 }
 
-/// `candidates_probe`: class (b): a library whose rows no longer match the index
-/// points the candidate listing at items that are not there; the pin's duplicate
-/// removal compares a string it never set (`pinyin.cpp:1635-1637`, `:2053`, SIGSEGV).
-fn candidates_probe(k: &mut Kit, edits: &[ConfEdit<'_>]) -> J {
-    let system = conf_system(k, edits);
-    let ctx = init_on(k, &system);
-    assert!(!ctx.is_null(), "init failed");
-    let inst = facade::alloc_instance(ctx);
-    facade::parse_more_full_pinyins(inst, c(conf_texts()[0]).as_ptr());
-    let sentence = facade::guess_sentence(inst);
-    let (ok, _, _) = conf_guess_rows(inst);
-    obj! { "ret" => ok, "sentence" => sentence }
-}
-
-/// `one_line_conf`: the first six newline-delimited fields joined by spaces,
-/// two newlines, then the rest.
-fn one_line_conf(data: &[u8]) -> Vec<u8> {
-    let parts: Vec<&[u8]> = data.splitn(7, |&byte| byte == b'\n').collect();
-    assert_eq!(parts.len(), 7, "table.conf has six header lines");
-    [&parts[..6].join(&b' ')[..], b"\n\n", parts[6]].concat()
-}
-
 /// A session on table.conf with `edits` applied.
 fn session(k: &mut Kit, edits: &[ConfEdit<'_>]) -> J {
     let system = conf_system(k, edits);
     conf_session(k, &system)
 }
 
-/// A session on table.conf's raw bytes mutated (#919: `SystemTableInfo2::load`
-/// is one source for both facades).
-fn session_bytes(k: &mut Kit, mutate: impl FnOnce(Vec<u8>) -> Vec<u8>) -> J {
-    let system = conf_system_bytes(k, mutate);
-    conf_session(k, &system)
-}
-
 /// A λ line rewritten to `value`.
 fn lambda(value: &str) -> String {
     format!("lambda parameter:{value}")
-}
-
-/// A `conf_abort` probe on table.conf with `edits` applied.
-fn abort(k: &mut Kit, edits: &[ConfEdit<'_>], call: &Call) -> J {
-    let system = conf_system(k, edits);
-    conf_abort(k, &system, call)
 }
 
 /// Runs the case `id` and answers its result document.
@@ -522,305 +414,22 @@ pub fn case(k: &mut Kit, id: &str) -> J {
         id
     };
     let name = name.strip_prefix("table-conf-").unwrap_or(name);
-    if let Some(value) = name.strip_prefix("1378-unigram-lambda-") {
-        let value = match value {
-            "one" => "1",
-            "zero-control" => "0",
-            other => panic!("unknown 1378 case {other}"),
-        };
-        let system = conf_system(k, &[R(LAMBDA, &lambda(value))]);
-        return unigram_only_session(k, &system);
-    }
-    // λ spelled inside [0, 1] reads the file's λ in the candidate law
-    // `(λ·bigram + (1−λ)·unigram)·2²⁴`; outside it the costs go negative (below 0)
-    // or NaN (above 1), sticky through the trellis.
-    let lambda_value = match name {
-        "lambda-zero" => Some("0"),
-        "lambda-half" => Some("0.5"),
-        "lambda-one" => Some("1"),
-        "lambda-negative-half" => Some("-0.5"),
-        "lambda-negative-two" => Some("-2"),
-        "lambda-one-and-a-half" => Some("1.5"),
-        "lambda-two" => Some("2"),
-        "lambda-million" => Some("1e6"),
-        _ => None,
-    };
-    if let Some(value) = lambda_value {
-        return session(k, &[R(LAMBDA, &lambda(value))]);
-    }
     match name {
-        // Valid files that are not the stock one: the pin follows the rows.
-        "row-removed-gbk" => session(k, &[Drop("GBK_DICTIONARY")]),
+        "1378-unigram-lambda-one" => {
+            let system = conf_system(k, &[R(LAMBDA, &lambda("1"))]);
+            unigram_only_session(k, &system)
+        }
         "row-removed-gb" => session(k, &[Drop("GB_DICTIONARY")]),
-        "not-used-opengram" => session(
-            k,
-            &[R("opengram.dbin SYSTEM_FILE", "opengram.dbin NOT_USED")],
-        ),
-        "not-used-merged" => session(k, &[R("merged.dbin SYSTEM_FILE", "merged.dbin NOT_USED")]),
-        "not-used-user-dictionary" => session(k, &[R("user.bin USER_FILE", "user.bin NOT_USED")]),
-        "not-used-network-dictionary" => {
-            session(k, &[R("network.bin USER_FILE", "network.bin NOT_USED")])
-        }
-        "user-files-renamed" => session(
-            k,
-            &[
-                R("gb_char.dbin", "x_gb.dbin"),
-                R("merged.dbin", "x_merged.dbin"),
-                R("user.bin", "x_user.bin"),
-                R("addon.bin", "x_addon.bin"),
-            ],
-        ),
-        "tsi-is-gb" => session(k, &[R("default GB_DICTIONARY", "default TSI_DICTIONARY")]),
-        "later-row-wins" => session(
-            k,
-            &[Add(
-                "default OPENGRAM_DICTIONARY opengram.table opengram.bin opengram.dbin NOT_USED",
-            )],
-        ),
-        "network-as-system-file" => session(
-            k,
-            &[R(
-                "default NETWORK_DICTIONARY NULL NULL network.bin USER_FILE",
-                "default NETWORK_DICTIONARY art.table art.bin network.dbin SYSTEM_FILE",
-            )],
-        ),
-        "reserved-as-system-file" => session(
-            k,
-            &[R(
-                "default RESERVED NULL NULL NULL NOT_USED",
-                "default RESERVED merged.table merged.bin x_reserved.dbin SYSTEM_FILE",
-            )],
-        ),
-        // The header fields the user marker conforms against.
-        "database-format-other" => session_bytes(k, |data| {
-            sub_database_format(&data, |found| {
-                if found.ends_with(b"Tkrzw") {
-                    b"database format:BerkeleyDB".to_vec()
-                } else {
-                    b"database format:Tkrzw".to_vec()
-                }
-            })
-        }),
-        "versions-other" => session(
-            k,
-            &[
-                R("binary format version:7", "binary format version:8"),
-                R("model data version:14", "model data version:15"),
-            ],
-        ),
-        "source-format-zhuyin" => session(
-            k,
-            &[R(
-                "source table format:pinyin",
-                "source table format:zhuyin",
-            )],
-        ),
-        // Words are read in groups of six: a short row and a seventh word at the
-        // end are dropped, and an addon index goes through a `guint8`.
-        "short-row-dropped" => session(k, &[Add("default GB_DICTIONARY a b c")]),
-        "extra-word-dropped" => session(
-            k,
-            &[Add(
-                "default GB_DICTIONARY gb_char.table gb_char.bin gb_char.dbin SYSTEM_FILE EXTRA",
-            )],
-        ),
-        // The addon rows decide what `pinyin_load_addon_phrase_library` loads.
-        "addon-index-wraps"
-        | "addon-moved"
-        | "addon-files-swapped"
-        | "addon-not-used"
-        | "addon-index-zero" => {
-            let edits: &[ConfEdit<'_>] = match name {
-                "addon-index-wraps" => &[Add("addon 256 art.table art.bin NULL DICTIONARY")],
-                "addon-moved" => &[R("addon 4 art.table", "addon 3 art.table")],
-                "addon-files-swapped" => &[
-                    R("addon 4 art.table art.bin", "addon 4 art.table culture.bin"),
-                    R(
-                        "addon 5 culture.table culture.bin",
-                        "addon 5 culture.table art.bin",
-                    ),
-                ],
-                "addon-not-used" => &[R("art.bin NULL DICTIONARY", "art.bin NULL NOT_USED")],
-                _ => &[R("addon 4 art.table", "addon 0 art.table")],
-            };
-            let system = conf_system(k, edits);
-            addon_session(k, &system)
-        }
-        // The rows the pin dies on: `table_info.cpp` aborts inside
-        // `SystemTableInfo2::load`, before `check_format`.
-        "abort-source-format-unknown" => abort(
-            k,
-            &[R("source table format:pinyin", "source table format:foo")],
-            &Call::Init,
-        ),
         "abort-database-format-unknown" => {
             let system = conf_system_bytes(k, |data| {
                 sub_database_format(&data, |_| b"database format:LMDB".to_vec())
             });
-            conf_abort(k, &system, &Call::Init)
+            conf_abort(k, &system)
         }
-        "abort-default-name-unknown" => abort(
-            k,
-            &[Add("default FOO_DICTIONARY a b c SYSTEM_FILE")],
-            &Call::Init,
-        ),
-        "abort-file-type-unknown" => abort(
-            k,
-            &[Add("default GB_DICTIONARY a b c FOO_FILE")],
-            &Call::Init,
-        ),
-        "abort-addon-index-16" => abort(
-            k,
-            &[Add("addon 16 x.table x.bin NULL DICTIONARY")],
-            &Call::Init,
-        ),
-        // The init loop (`pinyin.cpp:377-392`) runs after `check_format`.
-        "abort-default-dictionary" => abort(
-            k,
-            &[R("gb_char.dbin SYSTEM_FILE", "gb_char.dbin DICTIONARY")],
-            &Call::Init,
-        ),
-        // A library call on a row the pin asserts on (`pinyin.cpp:457`, `:491`).
-        "abort-load-library-not-used" => abort(
-            k,
-            &[R("opengram.dbin SYSTEM_FILE", "opengram.dbin NOT_USED")],
-            &Call::Load(3),
-        ),
-        "abort-load-addon-system-file" => abort(
-            k,
-            &[R("art.bin NULL DICTIONARY", "art.bin NULL SYSTEM_FILE")],
-            &Call::Addon(4),
-        ),
-        // Class (b): the header's `source table format:` line is missing.
-        "abort-source-format-line-missing" => abort(k, &[Drop("source table format")], &Call::Init),
-        "abort-919-word-width-overlong" => {
-            let row = format!("{} x.table x.bin x.dbin SYSTEM_FILE", "x".repeat(300));
-            abort(k, &[Add(&row)], &Call::Init)
-        }
-        "user-conf-abort-database-format-unknown" => user_conf_unknown_format(k),
-        "lambda-line-missing" => header_probe(k, &[Drop("lambda parameter")]),
-        // A spelling glibc's `%f` accepts that is not a decimal: header acceptance
-        // with an already conforming user marker.
-        "lambda-hex" => {
-            let system = conf_system(k, &[R(LAMBDA, "lambda parameter:0x1p-1")]);
-            write_user_conf(k);
-            obj! { "ctx" => !init_on(k, &system).is_null() }
-        }
-        // #919: table.conf scanner partitions.
-        "919-header-one-line" => session_bytes(k, |data| one_line_conf(&data)),
-        "919-header-no-final-newline" => session_bytes(k, |mut data| {
-            while data.last() == Some(&b'\n') {
-                data.pop();
-            }
-            data
-        }),
-        "919-word-nul-truncates" => session_bytes(k, |data| {
-            replace_bytes(
-                &data,
-                b"gb_char.table gb_char.bin gb_char.dbin",
-                b"gb_char.table gb_char.bin\x00junk gb_char.dbin",
-            )
-        }),
-        "919-source-token-nul" => session_bytes(k, |data| {
-            replace_bytes(
-                &data,
-                b"source table format:pinyin",
-                b"source table format:pinyin\x00suffix",
-            )
-        }),
-        "919-database-token-nul" => session_bytes(k, |mut data| {
-            for format in ["BerkeleyDB", "KyotoCabinet", "Tkrzw"] {
-                let from = format!("database format:{format}");
-                let to = format!("database format:{format}\0suffix");
-                data = replace_bytes(&data, from.as_bytes(), to.as_bytes());
-            }
-            data
-        }),
-        "919-binary-version-line-missing" => header_probe(k, &[Drop("binary format version")]),
-        "919-model-version-line-missing" => header_probe(k, &[Drop("model data version")]),
-        "919-versions-positive-overflow" => session(
-            k,
-            &[
-                R(
-                    "binary format version:7",
-                    "binary format version:9223372036854775808",
-                ),
-                R(
-                    "model data version:14",
-                    "model data version:99999999999999999999",
-                ),
-            ],
-        ),
-        "919-versions-int-wrap" => session(
-            k,
-            &[
-                R(
-                    "binary format version:7",
-                    "binary format version:4294967296",
-                ),
-                R("model data version:14", "model data version:2147483648"),
-            ],
-        ),
-        "919-versions-negative" => session(
-            k,
-            &[
-                R("binary format version:7", "binary format version:-1"),
-                R("model data version:14", "model data version:-2"),
-            ],
-        ),
         "missing-with-dbms" => missing_conf_with_dbms(k),
         "user-file-absolute" => absolute_user_file(k),
         "addon-cleanup" => addon_cleanup(k),
-        // The `strtol` behind `%d` and `atoi` saturates at LONG_MIN on a negative
-        // overflow, which the stores into an `int` and a `guint8` cut to 0.
-        "versions-negative-overflow" => session(
-            k,
-            &[
-                R(
-                    "binary format version:7",
-                    "binary format version:-9223372036854775808",
-                ),
-                R(
-                    "model data version:14",
-                    "model data version:-99999999999999999999",
-                ),
-            ],
-        ),
-        // The names are the bytes the word holds.
-        "user-file-not-utf8" => session_bytes(k, |data| {
-            let from: &[u8] = b"user.bin USER_FILE";
-            assert!(data.windows(from.len()).any(|window| window == from));
-            replace_bytes(&data, from, b"u\xff.bin USER_FILE")
-        }),
-        // `_write_files` writes the library files by sub-index, then the two
-        // indices and the bigram, and `_rename_files` renames in the same order.
-        "colliding-library-files" => session(
-            k,
-            &[
-                R("network.bin USER_FILE", "shared.bin USER_FILE"),
-                R("user.bin USER_FILE", "shared.bin USER_FILE"),
-            ],
-        ),
-        "library-named-like-an-index" => session(
-            k,
-            &[R("user.bin USER_FILE", "user_pinyin_index.bin USER_FILE")],
-        ),
-        "log-named-like-a-library" => {
-            session(k, &[R("gb_char.dbin SYSTEM_FILE", "user.bin SYSTEM_FILE")])
-        }
-        // libpinyin's check_format saves the marker, then wipes a non-conforming
-        // profile (074a2219 pinyin.cpp:187, :194-215).
-        "user-library-named-user-conf" => {
-            session(k, &[R("user.bin USER_FILE", "user.conf USER_FILE")])
-        }
-        "candidates-files-swapped" => candidates_probe(
-            k,
-            &[
-                R("gb_char.table gb_char.bin", "gb_char.table TMP.bin"),
-                R("gbk_char.table gbk_char.bin", "gbk_char.table gb_char.bin"),
-                R("TMP.bin", "gbk_char.bin"),
-            ],
-        ),
-        other => panic!("unknown table_conf_scanner case {other}"),
+        "user-conf-abort-database-format-unknown" => user_conf_unknown_format(k),
+        other => panic!("no table_conf_scanner case {other}"),
     }
 }

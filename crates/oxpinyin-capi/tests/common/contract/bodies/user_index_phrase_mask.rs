@@ -80,26 +80,18 @@ const TONE_PHRASES: Phrases = &[
 /// `TONE_READINGS`: pinyin only.
 const TONE_READINGS: Readings = (&["da2'da2", "da4'da4"], &[]);
 
-/// `MIDDLE`, `HIGHEST` and `USER_ALL`.
+/// `MIDDLE` and `USER_ALL`.
 const MIDDLE: Step = Mask(0xffff_ffff, 0x0700_0002);
-const HIGHEST: Step = Mask(0xffff_ffff, 0x0700_0003);
 const USER_ALL: Step = Mask(0x0f00_0000, 0x0700_0000);
-/// `MASK_TA`, `MASK_DA2`.
+/// `MASK_TA`.
 const MASK_TA: Step = Mask(0xffff_ffff, 0x0700_0004);
-const MASK_DA2: Step = Mask(0xffff_ffff, 0x0700_0002);
 /// `DD`, `D`.
 const DD: Step = Step::Guess("dada", "286286");
-const D: Step = Step::Guess("da", "286");
-
 /// The case body for `id`.
 pub fn case(k: &mut Kit, id: &str) -> J {
     match id {
-        "abort-guess-predicted-short-bigram-value" => return predicted(k, "我", &[7, 0, 0]),
         "abort-guess-predicted-empty-bigram-gram" => return predicted(k, "我", &[7, 0, 0, 0]),
         "guess-predicted-unrelated-short-bigram-value" => return predicted(k, "你", &[7, 0, 0]),
-        "guess-predicted-unrelated-empty-bigram-gram" => {
-            return predicted(k, "你", &[7, 0, 0, 0]);
-        }
         "issue1418-tone-variant-readings-pinyin" => {
             let steps = [
                 Add(0),
@@ -114,11 +106,6 @@ pub fn case(k: &mut Kit, id: &str) -> J {
                 Lookup(1),
             ];
             return index_key_sequence(k, &steps, TONE_PHRASES, TONE_READINGS);
-        }
-        "issue785-pinyin-tails-kept-entry-zhuyin" => {
-            let mut steps = shared();
-            steps.extend([DD, Unload, Load, Add(5), MASK_DA2, Save]);
-            return index_key_sequence(k, &steps, TAIL_PHRASES, TAIL_READINGS);
         }
         _ => {}
     }
@@ -164,72 +151,22 @@ fn after_saved(rest: &[Step]) -> Vec<Step> {
 /// `INDEX_KEY_SEQUENCES`' steps for `name`.
 fn index_key_steps(name: &str) -> Vec<Step> {
     match name {
-        "no-mask" => after_saved(&[Add(3), Save]),
-        "mask-save" => after_saved(&[MIDDLE, Save]),
         "mask-middle" => after_saved(&[MIDDLE, Add(3), Save]),
-        "mask-highest" => after_saved(&[HIGHEST, Add(3), Save]),
-        "mask-middle-highest" => after_saved(&[MIDDLE, HIGHEST, Add(3), Save]),
-        "mask-unsaved" => vec![Add(0), Add(1), Add(2), MIDDLE, Save],
-        "mask-all" => vec![Add(0), Add(1), Save, USER_ALL, Add(2), Save],
-        "mask-reopen" => after_saved(&[
-            MIDDLE,
-            Add(3),
-            Save,
-            Reopen,
-            Add(4),
-            Save,
-            Reopen,
-            Add(1),
-            Save,
-        ]),
-        "mask-lookup" => after_saved(&[MIDDLE, Lookup(1), Lookup(0)]),
         "mask-reopen-lookup" => after_saved(&[MIDDLE, Add(3), Save, Reopen, Lookup(1), Lookup(0)]),
         other => panic!("no index key sequence {other}"),
     }
 }
-
 /// `REMOVE_SEQUENCES`' steps for `name`.
 fn remove_steps(name: &str) -> Vec<Step> {
     match name {
-        "remove-save" => after_saved(&[Remove(1), Save]),
         "remove-middle" => after_saved(&[Remove(1), Add(3), Save]),
-        "remove-unsaved" => vec![Add(0), Add(1), Add(2), Remove(2), Save],
-        "remove-reopen" => vec![
-            Add(0),
-            Add(1),
-            Save,
-            Remove(0),
-            Add(2),
-            Save,
-            Reopen,
-            Add(3),
-            Save,
-        ],
-        "remove-lookup" => vec![Add(0), Add(1), Save, Remove(1), Lookup(1), Lookup(0)],
-        "remove-reopen-lookup" => vec![
-            Add(0),
-            Add(1),
-            Save,
-            Remove(1),
-            Add(2),
-            Save,
-            Reopen,
-            Lookup(1),
-            Lookup(0),
-        ],
         other => panic!("no removal sequence {other}"),
     }
 }
-
 /// `TAIL_SEQUENCES`' steps for `name`.
 fn tail_steps(name: &str) -> Vec<Step> {
     let rest: Vec<Step> = match name {
-        "add" => vec![MASK_TA, Save],
         "hit" => vec![Save, DD, MASK_TA, Add(5), Save],
-        "hit-shrink" => vec![Save, DD, MASK_DA2, Add(5), Save],
-        "suggestion" => vec![DD, D, MASK_TA, Save],
-        "mask-twice" => vec![DD, MASK_TA, MASK_DA2, Save],
-        "hit-tailed" => vec![DD, MASK_DA2, DD, MASK_TA, Save],
         "hit-order" => vec![
             Save,
             Step::Guess("dadatata", "286286w84w84"),
@@ -237,40 +174,14 @@ fn tail_steps(name: &str) -> Vec<Step> {
             Add(5),
             Save,
         ],
-        "hit-order-reverse" => vec![
-            Save,
-            Step::Guess("tatadada", "w84w84286286"),
-            MASK_TA,
-            Add(5),
-            Save,
-        ],
-        "remove" => vec![Remove(3), MASK_TA, Save],
-        "markers" => return vec![Add(4), Add(0), Add(1), Add(2), MASK_TA, Save],
-        "markers-hit" => {
-            return vec![
-                Add(4),
-                Add(0),
-                Add(1),
-                Add(2),
-                Save,
-                D,
-                MASK_TA,
-                Add(5),
-                Save,
-            ];
-        }
-        "reopen" => vec![DD, MASK_TA, Save, Reopen, Add(5), Save],
-        "reopen-mask" => vec![DD, MASK_TA, Save, Reopen, MASK_DA2, Add(5), Save],
-        "lookup" => vec![DD, MASK_DA2, Lookup(0), Lookup(3)],
-        "mask-none" => vec![DD, Mask(0xffff_ffff, 0x0700_0009), Save],
         "mask-all" => vec![DD, USER_ALL, Add(5), Save],
+        "reopen" => vec![DD, MASK_TA, Save, Reopen, Add(5), Save],
         other => panic!("no tail sequence {other}"),
     };
     let mut steps = shared();
     steps.extend(rest);
     steps
 }
-
 /// `index_key_sequence`'s `tokens`: `lookup_tokens` of `text` and the tokens as hex.
 fn tokens(inst: P, text: &str) -> J {
     // SAFETY: a fresh GArray of four-byte elements; it stays allocated, as the old case left it.

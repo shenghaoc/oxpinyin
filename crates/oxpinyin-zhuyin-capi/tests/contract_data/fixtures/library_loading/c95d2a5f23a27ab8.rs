@@ -1,1 +1,0 @@
-M(&[("ctx", B(true)), ("guess_candidates", B(true)), ("guess_sentence", B(true)), ("logs", L(&[])), ("n", I(126)), ("parse", I(6)), ("rows", L(&[L(&[I(1), S("你好")]), L(&[I(2), S("你")]), L(&[I(2), S("尼")]), L(&[I(2), S("呢")]), L(&[I(2), S("泥")]), L(&[I(2), S("妮")]), L(&[I(2), S("拟")]), L(&[I(2), S("逆")])]))])

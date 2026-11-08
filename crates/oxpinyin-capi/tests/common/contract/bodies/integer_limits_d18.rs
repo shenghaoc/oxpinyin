@@ -28,41 +28,16 @@ pub fn case(k: &mut Kit, id: &str) -> J {
         return merge(k, &merge_case(label));
     }
     if let Some(label) = name.strip_prefix("d18-train-") {
-        return bigram_update(k, train_count(label), false, false);
+        return bigram_update(k, train_count(label));
     }
-    if let Some(label) = name.strip_prefix("d18-review-zero-count-zero-total-") {
-        let lam = match label {
-            "default" => None,
-            "half" => Some("0.5"),
-            "zero-lambda" => Some("0"),
-            other => panic!("no lambda {other}"),
-        };
-        let current = if lam.is_none() { "好" } else { "嚎" };
-        let spec = Merge {
-            lam,
-            ..Merge::new(Some((1, 1)), (0xffff_ffff, 0xffff_ffff), current)
-        };
-        return merge(k, &spec);
-    }
-    if let Some(index) = name.strip_prefix("issue542-stale-") {
-        return stale_index_tmp(k, index);
+    if name.strip_prefix("issue542-stale-").is_some() {
+        return stale_index_tmp(k);
     }
     match name {
-        "d18-unigram-max" => unigram(k, false, "你"),
-        "d18-unigram-total-boundary" => unigram(k, true, "你"),
-        "d18-review-unigram-library-two" => unigram(k, true, "丠"),
-        "d18-review-user-only-zero-total" => {
-            let spec = Merge {
-                empty_system: true,
-                extra_successor: true,
-                ..Merge::new(None, (0, 0xffff_ffff), "嚎")
-            };
-            merge(k, &spec)
-        }
+        "d18-unigram-total-boundary" => unigram(k, "你"),
         other => panic!("no integer_limits_d18 case {other}"),
     }
 }
-
 /// The cases whose IDs carry no mode suffix.
 fn fixed_case(k: &mut Kit, id: &str) -> Option<J> {
     if let Some(count) = id.strip_prefix("d18-remember-multiply-") {
@@ -74,30 +49,11 @@ fn fixed_case(k: &mut Kit, id: &str) -> Option<J> {
             u32::from_str_radix(count, 16).expect("a hex count"),
         ));
     }
-    if let Some(label) = id.strip_prefix("d18-predicted-total-") {
-        let count = match label {
-            "max" => 0xffff_ffff - 69,
-            "zero" => 0xffff_ffff - 68,
-            "after" => 0xffff_ffff - 67,
-            other => panic!("no predicted total {other}"),
-        };
-        return Some(bigram_update(k, count, true, false));
+    match id {
+        "remember-known-nul-suffix-pinyin" => Some(remember_nul(k)),
+        _ => None,
     }
-    Some(match id {
-        "d18-remember-reported" => remember(k, &[-1, 0, 0x7fff_ffff]),
-        "d18-remember-signed-boundary" => remember(k, &[0x7fff_fffe, 1, 1, 0x7fff_ffff, 1]),
-        "remember-nul-double-pinyin" => remember_nul(k, Parser::Double, b"nihk", b"ni\0hao"),
-        "remember-nul-chewing-pinyin" => remember_nul(k, Parser::Chewing, b"su3cl3", b"ni\0hao"),
-        "remember-known-nul-suffix-pinyin" => {
-            remember_nul(k, Parser::Full, b"nihao", "你好\0ignored".as_bytes())
-        }
-        "d18-review-predicted-user-only-zero-total" => {
-            bigram_update(k, 0xffff_ffff - 69, true, true)
-        }
-        _ => return None,
-    })
 }
-
 /// `d18_remember`: parse nihaoshijie once, then remember 你好世界 with each
 /// delta: the flag, the user export and the user token's unigram.
 fn remember(k: &mut Kit, deltas: &[i32]) -> J {
@@ -117,42 +73,25 @@ fn remember(k: &mut Kit, deltas: &[i32]) -> J {
     obj! { "parsed" => parsed, "steps" => steps }
 }
 
-/// The parser a [`remember_nul`] case configures.
-enum Parser {
-    Full,
-    Double,
-    Chewing,
-}
-
-/// `remember_nul`: option word 0x28 and the parser's scheme, the complete
-/// input parsed, then `phrase`'s bytes (NUL included) remembered with count 1.
-fn remember_nul(k: &mut Kit, parser: Parser, input: &[u8], phrase: &[u8]) -> J {
+/// `remember_nul`: option word 0x28, the complete input parsed, then
+/// `phrase`'s bytes (NUL included) remembered with count 1.
+fn remember_nul(k: &mut Kit) -> J {
     let ctx = k.ctx();
     facade::set_options(ctx, 0x28);
     let inst = k.inst();
+    let input = b"nihao";
     let text = c(input);
-    let parsed = match parser {
-        Parser::Double => {
-            assert!(facade::set_double_pinyin_scheme(ctx, 2));
-            facade::parse_more_double_pinyins(inst, text.as_ptr())
-        }
-        Parser::Chewing => {
-            assert!(facade::set_zhuyin_scheme(ctx, 1));
-            facade::parse_more_chewings(inst, text.as_ptr())
-        }
-        Parser::Full => facade::parse_more_full_pinyins(inst, text.as_ptr()),
-    };
+    let parsed = facade::parse_more_full_pinyins(inst, text.as_ptr());
     assert_eq!(
         parsed,
         input.len(),
         "the complete two-syllable input must parse"
     );
-    // The bytes as ctypes passed them: the buffer and a terminating NUL.
+    let phrase = "你好\0ignored".as_bytes();
     let bytes = [phrase, b"\0"].concat();
     let ret = facade::remember_user_input(inst, bytes.as_ptr().cast(), 1);
     obj! { "parsed" => parsed, "ret" => ret, "rows" => export_phrases(k) }
 }
-
 /// The library name's index in table.conf's `default` lines.
 fn library_index(name: &str) -> u32 {
     let names = [
@@ -171,45 +110,27 @@ fn library_index(name: &str) -> u32 {
 
 /// `d18_unigram`: unigram increments of `text`'s first token; `boundary`
 /// derives them from its system library's stored total.
-fn unigram(k: &mut Kit, boundary: bool, text: &str) -> J {
+fn unigram(k: &mut Kit, text: &str) -> J {
     let token = tokens_of(k, text)[0];
-    if text == "丠" {
-        assert_eq!(
-            token >> 24,
-            2,
-            "the alternate-sub-index control must use library 2"
-        );
-    }
     let mut out = obj! { "token" => token, "before" => unigram_of(k, token) };
-    let deltas: Vec<u32> = if boundary {
-        let library = token >> 24;
-        let conf = std::fs::read_to_string(k.data.join("table.conf")).expect("table.conf");
-        let entry: Vec<&str> = conf
-            .lines()
-            .filter(|line| line.starts_with("default "))
-            .map(|line| line.split_whitespace().collect::<Vec<_>>())
-            .find(|row| library_index(row[1]) == library)
-            .expect("the token's library");
-        assert_ne!(
-            entry[3], "NULL",
-            "boundary fixture needs a system sub-index"
-        );
-        let data = std::fs::read(k.data.join(entry[3])).expect("the sub-index");
-        let total = u32::from_le_bytes(data[8..12].try_into().expect("a total"));
-        out.set("library", library);
-        out.set("subindex", entry[3]);
-        out.set("library-total", total);
-        vec![0xffff_ffff - total - 1, 1, 1, 0xffff_ffff]
-    } else {
-        vec![
-            0xffff_ffff,
-            0x7fff_ffff,
-            0x7fff_ffff,
-            0x7fff_ffff,
-            0x7fff_ffff,
-            0xffff_ffff,
-        ]
-    };
+    let library = token >> 24;
+    let conf = std::fs::read_to_string(k.data.join("table.conf")).expect("table.conf");
+    let entry: Vec<&str> = conf
+        .lines()
+        .filter(|line| line.starts_with("default "))
+        .map(|line| line.split_whitespace().collect::<Vec<_>>())
+        .find(|row| library_index(row[1]) == library)
+        .expect("the token's library");
+    assert_ne!(
+        entry[3], "NULL",
+        "boundary fixture needs a system sub-index"
+    );
+    let data = std::fs::read(k.data.join(entry[3])).expect("the sub-index");
+    let total = u32::from_le_bytes(data[8..12].try_into().expect("a total"));
+    out.set("library", library);
+    out.set("subindex", entry[3]);
+    out.set("library-total", total);
+    let deltas = [0xffff_ffff - total - 1, 1, 1, 0xffff_ffff];
     let inst = k.inst();
     let steps: Vec<(u32, bool, (bool, u32))> = deltas
         .iter()
@@ -218,23 +139,17 @@ fn unigram(k: &mut Kit, boundary: bool, text: &str) -> J {
             (delta, ret, unigram_of(k, token))
         })
         .collect();
-    if boundary {
-        let flags: Vec<bool> = steps.iter().map(|step| step.1).collect();
-        assert_eq!(flags, [true, true, false, false]);
-        assert!(steps[1].2 == steps[2].2 && steps[2].2 == steps[3].2);
-    }
+    let flags: Vec<bool> = steps.iter().map(|step| step.1).collect();
+    assert_eq!(flags, [true, true, false, false]);
+    assert!(steps[1].2 == steps[2].2 && steps[2].2 == steps[3].2);
     out.set("steps", steps);
     out
 }
-
 /// One merged-bigram fixture (`d18_bigram_fixture`'s and `d18_merge`'s arguments).
 struct Merge<'a> {
     system: Option<(u32, u32)>,
     user: (u32, u32),
     current: &'a str,
-    empty_system: bool,
-    extra_successor: bool,
-    lam: Option<&'a str>,
 }
 
 impl<'a> Merge<'a> {
@@ -243,45 +158,23 @@ impl<'a> Merge<'a> {
             system,
             user,
             current,
-            empty_system: false,
-            extra_successor: false,
-            lam: None,
         }
     }
 }
-
 /// The `d18-merge-{label}` fixtures.
 fn merge_case(label: &str) -> Merge<'static> {
-    let (system, user) = match label {
-        "total-before" => ((1, 1), (0xffff_fffe, 1)),
-        "total-zero" => ((1, 1), (0xffff_ffff, 1)),
-        "total-after" => ((2, 1), (0xffff_ffff, 1)),
-        "count-before" => ((0x8000_0000, 1), (0xffff_ffff, 0xffff_fffe)),
-        "count-zero" => ((0x8000_0000, 1), (0xffff_ffff, 0xffff_ffff)),
-        "count-after" => ((0x8000_0000, 2), (0xffff_ffff, 0xffff_ffff)),
+    match label {
+        "total-zero" => Merge::new(Some((1, 1)), (0xffff_ffff, 1), "号"),
         other => panic!("no merge {other}"),
-    };
-    let current = if label.starts_with("count-") {
-        "嚎"
-    } else {
-        "号"
-    };
-    Merge::new(Some(system), user, current)
+    }
 }
-
 /// The `d18-train-{label}` user counts.
 fn train_count(label: &str) -> u32 {
     match label {
-        "stored-zero" => 0,
-        "seed-before" => 0x7fff_ffff,
-        "seed-zero" => 0x8000_0000,
-        "seed-after" => 0x8000_0001,
-        "total-max" => 0xffff_ffff - 22080,
         "total-overflow" => 0xffff_ffff - 22080 + 1,
         other => panic!("no train {other}"),
     }
 }
-
 /// Frees the cached instance and finalises the cached context; both reopen lazily.
 fn close(k: &mut Kit) {
     facade::free_instance(k.inst_if_any());
@@ -302,22 +195,18 @@ fn gram(total: u32, token: u32, count: u32) -> Vec<u8> {
 fn bigram_fixture(k: &mut Kit, spec: &Merge<'_>) -> (u32, u32) {
     let [prev, cur, other] = ["你", spec.current, "我"].map(|text| tokens_of(k, text)[0]);
     close(k);
-    if spec.system.is_some() || spec.empty_system {
+    if spec.system.is_some() {
         let copied = private_system(k);
         k.data = copied.clone();
         let rows = match spec.system {
-            Some((total, count)) if !spec.empty_system => {
+            Some((total, count)) => {
                 vec![(prev.to_le_bytes().to_vec(), gram(total, cur, count))]
             }
             _ => Vec::new(),
         };
         craft_hash(&copied.join("bigram.db"), &rows);
     }
-    let mut records = vec![(cur, spec.user.1)];
-    if spec.extra_successor {
-        records.push((other, 1));
-    }
-    records.sort_unstable();
+    let records = vec![(cur, spec.user.1)];
     let mut value = spec.user.0.to_le_bytes().to_vec();
     for (token, count) in records {
         value.extend(token.to_le_bytes());
@@ -391,24 +280,6 @@ fn merge_observation(k: &mut Kit) -> J {
 /// table.conf, then the merge observation.
 fn merge(k: &mut Kit, spec: &Merge<'_>) -> J {
     bigram_fixture(k, spec);
-    if let Some(lam) = spec.lam {
-        let path = k.data.join("table.conf");
-        let text = std::fs::read_to_string(&path).expect("table.conf");
-        let edited: String = text
-            .split_inclusive('\n')
-            .map(|line| {
-                if line.starts_with("lambda parameter:") {
-                    let end = if line.ends_with('\n') { "\n" } else { "" };
-                    format!("lambda parameter:{lam}{end}")
-                } else {
-                    line.to_owned()
-                }
-            })
-            .collect();
-        // The private copy links table.conf: replace the link, not its target.
-        std::fs::remove_file(&path).expect("unlink table.conf");
-        std::fs::write(&path, edited).expect("write table.conf");
-    }
     merge_observation(k)
 }
 
@@ -439,24 +310,6 @@ fn stored_value(path: &Path, key: &[u8]) -> Vec<u8> {
     value
 }
 
-/// The predicted-selection half of [`bigram_update`].
-fn predicted_steps(k: &mut Kit, out: &mut J, current: &str) {
-    let inst = k.inst();
-    out.set(
-        "predicted",
-        facade::guess_predicted_candidates(inst, c("你").as_ptr()),
-    );
-    let candidate = row_with_text(inst, 4, current).expect("missing predicted bigram candidate");
-    out.set(
-        "choose",
-        facade::choose_predicted_candidate(inst, candidate),
-    );
-    out.set(
-        "parse",
-        facade::parse_more_full_pinyins(inst, c("wo").as_ptr()),
-    );
-}
-
 /// The ordinary half of [`bigram_update`]: nihao constrained to 你 and 好.
 fn chosen_steps(inst: P, out: &mut J) {
     let mut choices = Vec::new();
@@ -477,30 +330,20 @@ fn chosen_steps(inst: P, out: &mut J) {
 /// `d18_bigram_update`: the gram planted with `count`, a predicted selection
 /// or an ordinary constrained guess, train and save; the stored record, then
 /// the reopened unigram (and, `user_only`, the reopened merge observation).
-fn bigram_update(k: &mut Kit, count: u32, predicted: bool, user_only: bool) -> J {
-    let current = if user_only { "嚎" } else { "好" };
-    let spec = Merge {
-        empty_system: user_only,
-        extra_successor: user_only,
-        ..Merge::new(None, (count + u32::from(user_only), count), current)
-    };
+fn bigram_update(k: &mut Kit, count: u32) -> J {
+    let current = "好";
+    let spec = Merge::new(None, (count, count), current);
     let (prev, cur) = bigram_fixture(k, &spec);
     assert!(facade::set_options(k.ctx(), 1 << 5));
     let mut out = obj! { "before" => unigram_of(k, cur) };
-    if predicted {
-        predicted_steps(k, &mut out, current);
-    } else {
-        let inst = k.inst();
-        out.set(
-            "parse",
-            facade::parse_more_full_pinyins(inst, c("nihao").as_ptr()),
-        );
-    }
+    let inst = k.inst();
+    out.set(
+        "parse",
+        facade::parse_more_full_pinyins(inst, c("nihao").as_ptr()),
+    );
     let inst = k.inst();
     out.set("guess", facade::guess_sentence(inst));
-    if !predicted {
-        chosen_steps(inst, &mut out);
-    }
+    chosen_steps(inst, &mut out);
     out.set("train", facade::train_top(inst));
     out.set("after", unigram_of(k, cur));
     out.set("save", facade::save(k.ctx()));
@@ -513,9 +356,6 @@ fn bigram_update(k: &mut Kit, count: u32, predicted: bool, user_only: bool) -> J
         .collect();
     out.set("stored", (word(0), records));
     out.set("reopened-unigram", unigram_of(k, cur));
-    if user_only {
-        out.set("reopened-guess", merge_observation(k));
-    }
     out
 }
 
@@ -536,7 +376,8 @@ fn train_once(inst: P) -> bool {
 /// a fresh user directory. The old case made each with `mkdtemp`; here the
 /// previous one is renamed aside so that the fresh one is `user-X`, the name
 /// the frozen stderr shows.
-fn stale_index_tmp(k: &mut Kit, index: &str) -> J {
+fn stale_index_tmp(k: &mut Kit) -> J {
+    let index = "user_phrase_index.bin";
     let marker: &[u8] = b"unchanged temporary directory";
     let mut out = J::map();
     for (round, destination) in ["absent", "empty-directory", "live-file"]

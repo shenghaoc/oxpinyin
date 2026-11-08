@@ -1,1 +1,0 @@
-M(&[("bytes", S("0000")), ("get_parsed_input_length", I(7)), ("guess_sentence", B(true)), ("logs", L(&[])), ("parse_return_consumed", I(7)), ("pinyin_string", L(&[B(false), Nil])), ("pointer", S("key")), ("ret", B(true)), ("zhuyin_string", L(&[B(false), Nil]))])

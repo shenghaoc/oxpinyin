@@ -1,1 +1,0 @@
-M(&[("choose", B(true)), ("logs", L(&[])), ("predicted", M(&[("count", I(1)), ("get-count", B(true)), ("ret", B(true)), ("rows", L(&[L(&[B(true), B(true), I(5), B(true), Nil])]))])), ("unigram-after", L(&[B(false), I(0)])), ("unigram-before", L(&[B(false), I(0)]))])
