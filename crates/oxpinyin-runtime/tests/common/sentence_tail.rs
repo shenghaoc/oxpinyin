@@ -10,51 +10,38 @@
 
 use std::path::Path;
 
-use oxpinyin_data::lm::BigramTables;
-use oxpinyin_data::{BigramLanguageModel, SystemDbm, SystemDictionary};
 use oxpinyin_engine::{Candidate, CandidateKind, Session, SessionSettings};
+use oxpinyin_runtime::{Runtime, RuntimeDict, RuntimeLm};
 
 use crate::sentence_fixture::{SENTENCE_FIXTURE, load_fixture, load_residuals};
 
 /// The concrete port session the measurement drives.
 pub struct PortSession {
-    dict: SystemDictionary,
-    model: BigramTables,
+    runtime: Runtime,
     state: oxpinyin_engine::SessionState,
 }
 
-/// One operation over the retained composition and uniquely owned tables.
-pub type PortRead<'a> = Session<
-    &'a SystemDictionary,
-    BigramLanguageModel<&'a oxpinyin_data::PhraseLibraries, &'a BigramTables>,
-    &'a mut oxpinyin_engine::SessionState,
->;
+/// One operation over the retained composition and the runtime's tables.
+pub type PortRead<'a> =
+    Session<RuntimeDict<'a>, RuntimeLm<'a>, &'a mut oxpinyin_engine::SessionState>;
 
 impl PortSession {
-    /// Open the unchanged dictionary/model inputs and retain only composition.
+    /// Open the unchanged data directory and retain only composition.
     ///
     /// # Errors
-    /// Returns the existing table-open or session-construction error.
+    /// Returns the existing runtime-open or session-construction error.
     pub fn open(dir: &Path) -> Result<Self, String> {
-        let dict = SystemDictionary::open(dir)
-            .map_err(|error| format!("cannot open SystemDictionary: {error}"))?;
-        let mut model = BigramTables::open(&dir.join(SystemDbm::Bigram.file_name()))
-            .map_err(|error| format!("cannot open BigramLanguageModel: {error}"))?;
-        model.set_lambda_from_table_conf(&dir.join("table.conf"));
-        let state = Session::new(
-            SessionSettings::default(),
-            &dict,
-            model.read_all(dict.libraries()),
-        )
-        .map_err(|error| format!("cannot create Session: {error}"))?
-        .into_state();
-        Ok(Self { dict, model, state })
+        let runtime = Runtime::open(dir, None)
+            .map_err(|error| format!("cannot open the runtime: {error}"))?;
+        let state = runtime
+            .new_session(SessionSettings::default())
+            .map_err(|error| format!("cannot create Session: {error}"))?;
+        Ok(Self { runtime, state })
     }
 
     /// Re-borrow the current tables for an operation on retained composition.
     pub fn session(&mut self) -> PortRead<'_> {
-        self.state
-            .bind(&self.dict, self.model.read_all(self.dict.libraries()))
+        self.state.bind(self.runtime.dict(), self.runtime.lm())
     }
 }
 

@@ -2259,13 +2259,12 @@ mod tests {
         .expect("authored fixture");
         let (matrix, bound) = one_column_matrix("nini");
         let model = Counting(RefCell::new(Vec::new()));
-        // Passing &model exercises the blanket &L forwarding too.
         for run in 1..=2 {
             let rows = nbest_sentences(
                 &matrix,
                 bound,
                 &dict,
-                &&model,
+                &model,
                 &[PhraseToken::new(1)],
                 None,
                 NbestShape::PINYIN,
