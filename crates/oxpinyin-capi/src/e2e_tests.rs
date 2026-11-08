@@ -4173,7 +4173,6 @@ fn export_walk(tag: &str, items: impl FnOnce(u32, u32, u32) -> Vec<(u32, u32)>) 
 
 /// Lays a planted `user_bigram.db` holding PREDECESSOR's gram of ITEMS, `(token, count)` in the
 /// stored order with their total first, over the profile at USER_DIR.
-#[cfg(unix)]
 fn lay_gram(user_dir: &std::path::Path, predecessor: u32, items: &[(u32, u32)]) {
     let total: u32 = items.iter().map(|&(_, count)| count).sum();
     let mut gram = total.to_le_bytes().to_vec();
@@ -4197,7 +4196,6 @@ fn lay_gram(user_dir: &std::path::Path, predecessor: u32, items: &[(u32, u32)]) 
 
 /// Opens USER_DIR and walks the bigram export at most sixteen steps, stopping after two
 /// consecutive `has_next` answers of false.
-#[cfg(unix)]
 fn walk_bigram_export(user_dir: &std::path::Path) -> Vec<ExportStep> {
     let context = init_at(user_dir);
     assert!(!context.is_null());
