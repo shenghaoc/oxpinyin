@@ -268,22 +268,28 @@ uv run --no-project --managed-python python -B -X lazy_imports=normal tools/tkrz
 
 0. Bootstraps uv and managed CPython, checking the uv installation
    destination before its download. The Python provisioning service then
-   checks Cargo and the repository toolchain and requires or installs
-   Valgrind.
-   Requires backend dump utilities for the requested cells: `db5.3_dump`
-   (`db5.3-util`) and `kchashmgr` (`kyotocabinet-utils`). Root containers may
-   install them with apt; ordinary accounts get an explicit missing-package
-   error. Install them deliberately before running setup. Normal
-   provisioning installs Valgrind idempotently when
-   `valgrind --version` fails and prints its version in the summary.
+   checks Cargo and the repository toolchain on every OS. On Linux it also
+   requires or installs Valgrind.
+   On Linux it requires backend dump utilities for the requested cells:
+   `db5.3_dump` (`db5.3-util`) and `kchashmgr` (`kyotocabinet-utils`). Root
+   containers may install them with apt, and ordinary accounts get an explicit
+   missing-package error. Install them deliberately before running setup. On
+   macOS and Windows they are not required: provisioning runs neither, and its
+   prefix checks run in the `deps` image. Normal Linux provisioning installs Valgrind idempotently
+   when `valgrind --version` fails and prints its version in the summary.
 1. Resolves and prints the runtime/version before container provisioning. Platform order
    is Windows: wslc/Podman/Docker; macOS: Apple container/Podman/Docker;
    Linux: Podman/Docker. Explicit `OXPINYIN_CONTAINER` wins; no available candidate
-   is an error. Neither wslc nor the Apple adapter is supported by this Linux
-   provisioner; both are refused after the runtime is resolved.
-   Every container call uses the resolved runtime. Only the Docker path
-   starts `dockerd` (detached, `setsid
+   is an error.
+   Every container call uses the resolved runtime, written in docker's
+   grammar and translated by `runtime_command` in `tools/oracle/image.py`:
+   docker and Podman take it as written, and wslc and Apple container get
+   their own forms (no `--platform` or host network on wslc, `image pull`, `delete` and
+   `system status` on Apple container, no `z` mount option on either).
+   Only the Docker path on Linux starts `dockerd` (detached, `setsid
    nohup dockerd`) unless `docker info` already answers, and waits for it.
+   On macOS and Windows a Docker that does not answer `docker info` fails
+   with a message to start Docker Desktop.
    If a proxy certificate exists at
    `/root/.ccr/agent-proxy-ca.crt` (the path some hosted Linux environments
    use), this path installs it into the system
@@ -307,6 +313,9 @@ uv run --no-project --managed-python python -B -X lazy_imports=normal tools/tkrz
    `deps` stage is built and `tools/oracle/build-oracle.sh --libs-only
    --enable-libzhuyin --dbm <cell>` runs inside it, at the same in-image
    paths as the Dockerfile (`/build/<cell>`, `/opt/pinyin-oracle/<cell>`).
+   Apple container skips the published image and always builds the cells
+   this way. On Windows the published image's filesystem is exported to a
+   tar in the cache and unpacked by the `deps` image.
    The cells that need a build, and later the cells that need data, run at
    once in a bounded pool (#1233, `tools/dev/pool.py`). Workers
    times make jobs stays within the CPUs, so nested `make -j` is counted; every
@@ -323,8 +332,16 @@ uv run --no-project --managed-python python -B -X lazy_imports=normal tools/tkrz
    `<cache>/build-<cell>.log` and `<cache>/data-<cell>.log`.
    Setup validates the current pin/recipe stamp and the prefix's recorded
    library hashes and installed-version record. Stale or damaged provenance
-   stops provisioning; there is no frozen output digest.
-   3b. The tkrzw cell's host library. The host's `tkrzw_dbm_util` (on `PATH`)
+   stops provisioning; there is no frozen output digest. On Windows host
+   Python cannot read the symlinks a container makes in a prefix on NTFS,
+   so every check, removal and summary of a prefix runs in the `deps` image
+   (`provision prefix-check`, run by the image's managed interpreter). Only a
+   check that ran and found a prefix invalid leads to its removal: a check
+   that does not run (the interpreter, an import, the runtime) stops
+   provisioning with its error, and the prefix is kept.
+   3b. Linux only: the tkrzw cell's host library. On macOS and Windows the
+   oracle loads only in containers, and this step is skipped.
+   The host's `tkrzw_dbm_util` (on `PATH`)
    must load a host `libtkrzw` outside every cache. On an Ubuntu host
    (`ID` or `ID_LIKE` in `/etc/os-release`), `tools/tkrzw/distro-probe.sh`
    must also exit 0 against it; no other host's package needs the probe. A
@@ -350,8 +367,14 @@ uv run --no-project --managed-python python -B -X lazy_imports=normal tools/tkrz
    staging area and published with its own manifest hashes. Reuse checks these
    recorded hashes and every listed file; no generated output is frozen in
    the repository pin.
-5. Rewrites the prefixes' `.pc` files to the host location, writes the
-   environment file above and prints the per-cell lines.
+5. Prints the per-cell lines. On Linux it first rewrites the prefixes'
+   `.pc` files to the host location and writes the environment file above;
+   on macOS and Windows the host loads no oracle, so neither is written.
+
+The host steps that run only on Linux are Valgrind's check and apt install,
+the apt install of the dump utilities, the start of `dockerd`, the ext4
+report (`findmnt`), the tkrzw host-library check of step 3b, the `.pc`
+rewrite and the environment file.
 
 ### How containers get out
 

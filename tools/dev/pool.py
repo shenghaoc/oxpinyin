@@ -128,12 +128,18 @@ class Handle:
         return self.process.poll()
 
     def terminate(self) -> None:
-        """Send SIGTERM to the task's whole process group."""
+        """Send SIGTERM to the task's whole process group; Windows has no groups, so the task alone."""
+        if sys.platform == 'win32':
+            self.process.terminate()
+            return
         with contextlib.suppress(ProcessLookupError):
             os.killpg(self.process.pid, signal.SIGTERM)
 
     def kill(self) -> None:
-        """Send SIGKILL to the task's whole process group."""
+        """Send SIGKILL to the task's whole process group; Windows has no groups, so the task alone."""
+        if sys.platform == 'win32':
+            self.process.kill()
+            return
         with contextlib.suppress(ProcessLookupError):
             os.killpg(self.process.pid, signal.SIGKILL)
 
@@ -438,15 +444,15 @@ def remove_owned(owned: OwnedContainer, run: Callable[[Sequence[str]], subproces
         return False
     if not recorded:
         return False
-    template = '{{.Id}} {{index .Config.Labels "%s"}}' % owned.label
-    found = run([*owned.runtime, 'container', 'inspect', '--format', template, recorded])
-    if found.returncode:
+    from tools.oracle import image
+    found = image.container_owner(owned.runtime, recorded, owned.label, run=run)
+    if found is None:
         return False
-    identity, _, label = found.stdout.strip().partition(' ')
+    identity, _, label = found.partition(' ')
     if identity != recorded or label != owned.token:
         print(f'left container {recorded[:12]} alone: it was not created by this run', file=out, flush=True)
         return False
-    run([*owned.runtime, 'container', 'rm', '-f', recorded])
+    run(image.runtime_command([*owned.runtime, 'container', 'rm', '-f', recorded]))
     return True
 
 

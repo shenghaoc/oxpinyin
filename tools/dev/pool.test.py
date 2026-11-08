@@ -551,6 +551,39 @@ class ContainerOwnershipTests(unittest.TestCase):
                 if removed:
                     self.assertEqual(calls[1], ['rt', 'container', 'rm', '-f', cid])
 
+    def test_wslc_and_apple_owners_are_read_from_their_json(self):
+        from tools.oracle import image
+        patcher = mock.patch.object(image, 'host_system', return_value='Darwin')
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        cid = 'b' * 64
+        records = {'wslc': [{'Id': cid, 'Config': {'Labels': {'k': 'mine'}}}],
+                   'container': [{'configuration': {'id': cid, 'labels': {'k': 'mine'}}}]}
+        removals = {'wslc': ['wslc', 'container', 'remove', '-f', cid], 'container': ['container', 'delete', '-f', cid]}
+        inspects = {'wslc': ['wslc', 'container', 'inspect', cid], 'container': ['container', 'inspect', cid]}
+        for runtime, record in records.items():
+            with self.subTest(runtime=runtime):
+                calls = []
+
+                def run(argv):
+                    calls.append(list(argv))
+                    found = 'inspect' in argv
+                    return subprocess.CompletedProcess(argv, 0, json.dumps(record) if found else '', '')
+                owned = self.owned(cid)
+                owned = pool.OwnedContainer((runtime,), owned.cidfile, 'k', 'mine')
+                self.assertTrue(pool.remove_owned(owned, run, io.StringIO()))
+                self.assertEqual(calls, [inspects[runtime], removals[runtime]])
+
+    def test_windows_tasks_are_stopped_without_process_groups(self):
+        process = mock.Mock()
+        handle = pool.Handle(process)
+        with mock.patch.object(pool.sys, 'platform', 'win32'), mock.patch.object(pool.os, 'killpg', create=True) as killpg:
+            handle.terminate()
+            handle.kill()
+        process.terminate.assert_called_once_with()
+        process.kill.assert_called_once_with()
+        killpg.assert_not_called()
+
     def test_an_empty_or_missing_cidfile_means_no_container_and_no_runtime_call(self):
         run, calls = self.runner(f'{"a" * 64} mine\n')
         owned = self.owned('')

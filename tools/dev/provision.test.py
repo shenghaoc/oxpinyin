@@ -443,6 +443,9 @@ elif name=='podman':
 elif name=='wslc':
     if a==['--version']: print('wslc 3.0.3.0 (synthetic)\\nCopyright (synthetic)')
     else: sys.exit(97)
+elif name=='container':
+    if a==['--version']: print('container CLI version 0.0.0 (synthetic)')
+    else: sys.exit(97)
 elif name=='findmnt':
     if os.environ.get('FAKE_EXT4')=='unknown': sys.exit(1)
     print('/ overlay' if a[:1]==['--raw'] else 'overlay')
@@ -450,7 +453,7 @@ elif name in ('curl','apt-get','sudo'):
     with open(os.environ['CALLS'],'a') as f: f.write(name+' '+ ' '.join(a)+'\\n')
     sys.exit(97)
 '''
-        for name in ('uv', 'rustup', 'valgrind', 'podman', 'wslc', 'findmnt', 'curl', 'apt-get', 'sudo'):
+        for name in ('uv', 'rustup', 'valgrind', 'podman', 'wslc', 'container', 'findmnt', 'curl', 'apt-get', 'sudo'):
             path = self.bin / name
             path.write_text(program)
             path.chmod(0o755)
@@ -546,11 +549,15 @@ elif name in ('curl','apt-get','sudo'):
         self.env['FAKE_EXT4'] = 'unknown'
         self.check_entry(['--python-only'], 0)
 
-    def test_wslc_is_refused_before_any_runtime_command(self):
-        self.env['OXPINYIN_CONTAINER'] = 'wslc'
-        current = self.check_entry(['--cells', 'bdb'], 1)
-        self.assertIn(b'wslc (WSL containers) is not supported', current.stderr)
-        self.assertFalse(self.calls.exists())
+    def test_wslc_and_apple_container_are_provisioned_through_the_adapter(self):
+        # Neither is refused: each reaches its own readiness command, which these fakes fail.
+        self.verified_model()
+        for runtime in ('wslc', 'container'):
+            with self.subTest(runtime=runtime):
+                self.env['OXPINYIN_CONTAINER'] = runtime
+                current = self.check_entry(['--cells', 'bdb'], 1)
+                self.assertNotIn(b'not supported', current.stderr)
+                self.assertIn(f'FAIL: {runtime} info failed; there is no daemon to start for it'.encode(), current.stderr)
 
     def test_cached_full_setup_preserves_result_order_files_and_selection(self):
         cache = self.work / 'cache'
@@ -629,6 +636,322 @@ elif name in ('curl','apt-get','sudo'):
             self.assertFalse(any(path.name == 'ca.crt' for path in self.work.rglob('ca.crt')))
 
 
+class RuntimeProvisionTests(unittest.TestCase):
+    """The command each runtime gets, and the host-only steps per OS; no container runs."""
+    def setUp(self):
+        # `container` names Apple's CLI only on macOS; on Windows it is wslc's alias.
+        patcher = mock.patch.object(provision.images, 'host_system', return_value='Darwin')
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.work = Path(directory.name)
+        self.calls = []
+
+    def service(self, ctr, host='Linux'):
+        service = provision.Provision(root=ROOT, env={'PATH': ''})
+        service.host, service.ctr, service.platform = host, ctr, 'linux/amd64'
+        service.cache = self.work / 'cache'
+        service.cache.mkdir(exist_ok=True)
+        service.model_cache = self.work / 'model20'
+        service.deps_image, service.base_image = 'deps:tag', 'debian:testing'
+        service.published, service.published_deps = 'pub:tag', 'pub:tag-deps'
+        service.proxy, service.custom_ca, service.env_flags = '', False, []
+        service.cells = ['tkrzw']
+        service.log = lambda message: self.calls.append(['log', message])
+        return service
+
+    def runner(self, statuses=None):
+        statuses = statuses or {}
+
+        def fake(command, **kwargs):
+            command = [str(part) for part in command]
+            self.calls.append(command)
+            return next((status for key, status in statuses.items() if key in command), 0)
+        return fake
+
+    def commands(self):
+        return [call for call in self.calls if call[0] != 'log']
+
+    def test_the_build_run_mounts_per_runtime(self):
+        commands = {ctr: self.service(ctr).in_image_command(['--libs-only']) for ctr in ('docker', 'podman', 'wslc', 'container')}
+        recipe = f'{ROOT}:/opt/oracle-recipe'
+        for ctr in ('docker', 'podman'):
+            self.assertIn(recipe + ':ro,z', commands[ctr])
+            self.assertEqual(commands[ctr][commands[ctr].index('--platform') + 1], 'linux/amd64')
+            self.assertIn('--network', commands[ctr])
+        self.assertIn(recipe + ':ro', commands['wslc'])
+        self.assertNotIn('--platform', commands['wslc'])
+        self.assertNotIn('--network', commands['wslc'])
+        self.assertIn(f'type=bind,source={ROOT},target=/opt/oracle-recipe,readonly', commands['container'])
+        self.assertNotIn('--network', commands['container'])
+        for ctr in ('wslc', 'container'):
+            self.assertFalse(any(str(part).endswith(('z', ',z')) and ':' in str(part) for part in commands[ctr]), ctr)
+            script = '/opt/oracle-recipe/tools/oracle/build-oracle.sh' if ctr == 'container' else 'build-oracle.sh'
+            self.assertEqual(commands[ctr][-2:], [script, '--libs-only'])
+
+    def test_runtime_readiness_asks_each_runtime_its_own_way(self):
+        for ctr, expected in (('docker', ['docker', 'info']), ('podman', ['podman', 'info']),
+                              ('wslc', ['wslc', 'info']), ('container', ['container', 'system', 'status'])):
+            with self.subTest(ctr=ctr):
+                self.calls.clear()
+                with mock.patch.object(provision, 'run', self.runner()):
+                    service = self.service(ctr)
+                    service.runtime_ready()
+                    service.runtime_ready()
+                self.assertEqual(self.commands(), [expected])
+
+    def test_docker_without_a_daemon_starts_dockerd_only_on_linux(self):
+        for host in ('Darwin', 'Windows'):
+            with (self.subTest(host=host), mock.patch.object(provision, 'run', self.runner({'info': 1})),
+                  contextlib.redirect_stderr(io.StringIO()) as error, self.assertRaises(Finished)):
+                self.service('docker', host).runtime_ready()
+            self.assertIn('start Docker Desktop or the Docker daemon (dockerd is started only on Linux)', error.getvalue())
+        with (mock.patch.object(provision, 'run', self.runner({'info': 1})), mock.patch.object(provision.shutil, 'which', return_value=None),
+              contextlib.redirect_stderr(io.StringIO()) as error, self.assertRaises(Finished)):
+            self.service('docker').runtime_ready()
+        self.assertIn('dockerd is not installed', error.getvalue())
+
+    def test_the_deps_image_is_pulled_tagged_or_built_per_runtime(self):
+        for ctr in ('docker', 'wslc', 'container'):
+            with self.subTest(ctr=ctr):
+                self.calls.clear()
+                with mock.patch.object(provision, 'run', self.runner({'inspect': 1})):
+                    self.service(ctr).build_deps_image()
+                inspect, pull, tag = self.commands()
+                self.assertEqual(inspect, provision.runtime_command([ctr, 'image', 'inspect', 'deps:tag']))
+                self.assertEqual(pull, provision.runtime_command([ctr, 'pull', '--quiet', '--platform', 'linux/amd64', 'pub:tag-deps']))
+                self.assertEqual(tag, provision.runtime_command([ctr, 'tag', 'pub:tag-deps', 'deps:tag']))
+        self.assertEqual(pull, ['container', 'image', 'pull', '--platform', 'linux/amd64', 'pub:tag-deps'])
+        self.calls.clear()
+        with mock.patch.object(provision, 'run', self.runner({'inspect': 1, 'pull': 1})), contextlib.redirect_stderr(io.StringIO()):
+            service = self.service('wslc')
+            (service.cache / 'pull-deps.err').write_text('')
+            service.retry = lambda command: self.calls.append(['retry', *map(str, command)])
+            service.build_deps_image()
+        self.assertEqual(self.commands()[-2], ['retry', 'wslc', 'pull', '--quiet', 'debian:testing'])
+        self.assertEqual(self.commands()[-1][:4], ['wslc', 'build', '--target', 'deps'])
+        self.calls.clear()
+        with mock.patch.object(provision, 'run', self.runner({'inspect': 1})):
+            service = self.service('container')
+            service.pull = False
+            service.retry = lambda command: self.calls.append(['retry', *map(str, command)])
+            service.build_deps_image()
+        self.assertEqual(self.commands()[-1][:6], ['container', 'build', '--cpus', '4', '--memory', '6G'])
+
+    def libraries(self, ctr, host='Linux', pulled=True):
+        service = self.service(ctr, host)
+        states = iter([False, True, True])
+        service.libs_ok = lambda cell, prefix=None: next(states)
+        service.build_deps_image = lambda: self.calls.append(['deps'])
+        service.pool_phase = lambda *args: self.calls.append(['pool']) or 0
+        service.in_deps_image = lambda script, *args: self.calls.append(['in-deps', *args])
+        with (mock.patch.object(provision, 'run', self.runner({'pull': 0 if pulled else 1})),
+              mock.patch.object(provision, 'text', lambda command, **kwargs: self.calls.append([str(p) for p in command]) or 'cid\r'),
+              contextlib.redirect_stderr(io.StringIO())):
+            (service.cache / 'pull-published.err').write_text('manifest unknown\n')
+            service.libraries()
+        return self.commands()
+
+    def test_the_published_libraries_are_copied_per_runtime(self):
+        commands = self.libraries('docker')
+        self.assertEqual(commands[0], ['docker', 'pull', '--quiet', '--platform', 'linux/amd64', 'pub:tag'])
+        self.assertEqual(commands[1], ['docker', 'create', '--platform', 'linux/amd64', 'pub:tag', '/none'])
+        self.assertEqual(commands[2], ['docker', 'cp', 'cid:/opt/pinyin-oracle/tkrzw', str(self.work / 'cache/oracle/tkrzw')])
+        self.assertEqual(commands[3], ['docker', 'rm', 'cid'])
+
+    def test_on_windows_the_published_prefix_is_unpacked_by_the_deps_image(self):
+        self.calls.clear()
+        commands = self.libraries('wslc', 'Windows')
+        self.assertEqual(commands[:2], [['wslc', 'pull', '--quiet', 'pub:tag'], ['wslc', 'create', 'pub:tag', '/none']])
+        self.assertEqual(commands[2], ['wslc', 'export', '-o', str(self.work / 'cache/published.tar'), 'cid'])
+        self.assertEqual(commands[3], ['in-deps', 'tkrzw'])
+        self.assertEqual(commands[4], ['wslc', 'remove', 'cid'])
+        self.assertFalse(any('cp' in command for command in commands))
+
+    def test_apple_builds_the_libraries_in_the_deps_image_without_the_published_pull(self):
+        self.calls.clear()
+        commands = self.libraries('container', 'Darwin')
+        self.assertEqual(commands, [['deps'], ['pool']])
+        self.assertIn(['log', 'Apple container: building the libraries in the deps image (no published-image pull)'], self.calls)
+
+    def test_windows_prefix_checks_and_removals_run_in_the_deps_image(self):
+        service = self.service('wslc', 'Windows')
+        service.contained_ready = lambda: None
+        with (mock.patch.object(provision, 'run', self.runner({'libs': provision.PREFIX_INVALID})),
+              mock.patch.object(provision.images, 'prefix_ok') as host_check,
+              mock.patch.object(provision.shutil, 'rmtree') as rmtree):
+            self.assertFalse(service.libs_ok('tkrzw'))
+            self.assertTrue(service.data_ok('kc', service.oracle_root / 'kc'))
+            service.remove_prefix('bdb')
+        host_check.assert_not_called()
+        rmtree.assert_not_called()
+        libs, data, remove = self.commands()
+        self.assertEqual(libs[:3], ['wslc', 'run', '--rm'])
+        self.assertIn(f'{service.oracle_root}:/opt/pinyin-oracle:ro', libs)
+        self.assertEqual(libs[libs.index('deps:tag'):], ['deps:tag', 'uv', 'run', '--no-project', '--managed-python', 'python',
+                                                         '-X', 'lazy_imports=normal', '-m', 'tools.dev',
+                                                         'provision', 'prefix-check', 'libs', 'tkrzw',
+                                                         '/opt/pinyin-oracle/tkrzw', '/run/oracle-pin.txt'])
+        self.assertEqual(data[-4:], ['data', 'kc', '/opt/pinyin-oracle/kc', '/run/oracle-pin.txt'])
+        self.assertEqual(remove[-4:], ['-c', 'rm -rf "/cache/oracle/$1"', 'sh', 'bdb'])
+        with mock.patch.object(provision.shutil, 'rmtree') as rmtree:
+            self.service('docker').remove_prefix('bdb')
+        rmtree.assert_called_once()
+        self.calls.clear()
+        with mock.patch.object(provision, 'run', self.runner()):
+            self.assertEqual(service.contained('summary', 'tkrzw', service.oracle_root / 'tkrzw'), 0)
+        self.assertEqual(self.commands()[0][-5:], ['summary', 'tkrzw', '/opt/pinyin-oracle/tkrzw', '/run/oracle-pin.txt',
+                                                   str(service.oracle_root / 'tkrzw')])
+
+    def test_a_check_that_does_not_run_keeps_the_prefix_and_names_the_error(self):
+        # 2: uv or the tools.dev interpreter gate; 125: the runtime; 1: a crash in the check.
+        for status in (1, 2, 125):
+            with self.subTest(status=status):
+                self.calls.clear()
+                service = self.service('wslc', 'Windows')
+                service.contained_ready = lambda: None
+                prefix = service.oracle_root / 'tkrzw'
+                (prefix / 'lib').mkdir(parents=True, exist_ok=True)
+                (prefix / 'lib/libpinyin.so').write_text('kept')
+                with (mock.patch.object(provision, 'run', self.runner({'prefix-check': status})),
+                      contextlib.redirect_stderr(io.StringIO()) as error, self.assertRaises(Finished)):
+                    service.libraries()
+                self.assertIn(f'tkrzw: the libs check of {prefix} did not run (wslc exited {status}); the prefix is kept',
+                              error.getvalue())
+                self.assertEqual((prefix / 'lib/libpinyin.so').read_text(), 'kept')
+                commands = self.commands()
+                self.assertEqual(len(commands), 1)
+                self.assertIn('prefix-check', commands[0])
+                self.assertFalse(any('rm -rf' in ' '.join(command) or 'export' in command for command in commands))
+
+    def test_an_invalid_verdict_is_a_status_of_its_own(self):
+        with mock.patch.object(provision.Provision, 'options', lambda self, argv: None):
+            for check in ('libs', 'data'):
+                with self.subTest(check=check), mock.patch.object(provision.Provision, check + '_ok', return_value=False):
+                    self.assertEqual(provision.main(['prefix-check', check, 'tkrzw', '/p', '/pin']), provision.PREFIX_INVALID)
+                with mock.patch.object(provision.Provision, check + '_ok', return_value=True):
+                    self.assertEqual(provision.main(['prefix-check', check, 'tkrzw', '/p', '/pin']), 0)
+
+    def test_a_tkrzw_loader_check_that_does_not_run_keeps_the_cache(self):
+        service = self.service('podman')
+        prefix = service.tkrzw_prefix
+        (prefix / 'bin').mkdir(parents=True)
+        (prefix / 'bin/tkrzw_dbm_util').write_text('built')
+        (prefix / 'REV').write_text(provision.TKRZW_REV + '\n')
+        uncertified = mock.Mock(status=1, stdout=b'', stderr=b'')
+        with (mock.patch.object(provision, 'capture', return_value=uncertified),
+              mock.patch.object(provision, 'resolve_tkrzw', side_effect=Finished(127)),
+              mock.patch.object(provision, 'run') as run,
+              contextlib.redirect_stderr(io.StringIO()) as error, self.assertRaises(Finished)):
+            service.sound_tkrzw()
+        self.assertIn(f'tkrzw: the loader check of {prefix} did not run (status 127); the cache is kept', error.getvalue())
+        self.assertEqual((prefix / 'bin/tkrzw_dbm_util').read_text(), 'built')
+        run.assert_not_called()
+
+    def test_the_prefix_check_entry_point_names_the_host_prefix_in_its_summary(self):
+        prefix = self.work / 'tkrzw'
+        (prefix / 'lib').mkdir(parents=True)
+        for library in ('libpinyin', 'libzhuyin'):
+            (prefix / 'lib' / (library + '.so')).write_text(library)
+        with mock.patch.object(provision.Provision, 'options', lambda self, argv: None), \
+                contextlib.redirect_stdout(io.StringIO()) as output:
+            status = provision.main(['prefix-check', 'summary', 'tkrzw', str(prefix), str(self.work / 'pin'), 'C:\\cache\\oracle\\tkrzw'])
+        self.assertEqual(status, 0)
+        self.assertEqual(output.getvalue(), f'tkrzw prefix=C:\\cache\\oracle\\tkrzw libpinyin={digest_file(prefix / "lib/libpinyin.so")} '
+                                            f'libzhuyin={digest_file(prefix / "lib/libzhuyin.so")} data manifest OK\n')
+
+    def test_valgrind_ext4_and_dump_utilities_off_linux(self):
+        for host in ('Darwin', 'Windows'):
+            with self.subTest(host=host):
+                service = self.service('docker', host)
+                service.cells = ['bdb', 'kc', 'tkrzw']
+                with (mock.patch.object(service, 'which', side_effect=lambda name: name in ('cargo', 'rustup')),
+                      mock.patch.object(provision, 'run', return_value=0) as run):
+                    service.prerequisites()
+                self.assertEqual(service.valgrind_version, 'not checked (Linux only)')
+                self.assertFalse(any('valgrind' in map(str, call.args[0]) for call in run.call_args_list))
+                with contextlib.redirect_stdout(io.StringIO()) as output:
+                    service.report_ext4()
+                self.assertEqual(output.getvalue(), 'ext4 paths: not checked (findmnt and the measurement gates are Linux only).\n')
+                # Provisioning runs neither dump tool, and off Linux its checks run in the deps image.
+                with (mock.patch.object(service, 'which', return_value=None), mock.patch.object(service, 'apt') as apt,
+                      mock.patch.object(provision.os, 'geteuid', create=True) as geteuid):
+                    service.backend_tools()
+                apt.assert_not_called()
+                geteuid.assert_not_called()
+                self.assertIn(['log', f'db5.3_dump kchashmgr: not required on {host}; '
+                                      'provisioning checks run in the deps image there'], self.calls)
+
+    def test_linux_still_requires_the_dump_utilities(self):
+        service = self.service('podman')
+        service.cells = ['bdb', 'kc']
+        with (mock.patch.object(service, 'which', return_value=None), mock.patch.object(service, 'apt') as apt,
+              mock.patch.object(provision.os, 'geteuid', create=True, return_value=1000),
+              contextlib.redirect_stderr(io.StringIO()) as error, self.assertRaises(Finished)):
+            service.backend_tools()
+        apt.assert_not_called()
+        self.assertIn('missing: db5.3_dump kchashmgr\nrun as root: apt-get install -y db5.3-util kyotocabinet-utils',
+                      error.getvalue())
+
+    def test_provision_and_provision_oracle_share_one_cache(self):
+        # F: OXPINYIN_PROVISION_CACHE first, then the older OXPINYIN_CLOUD_CACHE, then ~/.cache/oxpinyin.
+        for env, expected in (({'OXPINYIN_PROVISION_CACHE': '/p', 'OXPINYIN_CLOUD_CACHE': '/c'}, '/p'),
+                              ({'OXPINYIN_CLOUD_CACHE': '/c'}, '/c'), ({'XDG_CACHE_HOME': '/x'}, '/x/oxpinyin')):
+            with self.subTest(env=env):
+                self.assertEqual(provision.Provision(root=ROOT, env=dict(env, PATH='')).cache, Path(expected))
+                self.assertEqual(provision.images.provision_cache(env), Path(expected))
+
+    def test_the_platform_comes_from_the_host_architecture_on_every_os(self):
+        for machine, expected in (('x86_64', 'linux/amd64'), ('AMD64', 'linux/amd64'), ('aarch64', 'linux/arm64'),
+                                  ('ARM64', 'linux/arm64')):
+            with self.subTest(machine=machine), mock.patch.object(provision.platform, 'machine', return_value=machine):
+                service = self.service('docker')
+                service.options(['--cells', 'tkrzw'])
+                self.assertEqual(service.platform, expected)
+        with (mock.patch.object(provision.platform, 'machine', return_value='riscv64'),
+              contextlib.redirect_stderr(io.StringIO()), self.assertRaises(Finished) as raised):
+            self.service('docker').options([])
+        self.assertEqual(raised.exception.status, 2)
+
+
+class ManifestCheckTests(unittest.TestCase):
+    """check_manifest gives sha256sum --check --quiet's status and output."""
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.work = Path(directory.name)
+        for name in ('a', 'b'):
+            (self.work / name).write_text(name + '\n')
+
+    def manifest(self, *lines):
+        (self.work / 'm.sha256').write_text(''.join(line + '\n' for line in lines))
+        return provision.check_manifest('m.sha256', self.work)
+
+    def test_matching_files_print_nothing(self):
+        a, b = (digest_file(self.work / name) for name in ('a', 'b'))
+        self.assertEqual(self.manifest(f'{a}  a', f'{b.upper()} *b'), (0, ''))
+
+    def test_mismatches_unreadable_files_and_malformed_lines_follow_sha256sum(self):
+        a = digest_file(self.work / 'a')
+        status, output = self.manifest(f'{"0" * 64}  a', f'{a}  gone', 'not a checksum line', f'{"1" * 64}  b')
+        self.assertEqual(status, 1)
+        lines = output.splitlines()
+        self.assertEqual(lines[0], 'a: FAILED')
+        self.assertRegex(lines[1], r'^sha256sum: gone: .+')
+        self.assertEqual(lines[2:], ['gone: FAILED open or read', 'b: FAILED',
+                                     'sha256sum: WARNING: 1 line is improperly formatted',
+                                     'sha256sum: WARNING: 1 listed file could not be read',
+                                     'sha256sum: WARNING: 2 computed checksums did NOT match'])
+
+    def test_a_manifest_without_a_checksum_line_fails(self):
+        self.assertEqual(self.manifest('nothing here'),
+                         (1, 'sha256sum: m.sha256: no properly formatted checksum lines found\n'))
+        status, output = provision.check_manifest('absent.sha256', self.work)
+        self.assertEqual(status, 1)
+        self.assertTrue(output.startswith('sha256sum: absent.sha256: '))
+
+
 class InImageCommandTests(unittest.TestCase):
     def test_deps_image_run_mounts_the_bash_floor_next_to_the_build_script(self):
         # build-oracle.sh sources ../lib/bash-floor.sh relative to /usr/local/bin; a deps image
@@ -641,6 +964,14 @@ class InImageCommandTests(unittest.TestCase):
         command = run.in_image_command(['--libs-only'])
         self.assertIn('/checkout/tools/oracle/build-oracle.sh:/usr/local/bin/build-oracle.sh:ro,z', command)
         self.assertIn('/checkout/tools/lib/bash-floor.sh:/usr/local/lib/bash-floor.sh:ro,z', command)
+        run.ctr = 'container'
+        # `container` names Apple's CLI only on macOS; on Windows it is wslc's alias.
+        with mock.patch.object(provision.images, 'host_system', return_value='Darwin'):
+            command = run.in_image_command(['--libs-only'])
+        self.assertIn('type=bind,source=/checkout,target=/opt/oracle-recipe,readonly', command)
+        self.assertEqual(command[command.index('--memory') + 1], '6G')
+        self.assertIn('/opt/oracle-recipe/tools/oracle/build-oracle.sh', command)
+        self.assertFalse(any('source=/checkout/tools/' in part for part in command))
 
 
 if __name__ == '__main__':

@@ -57,6 +57,10 @@ python:
 provision *args: python
     @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev provision "$@"
 
+[windows]
+provision *args: python
+    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev provision @forwarded; exit $LASTEXITCODE
+
 # Fetch, verify and extract the pinned model20 archive into target/model20.
 [unix]
 fetch-model *args: python
@@ -220,7 +224,8 @@ coverage *args:
     @{{windows_args}} $scratch = Join-Path ([IO.Path]::GetTempPath()) ('oxpinyin-coverage-' + [guid]::NewGuid().ToString('N')); $target = Join-Path $scratch 'target'; New-Item -ItemType Directory -Path $scratch | Out-Null; $env:CARGO_LLVM_COV_TARGET_DIR = $target; $env:CARGO_LLVM_COV_BUILD_DIR = $target; [Console]::Error.WriteLine("CARGO_LLVM_COV_TARGET_DIR: $target"); try { cargo llvm-cov @forwarded; $status = $LASTEXITCODE } finally { Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $scratch }; exit $status
 
 # Capture one run of the pin's apostrophe observations in the capture image
-# (docs/runbooks/pin-captures.md). OXPINYIN_CAPTURE_RUNTIME names the runtime.
+# (docs/runbooks/pin-captures.md). The runtime is the platform's default; OXPINYIN_CAPTURE_RUNTIME
+# or OXPINYIN_CONTAINER names another.
 [unix]
 capture-pin run: python
     @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.oracle.image capture-pin "$1"
@@ -228,6 +233,17 @@ capture-pin run: python
 [windows]
 capture-pin run: python
     @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.oracle.image capture-pin @forwarded; exit $LASTEXITCODE
+
+# Provision the oracle cells into the provisioning cache `just provision` also uses
+# (OXPINYIN_PROVISION_CACHE, else ~/.cache/oxpinyin), running `provision oracle` in the
+# performance image through the selected runtime (docs/runbooks/pin-captures.md).
+[unix]
+provision-oracle *args: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.oracle.image provision-oracle "$@"
+
+[windows]
+provision-oracle *args: python
+    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.oracle.image provision-oracle @forwarded; exit $LASTEXITCODE
 
 # Run a sanitizer gate with address, thread, leak or memory instrumentation.
 [linux]
