@@ -17,7 +17,6 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / 'tools/bisection'))
 
 from tools.dev import contract_data
-import contract_reference
 
 
 def deb(files):
@@ -63,7 +62,7 @@ class PinTests(unittest.TestCase):
             target = Path(directory, 'data')
             contract_data.extract(payload, 'usr/lib/x/libpinyin/data', target)
             self.assertEqual(sorted(file.name for file in target.iterdir()), ['a.bin', 'table.conf'])
-            self.assertEqual(contract_data.content_digest(target), contract_reference.data_identity(target))
+            self.assertEqual(contract_data.content_digest(target), contract_data.data_identity(target))
 
     def test_staged_files_are_read_only_and_a_damaged_read_only_copy_is_replaced(self):
         files = {'usr/lib/x/libpinyin/data/table.conf': b'c', 'usr/lib/x/libpinyin/data/a.bin': b'1'}

@@ -1,5 +1,5 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
-"""Regressions for the ABI helpers the contract-diff cases share (#1175).
+"""Regressions for the ABI helpers the cross-open cases share (#1175).
 
 The helpers drive a Kit through `fn`, `text`, `alloc` and `inst`, so a stand-in
 Kit whose `fn` hands back Python functions exercises each one without a

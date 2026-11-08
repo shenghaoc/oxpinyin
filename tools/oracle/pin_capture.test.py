@@ -48,7 +48,7 @@ class CaptureTests(unittest.TestCase):
         (self.data / 'table.conf').write_text('the fixture system data\n')
         pin = self.root / PINS[1]
         pin.write_text(json.dumps(dict(json.loads(pin.read_text()),
-                                       content_sha256=pin_capture.reference.data_identity(self.data))))
+                                       content_sha256=pin_capture.contract_data.data_identity(self.data))))
         self.pins = image.fields(self.root / PINS[0])
         self.prefix = self.root / 'prefix'
         self.record = self.make_prefix(self.prefix, 'tkrzw')

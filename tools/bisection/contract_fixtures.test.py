@@ -1,5 +1,5 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
-"""Regressions for the fixture builders the contract-diff cases share (#1175)."""
+"""Regressions for the fixture builders the cross-open cases share (#1175)."""
 
 import os
 from pathlib import Path

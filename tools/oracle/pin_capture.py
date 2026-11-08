@@ -44,6 +44,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -53,7 +54,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools/bisection'))
 sys.path.insert(0, str(ROOT))
 import contract_fixtures  # noqa: E402
-import contract_reference as reference  # noqa: E402
+from tools.dev import contract_data  # noqa: E402
 from tools.dev import w3_fixtures  # noqa: E402
 from tools.oracle import image  # noqa: E402
 
@@ -1234,7 +1235,7 @@ def checked_identity(prefix, data, root=ROOT, libraries=None, cache=None, model=
         if loaded != record[key]:
             raise CaptureError(f'{library}: the loaded lib{facade} is {loaded}, the prefix records {record[key]}')
         facades[facade] = {'library_sha256': loaded}
-    digest = reference.data_identity(data)
+    digest = contract_data.data_identity(data)
     pinned = json.loads((Path(root) / 'tools/oracle/libpinyin-data.json').read_text())['content_sha256']
     if digest != pinned:
         raise CaptureError(f'{data}: the data digest is {digest}, the repository pins {pinned}')
@@ -1246,9 +1247,21 @@ def checked_identity(prefix, data, root=ROOT, libraries=None, cache=None, model=
             'library_sha256': facades['pinyin']['library_sha256'],
             'facades': facades,
             'versions_sha256': record['versions_sha256'],
-            'data': {'kind': reference.PACKAGE, 'digest': digest},
+            'data': {'kind': 'package', 'digest': digest},
             'utility_cells': checked_utilities(cache, root),
             'model_dir': None if (path := checked_model(model)) is None else str(path)}
+
+
+def require_capture_environment():
+    """Capture only runs in the Debian testing pin image; refuse any other host."""
+    release = Path('/etc/os-release')
+    content = release.read_text() if release.is_file() else ''
+    # Rolling Debian identifies itself as <testing codename>/sid; do not pin that codename.
+    if not re.search(r'^ID=debian$', content, re.M) or not re.search(
+            r'^PRETTY_NAME="Debian GNU/Linux [^"]+/sid"$', content, re.M):
+        raise ValueError('capture runs in the Debian testing pin image: see docs/runbooks/pin-captures.md')
+    if not os.environ.get('OXPINYIN_CAPTURE_IMAGE'):
+        raise ValueError('capture needs OXPINYIN_CAPTURE_IMAGE, the image identity (set by just capture-pin)')
 
 
 def capture(run, prefix, data, staging, take, root=ROOT, libraries=None, cache=None, model=None):
@@ -1296,11 +1309,11 @@ def main(argv):
     run.add_argument('--staging', default=str(DEFAULT_STAGING), help='the staging directory')
     args = parser.parse_args(argv)
     try:
-        reference.require_capture_environment()
+        require_capture_environment()
         return capture(args.run, args.prefix, args.data, args.staging,
                        take_observation(args.prefix, args.data), cache=args.provision_cache,
                        model=args.model_dir)
-    except (CaptureError, reference.ReferenceError, OSError, ValueError, subprocess.CalledProcessError) as error:
+    except (CaptureError, ValueError, OSError, subprocess.CalledProcessError) as error:
         print(f'FAIL: {error}', file=sys.stderr)
         return 1
 

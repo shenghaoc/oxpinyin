@@ -1,12 +1,10 @@
-"""Profile, system-directory and DBM-container fixtures the contract-diff cases share.
+"""Profile, system-directory and DBM-container fixtures the cross-open cases share.
 
 Builders for the files a case plants before it opens a facade (a private system
 directory of links, a conforming user.conf, an edited table.conf, a user table
 container in each backend's own format) and readers for what a run left behind.
-Nothing here reads the driver's per-run state: the cell, which the container
-reader needs, is a parameter, and contract-diff.py passes its own. The driver
-re-exports every name. `_craft_db`, which picks the writer for its cell, stays
-there beside the tests that patch the writers.
+Nothing here reads a per-run state: the cell, which the container reader
+needs, is a parameter.
 """
 import ctypes as C
 import os

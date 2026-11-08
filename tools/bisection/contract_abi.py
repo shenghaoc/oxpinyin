@@ -1,13 +1,9 @@
-"""C ABI vocabulary and call helpers shared by the contract-diff cases.
+"""C ABI vocabulary and call helpers shared by the cross-open cases.
 
 The ctypes aliases the cases write their signatures with, the out-parameter
 sentinel, and the helpers that drive one facade call and return its
-observation: parse results, candidate and sentence readers, token and unigram
-readers. Every helper takes the case's Kit (contract-diff.py) and uses only
-its `mode`, `fn`, `text`, `alloc`, `inst` and `glib`. Nothing here reads the
-driver's per-run state (cell, registry, timings, cancellation), so one copy
-serves every load of the driver. contract-diff.py re-exports each name; that is
-how the cases, its tests and gcov_measure reach them.
+observation. Every helper takes the case's Kit and uses only its `mode`,
+`fn`, `text`, `alloc`, `inst` and `glib`.
 """
 import ctypes as C
 import json
