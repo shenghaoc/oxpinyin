@@ -8,7 +8,8 @@ description: |-
   profile), optional CI tools (uv through astral-sh/setup-uv, with the
   managed Python and its build check; just,
   cargo-nextest, cargo-llvm-cov and cargo-deny through
-  taiki-e/install-action, and cargo-c through cargo install), and an optional Swatinem/rust-cache
+  taiki-e/install-action at exact versions, restored from the Actions cache
+  when the requested tool list and versions match, and cargo-c through cargo install), and an optional Swatinem/rust-cache
   restore/save (its post step runs with the composite's completion).
 
   The actions/checkout step stays inline in every calling job. A local
@@ -174,32 +175,105 @@ runs:
         assert Path(sys.executable).resolve() == Path(managed).resolve()
         PYTHON
 
-    # install-action pins below: v2.90.0 tag commit. Each tool is written once,
-    # here. Checksum verification stays on (its default) and fallback is off, so
-    # a tool the action cannot install from a release fails the job.
-    - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
-      if: inputs.just == 'true'
+    # The install-action tools, each written once, here, with an exact version
+    # so the cache key below is stable. Bump a version here and the key moves
+    # with it. The step also builds the key from the runner OS and architecture
+    # plus the exact list of tools this call asks for, and the paths to cache
+    # (install-action puts all four in ${CARGO_HOME:-~/.cargo}/bin, and none
+    # sets CARGO_HOME here).
+    - name: Resolve the install-action tools
+      id: tools
+      shell: bash
+      env:
+        JUST: ${{ inputs.just }}
+        CARGO_NEXTEST: ${{ inputs.cargo-nextest }}
+        CARGO_LLVM_COV: ${{ inputs.cargo-llvm-cov }}
+        CARGO_DENY: ${{ inputs.cargo-deny }}
+      run: |
+        set -euo pipefail
+        wanted=()
+        paths=()
+        resolve() {
+          printf '%s=%s@%s\n' "$1" "$1" "$2" >> "$GITHUB_OUTPUT"
+          if [ "$3" = true ]; then
+            wanted+=("$1@$2")
+            paths+=("~/.cargo/bin/$1" "~/.cargo/bin/$1.exe")
+          fi
+        }
+        resolve just 1.59.0 "$JUST"
+        resolve cargo-nextest 0.9.150 "$CARGO_NEXTEST"
+        resolve cargo-llvm-cov 0.9.1 "$CARGO_LLVM_COV"
+        resolve cargo-deny 0.20.2 "$CARGO_DENY"
+        if [ "${#wanted[@]}" -eq 0 ]; then
+          echo 'any=false' >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        {
+          echo 'any=true'
+          printf 'key=install-action-tools-%s-%s-%s\n' "$RUNNER_OS" "$RUNNER_ARCH" "${wanted[*]}" | tr ' ' '-'
+          echo 'paths<<EOF_PATHS'
+          printf '%s\n' "${paths[@]}"
+          echo 'EOF_PATHS'
+        } >> "$GITHUB_OUTPUT"
+
+    # An exact hit restores every requested binary and skips install-action.
+    # A miss installs as before and the save step below stores the result.
+    - name: Restore the install-action tools
+      id: tool-cache
+      if: steps.tools.outputs.any == 'true'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        tool: just@1
+        path: ${{ steps.tools.outputs.paths }}
+        key: ${{ steps.tools.outputs.key }}
+
+    # GITHUB_PATH applies to later steps. install-action does this itself on
+    # a miss; a restore only extracts files.
+    - name: Put the cached tools on PATH
+      if: steps.tool-cache.outputs.cache-hit == 'true'
+      shell: bash
+      run: |
+        bin="$HOME/.cargo/bin"
+        if command -v cygpath >/dev/null; then bin="$(cygpath -w "$bin")"; fi
+        printf '%s\n' "$bin" >> "$GITHUB_PATH"
+
+    # install-action pins below: v2.90.0 tag commit. Checksum verification stays
+    # on (its default) and fallback is off, so a tool the action cannot install
+    # from a release fails the job. The action has no retry or timeout input;
+    # its downloads retry inside the script.
+    - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+      if: inputs.just == 'true' && steps.tool-cache.outputs.cache-hit != 'true'
+      with:
+        tool: ${{ steps.tools.outputs.just }}
         fallback: none
 
     - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
-      if: inputs.cargo-nextest == 'true'
+      if: inputs.cargo-nextest == 'true' && steps.tool-cache.outputs.cache-hit != 'true'
       with:
-        tool: cargo-nextest@0.9
+        tool: ${{ steps.tools.outputs.cargo-nextest }}
         fallback: none
 
     - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
-      if: inputs.cargo-llvm-cov == 'true'
+      if: inputs.cargo-llvm-cov == 'true' && steps.tool-cache.outputs.cache-hit != 'true'
       with:
-        tool: cargo-llvm-cov@0.9
+        tool: ${{ steps.tools.outputs.cargo-llvm-cov }}
         fallback: none
 
     - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
-      if: inputs.cargo-deny == 'true'
+      if: inputs.cargo-deny == 'true' && steps.tool-cache.outputs.cache-hit != 'true'
       with:
-        tool: cargo-deny@0.20
+        tool: ${{ steps.tools.outputs.cargo-deny }}
         fallback: none
+
+    # Only main writes the Actions cache; every other ref restores only.
+    - name: Save the install-action tools
+      if: >-
+        steps.tools.outputs.any == 'true'
+        && steps.tool-cache.outputs.cache-hit != 'true'
+        && github.ref == 'refs/heads/main'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.tools.outputs.paths }}
+        key: ${{ steps.tools.outputs.key }}
 
     # Exact on purpose: a fresh runner has nothing to reuse, and cargo-c's
     # rust-version rises with each release (0.10.24 needs Rust 1.95, 0.10.26
