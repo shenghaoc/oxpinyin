@@ -27,7 +27,7 @@ class HarnessTests(unittest.TestCase):
 
     def test_discovery_matches_ci_find_and_sort_on_the_checkout(self):
         self.assertEqual(test_runner.harness_files(), self.legacy_files(ROOT))
-        self.assertEqual(test_runner.HARNESS_EXCLUDED, {'tools/bisection/internal-ledger.test.py'})
+        self.assertEqual(test_runner.HARNESS_EXCLUDED, {'tools/bisection/internal-ledger-toolchain.test.py'})
 
     def test_discovery_includes_hidden_files_but_not_symlinks_or_directories(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -153,7 +153,7 @@ class Tests(unittest.TestCase):
     def test_other(self): self.fail('must not run')
 if __name__ == '__main__': unittest.main()
 """
-        excluded = {'tools/bisection/internal-ledger.test.py': "raise RuntimeError('must be excluded')"}
+        excluded = {'tools/bisection/internal-ledger-toolchain.test.py': "raise RuntimeError('must be excluded')"}
         for sources, unmatched in ((dict(excluded, **{'tools/a.test.py': source,
                                                      'tools/z.test.py': source}), 2),
                                    (excluded, 0), ({}, 0)):
@@ -355,7 +355,7 @@ print('END ' + name, file=sys.stderr, flush=True)
 
     def test_failure_runs_later_files_and_preserves_exclusion(self):
         sources = {'tools/a.test.py': 'raise SystemExit(7)',
-                   'tools/bisection/internal-ledger.test.py': "raise RuntimeError('must be excluded')",
+                   'tools/bisection/internal-ledger-toolchain.test.py': "raise RuntimeError('must be excluded')",
                    'tools/z.test.py': "print('LAST')"}
         status, out, err = self.fake_run(sources, cpus=1)
         self.assertEqual(status, 1)
