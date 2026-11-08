@@ -78,7 +78,7 @@ fn candidate_at(instance: *mut PinyinInstance, index: u32) -> *mut LookupCandida
     cand
 }
 
-/// The first row of TEXT, of any type, as nbest-train-diff.c's `find_by_text` takes it.
+/// The first row of TEXT, of any type, as `pinyin_choose_candidate` takes a row by text (`pinyin.cpp:2501-2589` at 074a2219).
 fn first_row_of(instance: *mut PinyinInstance, text: &str) -> u32 {
     let index = capture_rows(instance)
         .iter()
@@ -220,7 +220,7 @@ fn the_row_one_past_the_list_is_refused() {
     close(context, instance);
 }
 
-/// D8: nbest-train-diff.c's ordinary sequence at the gate's rounds (`runner_recipes.py:588`): three
+/// D8: the n-best training sequence (`pinyin.cpp:1372-1387`, `:2184-2308`, `:2501-2589`, `:2670-2691` at 074a2219): three
 /// rounds of 你 then 浩 at the cursor, then three of 你 then 好, by text, on the default options.
 /// `train_result3` trains each ONESTEP token and the next: a new pair seeds 69, an existing one
 /// adds `max(freq, 69) * 2` (`lookup/phonetic_lookup.h:886-903` at 074a2219), so three rounds

@@ -463,7 +463,7 @@ mod tests {
     }
 
     /// `OPTION_BASE` of `tools/oracle/pin_capture.py`: PINYIN_INCOMPLETE | USE_DIVIDED_TABLE |
-    /// USE_RESPLIT_TABLE, option-sweep's base word.
+    /// USE_RESPLIT_TABLE, the base word of the option cases (`pinyin_set_options`, `pinyin.cpp:1299-1307` at 074a2219).
     const OPTION_BASE: u32 = 0x188;
     /// PINYIN_CORRECT_ALL | PINYIN_AMB_S_SH | PINYIN_AMB_Z_ZH (`pinyin_custom2.h:51-52,79`).
     const OPTION_GATES: u32 = 0x1FE0_1800;

@@ -223,16 +223,16 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(registry.select(self.rows), self.rows)
 
     def test_names_keep_catalog_order_instead_of_selector_order(self):
-        chosen = registry.select(self.rows, names=['union-diff', 'bisect'])
-        self.assertEqual([row['name'] for row in chosen], ['bisect', 'union-diff'])
+        chosen = registry.select(self.rows, names=['abi-alloc', 'cpp-smoke'])
+        self.assertEqual([row['name'] for row in chosen], ['cpp-smoke', 'abi-alloc'])
 
     def test_cells_select_rows_supporting_any_requested_cell(self):
         self.assertNotIn('fuzz', [row['name'] for row in registry.select(self.rows, cells=['kc'])])
         self.assertIn('fuzz', [row['name'] for row in registry.select(self.rows, cells=['bdb'])])
 
     def test_issues_match_normalized_tags_and_keep_order(self):
-        chosen = registry.select(self.rows, issues=['Row 33'])
-        self.assertEqual([row['name'] for row in chosen], ['abi-probe-diff', 'residue-a-tail-diff'])
+        chosen = registry.select(self.rows, issues=['Row 38'])
+        self.assertEqual([row['name'] for row in chosen], ['train-index-diff'])
 
     def test_kind_and_require_selection(self):
         chosen = registry.select(self.rows, kind='not-a-gate')
@@ -240,8 +240,8 @@ class SelectionTests(unittest.TestCase):
         self.assertTrue(all(row['kind'] == 'not-a-gate' for row in chosen))
         with self.assertRaisesRegex(registry.RegistryError, 'plan needs an explicit selection'):
             registry.select(self.rows, require_selection=True)
-        self.assertEqual(registry.select(self.rows, names=['bisect'], require_selection=True),
-                         [row for row in self.rows if row['name'] == 'bisect'])
+        self.assertEqual(registry.select(self.rows, names=['cpp-smoke'], require_selection=True),
+                         [row for row in self.rows if row['name'] == 'cpp-smoke'])
 
     def test_empty_and_unknown_selectors_fail(self):
         for kwargs, message in (
@@ -262,7 +262,7 @@ class SelectionTests(unittest.TestCase):
 
     def test_no_match_raises_a_distinct_error(self):
         with self.assertRaises(registry.NoMatch) as raised:
-            registry.select(self.rows, names=['bisect'], issues=['W11'])
+            registry.select(self.rows, names=['cpp-smoke'], issues=['T2N'])
         self.assertIsInstance(raised.exception, registry.RegistryError)
         self.assertEqual(str(raised.exception), 'selection matched no registry rows')
 

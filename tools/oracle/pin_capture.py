@@ -309,8 +309,8 @@ def row_past_end(facade, text):
 # S5: one option bit on or off for its parser-table row.
 
 def option_walk(facade, case):
-    """Set WORD (after alloc, as option-sweep.c does), walk TEXT's keys and read the full-pinyin
-    auxiliary text at the parsed length."""
+    """Set WORD (after alloc; `pinyin_set_options` stores it, `pinyin.cpp:1299-1307` at 074a2219), walk
+    TEXT's keys and read the full-pinyin auxiliary text at the parsed length (`:3381-3438`)."""
     word, text = case
     facade.call('pinyin_set_options', word)
     key_walk(facade, text)
@@ -346,7 +346,8 @@ def scheme_key(scheme):
 
 
 def word_moves(facade, text):
-    """abi-probe-diff.c:582-596: the left and right word moves at offset(cursor), cursors 0, 2, 5, 8."""
+    """`pinyin.cpp:3010-3096` at 074a2219: the pinyin offset of the cursor, then the left and right word
+    moves from it, cursors 0, 2, 5, 8."""
     facade.call('pinyin_set_options', PARITY_OPTIONS)
     parse(facade, text)
     for cursor in (0, 2, 5, 8):
@@ -405,11 +406,13 @@ def dynamic(facade, case):
     rows(facade)
 
 
-# D8: nbest-train-diff's ordinary sequence (rounds as the gate ran it, runner_recipes.py:588).
+# D8: the n-best training sequence over `pinyin.cpp:1372-1387`, `:2184-2308`, `:2501-2589` and
+# `:2670-2691` at 074a2219.
 
 def nbest_surface(facade):
-    """nbest-train-diff.c print_surface: decode nihao, every row's type (and n-best index), up to
-    three sentences, the first eight rows; then reset."""
+    """Decode nihao (`pinyin.cpp:1372-1387`, `:2184-2308` at 074a2219), read every row's type and
+    n-best index (`:2845-2886`), up to three sentences (`:1464-1482`), the first eight rows; then
+    reset (`:2693-2705`)."""
     parse(facade, 'nihao')
     facade.call('pinyin_guess_sentence')
     facade.call('pinyin_guess_candidates', 0, DEFAULT_SORT)
@@ -420,7 +423,8 @@ def nbest_surface(facade):
 
 
 def train_pair(facade, first, second):
-    """nbest-train-diff.c train_pair: choose FIRST at 0 and SECOND at the cursor, by text, any type."""
+    """Choose FIRST at 0 and SECOND at the cursor, by text, any type (`pinyin.cpp:2501-2589`), then train
+    (`:2670-2691`) at 074a2219."""
     parse(facade, 'nihao')
     facade.call('pinyin_guess_sentence')
     facade.call('pinyin_guess_candidates', 0, DEFAULT_SORT)
@@ -557,7 +561,8 @@ def segment(facade, text):
 
 # D15 and D16: user rows for an incomplete key, and the zhuyin import separators.
 
-# tie-order-diff.c:82-85: one-character phrases whose readings differ only in the stored key.
+# One-character phrases whose readings differ only in the stored key; the candidate order they
+# probe is `pinyin.cpp:2184-2308` at 074a2219.
 TIE_USER_PHRASES = (('𦰡', 'na'), ('𫐐', 'ni'), ('𫠜', 'ni'), ('𨺙', 'ni'), ('𫔶', 'nie'),
                     ('𬪩', 'nong'), ('𦰡', 'nuo'), ('𫟅', 'nen'), ('𫵷', 'nao'), ('𬇕', 'nu'))
 
@@ -585,7 +590,7 @@ def zhuyin_import(facade, case):
 
 _GATED = (('agn', 1 << 21), ('amg', 1 << 22), ('diou', 1 << 23), ('duei', 1 << 24), ('duen', 1 << 25),
           ('lue', 1 << 26), ('jv', 1 << 27), ('zon', 1 << 28), ('sua', 1 << 11), ('zua', 1 << 12))
-OPTION_BASE = 0x188  # PINYIN_INCOMPLETE|USE_DIVIDED_TABLE|USE_RESPLIT_TABLE, option-sweep's base
+OPTION_BASE = 0x188  # PINYIN_INCOMPLETE|USE_DIVIDED_TABLE|USE_RESPLIT_TABLE, the base word of the option cases (`pinyin.cpp:1299-1307` at 074a2219)
 OPTION_GATES = 0x1FE01800  # PINYIN_CORRECT_ALL|PINYIN_AMB_S_SH|PINYIN_AMB_Z_ZH, pinyin_custom2.h:51-52,79
 
 # Observation ID -> Api(function, input[, facade]) or Utility.

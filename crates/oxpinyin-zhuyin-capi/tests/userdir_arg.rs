@@ -3,10 +3,8 @@
 //! The pin keeps `g_strdup(userdir)` (`zhuyin.cpp:276` at 074a2219) and
 //! its guards test the pointer (`:548`, `:1697`): NULL is no user dir,
 //! while `""` is one — `g_build_filename` drops the empty element, so the
-//! profile is bare file names in the working directory (#619). The
-//! differential that holds every form against the pin is
-//! `tools/bisection/run-locale-diff.sh`; this executable holds the
-//! boundary conversion where no oracle is built.
+//! profile is bare file names in the working directory (#619). This
+//! executable holds that law where no oracle is built.
 //!
 //! The working directory is process state. Keep every scenario in the
 //! single test below so the default parallel test runner cannot

@@ -1310,55 +1310,6 @@ fn dynamic_adjust_folds_the_bigram_term_only_with_the_bit_and_a_gram() {
     );
 }
 
-/// The frozen candidate pins were measured with `DYNAMIC_ADJUST` clear on
-/// both sides, which is the whole reason implementing it cannot move
-/// them. That safety argument is **not** "the term is zero at offset 0"
-/// — upstream's `_get_previous_token` answers `sentence_start` (1) there,
-/// not `null_token`, so Gate 2 fires and a real gram is merged. The
-/// argument is only that the bit is clear in every frozen word.
-///
-/// So this reads the harness's own option words rather than a copy of
-/// them: adding the bit to a frozen profile fails here instead of
-/// silently moving pins.
-#[test]
-fn no_frozen_option_word_sets_dynamic_adjust() {
-    use std::path::Path;
-
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/bisection");
-    let mut checked = 0_usize;
-    for entry in std::fs::read_dir(&dir).expect("the bisection harness is in-tree") {
-        let path = entry.expect("readable dir entry").path();
-        if path.extension().and_then(|e| e.to_str()) != Some("c") {
-            continue;
-        }
-        let source = std::fs::read_to_string(&path).expect("readable source");
-        for line in source.lines() {
-            let Some(rest) = line.strip_prefix("#define PARITY_OPTIONS") else {
-                continue;
-            };
-            let hex = rest
-                .split("0x")
-                .nth(1)
-                .expect("PARITY_OPTIONS is written in hex")
-                .trim_end_matches(|c: char| !c.is_ascii_hexdigit());
-            let word = u32::from_str_radix(hex, 16).expect("parsable hex option word");
-            assert_eq!(
-                word & 0x200,
-                0,
-                "{}: frozen option word 0x{word:x} sets DYNAMIC_ADJUST (1<<9). \
-                 The frozen candidate pins were measured with it clear; setting it \
-                 changes candidate ranking at every offset, including 0.",
-                path.display()
-            );
-            checked += 1;
-        }
-    }
-    assert!(
-        checked > 0,
-        "found no PARITY_OPTIONS definitions to check — the guard would be vacuous"
-    );
-}
-
 /// A system-only facade with a caller-chosen entry count, so a guess's
 /// merge count can be measured against its candidate count.
 struct SystemPhrases(Vec<PhraseEntry>);

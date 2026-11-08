@@ -399,7 +399,8 @@ mod tests {
     #[test]
     fn full_aux_text_matches_the_oracle_for_simple_keys() {
         // Captured from the pinned C++ libpinyin 2.11.91 oracle with
-        // PINYIN_INCOMPLETE set, using tools/bisection's dlopen driver.
+        // PINYIN_INCOMPLETE set (`pinyin_get_full_pinyin_auxiliary_text`, `pinyin.cpp:3381-3438`
+        // at 074a2219).
         for (cursor, expected) in [
             (0, "|ni hao "),
             (1, "n|i hao "),

@@ -1,26 +1,21 @@
 """Registry runner services and explicit recipe dispatch, sharing pool child cleanup.
 
 The registry remains in run-all.py/runners.json. This module supplies the
-build/cell/data/driver operations used by its recipes, not another scheduler.
+cell and driver operations used by its recipe, not another scheduler.
 """
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import ExitStack
-from dataclasses import dataclass, field, replace
-import io
-import importlib.util
+from dataclasses import dataclass
 import os
 from pathlib import Path
-import re
 import shlex
 import shutil
-import subprocess
 import sys
 import tempfile
 
-from . import cell as backend_cell, pool, slot
+from . import pool, slot
 from .cell import CellError, ROOT, Settings, library_path
 from .drivers import DriverServices
-from .system_data import SystemData
 
 
 class Finished(Exception):
@@ -51,7 +46,6 @@ class Context:
     caller: Path
     name: str
     events: list[tuple[bool, bytes]] | None = None
-    retained: set[Path] = field(default_factory=set)
 
     def emit(self, value: str = '', *, error: bool = False) -> None:
         self.write((value + '\n').encode(), error=error)
@@ -62,43 +56,6 @@ class Context:
         else:
             self.events.append((error, data))
 
-    def campaign(self, items: Sequence, function: Callable) -> list:
-        """Run independent cases with private scratch and deterministic streams.
-
-        Child cleanup is pool.py's.
-        Dependent steps within each case remain sequential in its callback.
-        """
-        def unit(item):
-            def run(context):
-                events = []
-                environment = dict(context.environment, **self.env)
-                settings = replace(self.settings, environment=environment)
-                with ExitStack() as stack:
-                    services = self.services.fork(settings, context,
-                        stdout=lambda data: events.append((False, data)),
-                        stderr=lambda data: events.append((True, data)))
-                    child = replace(self, settings=settings, services=services, stack=stack, events=events)
-                    try:
-                        return function(child, item), events
-                    except (Finished, CellError) as error:
-                        error.events = events
-                        raise
-            return run
-
-        def emit_unit(name, result):
-            for error, data in result[1]:
-                self.write(data, error=error)
-
-        try:
-            results = pool.run_leased([(f'{index}:{item}', unit(item)) for index, item in enumerate(items)],
-                                      cancelled=slot.CANCELLED.is_set, emit=emit_unit,
-                                      out=io.StringIO())
-        except (Finished, CellError) as error:
-            for diagnostic, data in getattr(error, 'events', []):
-                self.write(data, error=diagnostic)
-            raise
-        return [result[0] for result in results]
-
     @property
     def env(self) -> Mapping[str, str]:
         return self.settings.environment
@@ -107,26 +64,10 @@ class Context:
     def here(self) -> Path:
         return self.settings.root / 'tools/bisection'
 
-    @property
-    def data(self) -> SystemData:
-        return SystemData(self.settings, self.here)
-
     def scratch(self) -> Path:
         directory = Path(tempfile.mkdtemp())
-        self.stack.callback(lambda: None if directory in self.retained else shutil.rmtree(directory))
+        self.stack.callback(shutil.rmtree, directory)
         return directory
-
-    def output(self, variable: str) -> Path:
-        value = self.env.get(variable)
-        if not value:
-            return self.scratch()
-        directory = self.path(value)
-        directory.mkdir(parents=True, exist_ok=True)
-        return directory
-
-    def path(self, value: str | Path, *, caller: bool = False) -> Path:
-        path = Path(value)
-        return path if path.is_absolute() else (self.caller if caller else self.here) / path
 
     def command(self, argv: Sequence[str | Path], *, cwd: Path | None = None,
                 environment: Mapping[str, str] | None = None, capture: bool = False):
@@ -145,42 +86,10 @@ class Context:
             raise Finished(status(result.returncode))
         return shlex.split(result.stdout.decode()) if result.returncode == 0 else []
 
-    def compile(self, stem: str, destination: Path | None = None, *, compiler: str = 'gcc',
-                flags: Sequence[str] = ('-std=gnu11', '-Wall', '-Wextra', '-Werror', '-O2'),
-                glib: bool = False, optional_glib: bool = False, suffix: str = '.c',
-                link_flags: Sequence[str] = (), absolute_source: bool = False) -> Path:
-        destination = destination or self.here / stem
-        extra = self.flags('--cflags', '--libs', optional=optional_glib) if glib or optional_glib else []
-        source = self.here / (stem + suffix) if absolute_source else Path(stem + suffix)
-        self.checked([compiler, *flags, '-o', destination, source, '-ldl', *extra, *link_flags])
-        return destination
-
     def artifact(self, mode: str = 'pinyin') -> Path:
         variable, filename, package = ('OXPINYIN_CAPI_SO', 'libpinyin_capi.so', 'oxpinyin-capi') if mode == 'pinyin' else (
             'OXPINYIN_ZHUYIN_SO', 'libzhuyin_capi.so', 'oxpinyin-zhuyin-capi')
         return self.settings.artifact(variable, filename, package)
-
-    def pin(self, *, missing: int = 77, hint: bool = False, exact: bool = True,
-            require_data: bool = False, verify: bool = True) -> tuple[Path, Path]:
-        prefix = self.path(self.env.get('PINYIN_ORACLE_PREFIX') or str(Path.home() / '.local/opt/pinyin-oracle'))
-        so, data = prefix / 'lib/libpinyin.so', prefix / 'lib/libpinyin/data'
-        if not (prefix / 'oracle-pin.txt').is_file() or not so.is_file():
-            emit(f'SKIP: pin-built oracle not found at {prefix}')
-            if hint:
-                emit('  build it with tools/oracle/build-oracle.sh and set PINYIN_ORACLE_PREFIX')
-            raise Finished(missing)
-        lines = (prefix / 'oracle-pin.txt').read_text().splitlines()
-        good = self.settings.expected_pin in lines if exact else any(
-            line.startswith(self.settings.expected_pin.split('+model20-')[0]) for line in lines)
-        if verify and not good:
-            emit(f'SKIP: oracle prefix at {prefix} is off-pin' + (f' for the {self.settings.cell} cell' if exact else ''))
-            if exact:
-                emit('  expected ' + self.settings.expected_pin)
-            raise Finished(missing)
-        if require_data and not (data / 'bigram.db').is_file():
-            emit(f'SKIP: oracle data not found at {data}')
-            raise Finished(missing)
-        return so, data
 
     def run(self, driver: Path, so: Path, args: Sequence[str | Path], *, side: str,
             cwd: Path | None = None, env: Mapping[str, str] | None = None,
@@ -198,49 +107,6 @@ class Context:
             self.write(result.stderr, error=True)
             raise Finished(status(result.returncode))
         return result
-
-    def compare(self, pin: bytes, subject: bytes, *, labels: tuple[str, str] | None = None,
-                paths: tuple[Path, Path] | None = None) -> tuple[int, bytes]:
-        if paths is None:
-            work = self.scratch()
-            paths = work / 'oracle.log', work / 'oxpinyin.log'
-            paths[0].write_bytes(pin)
-            paths[1].write_bytes(subject)
-        command = ['diff', '-u']
-        if labels:
-            command += ['--label', labels[0], '--label', labels[1]]
-        result = self.command([*command, *paths], capture=True)
-        if result.stderr:
-            write(result.stderr, error=True)
-        return result.returncode, result.stdout
-
-    def pair(self, driver: Path, pin: Path, subject: Path, pin_data: Path, subject_data: Path,
-             *, args: Sequence[str] = (), loader: bool = False, fresh: bool = False,
-             quiet: bool = False, pin_first: bool = False, env: Mapping[str, str] | None = None,
-             failure: tuple[str, str] | None = None, diagnostics: bool = False) -> tuple[bytes, bytes]:
-        observations = {}
-        order = ('pin', 'subject') if pin_first else ('subject', 'pin')
-        for side in order:
-            so, data = (pin, pin_data) if side == 'pin' else (subject, subject_data)
-            result = self.run(driver, so, [so, data, *args], side=side, loader=loader, quiet=quiet,
-                              cwd=self.scratch() if fresh else None, env=env)
-            if result.returncode:
-                label = ('the oracle' if side == 'pin' else 'oxpinyin-capi')
-                self.emit(failure[0 if side == 'subject' else 1] if failure else f'FAIL: {driver.name} crashed against {label}')
-                self.write(result.stdout)
-                if diagnostics:
-                    self.emit('--- driver diagnostics (stderr) ---')
-                    self.write(result.stderr)
-                raise Finished(1)
-            if not quiet and not diagnostics:
-                self.write(result.stderr, error=True)
-            observations[side] = result.stdout
-        return observations['pin'], observations['subject']
-
-
-def python_script(ctx: Context, filename: str, argv: Sequence[str]) -> int:
-    return status(ctx.command([sys.executable, '-X', 'lazy_imports=normal', ctx.here / filename, *argv]).returncode)
-
 
 def verify_contract(args: Sequence[str]) -> int:
     """`contract-diff verify CELL PINYIN_SO [ZHUYIN_SO] [-- OPTIONS]`: the subject against the references.

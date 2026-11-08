@@ -146,8 +146,8 @@ pinyin_iterator_get_next_phrase          pinyin      g_free                     
 # leaks it. Called with no row pending, the pin asserts (:902) and
 # oxpinyin aborts there too (`BigramStep::Aborts`). Where the pin instead
 # reads NULL (:905), oxpinyin answers `false` without writing.
-pinyin_bigram_iterator_get_next_phrase   phrase      g_free                        false-allocates    pin-probe:run-bigram-export-diff.sh
-pinyin_bigram_iterator_get_next_phrase   pinyin      g_free                        false-allocates    pin-probe:run-bigram-export-diff.sh
+pinyin_bigram_iterator_get_next_phrase   phrase      g_free                        false-allocates    source:pinyin.cpp:896-909
+pinyin_bigram_iterator_get_next_phrase   pinyin      g_free                        false-allocates    source:pinyin.cpp:896-909
 
 # ── Caller-owned string vectors (g_strfreev) ──────────────────────────
 pinyin_in_chewing_keyboard               symbols     g_strfreev                    false-nulls        unverified

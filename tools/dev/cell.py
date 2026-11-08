@@ -55,12 +55,6 @@ def feature_flags(backend: str | None = None) -> list[str]:
     return ['--no-default-features', '--features', backend]
 
 
-def patch_digest(directory: Path) -> str:
-    rows = ''.join(f'{hashlib.sha256(file.read_bytes()).hexdigest()}  ./{file.name}\n'
-                   for file in sorted(directory.glob('*.patch')))
-    return hashlib.sha256(rows.encode()).hexdigest()
-
-
 def bash_word(value: str) -> str:
     """Render invalid settings as the former Bash printf %q diagnostic did."""
     if not value:
@@ -200,14 +194,9 @@ class Settings:
         return {key: self.environment[key] for key in keys if key in self.environment}
 
     def oracle(self, prefix: str, variant: str) -> 'Settings':
-        expected, patch = self.expected_pin, ''
-        if variant == 'bigram-export-strjoinv':
-            prefix += '-' + variant
-            patch = 'pin-bigram-export-strjoinv.patch'
-            directory = self.root / 'tools/bisection/patches' / variant
-            expected += '+patches-' + patch_digest(directory)
-        elif variant != 'unpatched':
+        if variant != 'unpatched':
             raise CellError(f'FAIL: unknown oracle variant: {variant}')
+        expected, patch = self.expected_pin, ''
         return replace(self, environment=dict(self.environment, PINYIN_ORACLE_PREFIX=prefix,
                        EXPECTED_ORACLE_PIN_REF=expected, ORACLE_PATCH_FILE=patch))
 
