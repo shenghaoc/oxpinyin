@@ -91,7 +91,7 @@ pub extern "C" fn zhuyin_set_options(context: *mut ZhuyinContext, options: Pinyi
 
     // SAFETY: `context` is non-null and was produced by `zhuyin_init`.
     let ctx = unsafe { context_mut(context) };
-    // The shared set_options law (word, mirrored bools, config key);
+    // The shared set_options law (stored word and incomplete setting);
     // the pinyin facade's setter runs the same body.
     ctx.core.set_options(options);
     true

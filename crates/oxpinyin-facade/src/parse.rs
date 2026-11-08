@@ -223,7 +223,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
     /// not on the keyboard (upstream's `false`).
     #[must_use]
     pub fn in_keyboard(&self, key: u8) -> Vec<String> {
-        let use_tone = self.live.use_tone.load(Ordering::Relaxed);
+        let use_tone = self.options().contains(USE_TONE);
         let Some(scheme) = zhuyin_scheme(self.live.zhuyin_scheme.load(Ordering::Relaxed)) else {
             return Vec::new();
         };
