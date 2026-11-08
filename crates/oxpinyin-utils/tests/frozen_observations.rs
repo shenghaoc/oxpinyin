@@ -1,9 +1,9 @@
 //! The shared comparison and the narrow masks that every frozen case uses.
-#![cfg(unix)]
 mod common;
 use common::expected::*;
 use common::*;
 use oxpinyin_store::{DefaultStore, WriteStore as _, WriteTxn as _};
+#[cfg(unix)]
 use std::os::unix::process::ExitStatusExt as _;
 use std::path::Path;
 use std::process::{ExitStatus, Output};
@@ -106,9 +106,27 @@ const PROBE: Run = Run {
     files: &[],
 };
 
-fn output(status: i32, stdout: &[u8], stderr: &[u8]) -> Output {
+/// A run that exited with `code` and printed these bytes.
+fn exited(code: i32, stdout: &[u8], stderr: &[u8]) -> Output {
+    #[cfg(unix)]
+    let status = ExitStatus::from_raw(code << 8);
+    #[cfg(windows)]
+    let status = {
+        use std::os::windows::process::ExitStatusExt as _;
+        ExitStatus::from_raw(u32::try_from(code).expect("an exit code"))
+    };
     Output {
-        status: ExitStatus::from_raw(status),
+        status,
+        stdout: stdout.to_vec(),
+        stderr: stderr.to_vec(),
+    }
+}
+
+/// A run the signal `signal` ended: a Unix wait status.
+#[cfg(unix)]
+fn signalled(signal: i32, stdout: &[u8], stderr: &[u8]) -> Output {
+    Output {
+        status: ExitStatus::from_raw(signal),
         stdout: stdout.to_vec(),
         stderr: stderr.to_vec(),
     }
@@ -133,40 +151,35 @@ fn after(directory: &Path, before: &Snapshot) -> String {
 }
 
 #[rstest::rstest]
-#[case::exact(0, b"a\0", b"\xffb", false)]
-#[case::exit_code(7 << 8, b"a\0", b"\xffb", true)]
-#[case::signal_instead_of_exit(6, b"a\0", b"\xffb", true)]
-#[case::stdout_byte(0, b"a\x01", b"\xffb", true)]
-#[case::stderr_byte(0, b"a\0", b"\xfeb", true)]
-fn status_and_streams_are_exact(
-    #[case] status: i32,
-    #[case] stdout: &[u8],
-    #[case] stderr: &[u8],
-    #[case] rejects: bool,
-) {
+#[case::exact(exited(0, b"a\0", b"\xffb"), false)]
+#[case::exit_code(exited(7, b"a\0", b"\xffb"), true)]
+// Unix only: a signal status; Windows has none.
+#[cfg_attr(
+    unix,
+    case::signal_instead_of_exit(signalled(6, b"a\0", b"\xffb"), true)
+)]
+#[case::stdout_byte(exited(0, b"a\x01", b"\xffb"), true)]
+#[case::stderr_byte(exited(0, b"a\0", b"\xfeb"), true)]
+fn status_and_streams_are_exact(#[case] run: Output, #[case] rejects: bool) {
     let (directory, before) = tree();
     let files = after(directory.path(), &before);
-    assert_eq!(
-        refuses(output(status, stdout, stderr), &files, &before, &PROBE),
-        rejects
-    );
+    assert_eq!(refuses(run, &files, &before, &PROBE), rejects);
 }
 
+// Unix only: signal statuses; Windows has none.
+#[cfg(unix)]
 #[rstest::rstest]
-#[case::exact_signal(6, false)]
-#[case::wrong_signal(15, true)]
-#[case::exit_instead_of_signal(6 << 8, true)]
-fn signals_are_exact(#[case] status: i32, #[case] rejects: bool) {
+#[case::exact_signal(signalled(6, b"a\0", b"\xffb"), false)]
+#[case::wrong_signal(signalled(15, b"a\0", b"\xffb"), true)]
+#[case::exit_instead_of_signal(exited(6, b"a\0", b"\xffb"), true)]
+fn signals_are_exact(#[case] run: Output, #[case] rejects: bool) {
     let expected = Run {
         status: Signal(6),
         ..PROBE
     };
     let (directory, before) = tree();
     let files = after(directory.path(), &before);
-    assert_eq!(
-        refuses(output(status, b"a\0", b"\xffb"), &files, &before, &expected),
-        rejects
-    );
+    assert_eq!(refuses(run, &files, &before, &expected), rejects);
 }
 
 /// Each way a run can change a tree that its expectation leaves alone.
@@ -176,7 +189,8 @@ fn signals_are_exact(#[case] status: i32, #[case] rejects: bool) {
 #[case::removed_directory(|at: &Path| std::fs::remove_dir(at.join("held")), true)]
 #[case::new_file(|at: &Path| std::fs::write(at.join("held/new"), b""), true)]
 #[case::new_directory(|at: &Path| std::fs::create_dir(at.join("new")), true)]
-#[case::new_link(|at: &Path| std::os::unix::fs::symlink("kept", at.join("link")), true)]
+// Unix only: a symbolic link made without a privilege.
+#[cfg_attr(unix, case::new_link(|at: &Path| std::os::unix::fs::symlink("kept", at.join("link")), true))]
 fn a_read_only_case_keeps_the_whole_tree(
     #[case] change: fn(&Path) -> std::io::Result<()>,
     #[case] rejects: bool,
@@ -185,7 +199,7 @@ fn a_read_only_case_keeps_the_whole_tree(
     change(directory.path()).expect("change");
     let files = after(directory.path(), &before);
     assert_eq!(
-        refuses(output(0, b"a\0", b"\xffb"), &files, &before, &PROBE),
+        refuses(exited(0, b"a\0", b"\xffb"), &files, &before, &PROBE),
         rejects
     );
 }
@@ -206,7 +220,7 @@ fn a_changed_file_matches_only_its_digest_and_length() {
             ..PROBE
         };
         assert_eq!(
-            refuses(output(0, b"a\0", b"\xffb"), &files, &before, &expected),
+            refuses(exited(0, b"a\0", b"\xffb"), &files, &before, &expected),
             rejects
         );
     }
@@ -229,7 +243,7 @@ fn changed_dbm_rows_are_rejected() {
         ..PROBE
     };
     assert!(!refuses(
-        output(0, b"a\0", b"\xffb"),
+        exited(0, b"a\0", b"\xffb"),
         &files,
         &before,
         &expected
@@ -239,7 +253,7 @@ fn changed_dbm_rows_are_rejected() {
     drop(store);
     let files = after(directory.path(), &before);
     assert!(refuses(
-        output(0, b"a\0", b"\xffb"),
+        exited(0, b"a\0", b"\xffb"),
         &files,
         &before,
         &expected
@@ -261,7 +275,7 @@ fn glib_alternatives_are_exact_bytes(#[case] stdout: &str, #[case] rejects: bool
     let files = after(directory.path(), &before);
     assert_eq!(
         refuses(
-            output(0, stdout.as_bytes(), b"\xffb"),
+            exited(0, stdout.as_bytes(), b"\xffb"),
             &files,
             &before,
             &expected

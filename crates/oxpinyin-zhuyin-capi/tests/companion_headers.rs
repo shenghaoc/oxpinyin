@@ -5,11 +5,6 @@
 //! resolve. Two copies in one destination are only coherent while they are
 //! byte-identical; this test is the tree-level gate on that invariant.
 //! `tools/packaging/install.sh` repeats the check as a pre-install guard.
-// Placed below the `//!` block, never above it: a crate-level `#![cfg]`
-// that evaluates false discards the crate attributes that FOLLOW it, so a
-// gate on line 1 takes these docs with it and `missing_docs` then fires on
-// every non-Linux host. Same placement as the other cfg-gated test crates.
-#![cfg(target_os = "linux")]
 
 use std::fs;
 use std::path::Path;

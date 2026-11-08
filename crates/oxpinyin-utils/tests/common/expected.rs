@@ -3,11 +3,14 @@
 use super::{CELL, Snapshot};
 use assert_cmd::prelude::*;
 use std::collections::BTreeSet;
+#[cfg(unix)]
 use std::os::unix::process::ExitStatusExt as _;
 use std::process::Output;
 
 pub use File::{Rows, Sha256};
-pub use Status::{Exit, Signal};
+pub use Status::Exit;
+#[cfg(unix)]
+pub use Status::Signal;
 pub use Stdout::{Exact, GlibOption};
 
 /// What the pin did, as its `tests/cases` JSON entry froze it.
@@ -24,6 +27,8 @@ pub struct Run {
 #[derive(Clone, Copy, Debug)]
 pub enum Status {
     Exit(i32),
+    /// Unix only: a wait status that names the signal; Windows has no signal statuses.
+    #[cfg(unix)]
     Signal(i32),
 }
 
@@ -94,6 +99,7 @@ pub fn check(output: Output, files: &str, before: &Snapshot, expected: &Run) {
     let assertion = output.assert();
     let assertion = match expected.status {
         Exit(code) => assertion.code(code),
+        #[cfg(unix)]
         Signal(signal) => {
             let assertion = assertion.interrupted();
             assert_eq!(

@@ -186,6 +186,7 @@ mod tests {
 
     /// `g_build_filename(dir, name, NULL)`: the separators, empty parts and
     /// separator-only parts GLib 2.84.4's `g_build_path_va` produces.
+    // Unix only: byte-string names, and `/` as the separator GLib inserts.
     #[test]
     #[cfg(unix)]
     fn names_stay_beneath_their_directory() {

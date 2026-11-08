@@ -152,6 +152,7 @@ fn save_reload_keeps_bigrams_and_unsaved_changes_do_not_replace_them() {
     }
 }
 
+// Linux only: /dev/null accepts writes and rejects fsync.
 #[cfg(target_os = "linux")]
 #[test]
 fn sync_rejecting_chunk_target_does_not_stop_later_files() {

@@ -110,6 +110,7 @@ fn empty_phrase_is_a_glib_precondition_diagnostic_and_not_a_crash() {
 #[cfg(unix)]
 mod common;
 
+// Unix only: the frozen pin runs are Linux and macOS observations (signal statuses, Unix paths and line endings).
 #[cfg(unix)]
 mod frozen {
     mod gen_zhuyin_table {

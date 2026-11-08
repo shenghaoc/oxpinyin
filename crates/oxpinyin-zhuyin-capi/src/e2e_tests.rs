@@ -16,6 +16,7 @@
 use std::os::raw::c_char;
 use std::ptr;
 
+// Windows only: the C API's UTF-8 paths reach the wide-character (UTF-16) file API.
 #[cfg(windows)]
 #[test]
 fn utf8_c_api_paths_open_cjk_directories_and_files() {
@@ -756,7 +757,6 @@ fn init_aborts_on_a_log_header_token() {
 /// Register row 91 before row 76: library 1's merge asserts before the loop
 /// reaches library 4 (`zhuyin.cpp:220` before `:200`), so a later chunk the
 /// pin never opens cannot turn the abort into a NULL answer.
-#[cfg(unix)]
 #[test]
 fn init_aborts_on_a_log_before_an_unmappable_library() {
     crate::test_support::assert_aborts(
@@ -886,7 +886,6 @@ fn mask_out_of_a_selected_short_key_completes() {
 /// Whether a directory reads as a chunk on this host's temporary file
 /// system (register row 96); where it does not, a directory library is row
 /// 76's unmappable one (class (b)).
-#[cfg(unix)]
 fn directory_reads_as_a_chunk_here() -> bool {
     let probe = tempfile::tempdir().expect("probe dir");
     std::fs::write(probe.path().join("e".repeat(25)), b"x").expect("fill the probe");
@@ -897,7 +896,6 @@ fn directory_reads_as_a_chunk_here() -> bool {
 /// (register row 96): init maps `merged.bin` (`zhuyin.cpp:199`), the save and
 /// the mask-out map it again (`:589`, `:800`), and the reload of the
 /// unloaded library 2 maps `gbk_char.bin` (`:200`).
-#[cfg(unix)]
 fn map_a_directory_library(site: &str) -> bool {
     let scratch = tempfile::tempdir().expect("scratch");
     let system = crate::test_support::private_system(scratch.path());
@@ -934,6 +932,10 @@ fn map_a_directory_library(site: &str) -> bool {
 
 /// Register row 96 at init; row 76's NULL where a directory does not read
 /// as a chunk.
+// Unix only: a directory opens as a file, so the pin's `MemoryChunk::mmap` judges it by its
+// size (`directory_reads_as_a_chunk`). Windows refuses the open, and oxpinyin skips the row
+// without a word there (`oxpinyin-data`, `phrase_libraries.rs`), which no pin observation
+// covers.
 #[cfg(unix)]
 #[test]
 fn init_aborts_on_a_directory_library() {
@@ -947,6 +949,10 @@ fn init_aborts_on_a_directory_library() {
 }
 
 /// Register row 96 at save; row 76's completed save elsewhere.
+// Unix only: a directory opens as a file, so the pin's `MemoryChunk::mmap` judges it by its
+// size (`directory_reads_as_a_chunk`). Windows refuses the open, and oxpinyin skips the row
+// without a word there (`oxpinyin-data`, `phrase_libraries.rs`), which no pin observation
+// covers.
 #[cfg(unix)]
 #[test]
 fn save_aborts_on_a_directory_library() {
@@ -960,7 +966,6 @@ fn save_aborts_on_a_directory_library() {
 }
 
 /// Register row 96 at mask-out, after the user tables are masked.
-#[cfg(unix)]
 #[test]
 fn mask_out_aborts_on_a_directory_library() {
     if directory_reads_as_a_chunk_here() {
@@ -976,7 +981,6 @@ fn mask_out_aborts_on_a_directory_library() {
 }
 
 /// Register row 96 at the reload of an unloaded library.
-#[cfg(unix)]
 #[test]
 fn reload_aborts_on_a_directory_library() {
     if directory_reads_as_a_chunk_here() {
@@ -1003,9 +1007,13 @@ fn reload_aborts_on_a_directory_library() {
 /// makes `zhuyin_init` write: `UserTableInfo::load` prints it when the
 /// marker is missing, with no trailing newline (`table_info.cpp:332` at
 /// 074a2219).
-#[cfg(unix)]
 fn fresh_user_conf_line(user_dir: &std::path::Path) -> String {
-    format!("open {}/user.conf failed.", user_dir.display())
+    // `g_build_filename` joins with the host's separator.
+    format!(
+        "open {}{}user.conf failed.",
+        user_dir.display(),
+        std::path::MAIN_SEPARATOR
+    )
 }
 
 /// The zhuyin twin of audit D-06's row-42 witness
@@ -1013,7 +1021,6 @@ fn fresh_user_conf_line(user_dir: &std::path::Path) -> String {
 /// hands the freed context to `get_nbest_match` (`zhuyin.cpp:895-909`) and
 /// returns its result, so no pin answer is defined; the ruled safe answer
 /// is `true`. A populated matrix reaches the lookup (`su3cl3` is 你好).
-#[cfg(unix)]
 #[test]
 fn instance_outlives_context_guesses_true() {
     let run = crate::test_support::run_in_child(
@@ -1038,7 +1045,6 @@ fn instance_outlives_context_guesses_true() {
 /// A second `zhuyin_fini` on one context (#573, register row 105): the pin
 /// deletes the context twice (`zhuyin.cpp:741-757`) and dies of SIGSEGV;
 /// the ruling is a silent return.
-#[cfg(unix)]
 #[test]
 fn fini_twice_returns_silently() {
     let run = crate::test_support::run_in_child("e2e_tests::fini_twice_returns_silently", |user| {
@@ -1055,12 +1061,10 @@ fn fini_twice_returns_silently() {
 
 /// GLib log records the child's default handler collected:
 /// `(domain, level, message)`.
-#[cfg(unix)]
 static GLIB_LOG: std::sync::Mutex<Vec<(String, u32, String)>> = std::sync::Mutex::new(Vec::new());
 
 /// Collects every GLib log record instead of printing it, so the child's
 /// stderr holds only the library's raw `fprintf` lines.
-#[cfg(unix)]
 extern "C" fn collect_glib_log(
     domain: *const c_char,
     level: glib_sys::GLogLevelFlags,
@@ -1100,7 +1104,6 @@ extern "C" fn collect_glib_log(
 /// line follows (the pinyin twin's save writes all logs first,
 /// `pinyin.cpp:925-1090`); the only raw stderr line is the init's
 /// missing-marker line (`table_info.cpp:332`).
-#[cfg(unix)]
 #[test]
 fn table_conf_919_short_row_merged() {
     let run =
@@ -1187,9 +1190,12 @@ fn table_conf_919_short_row_merged() {
             ] {
                 assert_eq!(sizes[name], size, "{name}");
             }
+            // user.conf is written in text mode: CRLF on Windows.
+            let newline = if cfg!(windows) { "\r\n" } else { "\n" };
             assert!(
-                marker.starts_with("binary format version:7\nmodel data version:14\n")
-                    && marker.ends_with("\nopen counter:0\n"),
+                marker.starts_with(&format!(
+                    "binary format version:7{newline}model data version:14{newline}"
+                )) && marker.ends_with(&format!("{newline}open counter:0{newline}")),
                 "{marker}"
             );
             let records = GLIB_LOG.lock().expect("log lock").clone();

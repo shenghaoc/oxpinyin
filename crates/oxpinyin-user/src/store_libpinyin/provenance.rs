@@ -12,7 +12,9 @@
 //! chunk's mapping is the live buffer, and reads the answers the lookups use.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+#[cfg(target_os = "linux")]
+use std::path::Path;
+use std::path::PathBuf;
 
 use oxpinyin_core::ChewingKey;
 use oxpinyin_data::chunk_write::{ChunkItem, build_chunk, encode_phrase_item};
@@ -154,6 +156,7 @@ fn removed(store: &UserStore, slot: u32) -> bool {
     store.system_item_removed(LIBRARY | slot)
 }
 
+#[cfg(target_os = "linux")]
 fn chunk_is_mapped(path: &Path) -> bool {
     std::fs::read_to_string("/proc/self/maps").is_ok_and(|maps| {
         maps.lines()
@@ -189,9 +192,9 @@ fn a_log_of_in_place_modifies_records_nothing() {
         assert!(!removed(&store, slot), "slot {slot}");
     }
     assert!(!store.system_provenance_recorded(1));
-    if cfg!(target_os = "linux") {
-        assert!(chunk_is_mapped(&profile.chunk), "the chunk is the buffer");
-    }
+    // Linux only: /proc/self/maps names the mapping.
+    #[cfg(target_os = "linux")]
+    assert!(chunk_is_mapped(&profile.chunk), "the chunk is the buffer");
 }
 
 /// ADD into a hole of the loaded offset array and past its end: both items

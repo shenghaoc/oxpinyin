@@ -416,6 +416,7 @@ mod common;
 #[cfg(unix)]
 mod fixtures;
 
+// Unix only: the frozen pin runs are Linux and macOS observations (signal statuses, Unix paths and line endings).
 #[cfg(unix)]
 mod frozen {
     use crate::common::CELL;

@@ -179,6 +179,7 @@ fn undefined_lines_are_refused_normally() {
 #[cfg(unix)]
 mod common;
 
+// Unix only: the frozen pin runs are Linux and macOS observations (signal statuses, Unix paths and line endings).
 #[cfg(unix)]
 mod frozen {
     mod k_mixture_model_to_interpolation {

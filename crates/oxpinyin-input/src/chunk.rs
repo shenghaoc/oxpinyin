@@ -388,6 +388,7 @@ mod tests {
         assert!(!called.get(), "framing fails before reading the payload");
     }
 
+    // Windows only: the wide-character (UTF-16) file API opens the path.
     #[cfg(windows)]
     #[test]
     fn mapping_opens_a_non_ascii_windows_path() {
@@ -418,6 +419,7 @@ mod tests {
             let pending = source.map().unwrap();
             assert_eq!(pending.as_slice(), bytes, "{len}");
             let mut mapping = pending.finish();
+            // Linux only: /proc/self/maps names the mapping's permissions.
             #[cfg(target_os = "linux")]
             {
                 let ranges = file_mappings(&path);
@@ -455,6 +457,7 @@ mod tests {
             .collect()
     }
 
+    // Linux only: /proc/self/fd and /proc/self/maps.
     #[cfg(target_os = "linux")]
     #[test]
     fn validation_owns_the_descriptor_and_finish_closes_it() {
@@ -479,6 +482,7 @@ mod tests {
         assert!(file_mappings(&path).is_empty());
     }
 
+    // Linux only: /proc/self/maps, and a 4 GiB sparse mapping on a 64-bit host.
     #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
     #[test]
     fn sparse_file_has_one_whole_writable_private_mapping_and_no_residual() {
@@ -545,6 +549,7 @@ mod tests {
         assert!(matches!(save(&path, &chunk(0)), Err(ChunkSaveError::Io(_))));
     }
 
+    // Windows only: the read-only file attribute.
     #[cfg(windows)]
     #[test]
     fn saving_over_a_read_only_file_is_permission_denied() {
@@ -564,6 +569,7 @@ mod tests {
         assert_eq!(error.raw_os_error(), Some(5));
     }
 
+    // Linux only: /dev/full.
     #[cfg(target_os = "linux")]
     #[test]
     fn a_header_write_failure_is_the_abort_site() {

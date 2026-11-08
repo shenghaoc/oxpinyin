@@ -1133,7 +1133,6 @@ mod unloaded_library_tests {
     /// the pin dies (register row 76). The call keeps its answer, and the
     /// library stays unloaded, so no reader meets a library whose bytes the
     /// session no longer holds. The next load maps the repaired file.
-    #[cfg(unix)]
     #[test]
     fn a_failed_reload_keeps_the_library_unloaded_until_the_next_load() {
         let scratch = tempfile::tempdir().expect("scratch");
@@ -1159,11 +1158,10 @@ mod unloaded_library_tests {
             "the library is still unloaded"
         );
 
-        std::os::unix::fs::symlink(
-            crate::test_support::system_dir().join("gbk_char.bin"),
+        crate::test_support::link_file(
+            &crate::test_support::system_dir().join("gbk_char.bin"),
             &library,
-        )
-        .expect("repair the system file");
+        );
         assert!(
             pinyin_load_phrase_library(context, 2),
             "the next load maps it"

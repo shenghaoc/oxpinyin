@@ -935,6 +935,7 @@ mod tests {
         );
     }
 
+    // Unix only: byte-string file names.
     #[cfg(unix)]
     #[test]
     fn file_name_columns_keep_their_raw_bytes() {

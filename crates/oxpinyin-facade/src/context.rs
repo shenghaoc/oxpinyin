@@ -866,6 +866,7 @@ mod null_chunk_tests {
     use super::writes_null_chunk_line;
     use std::path::Path;
 
+    // Unix only: the pin's read of a directory as a chunk (`phrase_library::directory_chunk_fault`); `writes_null_chunk_line` is false elsewhere.
     #[cfg(unix)]
     #[test]
     fn a_directory_that_does_not_read_as_a_chunk_gets_the_pin_line_once() {
@@ -928,10 +929,16 @@ mod open_failure_tests {
 /// unloaded library (`pinyin.cpp:928-933`).
 #[cfg(test)]
 mod library_transition_tests {
-    use super::{ContextCore, RemapStep, SaveOutcome};
+    #[cfg(unix)]
+    use super::RemapStep;
+    use super::{ContextCore, SaveOutcome};
     use crate::PINYIN_DEFAULT_OPTION_WORD as WORD;
-    use oxpinyin_core::{ChewingKey, PhraseText, SyllableKey};
+    #[cfg(unix)]
+    use oxpinyin_core::ChewingKey;
+    use oxpinyin_core::{PhraseText, SyllableKey};
+    #[cfg(unix)]
     use oxpinyin_data::chunk_write::{ChunkItem, build_chunk};
+    #[cfg(unix)]
     use oxpinyin_data::phrase_library::PhraseLibrary;
     use oxpinyin_user::{UserConfLaw, toned_key};
     use std::path::Path;
@@ -1172,11 +1179,11 @@ mod library_transition_tests {
     /// `true`, and the next load maps the repaired file. The context has no
     /// user directory: with one, the pin reads the directory itself as the
     /// row's log, and on a file system where that asserts the init dies.
+    // Unix only: the mapped system file is removed and replaced under the
+    // open context; Windows keeps a mapped file in use
+    // (compatibility-policy.md, "fundamental OS differences").
+    #[cfg(unix)]
     #[test]
-    #[cfg_attr(
-        windows,
-        ignore = "see docs/findings/compatibility-policy.md#fundamental-os-differences"
-    )]
     fn a_reload_maps_a_system_row_that_names_no_user_file() {
         let scratch = tempfile::tempdir().expect("scratch");
         let system = system_with_gbk_naming_no_user_file(scratch.path());

@@ -71,6 +71,7 @@ mod tests {
         assert_eq!(c_prefix(b""), CString::default());
     }
 
+    // Unix only: byte-string paths (`OsStrExt::from_bytes`).
     #[test]
     #[cfg(unix)]
     fn paths_are_written_as_their_bytes() {

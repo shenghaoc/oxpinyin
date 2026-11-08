@@ -4218,6 +4218,7 @@ mod tests {
     /// The reporting save is the one place the pin's "carry on" stops, so
     /// the failure has to come back typed, naming the header word, for the
     /// C adapters to abort on.
+    // Linux only: /dev/full.
     #[test]
     #[cfg(target_os = "linux")]
     fn reporting_save_stops_at_a_chunk_header_write() {
@@ -4275,6 +4276,7 @@ mod tests {
     }
 
     #[test]
+    // Unix only: file modes and the umask.
     #[cfg(unix)]
     fn user_files_take_the_pins_creation_modes() {
         // #544: each file's mode is what upstream asks for, less the

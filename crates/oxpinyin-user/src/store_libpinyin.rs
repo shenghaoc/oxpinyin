@@ -1523,6 +1523,7 @@ mod tests {
         dir
     }
 
+    // Linux only: /proc/self/maps.
     #[cfg(target_os = "linux")]
     #[test]
     fn session_owns_one_writable_whole_file_mapping() {
@@ -1615,6 +1616,7 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    // Linux only: /proc/self/maps, and a 4 GiB sparse mapping on a 64-bit host.
     #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
     #[test]
     fn layout_failed_sparse_library_keeps_and_releases_whole_mapping() {
