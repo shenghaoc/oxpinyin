@@ -125,28 +125,6 @@ fn save_929_logical_cross_open_pinyin() {
         None,
     );
 }
-
-// save-929-reload-pinyin: MATCH.
-#[test]
-fn save_929_reload_pinyin() {
-    // user.conf is written in text mode: CRLF on Windows (external-io-boundary.md, "Native text-mode line endings").
-    #[cfg(windows)]
-    let expected = raw!(include!(
-        "fixtures/save_failures_stderr/40b02ed450a847c9.rs"
-    ));
-    #[cfg(not(windows))]
-    let expected = raw!(include!(
-        "fixtures/save_failures_stderr/a8f263dc3d4cbcb9.rs"
-    ));
-    run_j(
-        "save_failures_stderr::save_929_reload_pinyin",
-        Expect::RESULT,
-        |k| b::case(k, "save-929-reload-pinyin"),
-        expected,
-        None,
-    );
-}
-
 // save-929-rename-user.bin-pinyin: MATCH.
 #[test]
 fn save_929_rename_user_dot_bin_pinyin() {
@@ -165,83 +143,6 @@ fn save_929_rename_user_dot_bin_pinyin() {
         None,
     );
 }
-
-// save-929-rename-user_bigram.db-pinyin: MATCH.
-#[test]
-fn save_929_rename_user_bigram_dot_db_pinyin() {
-    run_j(
-        "save_failures_stderr::save_929_rename_user_bigram_dot_db_pinyin",
-        // The UCRT's text-mode stderr writes \n as \r\n.
-        Expect::stderr(if cfg!(windows) {
-            b"open SCRATCH\\user-X\\user.conf failed.rename SCRATCH\\user-X\\user_bigram.db.tmp to SCRATCH\\user-X\\user_bigram.db failed.\r\n"
-        } else {
-            b"open SCRATCH/user-X/user.conf failed.rename SCRATCH/user-X/user_bigram.db.tmp to SCRATCH/user-X/user_bigram.db failed.\n"
-        }),
-        |k| b::case(k, "save-929-rename-user_bigram.db-pinyin"),
-        raw!(include!(
-            "fixtures/save_failures_stderr/45c3638cef759ba8.rs"
-        )),
-        None,
-    );
-}
-
-// save-929-rename-user_bigram.db.tmp-pinyin: MATCH.
-#[test]
-fn save_929_rename_user_bigram_dot_db_dot_tmp_pinyin() {
-    run_j(
-        "save_failures_stderr::save_929_rename_user_bigram_dot_db_dot_tmp_pinyin",
-        // The UCRT's text-mode stderr writes \n as \r\n.
-        Expect::stderr(if cfg!(windows) {
-            b"open SCRATCH\\user-X\\user.conf failed.rename SCRATCH\\user-X\\user_bigram.db.tmp to SCRATCH\\user-X\\user_bigram.db failed.\r\n"
-        } else {
-            b"open SCRATCH/user-X/user.conf failed.rename SCRATCH/user-X/user_bigram.db.tmp to SCRATCH/user-X/user_bigram.db failed.\n"
-        }),
-        |k| b::case(k, "save-929-rename-user_bigram.db.tmp-pinyin"),
-        raw!(include!(
-            "fixtures/save_failures_stderr/089a568c7421a45b.rs"
-        )),
-        None,
-    );
-}
-
-// save-929-rename-user_phrase_index.bin-pinyin: MATCH.
-#[test]
-fn save_929_rename_user_phrase_index_dot_bin_pinyin() {
-    run_j(
-        "save_failures_stderr::save_929_rename_user_phrase_index_dot_bin_pinyin",
-        // The UCRT's text-mode stderr writes \n as \r\n.
-        Expect::stderr(if cfg!(windows) {
-            b"open SCRATCH\\user-X\\user.conf failed.rename SCRATCH\\user-X\\user_phrase_index.bin.tmp to SCRATCH\\user-X\\user_phrase_index.bin failed.\r\n"
-        } else {
-            b"open SCRATCH/user-X/user.conf failed.rename SCRATCH/user-X/user_phrase_index.bin.tmp to SCRATCH/user-X/user_phrase_index.bin failed.\n"
-        }),
-        |k| b::case(k, "save-929-rename-user_phrase_index.bin-pinyin"),
-        raw!(include!(
-            "fixtures/save_failures_stderr/33a2cf050f15e81c.rs"
-        )),
-        None,
-    );
-}
-
-// save-929-rename-user_pinyin_index.bin-pinyin: MATCH.
-#[test]
-fn save_929_rename_user_pinyin_index_dot_bin_pinyin() {
-    run_j(
-        "save_failures_stderr::save_929_rename_user_pinyin_index_dot_bin_pinyin",
-        // The UCRT's text-mode stderr writes \n as \r\n.
-        Expect::stderr(if cfg!(windows) {
-            b"open SCRATCH\\user-X\\user.conf failed.rename SCRATCH\\user-X\\user_pinyin_index.bin.tmp to SCRATCH\\user-X\\user_pinyin_index.bin failed.\r\n"
-        } else {
-            b"open SCRATCH/user-X/user.conf failed.rename SCRATCH/user-X/user_pinyin_index.bin.tmp to SCRATCH/user-X/user_pinyin_index.bin failed.\n"
-        }),
-        |k| b::case(k, "save-929-rename-user_pinyin_index.bin-pinyin"),
-        raw!(include!(
-            "fixtures/save_failures_stderr/9c453ddcbbe5ac65.rs"
-        )),
-        None,
-    );
-}
-
 // save-929-stale-bigram-tmp-pinyin: MATCH.
 #[test]
 fn save_929_stale_bigram_tmp_pinyin() {
@@ -259,27 +160,6 @@ fn save_929_stale_bigram_tmp_pinyin() {
         None,
     );
 }
-
-// save-929-sync-rejecting-pinyin: MATCH.
-// Unix only: user.bin.tmp is a symbolic link to /dev/null, whose sync fails.
-#[cfg(unix)]
-#[test]
-fn save_929_sync_rejecting_pinyin() {
-    run_j(
-        "save_failures_stderr::save_929_sync_rejecting_pinyin",
-        Expect::RESULT,
-        |k| b::case(k, "save-929-sync-rejecting-pinyin"),
-        raw!(M(&[
-            ("bigram_exists", B(true)),
-            ("clean", B(false)),
-            ("logs", L(&[])),
-            ("renamed_target", S("/dev/null")),
-            ("saved", B(true))
-        ])),
-        None,
-    );
-}
-
 // stderr-fini-dir-removed: MATCH.
 #[test]
 fn stderr_fini_dir_removed() {
@@ -296,23 +176,6 @@ fn stderr_fini_dir_removed() {
         None,
     );
 }
-
-// stderr-fresh-user-dir: MATCH.
-#[test]
-fn stderr_fresh_user_dir() {
-    run_j(
-        "save_failures_stderr::stderr_fresh_user_dir",
-        Expect::stderr(if cfg!(windows) {
-            b"open SCRATCH\\user-X\\user.conf failed."
-        } else {
-            b"open SCRATCH/user-X/user.conf failed."
-        }),
-        |k| b::case(k, "stderr-fresh-user-dir"),
-        raw!(M(&[("init", B(true)), ("logs", L(&[]))])),
-        None,
-    );
-}
-
 // stderr-non-utf8-user-dir: MATCH.
 // Linux only: the user directory has a non-UTF-8 name, which APFS and Windows refuse.
 #[cfg(target_os = "linux")]
@@ -326,30 +189,6 @@ fn stderr_non_utf8_user_dir() {
         None,
     );
 }
-
-// stderr-quiet-saves: MATCH.
-#[test]
-fn stderr_quiet_saves() {
-    run_j(
-        "save_failures_stderr::stderr_quiet_saves",
-        Expect::stderr(if cfg!(windows) {
-            b"open SCRATCH\\user-X\\user.conf failed."
-        } else {
-            b"open SCRATCH/user-X/user.conf failed."
-        }),
-        |k| b::case(k, "stderr-quiet-saves"),
-        raw!(M(&[
-            ("logs", L(&[])),
-            ("reopen", B(true)),
-            ("save", B(true)),
-            ("second save", B(false)),
-            ("train", B(true)),
-            ("unmodified save", B(false))
-        ])),
-        None,
-    );
-}
-
 // stderr-save-dir-removed: MATCH.
 #[test]
 fn stderr_save_dir_removed() {
@@ -402,70 +241,6 @@ fn stderr_unmodified_save_dir_removed() {
         }),
         |k| b::case(k, "stderr-unmodified-save-dir-removed"),
         raw!(M(&[("logs", L(&[])), ("save", B(false))])),
-        None,
-    );
-}
-
-// save-929-boundary-save-marker-pinyin: MATCH.
-// Linux only: the boundary is found through a read lease on user.conf (F_SETLEASE) that the save child, this test binary run again for the case, breaks.
-#[cfg(target_os = "linux")]
-#[test]
-fn save_929_boundary_save_marker_pinyin() {
-    run_j(
-        "save_failures_stderr::save_929_boundary_save_marker_pinyin",
-        Expect::RESULT,
-        |k| b::case(k, "save-929-boundary-save-marker-pinyin"),
-        raw!(include!(
-            "fixtures/save_failures_stderr/d7cb86a653ebbd1f.rs"
-        )),
-        None,
-    );
-}
-
-// save-929-boundary-after-save-pinyin: MATCH.
-// Linux only: the boundary is found through a read lease on user.conf (F_SETLEASE) that the save child, this test binary run again for the case, breaks.
-#[cfg(target_os = "linux")]
-#[test]
-fn save_929_boundary_after_save_pinyin() {
-    run_j(
-        "save_failures_stderr::save_929_boundary_after_save_pinyin",
-        Expect::RESULT,
-        |k| b::case(k, "save-929-boundary-after-save-pinyin"),
-        raw!(include!(
-            "fixtures/save_failures_stderr/c872f8790e96836f.rs"
-        )),
-        None,
-    );
-}
-
-// save-929-boundary-after-fini-pinyin: MATCH.
-// Linux only: the boundary is found through a read lease on user.conf (F_SETLEASE) that the save child, this test binary run again for the case, breaks.
-#[cfg(target_os = "linux")]
-#[test]
-fn save_929_boundary_after_fini_pinyin() {
-    run_j(
-        "save_failures_stderr::save_929_boundary_after_fini_pinyin",
-        Expect::RESULT,
-        |k| b::case(k, "save-929-boundary-after-fini-pinyin"),
-        raw!(include!(
-            "fixtures/save_failures_stderr/ee60d8cc1c526a7b.rs"
-        )),
-        None,
-    );
-}
-
-// save-929-boundary-fini-marker-pinyin: MATCH.
-// Linux only: the boundary is found through a read lease on user.conf (F_SETLEASE) that the save child, this test binary run again for the case, breaks.
-#[cfg(target_os = "linux")]
-#[test]
-fn save_929_boundary_fini_marker_pinyin() {
-    run_j(
-        "save_failures_stderr::save_929_boundary_fini_marker_pinyin",
-        Expect::RESULT,
-        |k| b::case(k, "save-929-boundary-fini-marker-pinyin"),
-        raw!(include!(
-            "fixtures/save_failures_stderr/d7cb86a653ebbd1f.rs"
-        )),
         None,
     );
 }

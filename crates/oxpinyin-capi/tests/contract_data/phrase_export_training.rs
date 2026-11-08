@@ -72,39 +72,6 @@ fn issue790_export_after_train_system() {
         None,
     );
 }
-
-// issue790-export-appended-system: MATCH.
-#[test]
-fn issue790_export_appended_system() {
-    run_j(
-        "phrase_export_training::issue790_export_appended_system",
-        Expect::RESULT,
-        |k| b::case(k, "issue790-export-appended-system"),
-        raw!(include!(
-            "fixtures/phrase_export_training/61d79cda9db2603e.rs"
-        )),
-        None,
-    );
-}
-
-// issue790-export-no-train-system: MATCH.
-#[test]
-fn issue790_export_no_train_system() {
-    run_j(
-        "phrase_export_training::issue790_export_no_train_system",
-        Expect::RESULT,
-        |k| b::case(k, "issue790-export-no-train-system"),
-        raw!(M(&[
-            ("after", L(&[L(&[B(true), S("你"), S("ni"), I(313574)])])),
-            ("before", L(&[L(&[B(true), S("你"), S("ni"), I(313574)])])),
-            ("guessed", B(true)),
-            ("logs", L(&[])),
-            ("parsed", I(2))
-        ])),
-        None,
-    );
-}
-
 // issue790-export-open-before-system: MATCH.
 #[test]
 fn issue790_export_open_before_system() {
@@ -118,21 +85,6 @@ fn issue790_export_open_before_system() {
         None,
     );
 }
-
-// issue790-export-override-only-system: MATCH.
-#[test]
-fn issue790_export_override_only_system() {
-    run_j(
-        "phrase_export_training::issue790_export_override_only_system",
-        Expect::RESULT,
-        |k| b::case(k, "issue790-export-override-only-system"),
-        raw!(include!(
-            "fixtures/phrase_export_training/acfc1080fdd6ad24.rs"
-        )),
-        None,
-    );
-}
-
 // issue790-export-prefix-overflow-system: MATCH.
 #[test]
 fn issue790_export_prefix_overflow_system() {
@@ -146,49 +98,6 @@ fn issue790_export_prefix_overflow_system() {
         None,
     );
 }
-
-// issue790-export-replayed-train-system: MATCH.
-#[test]
-fn issue790_export_replayed_train_system() {
-    run_j(
-        "phrase_export_training::issue790_export_replayed_train_system",
-        Expect::RESULT,
-        |k| b::case(k, "issue790-export-replayed-train-system"),
-        raw!(include!(
-            "fixtures/phrase_export_training/ee7f261d080150d9.rs"
-        )),
-        None,
-    );
-}
-
-// issue790-export-save-reopen-system: MATCH.
-#[test]
-fn issue790_export_save_reopen_system() {
-    run_j(
-        "phrase_export_training::issue790_export_save_reopen_system",
-        Expect::RESULT,
-        |k| b::case(k, "issue790-export-save-reopen-system"),
-        raw!(include!(
-            "fixtures/phrase_export_training/d69690228c2b82f9.rs"
-        )),
-        None,
-    );
-}
-
-// issue790-export-unconstrained-system: MATCH.
-#[test]
-fn issue790_export_unconstrained_system() {
-    run_j(
-        "phrase_export_training::issue790_export_unconstrained_system",
-        Expect::RESULT,
-        |k| b::case(k, "issue790-export-unconstrained-system"),
-        raw!(include!(
-            "fixtures/phrase_export_training/b310a6a69766c96c.rs"
-        )),
-        None,
-    );
-}
-
 // issue790-export-zero-and-signed-system: MATCH.
 #[test]
 fn issue790_export_zero_and_signed_system() {

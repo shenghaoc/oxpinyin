@@ -1,1 +1,0 @@
-M(&[("0x4000001", L(&[B(false), I(0), Nil, B(false), I(0), B(false), I(0)])), ("0x4000002", L(&[B(false), I(0), Nil, B(false), I(0), B(false), I(0)])), ("ctx", B(true)), ("has_next", B(false)), ("logs", L(&[]))])

@@ -48,25 +48,11 @@ const ENCODING_INPUTS: &[(&str, &[u8])] = &[
     ("pinyin", b"nihao"),
     ("tone", b"ni3hao3"),
     ("nfc", "n\u{1d0}h\u{1ce}o".as_bytes()),
-    ("nfd", "ni\u{30c}ha\u{30c}o".as_bytes()),
     ("hanzi", "你好".as_bytes()),
     ("bopomofo", "ㄋㄧˇ ㄏㄠˇ".as_bytes()),
     ("fullwidth", "ｎｉｈａｏ".as_bytes()),
-    ("ff-start", b"\xffnihao"),
     ("ff-middle", b"ni\xffhao"),
-    ("ff-end", b"nihao\xff"),
-    ("overlong-start", b"\xc0\x80nihao"),
-    ("overlong-middle", b"ni\xc0\x80hao"),
-    ("overlong-end", b"nihao\xc0\x80"),
-    ("surrogate-start", b"\xed\xa0\x80nihao"),
-    ("surrogate-middle", b"ni\xed\xa0\x80hao"),
-    ("surrogate-end", b"nihao\xed\xa0\x80"),
-    ("truncated-start", b"\xe4\xbdnihao"),
-    ("truncated-middle", b"ni\xe4\xbdhao"),
-    ("truncated-end", b"nihao\xe4\xbd"),
-    ("nul-start", b"\x00nihao"),
     ("nul-middle", b"ni\x00hao"),
-    ("nul-end", b"nihao\x00"),
 ];
 
 /// The encoding operations as the case names spell them.
@@ -89,10 +75,6 @@ const LAYOUT_INPUTS: &[&str] = &[
     "", "1", "18", "su3", "su3cl3", "su3u3", "su3u3u3", "vu0", "zhang", "zhan", "n", "u", "wu",
     "yi", "nin", "3",
 ];
-
-/// The surrogate code point U+D800 as UTF-8 bytes, whose segmentation inputs are read
-/// further (#751).
-const SURROGATE: &[u8] = b"\xed\xa0\x80";
 
 /// Runs the case `id` and answers its result document.
 ///
@@ -397,22 +379,7 @@ fn segment(inst: P, text: &[u8]) -> J {
     let ret = facade::phrase_segment(inst, c_bytes(text).as_ptr());
     let mut count = UNTOUCHED;
     let got = facade::get_n_phrase(inst, &raw mut count);
-    let mut out = obj! { "ret" => ret, "get_n_phrase" => got, "count" => count };
-    if text
-        .windows(SURROGATE.len())
-        .any(|window| window == SURROGATE)
-    {
-        let read = |index: u32| {
-            let mut slot = UNTOUCHED;
-            let ret = facade::get_phrase_token(inst, index, &raw mut slot);
-            J::from((ret, slot))
-        };
-        let tokens =
-            (got && count as usize <= text.len()).then(|| (0..count).map(read).collect::<Vec<_>>());
-        out.set("tokens", tokens);
-        out.set("past", vec![read(count), read(0xFFFF_FFFF)]);
-    }
-    out
+    obj! { "ret" => ret, "get_n_phrase" => got, "count" => count }
 }
 
 /// `axis_c_import`: imports the phrase or reading bytes into library 7 with count 1

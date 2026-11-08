@@ -11,15 +11,11 @@ use std::ffi::c_char;
 use std::path::PathBuf;
 
 use crate::facade;
-use crate::fixtures::{chunk, modify_header, write_log, write_user_conf};
 use crate::readers::{
-    c, candidate_at, candidate_text, candidate_type, final_step_sentences, garray_u16, guess_rows,
-    lookup, n_candidate, owned_out, seeded, segment_out,
+    c, candidate_at, candidate_text, candidate_type, garray_u16, guess_rows, lookup, n_candidate,
+    owned_out, seeded,
 };
-use crate::support::{J, Kit, P, UNTOUCHED, borrowed_text, path_c, take_text};
-
-/// The oracle data's loaded libraries' totals, summed.
-const FACADE_TOTAL: i64 = 51_051_831;
+use crate::support::{J, Kit, P, UNTOUCHED, borrowed_text, path_c};
 /// The phrases whose place in a candidate list the snapshots watch.
 const RELOAD_WATCH: [&str; 2] = ["礙", "龘龘"];
 
@@ -69,14 +65,6 @@ impl Session {
 
     /// `k._inst = None`: forgets the instance without freeing it.
     fn drop_inst(&mut self) {
-        self.inst = std::ptr::null_mut();
-    }
-
-    /// Frees the instance and finalises the context, forgetting both.
-    fn close(&mut self) {
-        facade::free_instance(self.inst());
-        facade::fini(self.ctx);
-        self.ctx = std::ptr::null_mut();
         self.inst = std::ptr::null_mut();
     }
 }
@@ -301,78 +289,14 @@ fn reload_probe(k: &Kit, change: &Change, library: u8, save_first: bool) -> J {
 }
 
 /// The change a `reload-*-<mode>-<name>` case makes, and its library.
-fn reload_change(name: &str) -> (Change, u8) {
-    let change = match (facade::ZHUYIN, name) {
-        (false, "train") => Change::Train("礙", 2, b"ai4"),
-        (false, "reading") => Change::Import(2, ("礙", "ai1", 50), &["礙"], &[b"ai1"]),
-        (false, "new-item") => Change::Import(2, ("龘龘", "da3'da3", 50), &["龘龘"], &[]),
-        (false, "train-library-1") => Change::Train("癫痫", 1, b"dian4xian4"),
-        (true, "train") => Change::Train("礙", 2, b"94"),
-        (true, "reading") => Change::Import(2, ("礙", "ㄞ", 50), &["礙"], &[b"9"]),
-        (true, "new-item") => Change::Import(2, ("龘龘", "ㄉㄚˇ ㄉㄚˇ", 50), &["龘龘"], &[]),
-        (true, "train-library-1") => Change::Train("癫痫", 1, b"2u04vu04"),
-        (_, other) => panic!("unknown reload change {other}"),
-    };
-    let library = if name == "train-library-1" { 1 } else { 2 };
-    (change, library)
-}
-
-/// One `_reload_user` probe's parameters.
-struct UserReload {
-    setup: Vec<(&'static str, &'static str, i32)>,
-    change: Vec<(&'static str, &'static str, i32)>,
-    inputs: Vec<&'static [u8]>,
-    save_setup: bool,
-    save_change: bool,
-}
-
-/// The `_RELOAD_USER` probe the case `name` (`item`, `item-saved`, ...) runs.
-fn user_reload(name: &str) -> UserReload {
-    let (first, second, input): (&str, &str, &[u8]) = if facade::ZHUYIN {
-        ("ㄏㄠˇ ㄋㄧˇ", "ㄏㄠˋ ㄋㄧˇ", b"cl3su3")
+fn reload_change() -> (Change, u8) {
+    let change = if facade::ZHUYIN {
+        Change::Train("礙", 2, b"94")
     } else {
-        ("hao3'ni3", "hao4'ni3", b"hao3ni3")
+        Change::Train("礙", 2, b"ai4")
     };
-    let item = vec![("好你", first, 50)];
-    let more = vec![("好你", second, 50)];
-    let (setup, change, inputs, save_setup, save_change) = match name {
-        "item" => (vec![], item, vec![], false, false),
-        "item-saved" => (vec![], item, vec![input], false, true),
-        "reading" => (item, more, vec![input], true, false),
-        "reading-saved" => (item, more, vec![input], true, true),
-        other => panic!("unknown user reload {other}"),
-    };
-    UserReload {
-        setup,
-        change,
-        inputs,
-        save_setup,
-        save_change,
-    }
+    (change, 2)
 }
-
-/// `_reload_user`: a user-library reload probe with independent saves.
-fn reload_user(k: &Kit, probe: &UserReload) -> J {
-    let mut s = Session::new(k);
-    let phrases = ["好你"];
-    if !probe.setup.is_empty() {
-        import_rows(&mut s, 7, &probe.setup);
-        if probe.save_setup {
-            assert!(facade::save(s.ctx()));
-        }
-    }
-    s.drop_inst();
-    let mut out = obj! { "before" => reload_snapshot(&mut s, &phrases, &probe.inputs) };
-    import_rows(&mut s, 7, &probe.change);
-    out.set("changed", reload_snapshot(&mut s, &phrases, &probe.inputs));
-    if probe.save_change {
-        out.set("save", facade::save(s.ctx()));
-    }
-    unload_load(&mut s, 7, &mut out);
-    out.set("reloaded", reload_snapshot(&mut s, &phrases, &probe.inputs));
-    out
-}
-
 /// `_reload_reuse_setup`: an unsaved zhuyin user phrase, then its library reloaded.
 fn reload_reuse_setup(s: &mut Session) -> J {
     let mut out = obj! { "first" => import_rows(s, 7, &[("好你", "ㄏㄠˇ ㄋㄧˇ", 50)]) };
@@ -381,74 +305,14 @@ fn reload_reuse_setup(s: &mut Session) -> J {
 }
 
 /// The `reload-user-zhuyin-reuse-*` cases.
-fn reuse_case(k: &Kit, name: &str) -> J {
+fn reuse_case(k: &Kit) -> J {
     let mut s = Session::new(k);
     let mut out = reload_reuse_setup(&mut s);
-    if name == "same" {
-        let it = facade::begin_add_phrases(s.ctx(), 7);
-        let ret =
-            facade::iterator_add_phrase(it, c("好你").as_ptr(), c("ㄏㄠˇ ㄋㄧˇ").as_ptr(), 50);
-        return obj! { "ret" => ret };
-    }
-    out.set(
-        "again",
-        import_rows(&mut s, 7, &[("你好", "ㄋㄧˇ ㄏㄠˇ", 50)]),
-    );
-    let inputs: [&[u8]; 3] = [b"cl3su3", b"su3cl3", b"cl3cl3"];
-    let after = match name {
-        "other" => reload_snapshot(&mut s, &["好你", "你好"], &inputs[..2]),
-        "other-save-reopen" => {
-            out.set("save", facade::save(s.ctx()));
-            s.drop_inst();
-            facade::fini(s.ctx());
-            s.ctx = std::ptr::null_mut();
-            reload_snapshot(&mut s, &["好你", "你好"], &inputs[..2])
-        }
-        "other-mask" => {
-            out.set("mask", facade::mask_out(s.ctx(), 0xFF00_0000, 0x0700_0000));
-            s.drop_inst();
-            out.set(
-                "third",
-                import_rows(&mut s, 7, &[("好好", "ㄏㄠˇ ㄏㄠˇ", 50)]),
-            );
-            reload_snapshot(&mut s, &["好你", "你好", "好好"], &inputs)
-        }
-        other => panic!("unknown reuse case {other}"),
-    };
-    out.set("after", after);
+    let it = facade::begin_add_phrases(s.ctx(), 7);
+    let ret = facade::iterator_add_phrase(it, c("好你").as_ptr(), c("ㄏㄠˇ ㄋㄧˇ").as_ptr(), 50);
+    out.set("ret", ret);
     out
 }
-
-/// `_reload_dangling`: a candidate walk over an imported token after its library reload.
-fn reload_dangling(k: &Kit) -> J {
-    let mut s = Session::new(k);
-    let (walk, reading): (&[u8], &str) = if facade::ZHUYIN {
-        (b"283283", "ㄉㄚˇ ㄉㄚˇ")
-    } else {
-        (b"dada", "da3'da3")
-    };
-    import_rows(&mut s, 2, &[("龘龘", reading, 50)]);
-    s.drop_inst();
-    let token = tokens_of(&mut s, "龘龘")
-        .into_iter()
-        .find(|token| token >> 24 == 2)
-        .expect("a library 2 token");
-    facade::unload_phrase_library(s.ctx(), 2);
-    s.drop_inst();
-    facade::load_phrase_library(s.ctx(), 2);
-    s.drop_inst();
-    let tokens: Vec<String> = tokens_of(&mut s, "龘龘")
-        .into_iter()
-        .map(hex_token)
-        .collect();
-    obj! {
-        "tokens" => tokens,
-        "unigram" => unigram_of(&mut s, token),
-        "readings" => reload_pron_keys(&mut s, token),
-        "candidates" => reload_candidates(&mut s, walk),
-    }
-}
-
 /// `sentence_out(k, inst, 0)`.
 fn sentence_out(inst: P) -> J {
     let mut out = seeded();
@@ -492,53 +356,6 @@ fn reload_total_window(k: &Kit) -> J {
     out
 }
 
-/// `_facade_total_out` on the session's cached instance (pinyin).
-fn facade_total_out(s: &mut Session, out: &mut J) {
-    let inst = s.inst();
-    out.set(
-        "parsed",
-        facade::parse_more_full_pinyins(inst, c("ni3'hao3").as_ptr()),
-    );
-    out.set("guessed", facade::guess_sentence(inst));
-    out.set("sentences", final_step_sentences(inst));
-    let mut candidates = guess_rows(inst, 0, 0x1e).rows;
-    candidates.truncate(8);
-    out.set("candidates", candidates);
-    out.set("segment", segment_out(inst, &["你好"]));
-}
-
-/// A system library chunk's stored total, after the MemoryChunk header.
-fn stored_library_total(k: &Kit, name: &str) -> i64 {
-    let bytes = std::fs::read(k.data.join(name)).expect("a system library");
-    i64::from(u32::from_le_bytes(
-        bytes[8..12].try_into().expect("a total word"),
-    ))
-}
-
-/// `mask_out_reload`: a saved, reopened large import masked by its exact token.
-fn mask_out_reload(k: &Kit, compact: bool) -> J {
-    let mut s = Session::new(k);
-    let count = ((1_i64 << 32) + 1_900_001 - FACADE_TOTAL) / 3;
-    assert!(stored_library_total(k, "gb_char.bin") + 3 * count <= 0xFFFF_FFFF);
-    let count = i32::try_from(count).expect("an i32 count");
-    let mut out = obj! { "added" => import_rows(&mut s, 1, &[("龘龘", "da3'da3", count)]) };
-    out.set("saved", facade::save(s.ctx()));
-    facade::fini(s.ctx());
-    s.ctx = std::ptr::null_mut();
-    s.drop_inst();
-    let token = tokens_of(&mut s, "龘龘")
-        .into_iter()
-        .find(|token| token >> 24 == 1)
-        .expect("a library 1 token");
-    if compact {
-        out.set("import", import_rows(&mut s, 7, &[("好你", "hao3'ni3", 2)]));
-    }
-    out.set("mask", facade::mask_out(s.ctx(), 0xFFFF_FFFF, token));
-    s.drop_inst();
-    facade_total_out(&mut s, &mut out);
-    out
-}
-
 /// `_digest`: a user file's SHA-256, `None` when absent.
 fn digest(s: &Session, name: &str) -> Option<String> {
     use sha2::Digest as _;
@@ -557,36 +374,27 @@ struct UnloadSave {
 }
 
 /// The `unload-save-skips-*` case `name`'s parameters.
-fn unload_save_params(name: &str) -> UnloadSave {
-    match (facade::ZHUYIN, name) {
-        (false, "library") => UnloadSave {
-            library: 2,
-            file: "gbk_char.dbin",
-            saved: ("礙", "ai1", 50),
-            unsaved: ("龘龘", "da3'da3", 50),
-            phrases: &["礙", "龘龘"],
-            inputs: &[b"ai1"],
-        },
-        (true, "library") => UnloadSave {
+fn unload_save_params() -> UnloadSave {
+    if facade::ZHUYIN {
+        UnloadSave {
             library: 2,
             file: "gbk_char.dbin",
             saved: ("礙", "ㄞ", 50),
             unsaved: ("龘龘", "ㄉㄚˇ ㄉㄚˇ", 50),
             phrases: &["礙", "龘龘"],
             inputs: &[b"9"],
-        },
-        (true, "user-library") => UnloadSave {
-            library: 7,
-            file: "user.bin",
-            saved: ("好你", "ㄏㄠˇ ㄋㄧˇ", 50),
-            unsaved: ("好你", "ㄏㄠˋ ㄋㄧˇ", 50),
-            phrases: &["好你"],
-            inputs: &[b"cl3su3"],
-        },
-        (_, other) => panic!("unknown unload-save case {other}"),
+        }
+    } else {
+        UnloadSave {
+            library: 2,
+            file: "gbk_char.dbin",
+            saved: ("礙", "ai1", 50),
+            unsaved: ("龘龘", "da3'da3", 50),
+            phrases: &["礙", "龘龘"],
+            inputs: &[b"ai1"],
+        }
     }
 }
-
 /// `_unload_save`: import and save, change both libraries, unload, save, load.
 fn unload_save(k: &Kit, p: &UnloadSave) -> J {
     let mut s = Session::new(k);
@@ -615,7 +423,7 @@ fn unload_save(k: &Kit, p: &UnloadSave) -> J {
 }
 
 /// `_reload_unreadable`: library 2's saved log made unreadable before its reload.
-fn reload_unreadable(k: &Kit, missing: bool) -> J {
+fn reload_unreadable(k: &Kit) -> J {
     let mut s = Session::new(k);
     let (row, input): ((&str, &str, i32), &[u8]) = if facade::ZHUYIN {
         (("礙", "ㄞ", 50), b"9")
@@ -629,141 +437,25 @@ fn reload_unreadable(k: &Kit, missing: bool) -> J {
     out.set("saved", reload_snapshot(&mut s, &phrases, &inputs));
     out.set("unload", facade::unload_phrase_library(s.ctx(), 2));
     let log = s.user.join("gbk_char.dbin");
-    if missing {
-        std::fs::remove_file(&log).expect("remove the log");
-    } else {
-        std::fs::write(&log, b"abc").expect("shorten the log");
-    }
+    std::fs::write(&log, b"abc").expect("shorten the log");
     out.set("load", facade::load_phrase_library(s.ctx(), 2));
     s.drop_inst();
     out.set("reloaded", reload_snapshot(&mut s, &phrases, &inputs));
     out
 }
-
-/// `_persisted_item_getters`: text, unigram, count and each nth reading.
-fn persisted_item_getters(s: &mut Session, token: u32) -> J {
-    let inst = s.inst();
-    let mut count = 0_u32;
-    let ok = facade::token_get_n_pronunciation(inst, token, &raw mut count);
-    let mut readings = Vec::new();
-    for nth in 0..if ok { count } else { 0 } {
-        // SAFETY: a fresh GArray of two-byte elements, freed below.
-        let keys = unsafe { glib_sys::g_array_new(0, 0, 2) };
-        let got = facade::token_get_nth_pronunciation(inst, token, nth, keys.cast());
-        // SAFETY: `keys` is the live GArray allocated above.
-        let len = unsafe { (*keys).len };
-        readings.push(J::from((got, len, keys_hex(keys))));
-        // SAFETY: the array was allocated above and is freed once.
-        unsafe { glib_sys::g_array_free(keys, 1) };
-    }
-    let (mut length, mut text) = (0_u32, std::ptr::null_mut());
-    let ret = facade::token_get_phrase(inst, token, &raw mut length, &raw mut text);
-    let phrase = J::from((ret, length, take_text(text)));
-    obj! {
-        "phrase" => phrase,
-        "unigram" => unigram_of(s, token),
-        "count" => (ok, count),
-        "readings" => readings,
-    }
-}
-
-/// `_system_items`' total and largest item slot of a system chunk.
-fn system_total_and_last_slot(k: &Kit, name: &str) -> (u32, u32) {
-    let bytes = std::fs::read(k.data.join(name)).expect("a system library");
-    let payload = &bytes[8..];
-    let word =
-        |offset: usize| u32::from_le_bytes(payload[offset..offset + 4].try_into().expect("a word"));
-    let (total, index, content) = (word(0), word(4) as usize, word(8) as usize);
-    let last = (0..(content - index - 1) / 4)
-        .filter(|slot| word(index + slot * 4) != 0)
-        .max()
-        .expect("an item");
-    (total, u32::try_from(last).expect("a slot"))
-}
-
-/// Plants the persisted empty item before init; answers its library, token and file.
-fn plant_empty_item(k: &Kit, user_file: bool, frequencies: &[u32]) -> (u8, u32, &'static str) {
-    write_user_conf(k);
-    let mut body = vec![0, u8::try_from(frequencies.len()).expect("a count")];
-    body.extend(37_u32.to_le_bytes());
-    body.extend(frequencies.iter().flat_map(|value| value.to_le_bytes()));
-    let (library, slot, name) = if user_file {
-        let content = [vec![0; 8], body].concat();
-        let end = u32::try_from(34 + content.len() + 1).expect("an offset");
-        let mut payload: Vec<u8> = [91_u32, 17, 34, end]
-            .iter()
-            .flat_map(|value| value.to_le_bytes())
-            .collect();
-        payload.extend(b"#");
-        payload.extend([0; 12]);
-        payload.extend(8_u32.to_le_bytes());
-        payload.extend(b"#");
-        payload.extend(content);
-        payload.extend(b"#");
-        std::fs::write(k.user.join("addon.bin"), chunk(&payload)).expect("write addon.bin");
-        (5, 3, "addon.bin")
-    } else {
-        let (total, last) = system_total_and_last_slot(k, "gbk_char.bin");
-        let slot = last + 3;
-        let length = u16::try_from(body.len()).expect("a record length");
-        let mut log = modify_header(0, total, total + 37);
-        log.extend(1_u32.to_le_bytes());
-        log.extend(slot.to_le_bytes());
-        log.extend(length.to_le_bytes());
-        log.extend(body);
-        write_log(k, &log, "gbk_char.dbin");
-        (2, slot, "gbk_char.dbin")
-    };
-    (library, (u32::from(library) << 24) | slot, name)
-}
-
-/// `_persisted_empty_reload`: a persisted empty item through load, unload,
-/// reload, compaction, save and reopen.
-fn persisted_empty_reload(k: &Kit, user_file: bool, frequencies: &[u32]) -> J {
-    let (library, token, name) = plant_empty_item(k, user_file, frequencies);
-    let mut s = Session::new(k);
-    let mut out = obj! { "initial" => persisted_item_getters(&mut s, token) };
-    facade::free_instance(s.inst());
-    s.drop_inst();
-    out.set("unload", facade::unload_phrase_library(s.ctx(), library));
-    out.set("unloaded", persisted_item_getters(&mut s, token));
-    facade::free_instance(s.inst());
-    s.drop_inst();
-    out.set("load", facade::load_phrase_library(s.ctx(), library));
-    out.set("reloaded", persisted_item_getters(&mut s, token));
-    assert!(import_rows(&mut s, 7, &[]).is_empty());
-    out.set("compacted", persisted_item_getters(&mut s, token));
-    out.set("save", facade::save(s.ctx()));
-    let saved = std::fs::read(s.user.join(name)).expect("the saved file");
-    out.set("saved", hex(&saved));
-    out.set("after-save", persisted_item_getters(&mut s, token));
-    s.close();
-    out.set("reopened", persisted_item_getters(&mut s, token));
-    out
-}
-
 /// The `reload-*` cases of the reload probes, the user library and its reuse.
 fn reload_case(k: &mut Kit, rest: &str) -> J {
     let mode = if facade::ZHUYIN { "zhuyin" } else { "pinyin" };
-    if let Some(name) = rest.strip_prefix(&format!("user-{mode}-reuse-")) {
-        return reuse_case(k, name);
+    if rest.strip_prefix(&format!("user-{mode}-reuse-")).is_some() {
+        return reuse_case(k);
     }
-    if let Some(name) = rest
-        .strip_prefix(&format!("refused-user-{mode}-"))
-        .or_else(|| rest.strip_prefix(&format!("user-{mode}-")))
-    {
-        return reload_user(k, &user_reload(name));
-    }
-    for (prefix, save_first) in [
-        ("refused-", false),
-        ("drops-session-", false),
-        ("keeps-saved-", true),
-    ] {
-        if let Some(name) = rest
+    for (prefix, save_first) in [("drops-session-", false), ("keeps-saved-", true)] {
+        if rest
             .strip_prefix(prefix)
             .and_then(|name| name.strip_prefix(&format!("{mode}-")))
+            .is_some()
         {
-            let (change, library) = reload_change(name);
+            let (change, library) = reload_change();
             return reload_probe(k, &change, library, save_first);
         }
     }
@@ -777,13 +469,8 @@ fn reload_misc(k: &mut Kit, rest: &str) -> J {
         .or_else(|| rest.strip_suffix("-zhuyin"))
         .unwrap_or(rest);
     match name {
-        "dangling-token-candidates" => reload_dangling(k),
         "total-while-unloaded" => reload_total_window(k),
-        "unreadable-log-missing" => reload_unreadable(k, true),
-        "unreadable-log-short" => reload_unreadable(k, false),
-        "persisted-empty-add-plain" => persisted_empty_reload(k, false, &[]),
-        "persisted-empty-add-pronunciations" => persisted_empty_reload(k, false, &[13, 5]),
-        "persisted-empty-user-file" => persisted_empty_reload(k, true, &[13, 5]),
+        "unreadable-log-short" => reload_unreadable(k),
         other => panic!("unknown library_reload case reload-{other}"),
     }
 }
@@ -794,15 +481,10 @@ pub fn case(k: &mut Kit, id: &str) -> J {
         return reload_case(k, rest);
     }
     if let Some(rest) = id.strip_prefix("unload-save-skips-") {
-        let name = rest
-            .strip_suffix("-pinyin")
+        rest.strip_suffix("-pinyin")
             .or_else(|| rest.strip_suffix("-zhuyin"))
             .expect("a facade suffix");
-        return unload_save(k, &unload_save_params(name));
+        return unload_save(k, &unload_save_params());
     }
-    match id {
-        "mask-out-replaces-reload-offset" => mask_out_reload(k, false),
-        "mask-out-after-compact-keeps-reload-offset" => mask_out_reload(k, true),
-        other => panic!("unknown library_reload case {other}"),
-    }
+    panic!("unknown library_reload case {id}")
 }

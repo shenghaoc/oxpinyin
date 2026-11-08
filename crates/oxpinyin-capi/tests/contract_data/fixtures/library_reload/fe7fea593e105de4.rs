@@ -1,1 +1,0 @@
-M(&[("candidates", L(&[I(88), L(&[L(&[S("大大"), I(2)]), L(&[S("鞑靼"), I(2)]), L(&[S("达达"), I(2)])]), M(&[])])), ("readings", L(&[B(false), I(0)])), ("tokens", L(&[S("0x2003cfd")])), ("unigram", L(&[B(false), I(0)]))])

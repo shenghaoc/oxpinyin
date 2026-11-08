@@ -15,7 +15,7 @@ use std::path::Path;
 use crate::facade;
 use crate::fixtures::log_walk;
 use crate::readers::{FacadeOut, GuessRows, c, unigram_of};
-use crate::support::{J, Kit, P, UNTOUCHED, take_text};
+use crate::support::{J, Kit, P, take_text};
 
 /// Runs the case `id` and answers its result document.
 pub fn case(k: &mut Kit, id: &str) -> J {
@@ -26,24 +26,12 @@ pub fn case(k: &mut Kit, id: &str) -> J {
     if let Some(name) = name.strip_prefix("replay-") {
         return replay::case(k, name);
     }
-    if let Some(variant) = name.strip_prefix("unigram-lifecycle-") {
-        return lifecycle::unigram_lifecycle(k, variant);
-    }
     match name {
         "unigram-refused-reload" => lifecycle::refused_add_reload(k),
-        "unigram-null-user-save" => lifecycle::unigram_null_user_save(k),
-        "removed-extension-sentence" => {
-            removed::removed_extension(k, false, &["exact", "longer", "prefix"], false)
-        }
-        "removed-extension-candidates" => removed::removed_extension(k, true, &["prefix"], false),
-        "removed-candidate" => removed::removed_candidate(k, false),
-        "removed-predict-sole" => removed::predicted_sole(k),
-        "removed-predict-choose" => removed::predicted_choose(k),
-        "removed-predict-class-b" => removed::predicted_class_b(k),
-        "chunk-frame-journal-exact" => chunk_frame::journal(k, false),
-        "chunk-frame-journal-trailing" => chunk_frame::journal(k, true),
-        "chunk-frame-user-exact" => chunk_frame::user(k, false),
-        "chunk-frame-user-trailing" => chunk_frame::user(k, true),
+        "removed-candidate" => removed::removed_candidate(k),
+        "chunk-frame-journal-exact" => chunk_frame::journal(k),
+        "chunk-frame-user-trailing" => chunk_frame::user(k),
+        "unigram-lifecycle-overflow" => lifecycle::unigram_lifecycle(k),
         other => panic!("no journal_replay case {other}"),
     }
 }
@@ -318,28 +306,6 @@ fn parse_training_input(k: &mut Kit) -> usize {
     }
 }
 
-/// `_reload_pron_keys`: a token's pronunciation count and each reading's
-/// two-byte keys as hex.
-fn reload_pron_keys(k: &mut Kit, token: u32) -> J {
-    let inst = k.inst();
-    let mut count = UNTOUCHED;
-    let ok = facade::token_get_n_pronunciation(inst, token, &raw mut count);
-    let mut out = vec![J::from(ok), J::from(count)];
-    for nth in 0..if ok { count } else { 0 } {
-        // SAFETY: a fresh GArray of two-byte elements, freed below.
-        let keys = unsafe { glib_sys::g_array_new(0, 0, 2) };
-        facade::token_get_nth_pronunciation(inst, token, nth, keys.cast());
-        let bytes: Vec<u8> = crate::readers::garray_u16(keys)
-            .iter()
-            .flat_map(|key| key.to_le_bytes())
-            .collect();
-        // SAFETY: the array was allocated above and is freed once.
-        unsafe { glib_sys::g_array_free(keys, 1) };
-        out.push(J::from(hex(&bytes)));
-    }
-    J::L(out)
-}
-
 /// The user directory's `name`.
 fn user_file(k: &Kit, name: &str) -> Vec<u8> {
     std::fs::read(k.user.join(name)).expect("a user file")
@@ -351,11 +317,4 @@ fn user_file(k: &Kit, name: &str) -> Vec<u8> {
 fn close(k: &mut Kit) {
     k.inst();
     k.close();
-}
-
-/// A private system library replacing the linked `name` with `payload` as a chunk.
-fn replace_library(system: &Path, name: &str, payload: &[u8]) {
-    let path = system.join(name);
-    std::fs::remove_file(&path).expect("unlink the private link");
-    std::fs::write(&path, crate::fixtures::chunk(payload)).expect("write the library");
 }

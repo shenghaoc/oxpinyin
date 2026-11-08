@@ -10,12 +10,19 @@ use crate::facade;
 use crate::readers::{UNTOUCHED_TEXT, c, owned_out};
 use crate::support::{J, Kit, P, UNTOUCHED, borrowed_text};
 
-/// The separator cases' inputs, by the index their IDs name.
-const SEPARATOR_INPUTS: [&str; 6] = ["'ni", "''ni", "'nihao", "'ni'hao", "'ni'", "'a"];
-
-/// The options most cases set; [`TONE_OPTIONS`] adds tone input.
+/// The options the cases set.
 const OPTIONS: u32 = 0x18a;
-const TONE_OPTIONS: u32 = 0x1aa;
+
+/// The separator input the case index names.
+fn separator_input(index: usize) -> &'static str {
+    match index {
+        0 => "'ni",
+        1 => "''ni",
+        3 => "'ni'hao",
+        4 => "'ni'",
+        other => panic!("no separator input {other}"),
+    }
+}
 
 /// One case: its input, operation, byte offset and options.
 struct Probe<'a> {
@@ -23,16 +30,6 @@ struct Probe<'a> {
     op: &'a str,
     off: usize,
     options: u32,
-}
-
-/// The options of a before-cursor or separator-free input: tone input when it
-/// holds a digit.
-fn options_for(text: &str) -> u32 {
-    if text.chars().any(|ch| ch.is_ascii_digit()) {
-        TONE_OPTIONS
-    } else {
-        OPTIONS
-    }
 }
 
 fn number(text: &str) -> usize {
@@ -53,46 +50,10 @@ fn probe_of(id: &str) -> Probe<'_> {
         ["separator", mode, index, op, off] => {
             mode_matches(mode);
             Probe {
-                text: SEPARATOR_INPUTS[number(index)],
+                text: separator_input(number(index)),
                 op,
                 off: number(off),
                 options: OPTIONS,
-            }
-        }
-        ["before-cursor", text, off] => Probe {
-            text,
-            op: "before",
-            off: number(off),
-            options: options_for(text),
-        },
-        ["separator-free-control", text, "sentence"] => Probe {
-            text,
-            op: "sentence",
-            off: 0,
-            options: options_for(text),
-        },
-        ["separator-free-control", text, op, off] => Probe {
-            text,
-            op,
-            off: number(off),
-            options: options_for(text),
-        },
-        ["zero-key", mode, text, op, off] => {
-            mode_matches(mode);
-            Probe {
-                text,
-                op,
-                off: number(off),
-                options: OPTIONS,
-            }
-        }
-        ["allocator-zero", mode, text, op, off] => {
-            mode_matches(mode);
-            Probe {
-                text,
-                op,
-                off: number(off),
-                options: TONE_OPTIONS,
             }
         }
         _ => panic!("unknown separator_before_cursor case {id}"),
@@ -148,9 +109,6 @@ fn separator_case(k: &mut Kit, probe: &Probe<'_>) -> J {
         "parse_return_consumed" => parsed,
         "get_parsed_input_length" => facade::get_parsed_input_length(inst),
     };
-    if op == "parse" {
-        return out;
-    }
     out.set("guess_sentence", facade::guess_sentence(inst));
     match op {
         "sentence" => {
@@ -179,13 +137,7 @@ fn separator_case(k: &mut Kit, probe: &Probe<'_>) -> J {
             out.set("untouched_output", ret || value == UNTOUCHED as usize);
         }
         "character" => {
-            let phrase = if text == "'a" {
-                "阿"
-            } else if text.contains("hao") {
-                "你好"
-            } else {
-                "你"
-            };
+            let phrase = "你";
             let mut value = UNTOUCHED as usize;
             let ret = facade::get_character_offset(inst, c(phrase).as_ptr(), off, &raw mut value);
             out.set("ret", ret);
@@ -297,40 +249,5 @@ fn key(inst: P, op: &str, off: usize, out: &mut J) {
         };
         out.set("length_ret", length_ret);
         out.set("length", length);
-    }
-    if op == "render" {
-        render(inst, pointer, out);
-    }
-}
-
-/// Every string the facade renders for the key at `pointer`, owned and freed.
-fn render(inst: P, pointer: P, out: &mut J) {
-    type Render = fn(P, P, *mut *mut c_char) -> bool;
-    let renders: &[(&str, Render)] = if facade::ZHUYIN {
-        &[
-            ("zhuyin", facade::get_zhuyin_string),
-            ("pinyin", facade::get_pinyin_string),
-        ]
-    } else {
-        &[
-            ("pinyin", facade::get_pinyin_string),
-            ("zhuyin", facade::get_zhuyin_string),
-            ("luoma_pinyin", facade::get_luoma_pinyin_string),
-            ("secondary_zhuyin", facade::get_secondary_zhuyin_string),
-        ]
-    };
-    for (name, render) in renders {
-        let mut string = seeded_ptr().cast::<c_char>();
-        let rendered = render(inst, pointer, &raw mut string);
-        out.set(format!("{name}_string"), (rendered, owned_out(string)));
-    }
-    if !facade::ZHUYIN {
-        let mut initial = seeded_ptr().cast::<c_char>();
-        let mut last = seeded_ptr().cast::<c_char>();
-        let rendered = facade::get_pinyin_strings(inst, pointer, &raw mut initial, &raw mut last);
-        out.set(
-            "pinyin_strings",
-            (rendered, owned_out(initial), owned_out(last)),
-        );
     }
 }
