@@ -561,7 +561,7 @@ mod tests {
             .collect()
     }
 
-    /// S6, zhuyin-diff's noguess protocol: no sentence guess since the parse, so the n-best results
+    /// S6, the noguess protocol: no sentence guess since the parse, so the n-best results
     /// are empty and nothing is prepended (`zhuyin.cpp:1277-1278` at 074a2219). Before offset 0 the
     /// span loop does not run (`:1563`); inside a key the span is skipped (`:1590-1591`;
     /// `phonetic_key_matrix.cpp:422-423`). A toneless `su` places no key under FORCE_TONE

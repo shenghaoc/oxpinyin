@@ -132,8 +132,8 @@ impl ChewingKey {
     /// (initial `0..5`, middle `5..7`, final `7..12`, tone `12..15`,
     /// zero padding `15`), matching `_ChewingKey`'s declaration order
     /// under the little-endian bitfield allocation both engines build
-    /// with. Byte identity against the pinned oracle is verified by the
-    /// key-surface differential (`tools/bisection/key-surface-diff.c`).
+    /// with. Byte identity against the pinned oracle is held by the frozen key
+    /// cases in `tests/abi/keys.rs` of `oxpinyin-capi`.
     #[must_use]
     pub const fn to_packed(self) -> u16 {
         ((self.initial as u16) & 0x1f)

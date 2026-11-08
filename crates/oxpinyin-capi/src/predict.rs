@@ -22,7 +22,7 @@ use crate::types::{PinyinInstance, lookup_candidate_type_t};
 /// `const guint32 filter = 10` (`pinyin.cpp:2311`) and
 /// `if (phrase_item->m_count < filter) continue` (`pinyin.cpp:2349-2350`).
 /// Not a design choice — public `pinyin_train` first-seeds 69, so the
-/// 9-vs-10 edge is planted in `run-union-diff.sh`, not trained.
+/// 9-vs-10 edge is planted in the union data, not trained.
 const BIGRAM_FILTER: u32 = 10;
 
 /// One predicted item before sort/dedup.

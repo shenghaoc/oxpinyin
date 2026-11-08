@@ -55,13 +55,13 @@ class RunnerSelectionTests(unittest.TestCase):
 
     def test_runner_filter_matches_registry_selection(self):
         expected = run_all['_registry'].select(run_all['_registry'].load(),
-                                               names=['bisect', 'union-diff'])
-        self.assertEqual(self.list_rows('--runners', 'union-diff,bisect'), expected)
+                                               names=['cpp-smoke', 'abi-alloc'])
+        self.assertEqual(self.list_rows('--runners', 'abi-alloc,cpp-smoke'), expected)
 
     def test_issue_filter_matches_registry_selection(self):
         rows = run_all['_registry'].load()
-        expected = run_all['_registry'].select(rows, issues=['W11'])
-        self.assertEqual(self.list_rows('--issue', 'W11'), expected)
+        expected = run_all['_registry'].select(rows, issues=['T2N'])
+        self.assertEqual(self.list_rows('--issue', 'T2N'), expected)
 
     def test_contract_only_issue_appends_contract_diff(self):
         rows = self.list_rows('--issue', '532', index=self.index)
@@ -72,7 +72,7 @@ class RunnerSelectionTests(unittest.TestCase):
     def test_no_match_from_registry_still_appends_contract_diff(self):
         index = {'tags': {'545': ['default-option-parse']},
                  'modes': {'default-option-parse': 'pinyin'}}
-        rows = self.list_rows('--runners', 'bisect,contract-diff', '--issue', '545', index=index)
+        rows = self.list_rows('--runners', 'cpp-smoke,contract-diff', '--issue', '545', index=index)
         self.assertEqual([row['name'] for row in rows], ['contract-diff'])
         self.assertEqual(rows[0]['command'][-3:], ['--', '--cases', 'default-option-parse'])
 
@@ -109,7 +109,7 @@ class RunnerSelectionTests(unittest.TestCase):
             self.assertIn('--cases-prefix', message)
             self.assertNotIn('unrecognized arguments', message)
         self.assertIn('--cases-prefix requires --runners contract-diff',
-                      self.selection_error('--runners', 'bisect', '--cases-prefix', 'default-'))
+                      self.selection_error('--runners', 'cpp-smoke', '--cases-prefix', 'default-'))
 
     def test_empty_cases_exit_two_from_the_command_line(self):
         script = Path(__file__).with_name('run-all.py')
@@ -174,11 +174,11 @@ class RunnerSelectionTests(unittest.TestCase):
 
     def test_a_contract_tag_requires_contract_diff_to_be_selected(self):
         self.assertIn('unknown issue(s): 532',
-                      self.selection_error('--runners', 'bisect', '--issue', '532', '--list'))
+                      self.selection_error('--runners', 'cpp-smoke', '--issue', '532', '--list'))
 
     def test_a_known_issue_without_a_selected_runner_keeps_the_catalog_diagnostic(self):
-        error = self.selection_error('--runners', 'bisect', '--issue', 'W11', '--list')
-        self.assertIn('no runner or contract case carries issue tag(s) w11', error)
+        error = self.selection_error('--runners', 'cpp-smoke', '--issue', 'T2N', '--list')
+        self.assertIn('no runner or contract case carries issue tag(s) t2n', error)
         self.assertIn('runner tags:', error)
 
     def test_malformed_catalogs_fail_before_scheduling(self):
@@ -206,8 +206,8 @@ class IssueResolutionTests(unittest.TestCase):
                        'separator/pinyin/0/parse/0': 'pinyin'}}
 
     def test_tags_normalise_like_the_contract_driver(self):
-        self.assertEqual(run_all['normal_tag']('#W11'), 'w11')
-        self.assertEqual(run_all['normal_tag']('Row 33'), 'row:33')
+        self.assertEqual(run_all['normal_tag']('#T2N'), 't2n')
+        self.assertEqual(run_all['normal_tag']('Row 38'), 'row:38')
 
     def test_requested_tags_resolve_to_exact_case_ids(self):
         chosen = run_all['contract_cases_for']({'532', '640', '9999'}, self.index)
@@ -277,7 +277,7 @@ class ArtifactUnionTests(unittest.TestCase):
                 if '{zhuyin}' in blob:
                     self.assertIn('zhuyin-capi', row['artifacts'])
         self.assertEqual(next(r for r in rows if r['name'] == 'pc-version')['artifacts'], [])
-        self.assertEqual(next(r for r in rows if r['name'] == 'import-diff')['artifacts'], ['pinyin-capi'])
+        self.assertEqual(next(r for r in rows if r['name'] == 'cpp-smoke')['artifacts'], ['pinyin-capi'])
 
 
 class TimingColumnsTests(unittest.TestCase):

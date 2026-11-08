@@ -234,8 +234,6 @@ def render(args, state, contract_results, gate_receipt=None):
         stages, compiled_records = measure.consume_parallel(address, measure.identity_guard(args.oracle, args.pinyin_so, args.zhuyin_so, args.measurement_config, surface_pinyin))
     else:
         stages = {
-            'same-data': measure.same_data(args.oracle, args.pinyin_so, args.measurement_build, args.pin),
-            'user-store': measure.user_store(args.oracle, args.rust_target, args.measurement_build, args.pin),
             'surface': measure.surfaces(args.oracle, surface_pinyin, args.measurement_build, args.pin),
         }
         compiled_records = set(measure.counters(args.measurement_build, args.pin))
@@ -353,7 +351,7 @@ requested test binaries in `$J_BDB_RUST_TARGET/j-tests` with
 sentence_surface_parity --test user_dir_round_trip --no-run`, setting
 `CARGO_TARGET_DIR="$J_BDB_RUST_TARGET/j-tests"` for this test build. Test executables use an optimized development
 profile with debug assertions/overflow checks retained; the C-ABI comparison
-libraries for contract/seven-driver/user-store comparisons use the original
+libraries for contract comparisons use the original
 unoptimized development profile. Build the separate `$BDB_RUST_SURFACE_SO`
 with the same facade cargo command and `--profile dev --config
 profile.dev.opt-level=1`, setting `CARGO_TARGET_DIR` to the test target.
@@ -400,7 +398,7 @@ does not guess the callee of every indirect site and proves nothing for all inpu
         names = {'contract/exact-MATCH-cases' if label.startswith('contract/') else label for label in labels}
         by_differential.update(names)
     text += 'Unique executed MATCH functions within baseline 962, per differential (overlap retained): ' + '; '.join(f'{name} **{count}**' for name, count in sorted(by_differential.items())) + '.\n\n'
-    text += f'Contract cases **{len(records["contract"])}**: {diff_counts}. Seven same-data drivers: ' + ', '.join(name + ' ' + verdict for name, verdict in records['same-data']) + '. User-store: ' + ', '.join(name + ' ' + verdict for name, verdict in records['user-store']) + '.\n\n'
+    text += f'Contract cases **{len(records["contract"])}**: {diff_counts}.\n\n'
     text += 'Surface/C-ABI corpus exact MATCH replay: ' + '; '.join(f'{name} {matched}/{total} inputs ({other} not credited)' for name, total, matched, other in records['surface']) + '. ' + gate_result + '.\n\n'
     text += f'T1 eligible citation rows **{len(cited)}**; random seed `{AUDITED_SEED}`, ceil(5%) **{len(sample)}** sampled identities: ' + ', '.join('`' + key + '`' for key in sorted(sample)) + '. Both bodies were read. Earlier broad-body citations failed semantic review (warning wrappers, locale-only initialization, partial predicates, configuration-field copying and nonshipping training helpers); the rule was tightened to contiguous actual shipping items, full cited ranges within clang bodies, and an explicit same-function/port role, then resampled. The accepted rule/sample is guarded against drift. T2 configured-out rows **0** within this bdb reachable inventory. T4 registered-divergence rows **0**: row 11 covers the six declared floating-point residuals, not whole lookup or container functions. Facility families classify only their stated storage/lifetime operations.\n\n'
     text += 'Rebase citation audit: the new C-API comments initially made 30 rows eligible and selected SubPhraseIndex::add_unigram_frequency. Reading its complete pin body and Rust helper rejected that citation as a whole-function counterpart: the helper combines facade accounting with a USER_FILE overflow/update scope and omits the pin index lookup/error branches. The exact reviewed source/USR exclusion is in coverage_tiers.py; it is not a divergence or an unreachability claim. Fresh executed MATCH credit remains independent of this citation limit. The tightened population is resampled with the same seed and independently guarded above.\n\n'

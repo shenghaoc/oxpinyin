@@ -803,7 +803,6 @@ libpinyin_la_SOURCES = $(pinyin_SOURCES) pinyin.cpp
         ledger_stub = SimpleNamespace(run=lambda *a: '', REPO=Path('.'), symbol_base=ledger.symbol_base, witness=lambda *a: {})
         with patch.object(gcov_measure, 'build'), patch.object(gcov_measure, 'configured_libraries', return_value=['-lkyotocabinet']), \
              patch.object(gcov_measure, 'contracts', side_effect=stage), patch.object(gcov_measure, 'gates', return_value='gate'), \
-             patch.object(gcov_measure, 'same_data', side_effect=stage), patch.object(gcov_measure, 'user_store', side_effect=stage), \
              patch.object(gcov_measure, 'surfaces', side_effect=surfaces), patch.object(delta_ledger, 'emitted_inventory', return_value=set()), \
              patch.object(gcov_measure, 'limit_roots', return_value=(set(), {}, {}, {})):
             delta_ledger.measure_cell(args, ledger_stub, dict(nodes={}, roots={}, edges=set()), None)
@@ -827,7 +826,6 @@ libpinyin_la_SOURCES = $(pinyin_SOURCES) pinyin.cpp
         ledger_stub = SimpleNamespace(run=lambda *a: '', REPO=Path('.'), symbol_base=ledger.symbol_base, witness=lambda *a: {})
         with patch.object(gcov_measure, 'build'), patch.object(gcov_measure, 'configured_libraries', return_value=['-ltkrzw']), \
              patch.object(gcov_measure, 'contracts', return_value=contracts), patch.object(gcov_measure, 'gates', return_value='gate'), \
-             patch.object(gcov_measure, 'same_data', side_effect=stage), patch.object(gcov_measure, 'user_store', side_effect=stage), \
              patch.object(gcov_measure, 'surfaces', side_effect=stage), patch.object(delta_ledger, 'emitted_inventory', return_value=set()), \
              patch.object(delta_ledger, 'align', side_effect=align), \
              patch.object(gcov_measure, 'limit_roots', return_value=(set(), {}, {'user-gram-unsorted-export': 'MATCH', 'broken': 'MATCH'},

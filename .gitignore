@@ -32,36 +32,13 @@ rustc-ice-*.txt
 # Local agent tooling worktrees (not committed)
 /.claude/
 
-# Bisection harness compiled binaries (every run-*.sh compiles its driver
-# beside the source; one was committed by mistake until 2026-09-06)
+# Bisection harness compiled binaries (the runners compile bisect beside the
+# source; one was committed by mistake until 2026-09-06)
 /tools/bisection/*-bin
 /tools/bisection/bisect
-/tools/bisection/train-diff
-/tools/bisection/nbest-train-diff
-/tools/bisection/live-typing-diff
-/tools/bisection/import-diff
-/tools/bisection/scheme-diff
-/tools/bisection/chewing-diff
-/tools/bisection/option-sweep
-/tools/bisection/user-candidate-diff
-/tools/bisection/addon-candidate-diff
-/tools/bisection/predict-diff
-/tools/bisection/punct-diff
-/tools/bisection/union-diff
-/tools/bisection/union-edge-diff
-/tools/bisection/plant-oracle-bigram
-/tools/bisection/abi-probe-diff
-/tools/bisection/residue-mechanism-diff
-/tools/bisection/residue-a-tail-diff
 
 # macOS
 .DS_Store
-
-# The user-learning store is per-user runtime data; it must never be
-# committed (W6-T5: no user-data fixtures beyond tiny synthetic ones).
-tools/bisection/fullpin-diff
-/tools/bisection/uncovered-surface-diff
-/tools/bisection/pred-order-diff
 
 # Python tooling sidecars (tools/**/*.py; no in-tree binding)
 .venv*/

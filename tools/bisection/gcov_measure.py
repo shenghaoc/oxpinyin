@@ -537,47 +537,6 @@ def limit_roots(prefix, out, incomplete, verdicts, pin, cell='bdb'):
     return roots, cases, corrections, recovered
 
 
-def same_data(prefix, pinyin, out, pin, cell='bdb', provenance=None):
-    """Compile and compare the seven registered same-data drivers with fresh writable state.
-
-    Run reference, subject, and instrumented libraries in separate processes,
-    disabling core dumps in the controller. Attribute counters only when all
-    three exit successfully with identical stdout; return credited identities,
-    nonmatches, incomplete labels, and verdicts. Remove temporary drivers and
-    profiles on exit.
-    """
-    verify_prefix(prefix, provenance, cell)
-    names = ['key-surface-diff', 'dict-surface-diff', 'phrase-surface-diff',
-             'pred-order-diff', 'predict-diff', 'punct-diff', 'import-diff']
-    attributed, nonmatch, incomplete, results = defaultdict(set), set(), set(), []
-    data = prefix / 'lib/libpinyin/data'
-    with tempfile.TemporaryDirectory(prefix='j-same-data-') as scratch:
-        work = Path(scratch)
-        for name in names:
-            exe = work / name
-            command(['gcc', '-std=gnu11', '-Wall', '-Wextra', '-O2', '-o', exe, HERE / (name + '.c'), '-ldl', *shlex.split(command(['pkg-config', '--cflags', '--libs', 'glib-2.0']))])
-            observations = []
-            clear(out)
-            for side, so in [('reference', prefix / 'lib/libpinyin.so'), ('subject', pinyin), ('measurement', out / 'libpinyin.so')]:
-                cwd = work / (name + '-' + side)
-                cwd.mkdir()
-                env = dict(os.environ, LD_LIBRARY_PATH=str(so.parent) + (":" + os.environ["LD_LIBRARY_PATH"] if os.environ.get("LD_LIBRARY_PATH") else ""))
-                check_tkrzw(cell, "gcov_measure.py/same_data", side, so, env=env, cwd=cwd)
-                resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
-                run = subprocess.run([str(exe), str(so), str(data), *(['matched-tables'] if name == 'punct-diff' else [])], cwd=cwd, env=env, capture_output=True)
-                observations.append((run.returncode, run.stdout))
-            reference, subject, measurement = observations
-            verdict = 'MATCH' if reference[0] == subject[0] == measurement[0] == 0 and reference == subject == measurement else 'DIFFER'
-            for identity, count in counters(out, pin).items():
-                if count:
-                    if verdict == 'MATCH': attributed[identity].add('same-data/' + name)
-                    else: nonmatch.add(identity)
-            if measurement[0]: incomplete.add('same-data/' + name)
-            results.append((name, verdict))
-            print(f'same-data {name}: {verdict}; exits={[o[0] for o in observations]}', file=sys.stderr, flush=True)
-    return attributed, nonmatch, incomplete, results
-
-
 def declared_residuals(root=REPO):
     """The six §12 shared-comparison residual inputs, read from the same
     membership source and with the same anchors as the Rust gate
@@ -830,76 +789,6 @@ def preserved_gate(receipt, target):
     return 'sentence_surface_parity: four tests PASS (frozen surface, supplementary ties, native costs, fixture membership)'
 
 
-def user_store(prefix, target, out, pin, cell='bdb', provenance=None, libraries=('-ldb',)):
-    """Run the four-phase user-directory differential through reference and measured drivers.
-
-    Verify the prefix, compile temporary C drivers, and invoke the prebuilt
-    Rust round-trip test. Compare saved state through pipes and credit counters
-    only when both driver observations agree. Return attribution, nonmatches,
-    incomplete labels, and verdicts; temporary profiles are removed on exit.
-    Create a measurement SONAME symlink if absent.
-    """
-    verify_prefix(prefix, provenance, cell)
-    tests = target / 'j-tests' if (target / 'j-tests').exists() else target
-    binaries = [path for path in (tests / 'debug/deps').glob('user_dir_round_trip-*') if path.is_file() and os.access(path, os.X_OK)]
-    if len(binaries) != 1:
-        raise RuntimeError(f'exactly one user_dir_round_trip test binary is required; found {len(binaries)} in {tests}')
-    headers = next((prefix / 'include').glob('libpinyin-*'))
-    data = prefix / 'lib/libpinyin/data'
-    attributed, nonmatch, incomplete, results = defaultdict(set), set(), set(), []
-    with tempfile.TemporaryDirectory(prefix='j-user-store-') as scratch:
-        work = Path(scratch)
-        outputs = []
-        for side, so_dir in [('reference', prefix / 'lib'), ('measurement', out)]:
-            clear(out)
-            exe = work / ('user-driver-' + side)
-            # The installed reference requires DB5_3, while Fedora's same-ABI
-            # libdb exports unversioned symbols. As with the existing dlopen
-            # drivers, defer shared-library dependency resolution to ld.so;
-            # direct driver references are still required at link time, and
-            # an unsatisfied runtime dependency fails the actual test.
-            command(['gcc', '-O2', '-o', exe, REPO / 'tools/oracle/user_driver.c', '-I' + str(headers), *shlex.split(command(['pkg-config', '--cflags', 'glib-2.0'])), '-L' + str(so_dir), '-lpinyin', *libraries, *shlex.split(command(['pkg-config', '--libs', 'glib-2.0'])), '-Wl,--allow-shlib-undefined', '-Wl,-rpath,' + str(so_dir)])
-            # SONAME lookup must select the measurement object too.
-            if side == 'measurement':
-                alias = out / 'libpinyin.so.15'
-                if not alias.exists(): alias.symlink_to('libpinyin.so')
-            profile, owned = work / ('profile-' + side), work / ('owned-' + side)
-            profile.mkdir(); owned.mkdir()
-            env = dict(os.environ, LD_LIBRARY_PATH=str(so_dir) + (":" + os.environ["LD_LIBRARY_PATH"] if os.environ.get("LD_LIBRARY_PATH") else ""), OX_SYSTEM_DIR=str(data), OX_PIN_DIR=str(profile), OX_OWNED_DIR=str(owned), OX_INPUTS='nihao nisha')
-            check_tkrzw(cell, 'gcov_measure.py/user_store', side, exe, env=env)
-            check_tkrzw(cell, 'gcov_measure.py/user_store', 'subject', binaries[0], env=env)
-            command([exe, 'train', data, profile, 'nihao', 'nisha'], env=env)
-            original = sorted(command([exe, 'dump', data, profile], env=env).splitlines())
-            assert original and any(line.startswith('B') for line in original)
-            command([binaries[0], '--ignored', '--nocapture', 'a_pin_profile'], env=env)
-            rewritten = sorted(command([exe, 'dump', data, profile], env=env).splitlines())
-            assert original == rewritten, 'pin profile rewrite differs'
-            read_fd, write_fd = os.pipe()
-            try:
-                env['OX_EXPECTED_PHRASES'] = '/proc/self/fd/' + str(write_fd)
-                command([binaries[0], '--ignored', '--nocapture', 'oxpinyin_trains'], env=env, pass_fds=(write_fd,))
-                os.close(write_fd); write_fd = None
-                expected = sorted(os.read(read_fd, 65536).decode().splitlines())
-            finally:
-                os.close(read_fd)
-                if write_fd is not None: os.close(write_fd)
-            rows = sorted(command([exe, 'phrases', data, owned], env=env).splitlines())
-            actual = sorted(row.split('\t')[1] for row in rows if row.startswith('P'))
-            assert actual == expected and actual, 'owned profile phrase set differs'
-            outputs.append((original, rewritten, rows))
-            if side == 'measurement': measured = counters(out, pin)
-        # Bigram-export indeterminate bytes remain the existing same-renderer
-        # comparison within each side, not an invented cross-renderer rule.
-        verdict = 'MATCH' if outputs[0] == outputs[1] else 'MEASUREMENT-DIFFER'
-        for identity, count in measured.items():
-            if count:
-                if verdict == 'MATCH': attributed[identity].add('user-store/four-phase-round-trip')
-                else: nonmatch.add(identity)
-        results.append(('four-phase-round-trip', verdict))
-        print('user-store: ' + verdict, file=sys.stderr, flush=True)
-    return attributed, nonmatch, incomplete, results
-
-
 def identity_guard(prefix, pinyin, zhuyin, config, surface_pinyin=None):
     """Verify the bdb prefix and hash the seven inputs used by parallel measurement.
 
@@ -916,7 +805,7 @@ def prepare_parallel(prefix, pinyin, zhuyin, target, main_out, pin, config, addr
 
     Create gcov-parallel beside main_out with links to measurement inputs,
     and set process-wide GCOV_PREFIX/GCOV_PREFIX_STRIP for its counters.
-    Run same-data, user-store, and surface stages, then block for one client
+    Run the surface stage, then block for one client
     to receive pickled input hashes, results, and compiled identities. Reject
     an existing socket path and unlink the socket after a successful transfer;
     observations remain in memory rather than result files.
@@ -933,9 +822,7 @@ def prepare_parallel(prefix, pinyin, zhuyin, target, main_out, pin, config, addr
     # GCC recorded absolute filenames in main_out; retain just each basename.
     os.environ['GCOV_PREFIX_STRIP'] = str(len(main_out.parts) - 1)
     result = {}
-    for name, operation in [('same-data', lambda: same_data(prefix, pinyin, out, pin)),
-                            ('user-store', lambda: user_store(prefix, target, out, pin)),
-                            ('surface', lambda: surfaces(prefix, surface_pinyin or pinyin, out, pin))]:
+    for name, operation in [('surface', lambda: surfaces(prefix, surface_pinyin or pinyin, out, pin))]:
         result[name] = operation()
     compiled = counters(out, pin)
     payload = (identity_guard(prefix, pinyin, zhuyin, config, surface_pinyin), result, set(compiled))

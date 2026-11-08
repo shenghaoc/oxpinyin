@@ -140,7 +140,7 @@ def select(rows, names=None, cells=None, issues=None, kind=None, require_selecti
     selectors = {'runner': names, 'cell': cells, 'issue': issues,
                  'kind': None if kind is None else [kind]}
     if require_selection and all(value is None for value in selectors.values()):
-        raise RegistryError('plan needs an explicit selection (for example --runners bisect)')
+        raise RegistryError('plan needs an explicit selection (for example --runners cpp-smoke)')
     known = {'runner': {row['name'] for row in rows},
              'cell': {cell for row in rows for cell in row['cells']},
              'issue': {normal_issue(issue) for row in rows for issue in row.get('issues', [])},

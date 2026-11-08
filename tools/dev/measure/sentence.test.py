@@ -77,48 +77,6 @@ bool pinyin_get_candidate_nbest_index(void *p, void *c, uint8_t *n) {
 }
 '''
 
-# Default mode resolves these before pinyin_init. Initialization fails in the
-# placement test, so calling any of them would exercise the wrong path.
-DEFAULT_SYMBOLS = r'''
-#define UNEXPECTED(name) void name(void) { abort(); }
-UNEXPECTED(pinyin_set_double_pinyin_scheme)
-UNEXPECTED(pinyin_set_zhuyin_scheme)
-UNEXPECTED(pinyin_load_addon_phrase_library)
-UNEXPECTED(pinyin_save)
-UNEXPECTED(pinyin_parse_more_double_pinyins)
-UNEXPECTED(pinyin_parse_more_chewings)
-UNEXPECTED(pinyin_get_parsed_input_length)
-UNEXPECTED(pinyin_in_chewing_keyboard)
-UNEXPECTED(pinyin_guess_predicted_candidates_with_punctuations)
-UNEXPECTED(pinyin_is_user_candidate)
-UNEXPECTED(pinyin_remove_user_candidate)
-UNEXPECTED(pinyin_choose_candidate)
-UNEXPECTED(pinyin_choose_predicted_candidate)
-UNEXPECTED(pinyin_train)
-UNEXPECTED(pinyin_get_character_offset)
-UNEXPECTED(pinyin_get_pinyin_key_rest)
-UNEXPECTED(pinyin_get_pinyin_key_rest_positions)
-UNEXPECTED(pinyin_get_pinyin_offset)
-UNEXPECTED(pinyin_get_left_pinyin_offset)
-UNEXPECTED(pinyin_get_right_pinyin_offset)
-UNEXPECTED(pinyin_get_full_pinyin_auxiliary_text)
-UNEXPECTED(pinyin_get_double_pinyin_auxiliary_text)
-UNEXPECTED(pinyin_get_chewing_auxiliary_text)
-UNEXPECTED(pinyin_mask_out)
-UNEXPECTED(pinyin_remember_user_input)
-UNEXPECTED(pinyin_begin_add_phrases)
-UNEXPECTED(pinyin_iterator_add_phrase)
-UNEXPECTED(pinyin_end_add_phrases)
-UNEXPECTED(pinyin_begin_get_phrases)
-UNEXPECTED(pinyin_iterator_has_next_phrase)
-UNEXPECTED(pinyin_iterator_get_next_phrase)
-UNEXPECTED(pinyin_end_get_phrases)
-UNEXPECTED(pinyin_begin_get_bigram_phrases)
-UNEXPECTED(pinyin_bigram_iterator_has_next_phrase)
-UNEXPECTED(pinyin_bigram_iterator_get_next_phrase)
-UNEXPECTED(pinyin_end_get_bigram_phrases)
-'''
-
 
 class NativeTests(unittest.TestCase):
     @classmethod
@@ -130,9 +88,6 @@ class NativeTests(unittest.TestCase):
         source.write_text(STUB)
         subprocess.run(bench.harness_build(cls.harness), check=True, capture_output=True)
         subprocess.run(['cc', '-shared', '-fPIC', '-O2', '-o', cls.library, source], check=True, capture_output=True)
-        cls.default_library = cls.root / 'default-stub.so'
-        source.write_text(STUB + DEFAULT_SYMBOLS)
-        subprocess.run(['cc', '-shared', '-fPIC', '-O2', '-o', cls.default_library, source], check=True, capture_output=True)
 
     @classmethod
     def tearDownClass(cls):
@@ -174,8 +129,8 @@ class NativeTests(unittest.TestCase):
                 self.assertEqual(done.stdout, b'')
                 self.assertEqual(done.stderr, b'fatal: TMPDIR path is too long\n')
 
-    def test_bisect_default_and_perf_place_and_clean_user_directories_on_init_failure(self):
-        for mode, prefix in (([], 'bisect-user-'), (['--perf'], 'bisect-perf-')):
+    def test_bisect_perf_places_and_cleans_user_directories_on_init_failure(self):
+        for mode, prefix in ((['--perf'], 'bisect-perf-'),):
             for setting in ('custom', 'unset', 'empty'):
                 with self.subTest(mode=mode, setting=setting), \
                         tempfile.TemporaryDirectory(dir=self.root) as root:
@@ -184,8 +139,7 @@ class NativeTests(unittest.TestCase):
                     env.pop('TMPDIR', None)
                     if setting != 'unset':
                         env['TMPDIR'] = root if setting == 'custom' else ''
-                    library = self.library if mode else self.default_library
-                    done = subprocess.run([self.harness, *mode, library, self.root],
+                    done = subprocess.run([self.harness, *mode, self.library, self.root],
                                           capture_output=True, env=env)
                     self.assertEqual(done.returncode, 1)
                     users = [line.removeprefix('USER:') for line in done.stderr.decode().splitlines()
@@ -194,8 +148,6 @@ class NativeTests(unittest.TestCase):
                     user = Path(users[0])
                     self.assertIn(b'fatal: pinyin_init returned NULL\n', done.stderr)
                     self.assertNotIn(b'symbols missing', done.stderr)
-                    if not mode:
-                        self.assertIn(b'resolved: 51/51 symbols\n', done.stdout)
                     self.assertEqual(user.parent, parent)
                     self.assertTrue(user.name.startswith(prefix))
                     # The loaded stub saw this directory before the failure cleanup.
@@ -203,25 +155,8 @@ class NativeTests(unittest.TestCase):
                     self.assertFalse(user.exists())
                     self.assertEqual(list(Path(root).iterdir()), [])
 
-    def test_bisect_default_missing_symbols_cleans_user_directory_before_init(self):
-        with tempfile.TemporaryDirectory(dir=self.root) as root:
-            done = subprocess.run([self.harness, self.library, self.root], capture_output=True,
-                                  env=dict(os.environ, TMPDIR=root, REPORT_USER_ROOT=root))
-            self.assertEqual(done.returncode, 1)
-            self.assertRegex(done.stderr, rb'fatal: [1-9][0-9]* of 51 symbols missing\n')
-            self.assertNotIn(b'USER:', done.stderr)
-            self.assertNotIn(b'pinyin_init:', done.stdout)
-            directories = [line.removeprefix('DIR:') for line in done.stderr.decode().splitlines()
-                           if line.startswith('DIR:')]
-            self.assertEqual(len(directories), 1, done.stderr)
-            user = Path(directories[0])
-            self.assertEqual(user.parent, Path(root))
-            self.assertTrue(user.name.startswith('bisect-user-'))
-            self.assertFalse(user.exists())
-            self.assertEqual(list(Path(root).iterdir()), [])
-
-    def test_bisect_default_and_perf_refuse_overlong_tmpdir(self):
-        for mode in ([], ['--perf']):
+    def test_bisect_perf_refuses_overlong_tmpdir(self):
+        for mode in (['--perf'],):
             with self.subTest(mode=mode):
                 done = subprocess.run([self.harness, *mode, self.library, self.root], capture_output=True,
                                       env=dict(os.environ, TMPDIR='/' + 'x' * 4096))

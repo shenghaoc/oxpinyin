@@ -5017,7 +5017,7 @@ fn an_empty_phrase_segment_answers_true_with_no_phrase() {
 fn user_rows_for_an_incomplete_key_follow_the_stored_key_order() {
     let user_dir = TempUserDir::new("tie-user-n");
     let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-    // tie-order-diff.c:82-85: 𦰡 takes two readings, the second appended.
+    // 𦰡 takes two readings, the second appended; the candidate order is `pinyin.cpp:2184-2308` at 074a2219.
     let phrases = [
         ("𦰡", "na"),
         ("𫐐", "ni"),

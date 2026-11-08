@@ -1943,7 +1943,7 @@ mod tests {
 
     /// The key one zhuyin symbol maps to on `scheme`'s keyboard, derived
     /// from the symbol table rather than hand-authored (the same rule the
-    /// chewing-diff corpus applies).
+    /// frozen chewing layout cases apply).
     fn key_for_symbol(scheme: ZhuyinScheme, symbol: &str) -> u8 {
         let tables = scheme.simple_tables().expect("Simple keyboard");
         for (key, candidate) in tables.symbols {
@@ -2410,7 +2410,7 @@ mod tests {
     /// The key that makes a positional probe read `symbol` at `slot`:
     /// the parser takes each table's **first** matching row per key, so
     /// a dual key's second row never derives a parse (same rule the
-    /// chewing-diff corpus applies for the Discrete keyboards).
+    /// frozen chewing layout cases apply for the Discrete keyboards).
     fn discrete_key_for(scheme: ZhuyinScheme, slot: usize, symbol: &str) -> u8 {
         let tables = scheme.discrete_tables().expect("discrete keyboard");
         let ordered: &[&[(u8, &'static str)]] = match slot {

@@ -5,9 +5,7 @@
 //! (`pinyin.cpp:332`, `:176-177`, `:220-232` at 074a2219): the profile of
 //! a `""` user dir is bare file names, resolved against the directory
 //! that is current when each file is opened, not the one current at init
-//! (#619). The differential that holds this against the pin is
-//! `tools/bisection/run-locale-diff.sh`; this executable holds the
-//! same law where no oracle is built.
+//! (#619). This executable holds that law where no oracle is built.
 //!
 //! The working directory is process state, so everything here is one
 //! test in an executable of its own: nothing else can run beside it and

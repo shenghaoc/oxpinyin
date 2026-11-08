@@ -299,7 +299,7 @@ def measure_cell(args, ledger, state, provenance):
     """Run cell measurements and align credited, failed, and limited compiler identities.
 
     Resolve required paths on args, require committed Rust sources, build
-    instrumented libraries, and run contract, surface, user-store, and Rust
+    instrumented libraries, and run contract, surface, and Rust
     gates. Remove registered measurement-limit credit and return attribution
     plus provenance/configuration and verdict records.
     """
@@ -314,7 +314,6 @@ def measure_cell(args, ledger, state, provenance):
     if ledger.run(['git', '-C', ledger.REPO, 'status', '--porcelain', '--', 'crates']).strip():
         raise RuntimeError('Rust sources must match the committed crates tree')
     configuration = measure.build(args.pin, args.measurement_config, args.measurement_build, args.oracle, cell, provenance)
-    libraries = measure.configured_libraries(args.measurement_config.parent / 'config.status', cell)
     behavior, nonmatching, incomplete, verdicts = measure.contracts(
         args.oracle, args.pinyin_so, args.zhuyin_so, args.measurement_build, args.pin, cell=cell, provenance=provenance)
     # Registered measurement limits: never credited, always a limit, whatever
@@ -330,8 +329,6 @@ def measure_cell(args, ledger, state, provenance):
     records = {'contract': verdicts}
     gate_result = measure.gates(args.rust_target, args.export, args.model)
     stages = {
-        'same-data': measure.same_data(args.oracle, args.pinyin_so, args.measurement_build, args.pin, cell, provenance),
-        'user-store': measure.user_store(args.oracle, args.rust_target, args.measurement_build, args.pin, cell, provenance, libraries),
         'surface': measure.surfaces(args.oracle, surface_pinyin, args.measurement_build, args.pin, cell, provenance,
                                     excused=measure.declared_residuals()),
     }
@@ -611,7 +608,7 @@ callable from). Each cell's own rows keep their exact identities.
     text += f'Export roots **{len(roots)}/{len(state["expected_exports"])}**; TUs **{len(state["tus"])}/23**; reachable graph candidates in this cell **{len(reachable)}**. Delta rows **{len(rows)}**: conditional-source **{origins["a"]}**, reachable only here **{origins["b+"]}**, bdb-witness-only **{len(missing)}**. Classification: ' + ', '.join(f'{name} **{count}**' for name, count in sorted(categories.items())) + '.\n\n'
     text += f'Conditional-source definitions outside the measured closure, as in the bdb ledger (never declared unreachable; static dispatch closure is partial): **{len(with_code)}** with object code but neither an export witness nor an executed record' + (': ' + '; '.join(f'`{signature}` at {file}:{line}' for file, line, signature in with_code) if with_code else '') + f'; **{len(without_code)}** without object code in the configured translation units (uninstantiated template or unused inline bodies)' + (': ' + '; '.join(f'`{signature}` at {file}:{line}' for file, line, signature in without_code) if without_code else '') + '.\n\n'
     text += f'Unresolved LLVM indirect groups **{len(state["sites"])}**, pinned virtual groups **{len(state["resolved_sites"])}**, singleton typed callback groups **{len(state["singleton_callbacks"])}**, ambiguous virtual groups **{len(state["ambiguous"])}**. GCC executed records without an exact ledger alignment **{len(measured["unmatched"])}**; limited measurement entries **{len(measured["incomplete"])}**; fatal/discrepant root-call replay identifies **{len(measured["limited_cases"])}** limited contract cases and **{len(measured["limited_roots"])}** actually invoked export roots.\n\n'
-    text += f'Contract cases **{len(measured["records"]["contract"])}**: ' + ', '.join(f'{name} {count}' for name, count in sorted(contracts.items())) + ' (SKIP marks cases whose fixture is another cell\'s storage format). Seven same-data drivers: ' + ', '.join(name + ' ' + verdict for name, verdict in measured['records']['same-data']) + '. User-store: ' + ', '.join(name + ' ' + verdict for name, verdict in measured['records']['user-store']) + '. Surface/C-ABI corpus exact MATCH replay: ' + '; '.join(f'{name} {matched}/{total} inputs ({other} not credited' + (': ' + ', '.join(f'`{text}`' for text in uncredited) if uncredited else '') + ')' for name, total, matched, other, uncredited in measured['records']['surface']) + '. Every input left uncredited is one of the six shared-comparison residuals declared in docs/findings/sentence-surface.md §12, the Rust gate\'s own membership source; any other sentence, tie or corpus difference, pin/Rust or measurement, fails the run. ' + measured['gate_result'] + '.\n\n'
+    text += f'Contract cases **{len(measured["records"]["contract"])}**: ' + ', '.join(f'{name} {count}' for name, count in sorted(contracts.items())) + ' (SKIP marks cases whose fixture is another cell\'s storage format). Surface/C-ABI corpus exact MATCH replay: ' + '; '.join(f'{name} {matched}/{total} inputs ({other} not credited' + (': ' + ', '.join(f'`{text}`' for text in uncredited) if uncredited else '') + ')' for name, total, matched, other, uncredited in measured['records']['surface']) + '. Every input left uncredited is one of the six shared-comparison residuals declared in docs/findings/sentence-surface.md §12, the Rust gate\'s own membership source; any other sentence, tie or corpus difference, pin/Rust or measurement, fails the run. ' + measured['gate_result'] + '.\n\n'
     text += 'Non-MATCH differentials (parity findings, reported and not fixed here): ' + ('; '.join(differ) if differ else 'none') + '.\n\n'
     text += 'Measurement limits (the pin/Rust differential did not differ, but the instrumented `-g -O0 --coverage` pin build did not reproduce the installed oracle or a side timed out, so the case earns no credit): ' + ('; '.join(limited) if limited else 'none') + '.\n\n'
     text += 'Registered measurement limits (from the known-limit rule batch; never credited and always listed above, whatever a run\'s measurement did): ' + ('; '.join(f'`{name}`: {reason}' for name, reason in sorted(MEASUREMENT_LIMITS.items())) if MEASUREMENT_LIMITS else 'none') + '.\n\n'

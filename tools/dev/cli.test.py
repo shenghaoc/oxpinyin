@@ -153,11 +153,11 @@ class CliTests(unittest.TestCase):
 
     def test_registry_commands_reject_empty_unknown_and_unmatched_selections(self):
         selections = ([], ['--runners', ''], ['--runners', ','],
-                      ['--runners', 'bisect,'], ['--runners', 'bisect,missing'],
+                      ['--runners', 'cpp-smoke,'], ['--runners', 'cpp-smoke,missing'],
                       ['--cells', ''], ['--cells', 'bdb,missing'],
                       ['--issue', ''], ['--issue', 'missing'],
                       ['--kind', 'missing'],
-                      ['--runners', 'bisect', '--issue', 'W11'])
+                      ['--runners', 'cpp-smoke', '--issue', 'T2N'])
         for selection in selections:
             with self.subTest(selection=selection), \
                     contextlib.redirect_stdout(io.StringIO()) as output, \
@@ -169,15 +169,15 @@ class CliTests(unittest.TestCase):
         test_support.assert_not_called(self, self.launch)
 
     def test_registry_listing_filters_static_issues_and_kind(self):
-        for selector in ('row:33', 'Row 33'):
+        for selector in ('row:38', 'Row 38'):
             with self.subTest(selector=selector), \
                     contextlib.redirect_stdout(io.StringIO()) as output:
                 self.assertEqual(cli.main(['list', '--issue', selector, '--kind', 'gate']), 0)
                 self.assertEqual([line.split('\t')[0] for line in output.getvalue().splitlines()],
-                                 ['abi-probe-diff', 'residue-a-tail-diff'])
+                                 ['train-index-diff'])
         with contextlib.redirect_stdout(io.StringIO()) as output:
-            self.assertEqual(cli.main(['list', '--runners', 'bisect']), 0)
-            self.assertEqual(output.getvalue(), 'bisect\tgate\tbdb,kc,tkrzw\t'
+            self.assertEqual(cli.main(['list', '--runners', 'cpp-smoke']), 0)
+            self.assertEqual(output.getvalue(), 'cpp-smoke\tgate\tbdb,kc,tkrzw\t'
                              'python:tools.dev\n')
         with contextlib.redirect_stdout(io.StringIO()) as output:
             self.assertEqual(cli.main(['list', '--runners', 'callgrind-differential']), 0)
@@ -200,7 +200,7 @@ class CliTests(unittest.TestCase):
 
     def test_plan_prints_the_implementation_with_each_row(self):
         with contextlib.redirect_stdout(io.StringIO()) as output:
-            self.assertEqual(cli.main(['plan', '--runners', 'bisect,pc-metadata']), 0)
+            self.assertEqual(cli.main(['plan', '--runners', 'cpp-smoke,pc-metadata']), 0)
         lines = [line for line in output.getvalue().splitlines() if line.startswith('  implementation: ')]
         self.assertEqual(lines, ['  implementation: python:tools.dev',
                                  '  implementation: python:tools.dev'])
@@ -220,7 +220,7 @@ class CliTests(unittest.TestCase):
         test_support.assert_not_called(self, self.launch)
 
     def test_registry_read_failure_has_a_nonzero_diagnostic(self):
-        for command, selection in (('list', []), ('plan', ['--runners', 'bisect'])):
+        for command, selection in (('list', []), ('plan', ['--runners', 'cpp-smoke'])):
             with self.subTest(command=command), \
                     mock.patch.object(registry, 'load', side_effect=registry.RegistryError('bad registry')), \
                     contextlib.redirect_stderr(io.StringIO()) as error:
@@ -252,11 +252,11 @@ class CliTests(unittest.TestCase):
         test_support.assert_not_called(self, self.launch)
 
     def test_registry_numeric_string_issue_labels_remain_selectable(self):
-        rows = [dict(name='fixture', command=COMMAND, cells=['bdb'], implementation=IMPLEMENTATION, issues=['541', 'Row 33'])]
+        rows = [dict(name='fixture', command=COMMAND, cells=['bdb'], implementation=IMPLEMENTATION, issues=['541', 'Row 38'])]
         with mock.patch.object(Path, 'read_text', return_value=json.dumps(rows)):
             loaded = registry.load()
         self.assertEqual(loaded, rows)
-        for issue in ('541', '#541', '  #541  ', 'row:33', 'Row 33'):
+        for issue in ('541', '#541', '  #541  ', 'row:38', 'Row 38'):
             with self.subTest(issue=issue):
                 self.assertEqual(registry.select(loaded, issues=[issue]), rows)
         test_support.assert_not_called(self, self.launch)
