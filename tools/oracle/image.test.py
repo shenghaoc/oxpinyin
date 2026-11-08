@@ -1,6 +1,7 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """tools/oracle/image.py: the oracle image tag, pin fields, image verification and runtime selection."""
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -11,6 +12,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import types
 import unittest
 from unittest import mock
 
@@ -432,6 +434,145 @@ class WslcAdapterTests(unittest.TestCase):
             selected = images.select_runtime(env={'PATH': ''}, host='MINGW64_NT-10.0', output=printed.append)
         self.assertEqual(selected, 'wslc')
         self.assertEqual(printed, ['Runtime: wslc; wslc 3.0.3.0'])
+
+class CaptureLauncherTests(unittest.TestCase):
+    """The commands `just capture-pin` builds for each runtime; no container runs."""
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.provision = Path(directory.name).resolve() / 'provision'
+        (self.provision / 'model20/extracted').mkdir(parents=True)
+
+    def launch(self, runtime, *, present=True, machine='x86_64', uid=(1000, 1001), argv=('1',)):
+        calls = []
+
+        def fake_run(command, **kwargs):
+            calls.append([str(part) for part in command])
+            return 0
+
+        def field(engine, name, image, env=None):
+            return {'Architecture': images.ARCHITECTURES[machine], 'Id': 'sha256:capture-id'}[name]
+        env = {'OXPINYIN_CAPTURE_RUNTIME': runtime, 'OXPINYIN_CAPTURE_BUILD_FLAGS': '--network host', 'PATH': '',
+               'OXPINYIN_PROVISION_CACHE': str(self.provision)}
+        user = ['--user', f'{uid[0]}:{uid[1]}'] if uid else []
+        with (mock.patch.object(images.platform, 'machine', return_value=machine),
+              mock.patch.object(images.shutil, 'which', return_value=runtime),
+              mock.patch.object(images, 'image_tag', return_value='TAG'),
+              mock.patch.object(images, 'capture_recipe', return_value='RECIPE'),
+              mock.patch.object(images, 'quiet', return_value=0 if present else 1) as quiet,
+              mock.patch.object(images, 'run', fake_run),
+              mock.patch.object(images, 'image_field', field),
+              mock.patch.object(images, 'capture', return_value=mock.Mock(stdout=b'downloading\n/cache/data\n')),
+              mock.patch.object(images, 'run_user', return_value=user),
+              mock.patch.object(images.Path, 'mkdir')):
+            status = images.capture_pin(list(argv), root=ROOT, env=env)
+        return status, calls, [call.args[0] for call in quiet.call_args_list]
+
+    def expected_run(self, runtime, *, platform=('--platform', 'linux/amd64'), user=('--user', '1000:1001')):
+        python = 'python' + re.match(r'[0-9]+\.[0-9]+', (ROOT / '.python-version').read_text()).group()
+        return [runtime, 'run', '--rm', *platform, '--network', 'none', *user,
+                '-e', 'HOME=/tmp', '-e', 'TMPDIR=/tmp', '-e', 'PYTHONPYCACHEPREFIX=/tmp/pyc',
+                '-e', 'OXPINYIN_CAPTURE_IMAGE=sha256:capture-id',
+                '-e', 'OXPINYIN_TKRZW_LIBRARY=/usr/lib/x86_64-linux-gnu/libtkrzw.so.1',
+                '-v', f'{ROOT}:/work:ro', '-v', f'{ROOT / "target/pin-observations"}:/work/target/pin-observations:rw',
+                '-v', '/cache/data:/data:ro', '-v', f'{self.provision}:/provision:ro',
+                '-v', f'{self.provision / "model20"}:/model20:ro', '-w', '/work', 'sha256:capture-id', python,
+                '-X', 'lazy_imports=normal', 'tools/oracle/pin_capture.py', 'capture', '1', '--prefix',
+                '/opt/reference/tkrzw', '--data', '/data', '--provision-cache', '/provision',
+                '--model-dir', '/model20/extracted', '--staging', '/work/target/pin-observations']
+
+    def test_docker_runs_as_the_invoking_user_with_its_platform(self):
+        status, calls, inspected = self.launch('docker')
+        self.assertEqual(status, 0)
+        self.assertEqual(inspected, [['docker', 'image', 'inspect', 'ghcr.io/shenghaoc/oxpinyin-oracle:TAG'],
+                                     ['docker', 'image', 'inspect', 'oxpinyin-capture:TAG-RECIPE']])
+        self.assertEqual(calls, [self.expected_run('docker')])
+
+    def test_podman_runs_without_a_user(self):
+        _, calls, _ = self.launch('/usr/bin/podman')
+        self.assertEqual(calls, [self.expected_run('/usr/bin/podman', user=())])
+
+    def test_wslc_drops_platform_and_mounts_native_paths(self):
+        for runtime in ('wslc', 'C:/Program Files/WSL/wslc.exe'):
+            with self.subTest(runtime=runtime):
+                _, calls, _ = self.launch(runtime, uid=None)
+                self.assertEqual(calls, [self.expected_run(runtime, platform=(), user=())])
+                self.assertFalse(any('cygpath' in part or part.startswith('/c/') for part in calls[0]))
+
+    def test_absent_images_are_pulled_and_built_per_runtime(self):
+        builds = {
+            'docker': ['docker', 'build', '--platform', 'linux/amd64', '--pull=false'],
+            'podman': ['podman', 'build', '--platform', 'linux/amd64', '--pull=never'],
+            'wslc': ['wslc', 'build'],
+        }
+        pulls = {'docker': ['docker', 'pull', '--platform', 'linux/amd64'], 'podman': ['podman', 'pull', '--platform', 'linux/amd64'],
+                 'wslc': ['wslc', 'pull']}
+        for runtime, build in builds.items():
+            with self.subTest(runtime=runtime):
+                _, calls, _ = self.launch(runtime, present=False)
+                self.assertEqual(calls[0], [*pulls[runtime], 'ghcr.io/shenghaoc/oxpinyin-oracle:TAG'])
+                self.assertEqual(calls[1], [*build, '--network', 'host', '-f', 'tools/oracle/Dockerfile.capture',
+                                            '--build-arg', 'REFERENCE_IMAGE=ghcr.io/shenghaoc/oxpinyin-oracle:TAG',
+                                            '-t', 'oxpinyin-capture:TAG-RECIPE', '.'])
+
+    def test_arm64_uses_the_suffixed_reference_and_its_multiarch_library(self):
+        _, calls, inspected = self.launch('docker', machine='aarch64')
+        self.assertEqual(inspected[0][-1], 'ghcr.io/shenghaoc/oxpinyin-oracle:TAG-arm64')
+        self.assertIn('OXPINYIN_TKRZW_LIBRARY=/usr/lib/aarch64-linux-gnu/libtkrzw.so.1', calls[0])
+        self.assertEqual(calls[0][3:5], ['--platform', 'linux/arm64'])
+
+    def test_a_missing_published_image_names_build_image(self):
+        def fail_pull(command, **kwargs):
+            return 1
+        with (mock.patch.object(images.platform, 'machine', return_value='x86_64'),
+              mock.patch.object(images.shutil, 'which', return_value='docker'),
+              mock.patch.object(images, 'image_tag', return_value='TAG'),
+              mock.patch.object(images, 'quiet', return_value=1), mock.patch.object(images, 'run', fail_pull),
+              contextlib.redirect_stderr(io.StringIO()) as error, self.assertRaises(images.Finished)):
+            images.capture_pin(['1'], root=ROOT, env={'PATH': '', 'OXPINYIN_PROVISION_CACHE': str(self.provision)})
+        self.assertIn('is unavailable; build it with: uv run --no-project --managed-python python -X lazy_imports=normal '
+                      '-m tools.oracle.image build-image', error.getvalue())
+
+    def test_a_missing_provision_or_model_cache_is_refused_before_any_runtime_call(self):
+        model = Path(self.provision.parent) / 'model-elsewhere'
+        for env, message in (({}, 'set OXPINYIN_PROVISION_CACHE to a `tools.dev provision oracle --cache-dir` directory'),
+                             ({'OXPINYIN_PROVISION_CACHE': str(self.provision.parent / 'absent')}, 'set OXPINYIN_PROVISION_CACHE'),
+                             ({'OXPINYIN_PROVISION_CACHE': str(self.provision), 'PINYIN_MODEL_CACHE': str(model)},
+                              f'{model / "extracted"} is not a model20 extraction; set PINYIN_MODEL_CACHE')):
+            with (self.subTest(env=env), mock.patch.object(images, 'run') as run, mock.patch.object(images, 'quiet') as quiet,
+                  contextlib.redirect_stderr(io.StringIO()) as error, self.assertRaises(images.Finished) as raised):
+                images.capture_pin(['1'], root=ROOT, env=dict(env, PATH=''))
+            self.assertEqual(raised.exception.status, 2)
+            self.assertIn(message, error.getvalue())
+            run.assert_not_called()
+            quiet.assert_not_called()
+
+    def test_the_model_cache_defaults_to_the_provision_caches_model20(self):
+        _, calls, _ = self.launch('docker')
+        self.assertIn(f'{self.provision / "model20"}:/model20:ro', calls[0])
+
+    def test_foreign_architecture_and_bad_run_names_are_refused_before_any_runtime_call(self):
+        for argv, machine in ((['1'], 'riscv64'), (['../1'], 'x86_64'), (['a b'], 'x86_64'), ([], 'x86_64')):
+            with self.subTest(argv=argv, machine=machine), \
+                    mock.patch.object(images.platform, 'machine', return_value=machine), \
+                    mock.patch.object(images.shutil, 'which', return_value='docker'), \
+                    mock.patch.object(images, 'run') as run, mock.patch.object(images, 'quiet') as quiet, \
+                    contextlib.redirect_stderr(io.StringIO()), self.assertRaises(images.Finished) as raised:
+                images.capture_pin(argv, root=ROOT, env={'PATH': ''})
+            self.assertEqual(raised.exception.status, 2)
+            run.assert_not_called()
+            quiet.assert_not_called()
+
+    def test_the_run_user_is_the_invoking_uid_and_none_without_one(self):
+        posix = types.SimpleNamespace(getuid=lambda: 1000, getgid=lambda: 1001)
+        with mock.patch.object(images, 'os', posix):
+            self.assertEqual(images.run_user(), ['--user', '1000:1001'])
+        with mock.patch.object(images, 'os', types.SimpleNamespace()):
+            self.assertEqual(images.run_user(), [])
+
+    def test_the_capture_recipe_hashes_sha256sum_text_lines(self):
+        lines = ''.join(f'{images.digest_file(ROOT / name)}  {name}\n' for name in images.CAPTURE_RECIPE)
+        self.assertEqual(images.capture_recipe(ROOT), hashlib.sha256(lines.encode()).hexdigest()[:12])
 
 if __name__ == '__main__':
     unittest.main()

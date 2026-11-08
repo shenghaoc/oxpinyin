@@ -89,15 +89,15 @@ asks for it.
 2. On a native host, capture two runs in the capture image:
 
    ```bash
-   OXPINYIN_PROVISION_CACHE=CACHE PINYIN_MODEL_CACHE=MODEL bash tools/oracle/capture-pin.sh 1
+   OXPINYIN_PROVISION_CACHE=CACHE PINYIN_MODEL_CACHE=MODEL just capture-pin 1
    ```
 
    ```bash
-   OXPINYIN_PROVISION_CACHE=CACHE PINYIN_MODEL_CACHE=MODEL bash tools/oracle/capture-pin.sh 2
+   OXPINYIN_PROVISION_CACHE=CACHE PINYIN_MODEL_CACHE=MODEL just capture-pin 2
    ```
 
-   On Windows, run them from Developer PowerShell with `OXPINYIN_CAPTURE_RUNTIME=wslc`,
-   through Git for Windows' `bash.exe`
+   On Windows, run them from Developer PowerShell with `OXPINYIN_CAPTURE_RUNTIME=wslc`, setting
+   the variables first (`$env:OXPINYIN_PROVISION_CACHE = 'CACHE'`, then `just capture-pin 1`)
    (the [WSL container limits](setup.md#native-windows-and-wsl-containers) apply).
 
    Each run first refuses the capture unless:

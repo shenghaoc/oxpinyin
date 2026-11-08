@@ -1,13 +1,15 @@
 """Oracle pin fields, image tag, image verification and runtime selection.
 
 Standard library plus the shared tools.dev process helpers. Used by
-capture-image.sh, capture-contract.sh and cloud provisioning:
+`just capture-pin`, capture-contract.sh and cloud provisioning:
 
     python -m tools.oracle.image image-tag
     python -m tools.oracle.image pin-field [--platform PLATFORM] KEY
     python -m tools.oracle.image verify-image [--engine docker|podman|wslc] [--platform PLATFORM] IMAGE
     python -m tools.oracle.image build-image
     python -m tools.oracle.image image-field ENGINE FIELD IMAGE
+    python -m tools.oracle.image capture-pin RUN
+    python -m tools.oracle.image run-in-capture-image OUT COMMAND [ARGUMENTS...]
 
 docker and podman take each command as written. wslc (WSL containers, Windows) has no
 --platform, no cp and no rm, and its image inspect prints only JSON; wslc_command and
@@ -335,6 +337,148 @@ def build_image(argv, *, root=ROOT, env=None):
     return 0
 
 
+CAPTURE_RECIPE = ('tools/oracle/Dockerfile.capture', 'tools/oracle/versions.py',
+                  'tools/oracle/version-manifest.json', '.python-version')
+MULTIARCH = {'amd64': 'x86_64-linux-gnu', 'arm64': 'aarch64-linux-gnu'}
+RUN_NAME = re.compile(r'[A-Za-z0-9_-]+')
+
+
+def capture_recipe(root=ROOT):
+    """The capture image's recipe hash: sha256sum's text lines of CAPTURE_RECIPE, hashed again."""
+    lines = ''.join(f'{digest_file(Path(root) / name)}  {name}\n' for name in CAPTURE_RECIPE)
+    return hashlib.sha256(lines.encode()).hexdigest()[:12]
+
+
+def run_user():
+    """docker's --user for the invoking user; podman maps it already, and Windows has no uid."""
+    if not hasattr(os, 'getuid'):
+        return []
+    return ['--user', f'{os.getuid()}:{os.getgid()}']
+
+
+def capture_image_command(runtime, out, command, *, root, data, image, selected, provision='', model=''):
+    """The run command for COMMAND in the capture image IMAGE (docker grammar, then wslc_command).
+
+    PROVISION, a `provision oracle` cache, is mounted read-only at /provision and MODEL, a model20
+    cache, at /model20, each only when given."""
+    architecture = selected.split('/', 1)[1]
+    mounts = [*(['-v', f'{Path(provision)}:/provision:ro'] if provision else []),
+              *(['-v', f'{Path(model)}:/model20:ro'] if model else [])]
+    user = [] if Path(runtime).name.startswith('podman') else run_user()
+    python = 'python' + re.match(r'[0-9]+\.[0-9]+', (Path(root) / '.python-version').read_text()).group()
+    return wslc_command([
+        runtime, 'run', '--rm', '--platform', selected, '--network', 'none', *user,
+        '-e', 'HOME=/tmp', '-e', 'TMPDIR=/tmp', '-e', 'PYTHONPYCACHEPREFIX=/tmp/pyc',
+        '-e', f'OXPINYIN_CAPTURE_IMAGE={image}',
+        '-e', f'OXPINYIN_TKRZW_LIBRARY=/usr/lib/{MULTIARCH[architecture]}/libtkrzw.so.1',
+        '-v', f'{Path(root)}:/work:ro', '-v', f'{Path(root) / out}:/work/{out}:rw', '-v', f'{data}:/data:ro',
+        *mounts, '-w', '/work', image, python, '-X', 'lazy_imports=normal', *command])
+
+
+def capture_build_command(runtime, reference, capture_image, *, selected, flags):
+    """The capture image build: Dockerfile.capture on top of REFERENCE."""
+    if Path(runtime).name.startswith('podman'):
+        pull = ['--pull=never']
+    elif is_wslc(runtime):
+        pull = []  # wslc's --pull is an on/off switch with no never
+    else:
+        pull = ['--pull=false']
+    return wslc_command([runtime, 'build', '--platform', selected, *pull, *flags, '-f', 'tools/oracle/Dockerfile.capture',
+                         '--build-arg', f'REFERENCE_IMAGE={reference}', '-t', capture_image, '.'])
+
+
+def quiet(command, env):
+    """A command's status with its output discarded."""
+    return run(command, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+
+
+def run_in_capture_image(out, command, *, root=ROOT, env=None):
+    """Run COMMAND, with the image's managed Python, in the capture image the pin runs in.
+
+    Run on a native x86_64 or aarch64 host. The published oracle image is pulled when absent;
+    the capture image (Dockerfile.capture) is built on top of it. The checkout is mounted
+    read-only at /work, OUT (a path relative to the checkout) writable at /work/OUT, and the
+    pinned libpinyin-data (`just fetch-contract-data`) at /data. The container has no network.
+    With OXPINYIN_CAPTURE_PROVISION set to a directory, it is mounted read-only at /provision too,
+    and OXPINYIN_CAPTURE_MODEL, a model20 cache, at /model20.
+    OXPINYIN_CAPTURE_RUNTIME names the runtime (docker by default); OXPINYIN_CAPTURE_BUILD_FLAGS
+    carries site flags for the image build (no quoting inside)."""
+    environment = os.environ if env is None else env
+    runtime = environment.get('OXPINYIN_CAPTURE_RUNTIME') or 'docker'
+    if not shutil.which(runtime, path=environment.get('PATH')):
+        fail(f'FAIL: {runtime} is not installed')
+    selected = host_platform()
+    if selected is None:
+        fail('FAIL: capture supports only native x86_64 and aarch64', 2)
+    architecture = selected.split('/', 1)[1]
+    suffix = '-arm64' if architecture == 'arm64' else ''
+    tag = image_tag(root)
+    reference = f'{REGISTRY}:{tag}{suffix}'
+    capture_image = f'oxpinyin-capture:{tag}{suffix}-{capture_recipe(root)}'
+    if quiet([runtime, 'image', 'inspect', reference], environment):
+        if run(wslc_command([runtime, 'pull', '--platform', selected, reference]), env=environment, check=False):
+            fail(f'FAIL: {reference} is unavailable; build it with: '
+                 'uv run --no-project --managed-python python -X lazy_imports=normal -m tools.oracle.image build-image')
+    actual = image_field(runtime, 'Architecture', reference, env=environment)
+    if actual != architecture:
+        fail(f'FAIL: {reference} is {actual}, expected native {architecture}')
+    if quiet([runtime, 'image', 'inspect', capture_image], environment):
+        flags = environment.get('OXPINYIN_CAPTURE_BUILD_FLAGS', '').split()
+        if run(capture_build_command(runtime, reference, capture_image, selected=selected, flags=flags),
+               cwd=root, env=environment, check=False):
+            raise Finished(1)
+    actual = image_field(runtime, 'Architecture', capture_image, env=environment)
+    if actual != architecture:
+        fail(f'FAIL: {capture_image} is {actual}, expected native {architecture}')
+    fetched = capture([sys.executable, '-X', 'lazy_imports=normal', '-m', 'tools.dev', 'fetch-contract-data'],
+                      cwd=root, env=environment)
+    data = fetched.stdout.decode().splitlines()[-1].strip()
+    image = image_field(runtime, 'Id', capture_image, env=environment)
+    (Path(root) / out).mkdir(parents=True, exist_ok=True)
+    return run(capture_image_command(runtime, out, command, root=root, data=data, image=image, selected=selected,
+                                     provision=environment.get('OXPINYIN_CAPTURE_PROVISION', ''),
+                                     model=environment.get('OXPINYIN_CAPTURE_MODEL', '')),
+               cwd=root, env=environment, check=False)
+
+
+CAPTURE_PIN_USAGE = 'usage: capture-pin RUN'
+
+
+def capture_pin(argv, *, root=ROOT, env=None):
+    """Capture one run of the proposed pin observations (docs/runbooks/pin-captures.md).
+
+    RUN names the run (1, 2, ...). The C API observations run on the image's tkrzw cell on the
+    pinned libpinyin-data. The utility runs use the bdb, kc and tkrzw builds of `python -m tools.dev
+    provision oracle --cache-dir CACHE`, OXPINYIN_PROVISION_CACHE: CACHE/oracle/CELL and the build
+    tree beside it, mounted read-only at /provision. The data sequence reads the verified model20
+    extraction MODEL/extracted, the cache `provision oracle` fetched (PINYIN_MODEL_CACHE, default
+    CACHE/model20), mounted read-only at /model20. tools/oracle/pin_capture.py checks the prefixes,
+    the loaded libraries, the utility builds and the data, then stages the proposed observations
+    and capture.json in target/pin-observations/RUN/. Nothing else is written."""
+    environment = os.environ if env is None else env
+    if argv[:1] in (['-h'], ['--help']):
+        print(CAPTURE_PIN_USAGE)
+        return 0
+    if len(argv) != 1:
+        fail(CAPTURE_PIN_USAGE, 2)
+    name = argv[0]
+    if not RUN_NAME.fullmatch(name):
+        fail(f'FAIL: a run name uses letters, digits, _ and -: {name}', 2)
+    provision = environment.get('OXPINYIN_PROVISION_CACHE', '')
+    if not provision or not Path(provision).is_dir():
+        fail('FAIL: set OXPINYIN_PROVISION_CACHE to a `tools.dev provision oracle --cache-dir` directory', 2)
+    model = environment.get('PINYIN_MODEL_CACHE') or str(Path(provision) / 'model20')
+    if not (Path(model) / 'extracted').is_dir():
+        fail(f'FAIL: {Path(model) / "extracted"} is not a model20 extraction; '
+             'set PINYIN_MODEL_CACHE to the cache provision oracle used', 2)
+    child = dict(environment, OXPINYIN_CAPTURE_PROVISION=str(Path(provision).resolve()),
+                 OXPINYIN_CAPTURE_MODEL=str(Path(model).resolve()))
+    return run_in_capture_image('target/pin-observations', [
+        'tools/oracle/pin_capture.py', 'capture', name, '--prefix', '/opt/reference/tkrzw', '--data', '/data',
+        '--provision-cache', '/provision', '--model-dir', '/model20/extracted',
+        '--staging', '/work/target/pin-observations'], root=root, env=child)
+
+
 def select_runtime(override='', *, env=None, host=None, output=print):
     """Preserve platform runtime order and an explicit override; wslc is preferred on Windows."""
     environment = os.environ if env is None else env
@@ -468,10 +612,15 @@ def main(argv=None):
             return verify_image(args[1:])
         if args[:1] == ['build-image']:
             return build_image(args[1:])
+        if args[:1] == ['capture-pin']:
+            return capture_pin(args[1:])
+        if args[:1] == ['run-in-capture-image'] and len(args) >= 3:
+            return run_in_capture_image(args[1], args[2:])
         if args[:1] == ['image-field'] and len(args) == 4:
             print(image_field(*args[1:]))
             return 0
-        print('usage: python -m tools.oracle.image image-tag|pin-field|verify-image|build-image|image-field|performance ...',
+        print('usage: python -m tools.oracle.image '
+              'image-tag|pin-field|verify-image|build-image|image-field|capture-pin|run-in-capture-image|performance ...',
               file=sys.stderr)
         return 2
     return guarded(call)

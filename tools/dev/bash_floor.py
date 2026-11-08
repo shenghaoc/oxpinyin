@@ -19,7 +19,8 @@ VERSION_LITERAL = re.compile(r'(?i)\bbash\b[ \t]*(?:>=|>|at[ \t]+least)[ \t]*[0-
 
 # Files that are sourced, never executed. Their caller has run the floor
 # check, so they neither source the guard nor carry a version themselves.
-SOURCED_ONLY = frozenset({'tools/oracle/capture-image.sh'})
+# None remains.
+SOURCED_ONLY = frozenset()
 
 # Scripts that are both executed and sourced. They must not re-run the
 # relative-path check when a caller has changed directory, so the source
