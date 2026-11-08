@@ -262,6 +262,33 @@ pub fn run_in_child(name: &str, body: impl FnOnce(&std::path::Path)) -> ChildRun
     }
 }
 
+/// [`assert_aborts`] with a directory the parent keeps: `body` gets a
+/// fresh, empty directory, and the parent reads the files the child left in
+/// it before the abort. Answers the child's stderr and that directory.
+pub fn assert_aborts_in_dir(name: &str, body: impl FnOnce(&std::path::Path)) -> ChildRun {
+    if std::env::var_os(DEATH_TEST).is_some_and(|value| value == name) {
+        let dir = std::env::var_os(CHILD_DIR).expect("the child's directory");
+        body(std::path::Path::new(&dir));
+        // Reached only when `body` did not abort.
+        std::process::exit(0);
+    }
+    let scratch = tempfile::tempdir().expect("death-test scratch");
+    let user_dir = scratch.path().join("user");
+    std::fs::create_dir(&user_dir).expect("child directory");
+    let mut command = std::process::Command::new(std::env::current_exe().expect("test binary"));
+    command
+        .args(["--exact", name, "--test-threads=1"])
+        .env(DEATH_TEST, name)
+        .env(CHILD_DIR, &user_dir)
+        .env(if cfg!(windows) { "TMP" } else { "TMPDIR" }, scratch.path());
+    let output = wait_for_abort(name, command);
+    ChildRun {
+        stderr: output.stderr,
+        user_dir,
+        _scratch: scratch,
+    }
+}
+
 /// The environment variable that names the file [`assert_aborts_sharing`]
 /// maps in the child.
 // Unix only: the shared page is an `mmap(MAP_SHARED)` of a file.
@@ -479,4 +506,371 @@ pub mod logs {
             &[6, 0, 6, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
         )
     }
+}
+
+/// Writes a `user.conf` that conforms to the `table.conf` of `system`, with
+/// open counter 0, so the next init keeps the profile under `user_dir`.
+pub fn write_user_conf(user_dir: &std::path::Path, system: &std::path::Path) {
+    let conf =
+        oxpinyin_data::table_info::TableConf::load_from_dir(system).expect("system table.conf");
+    let versions = oxpinyin_data::user_files::SystemVersions::from_conf(&conf);
+    std::fs::write(
+        user_dir.join("user.conf"),
+        oxpinyin_data::user_files::UserTableInfo::conform_to(&versions).to_text(),
+    )
+    .expect("write user.conf");
+}
+
+/// A tree DBM of the running backend at `path` that holds exactly `rows`,
+/// in place of any file there: a system table with records the library
+/// never writes.
+pub fn craft_tree(path: &std::path::Path, rows: &[(Vec<u8>, Vec<u8>)]) {
+    use oxpinyin_store::{WriteStore as _, WriteTxn as _};
+    if path.exists() {
+        std::fs::remove_file(path).expect("replace the DBM");
+    }
+    let store = oxpinyin_store::DefaultStore::create(path).expect("create the DBM");
+    store
+        .write(|txn| {
+            for (key, value) in rows {
+                txn.put_raw(key, value)?;
+            }
+            Ok(())
+        })
+        .expect("write the DBM rows");
+}
+
+/// A hash DBM of the running backend at `path` that holds exactly `rows`, in
+/// place of any file there: a system bigram with grams the library never
+/// writes.
+pub fn craft_hash(path: &std::path::Path, rows: &[(Vec<u8>, Vec<u8>)]) {
+    use oxpinyin_store::{WriteStore as _, WriteTxn as _};
+    if path.exists() {
+        std::fs::remove_file(path).expect("replace the DBM");
+    }
+    let store = oxpinyin_store::DefaultStore::create_hash(path).expect("create the DBM");
+    store
+        .write(|txn| {
+            for (key, value) in rows {
+                txn.put_raw(key, value)?;
+            }
+            Ok(())
+        })
+        .expect("write the DBM rows");
+}
+
+/// Replaces the user index at `path` with one that holds exactly `rows`,
+/// raw keys and values that the library may never write. It is written as
+/// the library's own save writes a user index: a snapshot on Kyoto
+/// Cabinet, a tree file on tkrzw and Berkeley DB.
+pub fn craft_user_index(path: &std::path::Path, rows: &[(Vec<u8>, Vec<u8>)]) {
+    use oxpinyin_store::WriteStore as _;
+    if path.exists() {
+        std::fs::remove_file(path).expect("replace the user index");
+    }
+    oxpinyin_store::DefaultStore::write_user_index(path, |sink| {
+        for (key, value) in rows {
+            sink(key, value)?;
+        }
+        Ok(())
+    })
+    .expect("write the user index");
+}
+
+/// Replaces the user bigram at `path` with one that holds exactly `rows`,
+/// grams that the library may never write. It is written as the library's
+/// own save writes the user bigram: a snapshot on Kyoto Cabinet, a hash
+/// file on tkrzw and Berkeley DB.
+pub fn craft_user_bigram(path: &std::path::Path, rows: &[(Vec<u8>, Vec<u8>)]) {
+    use oxpinyin_store::WriteStore as _;
+    let mut rows = rows.to_vec();
+    rows.sort();
+    oxpinyin_store::DefaultStore::write_user_bigram(path, &rows).expect("write the user bigram");
+}
+
+/// Every record of the user container at `path`, sorted. `hash` reads the
+/// user bigram; otherwise the file is a user index. Each is read as the
+/// library reads it on the running backend.
+pub fn store_rows(path: &std::path::Path, hash: bool) -> Vec<(Vec<u8>, Vec<u8>)> {
+    use oxpinyin_store::RawReadStore as _;
+    use std::ops::Bound;
+    let store = if hash {
+        oxpinyin_store::DefaultStore::open_user_bigram(path)
+    } else {
+        oxpinyin_store::DefaultStore::open_user_index(path)
+    }
+    .unwrap_or_else(|error| panic!("open {}: {error:?}", path.display()));
+    let mut rows = Vec::new();
+    store
+        .range_raw(Bound::Unbounded, Bound::Unbounded, |key, value| {
+            rows.push((key.to_vec(), value.to_vec()));
+            Ok(())
+        })
+        .expect("read the container");
+    rows.sort();
+    rows
+}
+
+/// A stored `SingleGram`: the total, then `(token, count)` pairs
+/// (`ngram.cpp:48-50`).
+#[must_use]
+pub fn gram_bytes(total: u32, items: &[(u32, u32)]) -> Vec<u8> {
+    let mut bytes = total.to_le_bytes().to_vec();
+    for (token, count) in items {
+        bytes.extend(token.to_le_bytes());
+        bytes.extend(count.to_le_bytes());
+    }
+    bytes
+}
+
+/// A `LOG_MODIFY_HEADER` record: type 4, the token, a `u16` length, then
+/// the old and new totals (`phrase_index_logger.h:158-215`).
+#[must_use]
+pub fn modify_header(token: u32, old: u32, new: u32) -> Vec<u8> {
+    [
+        &4_u32.to_le_bytes()[..],
+        &token.to_le_bytes(),
+        &4_u16.to_le_bytes(),
+        &old.to_le_bytes(),
+        &new.to_le_bytes(),
+    ]
+    .concat()
+}
+
+/// The tokens `pinyin_lookup_tokens` writes for `text`.
+pub fn lookup(instance: *mut PinyinInstance, text: impl AsRef<[u8]>) -> Vec<u32> {
+    let text = CString::new(text.as_ref()).expect("no interior NUL");
+    // SAFETY: a fresh GArray of four-byte elements, freed below.
+    let array = unsafe { glib_sys::g_array_new(0, 0, 4) };
+    crate::dict::pinyin_lookup_tokens(instance, text.as_ptr(), array.cast());
+    // SAFETY: a live GArray of four-byte elements: `data` holds `len` of them.
+    let tokens = unsafe {
+        let view = &*array;
+        if view.len == 0 {
+            Vec::new()
+        } else {
+            std::slice::from_raw_parts(view.data.cast::<u32>(), view.len as usize).to_vec()
+        }
+    };
+    // SAFETY: allocated above and freed once.
+    unsafe { glib_sys::g_array_free(array, 1) };
+    tokens
+}
+
+/// One GLib log record: the domain (`None` for the default domain) and
+/// the level.
+pub type LogRecord = (Option<String>, glib_sys::GLogLevelFlags);
+
+std::thread_local! {
+    static CAPTURED: std::cell::RefCell<Option<Vec<LogRecord>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+unsafe extern "C" fn capture_log(
+    domain: *const std::ffi::c_char,
+    level: glib_sys::GLogLevelFlags,
+    message: *const std::ffi::c_char,
+    data: glib_sys::gpointer,
+) {
+    let captured = CAPTURED.with(|logs| {
+        let mut logs = logs.borrow_mut();
+        let Some(logs) = logs.as_mut() else {
+            return false;
+        };
+        let domain = (!domain.is_null()).then(|| {
+            // SAFETY: GLib hands a live NUL-terminated domain.
+            unsafe { std::ffi::CStr::from_ptr(domain) }
+                .to_string_lossy()
+                .into_owned()
+        });
+        logs.push((domain, level));
+        true
+    });
+    if !captured {
+        // SAFETY: GLib's unchanged arguments, for a thread with no capture.
+        unsafe { glib_sys::g_log_default_handler(domain, level, message, data) };
+    }
+}
+
+/// Collects the GLib log records of this thread (the `libpinyin`, `GLib`
+/// and default domains) while it lives.
+pub struct LogCapture {
+    handlers: Vec<(Option<&'static std::ffi::CStr>, u32)>,
+}
+
+impl LogCapture {
+    pub fn new() -> Self {
+        CAPTURED.with(|logs| *logs.borrow_mut() = Some(Vec::new()));
+        let handlers = [Some(c"libpinyin"), Some(c"GLib"), None]
+            .into_iter()
+            .map(|domain| {
+                // SAFETY: the callback lives for the process and takes no
+                // user data; Drop removes it.
+                let id = unsafe {
+                    glib_sys::g_log_set_handler(
+                        domain.map_or(std::ptr::null(), std::ffi::CStr::as_ptr),
+                        glib_sys::G_LOG_LEVEL_MASK,
+                        Some(capture_log),
+                        std::ptr::null_mut(),
+                    )
+                };
+                (domain, id)
+            })
+            .collect();
+        Self { handlers }
+    }
+
+    /// The records since the capture began or since the last call.
+    pub fn take(&self) -> Vec<LogRecord> {
+        CAPTURED.with(|logs| std::mem::take(logs.borrow_mut().as_mut().expect("active capture")))
+    }
+}
+
+impl Drop for LogCapture {
+    fn drop(&mut self) {
+        for (domain, id) in &self.handlers {
+            // SAFETY: the handler ids installed in `new`.
+            unsafe {
+                glib_sys::g_log_remove_handler(
+                    domain.map_or(std::ptr::null(), std::ffi::CStr::as_ptr),
+                    *id,
+                );
+            }
+        }
+        CAPTURED.with(|logs| *logs.borrow_mut() = None);
+    }
+}
+
+/// Writes the files of the pin-written profile `case` from
+/// `testdata/pin-profiles.txt` into `dir`, byte for byte.
+/// The profiles hold tkrzw files, so only the tkrzw pinned-data tests read them.
+#[cfg(feature = "tkrzw")]
+pub fn write_pin_profile(case: &str, dir: &std::path::Path) {
+    let text = include_str!("../testdata/pin-profiles.txt");
+    let mut in_case = false;
+    let mut file: Option<(String, Vec<u8>)> = None;
+    let mut found = false;
+    let flush = |file: &mut Option<(String, Vec<u8>)>| {
+        if let Some((name, bytes)) = file.take() {
+            std::fs::write(dir.join(name), bytes).expect("write a profile file");
+        }
+    };
+    for line in text.lines() {
+        if line.starts_with('#') || line.is_empty() {
+            continue;
+        }
+        let mut words = line.split(' ');
+        match words.next() {
+            Some("profile") => {
+                flush(&mut file);
+                in_case = words.next() == Some(case);
+                found |= in_case;
+            }
+            Some("file") if in_case => {
+                flush(&mut file);
+                let name = words.next().expect("a file name").to_owned();
+                let size = words
+                    .next()
+                    .expect("a size")
+                    .parse()
+                    .expect("a decimal size");
+                file = Some((name, vec![0; size]));
+            }
+            Some(offset) if in_case => {
+                let (_, bytes) = file.as_mut().expect("a byte run follows a file line");
+                let at: usize = offset.parse().expect("a decimal offset");
+                let hex = words.next().expect("the run's bytes");
+                for (index, pair) in hex.as_bytes().chunks(2).enumerate() {
+                    let pair = std::str::from_utf8(pair).expect("ASCII hex");
+                    bytes[at + index] = u8::from_str_radix(pair, 16).expect("hex byte");
+                }
+            }
+            _ => {}
+        }
+    }
+    flush(&mut file);
+    assert!(found, "no profile {case} in pin-profiles.txt");
+}
+
+/// One library-1 item of [`items_system`]: its text as code points, its
+/// keys and its unigram.
+pub type SystemItem<'a> = (&'a [u32], &'a [u16], u32);
+
+/// A private system under `parent`, linked from `source`, whose library 1
+/// holds exactly `items` (tokens 0x01000001 on, in order) under `total`,
+/// with matching pinyin and phrase indexes. Answers its path.
+pub fn items_system(
+    source: &std::path::Path,
+    parent: &std::path::Path,
+    items: &[SystemItem<'_>],
+    total: u32,
+) -> PathBuf {
+    use std::collections::BTreeMap;
+    let system = parent.join("system");
+    std::fs::create_dir_all(&system).expect("private system dir");
+    for entry in std::fs::read_dir(source).expect("system dir") {
+        let entry = entry.expect("system entry");
+        link_file(&entry.path(), &system.join(entry.file_name()));
+    }
+    let mut content = vec![0_u8; 8];
+    let mut offsets = vec![0_u32];
+    let mut phonetic: BTreeMap<Vec<u8>, Vec<u8>> = BTreeMap::new();
+    let mut phrases: BTreeMap<Vec<u8>, Vec<u8>> = BTreeMap::new();
+    for (slot, (text, keys, unigram)) in items.iter().enumerate() {
+        let token = 0x0100_0000 | u32::try_from(slot + 1).expect("slot");
+        let raw_text: Vec<u8> = text.iter().flat_map(|word| word.to_le_bytes()).collect();
+        let raw_keys: Vec<u8> = keys.iter().flat_map(|word| word.to_le_bytes()).collect();
+        offsets.push(u32::try_from(content.len()).expect("offset"));
+        content.extend([u8::try_from(text.len()).expect("length"), 1]);
+        content.extend(unigram.to_le_bytes());
+        content.extend(&raw_text);
+        content.extend(&raw_keys);
+        content.extend(10_u32.to_le_bytes());
+        let index: Vec<u8> = keys
+            .iter()
+            .flat_map(|word| (word & 4095).to_le_bytes())
+            .collect();
+        for end in (2..index.len()).step_by(2) {
+            phonetic.entry(index[..end].to_vec()).or_default();
+        }
+        let mut item = token.to_le_bytes().to_vec();
+        item.extend(&raw_keys);
+        item.resize(item.len().div_ceil(4) * 4, 0);
+        phonetic.entry(index).or_default().extend(item);
+        for end in (4..raw_text.len()).step_by(4) {
+            phrases.entry(raw_text[..end].to_vec()).or_default();
+        }
+        phrases
+            .entry(raw_text)
+            .or_default()
+            .extend(token.to_le_bytes());
+    }
+    let count = u32::try_from(offsets.len()).expect("offsets");
+    let index_two = 17 + count * 4 + 1;
+    let content_len = u32::try_from(content.len()).expect("content");
+    let mut payload: Vec<u8> = [total, 17, index_two, index_two + content_len + 1]
+        .iter()
+        .flat_map(|value| value.to_le_bytes())
+        .collect();
+    payload.push(b'#');
+    payload.extend(offsets.iter().flat_map(|value| value.to_le_bytes()));
+    payload.push(b'#');
+    payload.extend(&content);
+    payload.push(b'#');
+    let gb_char = system.join("gb_char.bin");
+    std::fs::remove_file(&gb_char).expect("unlink gb_char.bin");
+    std::fs::write(
+        &gb_char,
+        oxpinyin_data::chunk_format::build_memory_chunk(&payload).expect("frame"),
+    )
+    .expect("gb_char.bin");
+    for (name, rows) in [
+        ("pinyin_index.bin", phonetic),
+        ("phrase_index.bin", phrases),
+    ] {
+        let path = system.join(name);
+        std::fs::remove_file(&path).expect("unlink an index");
+        craft_tree(&path, &rows.into_iter().collect::<Vec<_>>());
+    }
+    system
 }

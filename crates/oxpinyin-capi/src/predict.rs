@@ -571,4 +571,162 @@ mod tests {
         assert_eq!(kept[0].0, 3);
         assert_eq!(sole, None);
     }
+
+    // ── The predicted ranking at the C boundary (mini fixture) ──
+
+    use crate::config::pinyin_set_options;
+    use crate::e2e_tests::{capture_rows, import_batch};
+    use crate::test_support::{TempUserDir, lookup, open};
+    use crate::types::lookup_candidate_type_t;
+    use crate::types::{PinyinContext, PinyinInstance};
+
+    /// `PINYIN_INCOMPLETE | USE_DIVIDED_TABLE | USE_RESPLIT_TABLE | IS_PINYIN`.
+    const OPTIONS: u32 = 0x18a;
+    /// `DYNAMIC_ADJUST`.
+    const DYNAMIC_ADJUST: u32 = 1 << 9;
+
+    fn close(context: *mut PinyinContext, instance: *mut PinyinInstance) {
+        crate::instance::pinyin_free_instance(instance);
+        crate::context::pinyin_fini(context);
+    }
+
+    /// The texts of the rows `pinyin_guess_predicted_candidates` lists
+    /// after `prefix`.
+    fn predicted_texts(instance: *mut PinyinInstance, prefix: &std::ffi::CStr) -> Vec<String> {
+        assert!(super::pinyin_guess_predicted_candidates(
+            instance,
+            prefix.as_ptr()
+        ));
+        capture_rows(instance)
+            .into_iter()
+            .map(|(_, text, _)| text)
+            .collect()
+    }
+
+    /// The predicted scorer passes no predecessor, so neither DYNAMIC_ADJUST
+    /// nor the bigram counts move a row (`pinyin.cpp:2418`, `:2438`): two
+    /// successors of 你 rank the same whichever has the larger count.
+    #[test]
+    fn predicted_rows_ignore_dynamic_adjust_and_the_bigram_counts() {
+        let user = TempUserDir::new("predict-bigram-terms");
+        let (context, instance) = open(user.path.to_str().expect("UTF-8 path"));
+        let [ni, hao, zhong] = ["你", "好", "中"].map(|text| lookup(instance, text)[0]);
+        let mut lists = Vec::new();
+        for (hao_count, zhong_count) in [(1000, 20), (20, 1000)] {
+            // SAFETY: the live context has no reader retained across this write.
+            let ctx = unsafe { crate::state::context_mut(context) };
+            let store = ctx.core.user_store_mut().expect("a user store");
+            store.set_bigram_count(ni, hao, hao_count).expect("set");
+            store.set_bigram_count(ni, zhong, zhong_count).expect("set");
+            for dynamic in [0, DYNAMIC_ADJUST] {
+                assert!(pinyin_set_options(context, OPTIONS | dynamic));
+                lists.push(predicted_texts(instance, c"你"));
+            }
+        }
+        assert!(
+            capture_rows(instance).iter().any(|(kind, text, _)| {
+                *kind == lookup_candidate_type_t::PREDICTED_BIGRAM_CANDIDATE && text == "中"
+            }),
+            "the bigram rows are listed"
+        );
+        assert!(lists.iter().all(|list| *list == lists[0]), "{lists:?}");
+        close(context, instance);
+    }
+
+    /// The predicted ranking uses the table.conf lambda: at λ = 1 every
+    /// unigram term is zero, so a large count does not move its row ahead
+    /// of the collection order; at the fixture's λ it does.
+    #[test]
+    fn predicted_rows_take_the_table_conf_lambda() {
+        let order = |lambda: Option<&str>| {
+            let scratch = tempfile::tempdir().expect("scratch");
+            let system = crate::test_support::private_system(scratch.path());
+            if let Some(lambda) = lambda {
+                let path = system.join("table.conf");
+                let text = std::fs::read_to_string(&path).expect("table.conf");
+                std::fs::remove_file(&path).expect("unlink the linked table.conf");
+                let text = text.replace(
+                    "lambda parameter:0.312699",
+                    &format!("lambda parameter:{lambda}"),
+                );
+                std::fs::write(&path, text).expect("write table.conf");
+            }
+            let user = TempUserDir::new("predict-lambda");
+            let system_c = crate::test_support::cstr(system.to_str().expect("UTF-8 path"));
+            let user_c = crate::test_support::cstr(user.path.to_str().expect("UTF-8 path"));
+            let context = crate::context::pinyin_init(system_c.as_ptr(), user_c.as_ptr());
+            assert!(!context.is_null());
+            let instance = crate::instance::pinyin_alloc_instance(context);
+            let before = predicted_texts(instance, c"你");
+            assert_eq!(before.len(), 2);
+            let last = lookup(instance, format!("你{}", before[1]))[0];
+            assert!(crate::dict::pinyin_token_add_unigram_frequency(
+                instance, last, 50_000_000
+            ));
+            let after = predicted_texts(instance, c"你");
+            close(context, instance);
+            (before, after)
+        };
+        let (before, after) = order(Some("1"));
+        assert_eq!(after, before, "λ = 1 ranks by collection order");
+        let (before, after) = order(None);
+        assert_eq!(after, [before[1].clone(), before[0].clone()]);
+    }
+
+    /// Prefix rows alone never reach the zero-total assert, which gates the
+    /// bigram rows only: on a facade total wrapped to zero the prediction
+    /// answers true with its rows.
+    #[test]
+    fn prefix_rows_rank_on_a_zero_facade_total() {
+        let user = TempUserDir::new("predict-prefix-zero-total");
+        let (context, instance) = open(user.path.to_str().expect("UTF-8 path"));
+        let before = predicted_texts(instance, c"你");
+        // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
+        let total = unsafe { crate::state::instance_ref(instance) }
+            .core
+            .lm
+            .amplified_total();
+        let total = u32::try_from(total).expect("a guint32 total");
+        assert!(crate::dict::pinyin_token_add_unigram_frequency(
+            instance,
+            0x0100_0001,
+            total.wrapping_neg()
+        ));
+        let mut after = predicted_texts(instance, c"你");
+        after.sort();
+        let mut expected = before;
+        expected.sort();
+        assert_eq!(after, expected);
+        close(context, instance);
+    }
+
+    /// A system-library import ranks by its live item count, runtime
+    /// additions included, against a user-library row.
+    #[test]
+    fn a_system_library_import_ranks_by_its_live_count() {
+        let user = TempUserDir::new("predict-system-import");
+        let (context, instance) = open(user.path.to_str().expect("UTF-8 path"));
+        assert_eq!(
+            import_batch(context, 1, &[("你甲甲", "ni3'jia3'jia3", 100_000)]),
+            [true]
+        );
+        assert_eq!(
+            import_batch(context, 7, &[("你乙乙", "ni3'yi3'yi3", 110_000)]),
+            [true]
+        );
+        let system = lookup(instance, "你甲甲")[0];
+        assert_eq!(system >> 24, 1);
+        let rank = |instance| {
+            predicted_texts(instance, c"你")
+                .into_iter()
+                .filter(|text| text == "甲甲" || text == "乙乙")
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(rank(instance), ["乙乙", "甲甲"]);
+        assert!(crate::dict::pinyin_token_add_unigram_frequency(
+            instance, system, 100_000
+        ));
+        assert_eq!(rank(instance), ["甲甲", "乙乙"]);
+        close(context, instance);
+    }
 }
