@@ -34,7 +34,6 @@ FROM --platform=$ORACLE_PLATFORM debian:testing AS deps
 COPY tools/lib/bash-floor.sh /usr/local/lib/bash-floor.sh
 COPY tools/oracle/version-manifest.json /usr/local/share/oxpinyin/version-manifest.json
 COPY tools/oracle/versions.py /usr/local/bin/versions.py
-COPY tools/tkrzw/distro-probe.sh /usr/local/bin/distro-probe.sh
 RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
     set -eu; set --; \
     if [ -s /run/secrets/cacert ]; then \
@@ -54,12 +53,10 @@ RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
     rm -rf /var/lib/apt/lists/*; \
     python3 /usr/local/bin/versions.py \
         --manifest /usr/local/share/oxpinyin/version-manifest.json \
-        --probe /usr/local/bin/distro-probe.sh \
         --record /opt/oracle-versions.txt
 
 # Source-only identity inputs; these carry no model data.
 COPY tools/oracle/Dockerfile.oracle tools/oracle/build-oracle.sh tools/oracle/version-manifest.json tools/oracle/versions.py tools/oracle/oracle-pin.txt /opt/oracle-recipe/tools/oracle/
-COPY tools/tkrzw/distro-probe.sh /opt/oracle-recipe/tools/tkrzw/
 COPY tools/lib/bash-floor.sh /opt/oracle-recipe/tools/lib/
 ENV OXPINYIN_ORACLE_RECIPE_ROOT=/opt/oracle-recipe
 

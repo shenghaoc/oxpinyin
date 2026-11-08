@@ -238,10 +238,22 @@ class ProvisionTests(unittest.TestCase):
         env = dict(self.env, PATH=':'.join(str(p / 'bin') for p in [*caches, host]) + ':' + self.env['PATH'],
                    LD_LIBRARY_PATH=':'.join(str(p / 'lib') for p in [*caches, host]),
                    OXPINYIN_TKRZW_PREFIXES=str(caches[0]), FAKE_RESOLVED=str(host / 'lib/libtkrzw.so.1'))
-        with contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(provision.probe_host(caches[1], env=env, probe=probe), str(host / 'lib/libtkrzw.so.1'))
-            self.assertFalse(provision.probe_host(caches[1], env=dict(env, FAKE_HOST_STATUS='1'), probe=probe))
-            self.assertFalse(provision.probe_host(caches[1], env=dict(env, FAKE_RESOLVED=str(caches[0] / 'lib/libtkrzw.so.1')), probe=probe))
+        ubuntu, debian = self.work / 'os-release-ubuntu', self.work / 'os-release-debian'
+        ubuntu.write_text('NAME="Ubuntu"\nID=ubuntu\nID_LIKE=debian\n')
+        debian.write_text('NAME="Debian GNU/Linux"\nID=debian\n')
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(provision.probe_host(caches[1], env=env, probe=probe, os_release=ubuntu),
+                             str(host / 'lib/libtkrzw.so.1'))
+            self.assertFalse(provision.probe_host(caches[1], env=dict(env, FAKE_HOST_STATUS='1'), probe=probe,
+                                                  os_release=ubuntu))
+            self.assertFalse(provision.probe_host(caches[1], env=dict(env, FAKE_RESOLVED=str(caches[0] / 'lib/libtkrzw.so.1')),
+                                                  probe=probe, os_release=ubuntu))
+            # Off Ubuntu the distribution package needs no distro-probe.sh: a failing probe is never run,
+            # and the loader checks still refuse a cached library.
+            self.assertEqual(provision.probe_host(caches[1], env=dict(env, FAKE_HOST_STATUS='1'), probe=probe,
+                                                  os_release=debian), str(host / 'lib/libtkrzw.so.1'))
+            self.assertFalse(provision.probe_host(caches[1], env=dict(env, FAKE_RESOLVED=str(caches[0] / 'lib/libtkrzw.so.1')),
+                                                  probe=probe, os_release=debian))
         legacy = self.service.env_file.read_text().replace('export OXPINYIN_TKRZW_PREFIXES=', '# old ')
         self.service.env_file.write_text(legacy)
         self.assertEqual(provision.tkrzw_env_prefix(self.service.env_file), str(caches[0]))
@@ -251,7 +263,39 @@ class ProvisionTests(unittest.TestCase):
         self.assertEqual(provision.tkrzw_env_prefix(self.service.env_file), '')
         self.assertIn(str(host / 'lib/libtkrzw.so.1').encode(), self.source('tkrzw').stdout)
 
+    def test_ubuntu_hosts_are_named_by_os_release(self):
+        for text, expected in (('ID=ubuntu\n', True), ('ID="ubuntu"\n', True), ('ID=linuxmint\nID_LIKE="ubuntu debian"\n', True),
+                               ('ID=debian\n', False), ('ID=fedora\nID_LIKE="rhel centos"\n', False), ('', False)):
+            with self.subTest(text=text):
+                path = self.work / 'os-release'
+                path.write_text(text)
+                self.assertIs(provision.ubuntu_host(path), expected)
+        absent = self.work / 'absent-os-release'
+        self.assertFalse(provision.ubuntu_host(absent, absent))
+
+    def test_os_release_falls_back_to_usr_lib(self):
+        fallback = self.work / 'usr-lib-os-release'
+        fallback.write_text('ID=ubuntu\n')
+        absent = self.work / 'absent-os-release'
+        self.assertTrue(provision.ubuntu_host(absent, fallback))
+        self.assertEqual(provision.os_release_record(absent, fallback), {'ID': 'ubuntu'})
+        first = self.work / 'etc-os-release'
+        first.write_text('ID=debian\n')
+        self.assertFalse(provision.ubuntu_host(first, fallback))
+        self.assertIsNone(provision.os_release_record(absent, absent))
+
+    def test_a_linux_host_without_os_release_is_not_certified(self):
+        absent = self.work / 'absent-os-release'
+        with (mock.patch.object(provision.platform, 'system', return_value='Linux'),
+              mock.patch.object(provision, 'run') as run, contextlib.redirect_stderr(io.StringIO()) as error):
+            self.assertEqual(provision.probe_host('', env={'PATH': ''}, os_release=absent, os_release_fallback=absent), '')
+        run.assert_not_called()
+        self.assertIn(f'host check: neither {absent} nor {absent} can be read, so the host cannot be named; '
+                      'no healthy host libtkrzw was certified', error.getvalue())
+
     def test_every_empty_host_probe_result_reports_its_reason_on_stderr(self):
+        ubuntu = self.work / 'os-release-ubuntu'
+        ubuntu.write_text('ID=ubuntu\n')
         library = self.work / 'host-libtkrzw.so.1'
         library.touch()
         cached = self.service.tkrzw_prefix / 'lib/libtkrzw.so.1'
@@ -285,7 +329,7 @@ class ProvisionTests(unittest.TestCase):
                                       side_effect=error), \
                     mock.patch.object(provision, 'text', return_value='Linux'), \
                     contextlib.redirect_stdout(output), contextlib.redirect_stderr(diagnostic):
-                self.assertEqual(provision.probe_host(self.service.tkrzw_prefix, env=self.env), '')
+                self.assertEqual(provision.probe_host(self.service.tkrzw_prefix, env=self.env, os_release=ubuntu), '')
             self.assertIn(reason, diagnostic.getvalue())
             self.assertIn('no healthy host libtkrzw was certified', diagnostic.getvalue())
             self.assertNotIn(reason, output.getvalue())

@@ -175,7 +175,9 @@ Cancellation, expiry and an OOM-killed child never count as PASS or SKIP.
 ## 9. Sound tkrzw library
 
 Run the tkrzw cell, the reference cell, only against a sound libtkrzw.
-`tools/tkrzw/distro-probe.sh` must report it healthy.
+Ubuntu's packaged libtkrzw is used only when `tools/tkrzw/distro-probe.sh`
+reports it healthy. A build from `tools/tkrzw/build.py` and Debian's package
+need no probe.
 `tools/cloud/setup.sh` provides a sound library when the packaged one is defective.
 CI's tkrzw action provides one on every OS.
 See the [Ubuntu library finding](../findings/tkrzw-distro-compat.md).

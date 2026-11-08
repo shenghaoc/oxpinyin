@@ -27,7 +27,7 @@ class OracleDependenciesTests(unittest.TestCase):
         build = source.split('\ndef build_image(', 1)[1].split('\ndef ', 1)[0]
         self.assertIn("'-f', 'tools/oracle/Dockerfile.oracle'", build)
         self.assertIn('verify_image(', build)
-        pattern = r'^COPY tools/(oracle/(version-manifest.json|versions.py)|tkrzw/distro-probe.sh|lib/bash-floor.sh) '
+        pattern = r'^COPY tools/(oracle/(version-manifest.json|versions.py)|lib/bash-floor.sh) '
         docker = (ROOT / 'tools/oracle/Dockerfile.oracle').read_text().split('FROM deps AS build', 1)[0]
         copies = [line for line in docker.splitlines() if line.startswith('COPY ') and '/opt/oracle-recipe/' not in line]
         self.assertTrue(copies)

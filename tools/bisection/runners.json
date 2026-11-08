@@ -563,7 +563,7 @@
       "Linux native toolchain and the selected backend's headers and library",
       "the nightly that fuzz/rust-toolchain.toml names",
       "setarch with permission to disable ASLR (tkrzw)",
-      "a verified libtkrzw: the one setup.sh's environment file names, or a host library that passes tools/tkrzw/distro-probe.sh (tkrzw)",
+      "a verified libtkrzw: the one setup.sh's environment file names, or a certified host library, which on Ubuntu must pass tools/tkrzw/distro-probe.sh (tkrzw)",
       "caller-selected backend: bdb, kc, tkrzw or all"
     ],
     "timeout": 2700,

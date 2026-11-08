@@ -436,9 +436,9 @@ jobs:
         # libclang-dev is bindgen's runtime dependency.
         run: apt-get install -y --no-install-recommends gcc g++ make pkg-config util-linux libclang-dev libglib2.0-dev
 
-      # The library the backend links against. With no setup.sh environment
-      # here, the gate trusts it only after tools/tkrzw/distro-probe.sh,
-      # which runs the tkrzw_dbm_util the action puts first on PATH.
+      # The library the backend links against: the action's source build,
+      # named by OXPINYIN_TKRZW_PREFIX. It needs no distro-probe.sh, which
+      # is for Ubuntu's packaged libtkrzw only.
       - name: Provision tkrzw (built at the setup.sh revision and cached)
         uses: ./.github/actions/tkrzw
 
