@@ -16,9 +16,10 @@ If you add a new driver, state why no existing driver could take the case
 ## Results
 
 <!--
-State the results and the command or just recipe that reproduces them.
-CI on the PR head provides the clippy and Rust-test results (verification
-rule 5); state the local checks CI does not cover.
+Run the local checks in [verification rule 5](docs/runbooks/verification.md#5-local-test-gate); they scale with the change and its stage.
+
+State the results and the command that reproduces them.
+CI on the PR head is the full gate (verification rule 5); state the local checks you ran before the push.
 Disclose any required check that failed or could not run as a limitation.
 Omit checks that do not apply. Keep historical results clearly identified.
 Follow CONTRIBUTING.md#results-and-reproduction: no raw logs, captures,

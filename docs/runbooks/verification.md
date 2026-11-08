@@ -48,15 +48,35 @@ Never mutate the pin.
 
 ## 5. Local test gate
 
-CI is the routine clippy and Rust-test gate (maintainer ruling 2026-10-30 UTC).
+Maintainer ruling 2026-11-08 UTC: run the local checks proportionally.
+
+While iterating, run `cargo fmt --all --check`, `cargo clippy --locked -p <crate> --all-targets -- -D warnings` and fail-fast `cargo nextest run -p <crate>` for each crate you changed. Fix diagnostics as they appear.
+
+Before a push for review or merge, and after any rebase, run one `cargo clippy --locked --workspace --all-targets -- -D warnings` on the final tree. Also run, only when the change calls for it:
+
+- `RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --workspace` when doc comments or public items changed.
+- When a `Cargo.toml`, `Cargo.lock` or `deny.toml` changed, run:
+  - `cargo deny --locked --log-level error check`
+  - `cargo deny --locked --all-features --log-level error check`
+  - `cargo deny --locked --log-level error --manifest-path fuzz/Cargo.toml check`
+- ShellCheck when a shell script changed.
+- Lizard 1.24.0 (`lizard crates/ -l rust -C 40`) when Rust functions changed.
+- `just test-tools` when `tools/` changed.
+
+WIP checkpoint pushes: `cargo fmt --all --check` only.
+
+Markdown-only changes: `git diff --check` and a check of their links. Source-comment changes also run `cargo fmt --all --check`.
+
+These WIP-checkpoint and Markdown-only rules override the pre-push requirement above.
+
+CI is the full gate. These checks cover only the host’s cfg arms and backend features, so a change under an OS gate or a backend feature also needs that OS or backend, or a `verify-nightly` dispatch.
+
 Each stack member must pass its required verification independently.
-Successful CI on that member's final source tree satisfies the required clippy and Rust-test checks for the required package, feature and platform scope.
+Successful CI on that member's final source tree satisfies the full-gate checks for the required package, feature and platform scope.
 PR CI tests Linux; the macOS and Windows jobs run in `verify-nightly.yml` every night and on dispatch ([setup](setup.md#when-the-macos-job-runs)).
-Do not repeat an equivalent passing CI check locally.
 A check that is missing, cancelled or skipped when it applies does not count as a pass.
 A check skipped because it does not apply to the change is not a failure.
-Run fmt locally; it is cheap.
-Run locally the required checks that CI does not cover: the issue's differentials, revert-and-check and any measurement that a concrete unresolved question affecting a decision requires ([controlling rule](../source-policy.md#controlling-rule)).
+Run locally the checks that CI does not cover: the issue's differentials, revert-and-check and any measurement that a concrete unresolved question affecting a decision requires ([controlling rule](../source-policy.md#controlling-rule)).
 These checks keep their current rules.
 Stripped shipping-library sizes ([constitution §2](../constitution.md)) are not a local check.
 The `shipping-sizes` CI job reports base and PR sizes in its job summary, for each PR that can change a shipping library.
@@ -87,21 +107,23 @@ Do not substitute a private procedure or claim that an unrun check passed.
 
 ## 7. Proportionate verification
 
+Run the local checks in [verification rule 5](#5-local-test-gate); they scale with the change and its stage.
+
 Choose checks from the changes since the last green gate:
 
 - **Documentation, comments or findings only:** review the changed text and links.
-  Run `git diff --check`, then push.
-  Run fmt when source comments change.
-  Markdown-only changes need no Rust formatter.
-  Do not run builds, tests, clippy, differentials or backend-selection checks.
+  Follow the Markdown-only and source-comment rules in verification rule 5.
+  Do not run builds, tests, differentials or backend-selection checks.
   This case overrides rule 2, including comments-only changes in backend files.
-- **A review fix in code:** run fmt, focused tests and the issue's differentials on the reference cell.
-  CI provides clippy and the test suites.
+- **A review fix in code:** use the iteration checks in verification rule 5, then its pre-push checks on the final tree.
+  Run the issue's differentials on the reference cell.
+  CI is the full gate.
 - **Revert-and-check:** repeat it only if the differential changed.
-- **A conflict-free rebase:** CI on the new head is the gate for clippy and tests.
-  Local work is limited to the checks CI does not run.
-  None is needed if the rebase brings in no file the branch touches.
-- **A stack:** CI on each member's new head is the gate for clippy and tests.
+- **A conflict-free rebase:** run the workspace Clippy check in verification rule 5 on the new head.
+  CI is the full gate.
+  If the rebase brings in no file the branch touches, only the differentials and other change-specific checks are unnecessary.
+- **A stack:** run the checks in verification rule 5 on each member's new head.
+  CI is the full gate.
   Repeat the local checks CI does not run only for the changed commit and higher commits that touch the same files.
 
 Stop when applicable checks pass and concrete failures are addressed.
@@ -109,7 +131,7 @@ Additional runs require a relevant input change, a specific unresolved failure o
 Do not repeat runs merely to collect more evidence.
 
 Rules 5 and 7 describe the **completion gate** (maintainer rulings
-2026-10-19 UTC and 2026-10-30 UTC).
+2026-10-19 UTC, 2026-10-30 UTC and 2026-11-08 UTC).
 
 Run the local checks that CI does not cover when a coherent fix is ready, before a push for review.
 Between completion gates, use iteration feedback while the fix is taking shape:
@@ -126,9 +148,9 @@ Iteration feedback is not a gate result.
 Do not report it as one.
 Report final results and reproduction commands.
 Disclose failed or unrun required checks as limitations.
-A fix is ready for review when the local checks that CI does not cover pass.
+A fix is ready for review when the pre-push checks in verification rule 5 and the local checks that CI does not cover pass.
 A PR is not ready to merge until CI passes on its head.
-A `wip/` checkpoint push does not require a completion gate.
+A `wip/` checkpoint push runs only the checkpoint check in verification rule 5.
 
 ## 8. Builds
 
