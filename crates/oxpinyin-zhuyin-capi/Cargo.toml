@@ -74,6 +74,8 @@ glib-sys.workspace = true
 [dev-dependencies]
 # Dev-only: the death-test helpers wait for their child with a time limit.
 assert_cmd = "2.2"
+# Dev-only: the user.conf expectation uses the boundary's text-mode newline.
+oxpinyin-input.workspace = true
 # Dev-only: shared-shape cases in the crate tests.
 rstest = { version = "0.28", default-features = false }
 # Dev-only: scratch dirs for the test fixtures. Never a dependency of the

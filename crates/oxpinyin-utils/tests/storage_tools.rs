@@ -77,7 +77,7 @@ ni\t你\t16777219\t7\nni'hao\t你好\t16777220\t9\n\
 zhong'guo\t中国\t16777221\t3\n";
 
 fn expected_text(text: &str) -> String {
-    text.replace('\n', if cfg!(windows) { "\r\n" } else { "\n" })
+    text.replace('\n', oxpinyin_input::TEXT_NEWLINE)
 }
 
 #[test]

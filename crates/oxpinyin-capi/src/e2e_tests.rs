@@ -4082,7 +4082,7 @@ fn table_conf_919_short_row_merged() {
             }
             // The open counter the init raised, the fini lowered.
             // user.conf is written in text mode: CRLF on Windows.
-            let newline = if cfg!(windows) { "\r\n" } else { "\n" };
+            let newline = oxpinyin_input::TEXT_NEWLINE;
             assert!(
                 marker.starts_with(&format!(
                     "binary format version:7{newline}model data version:14{newline}"
@@ -4104,7 +4104,7 @@ fn table_conf_919_short_row_merged() {
     // `g_build_filename` joins with the host's separator, and the UCRT's
     // text-mode stderr writes `\n` as `\r\n`.
     let sep = std::path::MAIN_SEPARATOR;
-    let newline = if cfg!(windows) { "\r\n" } else { "\n" };
+    let newline = oxpinyin_input::TEXT_NEWLINE;
     assert_eq!(
         String::from_utf8_lossy(&run.stderr),
         format!(

@@ -69,7 +69,7 @@ fn the_pruned_differential_fixture_projects_to_the_golden() {
     // The utility prints through the C runtime's text-mode stdout: CRLF on
     // Windows, LF elsewhere (docs/findings/external-io-boundary.md, "Native
     // text-mode line endings").
-    let newline = if cfg!(windows) { "\r\n" } else { "\n" };
+    let newline = oxpinyin_input::TEXT_NEWLINE;
     // <start> and zero-freq unigrams drop; the 1-gram count is the KMM
     // freq, the 2-gram count the pair WC. 乙 is W2-only but its header-only
     // row carries freq 8, so it projects.
@@ -86,7 +86,7 @@ fn the_pruned_differential_fixture_projects_to_the_golden() {
 
 #[test]
 fn an_empty_input_or_a_foreign_header_exits_with_enodata() {
-    let newline = if cfg!(windows) { "\r\n" } else { "\n" };
+    let newline = oxpinyin_input::TEXT_NEWLINE;
     for (input, message) in [
         ("", "empty file input.\n"),
         (
@@ -127,18 +127,14 @@ fn the_pins_assertions_and_abort_abort() {
         );
         assert_eq!(stderr(&out), "");
         let expected = "\\data model interpolation\n\\1-gram\n";
-        let expected = if cfg!(windows) {
-            expected.replace('\n', "\r\n")
-        } else {
-            expected.to_owned()
-        };
+        let expected = expected.replace('\n', oxpinyin_input::TEXT_NEWLINE);
         assert_eq!(out.stdout, expected.as_bytes());
     }
 }
 
 #[test]
 fn undefined_lines_are_refused_normally() {
-    let newline = if cfg!(windows) { "\r\n" } else { "\n" };
+    let newline = oxpinyin_input::TEXT_NEWLINE;
     for (input, reason, line) in [
         (
             format!("{HEADER}\\1-gram\n  \t\n\\end\n"),

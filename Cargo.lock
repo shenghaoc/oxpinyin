@@ -755,6 +755,7 @@ dependencies = [
  "oxpinyin-data",
  "oxpinyin-engine",
  "oxpinyin-facade",
+ "oxpinyin-input",
  "oxpinyin-runtime",
  "oxpinyin-store",
  "oxpinyin-user",

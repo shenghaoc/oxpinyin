@@ -399,7 +399,7 @@ fn zhuyin_launches_never_move_the_open_counter() {
     zhuyin_end_add_phrases(zhuyin_begin_add_phrases(context, USER_DICTIONARY));
     assert!(zhuyin_save(context));
     let saved = std::fs::read(&marker).expect("zhuyin_save writes user.conf");
-    let newline = if cfg!(windows) { "\r\n" } else { "\n" };
+    let newline = oxpinyin_input::TEXT_NEWLINE;
     assert!(
         String::from_utf8_lossy(&saved).ends_with(&format!("open counter:0{newline}")),
         "zhuyin_save's marker carries a fresh counter"
@@ -1191,7 +1191,7 @@ fn table_conf_919_short_row_merged() {
                 assert_eq!(sizes[name], size, "{name}");
             }
             // user.conf is written in text mode: CRLF on Windows.
-            let newline = if cfg!(windows) { "\r\n" } else { "\n" };
+            let newline = oxpinyin_input::TEXT_NEWLINE;
             assert!(
                 marker.starts_with(&format!(
                     "binary format version:7{newline}model data version:14{newline}"

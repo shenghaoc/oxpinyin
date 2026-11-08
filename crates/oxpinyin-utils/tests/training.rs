@@ -124,7 +124,7 @@ fn exit_word(outcome: &Output) -> i32 {
 }
 
 fn expected_text(text: &str) -> String {
-    text.replace('\n', if cfg!(windows) { "\r\n" } else { "\n" })
+    text.replace('\n', oxpinyin_input::TEXT_NEWLINE)
 }
 
 // Expected host difference: Unix SIGABRT, Windows FAST_FAIL_FATAL_APP_EXIT.
