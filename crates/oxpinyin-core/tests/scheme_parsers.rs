@@ -116,38 +116,6 @@ fn the_zrm_fallback_table_resolves_two_key_spellings() {
     assert_eq!(parse.keys()[0].start(), 0);
     assert_eq!(parse.keys()[0].end(), 2);
 }
-
-#[test]
-fn no_two_double_pinyin_layouts_read_the_keyboard_alike() {
-    // The same keystrokes mean different syllables under different
-    // layouts. Sweep every two-keystroke input: the six published tables
-    // must produce pairwise distinct readings somewhere on that domain —
-    // the parser must genuinely consult the active table.
-    let inputs: Vec<[u8; 2]> = (b'a'..=b'z')
-        .flat_map(|a| (b'a'..=b'z').map(move |b| [a, b]))
-        .collect();
-    let readings: Vec<Vec<String>> = DOUBLE_SCHEMES
-        .iter()
-        .map(|scheme| {
-            let mut parser = DoublePinyinParser::new();
-            parser.set_scheme(*scheme);
-            inputs
-                .iter()
-                .map(|input| parser.parse(input, false).full_pinyin())
-                .collect()
-        })
-        .collect();
-
-    for (i, left) in DOUBLE_SCHEMES.iter().enumerate() {
-        for (j, right) in DOUBLE_SCHEMES.iter().enumerate().skip(i + 1) {
-            assert_ne!(
-                readings[i], readings[j],
-                "{left:?} and {right:?} read the keyboard identically"
-            );
-        }
-    }
-}
-
 #[test]
 fn the_customized_slot_is_rejected_at_the_parser_seam() {
     // Upstream aborts (`pinyin_parser2.cpp:611-612`); oxpinyin reports

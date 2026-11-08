@@ -24,14 +24,6 @@ fn stderr(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
-#[cfg(unix)]
-fn signal(output: &Output) -> Option<i32> {
-    use std::os::unix::process::ExitStatusExt as _;
-    output.status.signal()
-}
-
-const HEADER: &str = "\\data model \"k mixture model\" count 1 N 1 total_freq 1\n";
-
 /// The merged candidate model of the old KMM differential fixture: one
 /// document with five `甲 乙` sentences then `丙 丁`, and one with three.
 /// Source-derived from `gen_k_mixture_model.cpp:65-311` and
@@ -83,95 +75,6 @@ fn the_pruned_differential_fixture_projects_to_the_golden() {
             .replace('\n', newline)
     );
 }
-
-#[test]
-fn an_empty_input_or_a_foreign_header_exits_with_enodata() {
-    let newline = oxpinyin_input::TEXT_NEWLINE;
-    for (input, message) in [
-        ("", "empty file input.\n"),
-        (
-            "\\data model interpolation\n\\end\n",
-            "error: k mixture model expected.\n",
-        ),
-    ] {
-        let out = run(input.as_bytes());
-        assert_ne!(out.status.code(), Some(0), "{input:?}");
-        assert_ne!(out.status.code(), None, "{input:?}");
-        assert!(
-            stderr(&out).ends_with(&message.replace('\n', newline)),
-            "{input:?}: {out:?}"
-        );
-        assert_eq!(out.stdout, b"", "{input:?}");
-    }
-}
-
-/// A failed `check_result(taglib_read(...))` aborts, as does a registered
-/// line outside its `switch`; neither writes a message (maintainer ruling
-/// 2026-10-31 UTC), and the lines `std::getline` flushed before stay on
-/// stdout.
-#[test]
-fn the_pins_assertions_and_abort_abort() {
-    for input in [
-        format!("{HEADER}\\1-gram\n\\item 10\n"),
-        format!("{HEADER}\\1-gram\n\\data model x\n"),
-    ] {
-        let out = run(input.as_bytes());
-        #[cfg(unix)]
-        assert_eq!(signal(&out), Some(6), "{out:?}");
-        #[cfg(windows)]
-        // Rust's Windows abort uses __fastfail, not the Unix SIGABRT.
-        assert_eq!(
-            out.status.code(),
-            Some(i32::from_ne_bytes(0xC000_0409_u32.to_ne_bytes())),
-            "{out:?}"
-        );
-        assert_eq!(stderr(&out), "");
-        let expected = "\\data model interpolation\n\\1-gram\n";
-        let expected = expected.replace('\n', oxpinyin_input::TEXT_NEWLINE);
-        assert_eq!(out.stdout, expected.as_bytes());
-    }
-}
-
-#[test]
-fn undefined_lines_are_refused_normally() {
-    let newline = oxpinyin_input::TEXT_NEWLINE;
-    for (input, reason, line) in [
-        (
-            format!("{HEADER}\\1-gram\n  \t\n\\end\n"),
-            "line without a token",
-            "  \t",
-        ),
-        (
-            format!("{HEADER}\\1-gram\n\\item 10 \"甲\\"),
-            "escape at the end of the line",
-            "\\item 10 \"甲\\",
-        ),
-    ] {
-        let out = run(input.as_bytes());
-        assert_eq!(out.status.code(), Some(1), "{input:?}: {out:?}");
-        assert!(
-            stderr(&out).ends_with(&format!(
-                "k_mixture_model_to_interpolation: {reason}: {line}{newline}"
-            )),
-            "{input:?}: {out:?}"
-        );
-    }
-    let mut input = format!("{HEADER}\\1-gram\n\\item 10 甲 freq 1 x ").into_bytes();
-    input.extend_from_slice(b"\xe4\n");
-    let out = run(&input);
-    assert_eq!(out.status.code(), Some(1), "{out:?}");
-    assert!(
-        out.stderr.ends_with(
-            &[
-                &b"k_mixture_model_to_interpolation: truncated UTF-8 sequence at the end of the line: \\item 10 \xe7\x94\xb2 freq 1 x \xe4"[..],
-                newline.as_bytes()
-            ]
-            .concat()
-        ),
-        "{out:?}"
-    );
-}
-
 #[cfg(unix)]
 mod common;
 

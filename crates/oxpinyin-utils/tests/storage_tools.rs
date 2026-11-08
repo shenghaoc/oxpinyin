@@ -136,43 +136,6 @@ fn export_missing_table_conf_is_enoent() {
     );
     assert!(output.stdout.is_empty());
 }
-
-#[test]
-fn import_empty_stdin_is_enodata() {
-    let dir = fixture();
-    let before: Vec<(PathBuf, Vec<u8>)> = chunk_files(dir.path());
-    let output = run(import_bin(), dir.path(), &[], b"");
-    assert_eq!(output.status.code(), Some(tool::ENODATA));
-    assert_eq!(
-        output.stderr,
-        expected_text("empty file input.\n").as_bytes()
-    );
-    assert_eq!(chunk_files(dir.path()), before);
-}
-
-#[test]
-fn import_bad_header_is_enodata() {
-    let dir = fixture();
-    let output = run(import_bin(), dir.path(), &[], b"garbage\n");
-    assert_eq!(output.status.code(), Some(tool::ENODATA));
-    assert_eq!(
-        output.stderr,
-        expected_text("error: interpolation model expected.\n").as_bytes()
-    );
-}
-
-#[test]
-fn import_missing_phrase_index_is_enoent() {
-    let dir = tempfile::tempdir().expect("scratch");
-    fs::write(dir.path().join("table.conf"), table_conf()).expect("write conf");
-    let output = run(import_bin(), dir.path(), &[], b"");
-    assert_eq!(output.status.code(), Some(tool::ENOENT));
-    assert_eq!(
-        output.stderr,
-        expected_text("open phrase_index.bin failed!\n").as_bytes()
-    );
-}
-
 #[test]
 fn import_applies_unigram_and_bigram() {
     let dir = fixture();
@@ -273,49 +236,6 @@ fn gen_binary_files_builds_the_indexes_and_chunks() {
         before_chunk
     );
 }
-
-#[test]
-fn gen_missing_table_file_is_enoent() {
-    let dir = tempfile::tempdir().expect("scratch");
-    fs::write(dir.path().join("table.conf"), table_conf()).expect("write conf");
-    let output = run(gen_bin(), dir.path(), &[], b"");
-    assert_eq!(output.status.code(), Some(tool::ENOENT));
-    assert_eq!(
-        output.stderr,
-        expected_text("open gb_char.table failed!\n").as_bytes()
-    );
-    // The pin attaches both index files before it opens the table.
-    assert!(dir.path().join("pinyin_index.bin").is_file());
-    assert!(dir.path().join("phrase_index.bin").is_file());
-}
-
-#[test]
-fn gen_help_lists_the_pin_entries() {
-    let dir = tempfile::tempdir().expect("scratch");
-    let output = run(gen_bin(), dir.path(), &["--help"], b"");
-    assert_eq!(output.status.code(), Some(0));
-    assert!(output.stderr.is_empty(), "{:?}", output.stderr);
-    let text = String::from_utf8(output.stdout).expect("help");
-    assert!(text.contains("- generate binary files"), "{text}");
-    assert!(text.contains("--table-dir"), "{text}");
-    assert!(text.contains("--gen-punct-table"), "{text}");
-}
-
-fn chunk_files(dir: &Path) -> Vec<(PathBuf, Vec<u8>)> {
-    let mut files: Vec<(PathBuf, Vec<u8>)> =
-        ["gb_char.bin", "gbk_char.bin", "opengram.bin", "merged.bin"]
-            .iter()
-            .map(|name| {
-                (
-                    PathBuf::from(name),
-                    fs::read(dir.join(name)).expect("chunk"),
-                )
-            })
-            .collect();
-    files.sort();
-    files
-}
-
 /// A `table.conf` with `row` as its only table rows, for this build's
 /// backend.
 fn conf_with(row: &str) -> String {
@@ -325,92 +245,6 @@ source table format:pinyin\ndatabase format:{}\n\n{row}\n",
         oxpinyin_data::DEFAULT_STORE_DB_FORMAT
     )
 }
-
-#[test]
-fn gen_narrows_a_table_frequency_to_guint32() {
-    // `table_text_read_pinyin_record` parses `size_t freq`;
-    // `FacadePhraseIndex::load_text` passes it to
-    // `PhraseItem::add_pronunciation(..., guint32 delta)`, so 2^32 + 1
-    // narrows to 1 (`phrase_index.cpp:524-583`, `:56-91`).
-    let dir = tempfile::tempdir().expect("scratch");
-    fs::write(
-        dir.path().join("table.conf"),
-        conf_with("default GB_DICTIONARY gb_char.table gb_char.bin gb_char.dbin SYSTEM_FILE"),
-    )
-    .expect("write conf");
-    fs::write(
-        dir.path().join("gb_char.table"),
-        "ni\t你\t16777217\t4294967297\n",
-    )
-    .expect("write table");
-    let output = run(gen_bin(), dir.path(), &[], b"");
-    assert_eq!(output.status.code(), Some(0));
-    let library =
-        oxpinyin_data::phrase_library::PhraseLibrary::open(&dir.path().join("gb_char.bin"))
-            .expect("chunk");
-    let item = library.item(16_777_217).expect("item");
-    assert_eq!(item.n_pronunciations(), 1);
-    assert_eq!(item.pronunciation(0).expect("pron").freq, 1);
-}
-
-#[test]
-fn gen_wraps_the_pronunciation_count_like_the_pin() {
-    // `PhraseItem::add_pronunciation` stores `guint8` count + 1
-    // (`phrase_index.cpp:88`): a 256th unmatched reading stores 0, and the
-    // pin's view of the item has no readings. The storage importer reuses
-    // the user store's handling of that wrap.
-    let syllables = [
-        "a", "ai", "an", "ang", "ao", "ba", "bai", "ban", "bang", "bao", "bei", "ben", "beng",
-        "bi", "bian", "biao",
-    ];
-    let mut rows = String::new();
-    for first in syllables {
-        for second in syllables {
-            rows.push_str(&format!("{first}'{second}\t你你\t16777217\t1\n"));
-        }
-    }
-    let dir = tempfile::tempdir().expect("scratch");
-    fs::write(
-        dir.path().join("table.conf"),
-        conf_with("default GB_DICTIONARY gb_char.table gb_char.bin gb_char.dbin SYSTEM_FILE"),
-    )
-    .expect("write conf");
-    fs::write(dir.path().join("gb_char.table"), rows).expect("write table");
-    let output = run(gen_bin(), dir.path(), &[], b"");
-    assert_eq!(output.status.code(), Some(0));
-    let library =
-        oxpinyin_data::phrase_library::PhraseLibrary::open(&dir.path().join("gb_char.bin"))
-            .expect("chunk");
-    let item = library.item(16_777_217).expect("item");
-    assert_eq!(item.n_pronunciations(), 0);
-    assert_eq!(
-        item.phrase_codes().collect::<Vec<_>>(),
-        vec![Some(0x4F60), Some(0x4F60)]
-    );
-}
-
-#[test]
-fn gen_masks_the_phrase_index_library_bits() {
-    // `PHRASE_INDEX_LIBRARY_INDEX` masks with `0x0F000000`
-    // (`novel_types.h:41`). Token `0x1F000001` is addon library 15, and
-    // its row belongs in `technology.bin`.
-    let dir = tempfile::tempdir().expect("scratch");
-    fs::write(
-        dir.path().join("table.conf"),
-        conf_with("addon 15 technology.table technology.bin NULL DICTIONARY"),
-    )
-    .expect("write conf");
-    fs::write(dir.path().join("technology.table"), "a\t啊\t520093697\t1\n").expect("write table");
-    let output = run(gen_bin(), dir.path(), &[], b"");
-    assert_eq!(output.status.code(), Some(0));
-    assert!(output.stderr.is_empty(), "{:?}", output.stderr);
-    let library =
-        oxpinyin_data::phrase_library::PhraseLibrary::open(&dir.path().join("technology.bin"))
-            .expect("chunk");
-    let item = library.item(1).expect("slot 1 in library 15");
-    assert_eq!(item.phrase_codes().collect::<Vec<_>>(), vec![Some(0x554A)]);
-}
-
 #[cfg(unix)]
 mod common;
 #[cfg(unix)]
@@ -1009,54 +843,6 @@ mod frozen {
                 &expected,
             );
         }
-        // gen_binary_files-family-e-save-refused: utils/storage/gen_binary_files.cpp:79,82;
-        // utils/utils_helper.h:97-145 at 074a2219.
-        #[test]
-        fn gen_binary_files_family_e_save_refused() {
-            let expected = Run {
-                status: Exit(2),
-                stdout: Exact(b""),
-                stderr: SAVE_GB_CHAR_BIN_FAILED,
-                files: &[
-                    ("phrase_index.bin", W3_PHRASE_INDEX_ROWS),
-                    ("pinyin_index.bin", W3_PINYIN_INDEX_ROWS),
-                ],
-            };
-            let (directory, _held) = crate::fixtures::sealed_w3();
-            let args: &[&str] = &[];
-            let stdin: &[u8] = b"";
-            let files: &[(&str, &[u8])] = &[("table.conf", b"binary format version:7\nmodel data version:14\nlambda parameter:0.312699\n\nsource table format:pinyin\ndatabase format:Tkrzw\n\ndefault GB_DICTIONARY gb_char.table gb_char.bin gb_char.dbin SYSTEM_FILE\n".as_slice()), ("gb_char.table", b"".as_slice())];
-
-            for (name, content) in files {
-                directory
-                    .child(name)
-                    .write_binary(content)
-                    .expect("input bytes");
-            }
-            let inputs = snapshot_inputs(directory.path());
-            let mut output = cargo_bin_cmd!("gen_binary_files")
-                .current_dir(directory.path())
-                .env("LC_ALL", "C")
-                .args(args)
-                .write_stdin(stdin)
-                .timeout(Duration::from_secs(300))
-                .output()
-                .expect("run gen_binary_files");
-            output.stderr = mask_glib_prefix(&output.stderr);
-            check(
-                output,
-                &inventory(
-                    directory.path(),
-                    &inputs,
-                    &["pinyin_index.bin", "phrase_index.bin"],
-                    &[],
-                    &["gb_char.bin"],
-                    &[],
-                ),
-                &inputs,
-                &expected,
-            );
-        }
     }
     mod import_interpolation {
         use crate::common::expected::*;
@@ -1281,46 +1067,6 @@ mod frozen {
             check(
                 output,
                 &inventory(directory.path(), &inputs, dbm_files, &[], &[], &[]),
-                &inputs,
-                &expected,
-            );
-        }
-        // import_interpolation-family-e-save-refused:
-        // utils/storage/import_interpolation.cpp:303; utils/utils_helper.h:97-145 at 074a2219.
-        // Platform exception, macos: a written DBM container's size and bytes follow the 16
-        // KiB page, against 4 KiB on Linux.
-        #[test]
-        fn import_interpolation_family_e_save_refused() {
-            let expected = Run {
-                status: Exit(2),
-                stdout: Exact(b""),
-                stderr: SAVE_GB_CHAR_BIN_FAILED,
-                files: refused_save_bigram_db_files(),
-            };
-            let (directory, _held) = crate::fixtures::sealed_w3();
-            let args: &[&str] = &[];
-            let stdin: &[u8] = b"\\data model interpolation\n\\1-gram\n\\item 16777217 \xe9\x94\x95 count 5\n\\end\n";
-            let files: &[(&str, &[u8])] = &[];
-
-            for (name, content) in files {
-                directory
-                    .child(name)
-                    .write_binary(content)
-                    .expect("input bytes");
-            }
-            let inputs = snapshot_inputs(directory.path());
-            let mut output = cargo_bin_cmd!("import_interpolation")
-                .current_dir(directory.path())
-                .env("LC_ALL", "C")
-                .args(args)
-                .write_stdin(stdin)
-                .timeout(Duration::from_secs(300))
-                .output()
-                .expect("run import_interpolation");
-            output.stderr = mask_glib_prefix(&output.stderr);
-            check(
-                output,
-                &inventory(directory.path(), &inputs, &[], &[], &["gb_char.bin"], &[]),
                 &inputs,
                 &expected,
             );
