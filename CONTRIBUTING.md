@@ -44,7 +44,11 @@ Advanced [backend](docs/runbooks/backends.md), [oracle](docs/runbooks/oracle.md)
 [measurement](docs/runbooks/benches.md) procedures apply only when that task needs them. Keep model downloads and
 derived data local; they never belong in Git or published images.
 
-A new regression identifies the behaviour it protects, uses reduced input, and explains any substantial fixture or runtime cost. Extend existing cases and helpers where that keeps the test clear. Don't commit bulk observations when a live comparison or a compact expectation suffices.
+## Testing
+
+Test a behaviour where it is implemented. A higher layer tests only the decisions and connections that layer adds. A test must protect a distinct failure mechanism, invariant or external-interface decision that the retained suite does not already protect. Different inputs, issue numbers or execution layers alone do not justify another test.
+
+A new regression uses reduced input and explains any substantial fixture or runtime cost. Extend existing cases and helpers where that keeps the test clear. Don't commit bulk observations when a live comparison or a compact expectation suffices.
 
 ## Contributor responsibility
 

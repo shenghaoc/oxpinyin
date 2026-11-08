@@ -13,6 +13,7 @@ The human documents hold every project rule:
 - [Candidate-frequency comparator ruling](docs/source-policy.md#internal-language-artefacts).
 - [Compatibility policy](docs/findings/compatibility-policy.md).
 - [Contributor procedures](CONTRIBUTING.md).
+- [Testing ownership](CONTRIBUTING.md#testing).
 - [Verification procedure](docs/runbooks/verification.md).
 - [Roadmap](ROADMAP.md).
 
