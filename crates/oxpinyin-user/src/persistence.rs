@@ -2785,7 +2785,7 @@ fn finish_save(
     }
 }
 
-/// [`diff_records`] with an explicit new header total: the pin's `compact`
+/// The sub-index record diff with an explicit new header total: the pin's `compact`
 /// rebuilds a layout-failed empty sub-index and its saved log carries zero
 /// as the new total while the system chunk's old total is unchanged
 /// (`phrase_index.cpp:648-675`).
@@ -2908,7 +2908,7 @@ pub(crate) fn diff_live_records(
     records
 }
 
-/// [`diff_records`] against a changed on-disk sub-index: the pin's
+/// The sub-index record diff against a changed on-disk sub-index: the pin's
 /// `_write_files` diffs the currently mapped chunk (`old`) against the live
 /// sub-index (`new` = loaded original + user overrides) over the union of
 /// resident slots (`SubPhraseIndex::diff`, `phrase_index.cpp:394-442`).

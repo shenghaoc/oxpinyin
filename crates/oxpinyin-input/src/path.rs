@@ -104,13 +104,50 @@ pub fn c_string(path: &OsStr) -> CString {
 ///
 /// # Errors
 ///
-/// The rename's `errno` when it answers a non-zero result.
+/// The rename's `errno` when it answers a non-zero result; on Windows also
+/// the two refusals of `posix_refusal`, a directory over an existing file
+/// (`ENOTDIR`) and a file over an existing directory (`EISDIR`).
 pub fn rename(from: &Path, to: &Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    posix_refusal(from, to)?;
     if native::rename(&c_string(from.as_os_str()), &c_string(to.as_os_str())) {
         Ok(())
     } else {
         Err(std::io::Error::last_os_error())
     }
+}
+
+/// The Windows platform adaptation of the save rename (compatibility-policy.md,
+/// maintainer ruling of 2026-11-03 UTC): the Linux pin's `rename(2)` refuses a
+/// directory over an existing file (`ENOTDIR`) and a file over a directory
+/// (`EISDIR`), while `MoveFileExW` with `MOVEFILE_REPLACE_EXISTING`, which
+/// GLib's `g_rename` calls, moves a `.tmp` directory onto the final file. Both
+/// paths are examined with the native facility (`symlink_metadata`, which does
+/// not follow links) and the refusal is a rename failure, so the caller prints
+/// `rename %s to %s failed.` as it does on Linux. A missing source or
+/// destination is left to `g_rename`.
+#[cfg(windows)]
+fn posix_refusal(from: &Path, to: &Path) -> std::io::Result<()> {
+    use std::io::ErrorKind::{IsADirectory, NotADirectory};
+    let (Ok(source), Ok(destination)) = (
+        std::fs::symlink_metadata(from),
+        std::fs::symlink_metadata(to),
+    ) else {
+        return Ok(());
+    };
+    if source.is_dir() && !destination.is_dir() {
+        return Err(std::io::Error::new(
+            NotADirectory,
+            "rename: a directory over an existing file",
+        ));
+    }
+    if !source.is_dir() && destination.is_dir() {
+        return Err(std::io::Error::new(
+            IsADirectory,
+            "rename: a file over an existing directory",
+        ));
+    }
+    Ok(())
 }
 
 /// `unlink(path)`, with the pin's ignored result (`_clean_user_files` and
@@ -168,6 +205,37 @@ mod tests {
         assert_eq!(under("/", b"/"), "//");
         assert_eq!(under("/u", b"./x"), "/u/./x");
         assert_eq!(under("/u\\", b"\\x"), "/u\\/\\x");
+    }
+
+    /// `rename(2)` refuses a directory over an existing file with `ENOTDIR`
+    /// (POSIX); on Windows `rename` gives the same refusal before `g_rename`,
+    /// whose `MoveFileExW` would move the directory onto the file.
+    #[test]
+    fn a_directory_is_not_renamed_over_a_file() {
+        let scratch = tempfile::tempdir().expect("scratch");
+        let staged = scratch.path().join("user_bigram.db.tmp");
+        let final_path = scratch.path().join("user_bigram.db");
+        std::fs::create_dir(&staged).expect("the staged directory");
+        std::fs::write(&final_path, b"kept").expect("the final file");
+        let error = rename(&staged, &final_path).expect_err("a directory over a file");
+        assert_eq!(error.kind(), std::io::ErrorKind::NotADirectory, "{error}");
+        assert!(staged.is_dir(), "the directory stays");
+        assert_eq!(std::fs::read(&final_path).expect("the final file"), b"kept");
+    }
+
+    /// `rename(2)` refuses a file over an existing directory with `EISDIR`
+    /// (POSIX); on Windows `rename` gives the same refusal before `g_rename`.
+    #[test]
+    fn a_file_is_not_renamed_over_a_directory() {
+        let scratch = tempfile::tempdir().expect("scratch");
+        let staged = scratch.path().join("user_bigram.db.tmp");
+        let final_path = scratch.path().join("user_bigram.db");
+        std::fs::write(&staged, b"staged").expect("the staged file");
+        std::fs::create_dir(&final_path).expect("the final directory");
+        let error = rename(&staged, &final_path).expect_err("a file over a directory");
+        assert_eq!(error.kind(), std::io::ErrorKind::IsADirectory, "{error}");
+        assert_eq!(std::fs::read(&staged).expect("the staged file"), b"staged");
+        assert!(final_path.is_dir(), "the directory stays");
     }
 
     /// The pin's `NULL` first element answers `""`, and a `NULL` name the
