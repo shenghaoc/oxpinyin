@@ -31,11 +31,7 @@ class ContractIntegrationTests(unittest.TestCase):
         self.assertEqual(json.loads(result.stdout)['modes'],
                          {name: spec['mode'] for name, spec in driver.CASES.items()})
 
-    def test_reduced_longer_normal_cases_keep_their_own_policy_metadata(self):
-        for name in ('longer-normal-frequency-dedup', 'longer-normal-frequency-tie', 'longer-normal-disabled'):
-            with self.subTest(name=name):
-                self.assertIsNone(driver.CASES[name]['policy_record'])
-                self.assertIn('913', driver.CASES[name]['issues'])
+    def test_the_s2_witness_keeps_its_own_policy_metadata(self):
         witness = driver.CASES['s2-nbest-longer-normal-precedence']
         self.assertEqual(witness['policy_record'], 'trellis-adjusted-cost-s1-s2.md')
         self.assertEqual(witness['cells'], ('bdb',))

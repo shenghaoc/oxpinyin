@@ -33,3 +33,10 @@ test-group = 'store-backend'
 filter = 'binary(bdb_libpinyin_files) | binary(libpinyin_data_dir)'
 test-group = 'store-backend'
 threads-required = "num-test-threads"
+
+# A backstop for the contract cases, whose runner bounds each nested child
+# itself: a case still running after five minutes is stopped. The slowest
+# case takes a few seconds.
+[[profile.default.overrides]]
+filter = 'binary(contract) | binary(contract_data)'
+slow-timeout = { period = "60s", terminate-after = 5 }
