@@ -55,7 +55,6 @@ class HarnessTests(unittest.TestCase):
             out, err = io.StringIO(), io.StringIO()
             with mock.patch.object(test_runner, 'ROOT', root), \
                     mock.patch.object(test_runner.host, 'allowed_cpus', return_value=set(range(cpus))), \
-                    mock.patch.object(test_runner.mounts, 'filesystem', return_value=filesystem), \
                     contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
                 status = test_runner.run_tools(files, pattern, changed)
             return status, out.getvalue(), err.getvalue()
@@ -109,7 +108,6 @@ class HarnessTests(unittest.TestCase):
             subprocess.run(['git', 'init', '-q', str(root)], check=True, capture_output=True)
             out, err = io.StringIO(), io.StringIO()
             with mock.patch.object(test_runner, 'ROOT', root), \
-                    mock.patch.object(test_runner.mounts, 'filesystem', return_value='ext4'), \
                     mock.patch.dict(os.environ, LC_ALL='C'), \
                     contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
                 status = test_runner.run_tools(changed='not-a-revision')
@@ -370,16 +368,6 @@ print('END ' + name, file=sys.stderr, flush=True)
         self.assertEqual((status, out), (2, ''))
         self.assertIn('not a discovered harness file', err)
 
-    def test_disk_backed_or_unreadable_tmpdir_runs(self):
-        for kind in ('ext4', 'overlay', None):
-            status, out, err = self.fake_run({'tools/bisection/teardown.test.py': "print('launched')"},
-                                             filesystem=kind)
-            self.assertEqual(status, 0, err)
-            self.assertIn('launched', out)
-        for error in (OSError('unreadable'), ValueError('unknown')):
-            with mock.patch.object(test_runner.mounts, 'filesystem', side_effect=error):
-                self.assertIsNone(test_runner.memory_backed_tmpdir())
-
     def test_credential_patterns_match_names_case_insensitively(self):
         removed = ['DEPLOY_KEY', 'npm_token', 'Client_Secret', 'MYSECRETS', 'DB_PASSWORD_FILE', 'GH_PAT',
                    'AWS_CREDENTIALS_FILE', 'GITHUB_TOKEN', 'GH_TOKEN', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY',
@@ -400,7 +388,6 @@ print('END ' + name, file=sys.stderr, flush=True)
                  "print(os.environ.get('OXPINYIN_TEST_TOKEN'), os.environ.get('OXPINYIN_TEST_KEPT'))\n")
         runner = ('import sys\nfrom pathlib import Path\nsys.path.insert(0, sys.argv[2])\n'
                   'from tools.dev import test_runner\ntest_runner.ROOT = Path(sys.argv[1])\n'
-                  'test_runner.mounts.filesystem = lambda path: "ext4"\n'
                   'raise SystemExit(test_runner.run_tools())\n')
         environ, _ = test_runner.harness_environment(os.environ)
         with tempfile.TemporaryDirectory() as temp:

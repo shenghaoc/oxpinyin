@@ -572,7 +572,7 @@ class GateTests(unittest.TestCase):
             'tools/dev/abi.py': {'lint', 'test', 'harness'},
             'tools/dev/new_module.py': {'lint', 'test', 'harness'},
             'tools/oracle/oracle-pin.txt': {'lint', 'test', 'harness', 'ship'},
-            'tools/bisection/teardown.py': {'lint', 'test', 'harness'},
+            'tools/bisection/startup_profile.py': {'lint', 'test', 'harness'},
             'tools/bisection/bisect.c': {'lint', 'test', 'harness'},
             'crates/oxpinyin-corpus/src/lib.rs': {'lint', 'test', 'harness'},
             'crates/oxpinyin-core/src/lib.rs': {'lint', 'test', 'harness', 'ship'},

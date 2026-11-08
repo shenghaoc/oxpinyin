@@ -2,7 +2,7 @@
 
 Schema `oxpinyin-startup-profile-v1`: a header
 line, then one line per regular file, `size<TAB>sha256<TAB>relative path`,
-in path-component order. tools/bisection/teardown.py's provisioner writes
+in path-component order. the teardown provisioner wrote
 it as `profile.manifest`. Measurement tools compare it and hash it as the
 system-data identity. A symlink or any other non-regular entry is an error.
 """
