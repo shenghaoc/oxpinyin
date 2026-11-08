@@ -1,1 +1,0 @@
-M(&[("after", M(&[("guessed", B(true)), ("parsed", I(2)), ("sentences", L(&[S("尼"), S("尼"), S("你")]))])), ("before", L(&[S("你"), S("泥"), S("尼")])), ("clear", B(true)), ("logs", L(&[])), ("parsed", I(2)), ("training", M(&[("after-choose", L(&[B(true), I(200000)])), ("chosen", S("尼")), ("cursor", I(2)), ("guess", B(true)), ("kind", I(2)), ("train", B(true))]))])

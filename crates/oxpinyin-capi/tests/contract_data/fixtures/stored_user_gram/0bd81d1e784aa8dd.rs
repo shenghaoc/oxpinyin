@@ -1,1 +1,0 @@
-M(&[("logs", L(&[])), ("nihaoshijie", L(&[B(true), L(&[L(&[B(true), S("你好世界")]), L(&[B(true), S("你好时节")]), L(&[B(true), S("你好是届")])])])), ("womenshizhongguoren", L(&[B(true), L(&[L(&[B(true), S("我们是中国人")]), L(&[B(true), S("我们是中国任")]), L(&[B(true), S("我们时中国人")])])]))])

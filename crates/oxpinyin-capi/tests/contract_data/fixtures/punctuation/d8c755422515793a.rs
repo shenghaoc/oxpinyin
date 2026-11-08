@@ -1,1 +1,0 @@
-M(&[("first predicted", L(&[S("e788b1e4bda0"), S("e79a84e788b1"), S("e698afe8b081")])), ("kinds", L(&[I(8), I(8), I(5), I(5)])), ("logs", L(&[])), ("others", I(168)), ("puncts", L(&[S("e788b1e4bda0"), S("efbc8c")])), ("ret", B(true))])

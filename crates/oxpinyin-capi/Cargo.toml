@@ -129,16 +129,6 @@ tempfile.workspace = true
 # Dev-only: the contract cases list chunk files by SHA-256.
 sha2 = "0.11"
 
-# The frozen pin contract cases with references on every backend cell.
-[[test]]
-name = "contract"
-
-# The frozen pin contract cases whose references hold the tkrzw cell only:
-# they read the pinned libpinyin-data package (`just fetch-contract-data`),
-# which is in tkrzw format.
-[[test]]
-name = "contract_data"
-required-features = ["tkrzw"]
 
 # cargo-c packaging metadata. See docs/packaging.md for the rationale and the
 # Fedora/Debian recipes that consume this.

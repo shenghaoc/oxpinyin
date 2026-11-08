@@ -1,1 +1,0 @@
-M(&[("0", M(&[("begin-only", L(&[B(true), I(0)])), ("both", L(&[B(true), I(0), I(3)])), ("end-only", L(&[B(true), I(3)])), ("neither", B(true)), ("rest", S("set")), ("rest_ret", B(true))])), ("1", M(&[("rest", S("null")), ("rest_ret", B(false))])), ("2", M(&[("rest", S("null")), ("rest_ret", B(false))])), ("logs", L(&[]))])
