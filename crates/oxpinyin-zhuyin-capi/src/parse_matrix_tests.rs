@@ -139,6 +139,7 @@ fn the_cursor_offset_stops_at_the_divided_column() {
 
 #[test]
 fn the_key_getters_read_the_divided_column() {
+    let _slots = crate::test_support::key_slot_guard();
     let fixture = Fixture::luoma_xian("z-key-divided");
     let mut key: *mut ChewingKey = ptr::null_mut();
     assert!(zhuyin_get_zhuyin_key(fixture.instance, 2, &raw mut key));

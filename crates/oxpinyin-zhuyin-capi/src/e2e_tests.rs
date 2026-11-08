@@ -596,6 +596,7 @@ fn an_unload_index_past_the_sub_indices_aborts() {
 /// `SIZE_MAX` answers `false` with the out-param NULLed.
 #[test]
 fn the_key_accessors_answer_false_at_size_max_on_an_empty_matrix() {
+    let _slots = crate::test_support::key_slot_guard();
     let (context, instance) = open();
     let mut key = std::ptr::NonNull::<crate::types::ChewingKey>::dangling().as_ptr();
     assert!(!crate::cursor::zhuyin_get_zhuyin_key(
@@ -621,6 +622,7 @@ fn the_key_accessors_answer_false_at_size_max_on_an_empty_matrix() {
 /// at 65537..65539, wholly past it; both lengths stay 2.
 #[test]
 fn key_rest_positions_past_byte_65535_wrap() {
+    let _slots = crate::test_support::key_slot_guard();
     let (context, instance) = open();
     assert!(crate::config::zhuyin_set_options(context, 1 << 5));
     assert!(crate::config::zhuyin_set_chewing_scheme(context, 1));
@@ -1279,6 +1281,7 @@ fn null_instance_zhuyin_string_answers() {
 /// non-NULL `begin` or `end` (`zhuyin.cpp:1930-1940`).
 #[test]
 fn key_rest_positions_follow_the_pins_reads() {
+    let _slots = crate::test_support::key_slot_guard();
     let (context, instance) = open();
     assert_eq!(
         zhuyin_parse_more_chewings(instance, cstr("su3cl3").as_ptr()),

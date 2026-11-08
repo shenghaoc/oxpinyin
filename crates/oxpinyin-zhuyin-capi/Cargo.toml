@@ -81,9 +81,9 @@ rstest = { version = "0.28", default-features = false }
 # Dev-only: scratch dirs for the test fixtures. Never a dependency of the
 # C ABI itself.
 tempfile.workspace = true
-# Dev-only: the contract cases list chunk files by SHA-256.
+# Dev-only: the pinned-data handoff test compares a saved user bigram by SHA-256.
 sha2 = "0.11"
-# Dev-only: the contract cases read a refused directory name's errno.
+# Dev-only: the boundary test that cuts a save lowers RLIMIT_FSIZE.
 libc.workspace = true
 
 
