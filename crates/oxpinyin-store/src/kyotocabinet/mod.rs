@@ -401,10 +401,10 @@ impl WriteStore for KcStore {
     /// Creates a raw writable tree with user-file permissions. Production
     /// user-index files use `write_user_index`'s snapshot path below.
     fn create_user(path: &Path) -> Result<Self, StoreError> {
+        // `OpenOptions` creates with mode 0o666 on Unix, the pin's user-file
+        // mode, subject to the process umask; Windows has no file mode.
         let mut file = std::fs::OpenOptions::new();
         file.write(true).create(true).truncate(true);
-        #[cfg(unix)]
-        std::os::unix::fs::OpenOptionsExt::mode(&mut file, 0o666);
         drop(file.open(path).map_err(StoreError::Io)?);
         Self::create(path)
     }

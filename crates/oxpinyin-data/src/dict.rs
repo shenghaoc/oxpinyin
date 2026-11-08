@@ -1279,9 +1279,9 @@ impl AddonDictionary {
         let path = oxpinyin_input::path::build_chunk_path(dir, file.as_ref());
         match std::fs::metadata(&path) {
             // A directory is `MemoryChunk::mmap`'s to judge by its reported
-            // size (`phrase_library::directory_chunk_fault`, Unix only).
-            #[cfg(unix)]
-            Ok(meta) if meta.is_dir() => {}
+            // size where the boundary says the loader opens directories; on
+            // Windows the open is refused and the row is skipped below.
+            Ok(meta) if meta.is_dir() && oxpinyin_input::chunk::opens_directories() => {}
             Ok(meta) if !meta.is_file() => return Ok(false),
             Ok(_) => {}
             Err(error) => {
