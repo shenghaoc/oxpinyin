@@ -25,7 +25,7 @@ fn zhuyin_token_unigram_system() {
         Expect::RESULT,
         |k| b::case(k, "zhuyin-token-unigram-system"),
         raw!(include!(
-            "fixtures/token_unigram_training/1b47f40ec2a18769.rs"
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/token_unigram_training/1b47f40ec2a18769.rs"
         )),
         None,
     );
@@ -39,7 +39,7 @@ fn zhuyin_token_unigram_user_libraries() {
         Expect::RESULT,
         |k| b::case(k, "zhuyin-token-unigram-user-libraries"),
         raw!(include!(
-            "fixtures/token_unigram_training/7405429b7ed8fdc3.rs"
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/token_unigram_training/7405429b7ed8fdc3.rs"
         )),
         None,
     );

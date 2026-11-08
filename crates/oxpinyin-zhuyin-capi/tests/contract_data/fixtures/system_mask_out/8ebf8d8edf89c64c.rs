@@ -1,1 +1,0 @@
-M(&[("files_unchanged", B(true)), ("line", B(true)), ("live_count_unchanged", B(true)), ("live_items_unchanged", B(true)), ("mask", B(true)), ("reopened_count_unchanged", B(true)), ("reopened_items_unchanged", B(true)), ("save", B(true))])

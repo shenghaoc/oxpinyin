@@ -79,7 +79,7 @@ fn issue1114_collision_load_save_zhuyin() {
         Expect::RESULT,
         |k| b::case_with_profile(k, "issue1114-collision-load-save-zhuyin", &PROFILE),
         raw!(include!(
-            "fixtures/bigram_mask_prediction/a4ebf892de124c15.rs"
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/bigram_mask_prediction/a4ebf892de124c15.rs"
         )),
         None,
     );
@@ -93,7 +93,7 @@ fn issue677_mask_save_sequence_zhuyin() {
         Expect::RESULT,
         |k| b::case(k, "issue677-mask-save-sequence-zhuyin"),
         raw!(include!(
-            "fixtures/bigram_mask_prediction/a5c1cd3c222e6c7d.rs"
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/bigram_mask_prediction/a5c1cd3c222e6c7d.rs"
         )),
         None,
     );

@@ -39,7 +39,7 @@ fn matrix_resplit_zhuyin_banangang_plain_exact() {
         Expect::RESULT,
         |k| b::case(k, "matrix-resplit-zhuyin-banangang-plain-exact"),
         raw!(include!(
-            "fixtures/matrix_resplit_windows/e8d98bfc94516b66.rs"
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/matrix_resplit_windows/e8d98bfc94516b66.rs"
         )),
         None,
     );
@@ -53,7 +53,7 @@ fn matrix_resplit_zhuyin_banangang_plain_fuzzy() {
         Expect::RESULT,
         |k| b::case(k, "matrix-resplit-zhuyin-banangang-plain-fuzzy"),
         raw!(include!(
-            "fixtures/matrix_resplit_windows/a9dc0e2c456b967e.rs"
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/matrix_resplit_windows/a9dc0e2c456b967e.rs"
         )),
         None,
     );
@@ -67,7 +67,7 @@ fn matrix_resplit_zhuyin_xian_plain_exact() {
         Expect::RESULT,
         |k| b::case(k, "matrix-resplit-zhuyin-xian-plain-exact"),
         raw!(include!(
-            "fixtures/matrix_resplit_windows/0a58dfd9314eaeeb.rs"
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/matrix_resplit_windows/0a58dfd9314eaeeb.rs"
         )),
         None,
     );
@@ -81,7 +81,7 @@ fn matrix_resplit_zhuyin_xian_plain_fuzzy() {
         Expect::RESULT,
         |k| b::case(k, "matrix-resplit-zhuyin-xian-plain-fuzzy"),
         raw!(include!(
-            "fixtures/matrix_resplit_windows/37626351eb588561.rs"
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/matrix_resplit_windows/37626351eb588561.rs"
         )),
         None,
     );
@@ -95,7 +95,7 @@ fn matrix_resplit_zhuyin_xian_tables_exact() {
         Expect::RESULT,
         |k| b::case(k, "matrix-resplit-zhuyin-xian-tables-exact"),
         raw!(include!(
-            "fixtures/matrix_resplit_windows/0a58dfd9314eaeeb.rs"
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/matrix_resplit_windows/0a58dfd9314eaeeb.rs"
         )),
         None,
     );

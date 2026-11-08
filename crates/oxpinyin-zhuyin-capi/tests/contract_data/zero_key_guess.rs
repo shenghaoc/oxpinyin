@@ -10,7 +10,9 @@ fn zero_key_guess_zhuyin_0x18a_apos_apos_apos_guess_sentence() {
         "zero_key_guess::zero_key_guess_zhuyin_0x18a_apos_apos_apos_guess_sentence",
         Expect::RESULT,
         |k| b::case(k, "zero-key-guess/zhuyin/0x18a/'''/guess_sentence"),
-        raw!(include!("fixtures/zero_key_guess/d774a96b57e82cf0.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/zero_key_guess/d774a96b57e82cf0.rs"
+        )),
         None,
     );
 }
@@ -22,7 +24,9 @@ fn zero_key_guess_zhuyin_0x18a_apos_apos_guess_sentence() {
         "zero_key_guess::zero_key_guess_zhuyin_0x18a_apos_apos_guess_sentence",
         Expect::RESULT,
         |k| b::case(k, "zero-key-guess/zhuyin/0x18a/''/guess_sentence"),
-        raw!(include!("fixtures/zero_key_guess/da8e35701f9b6f9e.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/zero_key_guess/da8e35701f9b6f9e.rs"
+        )),
         None,
     );
 }
@@ -39,7 +43,9 @@ fn zero_key_guess_zhuyin_0x18a_apos_guess_candidates_after_cursor() {
                 "zero-key-guess/zhuyin/0x18a/'/guess_candidates_after_cursor",
             )
         },
-        raw!(include!("fixtures/zero_key_guess/90e1e805489bd526.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/zero_key_guess/90e1e805489bd526.rs"
+        )),
         None,
     );
 }
@@ -56,7 +62,9 @@ fn zero_key_guess_zhuyin_0x18a_apos_guess_candidates_before_cursor() {
                 "zero-key-guess/zhuyin/0x18a/'/guess_candidates_before_cursor",
             )
         },
-        raw!(include!("fixtures/zero_key_guess/90e1e805489bd526.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/zero_key_guess/90e1e805489bd526.rs"
+        )),
         None,
     );
 }
@@ -68,7 +76,9 @@ fn zero_key_guess_zhuyin_0x18a_apos_guess_sentence() {
         "zero_key_guess::zero_key_guess_zhuyin_0x18a_apos_guess_sentence",
         Expect::RESULT,
         |k| b::case(k, "zero-key-guess/zhuyin/0x18a/'/guess_sentence"),
-        raw!(include!("fixtures/zero_key_guess/90e1e805489bd526.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/zero_key_guess/90e1e805489bd526.rs"
+        )),
         None,
     );
 }
@@ -85,7 +95,9 @@ fn zero_key_guess_zhuyin_0x18a_apos_guess_sentence_with_prefix() {
                 "zero-key-guess/zhuyin/0x18a/'/guess_sentence_with_prefix",
             )
         },
-        raw!(include!("fixtures/zero_key_guess/90e1e805489bd526.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/zero_key_guess/90e1e805489bd526.rs"
+        )),
         None,
     );
 }
@@ -97,7 +109,9 @@ fn zero_key_guess_zhuyin_0x20_apos_guess_sentence() {
         "zero_key_guess::zero_key_guess_zhuyin_0x20_apos_guess_sentence",
         Expect::RESULT,
         |k| b::case(k, "zero-key-guess/zhuyin/0x20/'/guess_sentence"),
-        raw!(include!("fixtures/zero_key_guess/934414412bb924c1.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/zero_key_guess/934414412bb924c1.rs"
+        )),
         None,
     );
 }
@@ -109,7 +123,9 @@ fn zero_key_guess_zhuyin_default_apos_apos_apos_guess_sentence() {
         "zero_key_guess::zero_key_guess_zhuyin_default_apos_apos_apos_guess_sentence",
         Expect::RESULT,
         |k| b::case(k, "zero-key-guess/zhuyin/default/'''/guess_sentence"),
-        raw!(include!("fixtures/zero_key_guess/2713c1d16eaf2371.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/zero_key_guess/2713c1d16eaf2371.rs"
+        )),
         None,
     );
 }
@@ -121,7 +137,9 @@ fn zero_key_guess_zhuyin_default_apos_apos_guess_sentence() {
         "zero_key_guess::zero_key_guess_zhuyin_default_apos_apos_guess_sentence",
         Expect::RESULT,
         |k| b::case(k, "zero-key-guess/zhuyin/default/''/guess_sentence"),
-        raw!(include!("fixtures/zero_key_guess/7616661a67db55b3.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/zero_key_guess/7616661a67db55b3.rs"
+        )),
         None,
     );
 }
@@ -138,7 +156,9 @@ fn zero_key_guess_zhuyin_default_apos_guess_candidates_after_cursor() {
                 "zero-key-guess/zhuyin/default/'/guess_candidates_after_cursor",
             )
         },
-        raw!(include!("fixtures/zero_key_guess/934414412bb924c1.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/zero_key_guess/934414412bb924c1.rs"
+        )),
         None,
     );
 }
@@ -155,7 +175,9 @@ fn zero_key_guess_zhuyin_default_apos_guess_candidates_before_cursor() {
                 "zero-key-guess/zhuyin/default/'/guess_candidates_before_cursor",
             )
         },
-        raw!(include!("fixtures/zero_key_guess/934414412bb924c1.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/zero_key_guess/934414412bb924c1.rs"
+        )),
         None,
     );
 }
@@ -167,7 +189,9 @@ fn zero_key_guess_zhuyin_default_apos_guess_sentence() {
         "zero_key_guess::zero_key_guess_zhuyin_default_apos_guess_sentence",
         Expect::RESULT,
         |k| b::case(k, "zero-key-guess/zhuyin/default/'/guess_sentence"),
-        raw!(include!("fixtures/zero_key_guess/934414412bb924c1.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/zero_key_guess/934414412bb924c1.rs"
+        )),
         None,
     );
 }
@@ -184,7 +208,9 @@ fn zero_key_guess_zhuyin_default_apos_guess_sentence_with_prefix() {
                 "zero-key-guess/zhuyin/default/'/guess_sentence_with_prefix",
             )
         },
-        raw!(include!("fixtures/zero_key_guess/934414412bb924c1.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/zero_key_guess/934414412bb924c1.rs"
+        )),
         None,
     );
 }

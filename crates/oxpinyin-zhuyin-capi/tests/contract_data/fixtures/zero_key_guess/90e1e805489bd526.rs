@@ -1,1 +1,0 @@
-M(&[("fresh", M(&[("candidates", L(&[B(true), I(0)])), ("consumed", I(1)), ("parsed_length", I(1)), ("ret", B(false)), ("sentence", L(&[B(false), S("untouched")]))])), ("logs", L(&[])), ("seeded", M(&[("candidates", L(&[B(true), I(0)])), ("consumed", I(1)), ("parsed_length", I(1)), ("ret", B(false)), ("sentence", L(&[B(true), S("你")]))]))])

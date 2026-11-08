@@ -20,7 +20,7 @@ fn non_utf8_directory_zhuyin_both() {
             None
         } else {
             Some(include!(
-                "fixtures/non_utf8_directories/d172c050e709a1ae.rs"
+                "../../../oxpinyin-capi/tests/contract_data/fixtures/non_utf8_directories/d172c050e709a1ae.rs"
             ))
         },
         Some(NO_LOGS),

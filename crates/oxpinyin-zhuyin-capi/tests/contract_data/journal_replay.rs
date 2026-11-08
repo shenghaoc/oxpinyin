@@ -68,7 +68,9 @@ fn removed_extension_candidates_zhuyin() {
             b"open SCRATCH/user-X/user.conf failed."
         }),
         |k| b::case(k, "removed-extension-candidates-zhuyin"),
-        raw!(include!("fixtures/journal_replay/128aa68a47e03eed.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/journal_replay/128aa68a47e03eed.rs"
+        )),
         None,
     );
 }
@@ -116,7 +118,9 @@ fn replay_modify_absent_default_grow_zhuyin() {
         "journal_replay::replay_modify_absent_default_grow_zhuyin",
         Expect::stderr(b""),
         |k| b::case(k, "replay-modify-absent-default-grow-zhuyin"),
-        raw!(include!("fixtures/journal_replay/067ee38fbe26671d.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/journal_replay/067ee38fbe26671d.rs"
+        )),
         Some(&["absent", "ctx", "fresh", "one"]),
     );
 }
@@ -140,7 +144,9 @@ fn replay_modify_header_overlong_zhuyin() {
         "journal_replay::replay_modify_header_overlong_zhuyin",
         Expect::stderr(b""),
         |k| b::case(k, "replay-modify-header-overlong-zhuyin"),
-        raw!(include!("fixtures/journal_replay/67e37978e3b3d97f.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/journal_replay/67e37978e3b3d97f.rs"
+        )),
         Some(&["ctx", "fresh", "last", "one"]),
     );
 }
@@ -231,7 +237,9 @@ fn replay_remove_absent_zhuyin() {
         "journal_replay::replay_remove_absent_zhuyin",
         Expect::stderr(b""),
         |k| b::case(k, "replay-remove-absent-zhuyin"),
-        raw!(include!("fixtures/journal_replay/d6b91d5e2d212be4.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/journal_replay/d6b91d5e2d212be4.rs"
+        )),
         Some(&["absent", "ctx", "fresh", "one"]),
     );
 }
@@ -279,7 +287,9 @@ fn replay_touched_duplicate_invalid_zhuyin() {
         "journal_replay::replay_touched_duplicate_invalid_zhuyin",
         Expect::stderr(b""),
         |k| b::case(k, "replay-touched-duplicate-invalid-zhuyin"),
-        raw!(include!("fixtures/journal_replay/67e37978e3b3d97f.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/journal_replay/67e37978e3b3d97f.rs"
+        )),
         Some(&["ctx", "fresh", "last", "one"]),
     );
 }
@@ -291,7 +301,9 @@ fn replay_touched_many_invalid_zhuyin() {
         "journal_replay::replay_touched_many_invalid_zhuyin",
         Expect::stderr(b""),
         |k| b::case(k, "replay-touched-many-invalid-zhuyin"),
-        raw!(include!("fixtures/journal_replay/67e37978e3b3d97f.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/journal_replay/67e37978e3b3d97f.rs"
+        )),
         Some(&["ctx", "fresh", "last", "one"]),
     );
 }
@@ -351,7 +363,9 @@ fn unigram_lifecycle_repeat_zhuyin() {
         "journal_replay::unigram_lifecycle_repeat_zhuyin",
         Expect::stderr(b""),
         |k| b::case(k, "unigram-lifecycle-repeat-zhuyin"),
-        raw!(include!("fixtures/journal_replay/6ee887f6be90a023.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/journal_replay/6ee887f6be90a023.rs"
+        )),
         None,
     );
 }
@@ -363,7 +377,9 @@ fn unigram_null_user_save_zhuyin() {
         "journal_replay::unigram_null_user_save_zhuyin",
         Expect::stderr(b"open  failed."),
         |k| b::case(k, "unigram-null-user-save-zhuyin"),
-        raw!(include!("fixtures/journal_replay/ccc2e2595ce52868.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/journal_replay/ccc2e2595ce52868.rs"
+        )),
         None,
     );
 }

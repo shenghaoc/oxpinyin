@@ -11,7 +11,9 @@ fn glib_924_array_lifecycle_zhuyin() {
         "glib_arrays::glib_924_array_lifecycle_zhuyin",
         Expect::RESULT,
         b::array_lifecycle,
-        include!("fixtures/glib_arrays/7d9a90ce3d3995ff.rs"),
+        include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/glib_arrays/7d9a90ce3d3995ff.rs"
+        ),
         Some(NO_LOGS),
     );
 }
@@ -70,7 +72,9 @@ fn glib_924_null_array_lookup_zhuyin() {
         "glib_arrays::glib_924_null_array_lookup_zhuyin",
         Expect::RESULT,
         |k| b::null_array(k, false),
-        include!("fixtures/glib_arrays/81787019cbd2092f.rs"),
+        include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/glib_arrays/81787019cbd2092f.rs"
+        ),
         Some(&[
             Log(Some("GLib"), 8),
             Log(Some("GLib"), 8),
@@ -91,7 +95,9 @@ fn glib_924_null_array_pronunciation_zhuyin() {
         "glib_arrays::glib_924_null_array_pronunciation_zhuyin",
         Expect::RESULT,
         |k| b::null_array(k, true),
-        include!("fixtures/glib_arrays/2f2cbcb3845eefd9.rs"),
+        include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/glib_arrays/2f2cbcb3845eefd9.rs"
+        ),
         Some(&[Log(Some("GLib"), 8)]),
     );
 }
