@@ -19,7 +19,7 @@
 //! markers and malformed rows: the pin's `load_db` copies the table and
 //! `save_db` copies it back.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use oxpinyin_core::ChewingKey;
 use oxpinyin_data::row_format::pinyin_index::{
@@ -27,9 +27,7 @@ use oxpinyin_data::row_format::pinyin_index::{
 };
 
 use crate::phrase::MAX_PHRASE_LENGTH;
-
-/// Record header: key length and value length, both little-endian `u32`.
-const HEADER: usize = 8;
+use crate::records::RecordArena;
 
 /// Whether the table keeps one entry per key length between operations,
 /// as the Kyoto Cabinet and tkrzw `ChewingLargeTable2` do: `search` loads
@@ -230,12 +228,8 @@ fn query_key(keys: &[ChewingKey]) -> QueryKey {
 /// The user pinyin index, owned in one arena.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct UserIndex {
-    /// `[u32 key_len][u32 value_len][key][value]` records.
-    arena: Vec<u8>,
-    /// Sorted offsets into `arena`, one per record.
-    offsets: Vec<u32>,
-    /// Records a session edited or created, by key, in key order.
-    overlay: BTreeMap<Vec<u8>, Vec<u8>>,
+    /// The pin's `(key, value)` rows.
+    records: RecordArena,
     /// The pin's per-length entry state for the KC/tkrzw mask walk.
     slots: [Slot; MAX_PHRASE_LENGTH + 1],
 }
@@ -243,9 +237,7 @@ pub(crate) struct UserIndex {
 impl UserIndex {
     pub(crate) const fn new() -> Self {
         Self {
-            arena: Vec::new(),
-            offsets: Vec::new(),
-            overlay: BTreeMap::new(),
+            records: RecordArena::new(),
             slots: [const { Slot::Empty }; MAX_PHRASE_LENGTH + 1],
         }
     }
@@ -261,38 +253,45 @@ impl UserIndex {
         index
     }
 
-    /// Appends one DBM record. The walk is ascending, so offsets stay
-    /// sorted; `finish_load` repairs a walk that is not.
+    /// Appends one DBM record.
     pub(crate) fn push_record(&mut self, key: &[u8], value: &[u8]) {
-        append_record(&mut self.arena, &mut self.offsets, key, value);
+        self.records.push_record(key, value);
     }
 
     /// Sorts the offset vector after a walk that did not arrive in key
     /// order.
     pub(crate) fn finish_load(&mut self) {
-        let arena = &self.arena;
-        self.offsets
-            .sort_by(|left, right| key_at(arena, *left).cmp(key_at(arena, *right)));
+        self.records.finish_load();
     }
 
     /// The value stored under `key`, arena or overlay.
     pub(crate) fn record(&self, key: &[u8]) -> Option<&[u8]> {
-        if let Some(value) = self.overlay.get(key) {
-            return Some(value);
-        }
-        self.arena_record(key)
-    }
-
-    fn arena_record(&self, key: &[u8]) -> Option<&[u8]> {
-        let at = self
-            .offsets
-            .binary_search_by(|offset| key_at(&self.arena, *offset).cmp(key))
-            .ok()?;
-        Some(value_at(&self.arena, self.offsets[at]))
+        self.records.record(key)
     }
 
     pub(crate) fn contains_key(&self, key: &[u8]) -> bool {
-        self.overlay.contains_key(key) || self.arena_record(key).is_some()
+        self.records.contains_key(key)
+    }
+
+    /// Every record in ascending key order: arena records with the
+    /// overlay's edits applied, plus the keys the overlay created.
+    pub(crate) fn rows(&self) -> Vec<(Vec<u8>, Vec<u8>)> {
+        self.records.rows()
+    }
+
+    /// Every key in ascending order, arena and overlay merged.
+    #[cfg(test)]
+    pub(crate) fn keys(&self) -> Vec<Vec<u8>> {
+        self.records.keys()
+    }
+
+    /// Visits every record in ascending key order, arena and overlay
+    /// merged, without materialising a row vector.
+    pub(crate) fn for_each_record<E>(
+        &self,
+        visit: impl FnMut(&[u8], &[u8]) -> Result<(), E>,
+    ) -> Result<(), E> {
+        self.records.for_each_record(visit)
     }
 
     /// Whether the exact bytes `key` names a table row. Used by the
@@ -335,7 +334,7 @@ impl UserIndex {
             if !self.contains_key(&key) {
                 let mut bytes = Vec::new();
                 Entry::new(&mut bytes, len).add_index(keys, token);
-                self.overlay.insert(key.clone(), bytes);
+                self.records.insert(key.clone(), bytes);
                 self.create_prefixes(&key);
                 // A new key is built in a local entry; the length's shared
                 // entry keeps what it held (`add_index_internal`,
@@ -348,7 +347,7 @@ impl UserIndex {
             if Entry::new(&mut bytes, len).add_index(keys, token) {
                 inserted = true;
             }
-            self.overlay.insert(key.clone(), bytes);
+            self.records.insert(key.clone(), bytes);
             *self.slot_mut(len) = Slot::Record(key);
         }
         inserted
@@ -364,7 +363,7 @@ impl UserIndex {
             if self.contains_key(&prefix) {
                 break;
             }
-            self.overlay.insert(prefix, Vec::new());
+            self.records.insert(prefix, Vec::new());
         }
     }
 
@@ -380,7 +379,7 @@ impl UserIndex {
                 return false;
             };
             let removed = Entry::new(&mut bytes, len).remove_index(keys, token);
-            self.overlay.insert(key.clone(), bytes);
+            self.records.insert(key.clone(), bytes);
             *self.slot_mut(len) = Slot::Record(key);
             if !removed {
                 return false;
@@ -420,7 +419,7 @@ impl UserIndex {
             return;
         }
         let mut lengths = [false; MAX_PHRASE_LENGTH + 1];
-        for key in self.keys_starting_with(&prefix) {
+        for key in self.records.keys_starting_with(&prefix) {
             if key.len() == prefix.len() {
                 continue;
             }
@@ -454,37 +453,30 @@ impl UserIndex {
         });
         #[cfg(not(any(feature = "kyotocabinet", feature = "tkrzw")))]
         let mut scratch = Vec::new();
-        let mut arena = Vec::with_capacity(self.arena.len());
-        let mut offsets = Vec::with_capacity(self.offsets.len() + self.overlay.len());
-        let Ok(()) = self.for_each_record::<std::convert::Infallible>(|key, record| {
+        self.records.rebuild(|key, record, kept| {
             let len = key.len() / 2;
             if len == 0 || len > MAX_PHRASE_LENGTH {
-                append_record(&mut arena, &mut offsets, key, record);
-                return Ok(());
+                kept.extend_from_slice(record);
+                return;
             }
             #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
-            let masked = {
+            {
                 let chunk = &mut chunks[len];
                 if chunk.len() < record.len() {
                     chunk.resize(record.len(), 0);
                 }
                 chunk[..record.len()].copy_from_slice(record);
                 Entry::new(chunk, len).mask_out(mask, value);
-                chunk.as_slice()
-            };
+                kept.extend_from_slice(chunk);
+            }
             #[cfg(not(any(feature = "kyotocabinet", feature = "tkrzw")))]
-            let masked = {
+            {
                 scratch.clear();
                 scratch.extend_from_slice(record);
                 Entry::new(&mut scratch, len).mask_out(mask, value);
-                scratch.as_slice()
-            };
-            append_record(&mut arena, &mut offsets, key, masked);
-            Ok(())
+                kept.extend_from_slice(&scratch);
+            }
         });
-        self.arena = arena;
-        self.offsets = offsets;
-        self.overlay.clear();
         #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
         for (len, chunk) in chunks.into_iter().enumerate().skip(1) {
             *self.slot_mut(len) = if chunk.is_empty() {
@@ -493,38 +485,6 @@ impl UserIndex {
                 Slot::Bytes(chunk)
             };
         }
-    }
-
-    /// Visits every record in ascending key order, arena and overlay
-    /// merged, without materialising a row vector.
-    pub(crate) fn for_each_record<E>(
-        &self,
-        mut visit: impl FnMut(&[u8], &[u8]) -> Result<(), E>,
-    ) -> Result<(), E> {
-        let mut overlay = self.overlay.iter().peekable();
-        for offset in &self.offsets {
-            let key = key_at(&self.arena, *offset);
-            while let Some((overlay_key, overlay_value)) = overlay.peek() {
-                if overlay_key.as_slice() < key {
-                    visit(overlay_key, overlay_value)?;
-                    overlay.next();
-                } else {
-                    break;
-                }
-            }
-            if let Some((overlay_key, overlay_value)) = overlay.peek()
-                && overlay_key.as_slice() == key
-            {
-                visit(overlay_key, overlay_value)?;
-                overlay.next();
-            } else {
-                visit(key, value_at(&self.arena, *offset))?;
-            }
-        }
-        for (key, value) in overlay {
-            visit(key, value)?;
-        }
-        Ok(())
     }
 
     fn slot_mut(&mut self, len: usize) -> &mut Slot {
@@ -545,7 +505,7 @@ impl UserIndex {
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn indexed_set(&self) -> BTreeSet<(u32, Vec<u16>)> {
         let mut set = BTreeSet::new();
-        for (key, value) in self.rows() {
+        for (key, value) in self.records.rows() {
             if value.is_empty() || !key.len().is_multiple_of(2) {
                 continue;
             }
@@ -563,79 +523,6 @@ impl UserIndex {
             }
         }
         set
-    }
-
-    /// Every key in ascending order, arena and overlay merged.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn keys(&self) -> Vec<Vec<u8>> {
-        let mut keys: Vec<Vec<u8>> = self
-            .offsets
-            .iter()
-            .map(|offset| key_at(&self.arena, *offset).to_vec())
-            .collect();
-        for key in self.overlay.keys() {
-            if !self.contains_arena_key(key) {
-                keys.push(key.clone());
-            }
-        }
-        keys.sort();
-        keys
-    }
-
-    fn contains_arena_key(&self, key: &[u8]) -> bool {
-        self.offsets
-            .binary_search_by(|offset| key_at(&self.arena, *offset).cmp(key))
-            .is_ok()
-    }
-
-    /// The keys extending `prefix`, arena and overlay merged in order.
-    pub(crate) fn keys_starting_with(&self, prefix: &[u8]) -> Vec<Vec<u8>> {
-        let mut keys: Vec<Vec<u8>> = Vec::new();
-        let start = self
-            .offsets
-            .partition_point(|offset| key_at(&self.arena, *offset) < prefix);
-        for offset in &self.offsets[start..] {
-            let key = key_at(&self.arena, *offset);
-            if !key.starts_with(prefix) {
-                break;
-            }
-            keys.push(key.to_vec());
-        }
-        for (key, _) in self.overlay.range(prefix.to_vec()..) {
-            if !key.starts_with(prefix) {
-                break;
-            }
-            if !self.contains_arena_key(key) {
-                keys.push(key.clone());
-            }
-        }
-        keys.sort();
-        keys
-    }
-
-    /// Every record in ascending key order: arena records with the
-    /// overlay's edits applied, plus the keys the overlay created.
-    pub(crate) fn rows(&self) -> Vec<(Vec<u8>, Vec<u8>)> {
-        let mut rows: Vec<(Vec<u8>, Vec<u8>)> = self
-            .offsets
-            .iter()
-            .map(|offset| {
-                let key = key_at(&self.arena, *offset);
-                let value = self
-                    .overlay
-                    .get(key)
-                    .cloned()
-                    .unwrap_or_else(|| value_at(&self.arena, *offset).to_vec());
-                (key.to_vec(), value)
-            })
-            .collect();
-        for (key, value) in &self.overlay {
-            if !self.contains_arena_key(key) {
-                rows.push((key.clone(), value.clone()));
-            }
-        }
-        rows.sort_by(|left, right| left.0.cmp(&right.0));
-        rows
     }
 
     /// `ChewingLargeTable2::search` over the stored records: the query's
@@ -679,7 +566,7 @@ impl UserIndex {
         }
         let prefix_key = query_key(prefix);
         let mut tokens = Vec::new();
-        for key in self.keys_starting_with(&prefix_key) {
+        for key in self.records.keys_starting_with(&prefix_key) {
             if key.len() <= prefix_key.len() || !key.len().is_multiple_of(2) {
                 continue;
             }
@@ -705,9 +592,9 @@ impl UserIndex {
     /// value-only save: the derived table is authoritative and the caller's
     /// index carries the retained empty keys.
     pub(crate) fn merge_missing(&mut self, other: &Self) {
-        for (key, value) in other.rows() {
+        for (key, value) in other.records.rows() {
             if !self.contains_key(&key) {
-                self.overlay.insert(key, value);
+                self.records.insert(key, value);
             }
         }
     }
@@ -718,8 +605,7 @@ impl UserIndex {
     #[must_use]
     pub(crate) fn overlong_keys(&self) -> Vec<Vec<u16>> {
         let mut overlong = Vec::new();
-        for offset in &self.offsets {
-            let key = key_at(&self.arena, *offset);
+        for key in self.records.arena_keys() {
             if key.len() < 2 {
                 overlong.push(Vec::new());
             } else if key.len() / 2 > MAX_PHRASE_LENGTH {
@@ -734,17 +620,6 @@ impl UserIndex {
         }
         overlong
     }
-}
-
-/// Appends one `[u32 key_len][u32 value_len][key][value]` record and its
-/// offset.
-fn append_record(arena: &mut Vec<u8>, offsets: &mut Vec<u32>, key: &[u8], value: &[u8]) {
-    let offset = u32::try_from(arena.len()).unwrap_or(u32::MAX);
-    arena.extend_from_slice(&u32::try_from(key.len()).unwrap_or(u32::MAX).to_le_bytes());
-    arena.extend_from_slice(&u32::try_from(value.len()).unwrap_or(u32::MAX).to_le_bytes());
-    arena.extend_from_slice(key);
-    arena.extend_from_slice(value);
-    offsets.push(offset);
 }
 
 /// Whether `pinyin_compare_with_tones` (`pinyin_phrase3.h:111-142` at
@@ -778,21 +653,6 @@ fn record_matches_with_tones(query: &[ChewingKey], record: &[u8]) -> bool {
 /// The `phrase_token_t` leading a `PinyinIndexItem2` record.
 fn record_token(record: &[u8]) -> u32 {
     u32::from_le_bytes([record[0], record[1], record[2], record[3]])
-}
-
-fn key_at(arena: &[u8], offset: u32) -> &[u8] {
-    let at = offset as usize;
-    let len = u32::from_le_bytes([arena[at], arena[at + 1], arena[at + 2], arena[at + 3]]) as usize;
-    &arena[at + HEADER..at + HEADER + len]
-}
-
-fn value_at(arena: &[u8], offset: u32) -> &[u8] {
-    let at = offset as usize;
-    let key_len =
-        u32::from_le_bytes([arena[at], arena[at + 1], arena[at + 2], arena[at + 3]]) as usize;
-    let value_len =
-        u32::from_le_bytes([arena[at + 4], arena[at + 5], arena[at + 6], arena[at + 7]]) as usize;
-    &arena[at + HEADER + key_len..at + HEADER + key_len + value_len]
 }
 
 fn value_has_reading(value: &[u8], len: usize, token: u32, packed: &[u16]) -> bool {
@@ -909,10 +769,14 @@ mod tests {
         assert!(index.suggest(&full[..1]).is_empty());
         assert!(index.has_prefix(&full));
         assert!(!index.has_prefix(&pair(3, 4)[..1]));
-        // An empty overlay marker is a stored key.
-        index
-            .overlay
-            .insert(encode_complete_key(&pair(3, 4)[..1]), Vec::new());
+        // Adding a longer key creates its empty prefix marker, which counts
+        // as a stored key.
+        assert!(index.add(&pair(3, 4), 8));
+        assert!(
+            index
+                .record(&encode_complete_key(&pair(3, 4)[..1]))
+                .is_some_and(<[u8]>::is_empty)
+        );
         assert!(index.has_prefix(&pair(3, 4)[..1]));
         assert!(!index.has_prefix(&pair(5, 6)[..1]));
     }

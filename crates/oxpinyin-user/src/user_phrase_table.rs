@@ -7,63 +7,59 @@
 //! key order. Empty prefix markers, duplicate tokens and malformed rows are
 //! state and are kept verbatim.
 
-use std::collections::BTreeMap;
-
 use oxpinyin_store::StoreError;
 
 #[cfg(test)]
 use crate::phrase_table::ERROR_OK;
 use crate::phrase_table::{PhraseTableEntry, key_ucs4, search_bytes};
-
-const HEADER: usize = 8;
+use crate::records::RecordArena;
 
 /// One suggestion row: the raw key and its stored tokens.
 type SuggestionRows = Vec<(Vec<u8>, Vec<u32>)>;
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct UserPhraseTable {
-    arena: Vec<u8>,
-    offsets: Vec<u32>,
-    overlay: BTreeMap<Vec<u8>, Vec<u8>>,
+    records: RecordArena,
 }
 
 impl UserPhraseTable {
     #[cfg(test)]
     pub(crate) const fn new() -> Self {
         Self {
-            arena: Vec::new(),
-            offsets: Vec::new(),
-            overlay: BTreeMap::new(),
+            records: RecordArena::new(),
         }
     }
 
     pub(crate) fn push_record(&mut self, key: &[u8], value: &[u8]) {
-        append_record(&mut self.arena, &mut self.offsets, key, value);
+        self.records.push_record(key, value);
     }
 
     pub(crate) fn finish_load(&mut self) {
-        let arena = &self.arena;
-        self.offsets
-            .sort_by(|left, right| key_at(arena, *left).cmp(key_at(arena, *right)));
+        self.records.finish_load();
     }
 
     pub(crate) fn record(&self, key: &[u8]) -> Option<&[u8]> {
-        if let Some(value) = self.overlay.get(key) {
-            return Some(value);
-        }
-        self.arena_record(key)
-    }
-
-    fn arena_record(&self, key: &[u8]) -> Option<&[u8]> {
-        let at = self
-            .offsets
-            .binary_search_by(|offset| key_at(&self.arena, *offset).cmp(key))
-            .ok()?;
-        Some(value_at(&self.arena, self.offsets[at]))
+        self.records.record(key)
     }
 
     pub(crate) fn contains_key(&self, key: &[u8]) -> bool {
-        self.overlay.contains_key(key) || self.arena_record(key).is_some()
+        self.records.contains_key(key)
+    }
+
+    /// Every record in ascending key order: arena records with the
+    /// overlay's edits applied, plus the keys the overlay created.
+    #[cfg(test)]
+    pub(crate) fn rows(&self) -> Vec<(Vec<u8>, Vec<u8>)> {
+        self.records.rows()
+    }
+
+    /// Visits every record in ascending key order, arena and overlay
+    /// merged, without materialising a row vector.
+    pub(crate) fn for_each_record<E>(
+        &self,
+        visit: impl FnMut(&[u8], &[u8]) -> Result<(), E>,
+    ) -> Result<(), E> {
+        self.records.for_each_record(visit)
     }
 
     /// `PhraseTableEntry::add_index` for `words`; creates the key and its
@@ -77,13 +73,13 @@ impl UserPhraseTable {
             Some(bytes) => {
                 let mut entry = PhraseTableEntry::from_bytes(bytes.to_vec())?;
                 let result = entry.add_index(token);
-                self.overlay.insert(key.clone(), entry.as_bytes().to_vec());
+                self.records.insert(key.clone(), entry.as_bytes().to_vec());
                 (result, false)
             }
             None => {
                 let mut entry = PhraseTableEntry::default();
                 let result = entry.add_index(token);
-                self.overlay.insert(key.clone(), entry.as_bytes().to_vec());
+                self.records.insert(key.clone(), entry.as_bytes().to_vec());
                 (result, true)
             }
         };
@@ -93,7 +89,7 @@ impl UserPhraseTable {
                 if self.contains_key(&prefix) {
                     break;
                 }
-                self.overlay.insert(prefix, Vec::new());
+                self.records.insert(prefix, Vec::new());
             }
         }
         Ok(result)
@@ -127,7 +123,7 @@ impl UserPhraseTable {
         };
         let mut entry = PhraseTableEntry::from_bytes(bytes)?;
         let result = entry.remove_index(token);
-        self.overlay.insert(key, entry.as_bytes().to_vec());
+        self.records.insert(key, entry.as_bytes().to_vec());
         Ok(result)
     }
 
@@ -144,10 +140,8 @@ impl UserPhraseTable {
     pub(crate) fn mask(&mut self, mask: u32, value: u32) -> Result<(), StoreError> {
         #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
         let mut reused = PhraseTableEntry::default();
-        let mut arena = Vec::with_capacity(self.arena.len());
-        let mut offsets = Vec::with_capacity(self.offsets.len() + self.overlay.len());
         let mut failed = None;
-        let Ok(()) = self.for_each_record::<std::convert::Infallible>(|key, bytes| {
+        self.records.rebuild(|_key, bytes, kept| {
             if failed.is_none() {
                 #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
                 let masked = reused.set_content(bytes).map(|()| {
@@ -164,81 +158,15 @@ impl UserPhraseTable {
                 });
                 match masked {
                     Ok(masked) => {
-                        append_record(&mut arena, &mut offsets, key, masked);
-                        return Ok(());
+                        kept.extend_from_slice(masked);
+                        return;
                     }
                     Err(error) => failed = Some(error),
                 }
             }
-            append_record(&mut arena, &mut offsets, key, bytes);
-            Ok(())
+            kept.extend_from_slice(bytes);
         });
-        self.arena = arena;
-        self.offsets = offsets;
-        self.overlay.clear();
         failed.map_or(Ok(()), Err)
-    }
-
-    /// Visits every record in ascending key order, arena and overlay
-    /// merged, without materialising a row vector.
-    pub(crate) fn for_each_record<E>(
-        &self,
-        mut visit: impl FnMut(&[u8], &[u8]) -> Result<(), E>,
-    ) -> Result<(), E> {
-        let mut overlay = self.overlay.iter().peekable();
-        for offset in &self.offsets {
-            let key = key_at(&self.arena, *offset);
-            while let Some((overlay_key, overlay_value)) = overlay.peek() {
-                if overlay_key.as_slice() < key {
-                    visit(overlay_key, overlay_value)?;
-                    overlay.next();
-                } else {
-                    break;
-                }
-            }
-            if let Some((overlay_key, overlay_value)) = overlay.peek()
-                && overlay_key.as_slice() == key
-            {
-                visit(overlay_key, overlay_value)?;
-                overlay.next();
-            } else {
-                visit(key, value_at(&self.arena, *offset))?;
-            }
-        }
-        for (key, value) in overlay {
-            visit(key, value)?;
-        }
-        Ok(())
-    }
-
-    #[cfg(test)]
-    pub(crate) fn rows(&self) -> Vec<(Vec<u8>, Vec<u8>)> {
-        let mut rows: Vec<(Vec<u8>, Vec<u8>)> = self
-            .offsets
-            .iter()
-            .map(|offset| {
-                let key = key_at(&self.arena, *offset);
-                let value = self
-                    .overlay
-                    .get(key)
-                    .cloned()
-                    .unwrap_or_else(|| value_at(&self.arena, *offset).to_vec());
-                (key.to_vec(), value)
-            })
-            .collect();
-        for (key, value) in &self.overlay {
-            if !self.contains_arena_key(key) {
-                rows.push((key.clone(), value.clone()));
-            }
-        }
-        rows.sort_by(|left, right| left.0.cmp(&right.0));
-        rows
-    }
-
-    fn contains_arena_key(&self, key: &[u8]) -> bool {
-        self.offsets
-            .binary_search_by(|offset| key_at(&self.arena, *offset).cmp(key))
-            .is_ok()
     }
 
     /// Tokens stored under the exact key, in record order.
@@ -257,7 +185,9 @@ impl UserPhraseTable {
             return Ok(Vec::new());
         }
         let mut out = Vec::new();
-        for key in self.keys_starting_with(prefix) {
+        let mut keys = self.records.keys_starting_with(prefix);
+        keys.dedup();
+        for key in keys {
             if key.len() <= prefix.len() {
                 continue;
             }
@@ -270,57 +200,6 @@ impl UserPhraseTable {
         }
         Ok(out)
     }
-
-    fn keys_starting_with(&self, prefix: &[u8]) -> Vec<Vec<u8>> {
-        let mut keys = Vec::new();
-        let start = self
-            .offsets
-            .partition_point(|offset| key_at(&self.arena, *offset) < prefix);
-        for offset in &self.offsets[start..] {
-            let key = key_at(&self.arena, *offset);
-            if !key.starts_with(prefix) {
-                break;
-            }
-            keys.push(key.to_vec());
-        }
-        for (key, _) in self.overlay.range(prefix.to_vec()..) {
-            if !key.starts_with(prefix) {
-                break;
-            }
-            if !self.contains_arena_key(key) {
-                keys.push(key.clone());
-            }
-        }
-        keys.sort();
-        keys.dedup();
-        keys
-    }
-}
-
-/// Appends one `[u32 key_len][u32 value_len][key][value]` record and its
-/// offset.
-fn append_record(arena: &mut Vec<u8>, offsets: &mut Vec<u32>, key: &[u8], value: &[u8]) {
-    let offset = u32::try_from(arena.len()).unwrap_or(u32::MAX);
-    arena.extend_from_slice(&u32::try_from(key.len()).unwrap_or(u32::MAX).to_le_bytes());
-    arena.extend_from_slice(&u32::try_from(value.len()).unwrap_or(u32::MAX).to_le_bytes());
-    arena.extend_from_slice(key);
-    arena.extend_from_slice(value);
-    offsets.push(offset);
-}
-
-fn key_at(arena: &[u8], offset: u32) -> &[u8] {
-    let at = offset as usize;
-    let len = u32::from_le_bytes([arena[at], arena[at + 1], arena[at + 2], arena[at + 3]]) as usize;
-    &arena[at + HEADER..at + HEADER + len]
-}
-
-fn value_at(arena: &[u8], offset: u32) -> &[u8] {
-    let at = offset as usize;
-    let key_len =
-        u32::from_le_bytes([arena[at], arena[at + 1], arena[at + 2], arena[at + 3]]) as usize;
-    let value_len =
-        u32::from_le_bytes([arena[at + 4], arena[at + 5], arena[at + 6], arena[at + 7]]) as usize;
-    &arena[at + HEADER + key_len..at + HEADER + key_len + value_len]
 }
 
 #[cfg(test)]

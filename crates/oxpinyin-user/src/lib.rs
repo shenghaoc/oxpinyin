@@ -44,6 +44,7 @@ mod live_system;
 mod lookup;
 mod model;
 pub mod persistence;
+mod records;
 mod replay;
 mod store;
 pub(crate) mod store_libpinyin;
