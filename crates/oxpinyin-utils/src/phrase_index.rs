@@ -97,5 +97,8 @@ pub fn load_system_phrases() -> SystemPhraseIndex {
 /// A `table.conf` file name as a C string for the pin's `%s`.
 fn c_name(name: &FileName) -> CString {
     let os: &OsStr = name.as_ref();
-    CString::new(os.as_encoded_bytes()).unwrap_or_default()
+    CString::new(oxpinyin_input::path::path_to_bytes(std::path::Path::new(
+        os,
+    )))
+    .unwrap_or_default()
 }

@@ -126,15 +126,7 @@ impl FileName {
     /// The name made of `bytes`.
     #[must_use]
     pub fn from_bytes(bytes: &[u8]) -> Self {
-        #[cfg(unix)]
-        {
-            use std::os::unix::ffi::OsStrExt as _;
-            Self(OsStr::from_bytes(bytes).to_owned())
-        }
-        #[cfg(not(unix))]
-        {
-            Self(oxpinyin_input::path::decode_filename_bytes(bytes).into_os_string())
-        }
+        Self(oxpinyin_input::path::path_from_bytes(bytes).into_os_string())
     }
 
     /// The name with `suffix` appended (`g_strdup_printf("%s.tmp", name)`).
@@ -473,18 +465,10 @@ impl TableConf {
     /// As [`Self::load`]; a path holding a NUL is
     /// [`TableConfError::Unopenable`].
     pub fn load_path(path: &Path) -> Result<Self, TableConfError> {
-        #[cfg(not(windows))]
-        {
-            let filename = oxpinyin_input::c_path(path).ok_or(TableConfError::Unopenable)?;
-            Self::load(&filename)
+        if oxpinyin_input::path::path_to_bytes(path).contains(&0) {
+            return Err(TableConfError::Unopenable);
         }
-        #[cfg(windows)]
-        {
-            if path.as_os_str().as_encoded_bytes().contains(&0) {
-                return Err(TableConfError::Unopenable);
-            }
-            Self::load(path)
-        }
+        Self::load(path)
     }
 
     /// `SystemTableInfo2::load` of `table.conf` in `system_dir`, named as

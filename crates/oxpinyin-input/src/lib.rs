@@ -51,7 +51,7 @@ use std::path::Path;
 /// encodes them, or `None` when they hold a NUL, which no C path can.
 #[must_use]
 pub fn c_path(path: &Path) -> Option<CString> {
-    CString::new(path.as_os_str().as_encoded_bytes()).ok()
+    CString::new(path::path_to_bytes(path)).ok()
 }
 
 /// A filename from a Rust path or an internal C-string interface.

@@ -68,15 +68,7 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
 
 /// One index file's path as the store opens it.
 fn path_of(name: &CStr) -> PathBuf {
-    #[cfg(unix)]
-    {
-        use std::os::unix::ffi::OsStrExt as _;
-        PathBuf::from(std::ffi::OsStr::from_bytes(name.to_bytes()))
-    }
-    #[cfg(not(unix))]
-    {
-        oxpinyin_input::path::decode_filename(name)
-    }
+    oxpinyin_input::path::path_from_bytes(name.to_bytes())
 }
 
 /// The rows one `generate_binary_files` call walks (default or addon).
@@ -142,15 +134,11 @@ fn generate_binary_files(
 pub(crate) fn load_chewing(table: Option<&Tree>, file: &mut TableFile, phonetic: PhoneticType) {
     while let Some(record) = read_pinyin_record(file) {
         let len = tool::utf8_strlen(&record.phrase);
-        // GLib returns the host glong. The bounded phrase fits either ABI;
-        // compare at the Linux pin's width after the call.
-        #[cfg(windows)]
-        let len = i64::from(len);
         let keys = match phonetic {
             PhoneticType::Pinyin => pinyin::parse(&record.pinyin),
             PhoneticType::Zhuyin => pinyin::parse_zhuyin(&record.pinyin),
         };
-        if len != i64::try_from(keys.len()).unwrap_or(i64::MAX) {
+        if usize::try_from(len).ok() != Some(keys.len()) {
             tool::storage::report_chewing_skip(
                 &record.pinyin,
                 &record.phrase,

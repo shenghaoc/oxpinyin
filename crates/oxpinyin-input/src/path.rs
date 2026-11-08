@@ -23,13 +23,16 @@ use crate::native;
 /// with U+FFFD. The C string already ends at its first NUL.
 #[must_use]
 pub fn decode_filename(name: &CStr) -> PathBuf {
-    decode_filename_bytes(name.to_bytes())
+    path_from_bytes(name.to_bytes())
 }
 
-/// Decode filename bytes already extracted from a C string or table field.
-/// NUL handling belongs to the caller, as it does at the C-string boundary.
+/// A pin byte path as the Rust path that opens it.
+///
+/// Unix keeps the bytes. Windows decodes UTF-8 and replaces invalid input
+/// with U+FFFD, because its C paths are UTF-8. NUL handling belongs to the
+/// caller, as it does at the C-string boundary.
 #[must_use]
-pub fn decode_filename_bytes(bytes: &[u8]) -> PathBuf {
+pub fn path_from_bytes(bytes: &[u8]) -> PathBuf {
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStrExt as _;
@@ -38,6 +41,44 @@ pub fn decode_filename_bytes(bytes: &[u8]) -> PathBuf {
     #[cfg(not(unix))]
     {
         PathBuf::from(String::from_utf8_lossy(bytes).into_owned())
+    }
+}
+
+/// A pin byte path as the Rust path that opens it, `None` where the
+/// platform cannot represent the bytes.
+///
+/// Unix accepts every byte. Windows requires UTF-8, as the pin's tools do
+/// for a `CStr` filename; invalid input names no path. "Checked" refers to
+/// the encoding alone: NULs, existence and filename validity are not
+/// examined.
+#[must_use]
+pub fn path_from_bytes_checked(bytes: &[u8]) -> Option<PathBuf> {
+    #[cfg(unix)]
+    {
+        Some(path_from_bytes(bytes))
+    }
+    #[cfg(not(unix))]
+    {
+        std::str::from_utf8(bytes).ok().map(PathBuf::from)
+    }
+}
+
+/// A Rust path as the pin's byte path.
+///
+/// Unix keeps the path's bytes. Windows uses the encoded `OsStr` bytes,
+/// which are WTF-8; they are UTF-8 only when the path is well-formed
+/// UTF-16. A NUL is kept, so the caller can refuse it where a C `%s` would
+/// end the name.
+#[must_use]
+pub fn path_to_bytes(path: &Path) -> &[u8] {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt as _;
+        path.as_os_str().as_bytes()
+    }
+    #[cfg(not(unix))]
+    {
+        path.as_os_str().as_encoded_bytes()
     }
 }
 
@@ -90,7 +131,7 @@ pub fn build_bytes(dir: Option<&Path>, name: Option<&str>) -> Vec<u8> {
 /// `path` as a C string, cut at a NUL as the pin's `%s` input would be.
 #[must_use]
 pub fn c_string(path: &OsStr) -> CString {
-    let bytes = path.as_encoded_bytes();
+    let bytes = path_to_bytes(Path::new(path));
     let end = bytes
         .iter()
         .position(|&byte| byte == 0)
@@ -265,5 +306,20 @@ mod tests {
         unlink(&to);
         assert!(!to.exists());
         unlink(&to);
+    }
+
+    /// The pair round-trips Unix bytes, and on Windows round-trips only
+    /// UTF-8 paths. A path with an unpaired surrogate is representable but
+    /// lossy through `path_from_bytes`. This is not a lossless Windows path
+    /// codec.
+    #[test]
+    fn paths_round_trip_and_the_checked_form_follows_the_platform() {
+        let path = Path::new("/u/name");
+        assert_eq!(path_from_bytes(path_to_bytes(path)), path.to_path_buf());
+        let bytes = b"/u/m\xff";
+        #[cfg(unix)]
+        assert_eq!(path_from_bytes_checked(bytes), Some(path_from_bytes(bytes)));
+        #[cfg(not(unix))]
+        assert_eq!(path_from_bytes_checked(bytes), None);
     }
 }

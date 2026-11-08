@@ -18,19 +18,11 @@ use oxpinyin_store::{AttachMode, StoreError};
 
 use crate::records::{KMixtureModelArrayHeader, KMixtureModelMagicHeader, KmmBigram, KmmGram};
 
-/// `filename` as a Rust path: on Unix the C string's bytes are the path,
-/// elsewhere the narrow name is UTF-8.
+/// `filename` as a Rust path: on Unix the C string's bytes are the path;
+/// Windows takes its UTF-8 and refuses bytes that are not UTF-8.
 #[must_use]
 pub fn open_path(filename: &CStr) -> Option<PathBuf> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::ffi::OsStrExt as _;
-        Some(std::ffi::OsStr::from_bytes(filename.to_bytes()).into())
-    }
-    #[cfg(not(unix))]
-    {
-        filename.to_str().ok().map(Into::into)
-    }
+    oxpinyin_input::path::path_from_bytes_checked(filename.to_bytes())
 }
 
 /// One `KMixtureModelBigram` after its `attach`.
