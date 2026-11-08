@@ -163,7 +163,7 @@ class ImageTests(unittest.TestCase):
         before = images.image_tag()
         copied = self.directory / 'tree'
         for path in ('tools/oracle/Dockerfile.oracle', 'tools/oracle/build-oracle.sh', 'tools/oracle/version-manifest.json',
-                     'tools/oracle/versions.py', 'tools/tkrzw/distro-probe.sh', 'tools/lib/bash-floor.sh', 'tools/oracle/oracle-pin.txt'):
+                     'tools/oracle/versions.py', 'tools/lib/bash-floor.sh', 'tools/oracle/oracle-pin.txt'):
             dest = copied / path
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / path, dest)

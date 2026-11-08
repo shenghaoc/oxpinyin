@@ -226,7 +226,7 @@ sanitize backend="" sanitizer="address": python
 
 # Darwin uses Homebrew's Berkeley DB 5.3, Kyoto Cabinet and tkrzw. The recipe
 # selects Darwin paths and omits Linux setarch. The tkrzw gate certifies the
-# host library through distro-probe.sh; put Homebrew's tkrzw_dbm_util on PATH.
+# host library by the library its tkrzw_dbm_util loads; put Homebrew's tkrzw_dbm_util on PATH.
 [macos]
 sanitize backend="" sanitizer="address": python
     @env \

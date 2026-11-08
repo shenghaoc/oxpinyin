@@ -13,7 +13,7 @@ set -euo pipefail
 # The image carries these same source inputs; native source invocations use
 # their checkout. Keep the ordering identical to tools.oracle.image.recipe_hash.
 recipe_root=${OXPINYIN_ORACLE_RECIPE_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}
-recipe_files=(Dockerfile.oracle build-oracle.sh version-manifest.json versions.py ../tkrzw/distro-probe.sh ../lib/bash-floor.sh oracle-pin.txt)
+recipe_files=(Dockerfile.oracle build-oracle.sh version-manifest.json versions.py ../lib/bash-floor.sh oracle-pin.txt)
 recipe_paths=()
 for file in "${recipe_files[@]}"; do recipe_paths+=("$recipe_root/tools/oracle/$file"); done
 recipe_sha256=$(cat "${recipe_paths[@]}" | sha256sum)

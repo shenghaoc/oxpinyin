@@ -19,7 +19,7 @@ from tools.oracle import image, pin_capture  # noqa: E402
 
 PINS = ('tools/oracle/oracle-pin.txt', 'tools/oracle/libpinyin-data.json')
 RECIPE = ('tools/oracle/Dockerfile.oracle', 'tools/oracle/build-oracle.sh', 'tools/oracle/version-manifest.json',
-          'tools/oracle/versions.py', 'tools/tkrzw/distro-probe.sh', 'tools/lib/bash-floor.sh')
+          'tools/oracle/versions.py', 'tools/lib/bash-floor.sh')
 UTILITIES = sorted({(spec.cell, subdir, program) for spec in pin_capture.OBSERVATIONS.values()
                     if isinstance(spec, (pin_capture.Utility, pin_capture.DataSequence))
                     for subdir, program in spec.programs()})

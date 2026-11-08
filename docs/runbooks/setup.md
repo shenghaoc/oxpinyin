@@ -68,9 +68,11 @@ the apt line installs them; without them every link fails with `cannot find
 -llzma`. To use a tkrzw you built yourself instead, put its `lib/pkgconfig`
 first on `PKG_CONFIG_PATH` and its `lib` on `LD_LIBRARY_PATH`;
 `just tkrzw-build DIR` builds the upstream revision CI uses into `DIR`.
-Some packaged libtkrzw builds are defective
+Ubuntu's packaged libtkrzw is defective
 ([`tkrzw-distro-compat.md`](../findings/tkrzw-distro-compat.md));
-`tools/tkrzw/distro-probe.sh` checks the one on `PATH`.
+`tools/tkrzw/distro-probe.sh` checks the one on `PATH`, and provisioning runs
+it on an Ubuntu host. A `just tkrzw-build` build, Debian's package and the
+MSVC `tkrzw.lib` need no probe.
 
 Repository Python uses uv and its managed CPython 3.15 series with the GIL.
 `uv.toml` sets uv's floor, 0.13.1; CI installs the newest uv that satisfies it.
@@ -473,10 +475,7 @@ locally, run `just tkrzw-build DIR` from Developer PowerShell (it loads the
 developer environment through `vswhere` when it is not already loaded),
 put `DIR\lib\pkgconfig` on `PKG_CONFIG_PATH` and `DIR\bin` on `PATH`, and
 set `PKG_CONFIG` to a `pkgconf.exe` (for example from `vcpkg install
-pkgconf:x64-windows`). The local Windows tkrzw distribution probe passed.
-
-The tkrzw recipe needs `sh` from Git for Windows for its unchanged
-`distro-probe.sh` check. Put Git for Windows' `usr\bin` on PATH for that session.
+pkgconf:x64-windows`). The recipe runs no `distro-probe.sh` and needs no `sh`.
 
 The job also installs vcpkg's `glib` port, found through the same
 `PKG_CONFIG` and `PKG_CONFIG_PATH`, so it builds and tests

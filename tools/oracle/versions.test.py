@@ -18,12 +18,9 @@ def manifest(components):
     return {'schema': versions.SCHEMA, 'components': components}
 
 
-def component(name, package, major_minor, probe=False):
-    entry = {'name': name, 'package': package, 'major_minor': major_minor,
-             'basis': 'test basis'}
-    if probe:
-        entry['probe'] = True
-    return entry
+def component(name, package, major_minor):
+    return {'name': name, 'package': package, 'major_minor': major_minor,
+            'basis': 'test basis'}
 
 
 class ManifestTest(unittest.TestCase):
@@ -34,8 +31,8 @@ class ManifestTest(unittest.TestCase):
                          'tkrzw', 'C compiler', 'C++ compiler', 'binutils',
                          'autoconf', 'automake', 'libtool', 'pkg-config'):
             self.assertIn(expected, names)
-        tkrzw = next(entry for entry in loaded['components'] if entry['name'] == 'tkrzw')
-        self.assertTrue(tkrzw.get('probe'))
+        # Debian's libtkrzw needs no distro-probe.sh; no component asks for one.
+        self.assertFalse(any('probe' in entry for entry in loaded['components']))
 
     def test_duplicate_component_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -48,15 +45,9 @@ class ManifestTest(unittest.TestCase):
 
 
 class CheckTest(unittest.TestCase):
-    def run_check(self, entries, installed, probe=None):
-        with tempfile.TemporaryDirectory() as tmp:
-            probe_path = Path(tmp, 'probe.sh')
-            probe_path.write_text('#!/bin/sh\necho "RESULT : healthy"\n')
-            path = probe if probe is not None else str(probe_path)
-            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-                status = versions.check(manifest(entries), resolve=lambda package: installed[package],
-                                        probe=path)
-        return status
+    def run_check(self, entries, installed):
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            return versions.check(manifest(entries), resolve=lambda package: installed[package])
 
     def test_installed_version_is_recorded(self):
         self.assertEqual(self.run_check([component('glibc', 'libc6', '2.41')],
@@ -66,20 +57,23 @@ class CheckTest(unittest.TestCase):
         stderr = io.StringIO()
         with redirect_stdout(io.StringIO()) as stdout, redirect_stderr(stderr):
             status = versions.check(manifest([component('C compiler', 'gcc-14', '14.2')]),
-                                    resolve=lambda package: '15.2.0-1', probe='/bin/true')
+                                    resolve=lambda package: '15.2.0-1')
         self.assertEqual(status, 0)
         self.assertIn('C compiler\tgcc-14\t15.2.0-1', stdout.getvalue())
         self.assertEqual(stderr.getvalue(), '')
 
-    def test_failed_tkrzw_probe_fails_the_build(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            probe = Path(tmp, 'probe.sh')
-            probe.write_text('#!/bin/sh\necho "RESULT : pointer identity is broken"\nexit 1\n')
-            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-                status = versions.check(
-                    manifest([component('tkrzw', 'libtkrzw1t64', '1.0', probe=True)]),
-                    resolve=lambda package: '1.0.32-1+b1', probe=str(probe))
+    def test_a_missing_package_fails_the_build_and_no_probe_runs(self):
+        def missing(package):
+            raise LookupError(f'{package}: not installed')
+        with patch.object(versions.subprocess, 'run', side_effect=AssertionError('a child was started')), \
+                redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()) as stderr:
+            status = versions.check(manifest([component('tkrzw', 'libtkrzw1t64', '1.0')]), resolve=missing)
         self.assertEqual(status, 1)
+        self.assertIn('FAIL: tkrzw: libtkrzw1t64: not installed', stderr.getvalue())
+
+    def test_the_probe_option_is_gone(self):
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            versions.main(['--probe', 'tools/tkrzw/distro-probe.sh'])
 
 
 class PrintModeTest(unittest.TestCase):
@@ -87,7 +81,7 @@ class PrintModeTest(unittest.TestCase):
         entries = [component('glibc', 'libc6', '2.41'),
                    component('C compiler', 'gcc-14', '14.2'),
                    component('pkg-config', 'pkg-config', '1.8'),
-                   component('tkrzw', 'libtkrzw1t64', '1.0', probe=True)]
+                   component('tkrzw', 'libtkrzw1t64', '1.0')]
         packages = {'libc6': '2.41-12+deb13u4'}
         commands = {('gcc', '--version'): '15.2.0'}
 
@@ -110,10 +104,9 @@ class PrintModeTest(unittest.TestCase):
                     patch.object(versions, 'command_version', side_effect=command_version), \
                     redirect_stdout(stdout), redirect_stderr(io.StringIO()):
                 status = versions.main(['--print', '--manifest', str(path),
-                                        '--probe', str(Path(tmp, 'absent-probe.sh')),
                                         '--record', str(record)])
             recorded = record.read_text(encoding='utf-8')
-        # Print mode checks no range and runs no probe: the out-of-range
+        # Print mode checks no range: the out-of-range
         # fallback version is recorded, and a missing package keeps its own
         # error even when its fallback command also fails.
         expected = ('glibc\tlibc6\t2.41-12+deb13u4\n'

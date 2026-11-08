@@ -572,7 +572,7 @@ def _run_tkrzw(backend, sanitizer, *, environment, out, err, tools, host_os, nig
             print('ERROR: no verified libtkrzw; the sanitizer gate did NOT run.', file=err, flush=True)
             print('  Source the environment file tools/cloud/setup.sh writes, or provide a host',
                   file=err, flush=True)
-            print('  libtkrzw that passes tools/tkrzw/distro-probe.sh (tkrzw_dbm_util on PATH).',
+            print('  libtkrzw (tkrzw_dbm_util on PATH); on Ubuntu it must pass tools/tkrzw/distro-probe.sh.',
                   file=err, flush=True)
             print("  Ubuntu's packaged libtkrzw fails it: it cannot read files it writes.",
                   file=err, flush=True)

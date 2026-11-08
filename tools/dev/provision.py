@@ -9,6 +9,7 @@ from contextlib import ExitStack
 import hashlib
 import os
 from pathlib import Path
+import platform
 import re
 import shlex
 import shutil
@@ -121,8 +122,34 @@ def resolve_tkrzw(obj, env, root=ROOT):
     return '\n'.join(matches[:1] if host == 'Darwin' else matches)
 
 
-def probe_host(prefix='', *, env=None, root=ROOT, probe=None, out=None):
-    """Certify the host utility and loaded object after excluding all caches."""
+OS_RELEASE = Path('/etc/os-release')
+OS_RELEASE_FALLBACK = Path('/usr/lib/os-release')
+
+
+def os_release_record(os_release=OS_RELEASE, fallback=OS_RELEASE_FALLBACK):
+    """os-release's fields from OS_RELEASE, else FALLBACK (os-release(5)); None when neither reads."""
+    for path in (os_release, fallback):
+        try:
+            return dict(line.split('=', 1) for line in Path(path).read_text().splitlines() if '=' in line)
+        except OSError:
+            continue
+    return None
+
+
+def ubuntu_host(os_release=OS_RELEASE, fallback=OS_RELEASE_FALLBACK):
+    """Whether os-release names Ubuntu or a distribution built on its packages."""
+    record = os_release_record(os_release, fallback) or {}
+    names = [record.get('ID', '').strip('"\''), *record.get('ID_LIKE', '').strip('"\'').split()]
+    return 'ubuntu' in names
+
+
+def probe_host(prefix='', *, env=None, root=ROOT, probe=None, out=None, os_release=OS_RELEASE,
+               os_release_fallback=OS_RELEASE_FALLBACK):
+    """Certify the host utility and loaded object after excluding all caches.
+
+    distro-probe.sh runs only on an Ubuntu host: the defect it detects is in Ubuntu's
+    packaged libtkrzw (docs/findings/tkrzw-distro-compat.md), and no other host's
+    distribution package needs it."""
     def refused(reason):
         print(f'host check: {reason}; no healthy host libtkrzw was certified',
               file=sys.stderr, flush=True)
@@ -131,10 +158,13 @@ def probe_host(prefix='', *, env=None, root=ROOT, probe=None, out=None):
     environment = dict(os.environ if env is None else env)
     child = dict(environment, PATH=without_prefix(environment.get('PATH', ''), prefix, environment),
                  LD_LIBRARY_PATH=without_prefix(environment.get('LD_LIBRARY_PATH', ''), prefix, environment))
-    status = run(['sh', probe or Path(root) / 'tools/tkrzw/distro-probe.sh'], env=child,
-                 cwd=root, stdout=out, check=False)
-    if status:
-        return refused(f'host distro-probe.sh failed (status {status})')
+    if platform.system() == 'Linux' and os_release_record(os_release, os_release_fallback) is None:
+        return refused(f'neither {os_release} nor {os_release_fallback} can be read, so the host cannot be named')
+    if ubuntu_host(os_release, os_release_fallback):
+        status = run(['sh', probe or Path(root) / 'tools/tkrzw/distro-probe.sh'], env=child,
+                     cwd=root, stdout=out, check=False)
+        if status:
+            return refused(f'host distro-probe.sh failed (status {status})')
     util = shutil.which('tkrzw_dbm_util', path=child['PATH'])
     if not util:
         return refused('tkrzw_dbm_util is not on the host PATH after excluding cached runtimes')
@@ -691,14 +721,11 @@ class Provision:
     def sound_tkrzw(self):
         if 'tkrzw' not in self.cells:
             return
-        probe = self.root / 'tools/tkrzw/distro-probe.sh'
         prefix = self.tkrzw_prefix
         child = dict(self.env, PATH=str(prefix / 'bin') + ':' + self.env.get('PATH', ''),
                      LD_LIBRARY_PATH=str(prefix / 'lib') + (':' + self.env['LD_LIBRARY_PATH'] if self.env.get('LD_LIBRARY_PATH') else ''))
+        # A build from tools/tkrzw/build.py needs no distro-probe.sh (Ubuntu's package only).
         def built_ok():
-            done = capture(['sh', str(probe)], env=child, check=False, stderr=False)
-            if done.status or b'RESULT : healthy' not in done.stdout + done.stderr:
-                return False
             try:
                 return resolve_tkrzw(prefix / 'bin/tkrzw_dbm_util', child, self.root) == str(prefix / 'lib/libtkrzw.so.1')
             except Finished:
@@ -710,13 +737,13 @@ class Provision:
             output.write(done.stdout + done.stderr)
         if not done.status:
             self.tkrzw_host_library = done.stdout.decode().splitlines()[-1]
-            self.log('tkrzw: the host libtkrzw passes distro-probe.sh')
+            self.log('tkrzw: the host libtkrzw is certified')
             return
         self.log(f'tkrzw: the host libtkrzw is broken or missing (probe: {self.cache}/tkrzw-host-probe.log)')
         self.tkrzw_local = True
         revision = prefix / 'REV'
         if revision.is_file() and revision.read_text().rstrip('\n') == TKRZW_REV and built_ok():
-            self.log(f'tkrzw: cached build {TKRZW_REV[:7]} passes distro-probe.sh')
+            self.log(f'tkrzw: cached build {TKRZW_REV[:7]} loads its own libtkrzw')
         else:
             for name in ('g++', 'make'):
                 if not self.which(name):
@@ -738,8 +765,7 @@ class Provision:
                 self.die(f'the tkrzw build failed (full log: {self.cache}/tkrzw-build.log)')
             shutil.rmtree(source)
             if not built_ok():
-                run(['sh', str(probe)], env=dict(child, LD_LIBRARY_PATH=str(prefix / 'lib')), stdout=sys.stderr, check=False)
-                self.die("the built tkrzw does not print 'RESULT : healthy' (refusing to use it)")
+                self.die(f'the built tkrzw_dbm_util does not load {prefix}/lib/libtkrzw.so.1 (refusing to use it)')
             revision.write_text(TKRZW_REV + '\n')
         resolved = resolve_tkrzw(self.oracle_root / 'tkrzw/lib/libpinyin.so', dict(self.env, LD_LIBRARY_PATH=str(prefix / 'lib')), self.root)
         if resolved != str(prefix / 'lib/libtkrzw.so.1'):
@@ -776,7 +802,7 @@ class Provision:
             self.published = published + ('-arm64' if self.platform == 'linux/arm64' else '')
             self.published_deps = self.published + '-deps'
             digest = hashlib.sha256()
-            for path in ('tools/oracle/Dockerfile.oracle', 'tools/oracle/versions.py', 'tools/oracle/version-manifest.json', 'tools/tkrzw/distro-probe.sh', 'tools/lib/bash-floor.sh', 'tools/oracle/oracle-pin.txt'):
+            for path in ('tools/oracle/Dockerfile.oracle', 'tools/oracle/versions.py', 'tools/oracle/version-manifest.json', 'tools/lib/bash-floor.sh', 'tools/oracle/oracle-pin.txt'):
                 digest.update((self.root / path).read_bytes())
             self.deps_image = 'oxpinyin-oracle-deps:' + digest.hexdigest()[:12]
             self.ctr = images.select_runtime(env=self.env)

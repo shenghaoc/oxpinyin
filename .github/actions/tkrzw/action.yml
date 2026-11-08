@@ -10,14 +10,15 @@ description: |-
   toolchain inside a container job (the compiler and /etc/os-release; a
   rolling debian:testing changes them without changing the runner image),
   the install prefix (the macOS install name and tkrzw.pc record it), and a
-  hash of the recipe. A miss builds, probes with distro-probe.sh and saves;
-  a hit restores and re-probes.
+  hash of the recipe. A miss builds, checks the install and saves; a hit
+  restores. A build from this recipe needs no distro-probe.sh, which is for
+  Ubuntu's packaged libtkrzw only (docs/findings/tkrzw-distro-compat.md).
 
   Afterwards the build is found the way a developer points at a self-built
   tkrzw: DIR/lib/pkgconfig first on PKG_CONFIG_PATH, DIR/lib on the runtime
   library path (LD_LIBRARY_PATH on Linux, DYLD_LIBRARY_PATH on macOS) and
-  DIR/bin on PATH (the runtime path on Windows, where tkrzw.lib is static;
-  everywhere it puts tkrzw_dbm_util first for distro-probe.sh). On Linux it
+  DIR/bin on PATH (the runtime path on Windows, where tkrzw.lib is static).
+  On Linux it
   also sets OXPINYIN_TKRZW_PREFIX, the verified runtime the loader checks in
   tools/tkrzw/runtime.py certify against.
   On Windows, where the image has no pkg-config, it installs vcpkg's
@@ -67,7 +68,7 @@ runs:
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.key.outputs.prefix }}
-        key: ${{ steps.key.outputs.key }}-recipe-${{ hashFiles('tools/tkrzw/build.py', 'tools/tkrzw/distro-probe.sh', 'tools/tkrzw/runtime.py', '.github/actions/tkrzw/action.yml') }}
+        key: ${{ steps.key.outputs.key }}-recipe-${{ hashFiles('tools/tkrzw/build.py', 'tools/tkrzw/runtime.py', '.github/actions/tkrzw/action.yml') }}
 
     - name: Build tkrzw (cache miss)
       if: steps.restore.outputs.cache-hit != 'true'
@@ -79,14 +80,6 @@ runs:
         set -euo pipefail
         rm -rf "$PREFIX"
         "$PYTHON" -m tools.tkrzw.build build --prefix "$PREFIX"
-
-    - name: Probe the restored tkrzw (cache hit)
-      if: steps.restore.outputs.cache-hit == 'true'
-      shell: bash
-      env:
-        PYTHON: ${{ steps.key.outputs.python }}
-        PREFIX: ${{ steps.key.outputs.prefix }}
-      run: '"$PYTHON" -m tools.tkrzw.build probe --prefix "$PREFIX"'
 
     # Saved right after the build, before the caller's own steps, so a red
     # test run still keeps the build; skipped on an exact hit.
@@ -108,7 +101,7 @@ runs:
         {
           echo "PKG_CONFIG_PATH=$PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+$sep$PKG_CONFIG_PATH}"
           case $RUNNER_OS in
-            # OXPINYIN_TKRZW_PREFIX names this probed build as the verified
+            # OXPINYIN_TKRZW_PREFIX names this checked build as the verified
             # runtime that tools/tkrzw/runtime.py certifies loaders against
             # (docs/runbooks/verification.md rule 9), as tools/cloud/setup.sh's environment does.
             Linux) echo "LD_LIBRARY_PATH=$PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"

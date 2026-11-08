@@ -138,7 +138,7 @@ def recipe_hash(root=ROOT):
     directory = Path(root) / 'tools/oracle'
     digest = hashlib.sha256()
     for name in ('Dockerfile.oracle', 'build-oracle.sh', 'version-manifest.json', 'versions.py',
-                 '../tkrzw/distro-probe.sh', '../lib/bash-floor.sh', 'oracle-pin.txt'):
+                 '../lib/bash-floor.sh', 'oracle-pin.txt'):
         digest.update((directory / name).read_bytes())
     return digest.hexdigest()
 

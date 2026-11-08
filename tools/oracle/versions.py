@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Record installed component versions in rolling Debian images.
 
-Version drift is recorded, not rejected. The default mode also requires the
-Tkrzw distribution health probe; --print records capture dependencies without
-running that build-time probe.
+Version drift is recorded, not rejected. The default mode fails on a missing
+package; --print records capture dependencies and marks a missing one instead.
+The images use Debian's libtkrzw, which needs no distro-probe.sh: that probe is
+for Ubuntu's packaged libtkrzw only (docs/findings/tkrzw-distro-compat.md).
 """
 from __future__ import annotations
 
@@ -15,7 +16,6 @@ import sys
 from pathlib import Path
 
 DEFAULT_MANIFEST = Path(__file__).with_name('version-manifest.json')
-DEFAULT_PROBE = 'tools/tkrzw/distro-probe.sh'
 SCHEMA = 'oracle-version-manifest-v1'
 # Command fallbacks for capture images, where build-only packages can be absent.
 PRINT_FALLBACKS = {
@@ -95,8 +95,8 @@ def load_manifest(path):
     return manifest
 
 
-def check(manifest, resolve=package_version, probe=DEFAULT_PROBE, record=None):
-    """Record installed versions; missing packages or an unhealthy Tkrzw fail."""
+def check(manifest, resolve=package_version, record=None):
+    """Record installed versions; missing packages fail."""
     lines = []
     failures = []
     for component in manifest['components']:
@@ -108,14 +108,6 @@ def check(manifest, resolve=package_version, probe=DEFAULT_PROBE, record=None):
             failures.append(f'{name}: {error}')
             continue
         lines.append(f'{name}\t{package}\t{version}')
-    if any(component.get('probe') for component in manifest['components']):
-        result = subprocess.run(['sh', probe], check=False, capture_output=True, text=True)
-        if result.stdout:
-            print(result.stdout, end='')
-        if result.stderr:
-            print(result.stderr, end='', file=sys.stderr)
-        if result.returncode != 0:
-            failures.append(f'tkrzw: distro probe {probe} exited {result.returncode}')
     for line in lines:
         print(line)
     if record is not None:
@@ -130,12 +122,10 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('--manifest', type=Path, default=DEFAULT_MANIFEST,
                         help='version manifest (default: beside this file)')
-    parser.add_argument('--probe', default=DEFAULT_PROBE,
-                        help='tkrzw distribution probe (default: %(default)s)')
     parser.add_argument('--record', type=Path,
                         help='also write the printed version lines to this file')
     parser.add_argument('--print', dest='print_only', action='store_true',
-                        help='record installed versions without running the Tkrzw probe')
+                        help='record installed versions, marking a missing package instead of failing')
     args = parser.parse_args(argv)
     try:
         manifest = load_manifest(args.manifest)
@@ -157,7 +147,7 @@ def main(argv=None):
         if args.record:
             args.record.write_text(text, encoding='utf-8')
         return 0
-    return check(manifest, probe=args.probe, record=args.record)
+    return check(manifest, record=args.record)
 
 
 if __name__ == '__main__':

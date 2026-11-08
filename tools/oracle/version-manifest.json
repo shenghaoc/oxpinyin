@@ -1,7 +1,7 @@
 {
   "schema": "oracle-version-manifest-v1",
   "reference": "debian:testing",
-  "note": "Unpinned Debian testing is the oracle, capture and performance base. Record every installed component version in each image and capture identity; version changes do not fail the build. Debian testing libpinyin package updates trigger pin bumps. The tkrzw distribution health probe remains required.",
+  "note": "Unpinned Debian testing is the oracle, capture and performance base. Record every installed component version in each image and capture identity; version changes do not fail the build. Debian testing libpinyin package updates trigger pin bumps.",
   "components": [
     {
       "name": "glibc",
@@ -26,8 +26,7 @@
     {
       "name": "tkrzw",
       "package": "libtkrzw1t64",
-      "basis": "the tkrzw cell's on-disk format and API, and the pointer-identity health check.",
-      "probe": true
+      "basis": "the tkrzw cell's on-disk format and API."
     },
     {
       "name": "C compiler",

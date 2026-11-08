@@ -44,8 +44,8 @@ The requested-row training gates use `db5.3_dump` for bdb, `kchashmgr` for kc,
 and `tkrzw_dbm_util` for tkrzw; installing a backend development library alone
 does not provide those command-line tools. `tools/cloud/setup.sh` provides
 all three (`docs/runbooks/cloud.md`): it requires `db5.3_dump` and `kchashmgr`
-and builds a sound libtkrzw, with its `tkrzw_dbm_util`, when the host's fails
-`tools/tkrzw/distro-probe.sh`.
+and builds a sound libtkrzw, with its `tkrzw_dbm_util`, when no host library
+is certified (on an Ubuntu host, one that fails `tools/tkrzw/distro-probe.sh`).
 
 The registry's `oracle_variant` defaults to `unpatched`, and no registered runner selects another
 variant. `tools/oracle/build-oracle.sh --apply-patches DIR` still builds a separately prefixed,

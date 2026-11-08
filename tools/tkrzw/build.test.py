@@ -1,6 +1,6 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """The tkrzw build recipe: the source check, the per-host install fixes and the
-probe that every build must pass before it is marked complete."""
+install check that every build must pass before it is marked complete."""
 import contextlib
 import io
 import os
@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
@@ -96,7 +97,7 @@ class InstallTests(unittest.TestCase):
         self.assertIn(['make', '-j2'], commands)
 
 
-class ProbeTests(unittest.TestCase):
+class InstallCheckTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -107,35 +108,34 @@ class ProbeTests(unittest.TestCase):
             (self.prefix / name).write_bytes(b'x')
         self.env = {'PATH': os.environ['PATH']}
 
-    def script(self, healthy):
-        path = self.work / 'probe.sh'
-        path.write_text('echo "RESULT : healthy"\n' if healthy else
-                        'echo "RESULT : pointer identity is broken on this build"; exit 1\n')
-        return path
-
-    def probe(self, *, healthy=True, library=None):
+    def check(self, *, library=None, system='Linux'):
         with contextlib.redirect_stdout(io.StringIO()) as output:
-            build.probe(self.prefix, self.env, system='Linux', script=self.script(healthy),
-                        resolve=resolved_to(library or self.prefix / 'lib/libtkrzw.so.1'))
+            build.check_install(self.prefix, self.env, system=system,
+                                resolve=resolved_to(library or self.prefix / 'lib/libtkrzw.so.1'))
         return output.getvalue()
 
-    def test_a_healthy_build_that_loads_its_own_library_passes(self):
-        self.assertIn('tkrzw_dbm_util loads', self.probe())
+    def test_a_build_that_loads_its_own_library_passes(self):
+        self.assertIn('tkrzw_dbm_util loads', self.check())
 
-    def test_an_unhealthy_build_is_refused(self):
-        with self.assertRaisesRegex(build.RecipeError, 'does not pass distro-probe.sh'):
-            self.probe(healthy=False)
+    def test_the_check_runs_no_distro_probe(self):
+        # distro-probe.sh is for Ubuntu's packaged libtkrzw only; a source build needs no sh.
+        with mock.patch.object(build.subprocess, 'run', side_effect=AssertionError('a child was started')):
+            self.check()
+        (self.prefix / 'lib/tkrzw.lib').write_bytes(b'x')
+        (self.prefix / 'bin/tkrzw_dbm_util.exe').write_bytes(b'x')
+        with mock.patch.object(build.subprocess, 'run', side_effect=AssertionError('a child was started')):
+            self.assertEqual(self.check(system='Windows'), '')
 
     def test_a_utility_that_loads_another_library_is_refused(self):
         other = self.work / 'other.so.1'
         other.write_bytes(b'other')
         with self.assertRaisesRegex(build.RecipeError, 'resolves libtkrzw to'):
-            self.probe(library=other)
+            self.check(library=other)
 
     def test_an_incomplete_install_is_refused(self):
         (self.prefix / 'lib/pkgconfig/tkrzw.pc').unlink()
         with self.assertRaisesRegex(build.RecipeError, 'lacks .*tkrzw.pc'):
-            self.probe()
+            self.check()
 
     def test_only_a_marked_prefix_counts_as_built(self):
         self.assertFalse(build.built(self.prefix))

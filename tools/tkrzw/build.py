@@ -1,14 +1,19 @@
 """Build upstream tkrzw at the provisioning revision into a prefix.
 
-tools/cloud/setup.sh builds this revision when the host libtkrzw fails
-distro-probe.sh (docs/findings/tkrzw-distro-compat.md), and CI's tkrzw
-composite action builds it on every OS. The source is fetched by commit and
-the checkout is checked against that commit before anything is built. On
+tools/cloud/setup.sh builds this revision when no certified host libtkrzw is
+available, and CI's tkrzw composite action builds it on every OS. The source
+is fetched by commit and the checkout is checked against that commit before
+anything is built. On
 Linux and macOS it is `./configure --prefix=DIR && make && make install`; on
 Windows `nmake -f VCMakefile` and its install target in the Visual Studio
 developer environment, into the same DIR/{include,lib,bin} layout. Every
 build leaves DIR/lib/pkgconfig/tkrzw.pc, so a consumer finds it through
-PKG_CONFIG_PATH, and must pass distro-probe.sh before DIR/REV is written.
+PKG_CONFIG_PATH, and must hold its headers, library, tkrzw.pc and utility (with
+the utility loading DIR's own shared libtkrzw) before DIR/REV is written.
+
+A build from this recipe needs no distro-probe.sh: the defect that probe detects
+is in Ubuntu's packaged libtkrzw (docs/findings/tkrzw-distro-compat.md), and this
+recipe drops the build flags that expose it.
 
 Standard library only, and no syntax newer than Python 3.9: the CI action runs
 this with the runner's own Python, which some jobs have instead of the managed
@@ -34,14 +39,13 @@ from tools.tkrzw import runtime
 # 1.0.34: its sentinel fix makes defect 1 immune to LTO (tkrzw-distro-compat.md).
 TKRZW_REV = '9ee84164cf45e441aa8186418c03a02c9b89f08b'
 TKRZW_URL = 'https://github.com/estraier/tkrzw'
-PROBE = Path(__file__).with_name('distro-probe.sh')
-# Written last, so a prefix carrying it holds a complete, probed build.
+# Written last, so a prefix carrying it holds a complete, checked build.
 MARKER = 'REV'
 LIBRARY = {'Linux': 'lib/libtkrzw.so.1', 'Darwin': 'lib/libtkrzw.dylib', 'Windows': 'lib/tkrzw.lib'}
 
 
 class RecipeError(RuntimeError):
-    """The fetch, the build or its probe was refused."""
+    """The fetch, the build or its install check was refused."""
 
 
 def host():
@@ -103,7 +107,7 @@ def make_jobs(env, cpus=None):
 
 def posix_build(source, prefix, jobs, env):
     # Build flags from the caller's environment are dropped, so no -flto or
-    # -Wl,-Bsymbolic-functions can come in (distro-probe.sh explains both).
+    # -Wl,-Bsymbolic-functions can come in (tkrzw-distro-compat.md explains both).
     env = {name: value for name, value in env.items() if name not in ('CFLAGS', 'CXXFLAGS', 'LDFLAGS')}
     run(['./configure', f'--prefix={prefix}'], cwd=source, env=env)
     run(['make', f'-j{jobs}'], cwd=source, env=env)
@@ -186,7 +190,7 @@ def windows_build(source, prefix, env):
     (pkgconfig / 'tkrzw.pc').write_text(windows_pc(prefix, version[1]))
 
 
-def probe_environment(prefix, env, system):
+def install_environment(prefix, env, system):
     child = dict(env)
     path = next((key for key in child if key.upper() == 'PATH'), 'PATH')
     child[path] = str(Path(prefix) / 'bin') + os.pathsep + child.get(path, '')
@@ -198,9 +202,9 @@ def probe_environment(prefix, env, system):
     return child
 
 
-def probe(prefix, env=None, *, system=None, script=PROBE, resolve=runtime.resolve):
-    """Require distro-probe.sh's healthy verdict for PREFIX's tkrzw and, where
-    it is a shared library, that its utility loads PREFIX's own libtkrzw."""
+def check_install(prefix, env=None, *, system=None, resolve=runtime.resolve):
+    """Require PREFIX's installed files and, where libtkrzw is a shared
+    library, that its utility loads PREFIX's own libtkrzw."""
     system = system or host()
     env = dict(os.environ if env is None else env)
     prefix = Path(prefix)
@@ -209,15 +213,7 @@ def probe(prefix, env=None, *, system=None, script=PROBE, resolve=runtime.resolv
                                       prefix / 'lib/pkgconfig/tkrzw.pc', util) if not path.is_file()]
     if missing:
         raise RecipeError(f'{prefix} lacks {", ".join(missing)}')
-    child = probe_environment(prefix, env, system)
-    search = lookup(child, 'PATH')
-    shell = shutil.which('sh', path=search) or shutil.which('bash', path=search)
-    if not shell:
-        raise RecipeError('distro-probe.sh needs sh on PATH')
-    done = subprocess.run([shell, str(script)], env=child, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    sys.stdout.write(done.stdout)
-    if done.returncode or 'RESULT : healthy' not in done.stdout:
-        raise RecipeError(f'the tkrzw in {prefix} does not pass distro-probe.sh (status {done.returncode})')
+    child = install_environment(prefix, env, system)
     if system == 'Windows':
         return  # a static library: there is no loader resolution to check
     library = prefix / LIBRARY[system]
@@ -229,7 +225,7 @@ def probe(prefix, env=None, *, system=None, script=PROBE, resolve=runtime.resolv
 
 
 def built(prefix):
-    """Whether PREFIX holds a complete, probed build of TKRZW_REV."""
+    """Whether PREFIX holds a complete, checked build of TKRZW_REV."""
     try:
         return (Path(prefix) / MARKER).read_text().rstrip('\n') == TKRZW_REV
     except OSError:
@@ -237,7 +233,7 @@ def built(prefix):
 
 
 def build(prefix, *, source=None, jobs=None, env=None):
-    """Fetch, verify, build, install and probe TKRZW_REV into an empty PREFIX."""
+    """Fetch, verify, build, install and check TKRZW_REV into an empty PREFIX."""
     system = host()
     env = dict(os.environ if env is None else env)
     prefix = Path(prefix).resolve()
@@ -257,7 +253,7 @@ def build(prefix, *, source=None, jobs=None, env=None):
     if system == 'Darwin':
         pc = prefix / 'lib/pkgconfig/tkrzw.pc'
         pc.write_text(darwin_pc(pc.read_text()))
-    probe(prefix, env, system=system)
+    check_install(prefix, env, system=system)
     (prefix / MARKER).write_text(TKRZW_REV + '\n')
     print(f'tkrzw: {TKRZW_REV[:7]} installed in {prefix}; set PKG_CONFIG_PATH={prefix / "lib" / "pkgconfig"} '
           f'and the runtime library path to use it', flush=True)
@@ -268,22 +264,16 @@ def main(argv=None):
     parser = argparse.ArgumentParser(prog='tools.tkrzw.build', description=__doc__.splitlines()[0])
     commands = parser.add_subparsers(dest='command', required=True)
     commands.add_parser('rev', help='print the revision this recipe builds')
-    command = commands.add_parser('build', help='fetch, verify, build, install and probe into an empty prefix')
+    command = commands.add_parser('build', help='fetch, verify, build, install and check into an empty prefix')
     command.add_argument('--prefix', required=True, type=Path)
     command.add_argument('--source', type=Path, help='check the source out here instead of a temporary directory')
     command.add_argument('--jobs', type=int)
-    commands.add_parser('probe', help='run distro-probe.sh against a built prefix').add_argument(
-        '--prefix', required=True, type=Path)
     args = parser.parse_args(argv)
     try:
         if args.command == 'rev':
             print(TKRZW_REV)
-        elif args.command == 'build':
-            build(args.prefix, source=args.source, jobs=args.jobs)
         else:
-            if not built(args.prefix):
-                raise RecipeError(f'{args.prefix} holds no completed build of tkrzw {TKRZW_REV[:7]}')
-            probe(args.prefix)
+            build(args.prefix, source=args.source, jobs=args.jobs)
     except RecipeError as error:
         print(f'FAIL: {error}', file=sys.stderr)
         return 1

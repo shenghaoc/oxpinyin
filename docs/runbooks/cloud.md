@@ -324,23 +324,25 @@ uv run --no-project --managed-python python -B -X lazy_imports=normal tools/tkrz
    Setup validates the current pin/recipe stamp and the prefix's recorded
    library hashes and installed-version record. Stale or damaged provenance
    stops provisioning; there is no frozen output digest.
-   3b. The tkrzw cell's host library. `tools/tkrzw/distro-probe.sh` is run
-   against the host's `libtkrzw` (`tkrzw_dbm_util` on `PATH`). If it
-   exits 0 nothing more happens. If it reports a defect, or finds no
-   tkrzw, upstream tkrzw is built from source by `tools/tkrzw/build.py`
+   3b. The tkrzw cell's host library. The host's `tkrzw_dbm_util` (on `PATH`)
+   must load a host `libtkrzw` outside every cache. On an Ubuntu host
+   (`ID` or `ID_LIKE` in `/etc/os-release`), `tools/tkrzw/distro-probe.sh`
+   must also exit 0 against it; no other host's package needs the probe. A
+   certified host library is used as it is. If none is certified, or there
+   is no tkrzw, upstream tkrzw is built from source by `tools/tkrzw/build.py`
    (the recipe CI's `.github/actions/tkrzw` also runs) at
    `9ee84164cf45e441aa8186418c03a02c9b89f08b` (1.0.34: its sentinel fix
    makes defect 1 immune to LTO; 1.0.32 is healthy only without LTO,
    `docs/findings/tkrzw-distro-compat.md`) with `env -u CFLAGS -u CXXFLAGS
    -u LDFLAGS ./configure --prefix=<cache>/tkrzw && make && make install`,
    so no LTO or `-Bsymbolic-functions` can come in from the environment.
-   The probe is then run against that build and the build is refused
-   unless it prints `RESULT : healthy` and resolves to the cache. The
+   The build is refused unless its `tkrzw_dbm_util` loads the cache's own
+   `libtkrzw`; it runs no probe. The
    environment file puts `<cache>/tkrzw` first on `PKG_CONFIG_PATH`,
    `LD_LIBRARY_PATH` and `PATH` (so `tkrzw_dbm_util` is the built one), and
    the script checks with `ldd` that the tkrzw oracle `libpinyin.so`
    resolves `libtkrzw.so.1` to `<cache>/tkrzw/lib`. A rerun skips the
-   build when the cached revision is present and its probe passes.
+   build when the cached revision is present and loads its own library.
 4. Uses model20 fetched early with the model fetch (`tools/dev/model.py`) into
    `<cache>/model20`, runs `build-oracle.sh --regen-data` per cell inside
    the image, and re-verifies the installed files with the shared
@@ -429,13 +431,11 @@ build-cache copy. These figures predate the move to the testing base image.
 
 ### tkrzw step and the CI child
 
-CI's tkrzw jobs use the `libtkrzw` that `debian:testing` ships, built
-without LTO: 1.0.34-1 on 2026-10-23 UTC (`apt-cache policy libtkrzw-dev` in
-that image; it is unpinned, so the version moves). Setup builds
-upstream 1.0.34 (`9ee8416`) when the host's library fails the probe. Both
-pass `tools/tkrzw/distro-probe.sh` (`RESULT : healthy`), which is the
-criterion the setup enforces. With no setup environment in CI, the
-`tkrzw-sanitizers` job runs that probe through `probe_host` before its gate.
+CI's tkrzw jobs use the tkrzw action's build of upstream 1.0.34
+(`9ee8416`), named by `OXPINYIN_TKRZW_PREFIX`. Setup builds the same
+revision when no host library is certified. Neither runs
+`tools/tkrzw/distro-probe.sh`: the defect it detects is in Ubuntu's
+packaged `libtkrzw`, so setup runs it only on an Ubuntu host's library.
 
 ### When the published image cannot be pulled
 

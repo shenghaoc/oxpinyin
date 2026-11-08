@@ -35,7 +35,7 @@ def _oracle_versions():
 def oracle_versions_command(args):
     """Forward the oracle version check's options and return its status."""
     forwarded = []
-    for name in ('manifest', 'probe', 'record'):
+    for name in ('manifest', 'record'):
         value = getattr(args, name)
         if value is not None:
             forwarded += [f'--{name}', str(value)]
@@ -163,7 +163,6 @@ def build_parser():
     p = sub.add_parser('oracle-versions',
                        help='record or check the pin-reference image tool versions')
     p.add_argument('--manifest', type=Path)
-    p.add_argument('--probe')
     p.add_argument('--record', type=Path)
     p.add_argument('--print', dest='print_only', action='store_true',
                    help='print installed versions without checking ranges')
