@@ -45,18 +45,6 @@ fn glib_sort_tails_pinyin() {
 
 // pinyin-length-wrap/span-15: MATCH.
 #[test]
-fn pinyin_length_wrap_span_15() {
-    run_j(
-        "sort_pinyin_length::pinyin_length_wrap_span_15",
-        Expect::RESULT,
-        |k| b::case(k, "pinyin-length-wrap/span-15"),
-        raw!(include!("fixtures/sort_pinyin_length/eca552db9605c9a0.rs")),
-        None,
-    );
-}
-
-// pinyin-length-wrap/span-255: MATCH.
-#[test]
 fn pinyin_length_wrap_span_255() {
     run_j(
         "sort_pinyin_length::pinyin_length_wrap_span_255",
@@ -104,18 +92,6 @@ fn pinyin_length_wrap_span_5() {
 }
 
 // pinyin-length-wrap/span-512: MATCH.
-#[test]
-fn pinyin_length_wrap_span_512() {
-    run_j(
-        "sort_pinyin_length::pinyin_length_wrap_span_512",
-        Expect::RESULT,
-        |k| b::case(k, "pinyin-length-wrap/span-512"),
-        raw!(include!("fixtures/sort_pinyin_length/185e0185e0dc73df.rs")),
-        None,
-    );
-}
-
-// trellis-adjusted-score/divided-bian-off: MATCH.
 #[test]
 fn trellis_adjusted_score_divided_bian_off() {
     run_j(

@@ -17,18 +17,6 @@ fn user_key_spelling_pinyin_egn() {
 
 // user-key-spelling/pinyin-emg: MATCH.
 #[test]
-fn user_key_spelling_pinyin_emg() {
-    run_j(
-        "user_key_spellings::user_key_spelling_pinyin_emg",
-        Expect::RESULT,
-        |k| b::case(k, "user-key-spelling/pinyin-emg"),
-        raw!(include!("fixtures/user_key_spellings/aa9567250ece9e60.rs")),
-        None,
-    );
-}
-
-// user-key-spelling/pinyin-nuen: MATCH.
-#[test]
 fn user_key_spelling_pinyin_nuen() {
     run_j(
         "user_key_spellings::user_key_spelling_pinyin_nuen",

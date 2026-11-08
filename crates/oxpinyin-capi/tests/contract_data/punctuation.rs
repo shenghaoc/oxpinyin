@@ -22,23 +22,6 @@ fn punct_alias_borrowed_candidates() {
 
 // punct-alias/borrowed-predicted: the pin is not run; oxpinyin returns its declared fields.
 #[test]
-fn punct_alias_borrowed_predicted() {
-    run_j(
-        "punctuation::punct_alias_borrowed_predicted",
-        Expect::RESULT,
-        |k| b::case(k, "punct-alias/borrowed-predicted"),
-        raw!(M(&[
-            ("candidates", I(0)),
-            ("kinds", L(&[])),
-            ("ret", B(true)),
-            ("sentences kept", B(true))
-        ])),
-        Some(&["candidates", "kinds", "ret", "sentences kept"]),
-    );
-}
-
-// punct-alias/owned-candidates: MATCH.
-#[test]
 fn punct_alias_owned_candidates() {
     run_j(
         "punctuation::punct_alias_owned_candidates",

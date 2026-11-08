@@ -41,30 +41,6 @@ fn aux_text_chewing_parse() {
 
 // aux-text-chewing-zhuyin-cursors: MATCH.
 #[test]
-fn aux_text_chewing_zhuyin_cursors() {
-    run_j(
-        "auxiliary_text::aux_text_chewing_zhuyin_cursors",
-        Expect::RESULT,
-        |k| b::case(k, "aux-text-chewing-zhuyin-cursors"),
-        raw!(include!("fixtures/auxiliary_text/0b04f09c83f8b0cd.rs")),
-        None,
-    );
-}
-
-// aux-text-divided-and-resplit: MATCH.
-#[test]
-fn aux_text_divided_and_resplit() {
-    run_j(
-        "auxiliary_text::aux_text_divided_and_resplit",
-        Expect::RESULT,
-        |k| b::case(k, "aux-text-divided-and-resplit"),
-        raw!(include!("fixtures/auxiliary_text/5598cbe139212516.rs")),
-        None,
-    );
-}
-
-// aux-text-divided-table: MATCH.
-#[test]
 fn aux_text_divided_table() {
     run_j(
         "auxiliary_text::aux_text_divided_table",

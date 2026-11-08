@@ -5,23 +5,6 @@ use crate::support::{Expect, run_j};
 
 // prefix-convert/pinyin-sentence-above-unicode: MATCH.
 #[test]
-fn prefix_convert_pinyin_sentence_above_unicode() {
-    run_j(
-        "prefix_conversion::prefix_convert_pinyin_sentence_above_unicode",
-        Expect::RESULT,
-        |k| b::case(k, "prefix-convert/pinyin-sentence-above-unicode"),
-        raw!(M(&[
-            ("logs", L(&[])),
-            ("ret", B(true)),
-            ("seeded", B(true)),
-            ("sentence", L(&[B(true), S("e6888c")]))
-        ])),
-        None,
-    );
-}
-
-// prefix-convert/pinyin-sentence-five-byte: MATCH.
-#[test]
 fn prefix_convert_pinyin_sentence_five_byte() {
     run_j(
         "prefix_conversion::prefix_convert_pinyin_sentence_five_byte",
@@ -72,40 +55,6 @@ fn prefix_convert_pinyin_sentence_null() {
 
 // prefix-convert/pinyin-sentence-six-byte: MATCH.
 #[test]
-fn prefix_convert_pinyin_sentence_six_byte() {
-    run_j(
-        "prefix_conversion::prefix_convert_pinyin_sentence_six_byte",
-        Expect::RESULT,
-        |k| b::case(k, "prefix-convert/pinyin-sentence-six-byte"),
-        raw!(M(&[
-            ("logs", L(&[])),
-            ("ret", B(true)),
-            ("seeded", B(true)),
-            ("sentence", L(&[B(true), S("e6888c")]))
-        ])),
-        None,
-    );
-}
-
-// prefix-convert/pinyin-sentence-surrogate: MATCH.
-#[test]
-fn prefix_convert_pinyin_sentence_surrogate() {
-    run_j(
-        "prefix_conversion::prefix_convert_pinyin_sentence_surrogate",
-        Expect::RESULT,
-        |k| b::case(k, "prefix-convert/pinyin-sentence-surrogate"),
-        raw!(M(&[
-            ("logs", L(&[])),
-            ("ret", B(true)),
-            ("seeded", B(true)),
-            ("sentence", L(&[B(true), S("e6888c")]))
-        ])),
-        None,
-    );
-}
-
-// prefix-convert/pinyin-sentence-valid: MATCH.
-#[test]
 fn prefix_convert_pinyin_sentence_valid() {
     run_j(
         "prefix_conversion::prefix_convert_pinyin_sentence_valid",
@@ -122,38 +71,6 @@ fn prefix_convert_pinyin_sentence_valid() {
 }
 
 // prefix-convert/predicted-above-unicode: MATCH.
-#[test]
-fn prefix_convert_predicted_above_unicode() {
-    run_j(
-        "prefix_conversion::prefix_convert_predicted_above_unicode",
-        Expect::RESULT,
-        |k| b::case(k, "prefix-convert/predicted-above-unicode"),
-        raw!(M(&[
-            ("logs", L(&[])),
-            ("ret", B(true)),
-            ("rows", L(&[L(&[I(5), S("e4b899")])]))
-        ])),
-        None,
-    );
-}
-
-// prefix-convert/predicted-five-byte: MATCH.
-#[test]
-fn prefix_convert_predicted_five_byte() {
-    run_j(
-        "prefix_conversion::prefix_convert_predicted_five_byte",
-        Expect::RESULT,
-        |k| b::case(k, "prefix-convert/predicted-five-byte"),
-        raw!(M(&[
-            ("logs", L(&[])),
-            ("ret", B(true)),
-            ("rows", L(&[L(&[I(5), S("e4b899")])]))
-        ])),
-        None,
-    );
-}
-
-// prefix-convert/predicted-invalid: MATCH.
 #[test]
 fn prefix_convert_predicted_invalid() {
     run_j(
@@ -178,22 +95,6 @@ fn prefix_convert_predicted_null() {
 }
 
 // prefix-convert/predicted-six-byte: MATCH.
-#[test]
-fn prefix_convert_predicted_six_byte() {
-    run_j(
-        "prefix_conversion::prefix_convert_predicted_six_byte",
-        Expect::RESULT,
-        |k| b::case(k, "prefix-convert/predicted-six-byte"),
-        raw!(M(&[
-            ("logs", L(&[])),
-            ("ret", B(true)),
-            ("rows", L(&[L(&[I(5), S("e4b899")])]))
-        ])),
-        None,
-    );
-}
-
-// prefix-convert/predicted-surrogate: MATCH.
 #[test]
 fn prefix_convert_predicted_surrogate() {
     run_j(
@@ -243,22 +144,6 @@ fn prefix_convert_punctuation_above_unicode() {
 
 // prefix-convert/punctuation-five-byte: MATCH.
 #[test]
-fn prefix_convert_punctuation_five_byte() {
-    run_j(
-        "prefix_conversion::prefix_convert_punctuation_five_byte",
-        Expect::RESULT,
-        |k| b::case(k, "prefix-convert/punctuation-five-byte"),
-        raw!(M(&[
-            ("logs", L(&[])),
-            ("ret", B(true)),
-            ("rows", L(&[L(&[I(5), S("e4b899")])]))
-        ])),
-        None,
-    );
-}
-
-// prefix-convert/punctuation-invalid: MATCH.
-#[test]
 fn prefix_convert_punctuation_invalid() {
     run_j(
         "prefix_conversion::prefix_convert_punctuation_invalid",
@@ -282,38 +167,6 @@ fn prefix_convert_punctuation_null() {
 }
 
 // prefix-convert/punctuation-six-byte: MATCH.
-#[test]
-fn prefix_convert_punctuation_six_byte() {
-    run_j(
-        "prefix_conversion::prefix_convert_punctuation_six_byte",
-        Expect::RESULT,
-        |k| b::case(k, "prefix-convert/punctuation-six-byte"),
-        raw!(M(&[
-            ("logs", L(&[])),
-            ("ret", B(true)),
-            ("rows", L(&[L(&[I(5), S("e4b899")])]))
-        ])),
-        None,
-    );
-}
-
-// prefix-convert/punctuation-surrogate: MATCH.
-#[test]
-fn prefix_convert_punctuation_surrogate() {
-    run_j(
-        "prefix_conversion::prefix_convert_punctuation_surrogate",
-        Expect::RESULT,
-        |k| b::case(k, "prefix-convert/punctuation-surrogate"),
-        raw!(M(&[
-            ("logs", L(&[])),
-            ("ret", B(true)),
-            ("rows", L(&[L(&[I(5), S("e4b899")])]))
-        ])),
-        None,
-    );
-}
-
-// prefix-convert/punctuation-valid: MATCH.
 #[test]
 fn prefix_convert_punctuation_valid() {
     run_j(

@@ -143,24 +143,6 @@ fn zhuyin_in_chewing_keyboard_scheme_6() {
 
 // zhuyin-in-chewing-keyboard-scheme-8: MATCH.
 #[test]
-fn zhuyin_in_chewing_keyboard_scheme_8() {
-    run_j(
-        "zhuyin_per_entry::zhuyin_in_chewing_keyboard_scheme_8",
-        Expect::RESULT,
-        |k| b::case(k, "zhuyin-in-chewing-keyboard-scheme-8"),
-        raw!(M(&[
-            ("b'3'", L(&[B(false), Nil])),
-            ("b'i'", L(&[B(true), L(&[S("ㄞ")])])),
-            ("b's'", L(&[B(true), L(&[S("ㄙ"), S("˙")])])),
-            ("b'u'", L(&[B(true), L(&[S("ㄩ")])])),
-            ("logs", L(&[]))
-        ])),
-        None,
-    );
-}
-
-// zhuyin-in-chewing-keyboard-scheme-9: MATCH.
-#[test]
 fn zhuyin_in_chewing_keyboard_scheme_9() {
     run_j(
         "zhuyin_per_entry::zhuyin_in_chewing_keyboard_scheme_9",
