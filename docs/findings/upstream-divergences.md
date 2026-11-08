@@ -2820,7 +2820,7 @@ texts are in
   pin's `guint32` comparator (`oxpinyin_engine::candidate::rank_by_frequency`).
 - **Externally observable:** yes, in the candidate order, only when a
   score is out of range. `row58-unsigned-score-off` and
-  `row58-unsigned-score-on` of `contract-diff.py`: import `我甲甲` with
+  `row58-unsigned-score-on`: import `我甲甲` with
   count 1431655631, bring the facade total to 10000000 through the
   absent-token delta, then call
   `pinyin_guess_predicted_candidates("我")`. The frequency is
@@ -2833,7 +2833,8 @@ texts are in
   saturating store is the language's defined result and is not tuned to
   either target. Also a pin portability defect to report upstream.
 - **Held by:** `row58-unsigned-score-off` and `row58-unsigned-score-on`,
-  `POLICY-ACCEPTED` on bdb, kc and sound tkrzw against the amd64 pin,
+  `oxpinyin-capi`'s `row58_ranking` contract tests, which hold oxpinyin's
+  value; it was `POLICY-ACCEPTED` on bdb, kc and sound tkrzw against the amd64 pin,
   with the digests in
   [`arm64-pin-portability-1137.md`](arm64-pin-portability-1137.md)
   (recorded 2026-10-30 UTC, #1416; before #1416 they were MATCH on the

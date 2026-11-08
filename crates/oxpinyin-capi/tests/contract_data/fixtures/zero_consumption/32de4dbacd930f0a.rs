@@ -1,0 +1,1 @@
+M(&[("fresh", M(&[("guess", B(false)), ("parse", I(0)), ("sentence", L(&[B(false), S("untouched")]))])), ("logs", L(&[])), ("stale", M(&[("guess", B(false)), ("initial_guess", B(true)), ("initial_parse", I(5)), ("initial_sentence", L(&[B(true), S("你好")])), ("parse", I(0)), ("sentence", L(&[B(true), S("你好")]))]))])

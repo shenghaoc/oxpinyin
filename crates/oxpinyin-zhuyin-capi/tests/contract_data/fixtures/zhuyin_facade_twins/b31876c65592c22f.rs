@@ -1,0 +1,1 @@
+M(&[("fresh", L(&[B(false), S("untouched")])), ("guessed", L(&[B(true), S("你好")])), ("keyless", L(&[B(false), L(&[B(false), S("untouched")])])), ("logs", L(&[])), ("parsed", L(&[B(false), S("untouched")])), ("reset", L(&[B(false), S("untouched")]))])

@@ -979,7 +979,7 @@ class VerdictTests(DriverFixtureCase):
     termination keeps the matcher's own semantics."""
 
     def plain(self, control=False):
-        return dict(contract['CASES']['empty-parse-sentence'], control=control)
+        return dict(contract['CASES']['wrap-256th-reading'], control=control)
 
     def decide(self, spec, pin, subject, parent):
         return contract['verdict_for'](spec, pin, subject, parent)
@@ -1120,8 +1120,8 @@ class RegisteredTerminationDefaultTests(DriverFixtureCase):
 class DriverInvalidTests(VerifyCase):
     """verify: a failed worker on either side is INVALID and exits 1, and is never HOST-DEPENDENT."""
 
-    def invoke(self, parent, pin, subject, case_name='empty-parse-sentence', glibc=None, glib=None):
-        spec = contract['CASES'][case_name]
+    def invoke(self, parent, pin, subject, case_name='wrap-256th-reading', glibc=None, glib=None, spec=None):
+        spec = spec or contract['CASES'][case_name]
         self.freeze(spec, pin, glibc=glibc, glib=glib)
         options = ['--cases', case_name] + (['--expect-parent'] if parent else [])
         result = self.verify({case_name: spec}, subject, *options)
@@ -1136,8 +1136,11 @@ class DriverInvalidTests(VerifyCase):
         for bad in (observation(exit=-signal.SIGSEGV), observation(exit='TIMEOUT'),
                     observation(exit=127), observation()):
             with self.subTest(bad=bad):
+                # The registered abort case, on every cell.
+                name = 'abort-choose-candidate-predicted-bigram-row'
+                spec = dict(contract['CASES'][name], cells=('bdb', 'kc', 'tkrzw'))
                 status, rows = self.invoke(True, observation(exit=-signal.SIGABRT), bad,
-                                           case_name='abort-train-index-past-results')
+                                           case_name=name, spec=spec)
                 self.assertEqual((status, rows[0]['verdict'], rows[0]['expected_ok']), (1, 'INVALID', False))
 
     def test_two_failed_workers_fail_in_normal_mode(self):
@@ -1150,12 +1153,12 @@ class DriverInvalidTests(VerifyCase):
         self.assertEqual((status, rows[0]['verdict'], rows[0]['expected_ok']), (0, 'DIFFER', True))
 
     def test_plan_only_never_runs_a_case(self):
-        spec = contract['CASES']['empty-parse-sentence']
+        spec = contract['CASES']['wrap-256th-reading']
         self.freeze(spec, observation(result={'a': 1}))
 
         def worker(*args, **kwargs):
             raise AssertionError('plan executed a case')
-        result = self.verify({'empty-parse-sentence': spec}, worker, '--cases', 'empty-parse-sentence', '--plan-only')
+        result = self.verify({'wrap-256th-reading': spec}, worker, '--cases', 'wrap-256th-reading', '--plan-only')
         self.assertEqual((result.status, result.rows), (0, []))
         self.assertIn('plan: 1 case;', result.stderr)
 
@@ -1331,17 +1334,17 @@ class SelectionTests(VerifyCase):
         self.assertEqual(contract['normal_tag']('W11'), 'w11')
 
     def test_issue_selects_registered_cases_only(self):
-        names, reasons = contract['select_cases'](issues=['#927'])
-        self.assertEqual(names, ['glib-sort-candidates-pinyin', 'glib-sort-candidates-zhuyin', 'glib-sort-predicted'])
-        self.assertEqual(reasons['glib-sort-candidates-pinyin'], ['issue 927'])
+        names, reasons = contract['select_cases'](issues=['#804'])
+        self.assertEqual(names, ['wrap-256th-reading', 'wrap-256th-reading-zhuyin'])
+        self.assertEqual(reasons['wrap-256th-reading'], ['issue 804'])
         for name in names:
-            self.assertIn('927', contract['CASES'][name]['issues'])
+            self.assertIn('804', contract['CASES'][name]['issues'])
 
     def test_family_selects_by_id_prefix(self):
-        names, reasons = contract['select_cases'](families=['zero-key-guess'])
-        self.assertTrue(names and all(name.startswith('zero-key-guess/') for name in names))
-        self.assertEqual(set(names), {n for n in contract['CASES'] if n.startswith('zero-key-guess/')})
-        self.assertEqual(reasons[names[0]], ['family zero-key-guess'])
+        names, reasons = contract['select_cases'](families=['missing-system-dbm'])
+        self.assertTrue(names and all(name.startswith('missing-system-dbm/') for name in names))
+        self.assertEqual(set(names), {n for n in contract['CASES'] if n.startswith('missing-system-dbm/')})
+        self.assertEqual(reasons[names[0]], ['family missing-system-dbm'])
 
     def test_prefix_selects_untagged_cases_from_the_full_driver_registry(self):
         names, _ = driver.select_cases(prefixes='glib-922-,reload-,phrase-text/')
@@ -1367,10 +1370,10 @@ class SelectionTests(VerifyCase):
                 self.assertNotIn('unrecognized arguments', error)
 
     def test_explicit_cases_keep_their_order_and_combine(self):
-        names, reasons = contract['select_cases']('empty-parse-sentence,glib-sort-predicted',
-                                                  issues=['927'])
-        self.assertEqual(names[:2], ['empty-parse-sentence', 'glib-sort-predicted'])
-        self.assertEqual(reasons['glib-sort-predicted'], ['--cases', 'issue 927'])
+        names, reasons = contract['select_cases']('s2-nbest-longer-normal-precedence,wrap-256th-reading',
+                                                  issues=['804'])
+        self.assertEqual(names[:2], ['s2-nbest-longer-normal-precedence', 'wrap-256th-reading'])
+        self.assertEqual(reasons['wrap-256th-reading'], ['--cases', 'issue 804'])
 
     def test_unknown_or_empty_selection_is_an_error_naming_what_exists(self):
         with self.assertRaises(contract['SelectionError']) as caught:
@@ -1382,7 +1385,7 @@ class SelectionTests(VerifyCase):
         self.assertNotIn('family/', str(caught.exception))
         with self.assertRaises(contract['SelectionError']) as caught:
             contract['select_cases'](families=['nope'])
-        self.assertIn('registered families: c-string-input', str(caught.exception))
+        self.assertIn('registered families: missing-system-dbm', str(caught.exception))
         with self.assertRaises(contract['SelectionError']):
             contract['select_cases']('nope')
         with self.assertRaises(contract['SelectionError']):
@@ -1395,15 +1398,15 @@ class SelectionTests(VerifyCase):
         self.assertEqual(contract['select_cases'](None), (names, reasons))
 
     def test_empty_cases_are_rejected_even_with_other_selectors(self):
-        for cases in ('', ' ', ',', 'empty-parse-sentence,', ',empty-parse-sentence'):
-            for selectors in ({}, {'issues': ['927']}, {'families': ['zero-key']}):
+        for cases in ('', ' ', ',', 'wrap-256th-reading,', ',wrap-256th-reading'):
+            for selectors in ({}, {'issues': ['804']}, {'families': ['missing-system']}):
                 with self.subTest(cases=cases, selectors=selectors), \
                         self.assertRaisesRegex(driver.SelectionError, '--cases must not contain an empty value'):
                     driver.select_cases(cases, **selectors)
 
     def test_empty_cases_cli_exits_two_before_inputs_or_workers(self):
-        for value in ('', ' ', ',', 'empty-parse-sentence,'):
-            for extra in ([], ['--issue', '927'], ['--family', 'zero-key-guess']):
+        for value in ('', ' ', ',', 'wrap-256th-reading,'):
+            for extra in ([], ['--issue', '804'], ['--family', 'missing-system-dbm']):
                 with self.subTest(value=value, extra=extra):
                     code, error = self.verify_exit('--cases', value, *extra)
                     self.assertEqual(code, 2)
@@ -1466,7 +1469,8 @@ class SelectionTests(VerifyCase):
             self.assertEqual(list(driver.CASES), ['unique-case', 'other-case'])
 
     def test_plan_lists_ids_reasons_facades_and_artifacts(self):
-        names, reasons = contract['select_cases'](issues=['927'], families=['zero-key-guess'])
+        names, reasons = contract['select_cases'](issues=['804'], families=['missing-system-dbm'])
+        names = [name for name in names if 'bdb' in contract['CASES'][name]['cells']]
         lines = contract['plan_lines'](names, reasons, Path('/s/libpinyin_capi.so'), Path('/s/libzhuyin_capi.so'),
                                        Path('/pin'), 'bdb')
         self.assertTrue(lines[0].startswith('plan: %d cases; cell bdb; facades: pinyin ' % len(names)))
@@ -1475,9 +1479,9 @@ class SelectionTests(VerifyCase):
         self.assertIn('pin /pin/lib/libzhuyin.so', lines[1])
         body = lines[2:]
         self.assertEqual(len(body), len(names))
-        self.assertTrue(any(line.split()[0] == 'glib-sort-predicted' and 'issue 927' in line
+        self.assertTrue(any(line.split()[0] == 'wrap-256th-reading' and 'issue 804' in line
                             for line in body))
-        self.assertTrue(any(line.split()[0].startswith('zero-key-guess/') and 'family zero-key-guess' in line
+        self.assertTrue(any(line.split()[0].startswith('missing-system-dbm/') and 'family missing-system-dbm' in line
                             for line in body))
         default_lines = contract['plan_lines'](*contract['select_cases'](), Path('/s'), None, Path('/pin'), 'bdb')
         self.assertIn('default suite', default_lines[0])
@@ -1612,7 +1616,7 @@ class DriverVerdictTests(VerifyCase):
         options = ['--cases', 'slow,next', '--jobs', '1'] + (['--expect-parent'] if parent else [])
         if timeout is not None:
             options.extend(['--case-timeout', str(timeout)])
-        cases = {name: dict(driver.CASES['empty-parse-sentence'], control=True) for name in ('slow', 'next')}
+        cases = {name: dict(driver.CASES['wrap-256th-reading'], control=True) for name in ('slow', 'next')}
         cases['slow'].update(control=False)
         self.freeze(cases['slow'], observation(result={'ret': True}))
         calls = []
@@ -1656,19 +1660,10 @@ class DriverVerdictTests(VerifyCase):
 
 
 class PlatformExclusionTests(VerifyCase):
-    """#1137: the arm64-only exclusions are registered, reasoned and skipped."""
-
-    def test_arm64_exclusions_are_two_reasoned_cases(self):
-        self.assertEqual(len(contract["ARM64_EXCLUDED_CASES"]), 2)
-        for name in contract['ARM64_EXCLUDED_CASES']:
-            with self.subTest(name=name):
-                spec = contract['CASES'][name]
-                self.assertEqual(spec['platforms'], ('linux/amd64',))
-                self.assertIn('#1137', spec['platform_skip_reason'])
-        self.assertIn('#1137', contract['ARM64_EXCLUSION_REASON'])
+    """A case registered away from the host platform is skipped (#1137)."""
 
     def invoke(self, host_platform, extra_args=(), cells=None, observations=False):
-        cases = {name: dict(driver.CASES['empty-parse-sentence'], control=True,
+        cases = {name: dict(driver.CASES['wrap-256th-reading'], control=True,
                             platforms=('linux/amd64',),
                             platform_skip_reason='#1137: arm64 exclusion')
                  for name in ('slow', 'next')}
@@ -1918,7 +1913,7 @@ class ParallelCaseTests(VerifyCase):
                 self.assertIn('"tags"', output)
                 status, _, stderr = self.run_main(
                     ['verify', 'tkrzw', str(self.subject), '--data', str(self.data),
-                     '--references', str(self.references), '--cases', 'empty-parse-sentence'],
+                     '--references', str(self.references), '--cases', 'wrap-256th-reading'],
                     dict(OXPINYIN_CONTRACT_JOBS=value), run_worker=lambda *a, **k: self.fail('a case ran'))
                 self.assertEqual(status, 2)
                 self.assertIn('Invalid OXPINYIN_CONTRACT_JOBS: use a positive integer', stderr)
@@ -2060,10 +2055,13 @@ class CancellationTests(DriverFixtureCase):
                 data = prefix / 'package-data'
                 data.mkdir()
                 (data / 'table.conf').write_text('x')
-                names = ['empty-parse-sentence'] + (['character-offset-out'] if jobs > 1 else [])
+                names = ['wrap-256th-reading'] + (['wrap-256th-reading-zhuyin'] if jobs > 1 else [])
                 for name in names:
                     freeze(prefix / 'refs', 'tkrzw', driver.CASES[name], observation(result={'ret': True}))
-                operation = ['verify', 'tkrzw', str(prefix / 'lib/libpinyin.so'), '--data', str(data),
+                # The second case is a zhuyin case: it needs the zhuyin library too.
+                (prefix / 'lib/libzhuyin.so').touch()
+                operation = ['verify', 'tkrzw', str(prefix / 'lib/libpinyin.so'),
+                             '--zhuyin-so', str(prefix / 'lib/libzhuyin.so'), '--data', str(data),
                              '--references', str(prefix / 'refs'), '--cases', ','.join(names), '--jobs', str(jobs)]
             command = [sys.executable, '-c', code, str(Path(driver.__file__).resolve()),
                        str(worker), *operation]

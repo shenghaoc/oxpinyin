@@ -171,17 +171,7 @@ from contract_selection import SelectionError, case_names, family_of, normal_tag
 import contract_registry
 from contract_registry import case_spec  # registration metadata and checks
 import contract_measurement
-import contract_pinyin_out_parameters
-import contract_allocator_register
-import contract_cursor_sentence_refusals
-import contract_zhuyin_facade_twins
-import contract_scheme_library_refusals
-import contract_row54_empty_forcing
-import contract_zero_consumption
 import contract_reading_256th
-import contract_auxiliary_text
-import contract_combined_import_nbest
-import contract_zhuyin_per_entry
 import contract_case_helpers
 # Helpers several case families share (#1175). Each is re-exported by assignment, not
 # imported by name: CPython 3.15 compiles a call on an imported name differently, and the
@@ -235,39 +225,24 @@ wrap_total_to_zero = contract_case_helpers.wrap_total_to_zero
 zhuyin_guess_rows = contract_case_helpers.zhuyin_guess_rows
 import contract_before_cursor_dedup
 import contract_token_unigram_training
-import contract_bigram_removal
-import contract_candidate_removals
 import contract_null_user_library
 import contract_bigram_mask_prediction
-import contract_sort_pinyin_length
 import contract_system_mask_out
 import contract_phrase_index_logger
-import contract_punctuation
 import contract_missing_system_dbm
-import contract_training_constraints
 import contract_user_stored_words
-import contract_user_key_spellings
-import contract_toned_keys_zhuyin_refusals
-import contract_final_step_surface
-import contract_zero_key_guess
 import contract_token_reuse_addon_import
 import contract_system_phrase_text
-import contract_prefix_conversion
-import contract_facade_totals_counts
-import contract_changed_parse_constraints
 import contract_stored_user_gram
 import contract_phrase_export_training
 import contract_user_index_phrase_mask
 import contract_glib_path_construction
-import contract_matrix_resplit_windows
 import contract_library_reload
 import contract_user_conf_overlong_index
-import contract_row58_ranking
 import contract_save_failures_stderr
 save_929_marker_interrupt = contract_save_failures_stderr.save_929_marker_interrupt
 save_929_physical_files = contract_save_failures_stderr.save_929_physical_files
 import contract_integer_limits_d18
-import contract_c_string_inputs
 import contract_gram_lookup
 import contract_cell_fixtures
 import contract_sentence_ties
@@ -511,15 +486,6 @@ def items_system(k, items, total=200, *, isolated=False):
 # The #587 invalid-byte cases stay at their original point in the registration sequence.
 
 
-contract_zero_key_guess.register(case)
-
-
-contract_pinyin_out_parameters.register(case, Rest=Rest)
-
-
-contract_auxiliary_text.register(case)
-
-
 # batch2 group 7: the sub-index unigram total guard (PR 7, #540)
 
 
@@ -529,9 +495,6 @@ contract_token_unigram_training.register(case)
 # batch2 group 8: choose_predicted_candidate's return table (PR 8, #542, #540)
 
 
-
-
-contract_punctuation.register(case, _craft_db=_craft_db)
 contract_missing_system_dbm.register(case)
 
 
@@ -554,26 +517,10 @@ contract_missing_system_dbm.register(case)
 # batch2 group 11: the facade unigram total wraps like the pin's (PR 11, #540)
 
 
-
-
-# batch2 group 12a: library-index, scheme and iterator refusals (PR 12a, #525)
-contract_scheme_library_refusals.register_pinyin(case)
-
-
-contract_cursor_sentence_refusals.register(case)
-
-
 # batch2 group 12c: candidate-type refusals (PR 12c, #525)
 
 
-contract_candidate_removals.register(case, _craft_hash=_craft_hash, _craft_db=_craft_db,
-                                     index_file_rows=index_file_rows)
-
-
 # batch2 group 12d: training a stale forcing (PR 12d, #525, row 6)
-
-
-contract_training_constraints.register(case)
 
 
 # batch E: over-long user chewing keys (#525, row 84). The pin's user
@@ -628,15 +575,6 @@ contract_user_index_phrase_mask.register(
     case, predicted_bigram_context=predicted_bigram_context, token_reuse_files=token_reuse_files)
 
 
-contract_toned_keys_zhuyin_refusals.register(case)
-
-
-contract_scheme_library_refusals.register_zhuyin(case)
-
-
-contract_toned_keys_zhuyin_refusals.register_2(case)
-
-
 # Row 65 / #696. The pin's LONGER row is a property of the whole parse,
 # not the lookup offset: `_prepend_longer_candidates` (`pinyin.cpp:1870-
 # 1933`) searches the whole matrix with `prefix_len = m_parsed_key_len`
@@ -646,12 +584,7 @@ contract_toned_keys_zhuyin_refusals.register_2(case)
 # the reserved slot past the parse — answers the LONGER row alone.
 
 
-
-
 # The #587 directory-name cases stay at their original point in the registration sequence.
-
-
-contract_zhuyin_facade_twins.register(case, Rest=Rest)
 
 
 contract_save_failures_stderr.register(
@@ -671,11 +604,7 @@ contract_save_failures_stderr.register(
 # --------------------------------------------------------------------------
 
 
-
-
 contract_glib_path_construction.register(case)
-
-
 
 
 # #642: NULL is transient state, not an absent user index. Snapshot both
@@ -686,10 +615,6 @@ contract_null_user_library.register(case)
 
 
 contract_phrase_export_training.register(case)
-
-
-contract_combined_import_nbest.register(
-    case, remember_export=remember_export, transient_files=transient_files)
 
 
 # The axis J controls stay at their original point in the registration sequence.
@@ -719,23 +644,6 @@ case_jobs = _RUNNER.case_jobs
 case_results = _RUNNER.case_results
 
 
-contract_allocator_register.register(case)
-
-
-contract_row54_empty_forcing.register(case)
-
-
-contract_zero_consumption.register(case)
-
-
-contract_changed_parse_constraints.register(case)
-
-
-contract_row58_ranking.register(case)
-
-
-contract_matrix_resplit_windows.register(case)
-
 # --------------------------------------------------------------------------
 # #694 and #525 batch B: the system `table.conf` decides the library set.
 # `SystemTableInfo2::load` (`table_info.cpp:194-294` at 074a2219) reads the
@@ -745,12 +653,6 @@ contract_matrix_resplit_windows.register(case)
 # Every case runs on a private copy of the oracle's system directory whose
 # `table.conf` is rewritten; the data files are links to the oracle's.
 # --------------------------------------------------------------------------
-
-
-contract_final_step_surface.register(case)
-
-
-contract_sort_pinyin_length.register(case, CASES=CASES)
 
 
 # #728: mask_out rebuilds loaded system sub-indexes from disk, then merges
@@ -792,10 +694,6 @@ contract_phrase_index_logger.register(case)
 # (`phrase_large_table3_tkrzwdb.cpp:83`).
 
 
-
-
-
-
 # #540 / D-18. Small boundary fixtures, never a repeated-training workload.
 # Read at libpinyin 074a2219: phrase_index.cpp:56-91, 150-179;
 # pinyin_parser2.cpp:274-360; ngram.cpp:277-358; pinyin.cpp:520-605,
@@ -803,9 +701,6 @@ contract_phrase_index_logger.register(case)
 
 
 contract_integer_limits_d18.register(case)
-
-
-contract_bigram_removal.register(case)
 
 
 # #757 PR 2: the pin keeps the stored SingleGram array as it is and searches
@@ -822,12 +717,7 @@ contract_bigram_removal.register(case)
 contract_stored_user_gram.register(case)
 
 
-contract_facade_totals_counts.register(case, items_system=items_system, _craft_db=_craft_db)
-
-
 contract_library_reload.register(case)
-
-
 
 
 contract_gram_lookup.register(case, _craft_db=_craft_db)
@@ -844,9 +734,6 @@ contract_gram_lookup.register(case, _craft_db=_craft_db)
 # subject's guard answers). Pin cites are in the PR body; each case names
 # the site it holds.
 # --------------------------------------------------------------------------
-
-
-contract_zhuyin_per_entry.register(case)
 
 
 # #894: source-derived, isolated SYSTEM_FILE words. See the two discrepancy
@@ -876,17 +763,10 @@ contract_system_phrase_text.register(case, phrase_text_system=phrase_text_system
 # converted prefix seeds 戌 in the sentence and suggests 丙 in prediction.
 
 
-contract_prefix_conversion.register(case, items_system=items_system)
-
-
 contract_user_stored_words.register(case, phrase_text_system=phrase_text_system)
 
 
-
-
 contract_reading_256th.register(case)
-
-
 
 
 # The sentence-tie fixture regeneration lives in contract_sentence_ties (#1175).
@@ -966,25 +846,6 @@ def run_per_call(args, parser):
                                             per_call_helper=per_call_helper, per_call_run=per_call_run,
                                             per_call_checked=per_call_checked, per_call_calibration=per_call_calibration,
                                             per_call_attribution=per_call_attribution, observed=observed)
-
-
-# The pin crashes (SIGBUS/SIGTRAP) or orders candidates differently on
-# arm64 for these cases; the amd64 pin is the reference and still runs them.
-# Diagnosis: #1137. The contract gate excludes them on arm64 only.
-ARM64_DIAGNOSIS_ISSUE = 1137
-ARM64_EXCLUDED_CASES = (
-    'row58-unsigned-score-off',
-    'row58-unsigned-score-on',
-)
-ARM64_EXCLUSION_REASON = (
-    '#1137: the pin crashes or orders candidates differently on arm64; '
-    'excluded there only, amd64 still runs the case'
-)
-for _excluded in ARM64_EXCLUDED_CASES:
-    if _excluded not in CASES:
-        raise RuntimeError('arm64 exclusion names an unregistered case: ' + _excluded)
-    CASES[_excluded] = dict(CASES[_excluded], platforms=('linux/amd64',),
-                            platform_skip_reason=ARM64_EXCLUSION_REASON)
 
 
 def platform_skips(spec):
@@ -1247,12 +1108,6 @@ def main():
         except Cancelled as error:
             print(str(error), file=sys.stderr)
             return 1
-
-
-contract_c_string_inputs.register(case, items_system=items_system)
-
-
-contract_user_key_spellings.register(case)
 
 
 if __name__ == '__main__':

@@ -245,7 +245,7 @@ if __name__ == '__main__': unittest.main()
         files = test_runner.harness_files()
         shared = {'tools/bisection/contract-modules.test.py', 'tools/bisection/contract-diff.test.py',
                   'tools/bisection/teardown.test.py'}
-        for name in ('abi', 'user_key_spellings', 'runner'):
+        for name in ('abi', 'reading_256th', 'runner'):
             with self.subTest(module=name):
                 expected = shared | {f'tools/bisection/contract_{name}.test.py'}
                 self.assertEqual(test_runner.changed_harness_files(files, [f'tools/bisection/contract_{name}.py']),

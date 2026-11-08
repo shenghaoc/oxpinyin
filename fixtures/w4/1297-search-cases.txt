@@ -16,7 +16,6 @@ mask-out-itemless-gram-untouched-remove-candidate-total-nonzero
 mask-out-itemless-gram-untouched-remove-candidate-total-zero
 mask-out-itemless-gram-untouched-zhuyin-total-nonzero
 mask-out-itemless-gram-untouched-zhuyin-total-zero
-nbest-user-table-order-zhuyin
 parse-dynamic-adjust-short-user-gram-pinyin
 parse-dynamic-adjust-short-user-gram-zhuyin
 system-gram-duplicate-guess

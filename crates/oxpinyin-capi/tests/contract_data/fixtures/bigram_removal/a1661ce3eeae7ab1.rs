@@ -1,0 +1,1 @@
+M(&[("logs", L(&[])), ("removed", B(true)), ("reopened", L(&[S("ffffffffa5080001ffffffffb808000100000000"), S("11000000a508000102000000")])), ("saved", B(true)), ("stored", L(&[S("ffffffffa5080001ffffffffb808000100000000"), S("11000000a508000102000000")])), ("trained", B(true))])
