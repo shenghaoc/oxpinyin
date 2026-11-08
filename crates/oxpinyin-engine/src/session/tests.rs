@@ -4632,8 +4632,7 @@ fn candidate_collection_uses_unpriced_system_and_addon_operations() {
             Ok(())
         }
     }
-    let dictionary = CandidateDict;
-    let session = Session::new(SessionSettings::default(), &dictionary, Silent).unwrap();
+    let session = Session::new(SessionSettings::default(), CandidateDict, Silent).unwrap();
     let (mut system, mut addon, mut entries) = (Vec::new(), Vec::new(), Vec::new());
     assert!(
         session

@@ -9,8 +9,8 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-use oxpinyin_data::{BigramLanguageModel, SystemDbm, SystemDictionary};
 use oxpinyin_engine::{Candidate, CandidateKind, Session, SessionSettings};
+use oxpinyin_runtime::Runtime;
 
 #[path = "common/candidate_fixture.rs"]
 mod candidate_fixture;
@@ -63,15 +63,9 @@ fn candidates_match_the_frozen_capture_over_the_corpus() {
     }
 
     let dir = contract_data::contract_data_dir();
-    let dictionary = SystemDictionary::open(&dir).expect("the system dictionary opens");
-    let mut model = BigramLanguageModel::open(
-        &dir.join(SystemDbm::Bigram.file_name()),
-        dictionary.libraries(),
-    )
-    .expect("the bigram opens");
-    model.set_lambda_from_table_conf(&dir.join("table.conf"));
-    let mut session =
-        Session::new(SessionSettings::default(), &dictionary, model).expect("the session opens");
+    let runtime = Runtime::open(&dir, None).expect("the pinned data directory opens");
+    let mut session = Session::new(SessionSettings::default(), runtime.dict(), runtime.lm())
+        .expect("the session opens");
 
     let inputs = corpus_inputs();
     let mut rows = 0_usize;
