@@ -279,8 +279,8 @@ uv run --no-project --managed-python python -B -X lazy_imports=normal tools/tkrz
 1. Resolves and prints the runtime/version before container provisioning. Platform order
    is Windows: wslc/Podman/Docker; macOS: Apple container/Podman/Docker;
    Linux: Podman/Docker. Explicit `OXPINYIN_CONTAINER` wins; no available candidate
-   is an error. wslc is blocked as not yet verified, and the Apple adapter is
-   not supported by this Linux provisioner.
+   is an error. Neither wslc nor the Apple adapter is supported by this Linux
+   provisioner; both are refused after the runtime is resolved.
    Every container call uses the resolved runtime. Only the Docker path
    starts `dockerd` (detached, `setsid
    nohup dockerd`) unless `docker info` already answers, and waits for it.
@@ -300,7 +300,7 @@ uv run --no-project --managed-python python -B -X lazy_imports=normal tools/tkrz
    built hashes and installed versions are recorded per prefix). If
    `ghcr.io/shenghaoc/oxpinyin-oracle:<tag>` exists for amd64, or
    `<tag>-arm64` for arm64, with `<tag>` printed by
-   `python -m tools.oracle.image image-tag` (pin, base image tag and a hash
+   `uv run --no-project --managed-python python -X lazy_imports=normal -m tools.oracle.image image-tag` (pin, base image tag and a hash
    of the recipe and `oracle-pin.txt`), it is pulled and the cells are copied out of it. A cell
    whose pin/recipe stamp or recorded bytes fail validation is discarded and built
    instead, as is every cell when no image exists: the pinned image's

@@ -782,6 +782,8 @@ class Provision:
             self.ctr = images.select_runtime(env=self.env)
             if Path(self.ctr).name == 'container':
                 self.die('normal cloud provisioning requires a Linux cloud runtime; the Apple adapter is not supported')
+            if images.is_wslc(self.ctr):
+                self.die('normal cloud provisioning requires a Linux cloud runtime; wslc (WSL containers) is not supported')
             self.backend_tools()
             for cell in self.cells:
                 if not self.libs_ok(cell) or not self.data_ok(cell):

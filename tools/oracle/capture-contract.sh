@@ -7,7 +7,7 @@
 # (--cases, --issue, --family, --cases-prefix, --runs, --case-timeout, --out). References
 # are written to fixtures/contract-refs unless --out names another directory under the
 # checkout. The pin is the published oracle image (`python -m tools.oracle.image image-tag`), pulled when
-# absent; build it locally with build-contract-image.sh when unpublished.
+# absent; build it locally with `python -m tools.oracle.image build-image` when unpublished.
 # An investigative live comparison is a capture into a temporary --out, then
 # `just runner contract-diff verify CELL ... --references <that directory>`.
 

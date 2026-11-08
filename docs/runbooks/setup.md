@@ -488,6 +488,26 @@ not selected. Native Windows oracle behavior is not established by those
 tests. Physical Windows hardware is not needed to use
 this CI coverage.
 
+A full local build or `just test` needs the same two vcpkg ports as the
+CI job; without GLib, `glib-sys` fails and every crate but
+`oxpinyin-chewing`, `oxpinyin-core`, `oxpinyin-store` and
+`oxpinyin-engine` fails to build. From Developer PowerShell, with
+`$vcpkg` your vcpkg checkout and `DIR` the `just tkrzw-build` prefix:
+
+```powershell
+& "$vcpkg\vcpkg.exe" install pkgconf:x64-windows glib:x64-windows
+$installed = "$vcpkg\installed\x64-windows"
+$env:PKG_CONFIG = "$installed\tools\pkgconf\pkgconf.exe"
+$env:PKG_CONFIG_PATH = "DIR\lib\pkgconfig;$installed\lib\pkgconfig"
+$env:PATH = "DIR\bin;$installed\bin;$env:PATH"
+& $env:PKG_CONFIG --modversion glib-2.0 tkrzw
+```
+
+The `bin` directories put the GLib and tkrzw DLLs on the test binaries'
+path. Bash scripts, such as the [WSL container](#native-windows-and-wsl-containers)
+tasks, run from the same session through Git for Windows' `bash.exe`
+(`& 'C:\Program Files\Git\bin\bash.exe' tools/oracle/capture-pin.sh 1`).
+
 **When the Windows job runs:** the full Windows workspace job is the
 `test-windows` job in `verify-nightly.yml`. It runs every night and on manual
 dispatch, not on every pull request. Windows remains a supported native
@@ -514,6 +534,54 @@ Recent upstream MinGW portability changes were checked separately from
 oxpinyin's MSVC support; see the [validation status](#validated-on--not-validated).
 The frozen oracle does not define which native operating systems oxpinyin
 can support, and its pins are unchanged.
+
+### Native Windows and WSL containers
+
+These run natively on Windows through the `[windows]` pwsh recipes: `build`,
+`test`, `test-doc`, `fmt`, `clippy`, `fuzz`, `coverage`, `python`, `doctor`,
+`fetch-contract-data`, `tkrzw-build`, `oracle-versions`, `rust-tables`,
+`policy-record`, `runner`, `abi`, `cell-artifacts`, `list` and `plan`. None
+of them starts a container. `sanitize` is Linux and Darwin only.
+
+The pin runs only in a Linux container. On Windows that container is a
+[WSL container](https://learn.microsoft.com/en-us/windows/wsl/wsl-container)
+driven by `wslc`. Run these from Developer PowerShell after
+`$env:OXPINYIN_CAPTURE_RUNTIME = 'wslc'`. Bash scripts run through Git for
+Windows' `C:\Program Files\Git\bin\bash.exe`, not the WSL `bash.exe` in
+`System32`:
+
+| Task | Command |
+| --- | --- |
+| Build and verify the oracle image | `uv run --no-project --managed-python python -X lazy_imports=normal -m tools.oracle.image build-image` |
+| Verify an oracle image | `uv run --no-project --managed-python python -X lazy_imports=normal -m tools.oracle.image verify-image --engine wslc IMAGE` |
+| Pin capture ([pin-captures.md](pin-captures.md)) | `& 'C:\Program Files\Git\bin\bash.exe' tools/oracle/capture-pin.sh RUN` |
+
+`tools/oracle/image.py` and `tools/oracle/capture-image.sh` translate the
+docker commands for `wslc`; docker and podman get the commands unchanged.
+The `wslc` limits that apply:
+
+- **No `--platform`.** The adapter drops the flag. Every image runs at the
+  host's architecture, with no emulation: x86_64 hosts use `linux/amd64` and
+  aarch64 hosts `linux/arm64`. `verify-image` defaults to the host's platform
+  and refuses any other `--platform`, on every runtime.
+- **`container.exe`.** `wslc` also ships as `container.exe`, so on Windows
+  `container` names `wslc`.
+- **`inspect` prints JSON only.** It has no Go templates, so
+  `Architecture` and `Id` are read from the JSON record
+  (`uv run --no-project --managed-python python -X lazy_imports=normal -m tools.oracle.image image-field`).
+- **No `cp` and no `rm`.** `verify-image` runs `wslc export` and extracts
+  only `opt/pinyin-oracle` from the tar. Containers are removed with
+  `wslc remove -f`.
+- **`build --pull` is an on/off switch.** Capture builds pass no pull flag.
+- **Mounts need Windows paths.** Git Bash rewrites `/c/...:/work:ro` as a
+  path list, and `wslc` rejects it. Without that rewrite, `wslc` reads
+  `/c/...` as a path inside its VM and mounts an empty directory. The capture
+  script passes the checkout and data as `C:/...` (`cygpath -m`) and sets
+  `MSYS2_ARG_CONV_EXCL='*'`. `:ro` and a read-write mount nested in a
+  read-only one both work.
+
+Cloud provisioning (`just provision`, `tools/dev/provision.py`) is Linux only
+and refuses `wslc`.
 
 WSL is a separate Linux development option: follow the Linux section from
 its Bash terminal. [Microsoft recommends the Linux filesystem](https://learn.microsoft.com/en-us/windows/wsl/filesystems)

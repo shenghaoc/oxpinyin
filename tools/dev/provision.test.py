@@ -396,6 +396,9 @@ elif name=='podman':
     elif a==['info'] and os.environ.get('FAKE_WAIT'):
         pathlib.Path(os.environ['READY']).touch(); time.sleep(60)
     else: sys.exit(97)
+elif name=='wslc':
+    if a==['--version']: print('wslc 3.0.3.0 (synthetic)\\nCopyright (synthetic)')
+    else: sys.exit(97)
 elif name=='findmnt':
     if os.environ.get('FAKE_EXT4')=='unknown': sys.exit(1)
     print('/ overlay' if a[:1]==['--raw'] else 'overlay')
@@ -403,7 +406,7 @@ elif name in ('curl','apt-get','sudo'):
     with open(os.environ['CALLS'],'a') as f: f.write(name+' '+ ' '.join(a)+'\\n')
     sys.exit(97)
 '''
-        for name in ('uv', 'rustup', 'valgrind', 'podman', 'findmnt', 'curl', 'apt-get', 'sudo'):
+        for name in ('uv', 'rustup', 'valgrind', 'podman', 'wslc', 'findmnt', 'curl', 'apt-get', 'sudo'):
             path = self.bin / name
             path.write_text(program)
             path.chmod(0o755)
@@ -498,6 +501,12 @@ elif name in ('curl','apt-get','sudo'):
                 self.env.pop(key)
         self.env['FAKE_EXT4'] = 'unknown'
         self.check_entry(['--python-only'], 0)
+
+    def test_wslc_is_refused_before_any_runtime_command(self):
+        self.env['OXPINYIN_CONTAINER'] = 'wslc'
+        current = self.check_entry(['--cells', 'bdb'], 1)
+        self.assertIn(b'wslc (WSL containers) is not supported', current.stderr)
+        self.assertFalse(self.calls.exists())
 
     def test_cached_full_setup_preserves_result_order_files_and_selection(self):
         cache = self.work / 'cache'
