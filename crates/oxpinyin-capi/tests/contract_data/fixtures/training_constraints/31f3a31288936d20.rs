@@ -1,0 +1,1 @@
+M(&[("first", I(2)), ("guess", B(true)), ("guess loaded", B(true)), ("guess unloaded", B(true)), ("logs", L(&[])), ("options", B(true)), ("parse", I(4)), ("row 0 loaded", L(&[B(true), S("你抳")])), ("row 0 unloaded", L(&[B(false), S("untouched")])), ("second", I(4)), ("tokens", L(&[S("0x2001c7f")])), ("unload", B(true))])

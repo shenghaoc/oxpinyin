@@ -155,9 +155,8 @@ mod tests {
     /// `zhuyin_parse_more_full_pinyins` answers that length and stores it for
     /// `zhuyin_get_parsed_input_length` (`zhuyin.cpp:1030`, `:1034`, `:1042`,
     /// `:1083-1085`). Each case holds the pin's consumed and parsed lengths
-    /// from its record in
-    /// `fixtures/contract-refs/tkrzw/contract_zero_key_guess.jsonl`
-    /// (`pin.result.fresh`, pin 074a2219, the pinned libpinyin-data). No
+    /// from its frozen observation, now the `zero_key_guess` contract tests'
+    /// `fresh` value (pin 074a2219, the pinned libpinyin-data). No
     /// database is read, so every cell runs this.
     #[rstest]
     // zero-key-guess/zhuyin/default/'/guess_sentence; pinyin_parser2.cpp:238-250.

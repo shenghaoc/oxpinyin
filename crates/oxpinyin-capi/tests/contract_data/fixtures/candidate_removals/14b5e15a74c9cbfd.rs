@@ -1,0 +1,1 @@
+M(&[("choose normal", I(2)), ("choose predicted prefix", B(true)), ("choose predicted punctuation", B(true)), ("is user", L(&[B(false), B(false)])), ("logs", L(&[])), ("nbest of sentence row", L(&[B(true), I(0)]))])

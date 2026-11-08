@@ -1,0 +1,1 @@
+M(&[("choices", L(&[L(&[S("泥"), I(2)])])), ("cleared_constraints", L(&[B(true)])), ("initial_guess", B(true)), ("initial_sentence", L(&[B(true), S("你好")])), ("intermediate_parse", I(5)), ("logs", L(&[])), ("parse", I(5)), ("replacement_guess", B(true)), ("replacement_parse", I(5)), ("replacement_sentence", L(&[B(true), S("泥还")]))])

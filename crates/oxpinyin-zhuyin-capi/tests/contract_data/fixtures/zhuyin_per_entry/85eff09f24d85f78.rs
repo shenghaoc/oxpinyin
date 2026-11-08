@@ -1,0 +1,1 @@
+M(&[("candidate_string", L(&[B(true), S("你好")])), ("candidate_type", L(&[B(true), I(2)])), ("key_rest_length", L(&[B(true), I(3)])), ("key_rest_positions", L(&[B(true), I(0), I(3)])), ("logs", L(&[])), ("zhuyin_string", L(&[B(true), S("ㄋㄧˇ")]))])

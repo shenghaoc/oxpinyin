@@ -76,6 +76,8 @@ macro_rules! shared_abi {
             fn mask_out(context: P, mask: u32, value: u32) -> bool;
             fn load_phrase_library(context: P, index: u8) -> bool;
             fn unload_phrase_library(context: P, index: u8) -> bool;
+            fn clear_constraint(instance: P, offset: usize) -> bool;
+            fn set_full_pinyin_scheme(context: P, scheme: i32) -> bool;
             $($($extra)*)?
         }
     };

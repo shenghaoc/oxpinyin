@@ -44,12 +44,19 @@ mod facade {
         fn get_zhuyin_offset(instance: P, cursor: usize, offset: *mut usize) -> bool;
         fn get_left_zhuyin_offset(instance: P, offset: usize, left: *mut usize) -> bool;
         fn get_right_zhuyin_offset(instance: P, offset: usize, right: *mut usize) -> bool;
+        fn reset(instance: P) -> bool;
     }
 
     /// Trains the n-best result (`zhuyin_train` takes no index).
     #[allow(dead_code)]
     pub fn train_top(instance: P) -> bool {
         train(instance)
+    }
+
+    /// The zhuyin facade's train takes no index.
+    #[allow(dead_code, unused_variables)]
+    pub fn train_at(instance: P, index: u8) -> bool {
+        unreachable!("the zhuyin facade's train takes no index")
     }
 
     /// The zhuyin facade's one sentence.
@@ -91,6 +98,11 @@ mod facade {
         fn get_luoma_pinyin_string(instance: P, key: P, utf8_str: *mut *mut c_char) -> bool;
         fn get_secondary_zhuyin_string(instance: P, key: P, utf8_str: *mut *mut c_char) -> bool;
         fn get_pinyin_strings(instance: P, key: P, shengmu: *mut *mut c_char, yunmu: *mut *mut c_char) -> bool;
+        fn parse_double_pinyin(instance: P, onepinyin: *const c_char, onekey: P) -> bool;
+        fn get_pinyin_is_incomplete(instance: P, key: P) -> bool;
+        fn begin_get_bigram_phrases(context: P) -> P;
+        fn bigram_iterator_has_next_phrase(iter: P) -> bool;
+        fn bigram_iterator_get_next_phrase(iter: P, phrase: *mut *mut c_char, pinyin: *mut *mut c_char, count: *mut i32) -> bool;
     }
 }
 
@@ -107,41 +119,72 @@ mod fixtures;
 #[allow(dead_code)]
 #[path = "../../oxpinyin-capi/tests/common/contract/bodies"]
 mod bodies {
+    pub mod allocator_register;
     pub mod axis_c;
     pub mod axis_j;
     pub mod before_cursor_dedup;
+    pub mod bigram_removal;
+    pub mod c_string_inputs;
     pub mod candidate_lookup_offsets;
     pub mod case_helpers;
+    pub mod changed_parse_constraints;
+    pub mod combined_import_nbest;
     pub mod duplicate_phrase_add;
+    pub mod final_step_surface;
     pub mod glib_arrays;
     pub mod invalid_input_bytes;
     pub mod issue542_remaining;
     pub mod journal_replay;
     pub mod key_positions_past_65535;
     pub mod library_loading;
+    pub mod matrix_resplit_windows;
     pub mod non_utf8_directories;
+    pub mod prefix_conversion;
     pub mod reading_256th;
+    pub mod row54_empty_forcing;
+    pub mod row58_ranking;
+    pub mod scheme_library_refusals;
     pub mod separator_before_cursor;
+    pub mod sort_pinyin_length;
     pub mod stored_count_headers;
     pub mod table_conf_scanner;
+    pub mod toned_keys_zhuyin_refusals;
+    pub mod training_constraints;
+    pub mod user_key_spellings;
+    pub mod zero_consumption;
+    pub mod zero_key_guess;
+    pub mod zhuyin_facade_twins;
     pub mod zhuyin_null_arguments;
+    pub mod zhuyin_per_entry;
 }
 
 #[path = "contract_data/fixtures/types.rs"]
 mod fixture_types;
 
+#[path = "contract_data/allocator_register.rs"]
+mod allocator_register;
 #[path = "contract_data/axis_c.rs"]
 mod axis_c;
 #[path = "contract_data/axis_j.rs"]
 mod axis_j;
 #[path = "contract_data/before_cursor_dedup.rs"]
 mod before_cursor_dedup;
+#[path = "contract_data/bigram_removal.rs"]
+mod bigram_removal;
+#[path = "contract_data/c_string_inputs.rs"]
+mod c_string_inputs;
 #[path = "contract_data/candidate_lookup_offsets.rs"]
 mod candidate_lookup_offsets;
 #[path = "contract_data/case_helpers.rs"]
 mod case_helpers;
+#[path = "contract_data/changed_parse_constraints.rs"]
+mod changed_parse_constraints;
+#[path = "contract_data/combined_import_nbest.rs"]
+mod combined_import_nbest;
 #[path = "contract_data/duplicate_phrase_add.rs"]
 mod duplicate_phrase_add;
+#[path = "contract_data/final_step_surface.rs"]
+mod final_step_surface;
 #[path = "contract_data/glib_arrays.rs"]
 mod glib_arrays;
 #[path = "contract_data/invalid_input_bytes.rs"]
@@ -154,15 +197,41 @@ mod journal_replay;
 mod key_positions_past_65535;
 #[path = "contract_data/library_loading.rs"]
 mod library_loading;
+#[path = "contract_data/matrix_resplit_windows.rs"]
+mod matrix_resplit_windows;
 #[path = "contract_data/non_utf8_directories.rs"]
 mod non_utf8_directories;
+#[path = "contract_data/prefix_conversion.rs"]
+mod prefix_conversion;
 #[path = "contract_data/reading_256th.rs"]
 mod reading_256th;
+#[path = "contract_data/row54_empty_forcing.rs"]
+mod row54_empty_forcing;
+#[path = "contract_data/row58_ranking.rs"]
+mod row58_ranking;
+#[path = "contract_data/scheme_library_refusals.rs"]
+mod scheme_library_refusals;
 #[path = "contract_data/separator_before_cursor.rs"]
 mod separator_before_cursor;
+#[path = "contract_data/sort_pinyin_length.rs"]
+mod sort_pinyin_length;
 #[path = "contract_data/stored_count_headers.rs"]
 mod stored_count_headers;
 #[path = "contract_data/table_conf_scanner.rs"]
 mod table_conf_scanner;
+#[path = "contract_data/toned_keys_zhuyin_refusals.rs"]
+mod toned_keys_zhuyin_refusals;
+#[path = "contract_data/training_constraints.rs"]
+mod training_constraints;
+#[path = "contract_data/user_key_spellings.rs"]
+mod user_key_spellings;
+#[path = "contract_data/zero_consumption.rs"]
+mod zero_consumption;
+#[path = "contract_data/zero_key_guess.rs"]
+mod zero_key_guess;
+#[path = "contract_data/zhuyin_facade_twins.rs"]
+mod zhuyin_facade_twins;
 #[path = "contract_data/zhuyin_null_arguments.rs"]
 mod zhuyin_null_arguments;
+#[path = "contract_data/zhuyin_per_entry.rs"]
+mod zhuyin_per_entry;

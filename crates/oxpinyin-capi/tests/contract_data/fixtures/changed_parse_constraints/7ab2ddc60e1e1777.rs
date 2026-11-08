@@ -1,0 +1,1 @@
+M(&[("choices", L(&[L(&[S("浩"), I(5)])])), ("cleared_constraints", L(&[B(false)])), ("empty_guess", B(false)), ("empty_parse", I(0)), ("initial_guess", B(true)), ("initial_sentence", L(&[B(true), S("你好")])), ("logs", L(&[])), ("parse", I(5)), ("replacement_guess", B(true)), ("replacement_parse", I(2)), ("replacement_sentence", L(&[B(true), S("你")]))])
