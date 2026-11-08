@@ -115,7 +115,7 @@ pub(crate) const fn make_token(library: u8, slot: u32) -> u32 {
 
 /// The name bytes of one `table.conf` column.
 pub(crate) fn os_bytes(name: &std::ffi::OsStr) -> Vec<u8> {
-    name.as_encoded_bytes().to_vec()
+    oxpinyin_input::path::path_to_bytes(std::path::Path::new(name)).to_vec()
 }
 
 /// The `CString` a `table.conf` name column names.

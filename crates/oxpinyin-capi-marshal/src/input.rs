@@ -51,22 +51,10 @@ pub fn parser_prefix(input: Option<&CStr>) -> String {
     }
 }
 
-/// Preserve the Unix filename bytes copied by `g_strdup` at context init.
-#[cfg(unix)]
+/// Read a native filename using the shared boundary's byte-path conversion.
 #[must_use]
 pub fn filename(input: Option<&CStr>) -> Option<PathBuf> {
-    use std::os::unix::ffi::OsStrExt;
-
-    Some(PathBuf::from(std::ffi::OsStr::from_bytes(
-        input?.to_bytes(),
-    )))
-}
-
-/// Read a native non-Unix filename using the adapter's UTF-8 convention.
-#[cfg(windows)]
-#[must_use]
-pub fn filename(input: Option<&CStr>) -> Option<PathBuf> {
-    Some(oxpinyin_input::path::decode_filename(input?))
+    Some(oxpinyin_input::path::path_from_bytes(input?.to_bytes()))
 }
 
 #[cfg(all(test, windows))]

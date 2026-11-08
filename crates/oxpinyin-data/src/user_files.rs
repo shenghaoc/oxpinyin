@@ -420,18 +420,10 @@ impl UserTableInfo {
     /// As [`Self::load`]; a path holding a NUL is
     /// [`UserConfError::Unopenable`].
     pub fn load_path(path: &std::path::Path) -> Result<Self, UserConfError> {
-        #[cfg(not(windows))]
-        {
-            let filename = oxpinyin_input::c_path(path).ok_or(UserConfError::Unopenable)?;
-            Self::load(&filename)
+        if oxpinyin_input::path::path_to_bytes(path).contains(&0) {
+            return Err(UserConfError::Unopenable);
         }
-        #[cfg(windows)]
-        {
-            if path.as_os_str().as_encoded_bytes().contains(&0) {
-                return Err(UserConfError::Unopenable);
-            }
-            Self::load(path)
-        }
+        Self::load(path)
     }
 
     /// `UserTableInfo::save(filename)` (`table_info.cpp:377-397`): `false`
@@ -466,14 +458,7 @@ impl UserTableInfo {
     /// holding a NUL, which no C caller can pass.
     #[must_use]
     pub fn save_path(&self, path: &std::path::Path) -> bool {
-        #[cfg(not(windows))]
-        {
-            oxpinyin_input::c_path(path).is_some_and(|filename| self.save(&filename))
-        }
-        #[cfg(windows)]
-        {
-            !path.as_os_str().as_encoded_bytes().contains(&0) && self.save(path)
-        }
+        !oxpinyin_input::path::path_to_bytes(path).contains(&0) && self.save(path)
     }
 
     /// The four lines [`Self::save`] writes, in its order, for composing

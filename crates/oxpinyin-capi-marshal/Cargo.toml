@@ -17,6 +17,6 @@ workspace = true
 
 [dependencies]
 oxpinyin-core = { workspace = true }
-
-[target.'cfg(windows)'.dependencies]
+# The shared byte-path conversion: Windows decoded C filenames here before;
+# the boundary now owns the conversion on every platform.
 oxpinyin-input = { workspace = true }

@@ -18,7 +18,7 @@ use std::path::Path;
 /// A path's bytes as they are, which is what `%s` writes.
 #[must_use]
 pub fn path_bytes(path: &Path) -> &[u8] {
-    path.as_os_str().as_encoded_bytes()
+    oxpinyin_input::path::path_to_bytes(path)
 }
 
 /// The init's `load %s failed!` for a `table.conf` that
