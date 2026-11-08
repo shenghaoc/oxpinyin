@@ -268,21 +268,56 @@ fuzz_target!(|data: &[u8]| {
                 if let Some(&token) = added.get(pick) {
                     // A phrase is removable only while every reading is
                     // indexed (`pinyin.cpp:3759`): a second reading merged
-                    // by a later add is never indexed, so removal then
-                    // reports false and the phrase stays.
+                    // by a later add is never indexed, so the removal is the
+                    // pin's reading-removal assert.
                     let removable = store
                         .phrase(token)
                         .expect("phrase lookup")
                         .is_some_and(|row| row.pronunciations().iter().all(|p| p.indexed()));
-                    let removed = store.remove_user_phrase(token).expect("remove");
-                    // `mask_out` deletes phrases whose token matches its
-                    // mask, so a tracked token can already be gone after
-                    // one; absent is only legal then.
-                    assert!(
-                        removed || masked_out || !removable,
-                        "removing a live, fully indexed tracked token must report true"
-                    );
-                    added.retain(|&other| other != token);
+                    // `pinyin_remove_user_candidate` asserts
+                    // `ERROR_OK == retval` for every stored reading
+                    // (`pinyin.cpp:3759`). `ChewingLargeTable2::remove_index`
+                    // answers `ERROR_REMOVE_ITEM_DONOT_EXISTS`
+                    // (`chewing_large_table2.cpp:200-219`) when a reading
+                    // merged by `_add_phrase` (`:569-582`) has no index row,
+                    // and when a mask left the entry without the token. The
+                    // store returns that assert as the typed refusal and
+                    // keeps the phrase, so the target must not treat it as a
+                    // crash.
+                    //
+                    // This generator draws only complete syllables
+                    // (`SYLLABLES`, `key_for`), so it cannot build an
+                    // initial-only reading, whose two index spaces name one
+                    // key. That shape is covered by the `oxpinyin-user` unit
+                    // test `an_initial_only_reading_answers_the_pins_reading_removal_assert`,
+                    // not by this generator.
+                    let mut refused = false;
+                    let removed = match store.remove_user_phrase(token) {
+                        Ok(removed) => removed,
+                        Err(UserStoreError::UserReadingRemoval) => {
+                            assert!(
+                                !removable || masked_out,
+                                "the reading-removal refusal needs an unindexed reading or a mask"
+                            );
+                            refused = true;
+                            false
+                        }
+                        Err(err) => panic!("remove: {err:?}"),
+                    };
+                    if !refused {
+                        // `mask_out` deletes phrases whose token matches its
+                        // mask, so a tracked token can already be gone after
+                        // one; absent is only legal then or when a reading is
+                        // unindexed (`pinyin.cpp:3759`).
+                        assert!(
+                            removed || masked_out || !removable,
+                            "removing a live, fully indexed tracked token must report true"
+                        );
+                    }
+                    // A refusal keeps the phrase, so the token stays tracked.
+                    if removed || store.phrase(token).expect("phrase lookup").is_none() {
+                        added.retain(|&other| other != token);
+                    }
                 }
                 assert!(!store
                     .remove_user_phrase(u32::MAX - 7)

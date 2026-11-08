@@ -336,6 +336,69 @@ fn one_phrase_holds_several_readings_and_counts_accumulate_per_reading() {
     assert!(store.phrase(token).unwrap().is_some());
 }
 
+/// The `user-store-ops` crash input `22d` (`crash-c249fd86…`): add `词` under
+/// `dian`, merge `hen` into the same token, then remove it. The merged
+/// reading has no pinyin-index row, so the pin's
+/// `pinyin_remove_user_candidate` dies at `pinyin.cpp:3759`; the store
+/// answers that assert as the typed refusal and keeps the phrase, which is
+/// what the fuzz target now accepts for exactly this condition.
+#[test]
+fn the_fuzz_remove_sequence_answers_the_pins_reading_removal_assert() {
+    let mut store = session();
+    let dian = keys("dian");
+    let hen = keys("hen");
+    let token = store
+        .add_phrase(&oxpinyin_core::PhraseText::from("词"), &dian, Some(50))
+        .unwrap();
+    let again = store
+        .add_phrase(&oxpinyin_core::PhraseText::from("词"), &hen, Some(100))
+        .unwrap();
+    assert_eq!(again, token, "the second add merges into the same token");
+    assert_eq!(
+        store
+            .phrase(token)
+            .unwrap()
+            .expect("stored")
+            .pronunciations()
+            .len(),
+        2,
+        "both readings stored, the second never indexed"
+    );
+    assert!(matches!(
+        store.remove_user_phrase(token),
+        Err(UserStoreError::UserReadingRemoval)
+    ));
+    assert!(store.phrase(token).unwrap().is_some());
+}
+
+/// An initial-only reading names one key in both index spaces, so
+/// `ChewingLargeTable2::remove_index` removes it once and then answers
+/// `ERROR_REMOVE_ITEM_DONOT_EXISTS` (`chewing_large_table2.cpp:200-219`),
+/// which `pinyin_remove_user_candidate` asserts on (`pinyin.cpp:3759`).
+/// The store answers that assert as the typed refusal and keeps the phrase.
+/// The `user-store-ops` generator cannot build this shape, so only this
+/// test covers it.
+#[test]
+fn an_initial_only_reading_answers_the_pins_reading_removal_assert() {
+    let mut store = session();
+    // The initial-only row `d` packs to initial 4 with middle and final 0, so
+    // both index spaces name the same key.
+    let reading = [key("d")];
+    let token = store
+        .add_phrase(&oxpinyin_core::PhraseText::from("词"), &reading, Some(50))
+        .unwrap();
+    let phrase = store.phrase(token).unwrap().expect("stored");
+    assert!(
+        phrase.pronunciations()[0].indexed(),
+        "the reading is indexed; the refusal is the double removal"
+    );
+    assert!(matches!(
+        store.remove_user_phrase(token),
+        Err(UserStoreError::UserReadingRemoval)
+    ));
+    assert!(store.phrase(token).unwrap().is_some());
+}
+
 #[test]
 fn readings_keep_insertion_order_tones_and_only_the_first_is_indexed() {
     // `_add_phrase` (pinyin.cpp:566-607): a new phrase is indexed under the
