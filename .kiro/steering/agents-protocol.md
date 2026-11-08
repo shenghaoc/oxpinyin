@@ -4,7 +4,7 @@ inclusion: always
 
 # Agent protocol
 
-Project rules are in the human documents, starting with the [contributor procedures](../../CONTRIBUTING.md).
+Project rules are in the human documents, starting with the [contributor procedures](../../CONTRIBUTING.md) and the [testing ownership rule](../../CONTRIBUTING.md#testing).
 This file holds the procedures an agent follows.
 
 ## Tiers
