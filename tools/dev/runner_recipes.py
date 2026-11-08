@@ -1,4 +1,4 @@
-"""The C++ smoke recipe, the one registry runner that compiles a driver."""
+"""The C++ smoke recipe, the one runner that compiles a driver."""
 from collections.abc import Sequence
 import re
 

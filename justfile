@@ -134,15 +134,6 @@ test *args:
 test-tools *args: python
     @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev test-tools "$@"
 
-# Record policy-accepted observations from contract-diff --observations captures.
-[unix]
-policy-record *args: python
-    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev policy-record "$@"
-
-[windows]
-policy-record *args: python
-    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev policy-record @forwarded; exit $LASTEXITCODE
-
 # Run doctests separately; nextest does not run them.
 [unix]
 test-doc *args:
@@ -272,14 +263,14 @@ sanitize backend="" sanitizer="address":
     @{{windows_args}} echo "sanitize is unsupported on Windows: the sanitizer gates are Linux/Darwin native builds."
     @{{windows_args}} exit 1
 
-# Run shared ABI export and allocation gates.
+# Compile and run the C++ pinyin.h smoke gate.
 [unix]
-runner *args: python
-    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev runner "$@"
+cpp-smoke: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev cpp-smoke
 
 [windows]
-runner *args: python
-    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev runner @forwarded; exit $LASTEXITCODE
+cpp-smoke: python
+    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev cpp-smoke; exit $LASTEXITCODE
 
 [unix]
 abi *args: python
@@ -297,24 +288,6 @@ cell-artifacts *args: python
 [windows]
 cell-artifacts *args: python
     @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev cell-artifacts @forwarded; exit $LASTEXITCODE
-
-# Read registry metadata, optionally filtered by issue or kind.
-[unix]
-list *args: python
-    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev list "$@"
-
-[windows]
-list *args: python
-    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev list @forwarded; exit $LASTEXITCODE
-
-# Describe an explicit registry selection without executing it.
-[unix]
-plan *args: python
-    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev plan "$@"
-
-[windows]
-plan *args: python
-    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev plan @forwarded; exit $LASTEXITCODE
 
 # Run a Valgrind recipe (tools/dev/measure/recipes.py).
 [unix]

@@ -27,7 +27,7 @@ class HarnessTests(unittest.TestCase):
 
     def test_discovery_matches_ci_find_and_sort_on_the_checkout(self):
         self.assertEqual(test_runner.harness_files(), self.legacy_files(ROOT))
-        self.assertEqual(test_runner.HARNESS_EXCLUDED, {'tools/bisection/internal-ledger-toolchain.test.py'})
+        self.assertEqual(test_runner.HARNESS_EXCLUDED, set())
 
     def test_discovery_includes_hidden_files_but_not_symlinks_or_directories(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -153,10 +153,8 @@ class Tests(unittest.TestCase):
     def test_other(self): self.fail('must not run')
 if __name__ == '__main__': unittest.main()
 """
-        excluded = {'tools/bisection/internal-ledger-toolchain.test.py': "raise RuntimeError('must be excluded')"}
-        for sources, unmatched in ((dict(excluded, **{'tools/a.test.py': source,
-                                                     'tools/z.test.py': source}), 2),
-                                   (excluded, 0), ({}, 0)):
+        for sources, unmatched in (({'tools/a.test.py': source, 'tools/z.test.py': source}, 2),
+                                   ({}, 0)):
             with self.subTest(files=list(sources)):
                 status, out, err = self.fake_run(sources, pattern='typo')
                 self.assertEqual(status, 1)
@@ -232,7 +230,7 @@ if __name__ == '__main__': unittest.main()
         files = test_runner.harness_files()
         self.assertIn('tools/dev/python-request.test.py', files)
         self.assertGreater(len(files), len(test_runner.COMPAT_HARNESS))
-        shared = ('justfile', 'tools/bisection/runners.json', 'tools/dev/bash_floor.py',
+        shared = ('justfile', 'tools/dev/bash_floor.py',
                   '.github/actions/example/action.yml',
                   '.github/workflows/oracle-image.yml', '.github/workflows/verify-nightly.yml',
                   'docs/plans/tooling-shell-audit.md')
@@ -241,22 +239,21 @@ if __name__ == '__main__': unittest.main()
                 self.assertNotIn(path, test_runner.HARNESS_DEPENDENCIES)
                 self.assertEqual(test_runner.changed_harness_files(files, [path]), files)
 
-    def test_contract_families_keep_own_tests_integration_and_policy_edges(self):
+    def test_contract_helpers_keep_their_own_tests(self):
         files = test_runner.harness_files()
-        shared = {'tools/bisection/contract-modules.test.py', 'tools/bisection/contract-diff.test.py',
-                  'tools/bisection/teardown.test.py'}
-        for name in ('abi', 'reading_256th', 'runner'):
+        for name in ('abi', 'fixtures', 'kit'):
             with self.subTest(module=name):
-                expected = shared | {f'tools/bisection/contract_{name}.test.py'}
-                self.assertEqual(test_runner.changed_harness_files(files, [f'tools/bisection/contract_{name}.py']),
-                                 [path for path in files if path in expected])
-        policy = {'tools/bisection/contract_policy.test.py', 'tools/bisection/contract_verdict.test.py',
-                  'tools/bisection/contract-modules.test.py', 'tools/bisection/contract-diff.test.py',
-                  'tools/dev/policy.test.py'}
-        self.assertEqual(test_runner.changed_harness_files(files, ['tools/bisection/contract_policy.py']),
-                         [path for path in files if path in policy])
-        self.assertEqual(test_runner.changed_harness_files(files, ['tools/bisection/contract_equivalence.py']),
-                         files)
+                expected = {f'tools/bisection/contract_{name}.test.py'}
+                self.assertEqual(
+                    test_runner.changed_harness_files(
+                        files, [f'tools/bisection/contract_{name}.py']),
+                    [path for path in files if path in expected])
+        self.assertEqual(
+            test_runner.changed_harness_files(files, ['tools/bisection/reverse_cross_open.py']),
+            [path for path in files
+             if path == 'tools/bisection/reverse_cross_open.test.py'])
+        self.assertEqual(
+            test_runner.changed_harness_files(files, ['tools/bisection/contract_case_helpers.py']), [])
 
     def test_provision_owned_file_selects_its_readers_and_justfile_selects_all(self):
         files = test_runner.harness_files()
@@ -288,7 +285,7 @@ if __name__ == '__main__': unittest.main()
         for path in ('justfile', '.github/workflows/ci.yml',
                      '.github/workflows/release-packages.yml',
                      '.github/actions/example/action.yml',
-                     'tools/bisection/runners.json', 'tools/dev/pool.py',
+                     'tools/dev/pool.py',
                      'tools/dev/bash_floor.py', 'tools/dev/doctor.py',
                      'tools/example.py', 'docs/packaging.md',
                      'docs/plans/tooling-shell-audit.md', 'docs/plans/tooling-python.md',
@@ -353,43 +350,22 @@ print('END ' + name, file=sys.stderr, flush=True)
         self.assertEqual(len(set(directories)), 4)
         self.assertTrue(all(not Path(path).exists() for path in directories))
 
-    def test_failure_runs_later_files_and_preserves_exclusion(self):
+    def test_failure_runs_later_files(self):
         sources = {'tools/a.test.py': 'raise SystemExit(7)',
-                   'tools/bisection/internal-ledger-toolchain.test.py': "raise RuntimeError('must be excluded')",
                    'tools/z.test.py': "print('LAST')"}
         status, out, err = self.fake_run(sources, cpus=1)
         self.assertEqual(status, 1)
         self.assertIn('LAST', out)
-        self.assertIn('excluded (missing CI input)', out)
         self.assertNotIn('RuntimeError', out)
         self.assertIn('one or more tools/ Python harness tests failed', err)
 
-    def test_memory_backed_tmpdir_refuses_only_selections_needing_eviction(self):
-        cold = 'tools/bisection/teardown.test.py'
-        sources = {cold: "print('cold')", 'tools/a.test.py': "print('launched')"}
-        for kind in ('tmpfs', 'ramfs'):
-            for files in ((), [cold], [cold, 'tools/a.test.py']):
-                with self.subTest(kind=kind, files=files):
-                    status, out, err = self.fake_run(sources, files, filesystem=kind)
-                    self.assertEqual(status, 2)
-                    self.assertEqual(out, '')
-                    self.assertIn('disk-backed TMPDIR', err)
-                    self.assertIn('on ' + kind, err)
-            with mock.patch.object(test_runner, 'memory_backed_tmpdir') as probe:
-                status, out, err = self.fake_run(sources, ['tools/a.test.py'], filesystem=kind)
-            self.assertEqual(status, 0, err)
-            self.assertIn('launched', out)
-            probe.assert_not_called()
-
     def test_changed_selection_precedes_the_tmpdir_requirement(self):
-        cold = 'tools/bisection/teardown.test.py'
-        sources = {cold: "print('cold')", 'tools/dev/check.test.py': "print('launched')"}
-        for paths, expected in ((['tools/dev/check.test.py'], 0), ([cold], 2), (['unknown'], 2), ([], 0)):
+        sources = {'tools/dev/check.test.py': "print('launched')"}
+        for paths, expected in ((['tools/dev/check.test.py'], 0), (['unknown'], 0), ([], 0)):
             with self.subTest(paths=paths), \
                     mock.patch.object(test_runner, 'changed_paths', return_value=paths):
                 status, out, err = self.fake_run(sources, changed='HEAD', filesystem='tmpfs')
             self.assertEqual(status, expected, out + err)
-            self.assertEqual('disk-backed TMPDIR' in err, expected == 2)
         status, out, err = self.fake_run(sources, ['tools/missing.test.py'], filesystem='tmpfs')
         self.assertEqual((status, out), (2, ''))
         self.assertIn('not a discovered harness file', err)
