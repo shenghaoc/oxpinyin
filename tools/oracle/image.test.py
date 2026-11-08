@@ -690,6 +690,7 @@ class RuntimeAdapterTests(unittest.TestCase):
             calls.append([str(part) for part in command])
             return 0
         with (mock.patch.object(images, 'select_runtime', return_value='podman') as select,
+              mock.patch.object(images, 'host_platform', return_value='linux/amd64'),
               mock.patch.object(images, 'capture', fake_capture), mock.patch.object(images, 'run', fake_run),
               mock.patch.object(images, 'digest_file', return_value='0'),
               mock.patch.object(images, 'prefix_ok', return_value=True),
@@ -876,6 +877,7 @@ class AppleSavedImageTests(unittest.TestCase):
     def test_verify_image_creates_no_container(self):
         calls = []
         with (mock.patch.object(images, 'run', self.stub(calls)),
+              mock.patch.object(images, 'host_platform', return_value='linux/amd64'),
               mock.patch.object(images, 'capture', side_effect=AssertionError('no create on Apple')),
               mock.patch.object(images.subprocess, 'run', side_effect=AssertionError('no removal on Apple')),
               mock.patch.object(images, 'prefix_ok', return_value=True),
