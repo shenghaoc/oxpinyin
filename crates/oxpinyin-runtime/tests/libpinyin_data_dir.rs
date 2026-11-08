@@ -6,7 +6,7 @@
 //! that backend. Nothing here is converted, imported or copied: the directory
 //! is the test input.
 //!
-//! The C-ABI half of the invariant is the contract suite's frozen references
+//! The C-ABI half of the invariant is the facade crates' pinned-data tests
 //! over the same package ([contract references](../../../docs/runbooks/contract-references.md)).
 
 use oxpinyin_core::{Dictionary, LanguageModel, PhraseToken, SyllableKey};

@@ -155,12 +155,14 @@ New cases in `tools/bisection/contract_library_reload.py`:
 | `unload-save-skips-user-library-zhuyin` | the same for the `USER_FILE` library 7 | DIFFER |
 | `reload-unreadable-log-{missing,short}-{pinyin,zhuyin}` | reload over a missing or short `.dbin` | MATCH (controls) |
 
-The existing cases already cover unload, reload and candidates:
+The earlier cases of unload, reload and candidates are
 `reload-drops-session-*`, `reload-keeps-saved-*`, `reload-refused-*`,
 `reload-user-zhuyin-*`, `reload-dangling-token-candidates{,-zhuyin}`,
 `reload-total-while-unloaded`, `unload-drops-accepted-bump`, the
 `library-*` and `stderr-library-control-*` loading cases (including
 `stderr-library-control-save-unloaded`) and `save-unloaded-replacement{,-zhuyin}`.
+`an_unloaded_library_leaves_the_model` (`crates/oxpinyin-data/tests/language_model.rs`)
+holds `reload-total-while-unloaded`.
 The export iterator cases are those whose names contain `iterator`.
 
 ## Open items

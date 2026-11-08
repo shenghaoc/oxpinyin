@@ -99,7 +99,9 @@
   key/value rows after masking only the documented item padding.
   `gbf-mini-fixture` and `kmm-estimate-good` are MATCH on each cell.
   The `user-key-spelling/pinyin-egn` and `user-key-spelling/pinyin-nuen`
-  contract controls also MATCH on all three cells.
+  contract controls also MATCHed on all three cells. `oxpinyin-capi`'s
+  `boundary_tests::an_import_reading_parses_with_the_corrections` holds the
+  `egn` control.
 - **Prior rulings:** none reversed. The same artefact was recorded for
   the deleted `oxpinyin-datagen` producer in
   `datagen-compat-2026-09-01` (the padding divergence) and was

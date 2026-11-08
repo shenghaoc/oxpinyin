@@ -75,11 +75,14 @@ just policy-record docs/findings/1297-gram-partition-training.md "obs-$CELL.json
   --cases abort-train-unsorted-set-freq-miss-pinyin,abort-train-unsorted-set-freq-miss-zhuyin
 ```
 
-The cases are the capi crates' `stored_user_gram` contract tests.
+`oxpinyin-capi`'s `boundary_tests::training_over_an_unsorted_start_gram_answers_true`
+holds the pinyin case. The zhuyin facade trains through the same shared facade
+training call and has no separate test.
 C's original user tests check that training preflight and apply agree and that
 refusal is atomic, without promising a position for unpartitioned search.
-The original broader selection, issues 757 and 785, is now Rust contract tests;
-its unchanged scope and the base/PR/pin comparison are documented in the
+The tests of `oxpinyin-core`'s `single_gram` module and `oxpinyin-user`'s
+`store_libpinyin::tests::training_preserves_a_partitioned_unsorted_gram_and_its_duplicates`
+now hold the original broader selection, issues 757 and 785. Its unchanged scope and the base/PR/pin comparison are documented in the
 bench runbook. No raw captures or verification logs are committed.
 
 Policy evidence is in [1297-gram-partition-training.json](../../fixtures/contract-policy/1297-gram-partition-training.json).

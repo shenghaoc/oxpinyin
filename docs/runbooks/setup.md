@@ -692,8 +692,8 @@ are not proof of bug-for-bug compatibility with upstream.
 
 Changes to parsing/candidate behavior, native data/user files or C API
 behavior need a relevant differential. Use a [provisioned remote Linux host](cloud.md).
-For example, key parsing/surface changes use the contract suite
-(the Rust contract suite, see [oracle](oracle.md)). Use the associated check, or ask the maintainer if no matching check is
+For example, key parsing/surface changes use the C-boundary tests
+(see [oracle](oracle.md#the-c-boundary-tests)). Use the associated check, or ask the maintainer if no matching check is
 apparent rather than guessing that ordinary unit tests establish parity. The normal cell
 (one backend on both sides) is tkrzw, the reference cell. Backend-affecting changes use the
 [backend selection rules](verification.md#2-backend-selection); they do not require every ordinary

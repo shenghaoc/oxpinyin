@@ -47,7 +47,8 @@ class RustTablesTests(unittest.TestCase):
             path = root / 'crates/oxpinyin-chewing/src/content_table_source.rs'
             original = path.read_text()
             # Named mutation: content-ni-initial changes the packed parser key.
-            # The same mutation is witnessed by default-option-single-key.
+            # The same mutation is witnessed by oxpinyin-capi's
+            # tests/abi/keys.rs full_pinyin_one_key_surface.
             start = original.index('pinyin: "ni",')
             altered = original[:start] + original[start:].replace('initial: 11,', 'initial: 1,', 1)
             self.assertNotEqual(altered, original)

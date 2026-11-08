@@ -91,8 +91,9 @@ fn open_with_dir(tag: &str) -> (*mut PinyinContext, *mut PinyinInstance, TempUse
 /// The full-pinyin one-key surface: `ni` parses and renders, the
 /// whole-input probe refuses `nihao`, and a failed parse leaves the ZEROED
 /// key (upstream zeroes `*onekey` before the probe). An apostrophe is the
-/// pin's assert (`pinyin_parser2.cpp:170`), held by the contract-diff case
-/// `abort-parse-full-pinyin-apostrophe`.
+/// pin's assert (`pinyin_parser2.cpp:170`), held by
+/// `boundary_tests::full_key_parse_aborts_on_an_apostrophe_after_invalid_bytes`
+/// in `src/boundary_tests.rs`.
 #[test]
 fn full_pinyin_one_key_surface() {
     let fixture = Fixture::new("keys-full");
@@ -466,7 +467,8 @@ fn get_context_returns_the_handle() {
 
 /// The addon unload contract: any in-range index answers `true` loaded or
 /// not. An index of 16 or more is the pin's assert (`pinyin.cpp:499`), held
-/// by the contract-diff case `abort-unload-addon-phrase-library-16`.
+/// by `e2e_tests::null_context_unload_addon_phrase_library_aborts_on_index_16`
+/// in `src/e2e_tests.rs`.
 #[test]
 fn unload_addon_contract() {
     let fixture = Fixture::new("keys-unload");

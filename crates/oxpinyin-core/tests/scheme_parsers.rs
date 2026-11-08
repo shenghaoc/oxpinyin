@@ -243,12 +243,12 @@ fn hsu_is_a_discrete_keyboard_that_differs_from_dachen() {
 fn the_romanization_indexes_parse_with_aligned_spans() {
     // Upstream `pinyindirect`/`zhuyindirect` parsers: the alternate
     // romanizations resolve through a pinned spelling index. `jhih` is a
-    // four-letter Luoma spelling (the ABI contract suite pins its parse
-    // length); here the invariant is alignment and canonical validity.
-    // `jhih` is a four-letter Luoma spelling (the ABI contract suite pins
-    // its parse length); the secondary table's own head entry `ai` is the
-    // secondary sample. Each must parse as aligned keys resolving to
-    // frozen canonical syllables.
+    // four-letter Luoma spelling; the secondary table's own head entry
+    // `ai` is the secondary sample. Each must parse whole (this test pins
+    // the parse length) as aligned keys resolving to frozen canonical
+    // syllables. `oxpinyin-core`
+    // `full_pinyin_index::tests::luoma_parses_through_the_dp` pins the
+    // syllable `jhih` resolves to.
     for (name, index, input) in [
         ("luoma", luoma_pinyin_index(), &b"jhih"[..]),
         ("secondary", secondary_zhuyin_index(), &b"ai"[..]),

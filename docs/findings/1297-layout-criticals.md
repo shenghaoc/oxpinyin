@@ -74,8 +74,11 @@ Cases, bound below with `just policy-record` from tkrzw, bdb and kc captures (ea
 differs from the pin only in the missing critical, or for
 `save-fatal-valid-to-invalid*` in the pin's SIGTRAP under the fatal mask):
 `header-only-library-init`, `header-only-library-init-zhuyin`, `header-only-library-load`, `header-only-library-load-zhuyin`, `header-only-library-save`, `nonzero-total-save`, `nonzero-total-save-zhuyin`, `save-fatal-valid-to-invalid`, `save-fatal-valid-to-invalid-zhuyin`, `save-replacement-invalid-to-valid`, `save-replacement-invalid-to-valid-zhuyin`, `save-replacement-valid-to-invalid`, `save-replacement-valid-to-invalid-zhuyin`, `save-unchanged-layout-failed`, `save-unchanged-layout-failed-zhuyin`, `second-separator-library-init`, `second-separator-library-init-zhuyin`, `short-chunk-layout`, `short-chunk-layout-zhuyin`, `sparse-library-addon`, `sparse-library-addon-reload`, `sparse-library-candidates`, `sparse-library-candidates-zhuyin`, `sparse-library-init`, `sparse-library-init-settled`, `sparse-library-init-settled-zhuyin`, `sparse-library-init-zhuyin`, `sparse-library-load`, `sparse-library-load-zhuyin`, `sparse-library-mask-out`, `sparse-library-mask-out-zhuyin`, `sparse-library-reinit`, `sparse-library-reinit-zhuyin`, `sparse-library-save`, `sparse-library-save-zhuyin`, `sparse-library-tokens`, `sparse-library-tokens-zhuyin`, `third-separator-library-init`, `third-separator-library-init-zhuyin`.
-Each holds oxpinyin's value in the `library_loading` tests of the two capi crates' `contract_data` targets
-(`tests/contract_data/library_loading.rs`), which name this record.
+`oxpinyin-capi`'s `pinned_data_tests::a_save_over_a_failed_layout_journals_against_an_empty_index`
+holds oxpinyin's value for `save-replacement-valid-to-invalid` and names this record.
+`oxpinyin-data`'s `phrase_library::sparse_mapping_tests::a_sparse_chunk_maps_the_whole_file` and
+`oxpinyin-user`'s `store_libpinyin::tests::layout_failed_sparse_library_keeps_and_releases_whole_mapping`
+hold the sparse-library init of `sparse-library-init` and its zhuyin twin.
 The tool case `estimate_interpolation-layout-refusal-total` also binds, on every cell,
 the missing critical: its refused library has a nonzero local total, which
 the facade excludes from the unigram denominator.
