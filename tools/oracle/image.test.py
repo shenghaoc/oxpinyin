@@ -680,6 +680,7 @@ class RuntimeAdapterTests(unittest.TestCase):
         self.assertIsNone(images.container_owner(('wslc',), cid, 'k', run=garbled))
 
     def test_verify_image_falls_back_to_the_selected_runtime(self):
+        native = images.host_platform()
         calls = []
 
         def fake_capture(command, **kwargs):
@@ -697,7 +698,7 @@ class RuntimeAdapterTests(unittest.TestCase):
               contextlib.redirect_stdout(io.StringIO())):
             self.assertEqual(images.verify_image(['image']), 0)
         select.assert_called_once()
-        self.assertEqual(calls[0], ['podman', 'create', '--pull=never', '--platform', 'linux/amd64', 'image', '/none'])
+        self.assertEqual(calls[0], ['podman', 'create', '--pull=never', '--platform', native, 'image', '/none'])
         self.assertEqual(calls[1][:3], ['podman', 'cp', 'cid:/opt/pinyin-oracle'])
         self.assertEqual(remove.call_args.args[0], ['podman', 'rm', '-f', 'cid'])
 
@@ -874,13 +875,14 @@ class AppleSavedImageTests(unittest.TestCase):
         self.assertFalse((self.directory / 'image.tar').exists())
 
     def test_verify_image_creates_no_container(self):
+        native = images.host_platform()
         calls = []
-        with (mock.patch.object(images, 'run', self.stub(calls)),
+        with (mock.patch.object(images, 'run', self.stub(calls, platform=tuple(native.split('/')))),
               mock.patch.object(images, 'capture', side_effect=AssertionError('no create on Apple')),
               mock.patch.object(images.subprocess, 'run', side_effect=AssertionError('no removal on Apple')),
               mock.patch.object(images, 'prefix_ok', return_value=True),
               contextlib.redirect_stdout(io.StringIO()) as output):
-            self.assertEqual(images.verify_image(['--engine', 'container', '--platform', 'linux/amd64', 'image']), 0)
+            self.assertEqual(images.verify_image(['--engine', 'container', '--platform', native, 'image']), 0)
         self.assertEqual([call[1:3] for call in calls], [['image', 'save']])
         self.assertFalse(any(word in call for call in calls for word in ('create', 'cp', 'export')))
         self.assertIn(f'tkrzw libpinyin {hashlib.sha256(b"tkrzw libpinyin second").hexdigest()}', output.getvalue())
