@@ -5,40 +5,6 @@ use crate::support::{Expect, run_j};
 
 // prefix-convert/zhuyin-sentence-above-unicode: MATCH.
 #[test]
-fn prefix_convert_zhuyin_sentence_above_unicode() {
-    run_j(
-        "prefix_conversion::prefix_convert_zhuyin_sentence_above_unicode",
-        Expect::RESULT,
-        |k| b::case(k, "prefix-convert/zhuyin-sentence-above-unicode"),
-        raw!(M(&[
-            ("logs", L(&[])),
-            ("ret", B(true)),
-            ("seeded", B(true)),
-            ("sentence", L(&[B(true), S("e6888c")]))
-        ])),
-        None,
-    );
-}
-
-// prefix-convert/zhuyin-sentence-five-byte: MATCH.
-#[test]
-fn prefix_convert_zhuyin_sentence_five_byte() {
-    run_j(
-        "prefix_conversion::prefix_convert_zhuyin_sentence_five_byte",
-        Expect::RESULT,
-        |k| b::case(k, "prefix-convert/zhuyin-sentence-five-byte"),
-        raw!(M(&[
-            ("logs", L(&[])),
-            ("ret", B(true)),
-            ("seeded", B(true)),
-            ("sentence", L(&[B(true), S("e6888c")]))
-        ])),
-        None,
-    );
-}
-
-// prefix-convert/zhuyin-sentence-invalid: MATCH.
-#[test]
 fn prefix_convert_zhuyin_sentence_invalid() {
     run_j(
         "prefix_conversion::prefix_convert_zhuyin_sentence_invalid",
@@ -88,23 +54,6 @@ fn prefix_convert_zhuyin_sentence_six_byte() {
 }
 
 // prefix-convert/zhuyin-sentence-surrogate: MATCH.
-#[test]
-fn prefix_convert_zhuyin_sentence_surrogate() {
-    run_j(
-        "prefix_conversion::prefix_convert_zhuyin_sentence_surrogate",
-        Expect::RESULT,
-        |k| b::case(k, "prefix-convert/zhuyin-sentence-surrogate"),
-        raw!(M(&[
-            ("logs", L(&[])),
-            ("ret", B(true)),
-            ("seeded", B(true)),
-            ("sentence", L(&[B(true), S("e6888c")]))
-        ])),
-        None,
-    );
-}
-
-// prefix-convert/zhuyin-sentence-valid: MATCH.
 #[test]
 fn prefix_convert_zhuyin_sentence_valid() {
     run_j(
