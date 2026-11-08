@@ -142,7 +142,7 @@ Between completion gates, use iteration feedback while the fix is taking shape:
 2. Select a small, explicit set of differential cases that reaches the changed behaviour.
 3. Name the defect's witness case and its neighbours by case ID.
 
-For example, use `just runner contract-diff verify tkrzw ... -- --cases default-option-parse,default-option-single-key`.
+For example, run the contract test that names the changed decision with `cargo test -p <crate> --test contract <name>`.
 Do not use the default differential suite for iteration feedback.
 Iteration feedback is not a gate result.
 Do not report it as one.
@@ -164,11 +164,8 @@ Run cargo build, test and clippy directly.
 Anyone who wants to limit builds sets `CARGO_BUILD_JOBS` in their own Cargo configuration.
 
 `CARGO_BUILD_JOBS` bounds only Cargo's own jobs.
-`run-all.py` runs `os.cpu_count()` runner jobs by default, and each contract runner (`contract-diff.py`) runs `os.cpu_count()` case workers by default.
-A `run-all.py` run that includes `contract-diff` therefore nests one pool inside another and oversubscribes the host.
-Bound the runner jobs with `run-all.py --jobs N`.
-Bound the case workers with `run-all.py --contract-jobs N`, `contract-diff.py --jobs N` or `OXPINYIN_CONTRACT_JOBS=N`.
-`--contract-jobs 1` runs the cases serially.
+Cargo runs the tests directly; no aggregate runner adds a second pool.
+Bound Cargo with `CARGO_BUILD_JOBS` when the host needs it.
 
 Cancellation, expiry and an OOM-killed child never count as PASS or SKIP.
 

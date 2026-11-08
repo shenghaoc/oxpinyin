@@ -149,7 +149,7 @@ checkout, `uv run --no-project --managed-python python` and `uv python find
 build, copies the file in or passes its contents on, and does not restate the
 version. From outside the checkout, pass `--python` the contents of the checkout's
 `.python-version`, then pass `tools/dev/__main__.py` by absolute path to that
-interpreter (with `-X lazy_imports=normal`), followed by `runner run-all` and its
+interpreter (with `-X lazy_imports=normal`), followed by the subcommand and its
 arguments. This preserves the caller's working directory; its `.python-version`
 does not decide the interpreter. Direct-run Python
 harness files rely on their `uv` shebang and a working directory inside the
@@ -212,15 +212,7 @@ With `-k` and no explicit FILE, files with no matching tests are reported as
 unselected. A named file with no matches remains a failure, as does a pattern
 that matches no tests across all selected files.
 
-`just list` reads `tools/bisection/runners.json`. Use `--issue 541`,
-`--kind gate` to filter its static rows. `just plan` requires
-an explicit selection, for example `just plan --runners bisect --cells bdb`.
-Both commands also accept `--runners`, `--cells`, repeated `--issue` and
-`--kind`; different filters intersect. Empty values, unknown selections and
-filters matching no rows fail. Plans print command and environment templates
-as registry metadata. They do not resolve oracle inputs, build artifacts
-or run commands. Cell names describe compatibility metadata;
-they do not make the native interface execute a container or oracle check.
+The surviving checks run through their own recipes or cargo commands.
 
 The Windows recipes use PowerShell and preserve the child status explicitly.
 Their argument transport remains TODO (no Windows host).
@@ -538,7 +530,7 @@ can support, and its pins are unchanged.
 These run natively on Windows through the `[windows]` pwsh recipes: `build`,
 `test`, `test-doc`, `fmt`, `clippy`, `fuzz`, `coverage`, `python`, `doctor`,
 `fetch-contract-data`, `tkrzw-build`, `oracle-versions`, `rust-tables`,
-`policy-record`, `runner`, `abi`, `cell-artifacts`, `list` and `plan`. None
+`cpp-smoke`, `abi` and `cell-artifacts`. None
 of them starts a container. `sanitize` is Linux and Darwin only.
 
 The pin runs only in a Linux container. On Windows that container is a
@@ -607,7 +599,7 @@ Windows, `wslc` also ships as `container.exe`, so `container` names `wslc`
 there; it names Apple `container` only on macOS.
 
 `OXPINYIN_CONTAINER` names one explicitly; for `build-image` and the captures
-(`just capture-pin`, `capture-contract.sh`) `OXPINYIN_CAPTURE_RUNTIME` comes first. Each
+(`just capture-pin`) `OXPINYIN_CAPTURE_RUNTIME` comes first. Each
 prints the runtime it chose on a `Runtime:` line. Provisioning (`just provision`,
 `just provision-oracle`), `verify-image` and `build-image` work through each
 of them. Every command is written in docker's grammar and passed through
@@ -701,8 +693,7 @@ are not proof of bug-for-bug compatibility with upstream.
 Changes to parsing/candidate behavior, native data/user files or C API
 behavior need a relevant differential. Use a [provisioned remote Linux host](cloud.md).
 For example, key parsing/surface changes use the contract suite
-(`just runner contract-diff verify tkrzw <pinyin_so> [<zhuyin_so>]`, see [oracle](oracle.md)) shown there. The registry records issue associations;
-use an associated issue/check, or ask the maintainer if no matching check is
+(the Rust contract suite, see [oracle](oracle.md)). Use the associated check, or ask the maintainer if no matching check is
 apparent rather than guessing that ordinary unit tests establish parity. The normal cell
 (one backend on both sides) is tkrzw, the reference cell. Backend-affecting changes use the
 [backend selection rules](verification.md#2-backend-selection); they do not require every ordinary
@@ -768,7 +759,7 @@ of completing a contribution.
 - Historical Debian/Linux amd64 compatibility run (glibc 2.41, GLib 2.84).
   The current oracle uses unpinned `debian:testing`; the compat launcher is retired.
   At `8ba13c53` (preserved on wip/1229-pre-squash), before `0x.`
-  was registered with `host_scanf`: `contract-diff` on 3,017 cases per cell
+  was registered with `host_scanf`: the contract differential on 3,017 cases per cell
   reported bdb 2,988 MATCH / 15 POLICY-ACCEPTED / 10 HOST-DEPENDENT / 2 SKIP
   / 2 DIFFER, kc 2,983 / 15 / 10 / 7 / 2, tkrzw 2,985 / 15 / 10 / 5 / 2. The
   2 DIFFER are the `0x.` glibc-version host-dependence finding; the 10

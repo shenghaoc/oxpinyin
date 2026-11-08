@@ -219,9 +219,9 @@ export PINYIN_EXPORT_DIR=/tmp/oxpinyin-export
 
 ## 4. Run the differentials
 
-The pin-versus-oxpinyin comparison of the C ABI is the contract suite, run with
-`just runner contract-diff verify` (below). The per-call C drivers it replaced retired with their
-frozen Rust tests; see [pin captures](pin-captures.md).
+The pin-versus-oxpinyin comparison of the C ABI is the Rust contract suite
+(below). The per-call C drivers it replaced retired with their frozen Rust
+tests; see [pin captures](pin-captures.md).
 
 ### Pre-release fixture check
 
@@ -248,71 +248,14 @@ The tkrzw `libpinyin_data_dir` and `sentence_surface_parity` tests, and
 `package_libraries` in `oxpinyin-data`, read the pinned libpinyin-data package
 (`just fetch-contract-data`) in every ordinary test run.
 
-### The full default contract selection
+### The Rust contract suite
 
-"The full default contract selection" is `verify` with no `--cases`, `--issue`,
-`--family` or `--cases-prefix`, on one cell. It runs the subject only, against
-the pin observations frozen in `fixtures/contract-refs` (see
-[contract references](contract-references.md)); no pin prefix, pin library or
-container is involved:
-
-```sh
-just runner contract-diff verify tkrzw \
-    <target>/debug/libpinyin_capi.so <target>/debug/libzhuyin_capi.so -- --jobs 4
-```
-
-It runs the registered default suite in sorted order. Print the current case count
-without running cases by adding `-- --plan-only` to the command above. Run the
-command without that option to print the current `verdict_counts` summary.
-The KC and BDB cells run only cases that read no system data; the package data's
-`bigram.db` is a tkrzw file. Select the Axis C battery with
-`-- --cases-prefix axis-c-`; add `--plan-only` to print its current count.
-
-For a smaller selection, `--cases-prefix P,Q,...` selects literal ID prefixes
-from the full registry, including untagged cases and IDs without `/`, and
-`--cases @FILE` reads the IDs one per line:
-
-```sh
-just runner contract-diff verify tkrzw <target>/debug/libpinyin_capi.so \
-    <target>/debug/libzhuyin_capi.so -- \
-    --cases-prefix table-conf-,user-conf-,glib-922-save-,stderr-save-,stderr-fini- --plan-only
-```
-
-Every prefix must match; an empty component or an unmatched prefix is an
-error, even alongside another selector. The driver unions explicit `--cases`
-IDs, repeatable `--issue` tags, repeatable `--family F` selections (`F/` IDs),
-then prefixes, in that order. Each issue, family and prefix contributes
-sorted IDs; overlapping selections keep the first position and all reasons
-in the plan.
-
-Ordinary cases default to `OXPINYIN_CONTRACT_JOBS`, else the CPU count.
-Add `-- --jobs N` to request
-at most N active cases. Each case has its own scratch directory and deadline,
-and verdicts and `--observations` remain in selection order. A `--jobs` well
-above the host's CPU count can make a case hit its wall-clock deadline and
-report TIMEOUT; keep `--jobs` at or below the CPU count.
-
-`--expect-parent` verifies a parent build against the same references: a case
-marked `control` must still pass and every other case must fail
-(revert-and-check).
-
-Three kinds of case follow the host, and the references record what they
-depended on at capture:
-
-- A `fatal=True` case (GLib's fatal critical) records the capture GLib. The
-  comparison always comes first: an equal result is `MATCH` on any host. Only
-  when the comparison `DIFFER`s and the host GLib differs from the capture's is
-  the case reported as `HOST-DEPENDENT`, the documented cross-host difference.
-- The lambda scanner cases (`table-conf-lambda-*`, `table-conf-919-lambda-*`)
-  read `%f` with the host's libc and record the capture glibc, with the same
-  rule: compare first, `HOST-DEPENDENT` only for a mismatch on another glibc.
-  Every other mismatch, and every mismatch of any other case, is `DIFFER`.
-  `HOST-DEPENDENT` is counted apart from `MATCH` and never added to it.
-
-The two bigram-export cases (`user-gram-*-export`) and the six cases whose pin
-stderr came from freed memory are Rust tests, because no frozen reference can
-hold them: see `e2e_tests` in `crates/oxpinyin-capi` and
-`crates/oxpinyin-zhuyin-capi`.
+The frozen contract cases are ordinary Rust tests in `crates/oxpinyin-capi/tests`
+and `crates/oxpinyin-zhuyin-capi/tests`; they never run the pin. Run the tkrzw
+set with `cargo test -p oxpinyin-capi --test contract` and
+`cargo test -p oxpinyin-zhuyin-capi --test contract` after
+`just fetch-contract-data`. The local-only cross-open check is in
+[contract references](contract-references.md).
 
 ### Training through the C API
 

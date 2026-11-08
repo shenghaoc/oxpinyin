@@ -98,5 +98,5 @@ Follow the [source method](../../source-policy.md#method): record, design and an
 - [ ] 12b. Run the original acceptance case, still unrun.
   Use a pinned-model phrase, not a user import, whose abbreviation expands past 4096.
   Force it, then revalidate through guess_sentence and a replaced selection.
-  Compare with the reference-cell oracle using a contract-diff.py case.
+  Compare with the reference-cell oracle using a contract test.
   _Requirements: 3.3_

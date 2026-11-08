@@ -1,7 +1,7 @@
 """Oracle pin fields, image tag, image verification and runtime selection.
 
 Standard library plus the shared tools.dev process helpers. Used by
-`just capture-pin`, capture-contract.sh and cloud provisioning:
+`just capture-pin` and cloud provisioning:
 
     python -m tools.oracle.image image-tag
     python -m tools.oracle.image pin-field [--platform PLATFORM] KEY

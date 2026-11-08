@@ -141,7 +141,7 @@ def _parse_gnu_ld(text):
 # is the one after the package string; a hyphen release inside the parentheses is the package's. GCC
 # marks trunk snapshots "(experimental)" (N.0.0 and N.0.1, before N.1.0) and release-branch snapshots
 # "(prerelease)" (N.M.1, after N.M.0). A snapshot counts as its number: the minimum is a major version
-# (14), so a snapshot of 14 counts as 14 and one of 15 as 15. gcov_measure.py checks the JSON
+# (14), so a snapshot of 14 counts as 14 and one of 15 as 15. The coverage review checked the JSON
 # format_version when it runs, which decides for a snapshot that predates the format. The phase is
 # shown in the report.
 _GCOV = re.compile(r'gcov \(.*?\)\s+(\d+(?:\.\d+)+)(.*)')
