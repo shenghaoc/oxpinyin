@@ -66,11 +66,15 @@ The capture runs on the pin only. It is a STOP under the
 [approval conditions](../../CONTRIBUTING.md#approval-conditions): do it only when the maintainer
 asks for it.
 
-1. Provision the three cells with their build trees into a fresh `CACHE`, inside
-   `just performance` (`provision oracle` builds a tree only when it regenerates the data):
+1. Provision the three cells with their build trees into a fresh `CACHE` with
+   `just provision-oracle` (`provision oracle` builds a tree only when it regenerates the data). It
+   runs `provision oracle` in the performance image through the selected runtime
+   ([container runtimes](setup.md#container-runtimes)), into the provisioning cache that
+   `just provision` also uses: `OXPINYIN_PROVISION_CACHE`, else `~/.cache/oxpinyin`. The cells are
+   `oracle/<cell>` there, and model20 is `model20`:
 
    ```bash
-   uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev provision oracle --cache-dir CACHE --cells 'bdb kc tkrzw' --jobs 4
+   OXPINYIN_PROVISION_CACHE=CACHE just provision-oracle
    ```
 
    The data sequence needs a model20 extraction: `provision oracle` fetches it into
@@ -96,9 +100,12 @@ asks for it.
    OXPINYIN_PROVISION_CACHE=CACHE PINYIN_MODEL_CACHE=MODEL just capture-pin 2
    ```
 
-   On Windows, run them from Developer PowerShell with `OXPINYIN_CAPTURE_RUNTIME=wslc`, setting
-   the variables first (`$env:OXPINYIN_PROVISION_CACHE = 'CACHE'`, then `just capture-pin 1`)
-   (the [WSL container limits](setup.md#native-windows-and-wsl-containers) apply).
+   The runtime is the platform's first installed one ([container runtimes](setup.md#container-runtimes)),
+   and the run prints it on its `Runtime:` line. `OXPINYIN_CAPTURE_RUNTIME`, else
+   `OXPINYIN_CONTAINER`, names another. On Windows, run them from Developer PowerShell, setting
+   the variables first (`$env:OXPINYIN_PROVISION_CACHE = 'CACHE'`, then `just capture-pin 1`);
+   `wslc` is the default there (the [WSL container limits](setup.md#native-windows-and-wsl-containers)
+   apply).
 
    Each run first refuses the capture unless:
    - `tools.oracle.image.prefix_ok` accepts the image's tkrzw prefix;

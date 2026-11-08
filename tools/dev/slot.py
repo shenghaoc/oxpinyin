@@ -188,6 +188,15 @@ def cancellation_handlers():
 def terminate_group(process):
     """Stop the group and reap its leader before the caller releases locks."""
     if sys.platform == 'win32':
+        # A console Ctrl-C reaches every process on the console, this child too. Give it the
+        # POSIX path's 5 s grace to finish its own cleanup (the pool removes the containers it
+        # owns) before terminating it; any other cancellation or failure terminates at once.
+        if CANCELLED.is_set() and CANCELLED_SIGNAL == signal.SIGINT:
+            try:
+                process.wait(timeout=5)
+                return
+            except subprocess.TimeoutExpired:
+                pass
         process.terminate()
         try:
             process.wait(timeout=5)

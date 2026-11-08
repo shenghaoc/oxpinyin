@@ -543,44 +543,116 @@ of them starts a container. `sanitize` is Linux and Darwin only.
 
 The pin runs only in a Linux container. On Windows that container is a
 [WSL container](https://learn.microsoft.com/en-us/windows/wsl/wsl-container)
-driven by `wslc`. Run these from Developer PowerShell after
-`$env:OXPINYIN_CAPTURE_RUNTIME = 'wslc'`:
+driven by `wslc`, the first runtime `select_runtime` tries there. Run these from Developer
+PowerShell; `$env:OXPINYIN_CAPTURE_RUNTIME` or `$env:OXPINYIN_CONTAINER` names another runtime:
 
 | Task | Command |
 | --- | --- |
 | Build and verify the oracle image | `uv run --no-project --managed-python python -X lazy_imports=normal -m tools.oracle.image build-image` |
 | Verify an oracle image | `uv run --no-project --managed-python python -X lazy_imports=normal -m tools.oracle.image verify-image --engine wslc IMAGE` |
 | Pin capture ([pin-captures.md](pin-captures.md)) | `just capture-pin RUN` |
+| Provision the oracle cells in the performance image | `just provision-oracle` |
+| Cloud provisioning ([cloud.md](cloud.md)) | `just provision` |
 
-`tools/oracle/image.py` translates the docker commands for `wslc`; docker and
-podman get the commands unchanged.
-The `wslc` limits that apply:
+`tools/oracle/image.py` translates the docker commands for `wslc`
+([container runtimes](#container-runtimes)); docker and podman get the
+commands unchanged. The `wslc` limits that apply:
 
-- **No `--platform`.** The adapter drops the flag. Every image runs at the
-  host's architecture, with no emulation: x86_64 hosts use `linux/amd64` and
-  aarch64 hosts `linux/arm64`. `verify-image` defaults to the host's platform
-  and refuses any other `--platform`, on every runtime.
-- **`container.exe`.** `wslc` also ships as `container.exe`, so on Windows
-  `container` names `wslc`.
+- **No `--platform`.** The adapter drops the flag; every image runs at the
+  host architecture anyway ([container runtimes](#container-runtimes)).
 - **`inspect` prints JSON only.** It has no Go templates, so
   `Architecture` and `Id` are read from the JSON record
   (`uv run --no-project --managed-python python -X lazy_imports=normal -m tools.oracle.image image-field`).
-- **No `cp` and no `rm`.** `verify-image` runs `wslc export` and extracts
-  only `opt/pinyin-oracle` from the tar. Containers are removed with
+- **No top-level `cp` and no `rm`.** `verify-image` runs `wslc export` and
+  extracts only `opt/pinyin-oracle` from the tar. Containers are removed with
   `wslc remove -f`.
-- **`build --pull` is an on/off switch.** Capture builds pass no pull flag.
+- **`build --pull` is an on/off switch, and `build` has no `--network`.**
+  Capture builds pass no pull flag. A build's `--network host` is dropped
+  with a notice; any other build `--network` value is refused.
+- **No `z` mount option.** The adapter drops `,z` and `:z`.
+- **No host networking.** `wslc run --network host` fails with "host mode
+  networking is not supported"; the adapter drops `--network host` and prints
+  a one-line notice that the runtime's default network is used. `--network
+  none` is kept.
 - **Mounts need Windows paths.** `wslc` reads an MSYS path such as
   `/c/...` as a path inside its VM and mounts an empty directory. The capture
   launcher passes the checkout and data as native Windows paths. `:ro` and a
   read-write mount nested in a read-only one both work.
 
-Cloud provisioning (`just provision`, `tools/dev/provision.py`) is Linux only
-and refuses `wslc`.
+Host Python cannot read the symlinks a container makes on an NTFS mount
+(`[Errno 22] Invalid argument`). On Windows, provisioning therefore never
+reads inside a provisioned prefix from the host: each check, removal and
+summary runs in the `deps` image.
 
 WSL is a separate Linux development option: follow the Linux section from
 its Bash terminal. [Microsoft recommends the Linux filesystem](https://learn.microsoft.com/en-us/windows/wsl/filesystems)
 for Linux checkouts/builds (`~/src`, not `/mnt/c`). WSL may also host the
 compatibility runtime without replacing the native Windows workflow.
+
+## Container runtimes
+
+The pin runs only in a Linux container. `select_runtime` in
+`tools/oracle/image.py` picks the first runtime found, in this order:
+
+| Host | Order |
+| --- | --- |
+| Windows | `wslc` (WSL containers), Podman, Docker |
+| macOS | Apple `container`, Podman, Docker |
+| Linux | Podman, Docker |
+
+Every image runs at the host's architecture, with no emulation: x86_64 hosts
+use `linux/amd64` and aarch64 hosts `linux/arm64`. `verify-image` defaults to
+the host's platform and refuses any other `--platform` on every runtime. On
+Windows, `wslc` also ships as `container.exe`, so `container` names `wslc`
+there; it names Apple `container` only on macOS.
+
+`OXPINYIN_CONTAINER` names one explicitly; for `build-image` and the captures
+(`just capture-pin`, `capture-contract.sh`) `OXPINYIN_CAPTURE_RUNTIME` comes first. Each
+prints the runtime it chose on a `Runtime:` line. Provisioning (`just provision`,
+`just provision-oracle`), `verify-image` and `build-image` work through each
+of them. Every command is written in docker's grammar and passed through
+`runtime_command`. Docker and Podman take it as written. `wslc` drops
+`--platform` (see [native Windows](#native-windows-and-wsl-containers)).
+Apple `container`, as a macOS run with it verified:
+
+- **Commands.** `image pull` (without `--quiet`), `image tag`, `delete` and
+  `system status`; JSON inspect records, whose image `Id` is the config
+  descriptor's digest.
+- **Mounts.** Read-only binds are `--mount ...,readonly`. It has no
+  single-file binds, so the library and data runs run `build-oracle.sh` from
+  the mounted recipe at `/opt/oracle-recipe` instead of binding the script,
+  the Bash floor and the pin one by one.
+- **Memory.** Its VM is small by default: image builds get `--cpus 4
+  --memory 6G`, and the library and data runs `--memory 6G`.
+- **Network.** There is no `--network host`: it is dropped with a one-line
+  notice that the default network is used. Its build has no `--network`, so
+  any other build value is refused. `--network none` was confirmed to block
+  traffic, so the capture run has no network.
+- **Pull.** The capture build gets no valued `--pull`: its `--pull` is an
+  on/off switch, as on `wslc`.
+- **Capture.** The capture runs the capture image by its tag, and checks
+  after the run that the tag still names the digest it read before.
+- **`verify-image`.** It can neither `cp` nor `export` a container that never
+  started, and the oracle image (`FROM scratch`) cannot start. So it creates
+  no container: it runs `container image save` and reads the OCI image layout
+  (each blob checked against its digest, the layers applied in order).
+- **Provisioning.** The libraries are built in the `deps` image instead of
+  copied from the published image.
+
+`just provision-oracle` builds the performance image when absent and runs
+`provision oracle` in it with the provisioning cache mounted at
+`/provision`. On rootful Docker the run is the invoking user, so the cache
+stays theirs; uv's home and cache are then in `/tmp`. `just provision` and
+`just provision-oracle` use one cache: `OXPINYIN_PROVISION_CACHE`, else the
+older `OXPINYIN_CLOUD_CACHE` if something still sets it, else
+`~/.cache/oxpinyin`.
+
+These host steps of `just provision` run only on Linux: Valgrind's check and
+apt install, the apt install of the dump utilities, the start of `dockerd`,
+the ext4 report, the host libtkrzw check, the `.pc` rewrite and the
+environment file. On macOS and Windows these are skipped. Provisioning there
+does not require the dump utilities (`db5.3_dump`, `kchashmgr`) either:
+it runs neither, and its prefix checks run in the `deps` image.
 
 ## Development debug information
 

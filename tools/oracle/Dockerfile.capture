@@ -26,10 +26,12 @@ RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
     python3 /usr/local/bin/versions.py --print \
       --manifest /usr/local/share/oxpinyin/version-manifest.json \
       > /opt/oxpinyin-capture-versions.txt
-# The managed interpreter that .python-version names, as Dockerfile.compat installs
-# it (uv 0.13.1, archive checksummed).
+# uv and the managed interpreter that .python-version names, as Dockerfile.oracle's deps
+# stage installs them (uv's Docker guide, https://docs.astral.sh/uv/guides/integration/docker/:
+# the uv image pinned to its multi-architecture index digest).
+COPY --from=ghcr.io/astral-sh/uv:0.13.7@sha256:96f40d3904aad8d0bd010539001d36c8e2188b981e1334471a90c4a1d93bb490 /uv /uvx /bin/
 COPY .python-version /opt/python-pin/.python-version
-ENV UV_INSTALL_DIR=/opt/uv/bin UV_PYTHON_INSTALL_DIR=/opt/uv/python UV_CACHE_DIR=/opt/uv/cache
+ENV UV_PYTHON_INSTALL_DIR=/opt/uv/python UV_CACHE_DIR=/opt/uv/cache
 RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
     set -eu; \
     if [ -s /run/secrets/cacert ]; then \
@@ -37,25 +39,10 @@ RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
       update-ca-certificates; \
       export UV_SYSTEM_CERTS=true; \
     fi; \
-    case $(uname -m) in \
-      x86_64) uv_target=x86_64-unknown-linux-gnu; \
-              uv_sha256=eadd9d27c134ab5ac1ffd4473b97a741407f3ea238288f03121fc4deddf90220 ;; \
-      aarch64 | arm64) uv_target=aarch64-unknown-linux-gnu; \
-              uv_sha256=9041c73c99fdc5892cf128140beb354eca9231d502068cc36e6cb53a8e59ad14 ;; \
-      *) printf 'no uv target for architecture %s\n' "$(uname -m)" >&2; exit 1 ;; \
-    esac; \
-    uv_tmp=$(mktemp -d); \
-    curl --fail --location --retry 3 -o "$uv_tmp/uv.tar.gz" \
-      "https://github.com/astral-sh/uv/releases/download/0.13.1/uv-$uv_target.tar.gz"; \
-    printf '%s  %s\n' "$uv_sha256" "$uv_tmp/uv.tar.gz" | sha256sum --check -; \
-    tar -xz -C "$uv_tmp" -f "$uv_tmp/uv.tar.gz"; \
-    mkdir -p /opt/uv/bin; \
-    install -m755 "$uv_tmp/uv-$uv_target/uv" /opt/uv/bin/uv; \
-    rm -rf "$uv_tmp"; \
-    /opt/uv/bin/uv python install --directory /opt/python-pin; \
+    uv python install --directory /opt/python-pin; \
     version=$(sed -n 's/^\([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' /opt/python-pin/.python-version); \
     test -n "$version"; \
-    ln -s "$(PATH="/opt/uv/bin:$PATH" uv python find --managed-python --directory /opt/python-pin)" "/usr/local/bin/python$version"; \
+    ln -s "$(uv python find --managed-python --directory /opt/python-pin)" "/usr/local/bin/python$version"; \
     rm -rf /opt/uv/cache; \
     chmod -R a+rX /opt/uv/python
 COPY --from=reference /opt/pinyin-oracle /opt/reference

@@ -31,27 +31,65 @@ def running(pid):
 
 
 class GroupTerminationTests(unittest.TestCase):
-    def test_darwin_exiting_group_permission_error_retries_final_kill(self):
-        process = mock.Mock(pid=123)
-        with mock.patch.object(sys, 'platform', 'darwin'), \
-                mock.patch.object(slot.os, 'killpg', side_effect=[PermissionError(), PermissionError(), ProcessLookupError()]) as kill, \
-                mock.patch.object(slot.time, 'monotonic', side_effect=[0, .01]), \
-                mock.patch.object(slot.time, 'sleep') as sleep:
-            slot.terminate_group(process)
-        self.assertEqual(kill.call_args_list, [mock.call(123, signal.SIGTERM),
-                                              mock.call(123, signal.SIGKILL), mock.call(123, signal.SIGKILL)])
-        sleep.assert_called_once_with(.01)
-        self.assertEqual(process.wait.call_args_list, [mock.call(timeout=5), mock.call()])
-
-    def test_group_permission_errors_are_not_silenced(self):
-        for platform in ('darwin', 'linux'):
-            with self.subTest(platform=platform), mock.patch.object(sys, 'platform', platform), \
-                    mock.patch.object(slot.os, 'killpg', side_effect=[None, PermissionError()]), \
-                    mock.patch.object(slot.time, 'monotonic', side_effect=[0, 6]), \
+    if sys.platform != 'win32':
+        # POSIX process groups (os.killpg); Windows has neither, and terminate_group's Windows path is below.
+        def test_darwin_exiting_group_permission_error_retries_final_kill(self):
+            process = mock.Mock(pid=123)
+            with mock.patch.object(sys, 'platform', 'darwin'), \
+                    mock.patch.object(slot.os, 'killpg', side_effect=[PermissionError(), PermissionError(), ProcessLookupError()]) as kill, \
+                    mock.patch.object(slot.time, 'monotonic', side_effect=[0, .01]), \
                     mock.patch.object(slot.time, 'sleep') as sleep:
-                with self.assertRaises(PermissionError):
-                    slot.terminate_group(mock.Mock(pid=123))
-                sleep.assert_not_called()
+                slot.terminate_group(process)
+            self.assertEqual(kill.call_args_list, [mock.call(123, signal.SIGTERM),
+                                                  mock.call(123, signal.SIGKILL), mock.call(123, signal.SIGKILL)])
+            sleep.assert_called_once_with(.01)
+            self.assertEqual(process.wait.call_args_list, [mock.call(timeout=5), mock.call()])
+
+    def windows_ctrl_c(self, *, signum, exits):
+        """terminate_group on Windows after a cancellation by SIGNUM; the child EXITS within the grace or not."""
+        process = mock.Mock()
+        process.wait.side_effect = [0] if exits else [subprocess.TimeoutExpired('child', 5), 0]
+        saved = slot.CANCELLED.is_set(), slot.CANCELLED_SIGNAL
+        self.addCleanup(lambda: (slot.CANCELLED.set() if saved[0] else slot.CANCELLED.clear(),
+                                 setattr(slot, 'CANCELLED_SIGNAL', saved[1])))
+        slot.CANCELLED.set()
+        slot.CANCELLED_SIGNAL = signum
+        with mock.patch.object(sys, 'platform', 'win32'):
+            slot.terminate_group(process)
+        return process
+
+    def test_a_windows_ctrl_c_lets_the_child_finish_its_own_cleanup(self):
+        # The console Ctrl-C reached the child too (the pool removing its containers): no terminate.
+        process = self.windows_ctrl_c(signum=signal.SIGINT, exits=True)
+        process.terminate.assert_not_called()
+        self.assertEqual(process.wait.call_args_list, [mock.call(timeout=5)])
+
+    def test_a_windows_child_that_outlasts_the_grace_is_terminated(self):
+        process = self.windows_ctrl_c(signum=signal.SIGINT, exits=False)
+        process.terminate.assert_called_once_with()
+        self.assertEqual(process.wait.call_args_list, [mock.call(timeout=5), mock.call(timeout=5)])
+
+    def test_other_windows_cancellations_terminate_at_once(self):
+        process = self.windows_ctrl_c(signum=signal.SIGTERM, exits=True)
+        process.terminate.assert_called_once_with()
+        self.assertEqual(process.wait.call_args_list, [mock.call(timeout=5)])
+        slot.CANCELLED.clear()
+        process = mock.Mock()
+        with mock.patch.object(sys, 'platform', 'win32'):
+            slot.terminate_group(process)    # a timeout or another failure: no cancellation at all
+        process.terminate.assert_called_once_with()
+
+    if sys.platform != 'win32':
+        # The group's PermissionError comes from os.killpg, which only POSIX has.
+        def test_group_permission_errors_are_not_silenced(self):
+            for platform in ('darwin', 'linux'):
+                with self.subTest(platform=platform), mock.patch.object(sys, 'platform', platform), \
+                        mock.patch.object(slot.os, 'killpg', side_effect=[None, PermissionError()]), \
+                        mock.patch.object(slot.time, 'monotonic', side_effect=[0, 6]), \
+                        mock.patch.object(slot.time, 'sleep') as sleep:
+                    with self.assertRaises(PermissionError):
+                        slot.terminate_group(mock.Mock(pid=123))
+                    sleep.assert_not_called()
 
 
 @unittest.skipIf(sys.platform == 'win32', 'the child is started in its own POSIX session')
@@ -142,8 +180,10 @@ class CancellationTests(unittest.TestCase):
     def test_status_is_130_without_a_signal_and_128_plus_the_signal_after_one(self):
         with mock.patch.object(slot, 'CANCELLED_SIGNAL', None):
             self.assertEqual(slot.cancellation_status(), 130)
-        with mock.patch.object(slot, 'CANCELLED_SIGNAL', signal.SIGHUP):
-            self.assertEqual(slot.cancellation_status(), 128 + signal.SIGHUP)
+        # SIGHUP exists only on POSIX; on Windows the handlers record SIGTERM (or SIGINT, which is 130).
+        recorded, expected = (signal.SIGTERM, 143) if sys.platform == 'win32' else (signal.SIGHUP, 128 + signal.SIGHUP)
+        with mock.patch.object(slot, 'CANCELLED_SIGNAL', recorded):
+            self.assertEqual(slot.cancellation_status(), expected)
 
 
 @unittest.skipIf(sys.platform == 'win32', 'POSIX process groups')

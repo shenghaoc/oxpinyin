@@ -55,6 +55,22 @@ RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
         --manifest /usr/local/share/oxpinyin/version-manifest.json \
         --record /opt/oracle-versions.txt
 
+# uv and the managed interpreter that .python-version names, as uv's Docker guide
+# installs them (https://docs.astral.sh/uv/guides/integration/docker/): the uv image is
+# pinned to its multi-architecture index digest, a version uv.toml's required-version
+# accepts. Every tools.dev call in an image runs this interpreter; Debian's python3 serves
+# only versions.py above, which runs before uv exists. Behind a TLS-intercepting proxy the
+# optional `cacert` secret is trusted for the interpreter download.
+COPY --from=ghcr.io/astral-sh/uv:0.13.7@sha256:96f40d3904aad8d0bd010539001d36c8e2188b981e1334471a90c4a1d93bb490 /uv /uvx /bin/
+COPY .python-version /opt/python-pin/.python-version
+ENV UV_PYTHON_INSTALL_DIR=/opt/uv/python UV_CACHE_DIR=/opt/uv/cache
+RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
+    set -eu; \
+    if [ -s /run/secrets/cacert ]; then export SSL_CERT_FILE=/run/secrets/cacert; fi; \
+    uv python install --directory /opt/python-pin; \
+    rm -rf /opt/uv/cache; \
+    chmod -R a+rX /opt/uv/python
+
 # Source-only identity inputs; these carry no model data.
 COPY tools/oracle/Dockerfile.oracle tools/oracle/build-oracle.sh tools/oracle/version-manifest.json tools/oracle/versions.py tools/oracle/oracle-pin.txt /opt/oracle-recipe/tools/oracle/
 COPY tools/lib/bash-floor.sh /opt/oracle-recipe/tools/lib/
@@ -130,42 +146,14 @@ ENV CARGO_BUILD_JOBS=${cargo_jobs}
 # (docs/packaging.md, "Regeneration").
 RUN cargo install cargo-c@0.10.25 --locked
 
-# uv 0.13.1 and the managed interpreter that .python-version names: the entry point
-# below is `python -m tools.dev measure ...`. The file is copied in because the build
-# has no checkout as its working directory yet; the version is not restated here.
-# The libtkrzw runtime check stays the shell resolver
-# (tools/tkrzw/runtime.py); installing uv does not establish trust in a runtime.
-COPY .python-version /opt/python-pin/.python-version
-# Archive digest: https://github.com/astral-sh/uv/releases/download/0.13.1/sha256.sum.
-# Exact on purpose (#1074): this image installs from a checksum, and a checksum
-# is only known for a known version.
-ENV UV_INSTALL_DIR=/opt/uv/bin UV_PYTHON_INSTALL_DIR=/opt/uv/python UV_CACHE_DIR=/opt/uv/cache
+# uv and the managed interpreter come from the deps stage. The entry point below is
+# `python -m tools.dev measure ...`; this checks the interpreter it runs. The libtkrzw
+# runtime check stays the shell resolver (tools/tkrzw/runtime.py); installing uv does
+# not establish trust in a runtime.
 RUN set -eu; \
-    [ "$(uname -s)" = Linux ]; \
-    case $(uname -m) in \
-      x86_64) uv_target=x86_64-unknown-linux-gnu; \
-              uv_sha256=eadd9d27c134ab5ac1ffd4473b97a741407f3ea238288f03121fc4deddf90220 ;; \
-      aarch64 | arm64) uv_target=aarch64-unknown-linux-gnu; \
-              uv_sha256=9041c73c99fdc5892cf128140beb354eca9231d502068cc36e6cb53a8e59ad14 ;; \
-      *) printf 'no uv target for architecture %s\n' "$(uname -m)" >&2; exit 1 ;; \
-    esac; \
-    uv_payload=$(curl --fail --location --retry 3 "https://github.com/astral-sh/uv/releases/download/0.13.1/uv-$uv_target.tar.gz" | base64); \
-    uv_actual=$(printf '%s' "$uv_payload" | base64 -d | sha256sum); \
-    [ "${uv_actual%% *}" = "$uv_sha256" ] || { printf 'uv archive checksum mismatch\n' >&2; exit 1; }; \
-    uv_tmp=$(mktemp -d); \
-    trap 'rm -rf "$uv_tmp"' EXIT; \
-    trap 'exit 1' HUP INT TERM; \
-    printf '%s' "$uv_payload" | base64 -d | tar -xz -C "$uv_tmp" "uv-$uv_target/uv" "uv-$uv_target/uvx"; \
-    mkdir -p /opt/uv/bin; \
-    install -m755 "$uv_tmp/uv-$uv_target/uv" "$uv_tmp/uv-$uv_target/uvx" /opt/uv/bin/; \
-    unset uv_payload; \
-    export PATH="/opt/uv/bin:$PATH"; \
-    /opt/uv/bin/uv --version | grep -q '^uv 0\.13\.1 '; \
     cd /opt/python-pin; \
-    /opt/uv/bin/uv python install; \
-    /opt/uv/bin/uv run --no-project --managed-python python -X lazy_imports=normal \
+    uv run --no-project --managed-python python -X lazy_imports=normal \
       -c 'from pathlib import Path; import subprocess, sys, sysconfig; assert sys.implementation.name == "cpython"; assert sys.version_info.releaselevel == "final" and (3, 15, 0) <= sys.version_info[:3] < (3, 16, 0); assert sysconfig.get_config_var("Py_GIL_DISABLED") == 0; assert sys._is_gil_enabled(); managed = subprocess.check_output(["uv", "python", "find", "--managed-python"], text=True).strip(); assert Path(sys.executable).resolve() == Path(managed).resolve()'
-ENV PATH=/opt/uv/bin:$PATH
 
 # Both arms use Debian's packaged libtkrzw, the library the `build` stage linked the
 # pin against: the subject finds it through pkg-config, and the runtime check
