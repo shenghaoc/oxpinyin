@@ -42,6 +42,14 @@ def content_digest(directory):
     return hashlib.sha256(text.encode('ascii')).hexdigest()
 
 
+def data_identity(directory):
+    """The system-data identity of a directory: digest over its files' names and SHA-256."""
+    directory = Path(directory)
+    if not (directory / 'table.conf').is_file():
+        raise ValueError(f'{directory} is not a libpinyin system data directory (no table.conf)')
+    return content_digest(directory)
+
+
 def protect(directory):
     """Clear the write bits of every regular file directly under DIRECTORY.
 

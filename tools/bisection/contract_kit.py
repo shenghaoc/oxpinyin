@@ -1,32 +1,26 @@
-"""Native worker kit, with the loader guard and driver cell explicitly supplied."""
-import contextlib
+"""Native worker kit: a facade handle, GLib diagnostics and one user profile."""
 import ctypes as C
 import os
 import tempfile
-import time
 
 from contract_abi import P, S, U
 
 
 class Kit:
-    """Hold a worker's native libraries, fresh profile and lazy facade handles.
-
-    Capture GLib diagnostics through process-wide handlers. Context and
-    instance handles are cached on demand; the kit does not automatically
-    free them, remove its profile or unregister the handlers."""
+    """Hold a worker's native libraries, fresh profile and lazy facade handles."""
 
     def __init__(self, mode, so, data, scratch, *, cell, check_tkrzw):
         """Load the facade and GLib, install log handlers and create a user directory.
 
         Check the selected tkrzw runtime before loading the facade. Register
-        handlers for both facade domains, GLib's own domain and the default domain, retaining
-        the callback on this object. Create the profile under scratch; native
-        context initialization is deferred until requested."""
+        handlers for both facade domains, GLib's own domain and the default
+        domain. The profile lives under scratch; initialization is deferred."""
         self.mode, self._data, self.scratch = mode, data, scratch
-        check_tkrzw(os.environ.get("CONTRACT_DIFF_CELL", cell), "contract-diff.py", os.environ.get("OXPINYIN_RUNTIME_SIDE", "subject"), so)
+        check_tkrzw(cell, 'reverse_cross_open.py',
+                    os.environ.get('OXPINYIN_RUNTIME_SIDE', 'subject'), so)
         self.lib = C.CDLL(so, use_errno=True)
-        # GLib's functions resolve through the facade's handle: dlsym searches the library and
-        # the libraries it depends on, so the kit always uses the GLib the facade is linked against.
+        # GLib's functions resolve through the facade's handle: dlsym searches the
+        # library and the libraries it depends on.
         self.glib = C.CDLL(so)
         self.glib.g_free.argtypes = [P]
         self.glib.g_free.restype = None
@@ -35,10 +29,6 @@ class Kit:
         cb_type = C.CFUNCTYPE(None, S, U, S, P)
 
         def handler(domain, level, message, _unused):
-            """Append the domain, level and message to the kit's log lists.
-
-            Decode nonempty strings as UTF-8 strictly; record None for NULL
-            or empty domain and message values."""
             self.logs.append([domain.decode() if domain else None, level])
             self.log_messages.append(message.decode() if message else None)
         self._handler = cb_type(handler)
@@ -49,15 +39,9 @@ class Kit:
         self._ctx = None
         self._inst = None
         self.user = tempfile.mkdtemp(prefix='user-', dir=scratch)
-        self.init_seconds = 0.0  # the facade `init` calls: fixture, not case work
 
     @property
     def data(self):
-        """The system data directory. Reading it marks the case as one that uses the
-        package data: CONTRACT_DATA_USE names a file `capture` looks for afterwards."""
-        marker = os.environ.get('CONTRACT_DATA_USE')
-        if marker:
-            open(marker, 'a').close()
         return self._data
 
     @data.setter
@@ -65,51 +49,29 @@ class Kit:
         self._data = value
 
     def fn(self, name, res, *args):
-        """Set a facade symbol's ctypes return and argument types, then return it.
-
-        Prefix name with the kit's mode; missing symbols raise AttributeError.
-        This changes the loaded function's signature without calling it."""
+        """Set a facade symbol's ctypes return and argument types, then return it."""
         f = getattr(self.lib, self.mode + '_' + name)
         f.restype, f.argtypes = res, list(args)
         return f
 
-    def per_call_step(self):
-        """Return a no-op context manager for per-call instrumentation hooks."""
-        return contextlib.nullcontext()
-
     def init(self, system=None, user=None, *, literal=False):
-        """Call the facade initializer and accumulate elapsed monotonic seconds.
-
-        Replace false system or user values with the kit defaults unless
-        literal is true. Pass None and bytes through; encode strings as UTF-8.
-        Return the native pointer, possibly NULL, without caching or asserting
-        success. Accumulate time even if argument conversion or the call raises."""
+        """Call the facade initializer and return its pointer, possibly NULL."""
         def raw(value):
-            """Preserve None and byte strings; encode other values with their encode method."""
-            return value if value is None or isinstance(value, bytes) else value.encode()
+            return value if value is None or isinstance(value, bytes) else os.fspath(value).encode()
         if not literal:
             system, user = system or self.data, user or self.user
-        started = time.monotonic()
-        try:
-            return self.fn('init', P, S, S)(raw(system), raw(user))
-        finally:
-            self.init_seconds += time.monotonic() - started
+        return self.fn('init', P, S, S)(raw(system), raw(user))
 
     @property
     def ctx(self):
-        """Initialize and cache the native context on first access, asserting success.
-
-        A NULL result raises AssertionError and leaves initialization eligible
-        for another attempt on the next access."""
+        """Initialize and cache the native context on first access, asserting success."""
         if self._ctx is None:
             self._ctx = self.init()
             assert self._ctx, 'init failed'
         return self._ctx
 
     def alloc(self):
-        """Allocate a fresh instance from the cached context and assert it is non-NULL.
-
-        Return the pointer without replacing the kit's cached instance."""
+        """Allocate a fresh instance from the cached context and assert it is non-NULL."""
         inst = self.fn('alloc_instance', P, P)(self.ctx)
         assert inst
         return inst
@@ -122,10 +84,7 @@ class Kit:
         return self._inst
 
     def text(self, ptr):
-        """Decode and free a caller-owned GLib string, returning None for NULL.
-
-        Replace invalid UTF-8 bytes during decoding and release the non-NULL
-        pointer with g_free."""
+        """Decode and free a caller-owned GLib string, returning None for NULL."""
         if not ptr:
             return None
         value = C.string_at(ptr).decode('utf-8', 'replace')
