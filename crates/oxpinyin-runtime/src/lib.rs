@@ -2921,6 +2921,54 @@ mod tests {
         }
     }
 
+    /// The save's library loop never visits the reserved row 0: a
+    /// library loaded there is not mapped again, so a directory in its
+    /// file's place does not fault. Library 1 at the same path does.
+    #[cfg(unix)]
+    #[test]
+    fn the_save_remap_skips_the_reserved_library() {
+        let system = tempfile::tempdir().unwrap();
+        for entry in std::fs::read_dir(w3_dir()).unwrap() {
+            let path = entry.unwrap().path();
+            std::fs::copy(&path, system.path().join(path.file_name().unwrap())).unwrap();
+        }
+        let mut runtime = Runtime::open_with_law(system.path(), None, UserConfLaw::Pinyin).unwrap();
+        let gb = system.path().join("gb_char.bin");
+        assert!(
+            runtime
+                .originals_mut()
+                .phrase_libraries_mut()
+                .load(0, &gb)
+                .unwrap()
+        );
+        std::fs::remove_file(&gb).unwrap();
+        std::fs::create_dir(&gb).unwrap();
+        std::fs::write(gb.join("e".repeat(25)), b"x").unwrap();
+        let originals = runtime
+            .user
+            .as_ref()
+            .map_or(&runtime.originals, UserStore::originals);
+        assert!(matches!(
+            Runtime::read_save_baseline(originals, 0, 0),
+            Ok(SaveBaseline::Keep)
+        ));
+        assert!(Runtime::read_save_baseline(originals, 0, 1).is_err());
+    }
+
+    /// `PHRASE_INDEX_LIBRARY_INDEX` ignores the high four bits
+    /// (`novel_types.h:42-44` at 074a2219): a tagged token reads the
+    /// item's own pronunciation count.
+    #[test]
+    fn pronunciation_count_ignores_the_token_tag_nibble() {
+        let runtime = Runtime::open_with_law(&w3_dir(), None, UserConfLaw::Pinyin).unwrap();
+        let token = runtime.dict().system().tokens_for_text("你").unwrap()[0];
+        let count = runtime.dict().token_pronunciation_count(token);
+        assert!(count.is_some());
+        for tag in [0x1000_0000, 0xf000_0000] {
+            assert_eq!(runtime.dict().token_pronunciation_count(tag | token), count);
+        }
+    }
+
     #[test]
     fn unigram_freq_live_count_ignores_bumps_until_library_is_masked() {
         let mut runtime = Runtime::open(&w3_dir(), None).unwrap();

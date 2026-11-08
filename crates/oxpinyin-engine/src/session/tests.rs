@@ -788,6 +788,60 @@ fn train_after_a_reparse_onto_an_internal_zero_key_column_trains() {
     );
 }
 
+/// A choose after a shortening re-parse shrinks the store under a row
+/// decoded for the longer input. The pin's walk stops at
+/// `constraints->length()` (`phonetic_lookup.h:858`), so the row's later
+/// spans are not trained or checked, and a forcing that survived the
+/// re-parse does not move the walk past the store. Training succeeds.
+#[test]
+fn train_after_a_reparse_and_a_choose_stops_the_walk_at_the_store_length() {
+    const VOCAB: &str = "token=1\tkeys=ni\ttext=你\tunigram=1000\n\
+                         token=2\tkeys=hao\ttext=好\tunigram=900\n\
+                         token=3\tkeys=ma\ttext=吗\tunigram=800\n";
+    let mut session = Session::new(
+        SessionSettings::default(),
+        FixtureDictionary::parse(VOCAB).expect("authored fixture"),
+        TrellisModel {
+            blended: 100,
+            unigram: 200,
+        },
+    )
+    .expect("the fixtures open");
+    let choose = |session: &mut Session<FixtureDictionary, TrellisModel>, offset, token| {
+        let window = session.candidates_at(offset).expect("offset in range");
+        let index = window
+            .iter()
+            .position(|candidate| candidate.token() == Some(PhraseToken::new(token)))
+            .expect("the fixture candidate is offered");
+        session
+            .select_anchored(index, &window, offset)
+            .expect("selection cannot fail");
+    };
+    session.replace_raw("nihaoma").expect("initial parse");
+    assert!(session.guess_sentence().expect("guess"));
+    choose(&mut session, 2, 2);
+    assert!(session.guess_sentence().expect("guess"));
+    assert_eq!(session.sentence_text(0).expect("row 0 exists"), "你好吗");
+    session.replace_raw("niha").expect("shrink");
+    choose(&mut session, 0, 1);
+    let mut recorder = Recorder {
+        observed: Vec::new(),
+    };
+    assert!(
+        session
+            .train_nbest(0, &mut recorder)
+            .expect("the walk stops at the store length"),
+        "the stale row trains"
+    );
+    assert!(
+        recorder
+            .observed
+            .iter()
+            .all(|(_, token)| *token != PhraseToken::new(3)),
+        "the span of 吗 lies past the store"
+    );
+}
+
 /// The stale end can still land on an empty column: after a re-parse to
 /// `ni'hao` the pin passes `:663` (the apostrophe column holds a zero key)
 /// and aborts at `:664` (`get_column_size(end) > 0`). The engine refuses
@@ -1597,6 +1651,19 @@ fn amplified_frequency_pins_the_class_a_probe_values() {
         0,
         "no index total ranks as zero"
     );
+}
+
+#[test]
+fn amplified_frequency_ties_two_unigrams_across_two_to_the_24() {
+    // Imports of 5_592_405 and 5_592_406 into library 7 hold the unigrams
+    // 16_777_215 and 16_777_218. The facade total is model20's 51_051_831
+    // plus the library 7 unigrams (207 from four smaller imports, then the
+    // two above). The f32 chain truncates both to one frequency, so the
+    // pin ranks them by token order (row58 conversions, float edge).
+    const TOTAL: u64 = 51_051_831 + 207 + 16_777_215 + 16_777_218;
+    let below = super::amplified_frequency(16_777_215, TOTAL, super::PIN_LAMBDA_F32);
+    let above = super::amplified_frequency(16_777_218, TOTAL, super::PIN_LAMBDA_F32);
+    assert_eq!((below, above), (2_286_563, 2_286_563));
 }
 
 #[test]

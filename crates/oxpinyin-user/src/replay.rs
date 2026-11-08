@@ -2932,6 +2932,21 @@ mod tests {
         }
     }
 
+    /// Each MODIFY_HEADER must start from the running total, so a second
+    /// header chained to the first one's new total also applies
+    /// (`phrase_index.cpp:503-512` at 074a2219).
+    #[test]
+    fn chained_modify_headers_both_apply_to_the_running_total() {
+        let header = |old_total, new_total| LogRecord::ModifyHeader {
+            old_total,
+            new_total,
+        };
+        let first = 1_000_000_150;
+        let (outcome, total, _) = merge_of(&library(), vec![header(150, first), header(first, 7)]);
+        assert!(outcome.is_ok());
+        assert_eq!(total, Some(7));
+    }
+
     #[test]
     fn a_failed_remove_keeps_the_removal_and_stops() {
         // Same size, other bytes: the item and its unigram are gone already.

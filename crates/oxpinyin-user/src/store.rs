@@ -3369,6 +3369,38 @@ mod tests {
             );
         }
 
+        /// `Bigram::mask_out` (`ngram_tkrzwdb.cpp:195-198` at 074a2219)
+        /// stores a gram back only when the mask removed an item. An
+        /// item-less gram has nothing to remove, so it stays as it is,
+        /// a zero total included.
+        #[test]
+        fn mask_out_leaves_an_itemless_gram_untouched() {
+            let mut store = transient();
+            let user = phrase_index_make_token(USER_DICTIONARY, 1);
+            store.plant_raw_bigram(1, &17_u32.to_le_bytes());
+            store.plant_raw_bigram(2, &0_u32.to_le_bytes());
+            let emptied = [9_u32.to_le_bytes(), user.to_le_bytes(), 9_u32.to_le_bytes()].concat();
+            store.plant_raw_bigram(3, &emptied);
+
+            store
+                .mask_out(
+                    PHRASE_INDEX_LIBRARY_MASK,
+                    phrase_index_make_token(USER_DICTIONARY, 0),
+                )
+                .unwrap();
+
+            assert_eq!(
+                store.bigram_row(1).unwrap(),
+                Some(17_u32.to_le_bytes().to_vec())
+            );
+            assert_eq!(
+                store.bigram_row(2).unwrap(),
+                Some(0_u32.to_le_bytes().to_vec())
+            );
+            // A gram the mask empties goes.
+            assert_eq!(store.bigram_row(3).unwrap(), None);
+        }
+
         #[test]
         fn save_compacts_after_a_cached_read() {
             let (_dir, mut store) = in_dir(no_originals());
@@ -3579,6 +3611,21 @@ mod tests {
                 .add_phrase(&"世界".into(), &[key("shi"), key("jie")], Some(10))
                 .unwrap();
             assert_eq!(store.unigram_delta(token2).unwrap(), 30);
+        }
+
+        /// `_add_phrase` adds `count * 3` as a `guint32` product: past
+        /// `u32::MAX` it wraps (1431655766 * 3 = 2^32 + 2).
+        #[test]
+        fn add_phrase_count_times_three_wraps_past_u32() {
+            let mut store = transient();
+            let token = store
+                .add_phrase(
+                    &"你好".into(),
+                    &[key("ni"), key("hao")],
+                    Some(1_431_655_766),
+                )
+                .unwrap();
+            assert_eq!(store.unigram_delta(token).unwrap(), 2);
         }
 
         /// The sub-index refuses a unigram add that would overflow its

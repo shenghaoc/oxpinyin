@@ -2215,6 +2215,53 @@ mod tests {
         assert!(rows.is_empty());
     }
 
+    /// λ = 1 makes `unigram_lambda(1. - lambda)` zero
+    /// (`phonetic_lookup.h:712-713` at 074a2219), so a unigram step adds
+    /// `log(0)`. The step is kept: the sentence still reaches the final
+    /// step, at -inf.
+    #[test]
+    fn a_zero_unigram_weight_still_gives_a_final_step_sentence() {
+        struct UnigramOnly;
+        impl LanguageModel for UnigramOnly {
+            type Token = PhraseToken;
+            type Error = EngineError;
+            fn score(
+                &self,
+                _: &[PhraseToken],
+                _: &PhraseToken,
+                cost: Cost,
+            ) -> Result<Cost, EngineError> {
+                Ok(cost)
+            }
+            fn nbest_step_costs(
+                &self,
+                _: &PhraseToken,
+                _: &PhraseToken,
+            ) -> Result<NbestStepCosts, EngineError> {
+                Ok(NbestStepCosts {
+                    blended: None,
+                    unigram: Some(0.5),
+                    unigram_lambda: 0.0,
+                })
+            }
+        }
+        let dict = FixtureDictionary::parse("token=1\tkeys=ni\ttext=你\tunigram=1000\n")
+            .expect("authored fixture");
+        let (matrix, bound) = one_column_matrix("ni");
+        let rows = nbest_sentences(
+            &matrix,
+            bound,
+            &dict,
+            &UnigramOnly,
+            &[],
+            None,
+            NbestShape::PINYIN,
+        )
+        .expect("the trellis cannot fail here");
+        assert_eq!(rows[0].text.as_str(), Some("你"));
+        assert_eq!(rows[0].poss, Some(f32::NEG_INFINITY));
+    }
+
     #[test]
     fn predecessor_rows_are_reused_only_inside_each_step_and_guess() {
         use oxpinyin_core::{MergedGram, NbestStepRow};
