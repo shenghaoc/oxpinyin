@@ -22,7 +22,7 @@ it, with the before/after numbers in the message.
 The Rust capture programs were deleted on 2026-11-06 UTC, and Python is the
 capture side. Each of these needs a Python regenerator in the next pin capture,
 alongside the [user-profile interchange captures](oracle.md#user-profile-interchange).
-The behaviours the live C drivers in `tools/bisection/` still cover alone are observations
+The behaviours the retired C drivers in `tools/bisection/` covered alone are observations
 of the [pin capture](pin-captures.md). None of these regenerators exists yet:
 
 | capture | file |
@@ -91,7 +91,7 @@ model SHA-256, DBM) are one identity; change every field together. The
    verifies the fetched commit by `git rev-parse`.
 2. Re-run the W2 candidate surface (must stay byte-identical unless the
    upstream change is the point), the sentence-surface counts, the
-   `_check_offset` and abort families, and `just runner same-data-dir-diff`.
+   `_check_offset` and abort families, and `just runner contract-diff verify tkrzw <pinyin_so> [<zhuyin_so>]`.
 3. Record what moved, what did not, and what is build-nondeterministic
    (the six DBM-backed data files are; issue #358) in a verification
    finding; amend `oracle-environment.md`.
