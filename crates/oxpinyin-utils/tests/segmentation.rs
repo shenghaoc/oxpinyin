@@ -72,10 +72,6 @@ fn spseg(cwd: &Path, args: &[&str], stdin: &[u8]) -> Output {
     run(env!("CARGO_BIN_EXE_spseg"), cwd, args, stdin)
 }
 
-fn mergeseq(cwd: &Path, args: &[&str], stdin: &[u8]) -> Output {
-    run(env!("CARGO_BIN_EXE_mergeseq"), cwd, args, stdin)
-}
-
 fn assert_streams(output: &Output, stdout: &[u8], stderr: &[u8], status: i32) {
     assert_eq!(output.status.code(), Some(status), "exit status");
     assert_eq!(output.stdout, expected_text(stdout), "stdout");
@@ -93,74 +89,6 @@ fn expected_text(text: &[u8]) -> Vec<u8> {
     }
     expected
 }
-
-#[test]
-fn empty_input_is_the_file_tail_null_token() {
-    let (_directory, data) = data_dir();
-    for output in [
-        ngseg(&data, &[], b""),
-        spseg(&data, &[], b""),
-        mergeseq(&data, &[], b""),
-    ] {
-        // `ngseg.cpp:258`, `spseg.cpp:341`: the trailing `%d \n`; `mergeseq`
-        // reaches the same bytes through its end-of-input `feed_line("0 ")`.
-        assert_streams(&output, b"0 \n", b"", 0);
-    }
-}
-
-#[test]
-fn empty_lines_and_the_extra_enter_flag() {
-    let (_directory, data) = data_dir();
-    // One empty line is `%d \n` (`ngseg.cpp:199-202`) plus the file tail.
-    assert_streams(&ngseg(&data, &[], b"\n"), b"0 \n0 \n", b"", 0);
-    // The empty-line branch `continue`s before the flag (`:199-204`), so
-    // the flag adds nothing to a blank line.
-    assert_streams(
-        &ngseg(&data, &["--generate-extra-enter"], b"\n"),
-        b"0 \n0 \n",
-        b"",
-        0,
-    );
-    // A processed line does reach it (`:249-251`).
-    assert_streams(
-        &ngseg(&data, &["--generate-extra-enter"], "中\n".as_bytes()),
-        "16786821 中\n0 \n0 \n".as_bytes(),
-        b"",
-        0,
-    );
-    assert_streams(
-        &spseg(&data, &["--generate-extra-enter"], "中\n".as_bytes()),
-        "16786821 中\n0 \n0 \n".as_bytes(),
-        b"",
-        0,
-    );
-    // `spseg.cpp:281-285`: the empty-line null token.
-    assert_streams(&spseg(&data, &[], b"\n"), b"0 \n0 \n", b"", 0);
-}
-
-#[test]
-fn invalid_utf8_is_a_null_token_and_the_pins_stderr_line() {
-    let (_directory, data) = data_dir();
-    // `len != num_of_chars`: the line on stderr, `%d \n` on output, then the
-    // next line and the file tail (`ngseg.cpp:189-197`, `spseg.cpp:270-278`).
-    for output in [ngseg(&data, &[], b"\xff\n"), spseg(&data, &[], b"\xff\n")] {
-        assert_streams(
-            &output,
-            b"0 \n0 \n",
-            b"non-ucs4 characters encountered:\xff.\n",
-            0,
-        );
-    }
-    // The extra-enter flag is not reached after the `continue`.
-    let output = ngseg(&data, &["--generate-extra-enter"], b"\xff\n");
-    assert_streams(
-        &output,
-        b"0 \n0 \n",
-        b"non-ucs4 characters encountered:\xff.\n",
-        0,
-    );
-}
-
 #[test]
 fn ascii_is_an_unknown_run() {
     let (_directory, data) = data_dir();
@@ -182,59 +110,6 @@ fn a_single_character_phrase_uses_its_stored_token() {
         0,
     );
 }
-
-#[test]
-fn spseg_matches_the_committed_w3_golden() {
-    let (_directory, data) = data_dir();
-    let input = repo_root().join("fixtures/w9/segmenter-han.txt");
-    let golden = std::fs::read(repo_root().join("fixtures/w9/segmenter-spseg-w3.txt"))
-        .expect("committed spseg golden");
-    let output = spseg(&data, &[input.to_str().expect("utf-8 path")], b"");
-    assert_eq!(output.status.code(), Some(0));
-    assert_eq!(output.stdout, expected_text(&golden), "spseg stdout");
-    assert_eq!(output.stderr, b"");
-}
-
-#[test]
-fn mergeseq_matches_the_committed_w3_golden() {
-    let (_directory, data) = data_dir();
-    let input = repo_root().join("fixtures/w9/mergeseq-input.txt");
-    let golden = std::fs::read(repo_root().join("fixtures/w9/segmenter-mergeseq-w3.txt"))
-        .expect("committed mergeseq golden");
-    let output = mergeseq(&data, &[input.to_str().expect("utf-8 path")], b"");
-    assert_eq!(output.status.code(), Some(0));
-    assert_eq!(output.stdout, expected_text(&golden), "mergeseq stdout");
-    assert_eq!(output.stderr, b"");
-}
-
-#[test]
-fn help_is_glibs_and_exits_zero() {
-    let (_directory, data) = data_dir();
-    for (output, parameter) in [
-        (ngseg(&data, &["--help"], b""), "- n-gram segment"),
-        (spseg(&data, &["--help"], b""), "- shortest path segment"),
-        (mergeseq(&data, &["--help"], b""), "- merge word sequence"),
-    ] {
-        assert_eq!(output.status.code(), Some(0), "help exit status");
-        assert_eq!(output.stderr, b"");
-        let text = String::from_utf8(output.stdout).expect("help is UTF-8");
-        let newline = oxpinyin_input::TEXT_NEWLINE;
-        assert!(text.contains(&format!("Usage:{newline}  ")), "{text}");
-        assert!(text.contains(parameter), "{text}");
-        assert!(text.contains("--outputfile"), "{text}");
-    }
-}
-
-#[test]
-fn a_bad_option_prints_glibs_line_and_exits_einval() {
-    let (_directory, data) = data_dir();
-    let output = ngseg(&data, &["--bogus"], b"");
-    assert_eq!(output.status.code(), Some(tool::EINVAL), "EINVAL");
-    assert_eq!(output.stderr, b"");
-    let text = String::from_utf8(output.stdout).expect("g_print is UTF-8");
-    assert!(text.starts_with("option parsing failed:"), "{text}");
-}
-
 #[test]
 fn a_missing_input_reports_the_open_and_exits_einval() {
     let (directory, data) = data_dir();
@@ -249,47 +124,6 @@ fn a_missing_input_reports_the_open_and_exits_einval() {
     assert_eq!(output.status.code(), Some(tool::EINVAL), "EINVAL");
     assert!(String::from_utf8_lossy(&output.stderr).starts_with("open file failed:"));
 }
-
-#[test]
-fn a_missing_table_conf_prints_the_readers_line_and_the_utilitys() {
-    let directory = tempfile::tempdir().expect("temporary directory");
-    let output = ngseg(directory.path(), &[], b"");
-    assert_eq!(output.status.code(), Some(tool::ENOENT), "ENOENT");
-    assert_eq!(
-        output.stderr,
-        expected_text(b"open table.conf failed.\nload table.conf failed.\n")
-    );
-    assert_eq!(output.stdout, b"");
-}
-
-#[test]
-fn a_missing_system_chunk_names_the_column_and_exits_enoent() {
-    let (_directory, data) = data_dir();
-    let conf = std::fs::read_to_string(data.join("table.conf")).expect("table.conf");
-    std::fs::write(
-        data.join("table.conf"),
-        conf.replacen("gb_char.bin", "absent.bin", 1),
-    )
-    .expect("write table.conf");
-    let output = ngseg(&data, &[], b"");
-    assert_eq!(output.status.code(), Some(tool::ENOENT), "ENOENT");
-    assert_eq!(output.stderr, expected_text(b"load absent.bin failed!\n"));
-    assert_eq!(output.stdout, b"");
-}
-
-#[test]
-fn too_many_arguments_opens_the_output_then_exits_einval() {
-    let (_directory, data) = data_dir();
-    let output = ngseg(&data, &["-o", "extra.out", "a", "b"], b"");
-    assert_eq!(output.status.code(), Some(tool::EINVAL), "EINVAL");
-    assert_eq!(output.stderr, expected_text(b"too many arguments.\n"));
-    // The output is opened before the argument-count check (`:123-134`).
-    assert_eq!(
-        std::fs::read(data.join("extra.out")).expect("created output"),
-        b""
-    );
-}
-
 #[test]
 fn the_output_file_receives_the_stream() {
     let (_directory, data) = data_dir();

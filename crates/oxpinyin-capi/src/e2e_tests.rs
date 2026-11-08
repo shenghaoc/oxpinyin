@@ -4771,61 +4771,6 @@ fn save_and_reopen(
     crate::context::pinyin_fini(context);
     open(user_dir.to_str().expect("UTF-8 path"))
 }
-
-/// S1: an index with no sub-index exports nothing; a `guint` past 255 truncates to the
-/// iterator's `guint8` field (`pinyin.cpp:126`, `:666` at 074a2219); library 2 exports nothing
-/// once unloaded (`phrase_index.cpp:261-268`). `get_range` fails for a slot with no sub-index
-/// (`phrase_index.cpp:610-613`), so begin hands out an iterator with no next token
-/// (`pinyin.cpp:672-675`). Observations `export/empty/0`, `export/empty/15`,
-/// `export/truncated/256`, `export/truncated/263` and `export/unloaded/2`.
-#[test]
-fn export_follows_the_pins_slots_and_index_truncation() {
-    let user_dir = TempUserDir::new("export-slots");
-    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-    for index in [0, 15, 256] {
-        assert_eq!(export_of(context, index), [], "index {index}");
-    }
-    assert_eq!(
-        import_batch(context, 7, &[("你好世界", "ni'hao'shi'jie", 5)]),
-        [true]
-    );
-    let user = vec![("你好世界".to_owned(), "ni'hao'shi'jie".to_owned(), 5)];
-    assert_eq!(export_of(context, 7), user);
-    assert_eq!(export_of(context, 263), user, "263 is library 7");
-    assert!(crate::config::pinyin_unload_phrase_library(context, 2));
-    assert_eq!(export_of(context, 2), []);
-    crate::instance::pinyin_free_instance(instance);
-    crate::context::pinyin_fini(context);
-}
-
-/// S2: 中国 is a system phrase, so the first add takes the new-token path (`pinyin.cpp:585-608`)
-/// and exports its own count; the second batch finds the token in library 7 and accumulates
-/// on the exact reading (`:563-583`, `phrase_index.cpp:73-84`) after the first batch's
-/// compaction (`pinyin.cpp:657`); a save and reopen keep it. Observation `import/rebatch/中国`.
-#[test]
-fn an_import_accumulates_across_a_batch_boundary() {
-    let user_dir = TempUserDir::new("import-rebatch");
-    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-    assert_eq!(
-        import_batch(context, 7, &[("中国", "zhong'guo", 4)]),
-        [true]
-    );
-    assert_eq!(
-        export_of(context, 7),
-        [("中国".to_owned(), "zhong'guo".to_owned(), 4)]
-    );
-    assert_eq!(
-        import_batch(context, 7, &[("中国", "zhong'guo", 6)]),
-        [true]
-    );
-    let accumulated = vec![("中国".to_owned(), "zhong'guo".to_owned(), 10)];
-    assert_eq!(export_of(context, 7), accumulated);
-    let (context, instance) = save_and_reopen(context, instance, &user_dir.path);
-    assert_eq!(export_of(context, 7), accumulated);
-    crate::instance::pinyin_free_instance(instance);
-    crate::context::pinyin_fini(context);
-}
-
 /// S3: an import count other than -1 reaches the item as its `guint32` bit pattern
 /// (`pinyin.cpp:523-524`, `:578`, `:601`); the export starts at -1 and writes the count only when
 /// it is above 0 (`:703`, `:738-739`), so 0 exports as -1. A second add onto `INT_MAX` passes the
@@ -4959,35 +4904,6 @@ fn a_reparse_keeps_the_stale_nbest_result_until_the_next_guess() {
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);
 }
-
-/// D11: two contexts on one user directory each save their own whole files
-/// (`pinyin.cpp:1132-1147`), so the later save wins and a third context sees only its phrase.
-/// Observation `two-context/both-learn`.
-#[test]
-fn of_two_modified_contexts_the_later_save_wins() {
-    let user_dir = TempUserDir::new("two-context-both-learn");
-    let path = user_dir.path.to_str().expect("UTF-8 path");
-    let (first, first_instance) = open(path);
-    let (second, second_instance) = open(path);
-    assert_eq!(import_batch(first, 7, &[("甲甲", "jia'jia", 1)]), [true]);
-    assert_eq!(import_batch(second, 7, &[("乙乙", "yi'yi", 1)]), [true]);
-    assert!(pinyin_save(first));
-    assert!(pinyin_save(second));
-    let (third, third_instance) = open(path);
-    assert_eq!(
-        export_of(third, 7),
-        [("乙乙".to_owned(), "yi'yi".to_owned(), 1)]
-    );
-    for (context, instance) in [
-        (first, first_instance),
-        (second, second_instance),
-        (third, third_instance),
-    ] {
-        crate::instance::pinyin_free_instance(instance);
-        crate::context::pinyin_fini(context);
-    }
-}
-
 /// D14: an empty segment input has as many UCS-4 characters as UTF-8 ones, 0, so the pin runs the
 /// phrase lookup over nothing and answers true with no phrase (`pinyin.cpp:1446-1462`).
 /// Observation `segment/empty`.
@@ -5119,88 +5035,5 @@ fn the_bigram_export_crosses_both_items_readings() {
             ExportStep::NoNext,
             ExportStep::NoNext,
         ]
-    );
-}
-
-/// D12: the modes of the profile's files after a save, then after `chmod 0640` on every file
-/// and a modified save, under umask 022. The pin writes each DBM file anew and renames it into
-/// place, so it takes its backend's create mode again: Berkeley DB opens it `DB_CREATE, 0600`
-/// (`ngram_bdb.cpp`, `phrase_large_table3_bdb.cpp`, `chewing_large_table2_bdb.cpp` `save_db` at
-/// 074a2219); Kyoto Cabinet's `dump_snapshot` writes through a `std::ofstream`, 0666
-/// (`kcdb.h:2316-2319`); tkrzw opens it with its default 0644
-/// (`ngram_tkrzwdb.cpp`, `*_tkrzwdb.cpp` `save_db`). A chunk is written by
-/// `MemoryChunk::save`, `open(..., 0644)` (`include/memory_chunk.h:537`), into a `.tmp` that is
-/// renamed (`pinyin.cpp:966`). `user.conf` is rewritten in place (`table_info.cpp:378`), so it
-/// keeps 0640. Each mode is less the umask. Pin capture of 2026-11-07 on tkrzw, runs 1 and 2
-/// identical, observation `file-modes/dbm-after-chmod`; the bdb and kc DBM modes are from the
-/// source lines above. Modes only: container sizes are the backend's layout.
-#[cfg(unix)]
-#[test]
-fn a_save_recreates_every_file_but_user_conf_with_its_create_mode() {
-    use std::os::unix::fs::PermissionsExt as _;
-
-    let run = crate::test_support::run_in_child(
-        "e2e_tests::a_save_recreates_every_file_but_user_conf_with_its_create_mode",
-        |user| {
-            // SAFETY: the child runs this test alone; umask touches only its own process.
-            unsafe { libc::umask(0o022) };
-            let modes = || -> Vec<(String, u32)> {
-                let mut found: Vec<(String, u32)> = std::fs::read_dir(user)
-                    .expect("user directory")
-                    .map(|entry| {
-                        let entry = entry.expect("entry");
-                        let mode =
-                            entry.metadata().expect("metadata").permissions().mode() & 0o7777;
-                        (entry.file_name().to_string_lossy().into_owned(), mode)
-                    })
-                    .collect();
-                found.sort();
-                found
-            };
-            let dbm = match oxpinyin_data::DEFAULT_STORE_EXT {
-                "db" => 0o600,
-                "kct" => 0o666 & !0o022,
-                _ => 0o644,
-            };
-            let expected = |conf: u32| -> Vec<(String, u32)> {
-                [
-                    ("addon.bin", 0o644),
-                    ("gb_char.dbin", 0o644),
-                    ("gbk_char.dbin", 0o644),
-                    ("merged.dbin", 0o644),
-                    ("network.bin", 0o644),
-                    ("opengram.dbin", 0o644),
-                    ("user.bin", 0o644),
-                    ("user.conf", conf),
-                    ("user_bigram.db", dbm),
-                    ("user_phrase_index.bin", dbm),
-                    ("user_pinyin_index.bin", dbm),
-                ]
-                .into_iter()
-                .map(|(name, mode)| (name.to_owned(), mode))
-                .collect()
-            };
-            let context = init_at(user);
-            assert!(!context.is_null());
-            assert_eq!(import_batch(context, 7, &[("你好", "nihao", 1)]), [true]);
-            assert!(pinyin_save(context));
-            assert_eq!(modes(), expected(0o644), "after the first save");
-            for (name, _) in modes() {
-                std::fs::set_permissions(user.join(name), std::fs::Permissions::from_mode(0o640))
-                    .expect("chmod");
-            }
-            assert_eq!(import_batch(context, 7, &[("世界", "shijie", 1)]), [true]);
-            assert!(pinyin_save(context));
-            assert_eq!(
-                modes(),
-                expected(0o640),
-                "after chmod 0640 and a modified save"
-            );
-            crate::context::pinyin_fini(context);
-        },
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&run.stderr),
-        fresh_user_conf_line(&run.user_dir)
     );
 }

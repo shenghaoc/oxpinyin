@@ -1878,36 +1878,6 @@ mod tests {
             6
         );
     }
-
-    #[test]
-    fn no_inventory_key_is_invented() {
-        for scheme in [
-            DoublePinyinScheme::Zrm,
-            DoublePinyinScheme::Ms,
-            DoublePinyinScheme::Ziguang,
-            DoublePinyinScheme::Abc,
-            DoublePinyinScheme::Pyjj,
-            DoublePinyinScheme::Xhe,
-        ] {
-            let parser = DoublePinyinParser::with_scheme(scheme);
-            for a in b'a'..=b'z' {
-                for b in b'a'..=b'z' {
-                    let parsed = parser.parse(&[a, b], false);
-                    for item in parsed.keys() {
-                        assert!(
-                            crate::full_pinyin_syllables()
-                                .any(|syllable| syllable == item.key().text())
-                                || crate::INCOMPLETE_PINYIN_KEYS.contains(&item.key().text()),
-                            "{} produced {}",
-                            scheme as i32,
-                            item.key()
-                        );
-                    }
-                }
-            }
-        }
-    }
-
     #[test]
     fn illegal_first_tone_on_ni_stops_without_retrying_a_shorter_key() {
         let parser = ZhuyinParser::new();

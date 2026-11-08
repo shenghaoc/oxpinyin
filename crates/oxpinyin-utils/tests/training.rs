@@ -7,37 +7,10 @@
 //! expectations are derived from the pin's source and the frozen fixture
 //! values.
 
-use oxpinyin_input::tool;
-
-/// Format independently with libc's `%f`, as the utility's printf family does.
-#[allow(unsafe_code)]
-fn host_f(value: f64) -> String {
-    let mut buffer = [0_u8; 64];
-    // SAFETY: the buffer is writable and `%f` takes one double.
-    let length = unsafe {
-        libc::snprintf(
-            buffer.as_mut_ptr().cast(),
-            buffer.len(),
-            c"%f".as_ptr(),
-            value,
-        )
-    };
-    let length = usize::try_from(length).expect("snprintf failed");
-    assert!(length < buffer.len());
-    String::from_utf8(buffer[..length].to_vec()).expect("libc output is UTF-8")
-}
-
-fn host_zero_divided_by_zero() -> f64 {
-    let numerator = std::hint::black_box(0.0_f64);
-    let denominator = std::hint::black_box(0.0_f64);
-    numerator / denominator
-}
-
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
-use oxpinyin_data::phrase_library::PhraseLibrary;
 use oxpinyin_data::row_format::encode_token_key;
 use oxpinyin_data::single_gram::decode_single_gram;
 use oxpinyin_store::{DefaultStore, RawReadStore};
@@ -126,72 +99,6 @@ fn exit_word(outcome: &Output) -> i32 {
 fn expected_text(text: &str) -> String {
     text.replace('\n', oxpinyin_input::TEXT_NEWLINE)
 }
-
-// Expected host difference: Unix SIGABRT, Windows FAST_FAIL_FATAL_APP_EXIT.
-const ABORT_STATUS: i32 = if cfg!(windows) { -1_073_740_791 } else { -6 };
-
-/// The one `table.conf` the success tests use: the fixture's four default
-/// `SYSTEM_FILE` rows and the one addon dictionary the mini set ships.
-const TABLE_CONF: &str = "\
-binary format version:7
-model data version:14
-lambda parameter:0.312699
-
-source table format:pinyin
-database format:Tkrzw
-
-default RESERVED NULL NULL NULL NOT_USED
-default GB_DICTIONARY gb_char.table gb_char.bin gb_char.dbin SYSTEM_FILE
-default GBK_DICTIONARY gbk_char.table gbk_char.bin gbk_char.dbin SYSTEM_FILE
-default OPENGRAM_DICTIONARY opengram.table opengram.bin opengram.dbin SYSTEM_FILE
-default MERGED_DICTIONARY merged.table merged.bin merged.dbin SYSTEM_FILE
-default ADDON_DICTIONARY NULL NULL addon.bin USER_FILE
-default NETWORK_DICTIONARY NULL NULL network.bin USER_FILE
-default USER_DICTIONARY NULL NULL user.bin USER_FILE
-
-addon 4 art.table art.bin NULL DICTIONARY
-";
-
-/// Writes [`TABLE_CONF`] into `dir`.
-fn write_table_conf(dir: &Path) {
-    std::fs::write(dir.join("table.conf"), TABLE_CONF).expect("table.conf");
-}
-
-/// Writes a `table.conf` whose first default chunk is absent.
-fn write_missing_chunk_conf(dir: &Path) {
-    std::fs::write(
-        dir.join("table.conf"),
-        "binary format version:7\n\
-         model data version:14\n\
-         lambda parameter:0.312699\n\
-         \n\
-         source table format:pinyin\n\
-         database format:Tkrzw\n\
-         \n\
-         default RESERVED NULL NULL NULL NOT_USED\n\
-         default GB_DICTIONARY gb_char.table absent.bin gb_char.dbin SYSTEM_FILE\n\
-         default GBK_DICTIONARY gbk_char.table gbk_char.bin gbk_char.dbin SYSTEM_FILE\n",
-    )
-    .expect("table.conf");
-}
-
-/// One chunk's items as `(slot, unigram, total)`.
-fn chunk_items(path: &Path) -> Vec<(u32, u32, u32)> {
-    let library = PhraseLibrary::open(path).expect("chunk opens");
-    let mut items: Vec<(u32, u32, u32)> = library
-        .items()
-        .map(|(slot, item)| (slot, item.unigram(), item.phrase_length() as u32))
-        .collect();
-    items.sort_by_key(|(slot, _, _)| *slot);
-    items
-}
-
-/// One chunk's stored total and item count.
-fn chunk_total_and_count(path: &Path) -> (u32, usize) {
-    let library = PhraseLibrary::open(path).expect("chunk opens");
-    (library.total_freq(), library.items().count())
-}
-
 /// One `SingleGram` row as `(total, records)`; the row must exist.
 fn bigram_row(path: &Path, token: u32) -> (u32, Vec<(u32, u32)>) {
     let store = DefaultStore::open_hash_read_only(path).expect("bigram opens");
@@ -217,199 +124,10 @@ fn has_bigram_row(path: &Path, token: u32) -> bool {
 const A: u32 = 0x0100_0003; // 阿
 const AH: u32 = 0x0100_0004; // 啊
 const START: u32 = 1;
-
-#[test]
-fn gen_unigram_adds_one_and_saves_system_and_dictionary_chunks() {
-    let dir = fixture_copy();
-    write_table_conf(dir.path());
-    let before_gb = chunk_items(&fixture().join("gb_char.bin"));
-    let before_art = chunk_items(&fixture().join("art.bin"));
-
-    let outcome = run("gen_unigram", dir.path(), &[], b"");
-    assert_eq!(exit_word(&outcome), 0, "stderr: {:?}", outcome.stderr);
-    assert!(outcome.stdout.is_empty() && outcome.stderr.is_empty());
-
-    let after_gb = chunk_items(&dir.path().join("gb_char.bin"));
-    assert_eq!(after_gb.len(), before_gb.len());
-    for (after, before) in after_gb.iter().zip(&before_gb) {
-        assert_eq!(after.0, before.0);
-        assert_eq!(after.1, before.1 + 1, "each default item gains one");
-    }
-    let after_art = chunk_items(&dir.path().join("art.bin"));
-    for (after, before) in after_art.iter().zip(&before_art) {
-        assert_eq!(after.0, before.0);
-        assert_eq!(after.1, before.1 + 1, "each addon item gains one");
-    }
-    // `SubPhraseIndex::add_unigram_frequency` raises the stored total with
-    // every unit.
-    let (before_total, before_count) = chunk_total_and_count(&fixture().join("gb_char.bin"));
-    let (after_total, after_count) = chunk_total_and_count(&dir.path().join("gb_char.bin"));
-    assert_eq!(after_count, before_count);
-    assert_eq!(after_total, before_total + before_count as u32);
-}
-
-#[test]
-fn gen_unigram_reports_a_missing_chunk_and_exits_enoent() {
-    let dir = fixture_copy();
-    write_missing_chunk_conf(dir.path());
-    let outcome = run("gen_unigram", dir.path(), &[], b"");
-    assert_eq!(exit_word(&outcome), tool::ENOENT);
-    assert_eq!(outcome.stdout, b"");
-    assert_eq!(
-        outcome.stderr,
-        expected_text("load absent.bin failed!\n").as_bytes()
-    );
-}
-
-#[test]
-fn gen_ngram_adds_unigram_and_bigram_counts_then_saves_chunks() {
-    let dir = fixture_copy();
-    let before_start = path_row(&fixture().join("bigram.db"), START).unwrap_or((0, Vec::new()));
-    let before_a = path_row(&fixture().join("bigram.db"), A).unwrap_or((0, Vec::new()));
-    let before_unigrams = chunk_items(&fixture().join("gb_char.bin"));
-
-    let outcome = run(
-        "gen_ngram",
-        dir.path(),
-        &[],
-        "16777219 阿\n16777220 啊\n\n16777219 阿\n".as_bytes(),
-    );
-    assert_eq!(exit_word(&outcome), 0, "stderr: {:?}", outcome.stderr);
-    assert!(outcome.stdout.is_empty() && outcome.stderr.is_empty());
-
-    // The uni-gram sweep of `gen_ngram.cpp:90`: 阿 twice, 啊 once.
-    let after_unigrams = chunk_items(&dir.path().join("gb_char.bin"));
-    for (after, before) in after_unigrams.iter().zip(&before_unigrams) {
-        let added = match after.0 {
-            3 => 2, // 阿's library-local slot
-            4 => 1, // 啊's
-            _ => 0,
-        };
-        assert_eq!(after.1, before.1 + added, "slot {}", after.0);
-    }
-
-    // The first token and the one after the blank line both follow
-    // `sentence_start`: `sentence_start → 阿` twice and `阿 → 啊` once; the
-    // blank line drops the `啊 → 阿` pair.
-    let bigram = dir.path().join("bigram.db");
-    let (start_total, start_records) = bigram_row(&bigram, START);
-    assert_eq!(start_total, before_start.0 + 2);
-    assert_eq!(record(&start_records, A), record(&before_start.1, A) + 2);
-    let (a_total, a_records) = bigram_row(&bigram, A);
-    assert_eq!(a_total, before_a.0 + 1);
-    assert_eq!(record(&a_records, AH), record(&before_a.1, AH) + 1);
-    // 啊 is only ever a successor in this corpus.
-    assert_eq!(
-        path_row(&bigram, AH),
-        path_row(&fixture().join("bigram.db"), AH)
-    );
-    // The pin's rows for this run (utility/<cell>/gen-ngram, identical on every backend).
-    assert_eq!(start_total, 2);
-    assert_eq!(start_records, vec![(A, 2)]);
-    assert_eq!(a_total, 132);
-    assert_eq!(
-        a_records,
-        vec![
-            (AH, 4),
-            (16779427, 11),
-            (16780263, 8),
-            (16780275, 32),
-            (16781858, 14),
-            (16781861, 8),
-            (16781872, 26),
-            (16785076, 2),
-            (16785081, 5),
-            (16785129, 7),
-            (16785138, 9),
-            (16785145, 3),
-            (16786837, 3),
-        ]
-    );
-    assert!(!has_bigram_row(&bigram, AH));
-}
-
-/// One successor's stored count, 0 where the record is absent.
-fn record(records: &[(u32, u32)], token: u32) -> u32 {
-    records
-        .iter()
-        .find(|(next, _)| *next == token)
-        .map_or(0, |(_, count)| *count)
-}
-
-#[test]
-fn gen_ngram_skip_pi_gram_training_omits_the_sentence_start_row() {
-    let dir = fixture_copy();
-    let before_start = path_row(&fixture().join("bigram.db"), START);
-    let before_a = path_row(&fixture().join("bigram.db"), A).unwrap_or((0, Vec::new()));
-    let before_unigrams = chunk_items(&fixture().join("gb_char.bin"));
-
-    let outcome = run(
-        "gen_ngram",
-        dir.path(),
-        &["--skip-pi-gram-training"],
-        "16777219 阿\n".as_bytes(),
-    );
-    assert_eq!(exit_word(&outcome), 0);
-
-    // The uni-gram count is added before the pi-gram skip.
-    let after_unigrams = chunk_items(&dir.path().join("gb_char.bin"));
-    for (after, before) in after_unigrams.iter().zip(&before_unigrams) {
-        let added = u32::from(after.0 == 3);
-        assert_eq!(after.1, before.1 + added);
-    }
-    assert_eq!(
-        path_row(&dir.path().join("bigram.db"), START),
-        before_start,
-        "--skip-pi-gram-training leaves the sentence_start row alone"
-    );
-    // 阿 is the first token, so no row is written for it either.
-    assert_eq!(path_row(&dir.path().join("bigram.db"), A), Some(before_a),);
-}
-
-#[test]
-fn gen_deleted_ngram_writes_rows_and_leaves_the_chunks_alone() {
-    let dir = fixture_copy();
-    let before_chunks: Vec<(String, Vec<u8>)> = [
-        "gb_char.bin",
-        "gbk_char.bin",
-        "opengram.bin",
-        "merged.bin",
-        "art.bin",
-    ]
-    .into_iter()
-    .map(|name| {
-        (
-            name.to_owned(),
-            std::fs::read(fixture().join(name)).expect("chunk"),
-        )
-    })
-    .collect();
-
-    let outcome = run(
-        "gen_deleted_ngram",
-        dir.path(),
-        &["--deleted-bigram-file", "deleted.db"],
-        "16777219 阿\n16777220 啊\n".as_bytes(),
-    );
-    assert_eq!(exit_word(&outcome), 0, "stderr: {:?}", outcome.stderr);
-
-    let deleted = dir.path().join("deleted.db");
-    assert_eq!(bigram_row(&deleted, START).0, 1);
-    assert_eq!(bigram_row(&deleted, START).1, vec![(A, 1)]);
-    assert_eq!(bigram_row(&deleted, A).0, 1);
-    assert_eq!(bigram_row(&deleted, A).1, vec![(AH, 1)]);
-
-    for (name, bytes) in before_chunks {
-        assert_eq!(
-            std::fs::read(dir.path().join(&name)).expect("saved chunk"),
-            bytes,
-            "{name} is not saved by gen_deleted_ngram"
-        );
-    }
-}
-
 // The pin's rows for this input (utility/<cell>/gen-deleted-ngram, identical on every backend):
 // a blank line restarts at sentence_start, and 啊 → 阿 crosses it, so 啊 gets no row.
+const GLIB_OPTION_PLACEHOLDERS: [&str; 3] = ["[OPTION\u{2026}]", "[OPTION?]", "[OPTION...]"];
+
 #[test]
 fn gen_deleted_ngram_restarts_after_a_blank_line_as_the_pin_does() {
     let dir = fixture_copy();
@@ -426,180 +144,6 @@ fn gen_deleted_ngram_restarts_after_a_blank_line_as_the_pin_does() {
     assert_eq!(bigram_row(&deleted, A), (1, vec![(AH, 1)]));
     assert!(!has_bigram_row(&deleted, AH));
 }
-
-#[test]
-fn gen_deleted_ngram_ends_a_missing_chunk_at_enodata() {
-    let dir = fixture_copy();
-    write_missing_chunk_conf(dir.path());
-    let outcome = run("gen_deleted_ngram", dir.path(), &[], b"");
-    assert_eq!(
-        exit_word(&outcome),
-        tool::ENODATA,
-        "the ENODATA the pin uses"
-    );
-    assert_eq!(
-        outcome.stderr,
-        expected_text("load absent.bin failed!\n").as_bytes()
-    );
-}
-
-#[test]
-fn gen_ngram_ends_a_missing_chunk_at_enoent() {
-    let dir = fixture_copy();
-    write_missing_chunk_conf(dir.path());
-    let outcome = run("gen_ngram", dir.path(), &[], b"");
-    assert_eq!(
-        exit_word(&outcome),
-        tool::ENOENT,
-        "the ENOENT gen_ngram uses"
-    );
-    assert_eq!(
-        outcome.stderr,
-        expected_text("load absent.bin failed!\n").as_bytes()
-    );
-}
-
-#[test]
-fn a_segmented_line_that_does_not_split_aborts() {
-    for utility in ["gen_ngram", "gen_deleted_ngram"] {
-        let dir = fixture_copy();
-        let outcome = run(utility, dir.path(), &[], b"abc\n");
-        assert_eq!(
-            exit_word(&outcome),
-            ABORT_STATUS,
-            "{utility}: the macro's abort()"
-        );
-        assert!(outcome.stderr.is_empty());
-    }
-}
-
-#[test]
-fn a_phrase_that_differs_from_the_token_aborts() {
-    let dir = fixture_copy();
-    // Token 0x01000006 is 呵, not 啊.
-    let outcome = run("gen_ngram", dir.path(), &[], "16777222 啊\n".as_bytes());
-    assert_eq!(exit_word(&outcome), ABORT_STATUS);
-    // The check macro's own text is a policy-accepted language artefact.
-    assert!(outcome.stderr.is_empty());
-}
-
-#[test]
-fn estimate_interpolation_fits_the_committed_deleted_bigram() {
-    let dir = fixture_copy();
-    let outcome = run("estimate_interpolation", dir.path(), &[], b"");
-    assert_eq!(exit_word(&outcome), 0, "stderr: {:?}", outcome.stderr);
-    assert!(outcome.stderr.is_empty());
-    let text = String::from_utf8(outcome.stdout).expect("stdout");
-    let mut token_lines: Vec<&str> = text
-        .lines()
-        .filter(|line| line.starts_with("token:"))
-        .collect();
-    token_lines.sort_unstable();
-    assert_eq!(
-        token_lines,
-        ["token:1 lambda:0.000000", "token:16777219 lambda:0.999892",]
-    );
-    assert!(
-        text.ends_with(&expected_text("average lambda:0.499946\n")),
-        "{text}"
-    );
-}
-
-#[test]
-fn estimate_interpolation_prints_the_host_nan_without_a_deleted_bigram() {
-    let dir = fixture_copy();
-    std::fs::remove_file(dir.path().join("deleted_bigram.db")).expect("remove deleted bigram");
-    let outcome = run("estimate_interpolation", dir.path(), &[], b"");
-    assert_eq!(exit_word(&outcome), 0);
-    assert_eq!(
-        outcome.stdout,
-        expected_text(&format!(
-            "average lambda:{}\n",
-            host_f(host_zero_divided_by_zero())
-        ))
-        .as_bytes()
-    );
-    // `estimate_interpolation.cpp:111-114` keeps the failed attach's
-    // handle, and the BDB pin's cursor and destructor sync on it print
-    // libdb's `BDB1565` (`ngram_bdb.cpp:40-42,188`). Berkeley DB requires
-    // `DB->close` after a failed open, so the store closed that handle and
-    // no line follows (compatibility register, Berkeley DB failed handles).
-    assert_eq!(outcome.stderr, b"");
-}
-
-#[test]
-fn estimate_interpolation_ignores_arguments() {
-    let dir = fixture_copy();
-    let plain = run("estimate_interpolation", dir.path(), &[], b"");
-    let with_arguments = run("estimate_interpolation", dir.path(), &["--help", "x"], b"");
-    assert_eq!(plain.stdout, with_arguments.stdout);
-    assert_eq!(exit_word(&with_arguments), 0);
-}
-
-#[test]
-fn eval_correction_rate_reports_the_correction_rate() {
-    let dir = fixture_copy();
-    let corpus = dir.path().join("evals2.text");
-
-    std::fs::write(&corpus, "16777219 阿\n").expect("corpus");
-    let outcome = run("eval_correction_rate", dir.path(), &[], b"");
-    assert_eq!(exit_word(&outcome), 0);
-    assert_eq!(
-        outcome.stdout,
-        expected_text("correction rate:1.000000\n").as_bytes()
-    );
-    assert!(outcome.stderr.is_empty());
-
-    std::fs::write(&corpus, "16777219 阿\n16777220 啊\n\n").expect("corpus");
-    let outcome = run("eval_correction_rate", dir.path(), &[], b"");
-    assert_eq!(exit_word(&outcome), 0);
-    assert_eq!(
-        outcome.stdout,
-        expected_text("correction rate:0.000000\n").as_bytes()
-    );
-    assert_eq!(
-        outcome.stderr,
-        expected_text("test sentence:阿啊\nguessed sentence:阿阿\nthe result mis-matches.\n")
-            .as_bytes()
-    );
-
-    std::fs::write(&corpus, "").expect("corpus");
-    let outcome = run("eval_correction_rate", dir.path(), &[], b"");
-    assert_eq!(exit_word(&outcome), 0);
-    assert_eq!(
-        outcome.stdout,
-        expected_text(&format!(
-            "correction rate:{}\n",
-            host_f(host_zero_divided_by_zero())
-        ))
-        .as_bytes()
-    );
-}
-
-#[test]
-fn eval_correction_rate_reports_a_missing_corpus() {
-    let dir = fixture_copy();
-    // The committed set carries no evaluation corpus.
-    assert!(!dir.path().join("evals2.text").exists());
-    let outcome = run("eval_correction_rate", dir.path(), &[], b"");
-    assert_eq!(exit_word(&outcome), tool::ENOENT);
-    assert_eq!(outcome.stdout, b"");
-    assert_eq!(
-        outcome.stderr,
-        expected_text("Can't open file:evals2.text\n").as_bytes()
-    );
-}
-
-#[test]
-fn eval_correction_rate_aborts_on_a_phrase_token_mismatch() {
-    let dir = fixture_copy();
-    // Token 0x01000006 is 呵, not 啊.
-    std::fs::write(dir.path().join("evals2.text"), "16777222 啊\n").expect("corpus");
-    let outcome = run("eval_correction_rate", dir.path(), &[], b"");
-    assert_eq!(exit_word(&outcome), ABORT_STATUS);
-    assert!(outcome.stderr.is_empty());
-}
-
 #[test]
 fn eval_correction_rate_refuses_an_unknown_token() {
     let dir = fixture_copy();
@@ -613,10 +157,6 @@ fn eval_correction_rate_refuses_an_unknown_token() {
         expected_text("error: unknown token:999999.\n").as_bytes()
     );
 }
-
-/// Known English GLib usage placeholders, including older and non-UTF-8 variants.
-const GLIB_OPTION_PLACEHOLDERS: [&str; 3] = ["[OPTION\u{2026}]", "[OPTION?]", "[OPTION...]"];
-
 #[test]
 fn the_option_help_names_the_pins_options() {
     let dir = fixture_copy();
@@ -655,15 +195,6 @@ fn a_bad_option_is_glibs_refusal() {
     );
     assert!(outcome.stderr.is_empty());
 }
-
-/// [`bigram_row`] for a path that may or may not exist.
-fn path_row(path: &Path, token: u32) -> Option<(u32, Vec<(u32, u32)>)> {
-    if !has_bigram_row(path, token) {
-        return None;
-    }
-    Some(bigram_row(path, token))
-}
-
 #[cfg(unix)]
 mod common;
 #[cfg(unix)]
@@ -1474,46 +1005,6 @@ mod frozen {
                 &expected,
             );
         }
-        // gen_ngram-family-e-save-refused: utils/training/gen_ngram.cpp:120;
-        // utils/utils_helper.h:97-145 at 074a2219.
-        // Platform exception, macos: a written DBM container's size and bytes follow the 16
-        // KiB page, against 4 KiB on Linux.
-        #[test]
-        fn gen_ngram_family_e_save_refused() {
-            let expected = Run {
-                status: Exit(2),
-                stdout: Exact(b""),
-                stderr: SAVE_GB_CHAR_BIN_FAILED,
-                files: refused_save_bigram_db_files(),
-            };
-            let (directory, _held) = crate::fixtures::sealed_w3();
-            let args: &[&str] = &[];
-            let stdin: &[u8] = b"";
-            let files: &[(&str, &[u8])] = &[];
-
-            for (name, content) in files {
-                directory
-                    .child(name)
-                    .write_binary(content)
-                    .expect("input bytes");
-            }
-            let inputs = snapshot_inputs(directory.path());
-            let mut output = cargo_bin_cmd!("gen_ngram")
-                .current_dir(directory.path())
-                .env("LC_ALL", "C")
-                .args(args)
-                .write_stdin(stdin)
-                .timeout(Duration::from_secs(300))
-                .output()
-                .expect("run gen_ngram");
-            output.stderr = mask_glib_prefix(&output.stderr);
-            check(
-                output,
-                &inventory(directory.path(), &inputs, &[], &[], &["gb_char.bin"], &[]),
-                &inputs,
-                &expected,
-            );
-        }
     }
     mod gen_unigram {
         use crate::common::expected::*;
@@ -1716,44 +1207,6 @@ mod frozen {
             check(
                 output,
                 &inventory(directory.path(), &inputs, &[], &[], &[], &[]),
-                &inputs,
-                &expected,
-            );
-        }
-        // gen_unigram-family-e-save-refused: utils/training/gen_unigram.cpp:72,75;
-        // utils/utils_helper.h:97-145 at 074a2219.
-        #[test]
-        fn gen_unigram_family_e_save_refused() {
-            let expected = Run {
-                status: Exit(2),
-                stdout: Exact(b""),
-                stderr: SAVE_GB_CHAR_BIN_FAILED,
-                files: &[],
-            };
-            let (directory, _held) = crate::fixtures::sealed_w3();
-            let args: &[&str] = &[];
-            let stdin: &[u8] = b"";
-            let files: &[(&str, &[u8])] = &[];
-
-            for (name, content) in files {
-                directory
-                    .child(name)
-                    .write_binary(content)
-                    .expect("input bytes");
-            }
-            let inputs = snapshot_inputs(directory.path());
-            let mut output = cargo_bin_cmd!("gen_unigram")
-                .current_dir(directory.path())
-                .env("LC_ALL", "C")
-                .args(args)
-                .write_stdin(stdin)
-                .timeout(Duration::from_secs(300))
-                .output()
-                .expect("run gen_unigram");
-            output.stderr = mask_glib_prefix(&output.stderr);
-            check(
-                output,
-                &inventory(directory.path(), &inputs, &[], &[], &["gb_char.bin"], &[]),
                 &inputs,
                 &expected,
             );

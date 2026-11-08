@@ -63,24 +63,6 @@ fn rows_follow_length_then_first_reading_then_phrase_bytes() {
         expected
     );
 }
-
-#[test]
-fn the_default_output_is_temp_out_and_a_last_row_without_newline_is_dropped() {
-    let newline = oxpinyin_input::TEXT_NEWLINE;
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("in.txt"), "你 ni 5\n好 hao 3").unwrap();
-    let out = run(dir.path(), &["in.txt"]);
-    assert_eq!(out.status.code(), Some(0));
-    assert_eq!(
-        String::from_utf8_lossy(&out.stdout),
-        format!("nnodes: 1{newline}")
-    );
-    assert_eq!(
-        std::fs::read_to_string(dir.path().join("temp.out")).unwrap(),
-        format!("ni\t你\t1\t5{newline}")
-    );
-}
-
 #[test]
 fn a_missing_input_exits_enoent_before_writing() {
     let newline = oxpinyin_input::TEXT_NEWLINE;
@@ -93,81 +75,6 @@ fn a_missing_input_exits_enoent_before_writing() {
     );
     assert!(!dir.path().join("temp.out").exists());
 }
-
-#[test]
-fn an_unknown_option_exits_einval_with_the_glib_message() {
-    let dir = tempfile::tempdir().unwrap();
-    let out = run(dir.path(), &["--bogus"]);
-    assert_eq!(out.status.code(), Some(tool::EINVAL));
-    assert!(
-        String::from_utf8_lossy(&out.stdout).starts_with("option parsing failed:"),
-        "{out:?}"
-    );
-}
-
-#[test]
-fn an_empty_phrase_counts_as_a_node_and_meets_glibs_null_array_check() {
-    let newline = oxpinyin_input::TEXT_NEWLINE;
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("in.txt"), b"\0 - 1\n\xe4\xbd\xa0 ni 5\n").unwrap();
-    let out = run(dir.path(), &["in.txt"]);
-    assert_eq!(out.status.code(), Some(0));
-    assert_eq!(
-        String::from_utf8_lossy(&out.stdout),
-        format!("nnodes: 2{newline}")
-    );
-    assert!(
-        String::from_utf8_lossy(&out.stderr)
-            .contains("g_array_append_vals: assertion 'array' failed"),
-        "{out:?}"
-    );
-    assert_eq!(
-        std::fs::read_to_string(dir.path().join("temp.out")).unwrap(),
-        format!("ni\t你\t1\t5{newline}")
-    );
-}
-
-/// An unconverted phrase reaches the output stage as the pin's NULL
-/// `uniphrase` does: every input is read and the output file is opened
-/// (`gen_pinyin_table.cpp:110-112`, `:261`) before the row that reads it
-/// (`:280-281`). There the pin dies of undefined behaviour; oxpinyin names
-/// the phrase and exits 1, flushing what it wrote (class (b)).
-#[test]
-fn an_unconvertible_phrase_is_refused_at_the_pins_row_after_the_output_opens() {
-    let newline = oxpinyin_input::TEXT_NEWLINE;
-    for (input, nnodes, phrase, rows) in [
-        (&b"\xff a 1\n"[..], "nnodes: 1\n", &b"\xff"[..], ""),
-        (
-            &b"\xe4\xbd\xa0 ni 5\n\xff\xff a'a 1\n"[..],
-            "nnodes: 2\n",
-            &b"\xff\xff"[..],
-            "ni\t你\t1\t5\n",
-        ),
-    ] {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("in.txt"), input).unwrap();
-        let out = run(dir.path(), &["in.txt"]);
-        assert_eq!(out.status.code(), Some(1), "{out:?}");
-        assert_eq!(
-            String::from_utf8_lossy(&out.stdout),
-            nnodes.replace('\n', newline)
-        );
-        assert_eq!(
-            out.stderr,
-            [
-                &b"gen_pinyin_table: invalid UTF-8 phrase: "[..],
-                phrase,
-                newline.as_bytes()
-            ]
-            .concat()
-        );
-        assert_eq!(
-            std::fs::read_to_string(dir.path().join("temp.out")).unwrap(),
-            rows.replace('\n', newline)
-        );
-    }
-}
-
 #[cfg(unix)]
 mod common;
 

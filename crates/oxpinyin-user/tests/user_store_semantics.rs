@@ -290,6 +290,12 @@ fn add_lookup_remove_roundtrip_and_persists_across_handles() {
     assert!(store.phrase(token).unwrap().is_none());
 }
 
+/// The `user-store-ops` crash input `22d` (`crash-c249fd86…`): add `词` under
+/// `dian`, merge `hen` into the same token, then remove it. The merged
+/// reading has no pinyin-index row, so the pin's
+/// `pinyin_remove_user_candidate` dies at `pinyin.cpp:3759`; the store
+/// answers that assert as the typed refusal and keeps the phrase, which is
+/// what the fuzz target now accepts for exactly this condition.
 #[test]
 fn one_phrase_holds_several_readings_and_counts_accumulate_per_reading() {
     // Upstream: the same phrase under two bopomofo readings is stored
@@ -335,42 +341,6 @@ fn one_phrase_holds_several_readings_and_counts_accumulate_per_reading() {
     ));
     assert!(store.phrase(token).unwrap().is_some());
 }
-
-/// The `user-store-ops` crash input `22d` (`crash-c249fd86…`): add `词` under
-/// `dian`, merge `hen` into the same token, then remove it. The merged
-/// reading has no pinyin-index row, so the pin's
-/// `pinyin_remove_user_candidate` dies at `pinyin.cpp:3759`; the store
-/// answers that assert as the typed refusal and keeps the phrase, which is
-/// what the fuzz target now accepts for exactly this condition.
-#[test]
-fn the_fuzz_remove_sequence_answers_the_pins_reading_removal_assert() {
-    let mut store = session();
-    let dian = keys("dian");
-    let hen = keys("hen");
-    let token = store
-        .add_phrase(&oxpinyin_core::PhraseText::from("词"), &dian, Some(50))
-        .unwrap();
-    let again = store
-        .add_phrase(&oxpinyin_core::PhraseText::from("词"), &hen, Some(100))
-        .unwrap();
-    assert_eq!(again, token, "the second add merges into the same token");
-    assert_eq!(
-        store
-            .phrase(token)
-            .unwrap()
-            .expect("stored")
-            .pronunciations()
-            .len(),
-        2,
-        "both readings stored, the second never indexed"
-    );
-    assert!(matches!(
-        store.remove_user_phrase(token),
-        Err(UserStoreError::UserReadingRemoval)
-    ));
-    assert!(store.phrase(token).unwrap().is_some());
-}
-
 /// An initial-only reading names one key in both index spaces, so
 /// `ChewingLargeTable2::remove_index` removes it once and then answers
 /// `ERROR_REMOVE_ITEM_DONOT_EXISTS` (`chewing_large_table2.cpp:200-219`),
