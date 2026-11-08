@@ -90,9 +90,10 @@ inputs:
     default: ''
   rust-cache-save-if:
     description: >-
-      Whether Swatinem/rust-cache saves at the end of the job. A job that
-      restores a cache but must not write one (a pull request) passes 'false'.
-      String 'true'/'false' (composite-action inputs are strings).
+      Whether this ref may save the Swatinem/rust-cache entry at the end of
+      the job. The cache is saved only when this is 'true' and the ref is
+      refs/heads/main; every other run restores only. String 'true'/'false'
+      (composite-action inputs are strings).
     required: false
     default: 'true'
 
@@ -217,4 +218,4 @@ runs:
       if: inputs.rust-cache == 'true'
       with:
         key: ${{ inputs.rust-cache-key }}
-        save-if: ${{ inputs.rust-cache-save-if }}
+        save-if: ${{ inputs.rust-cache-save-if == 'true' && github.ref == 'refs/heads/main' }}
