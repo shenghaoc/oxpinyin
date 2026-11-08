@@ -1751,6 +1751,44 @@ mod tests {
         assert_eq!(store.system_library_total(1), Some(187));
     }
 
+    /// An import after a transient reload merges into the replacement's
+    /// item, not into the item the session loaded first: the reading the
+    /// replacement holds takes the count, and no old reading comes back.
+    #[test]
+    fn an_import_after_a_transient_reload_merges_into_the_replacement() {
+        let mut store =
+            UserStore::open_transient(three_item_originals(), versions(), UserConfLaw::Pinyin)
+                .expect("transient session");
+        let token = (1_u32 << 24) | 2;
+        let ni3 = ChewingKey::new(23, 0, 1, 0).with_tone(3).to_packed();
+        let mut items = three_items();
+        items[1].prons = vec![(vec![ni3], 50)];
+        let replacement = BTreeMap::from([(
+            1_u8,
+            SystemLibrary {
+                mapped: None,
+                total: 180,
+                range_end: 4,
+                items: items
+                    .into_iter()
+                    .zip(1_u32..)
+                    .map(|(item, slot)| (slot, item))
+                    .collect(),
+            },
+        )]);
+        store
+            .load_system_libraries(replacement.into())
+            .expect("reload");
+        let keys = packed_to_pinyin_keys(&[ni3]).expect("keys");
+        store
+            .add_system_phrase_in(1, Some(token), &"好".into(), &keys, Some(1))
+            .expect("import");
+        assert_eq!(
+            store.with_effective_system_item(token, |item| item.prons.clone()),
+            Some(vec![(vec![ni3], 51)])
+        );
+    }
+
     /// The `(origin, first reading's frequency)` of one token, or its state.
     fn frequency_of(store: &UserStore, token: u32) -> crate::Lookup<(crate::ItemOrigin, u32)> {
         let unloaded = std::sync::atomic::AtomicU32::new(0);
@@ -2987,6 +3025,104 @@ mod tests {
                 .expect("item")
                 .expect("override"),
             new,
+        );
+        drop(store);
+        std::fs::remove_dir_all(dir).expect("cleanup");
+    }
+
+    /// Library 1's ADD of slot 2 and MODIFY of slot 1 (你 to 龘), with the
+    /// header first when `header` is true.
+    fn add_and_modify_log(header: bool) -> Vec<u8> {
+        use oxpinyin_data::chunk_format::build_memory_chunk;
+        use oxpinyin_data::chunk_write::encode_phrase_item;
+        use oxpinyin_data::user_files::{LogRecord, encode_log_records};
+
+        let old = originals()[&1].item(1).expect("original item");
+        let mut new = old.clone();
+        new.phrase = vec![0x9f98];
+        let mut records = Vec::new();
+        if header {
+            records.push(LogRecord::ModifyHeader {
+                old_total: 100,
+                new_total: 100,
+            });
+        }
+        records.push(LogRecord::Add {
+            token: 2,
+            new_item: encode_phrase_item(&new).expect("added item"),
+        });
+        records.push(LogRecord::Modify {
+            token: 1,
+            old_item: encode_phrase_item(&old).expect("old item"),
+            new_item: encode_phrase_item(&new).expect("new item"),
+        });
+        build_memory_chunk(&encode_log_records(&records).expect("log")).expect("frame")
+    }
+
+    /// The replayed phrase of slot 1 (`None` keeps the original 你) and the
+    /// unigram of slot 2 in library 1.
+    fn slot_state(store: &UserStore) -> (Option<Vec<u32>>, Option<u32>) {
+        let item = store.system_item_override(0x0100_0001).expect("item");
+        (
+            item.map(|item| item.phrase),
+            store.system_unigram(0x0100_0002),
+        )
+    }
+
+    /// A masked log with no header is an empty log (`_peek_header`): the
+    /// mask keeps the ADD but nothing aborts, and the MODIFY is not applied.
+    #[test]
+    fn a_masked_log_with_no_header_replays_nothing() {
+        let dir = tempdir("mask-no-header");
+        let mut store =
+            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                .expect("open");
+        std::fs::write(dir.join("gb_char.dbin"), add_and_modify_log(false)).expect("log");
+        store
+            .reload_system_libraries(originals(), 0x00ff_ffff, 0)
+            .expect("no fault");
+        assert_eq!(slot_state(&store), (None, None));
+        drop(store);
+        std::fs::remove_dir_all(dir).expect("cleanup");
+    }
+
+    /// A mask that selects the ADD's own token drops that ADD, and the walk
+    /// keeps the MODIFY after it.
+    #[test]
+    fn a_mask_on_an_add_token_drops_the_add_and_keeps_the_records_after_it() {
+        let dir = tempdir("mask-selected-add");
+        let mut store =
+            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                .expect("open");
+        std::fs::write(dir.join("gb_char.dbin"), add_and_modify_log(true)).expect("log");
+        store
+            .reload_system_libraries(originals(), 0x00ff_ffff, 2)
+            .expect("the ADD is dropped");
+        assert_eq!(slot_state(&store), (Some(vec![0x9f98]), None));
+        drop(store);
+        std::fs::remove_dir_all(dir).expect("cleanup");
+    }
+
+    /// A mask whose library bits exclude library 1 reloads it without its
+    /// log: the saved ADD is dropped and its token answers no item.
+    #[test]
+    fn a_library_the_mask_does_not_select_reloads_without_its_log() {
+        let dir = tempdir("mask-unselected-library");
+        let mut store =
+            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                .expect("open");
+        std::fs::write(dir.join("gb_char.dbin"), add_and_modify_log(true)).expect("log");
+        store.load_system_libraries(originals()).expect("merge");
+        assert_eq!(slot_state(&store), (Some(vec![0x9f98]), Some(100)));
+        store
+            .reload_system_libraries(originals(), 0xffff_ffff, 0)
+            .expect("the log is not read");
+        assert_eq!(slot_state(&store), (None, None));
+        assert_eq!(
+            store
+                .add_system_unigram_outcome(0x0100_0002, 7)
+                .expect("add"),
+            crate::UnigramAdd::Missing
         );
         drop(store);
         std::fs::remove_dir_all(dir).expect("cleanup");

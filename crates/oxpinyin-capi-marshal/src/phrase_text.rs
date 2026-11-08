@@ -130,6 +130,22 @@ mod tests {
         assert_eq!(phrase_text_bytes(&above).as_ref(), [0xF4, 0x90, 0x80, 0x80]);
     }
 
+    /// Words past the four-byte range take GLib's five- and six-byte forms.
+    /// `from_words` refuses a word at or above 0x80000000, so the words are
+    /// stored the way the punctuation table stores them.
+    #[test]
+    fn words_above_four_bytes_take_glibs_five_and_six_byte_forms() {
+        let cases: [(u32, &[u8]); 3] = [
+            (0x20_0000, &[0xF8, 0x88, 0x80, 0x80, 0x80]),
+            (0x400_0000, &[0xFC, 0x84, 0x80, 0x80, 0x80, 0x80]),
+            (0xFFFF_FFFF, &[0xFF, 0xBF, 0xBF, 0xBF, 0xBF, 0xBF]),
+        ];
+        for (word, bytes) in cases {
+            let text = PhraseText::from_stored_parts(vec![word], 1);
+            assert_eq!(phrase_text_bytes(&text).as_ref(), bytes, "{word:#x}");
+        }
+    }
+
     #[test]
     fn length_matches_the_encoding_without_encoding() {
         use super::phrase_text_len;

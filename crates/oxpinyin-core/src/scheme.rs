@@ -1686,6 +1686,20 @@ mod tests {
         assert!(parse_zhuyin_direct("", options).is_empty());
     }
 
+    /// `ZhuyinDirectParser2::parse` walks the input with `int` indices
+    /// (`zhuyin_parser2.cpp:914-958`) and has no length bound. A key that
+    /// starts past byte 65535 still parses.
+    #[test]
+    fn zhuyin_direct_parse_has_no_length_bound() {
+        use super::parse_zhuyin_direct;
+        let input = format!("ㄋㄧˇ{}ㄏㄠˇ", " ".repeat(70_000));
+        let keys: Vec<(&str, u8)> = parse_zhuyin_direct(&input, USE_TONE | FORCE_TONE)
+            .into_iter()
+            .map(|(key, tone)| (key.text(), tone))
+            .collect();
+        assert_eq!(keys, [("ni", 3), ("hao", 3)]);
+    }
+
     #[test]
     fn default_scheme_is_ms() {
         assert_eq!(DoublePinyinParser::new().scheme(), DoublePinyinScheme::Ms);

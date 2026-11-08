@@ -92,6 +92,24 @@ fn full_pinyin_skips_a_consumed_separator_column() {
     assert_eq!((hao.text, hao.begin, hao.end), ("hao", 3, 6));
 }
 
+/// At a separator column the zhuyin accessor reads the zero key itself;
+/// the pinyin accessor walks on to the next real key.
+#[test]
+fn abi_key_at_a_separator_reads_the_zero_key_only_for_zhuyin() {
+    let context = open_context(0x18a);
+    let mut inst = context.alloc_instance().expect("instance");
+    assert_eq!(inst.bind(&context.runtime).parse_full_more("'ni'hao"), 7);
+    let mut packed = |zhuyin| {
+        inst.bind(&context.runtime)
+            .abi_key_at(3, zhuyin)
+            .expect("no zero-column fault")
+            .expect("a key")
+            .0
+    };
+    assert_eq!(packed(true).to_le_bytes(), [0x00, 0x00]);
+    assert_eq!(packed(false).to_le_bytes(), [0x86, 0x02]);
+}
+
 #[test]
 fn lookup_offset_validation_follows_the_active_mode() {
     let (context, mut inst) = pinyin_instance();
