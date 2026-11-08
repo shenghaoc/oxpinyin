@@ -1,0 +1,1 @@
+M(&[("is-user", B(false)), ("logs", L(&[])), ("predicted", M(&[("count", I(1)), ("get-count", B(true)), ("ret", B(true)), ("rows", L(&[L(&[B(true), B(true), I(5), B(true), Nil])]))])), ("token-phrase", L(&[B(false), B(true), B(true)]))])

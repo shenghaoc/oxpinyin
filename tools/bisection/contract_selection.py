@@ -25,11 +25,9 @@ def family_of(name):
 
 
 def tag_index(registry):
-    """issue tag -> sorted case IDs, and 'family/<F>' -> IDs; axis C excluded."""
+    """issue tag -> sorted case IDs, and 'family/<F>' -> IDs."""
     index = {}
     for name, spec in registry.items():
-        if name.startswith('axis-c-'):
-            continue
         for tag in spec['issues']:
             index.setdefault(tag, []).append(name)
         family = family_of(name)
@@ -80,8 +78,7 @@ def select_cases(registry, cases=None, issues=(), families=(), prefixes=None):
     Process explicit IDs first, then issue selectors, families and prefixes;
     each issue, family or prefix contributes sorted IDs. Keep the first occurrence's
     position and append all reasons, including repeated selectors. With no
-    selectors, choose every non-axis-C case in sorted order. Axis C can be
-    selected explicitly or by prefix but is absent from issue and family indexes.
+    selectors, choose every case in sorted order.
     Raise SelectionError for unknown selectors, empty comma components or
     an empty selection; never fall back to the default suite on an error."""
     index = tag_index(registry)
@@ -107,7 +104,7 @@ def select_cases(registry, cases=None, issues=(), families=(), prefixes=None):
     for name, reasons in prefix_matches(registry, prefixes).items():
         chosen.setdefault(name, []).extend(reasons)
     if cases is None and not (issues or families) and prefixes is None:
-        chosen = {n: ['default suite'] for n in sorted(n for n in registry if not n.startswith('axis-c-'))}
+        chosen = {n: ['default suite'] for n in sorted(registry)}
     if not chosen:
         raise SelectionError('no cases selected')
     return list(chosen), chosen
@@ -123,7 +120,7 @@ def plan_lines(registry, names, reasons, pinyin_so, zhuyin_so, prefix, cell):
     explicit = any(reason != ['default suite'] for reason in reasons.values())
     lines = ['plan: %d case%s%s; cell %s; facades: %s' % (
         len(names), '' if len(names) == 1 else 's',
-        '' if explicit else ' (default suite: every registered non-axis-C case)', cell,
+        '' if explicit else ' (default suite: every registered case)', cell,
         ', '.join('%s %d' % item for item in sorted(modes.items())))]
     if skipped:
         lines.append('  %d case%s skip on this cell (fixture in another backend\'s format)' % (

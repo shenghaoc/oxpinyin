@@ -9,6 +9,9 @@
 
 // Links the facade: the cases call its exported C symbols, not Rust paths.
 use zhuyin_capi as _;
+// Links libpinyin: the cases export a saved profile through its export iterator
+// (`common/contract/libpinyin.rs`).
+use pinyin_capi as _;
 
 #[macro_use]
 #[path = "../../oxpinyin-capi/tests/common/contract/support.rs"]
@@ -37,6 +40,10 @@ mod facade {
         fn get_zhuyin_key_rest_positions(instance: P, key_rest: P, begin: *mut u16, end: *mut u16) -> bool;
         fn get_zhuyin_key_rest_length(instance: P, key_rest: P, length: *mut u16) -> bool;
         fn set_chewing_scheme(context: P, scheme: i32) -> bool;
+        fn get_character_offset(instance: P, phrase: *const c_char, offset: usize, length: *mut usize) -> bool;
+        fn get_zhuyin_offset(instance: P, cursor: usize, offset: *mut usize) -> bool;
+        fn get_left_zhuyin_offset(instance: P, offset: usize, left: *mut usize) -> bool;
+        fn get_right_zhuyin_offset(instance: P, offset: usize, right: *mut usize) -> bool;
     }
 
     /// Trains the n-best result (`zhuyin_train` takes no index).
@@ -75,11 +82,20 @@ mod facade {
         fn set_zhuyin_scheme(context: P, scheme: i32) -> bool;
         fn set_double_pinyin_scheme(context: P, scheme: i32) -> bool;
         fn load_addon_phrase_library(context: P, index: u8) -> bool;
+        fn unload_addon_phrase_library(context: P, index: u8) -> bool;
         fn is_user_candidate(instance: P, candidate: P) -> bool;
         fn remove_user_candidate(instance: P, candidate: P) -> bool;
+        fn get_pinyin_offset(instance: P, cursor: usize, offset: *mut usize) -> bool;
+        fn get_left_pinyin_offset(instance: P, offset: usize, left: *mut usize) -> bool;
+        fn get_right_pinyin_offset(instance: P, offset: usize, right: *mut usize) -> bool;
+        fn get_luoma_pinyin_string(instance: P, key: P, utf8_str: *mut *mut c_char) -> bool;
+        fn get_secondary_zhuyin_string(instance: P, key: P, utf8_str: *mut *mut c_char) -> bool;
+        fn get_pinyin_strings(instance: P, key: P, shengmu: *mut *mut c_char, yunmu: *mut *mut c_char) -> bool;
     }
 }
 
+#[path = "../../oxpinyin-capi/tests/common/contract/libpinyin.rs"]
+mod libpinyin;
 #[path = "../../oxpinyin-capi/tests/common/contract/readers.rs"]
 mod readers;
 
@@ -91,6 +107,7 @@ mod fixtures;
 #[allow(dead_code)]
 #[path = "../../oxpinyin-capi/tests/common/contract/bodies"]
 mod bodies {
+    pub mod axis_c;
     pub mod axis_j;
     pub mod before_cursor_dedup;
     pub mod candidate_lookup_offsets;
@@ -99,16 +116,22 @@ mod bodies {
     pub mod glib_arrays;
     pub mod invalid_input_bytes;
     pub mod issue542_remaining;
+    pub mod journal_replay;
     pub mod key_positions_past_65535;
+    pub mod library_loading;
     pub mod non_utf8_directories;
     pub mod reading_256th;
+    pub mod separator_before_cursor;
     pub mod stored_count_headers;
+    pub mod table_conf_scanner;
     pub mod zhuyin_null_arguments;
 }
 
 #[path = "contract_data/fixtures/types.rs"]
 mod fixture_types;
 
+#[path = "contract_data/axis_c.rs"]
+mod axis_c;
 #[path = "contract_data/axis_j.rs"]
 mod axis_j;
 #[path = "contract_data/before_cursor_dedup.rs"]
@@ -125,13 +148,21 @@ mod glib_arrays;
 mod invalid_input_bytes;
 #[path = "contract_data/issue542_remaining.rs"]
 mod issue542_remaining;
+#[path = "contract_data/journal_replay.rs"]
+mod journal_replay;
 #[path = "contract_data/key_positions_past_65535.rs"]
 mod key_positions_past_65535;
+#[path = "contract_data/library_loading.rs"]
+mod library_loading;
 #[path = "contract_data/non_utf8_directories.rs"]
 mod non_utf8_directories;
 #[path = "contract_data/reading_256th.rs"]
 mod reading_256th;
+#[path = "contract_data/separator_before_cursor.rs"]
+mod separator_before_cursor;
 #[path = "contract_data/stored_count_headers.rs"]
 mod stored_count_headers;
+#[path = "contract_data/table_conf_scanner.rs"]
+mod table_conf_scanner;
 #[path = "contract_data/zhuyin_null_arguments.rs"]
 mod zhuyin_null_arguments;

@@ -13,7 +13,7 @@ same `worker` with the same arguments:
     contract-worker.py MODE SO DATA CASE
 
 Nothing else changes: the process is still fresh per side per case, the
-environment (TMPDIR, CONTRACT_DIFF_CELL, G_DEBUG, AXIS_C_*) is inherited,
+environment (TMPDIR, CONTRACT_DIFF_CELL, G_DEBUG) is inherited,
 and the driver's `__file__` is the same path.
 """
 import importlib.util

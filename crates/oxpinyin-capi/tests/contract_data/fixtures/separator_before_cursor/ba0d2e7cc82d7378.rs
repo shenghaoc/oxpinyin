@@ -1,0 +1,1 @@
+M(&[("get_n", B(true)), ("get_parsed_input_length", I(9)), ("guess_sentence", B(true)), ("logs", L(&[])), ("n", I(3)), ("parse_return_consumed", I(9)), ("ret", B(true)), ("rows", L(&[L(&[B(true), B(true), I(1), B(true), S("你好时间"), B(true), I(0)]), L(&[B(true), B(true), I(1), B(true), S("你好世界"), B(true), I(1)]), L(&[B(true), B(true), I(1), B(true), S("你好世纪"), B(true), I(2)])]))])

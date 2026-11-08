@@ -640,9 +640,7 @@ of completing a contribution.
   2 DIFFER are the `0x.` glibc-version host-dependence finding; the 10
   HOST-DEPENDENT are the exponent spellings. A targeted bdb rerun of the
   eight affected cases at the same revision returned the same 2 DIFFER and
-  6 HOST-DEPENDENT. The current checker registers `0x.` with `host_scanf`,
-  so on a host whose scanner accepts it those two cases report
-  HOST-DEPENDENT when the pin loads and the subject refuses. The
+  6 HOST-DEPENDENT. The
   perf-matrix and callgrind images built on debian:testing and their smoke
   steps passed.
 - Anonymous oracle artifact retrieval/hash verification passed. Anonymous

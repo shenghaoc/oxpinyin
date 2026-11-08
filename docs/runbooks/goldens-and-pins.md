@@ -10,7 +10,7 @@ differential, and a maintainer ruling recorded in the findings.
 | --- | --- | --- |
 | the mini data set, per backend | `fixtures/w3/<ext>/` | `just w3-fixtures generate --model-dir <model20 extraction>` (`tools/dev/w3_fixtures.py`): the Python subset of the model20 text, then `oxpinyin-utils`' `gen_binary_files` / `import_interpolation` / `gen_unigram` / `gen_deleted_ngram` built for each backend. `just w3-fixtures check` regenerates into a temporary directory and compares records and chunk bytes with the committed tree; `fixtures/w3/README.md` has the details |
 | W4 oracle goldens (candidate structure, sentence surface, paths, tie order) | `fixtures/w4/oracle-*.txt` | no regenerator today, except the tie order (`contract_sentence_ties.py`); see [the next pin capture](#the-next-pin-capture). `oracle-paths.txt` came from W2 logs that no longer exist and stays frozen |
-| parity corpus inputs | `tests/parity/corpus/inputs/` | frozen input files; a change is a deliberate edit, with the digests in `tools/bisection/axis-c-replacement.json` updated with it |
+| parity corpus inputs | `tests/parity/corpus/inputs/` | frozen input files; a change is a deliberate edit, with the digests in [the corpus record](../testing/parity-corpus.md) updated with it |
 | trainer manifests and goldens | `fixtures/w9/` (`segmenter-han.txt`, `segmenter-spseg-w3.txt`, `mergeseq-input.txt`, `segmenter-mergeseq-w3.txt`) | `oxpinyin-utils`' segmentation tests compare against these; regenerate with the pin tool the test names and commit only when it agrees |
 
 A missing golden is a test failure, never a skip (#373). Regenerate,
@@ -54,7 +54,7 @@ bdb cell through `tools/oracle/pin_capture.py` staging and then converted to a R
 | `issue762-token-reuse-stale-bigram-no-mask-pinyin` | `contract_token_reuse_addon_import.py` |
 | `issue762-token-reuse-stale-bigram-zhuyin` | `contract_token_reuse_addon_import.py` |
 | `issue762-token-reuse-stale-bigram-no-mask-zhuyin` | `contract_token_reuse_addon_import.py` |
-| `removed-predict-stale-skip-pinyin` | `contract_journal_replay.py` |
+| `removed-predict-stale-skip-pinyin` | `journal_replay` |
 
 The six apostrophe inputs `'`, `''`, `'''`, `ni'`, `ni'!` and `ni'i` have their own
 capture step, which stages proposed observations for review, and native C-API tests in

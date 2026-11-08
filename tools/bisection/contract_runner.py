@@ -303,7 +303,7 @@ class Runner:
         finally:
             self.driver['WORKER_STATE'].side = previous_side
 
-    def capture_case(self, spec, pin_so, data, name, scratch, timeout, companion=None):
+    def capture_case(self, spec, pin_so, data, name, scratch, timeout):
         """Run one case on the pin alone and return (observation, profile, package_data).
 
         PROFILE is the pin-written donor profile of a handoff case as {file: base64}, else
@@ -320,8 +320,6 @@ class Runner:
         handoff, handoff_929, profile_key, reload_key = self._handoff(name)
         used = os.path.join(tempfile.mkdtemp(prefix='data-use-', dir=scratch), 'used')
         env = dict(fatal_env, CONTRACT_DATA_USE=used)
-        if companion is not None:
-            env['AXIS_C_COMPANION_PINYIN'] = str(Path(companion).resolve())
         profile = None
         lazy_bigram = name in ('lazy-user-bigram-pinyin', 'lazy-user-bigram-zhuyin')
         if handoff or lazy_bigram:
@@ -349,7 +347,7 @@ class Runner:
                 observation['result']['cross_reload'] = self.driver['observed'](reload['result'])
         return observation, encoded, package
 
-    def verify_case(self, spec, row, subject_so, data, name, scratch, timeout, companion=None):
+    def verify_case(self, spec, row, subject_so, data, name, scratch, timeout):
         """Run one case on the subject alone and return [stored pin observation, subject observation].
 
         A handoff case also lets the subject read the pin-written profile the reference
@@ -357,15 +355,12 @@ class Runner:
         The #1114 case compares the saved bigram bytes with the pin's, timestamp masked."""
         identity = row.get('identity', {})
         pin = dict(row['pin'], capture_glibc=identity.get('environment', {}).get('glibc'),
-                   capture_glib=identity.get('environment', {}).get('glib'),
-                   capture_scanf=row.get('scanner_verdict'))
+                   capture_glib=identity.get('environment', {}).get('glib'))
         if spec.get('pin_not_run') is not None:
             pin = dict(exit='NOT-RUN', result=None, userfiles=[], stderr_lines=0, stderr='')
         deadline = time.monotonic() + timeout
         handoff, handoff_929, profile_key, reload_key = self._handoff(name)
         env = {'G_DEBUG': 'fatal-criticals'} if spec['fatal'] else {}
-        if companion is not None:
-            env['AXIS_C_COMPANION_PINYIN'] = str(Path(companion).resolve())
         own = None
         lazy_bigram = name in ('lazy-user-bigram-pinyin', 'lazy-user-bigram-zhuyin')
         if handoff or lazy_bigram:
@@ -442,12 +437,7 @@ class Runner:
             assert subject_so and Path(subject_so).is_file(), '%s needs %s' % (
                 name, '--zhuyin-so' if spec['mode'] == 'zhuyin' else 'PINYIN_SO')
             with tempfile.TemporaryDirectory(prefix='case-', dir=scratch) as isolated:
-                pair = self.verify_case(spec, row, Path(subject_so), data, name, isolated, args.case_timeout,
-                                        companion=args.pinyin_so)
-                if name.startswith('axis-c-'):
-                    # The battery compares diagnostics with generated paths normalised.
-                    pair[1].update(self.driver['axis_c_normalize_diagnostics'](
-                        self.driver['axis_c_envelope'](pair[1]), isolated))
+                pair = self.verify_case(spec, row, Path(subject_so), data, name, isolated, args.case_timeout)
                 return name, pair
         if jobs == 1:
             yield map(observe, names)
