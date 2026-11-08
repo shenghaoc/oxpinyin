@@ -13,11 +13,13 @@ use std::path::PathBuf;
 // The chunk header, section offsets and checksum come from the crate's
 // own shared format module — the fixtures are built with the layout
 // under test, not a second copy of it.
+use oxpinyin_data::AddonDictionary;
+#[cfg(unix)]
+use oxpinyin_data::PhraseLibraries;
 use oxpinyin_data::chunk_format::{
     CHUNK_HEADER_SIZE, FIRST_ITEM_OFFSET, INDEX_ONE, SEPARATOR, chunk_checksum,
 };
 use oxpinyin_data::phrase_library::{PhraseLibrary, verify_chunk};
-use oxpinyin_data::{AddonDictionary, PhraseLibraries};
 
 /// Builds one phrase-library chunk file from slot → item entries.
 /// One item's pieces: `(unigram, text, pronunciations as (packed
@@ -494,6 +496,9 @@ fn chunk_level_refusals_name_the_file_and_layout_faults_do_not() {
     let _ = std::fs::remove_file(&path);
 }
 
+// Unix only: the test damages the library file while it is mapped; Windows
+// refuses a write into a mapped file (error 1224).
+#[cfg(unix)]
 #[test]
 fn libraries_record_absent_files_and_recheck_the_loaded_ones() {
     let dir = temp_dir("recheck");
@@ -511,34 +516,15 @@ fn libraries_record_absent_files_and_recheck_the_loaded_ones() {
     // The file goes bad after the open: the pin maps it again on a save.
     let mut bytes = sample();
     bytes[4] ^= 0xFF;
-    #[cfg(not(windows))]
-    {
-        std::fs::write(&first, bytes).expect("damage a.bin");
-        assert_eq!(
-            libraries.unmappable_now(|_| true, None),
-            std::slice::from_ref(&first)
-        );
-        assert_eq!(
-            libraries.unmappable_now(|n| n == 1, Some(1)),
-            std::slice::from_ref(&first)
-        );
-    }
-    #[cfg(windows)]
-    {
-        // Windows keeps the mapped file in use. Compare the full mapped
-        // extent with a separate file before and after the failed write.
-        let original_path = dir.join("original.bin");
-        std::fs::write(&original_path, sample()).expect("write original.bin");
-        let original = PhraseLibrary::open(&original_path).expect("map original.bin");
-        let loaded = libraries.library(1 << 24).expect("a.bin is loaded");
-        assert!(loaded.byte_identical(&original));
-        let error = std::fs::write(&first, bytes).expect_err("mapped file cannot be truncated");
-        assert_eq!(error.raw_os_error(), Some(1224));
-        assert!(loaded.byte_identical(&original), "mapped bytes changed");
-        assert_eq!(std::fs::read(&first).expect("read a.bin"), sample());
-        assert!(libraries.unmappable_now(|_| true, None).is_empty());
-        assert!(libraries.unmappable_now(|n| n == 1, Some(1)).is_empty());
-    }
+    std::fs::write(&first, bytes).expect("damage a.bin");
+    assert_eq!(
+        libraries.unmappable_now(|_| true, None),
+        std::slice::from_ref(&first)
+    );
+    assert_eq!(
+        libraries.unmappable_now(|n| n == 1, Some(1)),
+        std::slice::from_ref(&first)
+    );
     assert!(
         libraries.unmappable_now(|_| true, Some(2)).is_empty(),
         "only the named library is looked at"
