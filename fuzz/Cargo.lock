@@ -373,6 +373,7 @@ dependencies = [
  "oxpinyin-capi-marshal",
  "oxpinyin-core",
  "oxpinyin-engine",
+ "oxpinyin-input",
  "oxpinyin-runtime",
  "oxpinyin-user",
 ]

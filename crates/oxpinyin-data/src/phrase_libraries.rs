@@ -159,11 +159,10 @@ impl PhraseLibraries {
         let path = oxpinyin_input::path::build_chunk_path(dir, file);
         match std::fs::metadata(&path) {
             // A directory is `MemoryChunk::mmap`'s to judge by its
-            // reported size (`phrase_library::directory_chunk_fault`);
-            // any other file that is not a regular one is skipped
-            // without a word, as before.
-            #[cfg(unix)]
-            Ok(meta) if meta.is_dir() => {}
+            // reported size where the boundary says the loader opens
+            // directories; any other file that is not a regular one, and a
+            // directory on Windows, is skipped without a word.
+            Ok(meta) if meta.is_dir() && oxpinyin_input::chunk::opens_directories() => {}
             Ok(meta) if !meta.is_file() => return Ok(()),
             Ok(_) => {}
             // The pin's `open` fails and `MemoryChunk::mmap` answers

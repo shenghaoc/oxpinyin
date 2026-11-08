@@ -247,10 +247,11 @@ pub enum LibraryLoadFault {
 /// fails or answers under the header (tmpfs), `mmap` refuses it
 /// (`memory_chunk.h:486-489`), the pin writes `mmap %s failed!` naming `dir`
 /// and then dies of SIGSEGV on the empty chunk (`phrase_index.cpp:354`). The
-/// answer and warning stay the abort site's either way. Unix only, as
-/// `phrase_library::directory_chunk_fault` is.
+/// answer and warning stay the abort site's either way. The boundary says
+/// whether this platform lets the chunk loader open a directory; where it
+/// does not, the pin reaches neither branch.
 fn writes_null_chunk_line(dir: &Path, reads_as_a_chunk: impl FnOnce(&Path) -> bool) -> bool {
-    cfg!(unix) && !reads_as_a_chunk(dir)
+    oxpinyin_input::chunk::opens_directories() && !reads_as_a_chunk(dir)
 }
 
 /// Whether the pin's `MemoryChunk::mmap` asserts (`memory_chunk.h:493`) on

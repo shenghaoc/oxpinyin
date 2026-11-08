@@ -16,6 +16,17 @@ use crate::native;
 #[cfg(unix)]
 use crate::path;
 
+/// Whether the pin's chunk loader opens a directory row as a file and
+/// judges it by its reported size.
+///
+/// Unix opens the directory and seeks it, so `MemoryChunk::mmap` reaches its
+/// header checks; Windows refuses the open, so a directory row is skipped
+/// without a word.
+#[must_use]
+pub const fn opens_directories() -> bool {
+    cfg!(unix)
+}
+
 /// The header and bytes returned by the single payload read.
 pub struct LoadedChunk {
     /// The declared payload length, in the file's native header bytes.

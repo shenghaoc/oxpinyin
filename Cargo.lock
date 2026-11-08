@@ -645,6 +645,7 @@ dependencies = [
  "oxpinyin-core",
  "oxpinyin-data",
  "oxpinyin-engine",
+ "oxpinyin-input",
  "oxpinyin-runtime",
  "oxpinyin-user",
  "rstest",
