@@ -44,43 +44,6 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  contract-verify:
-    if: ${{ !inputs.windows_only && !inputs.macos_only }}
-    runs-on: ubuntu-26.04
-    container:
-      image: debian:testing # deliberately unpinned; see the workflow header
-    timeout-minutes: 75
-    steps:
-      - name: Bootstrap the bare runner essentials (apt)
-        run: |
-          apt-get update -qq
-          apt-get install -y --no-install-recommends bash python3 tar gzip zstd git ca-certificates curl
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/bootstrap
-        with:
-          safe-directory: 'true'
-          rustup: 'true'
-          rust-cache: 'true'
-          rust-cache-key: nightly-contract-verify
-          uv: 'true'
-          just: 'true'
-      - name: Install build dependencies (apt)
-        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libglib2.0-dev
-      - name: Provision tkrzw
-        uses: ./.github/actions/tkrzw
-      - name: Contract references (tkrzw verify)
-        uses: ./.github/actions/contract-verify
-        with:
-          cell: tkrzw
-
-  # Every fuzz target, 3 minutes each, with ASan and LSan on by default. This
-  # is the only fuzz job, so a target that does not compile or initialize
-  # fails here, the night after it lands. The list comes from
-  # `cargo fuzz list`, so a new target cannot be left out. The dict-loader
-  # corpus is seeded from the committed w3 tables, so the decoder starts
-  # from valid headers.
   fuzz-soak:
     # Skipped by a windows_only or macos_only dispatch; runs on the schedule.
     if: ${{ !inputs.windows_only && !inputs.macos_only }}

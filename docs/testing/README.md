@@ -5,8 +5,8 @@ capture-fixture format. How to build and run the oracle is
 `../runbooks/oracle.md`; how goldens and pins are refreshed
 is `../runbooks/goldens-and-pins.md`.
 
-For the live ABI gate registry, cell selection, prebuilt artifacts and aggregate
-result protocol, see [live parity gates](../runbooks/parity-gates.md). The
+For cell selection, prebuilt artifacts and the result protocol, see the
+[verification procedure](../runbooks/verification.md). The
 tooling-lane run records the three-cell table.
 
 ## Candidate capture

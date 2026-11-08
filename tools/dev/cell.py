@@ -1,4 +1,4 @@
-"""Explicit cell settings and shared build/identity services for registry runners."""
+"""Explicit cell settings and shared build/identity services."""
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 import datetime
@@ -80,7 +80,7 @@ def bash_word(value: str) -> str:
 
 def main(argv: Sequence[str], *, root: Path = ROOT,
          environment: Mapping[str, str] | None = None) -> int:
-    """Build or describe registry artifacts, preserving the former entry grammar."""
+    """Build or describe the selected cell artifacts."""
     try:
         environment = os.environ if environment is None else environment
         if list(argv[:1]) == ['--library-path'] and len(argv) in (1, 2):

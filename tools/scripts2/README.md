@@ -133,6 +133,6 @@ The named mutation `content-ni-initial` changes the generated `ni` content row's
 `initial: 11` to `initial: 1`. The tool test verifies that `--check` rejects it
 without rewriting the altered file and that the acceptance digests reject it.
 For the parser witness, build the mutated subject with `just cell-artifacts` and
-run existing `contract-diff` case `default-option-single-key` against the unchanged
+run the existing Rust contract test `default_option_single_key` against the unchanged
 pin; then restore with `just rust-tables --write` and rebuild. PR results record that
 witness, the selected parser/scheme cases, and the ordinary Rust/CI gates.

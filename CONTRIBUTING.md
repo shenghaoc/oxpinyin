@@ -65,7 +65,6 @@ Use repository `just` recipes and in-tree Python tools with managed CPython.
 Provision the interpreter with `just python`.
 Extend shared tooling when a required capability is missing.
 Do not publish or install a Python package, and add no console entry point without a new ruling.
-`tools/bisection/runners.json` is the one runner catalog; keep no second maintained catalog.
 A missing input that a caller requested explicitly is a failure, never a successful skip.
 Do not depend on scripts or environments that exist only on your machine.
 Existing documented shell entry points remain supported during migration.

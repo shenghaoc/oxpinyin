@@ -39,7 +39,7 @@ Stop if reading cannot settle the question (Requirement 2.4).
   Name the artefact, its idiomatic Rust replacement and affected inputs.
   Show that the C contract remains unchanged.
   Do not write Rust to imitate the artefact.
-- Retain a `POLICY-ACCEPTED` contract-diff case for each recorded artefact, never `MATCH`.
+- Retain a `POLICY-ACCEPTED` contract test for each recorded artefact, never `MATCH`.
   Keep its pin and subject evidence.
 
 ## Math

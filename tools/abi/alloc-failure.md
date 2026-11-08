@@ -8,9 +8,9 @@
 were derived from source before the fault-injected pin executions.
 
 This is the C consumer pattern used by `alloc-pairing-*.cc`, with precise
-allocation failure injection. It does not create another contract-diff
+allocation failure injection. It does not create another contract
 framework or change production ownership. Run it against the debug
-libraries the registry builds; the harness reads no symbols, so a stripped
+libraries the cell builds; the harness reads no symbols, so a stripped
 library works as well.
 
 ```sh

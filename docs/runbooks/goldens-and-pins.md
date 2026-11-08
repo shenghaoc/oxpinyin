@@ -91,7 +91,7 @@ model SHA-256, DBM) are one identity; change every field together. The
    verifies the fetched commit by `git rev-parse`.
 2. Re-run the W2 candidate surface (must stay byte-identical unless the
    upstream change is the point), the sentence-surface counts, the
-   `_check_offset` and abort families, and `just runner contract-diff verify tkrzw <pinyin_so> [<zhuyin_so>]`.
+   `_check_offset` and abort families, and the Rust contract suite.
 3. Record what moved, what did not, and what is build-nondeterministic
    (the six DBM-backed data files are; issue #358) in a verification
    finding; amend `oracle-environment.md`.
