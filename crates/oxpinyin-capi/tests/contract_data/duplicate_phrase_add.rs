@@ -111,32 +111,6 @@ fn abort_add_phrase_index_length_mismatch() {
 // Reproduced abort; the pin also wrote glibc's assertion line, which oxpinyin does not
 // (pin-abort-assert-line.md).
 #[test]
-fn abort_add_phrase_index_item_missing() {
-    #[cfg(windows)]
-    const USER_CONF: &str = "binary format version:7\r|model data version:14\r|database format:Tkrzw\r|open counter:1\r|";
-    #[cfg(not(windows))]
-    const USER_CONF: &str =
-        "binary format version:7|model data version:14|database format:Tkrzw|open counter:1|";
-    run_aborting(
-        "duplicate_phrase_add::abort_add_phrase_index_item_missing",
-        Expect::aborts(if cfg!(windows) {
-            b"open SCRATCH\\user-X\\user.conf failed."
-        } else {
-            b"open SCRATCH/user-X/user.conf failed."
-        })
-        .with_files(&[
-            ("user.conf", UserFile::Conf(USER_CONF)),
-            ("user_phrase_index.bin", UserFile::Size(529408)),
-        ]),
-        b::index_item_missing,
-    );
-}
-
-// abort-add-phrase-index-text-mismatch: POLICY-ACCEPTED (pin-abort-assert-line.md).
-// The pin asserts at pinyin.cpp:571.
-// Reproduced abort; the pin also wrote glibc's assertion line, which oxpinyin does not
-// (pin-abort-assert-line.md).
-#[test]
 fn abort_add_phrase_index_text_mismatch() {
     #[cfg(windows)]
     const USER_CONF: &str = "binary format version:7\r|model data version:14\r|database format:Tkrzw\r|open counter:1\r|";

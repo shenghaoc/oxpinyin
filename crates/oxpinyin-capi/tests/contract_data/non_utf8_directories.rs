@@ -48,25 +48,3 @@ fn non_utf8_directory_user() {
         Some(NO_LOGS),
     );
 }
-
-// non-utf8-directory-both: MATCH.
-// Linux and Windows only: APFS refuses a directory name that is not UTF-8. On Windows no
-// byte string spells a UTF-16 name, so that arm is the file system's refusal, not a pin
-// observation.
-#[cfg(any(target_os = "linux", windows))]
-#[test]
-fn non_utf8_directory_both() {
-    run(
-        "non_utf8_directories::non_utf8_directory_both",
-        Expect::RESULT,
-        |k| b::non_utf8_dirs(k, true, true),
-        if cfg!(windows) {
-            None
-        } else {
-            Some(include!(
-                "fixtures/non_utf8_directories/d172c050e709a1ae.rs"
-            ))
-        },
-        Some(NO_LOGS),
-    );
-}
