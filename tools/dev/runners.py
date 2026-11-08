@@ -1,7 +1,6 @@
-"""Registry runner services and explicit recipe dispatch, sharing pool child cleanup.
+"""Shared driver services for the C++ smoke gate and the native tools.
 
-The registry remains in run-all.py/runners.json. This module supplies the
-cell and driver operations used by its recipe, not another scheduler.
+This module supplies cell and driver operations; it has no catalog or scheduler.
 """
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import ExitStack
@@ -108,64 +107,21 @@ class Context:
             raise Finished(status(result.returncode))
         return result
 
-def verify_contract(args: Sequence[str]) -> int:
-    """`contract-diff verify CELL PINYIN_SO [ZHUYIN_SO] [-- OPTIONS]`: the subject against the references.
 
-    The tkrzw cell reads the pinned libpinyin-data package; it is fetched into target/contract-data
-    when absent (`just fetch-contract-data`). Other options pass through to contract-diff.py."""
-    cell, pinyin, *tail = args
-    if cell not in ('bdb', 'kc', 'tkrzw'):
-        emit(f'unknown backend: {cell}', error=True)
-        return 1
-    forwarded = ['verify', cell, pinyin]
-    if tail and not tail[0].startswith('-'):
-        forwarded += ['--zhuyin-so', tail.pop(0)]
-    if tail[:1] == ['--']:
-        tail = tail[1:]
-    if cell == 'tkrzw' and '--data' not in tail:
-        from . import contract_data
-        forwarded += ['--data', str(contract_data.fetch(contract_data.DEFAULT_CACHE))]
-    os.execv(sys.executable, [sys.executable, '-X', 'lazy_imports=normal',
-                              str(ROOT / 'tools/bisection/contract-diff.py'), *forwarded, *tail])
-
-
-def main(argv: Sequence[str]) -> int:
-    if not argv:
-        emit('usage: runner RECIPE [ARG ...]', error=True)
-        return 2
+def cpp_smoke(args: Sequence[str]) -> int:
+    """Run the C++ pinyin.h smoke gate through the shared driver services."""
     for name in ('UV_PYTHON', 'PYTHONHOME', 'PYTHONPATH'):
         if os.environ.get(name):
             emit(f'FAIL: {name} is not supported; unset it before running repository Python', error=True)
             return 2
-    from .runner_recipes import RECIPES
-    recipe, *args = argv
-    if recipe == 'run-all':
-        command = [sys.executable, '-X', 'lazy_imports=normal', str(ROOT / 'tools/bisection/run-all.py'), *args]
-        os.execv(sys.executable, command)
-    if recipe == 'contract-diff':
-        if args in (['-h'], ['--help']):
-            os.execv(sys.executable, [sys.executable, '-X', 'lazy_imports=normal',
-                                     str(ROOT / 'tools/bisection/contract-diff.py'), *args])
-        operation = 'verify'
-        if args[:1] in (['verify'], ['capture']):
-            operation, *args = args
-        if operation == 'capture':
-            emit('capture runs in the Debian stable pin image: bash tools/oracle/capture-contract.sh CELL [options]',
-                 error=True)
-            return 1
-        if len(args) < 2:
-            emit('usage: runner contract-diff [verify] CELL PINYIN_SO [ZHUYIN_SO] [-- OPTIONS]', error=True)
-            return 2
-        return verify_contract(args)
-    if recipe not in RECIPES:
-        emit(f'unknown runner recipe: {recipe}', error=True)
-        return 2
+    from .runner_recipes import cpp_smoke as recipe
+
     def call() -> int:
         with ExitStack() as stack:
             settings = Settings.read(os.environ)
-            context = pool.UnitContext(recipe, slot.CANCELLED, environment=dict(settings.environment))
-            ctx = Context(settings, DriverServices(settings, context), stack, Path.cwd(), recipe)
-            return RECIPES[recipe](ctx, args)
+            context = pool.UnitContext('cpp-smoke', slot.CANCELLED, environment=dict(settings.environment))
+            ctx = Context(settings, DriverServices(settings, context), stack, Path.cwd(), 'cpp-smoke')
+            return recipe(ctx, args)
     return guarded(call)
 
 

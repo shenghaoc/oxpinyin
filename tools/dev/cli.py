@@ -5,20 +5,8 @@ import json
 import sys
 from pathlib import Path
 
-from . import abi, cell, check, doctor, pool, registry, test_runner
+from . import abi, cell, check, doctor, pool, test_runner
 from .measure import recipes
-
-
-def _selected(args, *, required=False):
-    """Load registry rows matching the CLI selectors.
-
-    Raise RegistryError for invalid or empty selections; required also rejects
-    an invocation without any selector.
-    """
-    return registry.select(registry.load(),
-                           names=None if args.runners is None else registry.names(args.runners),
-                           cells=None if args.cells is None else registry.names(args.cells),
-                           issues=args.issue, kind=args.kind, require_selection=required)
 
 
 def _oracle_versions():
@@ -95,43 +83,6 @@ def test_tools_command(args):
     return test_runner.run_tools(args.files, args.pattern, args.changed)
 
 
-def list_command(args):
-    """Print matching registry rows as tab-separated metadata.
-
-    Raise RegistryError if the selection leaves no rows. Return zero after printing.
-    """
-    rows = _selected(args)
-    for row in rows:
-        print(f'{row["name"]}\t{row.get("kind", "")}\t{",".join(row["cells"])}\t'
-              f'{row["implementation"]}')
-    if not rows:
-        raise registry.RegistryError('selection matched no registry rows')
-    return 0
-
-
-def plan_command(args):
-    """Print selected command and environment templates without executing them.
-
-    Require an explicit registry selection and show only requested cells;
-    return zero after printing.
-    """
-    chosen = _selected(args, required=True)
-    cells = None if args.cells is None else registry.names(args.cells)
-    print('Registry description only; executes nothing. Cells and commands are compatibility metadata.')
-    for row in chosen:
-        inputs = '; '.join(row.get('required_inputs', []))
-        selected_cells = [cell for cell in row['cells'] if cells is None or cell in cells]
-        print(f'{row["name"]}: cells: '
-              f'{",".join(selected_cells)}; '
-              f'kind: {row.get("kind", "")}; inputs: {inputs or "none"}')
-        print('  implementation: ' + row['implementation'])
-        print('  command template: ' + json.dumps(row['command']))
-        print('  environment template: ' + json.dumps(row.get('env', {}), sort_keys=True))
-        if row.get('reason'):
-            print('  state: ' + row['reason'])
-    return 0
-
-
 def pool_command(args):
     """Run a command per item within one CPU budget; see tools/dev/pool.py."""
     if args.command[:1] == ['--']:
@@ -139,22 +90,16 @@ def pool_command(args):
     return pool.run_command(args)
 
 
-def runner_command(args):
-    """Call the shared driver recipe services; the registry still owns selection."""
+def cpp_smoke_command(args):
+    """Run the C++ pinyin.h smoke gate."""
     from . import runners
-    return runners.main(args.args)
-
-
-def policy_record_command(args):
-    """Write or update discrepancy-record entries from contract-diff observation captures."""
-    from . import policy
-    return policy.main(args.args[1:] if args.args[:1] == ['--'] else args.args)
+    return runners.cpp_smoke(args.args)
 
 
 def build_parser():
     """Build the native service CLI with dispatch callbacks on each subcommand."""
     parser = argparse.ArgumentParser(prog='python -m tools.dev',
-                                     description='Native tooling services: capabilities and registry.')
+                                     description='Native tooling services: capabilities and checks.')
     sub = parser.add_subparsers(dest='command', required=True)
 
     p = sub.add_parser('doctor', help='report native capabilities and the interpreter identity')
@@ -203,13 +148,9 @@ def build_parser():
     p.add_argument('args', nargs=argparse.REMAINDER)
     p.set_defaults(func=lambda args: abi.main(args.args))
 
-    p = sub.add_parser('policy-record', help='record policy-accepted observations into a findings record')
+    p = sub.add_parser('cpp-smoke', help='compile and run the C++ pinyin.h smoke gate')
     p.add_argument('args', nargs=argparse.REMAINDER)
-    p.set_defaults(func=policy_record_command)
-
-    p = sub.add_parser('runner', help='execute one registry recipe through shared driver services')
-    p.add_argument('args', nargs=argparse.REMAINDER)
-    p.set_defaults(func=runner_command)
+    p.set_defaults(func=cpp_smoke_command)
 
     p = sub.add_parser('w3-fixtures', help='regenerate or check the committed fixtures/w3 data sets')
     p.add_argument('args', nargs=argparse.REMAINDER)
@@ -232,14 +173,6 @@ def build_parser():
     p.add_argument('args', nargs=argparse.REMAINDER)
     p.set_defaults(func=lambda args: __import__('tools.dev.provision', fromlist=['main']).main(args.args))
 
-    p = sub.add_parser('list', help='list the registry, read-only')
-    _selection_arguments(p)
-    p.set_defaults(func=list_command)
-
-    p = sub.add_parser('plan', help='show the selected registry rows, read-only')
-    _selection_arguments(p)
-    p.set_defaults(func=plan_command)
-
     p = sub.add_parser('packaging', help='install, relink, metadata and package assembly')
     p.add_argument('args', nargs=argparse.REMAINDER)
     p.set_defaults(func=packaging_command)
@@ -255,19 +188,11 @@ def build_parser():
     return parser
 
 
-def _selection_arguments(parser):
-    """Add runner, cell, issue, and kind filters to an existing parser."""
-    parser.add_argument('--runners', help='comma-separated registry runner names')
-    parser.add_argument('--cells', help='comma-separated registry cells (metadata only)')
-    parser.add_argument('--issue', action='append', help='registry issue tag; repeat for alternatives')
-    parser.add_argument('--kind', help='registry kind, such as gate or not-a-gate')
-
-
 def main(argv=None):
     """Dispatch native tooling arguments and return the selected command status.
 
     Default to sys.argv. Forward non-help test arguments directly
-    to their runners; report registry selection errors on stderr with status 2.
+    to their runners.
     """
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv[:1] == ['rust-tables']:
@@ -289,9 +214,9 @@ def main(argv=None):
         return cell.main(argv[1:])
     if argv[:1] == ['abi']:
         return abi.main(argv[1:])
-    if argv[:1] == ['runner']:
+    if argv[:1] == ['cpp-smoke']:
         from . import runners
-        return runners.main(argv[1:])
+        return runners.cpp_smoke(argv[1:])
     if argv[:1] == ['lint-crate-cfg-placement']:
         return check.lint_crate_cfg_placement(argv[1:])
     if argv[:1] == ['sanitize']:
@@ -299,8 +224,4 @@ def main(argv=None):
     if argv[:1] == ['sanitize-toolchain']:
         return test_runner.sanitize_toolchain()
     args = build_parser().parse_args(argv)
-    try:
-        return args.func(args)
-    except registry.RegistryError as exc:
-        print(f'{args.command}: {exc}', file=sys.stderr)
-        return 2
+    return args.func(args)

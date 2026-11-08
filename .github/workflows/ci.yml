@@ -238,7 +238,7 @@ jobs:
         if: needs.changes.outputs.reuse != 'true'
       - name: C++ pinyin.h smoke gate
         if: needs.changes.outputs.reuse != 'true'
-        run: just runner cpp-smoke
+        run: just cpp-smoke
       # The exported-symbol gate: each cdylib exports exactly its pin
       # version script's set and nothing else, in the development build
       # (fixture hooks allowed) and in the packaged one (--features shipped,

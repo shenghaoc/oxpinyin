@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tools.dev import cli, registry, slot, test_support
+from tools.dev import cli, slot, test_support
 
 IMPLEMENTATION = 'legacy:tools/oracle/build-oracle.sh'
 COMMAND = ['bash', '{root}/tools/oracle/build-oracle.sh']
@@ -150,117 +150,6 @@ class CliTests(unittest.TestCase):
                     mock.patch.object(cli.test_runner, 'run_tools', return_value=7) as run:
                 self.assertEqual(cli.main(['test-tools', *argv]), 7)
                 run.assert_called_once_with(*expected)
-
-    def test_registry_commands_reject_empty_unknown_and_unmatched_selections(self):
-        selections = ([], ['--runners', ''], ['--runners', ','],
-                      ['--runners', 'cpp-smoke,'], ['--runners', 'cpp-smoke,missing'],
-                      ['--cells', ''], ['--cells', 'bdb,missing'],
-                      ['--issue', ''], ['--issue', 'missing'],
-                      ['--kind', 'missing'],
-                      ['--runners', 'cpp-smoke', '--issue', 'T2N'])
-        for selection in selections:
-            with self.subTest(selection=selection), \
-                    contextlib.redirect_stdout(io.StringIO()) as output, \
-                    contextlib.redirect_stderr(io.StringIO()) as error:
-                self.assertEqual(cli.main(['plan', *selection]), 2)
-                self.assertEqual(output.getvalue(), '')
-                self.assertTrue(error.getvalue().startswith('plan: '))
-                self.assertNotIn('Traceback', error.getvalue())
-        test_support.assert_not_called(self, self.launch)
-
-    def test_registry_listing_filters_static_issues_and_kind(self):
-        for selector in ('row:38', 'Row 38'):
-            with self.subTest(selector=selector), \
-                    contextlib.redirect_stdout(io.StringIO()) as output:
-                self.assertEqual(cli.main(['list', '--issue', selector, '--kind', 'gate']), 0)
-                self.assertEqual([line.split('\t')[0] for line in output.getvalue().splitlines()],
-                                 ['train-index-diff'])
-        with contextlib.redirect_stdout(io.StringIO()) as output:
-            self.assertEqual(cli.main(['list', '--runners', 'cpp-smoke']), 0)
-            self.assertEqual(output.getvalue(), 'cpp-smoke\tgate\tbdb,kc,tkrzw\t'
-                             'python:tools.dev\n')
-        with contextlib.redirect_stdout(io.StringIO()) as output:
-            self.assertEqual(cli.main(['list', '--runners', 'callgrind-differential']), 0)
-        self.assertEqual(output.getvalue().split('\t')[-1], 'python:tools.dev\n')
-        self.assertNotIn('registered', output.getvalue())
-        self.assertNotIn('measurement recipe', output.getvalue())
-        test_support.assert_not_called(self, self.launch)
-
-    def test_plan_describes_templates_without_resolving_or_executing_them(self):
-        with contextlib.redirect_stdout(io.StringIO()) as output:
-            self.assertEqual(cli.main(['plan', '--runners', 'pc-metadata', '--cells', 'kc']), 0)
-        plan = output.getvalue()
-        self.assertIn('executes nothing', plan)
-        self.assertIn('cells: kc;', plan)
-        self.assertNotIn('cells: bdb,kc,tkrzw;', plan)
-        self.assertIn('{env[OXPINYIN_METADATA_PIN_ROOT]}', plan)
-        self.assertIn('command template:', plan)
-        self.assertIn('\n  implementation: python:tools.dev\n', plan)
-        test_support.assert_not_called(self, self.launch)
-
-    def test_plan_prints_the_implementation_with_each_row(self):
-        with contextlib.redirect_stdout(io.StringIO()) as output:
-            self.assertEqual(cli.main(['plan', '--runners', 'cpp-smoke,pc-metadata']), 0)
-        lines = [line for line in output.getvalue().splitlines() if line.startswith('  implementation: ')]
-        self.assertEqual(lines, ['  implementation: python:tools.dev',
-                                 '  implementation: python:tools.dev'])
-        test_support.assert_not_called(self, self.launch)
-
-    def test_registry_commands_report_a_missing_implementation_without_tracebacks(self):
-        rows = [dict(name='fixture', command=['unused'], cells=['bdb'])]
-        for command, selection in (('list', []), ('plan', ['--runners', 'fixture'])):
-            with self.subTest(command=command), \
-                    mock.patch.object(Path, 'read_text', return_value=json.dumps(rows)), \
-                    contextlib.redirect_stdout(io.StringIO()) as output, \
-                    contextlib.redirect_stderr(io.StringIO()) as error:
-                self.assertEqual(cli.main([command, *selection]), 2)
-                self.assertEqual(output.getvalue(), '')
-                self.assertEqual(error.getvalue(),
-                                 f"{command}: registry row 'fixture' has no implementation\n")
-        test_support.assert_not_called(self, self.launch)
-
-    def test_registry_read_failure_has_a_nonzero_diagnostic(self):
-        for command, selection in (('list', []), ('plan', ['--runners', 'cpp-smoke'])):
-            with self.subTest(command=command), \
-                    mock.patch.object(registry, 'load', side_effect=registry.RegistryError('bad registry')), \
-                    contextlib.redirect_stderr(io.StringIO()) as error:
-                self.assertEqual(cli.main([command, *selection]), 2)
-                self.assertEqual(error.getvalue(), f'{command}: bad registry\n')
-        test_support.assert_not_called(self, self.launch)
-
-    def test_registry_load_rejects_numeric_issue_labels(self):
-        for issues in ([541], ['541', 542], 541):
-            rows = [dict(name='fixture', command=COMMAND, cells=['bdb'], implementation=IMPLEMENTATION, issues=issues)]
-            with self.subTest(issues=issues), mock.patch.object(
-                    Path, 'read_text', return_value=json.dumps(rows)):
-                with self.assertRaisesRegex(registry.RegistryError,
-                                            "registry row 'fixture' issues must be a list of strings"):
-                    registry.load()
-        test_support.assert_not_called(self, self.launch)
-
-    def test_registry_commands_report_numeric_issue_labels_without_tracebacks(self):
-        rows = [dict(name='fixture', command=COMMAND, cells=['bdb'], implementation=IMPLEMENTATION, issues=[541])]
-        for command, selection in (('list', []), ('plan', ['--runners', 'fixture'])):
-            with self.subTest(command=command), \
-                    mock.patch.object(Path, 'read_text', return_value=json.dumps(rows)), \
-                    contextlib.redirect_stdout(io.StringIO()) as output, \
-                    contextlib.redirect_stderr(io.StringIO()) as error:
-                self.assertEqual(cli.main([command, *selection]), 2)
-                self.assertEqual(output.getvalue(), '')
-                self.assertEqual(error.getvalue(),
-                                 f"{command}: registry row 'fixture' issues must be a list of strings\n")
-        test_support.assert_not_called(self, self.launch)
-
-    def test_registry_numeric_string_issue_labels_remain_selectable(self):
-        rows = [dict(name='fixture', command=COMMAND, cells=['bdb'], implementation=IMPLEMENTATION, issues=['541', 'Row 38'])]
-        with mock.patch.object(Path, 'read_text', return_value=json.dumps(rows)):
-            loaded = registry.load()
-        self.assertEqual(loaded, rows)
-        for issue in ('541', '#541', '  #541  ', 'row:38', 'Row 38'):
-            with self.subTest(issue=issue):
-                self.assertEqual(registry.select(loaded, issues=[issue]), rows)
-        test_support.assert_not_called(self, self.launch)
-
 
 if __name__ == '__main__':
     unittest.main()

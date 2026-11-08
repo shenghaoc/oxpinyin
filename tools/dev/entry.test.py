@@ -78,28 +78,28 @@ class EntryGuardTests(unittest.TestCase):
 
     def test_normal_mode_reaches_the_cli_listing(self):
         expected = subprocess.run([sys.executable, '-X', 'lazy_imports=normal', '-c',
-                                   'from tools.dev import cli; raise SystemExit(cli.main(["list"]))'],
+                                   'from tools.dev import cli; raise SystemExit(cli.main(["--help"]))'],
                                   cwd=ROOT, env=self.env, capture_output=True, text=True, timeout=120)
         self.assertEqual(expected.returncode, 0, expected.stderr)
         self.assertNotEqual(expected.stdout, '')
         for label, kwargs in (('-X', {'flag': 'normal'}), ('environment', {'env_mode': 'normal'})):
             with self.subTest(label):
-                result, diagnostic, report = self.run_reported(['list'], **kwargs)
+                result, diagnostic, report = self.run_reported(['--help'], **kwargs)
                 self.assertEqual(result.returncode, 0, diagnostic)
                 self.assertEqual(report, {'status': 0, 'cli_loaded': True})
                 self.assertEqual(result.stdout, expected.stdout)
                 self.assertEqual(diagnostic, [])
 
     def test_other_modes_exit_2_before_the_cli_loads(self):
-        for label, outcome, mode in self.rejected_runs(['list']):
+        for label, outcome, mode in self.rejected_runs(['--help']):
             with self.subTest(label):
                 self.assert_rejected(outcome, mode)
-        for label, result in self.startup_refusals(['list']):
+        for label, result in self.startup_refusals(['--help']):
             with self.subTest(label):
                 self.assert_startup_refused(result)
 
     def test_missing_get_lazy_imports_names_the_required_interpreter(self):
-        result, diagnostic, report = self.run_reported(['list'], flag='normal', action='drop')
+        result, diagnostic, report = self.run_reported(['--help'], flag='normal', action='drop')
         self.assertEqual(result.returncode, 2)
         self.assertEqual(report, {'status': 2, 'cli_loaded': False})
         self.assertEqual(result.stdout, '')

@@ -110,7 +110,7 @@ class CheckoutInterpreterTests(unittest.TestCase):
             env = {key: value for key, value in os.environ.items()
                    if key not in ('UV_PYTHON', 'PYTHONHOME', 'PYTHONPATH')}
             env.update(PATH=f'{stubs}{os.pathsep}{os.environ["PATH"]}', RECORD=str(record))
-            result = subprocess.run(['uv', 'run', '--no-project', '--managed-python', '--python', checkout_request, 'python', '-X', 'lazy_imports=normal', str(ROOT / 'tools/dev/__main__.py'), 'runner', 'run-all', '--list', '--runners', 'relative/path'],
+            result = subprocess.run(['uv', 'run', '--no-project', '--managed-python', '--python', checkout_request, 'python', '-X', 'lazy_imports=normal', str(ROOT / 'tools/dev/__main__.py'), 'doctor'],
                                     cwd=outer, env=env, capture_output=True, text=True, check=False)
             self.assertEqual(result.returncode, 0, result.stderr)
             lines = record.read_text().splitlines()
@@ -118,7 +118,7 @@ class CheckoutInterpreterTests(unittest.TestCase):
         argv = lines[1:]
         self.assertEqual(argv[argv.index('--python') + 1], checkout_request)
         self.assertNotIn(other, argv)
-        self.assertEqual(argv[-3:], ['--list', '--runners', 'relative/path'], 'the caller\'s arguments are unchanged')
+        self.assertEqual(argv[-1:], ['doctor'], 'the caller\'s arguments are unchanged')
 
 
 if __name__ == '__main__':

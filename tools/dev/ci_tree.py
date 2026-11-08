@@ -103,7 +103,7 @@ RUST = (*SHARED, "crates", "Cargo.toml", "Cargo.lock", "fixtures", "tests/parity
 PYTHON_ONLY = ("tools/*.test.py", "tools/audit", "tools/bisection/*.py", "tools/bisection/coverage_review_rules",
                "tools/capture", "tools/cloud", "tools/oracle", "tools/scripts2")
 # The exceptions: `python -m tools.dev` imports these modules, and the Rust lanes read the pin records.
-RUST_READS = ("tools/bisection/contract_policy.py", "tools/bisection/contract_verdict.py",
+RUST_READS = (
               "tools/bisection/startup_profile.py", "tools/bisection/teardown.py",
               "tools/oracle/image.py", "tools/oracle/versions.py",
               "tools/oracle/oracle-pin.txt", "tools/oracle/libpinyin-data.json")

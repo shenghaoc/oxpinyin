@@ -35,16 +35,6 @@ class TableTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertEqual(function.__code__.co_argcount, 2)
 
-    def test_the_registry_rows_that_were_shell_runners_run_the_recipe_of_their_name(self):
-        import json
-        rows = {row['name']: row for row in json.loads((ROOT / 'tools/bisection/runners.json').read_text())}
-        for name in ('callgrind-differential', 'system-import-profile'):
-            with self.subTest(name=name):
-                self.assertEqual(rows[name]['implementation'], 'python:tools.dev')
-                self.assertEqual(rows[name]['command'][-3:], ['tools.dev', 'measure', name])
-                self.assertIn(name, recipes.NAMES)
-
-
 class EnvironmentTests(unittest.TestCase):
     def test_the_control_is_outside_the_pin_scope(self):
         self.assertEqual(recipes.PIN_COMPARISONS, {'callgrind-differential', 'system-import-profile'})

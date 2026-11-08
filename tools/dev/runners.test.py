@@ -21,40 +21,6 @@ from tools.dev.runner_recipes import pinyin_needed, pinyin_resolved
 from tools.dev import runners
 
 
-class ContractSelectorTests(unittest.TestCase):
-    def test_missing_contract_arguments_print_usage(self):
-        for args in ([], ['bdb'], ['verify'], ['verify', 'bdb']):
-            with self.subTest(args=args), mock.patch.object(runners, 'emit') as emit:
-                self.assertEqual(runners.main(['contract-diff', *args]), 2)
-                self.assertIn('usage:', emit.call_args.args[0])
-
-    def test_prefix_flag_reaches_driver_with_or_without_separator_and_zhuyin(self):
-        # `contract-diff` is the verify operation: no oracle prefix, the subject libraries only.
-        for operation in ([], ['verify']):
-            for extra in ([], ['--'], ['/subject/zhuyin.so', '--']):
-                args = ['contract-diff', *operation, 'bdb', '/subject/pinyin.so', *extra,
-                        '--cases-prefix', 'table-conf-,user-conf-']
-                with self.subTest(operation=operation, extra=extra), \
-                        mock.patch.object(runners.os, 'execv', side_effect=SystemExit) as launch:
-                    with self.assertRaises(SystemExit):
-                        runners.main(args)
-                    forwarded = launch.call_args.args[1]
-                    self.assertEqual(forwarded[4:7], ['verify', 'bdb', '/subject/pinyin.so'])
-                    self.assertEqual(forwarded[-2:], ['--cases-prefix', 'table-conf-,user-conf-'])
-                    self.assertEqual('--zhuyin-so' in forwarded, bool(extra and extra[0] != '--'))
-
-    def test_capture_is_refused_by_the_runner_and_points_at_the_pin_image(self):
-        with mock.patch.object(runners.os, 'execv') as launch, mock.patch.object(runners, 'emit') as emit:
-            self.assertEqual(runners.main(['contract-diff', 'capture', 'bdb', '/pin']), 1)
-        launch.assert_not_called()
-        self.assertIn('capture-contract.sh', emit.call_args.args[0])
-
-    def test_runner_help_exposes_driver_flags_without_artifacts(self):
-        with mock.patch.object(runners.os, 'execv', side_effect=SystemExit) as launch:
-            with self.assertRaises(SystemExit):
-                runners.main(['contract-diff', '--help'])
-            self.assertEqual(launch.call_args.args[1][-1], '--help')
-
 class ElfObservationTests(unittest.TestCase):
     def test_elf_observations_are_parsed_without_a_linux_host(self):
         self.assertEqual(pinyin_needed(' (NEEDED) Shared library: [libpinyin.so.15]\n Shared library: [libc.so.6]'), 'libpinyin.so.15')

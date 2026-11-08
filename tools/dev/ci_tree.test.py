@@ -334,7 +334,7 @@ class MigratedWorkflowTests(unittest.TestCase):
     def test_migrated_gates_keep_the_tree_reuse_guard(self):
         workflow = (ROOT / PROFILE.path).read_text()
         commands = {
-            'C++ pinyin.h smoke gate': 'just runner cpp-smoke',
+            'C++ pinyin.h smoke gate': 'just cpp-smoke',
             'ABI export gate (development build)': 'just abi exports',
             'Allocator-pairing gate': 'just abi alloc-pairing',
             'ABI export gate (shipped build)': 'just abi exports --shipped',
@@ -567,7 +567,7 @@ class GateTests(unittest.TestCase):
             '.github/workflows/verify-nightly.yml': {'harness'},
             'tools/bisection/contract_axis_c.py': {'harness'},
             'tools/dev/ci_tree.test.py': {'harness'},
-            'tools/oracle/capture-contract.sh': {'lint', 'harness'},
+            'tools/oracle/build-oracle.sh': {'lint', 'harness'},
             'tools/dev/lint-crate-cfg-placement.test.py': {'lint', 'harness'},
             'tools/dev/abi.py': {'lint', 'test', 'harness'},
             'tools/dev/new_module.py': {'lint', 'test', 'harness'},

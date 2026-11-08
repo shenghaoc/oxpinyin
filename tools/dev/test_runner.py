@@ -18,12 +18,10 @@ from . import host, mounts, native, pool, slot
 
 ROOT = Path(__file__).resolve().parents[2]
 
-# internal-ledger-toolchain.test.py needs libclang, the LLVM tools and GCC with
-# gcov 14 or newer, which only a measurement host provides.
-HARNESS_EXCLUDED = frozenset({'tools/bisection/internal-ledger-toolchain.test.py'})
+HARNESS_EXCLUDED = frozenset()
 
 # These harnesses exercise real cold-file eviction; tmpfs/ramfs ignore fadvise.
-DISK_BACKED_HARNESS = {'tools/bisection/teardown.test.py'}
+DISK_BACKED_HARNESS = set()
 
 # No harness test file inherits a variable whose name matches one of these
 # patterns, compared case-insensitively. A failing mock assertion prints the
@@ -96,13 +94,8 @@ PACKAGING_PATHS = (
 
 # Each listed contract module selects its own test and the shared integration tests.
 # Keep this list explicit: new or removed paths still use the unknown-path fallback.
-CONTRACT_HARNESS = ('tools/bisection/contract-modules.test.py',
-                    'tools/bisection/contract-diff.test.py', 'tools/bisection/teardown.test.py')
-CONTRACT_MODULES = (
-    'abi', 'before_cursor_dedup', 'bigram_mask_prediction', 'case_helpers', 'cell_fixtures',
-    'execution', 'fixtures', 'kit', 'measurement', 'reading_256th', 'registry', 'runner',
-    'save_failures_stderr', 'selection', 'sentence_ties', 'verdict',
-)
+CONTRACT_HARNESS = ()
+CONTRACT_MODULES = ('abi', 'fixtures', 'kit')
 
 HARNESS_DEPENDENCIES = {
     **dict.fromkeys(PACKAGING_PATHS, PACKAGING_HARNESSES),
@@ -111,14 +104,8 @@ HARNESS_DEPENDENCIES = {
        for name in CONTRACT_MODULES},
     'tools/dev/test_runner.py': ('tools/dev/test_runner.test.py', 'tools/dev/cli.test.py',
                                  'tools/dev/sanitize.test.py'),
-    'tools/bisection/contract-diff.py': CONTRACT_HARNESS,
-    'tools/bisection/contract_policy.py': ('tools/bisection/contract_policy.test.py',
-                                           'tools/bisection/contract_verdict.test.py',
-                                           'tools/bisection/contract-modules.test.py',
-                                           'tools/bisection/contract-diff.test.py',
-                                           'tools/dev/policy.test.py'),
-    'tools/dev/policy.py': ('tools/dev/policy.test.py', 'tools/dev/cli.test.py'),
-    'tools/bisection/teardown.py': ('tools/bisection/teardown.test.py',),
+    'tools/bisection/reverse_cross_open.py': ('tools/bisection/reverse_cross_open.test.py',),
+    'tools/bisection/contract_case_helpers.py': (),
     'tools/bisection/system_import_profile.py': ('tools/bisection/system_import_profile.test.py',),
     'tools/dev/native.py': ('tools/dev/check.test.py', 'tools/dev/sanitize.test.py'),
     'tools/dev/check.py': ('tools/dev/check.test.py',
