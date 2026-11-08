@@ -9,8 +9,8 @@ name: verify-nightly
 # No job may fail: there are no continue-on-error jobs.
 #
 # Every Linux job runs in a debian:testing container in the
-# store-backends.yml style (test-windows runs on windows-latest,
-# test-macos on macos-latest): the nightly lanes exist to surface drift early, and the rolling
+# store-backends.yml style (test-windows runs on windows-2025,
+# test-macos on macos-26): the nightly lanes exist to surface drift early, and the rolling
 # distro toolchain is part of what they exercise. The image is
 # deliberately unpinned — do not "stabilise" it.
 # The oracle is never built or run on GitHub Actions.
@@ -240,9 +240,9 @@ jobs:
   test-windows:
     # Skipped by a macos_only dispatch; runs on the schedule.
     if: ${{ !inputs.macos_only }}
-    runs-on: windows-latest
+    runs-on: windows-2025
     timeout-minutes: 45
-    # windows-latest defaults every `run:` to pwsh; every step here is bash
+    # windows-2025 defaults every `run:` to pwsh; every step here is bash
     # (`>> "$GITHUB_ENV"`, `sha256sum`), which under pwsh would write nowhere.
     defaults:
       run:
@@ -383,7 +383,7 @@ jobs:
   test-macos:
     # Skipped by a windows_only dispatch; runs on the schedule.
     if: ${{ !inputs.windows_only }}
-    runs-on: macos-latest
+    runs-on: macos-26
     timeout-minutes: 45
     # ci.yml set these at workflow level; this workflow sets none.
     env:
