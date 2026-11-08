@@ -476,12 +476,6 @@ impl SegmentGraph {
         (start..end).map(EdgeId)
     }
 
-    /// Whether `node` can be reached from the start of the input.
-    #[must_use]
-    pub fn is_reachable(&self, node: usize) -> bool {
-        self.reachable.get(node).copied().unwrap_or(false)
-    }
-
     /// The furthest node reachable from the start on the full graph.
     ///
     /// Incomplete edges always participate. Filtered parse length is the
@@ -575,24 +569,6 @@ impl SegmentGraph {
         }
         path.reverse();
         path
-    }
-
-    /// Finds the edge leaving `from` that matches this segment exactly.
-    ///
-    /// The byte range is the key's own range, as the capture notation writes
-    /// it, so a segment after an apostrophe is looked up by where its text
-    /// starts rather than where its edge does.
-    #[must_use]
-    pub fn find_edge(
-        &self,
-        from: usize,
-        key: SyllableKey,
-        syllable_start: usize,
-    ) -> Option<EdgeId> {
-        self.outgoing_ids(from).find(|id| {
-            self.edge(*id)
-                .is_some_and(|edge| edge.key == key && edge.syllable_start() == syllable_start)
-        })
     }
 }
 
@@ -1134,8 +1110,6 @@ mod tests {
         assert_eq!(graph.edges().len(), 0);
         assert_eq!(graph.consumed(), 0);
         assert!(graph.fully_consumed());
-        assert!(graph.is_reachable(0));
-        assert!(!graph.is_reachable(1));
         assert!(graph.outgoing(0).is_empty());
         assert!(graph.outgoing(99).is_empty());
     }
@@ -1256,8 +1230,6 @@ mod tests {
         let graph = SegmentGraph::build(b"ni!hao").expect("valid");
         assert_eq!(graph.consumed(), 2);
         assert!(!graph.fully_consumed());
-        assert!(graph.is_reachable(2));
-        assert!(!graph.is_reachable(3));
 
         let leading = SegmentGraph::build(b"!ni").expect("valid");
         assert_eq!(leading.consumed(), 0);
@@ -1286,7 +1258,9 @@ mod tests {
         for (from, key, start) in [(0, "ying", 0), (4, "ch", 4), (6, "o", 6), (7, "n", 7)] {
             let key = SyllableKey::from_text(key).expect("frozen key");
             assert!(
-                graph.find_edge(from, key, start).is_some(),
+                graph.edges().iter().any(|edge| edge.from() == from
+                    && edge.key() == key
+                    && edge.syllable_start() == start),
                 "missing edge {from} {}",
                 key.text()
             );

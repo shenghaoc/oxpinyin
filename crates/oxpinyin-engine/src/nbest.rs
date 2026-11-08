@@ -1649,7 +1649,7 @@ mod tests {
     }
 
     #[test]
-    fn an_ordinary_sentence_text_stays_inline() {
+    fn an_ordinary_sentence_text_is_built() {
         let mut trellis = Trellis::with_seeds(0, &[], NbestShape::PINYIN);
         trellis.texts.insert(1, (0, 1));
         trellis
@@ -1661,7 +1661,6 @@ mod tests {
             .text(&TextDictionary, &mut cache, &[(0, 1)], &RefCell::default())
             .expect("trellis text")
             .expect("present");
-        assert!(text.is_inline(), "short sentence is inline");
         assert_eq!(text.as_str(), Some("你好"));
     }
 

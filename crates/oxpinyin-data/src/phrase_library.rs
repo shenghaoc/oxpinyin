@@ -264,13 +264,6 @@ impl PhraseItemView<'_> {
         })
     }
 
-    /// The phrase's code points in order, each `None` where the stored
-    /// `ucs4_t` is not a Unicode scalar value.
-    pub fn phrase_chars(&self) -> impl Iterator<Item = Option<char>> + '_ {
-        self.phrase_codes()
-            .map(|code| code.and_then(char::from_u32))
-    }
-
     /// `PhraseItem::get_nth_pronunciation` — pronunciation `index`'s
     /// packed keys and frequency, bounds-checked.
     #[must_use]
@@ -845,26 +838,6 @@ impl PhraseLibrary {
     #[must_use]
     pub fn slot_offset_word(&self, slot: u32) -> Option<u32> {
         self.slot_offset(slot as usize)
-    }
-
-    /// The raw entry-area offset of `token`'s slot, `None` when the slot has
-    /// no item. The offset indexes [`Self::item_area`].
-    #[must_use]
-    pub fn content_offset(&self, token: u32) -> Option<u32> {
-        let offset = self.slot_offset((token & PHRASE_MASK) as usize)?;
-        (offset != 0).then_some(offset)
-    }
-
-    /// Whether the mapped chunk is byte-for-byte the same as `other` —
-    /// the full `header + data_len` extent `MemoryChunk::mmap` exposes.
-    /// A save compares the current on-disk chunk against the snapshot the
-    /// session loaded with this, rather than path, size or mtime: a
-    /// replacement may keep all three (`_write_files` remaps the path at
-    /// `pinyin.cpp:956`, `zhuyin.cpp:589`).
-    #[must_use]
-    pub fn byte_identical(&self, other: &Self) -> bool {
-        self.file.as_ref().map(|mapping| mapping.as_slice())
-            == other.file.as_ref().map(|mapping| mapping.as_slice())
     }
 
     /// Every `(slot, item)` pair with a resident item, slot order — a

@@ -286,12 +286,6 @@ impl SystemVersions {
     }
 }
 
-/// `binary format version` at the pin (`data/table.conf.in`), and at
-/// every libpinyin install since 2.8.1.
-pub const PINNED_BINARY_FORMAT_VERSION: u32 = 7;
-/// `model data version` at the pin — stable 2.8.1 through 2.11.92.
-pub const PINNED_MODEL_DATA_VERSION: u32 = 14;
-
 /// `OPEN_COUNTER_LIMIT` (`table_info.cpp:32`): an open counter above this
 /// marks the profile non-conform — upstream's periodic-rebuild heuristic.
 pub const OPEN_COUNTER_LIMIT: i32 = 6;

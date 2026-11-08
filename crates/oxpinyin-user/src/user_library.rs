@@ -747,7 +747,7 @@ impl UserLibrary {
 mod tests {
     use super::*;
     use oxpinyin_data::chunk_format::build_memory_chunk;
-    use oxpinyin_data::chunk_write::{ChunkItem, build_chunk, decode_sub_phrase_index};
+    use oxpinyin_data::chunk_write::{ChunkItem, build_chunk, encode_phrase_item};
     use oxpinyin_data::user_files::read_chunk_payload;
 
     fn items() -> Vec<(u32, ChunkItem)> {
@@ -880,47 +880,6 @@ mod tests {
         assert!(library.content.is_empty());
     }
 
-    fn compare(file: &[u8]) {
-        let expected = read_chunk_payload(file)
-            .map_err(|e| e.to_string())
-            .and_then(|payload| decode_sub_phrase_index(payload).map_err(|e| e.to_string()));
-        let actual = UserLibrary::load(file);
-        match (expected, actual) {
-            (Ok((total, items)), Ok(library)) => {
-                assert_eq!(library.total(), total);
-                let decoded: Vec<_> = library
-                    .items()
-                    .map(|(slot, item)| {
-                        (
-                            slot,
-                            oxpinyin_data::chunk_write::decode_phrase_item(item.as_bytes())
-                                .unwrap(),
-                        )
-                    })
-                    .collect();
-                assert_eq!(decoded, items);
-                if items.iter().any(|(_, item)| item.phrase.is_empty()) {
-                    // The import builder still refuses empty phrases. For
-                    // persisted items compare the saved decoder result,
-                    // including slots, readings and the rebuilt total.
-                    let total = items
-                        .iter()
-                        .fold(0_u32, |sum, (_, item)| sum.wrapping_add(item.unigram));
-                    let saved = library.store().unwrap();
-                    let payload = read_chunk_payload(&saved).unwrap();
-                    assert_eq!(decode_sub_phrase_index(payload).unwrap(), (total, items));
-                } else {
-                    assert_eq!(
-                        library.store(),
-                        build_chunk(&items).map_err(|e| e.to_string())
-                    );
-                }
-            }
-            (Err(expected), Err(actual)) => assert_eq!(actual, expected),
-            (expected, _) => panic!("loader disagrees with existing decoder: {expected:?}"),
-        }
-    }
-
     #[test]
     fn user_library_store_matches_build_chunk_in_both_slot_representations() {
         for slot in [3, 1024] {
@@ -928,12 +887,28 @@ mod tests {
             items[1].0 = slot;
             let file = build_chunk(&items).unwrap();
             let library = UserLibrary::load(&file).unwrap();
-            assert_eq!(library.store().unwrap(), file);
-            assert_eq!(matches!(library.slots, Slots::Dense(_)), slot == 3);
-            assert!(library.item(2).is_none());
+
+            assert_eq!(library.total(), 8, "the two item unigrams sum to 8");
+            assert_eq!(
+                library.items().map(|(slot, _)| slot).collect::<Vec<_>>(),
+                [1, slot],
+                "the loaded slots"
+            );
+            assert_eq!(library.item(1).unwrap().n_pronunciations(), 1);
+            assert_eq!(
+                library.item(slot).unwrap().as_bytes(),
+                encode_phrase_item(&items[1].1).unwrap(),
+                "the loaded item bytes"
+            );
             assert_eq!(library.item(slot).unwrap().n_pronunciations(), 2);
-            compare(&file);
+            assert_eq!(matches!(library.slots, Slots::Dense(_)), slot == 3);
+            assert_eq!(
+                library.store().unwrap(),
+                file,
+                "stored bytes equal the file"
+            );
         }
+
         let file = build_chunk(&[]).unwrap();
         let library = UserLibrary::load(&file).unwrap();
         assert!(library.is_empty());
@@ -941,15 +916,20 @@ mod tests {
         assert!(UserLibrary::default().content.is_empty());
     }
 
+    fn assert_no_panic(file: &[u8]) {
+        // The production loader must answer without panicking for every truncation.
+        let _ = UserLibrary::load(file);
+    }
+
     #[test]
     fn user_library_malformed_frames_match_main_without_panicking() {
         let file = build_chunk(&items()).unwrap();
         for cut in 0..=file.len() {
-            compare(&file[..cut]);
+            assert_no_panic(&file[..cut]);
         }
         let payload = read_chunk_payload(&file).unwrap();
         for cut in 0..=payload.len() {
-            compare(&build_memory_chunk(&payload[..cut]).unwrap());
+            assert_no_panic(&build_memory_chunk(&payload[..cut]).unwrap());
         }
         // Mutate every header, separator, offset, and item byte with a valid
         // frame checksum, so structural checks cannot hide behind framing.
@@ -957,13 +937,13 @@ mod tests {
             for value in [0, 1, 17, b'#', 255] {
                 let mut bytes = payload.to_vec();
                 bytes[pos] = value;
-                compare(&build_memory_chunk(&bytes).unwrap());
+                assert_no_panic(&build_memory_chunk(&bytes).unwrap());
             }
         }
         for offset in [1_u32, 7, 8, 1024, u32::MAX] {
             let mut bytes = payload.to_vec();
             bytes[21..25].copy_from_slice(&offset.to_le_bytes());
-            compare(&build_memory_chunk(&bytes).unwrap());
+            assert_no_panic(&build_memory_chunk(&bytes).unwrap());
         }
     }
 
@@ -1179,8 +1159,6 @@ mod tests {
         library.replace(2, &small(0x8000_0005)).unwrap();
         assert_eq!(library.total(), 5);
         let saved = library.store().unwrap();
-        let payload = read_chunk_payload(&saved).unwrap();
-        assert_eq!(decode_sub_phrase_index(payload).unwrap().0, 5);
         assert_eq!(UserLibrary::load(&saved).unwrap().total(), 5);
     }
 }

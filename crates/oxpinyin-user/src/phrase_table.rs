@@ -17,14 +17,6 @@ pub const ERROR_OK: i32 = 0;
 pub const ERROR_INSERT_ITEM_EXISTS: i32 = 1;
 /// Removal did not find the token.
 pub const ERROR_REMOVE_ITEM_DONOT_EXISTS: i32 = 2;
-/// Search flags and tokens in stored traversal order.
-#[derive(Debug, Default, PartialEq, Eq)]
-pub struct SearchResult {
-    /// Bitwise combination of the pin's `SEARCH_*` flags.
-    pub flags: i32,
-    /// Tokens, including duplicates, in record traversal order.
-    pub tokens: Vec<u32>,
-}
 
 /// Encode phrase text as the pin's little-endian UCS-4 key.
 #[must_use]

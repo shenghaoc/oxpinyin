@@ -184,7 +184,7 @@ pub enum RemapStep {
     Directory(u8),
 }
 
-/// Why [`Runtime::save_disk_baseline`] could not give a baseline for a
+/// Why `save_disk_baseline` could not give a baseline for a
 /// system library the save maps again at its `_write_files` position
 /// (`pinyin.cpp:955`, `zhuyin.cpp:588`).
 #[derive(Debug)]
@@ -1027,16 +1027,6 @@ impl<'a> RuntimeDict<'a> {
     #[must_use]
     pub fn unigram_total_delta(&self) -> u32 {
         self.bumps.total.load(Ordering::SeqCst)
-    }
-
-    /// The addon library's stored unigram count for `token`.
-    #[must_use]
-    pub fn addon_unigram_frequency(&self, token: u32) -> Option<u64> {
-        let addons = self
-            .addons
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        addons.unigram_freq(token)
     }
 
     /// The visible item count for the amplified-law denominator: the
@@ -2524,20 +2514,7 @@ impl Runtime {
         self.dict().load_addon(index, system_dir)
     }
 
-    /// Loads addon library `index` from this runtime's first configured
-    /// system directory; `false` when the runtime has no system directory,
-    /// the library is already loaded, or its tables do not open. Keeps the
-    /// system-directory resolution here, next to the `paths` it reads,
-    /// rather than duplicated in every embedder.
-    #[must_use]
-    pub fn load_system_addon(&mut self, index: u8) -> bool {
-        let Some(system_dir) = self.paths.system_data_dirs().first() else {
-            return false;
-        };
-        self.dict().load_addon(index, system_dir)
-    }
-
-    /// [`Runtime::load_system_addon`] with the failure kept; `Ok(false)`
+    /// [`Runtime::load_system_addon_reporting`] with the failure kept; `Ok(false)`
     /// when the runtime has no system directory or the library is already
     /// loaded.
     ///
@@ -2604,34 +2581,6 @@ impl Runtime {
             .compact_layout_failed()
     }
 
-    /// The save's current on-disk baseline for one selected system library.
-    /// The pin remaps the library at its `_write_files` position and diffs
-    /// that chunk against the live sub-index (`pinyin.cpp:956`,
-    /// `zhuyin.cpp:589`). `Changed` carries the chunk as it is on disk now,
-    /// whether or not it differs from the one the session loaded; a
-    /// header-accepted layout refusal is returned for the caller to log and
-    /// turn into the pin's empty old sub-index. A file `MemoryChunk::mmap`
-    /// refuses is [`SaveRemapFault::Unmappable`]: the registered row 76 safe
-    /// outcome (the caller writes `mmap %s failed!` and the save stops at
-    /// that library). An unloaded default library, system or `USER_FILE`, is
-    /// `Unloaded`: the save leaves its file alone.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SaveRemapFault::Unmappable`] when `MemoryChunk::mmap` refuses it,
-    /// and [`SaveRemapFault::ChunkHeaderRead`] when it is a directory whose
-    /// header read the pin asserts on (`memory_chunk.h:493`, register row
-    /// 96): the save stops there.
-    pub fn save_disk_baseline(&self, nibble: u8) -> Result<SaveBaseline, SaveRemapFault> {
-        Self::read_save_baseline(
-            self.user
-                .as_ref()
-                .map_or(&self.originals, UserStore::originals),
-            self.unloaded_libraries(),
-            nibble,
-        )
-    }
-
     /// The current loaded-library mask, snapshotted for an exclusive save.
     pub fn unloaded_libraries(&self) -> u32 {
         self.library_mask.load(Ordering::SeqCst)
@@ -2640,7 +2589,7 @@ impl Runtime {
     /// Read a save baseline while its unique owner performs the operation.
     ///
     /// # Errors
-    /// The remap faults reported by [`Self::save_disk_baseline`].
+    /// The remap faults reported by `save_disk_baseline`.
     pub fn read_save_baseline(
         originals: &oxpinyin_user::SystemOriginals,
         unloaded: u32,

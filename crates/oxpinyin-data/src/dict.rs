@@ -383,11 +383,6 @@ impl SystemDictionary {
         (self.tables, self.libraries)
     }
 
-    /// Exclusive access to the loaded phrase storage.
-    pub fn libraries_mut(&mut self) -> &mut PhraseLibraries {
-        &mut self.libraries
-    }
-
     /// Opens the default facade from the backend's native system data
     /// directory — whether a libpinyin build or `oxpinyin-utils`' ports
     /// of its programs wrote it
@@ -1318,17 +1313,6 @@ impl AddonDictionary {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.libraries.is_empty()
-    }
-
-    /// The addon chunk files `table.conf` names, for callers that want to
-    /// load them all.
-    #[must_use]
-    pub fn library_files(&self) -> Vec<(u8, &FileName)> {
-        (0_u8..)
-            .zip(&self.rows)
-            .filter(|(_, row)| row.file_type == FileType::Dictionary)
-            .filter_map(|(index, row)| row.system.as_ref().map(|file| (index, file)))
-            .collect()
     }
 
     /// The stored unigram of `token`'s addon item, if its library is

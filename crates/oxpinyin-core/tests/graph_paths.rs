@@ -135,10 +135,13 @@ fn walk(
             ));
         }
 
-        let id = graph
-            .find_edge(node, key, *begin)
+        let edge = graph
+            .edges()
+            .iter()
+            .find(|edge| {
+                edge.from() == node && edge.key() == key && edge.syllable_start() == *begin
+            })
             .ok_or_else(|| format!("no edge for {text}@{begin}:{end} leaving node {node}"))?;
-        let edge = graph.edge(id).expect("the id came from this graph");
         if edge.to() != *end {
             return Err(format!(
                 "edge for {text}@{begin} ends at {} not {end}",

@@ -162,12 +162,6 @@ impl PhraseText {
         self.outward_bytes()
             .map_or_else(|| self.outward_words().next().is_none(), <[u8]>::is_empty)
     }
-
-    /// Whether this text occupies only its inline buffer.
-    #[must_use]
-    pub fn is_inline(&self) -> bool {
-        matches!(&self.0, TextStorage::Scalar(text) if !text.is_heap_allocated())
-    }
 }
 
 /// Concatenates ordinary texts in a CompactString, switching to stored words
@@ -419,10 +413,6 @@ mod phrase_text_tests {
                 assert_eq!(decoded.as_str(), Some(source.as_str()));
                 assert_eq!(text.phrase_length(), count);
                 assert_eq!(decoded.phrase_length(), count);
-                assert_eq!(
-                    text.is_inline(),
-                    source.len() <= core::mem::size_of::<compact_str::CompactString>()
-                );
                 assert_eq!(text, decoded);
                 assert_eq!(key(&text), key(&decoded));
                 let words = source.chars().map(u32::from).chain([0, 0xd800]);
@@ -503,14 +493,6 @@ mod phrase_text_tests {
             assert_eq!(text.phrase_length(), 3);
             assert_eq!(text.outward_words().collect::<Vec<_>>(), [0x7532]);
         }
-    }
-
-    #[test]
-    fn ordinary_stored_text_stays_inline() {
-        let text = PhraseText::from_stored_words([Some(0x7532), Some(0x4E59)])
-            .expect("ordinary stored words");
-        assert!(text.is_inline());
-        assert_eq!(text.as_str(), Some("甲乙"));
     }
 
     #[test]

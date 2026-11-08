@@ -1010,13 +1010,6 @@ pub const DEFAULT_STORE_EXT: &str = "tkt";
 #[cfg(feature = "bdb")]
 pub const DEFAULT_STORE_EXT: &str = "db";
 
-/// `<stem>.<DEFAULT_STORE_EXT>` — the on-disk name of a native table for
-/// the compiled-in backend.
-#[must_use]
-pub fn default_store_file(stem: &str) -> String {
-    format!("{stem}.{DEFAULT_STORE_EXT}")
-}
-
 /// The backend's `database format:` token — the string `user.conf`'s
 /// conformance check compares (`table_info.cpp`'s
 /// `to/from_table_database_format_type`: exactly `BerkeleyDB`,
@@ -1650,19 +1643,6 @@ mod tests {
         assert_eq!(super::DEFAULT_STORE_EXT, "tkt");
         #[cfg(feature = "bdb")]
         assert_eq!(super::DEFAULT_STORE_EXT, "db");
-    }
-
-    #[test]
-    fn default_store_file_composes_stem_and_extension() {
-        let native = super::default_store_file("phrase_index");
-        assert!(
-            native.starts_with("phrase_index."),
-            "the stem must be preserved verbatim: got {native:?}"
-        );
-        let dot = native
-            .find('.')
-            .expect("the composed name has an extension");
-        assert_eq!(&native[dot + 1..], super::DEFAULT_STORE_EXT);
     }
 
     /// `DefaultStore` resolves to `KcStore` on

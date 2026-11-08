@@ -2,7 +2,7 @@
 //! 074a2219: KMM text in, interpolation text out.
 //!
 //! [`convert`] is the conversion, over any [`LineReader`] and [`Sink`]; it
-//! answers a [`Failure`] where the pin exits or aborts. [`convert_text`] runs
+//! answers a [`Failure`] where the pin exits or aborts. `convert_text` runs
 //! it in memory for the trainer. [`main`] is the utility: `std::cin`,
 //! `stdout`, the pin's messages, `exit(ENODATA)`, `abort()` and oxpinyin's
 //! class (b) refusal. The utility parses no options, reads no argument
@@ -337,18 +337,6 @@ pub fn convert<R: BufRead>(
         converter.parse_body()?;
     }
     Ok(())
-}
-
-/// [`convert`] in memory, as the trainer runs `k_mixture_model_to_interpolation
-/// < kmm > interpolation2` (`tryprune.py`): the interpolation text.
-///
-/// # Errors
-///
-/// The [`Failure`] at which the pin's utility would stop.
-pub fn convert_text(kmm: &[u8]) -> Result<Vec<u8>, Failure> {
-    let mut output = Vec::new();
-    convert(&mut LineReader::from_bytes(kmm), &mut output)?;
-    Ok(output)
 }
 
 /// `main` (:188-213): `argv` is not read.
