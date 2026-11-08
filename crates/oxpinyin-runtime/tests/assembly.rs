@@ -319,7 +319,6 @@ fn open_reads_no_records_beyond_the_handles() {
     // The fixture opens with real counts straight from the chunk files:
     // no interpolation text, no fixture mode.
     let runtime = Runtime::open(&w3_dir(), None).expect("open");
-    assert!(LanguageModel::has_real_unigrams(&runtime.lm()));
     let total = LanguageModel::unigram_total(&runtime.lm())
         .expect("query")
         .expect("real unigrams");

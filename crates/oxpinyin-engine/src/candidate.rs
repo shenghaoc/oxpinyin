@@ -259,7 +259,7 @@ impl Candidate {
         self.token
     }
 
-    /// The pre-frequency fallback cost; real-table sentence rows carry zero.
+    /// The candidate's integer cost; trellis sentence rows carry zero.
     ///
     /// Lower is better. The scale belongs to
     /// `docs/findings/scoring-spec.md`; a shell should treat it as opaque and

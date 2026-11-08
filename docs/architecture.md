@@ -4,7 +4,7 @@
 
 | Crate | Role | unsafe | Portable | Ships |
 |---|---|---|---|---|
-| oxpinyin-core | Parser, SegmentGraph, k-best and scoring traits | forbid | yes | via engine |
+| oxpinyin-core | Parser, SegmentGraph, key expansion and model traits | forbid | yes | via engine |
 | oxpinyin-chewing | Dependency-free chewing/zhuyin leaf below core. Packed keys, renderers and frozen content tables. Core depends on chewing. | forbid | yes | via capi, engine |
 | oxpinyin-data | Native readers for the formats used by a same-backend libpinyin build (D3 route). | forbid | yes | via engine |
 | oxpinyin-input | External-I/O boundary through the `libc` crate and a safe API. Stage 1 covers configuration and locale. Stage 2 activates a single-owner memmap2 API for system and addon chunks; remaining chunk-load calls are separate. The `tools` feature adds the utilities' GLib option and text, C++ stream and C stdio calls; the shipping libraries never enable it. | deny, scoped allows | yes (`tools`: where GLib is installed) | via data |
@@ -164,7 +164,6 @@ Engine weights and language-model order are never user configuration.
 Use a weighted SegmentGraph with index-based arenas from the start, not references.
 Current EdgeKind variants are Exact and Segmentation.
 Fuzzy, Typo and Abbrev change output and are Stage 3 candidates behind an opt-in compile flag.
-The scorer accepts edge costs.
 Its Rust API is internal and can change under the 2026-10-18 UTC interface ruling.
 In parity mode, mirror the path-set SPEC's upstream path-enumeration policy.
 Produce neither more paths nor fewer.

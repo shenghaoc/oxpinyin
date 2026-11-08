@@ -1,4 +1,4 @@
-//! Deterministic cost arithmetic for the pre-frequency fallback scorer.
+//! Deterministic cost arithmetic.
 //!
 //! Real-table sentence decoding accumulates float log probabilities directly.
 //!

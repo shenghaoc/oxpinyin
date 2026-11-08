@@ -19,16 +19,16 @@ use oxpinyin_engine::{KeyOutcome, Selection, Session, SessionSettings};
 #[path = "../../oxpinyin-core/tests/common/fixture_doubles.rs"]
 mod fixture_doubles;
 
-use fixture_doubles::{FixtureDictionary, FixtureLanguageModel};
+use fixture_doubles::{FixtureDictionary, FrequencyFixtureModel};
 
 const VOCAB: &str = include_str!("../../../fixtures/w4/mini-vocab.txt");
 const BIGRAM: &str = include_str!("../../../fixtures/w4/mini-bigram.txt");
 
-type TestSession = Session<FixtureDictionary, FixtureLanguageModel>;
+type TestSession = Session<FixtureDictionary, FrequencyFixtureModel>;
 
 fn session() -> TestSession {
     let dictionary = FixtureDictionary::parse(VOCAB).expect("committed fixture");
-    let model = FixtureLanguageModel::parse(VOCAB, BIGRAM).expect("committed fixtures");
+    let model = FrequencyFixtureModel::parse(VOCAB, BIGRAM).expect("committed fixtures");
     Session::new(SessionSettings::default(), dictionary, model).expect("session builds")
 }
 

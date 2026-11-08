@@ -1,4 +1,4 @@
-//! Pure pinyin algorithms: parsing, `SegmentGraph`, k-best search, scoring
+//! Pure pinyin algorithms: parsing, `SegmentGraph`, key expansion, model
 //! traits. No I/O, no platform deps, no `unsafe`. Internal crate — the
 //! supported external interfaces are the libpinyin-compatible and
 //! libzhuyin-compatible C APIs and ABIs.
@@ -19,7 +19,6 @@ pub mod cost;
 mod direct;
 mod full_pinyin_index;
 pub mod graph;
-pub mod kbest;
 pub mod options;
 mod parser;
 mod scheme;
@@ -1666,8 +1665,8 @@ pub trait LanguageModel {
     /// the corpus count plus the one `gen_unigram` adds to every item, so a
     /// counted phrase is never 0).
     ///
-    /// `None` means the model exposes no frequency table at all; the engine
-    /// then keeps its pre-frequency behaviour. `Some(0)` is a real table miss
+    /// `None` means the model exposes no frequency table at all; every
+    /// candidate then ranks at frequency zero. `Some(0)` is a real table miss
     /// — the phrase has no item — and ranks below every counted phrase.
     ///
     /// Defaulted so the frozen implementors and any third-party model keep
@@ -1700,17 +1699,6 @@ pub trait LanguageModel {
     /// Returns [`Self::Error`] when the model backend cannot read the merged-gram record.
     fn merged_successors(&self, _prev: &Self::Token) -> Result<Option<MergedGram>, Self::Error> {
         Ok(None)
-    }
-
-    /// Whether the model carries a real unigram frequency table.
-    ///
-    /// This is the construction switch: when it returns `true` the engine
-    /// collects and ranks candidates by the pinned construction, and when it
-    /// returns `false` the pre-frequency behaviour runs. Defaulted to `false`
-    /// so the frozen implementors and any third-party model keep compiling
-    /// unchanged.
-    fn has_real_unigrams(&self) -> bool {
-        false
     }
 
     /// Sum of the default-facade unigram table, when the model carries one
@@ -1913,10 +1901,6 @@ impl<L: LanguageModel + ?Sized> LanguageModel for &L {
 
     fn unigram_freq(&self, token: &Self::Token) -> Result<Option<u64>, Self::Error> {
         (**self).unigram_freq(token)
-    }
-
-    fn has_real_unigrams(&self) -> bool {
-        (**self).has_real_unigrams()
     }
 
     fn unigram_total(&self) -> Result<Option<u64>, Self::Error> {

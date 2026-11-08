@@ -15,12 +15,12 @@ use oxpinyin_engine::{EngineError, Selection, Session, SessionSettings};
 #[path = "../../oxpinyin-core/tests/common/fixture_doubles.rs"]
 mod fixture_doubles;
 
-use fixture_doubles::{FixtureDictionary, FixtureLanguageModel};
+use fixture_doubles::{FixtureDictionary, FrequencyFixtureModel};
 
 const VOCAB: &str = include_str!("../../../fixtures/w4/mini-vocab.txt");
 const BIGRAM: &str = include_str!("../../../fixtures/w4/mini-bigram.txt");
 
-type Fixtures = Session<FixtureDictionary, FixtureLanguageModel>;
+type Fixtures = Session<FixtureDictionary, FrequencyFixtureModel>;
 
 fn session() -> Fixtures {
     let dictionary = FixtureDictionary::parse(VOCAB).expect("committed fixture");
@@ -48,7 +48,7 @@ fn session() -> Fixtures {
     Session::new(
         SessionSettings::default(),
         dictionary,
-        FixtureLanguageModel::parse(VOCAB, BIGRAM).expect("committed fixtures"),
+        FrequencyFixtureModel::parse(VOCAB, BIGRAM).expect("committed fixtures"),
     )
     .expect("the fixtures open")
 }

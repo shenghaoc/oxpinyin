@@ -686,32 +686,6 @@ fn train_observes_each_recorded_token_after_its_prefix() {
 }
 
 #[test]
-fn train_nbest_observes_partial_selection_for_fallback_model() {
-    let mut session = train_session();
-    assert!(!session.model.has_real_unigrams());
-    type_and_select(&mut session, "ni", 1);
-    for character in "hao".chars() {
-        session
-            .type_pinyin(character.encode_utf8(&mut [0; 4]))
-            .expect("typing cannot fail");
-    }
-    assert_eq!(session.selected_tokens(), [PhraseToken::new(1)]);
-    assert!(session.guess_sentence().expect("guess cannot fail"));
-    let row = session.sentence.rows.first().expect("decoded fallback row");
-    assert!(!row.tokens.is_empty());
-    assert!(row.spans.is_empty());
-    let mut recorder = Recorder {
-        observed: Vec::new(),
-    };
-    assert!(
-        session
-            .train_nbest(0, &mut recorder)
-            .expect("training cannot fail")
-    );
-    assert_eq!(recorder.observed, vec![(Vec::new(), PhraseToken::new(1))]);
-}
-
-#[test]
 fn train_nbest_without_results_does_not_observe_selection_history() {
     let mut session = train_session();
     type_and_select(&mut session, "ni", 1);
@@ -1068,16 +1042,14 @@ fn composition_keys_report_the_selected_parse() {
 }
 
 #[test]
-fn a_fallback_sentence_never_records_row_tokens() {
+fn a_row_records_its_whole_token_path() {
     use crate::nbest::NbestRow;
 
     let mut session = train_session();
     session.type_pinyin("nihao").expect("typing cannot fail");
     assert!(!session.sentence_lookup_active(), "no lookup has run yet");
 
-    // One authored row whose text differs from the DP sentence the
-    // fallback list also offers, so a fallback sentence candidate sits
-    // beyond the row at a known place.
+    // One authored row.
     session.sentence.rows = vec![NbestRow {
         poss: None,
         text: "\u{884}".into(),
@@ -1099,36 +1071,6 @@ fn a_fallback_sentence_never_records_row_tokens() {
         Selection::Continued
     );
     assert_eq!(session.selected_tokens(), [PhraseToken::new(9)]);
-
-    // A fallback sentence candidate — kind Sentence beyond the rows —
-    // records nothing, and in particular never defaults through to
-    // row zero's tokens.
-    session.reset();
-    session.type_pinyin("nihao").expect("typing cannot fail");
-    session.sentence.rows = vec![NbestRow {
-        poss: None,
-        text: "\u{884}".into(),
-        tokens: vec![PhraseToken::new(9)],
-        spans: Vec::new(),
-        keys: 1,
-        span: 2,
-        cost: 0,
-    }];
-    session.refresh().expect("refresh cannot fail");
-    let fallback = session
-        .candidates()
-        .iter()
-        .position(|candidate| {
-            candidate.kind() == crate::CandidateKind::Sentence
-                && candidate.text() == "\u{4f60}\u{597d}"
-        })
-        .expect("the fallback sentence is offered beyond the row");
-    assert!(fallback >= session.sentence.rows.len());
-    session.select(fallback).expect("the index is live");
-    assert!(
-        session.selected_tokens().is_empty(),
-        "a fallback sentence records no tokens"
-    );
 }
 
 #[test]
@@ -1478,10 +1420,6 @@ impl LanguageModel for CountingBigrams {
         edge_cost: Cost,
     ) -> Result<Cost, EngineError> {
         self.unigrams.score(history, token, edge_cost)
-    }
-
-    fn has_real_unigrams(&self) -> bool {
-        true
     }
 
     fn unigram_freq(&self, token: &PhraseToken) -> Result<Option<u64>, EngineError> {
@@ -1888,10 +1826,6 @@ impl LanguageModel for FixedUnigrams {
         Ok(edge_cost)
     }
 
-    fn has_real_unigrams(&self) -> bool {
-        true
-    }
-
     fn unigram_freq(&self, _token: &PhraseToken) -> Result<Option<u64>, EngineError> {
         Ok(Some(self.system))
     }
@@ -1907,75 +1841,6 @@ impl LanguageModel for FixedUnigrams {
     fn addon_unigram_total(&self) -> Result<Option<u64>, EngineError> {
         Ok(Some(self.addon_total))
     }
-}
-
-// The key-cost table is read only by the pre-frequency fallback scorer:
-// both `Scorer::with_key_costs` sites sit on the `else` of a
-// `has_real_unigrams()` gate, so a model carrying real frequencies can
-// never consult one and must not pay to build one. That walk is the
-// whole 42–57 ms first-alloc penalty, and upstream has no
-// analogue in any configuration — `pinyin_alloc_instance` allocates
-// instance state and performs no dictionary or model read
-// (`src/pinyin.cpp:1310-1333` at the pin `0c5e80e1`). The fallback must
-// keep its full table, so this pins both sides of the gate.
-#[test]
-fn real_unigrams_skip_the_key_cost_walk_but_the_fallback_keeps_it() {
-    let real = Session::new(
-        SessionSettings::default(),
-        Silent,
-        FixedUnigrams {
-            system: 14,
-            addon: 14,
-            total: 51_051_831,
-            addon_total: 25_525_916,
-        },
-    )
-    .expect("Session::new");
-    assert!(real.model.has_real_unigrams());
-    assert!(
-        real.key_costs.is_empty(),
-        "a real-frequency model must not walk the key inventory it cannot read"
-    );
-
-    let fallback = Session::new(SessionSettings::default(), Silent, Silent).expect("Session::new");
-    assert!(!fallback.model.has_real_unigrams());
-    assert_eq!(
-        fallback.key_costs.len(),
-        oxpinyin_core::SYLLABLE_KEY_COUNT,
-        "the fallback scorer still needs every frozen key priced at construction"
-    );
-}
-
-// Non-vacuity for the `Session::init` invariant assert, both directions.
-// Gated on `debug_assertions`: the assert compiles out in release, so an
-// ungated `should_panic` would fail under `cargo test --release` rather than
-// report anything about the code.
-#[cfg(debug_assertions)]
-#[test]
-#[should_panic(expected = "key_costs must be empty exactly when")]
-fn fallback_model_with_an_empty_key_cost_table_is_rejected() {
-    // The harmful direction: without the table the fallback scorer prices
-    // every edge at UNKNOWN_COST and decodes wrongly in silence.
-    let _ = Session::new_with_key_costs(SessionSettings::default(), Silent, Silent, Vec::new());
-}
-
-#[cfg(debug_assertions)]
-#[test]
-#[should_panic(expected = "key_costs must be empty exactly when")]
-fn real_unigram_model_with_a_populated_key_cost_table_is_rejected() {
-    // The wasteful direction: this is what reverting either gate looks like
-    // from the constructor's side.
-    let _ = Session::new_with_key_costs(
-        SessionSettings::default(),
-        Silent,
-        FixedUnigrams {
-            system: 14,
-            addon: 14,
-            total: 51_051_831,
-            addon_total: 25_525_916,
-        },
-        vec![oxpinyin_core::cost::UNKNOWN_COST; oxpinyin_core::SYLLABLE_KEY_COUNT],
-    );
 }
 
 #[test]
@@ -2350,10 +2215,6 @@ impl LanguageModel for TrellisModel {
         edge_cost: Cost,
     ) -> Result<Cost, EngineError> {
         Ok(edge_cost)
-    }
-
-    fn has_real_unigrams(&self) -> bool {
-        true
     }
 
     fn nbest_step_costs(
@@ -4772,13 +4633,7 @@ fn candidate_collection_uses_unpriced_system_and_addon_operations() {
         }
     }
     let dictionary = CandidateDict;
-    let session = Session::new_with_key_costs(
-        SessionSettings::default(),
-        &dictionary,
-        Silent,
-        vec![oxpinyin_core::cost::UNKNOWN_COST; oxpinyin_core::SYLLABLE_KEY_COUNT],
-    )
-    .unwrap();
+    let session = Session::new(SessionSettings::default(), &dictionary, Silent).unwrap();
     let (mut system, mut addon, mut entries) = (Vec::new(), Vec::new(), Vec::new());
     assert!(
         session

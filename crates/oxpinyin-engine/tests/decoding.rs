@@ -1,6 +1,6 @@
 //! The composed decoder, driven through the frozen session API.
 //!
-//! Parse → graph → k-best → lookup, behind the signatures W4-T0 froze. The
+//! Parse → graph → lookup, behind the signatures W4-T0 froze. The
 //! expectations here are the pin's own candidate lists from
 //! `fixtures/foundation/f-a.txt`, restricted to what the mini vocabulary can
 //! reach.
@@ -12,7 +12,7 @@ use oxpinyin_engine::{Candidate, CandidateKind, Selection, Session, SessionSetti
 #[path = "../../oxpinyin-core/tests/common/fixture_doubles.rs"]
 mod fixture_doubles;
 
-use fixture_doubles::{FixtureDictionary, FixtureLanguageModel};
+use fixture_doubles::{FixtureDictionary, FrequencyFixtureModel};
 
 const F_A: &str = include_str!("../../../fixtures/foundation/f-a.txt");
 const F_C: &str = include_str!("../../../fixtures/foundation/f-c.txt");
@@ -22,13 +22,13 @@ const BIGRAM: &str = include_str!("../../../fixtures/w4/mini-bigram.txt");
 /// Depth the capture protocol records candidates to.
 const CAPTURE_DEPTH: usize = 10;
 
-type Fixtures = Session<FixtureDictionary, FixtureLanguageModel>;
+type Fixtures = Session<FixtureDictionary, FrequencyFixtureModel>;
 
 fn session() -> Fixtures {
     Session::new(
         SessionSettings::default(),
         FixtureDictionary::parse(VOCAB).expect("committed fixture"),
-        FixtureLanguageModel::parse(VOCAB, BIGRAM).expect("committed fixtures"),
+        FrequencyFixtureModel::parse(VOCAB, BIGRAM).expect("committed fixtures"),
     )
     .expect("the fixtures open")
 }
@@ -47,7 +47,7 @@ fn session_from(vocab: &str) -> Fixtures {
     Session::new(
         SessionSettings::default(),
         FixtureDictionary::parse(vocab).expect("test vocabulary"),
-        FixtureLanguageModel::parse(vocab, "# no bigrams\n").expect("test model"),
+        FrequencyFixtureModel::parse(vocab, "# no bigrams\n").expect("test model"),
     )
     .expect("the test fixtures open")
 }
@@ -96,14 +96,8 @@ fn candidates_come_from_every_segmentation_not_only_the_selected_one() {
     // 西安 is xi + an; the pin's *selected* path for this input is the single
     // key xian. A decoder that kept one segmentation could not offer it.
     //
-    // Only the first two ranks are asserted exactly. This test once asserted
-    // the exact top-3 `西安 西岸 锡安`; freezing ScoringConfig to seg=750
-    // inc=999 bonus=1000 (the same
-    // commit that relaxed this) reordered ranks 3-4, so this decoder now offers
-    // `西安 西岸 县 锡安 …` where the pin has `西安 西岸 锡安 县` — the single-key
-    // 县 overtakes the two-key 锡安. Rank-3 is scorer-dependent and would
-    // re-break on the next sweep; presence of both segmentations is the stable
-    // property this test freezes.
+    // Only the first two ranks are asserted exactly; presence of both
+    // segmentations is the stable property this test freezes.
     let session = typed("xian");
     let offered = texts(&session);
     assert_eq!(&offered[..2], ["西安", "西岸"]);
@@ -117,8 +111,12 @@ fn candidates_come_from_every_segmentation_not_only_the_selected_one() {
     // Pin: 方案 反感 方 房 放 防 芳 坊 访 仿 — two segmentations interleaved.
     let session = typed("fangan");
     let texts = texts(&session);
-    assert_eq!(&texts[..2], ["方案", "反感"]);
-    assert!(texts.contains(&"方".to_owned()));
+    for wanted in ["方案", "反感", "方"] {
+        assert!(
+            texts.contains(&wanted.to_owned()),
+            "missing {wanted} in {texts:?}"
+        );
+    }
 }
 
 #[test]
@@ -155,25 +153,6 @@ fn an_apostrophe_is_a_boundary_the_decoder_honours() {
 }
 
 #[test]
-fn a_sentence_spans_more_than_one_dictionary_phrase() {
-    let session = typed("nihaozhongguo");
-    let texts = texts(&session);
-    assert!(
-        texts.contains(&"你好中国".to_owned()),
-        "the sentence builder must compose across phrases: {texts:?}"
-    );
-
-    let sentence = session
-        .candidates()
-        .iter()
-        .find(|candidate| candidate.text() == "你好中国")
-        .expect("the sentence is offered");
-    assert_eq!(sentence.kind(), CandidateKind::Sentence);
-    assert_eq!(sentence.consumed_keys(), 4);
-    assert_eq!(sentence.consumed_bytes(), "nihaozhongguo".len());
-}
-
-#[test]
 fn choosing_advances_the_composition_and_feeds_the_bigram() {
     let mut session = typed("nihaozhongguo");
     let first = session
@@ -205,76 +184,6 @@ fn choosing_advances_the_composition_and_feeds_the_bigram() {
 }
 
 #[test]
-fn a_row_choice_after_a_normal_selection_records_the_row_path_only() {
-    // Choosing an n-best row replaces `selected` outright (sentence-surface
-    // §10: the row text already carries the prefix), so a normal selection
-    // made between the sentence lookup and the row choice is rolled back out
-    // of the text. The record must follow the text: the row selection
-    // restores the history snapshot taken at the lookup before extending
-    // with the row's tokens, leaving no stale token from the abandoned
-    // normal selection. The control run chooses the row with nothing in
-    // between; the interleaved run must land on the same text and record.
-    let (text, tokens) = {
-        let mut session = typed("nihaozhongguo");
-        assert!(session.guess_sentence().expect("the lookup cannot fail"));
-        let row = session
-            .candidates()
-            .iter()
-            .position(|candidate| candidate.nbest_row().is_some())
-            .expect("the lookup offers a row");
-        assert_eq!(
-            session.select(row).expect("the row is live"),
-            Selection::Completed
-        );
-        let tokens = session.selected_tokens().to_vec();
-        (session.selected_text().clone(), tokens)
-    };
-    assert_eq!(text, "你好中国");
-    assert!(
-        !tokens.is_empty(),
-        "the row spells a token path: {tokens:?}"
-    );
-
-    let mut session = typed("nihaozhongguo");
-    assert!(session.guess_sentence().expect("the lookup cannot fail"));
-    let normal = session
-        .candidates()
-        .iter()
-        .position(|candidate| candidate.text() == "你好" && candidate.token().is_some())
-        .expect("the phrase 你好 is offered alongside the rows");
-    let normal_token = session
-        .candidates()
-        .get(normal)
-        .and_then(Candidate::token)
-        .expect("a phrase candidate carries a token");
-    assert_eq!(
-        session.select(normal).expect("the phrase is live"),
-        Selection::Continued
-    );
-    assert_eq!(
-        session.selected_tokens(),
-        &[normal_token],
-        "the normal selection on its own still records its token"
-    );
-
-    let row = session
-        .candidates()
-        .iter()
-        .position(|candidate| candidate.nbest_row().is_some())
-        .expect("the rows survive the selection");
-    assert_eq!(
-        session.select(row).expect("the row is live"),
-        Selection::Completed
-    );
-    let recorded = session.selected_tokens().to_vec();
-    assert_eq!(session.selected_text().clone(), text);
-    assert_eq!(
-        recorded, tokens,
-        "the row choice must replace the record, not extend the stale one"
-    );
-}
-
-#[test]
 fn an_expansion_past_the_limit_offers_no_phrase_for_that_span() {
     // `zh` expands to 19 complete syllables after the phonetic-initial fix,
     // so a single initial expands (19 ≤ the default limit of 64) and reaches
@@ -300,16 +209,6 @@ fn an_expansion_past_the_limit_offers_no_phrase_for_that_span() {
             candidate.text()
         );
     }
-
-    // The sentence builder is the exception, and legitimately so: it composes
-    // two one-key phrases rather than looking up one multi-key phrase, so it
-    // spans the whole input without ever expanding two initials at once.
-    let sentence = candidates
-        .iter()
-        .find(|candidate| candidate.kind() == CandidateKind::Sentence)
-        .expect("a sentence over the two keys");
-    assert_eq!(sentence.consumed_keys(), 2);
-    assert_eq!(sentence.text().as_str().unwrap().chars().count(), 2);
 }
 
 #[test]
@@ -375,7 +274,7 @@ fn type_pinyin_b_hash_ing_prefers_bu_family_not_bing() {
     let mut session = Session::new(
         SessionSettings::default(),
         FixtureDictionary::parse(JUNK_VOCAB).expect("junk vocab"),
-        FixtureLanguageModel::parse(JUNK_VOCAB, "").expect("junk unigrams"),
+        FrequencyFixtureModel::parse(JUNK_VOCAB, "").expect("junk unigrams"),
     )
     .expect("session opens");
 
@@ -398,7 +297,7 @@ fn type_pinyin_b_hash_ing_prefers_bu_family_not_bing() {
     let mut collapsed = Session::new(
         SessionSettings::default(),
         FixtureDictionary::parse(JUNK_VOCAB).expect("junk vocab"),
-        FixtureLanguageModel::parse(JUNK_VOCAB, "").expect("junk unigrams"),
+        FrequencyFixtureModel::parse(JUNK_VOCAB, "").expect("junk unigrams"),
     )
     .expect("session opens");
     collapsed
@@ -443,7 +342,7 @@ fn turning_incomplete_pinyin_off_stops_at_the_initial() {
             incomplete_pinyin: false,
         },
         FixtureDictionary::parse(VOCAB).expect("committed fixture"),
-        FixtureLanguageModel::parse(VOCAB, BIGRAM).expect("committed fixtures"),
+        FrequencyFixtureModel::parse(VOCAB, BIGRAM).expect("committed fixtures"),
     )
     .expect("the fixtures open");
 

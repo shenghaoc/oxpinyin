@@ -66,18 +66,13 @@ See float scoring §5.
 
 Historical: the design proposed either replacing the fixed-point scale in `oxpinyin-core/src/cost.rs` or adding a parallel float path.
 What was implemented is the replacement on the real-table sentence path:
-the decoder accumulates `f32` scores (#1378 PR B), the pre-frequency fallback scorer keeps its own `Cost`,
+the decoder accumulates `f32` scores (#1378 PR B),
 and the remaining rational path is scheduled for removal (#1378 PR C).
 
 ## Fitted coefficients
 
-`ScoringConfig::default` in `oxpinyin-core/src/scoring.rs` contains sweep-selected weights.
-Sessions read them only when the model has no real unigram data.
-No C-ABI configuration takes that branch: its language model always reports real unigrams.
-The weights therefore reach no parity-path output (record §11).
-Their removal does not close a C-ABI compatibility gap.
-Removal remains internal work, subject to checking in-tree Rust callers and test/tool consumers.
-Rust-signature changes need no interface approval since 2026-10-18 UTC.
+The sweep-selected `ScoringConfig` weights and the k-best fallback that read them are deleted.
+No C-ABI configuration took that branch: its language model always reported real unigrams (record §11).
 
 ## Idiom review
 

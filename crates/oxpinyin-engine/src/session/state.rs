@@ -23,89 +23,17 @@ where
     /// # Errors
     ///
     /// Returns [`EngineError`] when a backend rejects the settings it is
-    /// opened with, or — on the pre-frequency fallback only — when a
-    /// backend fails while the key-cost table is walked. A model carrying
-    /// real unigram frequencies never walks, so no such rejection exists
-    /// for it and construction currently always succeeds.
+    /// opened with. Construction currently always succeeds.
     pub fn new(settings: SessionSettings, dictionary: D, model: L) -> Result<Self, EngineError> {
-        // Only the fallback scorer reads the table (see `key_costs`), and
-        // it is unreachable under real frequencies. The fallback keeps the
-        // SPEC's construction-time walk verbatim: costs complete before any
-        // sweep, so `EdgeCost` still cannot fail, and a backend failure
-        // still surfaces here rather than inside the search.
-        let key_costs = if model.has_real_unigrams() {
-            Vec::new()
-        } else {
-            key_cost_table(&dictionary, &model)?
-        };
-        Ok(Self::init(
-            Settings::read(settings),
-            dictionary,
-            model,
-            key_costs,
-        ))
+        Ok(Self::init(Settings::read(settings), dictionary, model))
     }
 
-    /// Builds a session over a caller-supplied key-cost table.
-    ///
-    /// Callers can reuse a precomputed [`key_cost_table`] for fallback
-    /// models. Models with real unigram frequencies require an empty
-    /// table. [`Self::new`] selects and builds the appropriate table when
-    /// no precomputed table is available.
-    ///
-    /// # Panics
-    ///
-    /// Debug builds only: panics when `key_costs` contradicts
-    /// [`LanguageModel::has_real_unigrams`] — see the `Session::key_costs`
-    /// field. Release builds do not check, and a violation is silent:
-    /// every absent key reads back as `UNKNOWN_COST`.
-    ///
-    /// # Errors
-    ///
-    /// Construction with a caller-supplied key-cost table is currently
-    /// infallible; the `Result` return keeps this constructor's shape
-    /// aligned with [`Self::new`], whose fallback walk can fail.
-    pub fn new_with_key_costs(
-        settings: SessionSettings,
-        dictionary: D,
-        model: L,
-        key_costs: Vec<Cost>,
-    ) -> Result<Self, EngineError> {
-        Ok(Self::init(
-            Settings::read(settings),
-            dictionary,
-            model,
-            key_costs,
-        ))
-    }
-
-    pub(super) fn init(settings: Settings, dictionary: D, model: L, key_costs: Vec<Cost>) -> Self {
-        // The `key_costs` field documents a two-sided invariant: the table
-        // is empty exactly when the model carries real unigram
-        // frequencies. Neither side is enforced by the type, and neither
-        // failure is loud. A fallback model handed an empty table prices
-        // every edge at `UNKNOWN_COST` (`scoring.rs:228`, `:312` read
-        // through `.unwrap_or(UNKNOWN_COST)`) and decodes wrongly without
-        // erroring; a real-unigram model handed a full table silently
-        // reinstates the ~430-lookup walk that `6886dc1f` removed, for a
-        // value no reader on that path consults. Both are caller errors
-        // under the field's contract, and `new_with_key_costs` is public,
-        // so the check is stated equality rather than one-sided.
-        debug_assert_eq!(
-            model.has_real_unigrams(),
-            key_costs.is_empty(),
-            "key_costs must be empty exactly when the model has real \
-             unigrams (has_real_unigrams={}, key_costs.len()={})",
-            model.has_real_unigrams(),
-            key_costs.len(),
-        );
+    pub(super) fn init(settings: Settings, dictionary: D, model: L) -> Self {
         Self {
             dictionary,
             model,
             state: SessionState {
                 settings,
-                scoring: ScoringConfig::default(),
-                key_costs,
                 collapse_sentence_rows_to_best: false,
                 candidate_ranking: CandidateRanking::SortWord,
                 nbest_shape: crate::nbest::NbestShape::default(),
@@ -130,12 +58,6 @@ where
     L: LanguageModel<Token = PhraseToken>,
     L::Error: Display,
 {
-    /// The scoring weights currently in force.
-    #[must_use]
-    pub fn scoring_config(&self) -> &ScoringConfig {
-        &self.scoring
-    }
-
     /// Whether `text` extends the bytes the selection record was built
     /// over (`raw[..consumed]`) — the continuity retaining the record
     /// requires. The parse seams' own prefix checks run in the caller's
@@ -243,7 +165,6 @@ where
     }
 
     /// Accumulated natural-log possibility of a real-table sentence row.
-    /// The fallback scorer has its own integer cost scale and returns None.
     #[must_use]
     pub fn sentence_log_possibility(&self, index: u8) -> Option<f32> {
         self.sentence
@@ -300,15 +221,6 @@ where
     L: LanguageModel<Token = PhraseToken>,
     L::Error: Display,
 {
-    /// Replaces the scoring weights used by subsequent refreshes.
-    ///
-    /// Does not recompute the per-key cost table (that depends only on the
-    /// dictionary and language model). Interactive shells normally keep
-    /// [`ScoringConfig::default`].
-    pub fn set_scoring_config(&mut self, config: ScoringConfig) {
-        self.scoring = config;
-    }
-
     /// Discards the composition.
     ///
     /// The full reset — upstream's `pinyin_reset`: the input, the

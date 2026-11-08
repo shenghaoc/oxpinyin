@@ -77,8 +77,8 @@ constants and classifying residuals brought top-1 to 63–64%. Reading
 how the pin builds its candidate list brought it to 99% four days
 later. Every time the project measured its way towards the pin
 instead of reading the pin, it went slower and left something behind:
-the fitted `ScoringConfig` weights are still in the tree, now only on a
-fallback path the C ABI never takes.
+the fitted `ScoringConfig` weights stayed in the tree, on a fallback path
+the C ABI never took, until that path was deleted.
 
 **A residual labelled "arithmetic" can hide logic — and the arithmetic
 need not be a residual.** The sentence residual was frozen as
