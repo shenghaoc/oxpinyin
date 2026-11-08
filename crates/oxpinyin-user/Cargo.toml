@@ -12,6 +12,9 @@ workspace = true
 
 [dependencies]
 oxpinyin-core = { workspace = true }
+# The user pinyin index's probe key stays inline: one fixed-size key, no
+# heap allocation per lookup.
+smallvec.workspace = true
 # The user store persists in the backend's native user files; the codecs
 # (chunk builder, tree record builders, SingleGram, the logger and
 # user.conf codecs) live in oxpinyin-data beside their readers.

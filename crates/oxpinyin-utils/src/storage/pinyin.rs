@@ -47,22 +47,11 @@ fn parse_one_key(syllable: &[u8]) -> Option<ChewingKey> {
 pub(crate) fn parse(pinyin: &CStr) -> Vec<ChewingKey> {
     let bytes = pinyin.to_bytes();
     let mut keys = Vec::new();
-    let mut cur = 0_usize;
-    while cur < bytes.len() {
-        let mut next = cur;
-        while next < bytes.len() && bytes[next] != b' ' && bytes[next] != b'\'' {
-            next += 1;
-        }
-        let Some(key) = parse_one_key(&bytes[cur..next]) else {
-            return keys;
-        };
-        keys.push(key);
-        let mut after = next;
-        while after < bytes.len() && (bytes[after] == b' ' || bytes[after] == b'\'') {
-            after += 1;
-        }
-        cur = after;
-    }
+    oxpinyin_core::direct::parse(
+        bytes,
+        |span| parse_one_key(&bytes[span]),
+        |key, _| keys.push(key),
+    );
     keys
 }
 

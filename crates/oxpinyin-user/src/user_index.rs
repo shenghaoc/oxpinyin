@@ -25,6 +25,7 @@ use oxpinyin_core::ChewingKey;
 use oxpinyin_data::row_format::pinyin_index::{
     encode_complete_key, encode_incomplete_key, encode_item, item2_stride,
 };
+use smallvec::SmallVec;
 
 use crate::phrase::MAX_PHRASE_LENGTH;
 use crate::records::RecordArena;
@@ -190,19 +191,8 @@ fn index_keys(keys: &[ChewingKey]) -> [Vec<u8>; 2] {
 }
 
 /// A probe key built on the stack: at most `MAX_PHRASE_LENGTH` packed
-/// words.
-struct QueryKey {
-    bytes: [u8; 2 * MAX_PHRASE_LENGTH],
-    len: usize,
-}
-
-impl std::ops::Deref for QueryKey {
-    type Target = [u8];
-
-    fn deref(&self) -> &[u8] {
-        &self.bytes[..self.len]
-    }
-}
+/// words, always inside the inline capacity.
+type QueryKey = SmallVec<[u8; 2 * MAX_PHRASE_LENGTH]>;
 
 /// The key `ChewingLargeTable2::search` / `search_suggestion` probe, the
 /// bytes `encode_incomplete_key` or `encode_complete_key` give. Callers
@@ -210,17 +200,14 @@ impl std::ops::Deref for QueryKey {
 fn query_key(keys: &[ChewingKey]) -> QueryKey {
     // `contains_incomplete_pinyin` (`pinyin_phrase3.h:146`).
     let incomplete = keys.iter().any(|key| key.middle == 0 && key.final_ == 0);
-    let mut query = QueryKey {
-        bytes: [0; 2 * MAX_PHRASE_LENGTH],
-        len: 2 * keys.len(),
-    };
-    for (word, key) in query.bytes.as_chunks_mut::<2>().0.iter_mut().zip(keys) {
+    let mut query = QueryKey::with_capacity(2 * keys.len());
+    for key in keys {
         let key = if incomplete {
             ChewingKey::new(key.initial, 0, 0, 0)
         } else {
             ChewingKey::new(key.initial, key.middle, key.final_, 0)
         };
-        *word = key.to_packed().to_le_bytes();
+        query.extend_from_slice(&key.to_packed().to_le_bytes());
     }
     query
 }

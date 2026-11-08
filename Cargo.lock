@@ -710,6 +710,7 @@ dependencies = [
  "oxpinyin-input",
  "oxpinyin-store",
  "proptest",
+ "smallvec",
  "tempfile",
 ]
 

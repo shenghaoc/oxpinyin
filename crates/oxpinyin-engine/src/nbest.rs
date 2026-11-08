@@ -982,13 +982,12 @@ impl GenerationView<'_> {
         path.keys.clear();
         path.tones.clear();
         path.ranges.clear();
-        let mut continued = false;
         // search_matrix appends every path's ranges, system table then user
         // table, to the per-library arrays in walk order.
-        self.walk(start, end, dictionary, path, into, &mut continued)?;
-        Ok(continued)
+        self.walk(start, end, dictionary, path, into)
     }
 
+    /// Answers whether any searched step continued past this walk.
     fn walk<D>(
         &self,
         start: usize,
@@ -996,27 +995,26 @@ impl GenerationView<'_> {
         dictionary: &D,
         path: &mut GenerationPath,
         into: &mut SpanRanges<D::PathMemo>,
-        continued: &mut bool,
-    ) -> Result<(), EngineError>
+    ) -> Result<bool, EngineError>
     where
         D: Dictionary<Syllable = SyllableKey>,
         D::Error: core::fmt::Display,
     {
+        let mut continued = false;
         if start > end {
-            return Ok(());
+            return Ok(continued);
         }
         if start == end {
             if path.keys.len() > MAX_PHRASE_LENGTH {
-                return Ok(());
+                return Ok(continued);
             }
             if path.keys.is_empty() {
-                *continued = true;
-                return Ok(());
+                return Ok(true);
             }
             // `search_matrix_recur`'s leaf searches the table, which asserts
             // on a toned first initial-only key (`pinyin_phrase3.h:152`).
             EngineError::check_toned_incomplete(&path.keys, &path.tones)?;
-            *continued |= dictionary
+            let hit = dictionary
                 .trellis_ranges_continued(
                     &path.keys,
                     &path.tones,
@@ -1030,17 +1028,17 @@ impl GenerationView<'_> {
             // Drains the scratch, keeping its capacity for the next path.
             into.ranges
                 .append_from(&mut path.ranges, |()| LazySlot::new(id));
-            return Ok(());
+            return Ok(hit);
         }
         if self.zeros.get(start).copied().unwrap_or(false) {
-            return self.walk(start + 1, end, dictionary, path, into, continued);
+            return self.walk(start + 1, end, dictionary, path, into);
         }
         let Some(column) = self.columns.get(start) else {
-            return Ok(());
+            return Ok(continued);
         };
         for key in column {
             if key.to > end {
-                *continued = true;
+                continued = true;
                 continue;
             }
             if key.to <= start {
@@ -1049,12 +1047,12 @@ impl GenerationView<'_> {
             path.keys.push(key.key);
             path.tones.push(key.tone);
             if path.keys.len() <= MAX_PHRASE_LENGTH {
-                self.walk(key.to, end, dictionary, path, into, continued)?;
+                continued |= self.walk(key.to, end, dictionary, path, into)?;
             }
             path.keys.pop();
             path.tones.pop();
         }
-        Ok(())
+        Ok(continued)
     }
 }
 

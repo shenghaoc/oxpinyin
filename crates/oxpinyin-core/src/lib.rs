@@ -16,7 +16,7 @@
 #![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
 
 pub mod cost;
-mod direct;
+pub mod direct;
 mod full_pinyin_index;
 pub mod graph;
 pub mod options;
