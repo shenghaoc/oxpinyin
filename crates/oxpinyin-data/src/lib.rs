@@ -13,8 +13,7 @@
 //! The format notes live under `docs/findings/`:
 //! `libpinyin-system-data-formats-2026-09-01.md` (overview),
 //! `pinyin-dbm-format-2026-09-01.md`, `phrase-dbm-format-2026-09-01.md`,
-//! `bigram-punct-format-2026-09-01.md`; the custom-content loader follows
-//! `data-formats.md`.
+//! `bigram-punct-format-2026-09-01.md`.
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 // Constitution §4: keep these non-test denials. A permitted site needs the
@@ -33,10 +32,7 @@ pub mod c_stderr;
 pub(crate) mod chewing_table;
 pub mod chunk_format;
 pub mod chunk_write;
-pub mod content;
 pub mod dict;
-pub mod interp;
-pub mod interp_grammar;
 pub mod lm;
 #[cfg(test)]
 pub(crate) mod memory_dbm;
@@ -54,13 +50,9 @@ pub mod table_info;
 pub mod user_files;
 
 pub use bigram_table::BigramTable;
-pub use content::{ContentTable, LoadError, Record, TokenPair};
 pub use dict::{
     AddonDictionary, AddonPhraseItem, DictError, PhraseIndexTable, PinyinIndexTable,
     SystemDictionary,
-};
-pub use interp::{
-    InterpolationError, UnigramTable, parse_interpolation2, parse_interpolation2_from_reader,
 };
 pub use lm::{
     BigramLanguageModel, BigramRow, LmError, library_visible, merge_bigram, merge_counts,
