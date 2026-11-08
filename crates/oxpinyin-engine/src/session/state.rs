@@ -72,19 +72,6 @@ where
             .starts_with(&self.input.as_bytes()[..self.record.consumed()])
     }
 
-    /// Filtered parse length of the remaining input after the last refresh.
-    ///
-    /// This is the last byte of [`SegmentGraph::fewest_keys`] under the
-    /// session's `incomplete-pinyin` setting — not the unfiltered
-    /// [`SegmentGraph::consumed`].
-    ///
-    /// Under [`Session::set_defer_list_builds`], call
-    /// [`Session::refresh_candidates`] first.
-    #[must_use]
-    pub fn parsed_prefix_len(&self) -> usize {
-        self.lookup.parsed_prefix
-    }
-
     /// The option word applied ([`Self::set_options`]).
     #[must_use]
     pub fn options(&self) -> OptionBits {
@@ -205,12 +192,6 @@ where
     #[must_use]
     pub fn dictionary(&self) -> &D {
         &self.dictionary
-    }
-
-    /// The language model backend.
-    #[must_use]
-    pub fn language_model(&self) -> &L {
-        &self.model
     }
 }
 
@@ -446,20 +427,6 @@ where
         state.record.clamp_consumed(state.input.as_str());
     }
 
-    /// Apply a live `incomplete-pinyin` change and refresh if composing.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`EngineError`] when a composing session fails to refresh
-    /// under the new setting.
-    pub fn set_incomplete_pinyin(&mut self, enabled: bool) -> Result<(), EngineError> {
-        let options = self
-            .settings
-            .options
-            .with(oxpinyin_core::PINYIN_INCOMPLETE, enabled);
-        self.set_options(options)
-    }
-
     /// Apply a live option-word change and refresh if composing.
     ///
     /// This is the engine half of `pinyin_set_options`: correction and
@@ -568,7 +535,7 @@ where
     /// errors surface where they did, and all three leave the list stale.
     /// [`Session::select`], [`Session::select_promoted`]
     /// rebuild a stale list before indexing it; a reader of
-    /// [`Session::candidates`] or [`Session::parsed_prefix_len`] calls
+    /// [`Session::candidates`] or [`Session::full_parsed_len`] calls
     /// [`Session::refresh_candidates`] first. A failure of the deferred build then surfaces from that call
     /// rather than from the parse or the guess. This is the C facades'
     /// mode: upstream builds candidates only in `pinyin_guess_candidates`
