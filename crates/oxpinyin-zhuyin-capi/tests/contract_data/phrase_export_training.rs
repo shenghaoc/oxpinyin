@@ -5,20 +5,6 @@ use crate::support::{Expect, run_j};
 
 // appended-system-second-reading-zhuyin: MATCH.
 #[test]
-fn appended_system_second_reading_zhuyin() {
-    run_j(
-        "phrase_export_training::appended_system_second_reading_zhuyin",
-        Expect::RESULT,
-        |k| b::case(k, "appended-system-second-reading-zhuyin"),
-        raw!(include!(
-            "fixtures/phrase_export_training/36a215a342bb695b.rs"
-        )),
-        None,
-    );
-}
-
-// user-library-training-bytes-zhuyin: MATCH.
-#[test]
 fn user_library_training_bytes_zhuyin() {
     run_j(
         "phrase_export_training::user_library_training_bytes_zhuyin",

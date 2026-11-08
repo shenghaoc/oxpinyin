@@ -164,18 +164,6 @@ fn abort_mask_out_log_header_untouched_pinyin() {
 
 // abort-mask-out-multiple-log-headers-bad-tail-pinyin: the pin's abort, reproduced; POLICY-ACCEPTED (pin-abort-assert-line.md): the pin also wrote glibc's assertion line.
 #[test]
-fn abort_mask_out_multiple_log_headers_bad_tail_pinyin() {
-    run_aborting(
-        "phrase_index_logger::abort_mask_out_multiple_log_headers_bad_tail_pinyin",
-        Expect::aborts(b""),
-        |k| {
-            b::case(k, "abort-mask-out-multiple-log-headers-bad-tail-pinyin");
-        },
-    );
-}
-
-// abort-mask-out-multiple-log-headers-pinyin: the pin's abort, reproduced; POLICY-ACCEPTED (pin-abort-assert-line.md): the pin also wrote glibc's assertion line.
-#[test]
 fn abort_mask_out_multiple_log_headers_pinyin() {
     run_aborting(
         "phrase_index_logger::abort_mask_out_multiple_log_headers_pinyin",

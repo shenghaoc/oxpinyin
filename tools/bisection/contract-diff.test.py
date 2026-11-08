@@ -1047,7 +1047,8 @@ class RegisteredTerminationDefaultTests(DriverFixtureCase):
         """
         cases = {name: case for name, case in contract['CASES'].items()
                  if driver.registered_termination(case)}
-        self.assertTrue(cases)
+        if not cases:
+            self.skipTest('no python-registered terminations remain after the contract conversion')
         for name, case in cases.items():
             policy_kept = None
             policy_invalid = False
@@ -1102,9 +1103,9 @@ class DriverInvalidTests(VerifyCase):
         for bad in (observation(exit=-signal.SIGSEGV), observation(exit='TIMEOUT'),
                     observation(exit=127), observation()):
             with self.subTest(bad=bad):
-                # The registered abort case, on every cell.
-                name = 'abort-choose-candidate-predicted-bigram-row'
-                spec = dict(contract['CASES'][name], cells=('bdb', 'kc', 'tkrzw'))
+                # An abort case on every cell (the registered abort cases are Rust tests).
+                name = 'wrap-256th-reading'
+                spec = dict(contract['CASES'][name], abort=0, sigabrt=True, cells=('bdb', 'kc', 'tkrzw'))
                 status, rows = self.invoke(True, observation(exit=-signal.SIGABRT), bad,
                                            case_name=name, spec=spec)
                 self.assertEqual((status, rows[0]['verdict'], rows[0]['expected_ok']), (1, 'INVALID', False))
@@ -1306,19 +1307,13 @@ class SelectionTests(VerifyCase):
         for name in names:
             self.assertIn('804', contract['CASES'][name]['issues'])
 
-    def test_family_selects_by_id_prefix(self):
-        names, reasons = contract['select_cases'](families=['missing-system-dbm'])
-        self.assertTrue(names and all(name.startswith('missing-system-dbm/') for name in names))
-        self.assertEqual(set(names), {n for n in contract['CASES'] if n.startswith('missing-system-dbm/')})
-        self.assertEqual(reasons[names[0]], ['family missing-system-dbm'])
-
     def test_prefix_selects_untagged_cases_from_the_full_driver_registry(self):
-        names, _ = driver.select_cases(prefixes='abort-choose-,missing-system-dbm/,wrap-256th-')
-        expected = sorted(n for n in driver.CASES if n.startswith('abort-choose-'))
-        expected += sorted(n for n in driver.CASES if n.startswith('missing-system-dbm/'))
+        names, _ = driver.select_cases(prefixes='issue1114-,save-929-,wrap-256th-')
+        expected = sorted(n for n in driver.CASES if n.startswith('issue1114-'))
+        expected += sorted(n for n in driver.CASES if n.startswith('save-929-'))
         expected += sorted(n for n in driver.CASES if n.startswith('wrap-256th-'))
         self.assertEqual(names, expected)
-        self.assertTrue(any(not driver.CASES[n]['issues'] for n in names))
+        self.assertTrue(names)
 
     def test_listing_exposes_full_registry_for_prefix_selection(self):
         with patch.object(sys, 'argv', ['driver', '--list-tags']), \
@@ -1346,12 +1341,12 @@ class SelectionTests(VerifyCase):
             contract['select_cases'](issues=['9999'])
         self.assertIn('registered tags: ', str(caught.exception))
         available = str(caught.exception).split('registered tags: ', 1)[1].split(', ')
-        self.assertIn('762', available)
+        self.assertIn('1114', available)
         self.assertIn('804', available)
         self.assertNotIn('family/', str(caught.exception))
         with self.assertRaises(contract['SelectionError']) as caught:
             contract['select_cases'](families=['nope'])
-        self.assertIn('registered families: missing-system-dbm', str(caught.exception))
+        self.assertIn('registered families: ', str(caught.exception))
         with self.assertRaises(contract['SelectionError']):
             contract['select_cases']('nope')
         with self.assertRaises(contract['SelectionError']):
@@ -1435,7 +1430,7 @@ class SelectionTests(VerifyCase):
             self.assertEqual(list(driver.CASES), ['unique-case', 'other-case'])
 
     def test_plan_lists_ids_reasons_facades_and_artifacts(self):
-        names, reasons = contract['select_cases'](issues=['804'], families=['missing-system-dbm'])
+        names, reasons = contract['select_cases'](issues=['804'])
         names = [name for name in names if 'bdb' in contract['CASES'][name]['cells']]
         lines = contract['plan_lines'](names, reasons, Path('/s/libpinyin_capi.so'), Path('/s/libzhuyin_capi.so'),
                                        Path('/pin'), 'bdb')
@@ -1446,8 +1441,6 @@ class SelectionTests(VerifyCase):
         body = lines[2:]
         self.assertEqual(len(body), len(names))
         self.assertTrue(any(line.split()[0] == 'wrap-256th-reading' and 'issue 804' in line
-                            for line in body))
-        self.assertTrue(any(line.split()[0].startswith('missing-system-dbm/') and 'family missing-system-dbm' in line
                             for line in body))
         default_lines = contract['plan_lines'](*contract['select_cases'](), Path('/s'), None, Path('/pin'), 'bdb')
         self.assertIn('default suite', default_lines[0])

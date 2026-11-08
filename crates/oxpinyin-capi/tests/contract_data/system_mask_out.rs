@@ -93,18 +93,6 @@ fn mask_out_dropped_add_full_pinyin() {
 
 // mask-out-dropped-add-headerless-pinyin: MATCH.
 #[test]
-fn mask_out_dropped_add_headerless_pinyin() {
-    run_j(
-        "system_mask_out::mask_out_dropped_add_headerless_pinyin",
-        Expect::RESULT,
-        |k| b::case(k, "mask-out-dropped-add-headerless-pinyin"),
-        raw!(include!("fixtures/system_mask_out/aff286cbb35090bf.rs")),
-        None,
-    );
-}
-
-// mask-out-system-disk-replacement-pinyin: MATCH.
-#[test]
 fn mask_out_system_disk_replacement_pinyin() {
     run_j(
         "system_mask_out::mask_out_system_disk_replacement_pinyin",

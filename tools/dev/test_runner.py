@@ -101,8 +101,7 @@ CONTRACT_HARNESS = ('tools/bisection/contract-modules.test.py',
 CONTRACT_MODULES = (
     'abi', 'before_cursor_dedup', 'bigram_mask_prediction', 'case_helpers', 'cell_fixtures',
     'execution', 'fixtures', 'kit', 'measurement', 'reading_256th', 'registry', 'runner',
-    'save_failures_stderr', 'selection', 'sentence_ties', 'token_reuse_addon_import',
-    'verdict',
+    'save_failures_stderr', 'selection', 'sentence_ties', 'verdict',
 )
 
 HARNESS_DEPENDENCIES = {

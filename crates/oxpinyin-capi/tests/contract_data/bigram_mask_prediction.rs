@@ -3,6 +3,22 @@
 use crate::bodies::bigram_mask_prediction as b;
 use crate::support::{Expect, run_aborting, run_j};
 
+// abort-choose-candidate-predicted-bigram-row: the pin's abort, reproduced; no frozen reference: the expectation is the pin's assert at pinyin.cpp:2507-2508 (`PREDICTED_BIGRAM_CANDIDATE != candidate->m_candidate_type`), reached by passing the planted kind-4 row to pinyin_choose_candidate, and the init's `open %s failed.` line (pin-abort-assert-line.md: oxpinyin does not write glibc's assertion line).
+#[test]
+fn abort_choose_candidate_predicted_bigram_row() {
+    run_aborting(
+        "bigram_mask_prediction::abort_choose_candidate_predicted_bigram_row",
+        Expect::aborts(if cfg!(windows) {
+            b"open SCRATCH\\user-X\\user.conf failed."
+        } else {
+            b"open SCRATCH/user-X/user.conf failed."
+        }),
+        |k| {
+            b::case(k, "abort-choose-candidate-predicted-bigram-row");
+        },
+    );
+}
+
 // abort-begin-bigram-phrases-non-token-key: the pin's abort, reproduced; POLICY-ACCEPTED (pin-abort-assert-line.md): the pin also wrote glibc's assertion line.
 #[test]
 fn abort_begin_bigram_phrases_non_token_key() {

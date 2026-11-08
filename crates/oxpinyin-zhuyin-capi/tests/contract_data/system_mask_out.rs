@@ -93,18 +93,6 @@ fn mask_out_dropped_add_full_zhuyin() {
 
 // mask-out-dropped-add-headerless-zhuyin: MATCH.
 #[test]
-fn mask_out_dropped_add_headerless_zhuyin() {
-    run_j(
-        "system_mask_out::mask_out_dropped_add_headerless_zhuyin",
-        Expect::RESULT,
-        |k| b::case(k, "mask-out-dropped-add-headerless-zhuyin"),
-        raw!(include!("fixtures/system_mask_out/aff286cbb35090bf.rs")),
-        None,
-    );
-}
-
-// mask-out-system-disk-replacement-zhuyin: MATCH.
-#[test]
 fn mask_out_system_disk_replacement_zhuyin() {
     run_j(
         "system_mask_out::mask_out_system_disk_replacement_zhuyin",

@@ -183,6 +183,61 @@ fn a_mask_selects_only_the_matching_tokens() {
     assert_eq!(store.bigram_total(a).unwrap(), 8, "totals are rewritten");
 }
 
+#[test]
+fn a_mask_removes_the_rows_that_list_a_masked_token_as_successor() {
+    // libpinyin's `Bigram::mask_out` (`ngram_bdb.cpp:218-253`, kept in step
+    // with `ngram_kyotodb.cpp`) walks every predecessor: one whose token
+    // matches the mask is removed whole (`:229-231`); every other gram drops
+    // the items whose token matches (`SingleGram::mask_out`, `ngram.cpp:86-99`,
+    // each item's count leaving the total, `:90`), and a gram left with no
+    // item is removed (`:243-244`), else stored back (`:246`). The former
+    // `issue762-token-reuse-stale-bigram` cases seeded a user token's row and
+    // a system token's row that listed the user token, then masked library 7
+    // (`0x0f00_0000`, `0x0700_0000`): both rows go.
+    let user = FIRST_USER_TOKEN;
+    let system: Token = 0x0100_0001;
+    let seed = |store: &mut UserStore| {
+        store.set_bigram_count(user, system, 100).unwrap();
+        store.set_bigram_count(system, user, 100).unwrap();
+    };
+    let rows = |store: &UserStore| {
+        let mut rows: Vec<(Token, Token, u64)> = Vec::new();
+        for prev in store.bigram_predecessors().unwrap() {
+            for (cur, count) in store.bigram_successors(prev).unwrap() {
+                rows.push((prev, cur, count));
+            }
+        }
+        rows.sort_unstable();
+        rows
+    };
+
+    let mut masked = session();
+    seed(&mut masked);
+    assert_eq!(
+        rows(&masked),
+        vec![(system, user, 100), (user, system, 100)]
+    );
+    masked.mask_out(0x0f00_0000, 0x0700_0000).unwrap();
+    assert_eq!(
+        rows(&masked),
+        vec![],
+        "the row under the user token and the row listing it are removed"
+    );
+    assert_eq!(masked.bigram_predecessors().unwrap(), vec![]);
+    assert_eq!(masked.bigram_total(system).unwrap(), 0);
+
+    // The no-mask control: a mask that selects another library leaves both rows.
+    let mut control = session();
+    seed(&mut control);
+    control.mask_out(0x0f00_0000, 0x0200_0000).unwrap();
+    assert_eq!(
+        rows(&control),
+        vec![(system, user, 100), (user, system, 100)]
+    );
+    assert_eq!(control.bigram_total(system).unwrap(), 100);
+    assert_eq!(control.bigram_total(user).unwrap(), 100);
+}
+
 // ── libchewing test-userphrase.c: user phrase lifecycle ─────────────
 
 fn user_phrase(phrase: &str, reading: &str) -> (String, Vec<oxpinyin_user::PinyinKey>) {
