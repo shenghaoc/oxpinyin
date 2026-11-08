@@ -4129,7 +4129,7 @@ enum ExportStep {
     Row(bool, String, String, i32),
 }
 
-/// Plants the user-gram layout of `contract_stored_user_gram.py`
+/// Plants the user-gram layout of the `stored_user_gram` contract cases
 /// (`user_gram_layout`) and walks the bigram export at most sixteen steps,
 /// stopping after two consecutive `has_next` answers of false.
 ///

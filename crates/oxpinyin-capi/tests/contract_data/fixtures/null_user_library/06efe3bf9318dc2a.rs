@@ -1,0 +1,1 @@
+M(&[("add", B(true)), ("begin", B(true)), ("export", L(&[L(&[B(true), S("你好"), S("ni'hao"), I(100)]), L(&[B(true), S("你好"), S("ni3'hao3"), I(100000)])])), ("init", B(true)), ("logs", L(&[])), ("tokens", L(&[I(16802309)]))])

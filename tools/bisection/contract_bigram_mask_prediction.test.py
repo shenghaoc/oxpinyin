@@ -13,29 +13,9 @@ import contract_bigram_mask_prediction as family
 
 
 # (case ID, positional options, keyword options) in registration order.
-EXPECTED = [('issue1114-collision-load-save-pinyin',
-             (),
-             {'cells': ('tkrzw',), 'issues': ('1114',), 'mode': 'pinyin'}),
-            ('issue1114-collision-load-save-zhuyin',
-             (),
-             {'cells': ('tkrzw',), 'issues': ('1114',), 'mode': 'zhuyin'}),
-            ('lazy-user-bigram-pinyin', (), {'mode': 'pinyin', 'cells': ('tkrzw',)}),
-            ('lazy-user-bigram-zhuyin', (), {'mode': 'zhuyin', 'cells': ('tkrzw',)}),
-            ('predicted-bigram-is-user-candidate', (), {'issues': ('1231',)}),
-            ('abort-choose-candidate-predicted-bigram-row', (), {'sigabrt': True, 'abort': 0, 'cells': ('bdb',)}),
-            ('abort-mask-out-short-bigram-value', (), {'abort': False, 'sigabrt': True}),
-            ('abort-zhuyin-mask-out-short-bigram-value', (), {'abort': False, 'mode': 'zhuyin', 'sigabrt': True}),
-            ('mask-out-short-bigram-value-masked-key', (), {'control': True}),
-            ('import-after-partial-bigram-mask-pinyin', (), {'mode': 'pinyin', 'pin_not_run': {'first': True, 'mask': False, 'second': True}}),
-            ('import-after-partial-bigram-mask-zhuyin', (), {'mode': 'zhuyin', 'pin_not_run': {'first': True, 'mask': False, 'second': True}}),
-            ('abort-mask-out-non-token-bigram-key', (), {'sigabrt': True, 'abort': False}),
-            ('abort-zhuyin-mask-out-non-token-bigram-key', (), {'mode': 'zhuyin', 'abort': False, 'sigabrt': True}),
-            ('abort-mask-out-residual-bigram-gram', (), {'sigabrt': True, 'abort': False}),
-            ('abort-zhuyin-mask-out-residual-bigram-gram', (), {'mode': 'zhuyin', 'abort': False, 'sigabrt': True}),
-            ('abort-begin-bigram-phrases-non-token-key', (), {'sigabrt': True, 'abort': False}),
-            ('abort-bigram-export-short-predecessor', (), {'abort': False, 'sigabrt': True, 'issues': ('525',)}),
-            ('issue677-mask-save-sequence-pinyin', (), {'issues': ('677',), 'mode': 'pinyin'}),
-            ('issue677-mask-save-sequence-zhuyin', (), {'issues': ('677',), 'mode': 'zhuyin'})]
+EXPECTED = [('issue1114-collision-load-save-pinyin', (), {'cells': ('tkrzw',), 'issues': ('1114',), 'mode': 'pinyin'}),
+            ('issue1114-collision-load-save-zhuyin', (), {'cells': ('tkrzw',), 'issues': ('1114',), 'mode': 'zhuyin'}),
+            ('abort-choose-candidate-predicted-bigram-row', (), {'sigabrt': True, 'abort': 0, 'cells': ('bdb',)})]
 INJECTED = ('_craft_hash', 'crafted_bigram_context', 'index_file_rows')
 
 

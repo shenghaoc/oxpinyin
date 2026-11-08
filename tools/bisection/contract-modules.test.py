@@ -36,12 +36,6 @@ class ContractIntegrationTests(unittest.TestCase):
         self.assertEqual(witness['policy_record'], 'trellis-adjusted-cost-s1-s2.md')
         self.assertEqual(witness['cells'], ('bdb',))
 
-    def test_stored_search_selection_keeps_the_registered_inventory_cases(self):
-        names = (ROOT / 'fixtures/w4/1297-search-cases.txt').read_text().splitlines()
-        selected, _ = driver.select_cases(issues=('757', '785'))
-        self.assertEqual(names, [name for name in selected if name != 'nbest-user-table-order-pinyin'])
-        self.assertEqual(len(names), len(set(names)))
-
     def test_selection_adapters_select_from_the_registry_the_driver_holds_now(self):
         registry = {'only/one': dict(mode='zhuyin', cells=('kc',), issues=('7',))}
         with patch.object(driver, 'CASES', registry):

@@ -224,26 +224,12 @@ transient_files = contract_case_helpers.transient_files
 wrap_total_to_zero = contract_case_helpers.wrap_total_to_zero
 zhuyin_guess_rows = contract_case_helpers.zhuyin_guess_rows
 import contract_before_cursor_dedup
-import contract_token_unigram_training
-import contract_null_user_library
 import contract_bigram_mask_prediction
-import contract_system_mask_out
-import contract_phrase_index_logger
 import contract_missing_system_dbm
-import contract_user_stored_words
 import contract_token_reuse_addon_import
-import contract_system_phrase_text
-import contract_stored_user_gram
-import contract_phrase_export_training
-import contract_user_index_phrase_mask
-import contract_glib_path_construction
-import contract_library_reload
-import contract_user_conf_overlong_index
 import contract_save_failures_stderr
 save_929_marker_interrupt = contract_save_failures_stderr.save_929_marker_interrupt
 save_929_physical_files = contract_save_failures_stderr.save_929_physical_files
-import contract_integer_limits_d18
-import contract_gram_lookup
 import contract_cell_fixtures
 import contract_sentence_ties
 import contract_kit
@@ -489,9 +475,6 @@ def items_system(k, items, total=200, *, isolated=False):
 # batch2 group 7: the sub-index unigram total guard (PR 7, #540)
 
 
-contract_token_unigram_training.register(case)
-
-
 # batch2 group 8: choose_predicted_candidate's return table (PR 8, #542, #540)
 
 
@@ -539,7 +522,6 @@ contract_missing_system_dbm.register(case)
 # its own line.
 
 
-contract_user_conf_overlong_index.register(case, _craft_db=_craft_db)
 # batch 525-D: crafted `user_bigram.db` rows the pin's bigram walk aborts on.
 # A value shorter than a `guint32` dies at `MemoryChunk::get_content<guint32>`
 # (`memory_chunk.h:390`, reached by `get_total_freq`); a key that is not four
@@ -571,10 +553,6 @@ contract_token_reuse_addon_import.register(case, token_reuse_sequence=token_reus
 contract_before_cursor_dedup.register(case)
 
 
-contract_user_index_phrase_mask.register(
-    case, predicted_bigram_context=predicted_bigram_context, token_reuse_files=token_reuse_files)
-
-
 # Row 65 / #696. The pin's LONGER row is a property of the whole parse,
 # not the lookup offset: `_prepend_longer_candidates` (`pinyin.cpp:1870-
 # 1933`) searches the whole matrix with `prefix_len = m_parsed_key_len`
@@ -588,7 +566,7 @@ contract_user_index_phrase_mask.register(
 
 
 contract_save_failures_stderr.register(
-    case, CASES=CASES, crafted_bigram_context=crafted_bigram_context, index_file_rows=index_file_rows, token_reuse_sequence=token_reuse_sequence)
+    case, CASES=CASES, crafted_bigram_context=crafted_bigram_context, index_file_rows=index_file_rows)
 
 
 # The raw `mmap %s failed!` lines of the pin's library loaders (#545;
@@ -604,17 +582,8 @@ contract_save_failures_stderr.register(
 # --------------------------------------------------------------------------
 
 
-contract_glib_path_construction.register(case)
-
-
 # #642: NULL is transient state, not an absent user index. Snapshot both
 # filesystem destinations at every step, including a pre-existing canary.
-
-
-contract_null_user_library.register(case)
-
-
-contract_phrase_export_training.register(case)
 
 
 # The axis J controls stay at their original point in the registration sequence.
@@ -661,9 +630,6 @@ case_results = _RUNNER.case_results
 # so token_get_phrase, rather than lookup_tokens, observes the reload.
 
 
-contract_system_mask_out.register(case)
-
-
 # Batch F (#525): the phrase-index logger's two assert sites. A
 # `SYSTEM_FILE`/`DICTIONARY` library's user `.dbin` is a `MemoryChunk` of
 # `PhraseIndexLogger` records. `next_record` asserts a `MODIFY_HEADER`
@@ -678,9 +644,6 @@ contract_system_mask_out.register(case)
 # `.dbin` is never merged. A `.dbin` is a backend-independent `MemoryChunk`,
 # so those fixtures are the same in every cell; the zhuyin import cases craft
 # the user phrase table in the running cell's own format (`_craft_db`).
-
-
-contract_phrase_index_logger.register(case)
 
 
 # Batch F (#525): `zhuyin.cpp`'s phrase-table walk in `_add_phrase`. A token
@@ -700,9 +663,6 @@ contract_phrase_index_logger.register(case)
 # 896-911, 2597-2650; phonetic_lookup.h:880-929.
 
 
-contract_integer_limits_d18.register(case)
-
-
 # #757 PR 2: the pin keeps the stored SingleGram array as it is and searches
 # it with std::lower_bound (074a2219 stl_lite.h:29; ngram.cpp:161, 185, 215,
 # 239, 259), so an unsorted array answers deterministically (Q1) and
@@ -712,15 +672,6 @@ contract_integer_limits_d18.register(case)
 # training (pinyin.cpp:2622-2638), mask and removal (pinyin.cpp:1230, 3764-3766;
 # ngram_bdb.cpp:217-254 and twins), export (pinyin.cpp:775-787, 885-890) and
 # prediction (pinyin.cpp:2321-2341) all run over that raw array.
-
-
-contract_stored_user_gram.register(case)
-
-
-contract_library_reload.register(case)
-
-
-contract_gram_lookup.register(case, _craft_db=_craft_db)
 
 
 # --------------------------------------------------------------------------
@@ -741,9 +692,6 @@ contract_gram_lookup.register(case, _craft_db=_craft_db)
 # and the binding observations. No pin output is used to generate expectations.
 
 
-contract_system_phrase_text.register(case, phrase_text_system=phrase_text_system)
-
-
 # Prefix conversion (#1277). `_compute_prefixes` converts `prefix` with
 # `g_utf8_to_ucs4(prefix, -1, NULL, &len, NULL)` (pinyin.cpp:1396-1398;
 # zhuyin.cpp:918 at pin 074a2219). GLib 2.84.4 decodes every one- to
@@ -761,9 +709,6 @@ contract_system_phrase_text.register(case, phrase_text_system=phrase_text_system
 # The private system holds 甲<word>乙, 丙 and 戌 (both ba, 丙 the commoner)
 # and 甲<word>乙丙; the system bigram makes 戌 follow 甲<word>乙. So a
 # converted prefix seeds 戌 in the sentence and suggests 丙 in prediction.
-
-
-contract_user_stored_words.register(case, phrase_text_system=phrase_text_system)
 
 
 contract_reading_256th.register(case)

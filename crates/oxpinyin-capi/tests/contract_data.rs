@@ -67,6 +67,7 @@ mod facade {
         fn begin_get_bigram_phrases(context: P) -> P;
         fn bigram_iterator_has_next_phrase(iter: P) -> bool;
         fn bigram_iterator_get_next_phrase(iter: P, phrase: *mut *mut c_char, pinyin: *mut *mut c_char, count: *mut i32) -> bool;
+        fn end_get_bigram_phrases(iter: P);
     }
 
     /// Trains n-best result 0 (`pinyin_train(instance, 0)`).
@@ -132,6 +133,7 @@ mod bodies {
     pub mod axis_c;
     pub mod axis_j;
     pub mod before_cursor_dedup;
+    pub mod bigram_mask_prediction;
     pub mod bigram_removal;
     pub mod c_string_inputs;
     pub mod candidate_lookup_offsets;
@@ -146,15 +148,23 @@ mod bodies {
     pub mod facade_totals_counts;
     pub mod final_step_surface;
     pub mod glib_arrays;
+    pub mod glib_path_construction;
+    pub mod gram_lookup;
     pub mod input_length_cap;
+    pub mod integer_limits_d18;
     pub mod invalid_input_bytes;
     pub mod issue542_remaining;
     pub mod journal_replay;
     pub mod key_positions_past_65535;
     pub mod library_loading;
+    pub mod library_reload;
     pub mod matrix_resplit_windows;
+    pub mod missing_system_dbm;
     pub mod negative_remember;
     pub mod non_utf8_directories;
+    pub mod null_user_library;
+    pub mod phrase_export_training;
+    pub mod phrase_index_logger;
     pub mod phrase_table_mask;
     pub mod pinyin_out_parameters;
     pub mod predicted_types;
@@ -164,15 +174,24 @@ mod bodies {
     pub mod remember_tone;
     pub mod row54_empty_forcing;
     pub mod row58_ranking;
+    pub mod save_failures_stderr;
     pub mod scheme_library_refusals;
     pub mod separator_before_cursor;
     pub mod sort_pinyin_length;
     pub mod stored_count_headers;
     pub mod stored_total_overflow;
+    pub mod stored_user_gram;
+    pub mod system_mask_out;
+    pub mod system_phrase_text;
     pub mod table_conf_scanner;
+    pub mod token_reuse_addon_import;
+    pub mod token_unigram_training;
     pub mod toned_keys_zhuyin_refusals;
     pub mod training_constraints;
+    pub mod user_conf_overlong_index;
+    pub mod user_index_phrase_mask;
     pub mod user_key_spellings;
+    pub mod user_stored_words;
     pub mod zero_consumption;
     pub mod zero_key_guess;
     pub mod zhuyin_facade_twins;
@@ -193,6 +212,8 @@ mod axis_c;
 mod axis_j;
 #[path = "contract_data/before_cursor_dedup.rs"]
 mod before_cursor_dedup;
+#[path = "contract_data/bigram_mask_prediction.rs"]
+mod bigram_mask_prediction;
 #[path = "contract_data/bigram_removal.rs"]
 mod bigram_removal;
 #[path = "contract_data/c_string_inputs.rs"]
@@ -221,8 +242,14 @@ mod facade_totals_counts;
 mod final_step_surface;
 #[path = "contract_data/glib_arrays.rs"]
 mod glib_arrays;
+#[path = "contract_data/glib_path_construction.rs"]
+mod glib_path_construction;
+#[path = "contract_data/gram_lookup.rs"]
+mod gram_lookup;
 #[path = "contract_data/input_length_cap.rs"]
 mod input_length_cap;
+#[path = "contract_data/integer_limits_d18.rs"]
+mod integer_limits_d18;
 #[path = "contract_data/invalid_input_bytes.rs"]
 mod invalid_input_bytes;
 #[path = "contract_data/issue542_remaining.rs"]
@@ -233,12 +260,22 @@ mod journal_replay;
 mod key_positions_past_65535;
 #[path = "contract_data/library_loading.rs"]
 mod library_loading;
+#[path = "contract_data/library_reload.rs"]
+mod library_reload;
 #[path = "contract_data/matrix_resplit_windows.rs"]
 mod matrix_resplit_windows;
+#[path = "contract_data/missing_system_dbm.rs"]
+mod missing_system_dbm;
 #[path = "contract_data/negative_remember.rs"]
 mod negative_remember;
 #[path = "contract_data/non_utf8_directories.rs"]
 mod non_utf8_directories;
+#[path = "contract_data/null_user_library.rs"]
+mod null_user_library;
+#[path = "contract_data/phrase_export_training.rs"]
+mod phrase_export_training;
+#[path = "contract_data/phrase_index_logger.rs"]
+mod phrase_index_logger;
 #[path = "contract_data/phrase_table_mask.rs"]
 mod phrase_table_mask;
 #[path = "contract_data/pinyin_out_parameters.rs"]
@@ -257,6 +294,8 @@ mod remember_tone;
 mod row54_empty_forcing;
 #[path = "contract_data/row58_ranking.rs"]
 mod row58_ranking;
+#[path = "contract_data/save_failures_stderr.rs"]
+mod save_failures_stderr;
 #[path = "contract_data/scheme_library_refusals.rs"]
 mod scheme_library_refusals;
 #[path = "contract_data/separator_before_cursor.rs"]
@@ -267,14 +306,30 @@ mod sort_pinyin_length;
 mod stored_count_headers;
 #[path = "contract_data/stored_total_overflow.rs"]
 mod stored_total_overflow;
+#[path = "contract_data/stored_user_gram.rs"]
+mod stored_user_gram;
+#[path = "contract_data/system_mask_out.rs"]
+mod system_mask_out;
+#[path = "contract_data/system_phrase_text.rs"]
+mod system_phrase_text;
 #[path = "contract_data/table_conf_scanner.rs"]
 mod table_conf_scanner;
+#[path = "contract_data/token_reuse_addon_import.rs"]
+mod token_reuse_addon_import;
+#[path = "contract_data/token_unigram_training.rs"]
+mod token_unigram_training;
 #[path = "contract_data/toned_keys_zhuyin_refusals.rs"]
 mod toned_keys_zhuyin_refusals;
 #[path = "contract_data/training_constraints.rs"]
 mod training_constraints;
+#[path = "contract_data/user_conf_overlong_index.rs"]
+mod user_conf_overlong_index;
+#[path = "contract_data/user_index_phrase_mask.rs"]
+mod user_index_phrase_mask;
 #[path = "contract_data/user_key_spellings.rs"]
 mod user_key_spellings;
+#[path = "contract_data/user_stored_words.rs"]
+mod user_stored_words;
 #[path = "contract_data/zero_consumption.rs"]
 mod zero_consumption;
 #[path = "contract_data/zero_key_guess.rs"]

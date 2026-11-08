@@ -1,0 +1,1 @@
+M(&[("choices", L(&[I(2), I(5)])), ("chosen-guess", B(true)), ("grams", L(&[L(&[I(309), L(&[L(&[I(16779429), I(69)]), L(&[I(117440513), I(90)]), L(&[I(16779448), I(80)]), L(&[I(16779429), I(70)])])])])), ("guess", B(true)), ("logs", L(&[])), ("parse", I(5)), ("save", B(true)), ("train", B(true))])

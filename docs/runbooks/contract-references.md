@@ -10,7 +10,7 @@ live comparison is a capture into a temporary directory followed by a verify aga
 ```sh
 just fetch-contract-data                       # once: the pinned system data
 just runner contract-diff verify tkrzw target/debug/libpinyin_capi.so target/debug/libzhuyin_capi.so
-just runner contract-diff verify tkrzw ... -- --cases save-929-logical-cross-open-pinyin
+just runner contract-diff verify tkrzw ... -- --cases wrap-256th-reading
 just runner contract-diff verify tkrzw ... -- --expect-parent        # a parent build
 ```
 

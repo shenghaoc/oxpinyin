@@ -386,3 +386,20 @@ pub fn row58_rows(k: &mut Kit, prefix: &str) -> Predicted {
         .collect();
     Predicted { ret, rows }
 }
+
+/// `contract_case_helpers._guess_out`: the cached instance's full-pinyin parse
+/// of `text` (zhuyin under option word `1 << 5`, asserted), its sentence guess
+/// and every final-step sentence, as `{parsed, guessed, sentences}`.
+pub fn guess_out(k: &mut Kit, text: &[u8]) -> crate::support::J {
+    if facade::ZHUYIN {
+        assert!(facade::set_options(k.ctx(), 1 << 5));
+    }
+    let inst = k.inst();
+    let parsed = facade::parse_more_full_pinyins(inst, c(text).as_ptr());
+    let guessed = facade::guess_sentence(inst);
+    obj! {
+        "parsed" => parsed,
+        "guessed" => guessed,
+        "sentences" => final_step_sentences(inst),
+    }
+}

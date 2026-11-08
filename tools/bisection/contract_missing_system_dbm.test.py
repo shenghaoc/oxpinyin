@@ -40,37 +40,24 @@ class MissingSystemDbmTests(unittest.TestCase):
             self.assertEqual(family.missing_case(None, True)(kit), {'init': False})
         kit.fn.assert_not_called()
 
-    def test_bdb_twins_name_the_record_and_the_others_do_not(self):
+    def test_only_the_bdb_twins_are_registered_and_they_name_the_record(self):
         cases = {}
 
         def case(name, **spec):
             return lambda fn: cases.setdefault(name, spec)
 
         family.register(case)
-        twins = {name: spec for name, spec in cases.items() if '/bdb-' in name}
-        self.assertTrue(twins)
-        for name, spec in twins.items():
+        self.assertEqual(len(cases), 14 + 8)
+        for name, spec in cases.items():
+            self.assertIn('/bdb-', name)
             self.assertEqual(spec['cells'], ('bdb',), name)
             self.assertEqual(spec['policy_record'], family.RECORD, name)
-            plain = name.replace('/bdb-', '/')
-            self.assertEqual(cases[plain]['cells'], ('kc', 'tkrzw'), plain)
-            self.assertNotIn('policy_record', cases[plain])
-        self.assertEqual(len(twins), 14 + 8)
-        unattached = cases['missing-system-dbm/zhuyin-punctuation-overlay']
-        self.assertNotIn('cells', unattached)
-        self.assertNotIn('policy_record', unattached)
         for table in ('punctuation', 'addon-pinyin', 'addon-phrase'):
-            for operation in ('lifecycle', 'operations'):
-                self.assertNotIn(f'missing-system-dbm/zhuyin-{table}-{operation}', cases)
+            for operation in ('lifecycle', 'operations', 'overlay'):
+                self.assertNotIn(f'missing-system-dbm/bdb-zhuyin-{table}-{operation}', cases)
         self.assertEqual(sorted(name for name in cases if name.endswith('-lifecycle')),
                          ['missing-system-dbm/bdb-pinyin-bigram-lifecycle',
-                          'missing-system-dbm/bdb-zhuyin-phrase-lifecycle',
-                          'missing-system-dbm/pinyin-bigram-lifecycle',
-                          'missing-system-dbm/zhuyin-phrase-lifecycle'])
-        for facade in ('pinyin', 'zhuyin'):
-            intact = cases[f'missing-system-dbm/{facade}-intact']
-            self.assertNotIn('cells', intact)
-            self.assertTrue(intact['control'])
+                          'missing-system-dbm/bdb-zhuyin-phrase-lifecycle'])
 
 
 if __name__ == '__main__':
