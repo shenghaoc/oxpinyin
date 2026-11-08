@@ -96,6 +96,10 @@ fn interpolation2_parses_to_the_expected_counts() {
     assert_eq!(counts.unigrams.get(&10), Some(&100));
     assert_eq!(counts.bigrams.get(&(10, 30)), Some(&40));
     assert_eq!(counts.bigrams.get(&(1, 20)), Some(&1));
+    // A zero count is a value like any other: the pin's taglib returns true
+    // for it, and the dump carries it through.
+    let zero = parse_interpolation2("\\1-gram\n\\item 10 中 count 0\n");
+    assert_eq!(zero.unigrams.get(&10), Some(&0));
 }
 
 #[test]

@@ -16,7 +16,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "=0.4.13"
 oxpinyin-core = { path = "../crates/oxpinyin-core" }
-# dict-loader: hostile bytes through the table decoder.
+# dict-loader: hostile bytes through the system chunk loader.
 oxpinyin-data = { path = "../crates/oxpinyin-data" }
 # capi-commands: stateful session fuzzer over the C ABI (libchewing
 # fuzzer.rs shape). The facade links natively on macOS with Homebrew GLib
