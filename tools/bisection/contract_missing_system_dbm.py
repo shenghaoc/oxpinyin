@@ -114,41 +114,23 @@ RECORD = 'bdb-failed-handle.md'
 
 
 def register(case):
-    """Register both facades, isolated missing files, and intact controls.
-
-    A missing table the facade attaches runs on kc and tkrzw under its
-    name, and on bdb as a `bdb-` twin that names the record of the BDB1565
-    difference. A table the facade never attaches runs on every cell.
+    """Register the `bdb-` twins: a missing table the facade attaches, on bdb,
+    naming the record of the BDB1565 difference. They have no frozen
+    reference yet. The kc/tkrzw cases, the tables a facade never attaches and
+    the intact controls are Rust tests (`missing_system_dbm` in the capi crates).
     """
     def missing(name, facade, table, probe):
-        if table not in ATTACHED[facade]:
-            case(f'missing-system-dbm/{name}', mode=facade,
+        if table in ATTACHED[facade]:
+            case(f'missing-system-dbm/bdb-{name}', mode=facade, cells=('bdb',), policy_record=RECORD,
                  stderr=True, userdir=True, issues=('1516',))(probe)
-            return
-        case(f'missing-system-dbm/{name}', mode=facade, cells=('kc', 'tkrzw'),
-             stderr=True, userdir=True, issues=('1516',))(probe)
-        case(f'missing-system-dbm/bdb-{name}', mode=facade, cells=('bdb',), policy_record=RECORD,
-             stderr=True, userdir=True, issues=('1516',))(probe)
 
-    # A lifecycle case is the clean init and fini with no operations. It is not an `operations` case
-    # without the exercise: the exercise trains and saves, so the lifecycle leaves one file in the user
-    # directory where the operations case leaves eleven, in the frozen rows. Every lifecycle result is
-    # the same, since the attach of a missing table is ignored, so each facade keeps one, on a different
-    # kind of table: libpinyin's bigram and libzhuyin's phrase index. A table libzhuyin never attaches
-    # (`zhuyin.cpp:301,312,338` open three) is never opened, so removing it leaves `zhuyin-intact`'s
-    # outcome in every frozen row; one overlay stays, the import that `zhuyin-intact` does not make.
+    # A lifecycle case is the clean init and fini with no operations; each facade keeps one,
+    # on a different kind of table: libpinyin's bigram and libzhuyin's phrase index.
     LIFECYCLE_KEPT = (('pinyin', 'bigram'), ('zhuyin', 'phrase'))
     for facade in ('pinyin', 'zhuyin'):
         for table in TABLES:
-            unattached = table not in ATTACHED[facade]
             if (facade, table) in LIFECYCLE_KEPT:
                 missing(f'{facade}-{table}-lifecycle', facade, table, missing_case(table, False))
-            if not unattached:
-                missing(f'{facade}-{table}-operations', facade, table, missing_case(table, True))
-            if not unattached or table == 'punctuation':
-                missing(f'{facade}-{table}-overlay', facade, table,
-                        missing_case(table, True, overlay=True))
-        case(f'missing-system-dbm/{facade}-intact', mode=facade, control=True,
-             stderr=True, userdir=True, issues=('1516',))(missing_case(None, True))
-        missing(f'{facade}-pinyin-unloaded', facade, 'pinyin',
-                missing_case('pinyin', True, unload=True))
+            missing(f'{facade}-{table}-operations', facade, table, missing_case(table, True))
+            missing(f'{facade}-{table}-overlay', facade, table, missing_case(table, True, overlay=True))
+        missing(f'{facade}-pinyin-unloaded', facade, 'pinyin', missing_case('pinyin', True, unload=True))

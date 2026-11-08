@@ -99,18 +99,10 @@ PACKAGING_PATHS = (
 CONTRACT_HARNESS = ('tools/bisection/contract-modules.test.py',
                     'tools/bisection/contract-diff.test.py', 'tools/bisection/teardown.test.py')
 CONTRACT_MODULES = (
-    'abi', 'alloc_after_fini', 'axis_j', 'before_cursor_dedup', 'bigram_mask_prediction',
-    'candidate_lookup_offsets', 'case_helpers', 'cell_fixtures', 'default_options',
-    'double_fini', 'duplicate_phrase_add', 'execution', 'facade_total', 'fixtures',
-    'glib_arrays', 'glib_path_construction', 'gram_lookup', 'input_length_cap',
-    'integer_limits_d18', 'invalid_input_bytes', 'issue542_remaining', 'kit', 'library_reload',
-    'measurement', 'negative_remember', 'non_utf8_directories', 'null_user_library',
-    'phrase_export_training', 'phrase_index_logger', 'phrase_table_mask', 'predicted_types',
-    'reading_256th', 'registry', 'remember_tone', 'runner', 'save_failures_stderr', 'selection',
-    'sentence_ties', 'stored_count_headers', 'stored_total_overflow', 'stored_user_gram',
-    'system_mask_out', 'system_phrase_text', 'token_reuse_addon_import',
-    'token_unigram_training', 'user_conf_overlong_index', 'user_index_phrase_mask',
-    'user_stored_words', 'verdict', 'zhuyin_null_arguments',
+    'abi', 'before_cursor_dedup', 'bigram_mask_prediction', 'case_helpers', 'cell_fixtures',
+    'execution', 'fixtures', 'kit', 'measurement', 'reading_256th', 'registry', 'runner',
+    'save_failures_stderr', 'selection', 'sentence_ties', 'token_reuse_addon_import',
+    'verdict',
 )
 
 HARNESS_DEPENDENCIES = {

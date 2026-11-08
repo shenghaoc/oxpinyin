@@ -408,3 +408,247 @@ pub fn user_listing(k: &Kit, directory: Option<&Path>) -> crate::support::J {
     }
     listing
 }
+
+/// `TOKEN_REUSE_PHRASES`: rare two-character phrases with their pinyin and
+/// zhuyin readings.
+pub const TOKEN_REUSE_PHRASES: [(&str, &str, &str); 6] = [
+    ("龘龘", "da2'da2", "ㄉㄚˊ ㄉㄚˊ"),
+    ("龖龖", "ta4'ta4", "ㄊㄚˋ ㄊㄚˋ"),
+    ("靐靐", "bing3'bing3", "ㄅㄧㄥˇ ㄅㄧㄥˇ"),
+    ("鱻鱻", "xian1'xian1", "ㄒㄧㄢ ㄒㄧㄢ"),
+    ("麤麤", "cu1'cu1", "ㄘㄨ ㄘㄨ"),
+    ("厵厵", "yuan2'yuan2", "ㄩㄢˊ ㄩㄢˊ"),
+];
+
+/// `TOKEN_REUSE_PHRASES[n]`'s reading in the facade's column.
+pub fn token_reuse_reading(n: usize) -> &'static str {
+    let (_, pinyin, zhuyin) = TOKEN_REUSE_PHRASES[n];
+    if crate::facade::ZHUYIN {
+        zhuyin
+    } else {
+        pinyin
+    }
+}
+
+/// Bytes as lowercase hex (Python's `bytes.hex`).
+pub fn hex_bytes(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// `index_file_rows(path, kind=...)`: every record of a user container in this
+/// cell's format, empty values included, as sorted `[key hex, value hex]`
+/// pairs; `hash` reads the user bigram's hash container.
+pub fn index_file_rows(path: &Path, hash: bool) -> Vec<(String, String)> {
+    use oxpinyin_store::RawReadStore as _;
+    use std::ops::Bound;
+    let store = if hash {
+        DefaultStore::open_user_bigram(path)
+    } else {
+        DefaultStore::open_read_only(path)
+    }
+    .unwrap_or_else(|error| panic!("open {}: {error:?}", path.display()));
+    let mut rows = Vec::new();
+    store
+        .range_raw(Bound::Unbounded, Bound::Unbounded, |key, value| {
+            rows.push((hex_bytes(key), hex_bytes(value)));
+            Ok(())
+        })
+        .expect("read the container");
+    rows.sort();
+    rows
+}
+
+/// `crafted_bigram_context`: a context whose user directory carries crafted
+/// `user_bigram.db` rows: the first init writes `user.conf`, the rows are
+/// written under a conforming `user.conf` and the profile reopened. The context
+/// is not cached in the kit.
+pub fn crafted_bigram_context(k: &Kit, rows: &[(Vec<u8>, Vec<u8>)]) -> crate::support::P {
+    let ctx = k.init_default();
+    assert!(!ctx.is_null(), "the first init failed");
+    crate::facade::fini(ctx);
+    craft_hash(&k.user.join("user_bigram.db"), rows);
+    write_user_conf(k);
+    let ctx = k.init_default();
+    assert!(!ctx.is_null(), "the reopen failed");
+    ctx
+}
+
+/// `zero_item_padding`: a pinyin index value with every odd-length item's two
+/// padding bytes zeroed (`pinyin_phrase3.h:180-196`).
+pub fn zero_item_padding(key_hex: &str, value_hex: &str) -> String {
+    let length = key_hex.len() / 4;
+    if length.is_multiple_of(2) || value_hex.is_empty() {
+        return value_hex.to_owned();
+    }
+    let mut value: Vec<u8> = (0..value_hex.len())
+        .step_by(2)
+        .map(|at| u8::from_str_radix(&value_hex[at..at + 2], 16).expect("hex"))
+        .collect();
+    let stride = 4 + 2 * length + 2;
+    let complete = value.len() / stride * stride;
+    for item in value[..complete].chunks_exact_mut(stride) {
+        item[stride - 2..].fill(0);
+    }
+    hex_bytes(&value)
+}
+
+/// `token_reuse_files`: the user files a save leaves, by content: the two user
+/// indexes record by record (pinyin item padding zeroed), a Berkeley DB container
+/// by its non-empty rows, another cell's user bigram by its presence, `user.bin`,
+/// `addon.bin` and `network.bin` with header bytes 4..8 zeroed, every other
+/// regular file but `.tmp` ones as hex.
+pub fn token_reuse_files(k: &Kit) -> crate::support::J {
+    use crate::support::J;
+    let mut names: Vec<String> = std::fs::read_dir(&k.user)
+        .expect("user directory")
+        .map(|entry| crate::support::os_text(&entry.expect("user entry").file_name()))
+        .collect();
+    names.sort();
+    let mut files = J::map();
+    for name in names {
+        let path = k.user.join(&name);
+        if !path.is_file() || name.ends_with(".tmp") {
+            continue;
+        }
+        let raw = std::fs::read(&path).expect("user file");
+        let view = if name == "user_phrase_index.bin" || name == "user_pinyin_index.bin" {
+            let mut rows = index_file_rows(&path, false);
+            if name == "user_pinyin_index.bin" {
+                for (key, value) in &mut rows {
+                    *value = zero_item_padding(key, value);
+                }
+            }
+            J::from(rows)
+        } else if crate::support::CELL != "bdb" && name == "user_bigram.db" {
+            J::from(!raw.is_empty())
+        } else if raw
+            .get(12..16)
+            .is_some_and(|magic| magic == b"\x62\x31\x05\x00" || magic == b"\x61\x15\x06\x00")
+        {
+            let rows: Vec<(String, String)> = index_file_rows(&path, name == "user_bigram.db")
+                .into_iter()
+                .filter(|(_, value)| !value.is_empty())
+                .collect();
+            J::from(rows)
+        } else if ["user.bin", "addon.bin", "network.bin"].contains(&name.as_str()) {
+            let mut masked = raw.clone();
+            masked[4..8].fill(0);
+            J::from(hex_bytes(&masked))
+        } else {
+            J::from(hex_bytes(&raw))
+        };
+        files.set(name, view);
+    }
+    files
+}
+
+/// One step of [`token_reuse_sequence`].
+#[derive(Clone, Copy, Debug)]
+pub enum ReuseStep {
+    /// `('add', n)`: import `TOKEN_REUSE_PHRASES[n]` with count 100.
+    Add(usize),
+    /// `('save',)`.
+    Save,
+    /// `('mask', mask, value)`.
+    Mask(u32, u32),
+    /// `('reopen',)`: finalise without saving and initialise again.
+    Reopen,
+}
+
+/// `token_reuse_sequence`: runs `steps` over `library` and answers each step's
+/// return, the token of every phrase imported so far after each step and the
+/// user files left. `bigram_rows` seeds `user_bigram.db` first.
+pub fn token_reuse_sequence(
+    k: &mut Kit,
+    steps: &[ReuseStep],
+    bigram_rows: Option<&[(Vec<u8>, Vec<u8>)]>,
+    library: u8,
+) -> crate::support::J {
+    use crate::facade;
+    use crate::readers::{c, lookup};
+    use crate::support::J;
+    let mut ctx = match bigram_rows {
+        Some(rows) if !rows.is_empty() => crafted_bigram_context(k, rows),
+        _ => k.ctx(),
+    };
+    let (mut out, mut seen) = (Vec::new(), Vec::new());
+    for step in steps {
+        match *step {
+            ReuseStep::Add(n) => {
+                let it = facade::begin_add_phrases(ctx, library);
+                assert!(!it.is_null(), "the import iterator");
+                let text = c(TOKEN_REUSE_PHRASES[n].0);
+                let reading = c(token_reuse_reading(n));
+                let added = facade::iterator_add_phrase(it, text.as_ptr(), reading.as_ptr(), 100);
+                out.push(J::from(("add", added)));
+                facade::end_add_phrases(it);
+                seen.push(n);
+            }
+            ReuseStep::Save => out.push(J::from(("save", facade::save(ctx)))),
+            ReuseStep::Mask(mask, value) => {
+                out.push(J::from(("mask", facade::mask_out(ctx, mask, value))));
+            }
+            ReuseStep::Reopen => {
+                facade::fini(ctx);
+                ctx = k.init_default();
+                assert!(!ctx.is_null(), "the reopen failed");
+            }
+        }
+        let inst = facade::alloc_instance(ctx);
+        let mut found = J::map();
+        for &n in &seen {
+            let text = TOKEN_REUSE_PHRASES[n].0;
+            let tokens: Vec<String> = lookup(inst, text.as_bytes())
+                .iter()
+                .map(|token| format!("{token:#x}"))
+                .collect();
+            found.set(text, tokens);
+        }
+        facade::free_instance(inst);
+        out.push(found);
+    }
+    obj! { "steps" => out, "files" => token_reuse_files(k) }
+}
+
+/// Writes a pin-written handoff profile into `dir`: the frozen reference's
+/// `profile`, as the generator holds it (each file's name, length and non-zero
+/// byte runs), written back byte for byte (`contract_reference.decode_profile`).
+pub fn write_profile(profile: &crate::support::Raw, dir: &Path) {
+    use crate::support::Raw;
+    let items = |raw: &Raw| match raw {
+        Raw::L(items) => *items,
+        other => panic!("a profile entry is a list, not {other:?}"),
+    };
+    let int = |raw: &Raw| match raw {
+        Raw::I(value) => usize::try_from(*value).expect("a profile offset"),
+        other => panic!("a profile offset is an integer, not {other:?}"),
+    };
+    for file in items(profile) {
+        let [Raw::S(name), length, runs] = items(file) else {
+            panic!("a profile file is [name, length, runs]")
+        };
+        let mut bytes = vec![0_u8; int(length)];
+        for run in items(runs) {
+            let [offset, Raw::Y(data)] = items(run) else {
+                panic!("a profile run is [offset, bytes]")
+            };
+            let at = int(offset);
+            bytes[at..at + data.len()].copy_from_slice(data);
+        }
+        std::fs::write(dir.join(name), bytes).expect("write a profile file");
+    }
+}
+
+/// `contract_verdict.tkrzw_saved_bigram_bytes`: saved HashDBM bytes with only
+/// `META_OFFSET_TIMESTAMP` (bytes 48-55) zeroed, the #1114 byte comparison.
+pub fn tkrzw_saved_bigram_bytes(raw: &[u8]) -> Vec<u8> {
+    const METADATA_SIZE: usize = 128;
+    const TIMESTAMP: std::ops::Range<usize> = 48..56;
+    assert!(
+        raw.len() >= METADATA_SIZE,
+        "saved HashDBM is shorter than its metadata"
+    );
+    let mut masked = raw.to_vec();
+    masked[TIMESTAMP].fill(0);
+    masked
+}

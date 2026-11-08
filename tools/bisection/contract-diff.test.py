@@ -73,6 +73,24 @@ def stub_case(kit):
     return {}
 
 
+# The lazy-bigram cases are Rust tests now (`bigram_mask_prediction` in the capi
+# crates). The runner still special-cases their IDs, so the tests of that machinery
+# register them again with their former metadata.
+MOVED_HANDOFF_SPECS = {
+    name: driver.case_spec(mode=mode, cells=('tkrzw',), fn=stub_case, case_id=name)
+    for name, mode in (('lazy-user-bigram-pinyin', 'pinyin'), ('lazy-user-bigram-zhuyin', 'zhuyin'))}
+
+
+class MovedHandoffCases:
+    """Registers MOVED_HANDOFF_SPECS for each test of the handoff machinery."""
+
+    def setUp(self):
+        super().setUp()
+        registered = patch.dict(driver.CASES, MOVED_HANDOFF_SPECS)
+        registered.start()
+        self.addCleanup(registered.stop)
+
+
 def freeze(root, cell, spec, pin, *, glibc=None, glib=None, profile=None):
     """Write the reference row of SPEC holding the pin observation PIN, the way capture does."""
     pinned = spec.get('pin_not_run') is not None
@@ -402,20 +420,6 @@ class FixtureCrafterTests(DriverFixtureCase):
                     kc.assert_not_called()
 
 
-class PhraseTextRecordTests(DriverFixtureCase):
-    def test_all_stored_text_cases_are_ordinary_parity_cases(self):
-        names, _ = driver.select_cases(None, ['894'], [])
-        self.assertEqual(len(names), 32)
-        for name in names:
-            spec = driver.CASES[name]
-            self.assertIsNone(spec['policy_record'], name)
-            controls = spec['control']
-            if '-valid-' in name or (name.startswith('phrase-text/zhuyin-') and name.endswith('-export')):
-                self.assertTrue(controls, name)
-            else:
-                self.assertFalse(controls, name)
-
-
 class TkrzwSavedBigramTests(DriverFixtureCase):
     def setUp(self):
         super().setUp()
@@ -473,7 +477,7 @@ class TkrzwSavedBigramTests(DriverFixtureCase):
         self.assertFalse(self.matches(self.raw, ((bucket + 1, chain),)))
 
 
-class LazyBigramSaveTests(DriverFixtureCase):
+class LazyBigramSaveTests(MovedHandoffCases, DriverFixtureCase):
     def test_worker_failures_cannot_pass_or_compare_snapshots(self):
         for mode in ('pinyin', 'zhuyin'):
             name = 'lazy-user-bigram-' + mode
@@ -751,44 +755,6 @@ class Save929HandoffTests(DriverFixtureCase):
         for mode in ('pinyin', 'zhuyin'):
             self.assertIn('save-929-logical-cross-open-' + mode, names)
             self.assertNotIn('save-929-physical-bytes-' + mode, driver.CASES)
-
-
-class Save929ObservationTests(DriverFixtureCase):
-    def test_physical_observation_retains_checksum_metadata_marker_and_staging(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            for name in ('user.bin', 'user_bigram.db', 'user.conf', 'user.bin.tmp'):
-                path = root / name
-                path.write_bytes(bytes(range(128)))
-                before = driver.save_929_physical_files(root)
-                for offset in (4, 7, 48, 55, 56, 127):
-                    raw = bytearray(range(128))
-                    raw[offset] ^= 1
-                    path.write_bytes(raw)
-                    after = driver.save_929_physical_files(root)
-                    self.assertNotEqual(before[name], after[name], (name, offset))
-                    self.assertEqual(after[name]['size'], 128)
-                path.write_bytes(bytes(range(128)))
-            self.assertEqual(set(driver.save_929_physical_files(root)),
-                             {'user.bin', 'user_bigram.db', 'user.conf', 'user.bin.tmp'})
-
-    def test_nonregular_profile_entry_is_not_silently_omitted(self):
-        with tempfile.TemporaryDirectory() as directory:
-            (Path(directory) / 'user.bin').mkdir()
-            with self.assertRaisesRegex(ValueError, 'nonregular'):
-                driver.save_929_physical_files(directory)
-
-    @unittest.skipUnless(sys.platform == 'linux', 'Linux file leases')
-    def test_marker_notification_precedes_write_and_child_is_reaped(self):
-        with tempfile.TemporaryDirectory() as directory:
-            marker = Path(directory) / 'user.conf'
-            marker.write_bytes(b'old marker')
-            self.assertEqual(driver.save_929_marker_interrupt(
-                marker, lambda: marker.write_bytes(b'new marker')), 'marker-open')
-            self.assertEqual(marker.read_bytes(), b'old marker')
-            # Unlock/close must leave the marker writable after the child died.
-            marker.write_bytes(b'next marker')
-            self.assertEqual(marker.read_bytes(), b'next marker')
 
 
 class ProfileRowsTests(DriverFixtureCase):
@@ -1347,10 +1313,10 @@ class SelectionTests(VerifyCase):
         self.assertEqual(reasons[names[0]], ['family missing-system-dbm'])
 
     def test_prefix_selects_untagged_cases_from_the_full_driver_registry(self):
-        names, _ = driver.select_cases(prefixes='glib-922-,reload-,phrase-text/')
-        expected = sorted(n for n in driver.CASES if n.startswith('glib-922-'))
-        expected += sorted(n for n in driver.CASES if n.startswith('reload-'))
-        expected += sorted(n for n in driver.CASES if n.startswith('phrase-text/'))
+        names, _ = driver.select_cases(prefixes='abort-choose-,missing-system-dbm/,wrap-256th-')
+        expected = sorted(n for n in driver.CASES if n.startswith('abort-choose-'))
+        expected += sorted(n for n in driver.CASES if n.startswith('missing-system-dbm/'))
+        expected += sorted(n for n in driver.CASES if n.startswith('wrap-256th-'))
         self.assertEqual(names, expected)
         self.assertTrue(any(not driver.CASES[n]['issues'] for n in names))
 
@@ -1362,7 +1328,7 @@ class SelectionTests(VerifyCase):
         self.assertEqual(listing['modes'], {name: spec['mode'] for name, spec in driver.CASES.items()})
 
     def test_bad_prefix_cli_exits_two_before_inputs_or_workers(self):
-        for value in ('', 'glib-922-,', 'glib-922-,no-such-case-prefix'):
+        for value in ('', 'wrap-256th-,', 'wrap-256th-,no-such-case-prefix'):
             with self.subTest(value=value):
                 code, error = self.verify_exit('--cases-prefix', value)
                 self.assertEqual(code, 2)
@@ -1380,8 +1346,8 @@ class SelectionTests(VerifyCase):
             contract['select_cases'](issues=['9999'])
         self.assertIn('registered tags: ', str(caught.exception))
         available = str(caught.exception).split('registered tags: ', 1)[1].split(', ')
-        self.assertIn('525', available)
-        self.assertIn('1114', available)
+        self.assertIn('762', available)
+        self.assertIn('804', available)
         self.assertNotIn('family/', str(caught.exception))
         with self.assertRaises(contract['SelectionError']) as caught:
             contract['select_cases'](families=['nope'])

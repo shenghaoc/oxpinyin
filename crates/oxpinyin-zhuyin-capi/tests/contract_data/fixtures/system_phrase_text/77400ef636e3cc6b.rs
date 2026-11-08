@@ -1,0 +1,1 @@
+M(&[("chosen", S("e794b2")), ("cursor", I(9)), ("guessed", B(true)), ("listed", B(true)), ("logs", L(&[])), ("parsed", I(12)), ("read", B(true)), ("sentence", S("e794b2e4b899")), ("trained", B(true)), ("unigrams", L(&[L(&[B(true), I(583)]), L(&[B(true), I(583)])]))])

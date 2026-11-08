@@ -39,12 +39,23 @@ mod facade {
         fn get_zhuyin_key_rest_positions(instance: P, key_rest: P, begin: *mut u16, end: *mut u16) -> bool;
         fn get_zhuyin_key_rest_length(instance: P, key_rest: P, length: *mut u16) -> bool;
         fn set_chewing_scheme(context: P, scheme: i32) -> bool;
+        fn get_character_offset(instance: P, phrase: *const c_char, offset: usize, length: *mut usize) -> bool;
+        fn get_zhuyin_offset(instance: P, cursor: usize, offset: *mut usize) -> bool;
+        fn get_left_zhuyin_offset(instance: P, offset: usize, left: *mut usize) -> bool;
+        fn get_right_zhuyin_offset(instance: P, offset: usize, right: *mut usize) -> bool;
+        fn reset(instance: P) -> bool;
     }
 
     /// Trains the n-best result (`zhuyin_train` takes no index).
     #[allow(dead_code)]
     pub fn train_top(instance: P) -> bool {
         train(instance)
+    }
+
+    /// The zhuyin facade's train takes no index.
+    #[allow(dead_code, unused_variables)]
+    pub fn train_at(instance: P, index: u8) -> bool {
+        unreachable!("the zhuyin facade's train takes no index")
     }
 
     /// The zhuyin facade's one sentence.
@@ -77,8 +88,21 @@ mod facade {
         fn set_zhuyin_scheme(context: P, scheme: i32) -> bool;
         fn set_double_pinyin_scheme(context: P, scheme: i32) -> bool;
         fn load_addon_phrase_library(context: P, index: u8) -> bool;
+        fn unload_addon_phrase_library(context: P, index: u8) -> bool;
         fn is_user_candidate(instance: P, candidate: P) -> bool;
         fn remove_user_candidate(instance: P, candidate: P) -> bool;
+        fn get_pinyin_offset(instance: P, cursor: usize, offset: *mut usize) -> bool;
+        fn get_left_pinyin_offset(instance: P, offset: usize, left: *mut usize) -> bool;
+        fn get_right_pinyin_offset(instance: P, offset: usize, right: *mut usize) -> bool;
+        fn get_luoma_pinyin_string(instance: P, key: P, utf8_str: *mut *mut c_char) -> bool;
+        fn get_secondary_zhuyin_string(instance: P, key: P, utf8_str: *mut *mut c_char) -> bool;
+        fn get_pinyin_strings(instance: P, key: P, shengmu: *mut *mut c_char, yunmu: *mut *mut c_char) -> bool;
+        fn parse_double_pinyin(instance: P, onepinyin: *const c_char, onekey: P) -> bool;
+        fn get_pinyin_is_incomplete(instance: P, key: P) -> bool;
+        fn begin_get_bigram_phrases(context: P) -> P;
+        fn bigram_iterator_has_next_phrase(iter: P) -> bool;
+        fn bigram_iterator_get_next_phrase(iter: P, phrase: *mut *mut c_char, pinyin: *mut *mut c_char, count: *mut i32) -> bool;
+        fn end_get_bigram_phrases(iter: P);
     }
 }
 
@@ -98,11 +122,17 @@ mod fixtures;
 #[allow(dead_code)]
 #[path = "../../oxpinyin-capi/tests/common/contract/bodies"]
 mod bodies {
+    pub mod glib_path_construction;
     pub mod remember_tone;
+    pub mod save_failures_stderr;
     pub mod zhuyin_null_arguments;
 }
 
+#[path = "contract/glib_path_construction.rs"]
+mod glib_path_construction;
 #[path = "contract/remember_tone.rs"]
 mod remember_tone;
+#[path = "contract/save_failures_stderr.rs"]
+mod save_failures_stderr;
 #[path = "contract/zhuyin_null_arguments.rs"]
 mod zhuyin_null_arguments;

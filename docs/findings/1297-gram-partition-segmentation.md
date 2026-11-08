@@ -70,10 +70,10 @@ just policy-record docs/findings/1297-gram-partition-segmentation.md "obs-$CELL.
   --cases user-gram-unsorted-phrase-segment
 ```
 
-The case-module harness is `tools/bisection/contract_gram_lookup.test.py`.
+The cases are the capi crates' `gram_lookup` contract tests.
 C's original core tests cover sorted duplicates, empty/short headers,
 both-end misses, all partial-tail lengths and stored-order preservation.
-The original broader selection remains in `fixtures/w4/1297-search-cases.txt`;
+The original broader selection, issues 757 and 785, is now Rust contract tests;
 its unchanged scope and the base/PR/pin comparison are documented in the
 bench runbook. No raw captures or verification logs are committed.
 

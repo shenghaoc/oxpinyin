@@ -473,6 +473,23 @@ pub fn isolated(probe: impl FnOnce() -> Vec<u8>) -> Option<Vec<u8>> {
     answer
 }
 
+/// The command that runs this case again in a fresh child, as [`isolated`]'s
+/// replay does, with `scratch` its scratch directory; the caller adds its mode.
+pub fn case_command(scratch: &Path) -> std::process::Command {
+    let name = CASE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+        .expect("a case is running");
+    let mut command = std::process::Command::new(std::env::current_exe().expect("test binary"));
+    command
+        .args(["--exact", &name, "--test-threads=1"])
+        .env(CHILD, &name)
+        .env(SCRATCH, scratch)
+        .env(if cfg!(windows) { "TMP" } else { "TMPDIR" }, scratch);
+    command
+}
+
 /// In a replay: an earlier probe's recorded answer, or the target probe's run,
 /// whose answer is written before the replay exits.
 fn replayed(
