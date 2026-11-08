@@ -104,7 +104,7 @@ PYTHON_ONLY = ("tools/*.test.py", "tools/audit", "tools/bisection/*.py", "tools/
                "tools/capture", "tools/cloud", "tools/oracle", "tools/scripts2")
 # The exceptions: `python -m tools.dev` imports these modules, and the Rust lanes read the pin records.
 RUST_READS = (
-              "tools/bisection/startup_profile.py", "tools/bisection/teardown.py",
+              "tools/bisection/startup_profile.py", 
               "tools/oracle/image.py", "tools/oracle/versions.py",
               "tools/oracle/oracle-pin.txt", "tools/oracle/libpinyin-data.json")
 CI_INPUTS = {

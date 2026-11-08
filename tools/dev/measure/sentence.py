@@ -17,7 +17,7 @@ import shutil
 
 from .. import cell, slot
 from ..runners import emit
-from ...bisection.teardown import callgrind_costs
+from .instructions import callgrind_costs
 from . import bench, identity, instructions, neutrality, stats
 
 ANCHORS = {'sentence': 'bisect_sentence_unit', 'typing-sequence': 'bisect_typing_unit'}

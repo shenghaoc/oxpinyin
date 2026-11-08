@@ -14,14 +14,12 @@ import sys
 import tempfile
 import tomllib
 
-from . import host, mounts, native, pool, slot
+from . import host, native, pool, slot
 
 ROOT = Path(__file__).resolve().parents[2]
 
 HARNESS_EXCLUDED = frozenset()
 
-# These harnesses exercise real cold-file eviction; tmpfs/ramfs ignore fadvise.
-DISK_BACKED_HARNESS = set()
 
 # No harness test file inherits a variable whose name matches one of these
 # patterns, compared case-insensitively. A failing mock assertion prints the
@@ -60,28 +58,10 @@ def harness_environment(environ):
     return kept, len(environ) - len(kept)
 
 
-def memory_backed_tmpdir():
-    """Return the refusal line when the harness temporary directory is on tmpfs or ramfs, else None.
-
-    teardown.test.py's cold eviction tests need fadvise to evict, which tmpfs
-    and ramfs ignore. An unreadable mount type is not a refusal.
-    """
-    directory = tempfile.gettempdir()
-    try:
-        kind = mounts.filesystem(directory)
-    except (OSError, ValueError):
-        return None
-    if kind not in ('tmpfs', 'ramfs'):
-        return None
-    return (f'just test-tools: TMPDIR {directory} is on {kind}; the cold teardown tests need a '
-            'disk-backed TMPDIR (for example ~/.cache/oxpinyin/tmp)')
-
-
 # Explicit dependency mapping; shared infrastructure and unknown paths fall back
 # to the full suite rather than guessing from a matching filename.
 PACKAGING_HARNESSES = (
     'tools/dev/packaging.test.py',
-    'tools/bisection/teardown.test.py',
     'tools/dev/cli.test.py',
     'tools/dev/bash_floor.test.py',
 )
@@ -213,9 +193,8 @@ def select_harness_files(files, requested, changed):
 def run_tools(files=(), pattern=None, changed=None):
     """Run selected harness files concurrently, returning 1 if any fails.
 
-    Return 2 before any harness runs when a selected cold-eviction test needs
-    a disk-backed temporary directory. Each harness runs without credential-shaped
-    variables; only their count is printed.
+    Each harness runs without credential-shaped variables; only their count is
+    printed.
     """
     try:
         selected = select_harness_files(harness_files(), files, changed)
@@ -225,11 +204,6 @@ def run_tools(files=(), pattern=None, changed=None):
             detail = error.stderr.decode(errors='replace') if isinstance(error.stderr, bytes) else error.stderr
             print(detail, end='' if detail.endswith('\n') else '\n', file=sys.stderr)
         return 2
-    if DISK_BACKED_HARNESS.intersection(selected):
-        refusal = memory_backed_tmpdir()
-        if refusal:
-            print(refusal, file=sys.stderr, flush=True)
-            return 2
     env, removed = harness_environment(os.environ)
     print(f'tools harness: credential-shaped environment variables removed: {removed}', flush=True)
 
