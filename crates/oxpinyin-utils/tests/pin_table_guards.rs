@@ -29,7 +29,7 @@ fn run(binary: &str, input: &[u8]) -> std::process::Output {
 
 #[test]
 fn invalid_phrase_query_keeps_the_previous_timed_result() {
-    let newline = if cfg!(windows) { "\r\n" } else { "\n" };
+    let newline = oxpinyin_input::TEXT_NEWLINE;
     let result = run(
         env!("CARGO_BIN_EXE_test_phrase_table"),
         b"\xe4\xbd\xa0\n\xff\n",
@@ -43,7 +43,7 @@ fn invalid_phrase_query_keeps_the_previous_timed_result() {
 
 #[test]
 fn overlong_chewing_query_keeps_the_previous_timed_result() {
-    let newline = if cfg!(windows) { "\r\n" } else { "\n" };
+    let newline = oxpinyin_input::TEXT_NEWLINE;
     let input = format!("ni3\n{}\n", ["ni3"; 17].join("'"));
     let result = run(env!("CARGO_BIN_EXE_test_chewing_table"), input.as_bytes());
     assert_eq!(result.status.code(), Some(22));

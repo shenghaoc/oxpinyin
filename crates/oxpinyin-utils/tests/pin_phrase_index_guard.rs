@@ -4,7 +4,7 @@ use std::fs;
 use std::process::Command;
 
 fn refuse(table: &[u8], reserved: bool) {
-    let newline = if cfg!(windows) { "\r\n" } else { "\n" };
+    let newline = oxpinyin_input::TEXT_NEWLINE;
     let root = tempfile::tempdir().unwrap();
     let cwd = root.path().join("tests/storage");
     fs::create_dir_all(&cwd).unwrap();

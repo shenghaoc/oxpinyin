@@ -17,7 +17,7 @@ fn run(path: &Path, args: &[&str]) -> Output {
 
 #[test]
 fn zhuyin_rows_use_tones_duplicates_and_last_unterminated_line() {
-    let newline = if cfg!(windows) { "\r\n" } else { "\n" };
+    let newline = oxpinyin_input::TEXT_NEWLINE;
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
         dir.path().join("in.txt"),
@@ -42,7 +42,7 @@ fn zhuyin_rows_use_tones_duplicates_and_last_unterminated_line() {
 
 #[test]
 fn malformed_input_refuses_normally_at_its_source_stage() {
-    let newline = if cfg!(windows) { "\r\n" } else { "\n" };
+    let newline = oxpinyin_input::TEXT_NEWLINE;
     for (input, diagnostic, output_exists, stdout, rows) in [
         (
             b"one-field\n".to_vec(),
@@ -91,7 +91,7 @@ fn malformed_input_refuses_normally_at_its_source_stage() {
 
 #[test]
 fn empty_phrase_is_a_glib_precondition_diagnostic_and_not_a_crash() {
-    let newline = if cfg!(windows) { "\r\n" } else { "\n" };
+    let newline = oxpinyin_input::TEXT_NEWLINE;
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("in.txt"), " 1 \n你 5 ㄋㄧ\n").unwrap();
     let out = run(dir.path(), &["in.txt"]);

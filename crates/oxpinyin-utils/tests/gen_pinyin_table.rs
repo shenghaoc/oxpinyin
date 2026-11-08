@@ -21,7 +21,7 @@ fn run(dir: &Path, args: &[&str]) -> Output {
 
 #[test]
 fn rows_follow_length_then_first_reading_then_phrase_bytes() {
-    let newline = if cfg!(windows) { "\r\n" } else { "\n" };
+    let newline = oxpinyin_input::TEXT_NEWLINE;
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
         dir.path().join("in.txt"),
@@ -66,7 +66,7 @@ fn rows_follow_length_then_first_reading_then_phrase_bytes() {
 
 #[test]
 fn the_default_output_is_temp_out_and_a_last_row_without_newline_is_dropped() {
-    let newline = if cfg!(windows) { "\r\n" } else { "\n" };
+    let newline = oxpinyin_input::TEXT_NEWLINE;
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("in.txt"), "你 ni 5\n好 hao 3").unwrap();
     let out = run(dir.path(), &["in.txt"]);
@@ -83,7 +83,7 @@ fn the_default_output_is_temp_out_and_a_last_row_without_newline_is_dropped() {
 
 #[test]
 fn a_missing_input_exits_enoent_before_writing() {
-    let newline = if cfg!(windows) { "\r\n" } else { "\n" };
+    let newline = oxpinyin_input::TEXT_NEWLINE;
     let dir = tempfile::tempdir().unwrap();
     let out = run(dir.path(), &["absent.txt"]);
     assert_eq!(out.status.code(), Some(tool::ENOENT));
@@ -107,7 +107,7 @@ fn an_unknown_option_exits_einval_with_the_glib_message() {
 
 #[test]
 fn an_empty_phrase_counts_as_a_node_and_meets_glibs_null_array_check() {
-    let newline = if cfg!(windows) { "\r\n" } else { "\n" };
+    let newline = oxpinyin_input::TEXT_NEWLINE;
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("in.txt"), b"\0 - 1\n\xe4\xbd\xa0 ni 5\n").unwrap();
     let out = run(dir.path(), &["in.txt"]);
@@ -134,7 +134,7 @@ fn an_empty_phrase_counts_as_a_node_and_meets_glibs_null_array_check() {
 /// the phrase and exits 1, flushing what it wrote (class (b)).
 #[test]
 fn an_unconvertible_phrase_is_refused_at_the_pins_row_after_the_output_opens() {
-    let newline = if cfg!(windows) { "\r\n" } else { "\n" };
+    let newline = oxpinyin_input::TEXT_NEWLINE;
     for (input, nnodes, phrase, rows) in [
         (&b"\xff a 1\n"[..], "nnodes: 1\n", &b"\xff"[..], ""),
         (

@@ -1055,7 +1055,7 @@ mod tests {
         let path = dir.path().join("user.conf");
         let filename = oxpinyin_input::c_path(&path).expect("c path");
         assert!(conform.save(&filename));
-        let newline = if cfg!(windows) { "\r\n" } else { "\n" };
+        let newline = oxpinyin_input::TEXT_NEWLINE;
         let expected = format!(
             "binary format version:7{newline}model data version:14{newline}database format:{DEFAULT_STORE_DB_FORMAT}{newline}open counter:0{newline}"
         );

@@ -200,7 +200,7 @@ fn text(bytes: &[u8]) -> String {
 }
 
 fn expected_text(text: &str) -> String {
-    text.replace('\n', if cfg!(windows) { "\r\n" } else { "\n" })
+    text.replace('\n', oxpinyin_input::TEXT_NEWLINE)
 }
 
 fn block(export: &str, header: &str, until: &str) -> Vec<String> {

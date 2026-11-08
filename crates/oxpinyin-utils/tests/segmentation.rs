@@ -218,7 +218,7 @@ fn help_is_glibs_and_exits_zero() {
         assert_eq!(output.status.code(), Some(0), "help exit status");
         assert_eq!(output.stderr, b"");
         let text = String::from_utf8(output.stdout).expect("help is UTF-8");
-        let newline = if cfg!(windows) { "\r\n" } else { "\n" };
+        let newline = oxpinyin_input::TEXT_NEWLINE;
         assert!(text.contains(&format!("Usage:{newline}  ")), "{text}");
         assert!(text.contains(parameter), "{text}");
         assert!(text.contains("--outputfile"), "{text}");

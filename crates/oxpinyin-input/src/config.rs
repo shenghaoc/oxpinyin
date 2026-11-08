@@ -396,7 +396,7 @@ mod tests {
         };
         assert!(save_user_table_info(&name, &fields));
         // The pin's `fopen("w")` uses the host C runtime's text mode.
-        let newline = if cfg!(windows) { "\r\n" } else { "\n" };
+        let newline = crate::TEXT_NEWLINE;
         let expected = format!(
             "binary format version:-1{newline}model data version:14{newline}database format:KyotoCabinet{newline}open counter:3{newline}"
         );
