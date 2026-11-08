@@ -427,29 +427,6 @@ where
         self.record.history()
     }
 
-    /// The current composition's syllable keys, in the engine's selected
-    /// parse order.
-    ///
-    /// This is the fewest-keys segmentation the scan matrix is built from
-    /// ([`SegmentGraph::fewest_keys`], `docs/findings/candidate-construction.md`
-    /// §8.1) over the whole raw buffer — the standing-in for libpinyin's saved
-    /// keys, which `pinyin_remember_user_input` walks to store a phrase with
-    /// its pinyin (`docs/findings/user-store.md` §3.1).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`EngineError::Graph`] when the raw buffer cannot be built
-    /// into a segment graph (an input past
-    /// [`MAX_GRAPH_POSITION`](oxpinyin_core::graph::MAX_GRAPH_POSITION)).
-    pub fn composition_keys(&self) -> Result<Vec<SyllableKey>, EngineError> {
-        Ok(self
-            .selected_path()?
-            .edges
-            .iter()
-            .map(|edge| edge.key())
-            .collect())
-    }
-
     /// Text retained by selections, including raw gaps before anchored choices.
     /// Unselected trailing input remains in [`Session::raw_input`] after
     /// [`Session::composition_offset`].
@@ -720,9 +697,6 @@ where
                 .add(constraint_start, constraint_end, token, text);
         }
         state.record.set_consumed(constraint_end);
-        state
-            .record
-            .set_committed(constraint_end >= state.input.len());
         self.refresh()?;
 
         Ok(self.selection_outcome())

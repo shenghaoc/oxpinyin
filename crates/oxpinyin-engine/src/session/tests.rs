@@ -63,7 +63,6 @@ fn full_parsed_len_reflects_the_exact_chain() {
         .replace_raw_exact("ni'hao", &segments)
         .expect("replace");
     assert_eq!(session.full_parsed_len(), 6);
-    assert_eq!(session.parsed_prefix_len(), 6);
 }
 
 #[test]
@@ -239,7 +238,6 @@ fn reset_discards_the_composition() {
     let mut session = session();
     type_text(&mut session, "nihao");
     session.reset();
-    assert!(!session.is_composing());
     assert!(session.selected_text().is_empty());
     assert_eq!(session.raw_input(), "");
 }
@@ -446,7 +444,7 @@ fn a_deferred_list_is_the_eager_list_at_every_read() {
     assert!(!eager.candidates().is_empty());
     deferred.refresh_candidates().expect("deferred build");
     assert_eq!(deferred.candidates(), eager.candidates());
-    assert_eq!(deferred.parsed_prefix_len(), eager.parsed_prefix_len());
+    assert_eq!(deferred.full_parsed_len(), eager.full_parsed_len());
 
     // A sentence guess leaves its rows to the next reader, which
     // `select` is: it indexes the list the guess would have built.
@@ -560,7 +558,7 @@ fn a_failed_deferred_build_stays_stale_and_is_retried() {
     deferred.refresh_candidates().expect("the retry succeeds");
     assert!(!eager.candidates().is_empty());
     assert_eq!(deferred.candidates(), eager.candidates());
-    assert_eq!(deferred.parsed_prefix_len(), eager.parsed_prefix_len());
+    assert_eq!(deferred.full_parsed_len(), eager.full_parsed_len());
 }
 
 #[test]
@@ -1023,22 +1021,6 @@ fn train_reports_a_failing_user_model() {
         error.to_string(),
         "user model error: user model error: closed"
     );
-}
-
-#[test]
-fn composition_keys_report_the_selected_parse() {
-    let mut plain = session();
-    type_text(&mut plain, "nihao");
-    let keys = plain.composition_keys().expect("the graph builds");
-    let texts: Vec<&str> = keys.iter().map(|key| key.text()).collect();
-    assert_eq!(texts, ["ni", "hao"]);
-
-    // The apostrophe keeps xi'an from collapsing into xian.
-    let mut split = session();
-    type_text(&mut split, "xi'an");
-    let keys = split.composition_keys().expect("the graph builds");
-    let texts: Vec<&str> = keys.iter().map(|key| key.text()).collect();
-    assert_eq!(texts, ["xi", "an"]);
 }
 
 #[test]
@@ -2405,18 +2387,10 @@ fn clearing_a_tail_forcing_reopens_a_committed_composition() {
         .position(|candidate| candidate.kind() == crate::CandidateKind::Fallback)
         .expect("the fallback covers the remainder");
     session.select(index).expect("selection cannot fail");
-    assert!(
-        session.selection_committed(),
-        "the last selection consumed the buffer"
-    );
 
     // Un-force the tail run; the record rebuilds over the survivor
     // and the composition is open again.
     assert!(session.clear_constraint(2));
-    assert!(
-        !session.selection_committed(),
-        "the rebuild re-opened the composition"
-    );
     assert_eq!(session.selected_tokens(), [PhraseToken::new(1)]);
 
     // Further typing keeps the surviving 你 forcing alive.
@@ -2468,7 +2442,6 @@ fn a_shrinking_reparse_reconciles_a_constraint_free_row_selection() {
         session.select(row0).expect("selection cannot fail"),
         Selection::Completed
     );
-    assert!(session.selection_committed());
     assert!(
         !session.constraints.is_active(),
         "the row-0 choose wrote no forcing"
@@ -2521,7 +2494,6 @@ fn a_divergent_replacement_reconciles_the_committed_selection() {
             .expect("the fixture candidate is offered");
         session.select(index).expect("selection cannot fail");
     }
-    assert!(session.selection_committed());
 
     // Same length, divergent inside the covered span: no clamp, so
     // only the continuity check can reach the reconcile. The 你 run
@@ -4519,7 +4491,13 @@ fn wide_abbreviation_session(
         },
     )
     .expect("the fixtures open");
-    session.set_incomplete_pinyin(true).expect("incomplete on");
+    session
+        .set_options(
+            session
+                .options()
+                .with(oxpinyin_core::PINYIN_INCOMPLETE, true),
+        )
+        .expect("incomplete on");
     session.replace_raw("zhhrm").expect("parse");
     session.constraints.resize(6);
     assert_eq!(

@@ -41,7 +41,11 @@ fn reset_clears_the_composition_but_not_the_configuration() {
     // time, under the configuration set before the reset.
     let mut session = session();
     session
-        .set_incomplete_pinyin(false)
+        .set_options(
+            session
+                .options()
+                .with(oxpinyin_core::PINYIN_INCOMPLETE, false),
+        )
         .expect("the option toggles");
     let options = session.options();
 
@@ -58,7 +62,7 @@ fn reset_clears_the_composition_but_not_the_configuration() {
         session.type_pinyin("n").expect("typing"),
         KeyOutcome::Consumed
     );
-    assert_eq!(session.parsed_prefix_len(), 0);
+    assert_eq!(session.full_parsed_len(), 0);
 }
 
 #[test]
@@ -226,7 +230,11 @@ fn an_option_word_with_undefined_bits_is_accepted_and_inert() {
         ))
         .expect("the option word accepts undefined bits");
     session
-        .set_incomplete_pinyin(true)
+        .set_options(
+            session
+                .options()
+                .with(oxpinyin_core::PINYIN_INCOMPLETE, true),
+        )
         .expect("the option toggles");
     session.type_pinyin("n").expect("typing");
     assert!(

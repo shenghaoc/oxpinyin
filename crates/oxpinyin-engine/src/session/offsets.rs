@@ -226,44 +226,6 @@ where
         )
     }
 
-    /// Whether a selection consumed the whole buffer and no rebuild has
-    /// since changed the record — the commit-branch shape the R5 revert
-    /// keeps composing through ([`Session::committed_parse_continues`]).
-    /// A pure query over valid state.
-    #[must_use]
-    pub fn selection_committed(&self) -> bool {
-        self.record.committed()
-    }
-
-    /// Whether an open composition's original byte buffer and its
-    /// replacement share a prefix (extension, backspace or re-send).
-    /// This reports byte continuity only; constraints survive every parse
-    /// regardless of this answer, and are validated at the next guess
-    /// (074a2219, lookup/phonetic_lookup.cpp:120-160).
-    ///
-    /// A pure query over valid state; replacement and refresh are the
-    /// fallible operations.
-    #[must_use]
-    pub fn parse_continues(&self, stored: &[u8], original: &[u8]) -> bool {
-        !self.record.committed()
-            && !stored.is_empty()
-            && (original.starts_with(stored) || stored.starts_with(original))
-    }
-
-    /// The same byte-prefix continuity query after a selection consumed
-    /// the buffer. Constraints survive a committed reparse as well as
-    /// any other parse (register #8); this answer does not govern their
-    /// lifetime.
-    ///
-    /// A pure query over valid state; replacement and refresh are the
-    /// fallible operations.
-    #[must_use]
-    pub fn committed_parse_continues(&self, stored: &[u8], original: &[u8]) -> bool {
-        self.record.committed()
-            && !stored.is_empty()
-            && (original.starts_with(stored) || stored.starts_with(original))
-    }
-
     /// The filtered fewest-keys parse length of the WHOLE raw buffer —
     /// the `pinyin_parse_more_*` return and `pinyin_get_parsed_input_length`
     /// value, which are defined over the passed input, never the

@@ -78,7 +78,6 @@ fn sentence_surface_matches_the_declared_residual() {
     );
 }
 
-/// A per-step score mutation can leave the visible surface unchanged.
 /// Keep exact f32 accumulation checks for #574's recovered corpus inputs:
 /// the `gfloat m_poss` of the pin's `PhoneticLookup` (libpinyin 074a2219
 /// `src/lookup/phonetic_lookup.h`).
