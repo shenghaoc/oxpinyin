@@ -51,3 +51,5 @@ The ledgers are measured on the bdb cell on purpose, independent of the
 reference cell: the bdb ledger is the base that the kc and tkrzw ledgers
 inherit from with `--delta-from`, so `--cell` selects `bdb` in
 `internal-ledger.py` and `gcov_measure.py`.
+
+2026-11-08 UTC: the same-data and user-store surfaces can no longer be re-measured. The C drivers they ran, the seven same-data drivers and `tools/oracle/user_driver.c`, retired in the C-driver retirement, and `gcov_measure.py` and the two generators no longer run those stages; the recorded ledgers keep their figures for the trees they name.

@@ -219,19 +219,9 @@ export PINYIN_EXPORT_DIR=/tmp/oxpinyin-export
 
 ## 4. Run the differentials
 
-The C-ABI drop-in gate, both libraries opened on one unchanged data
-directory:
-
-```sh
-cargo build --locked -p oxpinyin-capi
-just runner same-data-dir-diff \
-    "$PINYIN_ORACLE_PREFIX/lib/libpinyin.so" target/debug/libpinyin_capi.so \
-    "$PINYIN_ORACLE_PREFIX/lib/libpinyin/data"
-```
-
-Exit 0 is identical on every driver; 2 prints each divergence. The
-per-surface drivers (`tools/bisection/run-*-diff.sh`) run one surface
-each; their headers say what they prove.
+The pin-versus-oxpinyin comparison of the C ABI is the contract suite, run with
+`just runner contract-diff verify` (below). The per-call C drivers it replaced retired with their
+frozen Rust tests; see [pin captures](pin-captures.md).
 
 ### Pre-release fixture check
 

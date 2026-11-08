@@ -235,7 +235,7 @@ podman run --rm -v "$HOME/.cache/oxpinyin/tkrzw:/runtime:ro" \
 ```
 
 The same runtime mount and two environment assignments apply to
-`oxpinyin-matrix` and its baseline/same-data runners. The mounted library
+`oxpinyin-matrix` and its baseline runners. The mounted library
 must match the image's architecture and ABI. Without a separately verified
 runtime the image run refuses before measurement; installing uv does not
 establish trust.
@@ -245,7 +245,6 @@ by the inherited value. The remaining overwrites were classified as follows:
 
 | Sites | Classification |
 | --- | --- |
-| `gcov_measure.py`: same-data and user-store environments | Defects; preserve inheritance and check the actual object/executable. |
 | `measure callgrind-differential`: all five launch sites | Defects; use each selected object's directory, then inheritance. |
 | `release-stage.sh` and `capture/run-capture.sh` | Additional defects; linked smoke/capture processes also need inheritance and the check. |
 | `just runner cpp-smoke`: cleared-path `ldd` assertion | Intentional SONAME/RPATH test; the subsequent executable launch is checked with its actual environment. |
@@ -255,7 +254,7 @@ by the inherited value. The remaining overwrites were classified as follows:
 No listed remaining measurement overwrite is exempt as never-tkrzw.
 `teardown.py` checks each copied object before every native, fixture-population
 and profile-reader launch.
-The shell surface runners, same-data/import/round-trip runners, profiling and
+The profiling and
 packaging launches, and Python contract/gcov/training/ordering tools share
 the same implementation. A refusal is a failed run, never MATCH or SKIP.
 

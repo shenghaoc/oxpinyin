@@ -566,8 +566,8 @@ are not proof of bug-for-bug compatibility with upstream.
 
 Changes to parsing/candidate behavior, native data/user files or C API
 behavior need a relevant differential. Use a [provisioned remote Linux host](cloud.md).
-For example, key parsing/surface changes use the existing
-`same-data-dir-diff` gate shown there. The registry records issue associations;
+For example, key parsing/surface changes use the contract suite
+(`just runner contract-diff verify tkrzw <pinyin_so> [<zhuyin_so>]`, see [oracle](oracle.md)) shown there. The registry records issue associations;
 use an associated issue/check, or ask the maintainer if no matching check is
 apparent rather than guessing that ordinary unit tests establish parity. The normal cell
 (one backend on both sides) is tkrzw, the reference cell. Backend-affecting changes use the
@@ -617,7 +617,7 @@ of completing a contribution.
   No local Windows storage installation was executed.
   That run used vcpkg's Berkeley DB 4.8, then the default; since 2026-10-30
   the job runs the [default backend](backends.md) built with MSVC by `.github/actions/tkrzw`.
-- Canonical Debian/Linux amd64 compatibility environment: BDB `same-data-dir-diff` and cache/
+- Canonical Debian/Linux amd64 compatibility environment: BDB `same-data-dir-diff` (retired since) and cache/
   environment-isolation resume passed on rootless Podman. Other runtime
   interoperability was not executed. Apple's volume-reader result retrieval
   is source-verified only, not runtime-tested.

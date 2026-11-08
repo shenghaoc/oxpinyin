@@ -13,18 +13,17 @@ the manifest must match it before any oracle gate executes.
 
 Use Berkeley DB for a change's ordinary before/after verification. Select all
 three cells for the start-of-sweep and pre-release differential run. The
-aggregate changes no CI policy; direct `just runner live-typing-diff` keeps its legacy
-missing-oracle exit behavior for CI.
+aggregate changes no CI policy.
 
 ```sh
 # A change's named runners on the reference cell.
 just runner run-all --cells bdb \
-  --runners addon-candidate-diff,union-diff \
+  --runners train-index-diff,transformed-options-sweep \
   --oracle bdb=/path/to/oracle/bdb --data bdb=/path/to/bdb-data
 
 # Find and run the differentials associated with an issue or register row.
 just runner run-all --list --issue 599
-just runner run-all --cells bdb --issue row:35 \
+just runner run-all --cells bdb --issue row:38 \
   --oracle bdb=/path/to/oracle/bdb --data bdb=/path/to/bdb-data
 
 # One sweep, including both facades' SYSTEM_FILE interchange.
@@ -48,33 +47,9 @@ all three (`docs/runbooks/cloud.md`): it requires `db5.3_dump` and `kchashmgr`
 and builds a sound libtkrzw, with its `tkrzw_dbm_util`, when the host's fails
 `tools/tkrzw/distro-probe.sh`.
 
-The registry's `oracle_variant` defaults to `unpatched`. Only
-`bigram-export-diff` and `residue-a-tail-diff` select `bigram-export-strjoinv`.
-For an unpatched base prefix `ROOT/CELL` (including `--oracle CELL=PREFIX`),
-`tools.dev.cell.Settings` resolves that variant to `ROOT/CELL-bigram-export-strjoinv`.
-It derives the expected patch-qualified pin reference from the committed patch
-manifest recipe. The aggregate uses this selected prefix in both runner argv
-and `PINYIN_ORACLE_PREFIX`; every other runner retains the unpatched base.
-Subject data and Cargo targets are independent of oracle variant selection.
-
-Provision separate prefixes; never patch the original installations. From the
-repository root, for CELL=bdb,kc,tkrzw (replace ROOT with the oracle parent):
-
-```sh
-tools/oracle/build-oracle.sh --dbm CELL --enable-libzhuyin --jobs 4 \
-  --apply-patches tools/bisection/patches/bigram-export-strjoinv \
-  --prefix ROOT/CELL-bigram-export-strjoinv \
-  --work-dir ROOT/work-CELL-bigram-export-strjoinv
-```
-
-The unpatched residue-A crash is register row 1, class (b): the bigram iterator
-passes an unterminated pointer array to `g_strjoinv`, causing a heap over-read.
-The lane GDB frame is `pinyin_bigram_iterator_has_next_phrase`, pinned
-`pinyin.cpp:862`, during `X2-train1`; a passing unpatched run is chance under UB.
-The direct residue-A runner requires the patch marker in
-`oracle-patches.sha256` and fails if it, the prefix, or required oracle data is
-missing. Both patched registry entries require the exact patch-qualified pin
-identity. An absent patched prefix is FAIL, never an allowable skip.
+The registry's `oracle_variant` defaults to `unpatched`, and no registered runner selects another
+variant. `tools/oracle/build-oracle.sh --apply-patches DIR` still builds a separately prefixed,
+patch-qualified oracle; never patch the original installations.
 
 `tools.dev.cell.Settings` owns backend selection and target resolution. Its child environment sets
 `CARGO_PROFILE_DEV_OPT_LEVEL=1`; no Cargo manifest or shipped source is changed.
@@ -123,15 +98,9 @@ and system-import-profile. They are omitted from the default gate set, and
 rejected if selected for execution. For example,
 `--list --runners callgrind-differential` reports its metadata without running it.
 
-Known failures stay observable. Bigram-export requires an instrumented oracle
-and reports FAIL when its patch marker is absent. Residue-A likewise requires
-the patched oracle and compares its live output without driver or expectation
-adjustments. Bisect retains full C API smoke/Valgrind
-coverage and checks the pin’s specific `nihao` right-tail assertion against the
-C API’s safe false return (compatibility register row 14); this is not a full
-oracle byte-parity claim. Dynamic-off training selects the cell’s complete
-fixture directory. The original sweep and focused follow-up results are linked
-from the tooling-lane findings.
+The C drivers that compared the pin and oxpinyin call by call retired with their frozen
+Rust tests (see [pin captures](pin-captures.md)). `cpp-smoke` is the kept smoke gate for the C++ header. The `bisect` harness keeps only its `--perf`, `--perf-sentence`,
+`--perf-typing-sequence` and `--teardown` modes, which the measurement recipes run.
 
 The registry also includes the ABI export/allocation gates, static package
 version check, installed metadata comparison,
