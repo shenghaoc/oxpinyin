@@ -16,7 +16,6 @@ use pinyin_capi::{
     pinyin_set_full_pinyin_scheme, pinyin_set_zhuyin_scheme,
 };
 
-#[cfg(unix)]
 use crate::common::assert_aborts;
 
 use crate::common::{TempUserDir, cstr, open};

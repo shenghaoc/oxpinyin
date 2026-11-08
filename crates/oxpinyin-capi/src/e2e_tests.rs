@@ -21,6 +21,7 @@ use oxpinyin_facade::TextSpan;
 use std::ffi::c_uint;
 use std::ptr;
 
+// Windows only: the C API's UTF-8 paths reach the wide-character (UTF-16) file API.
 #[cfg(windows)]
 #[test]
 fn utf8_c_api_paths_open_cjk_directories_and_files() {
@@ -53,7 +54,6 @@ fn utf8_c_api_paths_open_cjk_directories_and_files() {
     assert!(user.join("user.conf").is_file());
 }
 
-#[cfg(unix)]
 use oxpinyin_user::USER_DICTIONARY;
 use oxpinyin_user::{FIRST_USER_TOKEN, SENTENCE_START, UserStore};
 
@@ -816,6 +816,7 @@ fn a_new_sentence_lookup_trains_a_forcing() {
 /// The pin opens the directories it is given by their bytes (`g_strdup`,
 /// `pinyin.cpp:331-336`), so a name that is not UTF-8 is a directory like any
 /// other, for the system tables and for the user dir alike (#587).
+// Unix only: byte-string directory names (macOS refuses them, which the test asserts).
 #[cfg(unix)]
 #[test]
 fn directories_with_non_utf8_names_open() {
@@ -1698,6 +1699,7 @@ fn export_iterator_reads_imports_that_land_while_it_is_open() {
 /// `chewing_key.cpp:48`) is read, not skipped, and the pin's assert aborts
 /// the process. No `contract-diff.py` fixture can plant the reading in the
 /// pin's sub-index, so this death test holds the site.
+// Unix only: the out-params live in a page shared through `mmap(MAP_SHARED)` (`assert_aborts_sharing`).
 #[cfg(unix)]
 #[test]
 fn export_iterator_aborts_on_a_reading_it_cannot_spell() {
@@ -1724,6 +1726,7 @@ fn export_iterator_aborts_on_a_reading_it_cannot_spell() {
 /// Exports the user dictionary after planting a reading one tone past
 /// `MAX_KEY_TONE` behind a spellable one; the aborting read writes its
 /// out-params into `page` (phrase, pinyin, then count).
+// Unix only: the out-params live in a page shared through `mmap(MAP_SHARED)` (`assert_aborts_sharing`).
 #[cfg(unix)]
 fn export_an_unspellable_reading(page: *mut u8) {
     let user_dir = TempUserDir::new("export-unspellable");
@@ -2971,7 +2974,6 @@ fn init_aborts_on_a_log_header_token() {
 /// Register row 91 before row 76: library 1's merge asserts before the loop
 /// reaches library 4 (`pinyin.cpp:276` before `:256`), so a later chunk the
 /// pin never opens cannot turn the abort into a NULL answer.
-#[cfg(unix)]
 #[test]
 fn init_aborts_on_a_log_before_an_unmappable_library() {
     crate::test_support::assert_aborts(
@@ -3138,7 +3140,6 @@ fn bigram_export_aborts_where_the_walk_loads_a_short_predecessor() {
 /// (`pinyin.cpp:3702`), so a phrase table whose row for the phrase holds two
 /// library-7 tokens trips `assert(PHRASE_INDEX_LIBRARY_INDEX(token) != index)`
 /// (`:554`) there as it does on the import path.
-#[cfg(unix)]
 #[test]
 fn remember_user_input_aborts_on_two_same_library_tokens() {
     crate::test_support::assert_aborts(
@@ -3162,7 +3163,6 @@ fn remember_user_input_aborts_on_two_same_library_tokens() {
 
 /// As above, for `:568`: the lone library-7 token names a stored phrase of
 /// another length (`你好` -> the three-character `你好嗷`).
-#[cfg(unix)]
 #[test]
 fn remember_user_input_aborts_on_an_item_length_mismatch() {
     crate::test_support::assert_aborts(
@@ -3176,7 +3176,6 @@ fn remember_user_input_aborts_on_an_item_length_mismatch() {
 
 /// As above, for `:571`: the lone library-7 token names another phrase of the
 /// same length (`你好` -> `你們`).
-#[cfg(unix)]
 #[test]
 fn remember_user_input_aborts_on_an_item_text_mismatch() {
     crate::test_support::assert_aborts(
@@ -3192,7 +3191,6 @@ fn remember_user_input_aborts_on_an_item_text_mismatch() {
 /// for an empty matrix, and then asserts in `get_column_size(0)`
 /// (`phonetic_key_matrix.h:102`; register row 66). A fresh instance holds
 /// one.
-#[cfg(unix)]
 #[test]
 fn remember_user_input_aborts_on_a_fresh_instance() {
     crate::test_support::assert_aborts(
@@ -3207,7 +3205,6 @@ fn remember_user_input_aborts_on_a_fresh_instance() {
 
 /// As above, for a parse that consumed bytes but placed no key (three
 /// apostrophes): `fill_matrix` leaves the matrix empty.
-#[cfg(unix)]
 #[test]
 fn remember_user_input_aborts_on_a_keyless_parse() {
     crate::test_support::assert_aborts(
@@ -3241,7 +3238,6 @@ fn remember_user_input_refuses_an_unknown_character_before_the_empty_matrix() {
 /// `_add_phrase`. With the crafted 你好 row and only `ni` parsed, the one
 /// path has one key for a two-character phrase and is refused at
 /// `pinyin.cpp:3600-3601`, so the call answers `false`.
-#[cfg(unix)]
 #[test]
 fn remember_user_input_refuses_a_short_path_before_the_preflight() {
     let user_dir = TempUserDir::new("remember-short-path");
@@ -3261,7 +3257,6 @@ fn remember_user_input_refuses_a_short_path_before_the_preflight() {
 /// A key the next character's item does not pronounce ends its branch
 /// (`pinyin.cpp:3640-3645`): 好 does not pronounce `ni`, so 好你 reaches no
 /// path under `nihao`, whatever its crafted row holds.
-#[cfg(unix)]
 #[test]
 fn remember_user_input_refuses_a_path_the_item_does_not_pronounce() {
     let user_dir = TempUserDir::new("remember-unpronounced");
@@ -3279,7 +3274,6 @@ fn remember_user_input_refuses_a_path_the_item_does_not_pronounce() {
 }
 
 /// Imports `phrase` into library 7 once per reading and returns its token.
-#[cfg(unix)]
 fn import_readings(
     context: *mut crate::types::PinyinContext,
     instance: *mut PinyinInstance,
@@ -3302,7 +3296,6 @@ fn import_readings(
 }
 
 /// The stored readings of `token` as `(packed first key, frequency)`.
-#[cfg(unix)]
 fn stored_readings(instance: *mut PinyinInstance, token: u32) -> Vec<(u16, u32)> {
     with_store(instance, |store| store.item_pronunciations(token))
         .expect("readable store")
@@ -3315,7 +3308,6 @@ fn stored_readings(instance: *mut PinyinInstance, token: u32) -> Vec<(u16, u32)>
 /// The remember walk reads the matrix the parse built. Double pinyin keeps
 /// the parsed tone (`ni3` is the reading `ni3`), and a different tone finds no
 /// path.
-#[cfg(unix)]
 #[test]
 fn remember_user_input_keeps_the_double_pinyin_tone() {
     use crate::config::pinyin_set_double_pinyin_scheme;
@@ -3351,7 +3343,6 @@ fn remember_user_input_keeps_the_double_pinyin_tone() {
 
 /// 弄 with its `nong` and `long` readings, parsed as `ns` in Microsoft
 /// double pinyin under `L_N`. Returns the readings before any remember.
-#[cfg(unix)]
 fn parsed_nong_under_l_n(
     user_dir: &TempUserDir,
 ) -> (
@@ -3377,7 +3368,6 @@ fn parsed_nong_under_l_n(
 }
 
 /// Both readings' frequencies rose by the count of 3.
-#[cfg(unix)]
 fn assert_both_readings_rose(instance: *mut PinyinInstance, token: u32, before: &[(u16, u32)]) {
     let after = stored_readings(instance, token);
     assert_eq!(after.len(), 2);
@@ -3388,7 +3378,6 @@ fn assert_both_readings_rose(instance: *mut PinyinInstance, token: u32, before: 
 
 /// Fuzzy alternatives ride the parse-time matrix in every mode: `ns` is
 /// `nong` in Microsoft double pinyin, and `L_N` adds `long` beside it.
-#[cfg(unix)]
 #[test]
 fn remember_user_input_adds_fuzzy_alternatives_of_a_double_pinyin_parse() {
     let user_dir = TempUserDir::new("remember-double-fuzzy");
@@ -3399,7 +3388,6 @@ fn remember_user_input_adds_fuzzy_alternatives_of_a_double_pinyin_parse() {
 
 /// The matrix comes from the parse, not from the options now: turning `L_N`
 /// off after the parse leaves `long` in it.
-#[cfg(unix)]
 #[test]
 fn remember_user_input_keeps_the_parse_time_fuzzy_alternatives() {
     let user_dir = TempUserDir::new("remember-parse-time-fuzzy");
@@ -3411,7 +3399,6 @@ fn remember_user_input_keeps_the_parse_time_fuzzy_alternatives() {
 
 /// The same for the chewing seam: the standard keyboard spells `nong` as
 /// `sj/`, and `L_N` adds `long`.
-#[cfg(unix)]
 #[test]
 fn remember_user_input_adds_fuzzy_alternatives_of_a_chewing_parse() {
     use crate::config::pinyin_set_zhuyin_scheme;
@@ -3437,7 +3424,6 @@ fn remember_user_input_adds_fuzzy_alternatives_of_a_chewing_parse() {
 
 /// Persists `other` in library 7, points 你好's phrase-table row at its
 /// token, reopens, and remembers 你好 under the composition `nihao`.
-#[cfg(unix)]
 fn remember_against_a_redirected_row(user_dir: &TempUserDir, other: &str, reading: &str) {
     let path = user_dir.path.to_str().expect("UTF-8 path").to_owned();
     let (context, instance) = open(&path);
@@ -3467,7 +3453,6 @@ fn remember_against_a_redirected_row(user_dir: &TempUserDir, other: &str, readin
 /// Whether a directory reads as a chunk on this host's temporary file
 /// system (register row 96); where it does not, a directory library is row
 /// 76's unmappable one (class (b)).
-#[cfg(unix)]
 fn directory_reads_as_a_chunk_here() -> bool {
     let probe = tempfile::tempdir().expect("probe dir");
     std::fs::write(probe.path().join("e".repeat(25)), b"x").expect("fill the probe");
@@ -3475,7 +3460,6 @@ fn directory_reads_as_a_chunk_here() -> bool {
 }
 
 /// A context over a private system directory, with its user dir.
-#[cfg(unix)]
 fn init_private(
     scratch: &std::path::Path,
 ) -> (std::path::PathBuf, *mut crate::types::PinyinContext) {
@@ -3494,6 +3478,10 @@ fn init_private(
 /// (`pinyin.cpp:255`) and `MemoryChunk::mmap` asserts on the directory
 /// (`memory_chunk.h:493`); where a directory does not read as a chunk the
 /// init answers NULL (row 76).
+// Unix only: a directory opens as a file, so the pin's `MemoryChunk::mmap` judges it by its
+// size (`directory_reads_as_a_chunk`). Windows refuses the open, and oxpinyin skips the row
+// without a word there (`oxpinyin-data`, `phrase_libraries.rs`), which no pin observation
+// covers.
 #[cfg(unix)]
 #[test]
 fn init_aborts_on_a_directory_library() {
@@ -3519,7 +3507,6 @@ fn init_aborts_on_a_directory_library() {
 /// directory whose library is a directory (register row 96): the save and
 /// the mask-out map `merged.bin` (`pinyin.cpp:955`, `:1264`), the reload of
 /// the unloaded GBK library maps `gbk_char.bin` (`:256`).
-#[cfg(unix)]
 fn remap_a_directory_library(site: &str) -> bool {
     let scratch = tempfile::tempdir().expect("scratch");
     let (system, context) = init_private(scratch.path());
@@ -3551,6 +3538,10 @@ fn remap_a_directory_library(site: &str) -> bool {
 
 /// Register row 96 at save; row 76's completed save where a directory does
 /// not read as a chunk.
+// Unix only: a directory opens as a file, so the pin's `MemoryChunk::mmap` judges it by its
+// size (`directory_reads_as_a_chunk`). Windows refuses the open, and oxpinyin skips the row
+// without a word there (`oxpinyin-data`, `phrase_libraries.rs`), which no pin observation
+// covers.
 #[cfg(unix)]
 #[test]
 fn save_aborts_on_a_directory_library() {
@@ -3564,7 +3555,6 @@ fn save_aborts_on_a_directory_library() {
 }
 
 /// Register row 96 at mask-out, after the user tables are masked.
-#[cfg(unix)]
 #[test]
 fn mask_out_aborts_on_a_directory_library() {
     if directory_reads_as_a_chunk_here() {
@@ -3580,7 +3570,6 @@ fn mask_out_aborts_on_a_directory_library() {
 }
 
 /// Register row 96 at the reload of an unloaded library.
-#[cfg(unix)]
 #[test]
 fn reload_aborts_on_a_directory_library() {
     if directory_reads_as_a_chunk_here() {
@@ -3597,7 +3586,6 @@ fn reload_aborts_on_a_directory_library() {
 
 /// Register row 96 at the addon load, which maps `art.bin` through the same
 /// `MemoryChunk::mmap` (`pinyin.cpp:290`); row 76's `false` elsewhere.
-#[cfg(unix)]
 #[test]
 fn addon_load_aborts_on_a_directory_library() {
     if directory_reads_as_a_chunk_here() {
@@ -3685,6 +3673,7 @@ fn whole_gram(successor: u32) -> Vec<u8> {
 /// `has_next` that loads the next predecessor and asserts on its short
 /// total (`:910`, `:889`). The out-params live in a page shared with the
 /// child, so the writes are read back after the abort.
+// Unix only: the out-params live in a page shared through `mmap(MAP_SHARED)` (`assert_aborts_sharing`).
 #[cfg(unix)]
 #[test]
 fn bigram_get_next_writes_its_row_before_the_short_predecessor_aborts() {
@@ -3772,7 +3761,6 @@ fn bigram_export_aborts_at_a_short_predecessor_before_a_partial_one() {
 
 /// Row 98 (class (b)) on the export walk: the walk ends with one warning
 /// where it loads the partial value, after the rows before it.
-#[cfg(unix)]
 #[test]
 fn bigram_export_ends_at_a_partial_predecessor() {
     let (first, second, successor) = export_order_fixture();
@@ -3898,9 +3886,13 @@ fn borrowed_prediction_prefix_clears_candidates_and_owned_text_recovers() {
 /// makes `pinyin_init` write: `UserTableInfo::load` prints it when the
 /// marker is missing, with no trailing newline (`table_info.cpp:332` at
 /// 074a2219).
-#[cfg(unix)]
 fn fresh_user_conf_line(user_dir: &std::path::Path) -> String {
-    format!("open {}/user.conf failed.", user_dir.display())
+    // `g_build_filename` joins with the host's separator.
+    format!(
+        "open {}{}user.conf failed.",
+        user_dir.display(),
+        std::path::MAIN_SEPARATOR
+    )
 }
 
 /// Audit D-06's row-42 witness (`instance_outlives_context`): allocate an
@@ -3910,7 +3902,6 @@ fn fresh_user_conf_line(user_dir: &std::path::Path) -> String {
 /// answer is defined; the ruled safe answer is `true`, the value the pin
 /// returns unconditionally (`pinyin.cpp:1381-1383`). A populated matrix
 /// reaches the lookup; an empty one returns before consulting the context.
-#[cfg(unix)]
 #[test]
 fn instance_outlives_context_guesses_true() {
     let run = crate::test_support::run_in_child(
@@ -3939,7 +3930,6 @@ fn instance_outlives_context_guesses_true() {
 /// deletes the context twice (`pinyin.cpp:1194-1222`) and dies of SIGSEGV;
 /// the ruling is a silent return. The init's own `user.conf` line is the
 /// only output.
-#[cfg(unix)]
 #[test]
 fn fini_twice_returns_silently() {
     let run = crate::test_support::run_in_child("e2e_tests::fini_twice_returns_silently", |user| {
@@ -3958,12 +3948,10 @@ fn fini_twice_returns_silently() {
 
 /// GLib log records the child's default handler collected:
 /// `(domain, level, message)`.
-#[cfg(unix)]
 static GLIB_LOG: std::sync::Mutex<Vec<(String, u32, String)>> = std::sync::Mutex::new(Vec::new());
 
 /// Collects every GLib log record instead of printing it, so the child's
 /// stderr holds only the library's raw `fprintf` lines.
-#[cfg(unix)]
 extern "C" fn collect_glib_log(
     domain: *const std::ffi::c_char,
     level: glib_sys::GLogLevelFlags,
@@ -4002,7 +3990,6 @@ extern "C" fn collect_glib_log(
 /// `gbk_char.dbin`, so the second rename finds no tmp file and prints
 /// `rename ... failed.` (`pinyin.cpp:1059-1062`), the one raw stderr line
 /// beside the init's missing-marker line (`table_info.cpp:332`).
-#[cfg(unix)]
 #[test]
 fn table_conf_919_short_row_merged() {
     let run =
@@ -4094,9 +4081,12 @@ fn table_conf_919_short_row_merged() {
                 assert_eq!(sizes[name], size, "{name}");
             }
             // The open counter the init raised, the fini lowered.
+            // user.conf is written in text mode: CRLF on Windows.
+            let newline = if cfg!(windows) { "\r\n" } else { "\n" };
             assert!(
-                marker.starts_with("binary format version:7\nmodel data version:14\n")
-                    && marker.ends_with("\nopen counter:0\n"),
+                marker.starts_with(&format!(
+                    "binary format version:7{newline}model data version:14{newline}"
+                )) && marker.ends_with(&format!("{newline}open counter:0{newline}")),
                 "{marker}"
             );
             // Two lookups, two warnings: the merged row's library and table
@@ -4111,18 +4101,21 @@ fn table_conf_919_short_row_merged() {
             assert_eq!(records, [warning.clone(), warning]);
         });
     let user = run.user_dir.display();
+    // `g_build_filename` joins with the host's separator, and the UCRT's
+    // text-mode stderr writes `\n` as `\r\n`.
+    let sep = std::path::MAIN_SEPARATOR;
+    let newline = if cfg!(windows) { "\r\n" } else { "\n" };
     assert_eq!(
         String::from_utf8_lossy(&run.stderr),
         format!(
-            "open {user}/user.conf failed.\
-             rename {user}/gbk_char.dbin.tmp to {user}/gbk_char.dbin failed.\n"
+            "open {user}{sep}user.conf failed.\
+             rename {user}{sep}gbk_char.dbin.tmp to {user}{sep}gbk_char.dbin failed.{newline}"
         )
     );
 }
 
 /// One step of the bigram export walk: `has_next` answered false, or a
 /// row `get_next` handed out (`get_next`'s answer, phrase, pinyin, count).
-#[cfg(unix)]
 #[derive(Debug, PartialEq)]
 enum ExportStep {
     NoNext,
@@ -4138,7 +4131,6 @@ enum ExportStep {
 /// `(token, count)` items verbatim in the stored order the layout names,
 /// and a second session walks the export. Every count passes the export
 /// threshold (68); the walk doubles each count (register row 1).
-#[cfg(unix)]
 fn export_walk(tag: &str, items: impl FnOnce(u32, u32, u32) -> Vec<(u32, u32)>) -> Vec<ExportStep> {
     let user_dir = TempUserDir::new(tag);
     let path = user_dir.path.to_str().expect("UTF-8 path").to_owned();
@@ -4234,7 +4226,6 @@ fn export_walk(tag: &str, items: impl FnOnce(u32, u32, u32) -> Vec<(u32, u32)>) 
 /// `has_next` answers false (its do/while loads the last predecessor's gram
 /// on a false answer, register row 36); the last row's `get_next` answer is
 /// the walk's, `false` at the end of the gram.
-#[cfg(unix)]
 #[test]
 fn user_gram_unsorted_export_follows_the_stored_order() {
     let steps = export_walk("export-unsorted", |hao, hao_alt, dalong| {
@@ -4262,7 +4253,6 @@ fn user_gram_unsorted_export_follows_the_stored_order() {
 /// sorted: `[好 70, 好 80, 龘龘 90, 龘龘 100]`. `retrieve_all` appends
 /// every stored item, duplicates included (`ngram.cpp:133-151` at
 /// 074a2219), so the export lists each twice, in stored order.
-#[cfg(unix)]
 #[test]
 fn user_gram_duplicate_export_lists_every_stored_item() {
     let steps = export_walk("export-duplicate", |hao, _, dalong| {
@@ -4378,7 +4368,6 @@ fn null_instance_candidate_nbest_index_answers() {
 
 /// `pinyin_is_user_candidate` never reads `instance` (`pinyin.cpp:3712-3724`):
 /// a normal candidate in `USER_DICTIONARY` answers `true`.
-#[cfg(unix)]
 #[test]
 fn null_instance_is_user_candidate_answers() {
     let user = TempUserDir::new("null-instance-is-user");
@@ -4596,7 +4585,6 @@ fn null_context_unload_addon_phrase_library_aborts_on_index_16() {
 /// `nong` holds two keys over one span, `nong` and `long`, and a character
 /// whose item pronounces both is added along both paths: each reading's
 /// frequency rises by the count.
-#[cfg(unix)]
 #[test]
 fn remember_user_input_adds_along_every_complete_path() {
     let user_dir = TempUserDir::new("remember-two-paths");

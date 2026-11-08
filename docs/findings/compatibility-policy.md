@@ -266,8 +266,12 @@ formats stay unchanged.
 operating system itself does not allow the pin's Linux behaviour, oxpinyin
 does not imitate it. Example: on Windows, a file that is mapped or open
 without delete sharing cannot be deleted or replaced. Tests that depend on
-such behaviour are ignored on that platform with a reason that points to
-this entry.
+such behaviour are compiled only for the operating systems that provide it
+(`#[cfg]`), with a comment that names the facility. They are not ignored or
+skipped, and no failure is injected in their place.
+
+The maintainer amended this entry on 2026-11-08 UTC: the earlier text said such
+tests were ignored on that platform.
 
 The call rule does not reproduce an undefined read or an abort in the
 pin's surrounding code. Existing class (b) records, including

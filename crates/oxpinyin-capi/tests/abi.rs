@@ -5,11 +5,6 @@
 //! committed `fixtures/w3` mini tables. Suites that assert on
 //! `CapiInstance` internals are deliberately *not* here: they are unit
 //! tests of the ABI layer and live in `src/` (see `src/lib.rs`).
-// Placed below the `//!` block, never above it: a crate-level `#![cfg]`
-// that evaluates false discards the crate attributes that FOLLOW it, so a
-// gate on line 1 takes these docs with it and `missing_docs` then fires on
-// every non-Linux host. Same placement as the other cfg-gated test crates.
-#![cfg(target_os = "linux")]
 
 #[path = "abi/common.rs"]
 mod common;

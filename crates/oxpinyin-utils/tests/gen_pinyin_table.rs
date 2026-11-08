@@ -171,6 +171,7 @@ fn an_unconvertible_phrase_is_refused_at_the_pins_row_after_the_output_opens() {
 #[cfg(unix)]
 mod common;
 
+// Unix only: the frozen pin runs are Linux and macOS observations (signal statuses, Unix paths and line endings).
 #[cfg(unix)]
 mod frozen {
     mod gen_pinyin_table {

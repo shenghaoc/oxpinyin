@@ -2296,6 +2296,7 @@ mod tests {
         assert!(!missing.is_open());
     }
 
+    // Windows only: the wide-character (UTF-16) file API opens the UTF-8 C names.
     #[cfg(windows)]
     #[test]
     fn windows_tools_open_cjk_paths_and_utf8_names() {

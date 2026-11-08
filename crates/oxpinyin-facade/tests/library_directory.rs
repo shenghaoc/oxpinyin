@@ -9,11 +9,11 @@
 //! chunk (`directory_reads_as_a_chunk`), the same directory is row 76's
 //! unmappable library (class (b)), and each test asserts that outcome
 //! instead.
-#![cfg(unix)]
-
 use std::path::{Path, PathBuf};
 
-use oxpinyin_facade::{ContextCore, MaskOutOutcome, PINYIN_DEFAULT_OPTION_WORD, SaveOutcome};
+#[cfg(unix)]
+use oxpinyin_facade::SaveOutcome;
+use oxpinyin_facade::{ContextCore, MaskOutOutcome, PINYIN_DEFAULT_OPTION_WORD};
 use oxpinyin_user::{SystemVersions, UserConfLaw, persistence};
 
 /// The committed fixture set the compiled backend opens.
@@ -40,8 +40,21 @@ fn private_system(name: &str) -> PathBuf {
     let dir = scratch(&format!("{name}-system"));
     for entry in std::fs::read_dir(&fixture).expect("fixture dir") {
         let entry = entry.expect("fixture entry");
-        std::os::unix::fs::symlink(entry.path(), dir.join(entry.file_name()))
-            .expect("link a fixture file");
+        let link = dir.join(entry.file_name());
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(entry.path(), &link).expect("link a fixture file");
+        #[cfg(windows)]
+        if let Err(error) = std::os::windows::fs::symlink_file(entry.path(), &link) {
+            // ERROR_PRIVILEGE_NOT_HELD: a symbolic link needs the privilege
+            // (Developer Mode or an elevated process); nothing is copied.
+            assert_ne!(
+                error.raw_os_error(),
+                Some(1314),
+                "link a fixture file {}: this process lacks the symbolic-link privilege",
+                link.display()
+            );
+            panic!("link a fixture file {}: {error}", link.display());
+        }
     }
     dir
 }
@@ -61,6 +74,7 @@ fn reaches_the_assert(system: &Path) -> bool {
 }
 
 /// The user directory's file names, sorted.
+#[cfg(unix)]
 fn listing(dir: &Path) -> Vec<String> {
     let mut names: Vec<String> = std::fs::read_dir(dir)
         .expect("user dir")
@@ -211,6 +225,11 @@ fn init_reports_only_what_the_library_loop_reached() {
 /// nothing (`pinyin.cpp:940-1128`); libzhuyin renames each library's file as
 /// it writes it (`zhuyin.cpp:554-617`), so libraries 1 to 3 are in place.
 /// Nothing else is written, and the store's clean-up does not run.
+// Unix only: a directory opens as a file, so the pin's `MemoryChunk::mmap` judges it by its
+// size (`directory_reads_as_a_chunk`). Windows refuses the open, and oxpinyin skips the row
+// without a word there (`oxpinyin-data`, `phrase_libraries.rs`), which no pin observation
+// covers.
+#[cfg(unix)]
 #[test]
 fn save_stops_at_the_directory_with_the_pins_files() {
     for (law, expected) in [

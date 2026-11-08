@@ -13,6 +13,7 @@ use std::path::PathBuf;
 // The chunk header, section offsets and checksum come from the crate's
 // own shared format module — the fixtures are built with the layout
 // under test, not a second copy of it.
+#[cfg(unix)]
 use oxpinyin_data::AddonDictionary;
 #[cfg(unix)]
 use oxpinyin_data::PhraseLibraries;
@@ -400,6 +401,8 @@ fn fix_checksum(bytes: &mut [u8]) {
 
 // ── the files the pin's `MemoryChunk::mmap` refuses (#545) ──────────
 
+// Only the Unix-only tests above and below use a scratch directory.
+#[cfg(unix)]
 fn temp_dir(name: &str) -> PathBuf {
     let path = write_temp(name, b"");
     std::fs::remove_file(&path).expect("remove the placeholder");
@@ -412,6 +415,7 @@ fn temp_dir(name: &str) -> PathBuf {
 /// 8-byte header) and the `read` failure the pin asserts on. The size is the
 /// file system's, so the test reads it the way the pin does and expects the
 /// matching outcome, whatever the temporary directory's file system is.
+// Unix only: a directory opens as a file, so `lseek(SEEK_END)` reports its size.
 #[cfg(unix)]
 #[test]
 fn a_directory_chunk_follows_the_size_the_file_system_reports() {
@@ -536,11 +540,11 @@ fn libraries_record_absent_files_and_recheck_the_loaded_ones() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+// Unix only: the loaded chunk's file is removed while it is mapped; Windows
+// keeps a mapped file in use (compatibility-policy.md, "fundamental OS
+// differences").
+#[cfg(unix)]
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "see docs/findings/compatibility-policy.md#fundamental-os-differences"
-)]
 fn addon_load_keeps_its_answer_and_reports_the_refusal() {
     let dir = temp_dir("addon");
     let mut addons = AddonDictionary::empty();

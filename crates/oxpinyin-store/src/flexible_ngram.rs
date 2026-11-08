@@ -940,11 +940,9 @@ mod tests {
         }
     }
 
-    // Only the Unix child-process test below uses this spec.
-    #[cfg(unix)]
+    // Only the child-process test below uses this spec.
     struct Spec;
 
-    #[cfg(unix)]
     impl super::FlexibleGramSpec for Spec {
         const MAGIC_NUMBER: [u8; 4] = *b"TEST";
         type MagicHeader = Magic;
@@ -952,10 +950,10 @@ mod tests {
         type ArrayItem = Item;
     }
 
-    #[cfg(unix)]
     #[test]
     fn magic_header_reads_follow_backend_sizes() {
         use crate::{AttachMode, WriteStore, WriteTxn};
+        #[cfg(unix)]
         use std::os::unix::process::ExitStatusExt;
         use std::process::Command;
 
@@ -1015,7 +1013,15 @@ mod tests {
                 && (matches!(mode, "short" | "overlong" | "wrong")
                     || (cfg!(feature = "kyotocabinet") && mode == "missing"));
             if aborts {
+                #[cfg(unix)]
                 assert_eq!(output.status.signal(), Some(6), "{mode}: {output:?}");
+                // Rust's abort fast-fails on Windows (`crate::death_test`).
+                #[cfg(windows)]
+                assert_eq!(
+                    output.status.code(),
+                    Some(i32::from_ne_bytes(0xC000_0409_u32.to_ne_bytes())),
+                    "{mode}: {output:?}"
+                );
             } else {
                 assert!(output.status.success(), "{mode}: {output:?}");
             }

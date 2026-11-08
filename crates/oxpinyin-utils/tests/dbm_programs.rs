@@ -252,6 +252,7 @@ mod existing {
 #[cfg(unix)]
 mod common;
 
+// Unix only: the frozen pin runs are Linux and macOS observations (signal statuses, Unix paths and line endings).
 #[cfg(unix)]
 mod frozen {
     mod test_flexible_ngram {

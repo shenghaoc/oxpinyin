@@ -268,11 +268,9 @@ pub fn assert_aborts(name: &str, body: impl FnOnce()) -> Vec<u8> {
 
 /// The environment variable that names the user directory a
 /// [`run_in_child`] child works in.
-#[cfg(unix)]
 const CHILD_DIR: &str = "OXPINYIN_ZHUYIN_CAPI_CHILD_DIR";
 
 /// What a [`run_in_child`] child left behind.
-#[cfg(unix)]
 pub struct ChildRun {
     /// The child's fd 2, byte for byte: the C-style `fprintf(stderr, ...)`
     /// lines and GLib's default log handler write there directly.
@@ -289,7 +287,6 @@ pub struct ChildRun {
 /// the parent can name it in the expected text. `name` is the calling
 /// test's full path as libtest prints it (`module::test`). A child that
 /// panics or dies fails the parent's assertion on its exit status.
-#[cfg(unix)]
 pub fn run_in_child(name: &str, body: impl FnOnce(&Path)) -> ChildRun {
     if std::env::var_os(DEATH_TEST).is_some_and(|value| value == name) {
         let dir = std::env::var_os(CHILD_DIR).expect("the child's user directory");
@@ -365,16 +362,33 @@ pub fn plant_bigram(user_dir: &std::path::Path, rows: Vec<(Vec<u8>, Vec<u8>)>) {
 
 /// A private system directory under `parent`: every fixture file linked in,
 /// so a test can replace one library (register row 96).
-#[cfg(unix)]
 pub fn private_system(parent: &std::path::Path) -> PathBuf {
     let dir = parent.join("system");
     std::fs::create_dir_all(&dir).expect("private system dir");
     for entry in std::fs::read_dir(system_dir()).expect("fixture dir") {
         let entry = entry.expect("fixture entry");
-        std::os::unix::fs::symlink(entry.path(), dir.join(entry.file_name()))
-            .expect("link a fixture file");
+        link_file(&entry.path(), &dir.join(entry.file_name()));
     }
     dir
+}
+
+/// A symbolic link at `link` to `target`, on every OS; on Windows the
+/// process needs the symbolic-link privilege (Developer Mode or an elevated
+/// process), and the fixture is never copied in its place.
+pub fn link_file(target: &std::path::Path, link: &std::path::Path) {
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(target, link).expect("link a fixture file");
+    #[cfg(windows)]
+    if let Err(error) = std::os::windows::fs::symlink_file(target, link) {
+        // ERROR_PRIVILEGE_NOT_HELD
+        assert_ne!(
+            error.raw_os_error(),
+            Some(1314),
+            "link a fixture file {}: this process lacks the symbolic-link privilege",
+            link.display()
+        );
+        panic!("link a fixture file {}: {error}", link.display());
+    }
 }
 
 /// Replaces the system library `file` with a non-empty directory whose entry
@@ -383,7 +397,6 @@ pub fn private_system(parent: &std::path::Path) -> PathBuf {
 /// pin's `MemoryChunk::mmap` asserts on its header read
 /// (`memory_chunk.h:493`, register row 96); elsewhere it is row 76's
 /// unmappable library. Answers which.
-#[cfg(unix)]
 pub fn directory_library(system: &std::path::Path, file: &str) -> bool {
     let path = system.join(file);
     std::fs::remove_file(&path).expect("unlink the library");

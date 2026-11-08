@@ -420,6 +420,7 @@ mod tests {
         assert_eq!(atoi(c"-1"), -1);
     }
 
+    // Windows only: UTF-16 file names with lone surrogates.
     #[cfg(windows)]
     #[test]
     fn windows_config_paths_keep_cjk_and_lone_surrogates() {
