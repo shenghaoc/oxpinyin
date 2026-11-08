@@ -18,9 +18,9 @@ from . import host, mounts, native, pool, slot
 
 ROOT = Path(__file__).resolve().parents[2]
 
-# Compiler-backed J-ledger checks need clang++, LLVM tools and a discoverable
-# libclang, which the CI harness jobs do not provision (docs/testing/README.md).
-HARNESS_EXCLUDED = {'tools/bisection/internal-ledger.test.py'}
+# internal-ledger-toolchain.test.py needs libclang, the LLVM tools and GCC with
+# gcov 14 or newer, which only a measurement host provides.
+HARNESS_EXCLUDED = frozenset({'tools/bisection/internal-ledger-toolchain.test.py'})
 
 # These harnesses exercise real cold-file eviction; tmpfs/ramfs ignore fadvise.
 DISK_BACKED_HARNESS = {'tools/bisection/teardown.test.py'}
