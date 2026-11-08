@@ -132,11 +132,12 @@ class RunnerSelectionTests(unittest.TestCase):
         for seed in ('0', '1', '2', '12345'):
             result = subprocess.run(
                 [sys.executable, '-X', 'lazy_imports=normal', str(script), '--list', '--runners', 'contract-diff',
-                 '--cases', 'default-option-parse,explicit-use-tone-parse,default-option-parse'],
+                 '--cases', 'table-conf-919-source-token-nul,table-conf-919-header-one-line,'
+                 'table-conf-919-source-token-nul'],
                 env=dict(os.environ, PYTHONHASHSEED=seed), capture_output=True, text=True, check=False)
             self.assertEqual(result.returncode, 0, result.stderr)
             tails.add(tuple(json.loads(result.stdout.splitlines()[0])['command'][-3:]))
-        self.assertEqual(tails, {('--', '--cases', 'default-option-parse,explicit-use-tone-parse')})
+        self.assertEqual(tails, {('--', '--cases', 'table-conf-919-source-token-nul,table-conf-919-header-one-line')})
 
     def test_cells_do_not_filter_the_listed_rows(self):
         self.assertEqual(self.list_rows('--cells', 'bdb'), run_all['_registry'].load())

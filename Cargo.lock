@@ -587,6 +587,7 @@ dependencies = [
  "oxpinyin-store",
  "oxpinyin-user",
  "rstest",
+ "sha2",
  "tempfile",
 ]
 
@@ -745,6 +746,7 @@ version = "0.1.0"
 dependencies = [
  "assert_cmd",
  "glib-sys",
+ "libc",
  "oxpinyin-capi-marshal",
  "oxpinyin-chewing",
  "oxpinyin-core",
@@ -755,6 +757,7 @@ dependencies = [
  "oxpinyin-store",
  "oxpinyin-user",
  "rstest",
+ "sha2",
  "tempfile",
 ]
 

@@ -219,8 +219,7 @@ Guards that stay green (unchanged by this PR): `tools/abi/check-exports.sh`
 `tools/abi/check-alloc-pairing.sh` with `alloc-pairing-pinyin.cc`,
 `alloc-pairing-zhuyin.cc` and the `libpinyin.alloc` / `libzhuyin.alloc`
 registers; caller mutation and `GArray` lifecycle in
-`glib-924-array-lifecycle-{pinyin,zhuyin}`; `glib-924-oom-array-growth-*`
-(real `GArray` growth stays fatal on both sides); the diagnostic channel in
+`glib-924-array-lifecycle-{pinyin,zhuyin}`; the diagnostic channel in
 `glib-924-segment-critical-*` and `glib-924-segment-fatal-critical-*`.
 
 Stated limits (not closed by this record):

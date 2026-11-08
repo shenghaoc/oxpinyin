@@ -56,10 +56,12 @@ disabled must fail the audit on both facades.
 
 The per-exported-caller allocation matrix, classification and remaining
 partitions are recorded in the [#924 follow-through ledger](../../docs/findings/glib-libc-verification.md#924-allocation-failure-injection-follow-through--2026-10-25-utc).
-The new existing-driver IDs are `glib-924-oom-array-growth-pinyin` and
-`glib-924-oom-array-growth-zhuyin`. They reuse this harness in array-only
-mode, which finds no allocation site: the real GLib growth check is
-identified by its GLib caller. The full ABI harness is a source-derived
+A failed `GArray` growth has no contract case: both facades grow a
+caller's array only through GLib's `g_array_set_size` and
+`g_array_append_vals`, so the failure happens inside GLib's `g_realloc`
+on both sides, and `glib-924-array-lifecycle-{pinyin,zhuyin}` cover
+oxpinyin's part, returning a real GLib-owned `GArray`. The full ABI
+harness is a source-derived
 defect audit, not a blanket parity gate: it labels silent NULL returns as
 confirmed defects. No policy exception or expected contract result is
 weakened.
