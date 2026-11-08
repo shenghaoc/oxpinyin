@@ -1843,30 +1843,10 @@ pub fn strerror(errnum: c_int) -> CString {
     unsafe { CStr::from_ptr(libc::strerror(errnum)) }.to_owned()
 }
 
-/// `printf("%f", value)` into a buffer: the C library's spelling of a finite
-/// value, `inf`, `-inf`, `nan` or `-nan`, with its decimal point for the
-/// active locale.
-#[must_use]
-pub fn format_f64(value: f64) -> Vec<u8> {
-    let mut buffer = [0_u8; 512];
-    // SAFETY: the format takes one `double` and the buffer is large enough
-    // for `%f`'s output at any finite magnitude.
-    let written = unsafe {
-        libc::snprintf(
-            buffer.as_mut_ptr().cast(),
-            buffer.len(),
-            c"%f".as_ptr(),
-            value,
-        )
-    };
-    let length = usize::try_from(written).unwrap_or(0).min(buffer.len() - 1);
-    buffer[..length].to_vec()
-}
-
 /// The k-mixture-model utilities' own `fprintf`, `printf` and `abort` calls
 /// (`utils/training/*_k_mixture_model.cpp` at 074a2219). A `%d` prints a
 /// `guint32` as the signed `int` the pin's format reads; `%f` is the
-/// [`format_f64`] spelling.
+/// `format_f64` spelling.
 pub mod k_mixture_model {
     use super::{OutputStream, c_int, c_stderr, print_literal, print_text};
     use std::ffi::CStr;

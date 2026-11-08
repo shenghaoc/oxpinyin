@@ -25,10 +25,6 @@ use crate::records::KmmGram;
 pub const SEED_LAMBDA: f64 = 0.6;
 /// EM convergence threshold (`:41`).
 pub const EPSILON: f64 = 0.001;
-/// Default `--bigram-file` (`:25`).
-pub const DEFAULT_BIGRAM_FILE: &str = "k_mixture_model_ngram.db";
-/// Default `--deleted-bigram-file` (`:26`).
-pub const DEFAULT_DELETED_BIGRAM_FILE: &str = "k_mixture_model_deleted_ngram.db";
 
 /// `main`'s body (`:98-155`).
 pub fn run(bigram_filename: Option<&CStr>, deleted_bigram_filename: Option<&CStr>) {

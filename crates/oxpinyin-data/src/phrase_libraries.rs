@@ -404,16 +404,6 @@ impl PhraseLibraries {
         self.library(token)?.item(token)?.phrase_text()
     }
 
-    /// The item's stored character count, read without building the text;
-    /// `None` when the item's bytes end before a declared word.
-    #[must_use]
-    pub fn phrase_char_count(&self, token: u32) -> Option<u32> {
-        self.library(token)?
-            .item(token)?
-            .phrase_codes()
-            .try_fold(0_u32, |count, code| code.map(|_| count.saturating_add(1)))
-    }
-
     /// `PhraseItem::get_unigram_frequency` for `token` — the stored
     /// field, which carries `gen_unigram`'s `+1` on every system item.
     #[must_use]
@@ -552,7 +542,7 @@ impl PhraseLibraries {
     }
 
     /// What one trellis step prices of `token` over `query`: the
-    /// [`Self::phrase_char_count`] and [`Self::pronunciation_possibility`]
+    /// `phrase_char_count` and [`Self::pronunciation_possibility`]
     /// pair, from one item read. `None` where the character count is.
     #[must_use]
     pub fn trellis_item(&self, token: u32, query: &[ChewingKey]) -> Option<TrellisItem> {
@@ -587,29 +577,6 @@ impl PhraseLibraries {
                         .map(|pair| ChewingKey::from_packed(u16::from_le_bytes([pair[0], pair[1]])))
                         .collect();
                     (keys, view.freq)
-                })
-                .collect(),
-        )
-    }
-
-    /// `token`'s stored pronunciation words, in stored order — the bytes
-    /// `get_nth_pronunciation` copies into `ChewingKeyVector`, without a
-    /// spelling round-trip.
-    #[must_use]
-    pub fn pronunciation_keys(&self, token: u32) -> Option<Vec<(Vec<u16>, u64)>> {
-        let library = self.library(token)?;
-        let item = library.item(token)?;
-        Some(
-            item.pronunciations()
-                .map(|view| {
-                    let keys = view
-                        .keys
-                        .as_chunks::<2>()
-                        .0
-                        .iter()
-                        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
-                        .collect();
-                    (keys, u64::from(view.freq))
                 })
                 .collect(),
         )

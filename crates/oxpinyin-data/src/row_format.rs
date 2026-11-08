@@ -300,23 +300,6 @@ pub mod phrase_index {
         buf
     }
 
-    /// Decodes a UCS-4 DBM key back to a UTF-8 string.
-    ///
-    /// Returns `None` if the key length is not a multiple of 4 or if any
-    /// 4-byte group is not a valid Unicode scalar value.
-    #[must_use]
-    pub fn decode_ucs4_key(key: &[u8]) -> Option<String> {
-        if !key.len().is_multiple_of(4) {
-            return None;
-        }
-        let mut text = String::with_capacity(key.len() / 4 * 3);
-        for chunk in key.as_chunks::<4>().0.iter() {
-            let code = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-            text.push(char::from_u32(code)?);
-        }
-        Some(text)
-    }
-
     /// Encodes a slice of tokens into a DBM value: a flat array of `u32`
     /// LE, 4 bytes each.
     #[must_use]
@@ -666,7 +649,7 @@ mod tests {
 
     #[test]
     fn ucs4_key_round_trip_and_rejections() {
-        use phrase_index::{decode_ucs4_key, encode_ucs4_key, encode_ucs4_key_scalars};
+        use phrase_index::{encode_ucs4_key, encode_ucs4_key_scalars};
         let key = encode_ucs4_key("你好");
         assert_eq!(key.len(), 8);
         assert_eq!(
@@ -676,11 +659,8 @@ mod tests {
         );
         // The two entry points agree byte for byte.
         assert_eq!(key, encode_ucs4_key_scalars(&[0x4F60, 0x597D]));
-        assert_eq!(decode_ucs4_key(&key).as_deref(), Some("你好"));
-        assert!(decode_ucs4_key(&[0, 0, 0]).is_none());
         let mut bad = encode_ucs4_key("x");
         bad[0..4].copy_from_slice(&0xD800_u32.to_le_bytes());
-        assert!(decode_ucs4_key(&bad).is_none(), "surrogate is not a scalar");
     }
 
     #[test]

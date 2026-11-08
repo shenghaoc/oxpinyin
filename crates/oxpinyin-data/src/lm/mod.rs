@@ -402,7 +402,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, M: std::borrow::Borrow<AtomicU32>>
     ///
     /// λ defaults to [`Lambda::PINNED`] (`0.312699`, `data-formats.md` §3);
     /// override it from a real install's config with
-    /// [`BigramTables::set_lambda_from_table_conf`] or [`BigramTables::set_lambda`].
+    /// `set_lambda_from_conf`.
     ///
     /// # Errors
     ///
@@ -439,13 +439,6 @@ impl BigramTables {
         self.lambda
     }
 
-    /// Sets the interpolation weight λ directly.
-    pub fn set_lambda(&mut self, lambda: Lambda) {
-        self.lambda = lambda;
-        self.lambda_raw = None;
-        self.lambda_f32 = lambda.as_f64() as f32;
-    }
-
     /// Installs λ from the parsed system `table.conf`.
     pub fn set_lambda_from_conf(&mut self, conf: &crate::table_info::TableConf) {
         self.lambda_f32 = conf.lambda_f32();
@@ -455,22 +448,6 @@ impl BigramTables {
                 self.lambda_raw = None;
             }
             None => self.lambda_raw = Some(conf.lambda_f32()),
-        }
-    }
-
-    /// Reads λ from a model's `table.conf` with the pin's scanner
-    /// ([`crate::table_info::TableConf::load_path`]) and installs it
-    /// (`data-formats.md` §3).
-    ///
-    /// Returns `true` when the file loads as `SystemTableInfo2::load` would
-    /// accept it; `false` otherwise, in which case λ is left unchanged.
-    pub fn set_lambda_from_table_conf(&mut self, table_conf_path: &Path) -> bool {
-        match crate::table_info::TableConf::load_path(table_conf_path) {
-            Ok(conf) => {
-                self.set_lambda_from_conf(&conf);
-                true
-            }
-            Err(_) => false,
         }
     }
 }

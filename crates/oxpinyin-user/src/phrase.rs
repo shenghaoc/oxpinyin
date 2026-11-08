@@ -224,18 +224,6 @@ impl UserPronunciation {
             .map(|parts| parts.join("'"))
     }
 
-    /// [`Self::render_pinyin`] with every tone dropped — the complete
-    /// keyspace's projection (`encode_complete_key` zeroes the tone),
-    /// which the toneless lookup queries meet.
-    #[must_use]
-    pub fn render_pinyin_toneless(&self) -> Option<String> {
-        self.keys
-            .iter()
-            .map(|key| SyllableKey::from_index(key_syllable(*key)).map(SyllableKey::text))
-            .collect::<Option<Vec<_>>>()
-            .map(|parts| parts.join("'"))
-    }
-
     pub(crate) const fn new(keys: Vec<PinyinKey>, count: u64, indexed: bool) -> Self {
         Self {
             keys,
@@ -257,21 +245,6 @@ pub struct UserPhrase {
 }
 
 impl UserPhrase {
-    /// The user pinyin index carries `keys` for this token: the reading
-    /// already stored becomes indexed, any other is added with no count.
-    pub(crate) fn index_reading(&mut self, keys: Vec<PinyinKey>) {
-        if let Some(reading) = self
-            .pronunciations
-            .iter_mut()
-            .find(|reading| reading.keys == keys)
-        {
-            reading.indexed = true;
-        } else {
-            self.pronunciations
-                .push(UserPronunciation::new(keys, 0, true));
-        }
-    }
-
     /// Allocated user token (library nibble [`USER_DICTIONARY`]).
     #[must_use]
     pub const fn token(&self) -> Token {

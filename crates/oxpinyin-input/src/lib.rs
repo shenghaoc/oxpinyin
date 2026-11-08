@@ -20,13 +20,13 @@
 //! `g_build_filename` ([`path`]), the chunk open/write/sync/close
 //! ([`chunk`]), and `g_rename` and plain `unlink` (also [`path`]).
 //!
-//! Stage 5's tool boundary ([`tool`], the `tools` feature) holds the pin
+//! Stage 5's tool boundary (`tool`, the `tools` feature) holds the pin
 //! utilities' locale, GLib option, input-stream and text calls, through the
 //! `libc` crate, `glib-sys` and `std::io` without a C or C++ shim
 //! (maintainer ruling 2026-10-31 UTC); the shipping libraries never enable
 //! it.
 //!
-//! Unsafe code is confined to the native module and [`tool`]; every block
+//! Unsafe code is confined to the native module and `tool`; every block
 //! carries a `// SAFETY:` comment and no raw pointer leaves them.
 
 #![deny(unsafe_code)]

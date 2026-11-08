@@ -352,44 +352,8 @@ pub fn decode_phrase_item(bytes: &[u8]) -> Result<ChunkItem, ChunkWriteError> {
     })
 }
 
-/// Decodes a `SubPhraseIndex` payload — the reader half of
-/// [`build_chunk`]'s layout, at the writer's home so both stay beside
-/// the format they share.
-///
-/// Returns the library's `total_freq` and its
-/// items in ascending slot order.
-///
-/// This is the shape inside every per-library chunk file (`gb_char.bin`
-/// and friends, `user.bin`, `addon.bin`), after the `MemoryChunk` frame
-/// ([`crate::user_files::read_chunk_payload`]); the runtime's
-/// mmap-backed reader (`phrase_library`) validates the same layout.
-///
-/// # Errors
-///
-/// Fails when the header, separators or offset bounds do not hold, or
-/// an item's stored shape overruns the entry area.
-pub fn decode_sub_phrase_index(
-    payload: &[u8],
-) -> Result<(u32, Vec<(u32, ChunkItem)>), ChunkWriteError> {
-    let (total, offset_array, entry_area) = sub_phrase_index_sections(payload)?;
-    let mut items = Vec::new();
-    for (slot, window) in offset_array.as_chunks::<4>().0.iter().enumerate() {
-        let offset = u32::from_le_bytes([window[0], window[1], window[2], window[3]]) as usize;
-        if offset == 0 {
-            continue;
-        }
-        let bytes = entry_area.get(offset..).ok_or_else(|| {
-            ChunkWriteError(format!("sub phrase index: slot {slot} offset out of range"))
-        })?;
-        let item = decode_phrase_item(bytes)
-            .map_err(|error| ChunkWriteError(format!("sub phrase index: slot {slot}: {error}")))?;
-        items.push((u32::try_from(slot).unwrap_or(u32::MAX), item));
-    }
-    Ok((total, items))
-}
-
 /// Borrow the stored total, offset-array bytes and item arena without decoding
-/// any items. Uses exactly [`decode_sub_phrase_index`]'s layout checks.
+/// any items. Uses exactly `decode_sub_phrase_index`'s layout checks.
 ///
 /// # Errors
 /// Refuses a short header, invalid separator or section bounds.
@@ -607,51 +571,6 @@ mod tests {
             ..item
         };
         assert!(build_chunk(&[(1, empty)]).is_err());
-    }
-
-    #[test]
-    fn sub_phrase_index_round_trips_through_build_chunk() {
-        let items = vec![
-            (
-                1,
-                ChunkItem {
-                    phrase: vec![0x4f60],
-                    unigram: 3,
-                    prons: vec![(vec![0x1234], 7)],
-                },
-            ),
-            (
-                3,
-                ChunkItem {
-                    phrase: vec![0x597d],
-                    unigram: 5,
-                    prons: vec![(vec![0x5678], 11)],
-                },
-            ),
-        ];
-        let file = build_chunk(&items).expect("build");
-        let payload = read_frame(&file);
-        let (total, decoded) = decode_sub_phrase_index(payload).expect("decode");
-        assert_eq!(total, 8);
-        assert_eq!(decoded, items);
-
-        // The pin's own empty-library bytes (19-byte payload) decode to
-        // an empty library.
-        let empty = build_chunk(&[]).expect("build");
-        let (total, decoded) = decode_sub_phrase_index(read_frame(&empty)).expect("decode");
-        assert_eq!(total, 0);
-        assert!(decoded.is_empty());
-
-        // Hostile payloads answer typed errors: a broken separator and a
-        // truncated payload.
-        let mut broken = payload.to_vec();
-        broken[16] = b'!';
-        assert!(decode_sub_phrase_index(&broken).is_err());
-        assert!(decode_sub_phrase_index(&payload[..payload.len() - 1]).is_err());
-    }
-
-    fn read_frame(file: &[u8]) -> &[u8] {
-        crate::user_files::read_chunk_payload(file).expect("frame")
     }
 
     #[test]

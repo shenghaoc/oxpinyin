@@ -564,15 +564,6 @@ impl TableConf {
         self.rows_of(FileType::UserFile)
     }
 
-    /// The lowest default sub-index whose row is `DICTIONARY`, where the
-    /// init loop asserts (`pinyin.cpp:388`, `zhuyin.cpp:330`).
-    #[must_use]
-    pub fn first_default_dictionary(&self) -> Option<u8> {
-        self.rows_of(FileType::Dictionary)
-            .next()
-            .map(|(index, _)| index)
-    }
-
     /// What the init loop does at each default row, in index order
     /// (`pinyin.cpp:377-392`, `zhuyin.cpp:318-334`); a `NOT_USED` row does
     /// nothing and is left out. The pin reaches a row only after every row
@@ -971,6 +962,5 @@ mod tests {
         let user: Vec<_> = stock.user_libraries().map(|(index, _)| index).collect();
         assert_eq!(user, [5, 6, 7]);
         assert_eq!(stock.addon_rows().count(), 12);
-        assert_eq!(stock.first_default_dictionary(), None);
     }
 }

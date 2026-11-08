@@ -121,14 +121,7 @@ pub enum MaskOutOutcome {
     Journal(JournalFault),
 }
 
-impl MaskOutOutcome {
-    /// The C ABI's answer: [`MaskOutOutcome::Done`] carries the store's
-    /// own answer; the abort site is `false`.
-    #[must_use]
-    pub fn is_done(self) -> bool {
-        matches!(self, Self::Done(true))
-    }
-}
+impl MaskOutOutcome {}
 
 /// Why a context did not open — what `pinyin_init` / `zhuyin_init` hide
 /// behind NULL. Carried out of [`ContextCore::try_open`] so the facades

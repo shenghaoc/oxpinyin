@@ -327,21 +327,6 @@ impl<'a> LiveSystemItems<'a> {
             .map_or(Lookup::Absent, Lookup::Found)
     }
 
-    /// The stored unigram field in the live sub-index, `gen_unigram`'s `+1`
-    /// included. A transferred chunk answers from its sole live mapping.
-    #[must_use]
-    pub fn stored_unigram(&self, token: Token) -> Option<u64> {
-        self.libraries.library(token).and_then(|library| {
-            if library.is_detached() {
-                self.user
-                    .and_then(|store| store.system_unigram(token))
-                    .map(u64::from)
-            } else {
-                self.libraries.unigram_count(token)
-            }
-        })
-    }
-
     /// The live unigram of `token`'s effective item. Runtime bumps are not
     /// included; the caller adds `RuntimeDict::unigram_delta` once. `None`
     /// when the token is hidden or holds no item. Consumer: predicted

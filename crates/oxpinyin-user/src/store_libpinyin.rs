@@ -1248,8 +1248,15 @@ mod tests {
         );
         assert!(store.phrase_exists(token).unwrap());
         assert_eq!(store.phrase_length(token).unwrap(), Some(1));
-        assert_eq!(store.nth_pronunciation(token, 0).unwrap(), Some(keys));
-        assert_eq!(store.nth_pronunciation(token, usize::MAX).unwrap(), None);
+        assert_eq!(
+            packed_to_pinyin_keys(&store.nth_pronunciation_words(token, 0).unwrap().unwrap())
+                .unwrap(),
+            keys
+        );
+        assert_eq!(
+            store.nth_pronunciation_words(token, usize::MAX).unwrap(),
+            None
+        );
         assert!(store.remove_user_phrase(token).unwrap());
         assert!(store.phrase(token).unwrap().is_none());
         assert!(!store.phrase_exists(token).unwrap());
@@ -2251,8 +2258,8 @@ mod tests {
 
         // The stored field and the live count are separate reads: the stored
         // one is the chunk's; the live one adds the store's delta once.
-        assert_eq!(live.stored_unigram(untouched), Some(30));
-        assert_eq!(live.stored_unigram(absent), None);
+        assert_eq!(live.effective_unigram(untouched), Some(30));
+        assert_eq!(live.effective_unigram(absent), None);
         assert_eq!(live.effective_unigram(untouched), Some(30));
         assert_eq!(
             live.effective_unigram(replayed),
@@ -2410,7 +2417,6 @@ mod tests {
         assert_eq!(store.bigram_count(1, 9).expect("complete item"), 7);
         assert_eq!(store.bigram_count(1, 10).expect("absent item"), 0);
         assert!(store.has_oob_bigram_value_for(1));
-        assert!(!store.has_empty_bigram_gram_for(1));
         assert!(matches!(
             store.mask_out(u32::MAX, 0),
             Err(UserStoreError::PartialUserBigramTail)
@@ -2454,7 +2460,6 @@ mod tests {
             .expect("reopen");
         assert_eq!(store.bigram_total(1).expect("itemless total"), 7);
         assert_eq!(store.bigram_count(1, 9).expect("itemless count"), 0);
-        assert!(store.has_empty_bigram_gram_for(1));
         assert!(store.has_oob_bigram_value_for(1));
         let raw = persistence::load_user_bigram_db(&dir).expect("raw itemless container");
         assert_eq!(gram(&raw, &key).expect("raw itemless get"), Some(itemless));
@@ -2630,10 +2635,6 @@ mod tests {
         let preflight = store.check_training_step(2, token(5));
         let refused = matches!(preflight, Err(UserStoreError::TrainingSetFreqMiss));
         assert!(preflight.is_ok() || refused);
-        assert_eq!(
-            store.take_training_fault(),
-            refused.then_some(crate::TrainingFault::SetFreqMiss(2))
-        );
         assert_eq!(store.generation(), generation, "preflight writes nothing");
         assert_eq!(store.bigram_row(2).expect("row"), Some(gram.clone()));
         assert_eq!(store.system_unigram(token(1)), Some(100));

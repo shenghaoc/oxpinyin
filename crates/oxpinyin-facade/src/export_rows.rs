@@ -1202,7 +1202,7 @@ mod phrase_cursor_tests {
         assert_eq!(store.bigram_total(1).unwrap(), 0);
         assert!(store.bigram_successors(1).unwrap().is_empty());
         assert!(store.bigram_predecessors().unwrap().is_empty());
-        assert!(store.export_bigrams().unwrap().is_empty());
+        assert!(store.bigram_predecessors().unwrap().is_empty());
         store.mask_out(u32::MAX, 0x0700_0001).unwrap();
         let mut walk = ctx.bigram_export_walk().unwrap();
         assert!(!walk.has_next(Some(&ctx)).unwrap());

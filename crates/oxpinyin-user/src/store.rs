@@ -1005,19 +1005,6 @@ impl UserStore {
             .is_ok_and(|keys| keys.iter().any(Option::is_none))
     }
 
-    /// Whether the gram stored under `token` has no whole item and a
-    /// nonzero `total_freq` — the pin's `SingleGram::get_length` assert
-    /// (`ngram.cpp:70`). `_compute_predicted_bigram_candidates` merges only
-    /// the resolved prefixes' own grams (`pinyin.cpp:2322-2336`), so an
-    /// item-less row under any other token never reaches `get_length`.
-    #[must_use]
-    pub fn has_empty_bigram_gram_for(&self, token: Token) -> bool {
-        self.bigram_row(token).ok().flatten().is_some_and(|bytes| {
-            single_gram::get_length(&bytes) == 0
-                && single_gram::get_total_freq(&bytes).is_some_and(|total| total != 0)
-        })
-    }
-
     /// Whether `token`'s stored user-bigram value has a partial item
     /// tail (register rows 98 and 100). The pin's `retrieve_all`
     /// (`ngram.cpp:133-143`), `SingleGram::mask_out` (`ngram.cpp:86`) and
@@ -1030,31 +1017,6 @@ impl UserStore {
             .ok()
             .flatten()
             .is_some_and(|bytes| has_partial_tail(&bytes))
-    }
-
-    /// Whether `mask_out(mask, value)` makes the pin abort in
-    /// `get_length`: a gram whose key the mask leaves alone, from which the
-    /// mask removes every item while the stored total is not used up
-    /// (`ngram.cpp:70`, reached at `ngram_bdb.cpp:243`). Found by running
-    /// the ported mask on a copy of each such gram.
-    #[must_use]
-    pub fn has_residual_bigram_gram(&self, mask: Token, value: Token) -> bool {
-        matches!(
-            self.bigram_mask_fault(mask, value),
-            Some(UserStoreError::ResidualUserBigramGram)
-        )
-    }
-
-    /// The fault the pin's `Bigram::mask_out(mask, value)` dies on over the
-    /// live user bigram, or `None` when the walk completes
-    /// ([`gram_mask_fault_over`]). `pinyin_mask_out` / `zhuyin_mask_out` and
-    /// `pinyin_remove_user_candidate` (`user_bigram->mask_out`,
-    /// `pinyin.cpp:1230`, `zhuyin.cpp:765`, `pinyin.cpp:3766`) all reach
-    /// the same walk.
-    fn bigram_mask_fault(&self, mask: Token, value: Token) -> Option<UserStoreError> {
-        let _offsets = self.offsets();
-        let keys = self.container_keys();
-        self.bigram_mask_fault_over(&keys, mask, value)
     }
 
     /// The session container's `Bigram::get_all_items` walk
@@ -1099,11 +1061,6 @@ impl UserStore {
         self.training = TrainingCheck::default();
     }
 
-    /// The fault the last failing [`Self::check_training_step`] met, once.
-    pub fn take_training_fault(&mut self) -> Option<TrainingFault> {
-        self.training.fault.take()
-    }
-
     /// One training step's store checks, in the pin's order inside the
     /// step (`phonetic_lookup.h:876-909` at 074a2219): a gram too short for
     /// its total (`get_total_freq`, :884; `memory_chunk.h:390`), a partial
@@ -1111,7 +1068,7 @@ impl UserStore {
     /// and a `set_freq` that misses the item `insert_freq` just added
     /// (:903). The step runs on the gram the earlier steps of this call
     /// left, replayed on copies: nothing is stored. The fault is recorded
-    /// for [`Self::take_training_fault`].
+    /// for [`Self::check_training_step`].
     ///
     /// # Errors
     ///
@@ -1822,35 +1779,6 @@ impl UserStore {
         self.originals.layout().has_user_library(library)
     }
 
-    /// [`Self::phrases`] as the user pinyin index sees them: the index also
-    /// keeps entries no reading of the item behind them backs (a dropped
-    /// item's, 074a2219 `phrase_index.cpp:261-268`, and a profile's), so a
-    /// phrase that holds such a token now is found under them, as the pin's
-    /// is once an import hands the token out again (`zhuyin.cpp:472-478`).
-    /// Each such reading is added to the phrase indexed, with no count.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`UserStoreError`] when the store cannot be read.
-    pub fn index_phrases(&self) -> Result<Vec<UserPhrase>, UserStoreError> {
-        let mut phrases = self.phrases()?;
-        let by_token: std::collections::HashMap<Token, usize> = phrases
-            .iter()
-            .enumerate()
-            .map(|(at, phrase)| (phrase.token(), at))
-            .collect();
-        for (token, packed) in self.index_entries() {
-            let (Some(&at), Some(keys)) = (
-                by_token.get(&token),
-                crate::store_libpinyin::packed_to_pinyin_keys(&packed),
-            ) else {
-                continue;
-            };
-            phrases[at].index_reading(keys);
-        }
-        Ok(phrases)
-    }
-
     /// Borrows the session's canonical tables.
     ///
     /// # Errors
@@ -1980,34 +1908,6 @@ impl UserStore {
     /// None: the `Result` is the callers' signature.
     pub fn phrase_length(&self, token: Token) -> Result<Option<usize>, UserStoreError> {
         Ok(self.with_user_item(token, |item| item.phrase_length()))
-    }
-
-    /// One reading's keys in insertion order, without rebuilding the phrase
-    /// or decoding the other readings. Missing readings answer `None`.
-    ///
-    /// # Errors
-    /// None: the `Result` is the callers' signature.
-    pub fn nth_pronunciation(
-        &self,
-        token: Token,
-        nth: usize,
-    ) -> Result<Option<Vec<PinyinKey>>, UserStoreError> {
-        Ok(self
-            .with_user_item(token, |item| {
-                let reading = item.pronunciation(nth)?;
-                reading
-                    .keys
-                    .as_chunks::<2>()
-                    .0
-                    .iter()
-                    .map(|bytes| {
-                        let key = ChewingKey::from_packed(u16::from_le_bytes([bytes[0], bytes[1]]));
-                        let syllable = oxpinyin_core::SyllableKey::from_chewing_key(key)?;
-                        crate::toned_key(syllable.index(), key.tone)
-                    })
-                    .collect::<Option<Vec<_>>>()
-            })
-            .flatten())
     }
 
     /// One reading's stored key words, as `get_nth_pronunciation` copies them
@@ -2159,24 +2059,6 @@ impl UserStore {
         self.inner.phrase_table_generation.load(Ordering::Acquire)
     }
 
-    /// Next token the store will allocate.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`UserStoreError`] when the store cannot be read.
-    pub fn next_user_token(&self) -> Result<Token, UserStoreError> {
-        // `_add_phrase`'s token (`pinyin.cpp:589-594`): the facade range
-        // end, bumped past a zero low word.
-        let end = self
-            .inner
-            .libpinyin
-            .phrases()
-            .libraries
-            .get(&USER_DICTIONARY)
-            .map_or(1, crate::user_library::UserLibrary::token_end);
-        Ok(phrase::add_phrase_token(USER_DICTIONARY, end))
-    }
-
     /// `m_modified` (§4).
     #[must_use]
     pub fn is_modified(&self) -> bool {
@@ -2186,15 +2068,6 @@ impl UserStore {
     /// Arm `m_modified` without a data write.
     pub fn mark_modified(&mut self) {
         self.inner.dirty.store(true, Ordering::Relaxed);
-    }
-
-    /// Every user phrase as §9 export rows.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`UserStoreError`] when the store cannot be read.
-    pub fn export_phrases(&self) -> Result<Vec<ExportedPhrase>, UserStoreError> {
-        self.export_phrases_in(USER_DICTIONARY)
     }
 
     /// Export rows for one `USER_FILE` nibble.
@@ -2276,23 +2149,6 @@ impl UserStore {
                 .map(|(token, count)| (token, u64::from(count)))
                 .collect()
         }))
-    }
-
-    /// Every stored user-bigram item as `(prev, cur, count)`: the
-    /// predecessors in the user bigram's walk order ([`Self::bigram_predecessors`]),
-    /// each gram's items in stored order.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`UserStoreError`] when the store cannot be read.
-    pub fn export_bigrams(&self) -> Result<Vec<(Token, Token, u64)>, UserStoreError> {
-        let mut rows = Vec::new();
-        for prev in self.bigram_predecessors()? {
-            for (cur, count) in self.bigram_successors(prev)? {
-                rows.push((prev, cur, count));
-            }
-        }
-        Ok(rows)
     }
 
     /// Whether this session has a user-directory argument, including "".
@@ -3272,6 +3128,17 @@ impl UserStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn next_user_token(store: &UserStore) -> Token {
+        let end = store
+            .inner
+            .libpinyin
+            .phrases()
+            .libraries
+            .get(&USER_DICTIONARY)
+            .map_or(1, crate::user_library::UserLibrary::token_end);
+        crate::phrase::add_phrase_token(USER_DICTIONARY, end)
+    }
     use std::collections::BTreeMap;
 
     /// 074a2219 phrase_index.h:634 increments the facade before a refused
@@ -3350,6 +3217,7 @@ mod tests {
     /// count allocates its token first.
     mod session {
         use super::super::*;
+        use super::next_user_token;
         use crate::persistence::{SystemLibrary, SystemOriginals, UserConfLaw};
         use crate::{
             ADDON_DICTIONARY, FIRST_USER_TOKEN, NETWORK_DICTIONARY, PHRASE_INDEX_LIBRARY_MASK,
@@ -3620,7 +3488,7 @@ mod tests {
             assert!(matches!(error, UserStoreError::UnigramTotalOverflow));
             assert_eq!(store.unigram_delta(token).unwrap(), before);
             assert_eq!(store.unigram_total().unwrap(), total + 483);
-            assert!(store.export_bigrams().unwrap().is_empty());
+            assert!(store.bigram_predecessors().unwrap().is_empty());
         }
 
         #[test]
@@ -3655,14 +3523,14 @@ mod tests {
         #[test]
         fn first_allocation_is_first_user_token() {
             let mut store = transient();
-            assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN);
+            assert_eq!(next_user_token(&store), FIRST_USER_TOKEN);
             let token = store
                 .add_phrase(&"你好".into(), &[key("ni"), key("hao")], None)
                 .unwrap();
             assert_eq!(token, FIRST_USER_TOKEN);
             assert_eq!(token, 0x0700_0001);
             assert!(phrase::is_user_token(token));
-            assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN + 1);
+            assert_eq!(next_user_token(&store), FIRST_USER_TOKEN + 1);
         }
 
         #[test]
@@ -3676,7 +3544,7 @@ mod tests {
             assert_eq!(a, FIRST_USER_TOKEN);
             assert_eq!(b, a + 1);
             assert_eq!(c, a + 2);
-            assert_eq!(store.next_user_token().unwrap(), a + 3);
+            assert_eq!(next_user_token(&store), a + 3);
         }
 
         #[test]
@@ -3700,9 +3568,9 @@ mod tests {
             assert_ne!(user, net);
             assert_eq!(phrase::phrase_index_library_index(user), 7);
             assert_eq!(phrase::phrase_index_library_index(net), 6);
-            assert_eq!(store.export_phrases().unwrap().len(), 1);
+            assert_eq!(store.export_phrases_in(USER_DICTIONARY).unwrap().len(), 1);
             assert_eq!(store.export_phrases_in(6).unwrap().len(), 1);
-            assert_eq!(store.next_user_token().unwrap(), user + 1);
+            assert_eq!(next_user_token(&store), user + 1);
         }
 
         #[test]
@@ -3788,7 +3656,7 @@ mod tests {
                 .add_phrase(&"你好".into(), &[toned("ni", 3), key("hao")], Some(8))
                 .unwrap();
             assert_eq!(first, again);
-            assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN + 1);
+            assert_eq!(next_user_token(&store), FIRST_USER_TOKEN + 1);
             // The merge is a remove and an add of the same item
             // (`pinyin.cpp:576-580`; `phrase_index.h:669`, `:691`): no
             // unigram moves.
@@ -3841,7 +3709,7 @@ mod tests {
                 ),
                 Err(UserStoreError::InvalidPhrase)
             ));
-            assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN);
+            assert_eq!(next_user_token(&store), FIRST_USER_TOKEN);
             assert!(store.token_for_phrase("你好").unwrap().is_none());
         }
 
@@ -3866,7 +3734,7 @@ mod tests {
                 .unwrap();
 
             assert_eq!(
-                store.export_phrases().unwrap(),
+                store.export_phrases_in(USER_DICTIONARY).unwrap(),
                 vec![
                     ExportedPhrase {
                         text: "你好".chars().map(u32::from).collect(),
@@ -3880,18 +3748,6 @@ mod tests {
                     },
                 ]
             );
-        }
-
-        #[test]
-        fn export_bigrams_lists_every_stored_row_raw() {
-            let mut store = transient();
-            store.observe_selection(SENTENCE_START, 10).unwrap();
-            store.observe_selection(10, 20).unwrap();
-            store.observe_selection(10, 20).unwrap();
-
-            let mut rows = store.export_bigrams().unwrap();
-            rows.sort();
-            assert_eq!(rows, vec![(SENTENCE_START, 10, 69), (10, 20, 207)]);
         }
 
         const SYSTEM_A: Token = 0x0100_0001;
@@ -3969,7 +3825,7 @@ mod tests {
             assert_eq!(store.unigram_total().unwrap(), 0);
             // The user sub-index is empty again, so `get_range` ends at 1
             // (`phrase_index.cpp:624-646`) and the next import reuses it.
-            assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN);
+            assert_eq!(next_user_token(&store), FIRST_USER_TOKEN);
             assert!(!store.is_modified());
             assert!(!store.save().unwrap());
 
@@ -3999,11 +3855,11 @@ mod tests {
 
             // A hole below the top is not reused.
             store.mask_out(0xFFFF_FFFF, b).unwrap();
-            assert_eq!(store.next_user_token().unwrap(), c + 1);
+            assert_eq!(next_user_token(&store), c + 1);
 
             // Masking the top frees it and every empty slot beneath it.
             store.mask_out(0xFFFF_FFFF, c).unwrap();
-            assert_eq!(store.next_user_token().unwrap(), a + 1);
+            assert_eq!(next_user_token(&store), a + 1);
             assert_eq!(
                 store
                     .add_phrase(&"好的".into(), &[key("hao"), key("de")], None)
@@ -4013,7 +3869,7 @@ mod tests {
 
             // A single removal frees the top the same way.
             assert!(store.remove_user_phrase(a + 1).unwrap());
-            assert_eq!(store.next_user_token().unwrap(), a + 1);
+            assert_eq!(next_user_token(&store), a + 1);
             assert_eq!(
                 store
                     .add_phrase(&"再来".into(), &[key("zai"), key("lai")], None)
@@ -4138,7 +3994,7 @@ mod tests {
             let mut store = transient();
             plant_item(&store, USER_DICTIONARY, PHRASE_MASK - 1);
             let last = phrase_index_make_token(USER_DICTIONARY, PHRASE_MASK);
-            assert_eq!(store.next_user_token().unwrap(), last);
+            assert_eq!(next_user_token(&store), last);
 
             let token = store
                 .add_phrase(&"你好".into(), &[key("ni"), key("hao")], None)
@@ -4150,7 +4006,7 @@ mod tests {
                 phrase_index_make_token(USER_DICTIONARY, 0),
                 "the facade range end is masked into the nibble"
             );
-            assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN);
+            assert_eq!(next_user_token(&store), FIRST_USER_TOKEN);
 
             let wrapped = store
                 .add_phrase(&"世界".into(), &[key("shi"), key("jie")], None)

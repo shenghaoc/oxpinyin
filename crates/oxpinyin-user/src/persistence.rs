@@ -2785,21 +2785,6 @@ fn finish_save(
     }
 }
 
-/// The minimal log a save leaves for one system library — the header
-/// record plus a record per changed slot, in ascending token walk
-/// (`SubPhraseIndex::diff`'s order).
-///
-/// # Errors
-///
-/// Returns the store's error when a diff walk or record append fails.
-pub fn diff_records(
-    nibble: u8,
-    original: SystemLibraryRef<'_>,
-    overrides: &BTreeMap<u32, Option<ChunkItem>>,
-) -> Result<Vec<LogRecord>, PersistenceError> {
-    diff_records_with_new_total(nibble, original, overrides, None)
-}
-
 /// [`diff_records`] with an explicit new header total: the pin's `compact`
 /// rebuilds a layout-failed empty sub-index and its saved log carries zero
 /// as the new total while the system chunk's old total is unchanged
@@ -3338,28 +3323,6 @@ mod tests {
         assert_eq!(loaded.state, state);
 
         std::fs::remove_dir_all(&dir).expect("cleanup");
-    }
-
-    #[test]
-    fn diff_records_emits_remove_for_an_explicit_removal() {
-        // A `Some(None)` override is a removal, not "fall back to the
-        // original item": collapsing the two lookups drops the Remove
-        // record (review on #447).
-        let originals = originals();
-        let original = &originals[&1];
-        let overrides: BTreeMap<u32, Option<ChunkItem>> = BTreeMap::from([(1_u32, None)]);
-
-        let records = diff_records(1, original.view(), &overrides).expect("diff");
-        assert!(matches!(
-            records.as_slice(),
-            [
-                LogRecord::ModifyHeader {
-                    old_total: 150,
-                    new_total: 50
-                },
-                LogRecord::Remove { token: 1, .. }
-            ]
-        ));
     }
 
     #[test]

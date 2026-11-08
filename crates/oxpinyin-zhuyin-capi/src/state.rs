@@ -8,7 +8,7 @@
 //! user store, the live option/scheme word, the parse-mode state machine,
 //! the re-anchored window — lives in [`oxpinyin_facade`]'s
 //! `ContextCore`/`InstanceCore`, shared with the pinyin facade; this file
-//! keeps only the zhuyin-facing shell: the context back-pointer, the ABI
+//! keeps only the zhuyin-facing shell: the ABI
 //! key slots, the `CString` candidate snapshot (with the zhuyin-local
 //! 4-value candidate-type enum), and this facade's distinguishing
 //! seeds and sentence-row display law.
@@ -56,11 +56,7 @@ impl CapiContext {
         })
     }
 
-    pub(crate) fn alloc_instance(
-        &self,
-        context: *mut ZhuyinContext,
-        owner: ContextOwner,
-    ) -> Option<CapiInstance> {
+    pub(crate) fn alloc_instance(&self, owner: ContextOwner) -> Option<CapiInstance> {
         let mut core = self.core.alloc_instance()?;
         // The zhuyin surface's sentence-row display law: upstream fills every
         // BEST_MATCH row from `zhuyin_get_sentence` (always the 1-best), so
@@ -77,7 +73,6 @@ impl CapiContext {
         // not libpinyin's `<2, 3>`: one value per node, one sentence tail.
         session.set_nbest_shape(oxpinyin_engine::NbestShape::ZHUYIN);
         Some(CapiInstance {
-            context,
             owner,
             core,
             state: CapiInstanceState {
@@ -174,8 +169,6 @@ impl oxpinyin_facade::SnapshotRow for CapiCandidate {
 pub struct CapiInstance<C = InstanceCore, S = CapiInstanceState, O = ContextOwner> {
     /// Retains the sole runtime allocation after the public context is finalised.
     pub(crate) owner: O,
-    /// The owning context's C handle.
-    pub(crate) context: *mut ZhuyinContext,
     /// The orchestration half — composition, live option
     /// word, parse-mode state machine, re-anchored window — shared with
     /// the pinyin facade.
@@ -228,7 +221,6 @@ impl<
 {
     pub(crate) fn read(&self) -> CapiInstanceRead<'_> {
         CapiInstance {
-            context: self.context,
             owner: self.owner.borrow(),
             core: self.core.read(),
             state: self.state.borrow(),
@@ -321,7 +313,6 @@ pub unsafe fn instance_ref<'a>(ptr: *mut ZhuyinInstance) -> CapiInstanceRead<'a>
     let context = unsafe { owner_ref(&instance.owner) };
     let runtime = &context.core.runtime;
     CapiInstance {
-        context: instance.context,
         owner: &instance.owner,
         core: instance.core.read(runtime),
         state: &instance.state,
@@ -338,7 +329,6 @@ pub unsafe fn instance_mut<'a>(ptr: *mut ZhuyinInstance) -> CapiInstanceMut<'a> 
     let context = unsafe { owner_ref(&instance.owner) };
     let runtime = &context.core.runtime;
     CapiInstance {
-        context: instance.context,
         owner: &instance.owner,
         core: instance.core.bind(runtime),
         state: &mut instance.state,
@@ -358,5 +348,3 @@ pub(crate) unsafe fn train_instance(
     let context = unsafe { owner_mut(&mut instance.owner) };
     context.core.train(&instance.core, index)
 }
-
-pub(crate) use handles::instance_ref as instance_state_ref;

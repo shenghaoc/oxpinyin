@@ -981,7 +981,7 @@ mod tests {
                 .map_or(0, |d| d.as_nanos())
         ));
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join(oxpinyin_store::default_store_file("walk_stop"));
+        let path = dir.join(format!("walk_stop.{}", oxpinyin_store::DEFAULT_STORE_EXT));
         let store = DefaultStore::create(&path).unwrap();
         store
             .write(|txn| {

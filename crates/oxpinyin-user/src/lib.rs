@@ -15,8 +15,8 @@
 //! [`oxpinyin_core::UserCountDelta`] so decode can merge them additively
 //! with the system model, the §4 `m_modified` gate
 //! ([`UserStore::is_modified`] / [`UserStore::save`]) behind `pinyin_save`,
-//! and the §9 export surface ([`UserStore::export_phrases`] /
-//! [`UserStore::export_bigrams`]) behind the C ABI's export iterators.
+//! and the §9 export surface ([`UserStore::export_phrases_in`] /
+//! [`UserStore::bigram_predecessors`]) behind the C ABI's export iterators.
 //! Nothing is durable between saves: `save` writes the pin's own user file
 //! set (`.tmp` + rename), the pin's own shape (`docs/findings/user-store.md`
 //! §11). The user bigram is held once, as the pin's own `SingleGram`

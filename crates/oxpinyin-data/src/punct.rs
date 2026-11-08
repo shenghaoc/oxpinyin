@@ -11,7 +11,7 @@
 //!
 //! Every lookup is one point read; nothing is walked at open. Upstream's
 //! `pinyin_init` ignores a failed `PunctTable::attach`, so a missing or
-//! unopenable file is an empty table ([`PunctTable::open_optional`]).
+//! unopenable file is an empty table ([`PunctTable::open`]).
 
 use std::path::Path;
 
@@ -122,16 +122,6 @@ impl PunctTable {
         let store = DefaultStore::open_read_only(path).map_err(TableError::from)?;
         Ok(Self::new(RawChewingDbm::new(store)))
     }
-
-    /// Opens `path` when it is a readable table; otherwise empty —
-    /// upstream `pinyin_init` ignores a failed `PunctTable::attach`.
-    #[must_use]
-    pub fn open_optional(path: &Path) -> Self {
-        if !path.is_file() {
-            return Self::empty();
-        }
-        Self::open(path).unwrap_or_else(|_| Self::empty())
-    }
 }
 
 #[cfg(test)]
@@ -167,7 +157,6 @@ mod tests {
         let table = PunctTable::<MemoryDbm>::empty();
         assert!(!table.is_open());
         assert!(table.punctuations(0x0100_0295).unwrap().is_empty());
-        assert!(!PunctTable::open_optional(std::path::Path::new("/no/such/punct.bin")).is_open());
     }
 
     #[test]

@@ -83,6 +83,16 @@ fn with_store<R>(instance: *mut PinyinInstance, read: impl FnOnce(&UserStore) ->
     read(inst.core.user.expect("instance carries a user store"))
 }
 
+fn next_user_token(store: &UserStore) -> u32 {
+    store
+        .phrases()
+        .expect("phrases")
+        .iter()
+        .map(|phrase| phrase.token())
+        .max()
+        .map_or(FIRST_USER_TOKEN, |token| token + 1)
+}
+
 /// The token snapshotted on the candidate pointer.
 fn token_of(instance: *mut PinyinInstance, cand: *mut LookupCandidate) -> u32 {
     // SAFETY: `cand` was produced by `pinyin_get_candidate` on `instance`
@@ -254,10 +264,7 @@ fn remember_user_input_indexes_without_training(instance: *mut PinyinInstance) {
             with_store(instance, |store| store.token_for_phrase("你好")).unwrap(),
             Some(user_token)
         );
-        assert_eq!(
-            with_store(instance, |store| store.next_user_token()).unwrap(),
-            FIRST_USER_TOKEN + 1
-        );
+        assert_eq!(with_store(instance, next_user_token), FIRST_USER_TOKEN + 1);
         assert_eq!(
             with_store(instance, |store| store.unigram_delta(user_token)).unwrap(),
             15
@@ -283,10 +290,7 @@ fn remember_user_input_indexes_without_training(instance: *mut PinyinInstance) {
         cstr("你好").as_ptr(),
         -1
     ));
-    assert_eq!(
-        with_store(instance, |store| store.next_user_token()).unwrap(),
-        FIRST_USER_TOKEN + 1
-    );
+    assert_eq!(with_store(instance, next_user_token), FIRST_USER_TOKEN + 1);
 }
 
 /// #752: the pin's `_pre_compute_tokens` refuses a phrase if any character
@@ -317,10 +321,7 @@ fn remember_user_input_requires_known_characters_in_every_parse_mode() {
                 phrase.as_ptr().cast(),
                 1
             ));
-            assert_eq!(
-                with_store(instance, |store| store.next_user_token()).unwrap(),
-                FIRST_USER_TOKEN
-            );
+            assert_eq!(with_store(instance, next_user_token), FIRST_USER_TOKEN);
             let export = pinyin_begin_get_phrases(context, 7);
             assert!(!export.is_null());
             assert!(!pinyin_iterator_has_next_phrase(export));
@@ -388,10 +389,7 @@ fn remember_user_input_rejects_empty_and_oversized_known_phrases() {
             1
         ));
     }
-    assert_eq!(
-        with_store(instance, |store| store.next_user_token()).unwrap(),
-        FIRST_USER_TOKEN
-    );
+    assert_eq!(with_store(instance, next_user_token), FIRST_USER_TOKEN);
     let export = pinyin_begin_get_phrases(context, 7);
     assert!(!export.is_null());
     assert!(!pinyin_iterator_has_next_phrase(export));
@@ -966,10 +964,7 @@ fn mask_out_clears_user_entries_and_leaves_the_flag_alone() {
                 .unwrap()
                 .is_none()
         );
-        assert_eq!(
-            with_store(instance, |store| store.next_user_token()).unwrap(),
-            FIRST_USER_TOKEN
-        );
+        assert_eq!(with_store(instance, next_user_token), FIRST_USER_TOKEN);
         assert!(!with_store(instance, |store| store.is_modified()));
     }
     assert!(!pinyin_save(context), "masking does not arm the save gate");
@@ -2247,7 +2242,7 @@ fn predicted_tie_groups_are_text_ascending_including_user_rows() {
                 inst.core
                     .dict
                     .live_items()
-                    .stored_unigram(token.value())
+                    .effective_unigram(token.value())
                     .unwrap_or(0)
                     + inst
                         .core
