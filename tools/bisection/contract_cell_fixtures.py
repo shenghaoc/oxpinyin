@@ -105,59 +105,6 @@ def predicted_bigram_context(k, phrase, value, *, _craft_hash):
     return ctx
 
 
-def token_reuse_sequence(k, steps, bigram_rows=None, library=7, *, crafted_bigram_context, token_reuse_files):
-    """Runs `steps` over the user library and reports what a caller can see:
-    each step's return, the user token of every phrase imported so far, and
-    the user files left behind. `('add', n)` imports phrase n, `('save',)`,
-    `('mask', mask, value)` and `('reopen',)` are the facade calls.
-    `bigram_rows` seeds `user_bigram.db` first, with rows that name the token
-    the first import will take.
-
-    Use the chosen library and facade reading column with import count 100.
-    A truthy bigram_rows replaces the seeded profile; otherwise use the cached
-    context. Reopen finalizes without implicitly saving or replacing the kit's
-    cache. Return action results, per-step token mappings and normalized files.
-    Unrecognized actions still produce a token snapshot."""
-    ctx = crafted_bigram_context(k, bigram_rows) if bigram_rows else k.ctx
-    column = 1 if k.mode == 'pinyin' else 2
-    out, seen = [], []
-
-    def tokens():
-        """Look up every seen phrase with a temporary instance and return hexadecimal token lists.
-
-        Free that instance after lookup; the per-phrase GArrays remain allocated."""
-        inst = k.fn('alloc_instance', P, P)(ctx)
-        new = k.glib.g_array_new
-        new.restype, new.argtypes = P, [I, I, U]
-        found = {}
-        for n in seen:
-            arr = new(0, 0, 4)
-            k.fn('lookup_tokens', B, P, S, P)(inst, TOKEN_REUSE_PHRASES[n][0].encode(), arr)
-            view = C.cast(arr, C.POINTER(Arr)).contents
-            found[TOKEN_REUSE_PHRASES[n][0]] = [hex(t) for t in C.cast(view.data, C.POINTER(U))[:view.len]]
-        k.fn('free_instance', None, P)(inst)
-        return found
-
-    for step in steps:
-        if step[0] == 'add':
-            it = k.fn('begin_add_phrases', P, P, U)(ctx, library)
-            assert it, 'the import iterator'
-            text, reading = TOKEN_REUSE_PHRASES[step[1]][0], TOKEN_REUSE_PHRASES[step[1]][column]
-            out.append(['add', bool(k.fn('iterator_add_phrase', B, P, S, S, I)(it, text.encode(), reading.encode(), 100))])
-            k.fn('end_add_phrases', None, P)(it)
-            seen.append(step[1])
-        elif step[0] == 'save':
-            out.append(['save', bool(k.fn('save', B, P)(ctx))])
-        elif step[0] == 'mask':
-            out.append(['mask', bool(k.fn('mask_out', B, P, U, U)(ctx, step[1], step[2]))])
-        elif step[0] == 'reopen':
-            k.fn('fini', None, P)(ctx)
-            ctx = k.init()
-            assert ctx, 'the reopen failed'
-        out.append(tokens())
-    return {'steps': out, 'files': token_reuse_files(k)}
-
-
 def token_reuse_files(k, *, CELL, index_file_rows):
     """The user files a save leaves, by content. The two user index
     containers are compared record by record, a key whose value is empty

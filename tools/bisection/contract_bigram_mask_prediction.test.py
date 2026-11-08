@@ -14,8 +14,7 @@ import contract_bigram_mask_prediction as family
 
 # (case ID, positional options, keyword options) in registration order.
 EXPECTED = [('issue1114-collision-load-save-pinyin', (), {'cells': ('tkrzw',), 'issues': ('1114',), 'mode': 'pinyin'}),
-            ('issue1114-collision-load-save-zhuyin', (), {'cells': ('tkrzw',), 'issues': ('1114',), 'mode': 'zhuyin'}),
-            ('abort-choose-candidate-predicted-bigram-row', (), {'sigabrt': True, 'abort': 0, 'cells': ('bdb',)})]
+            ('issue1114-collision-load-save-zhuyin', (), {'cells': ('tkrzw',), 'issues': ('1114',), 'mode': 'zhuyin'})]
 INJECTED = ('_craft_hash', 'crafted_bigram_context', 'index_file_rows')
 
 

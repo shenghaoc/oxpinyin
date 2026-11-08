@@ -85,7 +85,6 @@ class CellFixtureTests(unittest.TestCase):
     def test_every_fixture_takes_its_driver_state_keyword_only(self):
         state = {'_craft_db': ('CELL', '_craft_bdb', '_craft_kc', '_craft_tkrzw'), '_craft_hash': ('_craft_db',),
                  'crafted_bigram_context': ('_craft_hash',), 'predicted_bigram_context': ('_craft_hash',),
-                 'token_reuse_sequence': ('crafted_bigram_context', 'token_reuse_files'),
                  'token_reuse_files': ('CELL', 'index_file_rows'), 'addon_promote_sequence': ('token_reuse_files',),
                  'phrase_text_system': ('items_system',), 'items_system': ('_craft_db',)}
         for name, names in state.items():

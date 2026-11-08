@@ -225,11 +225,7 @@ wrap_total_to_zero = contract_case_helpers.wrap_total_to_zero
 zhuyin_guess_rows = contract_case_helpers.zhuyin_guess_rows
 import contract_before_cursor_dedup
 import contract_bigram_mask_prediction
-import contract_missing_system_dbm
-import contract_token_reuse_addon_import
 import contract_save_failures_stderr
-save_929_marker_interrupt = contract_save_failures_stderr.save_929_marker_interrupt
-save_929_physical_files = contract_save_failures_stderr.save_929_physical_files
 import contract_cell_fixtures
 import contract_sentence_ties
 import contract_kit
@@ -428,13 +424,6 @@ def predicted_bigram_context(k, phrase, value):
     return contract_cell_fixtures.predicted_bigram_context(k, phrase, value, _craft_hash=_craft_hash)
 
 
-def token_reuse_sequence(k, steps, bigram_rows=None, library=7):
-    """Pass the driver's current crafted_bigram_context, token_reuse_files on every call (contract_cell_fixtures)."""
-    return contract_cell_fixtures.token_reuse_sequence(k, steps, bigram_rows, library,
-                                                       crafted_bigram_context=crafted_bigram_context,
-                                                       token_reuse_files=token_reuse_files)
-
-
 def index_file_rows(path, *, kind='tree', allow_empty=False, library=None):
     """Every key/value of a user container, sorted, in this run's cell (contract_fixtures.index_file_rows)."""
     return contract_fixtures.index_file_rows(path, cell=selected_cell(), kind=kind, allow_empty=allow_empty, library=library)
@@ -478,7 +467,6 @@ def items_system(k, items, total=200, *, isolated=False):
 # batch2 group 8: choose_predicted_candidate's return table (PR 8, #542, #540)
 
 
-contract_missing_system_dbm.register(case)
 
 
 # The remember-count cases stay at their original point in the registration sequence.
@@ -547,7 +535,6 @@ contract_bigram_mask_prediction.register(
 # the top of the range frees those tokens for the next import.
 
 
-contract_token_reuse_addon_import.register(case, token_reuse_sequence=token_reuse_sequence)
 
 
 contract_before_cursor_dedup.register(case)

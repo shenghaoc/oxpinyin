@@ -49,11 +49,6 @@ bdb cell through `tools/oracle/pin_capture.py` staging and then converted to a R
 
 | case | family |
 | --- | --- |
-| `abort-choose-candidate-predicted-bigram-row` | `contract_bigram_mask_prediction.py` |
-| `issue762-token-reuse-stale-bigram-pinyin` | `contract_token_reuse_addon_import.py` |
-| `issue762-token-reuse-stale-bigram-no-mask-pinyin` | `contract_token_reuse_addon_import.py` |
-| `issue762-token-reuse-stale-bigram-zhuyin` | `contract_token_reuse_addon_import.py` |
-| `issue762-token-reuse-stale-bigram-no-mask-zhuyin` | `contract_token_reuse_addon_import.py` |
 | `removed-predict-stale-skip-pinyin` | `journal_replay` |
 
 The six apostrophe inputs `'`, `''`, `'''`, `ni'`, `ni'!` and `ni'i` have their own

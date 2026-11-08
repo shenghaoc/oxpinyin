@@ -176,8 +176,9 @@ fn save_929_rename_user_bigram_dot_db_zhuyin() {
 fn save_929_rename_user_bigram_dot_db_dot_tmp_zhuyin() {
     run_j(
         "save_failures_stderr::save_929_rename_user_bigram_dot_db_dot_tmp_zhuyin",
+        // The UCRT's text-mode stderr writes \n as \r\n.
         Expect::stderr(if cfg!(windows) {
-            b"open SCRATCH\\user-X\\user.conf failed.rename SCRATCH\\user-X\\user_bigram.db.tmp to SCRATCH\\user-X\\user_bigram.db failed.\n"
+            b"open SCRATCH\\user-X\\user.conf failed.rename SCRATCH\\user-X\\user_bigram.db.tmp to SCRATCH\\user-X\\user_bigram.db failed.\r\n"
         } else {
             b"open SCRATCH/user-X/user.conf failed.rename SCRATCH/user-X/user_bigram.db.tmp to SCRATCH/user-X/user_bigram.db failed.\n"
         }),
@@ -303,8 +304,9 @@ fn stderr_save_dir_removed_zhuyin() {
 fn stderr_save_one_tmp_blocked_zhuyin() {
     run_j(
         "save_failures_stderr::stderr_save_one_tmp_blocked_zhuyin",
+        // The UCRT's text-mode stderr writes \n as \r\n.
         Expect::stderr(if cfg!(windows) {
-            b"open SCRATCH\\user-X\\user.conf failed.rename SCRATCH\\user-X\\user_pinyin_index.bin.tmp to SCRATCH\\user-X\\user_pinyin_index.bin failed.\n"
+            b"open SCRATCH\\user-X\\user.conf failed.rename SCRATCH\\user-X\\user_pinyin_index.bin.tmp to SCRATCH\\user-X\\user_pinyin_index.bin failed.\r\n"
         } else {
             b"open SCRATCH/user-X/user.conf failed.rename SCRATCH/user-X/user_pinyin_index.bin.tmp to SCRATCH/user-X/user_pinyin_index.bin failed.\n"
         }),

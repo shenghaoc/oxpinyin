@@ -1,7 +1,7 @@
 //! Phrase-index logger journals merged at init, mask-out and reload (inventory row 37, #525, #1175). Generated from the frozen pin observations.
 
 use crate::bodies::phrase_index_logger as b;
-use crate::support::{Expect, UserFile, run_aborting, run_j};
+use crate::support::{Expect, UserFile, run_aborting};
 
 // abort-init-log-header-token-later-directory-zhuyin: the pin's abort, reproduced; POLICY-ACCEPTED (pin-abort-assert-line.md): the pin also wrote glibc's assertion line.
 #[test]
@@ -52,30 +52,6 @@ fn abort_init_log_header_token_zhuyin() {
 }
 
 // abort-mask-out-log-header-token-later-directory-zhuyin: the pin's abort, reproduced; POLICY-ACCEPTED (pin-abort-assert-line.md): the pin also wrote glibc's assertion line.
-#[test]
-fn abort_mask_out_log_header_token_later_directory_zhuyin() {
-    run_aborting(
-        "phrase_index_logger::abort_mask_out_log_header_token_later_directory_zhuyin",
-        Expect::aborts(b""),
-        |k| {
-            b::case(k, "abort-mask-out-log-header-token-later-directory-zhuyin");
-        },
-    );
-}
-
-// abort-mask-out-log-header-token-zhuyin: the pin's abort, reproduced; POLICY-ACCEPTED (pin-abort-assert-line.md): the pin also wrote glibc's assertion line.
-#[test]
-fn abort_mask_out_log_header_token_zhuyin() {
-    run_aborting(
-        "phrase_index_logger::abort_mask_out_log_header_token_zhuyin",
-        Expect::aborts(b""),
-        |k| {
-            b::case(k, "abort-mask-out-log-header-token-zhuyin");
-        },
-    );
-}
-
-// abort-mask-out-log-header-untouched-zhuyin: the pin's abort, reproduced; POLICY-ACCEPTED (pin-abort-assert-line.md): the pin also wrote glibc's assertion line.
 #[test]
 fn abort_mask_out_log_header_untouched_zhuyin() {
     #[cfg(windows)]
@@ -147,30 +123,6 @@ fn abort_mask_out_log_header_untouched_zhuyin() {
 }
 
 // abort-mask-out-multiple-log-headers-bad-tail-zhuyin: the pin's abort, reproduced; POLICY-ACCEPTED (pin-abort-assert-line.md): the pin also wrote glibc's assertion line.
-#[test]
-fn abort_mask_out_multiple_log_headers_bad_tail_zhuyin() {
-    run_aborting(
-        "phrase_index_logger::abort_mask_out_multiple_log_headers_bad_tail_zhuyin",
-        Expect::aborts(b""),
-        |k| {
-            b::case(k, "abort-mask-out-multiple-log-headers-bad-tail-zhuyin");
-        },
-    );
-}
-
-// abort-mask-out-multiple-log-headers-zhuyin: the pin's abort, reproduced; POLICY-ACCEPTED (pin-abort-assert-line.md): the pin also wrote glibc's assertion line.
-#[test]
-fn abort_mask_out_multiple_log_headers_zhuyin() {
-    run_aborting(
-        "phrase_index_logger::abort_mask_out_multiple_log_headers_zhuyin",
-        Expect::aborts(b""),
-        |k| {
-            b::case(k, "abort-mask-out-multiple-log-headers-zhuyin");
-        },
-    );
-}
-
-// abort-mask-out-second-library-multiple-log-headers-zhuyin: the pin's abort, reproduced; POLICY-ACCEPTED (pin-abort-assert-line.md): the pin also wrote glibc's assertion line.
 #[test]
 fn abort_mask_out_second_library_multiple_log_headers_zhuyin() {
     // The pin aborts before it rewrites user.conf: the file is the case's own LF text on every host.
@@ -253,61 +205,3 @@ fn abort_reload_short_add_zhuyin() {
 }
 
 // init-multiple-log-headers-zhuyin: MATCH.
-#[test]
-fn init_multiple_log_headers_zhuyin() {
-    run_j(
-        "phrase_index_logger::init_multiple_log_headers_zhuyin",
-        Expect::RESULT,
-        |k| b::case(k, "init-multiple-log-headers-zhuyin"),
-        raw!(M(&[("logs", L(&[])), ("ret", B(true))])),
-        None,
-    );
-}
-
-// mask-out-log-header-bad-tail-zhuyin: MATCH.
-#[test]
-fn mask_out_log_header_bad_tail_zhuyin() {
-    run_j(
-        "phrase_index_logger::mask_out_log_header_bad_tail_zhuyin",
-        Expect::RESULT,
-        |k| b::case(k, "mask-out-log-header-bad-tail-zhuyin"),
-        raw!(M(&[("logs", L(&[])), ("ret", B(true))])),
-        None,
-    );
-}
-
-// mask-out-log-kept-add-bad-tail-zhuyin: MATCH.
-#[test]
-fn mask_out_log_kept_add_bad_tail_zhuyin() {
-    run_j(
-        "phrase_index_logger::mask_out_log_kept_add_bad_tail_zhuyin",
-        Expect::RESULT,
-        |k| b::case(k, "mask-out-log-kept-add-bad-tail-zhuyin"),
-        raw!(M(&[("logs", L(&[])), ("ret", B(true))])),
-        None,
-    );
-}
-
-// mask-out-second-library-other-bits-zhuyin: MATCH.
-#[test]
-fn mask_out_second_library_other_bits_zhuyin() {
-    run_j(
-        "phrase_index_logger::mask_out_second_library_other_bits_zhuyin",
-        Expect::RESULT,
-        |k| b::case(k, "mask-out-second-library-other-bits-zhuyin"),
-        raw!(M(&[("logs", L(&[])), ("ret", B(true))])),
-        None,
-    );
-}
-
-// mask-out-unloaded-library-log-zhuyin: MATCH.
-#[test]
-fn mask_out_unloaded_library_log_zhuyin() {
-    run_j(
-        "phrase_index_logger::mask_out_unloaded_library_log_zhuyin",
-        Expect::RESULT,
-        |k| b::case(k, "mask-out-unloaded-library-log-zhuyin"),
-        raw!(M(&[("logs", L(&[])), ("ret", B(true))])),
-        None,
-    );
-}

@@ -39,6 +39,17 @@ fn pin_donor(k: &Kit, profile: &Raw) -> std::path::PathBuf {
 pub fn case(k: &mut Kit, id: &str) -> J {
     match id {
         "predicted-bigram-is-user-candidate" => predicted_is_user(k),
+        // `pinyin_choose_candidate` takes no predicted row of either kind: it
+        // asserts `PREDICTED_BIGRAM_CANDIDATE != candidate->m_candidate_type`
+        // (`pinyin.cpp:2507-2508`). A planted 我-to-你好 prediction supplies the
+        // kind-4 row; the case passes it to ordinary candidate selection.
+        "abort-choose-candidate-predicted-bigram-row" => {
+            let ctx = predicted_bigram_row_context(k, "我", "你好", 20);
+            let inst = facade::alloc_instance(ctx);
+            facade::guess_predicted_candidates_with_punctuations(inst, c("我").as_ptr());
+            let row = row_of(inst, 4).expect("the planted gram listed no predicted-bigram row");
+            obj! { "ret" => facade::choose_candidate(inst, 0, row) }
+        }
         "abort-mask-out-short-bigram-value" | "abort-zhuyin-mask-out-short-bigram-value" => {
             mask_crafted(k, &[(vec![1, 0, 0, 0], vec![7, 0, 0])], 0)
         }

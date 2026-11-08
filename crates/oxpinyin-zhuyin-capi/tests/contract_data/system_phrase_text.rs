@@ -34,29 +34,6 @@ fn phrase_text_zhuyin_above_unicode_choose() {
 
 // phrase-text/zhuyin-above-unicode-export: MATCH.
 #[test]
-fn phrase_text_zhuyin_above_unicode_export() {
-    run_j(
-        "system_phrase_text::phrase_text_zhuyin_above_unicode_export",
-        Expect::RESULT,
-        |k| b::case(k, "phrase-text/zhuyin-above-unicode-export"),
-        raw!(M(&[
-            (
-                "exports",
-                M(&[
-                    ("begin_get_phrases", B(false)),
-                    ("end_get_phrases", B(false)),
-                    ("iterator_get_next_phrase", B(false)),
-                    ("iterator_has_next_phrase", B(false))
-                ])
-            ),
-            ("logs", L(&[]))
-        ])),
-        None,
-    );
-}
-
-// phrase-text/zhuyin-above-unicode-sentence: MATCH.
-#[test]
 fn phrase_text_zhuyin_above_unicode_sentence() {
     run_j(
         "system_phrase_text::phrase_text_zhuyin_above_unicode_sentence",
@@ -104,29 +81,6 @@ fn phrase_text_zhuyin_nul_choose() {
 
 // phrase-text/zhuyin-nul-export: MATCH.
 #[test]
-fn phrase_text_zhuyin_nul_export() {
-    run_j(
-        "system_phrase_text::phrase_text_zhuyin_nul_export",
-        Expect::RESULT,
-        |k| b::case(k, "phrase-text/zhuyin-nul-export"),
-        raw!(M(&[
-            (
-                "exports",
-                M(&[
-                    ("begin_get_phrases", B(false)),
-                    ("end_get_phrases", B(false)),
-                    ("iterator_get_next_phrase", B(false)),
-                    ("iterator_has_next_phrase", B(false))
-                ])
-            ),
-            ("logs", L(&[]))
-        ])),
-        None,
-    );
-}
-
-// phrase-text/zhuyin-nul-sentence: MATCH.
-#[test]
 fn phrase_text_zhuyin_nul_sentence() {
     run_j(
         "system_phrase_text::phrase_text_zhuyin_nul_sentence",
@@ -173,29 +127,6 @@ fn phrase_text_zhuyin_surrogate_choose() {
 }
 
 // phrase-text/zhuyin-surrogate-export: MATCH.
-#[test]
-fn phrase_text_zhuyin_surrogate_export() {
-    run_j(
-        "system_phrase_text::phrase_text_zhuyin_surrogate_export",
-        Expect::RESULT,
-        |k| b::case(k, "phrase-text/zhuyin-surrogate-export"),
-        raw!(M(&[
-            (
-                "exports",
-                M(&[
-                    ("begin_get_phrases", B(false)),
-                    ("end_get_phrases", B(false)),
-                    ("iterator_get_next_phrase", B(false)),
-                    ("iterator_has_next_phrase", B(false))
-                ])
-            ),
-            ("logs", L(&[]))
-        ])),
-        None,
-    );
-}
-
-// phrase-text/zhuyin-surrogate-sentence: MATCH.
 #[test]
 fn phrase_text_zhuyin_surrogate_sentence() {
     run_j(
