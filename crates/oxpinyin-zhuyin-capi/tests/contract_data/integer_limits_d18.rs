@@ -58,7 +58,9 @@ fn d18_train_seed_zero_zhuyin() {
         "integer_limits_d18::d18_train_seed_zero_zhuyin",
         Expect::RESULT,
         |k| b::case(k, "d18-train-seed-zero-zhuyin"),
-        raw!(include!("fixtures/integer_limits_d18/f76d84995b8eec0c.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/integer_limits_d18/f76d84995b8eec0c.rs"
+        )),
         None,
     );
 }
@@ -70,7 +72,9 @@ fn d18_train_stored_zero_zhuyin() {
         "integer_limits_d18::d18_train_stored_zero_zhuyin",
         Expect::RESULT,
         |k| b::case(k, "d18-train-stored-zero-zhuyin"),
-        raw!(include!("fixtures/integer_limits_d18/28798fd0445782e8.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/integer_limits_d18/28798fd0445782e8.rs"
+        )),
         None,
     );
 }
@@ -82,7 +86,9 @@ fn d18_train_total_overflow_zhuyin() {
         "integer_limits_d18::d18_train_total_overflow_zhuyin",
         Expect::RESULT,
         |k| b::case(k, "d18-train-total-overflow-zhuyin"),
-        raw!(include!("fixtures/integer_limits_d18/907723db5a4587c8.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/integer_limits_d18/907723db5a4587c8.rs"
+        )),
         None,
     );
 }
@@ -94,7 +100,9 @@ fn d18_unigram_total_boundary_zhuyin() {
         "integer_limits_d18::d18_unigram_total_boundary_zhuyin",
         Expect::RESULT,
         |k| b::case(k, "d18-unigram-total-boundary-zhuyin"),
-        raw!(include!("fixtures/integer_limits_d18/4d52ca68da4a63d4.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/integer_limits_d18/4d52ca68da4a63d4.rs"
+        )),
         None,
     );
 }
@@ -104,9 +112,13 @@ fn d18_unigram_total_boundary_zhuyin() {
 fn issue542_stale_user_phrase_index_dot_bin_zhuyin() {
     // g_rename is MoveFileExW with MOVEFILE_REPLACE_EXISTING (gstdio.c, GLib 2.90.1): a directory over an existing directory is an error (Microsoft Learn, MoveFileExW), so the empty-directory round's rename fails and its stale directory stays; a directory over an existing file is refused as rename(2) refuses it (compatibility-policy.md, 2026-11-03 UTC; oxpinyin-input path::rename), so the live-file round ends as the pin's did. Both failing rounds print the rename line, and text-mode stderr writes \n as \r\n.
     #[cfg(windows)]
-    let expected = raw!(include!("fixtures/integer_limits_d18/1c57f44b3d1ec4c0.rs"));
+    let expected = raw!(include!(
+        "../../../oxpinyin-capi/tests/contract_data/fixtures/integer_limits_d18/1c57f44b3d1ec4c0.rs"
+    ));
     #[cfg(not(windows))]
-    let expected = raw!(include!("fixtures/integer_limits_d18/7ca7480deb427fe4.rs"));
+    let expected = raw!(include!(
+        "../../../oxpinyin-capi/tests/contract_data/fixtures/integer_limits_d18/7ca7480deb427fe4.rs"
+    ));
     run_j(
         "integer_limits_d18::issue542_stale_user_phrase_index_dot_bin_zhuyin",
         // The rename line comes from the second and the third round (see the result above), and the UCRT's text-mode stderr writes \n as \r\n.
@@ -126,9 +138,13 @@ fn issue542_stale_user_phrase_index_dot_bin_zhuyin() {
 fn issue542_stale_user_pinyin_index_dot_bin_zhuyin() {
     // g_rename is MoveFileExW with MOVEFILE_REPLACE_EXISTING (gstdio.c, GLib 2.90.1): a directory over an existing directory is an error (Microsoft Learn, MoveFileExW), so the empty-directory round's rename fails and its stale directory stays; a directory over an existing file is refused as rename(2) refuses it (compatibility-policy.md, 2026-11-03 UTC; oxpinyin-input path::rename), so the live-file round ends as the pin's did. Both failing rounds print the rename line, and text-mode stderr writes \n as \r\n.
     #[cfg(windows)]
-    let expected = raw!(include!("fixtures/integer_limits_d18/1c57f44b3d1ec4c0.rs"));
+    let expected = raw!(include!(
+        "../../../oxpinyin-capi/tests/contract_data/fixtures/integer_limits_d18/1c57f44b3d1ec4c0.rs"
+    ));
     #[cfg(not(windows))]
-    let expected = raw!(include!("fixtures/integer_limits_d18/7ca7480deb427fe4.rs"));
+    let expected = raw!(include!(
+        "../../../oxpinyin-capi/tests/contract_data/fixtures/integer_limits_d18/7ca7480deb427fe4.rs"
+    ));
     run_j(
         "integer_limits_d18::issue542_stale_user_pinyin_index_dot_bin_zhuyin",
         // The rename line comes from the second and the third round (see the result above), and the UCRT's text-mode stderr writes \n as \r\n.

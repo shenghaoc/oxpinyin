@@ -106,7 +106,7 @@ fn save_929_logical_cross_open_zhuyin() {
         Expect::RESULT,
         |k| b::case_with_profile(k, "save-929-logical-cross-open-zhuyin", &PROFILE),
         raw!(include!(
-            "fixtures/save_failures_stderr/38e2d26184821bbd.rs"
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/save_failures_stderr/38e2d26184821bbd.rs"
         )),
         None,
     );
@@ -146,7 +146,7 @@ fn save_929_rename_user_dot_bin_zhuyin() {
         }),
         |k| b::case(k, "save-929-rename-user.bin-zhuyin"),
         raw!(include!(
-            "fixtures/save_failures_stderr/1744b3c574dd4910.rs"
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/save_failures_stderr/1744b3c574dd4910.rs"
         )),
         None,
     );
@@ -165,7 +165,7 @@ fn save_929_rename_user_bigram_dot_db_zhuyin() {
         }),
         |k| b::case(k, "save-929-rename-user_bigram.db-zhuyin"),
         raw!(include!(
-            "fixtures/save_failures_stderr/45c3638cef759ba8.rs"
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/save_failures_stderr/45c3638cef759ba8.rs"
         )),
         None,
     );
@@ -184,7 +184,7 @@ fn save_929_rename_user_bigram_dot_db_dot_tmp_zhuyin() {
         }),
         |k| b::case(k, "save-929-rename-user_bigram.db.tmp-zhuyin"),
         raw!(include!(
-            "fixtures/save_failures_stderr/089a568c7421a45b.rs"
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/save_failures_stderr/089a568c7421a45b.rs"
         )),
         None,
     );
@@ -203,7 +203,7 @@ fn save_929_rename_user_phrase_index_dot_bin_zhuyin() {
         }),
         |k| b::case(k, "save-929-rename-user_phrase_index.bin-zhuyin"),
         raw!(include!(
-            "fixtures/save_failures_stderr/33a2cf050f15e81c.rs"
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/save_failures_stderr/33a2cf050f15e81c.rs"
         )),
         None,
     );
@@ -222,7 +222,7 @@ fn save_929_rename_user_pinyin_index_dot_bin_zhuyin() {
         }),
         |k| b::case(k, "save-929-rename-user_pinyin_index.bin-zhuyin"),
         raw!(include!(
-            "fixtures/save_failures_stderr/9c453ddcbbe5ac65.rs"
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/save_failures_stderr/9c453ddcbbe5ac65.rs"
         )),
         None,
     );
@@ -312,7 +312,7 @@ fn stderr_save_one_tmp_blocked_zhuyin() {
         }),
         |k| b::case(k, "stderr-save-one-tmp-blocked-zhuyin"),
         raw!(include!(
-            "fixtures/save_failures_stderr/6ffd738a25abaac4.rs"
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/save_failures_stderr/6ffd738a25abaac4.rs"
         )),
         None,
     );

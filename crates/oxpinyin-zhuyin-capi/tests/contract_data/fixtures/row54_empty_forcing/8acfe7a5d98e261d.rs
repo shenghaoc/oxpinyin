@@ -1,1 +1,0 @@
-M(&[("candidates", B(true)), ("choose", I(2)), ("chosen_index", I(4)), ("chosen_text", S("泥")), ("initial_guess", B(true)), ("initial_sentence", L(&[B(true), S("你好")])), ("logs", L(&[])), ("parse", I(5)), ("restored_guess", B(true)), ("restored_parse", I(5)), ("restored_sentence", L(&[B(true), S("泥好")]))])

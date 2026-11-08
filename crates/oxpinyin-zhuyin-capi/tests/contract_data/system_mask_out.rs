@@ -86,7 +86,9 @@ fn mask_out_dropped_add_full_zhuyin() {
         "system_mask_out::mask_out_dropped_add_full_zhuyin",
         Expect::RESULT,
         |k| b::case(k, "mask-out-dropped-add-full-zhuyin"),
-        raw!(include!("fixtures/system_mask_out/aff286cbb35090bf.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/system_mask_out/aff286cbb35090bf.rs"
+        )),
         None,
     );
 }
@@ -98,7 +100,9 @@ fn mask_out_system_disk_replacement_zhuyin() {
         "system_mask_out::mask_out_system_disk_replacement_zhuyin",
         Expect::RESULT,
         |k| b::case(k, "mask-out-system-disk-replacement-zhuyin"),
-        raw!(include!("fixtures/system_mask_out/d27bdd027eb4b66f.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/system_mask_out/d27bdd027eb4b66f.rs"
+        )),
         None,
     );
 }
@@ -110,7 +114,9 @@ fn mask_out_system_headerless_add_zhuyin() {
         "system_mask_out::mask_out_system_headerless_add_zhuyin",
         Expect::RESULT,
         |k| b::case(k, "mask-out-system-headerless-add-zhuyin"),
-        raw!(include!("fixtures/system_mask_out/7fdd6a2d6469122b.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/system_mask_out/7fdd6a2d6469122b.rs"
+        )),
         None,
     );
 }
@@ -122,7 +128,9 @@ fn mask_out_system_modify_zhuyin() {
         "system_mask_out::mask_out_system_modify_zhuyin",
         Expect::RESULT,
         |k| b::case(k, "mask-out-system-modify-zhuyin"),
-        raw!(include!("fixtures/system_mask_out/d27bdd027eb4b66f.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/system_mask_out/d27bdd027eb4b66f.rs"
+        )),
         None,
     );
 }
@@ -134,7 +142,9 @@ fn mask_out_system_no_header_zhuyin() {
         "system_mask_out::mask_out_system_no_header_zhuyin",
         Expect::RESULT,
         |k| b::case(k, "mask-out-system-no-header-zhuyin"),
-        raw!(include!("fixtures/system_mask_out/ae73ea73b3062131.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/system_mask_out/ae73ea73b3062131.rs"
+        )),
         None,
     );
 }
@@ -146,7 +156,9 @@ fn mask_out_system_saved_zhuyin() {
         "system_mask_out::mask_out_system_saved_zhuyin",
         Expect::RESULT,
         |k| b::case(k, "mask-out-system-saved-zhuyin"),
-        raw!(include!("fixtures/system_mask_out/7fdd6a2d6469122b.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/system_mask_out/7fdd6a2d6469122b.rs"
+        )),
         None,
     );
 }
@@ -158,7 +170,9 @@ fn mask_out_system_selected_add_zhuyin() {
         "system_mask_out::mask_out_system_selected_add_zhuyin",
         Expect::RESULT,
         |k| b::case(k, "mask-out-system-selected-add-zhuyin"),
-        raw!(include!("fixtures/system_mask_out/c9787d72d31b20de.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/system_mask_out/c9787d72d31b20de.rs"
+        )),
         None,
     );
 }
@@ -170,7 +184,9 @@ fn mask_out_system_unsaved_zhuyin() {
         "system_mask_out::mask_out_system_unsaved_zhuyin",
         Expect::RESULT,
         |k| b::case(k, "mask-out-system-unsaved-zhuyin"),
-        raw!(include!("fixtures/system_mask_out/b94559cd0b3a7f0a.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/system_mask_out/b94559cd0b3a7f0a.rs"
+        )),
         None,
     );
 }
@@ -182,7 +198,9 @@ fn mask_out_unmappable_no_change_zhuyin() {
         "system_mask_out::mask_out_unmappable_no_change_zhuyin",
         Expect::RESULT,
         |k| b::case(k, "mask-out-unmappable-no-change-zhuyin"),
-        raw!(include!("fixtures/system_mask_out/8ebf8d8edf89c64c.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/system_mask_out/8ebf8d8edf89c64c.rs"
+        )),
         Some(&[
             "files_unchanged",
             "line",

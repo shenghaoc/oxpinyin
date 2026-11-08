@@ -10,7 +10,9 @@ fn zero_consumption_zhuyin_chewings_empty() {
         "zero_consumption::zero_consumption_zhuyin_chewings_empty",
         Expect::RESULT,
         |k| b::case(k, "zero-consumption-zhuyin-chewings-empty"),
-        raw!(include!("fixtures/zero_consumption/32de4dbacd930f0a.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/zero_consumption/32de4dbacd930f0a.rs"
+        )),
         None,
     );
 }
@@ -22,7 +24,9 @@ fn zero_consumption_zhuyin_chewings_empty_prefix() {
         "zero_consumption::zero_consumption_zhuyin_chewings_empty_prefix",
         Expect::RESULT,
         |k| b::case(k, "zero-consumption-zhuyin-chewings-empty-prefix"),
-        raw!(include!("fixtures/zero_consumption/32de4dbacd930f0a.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/zero_consumption/32de4dbacd930f0a.rs"
+        )),
         None,
     );
 }
@@ -34,7 +38,9 @@ fn zero_consumption_zhuyin_full_pinyins_bang_prefix() {
         "zero_consumption::zero_consumption_zhuyin_full_pinyins_bang_prefix",
         Expect::RESULT,
         |k| b::case(k, "zero-consumption-zhuyin-full_pinyins-!-prefix"),
-        raw!(include!("fixtures/zero_consumption/32de4dbacd930f0a.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/zero_consumption/32de4dbacd930f0a.rs"
+        )),
         None,
     );
 }
@@ -46,7 +52,9 @@ fn zero_consumption_zhuyin_full_pinyins_n() {
         "zero_consumption::zero_consumption_zhuyin_full_pinyins_n",
         Expect::RESULT,
         |k| b::case(k, "zero-consumption-zhuyin-full_pinyins-n"),
-        raw!(include!("fixtures/zero_consumption/32de4dbacd930f0a.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/zero_consumption/32de4dbacd930f0a.rs"
+        )),
         None,
     );
 }

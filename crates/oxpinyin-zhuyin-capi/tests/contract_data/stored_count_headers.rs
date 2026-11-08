@@ -11,7 +11,9 @@ fn stored_count_headers_system_zhuyin() {
         "stored_count_headers::stored_count_headers_system_zhuyin",
         Expect::RESULT,
         |k| b::stored_count_headers(k, false),
-        include!("fixtures/stored_count_headers/ca56425e717cde50.rs"),
+        include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/stored_count_headers/ca56425e717cde50.rs"
+        ),
         Some(NO_LOGS),
     );
 }
@@ -24,7 +26,9 @@ fn stored_count_headers_user_zhuyin() {
         "stored_count_headers::stored_count_headers_user_zhuyin",
         Expect::RESULT,
         |k| b::stored_count_headers(k, true),
-        include!("fixtures/stored_count_headers/ca56425e717cde50.rs"),
+        include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/stored_count_headers/ca56425e717cde50.rs"
+        ),
         Some(NO_LOGS),
     );
 }

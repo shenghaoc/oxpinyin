@@ -15,7 +15,7 @@ fn glib_922_dir_system_dup_trailing_zhuyin() {
         }),
         |k| b::case(k, "glib-922-dir-system-dup-trailing-zhuyin"),
         raw!(include!(
-            "fixtures/glib_path_construction/35cfd198aa8d0ffa.rs"
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/glib_path_construction/35cfd198aa8d0ffa.rs"
         )),
         None,
     );
@@ -34,7 +34,7 @@ fn glib_922_dir_user_dup_trailing_zhuyin() {
         }),
         |k| b::case(k, "glib-922-dir-user-dup-trailing-zhuyin"),
         raw!(include!(
-            "fixtures/glib_path_construction/35cfd198aa8d0ffa.rs"
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/glib_path_construction/35cfd198aa8d0ffa.rs"
         )),
         None,
     );

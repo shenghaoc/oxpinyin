@@ -714,7 +714,7 @@ fn separator_zhuyin_4_rest_4() {
         Expect::RESULT,
         |k| b::case(k, "separator/zhuyin/4/rest/4"),
         raw!(include!(
-            "fixtures/separator_before_cursor/e6dd594be807928f.rs"
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/separator_before_cursor/e6dd594be807928f.rs"
         )),
         None,
     );

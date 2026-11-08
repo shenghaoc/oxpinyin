@@ -11,7 +11,7 @@ fn user_library_training_bytes_zhuyin() {
         Expect::RESULT,
         |k| b::case(k, "user-library-training-bytes-zhuyin"),
         raw!(include!(
-            "fixtures/phrase_export_training/2661f3c04c99f242.rs"
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/phrase_export_training/2661f3c04c99f242.rs"
         )),
         None,
     );

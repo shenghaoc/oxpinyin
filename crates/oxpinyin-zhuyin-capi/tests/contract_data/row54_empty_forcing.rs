@@ -50,7 +50,9 @@ fn row54_forcing_zhuyin_empty() {
         "row54_empty_forcing::row54_forcing_zhuyin_empty",
         Expect::RESULT,
         |k| b::case(k, "row54-forcing-zhuyin-empty"),
-        raw!(include!("fixtures/row54_empty_forcing/3ef55d5e40844051.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/row54_empty_forcing/3ef55d5e40844051.rs"
+        )),
         None,
     );
 }
@@ -62,7 +64,9 @@ fn row54_forcing_zhuyin_empty_guess() {
         "row54_empty_forcing::row54_forcing_zhuyin_empty_guess",
         Expect::RESULT,
         |k| b::case(k, "row54-forcing-zhuyin-empty-guess"),
-        raw!(include!("fixtures/row54_empty_forcing/c29005a442adc380.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/row54_empty_forcing/c29005a442adc380.rs"
+        )),
         None,
     );
 }
@@ -74,7 +78,9 @@ fn row54_forcing_zhuyin_no_empty() {
         "row54_empty_forcing::row54_forcing_zhuyin_no_empty",
         Expect::RESULT,
         |k| b::case(k, "row54-forcing-zhuyin-no-empty"),
-        raw!(include!("fixtures/row54_empty_forcing/8acfe7a5d98e261d.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/row54_empty_forcing/8acfe7a5d98e261d.rs"
+        )),
         None,
     );
 }
@@ -86,7 +92,9 @@ fn row54_unload_zhuyin() {
         "row54_empty_forcing::row54_unload_zhuyin",
         Expect::RESULT,
         |k| b::case(k, "row54-unload-zhuyin"),
-        raw!(include!("fixtures/row54_empty_forcing/6db8e65b51117db6.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/row54_empty_forcing/6db8e65b51117db6.rs"
+        )),
         None,
     );
 }
@@ -110,7 +118,9 @@ fn row54_unload_zhuyin_reparse() {
         "row54_empty_forcing::row54_unload_zhuyin_reparse",
         Expect::RESULT,
         |k| b::case(k, "row54-unload-zhuyin-reparse"),
-        raw!(include!("fixtures/row54_empty_forcing/f9bc530bfcd9b85c.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/row54_empty_forcing/f9bc530bfcd9b85c.rs"
+        )),
         None,
     );
 }

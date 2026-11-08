@@ -15,7 +15,9 @@ fn axis_c_encoding_zhuyin_import_phrase_empty() {
             b"open SCRATCH/user-X/user.conf failed."
         }),
         |k| b::case(k, "axis-c-encoding-zhuyin-import-phrase-empty"),
-        raw!(include!("fixtures/axis_c/0585432bc9d11738.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/axis_c/0585432bc9d11738.rs"
+        )),
         None,
     );
 }
@@ -32,7 +34,9 @@ fn axis_c_encoding_zhuyin_import_phrase_hanzi() {
             b"open SCRATCH/user-X/user.conf failed."
         }),
         |k| b::case(k, "axis-c-encoding-zhuyin-import-phrase-hanzi"),
-        raw!(include!("fixtures/axis_c/209f46dcea94ace3.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/axis_c/209f46dcea94ace3.rs"
+        )),
         None,
     );
 }
@@ -66,7 +70,9 @@ fn axis_c_encoding_zhuyin_import_reading_bopomofo() {
             b"open SCRATCH/user-X/user.conf failed."
         }),
         |k| b::case(k, "axis-c-encoding-zhuyin-import-reading-bopomofo"),
-        raw!(include!("fixtures/axis_c/209f46dcea94ace3.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/axis_c/209f46dcea94ace3.rs"
+        )),
         None,
     );
 }
@@ -83,7 +89,9 @@ fn axis_c_encoding_zhuyin_import_reading_empty() {
             b"open SCRATCH/user-X/user.conf failed."
         }),
         |k| b::case(k, "axis-c-encoding-zhuyin-import-reading-empty"),
-        raw!(include!("fixtures/axis_c/dfe24221e6b513be.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/axis_c/dfe24221e6b513be.rs"
+        )),
         None,
     );
 }
@@ -144,7 +152,9 @@ fn axis_c_encoding_zhuyin_parse_more_chewings_ff_start() {
             b"open SCRATCH/user-X/user.conf failed."
         }),
         |k| b::case(k, "axis-c-encoding-zhuyin-parse_more_chewings-ff-start"),
-        raw!(include!("fixtures/axis_c/d8171b40697b7226.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/axis_c/d8171b40697b7226.rs"
+        )),
         None,
     );
 }
@@ -244,7 +254,9 @@ fn axis_c_encoding_zhuyin_parse_more_full_pinyins_fullwidth() {
                 "axis-c-encoding-zhuyin-parse_more_full_pinyins-fullwidth",
             )
         },
-        raw!(include!("fixtures/axis_c/d8171b40697b7226.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/axis_c/d8171b40697b7226.rs"
+        )),
         None,
     );
 }
@@ -283,7 +295,9 @@ fn axis_c_encoding_zhuyin_parse_more_full_pinyins_surrogate_end() {
                 "axis-c-encoding-zhuyin-parse_more_full_pinyins-surrogate-end",
             )
         },
-        raw!(include!("fixtures/axis_c/a0a82f7b9c12b4b4.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/axis_c/a0a82f7b9c12b4b4.rs"
+        )),
         None,
     );
 }
@@ -322,7 +336,9 @@ fn axis_c_encoding_zhuyin_parse_more_full_pinyins_tone() {
             b"open SCRATCH/user-X/user.conf failed."
         }),
         |k| b::case(k, "axis-c-encoding-zhuyin-parse_more_full_pinyins-tone"),
-        raw!(include!("fixtures/axis_c/46022603cac07f21.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/axis_c/46022603cac07f21.rs"
+        )),
         None,
     );
 }
@@ -454,7 +470,9 @@ fn axis_c_encoding_zhuyin_phrase_segment_surrogate_start() {
             b"open SCRATCH/user-X/user.conf failed."
         }),
         |k| b::case(k, "axis-c-encoding-zhuyin-phrase_segment-surrogate-start"),
-        raw!(include!("fixtures/axis_c/868f2e103465ad96.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/axis_c/868f2e103465ad96.rs"
+        )),
         None,
     );
 }
@@ -562,7 +580,9 @@ fn axis_c_layout_zhuyin_2_e0000070() {
             b"open SCRATCH/user-X/user.conf failed."
         }),
         |k| b::case(k, "axis-c-layout-zhuyin-2-e0000070"),
-        raw!(include!("fixtures/axis_c/77cbdd7f221e05c3.rs")),
+        raw!(include!(
+            "../../../oxpinyin-capi/tests/contract_data/fixtures/axis_c/77cbdd7f221e05c3.rs"
+        )),
         None,
     );
 }

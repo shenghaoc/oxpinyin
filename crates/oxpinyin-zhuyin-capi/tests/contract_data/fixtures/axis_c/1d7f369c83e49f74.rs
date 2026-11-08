@@ -1,1 +1,0 @@
-M(&[("exit", I(0)), ("result", M(&[("log_messages", L(&[])), ("logs", L(&[])), ("observation", M(&[("ret", B(true)), ("symbols", L(&[S("ㄎ"), S("ㄤ")]))])), ("set_scheme", B(true))])), ("stderr", S(""))])
