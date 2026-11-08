@@ -6,7 +6,7 @@ use core::ops::Range;
 /// Append successful whole keys with their raw spans; consume the following
 /// separator run even when the next key fails. No second key parse is needed
 /// to recover the return length or key rests.
-pub(crate) fn parse<K>(
+pub fn parse<K>(
     bytes: &[u8],
     mut parse_key: impl FnMut(Range<usize>) -> Option<K>,
     mut append: impl FnMut(K, Range<usize>),

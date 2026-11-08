@@ -529,13 +529,6 @@ fn container_gram(
         .then_some(gram))
 }
 
-/// Whether a raw gram's partial item tail is one the pin's `cur != end`
-/// walks read past (register rows 98 and 100).
-fn has_partial_tail(gram: &[u8]) -> bool {
-    gram.len() >= single_gram::TOTAL_LEN
-        && !(gram.len() - single_gram::TOTAL_LEN).is_multiple_of(single_gram::ITEM_LEN)
-}
-
 /// `Bigram::mask_out(mask, value)` (`ngram_bdb.cpp:217-254`, synced with
 /// `ngram_kyotodb.cpp:198-235` and `ngram_tkrzwdb.cpp:174-211` at the pin
 /// `074a2219`): over the keys `get_all_items` already collected, so that a
@@ -608,7 +601,7 @@ fn gram_mask_fault_over(
         if gram.len() < single_gram::TOTAL_LEN {
             return Ok(Some(UserStoreError::ShortUserBigramValue));
         }
-        if has_partial_tail(&gram) {
+        if single_gram::has_partial_tail(&gram) {
             return Ok(Some(UserStoreError::PartialUserBigramTail));
         }
         if single_gram::mask_out(&mut gram, mask, value) > 0
@@ -1016,7 +1009,7 @@ impl UserStore {
         self.bigram_row(token)
             .ok()
             .flatten()
-            .is_some_and(|bytes| has_partial_tail(&bytes))
+            .is_some_and(|bytes| single_gram::has_partial_tail(&bytes))
     }
 
     /// The session container's `Bigram::get_all_items` walk
@@ -1110,7 +1103,7 @@ impl UserStore {
                 check.fault = Some(TrainingFault::ShortValue(prev));
                 return Err(UserStoreError::ShortUserBigramValue);
             }
-            if has_partial_tail(gram) {
+            if single_gram::has_partial_tail(gram) {
                 check.fault = Some(TrainingFault::PartialTail(prev));
                 return Err(UserStoreError::PartialUserBigramTail);
             }
@@ -1685,7 +1678,7 @@ impl UserStore {
         // Class (b), register row 100: the pin's `get_freq`/`insert_freq`/
         // `set_freq` walks read past a partial item (`ngram.cpp:190`,
         // `:241`, `:261`); refused before anything changes.
-        if row.as_deref().is_some_and(has_partial_tail) {
+        if row.as_deref().is_some_and(single_gram::has_partial_tail) {
             return Err(UserStoreError::PartialUserBigramTail);
         }
         // Register row 85: the pin asserts on a total it cannot read

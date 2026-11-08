@@ -1123,12 +1123,8 @@ fn dedup_by_text_keep_first(candidates: &mut Vec<Candidate>) {
                 .map(|candidate| seen.insert(candidate.text())),
         );
     }
-    let mut index = 0;
-    candidates.retain(|_| {
-        let kept = keep[index];
-        index += 1;
-        kept
-    });
+    let mut keep = keep.into_iter();
+    candidates.retain(|_| keep.next().unwrap_or(false));
 }
 
 /// The pin's phrase-string dedup over the sorted phrase rows
@@ -1168,12 +1164,8 @@ fn dedup_ranked_by_text(ranked: &mut Vec<Candidate>, keys: &[(RankKey, u32)]) {
             }
         }
     }
-    let mut index = 0;
-    ranked.retain(|_| {
-        let kept = keep[index];
-        index += 1;
-        kept
-    });
+    let mut keep = keep.into_iter();
+    ranked.retain(|_| keep.next().unwrap_or(false));
 }
 
 /// Whether the engine batch path ([`Session::type_pinyin`]) accepts
