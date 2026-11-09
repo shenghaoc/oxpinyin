@@ -24,12 +24,12 @@ use oxpinyin_store::{DefaultStore, RawReadStore};
 use crate::chewing_table::{ChewingDbm, DefaultDbm, RawChewingDbm};
 use crate::dict::DictError;
 use crate::lm::BigramRow;
-// The key and value layout this reader shares with `import_interpolation`'s
-// writer: one written copy (`crate::row_format`).
-#[cfg(test)]
-use crate::row_format::bigram::encode_value as encode_bigram_value;
+// The key layout (`crate::row_format`) and the value layout
+// (`crate::single_gram`) have one owner each.
 use crate::row_format::bigram::parse_value as parse_bigram_value;
 use crate::row_format::encode_token_key;
+#[cfg(test)]
+use crate::single_gram::encode_single_gram;
 use crate::table::TableError;
 
 // ── BigramTable ──────────────────────────────────────────────────
@@ -233,13 +233,9 @@ mod tests {
     #[test]
     fn load_successors_finds_row() {
         let dbm = MemoryDbm::new();
-        let row = BigramRow {
-            total: 50,
-            records: vec![(0x0100_0099, 50)],
-        };
         dbm.put(
             0x0100_0010_u32.to_le_bytes().to_vec(),
-            encode_bigram_value(&row),
+            encode_single_gram(50, &[(0x0100_0099, 50)]),
         );
         let table = BigramTable::new(dbm);
         let result = table.load_successors(0x0100_0010).unwrap().unwrap();
@@ -257,13 +253,9 @@ mod tests {
     #[test]
     fn transition_finds_count() {
         let dbm = MemoryDbm::new();
-        let row = BigramRow {
-            total: 100,
-            records: vec![(0x0100_0099, 60), (0x0100_00A0, 40)],
-        };
         dbm.put(
             0x0100_0010_u32.to_le_bytes().to_vec(),
-            encode_bigram_value(&row),
+            encode_single_gram(100, &[(0x0100_0099, 60), (0x0100_00A0, 40)]),
         );
         let table = BigramTable::new(dbm);
         let (count, total) = table.transition(0x0100_0010, 0x0100_0099).unwrap().unwrap();
@@ -274,13 +266,9 @@ mod tests {
     #[test]
     fn transition_absent_next_returns_zero_count() {
         let dbm = MemoryDbm::new();
-        let row = BigramRow {
-            total: 100,
-            records: vec![(0x0100_0099, 100)],
-        };
         dbm.put(
             0x0100_0010_u32.to_le_bytes().to_vec(),
-            encode_bigram_value(&row),
+            encode_single_gram(100, &[(0x0100_0099, 100)]),
         );
         let table = BigramTable::new(dbm);
         let (count, total) = table.transition(0x0100_0010, 0xFFFF_FFFF).unwrap().unwrap();
@@ -344,10 +332,7 @@ mod tests {
     }
 
     fn stored(total: u32, records: &[(u32, u32)]) -> Vec<u8> {
-        encode_bigram_value(&BigramRow {
-            total,
-            records: records.to_vec(),
-        })
+        encode_single_gram(total, records)
     }
 
     #[test]

@@ -598,10 +598,10 @@ fn row_and_pair_read_a_stored_unsorted_row_through_the_pins_lower_bound() {
     let fix = Fixture::new();
     let store =
         DefaultStore::create_hash(&fix.dir.path().join(SystemDbm::Bigram.file_name())).unwrap();
-    let value = oxpinyin_data::row_format::bigram::encode_value(&oxpinyin_data::BigramRow {
-        total: 11,
-        records: vec![(NIHAO, 0), (HAO, 7), (NI, 4), (HAO, 99)],
-    });
+    let value = oxpinyin_data::single_gram::encode_single_gram(
+        11,
+        &[(NIHAO, 0), (HAO, 7), (NI, 4), (HAO, 99)],
+    );
     store
         .write(|txn| txn.put_raw(&NI.to_le_bytes(), &value))
         .unwrap();
