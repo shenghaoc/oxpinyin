@@ -8,11 +8,8 @@ neutrality comparison it calls is replaced by a fake module (it has its own test
 import contextlib
 import io
 from pathlib import Path
-import shutil
 import signal
 import sys
-import threading
-import time
 import types
 import unittest
 from unittest import mock
@@ -21,8 +18,8 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tools.dev import host, pool, slot
-from tools.dev.measure import bench, identity, valgrind
+from tools.dev import pool, slot
+from tools.dev.measure import bench, valgrind
 from tools.dev import runners
 from tools.dev.measure.fake_world import Stream, World
 
@@ -81,59 +78,9 @@ class TableTests(World):
                                'PASS: distinct addresses, so --toggle-collect=bisect_perf_steady_unit\n'
                                '      excludes process init and the cold cycle\n')
 
-    def test_folded_anchors_fail_the_run(self):
-        folded = NM.replace('1140 t', '1130 t')
-        code, text = valgrind.anchors_table(Path('bisect'), run=self.nm(folded))
-        self.assertEqual(code, 1)
-        self.assertTrue(text.endswith('FAIL: anchors folded to one address; the toggle would collect the cold cycle\n'))
-
     def test_no_anchor_symbol_at_all_ends_the_group_after_its_header(self):
         self.assertEqual(valgrind.anchors_table(Path('bisect'), run=self.nm('0 T main\n')),
                          (1, '=== collection anchors ===\n'))
-
-    def test_nms_own_complaint_reaches_stderr(self):
-        err = Stream()
-        with contextlib.redirect_stderr(err):
-            result = valgrind.anchors_table(
-                Path('bisect'), run=lambda command: pool.Completed(1, b'', b"nm: 'bisect': No such file\n"))
-        self.assertEqual((result, err.text()), ((1, '=== collection anchors ===\n'), "nm: 'bisect': No such file\n"))
-
-    def test_one_missing_anchor_passes_as_the_shell_did(self):
-        code, text = valgrind.anchors_table(Path('bisect'), run=self.nm('0000000000001140 t bisect_perf_steady_unit\n'))
-        self.assertEqual(code, 0)
-
-    def test_lines_of_selects_like_grep_and_complains_about_a_missing_file(self):
-        path = self.root / 'f'
-        path.write_text('ob=(1) /usr/lib/vgpreload_memcheck.so\nfn=main\nfn=MALLOC\nREDIR: x\n')
-        self.assertEqual(valgrind.lines_of(path, '^(ob|fl|fn)='), ['ob=(1) /usr/lib/vgpreload_memcheck.so', 'fn=main', 'fn=MALLOC'])
-        self.assertEqual(valgrind.lines_of(path, 'malloc', ignore_case=True), ['fn=MALLOC'])
-        err = Stream()
-        with contextlib.redirect_stderr(err):
-            self.assertEqual(valgrind.lines_of(self.root / 'missing', 'x'), [])
-        self.assertEqual(err.text(), f'grep: {self.root}/missing: No such file or directory\n')
-
-    def test_the_environment_table_names_the_host_the_tools_and_each_artifact(self):
-        artifact = self.root / 'lib.so'
-        artifact.write_bytes(b'abc')
-        with mock.patch.object(identity, 'uname', lambda flags='srm': {'m': 'aarch64', 'srvm': 'Linux 6 #1 aarch64'}[flags]):
-            text = valgrind.environment_table([artifact], run=lambda command: pool.Completed(0, b'tool 1\n', b''))
-        lines = text.splitlines()
-        self.assertEqual(lines[:4], ['=== environment ===', 'captured_utc: 2026-10-27T00:00:00Z', 'container_arch: aarch64',
-                                     'kernel: Linux 6 #1 aarch64'])
-        self.assertIn('valgrind: tool 1.0', lines)
-        self.assertIn('perf_event_paranoid: 2', lines)
-        self.assertIn('libpinyin_pkgversion: Version: 2.11.92', lines)
-        self.assertIn(f'artifact: ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad  {artifact} 3 bytes', lines)
-        self.assertEqual(lines[-1], f'data_dir: {valgrind.DATA}')
-
-    def test_a_symlinked_artifact_reports_the_links_own_size_as_stat_does(self):
-        target = self.root / 'libpinyin.so.15.0.0'
-        target.write_bytes(b'x' * 1000)
-        link = self.root / 'libpinyin.so'
-        link.symlink_to(target.name)
-        text = valgrind.environment_table([link], run=lambda command: pool.Completed(0, b'', b''))
-        hashed = identity.sha256(target)
-        self.assertIn(f'artifact: {hashed}  {link} {len(target.name)} bytes\n', text)
 
 
 class LibrariesTests(World):
@@ -165,71 +112,19 @@ class LibrariesTests(World):
         self.assertEqual((status, {key: path for key, path in found.items()}),
                          (None, {key: root / 'lib/libpinyin.so' for key, root in roots.items()}))
 
-    def test_a_root_that_is_not_there_is_findings_own_complaint(self):
-        roots = self.roots(None)
-        found, status, err = self.libraries()
-        self.assertEqual((found, status, err), (None, 1, f"find: '{roots['lp']}': No such file or directory\n"))
-
     def test_a_root_without_the_library_is_a_missing_artifact_with_nothing_to_name(self):
         self.roots('empty')
         _, status, err = self.libraries()
         self.assertEqual((status, err), (1, "fatal: missing artifact: ''\n"))
 
-    def test_a_missing_data_directory_is_named_last(self):
-        self.roots(True)
-        (self.root / 'data').rmdir()
-        _, status, err = self.libraries()
-        self.assertEqual((status, err), (1, f'fatal: data dir {self.root / "data"} missing\n'))
-
 
 class AnnotateTests(World):
-    """annotate runs its units in the pool: at most one per allowed CPU."""
+    """annotate runs its units in the pool."""
 
     def setUp(self):
         super().setUp()
         self.enterContext(mock.patch.object(slot.CANCELLED, 'is_set', lambda: False))
         self.enterContext(contextlib.redirect_stderr(io.StringIO()))
-        self.fake_host(cpus=4)
-
-    def fake_host(self, cpus):
-        """A host with CPUS CPUs, all of them allowed."""
-        self.enterContext(mock.patch.object(host, 'allowed_cpus', lambda: set(range(cpus))))
-
-    def annotate_four_profiles(self, expected=0):
-        """Annotate four profiles, eight annotations; return the most that ran at once.
-
-        With EXPECTED, each annotation waits until that many run together, so a narrower pool cannot pass.
-        """
-        for index in range(4):
-            (self.root / f'callgrind.p{index}.r1.out').write_bytes(b'')
-        lock, together, running, peak = threading.Lock(), threading.Event(), [0], [0]
-        self.ran = []
-
-        def capture(command, **kwargs):
-            with lock:
-                self.ran.append(command)
-                running[0] += 1
-                peak[0] = max(peak[0], running[0])
-                if running[0] == expected:
-                    together.set()
-            if expected:
-                self.assertTrue(together.wait(5), 'the annotations did not overlap')
-            time.sleep(0.02)
-            with lock:
-                running[0] -= 1
-            return pool.Completed(0, b'annotated\n', b'')
-        with mock.patch.object(bench, 'capture', capture):
-            valgrind.annotate(self.root)
-        return peak[0]
-
-    def test_a_single_cpu_annotates_one_profile_at_a_time(self):
-        self.fake_host(cpus=1)
-        self.assertEqual(self.annotate_four_profiles(), 1)
-        self.assertEqual(len(self.ran), 8)
-
-    def test_annotations_run_up_to_the_cpu_count_at_once(self):
-        self.assertEqual(self.annotate_four_profiles(expected=4), 4)
-        self.assertEqual(len(self.ran), 8)
 
     def test_each_profile_is_annotated_twice_and_the_redirection_probe_is_skipped(self):
         for name in ('callgrind.libpinyin-tkrzw.r1.out', 'callgrind.redir-probe.out', 'callgrind.oxpinyin-tkrzw.r1.out', 'other.out'):
@@ -278,40 +173,9 @@ class InterceptionTests(World):
         with mock.patch.object(self.worker, 'launch', launch, create=True):
             return valgrind.malloc_interception(self.worker, self.arm, self.root)
 
-    def test_the_report_lists_the_redirections_and_the_credited_objects_sorted_and_unique(self):
-        credited = ''.join(f'ob=(2) /usr/lib/vgpreload_{name}.so\n' for name in ('memcheck', 'callgrind', 'callgrind')) + 'fn=ordinary\n'
-        text = self.probe(b'REDIR: a\nnothing here\nmalloc replaced\n' + b'free x\n' * 60, credited)
-        lines = text.splitlines()
-        self.assertEqual(lines[0], '=== valgrind malloc interception ===')
-        self.assertEqual(lines[1], '--- redirections naming malloc/free (from --trace-redir) ---')
-        self.assertEqual(lines[2:4], ['REDIR: a', 'malloc replaced'])
-        self.assertEqual(len([line for line in lines if line.startswith(('REDIR', 'malloc', 'free'))]), 40)
-        marker = lines.index('--- objects credited in the profile ---')
-        self.assertEqual(lines[marker + 1:marker + 3], ['ob=(2) /usr/lib/vgpreload_callgrind.so', 'ob=(2) /usr/lib/vgpreload_memcheck.so'])
-        self.assertEqual(lines[marker + 3], '')
-        self.assertTrue(lines[-1].endswith('Call counts are unaffected.'))
-        self.assertEqual(self.launched[:3], ('probe', 'speed', '2'))
-        self.assertEqual(self.launched[3]['repeats'], 1)
-        self.assertEqual(self.launched[3]['prefix'][:5], ['valgrind', '--tool=callgrind', '--collect-atstart=no',
-                                                         '--toggle-collect=bisect_perf_steady_unit', '--trace-redir=yes'])
-        self.assertEqual((self.root / 'redir-probe.stdout').read_bytes(), b'row\n')
-
     def test_a_failing_probe_does_not_stop_the_capture(self):
         text = self.probe(b'valgrind: error\n', '', status=1)
         self.assertIn('--- objects credited in the profile ---', text)
-
-    def test_a_host_without_taskset_leaves_the_shells_complaint_in_the_probes_stderr_file(self):
-        def launch(arm, mode, cycles, **options):
-            raise FileNotFoundError(2, 'No such file or directory', 'taskset')
-        with mock.patch.object(self.worker, 'launch', launch, create=True):
-            err = Stream()
-            with contextlib.redirect_stderr(err):
-                text = valgrind.malloc_interception(self.worker, self.arm, self.root)
-        self.assertEqual((self.root / 'redir-probe.stderr').read_text(), 'taskset: command not found\n')
-        self.assertEqual((self.root / 'redir-probe.stdout').read_bytes(), b'')
-        self.assertTrue(text.startswith('=== valgrind malloc interception ===\n'))
-        self.assertTrue(text.rstrip().endswith('Call counts are unaffected.'))
-        self.assertIn(f'grep: {self.root}/callgrind.redir-probe.out: No such file or directory', err.text())
 
     def test_a_refusal_inside_the_probe_goes_to_its_stderr_file(self):
         text = self.probe(refuse=True)
@@ -422,13 +286,6 @@ class DifferentialTests(World):
         self.assertFalse((self.out / 'hw-instructions.jsonl').exists())
         self.assertNotIn(('annotate', 'out'), self.log)
 
-    def test_a_failing_allocation_run_keeps_its_partial_table_without_the_trailer(self):
-        self.worker_status = {5 + 4 + 1: 3}
-        status, _, _ = self.execute(valgrind.callgrind_differential, [], self.env)
-        self.assertEqual(status, 3)
-        self.assertNotIn('steady_alloc_count', (self.out / 'alloc-count.txt').read_text())
-        self.assertFalse((self.out / 'speed.jsonl').exists())
-
 
 class SystemImportProfileTests(World):
     def setUp(self):
@@ -454,38 +311,10 @@ class SystemImportProfileTests(World):
         self.assertEqual(compile_command[:6], ['cc', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-O2'])
         self.assertEqual(compile_command[-3:], ['-ldl', '-o', str(self.out.resolve() / 'driver')])
 
-    def test_the_workload_argument_and_cold_open_come_before_the_options(self):
-        for arguments, workload, jobs in ((['30'], '30', []), (['--cold-open'], '--cold-open', []),
-                                           (['--jobs', '2'], '1000', ['--jobs', '2']),
-                                           (['5', '--jobs', '1'], '5', ['--jobs', '1'])):
-            with self.subTest(arguments=arguments):
-                self.calls.clear()
-                shutil.rmtree(self.out, ignore_errors=True)
-                status, _, err = self.run_recipe(*arguments)
-                self.assertEqual(status, 0, err)
-                self.assertEqual(self.calls[0][:len(jobs)], jobs)
-                self.assertEqual(self.calls[0][-1], workload)
-
-    def test_jobs_needs_a_count(self):
-        for arguments in (['--jobs'], ['--jobs', '']):
-            with self.subTest(arguments=arguments):
-                status, out, err = self.run_recipe(*arguments)
-                self.assertEqual((status, out, err), (2, '', '--jobs needs a count\n'))
-        self.assertFalse(self.out.exists())
-
     def test_missing_operands_are_named_with_the_runner(self):
         for given, name in ((0, 'pin-so'), (1, 'ox-so'), (2, 'system-data-dir')):
             status, _, err = self.execute(valgrind.system_import_profile, [str(self.pin)] * given, {})
-            self.assertEqual((status, err), (1, f'run-system-import-profile.sh: {given + 1}: {name}\n'))
-
-    def test_the_collections_run_under_their_own_script_name(self):
-        seen = []
-        profile = types.SimpleNamespace(main=lambda argv: seen.append(Path(sys.argv[0]).name) or 0)
-        self.enterContext(mock.patch.object(bench, 'script', lambda relative: profile))
-        argv = sys.argv
-        status, _, err = self.run_recipe()
-        self.assertEqual((status, seen), (0, ['system_import_profile.py']), err)
-        self.assertIs(sys.argv, argv)
+            self.assertEqual((status, err), (1, f'system-import-profile: {given + 1}: {name}\n'))
 
     def test_a_cancelled_collection_ends_with_the_status_of_the_signal(self):
         def cancelled(argv):

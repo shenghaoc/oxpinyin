@@ -40,17 +40,13 @@ class World(unittest.TestCase):
         scratch.mkdir()
         self.enterContext(mock.patch.object(valgrind, 'SCRATCH', scratch))
         self.log = []
-        self.taskset = True
         self.worker_status = {}        # nth worker launch (1-based) -> exit status
         self.workers = 0
-        self.reports = []
-        self.report_status = {}
         fakes = dict(capture=self.fake_capture, run=self.fake_run, check=self.fake_check,
                      report=self.fake_report, utc_now=lambda: '2026-10-27T00:00:00Z')
         for name, fake in fakes.items():
             self.enterContext(mock.patch.object(bench, name, fake))
-        self.enterContext(mock.patch('shutil.which', lambda name, path=None: '/usr/bin/taskset' if (
-            name == 'taskset' and self.taskset) else None))
+        self.enterContext(mock.patch('shutil.which', lambda name, path=None: '/usr/bin/taskset' if name == 'taskset' else None))
         self.enterContext(mock.patch.object(identity, 'loadavg', lambda proc=None, fields=None: (
             '0.1 0.2 0.3 1/2 3' if fields is None else '0.1 0.2 0.3')))
         for name, value in (('cpu_model', 'Fancy CPU'), ('memory_total', 'MemTotal: 1 kB'), ('processors', 4),
@@ -72,11 +68,6 @@ class World(unittest.TestCase):
             row = {'backend': env['PERF_BACKEND'], 'mode': env['PERF_MODE'], 'n': self.workers}
             return pool.Completed(self.worker_status.get(self.workers, 0), (json.dumps(row) + '\n').encode(),
                                   b'worker diagnostics\n')
-        if command[0] == 'pkg-config':
-            answers = {'--cflags': '-I/stage/usr/include \n', '--libs': '-L/stage/usr/lib -lpinyin\n',
-                       '--variable=libdir': f'{self.root}/work/stage/usr/lib\n'}
-            self.log.append(('pkg-config', command[1], env.get('PKG_CONFIG_PATH'), env.get('PKG_CONFIG_SYSROOT_DIR')))
-            return pool.Completed(0, answers[command[1]].encode(), b'')
         self.log.append(('capture', command))
         return pool.Completed(0, b'', b'')
 
@@ -90,13 +81,9 @@ class World(unittest.TestCase):
     def fake_check(self, cell, runner, side, obj, **kwargs):
         self.log.append(('check', cell, side, str(obj)))
 
-    guard_env = None
-
-
     def fake_report(self, script, argv):
-        self.reports.append((script, list(argv)))
         self.log.append(('report', Path(script).name, argv[0] if argv else ''))
-        return self.report_status.get(Path(script).name, 0), f'REPORT {Path(script).name}\n'
+        return 0, f'REPORT {Path(script).name}\n'
 
     # ── driver ─────────────────────────────────────────────────────────────────────────────
     def execute(self, recipe, argv=(), env=None):
@@ -104,7 +91,6 @@ class World(unittest.TestCase):
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             status = runners.guarded(lambda: recipe(list(argv), dict(env or {})))
         return status, out.text(), err.text()
-
 
     def kinds(self, kind):
         return [event for event in self.log if event[0] == kind]

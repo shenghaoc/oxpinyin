@@ -107,26 +107,6 @@ def script(relative: str):
     return module
 
 
-@contextlib.contextmanager
-def exported(variables: Mapping[str, str] | None) -> Iterator[None]:
-    """Give the body the process environment VARIABLES (when given), as a script's exports reached a child.
-
-    A tool run in-process sees os.environ, not the dictionary a recipe built for its
-    children; this puts one in place of the other for the length of the call.
-    """
-    if variables is None:
-        yield
-        return
-    saved = dict(os.environ)
-    os.environ.clear()
-    os.environ.update(variables)
-    try:
-        yield
-    finally:
-        os.environ.clear()
-        os.environ.update(saved)
-
-
 def runtime_check(label: str, cell: str, side: str, obj, *, env: Mapping[str, str],
                   cwd: Path | None = None) -> None:
     """Refuse OBJ unless every libtkrzw it resolves is the runtime setup verified.
@@ -182,11 +162,11 @@ def pinned(command: Sequence, cpu, *, required: bool = True,
     return [*prefix, *map(str, command)]
 
 
-def find_named(root, name: str, *, any_type: bool = False) -> Path | None:
+def find_named(root, name: str) -> Path | None:
     """The first entry named NAME below ROOT that is a file or a symlink, else None.
 
-    The equivalent of `find ROOT -name NAME ( -type f -o -type l ) -print -quit`
-    (ANY_TYPE drops the type test), visiting entries in sorted order so the answer
+    The equivalent of `find ROOT -name NAME ( -type f -o -type l ) -print -quit`,
+    visiting entries in sorted order so the answer
     does not depend on the filesystem. A missing ROOT has none.
     """
     try:
@@ -195,21 +175,13 @@ def find_named(root, name: str, *, any_type: bool = False) -> Path | None:
         return None
     for entry in entries:
         directory = entry.is_dir(follow_symlinks=False)
-        if entry.name == name and (any_type or entry.is_symlink() or entry.is_file(follow_symlinks=False)):
+        if entry.name == name and (entry.is_symlink() or entry.is_file(follow_symlinks=False)):
             return Path(entry.path)
         if directory:
-            found = find_named(entry.path, name, any_type=any_type)
+            found = find_named(entry.path, name)
             if found is not None:
                 return found
     return None
-
-
-def find_library(root, name: str = 'libpinyin.so') -> Path:
-    """The library NAME below ROOT, or stop with the runners' message."""
-    found = find_named(root, name)
-    if found is None:
-        fail(f'fatal: {name} not found under {root}')
-    return found
 
 
 def utc_now() -> str:

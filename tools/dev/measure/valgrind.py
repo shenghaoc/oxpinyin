@@ -27,7 +27,7 @@ from .bench import Arm, Bench, fail, setting
 
 SCRATCH = Path('/performance/tmp')
 CALLGRIND = 'run-callgrind-differential.sh'
-SYSTEM_IMPORT = 'run-system-import-profile.sh'
+SYSTEM_IMPORT = 'system-import-profile'
 LP_ROOT = Path('/opt/libpinyin-tkrzw')
 DATA = LP_ROOT / 'lib/libpinyin/data'
 ANCHOR = 'bisect_perf_steady_unit'

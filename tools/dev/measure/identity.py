@@ -14,11 +14,9 @@ import re
 from collections.abc import Callable, Sequence
 
 from .. import host
-from ..runners import Finished, write
 from . import bench
 
 PROC = Path('/proc')
-NEEDED = re.compile(r'Shared library: \[(.*)\]')
 Run = Callable[..., 'bench.pool.Completed'] | None    # None: bench.capture, looked up at call time
 
 
@@ -127,18 +125,3 @@ def pc_version(path) -> str:
     except OSError:
         return 'unknown'
     return '\n'.join(lines) if lines else 'unknown'
-
-
-def needed(library, *, run: Run = None) -> list[str]:
-    """The DT_NEEDED names of LIBRARY, from `readelf -d`; a failing readelf ends the run with its status."""
-    done = (run or bench.capture)(['readelf', '-d', str(library)])
-    if done.status:
-        write(done.stderr, error=True)
-        raise Finished(done.status)
-    return [match[1] for line in done.stdout.decode(errors='replace').split('\n')
-            if (match := NEEDED.search(line))]
-
-
-def realpath(path) -> str:
-    """The canonical path of PATH, as `readlink -f` prints it."""
-    return os.path.realpath(path)

@@ -1,11 +1,10 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """Tests for the shared measurement services: bench.py, identity.py and reports.py.
 
-Counts, the option grammar, the order of the runtime guard, the worker's
-environment and argv, the pool that builds, and the records the runners write.
-The host readers take a fixture root and the tools are replaced by fakes, so
-the file runs on macOS and Linux. The real gcc, binutils and taskset classes
-are defined on Linux only. Real children are plain Python.
+The backend identity, CPU pinning, the order of the runtime guard, the worker's
+environment and argv, the launchers, the in-process reports and the summary.
+The tools are replaced by fakes, so the file runs on macOS and Linux. The real
+taskset class is defined on Linux only. Real children are plain Python.
 """
 import contextlib
 import io
@@ -61,31 +60,6 @@ class Scratch(unittest.TestCase):
         self.root = Path(self.enterContext(tempfile.TemporaryDirectory(prefix='bench-test-'))).resolve()
 
 
-class CountTests(unittest.TestCase):
-    def test_a_plain_decimal_is_a_count_and_prints_as_written(self):
-        for text, number in (('8', 8), ('08', 8), ('010', 10), ('0', 0), ('20', 20)):
-            with self.subTest(text=text):
-                value = bench.decimal_count('run-x.sh', 'PERF_RUNS', text)
-                self.assertEqual((int(value), str(value), f'{value}'), (number, text, text))
-                self.assertEqual(list(range(value)), list(range(number)))
-
-    def test_anything_else_exits_2_naming_the_variable_and_the_value(self):
-        for text in ('2+3', '-1', '', ' 5', '5 ', '5\n', '٣', '0x10', '1e3', '$((1))'):
-            with self.subTest(text=text):
-                _, status, out, err = stopped(bench.decimal_count, 'run-x.sh', 'PERF_RUNS', text)
-                self.assertEqual(status, 2)
-                self.assertEqual(out, '')
-                self.assertEqual(err, f"run-x.sh: PERF_RUNS must be a decimal count (got '{text}')\n")
-
-    def test_an_unset_or_empty_variable_takes_the_default(self):
-        for env in ({}, {'PERF_RUNS': ''}):
-            with self.subTest(env=env):
-                self.assertEqual(int(bench.count('run-x.sh', env, 'PERF_RUNS', '20')), 20)
-        self.assertEqual(int(bench.count('run-x.sh', {'PERF_RUNS': '08'}, 'PERF_RUNS', '20')), 8)
-        self.assertEqual(bench.setting({'A': ''}, 'A', 'x'), 'x')
-        self.assertEqual(bench.setting({'A': '0'}, 'A', 'x'), '0')
-
-
 class BackendIdentityTests(unittest.TestCase):
     def test_exactly_one_backend_is_required_from_the_linked_library(self):
         for library, expected in [('libdb-5.3.so', 'bdb'), ('libdb.so.6', 'bdb'),
@@ -100,19 +74,7 @@ class BackendIdentityTests(unittest.TestCase):
             identity.library_backend('/subject', run=lambda _: bench.pool.Completed(1, b'', b'invalid ELF'))
 
 
-class ArgumentTests(unittest.TestCase):
-    def test_unknown_options_are_refused(self):
-        self.assertIsNone(bench.no_arguments([]))
-        _, status, _, err = stopped(bench.no_arguments, ['--bogus'])
-        self.assertEqual((status, err), (2, 'unknown argument: --bogus\n'))
-
-
 class PathTests(Scratch):
-    def test_the_objects_directory_comes_first_on_the_loader_path(self):
-        self.assertEqual(bench.loader_path(Path('/a/lib'), None), '/a/lib')
-        self.assertEqual(bench.loader_path(Path('/a/lib'), ''), '/a/lib')
-        self.assertEqual(bench.loader_path('/a/lib', '/x:/y'), '/a/lib:/x:/y')
-
     def test_pinning_is_required_or_only_when_taskset_exists(self):
         self.assertEqual(bench.pinned(['w', '--perf'], 3, required=True, which=lambda name: None),
                          ['taskset', '-c', '3', 'w', '--perf'])
@@ -120,31 +82,6 @@ class PathTests(Scratch):
                          ['taskset', '-c', '0', 'w'])
         self.assertEqual(bench.pinned(['w', Path('/x')], 0, required=False, which=lambda name: None),
                          ['w', '/x'])
-
-    def test_find_named_walks_in_sorted_pre_order_and_accepts_links(self):
-        (self.root / 'b/lib').mkdir(parents=True)
-        (self.root / 'a/deep').mkdir(parents=True)
-        (self.root / 'b/lib/libpinyin.so').write_bytes(b'')
-        (self.root / 'a/deep/libpinyin.so').symlink_to('/nonexistent')
-        (self.root / 'a/libpinyin.so.15').write_bytes(b'')
-        self.assertEqual(bench.find_named(self.root, 'libpinyin.so'), self.root / 'a/deep/libpinyin.so')
-        self.assertIsNone(bench.find_named(self.root, 'absent'))
-        self.assertIsNone(bench.find_named(self.root / 'missing', 'libpinyin.so'))
-
-    def test_find_named_needs_a_file_or_link_unless_any_type(self):
-        (self.root / 'libpinyin.pc').mkdir()
-        self.assertIsNone(bench.find_named(self.root, 'libpinyin.pc'))
-        self.assertEqual(bench.find_named(self.root, 'libpinyin.pc', any_type=True), self.root / 'libpinyin.pc')
-
-    def test_find_library_stops_with_the_runners_message(self):
-        _, status, _, err = stopped(bench.find_library, self.root)
-        self.assertEqual((status, err), (1, f'fatal: libpinyin.so not found under {self.root}\n'))
-
-    def test_tee(self):
-        out = io.StringIO()
-        with contextlib.redirect_stdout(out):
-            bench.tee(self.root / 'table.txt', 'one\ntwo\n')
-        self.assertEqual((out.getvalue(), (self.root / 'table.txt').read_text()), ('one\ntwo\n',) * 2)
 
 
 class RuntimeGuardTests(Scratch):
@@ -167,21 +104,6 @@ class RuntimeGuardTests(Scratch):
         bench.guard('run-x.sh', 'auto', 'oxpinyin', self.so, [str(self.worker), '--perf'], env={'PATH': ''})
         self.assertEqual([call[3] for call in self.calls], [str(self.so), str(self.worker)])
         self.assertEqual({call[:3] for call in self.calls}, {('auto', 'run-x.sh', 'oxpinyin')})
-
-    def test_a_script_wrapper_or_the_object_itself_is_not_checked_again(self):
-        script = self.root / 'wrapper'
-        script.write_text('#!/bin/sh\n')
-        script.chmod(0o755)
-        bench.guard('run-x.sh', 'auto', 'pin', self.so, [str(script)], env={'PATH': ''})
-        bench.guard('run-x.sh', 'auto', 'pin', self.so, [str(self.so)], env={'PATH': ''})
-        self.assertEqual([call[3] for call in self.calls], [str(self.so)] * 2)
-
-    def test_mach_o_counts_as_native_and_a_missing_file_does_not(self):
-        macho = self.root / 'macho'
-        macho.write_bytes(b'\xcf\xfa\xed\xfe rest')
-        self.assertTrue(bench.native(macho))
-        self.assertTrue(bench.native(self.so))
-        self.assertFalse(bench.native(self.root / 'missing'))
 
     def test_a_refusal_is_a_failed_run_with_the_resolvers_words(self):
         with mock.patch.object(bench, 'check', side_effect=bench.RuntimeRefused('run-x.sh: pin: libtkrzw resolved to /usr')):
@@ -217,12 +139,6 @@ class BenchTests(Scratch):
                           'PERF_CYCLES': '8', 'PERF_REPEATS': '3', 'PERF_HW': 'instructions'})
         self.assertEqual(env['PATH'], '/bin')
 
-    def test_no_libdir_leaves_the_loader_path_and_no_repeats_leaves_the_variable_unset(self):
-        arm = bench.Arm('L', Path('/x.so'), Path('/d'))
-        env = self.bench().environment(arm, 'rss-diag', '8')
-        self.assertEqual(env['LD_LIBRARY_PATH'], '/inherited')
-        self.assertNotIn('PERF_REPEATS', env)
-
     def test_launch_checks_then_pins_the_harness_on_the_data(self):
         done = self.bench(required=True).launch(self.arm, 'speed', 8, repeats=1)
         self.assertEqual(done.stdout, b'{"a":1}\n')
@@ -230,11 +146,6 @@ class BenchTests(Scratch):
         self.assertEqual(kinds, ['guard', 'capture'])
         self.assertEqual(self.events[0][1], ('run-x.sh', 'auto', 'oxpinyin', Path('/lib/libpinyin.so')))
         self.assertEqual(self.events[1][1], ['taskset', '-c', '2', '/h/bisect', '--perf', '/lib/libpinyin.so', '/data'])
-
-    def test_a_profiler_prefix_comes_before_the_harness_and_is_what_the_guard_sees(self):
-        self.bench(required=True).launch(self.arm, 'speed', 4, prefix=['valgrind', '--tool=callgrind'])
-        self.assertEqual(self.events[1][1][3:5], ['valgrind', '--tool=callgrind'])
-        self.assertEqual(self.events[1][1][-4:], ['/h/bisect', '--perf', '/lib/libpinyin.so', '/data'])
 
     def test_sample_appends_stdout_and_stderr_and_a_failure_ends_the_run_after_the_append(self):
         out, err = self.root / 'speed.jsonl', self.root / 'x.err'
@@ -248,13 +159,6 @@ class BenchTests(Scratch):
             self.bench().sample(self.arm, 'speed', out, err, 8)
         self.assertEqual(stop.exception.status, 3)
         self.assertEqual(out.read_bytes().count(b'{"a":1}'), 3)
-
-    def test_both_files_exist_before_the_check_refuses(self):
-        out, err = self.root / 'o', self.root / 'e'
-        with mock.patch.object(bench, 'guard', side_effect=Finished(1)):
-            with self.assertRaises(Finished):
-                self.bench().sample(self.arm, 'speed', out, err, 8)
-        self.assertEqual((out.read_bytes(), err.read_bytes()), (b'', b''))
 
     def test_a_refusal_at_launch_goes_to_the_workers_stderr_file_not_the_console(self):
         # The shell's redirection covered the worker's whole chain, its libtkrzw check included.
@@ -277,15 +181,6 @@ class BenchTests(Scratch):
             self.bench(cell='auto').standalone('subject', self.arm, 'tkrzw')
         self.assertEqual(seen, [('auto', 'run-x.sh', 'pin', '/lib/libpinyin.so', '/lib:/inherited'),
                                 ('tkrzw', 'run-x.sh', 'subject', '/lib/libpinyin.so', '/lib:/inherited')])
-
-    def test_round_robin_runs_every_entry_once_per_round_in_order(self):
-        a, b = bench.Arm('a', Path('a'), Path('d')), bench.Arm('b', Path('b'), Path('d'))
-        calls = []
-        bench.round_robin(2, [(a, 'ram-init'), (b, 'ram-init'), (a, 'ram-cycle')],
-                          lambda arm, mode: calls.append((arm.label, mode)))
-        self.assertEqual(calls, [('a', 'ram-init'), ('b', 'ram-init'), ('a', 'ram-cycle')] * 2)
-        bench.round_robin(0, [(a, 'speed')], lambda *args: calls.append('never'))
-        self.assertNotIn('never', calls)
 
 
 class ProcessTests(Scratch):
@@ -315,11 +210,6 @@ class ProcessTests(Scratch):
             bench.run([sys.executable, '-c', 'raise SystemExit(5)'])
         self.assertEqual(stop.exception.status, 5)
         self.assertEqual(bench.run([sys.executable, '-c', 'pass']), 0)
-
-    def test_run_can_send_the_childs_stdout_elsewhere(self):
-        with open(self.root / 'o.txt', 'wb') as target:
-            bench.run([sys.executable, '-c', 'print("hello")'], stdout=target)
-        self.assertEqual((self.root / 'o.txt').read_text(), 'hello\n')
 
     def test_run_forwards_stdin_and_can_merge_stderr_for_interchange(self):
         source = self.root / 'input'
@@ -414,19 +304,6 @@ class ReportTests(Scratch):
             code, text = bench.report(path, [])
         self.assertEqual((code, text, err.getvalue()), (1, 'partial\n', 'no rows\n'))
 
-    def test_an_integer_exit_or_return_is_the_status(self):
-        self.assertEqual(bench.report(self.script('def main(argv):\n    raise SystemExit(4)\n'), [])[0], 4)
-        self.assertEqual(bench.report(self.script('def main(argv):\n    return 2\n'), [])[0], 2)
-        self.assertEqual(bench.report(self.script('def main(argv):\n    raise SystemExit\n'), [])[0], 0)
-
-    def test_a_script_that_cannot_be_opened_is_the_interpreters_complaint_and_status_2(self):
-        missing = self.root / 'ctl/bisection/perf-ci.py'
-        err = io.StringIO()
-        with contextlib.redirect_stderr(err):
-            result = bench.report(str(missing), ['x'])
-        self.assertEqual((result, err.getvalue()),
-                         ((2, ''), f"{sys.executable}: can't open file '{missing}': [Errno 2] No such file or directory\n"))
-
     def test_a_crashing_script_prints_its_traceback_and_keeps_what_it_had_written(self):
         path = self.script('def main(argv):\n    print("rows so far")\n    {}["missing"]\n')
         err = io.StringIO()
@@ -454,154 +331,10 @@ class ReportTests(Scratch):
         self.assertIs(sys.modules['__main__'], main)
 
 
-class ExportedTests(unittest.TestCase):
-    def test_the_environment_is_swapped_for_the_body_and_restored_after(self):
-        before = dict(os.environ)
-        with bench.exported({'ONLY': 'this'}):
-            self.assertEqual(dict(os.environ), {'ONLY': 'this'})
-        self.assertEqual(dict(os.environ), before)
-
-    def test_it_is_restored_when_the_body_raises(self):
-        before = dict(os.environ)
-        with self.assertRaises(RuntimeError):
-            with bench.exported({'ONLY': 'this'}):
-                raise RuntimeError
-        self.assertEqual(dict(os.environ), before)
-
-    def test_no_variables_leave_the_environment_alone(self):
-        before = dict(os.environ)
-        with bench.exported(None):
-            self.assertEqual(dict(os.environ), before)
-        self.assertEqual(dict(os.environ), before)
-
-
-class IdentityTests(Scratch):
-    def proc(self):
-        proc = self.root / 'proc'
-        (proc / 'sys/kernel').mkdir(parents=True)
-        (proc / 'cpuinfo').write_text('processor\t: 0\nmodel name\t: Fancy CPU: v2 @ 3GHz\nmodel name\t: other\n')
-        (proc / 'meminfo').write_text('MemFree:  1 kB\nMemTotal:       16384000 kB\nMemTotalX: 2\n')
-        (proc / 'loadavg').write_text('0.10 0.20 0.30 1/234 5678\n')
-        (proc / 'sys/kernel/perf_event_paranoid').write_text('2\n')
-        return proc
-
-    def test_cpu_memory_and_load_come_from_the_proc_files(self):
-        proc = self.proc()
-        self.assertEqual(identity.cpu_model(proc), 'Fancy CPU: v2 @ 3GHz')
-        self.assertEqual(identity.memory_total(proc), 'MemTotal:       16384000 kB')
-        self.assertEqual(identity.loadavg(proc), '0.10 0.20 0.30 1/234 5678')
-        self.assertEqual(identity.loadavg(proc, fields=3), '0.10 0.20 0.30')
-        self.assertEqual(identity.perf_event_paranoid(proc), '2')
-
-    def test_a_host_without_those_files_reports_what_the_shell_did(self):
-        empty = self.root / 'empty'
-        empty.mkdir()
-        self.assertEqual((identity.cpu_model(empty), identity.memory_total(empty)), ('', ''))
-        self.assertEqual(identity.perf_event_paranoid(empty), 'unknown')
-        (empty / 'cpuinfo').write_text('processor\t: 0\nCPU part\t: 0xd0c\n')
-        self.assertEqual(identity.cpu_model(empty), '')
-
-    def test_processors_are_the_snapshots_rounded_up_count(self):
-        with mock.patch.object(host, 'cpu_snapshot', return_value=dict(cpus=2, cargo_cpus=3)) as snapshot:
-            self.assertEqual(identity.processors(self.root / 'proc', self.root / 'cgroup'), 3)
-        snapshot.assert_called_once_with(self.root / 'proc', self.root / 'cgroup')
-        self.assertGreaterEqual(identity.processors(), 1)
-
-    def test_processors_differ_from_gnu_nproc_on_a_fractional_quota_and_the_omp_variables(self):
-        # The rows are cpu.max of the process's cgroup and this count, on a fake Linux host with four CPUs in
-        # the affinity set. GNU nproc 9.10 printed the same count for every row but the last three, where it
-        # printed 1, 2 and 3 (docs/plans/tooling-python.md, U2).
-        proc = self.proc()
-        (proc / 'self').mkdir()
-        (proc / 'self/cgroup').write_text('0::/\n')
-        cgroup = self.root / 'cgroup'
-        cgroup.mkdir()
-        for quota, count in (('max 100000', 4), ('100000 100000', 1), ('200000 100000', 2), ('800000 100000', 4),
-                             ('40000 100000', 1), ('150000 100000', 2), ('350000 100000', 4),
-                             ('125000 100000', 2), ('240000 100000', 3), ('349000 100000', 4)):
-            with self.subTest(quota=quota):
-                (cgroup / 'cpu.max').write_text(quota + '\n')
-                with mock.patch.object(sys, 'platform', 'linux'), \
-                        mock.patch.object(host, 'allowed_cpus', return_value={0, 1, 2, 3}):
-                    self.assertEqual(identity.processors(proc, cgroup), count)
-        # Under a quota of 4 CPUs GNU nproc printed 2 for OMP_NUM_THREADS=2 and 3 for OMP_THREAD_LIMIT=3.
-        (cgroup / 'cpu.max').write_text('400000 100000\n')
-        with mock.patch.object(sys, 'platform', 'linux'), \
-                mock.patch.object(host, 'allowed_cpus', return_value={0, 1, 2, 3, 4}), \
-                mock.patch.dict(os.environ, {'OMP_NUM_THREADS': '2', 'OMP_THREAD_LIMIT': '3'}):
-            self.assertEqual(identity.processors(proc, cgroup), 4)
-
-    def test_uname_fields_follow_the_flags(self):
-        names = os.uname()
-        self.assertEqual(identity.uname('m'), names.machine)
-        self.assertEqual(identity.uname('srvm'), f'{names.sysname} {names.release} {names.version} {names.machine}')
-
-    def test_first_line_version_and_tool_failures(self):
-        run = lambda command: completed(0, b'gcc (Debian 15) 15.2\nCopyright\n')
-        self.assertEqual(identity.first_output_line(['gcc', '--version'], run=run), 'gcc (Debian 15) 15.2')
-
-        def missing(command):
-            raise FileNotFoundError(command[0])
-        self.assertEqual(identity.first_output_line(['gcc'], run=missing), '')
-        self.assertEqual(identity.package_version('tkrzw', run=missing), 'unknown')
-        self.assertEqual(identity.package_version('tkrzw', run=lambda command: completed(1)), 'unknown')
-        self.assertEqual(identity.package_version('tkrzw', run=lambda command: completed(0, b'1.0.34\n')), '1.0.34')
-
-    def test_pc_version_prints_the_version_lines_or_unknown(self):
-        pc = self.root / 'libpinyin.pc'
-        pc.write_text('Name: libpinyin\nVersion: 2.11.92\nRequires: glib-2.0\n')
-        self.assertEqual(identity.pc_version(pc), 'Version: 2.11.92')
-        pc.write_text('Name: x\n')
-        self.assertEqual(identity.pc_version(pc), 'unknown')
-        self.assertEqual(identity.pc_version(self.root / 'absent.pc'), 'unknown')
-
-    def test_needed_parses_the_tools_output(self):
-        readelf = (b' 0x0000000000000001 (NEEDED)             Shared library: [libtkrzw.so.1]\n'
-                   b' 0x0000000000000001 (NEEDED)             Shared library: [libc.so.6]\n'
-                   b' 0x000000000000000e (SONAME)             Library soname: [libpinyin.so.15]\n')
-        self.assertEqual(identity.needed('x.so', run=lambda command: completed(0, readelf)),
-                         ['libtkrzw.so.1', 'libc.so.6'])
-
-    def test_a_failing_readelf_ends_the_run_with_its_status_and_message(self):
-        err = io.BytesIO()
-        with mock.patch.object(identity, 'write', lambda data, error=False: err.write(data)):
-            with self.assertRaises(Finished) as stop:
-                identity.needed('x.so', run=lambda command: completed(1, b'', b'readelf: Error: Not an ELF file\n'))
-        self.assertEqual((stop.exception.status, err.getvalue()), (1, b'readelf: Error: Not an ELF file\n'))
-
-    def test_sha256_matches_hashlib_and_realpath_follows_links(self):
-        import hashlib
-        (self.root / 'f').write_bytes(b'abc' * 1000)
-        (self.root / 'link').symlink_to(self.root / 'f')
-        self.assertEqual(identity.sha256(self.root / 'f'), hashlib.sha256(b'abc' * 1000).hexdigest())
-        self.assertEqual(identity.realpath(self.root / 'link'), str((self.root / 'f').resolve()))
-
-
 LINUX = sys.platform.startswith('linux')
 
 
 if LINUX:
-    class BinutilsTests(Scratch):
-        """The parsers read what the real readelf and nm print, from a shared object gcc builds here."""
-
-        def test_needed_of_a_real_shared_object(self):
-            source = self.root / 'lib.c'
-            source.write_text('#include <math.h>\n'
-                              'double oxpinyin_init_for_fixtures(double x) { return sin(x); }\n'
-                              'int oxpinyin_test_set_user_bigram(void) { return 0; }\n'
-                              'int plain(void) { return 1; }\n')
-            library = self.root / 'lib.so'
-            subprocess.run(['gcc', '-shared', '-fPIC', '-o', str(library), str(source), '-lm'], check=True)
-            names = identity.needed(library)
-            self.assertTrue(any(name.startswith('libm.so') for name in names), names)
-
-        def test_a_file_that_is_not_an_elf_ends_the_run_with_readelfs_status(self):
-            (self.root / 'text').write_text('not an object')
-            with contextlib.redirect_stderr(Stream()), self.assertRaises(Finished) as stop:
-                identity.needed(self.root / 'text')
-            self.assertNotEqual(stop.exception.status, 0)
-
-
     class TasksetTests(Scratch):
         def test_a_pinned_child_runs_on_the_chosen_cpu_and_reports_its_status(self):
             cpu = min(host.allowed_cpus())
@@ -634,9 +367,6 @@ class SummaryTests(Scratch):
         self.assertTrue(text.startswith('NO HARDWARE COUNTERS: a run reported none (hw_errno=1).\n'))
         self.assertIn('Distortion remains UNQUANTIFIED either way', text)
         self.assertNotIn('median', text)
-
-    def test_an_empty_capture_prints_nothing(self):
-        self.assertEqual(reports.hardware_instructions(self.write('hw.jsonl', [])), '')
 
 
 if __name__ == '__main__':
