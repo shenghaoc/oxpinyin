@@ -3,7 +3,7 @@
 The [roadmap](ROADMAP.md) records stage status.
 
 This file is the repository's instruction entry point. `CLAUDE.md` imports it.
-The human documents hold every project rule. This file states the agent procedure and links to the rules; it does not repeat them.
+The human documents hold every project rule. This file states the agent procedure and links to the rules. It does not repeat them.
 
 ## Where the rules are
 
@@ -14,9 +14,10 @@ The human documents hold every project rule. This file states the agent procedur
 | Change code | The [architecture](docs/architecture.md): which crate owns the behaviour and what it may depend on |
 | Write Rust | The [Rust conventions](docs/rust-conventions.md) |
 | Derive or change a pinned behaviour | The [source policy](docs/source-policy.md), its [Stage 2 reading procedure](docs/source-policy.md#stage-2) and the [pinned-behaviour page](docs/pinned-behaviour.md) |
-| Sort or compare candidate frequencies | The [candidate-frequency comparator ruling](docs/source-policy.md#internal-language-artefacts) |
+| Sort or compare candidate frequencies | The [candidate-frequency comparator ruling](docs/findings/compatibility-policy.md#no-ported-external-library-internals) |
 | Accept or record a difference from the pin | The [compatibility policy](docs/findings/compatibility-policy.md) and the [improvements page](docs/oxpinyin-improvements.md) |
 | Add or change a test | The [testing ownership rule](CONTRIBUTING.md#testing) |
+| Write or rewrite a document | The [writing rules](CONTRIBUTING.md#writing) |
 | Push | [Verification rule 5](docs/runbooks/verification.md#5-local-test-gate): the checks for iteration, push, WIP checkpoints and Markdown-only changes |
 | Open a PR or an issue | The [PR](CONTRIBUTING.md#pull-request-descriptions) and [issue](CONTRIBUTING.md#issue-descriptions) rules and the [results rule](CONTRIBUTING.md#results-and-reproduction) |
 
@@ -42,7 +43,7 @@ The human documents hold every project rule. This file states the agent procedur
 
 You may create branches, commit, push your own branches, open draft PRs, update their descriptions and read CI results.
 
-`.claude/settings.json` denies the usual commands for the PR and `main` actions above in Claude Code.
+In Claude Code, `.claude/settings.json` denies the usual commands for the PR and `main` actions above.
 The guard does not cover every command form, hosted session or agent.
 
 The prohibitions apply to every agent, every session and every form of a command.

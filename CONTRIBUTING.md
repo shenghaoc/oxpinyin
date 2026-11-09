@@ -5,51 +5,39 @@ When a change touches compatibility, the pin or a stage, also read the [roadmap]
 
 The usual workflow is:
 
-1. Set up native development with the [setup guide](docs/runbooks/setup.md)
-   and run its first passing test.
-2. Make the change on a branch and add or extend tests for it.
-3. Run the [checks for your contribution](docs/runbooks/setup.md#contribution-checks)
-   and the [verification procedure](docs/runbooks/verification.md).
-4. When the change affects compatibility with libpinyin, run its
-   differential on the oracle, as described below.
-5. Open a pull request whose description reports the results and how to
-   reproduce them.
+1. Choose the [scoped verification](docs/runbooks/verification.md#verification-scope-and-precedence) for the task. When it requires native development, follow the [setup guide](docs/runbooks/setup.md) and run its first passing test.
+2. Make the change on a branch and add or extend tests when the scoped verification requires them.
+3. Run the [checks for your contribution](docs/runbooks/setup.md#contribution-checks) and the [verification procedure](docs/runbooks/verification.md).
+4. When the change affects compatibility with libpinyin, run its differential on the oracle, as described below.
+5. Open a pull request whose description reports the results and how to reproduce them.
 
-Native development means editing, compiling, debugging and testing on your
-own operating system: Linux, macOS or native Windows. You need Git, the
-repository-selected Rust toolchain and a native compiler and linker; the
-setup guide gives complete commands for each platform, including a first
-passing test and resuming in a fresh terminal. No container, libpinyin
-oracle or model download is required for ordinary work.
+Use the [setup guide](docs/runbooks/setup.md) for native prerequisites and resumption.
+Ordinary work requires no container, libpinyin oracle or model download.
 
-A Rust **crate** is a package. A storage **backend** is the native DBM
-library that storage-dependent crates are built against; the
-[backend guide](docs/runbooks/backends.md) names the default; the
-[setup guide](docs/runbooks/setup.md#storage-backend) covers each platform.
+The [backend guide](docs/runbooks/backends.md) names the default storage backend; the [setup guide](docs/runbooks/setup.md#storage-backend) covers each platform.
 
-When a change needs **compatibility verification**, compare it with the
-**oracle** (the fixed upstream libpinyin implementation). A
-**differential** runs the same behaviour against both implementations.
-Run it on a [provisioned remote Linux host](docs/runbooks/cloud.md),
-so you do not install libpinyin or reconstruct its environment.
+When a change needs **compatibility verification**, compare it with the **oracle**, the fixed upstream libpinyin implementation.
+A **differential** runs the same behaviour against both implementations.
+Run it on a [provisioned remote Linux host](docs/runbooks/cloud.md), so that you do not install libpinyin or rebuild its environment.
 Native tests and differentials provide different evidence.
 Package-manager examples and runtime adapters are not extra test targets.
 
-Before changing code, read the [architecture](docs/architecture.md) to see
-which crate owns the behaviour and what it may depend on. Read the
-[Rust conventions](docs/rust-conventions.md) before writing Rust; they cover
-the lints, panics, matches and arithmetic that review checks.
+Before you change code, read the [architecture](docs/architecture.md) to see which crate owns the behaviour and what it may depend on.
+Before you write Rust, read the [Rust conventions](docs/rust-conventions.md); they cover the lints, panics, matches and arithmetic that review checks.
 
-Advanced [backend](docs/runbooks/backends.md), [oracle](docs/runbooks/oracle.md),
-[packaging](docs/packaging.md), [release](docs/runbooks/release.md) and
-[measurement](docs/runbooks/benches.md) procedures apply only when that task needs them. Keep model downloads and
-derived data local; they never belong in Git or published images.
+The advanced [backend](docs/runbooks/backends.md), [oracle](docs/runbooks/oracle.md), [packaging](docs/packaging.md), [release](docs/runbooks/release.md) and [measurement](docs/runbooks/benches.md) procedures apply only when a task needs them.
+Keep model downloads and derived data local, except for the scoped [W3 redistribution ruling](docs/findings/model-provenance.md). Do not publish model downloads in images.
 
 ## Testing
 
-Test a behaviour where it is implemented. A higher layer tests only the decisions and connections that layer adds. A test must protect a distinct failure mechanism, invariant or external-interface decision that the retained suite does not already protect. Different inputs, issue numbers or execution layers alone do not justify another test.
+Test a behaviour where it is implemented.
+A higher layer tests only the decisions and connections that layer adds.
+A test must protect a distinct failure mechanism, invariant or external-interface decision that the retained suite does not already protect.
+Different inputs, issue numbers or execution layers alone do not justify another test.
 
-A new regression uses reduced input and explains any substantial fixture or runtime cost. Extend existing cases and helpers where that keeps the test clear. Don't commit bulk observations when a live comparison or a compact expectation suffices.
+A new regression uses reduced input and explains any substantial fixture or runtime cost.
+Extend existing cases and helpers where that keeps the test clear.
+Do not commit bulk observations when a live comparison or a compact expectation suffices.
 
 ## Contributor responsibility
 
@@ -59,6 +47,13 @@ Update both in the same PR when their content changes.
 A Chinese wording correction that does not change content needs no English change.
 The [roadmap](ROADMAP.md) records the current stage and remaining work.
 
+## Writing
+
+Use Simplified Technical English as a guide, without enforcing its dictionary or claiming compliance.
+Write short, direct sentences with consistent technical terms.
+Preserve identifiers, citations, requirement strength and frozen behaviour.
+Keep machine-read content unchanged.
+
 ## Results and reproduction
 
 Deliver the software, maintained tooling and a concise final result with reproducible commands.
@@ -66,6 +61,7 @@ Use repository `just` recipes and in-tree Python tools with managed CPython.
 Provision the interpreter with `just python`.
 Extend shared tooling when a required capability is missing.
 Do not publish or install a Python package, and add no console entry point without a new ruling.
+
 A missing input that a caller requested explicitly is a failure, never a successful skip.
 Do not depend on scripts or environments that exist only on your machine.
 The documented shell entry points (`tools/cloud/setup.sh`, `tools/tkrzw/distro-probe.sh`) remain supported.
@@ -88,6 +84,7 @@ Investigate a broken reproduction command as a bug.
 Investigate a result that contradicts the claim beyond the method's expected variability.
 Fix the software, tooling, environment assumptions or documentation that caused the problem.
 Correct or withdraw the claim.
+
 Do not replace the investigation with an evidence package.
 Reproduction must work without the author's old captures.
 Timing results need not be bit-identical.
@@ -95,10 +92,11 @@ Timing results need not be bit-identical.
 Run the checks required by the [verification procedure](docs/runbooks/verification.md).
 Stop when they pass and concrete failures are addressed.
 Do not add reruns or broader sweeps merely to collect more evidence.
+
 Report failed or unrun required checks as limitations.
 Include a brief relevant diagnostic when useful.
 Omit inventories of passed or inapplicable checks.
-This policy supersedes older reporting requirements in runbooks and findings.
+This policy takes precedence over older reporting requirements in runbooks and findings.
 
 ### Measurements
 
@@ -174,12 +172,12 @@ Do not switch another workstream's checkout or change its working tree.
 
 Leave the shared checkout as you found it.
 Do not touch or prune another workstream's worktree.
-Two agents that each assumed sole ownership of one checkout caused the `shim.cc` collision.
+Example: the `shim.cc` collision came from two agents that each assumed sole ownership of one checkout.
 
 ## Checkpoints and rebases
 
 Push a `wip/<issue>` branch at each checkpoint.
-Treat every machine as disposable: work held only in a local checkout or container can be lost.
+Treat every machine as disposable: work that exists only in a local checkout or container can be lost.
 
 Fetch and rebase onto the current landing tip immediately before every push and before any merge.
 Check `git log origin/main..HEAD`.
@@ -208,11 +206,11 @@ Put a fix on the stack member whose change produces the symptom.
 Keep each stack member green when tested alone.
 This preserves bisection and bottom-up merging.
 A fix above the failing member leaves that lower member broken until the upper one lands.
+
 If member N exposes a pre-existing defect, put its fix on member N.
 Examples include a harness leak, missing teardown or latent undefined behaviour.
 Keep the tree correct at every stack level.
-The capi-commands fuzz leak fix belonged on #502, which made BDB the default and exposed the failure.
-Its initial placement on #512 was wrong.
+Example: the capi-commands fuzz leak fix belongs on #502, which changed the default backend and exposed the failure, not on #512.
 
 ## Approval conditions
 
@@ -224,9 +222,9 @@ Stop and ask the maintainer when any condition below applies:
 - A SPEC contradicts the pin's source.
 - The pin's source and disassembly cannot settle a behaviour.
 - The implementation requires an unapproved change to a frozen SPEC.
-- A product-behaviour change is not a language artefact under the source policy's decision order.
+- A product-behaviour change is not a language artefact under the compatibility policy's [decision order](docs/findings/compatibility-policy.md#decision-order).
 
-Use the pin's external call when a Rust equivalent is unsettled.
+Use the pin's external call when the equivalence of a Rust replacement is unsettled.
 Unsettled surrounding pin behaviour still requires a decision.
 Rust interfaces remain internal under the [interface ruling](docs/constitution.md#external-interfaces).
 

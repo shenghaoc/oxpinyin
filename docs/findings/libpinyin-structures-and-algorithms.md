@@ -6,10 +6,8 @@ first surveyed at `origin/main` `3b2bfdf`; rows updated 2026-10-18 UTC
 at `84b7e79` for #828 (merged as `928466f7`) and #832 (merged as
 `1726f685`).
 
-This is the record that `docs/source-policy.md` asks for:
-what the pin stores and computes, subsystem by subsystem, and what
-oxpinyin does in its place. Pin code is cited `file:line` under `src/`;
-oxpinyin code by file and item.
+This [source-policy record](../source-policy.md) compares the pin and oxpinyin
+by subsystem. Pin citations are `file:line` under `src/`; oxpinyin citations name files and items.
 
 Each row carries two marks, `structure / behaviour`, because whether
 oxpinyin is built the same way and whether it behaves the same way are
@@ -75,7 +73,7 @@ Three things about that shape matter for a re-expression:
 
 ### The two objects
 
-Everything the API does hangs off two objects (`pinyin.cpp:39-95`):
+The API keeps all of its state in two objects (`pinyin.cpp:39-95`):
 
 - **`pinyin_context_t`** (`:39-71`) — one per process or engine, the
   long-lived state: the option word; the three parsers (full pinyin,
@@ -92,12 +90,12 @@ Everything the API does hangs off two objects (`pinyin.cpp:39-95`):
   choosing a candidate writes a constraint (`:2582`), and the next guess
   reads it back.
 
-The split is not quite clean. The decoders sit in the context but keep
-per-call working state there — the trellis, cached keys and phrase item,
-and pointers to the calling instance's matrix and constraints
-(`lookup/phonetic_lookup.h:522-532`) — so every instance on one context
-shares one decoder and its scratch, and two instances on one context
-cannot decode from two threads at once.
+The split is not complete. The decoders are in the context, but they
+keep per-call working state there: the trellis, the cached keys and
+phrase item, and pointers to the matrix and constraints of the calling
+instance (`lookup/phonetic_lookup.h:522-532`). Every instance on one
+context therefore shares one decoder and its scratch. Two instances on
+one context cannot decode from two threads at the same time.
 
 oxpinyin keeps the same two objects at the ABI and moves the decoder
 state to the instance side:
@@ -146,12 +144,15 @@ dependencies (`docs/architecture.md` has the full map):
 | `pinyin.cpp` / `zhuyin.cpp` as ABI | `oxpinyin-capi`, `oxpinyin-zhuyin-capi`, sharing `oxpinyin-capi-marshal` |
 | `utils/storage`, `utils/training`, `utils/segment` | `oxpinyin-utils` (the pin-named binaries), over `oxpinyin-kmm` and `oxpinyin-training` |
 
-The differences are deliberate: the backend is a seam rather than an
-`#ifdef`, the two ABIs share one facade rather than two API files, and
-the logic that decides output sits in `oxpinyin-engine`, away from the
-ABI glue. The crate split dates from the first, clean-room design and is
-kept (crate-count ruling, October 2026): its purpose is to undo the
-pin's coupling while preserving its behaviour.
+The differences are deliberate:
+
+- the backend is a seam, not an `#ifdef`;
+- the two ABIs share one facade, not two API files;
+- the logic that decides output is in `oxpinyin-engine`, apart from the
+  ABI glue.
+
+The crate split is kept (crate-count ruling, October 2026). Its purpose
+is to remove the coupling of the pin and keep its behaviour.
 
 ## 1. Storage
 
@@ -176,8 +177,8 @@ one signature read or write. The wrapper's control work is bounded;
 native open costs remain the selected library's costs. Checking the
 signature copies O(v) bytes for a value of length v on KC/tkrzw, as the
 pin does, and at most four bytes through BDB's partial read. Retaining
-a refused handle adds no second live DBM. The old metadata freshness
-test is removed; no Rust-side record scan or additional index is added.
+a refused handle adds no second live DBM. There is no metadata
+freshness test, no Rust-side record scan and no additional index.
 The KC magic-header read uses the existing CXX `accept` visitor with a bounded sink, copying at most
 4 + H bytes for a header of size H and checking the native returned size
 (`flexible_ngram_kyotodb.h:282-308`). Its temporary space is O(H), as in
@@ -200,10 +201,10 @@ bound under [the existing record](eio-flexible-bigram-unsorted-records.md).
 that owner, uses the existing `UserIndex` or `UserPhraseTable` search, and
 releases the guard before returning. Matched text comes from the library arena
 through `PhraseItemView::phrase_text`; it is not cached for every token.
-`RuntimeDict` no longer holds a second set of tables. Both facade prediction
+`RuntimeDict` holds no second set of tables. Both facade prediction
 paths acquire this borrowed view. Plain stores, which have no session tables,
 retain one generation-stamped derived index on the shared store; their
-previously empty prediction-table seam stays empty.
+prediction-table seam is empty.
 
 The pin likewise searches its live user tables
 (`storage/facade_chewing_table2.h:109-129`,
@@ -217,15 +218,15 @@ text, including rejection of high-bit aliases absent from the former text map.
 The in-tree callers do not consume an old snapshot's results after a write.
 
 Let N be live items, A the combined index/table bytes, R the stored readings,
-and Q the query's existing table-search cost. Previously a session rebuild
+and Q the query's existing table-search cost. The removed session rebuild
 cloned A, visited every item and reading (including membership checks), and
 constructed an N-entry text map. It needed at least Ω(A + N + R) time and
 O(A + N) additional storage, including text and decoded reading scratch.
-Acquisition/refresh is now O(1) time and space with no rebuild. Query loops
+Acquisition and refresh take O(1) time and space, with no rebuild. Query loops
 and result allocations are unchanged. Resolving M matched texts costs
 O(M log N + output words) in the worst case: at most 16 libraries, then a
 dense slot read or sparse O(log N) slot lookup, constant-time item validation,
-and text decoding. The old text map cost O(M log N + copied text) instead.
+and text decoding. The removed text map cost O(M log N + copied text).
 Stored text length is bounded by its u8 header (255 words); query length is
 bounded by MAX_PHRASE_LENGTH (16). Thus lookup time/space bounds do not worsen.
 
@@ -235,8 +236,8 @@ raw-key merge and stable downstream ordering. Standalone refresh retains the
 previous derived-index algorithm, traverses phrase rows once instead of twice,
 and shares the result between store clones. Its bounds do not grow. The trade
 is on-demand text decoding plus a short phrase mutex guard instead of cached
-text clones; standalone derived data now stays on the store until refresh or
-its last handle drops. No performance question requires a measurement.
+text clones. Standalone derived data stays on the store until refresh or
+until its last handle drops. No performance question requires a measurement.
 
 Journal replay follows `SubPhraseIndex::merge` at 074a2219
 `storage/phrase_index.cpp:439-517`, called by `pinyin.cpp:250-276` and
@@ -716,33 +717,26 @@ far where oxpinyin keeps C-shaped code:
 
 ## 11. Open gaps
 
-**Full-pinyin distance rule — fixed in #832.** The pin's DP prefers,
-among steps with equal parsed length and equal key count, the one with
-the lower total distance (`storage/pinyin_parser2.cpp:306-310`); the
-rows that carry distance 1 are listed in §9.
+**Full-pinyin distance rule — fixed in #832.** Among steps with equal
+parsed length and equal key count, the pin's DP prefers the step with
+the lower total distance (`storage/pinyin_parser2.cpp:306-310`). §9
+lists the rows that carry distance 1.
 
-- *Found (2026-10-16 UTC, source reading).* `SegmentGraph::fewest_keys`
-  had no distance and kept the first-found step. With
-  `PINYIN_CORRECT_ON_ONG` set it returned `chon'ga`, `chon'gan` and
-  `zhon'ge` for `chonga`, `chongan` and `zhonge`, where the pin's rule
-  gives `chong'a`, `chong'an` and `zhong'e`. The survey also estimated
-  "about 500" differing two-syllable strings, from a Python replay of
-  the pin's DP over its `pinyin_index` with every correction bit set,
-  over ordered pairs of the index's non-incomplete spellings. That
-  replay was never committed and did not model option gating beyond
-  the correction bits, so the figure is not reproducible from the
-  repository and is superseded by the measurement below; the two
-  enumerate different string sets and are not comparable.
-- *Fixed (#832, 2026-10-17 UTC).* Each edge carries its row's distance
-  and `fewest_keys` ranks by (key count, total distance).
-- *Verified at the C ABI (#832, cell bdb; recorded evidence).* The
-  option-sweep differential logged every parsed key and key rest, and its
-  parse-only `pairs` mode covered every ordered pair of the 662 pinned
+- *Rule.* Each edge carries the distance of its row, and
+  `SegmentGraph::fewest_keys` ranks by (key count, total distance).
+- *Defect that #832 repaired.* Without the distance, `fewest_keys` kept
+  the first-found step. With `PINYIN_CORRECT_ON_ONG` set it returned
+  `chon'ga`, `chon'gan` and `zhon'ge` for `chonga`, `chongan` and
+  `zhonge`, where the pin's rule gives `chong'a`, `chong'an` and
+  `zhong'e`.
+- *Recorded evidence (#832, cell bdb, C ABI).* The option-sweep
+  differential logged every parsed key and key rest. Its parse-only
+  `pairs` mode covered every ordered pair of the 662 pinned
   `pinyin_index` spellings with an admitted alias member. Before the
-  fix, 291 of 253,344
-  strings differed under every correction bit (`0x1fe00188`), all
-  `PINYIN_CORRECT_ON_ONG` splits, and 223 of 22,219 under that bit
-  alone; with it, every pair sweep and option case is identical.
+  repair, 291 of 253,344 strings differed under every correction bit
+  (`0x1fe00188`), all `PINYIN_CORRECT_ON_ONG` splits, and 223 of 22,219
+  under that bit alone. With the repair, every pair sweep and option
+  case is identical.
 
 **Sentence scoring: gfloat and libm, which Rust can follow.** Register row 11
 classes the demonstrated std-maths precision differences as (a).
@@ -795,26 +789,25 @@ The `Cost` type stays as the type of `Candidate::cost` and `NbestRow::cost`; eve
 
 **Constraint revalidation and the expansion cap — fixed in #828.**
 
-- *Found (2026-10-16 UTC).* `span_finds_token` answered "does this
-  token still span this range" by enumerating key paths and expanding
-  every incomplete key through `expand_keys` with
-  `SCAN_EXPANSION_LIMIT`; past 4096 combinations it found nothing and
-  the forcing was dropped. The pin revalidates without searching any
-  table: `validate_constraint` (`lookup/phonetic_lookup.cpp:120-165`)
-  reads the constrained phrase item and calls
-  `compute_pronunciation_possibility`
-  (`storage/phonetic_key_matrix.cpp:534` onward), which matches the
-  matrix against the item's stored pronunciations, an incomplete key
-  matching any final (`storage/pinyin_phrase3.h:80-86`), with no
-  expansion and no cap. A first reproduction ran against a source build
-  of the pin whose hash was not the pinned one, on the mini fixture,
-  with user-imported phrases (#825).
-- *Fixed (#828).* `ConstraintSpelling::spells` (`nbest.rs`) ports
+- *Pin rule.* The pin revalidates a constraint without a table search.
+  `validate_constraint` (`lookup/phonetic_lookup.cpp:120-165`) reads the
+  constrained phrase item and calls `compute_pronunciation_possibility`
+  (`storage/phonetic_key_matrix.cpp:534` onward). That call matches the
+  matrix against the stored pronunciations of the item, with no
+  expansion and no cap. An incomplete key matches any final
+  (`storage/pinyin_phrase3.h:80-86`).
+- *Implementation.* `ConstraintSpelling::spells` (`nbest.rs`) ports
   `validate_constraint` and `compute_pronunciation_possibility` through
-  `Dictionary::phrase_item_pronunciations`, carrying the last item read
-  across a pass as the pin's single `PhraseItem` does.
-- *Verified (#828, cell bdb, hash-pinned oracle, full model20;
-  recorded evidence).* Contract cases
+  `Dictionary::phrase_item_pronunciations`. It carries the last item
+  read across a pass, as the single `PhraseItem` of the pin does.
+- *Defect that #828 repaired.* `span_finds_token` enumerated key paths
+  and expanded every incomplete key through `expand_keys` with
+  `SCAN_EXPANSION_LIMIT`. Past 4096 combinations it found nothing, and
+  the forcing was dropped. The first reproduction (#825) used a source
+  build of the pin with a hash other than the pinned one, the mini
+  fixture and user-imported phrases.
+- *Recorded evidence (#828, cell bdb, hash-pinned oracle, full model20).*
+  Contract cases
   `constraint-survives-{zhonghuarenmin,zhonghuarm,zhhrenmin,zhonghrm,zhhrm,zhhrmghg}`,
   `constraint-survives-reconcile-{juezhonghuarm,juezhhrm}` and
   `constraint-stale-item-{keeps-nini,drops-nihao}`: against the parent

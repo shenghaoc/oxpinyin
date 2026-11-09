@@ -60,12 +60,12 @@ facade and records the constraint under the promoted token — and a later
 
 ## 2. oxpinyin mapping
 
-The default facade's writable, persisted phrase index is the user store
-(`oxpinyin-user`), served by `oxpinyin_store::DefaultStore` — tkrzw under
-the workspace's default features, or the Berkeley DB or Kyoto Cabinet peer
-selected with `--no-default-features`; nibbles 6/7 already live there and
-`addon.bin` (nibble 5) is a `USER_FILE` of the same facade, so promotion
-writes there too:
+The writable, persisted phrase index of the default facade is the user
+store (`oxpinyin-user`). `oxpinyin_store::DefaultStore` serves it: tkrzw
+under the default features of the workspace, or the Berkeley DB or Kyoto
+Cabinet peer selected with `--no-default-features`. Nibbles 6/7 already
+live there, and `addon.bin` (nibble 5) is a `USER_FILE` of the same facade.
+Promotion therefore writes there too:
 
 - `UserStore::promote_addon_phrase(text, readings, unigram)`
   (`crates/oxpinyin-user/src/store.rs`) allocates the next nibble-5 token, writes
@@ -82,10 +82,11 @@ writes there too:
   token in the sentence via `Session::select_promoted`
   (`crates/oxpinyin-engine/src/session/selection.rs`).
 
-After promotion the phrase surfaces through `UserLookup` (which indexes every
-stored phrase regardless of nibble, ascending nibble then token — nibble 5 sorts
-ahead of 6/7, matching `_append_items`) as a `NORMAL_CANDIDATE` row. The
-addon row of the same string stays in the list and replaces it (section 5).
+After promotion the phrase surfaces through `UserLookup` as a
+`NORMAL_CANDIDATE` row. `UserLookup` indexes every stored phrase regardless
+of nibble, in ascending nibble then token order; nibble 5 sorts before 6/7,
+as in `_append_items`. The addon row of the same string stays in the list
+and replaces it (section 5).
 
 ## 3. Rust-mechanism divergences
 
@@ -108,11 +109,12 @@ this path; fold in on the next sweep.
 - The empty-store / no-addon path is untouched (promotion is gated on an `ADDON`
   candidate, which only exists once an addon library is loaded), so the decode
   pins do not move.
-- A focused C-ABI test loads addon library 4, chooses the surfaced
-  `ADDON_CANDIDATE`, and asserts that the snapshot candidate becomes a
-  `NORMAL_CANDIDATE` at a nibble-5 token, that the phrase persists under that
-  token in the user store, and that a freshly built `UserLookup` finds the
-  promoted phrase — i.e. it will surface as a default-facade candidate.
+- A focused C-ABI test loads addon library 4 and chooses the surfaced
+  `ADDON_CANDIDATE`. It asserts that:
+  - the snapshot candidate becomes a `NORMAL_CANDIDATE` at a nibble-5 token;
+  - the phrase persists under that token in the user store;
+  - a freshly built `UserLookup` finds the promoted phrase, so it surfaces
+    as a default-facade candidate.
 
 ## 5. The next candidate list: the string dedup (2026-10-19 UTC)
 
@@ -172,7 +174,7 @@ holds the promotion. `oxpinyin-engine`'s
 and `session::tests::a_longer_row_surfaces_when_bit_2_clear_and_vanishes_when_set`
 hold the dedup and LONGER.
 Each has a `frequency-tie` case with DYNAMIC_ADJUST clear. The before-cursor
-tie is a control. The LONGER tie also needs the fix: the old path omitted
-the final dedup when sentence rows were suppressed. `longer-normal-disabled`
+tie is a control. The LONGER tie also tests the repair: without it, the
+path omits the final dedup when sentence rows are suppressed. `longer-normal-disabled`
 is its control. All seven cases have tag 913. The LONGER cases also check
 sentence precedence and the sentence-suppression bit.

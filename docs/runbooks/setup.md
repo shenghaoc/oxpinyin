@@ -1,14 +1,15 @@
 # Native contributor setup
 
+This procedure sets up native development on Linux, macOS or Windows and gives the contribution checks.
 Pin-comparison campaigns use the local oracle `performance` stage; see
 [where measurements run](benches.md#where-measurements-run). Native development
 and native-only measurements need no container. The oxpinyin-only nightly
 snapshot uses plain unpinned Debian testing, like every other Linux environment.
 
 Start from [CONTRIBUTING](../../CONTRIBUTING.md). These instructions build
-and test local files; they do not install an input method or replace your
-system libpinyin. Stop if a command fails and keep that command and its full
-error before continuing. In Bash, `echo $?` immediately after a command
+and test local files. They do not install an input method or replace your
+system libpinyin. If a command fails, stop, and keep that command and its full
+error before you continue. In Bash, `echo $?` immediately after a command
 shows its exit status (zero means success); PowerShell uses `$LASTEXITCODE`.
 Choose your operating system below. Ordinary native work
 requires no container, oracle or model20 (upstream reference model data).
@@ -16,37 +17,42 @@ requires no container, oracle or model20 (upstream reference model data).
 ## Storage backend
 
 Storage-dependent crates build against one DBM backend per build. The
-[default backend](backends.md) is the reference cell on every platform. The build finds tkrzw through pkg-config;
-the platform sections below install it. Berkeley DB 5.3 and Kyoto Cabinet
+[default backend](backends.md) is the reference cell on every platform. The build finds tkrzw through pkg-config,
+and the platform sections below install it. Berkeley DB 5.3 and Kyoto Cabinet
 are non-default backends ([backends](backends.md)).
 
 Every repository shell script requires Bash 5.0 or newer on Linux and macOS.
-`just doctor` reports the `bash` that `env bash` selects and fails below 5.0.
-Linux distributions provide it; the macOS section installs Homebrew's Bash and
-checks the selection. On Windows doctor reports Bash as not applicable and
+`just doctor` reports the `bash` that `env bash` selects, and fails below 5.0.
+Linux distributions provide it. The macOS section installs Homebrew's Bash and
+checks the selection. On Windows, doctor reports Bash as not applicable and
 never fails on its version. Native Windows recipes use pwsh with
 `-CommandWithArgs`; doctor checks its declared minimum.
 
-Rust's **toolchain** consists of the compiler and its tools. rustup installs
-and selects it; `rust-toolchain.toml` is the version/component authority.
-The **linker** connects compiled code into executables and native libraries.
+The Rust **toolchain** is the compiler and its tools. rustup installs
+and selects it. `rust-toolchain.toml` is the authority for the version and components.
+The **linker** joins compiled code into executables and native libraries.
 
 ## Linux
 
-Use Bash 5.0 or newer. Linux is one native platform target. You need Git,
-curl and CA certificates, a C/C++ compiler and linker, Make, pkg-config,
-libclang, tkrzw development files (the [default store backend](backends.md)) and GLib development
-files. Berkeley DB **5.3** and Kyoto Cabinet are needed only to build those
+Use Bash 5.0 or newer. Linux is one native platform target. You need:
+
+- Git, curl and CA certificates;
+- a C/C++ compiler and linker, Make and pkg-config;
+- libclang;
+- tkrzw development files (the [default store backend](backends.md));
+- GLib development files.
+
+Berkeley DB **5.3** and Kyoto Cabinet are needed only to build those
 non-default backends.
-A development package supplies the headers and libraries needed to
-compile against a native library. Package names depend on your system; that
+A development package supplies the headers and libraries that you need to
+compile against a native library. Package names depend on your system. That
 does not change the build or create another compatibility environment.
-Repository Python does not use the system interpreter; provision it with uv
+Repository Python does not use the system interpreter. Provision it with uv
 as described below.
 
-If these prerequisites are missing, install them with your system's package
-manager. `sudo` asks for administrator permission to install system packages.
-These are common package-manager examples, not separate supported/tested
+If these prerequisites are missing, install them with the package
+manager of your system. `sudo` asks for administrator permission to install system packages.
+These are common package-manager examples, not separate supported or tested
 distribution targets:
 
 ```bash
@@ -60,36 +66,40 @@ sudo apt-get install -y build-essential git curl ca-certificates pkg-config libc
 sudo dnf install gcc gcc-c++ make git curl ca-certificates pkgconf-pkg-config clang-devel tkrzw-devel glib2-devel
 ```
 
-The build finds tkrzw only through pkg-config (`pkg-config tkrzw`), as
-libpinyin's configure does. Debian's `tkrzw.pc` names `-llzma -llz4 -lzstd
--lz`, but `libtkrzw-dev` does not depend on their development packages, so
-the apt line installs them; without them every link fails with `cannot find
--llzma`. To use a tkrzw you built yourself instead, put its `lib/pkgconfig`
-first on `PKG_CONFIG_PATH` and its `lib` on `LD_LIBRARY_PATH`;
-`just tkrzw-build DIR` builds the upstream revision CI uses into `DIR`.
+The build finds tkrzw only through pkg-config (`pkg-config tkrzw`), as the
+configure of libpinyin does. Debian's `tkrzw.pc` names `-llzma -llz4 -lzstd
+-lz`, but `libtkrzw-dev` does not depend on their development packages. The
+apt line therefore installs them. Without them, every link fails with `cannot find
+-llzma`. To use a tkrzw that you built yourself, put its `lib/pkgconfig`
+first on `PKG_CONFIG_PATH` and its `lib` on `LD_LIBRARY_PATH`.
+`just tkrzw-build DIR` builds the upstream revision that CI uses into `DIR`.
 Ubuntu's packaged libtkrzw is defective
-([`tkrzw-distro-compat.md`](../findings/tkrzw-distro-compat.md));
-`tools/tkrzw/distro-probe.sh` checks the one on `PATH`, and provisioning runs
-it on an Ubuntu host. A `just tkrzw-build` build, Debian's package and the
+([`tkrzw-distro-compat.md`](../findings/tkrzw-distro-compat.md)).
+`tools/tkrzw/distro-probe.sh` checks the library on `PATH`, and provisioning runs
+it on an Ubuntu host. A `just tkrzw-build` build, the Debian package and the
 MSVC `tkrzw.lib` need no probe.
 
 Repository Python uses uv and its managed CPython 3.15 series with the GIL.
-`uv.toml` sets uv's floor, 0.13.1; CI installs the newest uv that satisfies it.
+`uv.toml` sets the uv floor, 0.13.1. CI installs the newest uv that satisfies it.
 
-`just doctor` checks minimum versions for Bash 5.0, uv,
-CPython, cargo-nextest, cargo-c, cargo-fuzz, cargo-llvm-cov, and
+`just doctor` is the one check of the minimum of every tool: Bash 5.0, uv,
+CPython, just, cargo-nextest, cargo-c, cargo-fuzz, cargo-llvm-cov, and
 ShellCheck 0.11.0. ShellCheck is advisory; run it when a shell script
 changes ([verification rule 5](verification.md#5-local-test-gate)).
-On Linux it also checks GNU ld, gcov and Valgrind. Each line names the resolved
-executable, the minimum and the version found. A newer tool passes, an older
-required tool fails, and a missing one comes with its install command.
-Semantic versions compare as semver does: a pre-release of the minimum
-(`0.9.115-beta.1`) is older than it and build metadata (`+build`) does not
-count. GNU ld, gcov and Valgrind compare by number, and a development build of
-one counts as its number. Install or upgrade a tool only when `just doctor`
-says it is missing or too old.
+On Linux, doctor also checks GNU ld, gcov and Valgrind. These rules apply:
 
-Until uv exists, `just doctor` cannot run. Install uv only
+- Each line names the resolved executable, the minimum and the version found.
+- A newer tool passes, an older required tool fails, and a missing tool comes with its install command.
+- Semantic versions compare as semver does: a pre-release of the minimum
+  (`1.59.0-beta.1`) is older than it, and build metadata (`+build`) does not
+  count.
+- GNU ld, gcov and Valgrind compare by number, and a development build of
+  one of them counts as its number.
+
+Install or upgrade a tool only when `just doctor`
+says that it is missing or too old.
+
+`just doctor` cannot run until uv exists. Install uv only
 when it is missing or older than 0.13.1 (`uv --version` shows the version):
 
 ```bash
@@ -107,16 +117,16 @@ hash -r
 ```
 
 The native command interface needs just at or above the `minimum-version` in the
-root `justfile`, which `just` enforces when it loads the file.
-Install it through the host route: `brew install just` on macOS, the
+root `justfile`. `just` enforces this itself, and `just doctor` reports it.
+Install just through the route of your host: `brew install just` on macOS, the
 distribution package on Linux, or `cargo install just --locked`.
 
 Provision the interpreter through `just python`. It runs `uv python install --quiet`,
 which reads `.python-version` and does nothing when that interpreter is present.
 A plain version request prefers the GIL-enabled build, and the check below rejects
-a free-threaded one. Every other Python recipe depends on it, so a recipe
-run on a bare host provisions the interpreter itself; `just doctor` installs
-nothing and names `just python` when the interpreter is missing. Then verify
+a free-threaded build. Every other Python recipe depends on `just python`, so a recipe
+run on a bare host provisions the interpreter itself. `just doctor` installs
+nothing, and names `just python` when the interpreter is missing. Then verify
 the interpreter:
 
 ```bash
@@ -142,30 +152,30 @@ The installer digest comes from its `digest` field in the official
 Automated Linux setup on x86_64 and arm64 verifies the release archive against the pinned
 [published checksum](https://github.com/astral-sh/uv/releases/download/0.13.1/sha256.sum).
 
-`.python-version` is the one place the interpreter version is written. Inside the
-checkout, `uv run --no-project --managed-python python` and `uv python find
---managed-python` read it; a script that changes directory first, or a container
-build, copies the file in or passes its contents on, and does not restate the
-version. From outside the checkout, pass `--python` the contents of the checkout's
-`.python-version`, then add the checkout to the interpreter's import path before running the
-implementation module. For provisioning, `tools/cloud/setup.sh` passes the checkout
-as the first argument to its Python launcher and forwards the remaining arguments
-to `tools.dev.provision`. This preserves the caller's working directory; its `.python-version`
-does not decide the interpreter. Direct-run Python
-harness files rely on their `uv` shebang and a working directory inside the
-checkout. The check `tools/dev/python-request.test.py` fails when a version request
+`.python-version` is the one place where the interpreter version is written.
+
+- Inside the
+  checkout, `uv run --no-project --managed-python python` and `uv python find
+  --managed-python` read it.
+- A script that changes directory first, or a container
+  build, copies the file in or passes its contents on. It does not write the
+  version again.
+- Run the required `tools.dev` module from the checkout with the managed interpreter
+  and the invocation in the `justfile`.
+
+The check `tools/dev/python-request.test.py` fails when a version request
 appears anywhere else, outside the dated records in `docs/findings/`.
 
-**Rule (#1230).** Provision the repository's managed Python interpreter
+**Rule (#1230).** Provision the managed Python interpreter of the repository
 through `just python`. Do not substitute another interpreter. A later series is a deliberate change: the tooling
-relies on 3.15's `-X lazy_imports` modes. Do not use a system Python, a virtual
-environment, `pyproject.toml` or `uv.lock`; the checkout's `.python-version`
-and `uv.toml` name the same interpreter series and uv floor.
+relies on the `-X lazy_imports` modes of 3.15. Do not use a system Python, a virtual
+environment, `pyproject.toml` or `uv.lock`. The `.python-version`
+and `uv.toml` of the checkout name the same interpreter series and uv floor.
 
-`just build`, `just clippy` and `just fmt` pass Cargo arguments unchanged to
-Cargo. To limit parallel builds, set `CARGO_BUILD_JOBS` or `[build] jobs` in
+`just build`, `just clippy` and `just fmt` pass Cargo arguments to
+Cargo unchanged. To limit parallel builds, set `CARGO_BUILD_JOBS` or `[build] jobs` in
 your own `~/.cargo/config.toml`. Select the same native packages
-and backend as the Cargo command you would otherwise run:
+and backend as the Cargo command that you would otherwise run:
 
 ```bash
 just build --locked -p oxpinyin-core
@@ -176,12 +186,12 @@ just fmt --all --check
 ### Registry listing and test entry points
 
 `just test-tools` runs every non-excluded Python harness file, concurrently up
-to the host's allowed CPU count. Each file has private temporary and lock
-directories; output appears as complete blocks in path order, and failures do
-not prevent the remaining files from running. The same managed interpreter runs
+to the allowed CPU count of the host. Each file has private temporary and lock
+directories. Output appears as complete blocks in path order, and failures do
+not stop the remaining files. The same managed interpreter runs
 the controller and each file.
 
-For iteration, pass files and optionally a unittest name pattern:
+For iteration, pass files and, optionally, a unittest name pattern:
 
 ```sh
 just test-tools tools/dev/test_runner.test.py
@@ -190,53 +200,58 @@ just test-tools --changed
 just test-tools --changed origin/main
 ```
 
-`--changed [BASE]` compares tracked files against BASE (HEAD by default),
-including staged and unstaged edits, and includes untracked files. Changed test
-files select themselves; `HARNESS_DEPENDENCIES` in `tools/dev/test_runner.py`
-maps known modules to their tests. Any unknown path or missing mapped test
-selects the full suite. An empty diff selects no files. Explicit files and
-`--changed` cannot be combined. Every mode keeps the credential filter and the
-existing exclusions.
+These rules apply to the selection:
 
-`--changed` is iteration feedback only: `HARNESS_DEPENDENCIES` is hand-maintained
-and can under-select. The full `just test-tools` remains the completion gate.
-With `-k` and no explicit FILE, files with no matching tests are reported as
-unselected. A named file with no matches remains a failure, as does a pattern
+- `--changed [BASE]` compares tracked files against BASE (HEAD by default),
+  including staged and unstaged edits, and includes untracked files.
+- Changed test
+  files select themselves. `HARNESS_DEPENDENCIES` in `tools/dev/test_runner.py`
+  maps known modules to their tests.
+- Any unknown path or missing mapped test
+  selects the full suite. An empty diff selects no files.
+- You cannot combine explicit files and
+  `--changed`.
+- Every mode keeps the credential filter and the
+  existing exclusions.
+
+`--changed` is iteration feedback only: `HARNESS_DEPENDENCIES` is maintained by hand
+and can select too few tests. The full `just test-tools` stays the completion gate.
+With `-k` and no explicit FILE, the runner reports files with no matching tests as
+unselected. A named file with no matches stays a failure, as does a pattern
 that matches no tests across all selected files.
 
-The Windows recipes use PowerShell and preserve the child status explicitly.
-Their argument transport remains TODO (no Windows host).
+The Windows recipes use PowerShell and keep the child status explicitly.
+Their argument transport stays TODO (no Windows host).
 
-Run `just fetch-contract-data` once before a full test run: `oxpinyin-runtime`'s
-`candidate_surface` test reads the pinned system data it fetches, and fails without it.
-The data goes into the [cache directory](#cache-directory), so one fetch serves every worktree.
+Run `just fetch-contract-data` once before a full test run. The
+`candidate_surface` test of `oxpinyin-runtime` reads the pinned system data that it fetches, and fails without it.
 
 The native Rust test entry point uses cargo-nextest at or above the
 `nextest-version` in `.config/nextest.toml` ([profile inheritance](https://nexte.st/docs/configuration/#profile-inheritance)
 needs it); `just doctor` reports it. Install it with
 `cargo install cargo-nextest --locked` (or the prebuilt release). `just test` runs `cargo nextest run --profile local`
 with your arguments. Pass the same crate and
-feature selection as cargo test (see [backend selection](backends.md)). Pass `--profile ci` for the CI limits. `just test-doc` runs
+feature selection as for cargo test (see [backend selection](backends.md)). For the CI limits, pass `--profile ci`. `just test-doc` runs
 `cargo test --doc`.
 
-Use your system's official package documentation if names or enabled
-repositories differ. The native check below prints the tkrzw version
+If names or enabled repositories differ, use the official package documentation of your system.
+The native check below prints the tkrzw version that
 pkg-config reports.
 
-In a managed environment with these packages already present, skip their
+In a managed environment that already has these packages, skip their
 installation. Root development environments omit `sudo`. Without installation
-rights, ask the environment owner for these packages; ordinary native work
+rights, ask the environment owner for these packages. Ordinary native work
 does not require nested Docker or Podman.
 
-If you already have a checkout, enter its root: the directory containing
+If you already have a checkout, go to its root: the directory that contains
 `CONTRIBUTING.md` and `Cargo.toml`. Replace `/path/to/oxpinyin` below with
-that actual directory, then skip the cloning block:
+that directory, then skip the cloning block:
 
 ```bash
 cd /path/to/oxpinyin
 ```
 
-Otherwise obtain a checkout, then remain at its root:
+Otherwise, get a checkout, then stay at its root:
 
 ```bash
 mkdir -p ~/src
@@ -245,7 +260,7 @@ git clone https://github.com/shenghaoc/oxpinyin.git
 cd oxpinyin
 ```
 
-Check `command -v rustup`. If it reports no path, install
+Run `command -v rustup`. If it reports no path, install
 [rustup](https://rust-lang.github.io/rustup/installation/index.html):
 
 ```bash
@@ -255,9 +270,9 @@ sh "$installer" -y --profile minimal --default-toolchain none
 rm -f "$installer"
 ```
 
-The `.` command below loads Cargo's PATH settings into the current shell,
-so it can find `cargo` and `rustc`. With either a new or existing rustup
-installation:
+The `.` command below loads the PATH settings of Cargo into the current shell,
+so that the shell can find `cargo` and `rustc`. With a new or an existing rustup
+installation, run:
 
 ```bash
 . "$HOME/.cargo/env"
@@ -266,19 +281,19 @@ cargo test --locked -p oxpinyin-chewing -p oxpinyin-core -p oxpinyin-engine
 just check
 ```
 
-The `cargo test` command tests native Rust packages; `just check` (tkrzw by
+The `cargo test` command tests native Rust packages. `just check` (tkrzw by
 default; `just check bdb` or `just check kyotocabinet` for the others)
-additionally links and executes storage and C-library tests. Headers
-are the native library declarations used by the compiler; libclang reads
+also links and runs storage and C-library tests. Headers
+are the native library declarations that the compiler uses. libclang reads
 them, and pkg-config locates native library installations. The check prints
 the selected toolchain, architecture and backend. It installs nothing.
 
-Success means all test summaries have zero failures; the storage check ends
-with `Setup check passed`. Ignored tests need optional inputs. Negative
-tests can deliberately print warnings, assertions, `failed` or `CRITICAL`;
-use the final summaries and process exit status to determine success.
+Success means that all test summaries have zero failures, and that the storage check ends
+with `Setup check passed`. Negative
+tests can deliberately print warnings, assertions, `failed` or `CRITICAL`.
+Use the final summaries and the process exit status to decide success.
 
-In a fresh Bash terminal, use your actual checkout directory if different:
+In a fresh Bash terminal, use your checkout directory if it is different:
 
 ```bash
 cd ~/src/oxpinyin
@@ -286,17 +301,17 @@ cd ~/src/oxpinyin
 just check
 ```
 
-Cargo reuses downloaded dependencies and that checkout's `target/` outputs.
+Cargo reuses downloaded dependencies and the `target/` outputs of that checkout.
 Keep outputs separate across worktrees (separate checkouts of branches).
 
 ## macOS
 
 Use Terminal with Bash 5.0 or newer (`bash`), Git, Apple's
 [Command Line Tools](https://developer.apple.com/xcode/resources/),
-[Homebrew](https://docs.brew.sh/Installation) and rustup. If Command Line
+[Homebrew](https://docs.brew.sh/Installation) and rustup. If the Command Line
 Tools are absent, run `xcode-select --install` and complete the system dialog.
 
-macOS ships Bash 3.2 at `/bin/bash`. Install Homebrew's Bash and check that
+macOS ships Bash 3.2 at `/bin/bash`. Install Homebrew's Bash and make sure that
 `env bash` selects it:
 
 ```bash
@@ -308,7 +323,7 @@ command -v bash
 `env bash --version` must print 5.0 or newer. `command -v bash` must print the
 Homebrew path (`/opt/homebrew/bin/bash` on Apple silicon or
 `/usr/local/bin/bash` on Intel), not `/bin/bash`. If it prints `/bin/bash`,
-put Homebrew's `bin` directory before `/bin` on `PATH` in your shell profile
+put the Homebrew `bin` directory before `/bin` on `PATH` in your shell profile,
 and open a new terminal.
 
 ```bash
@@ -320,9 +335,9 @@ cd oxpinyin
 ```
 
 Run the uv, just and interpreter commands from the Linux section, in that
-order (`brew install just` supplies just). For the checksum step, replace
-`sha256sum -c -` with `shasum -a256 -c -` on macOS.
-Then install rustup if absent using the Linux rustup commands above
+order (`brew install just` supplies just). For the checksum step on macOS, replace
+`sha256sum -c -` with `shasum -a256 -c -`.
+Then, if rustup is absent, install it with the Linux rustup commands above,
 and run:
 
 ```bash
@@ -334,15 +349,15 @@ export CARGO_TARGET_DIR=target/tkrzw
 just check
 ```
 
-`export` sets a setting inherited by commands in this terminal. pkg-config
-finds Homebrew's tkrzw, the selected backend; its `tkrzw.pc` names
-the lz4, lzma and zstd libraries without their directory, which
-`LIBRARY_PATH` supplies. To use a tkrzw you built yourself (`just tkrzw-build
+`export` sets a value that the commands in this terminal inherit. pkg-config
+finds Homebrew's tkrzw, the selected backend. Its `tkrzw.pc` names
+the lz4, lzma and zstd libraries without their directory, and
+`LIBRARY_PATH` supplies that directory. To use a tkrzw that you built yourself (`just tkrzw-build
 DIR`), put `DIR/lib/pkgconfig` first on `PKG_CONFIG_PATH` and `DIR/lib` on
-`DYLD_LIBRARY_PATH` instead. This is a real storage link/run check; a mere
-`cargo check` does not execute the tests.
-In a fresh Bash terminal, return to the checkout, source Cargo's environment,
-repeat both exports and the check. Linux C-ABI packaging and Linux reference
+`DYLD_LIBRARY_PATH` instead. This is a real storage link/run check; a
+`cargo check` alone does not run the tests.
+In a fresh Bash terminal, go back to the checkout, source the Cargo environment,
+and repeat both exports and the check. Linux C-ABI packaging and Linux reference
 differentials are separate evidence, not permanent restrictions on portability.
 
 The nightly macOS CI job uses this broader portable scope:
@@ -351,17 +366,21 @@ The nightly macOS CI job uses this broader portable scope:
 cargo test --locked --workspace
 ```
 
-CI's macOS job builds tkrzw with `.github/actions/tkrzw` instead of
-Homebrew's. Berkeley DB is a non-default backend: `brew install berkeley-db@5`,
-export the keg-only `SYSTEM_DEPS_BDB_*` overrides
-([backends](backends.md#discovery-and-overrides)),
-`export CARGO_TARGET_DIR=target/bdb`, then `just check bdb`.
-Keep each backend's target and user-data directories separate.
+The macOS job of CI builds tkrzw with `.github/actions/tkrzw` instead of
+using Homebrew's. Berkeley DB is a non-default backend. To use it:
+
+1. Run `brew install berkeley-db@5`.
+2. Export the keg-only `SYSTEM_DEPS_BDB_*` overrides
+   ([backends](backends.md#discovery-and-overrides)).
+3. Run `export CARGO_TARGET_DIR=target/bdb`.
+4. Run `just check bdb`.
+
+Keep the target and user-data directories of each backend separate.
 
 Fuzzing and the backend sanitizer gates run natively on macOS. The recipes
-select Homebrew's Berkeley DB 5.3, Kyoto Cabinet and tkrzw and use the one
-nightly that `fuzz/rust-toolchain.toml` names, with `rust-src`; no Linux
-`setarch`. In `fuzz/`, rustup installs the toolchain that file names:
+select Homebrew's Berkeley DB 5.3, Kyoto Cabinet and tkrzw. They use the one
+nightly that `fuzz/rust-toolchain.toml` names, with `rust-src`, and no Linux
+`setarch`. In `fuzz/`, rustup installs the toolchain that the file names:
 
 ```bash
 brew install berkeley-db@5 kyoto-cabinet
@@ -375,17 +394,16 @@ just sanitize tkrzw address
 just sanitize tkrzw thread
 ```
 
-`capi-commands` also runs natively; pkg-config finds the facade's GLib and
-tkrzw, and the fuzz recipe adds Homebrew's lib to `LIBRARY_PATH`. AddressSanitizer runs with leak detection off on
+`capi-commands` also runs natively. pkg-config finds the GLib and
+tkrzw of the facade, and the fuzz recipe adds Homebrew's lib to `LIBRARY_PATH`. AddressSanitizer runs with leak detection off on
 Darwin. Standalone LeakSanitizer is refused on macOS arm64, and
-MemorySanitizer has no Darwin target; both refusals name the host. Linux
+MemorySanitizer has no Darwin target. Both refusals name the host. Linux
 keeps its existing sanitizer commands and paths.
 
 ### When the macOS job runs
 
-The macOS workspace job is the `test-macos` job in `verify-nightly.yml`. It is
-best-effort and never a PR merge condition: it runs every night on main and
-before a release ([verification rule 10](verification.md#10-ci-merge-conditions)).
+The macOS workspace job is the `test-macos` job in `verify-nightly.yml`.
+Its schedule and merge status are in [verification rule 10](verification.md#10-ci-merge-conditions).
 Pull-request CI tests Linux only. To reproduce a macOS-only failure, dispatch
 the job on a branch with `macos_only` set:
 
@@ -399,19 +417,18 @@ workflow, including the macOS job.
 
 ## Native Windows
 
-This is native Windows Rust development, not Linux under WSL. Install Git
+This section is for native Windows Rust development, not Linux under WSL. Install Git
 and [rustup's MSVC prerequisites](https://rust-lang.github.io/rustup/installation/windows-msvc.html):
 Visual Studio Build Tools with **Desktop development with C++** and the
 Windows SDK. [Microsoft's Rust setup](https://learn.microsoft.com/en-us/windows/dev-environment/rust/setup)
-explains installation. Cargo finds MSVC through the Visual Studio installer;
-MSVC does not need to be on PATH. Doctor uses the installer's fixed
-`vswhere.exe` location and requires the VC tools component.
-Install rustup with the official Windows installer
-if it is not already available.
+explains the installation. Cargo finds MSVC through the Visual Studio installer;
+MSVC does not need to be on PATH. Doctor uses the fixed
+`vswhere.exe` location of the installer and requires the VC tools component.
+If rustup is not already available, install it with the official Windows installer.
 
 Use pwsh at or above the minimum in
 [pwsh-floor.txt](../../tools/dev/pwsh-floor.txt). Call just recipes from pwsh,
-including in a Developer PowerShell session. Windows PowerShell can change
+also in a Developer PowerShell session. Windows PowerShell can change
 empty arguments and embedded quotes before just receives them.
 
 In pwsh:
@@ -429,49 +446,56 @@ cargo clippy --locked -p oxpinyin-chewing -p oxpinyin-core -p oxpinyin-engine --
 
 Repository Python tooling on Windows runs through the pwsh recipes.
 The Python-backed `_test-argv` recipe verifies argument and exit-status transport.
-Job Object lifetime, fuzz, coverage and full tooling acceptance remain unverified.
+Job Object lifetime, fuzz, coverage and full tooling acceptance stay unverified.
 Install uv with its native Windows installer, then just (`cargo install just
---locked`), then run `just python`; the rule above applies unchanged.
+--locked`), then run `just python`. The rule above applies unchanged.
 
 All three packages link and run natively without a DBM library or container.
 Success is zero failed tests and exit code zero (`$LASTEXITCODE`). In a fresh
-Developer PowerShell, `Set-Location "$HOME/src/oxpinyin"` and repeat the test;
-use your real directory for an existing checkout. Rustup chooses the same
-repository toolchain automatically. Editors/debuggers use this same native
+Developer PowerShell, run `Set-Location "$HOME/src/oxpinyin"` and repeat the test.
+For an existing checkout, use your real directory. Rustup selects the same
+repository toolchain automatically. Editors and debuggers use this same native
 MSVC environment and toolchain; no project-specific IDE is required.
 
 **Storage-dependent native Windows scope:** the Windows CI job runs clippy,
 `cargo nextest run --profile ci` and the doctests over the portable
 workspace on the [default backend](backends.md). It also runs the tools Python
-harness (`just test-tools`). `.github/actions/tkrzw` builds the
-upstream revision `tools/cloud/setup.sh` provisions with `nmake -f
-VCMakefile` in the Visual Studio developer environment (a static
-`tkrzw.lib` with the DLL C runtime that Rust's MSVC targets link) and
-writes a `tkrzw.pc`, which the store build script finds through
-`PKG_CONFIG_PATH`. The Windows image has no pkg-config, so the action
-installs vcpkg's `pkgconf` and sets `PKG_CONFIG` to its `pkgconf.exe`.
-To do the same
-locally, run `just tkrzw-build DIR` from Developer PowerShell (it loads the
-developer environment through `vswhere` when it is not already loaded),
-put `DIR\lib\pkgconfig` on `PKG_CONFIG_PATH` and `DIR\bin` on `PATH`, and
-set `PKG_CONFIG` to a `pkgconf.exe` (for example from `vcpkg install
-pkgconf:x64-windows`). The recipe runs no `distro-probe.sh` and needs no `sh`.
+harness (`just test-tools`).
 
-The job also installs vcpkg's `glib` port, found through the same
-`PKG_CONFIG` and `PKG_CONFIG_PATH`, so it builds and tests
+- `.github/actions/tkrzw` builds the
+  upstream revision that `tools/cloud/setup.sh` provisions, with `nmake -f
+  VCMakefile` in the Visual Studio developer environment. The result is a static
+  `tkrzw.lib` with the DLL C runtime that the Rust MSVC targets link.
+- The action writes a `tkrzw.pc`, which the store build script finds through
+  `PKG_CONFIG_PATH`.
+- The Windows image has no pkg-config, so the action
+  installs the vcpkg `pkgconf` and sets `PKG_CONFIG` to its `pkgconf.exe`.
+
+To do the same locally:
+
+1. Run `just tkrzw-build DIR` from Developer PowerShell. The recipe loads the
+   developer environment through `vswhere` when it is not already loaded.
+2. Put `DIR\lib\pkgconfig` on `PKG_CONFIG_PATH` and `DIR\bin` on `PATH`.
+3. Set `PKG_CONFIG` to a `pkgconf.exe` (for example, from `vcpkg install
+   pkgconf:x64-windows`).
+
+The recipe runs no `distro-probe.sh` and needs no `sh`.
+
+The job also installs the vcpkg `glib` port, which it finds through the same
+`PKG_CONFIG` and `PKG_CONFIG_PATH`. It therefore builds and tests
 the full workspace, including `oxpinyin-utils`, `oxpinyin-training`, KMM
 and both C-ABI crates. The locale tests select `.UTF-8` on Windows.
-Text expectations use the host newline.
-The `test-windows` job in `verify-nightly.yml` excludes no crate. The oracle's Linux FFI feature is
-not selected. Native Windows oracle behavior is not established by those
-tests. Physical Windows hardware is not needed to use
+Text expectations use the newline of the host.
+The `test-windows` job in `verify-nightly.yml` excludes no crate. The Linux FFI feature of the oracle is
+not selected. Those tests do not establish native Windows oracle behavior.
+You do not need physical Windows hardware to use
 this CI coverage.
 
 A full local build or `just test` needs the same two vcpkg ports as the
-CI job; without GLib, `glib-sys` fails and every crate but
+CI job. Without GLib, `glib-sys` fails, and every crate except
 `oxpinyin-chewing`, `oxpinyin-core`, `oxpinyin-store` and
 `oxpinyin-engine` fails to build. From Developer PowerShell, with
-`$vcpkg` your vcpkg checkout and `DIR` the `just tkrzw-build` prefix:
+`$vcpkg` as your vcpkg checkout and `DIR` as the `just tkrzw-build` prefix, run:
 
 ```powershell
 & "$vcpkg\vcpkg.exe" install pkgconf:x64-windows glib:x64-windows
@@ -482,14 +506,13 @@ $env:PATH = "DIR\bin;$installed\bin;$env:PATH"
 & $env:PKG_CONFIG --modversion glib-2.0 tkrzw
 ```
 
-The `bin` directories put the GLib and tkrzw DLLs on the test binaries'
-path. Bash scripts run from the same session through Git for Windows'
-`bash.exe` (`& 'C:\Program Files\Git\bin\bash.exe' SCRIPT`).
+The `bin` directories put the GLib and tkrzw DLLs on the path of the test binaries.
+Bash scripts run from the same session through the
+`bash.exe` of Git for Windows (`& 'C:\Program Files\Git\bin\bash.exe' SCRIPT`).
 
 **When the Windows job runs:** the full Windows workspace job is the
-`test-windows` job in `verify-nightly.yml`. It is best-effort and never a PR
-merge condition: it runs every night on main and before a release
-([verification rule 10](verification.md#10-ci-merge-conditions)). Windows
+`test-windows` job in `verify-nightly.yml`. Its schedule and merge status are in
+[verification rule 10](verification.md#10-ci-merge-conditions). Windows
 is a supported native target.
 To reproduce a Windows-only failure, dispatch the job on a branch with
 `windows_only` set:
@@ -509,10 +532,10 @@ can support.
 
 Every recipe has a Windows form, or prints why it is refused on Windows; see the `justfile`.
 
-The pin runs only in a Linux container. On Windows that container is a
+The pin runs only in a Linux container. On Windows, that container is a
 [WSL container](https://learn.microsoft.com/en-us/windows/wsl/wsl-container)
-driven by `wslc`, the first runtime `select_runtime` tries there. Run these from Developer
-PowerShell; `$env:OXPINYIN_CAPTURE_RUNTIME` or `$env:OXPINYIN_CONTAINER` names another runtime:
+driven by `wslc`, the first runtime that `select_runtime` tries there. Run these commands from Developer
+PowerShell. `$env:OXPINYIN_CAPTURE_RUNTIME` or `$env:OXPINYIN_CONTAINER` names another runtime:
 
 | Task | Command |
 | --- | --- |
@@ -523,11 +546,11 @@ PowerShell; `$env:OXPINYIN_CAPTURE_RUNTIME` or `$env:OXPINYIN_CONTAINER` names a
 | Cloud provisioning ([cloud.md](cloud.md)) | `just provision` |
 
 `tools/oracle/image.py` translates the docker commands for `wslc`
-([container runtimes](#container-runtimes)); docker and podman get the
-commands unchanged. The `wslc` limits that apply:
+([container runtimes](#container-runtimes)). Docker and podman get the
+commands unchanged. These `wslc` limits apply:
 
 - **No `--platform`.** The adapter drops the flag; every image runs at the
-  host architecture anyway ([container runtimes](#container-runtimes)).
+  host architecture in any case ([container runtimes](#container-runtimes)).
 - **`inspect` prints JSON only.** It has no Go templates, so
   `Architecture` and `Id` are read from the JSON record
   (`uv run --no-project --managed-python python -X lazy_imports=normal -m tools.oracle.image image-field`).
@@ -536,39 +559,38 @@ commands unchanged. The `wslc` limits that apply:
   `wslc remove -f`.
 - **`build --pull` is an on/off switch, and `build` has no `--network`.**
   Capture builds pass no pull flag. A build's `--network host` is dropped
-  with a notice; any other build `--network` value is refused.
+  with a notice. Any other build `--network` value is refused.
 - **No `z` mount option.** The adapter drops `,z` and `:z`.
 - **No host networking.** `wslc run --network host` fails with "host mode
-  networking is not supported"; the adapter drops `--network host` and prints
-  a one-line notice that the runtime's default network is used. `--network
+  networking is not supported". The adapter drops `--network host` and prints
+  a one-line notice that the default network of the runtime is used. `--network
   none` is kept.
 - **Mounts need Windows paths.** `wslc` reads an MSYS path such as
   `/c/...` as a path inside its VM and mounts an empty directory. The capture
-  launcher passes the checkout and data as native Windows paths. `:ro` and a
+  launcher therefore passes the checkout and data as native Windows paths. `:ro` and a
   read-write mount nested in a read-only one both work.
 
-Host Python cannot read the symlinks a container makes on an NTFS mount
+Host Python cannot read the symlinks that a container makes on an NTFS mount
 (`[Errno 22] Invalid argument`). On Windows, provisioning therefore never
-reads inside a provisioned prefix from the host: each check, removal and
+reads inside a provisioned prefix from the host. Each check, removal and
 summary runs in the `deps` image.
 
 WSL is a separate Linux development option: follow the Linux section from
 its Bash terminal. [Microsoft recommends the Linux filesystem](https://learn.microsoft.com/en-us/windows/wsl/filesystems)
-for Linux checkouts/builds (`~/src`, not `/mnt/c`). WSL may also host the
+for Linux checkouts and builds (`~/src`, not `/mnt/c`). WSL may also host the
 compatibility runtime without replacing the native Windows workflow.
 
 ## Cache directory
 
-The tooling keeps everything that it fetches or builds from pinned sources under one cache root, `OXPINYIN_CACHE`.
-All worktrees share it.
-The justfile exports your `OXPINYIN_CACHE` if non-empty, or `oxpinyin` in your cache directory.
-That directory is `$XDG_CACHE_HOME` or `~/.cache` on Linux, `~/Library/Caches` on macOS and `%LOCALAPPDATA%` on Windows.
+Pinned downloads and builds share `OXPINYIN_CACHE` across worktrees.
+The justfile exports a non-empty override or `join(cache_directory(), "oxpinyin")`.
+The OS cache directory is `$XDG_CACHE_HOME` or `~/.cache` on Linux,
+`~/Library/Caches` on macOS and `%LOCALAPPDATA%` on Windows.
 `just cache-root` prints the root.
 
-On a host with no home directory, set `OXPINYIN_CACHE` before running `just`.
-Set it to a non-empty absolute path.
-A command that does not start from a recipe, such as a direct `cargo` or `uv run`, needs the variable set.
-`tools/cloud/setup.sh` asks `just` for it when `just` is installed.
+Set a non-empty absolute `OXPINYIN_CACHE` on a host without a home directory
+and for direct `cargo` or `uv run` commands. `tools/cloud/setup.sh` asks
+`just` for the root when `just` is installed.
 
 The name of each entry carries its pin, so a new pin gets a new entry:
 
@@ -593,7 +615,7 @@ the backup to `extracted`. If both exist, move the backup aside, then run
 ## Container runtimes
 
 The pin runs only in a Linux container. `select_runtime` in
-`tools/oracle/image.py` picks the first runtime found, in this order:
+`tools/oracle/image.py` selects the first runtime that it finds, in this order:
 
 | Host | Order |
 | --- | --- |
@@ -601,39 +623,39 @@ The pin runs only in a Linux container. `select_runtime` in
 | macOS | Apple `container`, Podman, Docker |
 | Linux | Podman, Docker |
 
-Every image runs at the host's architecture, with no emulation: x86_64 hosts
-use `linux/amd64` and aarch64 hosts `linux/arm64`. `verify-image` defaults to
-the host's platform and refuses any other `--platform` on every runtime. On
+Every image runs at the architecture of the host, with no emulation: x86_64 hosts
+use `linux/amd64` and aarch64 hosts use `linux/arm64`. `verify-image` defaults to
+the platform of the host and refuses any other `--platform` on every runtime. On
 Windows, `wslc` also ships as `container.exe`, so `container` names `wslc`
-there; it names Apple `container` only on macOS.
+there. It names Apple `container` only on macOS.
 
-`OXPINYIN_CONTAINER` names one explicitly; for `build-image` and the captures
-(`just capture-pin`) `OXPINYIN_CAPTURE_RUNTIME` comes first. Each
-prints the runtime it chose on a `Runtime:` line. Provisioning (`just provision`,
+`OXPINYIN_CONTAINER` names one runtime explicitly. For `build-image` and the captures
+(`just capture-pin`), `OXPINYIN_CAPTURE_RUNTIME` comes first. Each command
+prints the runtime that it chose on a `Runtime:` line. Provisioning (`just provision`,
 `just provision-oracle`), `verify-image` and `build-image` work through each
-of them. Every command is written in docker's grammar and passed through
+runtime. Every command is written in the docker grammar and passed through
 `runtime_command`. Docker and Podman take it as written. `wslc` drops
 `--platform` (see [native Windows](#native-windows-and-wsl-containers)).
-Apple `container`, as a macOS run with it verified:
+Apple `container` works as follows, as a macOS run with it verified:
 
 - **Commands.** `image pull` (without `--quiet`), `image tag`, `delete` and
-  `system status`; JSON inspect records, whose image `Id` is the config
-  descriptor's digest.
+  `system status`; JSON inspect records, whose image `Id` is the digest of the config
+  descriptor.
 - **Mounts.** Read-only binds are `--mount ...,readonly`. It has no
   single-file binds.
-- **Memory.** Its VM is small by default: image builds get `--cpus 4
-  --memory 6G`, and the library and data runs `--memory 6G`.
-- **Network.** There is no `--network host`: it is dropped with a one-line
+- **Memory.** Its VM is small by default. Image builds get `--cpus 4
+  --memory 6G`, and the library and data runs get `--memory 6G`.
+- **Network.** There is no `--network host`. It is dropped with a one-line
   notice that the default network is used. Its build has no `--network`, so
   any other build value is refused. `--network none` was confirmed to block
   traffic, so the capture run has no network.
-- **Pull.** The capture build gets no valued `--pull`: its `--pull` is an
+- **Pull.** The capture build gets no valued `--pull`. Its `--pull` is an
   on/off switch, as on `wslc`.
-- **Capture.** The capture runs the capture image by its tag, and checks
-  after the run that the tag still names the digest it read before.
+- **Capture.** The capture runs the capture image by its tag. After the run, it checks
+  that the tag still names the digest that it read before.
 - **`verify-image`.** It can neither `cp` nor `export` a container that never
-  started, and the oracle image (`FROM scratch`) cannot start. So it creates
-  no container: it runs `container image save` and reads the OCI image layout
+  started, and the oracle image (`FROM scratch`) cannot start. It therefore creates
+  no container. It runs `container image save` and reads the OCI image layout
   (each blob checked against its digest, the layers applied in order).
 - **Provisioning.** The libraries are built in the `deps` image instead of
   copied from the published image.
@@ -642,19 +664,25 @@ On every runtime, the library and data runs mount the checkout read-only at
 `/opt/oracle-recipe` and run `python3 /opt/oracle-recipe/tools/oracle/build.py`
 in the `deps` image. No run binds a single file, and no host needs Bash for them.
 
-`just provision-oracle` builds the performance image when absent and runs
+`just provision-oracle` builds the performance image when it is absent, and runs
 `provision oracle` in it with the provisioning cache mounted at
-`/provision`. On rootful Docker the run is the invoking user, so the cache
-stays theirs; uv's home and cache are then in `/tmp`. `just provision` and
-`just provision-oracle` use one cache: the `pin-<commit>` entry of the
-[cache directory](#cache-directory). The run also mounts the cache root at `/cache`
-and receives it as `OXPINYIN_CACHE`.
+`/provision`. On rootful Docker, the run is the invoking user, so the cache
+stays theirs. The home and cache of uv are then in `/tmp`. `just provision` and
+`just provision-oracle` use the `pin-<commit>` entry under
+`OXPINYIN_CACHE` ([cache directory](#cache-directory)).
 
-These host steps of `just provision` run only on Linux: Valgrind's check and
-apt install, the apt install of the dump utilities, the start of `dockerd`,
-the ext4 report, the host libtkrzw check, the `.pc` rewrite and the
-environment file. On macOS and Windows these are skipped. Provisioning there
-does not require the dump utilities (`db5.3_dump`, `kchashmgr`) either:
+These host steps of `just provision` run only on Linux:
+
+- the Valgrind check and apt install;
+- the apt install of the dump utilities;
+- the start of `dockerd`;
+- the ext4 report;
+- the host libtkrzw check;
+- the `.pc` rewrite;
+- the environment file.
+
+On macOS and Windows, provisioning skips these steps. It also
+does not require the dump utilities (`db5.3_dump`, `kchashmgr`) there:
 it runs neither, and its prefix checks run in the `deps` image.
 
 ## Development debug information
@@ -683,7 +711,7 @@ and give it the path to `target/dev-full/libpinyin_capi.so`.
 Sanitizer gates use their existing compiler flags for symbolisation.
 Coverage uses LLVM coverage maps, which do not need type or variable information.
 The Callgrind and Massif shipping-library procedures use their own supplied
-libraries and retain their existing debug settings.
+libraries and keep their existing debug settings.
 
 ## Contribution checks
 
@@ -706,25 +734,25 @@ and stop after the required checks.
 
 ## Troubleshooting and resumption
 
-- Missing `cargo`/`rustup`: on Linux/macOS source `"$HOME/.cargo/env"`; on
-  Windows open a fresh Developer PowerShell after installing rustup. A
+- Missing `cargo`/`rustup`: on Linux/macOS, source `"$HOME/.cargo/env"`. On
+  Windows, open a fresh Developer PowerShell after you install rustup. A
   permission panic from an installed rustup is an environment access problem:
-  retain the error and ask the environment owner; do not reinstall over it.
+  keep the error and ask the environment owner. Do not reinstall over it.
 - Missing MSVC `link.exe` or Windows SDK: use Developer PowerShell and check
   the Visual Studio workload. Native Windows does not use Unix `cc` or
   `pkg-config` for the Rust-only command above.
 - Missing tkrzw headers (`pkg-config ... tkrzw` failed), `db.h`, libclang
-  or native libraries: repeat your OS prerequisite
-  checks. The error identifies the missing header/library; ordinary users
-  need the environment owner if package installation is restricted. Send
-  that owner the exact failing command and complete error. On Linux,
+  or native libraries: repeat the prerequisite checks of your OS.
+  The error identifies the missing header or library. If package installation is restricted,
+  ordinary users need the environment owner. Send
+  that owner the exact failing command and the complete error. On Linux,
   `pkg-config --modversion glib-2.0` and `pkg-config --modversion tkrzw`
-  check discovery; the setup check prints the backend version and bindgen's
-  missing libclang diagnostic, so retain those lines too.
-- macOS cannot link tkrzw's lz4/lzma/zstd: repeat the `LIBRARY_PATH` export
+  check discovery. The setup check prints the backend version and the missing-libclang diagnostic of bindgen,
+  so keep those lines too.
+- macOS cannot link the lz4/lzma/zstd libraries of tkrzw: repeat the `LIBRARY_PATH` export
   above. For Berkeley DB, repeat the `SYSTEM_DEPS_BDB_*` exports
   ([backends](backends.md#discovery-and-overrides)). Do not treat a
   successful Clippy/check as a link test.
-- Missing oracle/model inputs do not block ordinary native tests. They must
-  be supplied for the selected compatibility checks, where a skipped/missing
+- Missing oracle or model inputs do not block ordinary native tests. They must
+  be supplied for the selected compatibility checks, where a skipped or missing
   prerequisite is a failed verification, not a pass.

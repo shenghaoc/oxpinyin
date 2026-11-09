@@ -2,32 +2,32 @@
 
 Status: living document · Created: 2026-08-29
 
-This ledger records, for every test program in upstream
+This ledger covers every test program in upstream
 [libpinyin](https://github.com/libpinyin/libpinyin)/`tests` and
-[chewing/libchewing](https://github.com/chewing/libchewing)/`tests`, what
-behavior it protects and where that behavior lives in oxpinyin.
+[chewing/libchewing](https://github.com/chewing/libchewing)/`tests`.
+For each program, it records the behavior that the program protects and where that behavior lives in oxpinyin.
 
-**Audited upstream revisions** (every entry below describes these
-snapshots; re-audit the delta when either moves):
+**Audited upstream revisions.** Every entry below describes these
+snapshots. When either revision moves, audit the delta again:
 
 | Project | Revision | Snapshot date |
 |---|---|---|
 | libpinyin (pin) | `074a2219c90feaf962d0d24f034514033ece5f99` | 2026-09-03 |
 | libchewing (`master`) | `179a02f0629c1137050c736acddc17c9424bf1d2` | 2026-07-17 |
 
-The libchewing behavior-coverage vocabulary (the libpinyin drop-in statuses are defined below):
+The libchewing rows use this behavior-coverage vocabulary. The libpinyin drop-in statuses are defined below.
 
-- **PORT** — the invariant is reproduced with its assertion strength
-  intact against the oxpinyin equivalent.
-- **ADAPT** — the behavior is preserved through oxpinyin's own API shapes
-  (assertions re-expressed where the surface differs; the divergence is
-  stated).
-- **REPLACE** — the same risk is covered by a stronger or differently
-  shaped oxpinyin mechanism (usually a pin-verified differential).
-- **N/A** — no oxpinyin equivalent exists or the behavior is
-  harness/C++-mechanics specific. Deliberately not faked.
+- **PORT** — the invariant is reproduced against the oxpinyin equivalent, with its assertion strength
+  intact.
+- **ADAPT** — the behavior is kept through the API shapes of oxpinyin.
+  Assertions are re-expressed where the surface differs, and the divergence is
+  stated.
+- **REPLACE** — a stronger or differently
+  shaped oxpinyin mechanism covers the same risk (usually a pin-verified differential).
+- **N/A** — no oxpinyin equivalent exists, or the behavior is specific to
+  harness or C++ mechanics. It is deliberately not faked.
 
-The task ordering: **never silently omit an upstream test.** Every N/A
+The rule: **never silently omit an upstream test.** Every N/A
 states why.
 
 ---
@@ -35,25 +35,25 @@ states why.
 ## libpinyin tests
 
 Maintainer ruling, 2026-11-01 UTC (`date -u`): **every program under the
-pin's `tests/` is ported as a drop-in tool, without exception**. Its binary
+pin's `tests/` is ported as a drop-in tool, without exception**. The binary
 name, arguments, stdin protocol, stdout/stderr bytes, exit status and
-fixed file paths are part of the contract. The tools live in nonshipping
-`oxpinyin-utils` and are not installed. This is the single coverage ledger
-linked by [the external-I/O ruling](../findings/external-io-boundary.md#ruling-and-scope).
+fixed file paths of each program are part of the contract. The tools live in the nonshipping
+`oxpinyin-utils` crate and are not installed. [The external-I/O ruling](../findings/external-io-boundary.md#ruling-and-scope)
+links this ledger as the single coverage ledger.
 
-All **17** programs are `noinst_PROGRAMS`; only **six** also appear in
+All **17** programs are `noinst_PROGRAMS`. Only **six** of them also appear in
 Automake `TESTS`. The inventory is `tests/Makefile.am:37-59`,
 `tests/storage/Makefile.am:31-46`, `tests/include/Makefile.am:25-27` and
 `tests/lookup/Makefile.am:31-32` at the audited pin. `test_zhuyin` is
 conditional on `--enable-libzhuyin`. Interactive drivers and manual test
 programs have the same porting requirement as the six automated tests.
 
-**GAP** means the complete drop-in executable is pending. **Ported** means
-its source-defined interface is implemented and its [frozen cases](../runbooks/tool-diff.md)
+**GAP** means that the complete drop-in executable is pending. **Ported** means
+that its source-defined interface is implemented and that its [frozen cases](../runbooks/tool-diff.md)
 pass the required cells. Existing unit tests, adapted APIs and
-algorithm differentials do not by themselves make a program Ported.
-The previous PORT/ADAPT/REPLACE/N/A entries described internal behavior
-coverage and are superseded for these programs; no program is exempt.
+algorithm differentials alone do not make a program Ported.
+For these programs, the drop-in statuses replace the PORT/ADAPT/REPLACE/N/A vocabulary, which describes internal behavior
+coverage. No program is exempt.
 
 | Family | Pin source / binary | Automated `TESTS` | Program behavior and fixed inputs | Drop-in status |
 | --- | --- | --- | --- | --- |
@@ -76,96 +76,119 @@ coverage and are superseded for these programs; no program is exempt.
 | E | `tests/lookup/test_phrase_lookup.cpp` / `test_phrase_lookup` | No | Raw-text phrase lookup with phrase chunks and `../../data/bigram.db` | **Ported** — same-named frozen test module; matrix, result positions and text compared |
 
 Family A is implemented by the four same-named `oxpinyin-utils` binaries
-and `src/pin_tests.rs`, using tool-gated ownership adapters in the two
+and `src/pin_tests.rs`. They use tool-gated ownership adapters in the two
 existing C facades. Its cases are the `frozen::test_{pinyin,phrase,chewing,zhuyin}`
-modules of `crates/oxpinyin-utils/tests/storage_tools.rs`:
-13 cases match on tkrzw, bdb and kc, including saved user files. The exact prompt bytes are held by the module-local test
-`oxpinyin_input::tool::tests::prefix_prompt_writes_the_pins_exact_bytes`.
+modules of `crates/oxpinyin-utils/tests/storage_tools.rs`.
+13 cases match on tkrzw, bdb and kc, including saved user files. The module-local test
+`oxpinyin_input::tool::tests::prefix_prompt_writes_the_pins_exact_bytes` holds the exact prompt bytes.
 The existing differential case is `test-pinyin-quit`.
 
 Family C ports `test_ngram`, `test_flexible_ngram` and `test_punct_table`
-with 11 source-derived cases in their three same-named frozen test modules. The
-fixed `/tmp` paths remain isolated per side. Combined with all 44 current
-K-mixture cases, the all-cell result is tkrzw 46 MATCH / 9 POLICY-ACCEPTED,
-BDB 40 / 15, and KC 44 / 11, with no DIFFER or INVALID. Policy records bind
+with 11 source-derived cases in their three same-named frozen test modules.
+The fixed `/tmp` paths stay isolated for each side. Combined with all 44 current
+K-mixture cases, the all-cell result is:
+
+- tkrzw: 46 MATCH / 9 POLICY-ACCEPTED;
+- BDB: 40 / 15;
+- KC: 44 / 11;
+- no DIFFER or INVALID.
+
+Policy records bind
 the existing assertion-text and BDB failed-handle diagnostic exceptions. The tkrzw abort files use
-only the approved eight-byte clock-field normalization. The token arithmetic is held by
-the `frozen::test_ngram` case `ngram_ignored_input` in `oxpinyin-utils`.
+only the approved eight-byte clock-field normalization. The `frozen::test_ngram` case
+`ngram_ignored_input` in `oxpinyin-utils` holds the token arithmetic.
 [Shared attach and backend evidence](../findings/eio-test-flexible-attach-empty.md)
 records the native open, magic-header and mutation calls.
 
-Family E1 adds `test_memory_chunk` with the pin's logical capacity rule.
+Family E1 adds `test_memory_chunk` with the logical capacity rule of the pin.
 Its three source-derived cases give 2 MATCH and 1 POLICY-ACCEPTED on tkrzw.
-The removal offset is held by the `frozen::test_memory_chunk` case
-`memory_chunk_ignored_input` in `oxpinyin-utils`.
+The `frozen::test_memory_chunk` case
+`memory_chunk_ignored_input` in `oxpinyin-utils` holds the removal offset.
 
 Family E2 adds the phrase-index and logger executables with 13 cases:
-9 MATCH and 4 POLICY-ACCEPTED on tkrzw. The sparse and overflow logger cases
-retain the facade cache across load and merge, independently of the local
-stored total. Refused layouts contribute no load total; reload still subtracts
-the prior local total. Defined same-token invalid conversions continue. The invalid-UTF-8 index guard runs only the subject, checking
-exit EINVAL and the output printed before conversion. Required-load failures
-use pin_not_run and exit ENOENT without a diagnostic. In `oxpinyin-utils`, the
+9 MATCH and 4 POLICY-ACCEPTED on tkrzw.
+
+- The sparse and overflow logger cases
+  keep the facade cache across load and merge, independently of the local
+  stored total.
+- Refused layouts contribute no load total; a reload still subtracts
+  the prior local total.
+- Defined same-token invalid conversions continue.
+- The invalid-UTF-8 index guard runs only the subject. It checks
+  exit EINVAL and the output printed before conversion.
+- Required-load failures
+  use pin_not_run and exit ENOENT without a diagnostic.
+
+In `oxpinyin-utils`, the
 `frozen::test_phrase_index_logger` cases `phrase_index_logger_ignored_input` and
-`phrase_index_logger_refused_layout` hold the logger delta and the refused load's
-total. The `frozen::test_phrase_index` cases
+`phrase_index_logger_refused_layout` hold the logger delta and the total of the refused load.
+The `frozen::test_phrase_index` cases
 `phrase_index_same_token_invalid_utf8_reading` and
 `phrase_index_same_token_invalid_utf8_skip` hold defined same-token conversions.
-A review mutation also detects omitting
-the token-zero conversion guard. All three consuming guard tests are
-subject-only and retain the preceding output.
+A review mutation also detects an omitted
+token-zero conversion guard. All three consuming guard tests are
+subject-only and keep the preceding output.
 
 Family E3 adds the phrase-table and chewing-table executables. Their 18
 source-derived cases pass all three cells: 12 MATCH / 6 POLICY-ACCEPTED.
-Only timer fields are masked; token, range and pronunciation order and the
-literal backspace before frequencies remain exact. Token-zero cursors are
-empty before extending/flushing and at the final flush. Only the first
-incomplete key asserts its zero tone, before the overlong-query refusal. Invalid UTF-8 and the
-17-key direct search use source-only guards. Subject-only tests also check
-that EINVAL preserves earlier timed results. Continuation is held by the module-local
+
+- Only timer fields are masked. Token, range and pronunciation order, and the
+  literal backspace before frequencies, stay exact.
+- Token-zero cursors are
+  empty before extending/flushing and at the final flush.
+- Only the first
+  incomplete key asserts its zero tone, before the overlong-query refusal.
+- Invalid UTF-8 and the
+  17-key direct search use source-only guards.
+- Subject-only tests also check
+  that EINVAL keeps earlier timed results.
+
+The module-local test
 `storage_tests::tables::tests::an_empty_phrase_row_still_reports_continuation`
-in `oxpinyin-utils`, alongside `phrase-table-session`. The token after a zero cursor is held by
-`storage_tests::tables::tests::a_zero_cursor_keeps_the_following_chewing_token`.
+in `oxpinyin-utils` holds continuation, together with `phrase-table-session`.
+`storage_tests::tables::tests::a_zero_cursor_keeps_the_following_chewing_token`
+holds the token after a zero cursor.
 The `frozen::test_chewing_table` cases `chewing_table_toned_initial` and
 `chewing_table_overlong_toned_first` hold the first-key tone assertion and its
 order before the length refusal.
 
 Family E4 adds `test_matrix`, `test_pinyin_lookup` and `test_phrase_lookup`.
 Their 19 source-derived cases give 16 MATCH / 3 POLICY-ACCEPTED on the
-selected cells. The matrix includes separator and terminal zero keys;
-lookup results preserve non-null positions, token order and the phrase
-lookup's newline-separated `token phrase` entries. Required chunk failures
-and empty/unsegmentable text retain the pin's diagnostics and normal exits.
-The ambiguity options are held by the `frozen::test_matrix` case
-`matrix_session` in `oxpinyin-utils`. Only source timer fields
-are masked. No pin undefined path is executed.
+selected cells.
 
-The existing Rust Pinyin and Zhuyin C facades are separate implementations;
-raw-text phrase segmentation and phrase lookup exist. Those earlier N/A
-claims and the claim that Zhuyin is unified onto the Pinyin C API are stale.
-The direct parsers' complete key-rest and consumed-length interfaces must
-be checked separately from full/keyboard parser tests. Likewise, internal
-punctuation mutation and flexible n-gram operations are not replaced by
-training-utility coverage. Every listed libpinyin executable now has its drop-in implementation.
+- The matrix includes separator and terminal zero keys.
+- Lookup results keep non-null positions, token order and the
+  newline-separated `token phrase` entries of the phrase lookup.
+- Required chunk failures
+  and empty/unsegmentable text keep the diagnostics and normal exits of the pin.
+- The `frozen::test_matrix` case
+  `matrix_session` in `oxpinyin-utils` holds the ambiguity options.
+- Only source timer fields
+  are masked. No undefined path of the pin is executed.
+
+The Rust Pinyin and Zhuyin C facades are separate implementations.
+Raw-text phrase segmentation and phrase lookup exist. Zhuyin is not unified onto the Pinyin C API.
+The complete key-rest and consumed-length interfaces of the direct parsers must
+be checked separately from the full/keyboard parser tests. In the same way,
+training-utility coverage does not replace internal
+punctuation mutation and flexible n-gram operations. Every listed libpinyin executable has its drop-in implementation.
 
 `tests/tests_helper.h` and `tests/timer.h` are shared source dependencies,
 not additional executables. Helper-loaded `../../data` trees and every
-user file written back into `../data` are compared per side. Fixed `/tmp`
-paths are isolated across processes by the runner. Timing lines are the
-only clock-dependent test-program output; all other bytes remain compared
-under the existing external-I/O/check-message policies.
+user file written back into `../data` are compared for each side. The runner isolates the fixed `/tmp`
+paths across processes. Timing lines are the
+only clock-dependent test-program output. All other bytes stay compared
+under the existing external-I/O and check-message policies.
 
-Delivery order is A, B, D, C, E. Family E continues on current main after
-the earlier stack and the chunk work (#1549, #1576 and #1579) merged.
-All eight programs are ported across E1–E4.
+All eight family E programs are ported across E1–E4.
 
 ## libchewing tests
 
 libchewing is a Zhuyin/Bopomofo IME with its own dictionary formats,
-symbol tables, and C API conventions. oxpinyin shares the *behavior
+symbol tables and C API conventions. oxpinyin shares the *behavior
 class* (an IME session: keys → preedit/candidates/commit, user phrases,
-config) but not the data or ABI. Tests that protect chewing-only UI or
-ABI behaviors are N/A by design rather than artificially reconstructed.
+config), but not the data or the ABI. Tests that protect chewing-only UI or
+ABI behaviors are N/A by design; they are not artificially reconstructed.
 
 | Source | Behavior protected | Status | oxpinyin home |
 |---|---|---|---|
@@ -186,7 +209,7 @@ ABI behaviors are N/A by design rather than artificially reconstructed.
 
 ## Fuzz harnesses
 
-libchewing's `fuzzer/` crate holds the two harness shapes with the best
+The `fuzzer/` crate of libchewing holds the two harness shapes with the best
 recorded yield for an IME. oxpinyin has both, in the nightly `fuzz/`
 workspace (`fuzz/Cargo.toml` lists the targets):
 
@@ -198,9 +221,9 @@ workspace (`fuzz/Cargo.toml` lists the targets):
   `phrase-library` and `table-conf`.
 
 The nightly soak runs every target with cargo-fuzz 0.13.2 and its default
-`-s address` instrumentation; on Linux this includes LeakSanitizer.
-`just fuzz <target>` runs one target locally. Prefer a version-pinned tool
-over an ad-hoc build if an AFL++ lane is ever added.
+`-s address` instrumentation. On Linux, this includes LeakSanitizer.
+`just fuzz <target>` runs one target locally. If an AFL++ lane is added, prefer a version-pinned tool
+over an ad-hoc build.
 
 For valid command sequences, the contract tests in
 `crates/oxpinyin-capi/tests/abi/contract.rs` hold the postconditions:
@@ -214,24 +237,24 @@ For valid command sequences, the contract tests in
   (0 when nothing is consumed).
 
 Double-`end` and use-after-`end` are undefined behaviour by contract. The
-harness does not assert postconditions on them; a sanitizer report is the
+harness asserts no postconditions on them. A sanitizer report is the
 finding.
 
 ## Totals
 
 - **libpinyin**: 17 `noinst_PROGRAMS`, six also in automated `TESTS`;
-  **17 Ported, 0 GAP** after families A, B, D, C and E1–E4. Family PRs update their rows
-  and this total when their drop-in verification passes.
-- The libchewing rows retain their separately audited behavior-coverage
+  **17 Ported, 0 GAP** after families A, B, D, C and E1–E4. A family PR updates its rows
+  and this total when its drop-in verification passes.
+- The libchewing rows keep their separately audited behavior-coverage
   classifications. They do not count toward the libpinyin drop-in total.
 
 ## Maintenance rule
 
 Each libpinyin family PR updates its rows from GAP to Ported, names its
 source-derived frozen cases and records the selected-cell results. Keep the
-17-program inventory tied to the pin's four Makefiles; do not replace a
-missing executable with an internal-test claim or silently omit it.
+17-program inventory tied to the four Makefiles of the pin. Do not replace a
+missing executable with an internal-test claim, and do not silently omit it.
 
-For libchewing, when a row says N/A because a surface does not exist and
-that surface later ships, update its behavior-coverage classification and
+For libchewing: a row can say N/A because a surface does not exist. If
+that surface ships later, update the behavior-coverage classification of the row and
 add the test in the same change.

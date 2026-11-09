@@ -149,13 +149,13 @@ were identical (`你好` / `好` first). Trained user unigrams still rank
 (the ungated phrase-index term); trained user bigrams do not need to,
 because the bit is clear.
 
-A persistence leg (2026-08-27) ran save → full context teardown → reopen
-of the same user dir under the same word → one more training round with
-the bit still clear → export from the reopened context. Both sides
-exported `你好|ni'hao|414` (the subsequent-session round adds
-a 276 seed — `2 × 138`, the `user-store.md` §2.1 expansion of the
-persisted count — to that persisted 138; a lost state would re-seed at
-138) plus the remembered `你好|5` / `世界|12` rows.
+Recorded evidence (2026-08-27), a persistence leg: save → full context
+teardown → reopen of the same user dir under the same word → one more
+training round with the bit still clear → export from the reopened
+context. Both sides exported `你好|ni'hao|414` plus the remembered
+`你好|5` / `世界|12` rows. The round in the later session adds a 276 seed
+(`2 × 138`, the `user-store.md` §2.1 expansion of the persisted count) to
+the persisted 138. A lost state would re-seed at 138.
 
 ## Sweep TEXT/ORDER (ABI, top-10)
 

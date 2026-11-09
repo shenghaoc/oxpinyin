@@ -6,7 +6,7 @@ Stage 3 构建需显式启用。只改变可观察输出的 Stage 3 构建保留
 
 [源码政策](docs/source-policy.md#stages)定义各阶段，[路线图](ROADMAP.md)列出待完成的工作。
 
-**状态：** Stage 1 已完成——1,571/1,571 条语料库记录；79/79 个导出符号；已在 Fedora rawhide、Debian testing 和 NixOS 上验证可作为 `libpinyin.so.15` 直接替换。当前处于 Stage 2（bug-for-bug）。其收尾门禁是第三轮 bug-for-bug 排查（`ROADMAP.md`）。保持兼容性的性能工作仍在 Stage 2 继续。随后是 Stage 3（需显式启用的偏离）。
+**状态：** Stage 1 已完成：1,571/1,571 条语料库记录，79/79 个导出符号。已在 Fedora rawhide、Debian testing 和 NixOS 上验证可作为 `libpinyin.so.15` 直接替换。当前处于 Stage 2，其收尾门禁是第三轮 bug-for-bug 排查（[路线图](ROADMAP.md)）。
 
 ## 平台
 
@@ -22,11 +22,11 @@ Stage 3 构建需显式启用。只改变可观察输出的 Stage 3 构建保留
 
 | 路径 | 内容 |
 |---|---|
-| `crates/*` | 20 个工作区包，没有占位包（分组见下）；crate 映射见 `docs/architecture.md` |
+| `crates/*` | 工作区包；见 [crate 映射](docs/architecture.md#crates) |
 | `ROADMAP.md` | 当前阶段、pin 与待完成的工作 |
 | [docs/constitution.md](docs/constitution.md) | 项目规则与受支持的外部接口 |
 | [docs/source-policy.md](docs/source-policy.md) | 源码阅读方法、兼容性决策与阶段规则 |
-| `docs/runbooks/` | 操作指南：后端、oracle 与差分测试、基准测试、golden 与 pin、发布 |
+| `docs/runbooks/` | 操作指南：后端、oracle 与差分测试、Callgrind 与 Massif 配方、golden 与 pin、发布 |
 | `docs/findings/` | 决策、偏离记录、审计轨迹——已建立索引，并为每个文件标注状态 |
 | `docs/testing/` | 语料库流水线、oracle 环境、fixture 格式 |
 | `docs/packaging.md` | cargo-c 打包与安装树布局 |

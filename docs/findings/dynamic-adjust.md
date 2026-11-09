@@ -155,17 +155,17 @@ freq = (lambda * bigram_poss * BIGRAM_FREQUENCY_DISCOUNT +
         (1 - lambda) * unigram / (gfloat) total_freq) * 256 * 256 * 256;
 ```
 
-`trunc(a) + trunc(b)` differs from `trunc(a + b)` by up to one unit, and
-that unit is not a rounding detail: the truncation is what collapses
-near-ties into equal comparator keys (Class A), so an
-off-by-one moves candidates between tie classes and reorders the list.
-Hence one function taking the possibility, not an additive term bolted
-onto the unigram result.
+`trunc(a) + trunc(b)` differs from `trunc(a + b)` by up to one unit.
+That unit is not a rounding detail: the truncation makes near-ties into
+equal comparator keys (Class A). An off-by-one therefore moves candidates
+between tie classes and reorders the list. For this reason one function
+takes the possibility; the bigram term is not a separate term added to the
+unigram result.
 
-With `bigram_poss == 0.0` the first term is exactly `0.0` and
-`0.0 + x == x` in IEEE-754, so the bit-clear path is bit-identical to
-the pre-existing unigram law **by construction** — not merely because
-the frozen words happen to leave the bit clear.
+With `bigram_poss == 0.0` the first term is exactly `0.0`, and
+`0.0 + x == x` in IEEE-754. The bit-clear path is therefore bit-identical
+to the unigram law **by construction**, not only because the frozen words
+leave the bit clear.
 
 The addon and predicted branches carry no bigram term, matching the pin,
 which returns from those branches before reaching the expression.

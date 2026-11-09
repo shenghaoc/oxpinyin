@@ -397,13 +397,17 @@ over `deleted_bigram.db`, average λ), writes λ into `table.conf` via
   sentence equals the source; **incorrect** = differs; exactly one nbest
   result asserted; malformed lines `abort`).
 
-So the evaluator is a *decode round-trip*. `oxpinyin-utils`'
-`eval_correction_rate` reads the binary chunks and `bigram.db` that the
-data `Makefile` built, decodes with a term-for-term port of
-`PhoneticLookup<1,1>::get_nbest_match` (`oxpinyin-training::eval`: beam of
-32, bigram before unigram expansion,
-`log((λ·P_bi + (1 − λ)·P_uni) · P_pron)` at the pin's float widths), and
-reports the same rate. It does **not** use the engine's typing scorer.
+The evaluator is therefore a *decode round-trip*. The
+`eval_correction_rate` of `oxpinyin-utils`:
+
+- reads the binary chunks and `bigram.db` that the data `Makefile` built;
+- decodes with a term-for-term port of
+  `PhoneticLookup<1,1>::get_nbest_match` (`oxpinyin-training::eval`: beam
+  of 32, bigram before unigram expansion,
+  `log((λ·P_bi + (1 − λ)·P_uni) · P_pron)` at the pin's float widths);
+- reports the same rate.
+
+It does **not** use the engine's typing scorer.
 Recorded evidence: an engine-scorer evaluator measured `0.52` against the
 pin's `0.88`, and the port measured `0.880000`, equal to the pin, over 25
 sentences.
