@@ -32,7 +32,7 @@ MODES = ('callgrind', 'heap', 'pages')
 ATTEMPTS = 6
 # A boot-time minus monotonic-time drift over this many ns means the host slept.
 SUSPEND_LIMIT_NS = 1_000_000
-RUNNER = 'run-system-import-profile.sh'
+RUNNER = 'system-import-profile'
 
 
 class Failure(Exception):

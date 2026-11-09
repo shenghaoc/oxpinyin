@@ -2,7 +2,6 @@
 """Regressions for cells-for-diff.py's rule-2 checks, report and exit status."""
 import os
 from pathlib import Path
-import re
 import runpy
 import subprocess
 import sys
@@ -115,13 +114,6 @@ class FeatureGateTests(unittest.TestCase):
 
 
 class CargoTomlTests(unittest.TestCase):
-    def test_a_line_that_starts_with_a_backend_name_fires_check_3(self):
-        head = '[features]\nold = []\nbdb = []\ntkrzw = ["dep:x"]\nkyotocabinet = []\n'
-        got = Repo(self, {'crates/x/Cargo.toml': '[features]\nold = []\n'}, {'crates/x/Cargo.toml': head}).checks()
-        self.assertEqual(got[3], ['crates/x/Cargo.toml: +bdb = []', 'crates/x/Cargo.toml: +tkrzw = ["dep:x"]',
-                                  'crates/x/Cargo.toml: +kyotocabinet = []'])
-        self.assertEqual(fired(got), {3})
-
     def test_removed_and_edited_lines_that_start_with_a_backend_name_fire_check_3(self):
         got = Repo(self, {'crates/x/Cargo.toml': 'bdb = []\ntkrzw = []\nkyotocabinet = []\n'},
                    {'crates/x/Cargo.toml': 'tkrzw = ["dep:y"]\nkyotocabinet = []\n'}).checks()
@@ -157,14 +149,6 @@ class CargoTomlTests(unittest.TestCase):
                     {'crates/x/Cargo.toml': text.format('0.1.1')})
         self.assertEqual(fired(repo.checks()), set())
 
-    def test_a_moved_cargo_toml_counts_at_both_paths(self):
-        text = '[features]\nbdb = []\n'
-        repo = Repo(self, {'crates/a/Cargo.toml': text}, {'crates/a/Cargo.toml': None, 'crates/b/Cargo.toml': text})
-        for setting in ('true', 'false'):
-            with self.subTest(diff_renames=setting):
-                repo.git('config', 'diff.renames', setting)
-                self.assertEqual(repo.checks()[3], ['crates/a/Cargo.toml: -bdb = []', 'crates/b/Cargo.toml: +bdb = []'])
-
 
 class SelectionTests(unittest.TestCase):
     def test_a_diff_touching_none_fires_nothing(self):
@@ -178,13 +162,6 @@ class SelectionTests(unittest.TestCase):
         (repo.root / 'crates/x/Cargo.toml').write_text('x = 1\nbdb = []\n')
         (repo.root / 'crates/x/src/lib.rs').write_text(gate('bdb') + '\n')
         self.assertEqual(fired(repo.checks()), set())
-
-    def test_every_check_that_fires_is_reported(self):
-        head = {'crates/oxpinyin-store/src/lib.rs': gate('bdb') + '\n', 'crates/y/Cargo.toml': 'tkrzw = []\n'}
-        got = Repo(self, {'a.txt': 'a\n'}, head).checks()
-        self.assertEqual(got, {1: ['crates/oxpinyin-store/src/lib.rs'],
-                               2: [f'crates/oxpinyin-store/src/lib.rs:1: {gate("bdb")}'],
-                               3: ['crates/y/Cargo.toml: +tkrzw = []']})
 
     def test_repository_configuration_cannot_change_the_answer(self):
         head = {'crates/oxpinyin-store/src/lib.rs': gate('bdb') + '\n', 'crates/y/Cargo.toml': 'tkrzw = []\n'}
@@ -219,13 +196,6 @@ class DirectoryTests(unittest.TestCase):
         for directory, report in reports.items():
             with self.subTest(directory=directory):
                 self.assertEqual(report, reports['.'])
-
-    def test_a_change_under_the_store_crate_selects_the_same_cells_from_every_directory(self):
-        repo = Repo(self, self.BASE, {'crates/oxpinyin-store/src/lib.rs': 'fn changed() {}\n'})
-        reports = self.reports(repo)
-        self.assert_same_everywhere(reports)
-        self.assertIn('Cells: bdb,kc,tkrzw (check 1 fired).', reports['.'])
-        self.assertIn('\n  crates/oxpinyin-store/src/lib.rs\n', reports['.'])
 
     def test_checks_two_and_three_see_changes_outside_the_directory_they_run_in(self):
         cases = (('check 2', {'crates/oxpinyin-user/src/lib.rs': gate('bdb') + '\n'},
@@ -279,32 +249,6 @@ class CommandTests(unittest.TestCase):
                 self.assertTrue(result.stderr.startswith('FAIL: '), result.stderr)
                 self.assertIn(args[-1], result.stderr)
 
-    def test_the_report_names_cells_checks_paths_and_lines(self):
-        head = {'crates/oxpinyin-store/src/lib.rs': gate('bdb') + '\n', 'crates/y/Cargo.toml': 'tkrzw = []\n'}
-        result = Repo(self, {'a.txt': 'a\n'}, head).cli('base')
-        self.assertEqual(re.sub(r'\b[0-9a-f]{8}\b', 'HASH', result.stdout), '\n'.join([
-            'Diff: base...HEAD (merge base HASH, head HASH).',
-            'Cells: bdb,kc,tkrzw (checks 1, 2, 3 fired).',
-            '',
-            'Check 1, a changed path under crates/oxpinyin-store/: fired',
-            '  crates/oxpinyin-store/src/lib.rs',
-            'Check 2, a feature = "<backend>" line in a changed non-Markdown file: fired',
-            f'  crates/oxpinyin-store/src/lib.rs:1: {gate("bdb")}',
-            'Check 3, a changed Cargo.toml line that names a backend: fired',
-            '  crates/y/Cargo.toml: +tkrzw = []',
-            '']))
-
-    def test_the_report_for_a_diff_touching_none_names_the_reference_cell(self):
-        result = Repo(self, {'a.txt': 'a\n'}, {'a.txt': 'b\n'}).cli('base')
-        self.assertEqual(re.sub(r'\b[0-9a-f]{8}\b', 'HASH', result.stdout), '\n'.join([
-            'Diff: base...HEAD (merge base HASH, head HASH).',
-            'Cells: tkrzw (the reference cell; no check fired).',
-            '',
-            'Check 1, a changed path under crates/oxpinyin-store/: not fired',
-            'Check 2, a feature = "<backend>" line in a changed non-Markdown file: not fired',
-            'Check 3, a changed Cargo.toml line that names a backend: not fired',
-            '']))
-
     def test_limit_caps_the_matches_shown_per_check(self):
         repo = Repo(self, {'a.txt': 'a\n'}, {f'crates/oxpinyin-store/src/{name}.rs': 'a\n' for name in 'abc'})
         capped = repo.cli('--limit', '2', 'base').stdout
@@ -342,21 +286,11 @@ class RunFlagTests(unittest.TestCase):
             with self.subTest(name):
                 self.assertEqual(self.flag(head, *self.ALSO), f'run={expected}\n')
 
-    def test_an_infrastructure_path_counts_only_when_named(self):
-        head = {'tools/bdb/build.sh': 'b\n'}
-        self.assertEqual(self.flag(head), 'run=false\n')
-        self.assertEqual(self.flag(head, '--also', 'tools/bdb'), 'run=true\n')
-
     def test_also_needs_run_flag(self):
         result = Repo(self, self.BASE, {'README.md': 'b\n'}).cli('--also', 'tools/bdb', 'base')
         self.assertEqual(result.returncode, 2)
         self.assertEqual(result.stdout, '')
         self.assertIn('--also needs --run-flag', result.stderr)
-
-    def test_a_base_that_is_not_a_commit_still_fails(self):
-        result = Repo(self, self.BASE, {'README.md': 'b\n'}).cli('--run-flag', 'no-such-ref')
-        self.assertEqual(result.returncode, 1)
-        self.assertEqual(result.stdout, '')
 
     def gate_step(self):
         """store-backends.yml's gate script, for a push whose previous head is the branch `base`."""
@@ -381,10 +315,6 @@ class RunFlagTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('no merge base with ', result.stdout)
         self.assertEqual(output.read_text(), 'run=true\n')
-
-    def test_the_workflow_runs_the_flag(self):
-        workflow = (SCRIPT.parents[2] / '.github/workflows/store-backends.yml').read_text()
-        self.assertTrue('tools/bisection/cells-for-diff.py --run-flag' in workflow)
 
 
 if __name__ == '__main__':

@@ -1,54 +1,15 @@
-"""Profile, system-directory and DBM-container fixtures the cross-open cases share.
+"""User-profile and DBM-container fixtures the cross-open cases share.
 
-Builders for the files a case plants before it opens a facade (a private system
-directory of links, a conforming user.conf, an edited table.conf, a user table
-container in each backend's own format) and readers for what a run left behind.
-Nothing here reads a per-run state: the cell, which the container reader
-needs, is a parameter.
+Builders for the files a case plants before it opens a facade (a conforming
+user.conf, a user table container in each backend's own format) and a reader
+for what a run left behind. Nothing here reads a per-run state: the cell,
+which the container reader needs, is a parameter.
 """
 import ctypes as C
 import os
-from pathlib import Path
-import re
 import subprocess
-import tempfile
 
 from contract_abi import B, I, P, S, U, Z
-
-
-def private_system(k):
-    """Create a scratch system directory whose immediate entries symlink to k.data.
-
-    Return its path; callers may replace individual links without modifying the
-    source files. The directory is not removed here."""
-    system = tempfile.mkdtemp(prefix='sys-', dir=k.scratch)
-    for entry in os.listdir(k.data):
-        os.symlink(os.path.join(k.data, entry), os.path.join(system, entry))
-    return system
-
-
-def conf_system(k, *edits):
-    """A private system directory whose table.conf has `edits` applied:
-    (old, new) replaces, ('+', line) appends a row, ('-', substring) drops
-    the lines naming it, ('re', pattern, replacement) substitutes."""
-    system = private_system(k)
-    path = os.path.join(system, 'table.conf')
-    # A name may hold a byte that is not UTF-8 (`\udcff`, round-tripped).
-    text = Path(k.data, 'table.conf').read_text(errors='surrogateescape')
-    for edit in edits:
-        if edit[0] == '+':
-            text += edit[1] + '\n'
-        elif edit[0] == '-':
-            text = ''.join(line for line in text.splitlines(True) if edit[1] not in line)
-        elif edit[0] == 're':
-            assert re.search(edit[1], text), edit
-            text = re.sub(edit[1], edit[2], text)
-        else:
-            assert edit[0] in text, edit
-            text = text.replace(edit[0], edit[1])
-    os.unlink(path)
-    Path(path).write_text(text, errors='surrogateescape')
-    return system
 
 
 def _write_user_conf(k):
@@ -77,51 +38,7 @@ def _write_user_conf(k):
         user_conf.write('open counter:0\n')
 
 
-def user_listing(k, directory=None):
-    """The files of the user directory (or of `directory`): names as bytes,
-    `user.conf` by text, library chunks by size, and the DBM files named
-    `user_*` by whether a chunk was written over them (a chunk's length word
-    is its size less the 8-byte header)."""
-    directory = directory or k.user
-    listing = {}
-    for name in sorted(os.listdir(directory)):
-        file = os.path.join(directory, name)
-        key = os.fsencode(name).decode('latin-1')
-        if os.path.isdir(file):
-            listing[key] = 'dir'
-        elif name == 'user.conf':
-            listing[key] = Path(file).read_text().replace('\n', '|')
-        elif name.endswith(('.bin', '.dbin')):
-            data = Path(file).read_bytes()
-            framed = len(data) >= 8 and int.from_bytes(data[:4], 'little') == len(data) - 8
-            listing[key] = len(data) if not name.startswith('user_') else ('chunk' if framed else 'dbm')
-        else:
-            listing[key] = None
-    return listing
 
-
-def import_rows(k, library, rows):
-    """Import (phrase, reading, count) rows into the cached context and return add flags.
-
-    UTF-8 encode both strings and end the iterator on the normal path; begin/add
-    results are not asserted and exceptions do not guarantee iterator cleanup."""
-    it = k.fn('begin_add_phrases', P, P, U)(k.ctx, library)
-    added = [k.fn('iterator_add_phrase', B, P, S, S, I)(it, phrase.encode(), reading.encode(), count)
-             for phrase, reading, count in rows]
-    k.fn('end_add_phrases', None, P)(it)
-    return added
-
-
-def row58_import(k, rows):
-    """Import UTF-8 (phrase, reading, count) rows into user library seven.
-
-    Assert iterator creation and every add; close the iterator only on normal
-    completion. Leave imported state live and unsaved."""
-    it = k.fn('begin_add_phrases', P, P, U)(k.ctx, 7)
-    assert it
-    for text, reading, count in rows:
-        assert k.fn('iterator_add_phrase', B, P, S, S, I)(it, text.encode(), reading.encode(), count)
-    k.fn('end_add_phrases', None, P)(it)
 
 
 def _craft_kc(path, rows, keep=False, *, system_index=False):
@@ -396,26 +313,3 @@ def index_file_rows(path, *, cell, kind='tree', allow_empty=False, library=None)
         body = dump.split('DATA=END')[0].split('HEADER=END\n')[1].split('\n')[:-1]
         rows = [[body[i].strip(), body[i + 1].strip()] for i in range(0, len(body), 2)]
     return sorted(rows)
-
-
-def zero_item_padding(key_hex, value_hex):
-    """A pinyin index value with the padding of every item zeroed. An odd key
-    length leaves two uninitialised bytes after the keys of each `4 + 2L` byte
-    item, which upstream copies off the stack (upstream-divergences.md, "The
-    pinyin index DBMs carry uninitialized struct padding", class (b)); the
-    tails a mask walk carries between records copy them along.
-
-    Derive key length L in two-byte words from len(key_hex)//4. For odd L,
-    process complete 4+2L+2-byte items and leave an incomplete tail untouched.
-    For even L or an empty value, return the original string without decoding;
-    invalid value hex raises ValueError on the odd-length path. The masked
-    layout is PinyinIndexItem2 at src/storage/pinyin_phrase3.h:180-196
-    (pin 074a2219); only its alignment padding is normalized."""
-    length = len(key_hex) // 4
-    if length % 2 == 0 or not value_hex:
-        return value_hex
-    stride = 4 + 2 * length + 2
-    raw = bytearray(bytes.fromhex(value_hex))
-    for start in range(0, len(raw) - stride + 1, stride):
-        raw[start + stride - 2:start + stride] = b'\0\0'
-    return raw.hex()

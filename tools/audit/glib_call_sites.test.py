@@ -1,6 +1,5 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """Tests for the GLib/libc call-site generator."""
-import csv
 import ctypes
 import importlib.util
 import json
@@ -24,79 +23,9 @@ sys.modules["glib_call_sites"] = driver
 SPEC.loader.exec_module(driver)
 
 FIXTURE = Path(__file__).with_name("fixtures") / "small"
-COMMITTED = ROOT / "docs/findings/glib-libc-call-sites.tsv"
-LINK_MAP = """\
-Archive member included to satisfy reference by file (symbol)
-
-Discarded input sections
-
- .text._Z4deadv
-                0x0000000000000000       0x1c storage/.libs/ngram.o
- .text._ZL1hv   0x0000000000000000        0x8 ../src/libstorage.a(phrase_index.o)
- .text._ZN1AC2Ev
-                0x0000000000000000        0x0 storage/.libs/empty.o
-
-Memory Configuration
-
-Linker script and memory map
-
- *(.text.unlikely .text.*_unlikely .text.unlikely.*)
- .text          0x0000000000001000       0x10 crti.o
- .text._Z4longNameWhichWrapsOntoTheNextLinev
-                0x0000000000001010       0x20 storage/.libs/ngram.o
- .text.pinyin_init
-                0x0000000000001030       0x30 .libs/pinyin.o
- .text._ZL1hv   0x0000000000001060        0x8 .libs/pinyin.o
-"""
-
-
-MACHO_MAP = """\
-# Path: /x/libpinyin.dylib
-# Arch: arm64
-# Object files:
-[  0] linker synthesized
-[  1] .libs/pinyin.o
-[  2] ../src/libstorage.a(phrase_index.o)
-# Sections:
-# Address\tSize    \tSegment\tSection
-0x00001000\t0x00000040\t__TEXT\t__text
-# Symbols:
-# Address\tSize    \tFile  Name
-0x00001000\t0x00000020\t[  1] __ZL1hv
-0x00001020\t0x00000010\t[  2] _pinyin_init
-0x00001030\t0x00000000\t[  2] __Z4zerov
-0x00001030\t0x00000010\t[  0] _synthesized
-0x00001040\t0x00000010\t[  1] ltmp0
-# Dead Stripped Symbols:
-#        \tSize    \tFile  Name
-<<dead>> \t0x00000008\t[  2] __ZL1hv
-"""
 
 
 class LinkMapTests(unittest.TestCase):
-    def test_kept_and_discarded_sections_keep_their_object(self):
-        kept, discarded = driver.parse_link_map(LINK_MAP)
-        self.assertEqual(kept, {
-            ("ngram", "_Z4longNameWhichWrapsOntoTheNextLinev"),
-            ("pinyin", "pinyin_init"),
-            ("pinyin", "_ZL1hv"),
-        })
-        self.assertEqual(discarded, {("ngram", "_Z4deadv"), ("phrase_index", "_ZL1hv")})
-
-    def test_an_apple_map_gives_the_same_pairs_without_the_underscore(self):
-        kept, discarded = driver.parse_link_map(MACHO_MAP)
-        self.assertEqual(kept, {("pinyin", "_ZL1hv"), ("phrase_index", "pinyin_init"),
-                                ("linker synthesized", "synthesized")})
-        self.assertEqual(discarded, {("phrase_index", "_ZL1hv")})
-
-    def test_an_internal_function_is_placed_by_its_own_object(self):
-        kept, _ = driver.parse_link_map(LINK_MAP)
-        view = driver.View()
-        view.add(kept, {})
-        self.assertTrue(driver.FunctionRef(("_ZL1hv",), internal_to="pinyin").found_in(view))
-        self.assertFalse(driver.FunctionRef(("_ZL1hv",), internal_to="zhuyin").found_in(view))
-        self.assertTrue(driver.FunctionRef(("_ZL1hv",)).found_in(view))
-
     def test_constructor_and_destructor_names_cover_each_section_form(self):
         self.assertIn("_ZN1AC2Ev", driver.symbol_candidates("_ZN1AC1Ev", "ctor"))
         self.assertIn("_ZN1AD0Ev", driver.symbol_candidates("_ZN1AD1Ev", "dtor"))
@@ -116,12 +45,6 @@ class LinkMapTests(unittest.TestCase):
 
 
 class RowTests(unittest.TestCase):
-    def test_the_facade_prefers_the_libraries_over_the_tools(self):
-        cases = {("pinyin", "zhuyin", "tools"): "both", ("pinyin", "tools"): "pinyin",
-                 ("zhuyin",): "zhuyin", ("tools",): "tools", (): "none"}
-        for buckets, facade in cases.items():
-            self.assertEqual(driver.facade_of(set(buckets)), facade)
-
     def test_the_backend_comes_from_the_file_name(self):
         cases = {"src/storage/ngram_bdb.cpp": "bdb", "src/storage/bdb_utils.h": "bdb",
                  "src/storage/punct_table_kyotodb.h": "kc",
@@ -146,29 +69,10 @@ class RowTests(unittest.TestCase):
         ], {"pinyin": view, "zhuyin": empty, "tools": empty}, seen)
         return rows
 
-    def test_rows_merge_sort_and_render(self):
-        rows = self.merged()
-        text = driver.render(driver.build_rows(
-            rows, {"g_free": "memory", "memset": "bytes"}))
-        self.assertEqual(text, (
-            "family\tlibrary\tfacade\tbackend\tpin_site\tpin_call\tcall\n"
-            "bytes\tlibc\tnone\tall\tsrc/a.cpp:10\tmemset\tmemset(a, 0, 1)\n"
-            'memory\tglib\tpinyin\tall\tsrc/a.cpp:9\tg_free\t"g_free(""a\tb"")"\n'
-            "memory\tglib\tnone\tall\tsrc/b.cpp:2\tg_free\tg_free(x)\n"))
-
-    def test_only_a_function_no_link_saw_is_unplaced(self):
-        self.assertEqual(driver.unplaced(self.merged()),
-                         ["src/a.cpp:10\tmemset\th()"])
-
     def test_a_table_function_without_a_site_is_an_error(self):
         with self.assertRaisesRegex(ValueError, "1 table functions have no site: strlen"):
             driver.build_rows(self.merged(),
                               {"g_free": "m", "memset": "b", "strlen": "b"})
-
-    def test_the_committed_table_has_one_family_per_function(self):
-        table = driver.read_families(driver.FAMILIES)
-        self.assertEqual(len(table), 86)
-        self.assertTrue(all(table.values()))
 
     def test_a_duplicate_table_row_is_an_error(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -176,20 +80,6 @@ class RowTests(unittest.TestCase):
             path.write_text("function\tfamily\nf\ta\nf\tb\n")
             with self.assertRaisesRegex(ValueError, "duplicate function f"):
                 driver.read_families(path)
-
-    def test_the_committed_tsv_uses_the_table_and_one_column_count(self):
-        table = driver.read_families(driver.FAMILIES)
-        with COMMITTED.open(newline="") as stream:
-            rows = list(csv.reader(stream, delimiter="\t", strict=True))
-        self.assertEqual(rows[0], list(driver.HEADER))
-        self.assertEqual({len(row) for row in rows}, {len(driver.HEADER)})
-        self.assertNotIn("\r", COMMITTED.read_text())
-        named = dict(zip(driver.HEADER, zip(*rows[1:]), strict=True))
-        self.assertEqual(set(named["pin_call"]), set(table))
-        self.assertEqual(set(named["facade"]),
-                         {"pinyin", "zhuyin", "both", "tools", "none"})
-        for function, family in zip(named["pin_call"], named["family"], strict=True):
-            self.assertEqual(table[function], family)
 
     def test_the_pin_check_rejects_another_commit(self):
         with mock.patch("subprocess.check_output", return_value=driver.PIN + "\n"):

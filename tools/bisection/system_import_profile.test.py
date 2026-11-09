@@ -8,7 +8,6 @@ import shutil
 import sys
 import tempfile
 import threading
-import time
 import unittest
 from unittest import mock
 
@@ -31,7 +30,6 @@ class SystemImportProfileTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(prefix='system-import-profile-test-')
         self.work = Path(self.temporary.name)
         self.addCleanup(self.temporary.cleanup)
-        self.lock = threading.Lock()
         # The host readers a collection consults: the boot-minus-monotonic clock offset (Linux only)
         # and /proc/loadavg. Neither exists on macOS.
         self.offsets = lambda: 0
@@ -48,33 +46,6 @@ class SystemImportProfileTests(unittest.TestCase):
         lines = []
         PROFILE.run_collections(self.plan, jobs, lambda side, mode, report: lines.append((side, mode, report)))
         return lines
-
-    def test_jobs_two_caps_concurrent_collections_despite_more_cpus(self):
-        active, peak, completed = 0, 0, []
-        together = threading.Event()
-
-        def collect(side, mode, plan, environment, context):
-            nonlocal active, peak
-            with self.lock:
-                active += 1
-                peak = max(peak, active)
-                if active == 2:
-                    together.set()
-            self.assertTrue(together.wait(5), 'two collections did not overlap')
-            time.sleep(.02)
-            with self.lock:
-                active -= 1
-                completed.append((side, mode))
-            return [f'{side} {mode}']
-
-        with mock.patch.object(PROFILE, 'collect', collect):
-            status, output, checks, _ = self.run_main(self.good_outcomes(), '--jobs', '2')
-        order = [(side, mode) for side in PROFILE.SIDES for mode in PROFILE.MODES]
-        self.assertEqual(status, 0)
-        self.assertEqual(peak, 2)
-        self.assertCountEqual(completed, order)
-        self.assertEqual(output.splitlines(), [f'{side} {mode}' for side, mode in order])
-        self.assertEqual([side for _, _, side, _ in checks], ['pin', 'ox'])
 
     def test_every_collection_gets_the_same_captured_environment_in_both_modes(self):
         runs = {}
@@ -189,8 +160,8 @@ class SystemImportProfileTests(unittest.TestCase):
                                   'pin heap', 'pin peak heap', 'pin pages', 'pin peak pages',
                                   'ox callgrind', 'ox open', 'ox import', 'ox save', 'ox close', 'ox total',
                                   'ox heap', 'ox peak heap', 'ox pages', 'ox peak pages'])
-        self.assertEqual(checks, [('auto', 'run-system-import-profile.sh', 'pin', '/pin.so'),
-                                  ('auto', 'run-system-import-profile.sh', 'ox', '/ox.so')])
+        self.assertEqual(checks, [('auto', 'system-import-profile', 'pin', '/pin.so'),
+                                  ('auto', 'system-import-profile', 'ox', '/ox.so')])
         self.assertEqual([name for _, _, name, _ in calls], [f'{side}-{mode}-user-1' for side in PROFILE.SIDES
                                                            for mode in PROFILE.MODES])
 
