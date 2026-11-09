@@ -10,6 +10,8 @@ developer environment, into the same DIR/{include,lib,bin} layout. Every
 build leaves DIR/lib/pkgconfig/tkrzw.pc, so a consumer finds it through
 PKG_CONFIG_PATH, and must hold its headers, library, tkrzw.pc and utility (with
 the utility loading DIR's own shared libtkrzw) before DIR/REV is written.
+`check --prefix` requires an existing prefix to carry DIR/REV and pass the same
+install check.
 
 A build from this recipe needs no distro-probe.sh: the defect that probe detects
 is in Ubuntu's packaged libtkrzw (docs/findings/tkrzw-distro-compat.md), and this
@@ -232,6 +234,13 @@ def built(prefix):
         return False
 
 
+def check(prefix):
+    """Require PREFIX to hold TKRZW_REV's complete, checked install."""
+    if not built(prefix):
+        raise RecipeError(f'{prefix} does not hold a checked build of {TKRZW_REV}')
+    check_install(prefix)
+
+
 def build(prefix, *, source=None, jobs=None, env=None):
     """Fetch, verify, build, install and check TKRZW_REV into an empty PREFIX."""
     system = host()
@@ -264,6 +273,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(prog='tools.tkrzw.build', description=__doc__.splitlines()[0])
     commands = parser.add_subparsers(dest='command', required=True)
     commands.add_parser('rev', help='print the revision this recipe builds')
+    check_command = commands.add_parser('check', help='require a restored prefix to hold this revision and its install')
+    check_command.add_argument('--prefix', required=True, type=Path)
     command = commands.add_parser('build', help='fetch, verify, build, install and check into an empty prefix')
     command.add_argument('--prefix', required=True, type=Path)
     command.add_argument('--source', type=Path, help='check the source out here instead of a temporary directory')
@@ -272,6 +283,8 @@ def main(argv=None):
     try:
         if args.command == 'rev':
             print(TKRZW_REV)
+        elif args.command == 'check':
+            check(args.prefix)
         else:
             build(args.prefix, source=args.source, jobs=args.jobs)
     except RecipeError as error:
