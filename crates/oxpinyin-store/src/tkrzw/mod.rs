@@ -1308,7 +1308,8 @@ mod tests {
             StoreError::Io(_)
             | StoreError::ReadOnly
             | StoreError::InvalidInput(_)
-            | StoreError::ReadAfterCheck => None,
+            | StoreError::ReadAfterCheck
+            | StoreError::ShortArrayHeader => None,
         }
     }
 
