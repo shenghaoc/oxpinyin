@@ -234,6 +234,7 @@ jobs:
           rust-cache: 'true'
           cargo-nextest: 'true'
           uv: 'true'
+          just: 'true'
       - run: rustup show active-toolchain
       # vcpkg's binary cache, persisted across runs. vcpkg writes one zip per
       # built package, named by the package's ABI hash, to the files provider
@@ -339,6 +340,10 @@ jobs:
       - run: |
           read -ra excludes <<< "$WINDOWS_EXCLUDES"
           cargo test --locked --doc --workspace "${excludes[@]}"
+      # The tools Python harness, as in the macOS job. Nightly only: no pull
+      # request workflow runs it on Windows.
+      - name: Run tools Python harness tests
+        run: just test-tools
 
   # macOS links tkrzw from the tkrzw action. The full workspace runs here;
   # shipped macOS libraries are also built

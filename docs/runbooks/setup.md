@@ -454,7 +454,8 @@ MSVC environment and toolchain; no project-specific IDE is required.
 
 **Storage-dependent native Windows scope:** the Windows CI job runs clippy,
 `cargo nextest run --profile ci` and the doctests over the portable
-workspace on the [default backend](backends.md). `.github/actions/tkrzw` builds the
+workspace on the [default backend](backends.md). It also runs the tools Python
+harness (`just test-tools`). `.github/actions/tkrzw` builds the
 upstream revision `tools/cloud/setup.sh` provisions with `nmake -f
 VCMakefile` in the Visual Studio developer environment (a static
 `tkrzw.lib` with the DLL C runtime that Rust's MSVC targets link) and
