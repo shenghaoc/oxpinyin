@@ -93,15 +93,6 @@ impl Dictionary for Silent {
 impl LanguageModel for Silent {
     type Error = EngineError;
     type Token = PhraseToken;
-
-    fn score(
-        &self,
-        _history: &[PhraseToken],
-        _token: &PhraseToken,
-        edge_cost: Cost,
-    ) -> Result<Cost, EngineError> {
-        Ok(edge_cost)
-    }
 }
 
 fn session() -> Session<Silent, Silent> {
@@ -517,10 +508,6 @@ impl UserModel for Recorder {
     type Token = PhraseToken;
     type Error = EngineError;
 
-    fn score(&self, _history: &[Self::Token], _token: &Self::Token) -> Result<Cost, Self::Error> {
-        Ok(0)
-    }
-
     fn observe(&mut self, history: &[Self::Token], token: &Self::Token) -> Result<(), Self::Error> {
         self.observed.push((history.to_vec(), *token));
         Ok(())
@@ -915,14 +902,6 @@ fn a_stored_phrase_trains_with_its_stored_length() {
         type Token = PhraseToken;
         type Error = EngineError;
 
-        fn score(
-            &self,
-            _history: &[Self::Token],
-            _token: &Self::Token,
-        ) -> Result<Cost, Self::Error> {
-            Ok(0)
-        }
-
         fn observe(
             &mut self,
             _history: &[Self::Token],
@@ -1033,14 +1012,6 @@ fn train_reports_a_failing_user_model() {
     impl UserModel for Failing {
         type Token = PhraseToken;
         type Error = EngineError;
-
-        fn score(
-            &self,
-            _history: &[Self::Token],
-            _token: &Self::Token,
-        ) -> Result<Cost, Self::Error> {
-            Ok(0)
-        }
 
         fn observe(
             &mut self,
@@ -1394,15 +1365,6 @@ struct CountingBigrams {
 impl LanguageModel for CountingBigrams {
     type Error = EngineError;
     type Token = PhraseToken;
-
-    fn score(
-        &self,
-        history: &[PhraseToken],
-        token: &PhraseToken,
-        edge_cost: Cost,
-    ) -> Result<Cost, EngineError> {
-        self.unigrams.score(history, token, edge_cost)
-    }
 
     fn unigram_freq(&self, token: &PhraseToken) -> Result<Option<u64>, EngineError> {
         self.unigrams.unigram_freq(token)
@@ -1811,15 +1773,6 @@ impl LanguageModel for FixedUnigrams {
     type Error = EngineError;
     type Token = PhraseToken;
 
-    fn score(
-        &self,
-        _history: &[PhraseToken],
-        _token: &PhraseToken,
-        edge_cost: Cost,
-    ) -> Result<Cost, EngineError> {
-        Ok(edge_cost)
-    }
-
     fn unigram_freq(&self, _token: &PhraseToken) -> Result<Option<u64>, EngineError> {
         Ok(Some(self.system))
     }
@@ -2196,15 +2149,6 @@ struct TrellisModel {
 impl LanguageModel for TrellisModel {
     type Error = EngineError;
     type Token = PhraseToken;
-
-    fn score(
-        &self,
-        _history: &[PhraseToken],
-        _token: &PhraseToken,
-        edge_cost: Cost,
-    ) -> Result<Cost, EngineError> {
-        Ok(edge_cost)
-    }
 
     fn nbest_step_costs(
         &self,

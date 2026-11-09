@@ -920,24 +920,11 @@ impl<E> PhraseIndexRanges<E> {
 /// do not consult hidden process-global state, and do not panic on caller
 /// input.
 pub trait UserModel {
-    /// Token representation scored and observed by this model.
+    /// Token representation observed by this model.
     type Token;
 
-    /// Scoring or observation failure reported by this model.
+    /// Observation failure reported by this model.
     type Error;
-
-    /// Returns the user-specific cost for `token` after `history`.
-    ///
-    /// The §5 decode-time merge is count addition *before* the λ blend, so
-    /// a `Cost` returned here is not the merge — adding it to the language-
-    /// model cost would be a new weighting scheme. Implementors that hold
-    /// counts expose them as [`UserCountDelta`]; the language model folds
-    /// that overlay into the frozen interpolated formula.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Self::Error`] when the model backend cannot score the transition.
-    fn score(&self, history: &[Self::Token], token: &Self::Token) -> Result<Cost, Self::Error>;
 
     /// Checks one training step before any step is observed: the store
     /// reads the gram `token`'s step will load after `history` and refuses
@@ -1334,30 +1321,16 @@ pub enum NbestSuccessors<'a> {
     Miss,
 }
 
-/// Deterministic language-model scoring seam.
+/// Deterministic language-model seam.
 ///
-/// Implementations do not panic on caller input. They may combine the supplied
-/// edge cost with their own cost and report arithmetic or backend failures
-/// through [`Result`].
+/// Implementations do not panic on caller input. They report arithmetic or
+/// backend failures through [`Result`].
 pub trait LanguageModel {
     /// Token representation scored by this model.
     type Token;
 
     /// Scoring failure reported by this model.
     type Error;
-
-    /// Returns the model cost for `token` after `history` with `edge_cost`
-    /// available for deterministic composition.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Self::Error`] when the model backend cannot score the transition.
-    fn score(
-        &self,
-        history: &[Self::Token],
-        token: &Self::Token,
-        edge_cost: Cost,
-    ) -> Result<Cost, Self::Error>;
 
     /// The model's real unigram frequency of `token`, when the model carries
     /// one — upstream's phrase-item field (`PhraseItem::get_unigram_frequency`:

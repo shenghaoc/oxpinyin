@@ -392,15 +392,6 @@ mod tests {
         type Token = PhraseToken;
         type Error = core::convert::Infallible;
 
-        fn score(
-            &self,
-            _history: &[Self::Token],
-            _token: &Self::Token,
-            _edge_cost: i64,
-        ) -> Result<i64, Self::Error> {
-            Ok(0)
-        }
-
         fn nbest_step_costs(
             &self,
             _prev: &Self::Token,
@@ -422,15 +413,6 @@ mod tests {
     impl LanguageModel for CheckedModel {
         type Token = PhraseToken;
         type Error = &'static str;
-
-        fn score(
-            &self,
-            _history: &[Self::Token],
-            _token: &Self::Token,
-            _edge_cost: i64,
-        ) -> Result<i64, Self::Error> {
-            Ok(0)
-        }
 
         fn nbest_successors_in_row<'a>(
             &self,
@@ -487,15 +469,6 @@ mod tests {
             type Token = PhraseToken;
             type Error = core::convert::Infallible;
 
-            fn score(
-                &self,
-                _: &[PhraseToken],
-                _: &PhraseToken,
-                _: i64,
-            ) -> Result<i64, Self::Error> {
-                Ok(0)
-            }
-
             fn nbest_successors_in_row<'a>(
                 &self,
                 prev: &PhraseToken,
@@ -546,15 +519,6 @@ mod tests {
         impl LanguageModel for Unchecked {
             type Token = PhraseToken;
             type Error = &'static str;
-
-            fn score(
-                &self,
-                _: &[PhraseToken],
-                _: &PhraseToken,
-                _: i64,
-            ) -> Result<i64, Self::Error> {
-                Ok(0)
-            }
         }
         assert!(matches!(
             EngineError::row_read(&Unchecked, 7, &"closed"),
@@ -581,15 +545,6 @@ mod tests {
         impl LanguageModel for Ordered {
             type Token = PhraseToken;
             type Error = &'static str;
-
-            fn score(
-                &self,
-                _: &[PhraseToken],
-                _: &PhraseToken,
-                _: i64,
-            ) -> Result<i64, Self::Error> {
-                Ok(0)
-            }
 
             fn nbest_step_costs(
                 &self,
@@ -637,15 +592,6 @@ mod tests {
         impl LanguageModel for Missing {
             type Token = PhraseToken;
             type Error = core::convert::Infallible;
-
-            fn score(
-                &self,
-                _: &[PhraseToken],
-                _: &PhraseToken,
-                _: i64,
-            ) -> Result<i64, Self::Error> {
-                Ok(0)
-            }
 
             fn nbest_successors_in_row<'a>(
                 &self,
@@ -746,10 +692,6 @@ mod tests {
     impl LanguageModel for Rows {
         type Token = PhraseToken;
         type Error = core::convert::Infallible;
-
-        fn score(&self, _: &[Self::Token], _: &Self::Token, _: i64) -> Result<i64, Self::Error> {
-            Ok(0)
-        }
 
         fn nbest_successors_in_row<'a>(
             &self,
@@ -854,14 +796,6 @@ mod tests {
         impl LanguageModel for Special {
             type Token = PhraseToken;
             type Error = core::convert::Infallible;
-            fn score(
-                &self,
-                _: &[PhraseToken],
-                _: &PhraseToken,
-                cost: i64,
-            ) -> Result<i64, Self::Error> {
-                Ok(cost)
-            }
             fn nbest_step_costs(
                 &self,
                 _: &PhraseToken,

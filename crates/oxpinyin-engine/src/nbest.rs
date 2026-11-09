@@ -2170,15 +2170,6 @@ mod tests {
         type Error = EngineError;
         type Token = PhraseToken;
 
-        fn score(
-            &self,
-            _history: &[PhraseToken],
-            _token: &PhraseToken,
-            edge_cost: Cost,
-        ) -> Result<Cost, EngineError> {
-            Ok(edge_cost)
-        }
-
         fn nbest_step_costs(
             &self,
             _prev: &PhraseToken,
@@ -2225,14 +2216,6 @@ mod tests {
         impl LanguageModel for UnigramOnly {
             type Token = PhraseToken;
             type Error = EngineError;
-            fn score(
-                &self,
-                _: &[PhraseToken],
-                _: &PhraseToken,
-                cost: Cost,
-            ) -> Result<Cost, EngineError> {
-                Ok(cost)
-            }
             fn nbest_step_costs(
                 &self,
                 _: &PhraseToken,
@@ -2270,14 +2253,6 @@ mod tests {
         impl LanguageModel for Counting {
             type Token = PhraseToken;
             type Error = EngineError;
-            fn score(
-                &self,
-                _: &[PhraseToken],
-                _: &PhraseToken,
-                cost: Cost,
-            ) -> Result<Cost, EngineError> {
-                Ok(cost)
-            }
             fn nbest_step_costs_in_row(
                 &self,
                 prev: &PhraseToken,
@@ -2329,15 +2304,6 @@ mod tests {
         impl LanguageModel for Sparse {
             type Token = PhraseToken;
             type Error = EngineError;
-
-            fn score(
-                &self,
-                _: &[PhraseToken],
-                _: &PhraseToken,
-                cost: Cost,
-            ) -> Result<Cost, EngineError> {
-                Ok(cost)
-            }
 
             fn nbest_successors_in_row<'a>(
                 &self,
@@ -2406,15 +2372,6 @@ mod tests {
         impl LanguageModel for Rows {
             type Token = PhraseToken;
             type Error = EngineError;
-
-            fn score(
-                &self,
-                _: &[PhraseToken],
-                _: &PhraseToken,
-                cost: Cost,
-            ) -> Result<Cost, EngineError> {
-                Ok(cost)
-            }
 
             fn nbest_successors_in_row<'a>(
                 &self,
@@ -2498,15 +2455,6 @@ mod tests {
         impl LanguageModel for Walked {
             type Token = PhraseToken;
             type Error = EngineError;
-
-            fn score(
-                &self,
-                _: &[PhraseToken],
-                _: &PhraseToken,
-                cost: Cost,
-            ) -> Result<Cost, EngineError> {
-                Ok(cost)
-            }
 
             fn nbest_successors_in_row<'a>(
                 &self,

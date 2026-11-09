@@ -45,7 +45,7 @@ const PHRASE_INDEX_LIBRARY_COUNT: u32 = 16;
 use std::sync::{Mutex, RwLock};
 
 use oxpinyin_core::{
-    Cost, Dictionary, LanguageModel, MergedGram, NbestStepCosts, PhraseEntry, PhraseIndexRanges,
+    Dictionary, LanguageModel, MergedGram, NbestStepCosts, PhraseEntry, PhraseIndexRanges,
     PhraseItemRead, PhraseText, PhraseToken, SyllableKey, TrellisItem, TrellisPathMemo,
     UserCountDelta,
 };
@@ -1813,21 +1813,6 @@ impl LanguageModel for RuntimeLm<'_> {
         self.inner.amplification_lambda()
     }
 
-    fn score(
-        &self,
-        history: &[Self::Token],
-        token: &Self::Token,
-        edge_cost: Cost,
-    ) -> Result<Cost, Self::Error> {
-        // The bigram comes from the previous token's merged row; the
-        // overlay supplies the unigram fields alone.
-        let extra = self.delta(None, token.value())?;
-        self.inner
-            .score_with_merged_row(history, token, edge_cost, extra, |prev| {
-                self.merged_row(prev)
-            })
-    }
-
     /// Upstream's Gate 2 (`pinyin.cpp:2210-2215`): the system gram and the
     /// user gram loaded once each and merged, as ONE row the caller indexes
     /// per candidate. The n-best and phrase paths load the same row.
@@ -1888,7 +1873,7 @@ impl LanguageModel for RuntimeLm<'_> {
         Ok(addons.unigram_total())
     }
 
-    /// The §5 overlay `score` takes, forwarded into the n-best step costs.
+    /// The §5 overlay the n-best step costs take.
     fn nbest_step_costs(
         &self,
         prev: &Self::Token,

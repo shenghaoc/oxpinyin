@@ -19,24 +19,7 @@
 use core::fmt;
 use std::collections::BTreeMap;
 
-use oxpinyin_core::cost::{self, UNKNOWN_COST};
-use oxpinyin_core::{
-    Cost, Dictionary, LanguageModel, PhraseEntry, PhraseText, PhraseToken, SyllableKey,
-};
-
-/// Weight of the bigram term in the interpolated estimate, as a fraction.
-///
-/// One half: an authored, deliberately neutral value for this **portable test
-/// double**, whose data is captured/authored, not the real model. The
-/// shipping decoder (`oxpinyin_data::lm`) instead reads λ from the model's
-/// `table.conf` (`0.312699` for the pinned model, `data-formats.md` §3); the
-/// fixture keeps a neutral λ because its authored mini-bigram is not the
-/// pinned model's distribution, so tracking the real λ here would buy no
-/// parity and only re-calibrate the fixture pins. See
-/// `docs/findings/scoring-spec.md`.
-const LAMBDA_NUMERATOR: u128 = 1;
-/// Denominator of [`LAMBDA_NUMERATOR`].
-const LAMBDA_DENOMINATOR: u128 = 2;
+use oxpinyin_core::{Dictionary, LanguageModel, PhraseEntry, PhraseText, PhraseToken, SyllableKey};
 
 /// Why a fixture could not be read.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -292,17 +275,16 @@ impl Dictionary for FixtureDictionary {
     }
 }
 
-/// An in-memory interpolated bigram model read from fixtures.
+/// An in-memory unigram model read from fixtures.
 #[derive(Clone, Debug, Default)]
 pub struct FixtureLanguageModel {
     unigrams: BTreeMap<PhraseToken, u64>,
     unigram_total: u64,
-    bigrams: BTreeMap<(PhraseToken, PhraseToken), u64>,
-    pub(crate) bigram_totals: BTreeMap<PhraseToken, u64>,
 }
 
 impl FixtureLanguageModel {
-    /// Reads a vocabulary fixture for unigrams and a bigram fixture for pairs.
+    /// Reads a vocabulary fixture for unigrams and checks every bigram
+    /// record against it.
     ///
     /// # Errors
     ///
@@ -316,30 +298,20 @@ impl FixtureLanguageModel {
             unigrams.insert(record.token, record.unigram);
         }
 
-        let mut pairs = BTreeMap::new();
-        let mut totals: BTreeMap<PhraseToken, u64> = BTreeMap::new();
         for (index, raw) in bigrams.lines().enumerate() {
             let line = index + 1;
             let Some(fields) = record_fields(raw) else {
                 continue;
             };
 
-            let previous = token_field(&fields, "prev", line, &unigrams)?;
-            let next = token_field(&fields, "next", line, &unigrams)?;
-            let count = number(&fields, "count", line)?;
-
-            // Saturate like the unigram total above: fixture counts are
-            // untrusted text, and wrapping totals would poison every cost.
-            let current = *totals.entry(previous).or_default();
-            totals.insert(previous, current.saturating_add(count));
-            pairs.insert((previous, next), count);
+            token_field(&fields, "prev", line, &unigrams)?;
+            token_field(&fields, "next", line, &unigrams)?;
+            number(&fields, "count", line)?;
         }
 
         Ok(Self {
             unigrams,
             unigram_total,
-            bigrams: pairs,
-            bigram_totals: totals,
         })
     }
 
@@ -354,74 +326,11 @@ impl FixtureLanguageModel {
     pub fn is_empty(&self) -> bool {
         self.unigrams.is_empty()
     }
-
-    /// Number of bigram pairs held.
-    #[must_use]
-    pub fn bigram_count(&self) -> usize {
-        self.bigrams.len()
-    }
-
-    /// The interpolated model cost of `token` after `history`, without the
-    /// edge cost.
-    ///
-    /// `P(next | prev) = λ·P_bigram + (1 − λ)·P_unigram`, evaluated as one
-    /// exact integer ratio so no intermediate rounding enters, then converted
-    /// by [`cost::surprisal`].
-    #[must_use]
-    pub fn model_cost(&self, history: &[PhraseToken], token: &PhraseToken) -> Cost {
-        let unigram = u128::from(self.unigrams.get(token).copied().unwrap_or_default());
-        let unigram_total = u128::from(self.unigram_total);
-        if unigram == 0 || unigram_total == 0 {
-            return UNKNOWN_COST;
-        }
-
-        let bigram = history
-            .last()
-            .and_then(|previous| {
-                let count = self.bigrams.get(&(*previous, *token)).copied()?;
-                let total = self.bigram_totals.get(previous).copied()?;
-                (total > 0).then_some((u128::from(count), u128::from(total)))
-            })
-            .unwrap_or((0, 1));
-
-        // λ·b/bt + (1 − λ)·u/ut over a common denominator. The u128
-        // products still overflow when the u64 totals approach their cap,
-        // so mirror the production LM (`data::lm::interpolate_ratio`) and
-        // degrade to UNKNOWN_COST instead of wrapping.
-        let (bigram_count, bigram_total) = bigram;
-        let numerator = LAMBDA_NUMERATOR
-            .checked_mul(bigram_count)
-            .and_then(|t| t.checked_mul(unigram_total))
-            .and_then(|t| {
-                (LAMBDA_DENOMINATOR - LAMBDA_NUMERATOR)
-                    .checked_mul(unigram)
-                    .and_then(|u| u.checked_mul(bigram_total))
-                    .and_then(|u| t.checked_add(u))
-            });
-        let denominator = LAMBDA_DENOMINATOR
-            .checked_mul(bigram_total)
-            .and_then(|t| t.checked_mul(unigram_total));
-        let (Some(numerator), Some(denominator)) = (numerator, denominator) else {
-            return UNKNOWN_COST;
-        };
-
-        let (numerator, denominator) = cost::reduce_ratio(numerator, denominator);
-        cost::surprisal(numerator, denominator)
-    }
 }
 
 impl LanguageModel for FixtureLanguageModel {
     type Error = FixtureError;
     type Token = PhraseToken;
-
-    fn score(
-        &self,
-        history: &[PhraseToken],
-        token: &PhraseToken,
-        edge_cost: Cost,
-    ) -> Result<Cost, FixtureError> {
-        Ok(edge_cost.saturating_add(self.model_cost(history, token)))
-    }
 }
 
 /// A [`FixtureLanguageModel`] wrapper that answers the unigram queries, so
@@ -462,15 +371,6 @@ impl FrequencyFixtureModel {
 impl LanguageModel for FrequencyFixtureModel {
     type Error = FixtureError;
     type Token = PhraseToken;
-
-    fn score(
-        &self,
-        history: &[PhraseToken],
-        token: &PhraseToken,
-        edge_cost: Cost,
-    ) -> Result<Cost, FixtureError> {
-        self.inner.score(history, token, edge_cost)
-    }
 
     fn unigram_freq(&self, token: &PhraseToken) -> Result<Option<u64>, FixtureError> {
         Ok(self.inner.unigrams.get(token).copied())

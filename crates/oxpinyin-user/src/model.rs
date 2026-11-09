@@ -3,10 +3,10 @@
 //! This is the first implementor of the `oxpinyin-core` seam — T0
 //! (`docs/findings/user-store.md` §7) found the trait had zero implementors.
 //! T1 wired `observe`. T4 exposes the stored counts as
-//! [`oxpinyin_core::UserCountDelta`] for the decode-time additive merge;
-//! [`UserModel::score`] cannot return that merge as a [`Cost`] (adding a
-//! user cost after the λ blend would be a new weighting scheme), so it
-//! stays at `0` and decode reads the counts through the language model.
+//! [`oxpinyin_core::UserCountDelta`] for the decode-time additive merge.
+//! The seam carries counts only: decode reads them through the language
+//! model, because a `Cost` added after the λ blend would be a new weighting
+//! scheme.
 //!
 //! T3 types the seam with the engine's vocabulary token
 //! ([`PhraseToken`], `docs/findings/session-api.md`): the engine's
@@ -15,24 +15,13 @@
 //! the numeric value. The store itself stays keyed on the raw `u32`
 //! `phrase_token_t` layout; the impl converts at the seam.
 
-use oxpinyin_core::{Cost, PhraseToken, UserModel};
+use oxpinyin_core::{PhraseToken, UserModel};
 
 use crate::store::{SENTENCE_START, UserStore, UserStoreError};
 
 impl UserModel for UserStore {
     type Token = PhraseToken;
     type Error = UserStoreError;
-
-    /// Always `0`. The §5 merge is count addition *before* the probability
-    /// is taken, which lives in the language-model overlay via
-    /// [`UserStore::count_delta`]. A non-zero [`Cost`] here would be a
-    /// post-probability term — a weighting scheme §5 forbids.
-    fn score(&self, history: &[Self::Token], token: &Self::Token) -> Result<Cost, Self::Error> {
-        // Surface store-read failures rather than pretending the overlay
-        // is fine when the file is unreadable.
-        let _ = self.count_delta(history.last().map(|t| t.value()), token.value())?;
-        Ok(0)
-    }
 
     /// One training step's store checks before any step is observed
     /// ([`UserStore::check_training_step`]): the predecessor is the last
@@ -102,25 +91,5 @@ mod tests {
         // empty history -> sentence_start.
         UserModel::observe(&mut store, &[], &token(9)).unwrap();
         assert_eq!(store.bigram_count(SENTENCE_START, 9).unwrap(), 69);
-    }
-
-    #[test]
-    fn score_is_neutral_zero() {
-        let mut store = transient();
-        // A user item with a zero unigram: the pin's unigram belongs to an
-        // item (`phrase_index.cpp:150-161`), so the count is read on one.
-        let ci = oxpinyin_core::SyllableKey::from_text("ci").unwrap().index();
-        let item = store
-            .add_phrase(&"词".into(), &[crate::toned_key(ci, 0).unwrap()], Some(0))
-            .unwrap();
-        assert_eq!(
-            UserModel::score(&store, &[token(1), token(2)], &token(item)).unwrap(),
-            0
-        );
-        // A populated store still returns 0 from this method: the merge is
-        // in the count domain, not a post-hoc cost.
-        UserModel::observe(&mut store, &[], &token(item)).unwrap();
-        assert_eq!(UserModel::score(&store, &[], &token(item)).unwrap(), 0);
-        assert_eq!(store.count_delta(None, item).unwrap().unigram_delta, 483);
     }
 }
