@@ -1,11 +1,12 @@
 name: verify-nightly
 
-# Scheduled verification (docs/safety/ci-strategy.md): the checks too slow
-# for the PR gate. Findings here open issues. Nothing here blocks a merge,
-# because branch protection requires only ci.yml's `ci-aggregate`.
+# Scheduled verification: the checks too slow for the PR gate. The merge
+# conditions are docs/runbooks/verification.md, section 10. Findings here
+# open issues. Nothing here blocks a merge, because branch protection
+# requires only ci.yml's `ci-aggregate`.
 #
-# Jobs: the oracle and differentials, fuzz-soak, overflow-lane, coverage
-# (coverage.yml, also an advisory PR check), test-windows and test-macos.
+# Jobs: fuzz-soak, overflow-lane, coverage (coverage.yml, advisory),
+# test-windows and test-macos.
 # No job may fail: there are no continue-on-error jobs.
 #
 # Every Linux job runs in a debian:testing container in the
@@ -153,10 +154,9 @@ jobs:
           name: fuzz-crash-artifacts
           path: fuzz/artifacts/
 
-  # Latent-overflow lane: the releaseoptimized codepath with overflow
-  # checks and debug assertions forced on (docs/safety/
-  # tooling-evaluation.md §8) — the "NDEBUG question" as CI, not as
-  # shipped configuration.
+  # Latent-overflow lane: the release-optimized codepath with overflow
+  # checks and debug assertions forced on — the "NDEBUG question" as CI,
+  # not as shipped configuration.
   overflow-lane:
     # Skipped by a windows_only or macos_only dispatch; runs on the schedule.
     if: ${{ !inputs.windows_only && !inputs.macos_only }}
@@ -195,10 +195,8 @@ jobs:
   # The full Windows workspace: clippy and the tests over the workspace
   # less WINDOWS_EXCLUDES, built with MSVC
   # and the tkrzw action, and GLib from vcpkg. It runs every night and on
-  # manual dispatch, not on every PR. Dispatch it on the branch (windows_only: true) before merging
-  # changes to Windows-sensitive storage, filesystem or native-build code,
-  # toolchain or relevant dependency updates, and releases
-  # (docs/runbooks/setup.md, "Native Windows"). Not skipped by windows_only;
+  # manual dispatch; section 10 makes it best-effort and never a PR merge
+  # condition (docs/runbooks/verification.md). Not skipped by windows_only;
   # skipped by macos_only.
   test-windows:
     # Skipped by a macos_only dispatch; runs on the schedule.
@@ -347,9 +345,8 @@ jobs:
   # and checked separately. The tools Python harness runs after the Rust steps.
   #
   # Platforms other than Linux are unstable but usable, so the job runs every
-  # night and on manual dispatch, not on every PR. Dispatch it on the branch
-  # (macos_only: true) before merging macOS-sensitive changes
-  # (docs/runbooks/setup.md, "When the macOS job runs"). Not skipped by
+  # night and on manual dispatch; section 10 makes it best-effort and never a
+  # PR merge condition (docs/runbooks/verification.md). Not skipped by
   # macos_only.
   test-macos:
     # Skipped by a windows_only dispatch; runs on the schedule.

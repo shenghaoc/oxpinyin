@@ -12,6 +12,8 @@
 # Main's required set is `ci-aggregate`. It fails when an applicable job fails or
 # when a job's result does not agree with its flag. A pull request that changes
 # this workflow can also change its gates; branch protection covers that case.
+# The platform and backend merge conditions are docs/runbooks/verification.md,
+# section 10.
 
 name: CI
 
