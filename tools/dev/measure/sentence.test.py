@@ -78,80 +78,7 @@ bool pinyin_get_candidate_nbest_index(void *p, void *c, uint8_t *n) {
 '''
 
 
-class NativeTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.temp = tempfile.TemporaryDirectory(prefix='sentence-harness-')
-        cls.root = Path(cls.temp.name)
-        cls.harness, cls.library = cls.root / 'bisect', cls.root / 'stub.so'
-        source = cls.root / 'stub.c'
-        source.write_text(STUB)
-        subprocess.run(bench.harness_build(cls.harness), check=True, capture_output=True)
-        subprocess.run(['cc', '-shared', '-fPIC', '-O2', '-o', cls.library, source], check=True, capture_output=True)
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.temp.cleanup()
-
-    def launch(self, mode, input='nihao', iterations='1', extra=None):
-        return subprocess.run([self.harness, '--perf-' + mode, self.library, self.root, input, iterations],
-                              capture_output=True, env=dict(os.environ, **(extra or {})))
-
-    def test_sentence_and_typing_user_directories_follow_tmpdir_and_are_removed(self):
-        for mode in ('sentence', 'typing-sequence'):
-            with self.subTest(mode=mode), tempfile.TemporaryDirectory(dir=self.root) as root:
-                done = self.launch(mode, extra={'TMPDIR': root})
-                self.assertEqual(done.returncode, 0, done.stderr)
-                user = Path(done.stderr.decode().splitlines()[0].removeprefix('USER:'))
-                self.assertEqual(user.parent, Path(root))
-                self.assertTrue(user.name.startswith('bisect-sentence-'))
-                self.assertFalse(user.exists())
-                self.assertEqual(list(Path(root).iterdir()), [])
-
-    def test_sentence_and_typing_refuse_overlong_tmpdir_before_loading(self):
-        for mode in ('sentence', 'typing-sequence'):
-            with self.subTest(mode=mode):
-                done = self.launch(mode, extra={'TMPDIR': '/' + 'x' * 4096})
-                self.assertEqual(done.returncode, 1)
-                self.assertEqual(done.stdout, b'')
-                self.assertEqual(done.stderr, b'fatal: TMPDIR path is too long\n')
-
-    def test_bisect_perf_places_and_cleans_user_directories_on_init_failure(self):
-        for mode, prefix in ((['--perf'], 'bisect-perf-'),):
-            for setting in ('custom', 'unset', 'empty'):
-                with self.subTest(mode=mode, setting=setting), \
-                        tempfile.TemporaryDirectory(dir=self.root) as root:
-                    parent = Path(root) if setting == 'custom' else Path('/tmp')
-                    env = dict(os.environ, REPORT_USER_ROOT=str(parent), FAIL_INIT='1')
-                    env.pop('TMPDIR', None)
-                    if setting != 'unset':
-                        env['TMPDIR'] = root if setting == 'custom' else ''
-                    done = subprocess.run([self.harness, *mode, self.library, self.root],
-                                          capture_output=True, env=env)
-                    self.assertEqual(done.returncode, 1)
-                    users = [line.removeprefix('USER:') for line in done.stderr.decode().splitlines()
-                             if line.startswith('USER:')]
-                    self.assertEqual(len(users), 1, done.stderr)
-                    user = Path(users[0])
-                    self.assertIn(b'fatal: pinyin_init returned NULL\n', done.stderr)
-                    self.assertNotIn(b'symbols missing', done.stderr)
-                    self.assertEqual(user.parent, parent)
-                    self.assertTrue(user.name.startswith(prefix))
-                    # The loaded stub saw this directory before the failure cleanup.
-                    self.assertIn('DIR:' + str(user), done.stderr.decode().splitlines())
-                    self.assertFalse(user.exists())
-                    self.assertEqual(list(Path(root).iterdir()), [])
-
-    def test_sentence_calls_parse_then_sentence_without_candidates(self):
-        done = self.launch('sentence', iterations='2')
-        self.assertEqual(done.returncode, 0, done.stderr)
-        row = sentence.observation(done.stdout, types.SimpleNamespace(workload='sentence', iterations=2, input='nihao'))
-        self.assertEqual(row['observations'][0], row['observations'][1])
-        self.assertEqual(done.stderr.decode().splitlines()[1:],
-                         ['ALLOC', 'RESET', 'PARSE:nihao', 'SENTENCE', 'RESET', 'PARSE:nihao', 'SENTENCE', 'FREE', 'FINI'])
-        user = done.stderr.decode().splitlines()[0].removeprefix('USER:')
-        self.assertFalse(Path(user).exists())
-
+class ObservationTests(unittest.TestCase):
     def test_elapsed_ns_accepts_zero_and_rejects_negative_or_non_int(self):
         args = types.SimpleNamespace(workload='sentence', iterations=1, input='ni')
         row = dict(pid=123, workload='sentence', iterations=1, observations=[[dict(
@@ -161,41 +88,117 @@ class NativeTests(unittest.TestCase):
             with self.subTest(elapsed_ns=bad), self.assertRaises(ValueError):
                 sentence.observation(json.dumps(dict(row, elapsed_ns=bad)), args)
 
-    def test_typing_reuses_instance_and_retains_every_candidate_in_order(self):
-        done = self.launch('typing-sequence', 'ni')
-        self.assertEqual(done.returncode, 0, done.stderr)
-        row = sentence.observation(done.stdout, types.SimpleNamespace(workload='typing-sequence', iterations=1, input='ni'))
-        steps = row['observations'][0]
-        self.assertEqual([s['sentence'] for s in steps], ['n', 'ni'])
-        self.assertEqual(len(steps[0]['candidates']), 12)
-        self.assertEqual(steps[0]['candidates'][0], dict(type=1, nbest=7, text='duplicate'))
-        self.assertEqual(steps[0]['candidates'][-1], dict(type=2, nbest=None, text='tail"\\\n'))
-        self.assertEqual(done.stderr.decode().splitlines()[1:],
-                         ['ALLOC', 'RESET', 'PARSE:n', 'SENTENCE', 'CANDIDATES',
-                          'PARSE:ni', 'SENTENCE', 'CANDIDATES', 'FREE', 'FINI'])
 
-    def test_failure_is_nonzero_and_releases_instance_context_and_user_directory(self):
-        done = self.launch('sentence', extra={'FAIL_SENTENCE': '1'})
-        self.assertEqual(done.returncode, 1)
-        lines = done.stderr.decode().splitlines()
-        self.assertEqual(lines[-3:], ['FREE', 'FINI', 'sentence workload failed'])
-        self.assertFalse(Path(lines[0].removeprefix('USER:')).exists())
+if os.name == 'posix':
+    class NativeTests(unittest.TestCase):
+        @classmethod
+        def setUpClass(cls):
+            cls.temp = tempfile.TemporaryDirectory(prefix='sentence-harness-')
+            cls.root = Path(cls.temp.name)
+            cls.harness, cls.library = cls.root / 'bisect', cls.root / 'stub.so'
+            source = cls.root / 'stub.c'
+            source.write_text(STUB)
+            subprocess.run(bench.harness_build(cls.harness), check=True, capture_output=True)
+            subprocess.run(['cc', '-shared', '-fPIC', '-O2', '-o', cls.library, source], check=True, capture_output=True)
 
-    def test_bad_inputs_and_counts_are_rejected_before_dlopen(self):
-        for text, count in [('', '1'), ('你好', '1'), ('a' * 256, '1'), ('ni', '0'),
-                            ('ni', '-1'), ('ni', '100001'), ('ni', '1x'), ('ni', '')]:
-            with self.subTest(text=text, count=count):
-                done = self.launch('sentence', text, count)
-                self.assertEqual(done.returncode, 2)
-                self.assertEqual(done.stdout, b'')
-                self.assertNotIn(b'USER:', done.stderr)
+        @classmethod
+        def tearDownClass(cls):
+            cls.temp.cleanup()
 
-    def test_distinct_anchors_survive_optimization(self):
-        symbols = subprocess.check_output(['nm', self.harness], text=True).splitlines()
-        # Mach-O prefixes C symbols with an underscore; ELF does not.
-        addresses = {s.split()[2].removeprefix('_'): s.split()[0] for s in symbols if len(s.split()) == 3}
-        names = list(sentence.ANCHORS.values()) + ['bisect_perf_cold_unit', 'bisect_perf_steady_unit']
-        self.assertEqual(len({addresses[name] for name in names}), 4)
+        def launch(self, mode, input='nihao', iterations='1', extra=None):
+            return subprocess.run([self.harness, '--perf-' + mode, self.library, self.root, input, iterations],
+                                  capture_output=True, env=dict(os.environ, **(extra or {})))
+
+        def test_sentence_and_typing_user_directories_follow_tmpdir_and_are_removed(self):
+            for mode in ('sentence', 'typing-sequence'):
+                with self.subTest(mode=mode), tempfile.TemporaryDirectory(dir=self.root) as root:
+                    done = self.launch(mode, extra={'TMPDIR': root})
+                    self.assertEqual(done.returncode, 0, done.stderr)
+                    user = Path(done.stderr.decode().splitlines()[0].removeprefix('USER:'))
+                    self.assertEqual(user.parent, Path(root))
+                    self.assertTrue(user.name.startswith('bisect-sentence-'))
+                    self.assertFalse(user.exists())
+                    self.assertEqual(list(Path(root).iterdir()), [])
+
+        def test_sentence_and_typing_refuse_overlong_tmpdir_before_loading(self):
+            for mode in ('sentence', 'typing-sequence'):
+                with self.subTest(mode=mode):
+                    done = self.launch(mode, extra={'TMPDIR': '/' + 'x' * 4096})
+                    self.assertEqual(done.returncode, 1)
+                    self.assertEqual(done.stdout, b'')
+                    self.assertEqual(done.stderr, b'fatal: TMPDIR path is too long\n')
+
+        def test_bisect_perf_places_and_cleans_user_directories_on_init_failure(self):
+            for mode, prefix in ((['--perf'], 'bisect-perf-'),):
+                for setting in ('custom', 'unset', 'empty'):
+                    with self.subTest(mode=mode, setting=setting), \
+                            tempfile.TemporaryDirectory(dir=self.root) as root:
+                        parent = Path(root) if setting == 'custom' else Path('/tmp')
+                        env = dict(os.environ, REPORT_USER_ROOT=str(parent), FAIL_INIT='1')
+                        env.pop('TMPDIR', None)
+                        if setting != 'unset':
+                            env['TMPDIR'] = root if setting == 'custom' else ''
+                        done = subprocess.run([self.harness, *mode, self.library, self.root],
+                                              capture_output=True, env=env)
+                        self.assertEqual(done.returncode, 1)
+                        users = [line.removeprefix('USER:') for line in done.stderr.decode().splitlines()
+                                 if line.startswith('USER:')]
+                        self.assertEqual(len(users), 1, done.stderr)
+                        user = Path(users[0])
+                        self.assertIn(b'fatal: pinyin_init returned NULL\n', done.stderr)
+                        self.assertNotIn(b'symbols missing', done.stderr)
+                        self.assertEqual(user.parent, parent)
+                        self.assertTrue(user.name.startswith(prefix))
+                        # The loaded stub saw this directory before the failure cleanup.
+                        self.assertIn('DIR:' + str(user), done.stderr.decode().splitlines())
+                        self.assertFalse(user.exists())
+                        self.assertEqual(list(Path(root).iterdir()), [])
+
+        def test_sentence_calls_parse_then_sentence_without_candidates(self):
+            done = self.launch('sentence', iterations='2')
+            self.assertEqual(done.returncode, 0, done.stderr)
+            row = sentence.observation(done.stdout, types.SimpleNamespace(workload='sentence', iterations=2, input='nihao'))
+            self.assertEqual(row['observations'][0], row['observations'][1])
+            self.assertEqual(done.stderr.decode().splitlines()[1:],
+                             ['ALLOC', 'RESET', 'PARSE:nihao', 'SENTENCE', 'RESET', 'PARSE:nihao', 'SENTENCE', 'FREE', 'FINI'])
+            user = done.stderr.decode().splitlines()[0].removeprefix('USER:')
+            self.assertFalse(Path(user).exists())
+
+        def test_typing_reuses_instance_and_retains_every_candidate_in_order(self):
+            done = self.launch('typing-sequence', 'ni')
+            self.assertEqual(done.returncode, 0, done.stderr)
+            row = sentence.observation(done.stdout, types.SimpleNamespace(workload='typing-sequence', iterations=1, input='ni'))
+            steps = row['observations'][0]
+            self.assertEqual([s['sentence'] for s in steps], ['n', 'ni'])
+            self.assertEqual(len(steps[0]['candidates']), 12)
+            self.assertEqual(steps[0]['candidates'][0], dict(type=1, nbest=7, text='duplicate'))
+            self.assertEqual(steps[0]['candidates'][-1], dict(type=2, nbest=None, text='tail"\\\n'))
+            self.assertEqual(done.stderr.decode().splitlines()[1:],
+                             ['ALLOC', 'RESET', 'PARSE:n', 'SENTENCE', 'CANDIDATES',
+                              'PARSE:ni', 'SENTENCE', 'CANDIDATES', 'FREE', 'FINI'])
+
+        def test_failure_is_nonzero_and_releases_instance_context_and_user_directory(self):
+            done = self.launch('sentence', extra={'FAIL_SENTENCE': '1'})
+            self.assertEqual(done.returncode, 1)
+            lines = done.stderr.decode().splitlines()
+            self.assertEqual(lines[-3:], ['FREE', 'FINI', 'sentence workload failed'])
+            self.assertFalse(Path(lines[0].removeprefix('USER:')).exists())
+
+        def test_bad_inputs_and_counts_are_rejected_before_dlopen(self):
+            for text, count in [('', '1'), ('你好', '1'), ('a' * 256, '1'), ('ni', '0'),
+                                ('ni', '-1'), ('ni', '100001'), ('ni', '1x'), ('ni', '')]:
+                with self.subTest(text=text, count=count):
+                    done = self.launch('sentence', text, count)
+                    self.assertEqual(done.returncode, 2)
+                    self.assertEqual(done.stdout, b'')
+                    self.assertNotIn(b'USER:', done.stderr)
+
+        def test_distinct_anchors_survive_optimization(self):
+            symbols = subprocess.check_output(['nm', self.harness], text=True).splitlines()
+            # Mach-O prefixes C symbols with an underscore; ELF does not.
+            addresses = {s.split()[2].removeprefix('_'): s.split()[0] for s in symbols if len(s.split()) == 3}
+            names = list(sentence.ANCHORS.values()) + ['bisect_perf_cold_unit', 'bisect_perf_steady_unit']
+            self.assertEqual(len({addresses[name] for name in names}), 4)
 
 
 class CampaignTests(unittest.TestCase):

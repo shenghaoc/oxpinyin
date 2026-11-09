@@ -16,12 +16,40 @@ if str(ROOT) not in sys.path:
 from tools.dev import cell, check, native
 
 
-class CheckTests(unittest.TestCase):
+class CheckFixture(unittest.TestCase):
+    """A scratch directory first on PATH, no oracle variables, the declared cell."""
+
     def setUp(self):
         cell.declared_default()
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        script = '''#!/bin/sh
+        env = dict(os.environ, PATH=self.temp.name + os.pathsep + os.environ['PATH'],
+                   CARGO_TARGET_DIR='fixture-target', FIXTURE_CARGO_STATUS='0')
+        for name in ('PINYIN_MODEL_DIR', 'PINYIN_ORACLE_PREFIX', 'SYSTEM_DEPS_BDB_INCLUDE'):
+            env.pop(name, None)
+        patch = mock.patch.dict(os.environ, env, clear=True)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+
+class CheckTests(CheckFixture):
+    def test_unknown_backend_is_usage_and_missing_tool_is_status_one(self):
+        out, err = io.StringIO(), io.StringIO()
+        self.assertEqual(check.run('bogus', out=out, err=err), 2)
+        self.assertEqual(out.getvalue(), '')
+        self.assertIn('usage:', err.getvalue())
+        os.environ['PATH'] = self.temp.name
+        out, err = io.StringIO(), io.StringIO()
+        self.assertEqual(check.run('bdb', out=out, err=err), 1)
+        self.assertIn('missing cargo; see docs/runbooks/setup.md', err.getvalue())
+
+
+if sys.platform != 'win32':
+    # The stub tools are #!/bin/sh scripts with an exec bit, which Windows cannot run.
+    class StubbedCheckTests(CheckFixture):
+        def setUp(self):
+            super().setUp()
+            script = '''#!/bin/sh
 case "${0##*/}" in
 uname)
   if [ "$1" = -s ]; then printf 'Linux\\n'; else printf 'Linux x86_64\\n'; fi ;;
@@ -37,73 +65,55 @@ cc) cat >/dev/null; printf 'header declarations\\n"fixture Berkeley DB"\\n' ;;
 cargo) printf 'fixture cargo stdout\\n'; exit "${FIXTURE_CARGO_STATUS:-0}" ;;
 esac
 '''
-        for name in ('uname', 'rustup', 'rustc', 'pkg-config', 'cc', 'cargo'):
-            path = Path(self.temp.name) / name
-            path.write_text(script)
-            path.chmod(0o755)
-        env = dict(os.environ, PATH=self.temp.name + os.pathsep + os.environ['PATH'],
-                   CARGO_TARGET_DIR='fixture-target', FIXTURE_CARGO_STATUS='0')
-        for name in ('PINYIN_MODEL_DIR', 'PINYIN_ORACLE_PREFIX', 'SYSTEM_DEPS_BDB_INCLUDE'):
-            env.pop(name, None)
-        patch = mock.patch.dict(os.environ, env, clear=True)
-        patch.start()
-        self.addCleanup(patch.stop)
+            for name in ('uname', 'rustup', 'rustc', 'pkg-config', 'cc', 'cargo'):
+                path = Path(self.temp.name) / name
+                path.write_text(script)
+                path.chmod(0o755)
 
-    def exercise(self, status=0, error=None):
-        """Run check.run with a fake supervised launch and return the streams."""
-        os.environ['FIXTURE_CARGO_STATUS'] = str(status)
-        out, err = io.StringIO(), io.StringIO()
-        child_calls = []
+        def exercise(self, status=0, error=None):
+            """Run check.run with a fake supervised launch and return the streams."""
+            os.environ['FIXTURE_CARGO_STATUS'] = str(status)
+            out, err = io.StringIO(), io.StringIO()
+            child_calls = []
 
-        def run_command(command, *, env):
-            child_calls.append((list(command), dict(env)))
-            if error is not None:
-                raise error
-            child = subprocess.run(command, env=env, capture_output=True, text=True)
-            # Child stdout stays on stdout and child stderr on stderr.
-            output.write(child.stdout)
-            err.write(child.stderr)
-            return child.returncode
+            def run_command(command, *, env):
+                child_calls.append((list(command), dict(env)))
+                if error is not None:
+                    raise error
+                child = subprocess.run(command, env=env, capture_output=True, text=True)
+                # Child stdout stays on stdout and child stderr on stderr.
+                output.write(child.stdout)
+                err.write(child.stderr)
+                return child.returncode
 
-        output = out
-        with mock.patch.object(native.slot, 'run_command', side_effect=run_command), \
-                mock.patch.object(check.platform, 'system', return_value='Linux'), \
-                mock.patch.object(check.platform, 'machine', return_value='x86_64'):
-            rc = check.run('bdb', out=out, err=err)
-        return child_calls, rc, out.getvalue(), err.getvalue()
+            output = out
+            with mock.patch.object(native.slot, 'run_command', side_effect=run_command), \
+                    mock.patch.object(check.platform, 'system', return_value='Linux'), \
+                    mock.patch.object(check.platform, 'machine', return_value='x86_64'):
+                rc = check.run('bdb', out=out, err=err)
+            return child_calls, rc, out.getvalue(), err.getvalue()
 
-    def test_child_output_reaches_stdout_and_child_errors_reach_stderr(self):
-        calls, rc, actual, err = self.exercise()
-        self.assertEqual(rc, 0)
-        self.assertIn('fixture cargo stdout', actual)
-        self.assertNotIn('fixture cargo stdout', err)
-        self.assertEqual(calls[0][0], ['cargo', 'test', '--locked', '--no-default-features',
-                                       '--features', 'bdb', '-p', 'oxpinyin-store',
-                                       '-p', 'oxpinyin-capi'])
-        self.assertEqual(calls[0][1]['FIXTURE_CARGO_STATUS'], '0')
+        def test_child_output_reaches_stdout_and_child_errors_reach_stderr(self):
+            calls, rc, actual, err = self.exercise()
+            self.assertEqual(rc, 0)
+            self.assertIn('fixture cargo stdout', actual)
+            self.assertNotIn('fixture cargo stdout', err)
+            self.assertEqual(calls[0][0], ['cargo', 'test', '--locked', '--no-default-features',
+                                           '--features', 'bdb', '-p', 'oxpinyin-store',
+                                           '-p', 'oxpinyin-capi'])
+            self.assertEqual(calls[0][1]['FIXTURE_CARGO_STATUS'], '0')
 
-    def test_child_failure_preserves_stdout_and_status(self):
-        _, rc, actual, err = self.exercise(status=17)
-        self.assertEqual(rc, 17)
-        self.assertIn('fixture cargo stdout', actual)
-        self.assertNotIn('fixture cargo stdout', err)
+        def test_child_failure_preserves_stdout_and_status(self):
+            _, rc, actual, err = self.exercise(status=17)
+            self.assertEqual(rc, 17)
+            self.assertIn('fixture cargo stdout', actual)
+            self.assertNotIn('fixture cargo stdout', err)
 
-    def test_launch_failure_reports_the_reason_with_status_one(self):
-        _, rc, actual, err = self.exercise(error=OSError('fixture launch failure'))
-        self.assertEqual(rc, 1)
-        self.assertNotIn('fixture cargo stdout', actual)
-        self.assertIn('FAIL: fixture launch failure', err)
-
-    def test_unknown_backend_is_usage_and_missing_tool_is_status_one(self):
-        out, err = io.StringIO(), io.StringIO()
-        self.assertEqual(check.run('bogus', out=out, err=err), 2)
-        self.assertEqual(out.getvalue(), '')
-        self.assertIn('usage:', err.getvalue())
-        os.environ['PATH'] = self.temp.name
-        (Path(self.temp.name) / 'cargo').unlink()
-        out, err = io.StringIO(), io.StringIO()
-        self.assertEqual(check.run('bdb', out=out, err=err), 1)
-        self.assertIn('missing cargo; see docs/runbooks/setup.md', err.getvalue())
+        def test_launch_failure_reports_the_reason_with_status_one(self):
+            _, rc, actual, err = self.exercise(error=OSError('fixture launch failure'))
+            self.assertEqual(rc, 1)
+            self.assertNotIn('fixture cargo stdout', actual)
+            self.assertIn('FAIL: fixture launch failure', err)
 
 
 if sys.platform == 'win32':

@@ -1,7 +1,8 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """Tests for tools/dev/pool.py: the plan arithmetic, the pool loop with a
-fake launcher, callable units under the same loop, and a real SIGTERM against the CLI. No platform is
-skipped: /proc and CPU affinity are faked, and a unit's real children are plain Python."""
+fake launcher, callable units under the same loop, and a real SIGTERM against the CLI (POSIX only:
+Windows has no signal delivery to a process or process groups). /proc and CPU affinity are faked, and
+a unit's real children are plain Python."""
 import argparse
 import contextlib
 import io
@@ -202,29 +203,31 @@ class CliTests(unittest.TestCase):
             self.assertIn('distinct --items', result.stderr)
             self.assertFalse(marker.exists())
 
-    def test_sigterm_stops_queued_work_and_reaps_every_child(self):
-        with tempfile.TemporaryDirectory() as directory:
-            directory = Path(directory)
-            script = ('import os, sys, time; '
-                      'open(sys.argv[1] + "/" + sys.argv[2], "w").write(str(os.getpid())); time.sleep(60)')
-            process = subprocess.Popen(
-                [sys.executable, '-X', 'lazy_imports=normal', '-m', 'tools.dev.pool', 'run', '--items', 'a,b,c,d',
-                 '--cpus', '4',
-                 '--', sys.executable, '-c', script, str(directory), '{item}'],
-                cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            deadline = time.monotonic() + 30
-            while time.monotonic() < deadline and not list(directory.glob('?')):
-                time.sleep(0.05)
-            time.sleep(0.5)    # let any further worker the host's plan allows start
-            started = sorted(path.name for path in directory.glob('?'))
-            self.assertTrue(0 < len(started) < 4, started)    # at most two workers for four CPUs: items stay queued
-            pids = [int(path.read_text()) for path in directory.glob('?')]
-            process.send_signal(signal.SIGTERM)
-            _, stderr = process.communicate(timeout=30)
-            self.assertEqual(process.returncode, pool.CANCELLED_STATUS, stderr)
-            self.assertEqual(sorted(path.name for path in directory.glob('?')), started)
-            for pid in pids:
-                self.assertFalse(running(pid), f'{pid} still running')
+    if sys.platform != 'win32':
+        # Popen.send_signal(SIGTERM) is TerminateProcess on Windows: the CLI cannot run its handler.
+        def test_sigterm_stops_queued_work_and_reaps_every_child(self):
+            with tempfile.TemporaryDirectory() as directory:
+                directory = Path(directory)
+                script = ('import os, sys, time; '
+                          'open(sys.argv[1] + "/" + sys.argv[2], "w").write(str(os.getpid())); time.sleep(60)')
+                process = subprocess.Popen(
+                    [sys.executable, '-X', 'lazy_imports=normal', '-m', 'tools.dev.pool', 'run', '--items', 'a,b,c,d',
+                     '--cpus', '4',
+                     '--', sys.executable, '-c', script, str(directory), '{item}'],
+                    cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                deadline = time.monotonic() + 30
+                while time.monotonic() < deadline and not list(directory.glob('?')):
+                    time.sleep(0.05)
+                time.sleep(0.5)    # let any further worker the host's plan allows start
+                started = sorted(path.name for path in directory.glob('?'))
+                self.assertTrue(0 < len(started) < 4, started)    # at most two workers for four CPUs: items stay queued
+                pids = [int(path.read_text()) for path in directory.glob('?')]
+                process.send_signal(signal.SIGTERM)
+                _, stderr = process.communicate(timeout=30)
+                self.assertEqual(process.returncode, pool.CANCELLED_STATUS, stderr)
+                self.assertEqual(sorted(path.name for path in directory.glob('?')), started)
+                for pid in pids:
+                    self.assertFalse(running(pid), f'{pid} still running')
 
 FAKE_RUNTIME = """
 import json, os, secrets, subprocess, sys
@@ -327,19 +330,21 @@ class ContainerOwnershipTests(unittest.TestCase):
         self.assertIn('a: failed with status 125', result.stderr)
         self.assertEqual(self.left(), [self.bystander])
 
-    def test_sigterm_removes_the_recorded_containers_and_leaves_the_bystander(self):
-        script = 'import time; time.sleep(60)'
-        process = subprocess.Popen(self.cli(*self.arguments('a,b,c,d', 'owned-{token}-{item}', script)), cwd=ROOT,
-                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        deadline = time.monotonic() + 30
-        while time.monotonic() < deadline and len(self.left()) < 2:
-            time.sleep(0.05)
-        time.sleep(0.5)
-        self.assertGreater(len(self.left()), 1, 'no container was created')
-        process.send_signal(signal.SIGTERM)
-        _, stderr = process.communicate(timeout=30)
-        self.assertEqual(process.returncode, pool.CANCELLED_STATUS, stderr)
-        self.assertEqual(self.left(), [self.bystander])
+    if sys.platform != 'win32':
+        # Popen.send_signal(SIGTERM) is TerminateProcess on Windows: the CLI cannot run its handler.
+        def test_sigterm_removes_the_recorded_containers_and_leaves_the_bystander(self):
+            script = 'import time; time.sleep(60)'
+            process = subprocess.Popen(self.cli(*self.arguments('a,b,c,d', 'owned-{token}-{item}', script)), cwd=ROOT,
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline and len(self.left()) < 2:
+                time.sleep(0.05)
+            time.sleep(0.5)
+            self.assertGreater(len(self.left()), 1, 'no container was created')
+            process.send_signal(signal.SIGTERM)
+            _, stderr = process.communicate(timeout=30)
+            self.assertEqual(process.returncode, pool.CANCELLED_STATUS, stderr)
+            self.assertEqual(self.left(), [self.bystander])
 
     def owned(self, cid, token='mine'):
         cidfile = self.directory / 'cid'
@@ -550,69 +555,71 @@ class UnitRunnerTests(unittest.TestCase):
             time.sleep(.01)
         self.assertFalse(any(running(pid) for pid in descendants))
 
-    def test_cancellation_and_failure_kill_descendants_after_the_leader_exits(self):
-        for reason in ('cancelled', 'sibling failed'):
-            with self.subTest(reason=reason):
-                ready = self.work / (reason + '.pids')
-                # The intermediate parent stays outside the target group and reaps
-                # the stubborn descendant, so even a container without a reaping
-                # PID 1 can observe the target group's disappearance with killpg.
-                child = ('import os, signal, sys, time\n'
-                         'os.setpgid(0, int(sys.argv[1]))\n'
-                         'signal.signal(signal.SIGTERM, signal.SIG_IGN)\n'
-                         f'open({str(ready)!r}, "w").write(f"{{os.getpgrp()}} {{os.getppid()}}")\n'
-                         'time.sleep(60)\n')
-                reaper = ('import os, subprocess, sys\n'
-                          'os.setpgrp()\n'
-                          f'subprocess.Popen([sys.executable, "-c", {child!r}, sys.argv[1]]).wait()\n')
-                leader = ('import os, signal, subprocess, sys, time\n'
-                          'signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))\n'
-                          f'subprocess.Popen([sys.executable, "-c", {reaper!r}, str(os.getpid())])\n'
-                          'time.sleep(60)\n')
-                flag, groups = threading.Event(), []
+    if sys.platform != 'win32':
+        # Process groups (os.setpgid, os.killpg, signal.SIGKILL) exist only on POSIX.
+        def test_cancellation_and_failure_kill_descendants_after_the_leader_exits(self):
+            for reason in ('cancelled', 'sibling failed'):
+                with self.subTest(reason=reason):
+                    ready = self.work / (reason + '.pids')
+                    # The intermediate parent stays outside the target group and reaps
+                    # the stubborn descendant, so even a container without a reaping
+                    # PID 1 can observe the target group's disappearance with killpg.
+                    child = ('import os, signal, sys, time\n'
+                             'os.setpgid(0, int(sys.argv[1]))\n'
+                             'signal.signal(signal.SIGTERM, signal.SIG_IGN)\n'
+                             f'open({str(ready)!r}, "w").write(f"{{os.getpgrp()}} {{os.getppid()}}")\n'
+                             'time.sleep(60)\n')
+                    reaper = ('import os, subprocess, sys\n'
+                              'os.setpgrp()\n'
+                              f'subprocess.Popen([sys.executable, "-c", {child!r}, sys.argv[1]]).wait()\n')
+                    leader = ('import os, signal, subprocess, sys, time\n'
+                              'signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))\n'
+                              f'subprocess.Popen([sys.executable, "-c", {reaper!r}, str(os.getpid())])\n'
+                              'time.sleep(60)\n')
+                    flag, groups = threading.Event(), []
 
-                def hold(context):
-                    return context.launch([sys.executable, '-c', leader], poll=.01)
+                    def hold(context):
+                        return context.launch([sys.executable, '-c', leader], poll=.01)
 
-                def stop(context):
-                    deadline = time.monotonic() + 10
-                    while time.monotonic() < deadline:
-                        if ready.exists() and ready.read_text().count(' '):
-                            groups.extend(map(int, ready.read_text().split()))
-                            break
-                        context.check()
-                        time.sleep(.01)
-                    else:
-                        raise AssertionError('descendant did not become ready')
-                    os.killpg(groups[0], 0)
-                    if reason == 'cancelled':
-                        flag.set()
-                    else:
-                        raise ValueError(reason)
-
-                try:
-                    error = pool.UnitsCancelled if reason == 'cancelled' else ValueError
-                    with self.assertRaisesRegex(error, reason):
-                        self.run_units([('leader', hold), ('stop', stop)], cancelled=flag.is_set)
-                    deadline = time.monotonic() + 10
-                    while time.monotonic() < deadline:
-                        try:
-                            os.killpg(groups[0], 0)
-                        except ProcessLookupError:
-                            break
-                        except PermissionError:
-                            # A transient permission error is not proof that the
-                            # group is gone; keep waiting for ProcessLookupError.
-                            pass
-                        time.sleep(.01)
-                    with self.assertRaises(ProcessLookupError):
+                    def stop(context):
+                        deadline = time.monotonic() + 10
+                        while time.monotonic() < deadline:
+                            if ready.exists() and ready.read_text().count(' '):
+                                groups.extend(map(int, ready.read_text().split()))
+                                break
+                            context.check()
+                            time.sleep(.01)
+                        else:
+                            raise AssertionError('descendant did not become ready')
                         os.killpg(groups[0], 0)
-                finally:
-                    for group in groups:
-                        try:
-                            os.killpg(group, signal.SIGKILL)
-                        except (ProcessLookupError, PermissionError):
-                            pass
+                        if reason == 'cancelled':
+                            flag.set()
+                        else:
+                            raise ValueError(reason)
+
+                    try:
+                        error = pool.UnitsCancelled if reason == 'cancelled' else ValueError
+                        with self.assertRaisesRegex(error, reason):
+                            self.run_units([('leader', hold), ('stop', stop)], cancelled=flag.is_set)
+                        deadline = time.monotonic() + 10
+                        while time.monotonic() < deadline:
+                            try:
+                                os.killpg(groups[0], 0)
+                            except ProcessLookupError:
+                                break
+                            except PermissionError:
+                                # A transient permission error is not proof that the
+                                # group is gone; keep waiting for ProcessLookupError.
+                                pass
+                            time.sleep(.01)
+                        with self.assertRaises(ProcessLookupError):
+                            os.killpg(groups[0], 0)
+                    finally:
+                        for group in groups:
+                            try:
+                                os.killpg(group, signal.SIGKILL)
+                            except (ProcessLookupError, PermissionError):
+                                pass
 
     def test_a_serial_run_sees_cancellation_at_its_checks_and_reaps_its_child(self):
         class Cancelled(Exception):
