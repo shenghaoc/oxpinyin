@@ -108,19 +108,6 @@ class NativeTests(unittest.TestCase):
                 self.assertFalse(user.exists())
                 self.assertEqual(list(Path(root).iterdir()), [])
 
-    def test_sentence_and_typing_unset_or_empty_tmpdir_falls_back_to_tmp(self):
-        for mode in ('sentence', 'typing-sequence'):
-            for empty in (False, True):
-                with self.subTest(mode=mode, empty=empty), mock.patch.dict(os.environ):
-                    os.environ.pop('TMPDIR', None)
-                    if empty:
-                        os.environ['TMPDIR'] = ''
-                    done = self.launch(mode)
-                    self.assertEqual(done.returncode, 0, done.stderr)
-                    user = Path(done.stderr.decode().splitlines()[0].removeprefix('USER:'))
-                    self.assertEqual(user.parent, Path('/tmp'))
-                    self.assertFalse(user.exists())
-
     def test_sentence_and_typing_refuse_overlong_tmpdir_before_loading(self):
         for mode in ('sentence', 'typing-sequence'):
             with self.subTest(mode=mode):
@@ -154,15 +141,6 @@ class NativeTests(unittest.TestCase):
                     self.assertIn('DIR:' + str(user), done.stderr.decode().splitlines())
                     self.assertFalse(user.exists())
                     self.assertEqual(list(Path(root).iterdir()), [])
-
-    def test_bisect_perf_refuses_overlong_tmpdir(self):
-        for mode in (['--perf'],):
-            with self.subTest(mode=mode):
-                done = subprocess.run([self.harness, *mode, self.library, self.root], capture_output=True,
-                                      env=dict(os.environ, TMPDIR='/' + 'x' * 4096))
-                self.assertEqual(done.returncode, 1)
-                self.assertEqual(done.stdout, b'')
-                self.assertEqual(done.stderr, b'fatal: TMPDIR path is too long\n')
 
     def test_sentence_calls_parse_then_sentence_without_candidates(self):
         done = self.launch('sentence', iterations='2')

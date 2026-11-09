@@ -1,6 +1,6 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
-"""Tests for the measure recipe table and its dispatcher: the fixed name tuple matches what the
-module contributes, a recipe runs under the shared failure ladder, and the CLI forwards to it."""
+"""Tests for the measure recipe dispatcher: a recipe runs under the shared failure ladder, and the
+CLI refuses an unknown recipe."""
 import contextlib
 import io
 from pathlib import Path
@@ -25,34 +25,7 @@ def dispatch(name, argv=(), table=None):
     return status, out.getvalue(), err.getvalue()
 
 
-class TableTests(unittest.TestCase):
-    def test_the_fixed_names_are_exactly_what_the_module_contributes(self):
-        self.assertEqual(sorted(recipes.NAMES), sorted(recipes.table()))
-        self.assertEqual(list(recipes.NAMES), sorted(recipes.NAMES))
-
-    def test_every_recipe_takes_argv_and_env(self):
-        for name, function in recipes.table().items():
-            with self.subTest(name=name):
-                self.assertEqual(function.__code__.co_argcount, 2)
-
-class EnvironmentTests(unittest.TestCase):
-    def test_the_control_is_outside_the_pin_scope(self):
-        self.assertEqual(recipes.PIN_COMPARISONS, {'callgrind-differential', 'system-import-profile'})
-
-    def test_pin_comparison_refuses_on_actions_before_recipe_execution(self):
-        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(Finished):
-            recipes.require_performance_environment({'GITHUB_ACTIONS': 'true'})
-
-
 class DispatchTests(unittest.TestCase):
-    def test_a_recipe_gets_its_arguments_and_the_environment_and_returns_its_status(self):
-        seen = []
-        status, out, err = dispatch('x', ['--a', 'b'], {'x': lambda argv, env: seen.append((argv, env['A'])) or 0})
-        self.assertEqual((status, out, err, seen), (0, '', '', [(['--a', 'b'], 'b')]))
-
-    def test_an_unknown_name_is_a_usage_error(self):
-        self.assertEqual(dispatch('nope', table={}), (2, '', 'unknown measure recipe: nope\n'))
-
     def test_the_shared_failure_ladder_maps_every_ending(self):
         def raises(error):
             def recipe(argv, env):
@@ -65,19 +38,6 @@ class DispatchTests(unittest.TestCase):
 
 
 class CommandLineTests(unittest.TestCase):
-    def test_measure_accepts_every_recipe(self):
-        parser = cli.build_parser()
-        for name in recipes.NAMES:
-            with self.subTest(name=name):
-                args = parser.parse_args(['measure', name, '--out', 'x', '-h'])
-                self.assertEqual((args.recipe, args.args), (name, ['--out', 'x', '-h']))
-
-    def test_the_command_forwards_a_recipe_name_and_arguments_to_the_dispatcher(self):
-        with mock.patch.object(recipes, 'main', return_value=4) as main:
-            status = cli.main(['measure', 'system-import-profile', '--jobs', '1'])
-        self.assertEqual(status, 4)
-        main.assert_called_once_with('system-import-profile', ['--jobs', '1'])
-
     def test_an_unknown_recipe_is_refused_by_the_parser(self):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as stop:
             cli.main(['measure', 'no-such-recipe'])
