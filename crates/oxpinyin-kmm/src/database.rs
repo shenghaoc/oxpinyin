@@ -141,11 +141,25 @@ impl Database {
         }
     }
 
-    /// `get_array_header`; `None` when the token has no row, and a short
-    /// record aborts through the layer's assert.
+    /// `get_array_header`; `None` when there is no object, the token has no
+    /// row or the read fails. Those are the pin's `false` (`!m_db`, then
+    /// `flexible_ngram_bdb.h:385`, `flexible_ngram_kyotodb.h:367` and
+    /// `flexible_ngram_tkrzwdb.h:382`). A record shorter than the array
+    /// header aborts where the pin's assert does (`flexible_ngram_bdb.h:388`,
+    /// `flexible_ngram_kyotodb.h:371`, `flexible_ngram_tkrzwdb.h:388`).
     #[must_use]
     pub fn get_array_header(&self, token: u32) -> Option<KMixtureModelArrayHeader> {
-        self.inner.as_ref()?.get_array_header(token).ok().flatten()
+        match self.inner.as_ref()?.get_array_header(token) {
+            Ok(header) => header,
+            Err(StoreError::ShortArrayHeader) => abort(),
+            Err(
+                StoreError::Io(_)
+                | StoreError::Backend(_)
+                | StoreError::ReadOnly
+                | StoreError::InvalidInput(_)
+                | StoreError::ReadAfterCheck,
+            ) => None,
+        }
     }
 
     /// `check_result(get_array_header(…))`.
@@ -236,5 +250,75 @@ mod tests {
         assert_eq!(output.status.code(), Some(1), "the utility exits");
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(stderr.contains("unsupported library 6.2"), "{stderr}");
+    }
+
+    /// Set in the child to the scratch directory: build the container and
+    /// run the abort site instead of the test body.
+    const ABORT_CHILD: &str = "OXPINYIN_KMM_ABORT_CHILD";
+
+    /// The token whose single gram the abort tests plant.
+    const TOKEN: u32 = 7;
+
+    /// Run the test `name` again as a child with `ABORT_CHILD` set to a
+    /// scratch directory, and require it to abort with no Rust panic text
+    /// on either stream.
+    /// SIGABRT on Unix; Rust's abort fast-fails on Windows with
+    /// STATUS_STACK_BUFFER_OVERRUN, as the store's death tests check.
+    fn assert_aborts_without_a_panic(name: &str) {
+        let dir = tempfile::tempdir().expect("scratch directory");
+        let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .args(["--exact", name, "--test-threads=1"])
+            .env(ABORT_CHILD, dir.path())
+            .output()
+            .expect("child test");
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt as _;
+            assert_eq!(output.status.signal(), Some(6), "{name}: {output:?}");
+        }
+        #[cfg(windows)]
+        assert_eq!(
+            output.status.code(),
+            Some(i32::from_ne_bytes(0xC000_0409_u32.to_ne_bytes())),
+            "{name}: {output:?}"
+        );
+        // The child's libtest reports a captured panic on stdout and the
+        // default hook writes it to stderr, so neither stream may carry it.
+        for stream in [&output.stdout, &output.stderr] {
+            let text = String::from_utf8_lossy(stream);
+            assert!(!text.contains("panicked"), "{name}: {text}");
+        }
+    }
+
+    /// A `KMMP` container at `dir/name` whose only single gram, of
+    /// [`TOKEN`], is `value`, opened read-only as the pin's tools open it.
+    fn planted(dir: &std::ffi::OsStr, name: &str, value: &[u8]) -> super::Database {
+        use oxpinyin_store::{DefaultStore, MAGIC_KEY, WriteStore as _, WriteTxn as _};
+        let path = std::path::Path::new(dir).join(name);
+        {
+            let db = DefaultStore::create_hash(&path).expect("hash create");
+            db.write(|txn| {
+                txn.put_raw(&MAGIC_KEY, b"KMMP")?;
+                txn.put_raw(&TOKEN.to_ne_bytes(), value)
+            })
+            .expect("planted record");
+        }
+        let filename = std::ffi::CString::new(path.into_os_string().into_encoded_bytes())
+            .expect("path without NUL");
+        super::Database::open_read_only(Some(&filename))
+    }
+
+    /// `get_array_header` on a four-byte single gram: the pin asserts
+    /// (`flexible_ngram_bdb.h:388`, `flexible_ngram_kyotodb.h:371`,
+    /// `flexible_ngram_tkrzwdb.h:388`), and the tools abort there too.
+    #[test]
+    fn a_short_array_header_aborts_without_a_panic() {
+        if let Some(dir) = std::env::var_os(ABORT_CHILD) {
+            let _ = planted(&dir, "short.db", &[0; 4]).get_array_header(TOKEN);
+            return;
+        }
+        assert_aborts_without_a_panic(
+            "database::tests::a_short_array_header_aborts_without_a_panic",
+        );
     }
 }

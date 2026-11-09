@@ -51,7 +51,8 @@ impl From<StoreError> for TableError {
             other @ (StoreError::Backend(_)
             | StoreError::ReadOnly
             | StoreError::InvalidInput(_)
-            | StoreError::ReadAfterCheck) => Self::Store(other),
+            | StoreError::ReadAfterCheck
+            | StoreError::ShortArrayHeader) => Self::Store(other),
         }
     }
 }
