@@ -162,8 +162,15 @@ fmt *args:
     @{{windows_args}} cargo fmt @forwarded; exit $LASTEXITCODE
 
 # Regenerate the GLib/libc call-site TSV from a pinned libpinyin checkout.
+[unix]
 audit-glib-call-sites pin *args: python
-    @uv run --no-project --managed-python --with clang==21.1.7 python -X lazy_imports=normal tools/audit/glib_call_sites.py "$@"
+    @uv run --no-project --managed-python --with "$(uv run --no-project --managed-python python tools/audit/glib_call_sites.py --print-clang-requirement)" python -X lazy_imports=normal tools/audit/glib_call_sites.py "$@"
+
+# The audit needs bear, make and Unix linker options.
+[windows]
+audit-glib-call-sites pin *args:
+    @{{windows_args}} echo "audit-glib-call-sites is unsupported on Windows: the audit needs bear, make and Unix linker options."
+    @{{windows_args}} exit 1
 
 # Lint the workspace.
 [unix]

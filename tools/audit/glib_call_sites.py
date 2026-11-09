@@ -27,15 +27,20 @@ from pathlib import Path
 
 PIN = "074a2219c90feaf962d0d24f034514033ece5f99"
 ROOT = Path(__file__).resolve().parents[2]
+SHEBANG = Path(__file__).read_text(encoding="utf-8").splitlines()[0]
+clang_pin = re.search(r"--with\s+(clang==\S+)", SHEBANG)
+if clang_pin is None:
+    raise RuntimeError("the shebang must pin clang with --with clang==VERSION")
+CLANG_REQUIREMENT = clang_pin.group(1)
+LLVM_MAJOR = CLANG_REQUIREMENT.removeprefix("clang==").split(".", 1)[0]
 FAMILIES = ROOT / "tools/audit/glib_call_sites.families.tsv"
 OUTPUT = ROOT / "docs/findings/glib-libc-call-sites.tsv"
 HEADER = ("family", "library", "facade", "backend", "pin_site", "pin_call",
           "call")
 FAMILIES_HEADER = ("function", "family")
 CELLS = {"bdb": "BerkeleyDB", "kc": "KyotoCabinet", "tkrzw": "Tkrzw"}
-LLVM_MAJOR = "21"
-# Homebrew keg names; `llvm@21` is the keg whose LLVM matches the bindings the
-# recipe pins, and libpinyin's configure asks for Berkeley DB 5.
+# Homebrew keg names; the LLVM keg matches the bindings pin, and libpinyin's
+# configure asks for Berkeley DB 5.
 FORMULAE = ("autoconf", "automake", "bear", "berkeley-db@5", "gettext", "glib",
             "kyoto-cabinet", "libtool", f"llvm@{LLVM_MAJOR}", "tkrzw")
 LINUX_COMMANDS = ("autoreconf", "automake", "bear", "c++filt", "g++", "libtoolize",
@@ -863,7 +868,11 @@ def generate(work: Path, cells: list[str], families: dict[str, str],
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("pin", type=Path, help="libpinyin checkout at the pin")
+    parser.add_argument("pin", type=Path, nargs="?", help="libpinyin checkout at the pin")
+    parser.add_argument("--print-llvm-major", action="store_true",
+                        help="print the LLVM major from the clang pin in the shebang")
+    parser.add_argument("--print-clang-requirement", action="store_true",
+                        help="print the clang bindings pin from the shebang")
     parser.add_argument("--families", type=Path, default=FAMILIES)
     parser.add_argument("--output", type=Path, default=OUTPUT)
     parser.add_argument("--work", type=Path, default=ROOT / "target/glib-call-sites",
@@ -876,6 +885,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--check", action="store_true",
                         help="compare with --output instead of writing it")
     args = parser.parse_args(argv)
+    if args.print_llvm_major:
+        print(LLVM_MAJOR)
+        return 0
+    if args.print_clang_requirement:
+        print(CLANG_REQUIREMENT)
+        return 0
+    if args.pin is None:
+        parser.error("the following arguments are required: pin")
     try:
         missing_names = missing_tools()
         if missing_names:

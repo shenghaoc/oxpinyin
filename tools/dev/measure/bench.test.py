@@ -3,16 +3,15 @@
 
 Counts, the option grammar, the order of the runtime guard, the worker's
 environment and argv, the pool that builds, and the records the runners write.
-Nothing here needs taskset, binutils or a proc filesystem: the host readers take a
-fixture root and the tools are replaced by fakes, so the file runs on macOS and Linux.
-Real children are plain Python.
+The host readers take a fixture root and the tools are replaced by fakes, so
+the file runs on macOS and Linux. The real gcc, binutils and taskset classes
+are defined on Linux only. Real children are plain Python.
 """
 import contextlib
 import io
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -581,36 +580,34 @@ class IdentityTests(Scratch):
 LINUX = sys.platform.startswith('linux')
 
 
-@unittest.skipUnless(LINUX and shutil.which('gcc') and shutil.which('readelf') and shutil.which('nm'),
-                     'needs gcc and GNU binutils (readelf, nm) on Linux')
-class BinutilsTests(Scratch):
-    """The parsers read what the real readelf and nm print, from a shared object gcc builds here."""
+if LINUX:
+    class BinutilsTests(Scratch):
+        """The parsers read what the real readelf and nm print, from a shared object gcc builds here."""
 
-    def test_needed_of_a_real_shared_object(self):
-        source = self.root / 'lib.c'
-        source.write_text('#include <math.h>\n'
-                          'double oxpinyin_init_for_fixtures(double x) { return sin(x); }\n'
-                          'int oxpinyin_test_set_user_bigram(void) { return 0; }\n'
-                          'int plain(void) { return 1; }\n')
-        library = self.root / 'lib.so'
-        subprocess.run(['gcc', '-shared', '-fPIC', '-o', str(library), str(source), '-lm'], check=True)
-        names = identity.needed(library)
-        self.assertTrue(any(name.startswith('libm.so') for name in names), names)
+        def test_needed_of_a_real_shared_object(self):
+            source = self.root / 'lib.c'
+            source.write_text('#include <math.h>\n'
+                              'double oxpinyin_init_for_fixtures(double x) { return sin(x); }\n'
+                              'int oxpinyin_test_set_user_bigram(void) { return 0; }\n'
+                              'int plain(void) { return 1; }\n')
+            library = self.root / 'lib.so'
+            subprocess.run(['gcc', '-shared', '-fPIC', '-o', str(library), str(source), '-lm'], check=True)
+            names = identity.needed(library)
+            self.assertTrue(any(name.startswith('libm.so') for name in names), names)
 
-    def test_a_file_that_is_not_an_elf_ends_the_run_with_readelfs_status(self):
-        (self.root / 'text').write_text('not an object')
-        with contextlib.redirect_stderr(Stream()), self.assertRaises(Finished) as stop:
-            identity.needed(self.root / 'text')
-        self.assertNotEqual(stop.exception.status, 0)
+        def test_a_file_that_is_not_an_elf_ends_the_run_with_readelfs_status(self):
+            (self.root / 'text').write_text('not an object')
+            with contextlib.redirect_stderr(Stream()), self.assertRaises(Finished) as stop:
+                identity.needed(self.root / 'text')
+            self.assertNotEqual(stop.exception.status, 0)
 
 
-@unittest.skipUnless(shutil.which('taskset'), 'needs taskset (util-linux)')
-class TasksetTests(Scratch):
-    def test_a_pinned_child_runs_on_the_chosen_cpu_and_reports_its_status(self):
-        cpu = min(host.allowed_cpus())
-        command = bench.pinned([sys.executable, '-c', 'import os, sys; sys.exit(7 if os.sched_getaffinity(0) == {%d} else 1)' % cpu], cpu)
-        self.assertEqual(command[:3], ['taskset', '-c', str(cpu)])
-        self.assertEqual(bench.capture(command).status, 7)
+    class TasksetTests(Scratch):
+        def test_a_pinned_child_runs_on_the_chosen_cpu_and_reports_its_status(self):
+            cpu = min(host.allowed_cpus())
+            command = bench.pinned([sys.executable, '-c', 'import os, sys; sys.exit(7 if os.sched_getaffinity(0) == {%d} else 1)' % cpu], cpu)
+            self.assertEqual(command[:3], ['taskset', '-c', str(cpu)])
+            self.assertEqual(bench.capture(command).status, 7)
 
 
 class SummaryTests(Scratch):

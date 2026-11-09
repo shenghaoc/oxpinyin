@@ -372,10 +372,12 @@ jobs:
           just: 'true'
           cargo-nextest: 'true'
       - run: rustup show active-toolchain
-      # GLib and pkg-config from Homebrew; tkrzw from the tkrzw action, which
-      # puts its build first on PKG_CONFIG_PATH.
-      - name: Install GLib and pkg-config (Homebrew)
-        run: brew install glib pkgconf
+      # GLib, pkg-config and the call-site LLVM from Homebrew; tkrzw from the
+      # tkrzw action, which puts its build first on PKG_CONFIG_PATH.
+      - name: Install GLib, pkg-config and the call-site LLVM (Homebrew)
+        run: |
+          llvm_major=$(uv run --no-project --managed-python python tools/audit/glib_call_sites.py --print-llvm-major)
+          brew install glib pkgconf "llvm@${llvm_major}"
       - name: Provision tkrzw (built at the setup.sh revision and cached)
         uses: ./.github/actions/tkrzw
       - name: Install cargo-c for shipped macOS libraries
