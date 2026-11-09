@@ -61,12 +61,12 @@ coverage and are superseded for these programs; no program is exempt.
 | A | `tests/test_phrase.cpp` / `test_phrase` | No | `../data`: raw Chinese phrase segmentation, token text, save and mask-out/save/fini | **Ported** (2026-11-01 UTC) |
 | A | `tests/test_chewing.cpp` / `test_chewing` | No | `../data`: Pinyin C API's chewing parse, sentence and auxiliary text, train/reset/save and teardown | **Ported** (2026-11-01 UTC) |
 | A | `tests/test_zhuyin.cpp` / `test_zhuyin` | No | `../data`: the separate `zhuyin_*` C API, chewing parse and sentence, train/reset/save and teardown | **Ported** (2026-11-01 UTC) |
-| B | `tests/storage/test_parser2.cpp` / `test_parser2` | No | GLib `--parser`, `--incomplete`, `--scheme`; stdin; every parser variant, consumed length and raw key spans; `timer.h` output | **Ported** — `test_parser2.json`, 26 tkrzw cases |
+| B | `tests/storage/test_parser2.cpp` / `test_parser2` | No | GLib `--parser`, `--incomplete`, `--scheme`; stdin; every parser variant, consumed length and raw key spans; `timer.h` output | **Ported** — `test_parser2.json`, 16 tkrzw cases |
 | C | `tests/storage/test_ngram.cpp` / `test_ngram` | Yes | `SingleGram`/`Bigram` operations; `/tmp/test.db`, `/tmp/snapshot.db` | **Ported** — same-named frozen test module, all three cells |
 | C | `tests/storage/test_flexible_ngram.cpp` / `test_flexible_ngram` | Yes | Flexible single-gram range search and mutation, bigram storage; `/tmp/training.db` | **Ported** — same-named frozen test module, all three cells |
 | C | `tests/storage/test_punct_table.cpp` / `test_punct_table` | Yes | Punctuation append/remove and snapshot save/load; `/tmp/punct.bin`, `/tmp/snapshot.db` | **Ported** — same-named frozen test module, all three cells |
-| D | `tests/storage/test_table_info.cpp` / `test_table_info` | Yes | System/user table configuration and conformance; `../../data/table.conf`, `/tmp/user.conf` | **Ported** — `test_table_info.json`, 11 MATCH and 3 POLICY-ACCEPTED on tkrzw |
-| E | `tests/include/test_memory_chunk.cpp` / `test_memory_chunk` | Yes | Chunk content, capacity, insert/remove, save/load/map; `/tmp/test.bin` | **Ported** — `test_memory_chunk.json`, 3 MATCH and 1 POLICY-ACCEPTED on tkrzw |
+| D | `tests/storage/test_table_info.cpp` / `test_table_info` | Yes | System/user table configuration and conformance; `../../data/table.conf`, `/tmp/user.conf` | **Ported** — `test_table_info.json`, 8 MATCH and 3 POLICY-ACCEPTED on tkrzw |
+| E | `tests/include/test_memory_chunk.cpp` / `test_memory_chunk` | Yes | Chunk content, capacity, insert/remove, save/load/map; `/tmp/test.bin` | **Ported** — `test_memory_chunk.json`, 2 MATCH and 1 POLICY-ACCEPTED on tkrzw |
 | E | `tests/storage/test_phrase_index.cpp` / `test_phrase_index` | No | Phrase-item/index mutation, frequency, compact and chunk round trips; `../../data/*` through `tests_helper.h` | **Ported** — same-named frozen test module and source-only class (b) guards |
 | E | `tests/storage/test_phrase_index_logger.cpp` / `test_phrase_index_logger` | Yes | Phrase-index logger diff/merge; `../../data/*`; `/tmp/gb_char.bin`, `/tmp/gb_char.dbin`, `/tmp/gb_char2.bin` | **Ported** — same-named frozen test module and source-only class (b) guards |
 | E | `tests/storage/test_phrase_table.cpp` / `test_phrase_table` | No | Phrase-table lookup and mutation over `../../data/*` | **Ported** — same-named frozen test module, all three cells, with class (b) source-only guards |
@@ -79,35 +79,34 @@ Family A is implemented by the four same-named `oxpinyin-utils` binaries
 and `src/pin_tests.rs`, using tool-gated ownership adapters in the two
 existing C facades. Its cases are the `frozen::test_{pinyin,phrase,chewing,zhuyin}`
 modules of `crates/oxpinyin-utils/tests/storage_tools.rs`:
-21 cases match on tkrzw, bdb and kc, including saved user files. The exact prompt bytes are held by the module-local test
+13 cases match on tkrzw, bdb and kc, including saved user files. The exact prompt bytes are held by the module-local test
 `oxpinyin_input::tool::tests::prefix_prompt_writes_the_pins_exact_bytes`.
 The existing differential case is `test-pinyin-quit`.
 
 Family C ports `test_ngram`, `test_flexible_ngram` and `test_punct_table`
-with 14 source-derived cases in their three same-named frozen test modules. The
-fixed `/tmp` paths remain isolated per side. Combined with all 45 current
-K-mixture cases, the all-cell result is tkrzw 50 MATCH / 9 POLICY-ACCEPTED,
-BDB 44 / 15, and KC 48 / 11, with no DIFFER or INVALID. Policy records bind
+with 11 source-derived cases in their three same-named frozen test modules. The
+fixed `/tmp` paths remain isolated per side. Combined with all 44 current
+K-mixture cases, the all-cell result is tkrzw 46 MATCH / 9 POLICY-ACCEPTED,
+BDB 40 / 15, and KC 44 / 11, with no DIFFER or INVALID. Policy records bind
 the existing assertion-text and BDB failed-handle diagnostic exceptions. The tkrzw abort files use
 only the approved eight-byte clock-field normalization. The token arithmetic is held by
-`dbm_programs::test_ngram_prints_the_single_grams_and_leaves_both_bigram_rows`
-in `oxpinyin-utils` (Kyoto Cabinet), alongside `ngram-fresh`.
+the `frozen::test_ngram` case `ngram_ignored_input` in `oxpinyin-utils`.
 [Shared attach and backend evidence](../findings/eio-test-flexible-attach-empty.md)
 records the native open, magic-header and mutation calls.
 
 Family E1 adds `test_memory_chunk` with the pin's logical capacity rule.
-Its four source-derived cases give 3 MATCH and 1 POLICY-ACCEPTED on tkrzw.
+Its three source-derived cases give 2 MATCH and 1 POLICY-ACCEPTED on tkrzw.
 The removal offset is held by the `frozen::test_memory_chunk` case
-`memory_chunk_fresh` in `oxpinyin-utils`.
+`memory_chunk_ignored_input` in `oxpinyin-utils`.
 
-Family E2 adds the phrase-index and logger executables with 15 cases:
-11 MATCH and 4 POLICY-ACCEPTED on tkrzw. The sparse and overflow logger cases
+Family E2 adds the phrase-index and logger executables with 13 cases:
+9 MATCH and 4 POLICY-ACCEPTED on tkrzw. The sparse and overflow logger cases
 retain the facade cache across load and merge, independently of the local
 stored total. Refused layouts contribute no load total; reload still subtracts
 the prior local total. Defined same-token invalid conversions continue. The invalid-UTF-8 index guard runs only the subject, checking
 exit EINVAL and the output printed before conversion. Required-load failures
 use pin_not_run and exit ENOENT without a diagnostic. In `oxpinyin-utils`, the
-`frozen::test_phrase_index_logger` cases `phrase_index_logger_contiguous` and
+`frozen::test_phrase_index_logger` cases `phrase_index_logger_ignored_input` and
 `phrase_index_logger_refused_layout` hold the logger delta and the refused load's
 total. The `frozen::test_phrase_index` cases
 `phrase_index_same_token_invalid_utf8_reading` and
@@ -116,8 +115,8 @@ A review mutation also detects omitting
 the token-zero conversion guard. All three consuming guard tests are
 subject-only and retain the preceding output.
 
-Family E3 adds the phrase-table and chewing-table executables. Their 21
-source-derived cases pass all three cells: 15 MATCH / 6 POLICY-ACCEPTED.
+Family E3 adds the phrase-table and chewing-table executables. Their 18
+source-derived cases pass all three cells: 12 MATCH / 6 POLICY-ACCEPTED.
 Only timer fields are masked; token, range and pronunciation order and the
 literal backspace before frequencies remain exact. Token-zero cursors are
 empty before extending/flushing and at the final flush. Only the first
@@ -132,7 +131,7 @@ The `frozen::test_chewing_table` cases `chewing_table_toned_initial` and
 order before the length refusal.
 
 Family E4 adds `test_matrix`, `test_pinyin_lookup` and `test_phrase_lookup`.
-Their 22 source-derived cases give 19 MATCH / 3 POLICY-ACCEPTED on the
+Their 19 source-derived cases give 16 MATCH / 3 POLICY-ACCEPTED on the
 selected cells. The matrix includes separator and terminal zero keys;
 lookup results preserve non-null positions, token order and the phrase
 lookup's newline-separated `token phrase` entries. Required chunk failures

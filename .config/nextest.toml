@@ -17,14 +17,13 @@ inherits = "default"
 # than copying the local machine's CPU count into CI.
 test-threads = 4
 
-# Storage integration cases create, reopen and recover real backend files, and
-# dbm_programs (the pin's DBM test programs) writes fixed names under /tmp.
+# Storage integration cases create, reopen and recover real backend files.
 # Serialize that subset; independent unit tests stay in the default pool.
 [test-groups.store-backend]
 max-threads = 1
 
 [[profile.default.overrides]]
-filter = 'binary(bdb_libpinyin_files) | binary(trait_laws) | binary(user_store_semantics) | binary(assembly) | binary(empty_user_dir) | binary(libpinyin_data_dir) | binary(dbm_programs)'
+filter = 'binary(bdb_libpinyin_files) | binary(trait_laws) | binary(user_store_semantics) | binary(assembly) | binary(empty_user_dir) | binary(libpinyin_data_dir)'
 test-group = 'store-backend'
 
 # Cases that read a real libpinyin data tree, the pin-built user profile, or

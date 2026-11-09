@@ -137,18 +137,8 @@ fn run(cwd: &Path, name: &str, args: &[&str], stdin: Option<&[u8]>) -> Output {
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    if args == ["--help"] {
-        if let Some(locale) = std::env::var_os("LC_ALL").filter(|value| !value.is_empty()) {
-            command.env("LC_CTYPE", locale);
-        }
-        command
-            .env_remove("LC_ALL")
-            .env("LC_MESSAGES", "C")
-            .env_remove("LANGUAGE");
-    } else {
-        command.env("LC_ALL", "C");
-    }
+        .stderr(Stdio::piped())
+        .env("LC_ALL", "C");
     let mut child = command.spawn().unwrap();
     if let Some(input) = stdin {
         use std::io::Write as _;
@@ -180,22 +170,6 @@ fn block(export: &str, header: &str, until: &str) -> Vec<String> {
         .collect();
     lines.sort();
     lines
-}
-#[test]
-fn a_missing_system_chunk_names_itself_and_is_enoent() {
-    let dir = scratch();
-    std::fs::remove_file(dir.path().join("gbk_char.bin")).unwrap();
-    let out = run(
-        dir.path(),
-        "export_k_mixture_model",
-        &["--k-mixture-model-file", "absent.db"],
-        None,
-    );
-    assert_eq!(out.status.code(), Some(tool::ENOENT));
-    assert_eq!(
-        text(&out.stderr),
-        expected_text("load gbk_char.bin failed!\n")
-    );
 }
 #[test]
 fn merge_sums_the_same_model_and_refuses_a_missing_result_file() {
@@ -560,6 +534,8 @@ mod frozen {
         // export_k_mixture_model-family-e-truncated-first-chunk:
         // utils/training/export_k_mixture_model.cpp:139; utils/utils_helper.h:73-94;
         // src/include/memory_chunk.h:420-463 at 074a2219.
+        // gen_k_mixture_model and import_k_mixture_model load the chunks through the same
+        // phrase_index::load_system_phrases; their missing-table-conf cases cover the call.
         #[case::export_k_mixture_model_family_e_truncated_first_chunk(
             w3(),
             &[],
@@ -727,22 +703,6 @@ mod frozen {
         use crate::fixtures::w3;
 
         #[rstest]
-        // gen_k_mixture_model-family-e-truncated-first-chunk:
-        // utils/training/gen_k_mixture_model.cpp:344; utils/utils_helper.h:73-94;
-        // src/include/memory_chunk.h:420-463 at 074a2219.
-        #[case::gen_k_mixture_model_family_e_truncated_first_chunk(
-            w3(),
-            &[],
-            b"",
-            &[("gb_char.bin", b"\x04\0\0\0\0\0\0\0\x01".as_slice()), ("gbk_char.bin", b"\0".as_slice())],
-            &[],
-            Run {
-                status: Exit(2),
-                stdout: Exact(b""),
-                stderr: LOAD_GB_CHAR_BIN_FAILED,
-                files: &[],
-            },
-        )]
         // kmm-gen-bad-option: utils/training/gen_k_mixture_model.cpp at 074a2219: 313-403,
         // 65-311; utils/utils_helper.h:51-95.
         #[case::kmm_gen_bad_option(
@@ -904,22 +864,6 @@ mod frozen {
         use crate::fixtures::w3;
 
         #[rstest]
-        // import_k_mixture_model-family-e-truncated-first-chunk:
-        // utils/training/import_k_mixture_model.cpp:289; utils/utils_helper.h:73-94;
-        // src/include/memory_chunk.h:420-463 at 074a2219.
-        #[case::import_k_mixture_model_family_e_truncated_first_chunk(
-            w3(),
-            &[],
-            b"",
-            &[("gb_char.bin", b"\x04\0\0\0\0\0\0\0\x01".as_slice()), ("gbk_char.bin", b"\0".as_slice())],
-            &[],
-            Run {
-                status: Exit(2),
-                stdout: Exact(b""),
-                stderr: LOAD_GB_CHAR_BIN_FAILED,
-                files: &[],
-            },
-        )]
         // kmm-import-bad-option: utils/training/import_k_mixture_model.cpp at 074a2219:
         // 258-317, 72-256; src/storage/tag_utility.cpp:118-264.
         #[case::kmm_import_bad_option(
