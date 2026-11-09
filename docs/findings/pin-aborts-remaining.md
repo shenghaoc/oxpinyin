@@ -400,8 +400,8 @@ No harness reaches either row: `capi_commands.rs` opens a fresh user
 directory, trains only through `pinyin_train` (which writes sorted grams of
 at least four bytes) and has no mask, save, export or library call;
 `user_store_ops.rs` drives a standalone store through its writers, which
-never write a value under four bytes; `session_keys.rs` has no user store
-fault; the system-file targets map regular files only. No filter is needed.
+never write a value under four bytes; the system-file targets map regular
+files only. No filter is needed.
 
 ## Verification
 

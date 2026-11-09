@@ -22,11 +22,6 @@ oxpinyin-data = { path = "../crates/oxpinyin-data" }
 # fuzzer.rs shape). The facade links natively on macOS with Homebrew GLib
 # and Berkeley DB 5.3; the nightly CI soak still runs on Linux.
 oxpinyin-capi = { path = "../crates/oxpinyin-capi", features = ["fuzz-api"] }
-# session-keys: the Rust session API is an internal surface under the C facades; the
-# store backend rides the workspace default (tkrzw since
-# 2026-10-30), as capi-commands
-# does.
-oxpinyin-engine = { path = "../crates/oxpinyin-engine" }
 # user-store-ops: arbitrary mutation interleavings over UserStore, each
 # input over its own user directory (the root workspace's version).
 oxpinyin-user = { path = "../crates/oxpinyin-user" }
@@ -77,13 +72,6 @@ bench = false
 [[bin]]
 name = "chewing-parser"
 path = "fuzz_targets/chewing_parser.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "session-keys"
-path = "fuzz_targets/session_keys.rs"
 test = false
 doc = false
 bench = false

@@ -78,7 +78,7 @@ fn candidates_match_the_frozen_capture_over_the_corpus() {
             continue;
         };
         session.reset();
-        let _ = session.type_pinyin(input);
+        let _ = session.replace_raw(input);
         let ours: Vec<_> = session
             .candidates()
             .iter()

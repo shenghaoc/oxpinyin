@@ -15,6 +15,11 @@ Date: 2026-08-11 · Status: **landed — top-1 63%→64%, absent 177→70 on fix
 > `074a2219` on 2026-09-06.
 > `pinyin-oracle` was deleted on 2026-11-06 UTC, with the bins, tests and freshness
 > gates named here. The candidate gate is now `oxpinyin-runtime`'s `candidate_surface`.
+>
+> **Status (2026-11-09 UTC):** the batch `Session::type_pinyin` and `Session::erase`
+> were removed with `KeyOutcome`. `Session::replace_raw` is the only session input
+> seam; it keeps every character, as the C parse path always did. The measurements
+> and the split below are the historical record of the retired batch surface.
 
 ## Observed oracle behaviour (fixture only)
 

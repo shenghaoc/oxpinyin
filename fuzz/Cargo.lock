@@ -386,7 +386,6 @@ dependencies = [
  "oxpinyin-capi",
  "oxpinyin-core",
  "oxpinyin-data",
- "oxpinyin-engine",
  "oxpinyin-user",
  "tempfile",
 ]

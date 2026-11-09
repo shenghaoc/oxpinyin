@@ -35,11 +35,7 @@ fn session() -> Fixtures {
 
 fn typed(text: &str) -> Fixtures {
     let mut session = session();
-    for character in text.chars() {
-        session
-            .type_pinyin(character.encode_utf8(&mut [0; 4]))
-            .expect("typing cannot fail");
-    }
+    session.replace_raw(text).expect("typing cannot fail");
     session
 }
 
@@ -239,24 +235,6 @@ fn decoding_is_deterministic() {
     }
 }
 
-#[test]
-fn batch_and_key_by_key_agree_on_composing_inputs() {
-    // Pure a-z/`'` only: bulk `type_pinyin` and one-character `type_pinyin` must agree
-    // when no mid-composition selection intervenes. The parity harness relies
-    // on one refresh per input matching that final state.
-    for input in ["nihao", "zhongguo", "xian", "chang'an"] {
-        let batch = {
-            let mut session = session();
-            session
-                .type_pinyin(input)
-                .expect("batch typing cannot fail");
-            texts(&session)
-        };
-        let keyed = texts(&typed(input));
-        assert_eq!(batch, keyed, "batch vs key-by-key diverged for {input:?}");
-    }
-}
-
 /// Authored mini-vocab so hard-stop-at-`b` and full `bing` can be told apart.
 ///
 /// Incomplete `b` expands to complete keys (`bu`, `bing`, …). `不` rides on
@@ -268,9 +246,9 @@ token=2\tkeys=bing\ttext=并\tunigram=100
 ";
 
 #[test]
-fn type_pinyin_b_hash_ing_prefers_bu_family_not_bing() {
-    // Oracle fixture rank-1 for b#ing is 不 (b-family), not 并 (bing).
-    // Re-filtering junk in type_pinyin would collapse to bing and regress.
+fn replace_raw_b_hash_ing_prefers_bu_family_not_bing() {
+    // Oracle fixture rank-1 for b#ing is 不 (b-family), not 并 (bing):
+    // the junk byte reaches the decoder, which stops at it.
     let mut session = Session::new(
         SessionSettings::default(),
         FixtureDictionary::parse(JUNK_VOCAB).expect("junk vocab"),
@@ -278,9 +256,7 @@ fn type_pinyin_b_hash_ing_prefers_bu_family_not_bing() {
     )
     .expect("session opens");
 
-    session
-        .type_pinyin("b#ing")
-        .expect("batch typing cannot fail");
+    session.replace_raw("b#ing").expect("parse cannot fail");
     assert_eq!(session.raw_input(), "b#ing");
 
     let top = session
@@ -293,16 +269,14 @@ fn type_pinyin_b_hash_ing_prefers_bu_family_not_bing() {
         "fixture: b#ing rank-1 is 不, not 并; got {top:?}"
     );
 
-    // Contrast: filtered collapse would type as bing and prefer 并.
+    // Contrast: clean bing prefers 并.
     let mut collapsed = Session::new(
         SessionSettings::default(),
         FixtureDictionary::parse(JUNK_VOCAB).expect("junk vocab"),
         FrequencyFixtureModel::parse(JUNK_VOCAB, "").expect("junk unigrams"),
     )
     .expect("session opens");
-    collapsed
-        .type_pinyin("bing")
-        .expect("batch typing cannot fail");
+    collapsed.replace_raw("bing").expect("parse cannot fail");
     let collapsed_top = collapsed
         .candidates()
         .get(0)
@@ -346,11 +320,7 @@ fn turning_incomplete_pinyin_off_stops_at_the_initial() {
     )
     .expect("the fixtures open");
 
-    for character in "nih".chars() {
-        session
-            .type_pinyin(character.encode_utf8(&mut [0; 4]))
-            .expect("typing cannot fail");
-    }
+    session.replace_raw("nih").expect("typing cannot fail");
 
     let texts: Vec<&str> = session
         .candidates()
@@ -383,7 +353,7 @@ fn incomplete_initials_expand_by_phonetic_initial() {
 
     let session = session_from(vocab);
     let mut n = session.clone();
-    n.type_pinyin("n").expect("n types");
+    n.replace_raw("n").expect("n types");
     let offered = texts(&n);
     assert!(
         offered.contains(&"㐻".to_owned()),
@@ -398,7 +368,7 @@ fn incomplete_initials_expand_by_phonetic_initial() {
 
     for (input, kept, excluded) in [("z", "匝", "扎"), ("c", "擦", "叉"), ("s", "撒", "沙")] {
         let mut session = session.clone();
-        session.type_pinyin(input).expect("initial types");
+        session.replace_raw(input).expect("initial types");
         let offered = texts(&session);
         assert!(
             offered.contains(&kept.to_owned()),
@@ -466,12 +436,9 @@ fn candidate_differential_over_the_capture_families() {
         total += 1;
 
         let mut session = session();
-
-        for character in case.input.chars() {
-            session
-                .type_pinyin(character.encode_utf8(&mut [0; 4]))
-                .expect("typing cannot fail");
-        }
+        session
+            .replace_raw(&case.input)
+            .expect("typing cannot fail");
 
         let ours: Vec<String> = session
             .candidates()

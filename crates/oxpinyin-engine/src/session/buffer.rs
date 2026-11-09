@@ -122,25 +122,6 @@ impl InputBuffer {
         self.formatting_separators = true;
     }
 
-    /// Appends `character` and exits exact mode.
-    pub(super) fn push(&mut self, character: char) {
-        self.invalidate();
-        self.exact.clear();
-        self.parsed_full_pinyin = false;
-        self.formatting_separators = false;
-        self.raw.push(character);
-    }
-
-    /// Drops the last character and exits exact mode — the erase path,
-    /// which shrinks the buffer under a live composition.
-    pub(super) fn pop(&mut self) {
-        self.invalidate();
-        self.exact.clear();
-        self.parsed_full_pinyin = false;
-        self.formatting_separators = false;
-        self.raw.pop();
-    }
-
     /// Empties the buffer and the exact chain — `pinyin_reset`'s input
     /// half.
     pub(super) fn clear(&mut self) {

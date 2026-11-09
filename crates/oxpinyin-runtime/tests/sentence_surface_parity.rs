@@ -94,7 +94,7 @@ fn sentence_surface_detects_per_step_score_shift() {
     .into_iter()
     .map(|input| {
         session.reset();
-        session.type_pinyin(input).expect("input must parse");
+        session.replace_raw(input).expect("input must parse");
         assert!(session.guess_sentence().expect("sentence guess must run"));
         (
             input,

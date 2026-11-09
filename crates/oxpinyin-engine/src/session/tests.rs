@@ -1,53 +1,6 @@
 //! The session's unit tests, moved verbatim from `session.rs` (2026-09-08).
 
 #[test]
-fn ignored_type_input_preserves_exact_mode() {
-    let mut session = session();
-    let segments: Vec<oxpinyin_core::graph::ExactSegment> = {
-        use oxpinyin_core::graph::ExactSegment;
-        let ni = oxpinyin_core::SyllableKey::from_text("ni").expect("ni");
-        let hao = oxpinyin_core::SyllableKey::from_text("hao").expect("hao");
-        vec![
-            ExactSegment::new(0, 2, ni, 0),
-            ExactSegment::new(3, 6, hao, 0),
-        ]
-    };
-    session
-        .replace_raw_exact("ni'hao", &segments)
-        .expect("replace");
-    // A batch input whose every character is filtered (the space) is
-    // Ignored and must not exit exact mode.
-    assert_eq!(
-        session.type_pinyin("  ").expect("ignored input"),
-        KeyOutcome::Ignored
-    );
-    assert!(session.input.exact().len() == 2);
-    // An accepted character does exit exact mode.
-    assert_eq!(
-        session.type_pinyin("h").expect("typed"),
-        KeyOutcome::Consumed
-    );
-    assert!(session.input.exact().is_empty());
-}
-
-#[test]
-fn erasing_clears_the_exact_chain() {
-    let mut session = session();
-    let segments: Vec<oxpinyin_core::graph::ExactSegment> = {
-        use oxpinyin_core::graph::ExactSegment;
-        let ni = oxpinyin_core::SyllableKey::from_text("ni").expect("ni");
-        vec![ExactSegment::new(0, 2, ni, 0)]
-    };
-    session.replace_raw_exact("ni", &segments).expect("replace");
-    // Removing raw input invalidates the saved exact chain.
-    assert_eq!(session.erase().expect("erase"), KeyOutcome::Consumed);
-    assert!(
-        session.input.exact().is_empty(),
-        "erase must drop the exact chain"
-    );
-}
-
-#[test]
 fn full_parsed_len_reflects_the_exact_chain() {
     let mut session = session();
     let segments: Vec<oxpinyin_core::graph::ExactSegment> = {
@@ -63,6 +16,22 @@ fn full_parsed_len_reflects_the_exact_chain() {
         .replace_raw_exact("ni'hao", &segments)
         .expect("replace");
     assert_eq!(session.full_parsed_len(), 6);
+}
+
+#[test]
+fn replacing_raw_clears_the_exact_chain() {
+    use oxpinyin_core::graph::ExactSegment;
+    let mut session = session();
+    let ni = oxpinyin_core::SyllableKey::from_text("ni").expect("ni");
+    session
+        .replace_raw_exact("ni", &[ExactSegment::new(0, 2, ni, 0)])
+        .expect("replace");
+    // Replacing the raw input invalidates the saved exact chain.
+    session.replace_raw("n").expect("replace");
+    assert!(
+        session.input.exact().is_empty(),
+        "a raw replacement must drop the exact chain"
+    );
 }
 
 #[test]
@@ -100,7 +69,7 @@ use oxpinyin_core::{
     UserModel,
 };
 
-use super::{KeyOutcome, Selection, Session};
+use super::{Selection, Session};
 use crate::SessionSettings;
 use crate::error::{EngineError, TrainingSpanFault};
 use crate::fixture_doubles::{
@@ -141,35 +110,11 @@ fn session() -> Session<Silent, Silent> {
 }
 
 fn type_text(session: &mut Session<Silent, Silent>, text: &str) {
+    let mut typed = String::new();
     for character in text.chars() {
-        session
-            .type_pinyin(character.encode_utf8(&mut [0; 4]))
-            .expect("typing cannot fail");
+        typed.push(character);
+        session.replace_raw(&typed).expect("typing cannot fail");
     }
-}
-
-#[test]
-fn type_pinyin_keeps_printable_junk_in_the_raw_buffer() {
-    // Batch path (parity harness): printable ASCII including junk is kept
-    // so the decoder sees the fixture string; the decoder stops at the junk byte.
-    let mut session = session();
-    session
-        .type_pinyin("b#ing")
-        .expect("batch typing cannot fail");
-    assert_eq!(session.raw_input(), "b#ing");
-}
-
-#[test]
-fn type_pinyin_still_filters_stop_bytes() {
-    // The frozen half of the parse-termination split: `type_pinyin`
-    // keeps its printable-ASCII accept set (F1), so the corpus and
-    // sentence pins that feed through it cannot reach the loosened
-    // `replace_raw` seam — a space never enters `raw` here.
-    let mut session = session();
-    session
-        .type_pinyin("ni hao")
-        .expect("batch typing cannot fail");
-    assert_eq!(session.raw_input(), "nihao");
 }
 
 #[test]
@@ -221,18 +166,6 @@ fn replace_raw_consumes_trailing_and_standalone_apostrophe_runs() {
 }
 
 #[test]
-fn backspace_erases_then_reports_nothing_to_do() {
-    let mut session = session();
-    type_text(&mut session, "ni");
-
-    assert_eq!(session.erase().expect("no failure"), KeyOutcome::Consumed);
-    assert_eq!(session.raw_input(), "n");
-    session.erase().expect("no failure");
-    assert_eq!(session.raw_input(), "");
-    assert_eq!(session.erase().expect("no failure"), KeyOutcome::Ignored);
-}
-
-#[test]
 fn reset_discards_the_composition() {
     let mut session = session();
     type_text(&mut session, "nihao");
@@ -275,18 +208,6 @@ fn choosing_the_fallback_completes_the_composition() {
 }
 
 #[test]
-fn backspace_undoes_a_selection_before_reporting_nothing_to_do() {
-    let mut session = session();
-    type_text(&mut session, "nihao");
-    session.select(0).expect("the fallback exists");
-
-    assert_eq!(session.erase().expect("no failure"), KeyOutcome::Consumed);
-    assert_eq!(session.raw_input(), "nihao");
-    assert_eq!(session.composition_offset(), 0);
-    assert!(session.selected_text().is_empty());
-}
-
-#[test]
 fn input_past_the_pins_gint16_bound_is_kept_and_parsed_whole() {
     // The pin's full-pinyin parse stops at byte 32767 (`gint16` steps), a
     // language artefact the session does not reproduce
@@ -298,10 +219,8 @@ fn input_past_the_pins_gint16_bound_is_kept_and_parsed_whole() {
     session.replace_raw(&long).expect("no failure");
     assert_eq!(session.raw_input(), long);
     assert_eq!(session.full_parsed_len(), 65_537);
-    assert_eq!(
-        session.type_pinyin("'").expect("no failure"),
-        KeyOutcome::Consumed
-    );
+    let extended = format!("{long}'");
+    session.replace_raw(&extended).expect("no failure");
     assert_eq!(session.raw_input().len(), 65_538);
     assert_eq!(session.full_parsed_len(), 65_538);
 }
@@ -375,11 +294,7 @@ fn a_longer_row_surfaces_when_bit_2_clear_and_vanishes_when_set() {
         FrequencyFixtureModel::parse(LONGER_VOCAB, "").expect("authored fixture"),
     )
     .expect("the fixtures open");
-    for character in "fang".chars() {
-        session
-            .type_pinyin(character.encode_utf8(&mut [0; 4]))
-            .expect("typing cannot fail");
-    }
+    session.replace_raw("fang").expect("typing cannot fail");
     session
         .set_sort_options(SORT_IBUS_DEFAULT)
         .expect("set cannot fail");
@@ -573,11 +488,7 @@ fn a_longer_row_rides_an_empty_column_and_the_reserved_slot() {
         FrequencyFixtureModel::parse(LONGER_VOCAB, "").expect("authored fixture"),
     )
     .expect("the fixtures open");
-    for character in "fang".chars() {
-        session
-            .type_pinyin(character.encode_utf8(&mut [0; 4]))
-            .expect("typing cannot fail");
-    }
+    session.replace_raw("fang").expect("typing cannot fail");
     session
         .set_sort_options(SORT_IBUS_DEFAULT)
         .expect("set cannot fail");
@@ -664,10 +575,10 @@ fn type_and_select(
     text: &str,
     token: u32,
 ) {
+    let mut typed = session.raw_input().to_owned();
     for character in text.chars() {
-        session
-            .type_pinyin(character.encode_utf8(&mut [0; 4]))
-            .expect("typing cannot fail");
+        typed.push(character);
+        session.replace_raw(&typed).expect("typing cannot fail");
     }
     let index = session
         .candidates()
@@ -1174,7 +1085,7 @@ fn a_row_records_its_whole_token_path() {
     use crate::nbest::NbestRow;
 
     let mut session = train_session();
-    session.type_pinyin("nihao").expect("typing cannot fail");
+    session.replace_raw("nihao").expect("typing cannot fail");
     assert!(!session.sentence_lookup_active(), "no lookup has run yet");
 
     // One authored row.
@@ -1206,7 +1117,7 @@ fn a_shifted_row_records_its_own_rank_not_its_position() {
     use crate::nbest::NbestRow;
 
     let mut session = train_session();
-    session.type_pinyin("nihao").expect("typing cannot fail");
+    session.replace_raw("nihao").expect("typing cannot fail");
 
     // Rows [好, 好, 浩]: the NBEST-wins dedup keeps the lower-index 好
     // and drops row 1, so the surviving 浩 row sits at list position 1
@@ -1266,7 +1177,7 @@ fn an_nbest_row_chosen_from_a_reanchored_window_commits_only_its_text() {
     use crate::nbest::NbestRow;
 
     let mut session = train_session();
-    session.type_pinyin("nihao").expect("typing cannot fail");
+    session.replace_raw("nihao").expect("typing cannot fail");
 
     // A single whole-composition sentence hypothesis: its span is the
     // full input, so selecting it from a re-anchored window must commit
@@ -1312,7 +1223,7 @@ fn a_lookup_activates_the_sentence_gate_even_without_rows() {
     // rows, and still counts as active — upstream clears
     // m_nbest_results before every attempt.
     session
-        .type_pinyin("qqq")
+        .replace_raw("qqq")
         .expect("batch typing cannot fail");
     assert!(
         session.guess_sentence().expect("guess cannot fail"),
@@ -1328,7 +1239,7 @@ fn a_lookup_activates_the_sentence_gate_even_without_rows() {
 fn normalized_lookup_offset_walks_the_zero_run_and_refuses_a_leading_one() {
     let mut session = session();
     session
-        .type_pinyin("ni'hao")
+        .replace_raw("ni'hao")
         .expect("batch typing cannot fail");
     assert_eq!(session.normalized_lookup_offset(0), Ok(0));
     assert_eq!(
@@ -1340,7 +1251,7 @@ fn normalized_lookup_offset_walks_the_zero_run_and_refuses_a_leading_one() {
 
     session.reset();
     session
-        .type_pinyin("ni''hao")
+        .replace_raw("ni''hao")
         .expect("batch typing cannot fail");
     assert_eq!(
         session.normalized_lookup_offset(4),
@@ -1350,7 +1261,7 @@ fn normalized_lookup_offset_walks_the_zero_run_and_refuses_a_leading_one() {
 
     session.reset();
     session
-        .type_pinyin("'ni")
+        .replace_raw("'ni")
         .expect("batch typing cannot fail");
     assert_eq!(
         session.normalized_lookup_offset(1),
@@ -1361,7 +1272,7 @@ fn normalized_lookup_offset_walks_the_zero_run_and_refuses_a_leading_one() {
 
     session.reset();
     session
-        .type_pinyin("ni'")
+        .replace_raw("ni'")
         .expect("batch typing cannot fail");
     assert_eq!(
         session.normalized_lookup_offset(3),
@@ -1587,7 +1498,7 @@ fn dynamic_adjust_run(
                 .with(DYNAMIC_ADJUST, dynamic),
         )
         .expect("set_options");
-    session.type_pinyin("a").expect("typing cannot fail");
+    session.replace_raw("a").expect("typing cannot fail");
     DynamicAdjustRun {
         texts: session
             .candidates()
@@ -2092,7 +2003,7 @@ fn a_window_ranked_after_a_training_write_prices_the_rewritten_item() {
         },
     )
     .expect("Session::new");
-    session.type_pinyin("a").expect("typing cannot fail");
+    session.replace_raw("a").expect("typing cannot fail");
     assert_eq!(
         texts(session.candidates()),
         ["二", "一"],
@@ -2152,7 +2063,7 @@ fn window_scan_emits_system_candidates_before_addon_candidates() {
         },
     )
     .expect("Session::new");
-    session.type_pinyin("a").expect("typing cannot fail");
+    session.replace_raw("a").expect("typing cannot fail");
     let texts: Vec<&str> = session
         .candidates()
         .iter()
@@ -2341,10 +2252,10 @@ where
     M: LanguageModel<Token = PhraseToken>,
     M::Error: std::fmt::Display,
 {
+    let mut typed = session.raw_input().to_owned();
     for character in text.chars() {
-        session
-            .type_pinyin(character.encode_utf8(&mut [0; 4]))
-            .expect("typing cannot fail");
+        typed.push(character);
+        session.replace_raw(&typed).expect("typing cannot fail");
     }
     let index = session
         .candidates()
@@ -2402,11 +2313,7 @@ fn a_terminal_selection_still_answers_the_full_matrix() {
 fn the_forcing_survives_typing_and_releases_only_on_reset() {
     let mut session = trellis_session();
     type_and_select_over(&mut session, "nihao", 1);
-    for character in "s".chars() {
-        session
-            .type_pinyin(character.encode_utf8(&mut [0; 4]))
-            .expect("typing cannot fail");
-    }
+    session.replace_raw("nihaos").expect("typing cannot fail");
     assert!(
         session.guess_sentence().expect("guess cannot fail"),
         "the walk runs over the extended buffer"
@@ -2426,11 +2333,7 @@ fn the_forcing_survives_typing_and_releases_only_on_reset() {
         !session.clear_constraint(0),
         "the reset released the forcing — the store is empty"
     );
-    for character in "nihaos".chars() {
-        session
-            .type_pinyin(character.encode_utf8(&mut [0; 4]))
-            .expect("typing cannot fail");
-    }
+    session.replace_raw("nihaos").expect("typing cannot fail");
     assert!(
         session.guess_sentence().expect("guess cannot fail"),
         "the post-reset walk runs"
@@ -2472,11 +2375,9 @@ fn clear_constraint_unforces_the_run_and_rebuilds_the_record() {
 #[test]
 fn clearing_a_tail_forcing_reopens_a_committed_composition() {
     let mut session = trellis_session();
-    for character in "nihaoshijie".chars() {
-        session
-            .type_pinyin(character.encode_utf8(&mut [0; 4]))
-            .expect("typing cannot fail");
-    }
+    session
+        .replace_raw("nihaoshijie")
+        .expect("typing cannot fail");
     let select_token = |session: &mut Session<FixtureDictionary, TrellisModel>, token| {
         let index = session
             .candidates()
@@ -2502,11 +2403,9 @@ fn clearing_a_tail_forcing_reopens_a_committed_composition() {
     assert_eq!(session.selected_tokens(), [PhraseToken::new(1)]);
 
     // Further typing keeps the surviving 你 forcing alive.
-    for character in "s".chars() {
-        session
-            .type_pinyin(character.encode_utf8(&mut [0; 4]))
-            .expect("typing cannot fail");
-    }
+    session
+        .replace_raw("nihaoshijies")
+        .expect("typing cannot fail");
     assert!(
         session.guess_sentence().expect("guess cannot fail"),
         "the walk runs"
@@ -2533,11 +2432,7 @@ fn clearing_a_tail_forcing_reopens_a_committed_composition() {
 #[test]
 fn a_shrinking_reparse_reconciles_a_constraint_free_row_selection() {
     let mut session = trellis_session();
-    for character in "nihao".chars() {
-        session
-            .type_pinyin(character.encode_utf8(&mut [0; 4]))
-            .expect("typing cannot fail");
-    }
+    session.replace_raw("nihao").expect("typing cannot fail");
     assert!(session.guess_sentence().expect("guess cannot fail"));
     let row0 = session
         .candidates()
@@ -2589,11 +2484,7 @@ fn a_shrinking_reparse_reconciles_a_constraint_free_row_selection() {
 #[test]
 fn a_divergent_replacement_reconciles_the_committed_selection() {
     let mut session = trellis_session();
-    for character in "nihao".chars() {
-        session
-            .type_pinyin(character.encode_utf8(&mut [0; 4]))
-            .expect("typing cannot fail");
-    }
+    session.replace_raw("nihao").expect("typing cannot fail");
     for token in [1_u32, 2] {
         let index = session
             .candidates()
@@ -2659,21 +2550,17 @@ fn temporary_reparses_keep_constraints_until_a_guess_validates_them() {
     }
 }
 
-/// The engine-internal backspace keeps the forcing: erase shrinks
-/// the raw buffer one keystroke at a time (the engine's own
-/// backspace path — the capi's shrink is the same rule through
-/// `begin_parse`), the store survives, and the next guess
-/// re-validates: down to the forcing's own floor the row is the
-/// forced phrase alone, and re-typing continues the composition
-/// with the forcing intact.
+/// The C parsing path's shrink keeps the forcing: the frontend sends the
+/// shorter buffer one keystroke at a time, the store survives, and the next
+/// guess re-validates: down to the forcing's own floor the row is the forced
+/// phrase alone, and a grown buffer continues the composition with the
+/// forcing intact.
 #[test]
-fn the_forcing_survives_the_engine_backspace_and_retype() {
+fn the_forcing_survives_the_shrinking_parse_and_retype() {
     let mut session = trellis_session();
-    for character in "nihaoshijie".chars() {
-        session
-            .type_pinyin(character.encode_utf8(&mut [0; 4]))
-            .expect("typing cannot fail");
-    }
+    session
+        .replace_raw("nihaoshijie")
+        .expect("typing cannot fail");
     let index = session
         .candidates()
         .iter()
@@ -2681,13 +2568,11 @@ fn the_forcing_survives_the_engine_backspace_and_retype() {
         .expect("the fixture candidate is offered");
     session.select(index).expect("selection cannot fail");
 
-    // Backspace the buffer down to the forcing's floor.
-    for _ in 0..9 {
-        assert_eq!(
-            session.erase(),
-            Ok(KeyOutcome::Consumed),
-            "erase pops while input remains"
-        );
+    // Shrink the buffer down to the forcing's floor.
+    for end in (2..11).rev() {
+        session
+            .replace_raw(&"nihaoshijie"[..end])
+            .expect("shrink cannot fail");
     }
     assert_eq!(session.raw_input(), "ni");
     assert!(
@@ -2701,10 +2586,10 @@ fn the_forcing_survives_the_engine_backspace_and_retype() {
     );
 
     // The re-type continues the open composition with the forcing.
-    for character in "haoshijie".chars() {
+    for end in 3..=11 {
         session
-            .type_pinyin(character.encode_utf8(&mut [0; 4]))
-            .expect("typing cannot fail");
+            .replace_raw(&"nihaoshijie"[..end])
+            .expect("retype cannot fail");
     }
     assert!(
         session.guess_sentence().expect("guess cannot fail"),
@@ -2717,17 +2602,7 @@ fn the_forcing_survives_the_engine_backspace_and_retype() {
     assert_eq!(
         session.selected_tokens(),
         [PhraseToken::new(1)],
-        "the forcing survived the backspace and the retype"
-    );
-
-    // The all-or-nothing erase (nothing left to pop) un-selects
-    // everything, store included.
-    for _ in 0..11 {
-        let _ = session.erase();
-    }
-    assert!(
-        !session.clear_constraint(0),
-        "the un-select cleared the store"
+        "the forcing survived the shrink and the retype"
     );
 }
 
@@ -2739,7 +2614,7 @@ fn the_forcing_survives_the_engine_backspace_and_retype() {
 #[test]
 fn a_fresh_composition_row_choose_records_its_forcing() {
     let mut session = train_session();
-    session.type_pinyin("nihao").expect("typing cannot fail");
+    session.replace_raw("nihao").expect("typing cannot fail");
     // Hand-crafted rows whose rank-1 phrase differs from row 0's —
     // the shifted-row shape (`sentence-surface.md` §8).
     session.sentence.rows = vec![
@@ -2790,7 +2665,7 @@ fn a_fresh_composition_row_choose_records_its_forcing() {
 fn a_record_rebuild_keeps_the_gap_text_between_forcings() {
     let mut session = train_session();
     session
-        .type_pinyin("nihaoshijie")
+        .replace_raw("nihaoshijie")
         .expect("typing cannot fail");
     // A gapped store straight from diff_result's shape: 你 over
     // [0,2), a free gap "ha" over [2,5), a forcing over [5,10).
@@ -2816,11 +2691,7 @@ fn a_record_rebuild_keeps_the_gap_text_between_forcings() {
 #[test]
 fn a_row_zero_choose_trains_nothing_even_with_recorded_tokens() {
     let mut session = trellis_session();
-    for character in "nihao".chars() {
-        session
-            .type_pinyin(character.encode_utf8(&mut [0; 4]))
-            .expect("typing cannot fail");
-    }
+    session.replace_raw("nihao").expect("typing cannot fail");
     assert!(
         session.guess_sentence().expect("guess cannot fail"),
         "rows exist before the choose"
@@ -2923,7 +2794,7 @@ fn candidates_at_mid_syllable_offsets_answer_the_empty_column() {
     // `h…` window). The syllable starts keep their windows.
     let mut session = train_session();
     session
-        .type_pinyin("nihaoshijie")
+        .replace_raw("nihaoshijie")
         .expect("typing cannot fail");
     for offset in [1usize, 3, 4, 6, 7, 9] {
         let window = session
@@ -2955,7 +2826,7 @@ fn candidates_at_mid_syllable_offsets_answer_the_empty_column() {
 fn a_recycled_window_lends_its_storage_to_the_next() {
     let mut session = train_session();
     session
-        .type_pinyin("nihaoshijie")
+        .replace_raw("nihaoshijie")
         .expect("typing cannot fail");
     let first = session
         .candidates_at(2)
@@ -2993,7 +2864,7 @@ fn candidates_at_mid_syllable_keeps_the_prepended_nbest_rows() {
     // answers n=3 on the pin) over the fallback — not an empty list.
     let mut session = train_session();
     session
-        .type_pinyin("nihaoshijie")
+        .replace_raw("nihaoshijie")
         .expect("typing cannot fail");
     session.sentence.rows = vec![NbestRow {
         poss: None,
@@ -3050,7 +2921,7 @@ fn the_zhuyin_display_law_prepends_only_the_one_best_row() {
     // sentence (`pinyin.cpp:2004-2007`).
     let mut session = train_session();
     session
-        .type_pinyin("nihaoshijie")
+        .replace_raw("nihaoshijie")
         .expect("typing cannot fail");
     session.sentence.rows = vec![row("你好世界", 10), row("你", 12)];
 
@@ -3106,7 +2977,7 @@ fn choosing_a_before_cursor_row_constrains_its_own_span() {
     }
 
     let mut session = train_session();
-    session.type_pinyin("nihao").expect("typing cannot fail");
+    session.replace_raw("nihao").expect("typing cannot fail");
     let window = session
         .candidates_ending_at(5)
         .expect("offset 5 is in range");
@@ -3151,7 +3022,7 @@ fn candidates_ending_at_walks_the_spans_that_end_there() {
     // (measured on the instrumented oracle: su3u3 before(3) is the first
     // syllable's 125 rows plus one BEST_MATCH row).
     let mut session = train_session();
-    session.type_pinyin("nihao").expect("typing cannot fail");
+    session.replace_raw("nihao").expect("typing cannot fail");
 
     let window = session
         .candidates_ending_at(2)
@@ -3201,7 +3072,7 @@ fn candidates_at_the_apostrophe_column_is_transparent() {
     // window, n=93), so the apostrophe byte answers the next key's
     // window instead of collapsing to the empty-column law.
     let mut session = train_session();
-    session.type_pinyin("ni'hao").expect("typing cannot fail");
+    session.replace_raw("ni'hao").expect("typing cannot fail");
     let at_separator = session
         .candidates_at(2)
         .expect("the separator byte is in range");
@@ -3232,7 +3103,7 @@ fn candidates_at_an_incomplete_tail_column_stays_empty() {
     // pin), so byte 6 is an empty column even though the lone suffix
     // `h` could start a parse of its own.
     let mut session = train_session();
-    session.type_pinyin("nihaozh").expect("typing cannot fail");
+    session.replace_raw("nihaozh").expect("typing cannot fail");
     let window = session.candidates_at(6).expect("byte 6 is in range");
     assert!(
         window
@@ -3305,7 +3176,7 @@ fn candidates_at_a_divided_split_column_answers_the_split_window() {
 
     let mut session = split_session();
     session
-        .type_pinyin("nihaoshijie")
+        .replace_raw("nihaoshijie")
         .expect("typing cannot fail");
     assert!(
         session.spans_a_matrix_key(10).expect("byte 10 is in range"),
@@ -3338,7 +3209,7 @@ fn candidates_at_a_divided_split_column_answers_the_split_window() {
     }
 
     let mut session = split_session();
-    session.type_pinyin("fangan").expect("typing cannot fail");
+    session.replace_raw("fangan").expect("typing cannot fail");
     assert!(
         session.spans_a_matrix_key(4).expect("byte 4 is in range"),
         "byte 4 is the fang|an resplit column"
@@ -3684,7 +3555,7 @@ fn divided_table_gate_controls_the_split_column() {
     let mut s = session();
     s.set_options(without_divided)
         .expect("set_options cannot fail on an empty session");
-    s.type_pinyin("nihaoshijie").expect("typing cannot fail");
+    s.replace_raw("nihaoshijie").expect("typing cannot fail");
 
     // PINYIN_INCOMPLETE is set so the graph carries incomplete edges,
     // but byte 10 (the divided e half) must NOT be a live matrix column
@@ -3701,7 +3572,7 @@ fn divided_table_gate_controls_the_split_column() {
     let mut s2 = session();
     s2.set_options(with_divided)
         .expect("set_options cannot fail on an empty session");
-    s2.type_pinyin("nihaoshijie").expect("typing cannot fail");
+    s2.replace_raw("nihaoshijie").expect("typing cannot fail");
     assert!(
         s2.spans_a_matrix_key(10).expect("byte 10 is in range"),
         "byte 10 must be live with USE_DIVIDED_TABLE — the ji|e divided pair"
@@ -3719,7 +3590,7 @@ fn engine_default_includes_divided_and_resplit_table_bits() {
     // USE_DIVIDED_TABLE the column would be empty.
     let mut session = session();
     session
-        .type_pinyin("nihaoshijie")
+        .replace_raw("nihaoshijie")
         .expect("typing cannot fail");
     assert!(
         session.spans_a_matrix_key(10).expect("byte 10 is in range"),
@@ -3747,7 +3618,7 @@ fn choosing_behind_the_composition_moves_the_record_back() {
         FixtureLanguageModel::parse(VOCAB, "").expect("authored fixture"),
     )
     .expect("the fixtures open");
-    session.type_pinyin("nihao").expect("typing cannot fail");
+    session.replace_raw("nihao").expect("typing cannot fail");
     let whole = session
         .candidates()
         .iter()
@@ -3832,7 +3703,7 @@ fn typed_tones_keep_only_user_phrases_with_a_matching_stored_tone() {
         session
             .set_options(oxpinyin_core::OptionBits::from_bits(0x1aa))
             .expect("options apply");
-        session.type_pinyin(input).expect("typing cannot fail");
+        session.replace_raw(input).expect("typing cannot fail");
         session
             .candidates()
             .iter()
@@ -3971,7 +3842,7 @@ fn chained_resplit_and_divided_windows_read_the_retained_matrix() {
         session
             .set_options(OptionBits::from_bits(0x18a))
             .expect("options");
-        session.type_pinyin(raw).expect("parse");
+        session.replace_raw(raw).expect("parse");
         let rows = session.candidates_at(offset).expect("window");
         let row = rows.iter().find(|row| row.text() == wanted).expect(wanted);
         assert_eq!(row.consumed_bytes(), end - offset);
@@ -4382,12 +4253,16 @@ fn parser_graph_is_invalidated_by_input_exact_chain_and_options() {
     ));
     session.replace_raw("ni").expect("raw replacement");
     assert_eq!(session.full_parsed_len(), 2);
-    session.input.push('h');
-    assert!(session.input.graph.get().is_none());
-    session.refresh().expect("push refresh");
-    session.input.pop();
-    assert!(session.input.graph.get().is_none());
-    session.refresh().expect("pop refresh");
+    let replaced = session.input.graph.get().expect("rebuilt graph").clone();
+    assert!(!Arc::ptr_eq(&changed, &replaced));
+    session.replace_raw("nih").expect("raw growth");
+    let grown = session.input.graph.get().expect("grown graph").clone();
+    assert!(!Arc::ptr_eq(&replaced, &grown));
+    session.replace_raw("ni").expect("raw shrink");
+    assert!(!Arc::ptr_eq(
+        &grown,
+        session.input.graph.get().expect("shrunk graph")
+    ));
     session.reset();
     assert!(session.input.graph.get().is_none());
     assert_eq!(session.full_parsed_len(), 0);
@@ -4412,9 +4287,9 @@ fn cached_matrix_keys_follow_every_input_and_option_change() {
     assert!(session.input.keys.get().is_some(), "the list is cached");
     session.replace_raw("ni'hao").expect("replace");
     assert_eq!(spans(&session), (vec![(0, 2), (3, 6)], 6));
-    session.type_pinyin("s").expect("push");
+    session.replace_raw("ni'haos").expect("grow");
     assert_eq!(spans(&session).1, 7);
-    session.erase().expect("pop");
+    session.replace_raw("ni'hao").expect("shrink");
     assert_eq!(spans(&session), (vec![(0, 2), (3, 6)], 6));
     session.replace_raw("sh").expect("initial only");
     let with_incomplete = spans(&session);
@@ -4754,11 +4629,7 @@ fn a_searched_row_the_dedup_removes_is_still_a_ranked_row() {
         FrequencyFixtureModel::parse(ONE_PHRASE_VOCAB, "").expect("authored fixture"),
     )
     .expect("the fixtures open");
-    for character in "ni".chars() {
-        session
-            .type_pinyin(character.encode_utf8(&mut [0; 4]))
-            .expect("typing cannot fail");
-    }
+    session.replace_raw("ni").expect("typing cannot fail");
     // The decoded sentence, planted as `candidates_ending_at_walks_the_spans_that_end_there`
     // does: one row whose text is the phrase's.
     session.sentence.rows = vec![crate::nbest::NbestRow {
