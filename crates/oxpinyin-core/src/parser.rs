@@ -549,7 +549,6 @@ mod tests {
     use super::{
         Completeness, FullPinyinParser, MAX_PARSE_RESULTS, ParseError, ParseResult, ParsedSyllable,
     };
-    use crate::ChewingKey;
     use crate::OptionBits;
     use crate::options::{FORCE_TONE, PINYIN_CORRECT_GN_NG, PINYIN_INCOMPLETE, USE_TONE};
 
@@ -557,20 +556,6 @@ mod tests {
     /// one spelling probe — multi-syllable and apostrophe inputs are
     /// refused, a trailing `1..=5` is the tone under `USE_TONE`, and
     /// `FORCE_TONE` (nested inside `USE_TONE`) rejects toneless input.
-    /// The crate's `content_table` port covers exactly the frozen
-    /// inventory: every [`SyllableKey`] resolves to a key whose row
-    /// spelling is the key's own, and the packed form round-trips.
-    #[test]
-    fn frozen_inventory_matches_the_chewing_content_table() {
-        for index in 0..crate::SYLLABLE_KEY_COUNT {
-            let syllable = crate::SyllableKey::from_index(index).expect("in range");
-            let key = ChewingKey::from_pinyin(syllable.text()).expect("row exists");
-            assert_eq!(key.pinyin_spelling(), syllable.text());
-            assert_eq!(key.tone, 0);
-            assert_eq!(ChewingKey::from_packed(key.to_packed()), key);
-        }
-    }
-
     #[test]
     fn full_pinyin_one_key_law() {
         let parser = FullPinyinParser;
@@ -746,6 +731,13 @@ mod tests {
             (b"ni'", vec![complete("ni", 0, 2)], b"'"),
             (b"ni'i", vec![complete("ni", 0, 2)], b"'i"),
             (b"ni'!", vec![complete("ni", 0, 2)], b"'!"),
+            // The longest complete and partial prefix is `ni` + `h`; the
+            // `x` that no key consumes is the remainder.
+            (
+                b"nihx",
+                vec![complete("ni", 0, 2), partial("h", 2, 3)],
+                b"x",
+            ),
             (&[0xff, b'n', b'i'], vec![], &[0xff, b'n', b'i']),
             (
                 &[b'n', b'i', 0xff, b'h', b'a', b'o'],

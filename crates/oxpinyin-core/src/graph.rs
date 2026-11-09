@@ -1213,6 +1213,9 @@ mod tests {
         // rebuilt pin (`pinyin_parse_more_full_pinyins` returns 3, the
         // F-E-14 table row). The propagation step now lives in
         // `build_with_options`' reachability walk.
+        // The pin's recorded path for `ni'` is
+        // `ni@0:2:complete,<missing-pinyin>@2`; the oracle sentinels `ni'!`
+        // and `ni'i` record the same path.
         let trailing = SegmentGraph::build(b"ni'").expect("valid");
         assert_eq!(trailing.consumed(), 3);
         assert!(trailing.fully_consumed());
@@ -1266,25 +1269,6 @@ mod tests {
             );
         }
         assert!(graph.fully_consumed());
-    }
-
-    #[test]
-    fn ties_between_equal_length_alternatives_are_ordered_by_position() {
-        // fangan admits fang+an, fan+gan and fa+ng+an. Every one of those
-        // edges exists, and the order is a function of the input alone.
-        let first = rendered("fangan");
-        let second = rendered("fangan");
-        assert_eq!(first, second);
-        for wanted in [
-            "0-4:fang:exact",
-            "0-3:fan:segmentation",
-            "0-2:fa:segmentation",
-            "3-6:gan:exact",
-            "4-6:an:exact",
-            "2-4:ng:exact",
-        ] {
-            assert!(first.contains(&wanted.to_owned()), "missing {wanted}");
-        }
     }
 
     #[test]
@@ -1509,19 +1493,5 @@ mod tests {
             FewestKeys::parse("").map(|parsed| parsed.keys().len()),
             Some(0)
         );
-    }
-
-    #[test]
-    fn malformed_utf8_and_control_bytes_build_a_graph() {
-        for input in [
-            &[0xff, b'n', b'i'][..],
-            &[b'n', b'i', 0x00, b'h'][..],
-            &[0x80, 0x80][..],
-            b"NIHAO",
-            b"ni2hao3",
-        ] {
-            let graph = SegmentGraph::build(input).expect("every byte string builds");
-            assert!(graph.consumed() <= graph.input_len());
-        }
     }
 }

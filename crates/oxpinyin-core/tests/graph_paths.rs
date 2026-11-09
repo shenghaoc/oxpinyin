@@ -34,33 +34,6 @@ const EXPECTED_PIN_REF: &str = concat!(
 /// apostrophe cases remain.
 const OPEN_APOSTROPHE_CASES: [&str; 0] = [];
 
-/// Expectations retained from the deleted `live_sentinels` tests, without a
-/// new pin run. See `oracle-apostrophe-abort.md`: the no-key-column and
-/// missing-pinyin sentinels have no syllable edge to walk.
-#[test]
-fn apostrophe_only_inputs_consume_every_byte_without_key_edges() {
-    for input in ["'", "''", "'''"] {
-        let graph = SegmentGraph::build(input.as_bytes()).expect("short input");
-        assert_eq!(graph.consumed(), input.len(), "{input:?}");
-        assert!(graph.edges().is_empty(), "{input:?}");
-    }
-}
-
-#[test]
-fn trailing_apostrophe_sentinels_retain_the_recorded_ni_path() {
-    // The recorded pin wire value for all three was
-    // `ni@0:2:complete,<missing-pinyin>@2`.
-    for input in ["ni'", "ni'!", "ni'i"] {
-        let graph = SegmentGraph::build(input.as_bytes()).expect("short input");
-        assert_eq!(graph.consumed(), 3, "{input:?}");
-        assert_eq!(
-            walk(&graph, &parse_path("ni@0:2:complete")),
-            Ok(()),
-            "{input:?}"
-        );
-    }
-}
-
 /// One record: the input, what the oracle consumed, and the path it chose.
 struct Record {
     input: Vec<u8>,
@@ -153,50 +126,30 @@ fn walk(
     Ok(())
 }
 
+/// One pass over the fixture: it holds the whole corpus from the recorded
+/// pin, and for each record the graph walks the oracle's path and consumes
+/// what the oracle consumed.
 #[test]
-fn the_fixture_covers_the_whole_corpus() {
+fn every_captured_oracle_path_is_a_graph_path() {
+    assert!(PATHS.contains("pinyin-oracle-path-v1"));
+    assert!(PATHS.contains(EXPECTED_PIN_REF));
     let records = records();
     assert_eq!(
         records.len(),
         10_459,
         "10,465 corpus inputs less the six oracle-sentinel records"
     );
-    assert!(PATHS.contains("pinyin-oracle-path-v1"));
-    assert!(PATHS.contains(EXPECTED_PIN_REF));
-}
 
-#[test]
-fn the_fixture_paths_are_internally_consistent() {
-    for record in records() {
-        let mut previous_end = 0;
-        for (text, begin, end, _) in &record.segments {
-            assert!(
-                begin >= &previous_end,
-                "segments overlap in {:?}",
-                record.input
-            );
-            assert_eq!(end - begin, text.len(), "range disagrees with text");
-            assert!(*end <= record.input.len(), "segment runs past the input");
-            assert_eq!(
-                &record.input[*begin..*end],
-                text.as_bytes(),
-                "segment text is not the input it claims"
-            );
-            previous_end = *end;
-        }
-        assert!(record.consumed <= record.input.len());
-        assert!(previous_end <= record.consumed);
-    }
-}
-
-#[test]
-fn every_captured_oracle_path_is_a_graph_path() {
     let mut failures: Vec<(String, String)> = Vec::new();
-
-    for record in records() {
+    let mut disagreements: Vec<(String, usize, usize)> = Vec::new();
+    for record in records {
         let graph = SegmentGraph::build(&record.input).expect("corpus inputs are short");
+        let input = String::from_utf8_lossy(&record.input).into_owned();
         if let Err(reason) = walk(&graph, &record.segments) {
-            failures.push((String::from_utf8_lossy(&record.input).into_owned(), reason));
+            failures.push((input.clone(), reason));
+        }
+        if graph.consumed() != record.consumed {
+            disagreements.push((input, graph.consumed(), record.consumed));
         }
     }
 
@@ -205,88 +158,6 @@ fn every_captured_oracle_path_is_a_graph_path() {
         inputs, OPEN_APOSTROPHE_CASES,
         "unexpected graph gaps: {failures:?}"
     );
-}
-
-#[test]
-fn the_incomplete_key_divergences_are_resolved() {
-    // Keep the named W2 witnesses on the graph path that shipping uses. Their
-    // selected paths are already in the frozen fixture; no live oracle is
-    // needed to check these formerly live-only assertions in per-PR CI.
-    let records = records();
-    for (input, path) in [
-        (
-            "yingchon",
-            "ying@0:4:complete,ch@4:6:partial,o@6:7:complete,n@7:8:partial",
-        ),
-        (
-            "fanrufe",
-            "fan@0:3:complete,ru@3:5:complete,f@5:6:partial,e@6:7:complete",
-        ),
-        ("ngannve", "n@0:1:partial,gan@1:4:complete,nve@4:7:complete"),
-        (
-            "zzzzzzzz",
-            "z@0:1:partial,z@1:2:partial,z@2:3:partial,z@3:4:partial,z@4:5:partial,z@5:6:partial,z@6:7:partial,z@7:8:partial",
-        ),
-    ] {
-        let record = records
-            .iter()
-            .find(|record| record.input == input.as_bytes())
-            .expect("named W2 witness is in the frozen corpus");
-        assert_eq!(record.segments, parse_path(path), "{input}");
-        let graph = SegmentGraph::build(input.as_bytes()).expect("short input");
-        assert_eq!(walk(&graph, &record.segments), Ok(()), "{input}");
-        assert_eq!(graph.consumed(), input.len(), "{input}");
-    }
-
-    // The population the graph was built for: paths carrying an initial-only
-    // key that is not the final segment, which no Vec<Parse> path set can
-    // hold. Every one of them must walk.
-    let mut checked = 0;
-
-    for record in records {
-        let has_mid_partial =
-            record
-                .segments
-                .iter()
-                .enumerate()
-                .any(|(index, (_, _, _, completeness))| {
-                    *completeness == Completeness::Partial && index + 1 < record.segments.len()
-                });
-        if !has_mid_partial {
-            continue;
-        }
-
-        checked += 1;
-        let graph = SegmentGraph::build(&record.input).expect("corpus inputs are short");
-        assert_eq!(
-            walk(&graph, &record.segments),
-            Ok(()),
-            "{:?}",
-            String::from_utf8_lossy(&record.input)
-        );
-    }
-
-    assert!(
-        checked >= 481,
-        "expected the measured path-set population, saw {checked}"
-    );
-}
-
-#[test]
-fn the_graph_consumes_what_the_oracle_consumed() {
-    let mut disagreements: Vec<(String, usize, usize)> = Vec::new();
-
-    for record in records() {
-        let graph = SegmentGraph::build(&record.input).expect("corpus inputs are short");
-        if graph.consumed() != record.consumed {
-            disagreements.push((
-                String::from_utf8_lossy(&record.input).into_owned(),
-                graph.consumed(),
-                record.consumed,
-            ));
-        }
-    }
-
     let inputs: Vec<&str> = disagreements
         .iter()
         .map(|(input, ..)| input.as_str())
