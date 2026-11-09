@@ -197,30 +197,10 @@ pub extern "C" fn zhuyin_choose_candidate(
         return c_int::try_from(inst.core.parsed_len).unwrap_or(c_int::MAX);
     }
     let source_index = inst.state.candidates[index].source_index as usize;
-    // An after-cursor row's end in the window the caller saw — the pin's
-    // `offset = m_end` (`zhuyin.cpp:1649-1654`). A choose behind the
-    // composition offset (register row 37) re-derives the composition
-    // offset from the surviving forcings, which can reach past this span.
-    let window_end = inst
-        .core
-        .anchored_window
-        .as_ref()
-        .and_then(|(anchor, window)| {
-            window
-                .get(source_index)
-                .map(|row| anchor + row.span_start() + row.consumed_bytes())
-        });
-    let selection = match inst.core.state.anchored_window.as_ref() {
-        Some((anchor, window)) => inst
-            .core
-            .session
-            .select_anchored(source_index, window, *anchor),
-        None => inst.core.session.select(source_index),
+    let window_end = match inst.core.select_candidate(source_index, None) {
+        Ok(window_end) => window_end,
+        Err(_) => return -1,
     };
-    if selection.is_err() {
-        return -1;
-    }
-    inst.core.anchored_window = None;
     // `zhuyin_choose_candidate`'s return (`zhuyin.cpp:1644-1663` at the
     // pin): the BEST_MATCH row answers the parse end (`matrix.size() - 1`);
     // an after-cursor row answers its span's end (`offset = m_end`); a
@@ -258,10 +238,7 @@ pub extern "C" fn zhuyin_clear_constraint(instance: *mut ZhuyinInstance, offset:
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
     let mut inst = unsafe { instance_mut(instance) };
-    let session_offset = inst.core.zhuyin_parse.as_ref().map_or(offset, |parse| {
-        oxpinyin_facade::zhuyin_session_offset(parse, offset)
-    });
-    inst.core.session.clear_constraint(session_offset)
+    inst.core.clear_abi_constraint(offset, false, false)
 }
 
 /// Train the current sentence.

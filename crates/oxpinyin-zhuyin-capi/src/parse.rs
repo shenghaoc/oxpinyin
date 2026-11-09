@@ -90,7 +90,7 @@ pub extern "C" fn zhuyin_get_parsed_input_length(instance: *mut ZhuyinInstance) 
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
-    inst.core.parsed_len
+    inst.core.parsed_input_length()
 }
 
 /// Check whether an input key is in the current chewing keyboard scheme.

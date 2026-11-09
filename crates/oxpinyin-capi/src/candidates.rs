@@ -450,49 +450,12 @@ pub extern "C" fn pinyin_choose_candidate(
         return unigram_leg_answer(ctx.core.runtime.add_unigram_outcome(token.value(), 483));
     }
     let source_index = inst.state.candidates[index].source_index as usize;
-    // The chosen row's end in the window the caller saw — the pin's
-    // `offset + len` (`pinyin.cpp:2582-2589`, `m_begin = start = offset`,
-    // `:2246`). A choose behind the composition offset (register row 37)
-    // re-derives the composition offset from the surviving forcings, which
-    // can reach past this span; the answer is still the span's end.
-    let window_end = inst
-        .core
-        .anchored_window
-        .as_ref()
-        .and_then(|(anchor, window)| {
-            window
-                .get(source_index)
-                .map(|row| anchor + row.span_start() + row.consumed_bytes())
-        });
-    // Resolve the selection against the window the caller actually saw:
-    // when the last `pinyin_guess_candidates` re-anchored at an offset
-    // other than the composition's own, that window is held in
-    // `anchored_window`, and an index into the composition-anchored
-    // cached list would select a different row.
-    let selection = match addon_token {
-        Some(promoted) => match inst.core.state.anchored_window.as_ref() {
-            Some((anchor, window)) => {
-                inst.core
-                    .session
-                    .select_anchored_promoted(source_index, window, *anchor, promoted)
-            }
-            None => inst.core.session.select_promoted(source_index, promoted),
-        },
-        None => match inst.core.state.anchored_window.as_ref() {
-            Some((anchor, window)) => {
-                inst.core
-                    .session
-                    .select_anchored(source_index, window, *anchor)
-            }
-            None => inst.core.session.select(source_index),
-        },
+    // Resolve the selection against the window the caller actually saw,
+    // and keep the row's end in that window for the answer below.
+    let window_end = match inst.core.select_candidate(source_index, addon_token) {
+        Ok(window_end) => window_end,
+        Err(_) => return -1,
     };
-    if selection.is_err() {
-        return -1;
-    }
-    // The selection refreshed the cached list at the new composition
-    // offset, so a subsequent index is against that refreshed list.
-    inst.core.anchored_window = None;
     // The candidate's absolute end. The snapshot span is anchored at
     // the session's composition offset and includes any separator run
     // it crossed, while the caller offset may already sit past that
@@ -569,16 +532,7 @@ pub extern "C" fn pinyin_clear_constraint(instance: *mut PinyinInstance, offset:
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let mut inst = unsafe { instance_mut(instance) };
-    let session_offset = if let Some(parse) = inst.core.zhuyin_parse.as_ref() {
-        oxpinyin_facade::zhuyin_session_offset(parse, offset)
-    } else if let Some(parse) = inst.core.double_parse.as_ref() {
-        oxpinyin_facade::double_session_offset(parse, offset)
-    } else if let Some(parse) = inst.core.full_parse.as_ref() {
-        oxpinyin_facade::full_session_offset(parse, offset)
-    } else {
-        offset
-    };
-    inst.core.session.clear_constraint(session_offset)
+    inst.core.clear_abi_constraint(offset, true, true)
 }
 
 /// Promotes the chosen candidate when it is an `ADDON_CANDIDATE`

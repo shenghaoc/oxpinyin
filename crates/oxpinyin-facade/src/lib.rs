@@ -38,6 +38,7 @@
 mod context;
 mod cursor;
 mod export_rows;
+mod import;
 mod instance;
 mod offsets;
 mod parse;
@@ -53,8 +54,10 @@ pub use export_rows::{
     BigramExportWalk, BigramStep, ExportAssert, ExportRow, ExportStep, ExportedBigramRow,
     GramLoadFault, PhraseExportCursor,
 };
+pub use import::{ImportPlan, plan_add};
 pub use instance::{
     BEFORE_CURSOR_ANCHOR, InstanceCore, InstanceMut, InstanceRead, InstanceState, InstanceView,
+    refuse_lookup_gram,
 };
 pub use offsets::{
     double_offset_is_mid_key, double_original_offset, double_session_offset,

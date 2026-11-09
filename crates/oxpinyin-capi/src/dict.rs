@@ -25,8 +25,6 @@
 use oxpinyin_capi_marshal::phrase_text::phrase_text_bytes;
 use std::os::raw::{c_char, c_uint, c_void};
 
-use oxpinyin_core::Dictionary;
-
 use glib_sys::{g_array_append_vals, g_array_set_size};
 
 use crate::state::instance_ref;
@@ -62,13 +60,7 @@ pub extern "C" fn pinyin_lookup_tokens(
     let text =
         oxpinyin_capi_marshal::input::utf8_to_ucs4(oxpinyin_capi_marshal::borrow_c_string!(phrase))
             .unwrap_or_default();
-    let tokens: Vec<u32> = inst
-        .core
-        .dict
-        .tokens_for_ucs4(&text.outward_words().collect::<Vec<_>>())
-        .iter()
-        .map(|token| token.value())
-        .collect();
+    let tokens = inst.core.phrase_tokens(&text);
     // `reduce_tokens` clears the caller's array and appends every library's
     // hits, and only then validates the combined count
     // (`phrase_large_table3.h:79-95`): five or more tokens reach
@@ -152,7 +144,7 @@ pub extern "C" fn pinyin_token_get_phrase(
     let inst = unsafe { instance_ref(instance) };
     // An unknown token answers `false` with both out-params untouched
     // (`_token_get_phrase` returns before writing, `pinyin.cpp:1627`).
-    let Some(text) = inst.core.dict.token_text(token) else {
+    let Some(text) = inst.core.token_text(token) else {
         return false;
     };
     if !len.is_null() {
@@ -206,7 +198,7 @@ pub extern "C" fn pinyin_token_get_n_pronunciation(
             *num = 0;
         }
     }
-    let Some(count) = inst.core.dict.token_pronunciation_count(token) else {
+    let Some(count) = inst.core.token_pronunciation_count(token) else {
         return false;
     };
     if !num.is_null() {
@@ -387,49 +379,9 @@ pub extern "C" fn pinyin_token_get_unigram_frequency(
     // rides on it there, the overlay delta below. A token whose
     // library owns no item answers `false`, as `get_phrase_item`
     // failing does upstream.
-    let nibble = token >> 24;
-    let is_system = u8::try_from(nibble).is_ok_and(|index| inst.core.dict.is_system_library(index));
-    let base = match nibble {
-        _ if is_system => {
-            if !inst.core.dict.token_exists(token) {
-                // Unloaded library or no such item — nothing is
-                // reported (matches the visibility filter every other
-                // Tier-C read honours).
-                None
-            } else {
-                use oxpinyin_core::LanguageModel;
-                inst.core
-                    .lm
-                    .unigram_freq(&oxpinyin_core::PhraseToken::new(token))
-                    .ok()
-                    .flatten()
-            }
-        }
-        // The default facade's `USER_FILE` sub-indexes (addon.bin /
-        // network.bin / user.bin): the pin reads the item from
-        // `m_phrase_index`, never the addon facade (`pinyin.cpp:2821-2834`
-        // via `phrase_index.h:646-652`). The stored field is the user
-        // store's UNIGRAM accumulation; an absent item answers `false`, as
-        // `get_phrase_item`'s `ERROR_NO_ITEM` does.
-        5..=7 => inst
-            .core
-            .user
-            .as_ref()
-            .filter(|_| inst.core.dict.library_visible(nibble))
-            .and_then(|store| store.user_unigram_frequency(token).ok().flatten()),
-        _ => None,
-    };
-    let Some(base) = base else {
+    let Some(count) = inst.core.token_unigram_frequency(token) else {
         return false;
     };
-    // A system item's frequency comes from the language model, which
-    // already prices the overlay into it; the other libraries take it here.
-    let overlay = if is_system {
-        0
-    } else {
-        inst.core.dict.unigram_delta(token).unwrap_or(0)
-    };
-    let count = base + overlay;
     if !freq.is_null() {
         // SAFETY: Null-checked above.
         unsafe {

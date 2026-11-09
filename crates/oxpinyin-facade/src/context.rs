@@ -850,6 +850,22 @@ impl ContextCore {
         self.runtime.user_store_mut()
     }
 
+    /// The import iterator's constructor step: compact every sub-index so a
+    /// layout-failed empty one reports its local total as zero.
+    pub fn begin_import(&mut self) {
+        let _compacted = self.compact_layout_failed();
+    }
+
+    /// The import iterator's close step: compact each library's total from
+    /// its items and arm the store's modified flag for the next save. Absent
+    /// without a user store.
+    pub fn end_import(&mut self) {
+        if let Some(user) = self.user_store_mut() {
+            user.compact_libraries();
+            user.mark_modified();
+        }
+    }
+
     /// Train retained composition after re-borrowing the current storage.
     pub fn train(
         &mut self,
