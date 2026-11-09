@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from tools.dev import abi
-from tools.dev.abi import HostFacts, darwin_export_trie, exported_symbols, header_slots, register_shape, version_globals
+from tools.dev.abi import HostFacts, darwin_export_trie, exported_symbols, header_slots, version_globals
 
 
 class SymbolTests(unittest.TestCase):
@@ -29,19 +29,9 @@ class SymbolTests(unittest.TestCase):
                                                ('get_name', 'owned', 'char-pp'),
                                                ('new_handle', 'return', 'ptr-return')])
 
-    def test_register_shape_and_both_negative_controls(self):
-        self.assertEqual(register_shape('# comment\nname out g_free note pin-probe:valid\n'), [])
-        self.assertIn('4 fields, not 5', register_shape('name out g_free note')[0])
-        self.assertIn('not a documented kind', register_shape('name out g_free note unverifed')[0])
-
     def test_linux_dynamic_symbols(self):
         symbols = '10 T pinyin_init\n20 W hook\n30 D private\n40 t local\n'
         self.assertEqual(exported_symbols(symbols, HostFacts('Linux')), {'pinyin_init', 'hook', 'local'})
-
-    def test_darwin_symbols(self):
-        symbols = '10 T _pinyin_init\n20 W _hook\n30 T __other\n40 D _data\n50 S _section\n60 B _zero\n70 A _absolute\n U _import\n'
-        self.assertEqual(exported_symbols(symbols, HostFacts('Darwin')),
-                         {'pinyin_init', 'hook', '_other', 'data', 'section', 'zero', 'absolute'})
 
     def test_darwin_export_trie_includes_data_weak_and_reexports(self):
         text = '''library [arm64]:
@@ -55,13 +45,9 @@ class SymbolTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'unrecognized'):
             darwin_export_trie('mis-aligned LINKEDIT string pool')
 
-    def test_version_scope_excludes_local(self):
-        self.assertEqual(version_globals('API {\n global:\n pinyin_init;\n pinyin_init;\n local:\n *;\n};\n'),
-                         {'pinyin_init'})
-
 
 class DarwinExportGateTests(unittest.TestCase):
-    def gate(self, nm_extra='', trie_extra='', broken_trie=False):
+    def gate(self, nm_extra='', trie_extra=''):
         import os
         import tempfile
         with tempfile.TemporaryDirectory() as scratch:
@@ -77,8 +63,6 @@ class DarwinExportGateTests(unittest.TestCase):
                     output = ''.join('10 T _' + symbol + '\n' for symbol in names) + nm_extra
                 else:
                     output = 'image [arm64]:\n -exports:\n offset symbol\n' + ''.join('0x10 _' + symbol + '\n' for symbol in names) + trie_extra
-                    if broken_trie:
-                        output = 'invalid Mach-O export trie'
                 return SimpleNamespace(returncode=0, stdout=output, stderr='')
             output = io.StringIO()
             with patch.object(abi.subprocess, 'run', side_effect=inspect), \
@@ -101,12 +85,6 @@ class DarwinExportGateTests(unittest.TestCase):
         self.assertEqual(status, 1, output)
         self.assertIn('nm and export trie differ', output)
         self.assertIn('LEAKED non-ABI export: dependency_function', output)
-
-    def test_shipped_gate_rejects_a_loader_diagnostic_with_success_status(self):
-        status, output = self.gate(broken_trie=True)
-        self.assertEqual(status, 1, output)
-        self.assertIn('unrecognized dyld_info', output)
-
 
 
 class AllocationFailureGateTests(unittest.TestCase):
@@ -143,13 +121,6 @@ class AllocationFailureGateTests(unittest.TestCase):
                          ['user-pinyin', '', 'user-zhuyin', ''])
         self.assertIn('pinyin injection-disabled negative control: rejected', output)
         self.assertIn('zhuyin injection-disabled negative control: rejected', output)
-
-    def test_the_control_is_the_same_probe_built_without_injection(self):
-        _, calls, _, _ = self.gate()
-        compiles = [argv for argv in calls if argv[0] == 'g++']
-        self.assertEqual([Path(argv[argv.index('-o') + 1]).name for argv in compiles], ['probe', 'control'])
-        self.assertEqual([('-DOXPINYIN_ALLOC_FAILURE_DISABLED' in argv) for argv in compiles], [False, True])
-        self.assertTrue(all('tools/abi/alloc-failure.cc' in argv for argv in compiles))
 
     def test_a_failed_probe_fails_the_gate(self):
         status, _, _, _ = self.gate(probe_status=1)

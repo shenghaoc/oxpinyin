@@ -22,7 +22,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import subprocess
 import sys
@@ -34,9 +33,9 @@ ROOT = Path(__file__).resolve().parents[2]
 LIBRARIES = {'libpinyin': ('oxpinyin-capi', 'pinyin'), 'libzhuyin': ('oxpinyin-zhuyin-capi', 'zhuyin')}
 SCHEMA = 1
 KEY_PREFIX = 'ship-sizes-v1-'
-# Normal and build path dependencies of the two capi crates. shipping_closure()
-# computes the same set from cargo metadata; the tests compare the two, so a new
-# crate in the graph fails there. The CI path gate runs without Cargo and reads this tuple.
+# Normal and build path dependencies of the two capi crates. ship_sizes.test.py
+# compares this tuple with cargo metadata, so a new crate in the graph fails there.
+# The CI path gate runs without Cargo and reads this tuple.
 SHIPPING_CRATES = ('oxpinyin-capi', 'oxpinyin-capi-marshal', 'oxpinyin-chewing', 'oxpinyin-core',
                    'oxpinyin-data', 'oxpinyin-engine', 'oxpinyin-facade', 'oxpinyin-input',
                    'oxpinyin-runtime', 'oxpinyin-store', 'oxpinyin-user', 'oxpinyin-zhuyin-capi')
@@ -88,21 +87,6 @@ def reference_cell(root: Path = ROOT):
 
 def backend_packages(root: Path = ROOT) -> tuple[str, ...]:
     return BACKEND_PACKAGES[reference_cell(root).feature]
-
-
-def shipping_closure(root: Path = ROOT) -> set[str]:
-    """The capi crates and their normal and build path dependencies."""
-    metadata = json.loads(run(['cargo', 'metadata', '--no-deps', '--locked', '--format-version', '1'], cwd=root))
-    packages = {package['name']: package for package in metadata['packages']}
-    seen: set[str] = set()
-    pending = [crate for crate, _ in LIBRARIES.values()]
-    while pending:
-        name = pending.pop()
-        if name not in seen:
-            seen.add(name)
-            pending += [dependency['name'] for dependency in packages[name]['dependencies']
-                        if dependency.get('path') and dependency['kind'] in (None, 'build')]
-    return seen
 
 
 def environment(root: Path = ROOT) -> dict[str, str]:

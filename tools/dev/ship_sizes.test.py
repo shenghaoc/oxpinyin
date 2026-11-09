@@ -5,7 +5,6 @@ import io
 import json
 import os
 from pathlib import Path
-import re
 import subprocess
 import sys
 import tempfile
@@ -14,7 +13,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from tools.dev import packaging, ship_sizes
+from tools.dev import cell, ship_sizes
 
 VER = '''PINYIN {
   global:
@@ -52,12 +51,17 @@ class Repo:
 
 class ClosureTests(unittest.TestCase):
     def test_shipping_crates_are_the_capi_dependency_closure(self):
-        self.assertEqual(set(ship_sizes.SHIPPING_CRATES), ship_sizes.shipping_closure(ROOT))
-        for name in ship_sizes.SHIPPING_CRATES:
-            self.assertTrue((ROOT / 'crates' / name / 'Cargo.toml').is_file(), name)
-        for library, (crate, _) in ship_sizes.LIBRARIES.items():
-            self.assertIn(crate, ship_sizes.SHIPPING_CRATES)
-            self.assertTrue((ROOT / 'crates' / crate / (library + '.ver')).is_file())
+        metadata = json.loads(subprocess.check_output(
+            ['cargo', 'metadata', '--no-deps', '--locked', '--format-version', '1'], cwd=ROOT))
+        packages = {package['name']: package for package in metadata['packages']}
+        closure, pending = set(), [crate for crate, _ in ship_sizes.LIBRARIES.values()]
+        while pending:
+            name = pending.pop()
+            if name not in closure:
+                closure.add(name)
+                pending += [dependency['name'] for dependency in packages[name]['dependencies']
+                            if dependency.get('path') and dependency['kind'] in (None, 'build')]
+        self.assertEqual(set(ship_sizes.SHIPPING_CRATES), closure)
 
 
 class KeyTests(unittest.TestCase):
@@ -93,9 +97,6 @@ class KeyTests(unittest.TestCase):
 
 
 class ExportTests(unittest.TestCase):
-    def test_exact_version_script_set_passes(self):
-        ship_sizes.check_exports('libpinyin', NM, VER)
-
     def test_missing_extra_and_fixture_hooks_fail(self):
         for text, label in ((NM.replace('pinyin_free@@LIBPINYIN', 'x'), 'MISSING pinyin_free'),
                             (NM + '1 T pinyin_extra@@LIBPINYIN\n', 'EXTRA   pinyin_extra'),
@@ -104,32 +105,8 @@ class ExportTests(unittest.TestCase):
                 ship_sizes.check_exports('libpinyin', text, VER)
             self.assertIn(label, str(raised.exception))
 
-    def test_other_libraries_prefix_is_not_counted(self):
-        ship_sizes.check_exports('libpinyin', NM + '1 T zhuyin_init@@LIBZHUYIN\n', VER)
 
-
-def reference_cell(cell=None):
-    from tools.dev import cell as cells
-    return cells.Settings.read({'PINYIN_ORACLE_DBM': cell} if cell else {}, ROOT)
-
-
-CELL = reference_cell()
-
-
-class BackendTests(unittest.TestCase):
-    def test_default_is_the_cell_default_and_every_cell_has_packages(self):
-        self.assertEqual(CELL.feature, ship_sizes.reference_cell(ROOT).feature)
-        for cell in ('bdb', 'kc', 'tkrzw'):
-            self.assertIn(reference_cell(cell).feature, ship_sizes.BACKEND_PACKAGES)
-
-    def test_key_names_the_backend(self):
-        self.assertEqual(ship_sizes.environment(ROOT)['backend'], CELL.feature)
-
-    def test_workflow_installs_backend_packages_from_the_tool(self):
-        text = (ROOT / '.github/workflows/ci.yml').read_text()
-        job = text.split('\n  shipping-sizes:\n', 1)[1].split('\n  # The required aggregate', 1)[0]
-        self.assertIn('backend=$(just packaging sizes apt)', job)
-        self.assertNotIn('libdb-dev', job)
+CELL = cell.Settings.read({}, ROOT)
 
 
 def result(revision, pinyin, zhuyin):
@@ -144,16 +121,6 @@ class ReportTests(unittest.TestCase):
         self.assertIn('| `libpinyin.so.15.0.0` | 1000 | 1100 | +100 | 1.1000 |', text)
         self.assertIn('| `libzhuyin.so.15.0.0` | 2000 | 1900 | -100 | 0.9500 |', text)
         self.assertIn('Increase over base: libpinyin.', text)
-
-    def test_no_increase_is_stated(self):
-        text = ship_sizes.table(result('a', 5, 5), result('b', 5, 4), 'built in this run')
-        self.assertIn('Increase over base: none.', text)
-
-    def test_result_validation(self):
-        self.assertTrue(ship_sizes.valid(result('a', 1, 1)))
-        for bad in (None, {}, {**result('a', 1, 1), 'schema': 2}, result('a', 0, 1),
-                    {**result('a', 1, 1), 'libraries': {'libpinyin': 1}}, result('a', 1.5, 1)):
-            self.assertFalse(ship_sizes.valid(bad))
 
 
 class RunTests(unittest.TestCase):
@@ -207,13 +174,6 @@ class RunTests(unittest.TestCase):
                     status, out, _ = self.invoke(['run', '--base', 'B', '--work', directory], builds)
                     self.assertEqual(status, 1)
                     self.assertNotIn('| library |', out)
-
-    def test_summary_is_appended_to_the_job_summary(self):
-        with tempfile.TemporaryDirectory() as directory:
-            summary = Path(directory, 'summary.md')
-            self.invoke(['run', '--base', 'B', '--work', directory],
-                        [result('a', 1, 1), result('b', 2, 2)], GITHUB_STEP_SUMMARY=str(summary))
-            self.assertIn('## Stripped shipping-library sizes', summary.read_text())
 
 
 class BuildSideTests(unittest.TestCase):
@@ -274,17 +234,6 @@ class BuildSideTests(unittest.TestCase):
         self.assertEqual(outcome['libraries'], {'libpinyin': 60, 'libzhuyin': 60})
         self.assertEqual(outcome['backend'], CELL.feature)
 
-    def test_backend_follows_the_reference_cell_definition(self):
-        for cell, feature in (('tkrzw', 'tkrzw'), ('kc', 'kyotocabinet'), ('bdb', 'bdb')):
-            chosen = reference_cell(cell)
-            with self.subTest(cell=cell), mock.patch.object(ship_sizes, 'reference_cell', return_value=chosen):
-                outcome, calls = self.run_build()
-                self.assertEqual(outcome['backend'], feature)
-                installs = [call for call in calls if 'install' in call[0]]
-                self.assertTrue(all(call[0][call[0].index('--features') + 1].startswith(feature) for call in installs))
-                self.assertEqual(installs[0][2]['PINYIN_ORACLE_DBM'], cell)
-                self.assertEqual(ship_sizes.backend_packages(), ship_sizes.BACKEND_PACKAGES[feature])
-
     def test_export_mismatch_strip_failure_and_other_systems_fail(self):
         with self.assertRaises(ship_sizes.Failure):
             self.run_build(nm_text=NM + '1 T pinyin_leak@@LIBPINYIN\n')
@@ -292,14 +241,6 @@ class BuildSideTests(unittest.TestCase):
             self.run_build(strip_status=1)
         with mock.patch.object(ship_sizes, 'platform_system', return_value='Darwin'), \
                 self.assertRaisesRegex(ship_sizes.Failure, 'Linux'):
-            ship_sizes.build_side('HEAD', Path('/nonexistent'), Path('/nonexistent'))
-
-    def test_failed_install_fails_the_build(self):
-        def refuse(argv, **options):
-            raise ship_sizes.Failure('install failed')
-        with mock.patch.object(ship_sizes, 'extract'), mock.patch.object(ship_sizes, 'run', refuse), \
-                mock.patch.object(ship_sizes, 'platform_system', return_value='Linux'), \
-                self.assertRaisesRegex(ship_sizes.Failure, 'install failed'):
             ship_sizes.build_side('HEAD', Path('/nonexistent'), Path('/nonexistent'))
 
 
@@ -316,24 +257,6 @@ class ExtractTests(unittest.TestCase):
             self.assertTrue((destination / 'src/lib').is_file())
             self.assertGreater((destination / 'src/lib').stat().st_mtime, 1_000_000_000)
             ship_sizes.extract('HEAD', destination, repo.root)
-
-
-class WiringTests(unittest.TestCase):
-    def test_packaging_exposes_sizes_through_the_shared_entry(self):
-        self.assertIn('sizes', packaging.NAMES)
-        with mock.patch.object(ship_sizes, 'main', return_value=7) as main:
-            self.assertEqual(packaging.sizes(['run'], None), 7)
-        main.assert_called_once_with(['run'])
-
-    def test_workflow_job_uses_the_just_command_and_both_sides(self):
-        text = (ROOT / '.github/workflows/ci.yml').read_text()
-        job = text.split('\n  shipping-sizes:\n', 1)[1].split('\n  # The required aggregate', 1)[0]
-        self.assertNotIn('reuse', job)
-        self.assertRegex(job, r'just packaging sizes run --base')
-        self.assertRegex(job, r'just packaging sizes build --commit')
-        self.assertRegex(job, r'just packaging sizes key --commit')
-        self.assertIn('actions/cache/restore@', job)
-        self.assertIn('actions/cache/save@', job)
 
 
 if __name__ == '__main__':

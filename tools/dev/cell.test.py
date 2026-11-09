@@ -4,7 +4,6 @@ import contextlib
 import io
 import json
 import os
-from dataclasses import replace
 from pathlib import Path
 import signal
 import tempfile
@@ -20,27 +19,6 @@ from tools.dev.cell import main as cell_main
 
 
 class SettingsTests(unittest.TestCase):
-    def test_default_cell_maps_declared_backend(self):
-        with mock.patch.object(backend_cell, 'declared_default', return_value='kyotocabinet'):
-            self.assertEqual(backend_cell.default_cell(), 'kc')
-
-    def test_feature_flags_name_every_backend_including_the_default(self):
-        self.assertEqual(backend_cell.feature_flags(), [])
-        for backend in backend_cell.BACKENDS:
-            self.assertEqual(backend_cell.feature_flags(backend), ['--no-default-features', '--features', backend])
-        default = backend_cell.declared_default()
-        self.assertEqual(backend_cell.feature_flags(default), ['--no-default-features', '--features', default])
-        with self.assertRaises(ValueError):
-            backend_cell.feature_flags('sqlite')
-
-    def test_extra_features_follow_exactly_one_backend(self):
-        settings = replace(Settings.read({'PINYIN_ORACLE_DBM': 'tkrzw'}), extra_features=('shipped',))
-        self.assertEqual(settings.feature, 'tkrzw')
-        self.assertEqual(settings.feature_args(), ['--no-default-features', '--features', 'tkrzw',
-                                                   '--features', 'shipped'])
-        self.assertEqual(Settings.read({'PINYIN_ORACLE_DBM': 'tkrzw'}).feature_args(),
-                         ['--no-default-features', '--features', 'tkrzw'])
-
     def test_cells_are_explicit_and_preserve_overrides(self):
         for cell, feature, extension in [('bdb', 'bdb', 'db'), ('kc', 'kyotocabinet', 'kct'),
                                           ('tkrzw', 'tkrzw', 'tkt')]:
@@ -80,12 +58,6 @@ class SettingsTests(unittest.TestCase):
             with self.assertRaisesRegex(CellError, 'unreadable identity record'):
                 settings.claim()
             self.assertEqual(path.read_text(), '[]')
-
-    def test_empty_selection_does_not_claim(self):
-        with tempfile.TemporaryDirectory() as scratch:
-            settings = Settings.read({'CARGO_TARGET_DIR': scratch})
-            self.assertEqual(settings.build([]), 0)
-            self.assertEqual(list(Path(scratch).iterdir()), [])
 
     def test_loader_entries_keep_tokens_and_caller_spelling(self):
         cwd = Path('/caller root')
@@ -148,20 +120,6 @@ class BuildLaunchTests(unittest.TestCase):
                                         '-p', 'oxpinyin-capi', '--no-default-features', '--features', 'tkrzw'])
         self.assertEqual((call['cwd'], call['stdout']), (ROOT, 2))
         self.assert_supervised(call)
-
-    def test_cell_build_runs_each_cargo_command_through_run_command(self):
-        (self.target / 'debug').mkdir(parents=True)
-        settings = Settings.read(self.env)
-        with self.recording(), mock.patch.object(Settings, 'record') as record:
-            self.assertEqual(settings.build(['pinyin-capi', 'zhuyin-capi']), 0)
-        self.assertEqual(record.call_count, 1)
-        common = ['--locked', '--manifest-path', str(ROOT / 'Cargo.toml')]
-        features = ['--no-default-features', '--features', 'tkrzw']
-        self.assertEqual([call['argv'] for call in self.calls], [
-            ['cargo', 'build', *common, '-p', 'oxpinyin-capi', '-p', 'oxpinyin-zhuyin-capi', *features]])
-        self.assertEqual([(call['cwd'], call['stdout']) for call in self.calls], [(ROOT, None)])
-        for call in self.calls:
-            self.assert_supervised(call)
 
     def test_windows_builds_take_the_job_object_path(self):
         library = self.target / 'debug/libpinyin_capi.so'

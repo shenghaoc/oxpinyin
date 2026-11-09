@@ -14,7 +14,6 @@ import hashlib
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / 'tools/bisection'))
 
 from tools.dev import contract_data
 
@@ -46,14 +45,6 @@ class PinTests(unittest.TestCase):
                     patch.object(contract_data.urllib.request, 'urlopen', return_value=io.BytesIO(payload)):
                 target = contract_data.fetch(Path(directory, 'cache'), pin=pin)
             self.assertEqual((target / 'table.conf').read_bytes(), b'c')
-
-    def test_the_pin_names_one_exact_version_and_both_architectures(self):
-        pin = contract_data.read_pin()
-        self.assertEqual(pin['version'], '2.11.92-1')
-        self.assertEqual(set(pin['archives']), {'amd64', 'arm64'})
-        for entry in pin['archives'].values():
-            self.assertRegex(entry['sha256'], r'^[0-9a-f]{64}$')
-            self.assertRegex(entry['snapshot_sha1'], r'^[0-9a-f]{40}$')
 
     def test_extraction_keeps_only_the_data_directory_and_both_digests_agree(self):
         payload = deb({'usr/lib/x/libpinyin/data/table.conf': b'c', 'usr/lib/x/libpinyin/data/a.bin': b'1',

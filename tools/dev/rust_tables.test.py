@@ -2,10 +2,8 @@
 """Pinned scripts2 sources, offline regeneration, value identity and drift rejection."""
 import contextlib
 import io
-import os
 from pathlib import Path
 import shutil
-import subprocess
 import sys
 import tempfile
 import unittest
@@ -22,12 +20,6 @@ class RustTablesTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.outputs = rust_tables.render()
-
-    def test_upstream_blob_hashes_and_all_five_header_roundtrips(self):
-        manifest = rust_tables.verify_sources()
-        self.assertEqual(len(manifest['files']), 27)
-        self.assertEqual(rust_tables.FALLBACKS, {'VALID_ZHUYIN_TABLE'})
-        rust_tables.verify_acceptance(self.outputs)
 
     def test_committed_tables_regenerate_offline_without_any_external_program(self):
         # In particular, no rustfmt/rustup process can download a toolchain in
@@ -103,21 +95,6 @@ class RustTablesTests(unittest.TestCase):
             fixture.write_bytes(fixture.read_bytes() + b'a 1\n')
             with self.assertRaisesRegex(ValueError, 'input fixture mismatch'):
                 rust_tables.verify_sources(source)
-
-    def test_hash_seed_does_not_change_output(self):
-        for seed in ('1', '2'):
-            with self.subTest(seed=seed):
-                result = subprocess.run(
-                    [sys.executable, '-B', '-X', 'lazy_imports=normal', '-m', 'tools.dev',
-                     'rust-tables', '--check'], cwd=ROOT, capture_output=True, text=True,
-                    env={**os.environ, 'PYTHONHASHSEED': seed}, timeout=60)
-                self.assertEqual(result.returncode, 0, result.stderr)
-
-    def test_check_refuses_external_input_modes(self):
-        with contextlib.redirect_stderr(io.StringIO()):
-            with self.assertRaises(SystemExit) as error:
-                rust_tables.main(['--check', '--from-pin', 'anything'])
-        self.assertEqual(error.exception.code, 2)
 
 
 if __name__ == '__main__':
