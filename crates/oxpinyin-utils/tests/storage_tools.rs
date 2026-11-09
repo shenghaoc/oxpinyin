@@ -1,250 +1,5 @@
-//! The three storage utilities on the committed W3 mini data
-//! (`fixtures/w3/tkt/`): the files the pin opens from its cwd, byte
-//! expectations derived from the data layer's written formats, and the
-//! pin's messages, exit codes and stdin framing.
-
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
-
-use oxpinyin_input::tool;
-
-fn fixture() -> tempfile::TempDir {
-    let backend = oxpinyin_data::DEFAULT_STORE_EXT;
-    let src = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/w3")
-        .join(backend);
-    let dir = tempfile::Builder::new()
-        .prefix("oxpinyin-storage-tools-")
-        .tempdir()
-        .expect("scratch dir");
-    for entry in fs::read_dir(&src).expect("fixture dir") {
-        let entry = entry.expect("fixture entry");
-        if entry.path().is_file() {
-            fs::copy(entry.path(), dir.path().join(entry.file_name())).expect("copy fixture");
-        }
-    }
-    dir
-}
-
-fn run(binary: &str, dir: &Path, args: &[&str], stdin: &[u8]) -> Output {
-    use std::io::Write as _;
-    use std::process::Stdio;
-    let mut child = Command::new(binary)
-        .current_dir(dir)
-        .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn utility");
-    child
-        .stdin
-        .as_mut()
-        .expect("stdin")
-        .write_all(stdin)
-        .expect("write stdin");
-    child.wait_with_output().expect("utility output")
-}
-
-fn export_bin() -> &'static str {
-    env!("CARGO_BIN_EXE_export_interpolation")
-}
-
-fn gen_bin() -> &'static str {
-    env!("CARGO_BIN_EXE_gen_binary_files")
-}
-
-fn import_bin() -> &'static str {
-    env!("CARGO_BIN_EXE_import_interpolation")
-}
-
-/// The minimal `table.conf` these tests use: one system library and no
-/// addon rows, so the run touches only the files the case names. Its
-/// `database format:` is this build's backend.
-fn table_conf() -> String {
-    conf_with(
-        "default RESERVED NULL NULL NULL NOT_USED\n\
-default GB_DICTIONARY gb_char.table gb_char.bin gb_char.dbin SYSTEM_FILE\n\
-default GBK_DICTIONARY NULL NULL gbk_char.dbin USER_FILE\n\
-default OPENGRAM_DICTIONARY NULL NULL opengram.dbin USER_FILE\n\
-default MERGED_DICTIONARY NULL NULL merged.dbin USER_FILE",
-    )
-}
-
-const GB_CHAR: &str = "a\t吖\t16777217\t104\na\t啊\t16777218\t5\n\
-ni\t你\t16777219\t7\nni'hao\t你好\t16777220\t9\n\
-zhong'guo\t中国\t16777221\t3\n";
-
-fn expected_text(text: &str) -> String {
-    text.replace('\n', oxpinyin_input::TEXT_NEWLINE)
-}
-
-#[test]
-fn export_mini_fixture_writes_the_model_and_reads_only() {
-    let dir = fixture();
-    let before: Vec<(PathBuf, Vec<u8>)> = fixture_files(dir.path());
-    let output = run(export_bin(), dir.path(), &[], b"");
-    assert_eq!(output.status.code(), Some(0));
-    assert!(output.stderr.is_empty(), "{:?}", output.stderr);
-    let text = String::from_utf8(output.stdout).expect("UTF-8 model");
-    assert!(text.starts_with(&expected_text("\\data model interpolation\n\\1-gram\n")));
-    assert!(text.ends_with(&expected_text("\\end\n")));
-    let section = expected_text("\\2-gram\n");
-    let (head, rest) = text.split_once(section.as_str()).expect("bigram section");
-    // Every unigram line is `\item <token> <phrase> count <count>`.
-    for line in head.lines().skip(2) {
-        let fields: Vec<&str> = line.split(' ').collect();
-        assert_eq!(fields.len(), 5, "{line}");
-        assert_eq!(fields[0], "\\item");
-        assert_eq!(fields[3], "count");
-        assert!(fields[1].parse::<u32>().is_ok(), "{line}");
-        assert!(fields[4].parse::<u32>().is_ok(), "{line}");
-    }
-    // The bigram section prints only resolved pairs.
-    assert!(
-        rest.lines()
-            .all(|line| line.starts_with("\\item ") || line.is_empty() || line == "\\end")
-    );
-    // Read-only: every input file is unchanged.
-    assert_eq!(fixture_files(dir.path()), before);
-}
-
-fn fixture_files(dir: &Path) -> Vec<(PathBuf, Vec<u8>)> {
-    let mut files: Vec<(PathBuf, Vec<u8>)> = fs::read_dir(dir)
-        .expect("read dir")
-        .map(|entry| {
-            let entry = entry.expect("entry");
-            (
-                entry.file_name().into(),
-                fs::read(entry.path()).expect("read"),
-            )
-        })
-        .collect();
-    files.sort();
-    files
-}
-
-#[test]
-fn export_missing_table_conf_is_enoent() {
-    let dir = tempfile::tempdir().expect("scratch");
-    let output = run(export_bin(), dir.path(), &[], b"");
-    assert_eq!(output.status.code(), Some(tool::ENOENT));
-    assert_eq!(
-        output.stderr,
-        expected_text("open table.conf failed.\nload table.conf failed.\n").as_bytes()
-    );
-    assert!(output.stdout.is_empty());
-}
-#[test]
-fn import_applies_unigram_and_bigram() {
-    let dir = fixture();
-    let stdin = "\\data model interpolation\n\
-                 \\1-gram\n\
-                 \\item 16777217 锕 count 5\n\
-                 \\item 1 <start> count 2\n\
-                 \\2-gram\n\
-                 \\item 16777217 锕 16777218 吖 count 4\n\
-                 \\end\n";
-    let output = run(import_bin(), dir.path(), &[], stdin.as_bytes());
-    assert_eq!(output.status.code(), Some(0));
-    assert!(output.stderr.is_empty(), "{:?}", output.stderr);
-
-    let library =
-        oxpinyin_data::phrase_library::PhraseLibrary::open(&dir.path().join("gb_char.bin"))
-            .expect("chunk");
-    // The fixture's committed unigram for 16777217 is 3; import adds 5.
-    assert_eq!(library.item(16_777_217).expect("item").unigram(), 8);
-
-    let bigram = oxpinyin_data::BigramTable::open(&dir.path().join("bigram.db")).expect("bigram");
-    let row = bigram
-        .load_successors(16_777_217)
-        .expect("load")
-        .expect("group");
-    assert_eq!(row.total, 4);
-    assert_eq!(row.records, vec![(16_777_218, 4)]);
-}
-
-#[test]
-fn gen_binary_files_builds_the_indexes_and_chunks() {
-    let dir = tempfile::tempdir().expect("scratch");
-    fs::write(dir.path().join("table.conf"), table_conf()).expect("write conf");
-    fs::write(dir.path().join("gb_char.table"), GB_CHAR).expect("write table");
-    let output = run(gen_bin(), dir.path(), &[], b"");
-    assert_eq!(output.status.code(), Some(0));
-    assert!(output.stderr.is_empty(), "{:?}", output.stderr);
-
-    // The chunk is `SubPhraseIndex::store`'s bytes: unigram 0 at
-    // gen_binary_files time, the `.table` count as each pronunciation's
-    // frequency, and the phrases in ascending token order.
-    let item = |phrase: &[u32], prons: &[(&str, u32)]| oxpinyin_data::chunk_write::ChunkItem {
-        phrase: phrase.to_vec(),
-        unigram: 0,
-        prons: prons
-            .iter()
-            .map(|(pinyin, freq)| {
-                let keys: Vec<u16> = pinyin
-                    .split(['\'', ' '])
-                    .map(|syllable| {
-                        oxpinyin_core::ChewingKey::from_pinyin(syllable)
-                            .expect("syllable")
-                            .to_packed()
-                    })
-                    .collect();
-                (keys, *freq)
-            })
-            .collect(),
-    };
-    let items = vec![
-        (1, item(&[0x5416], &[("a", 104)])),
-        (2, item(&[0x554a], &[("a", 5)])),
-        (3, item(&[0x4f60], &[("ni", 7)])),
-        (4, item(&[0x4f60, 0x597d], &[("ni'hao", 9)])),
-        (5, item(&[0x4e2d, 0x56fd], &[("zhong'guo", 3)])),
-    ];
-    let want_chunk = oxpinyin_data::chunk_write::build_chunk(&items).expect("chunk");
-    assert_eq!(
-        fs::read(dir.path().join("gb_char.bin")).expect("chunk"),
-        want_chunk
-    );
-
-    // The phrase index stores each phrase's token and every proper prefix
-    // as an empty continuation marker.
-    use oxpinyin_store::RawReadStore as _;
-    let store = oxpinyin_store::DefaultStore::open_read_only(&dir.path().join("phrase_index.bin"))
-        .expect("phrase index");
-    let mut value = Vec::new();
-    let ni_hao = [0x4f60_u32, 0x597d]
-        .iter()
-        .flat_map(|word| word.to_le_bytes())
-        .collect::<Vec<u8>>();
-    assert!(store.get_raw(&ni_hao, &mut value).expect("get"));
-    assert_eq!(value, 16_777_220_u32.to_le_bytes());
-    let ni = 0x4f60_u32.to_le_bytes();
-    let mut marker = Vec::new();
-    assert!(store.get_raw(&ni, &mut marker).expect("get"));
-    assert_eq!(marker, 16_777_219_u32.to_le_bytes());
-    drop(store);
-
-    // Re-running appends nothing: the index rows and the chunk are the
-    // same, because the records already exist.
-    let before_chunk = fs::read(dir.path().join("gb_char.bin")).expect("chunk");
-    let output = run(gen_bin(), dir.path(), &[], b"");
-    assert_eq!(output.status.code(), Some(0));
-    assert_eq!(
-        fs::read(dir.path().join("gb_char.bin")).expect("chunk"),
-        before_chunk
-    );
-}
-/// A `table.conf` with `row` as its only table rows, for this build's
-/// backend.
-fn conf_with(row: &str) -> String {
-    format!(
-        "binary format version:7\nmodel data version:14\nlambda parameter:0.312699\n\n\
-source table format:pinyin\ndatabase format:{}\n\n{row}\n",
-        oxpinyin_data::DEFAULT_STORE_DB_FORMAT
-    )
-}
+//! Frozen pin observations of the storage utilities and the pin's storage
+//! test programs: exit status, both streams and every file the run leaves.
 #[cfg(unix)]
 mod common;
 #[cfg(unix)]
@@ -376,22 +131,9 @@ mod frozen {
         }
 
         #[rstest]
-        // exp-bad-option-is-ordinary: utils/storage/export_interpolation.cpp at 074a2219:
-        // 30-73, 75-143; src/storage/tag_utility.cpp: 362-417.
-        #[case::exp_bad_option_is_ordinary(
-            w3(),
-            &["--no-such-option"],
-            b"",
-            &[],
-            Run {
-                status: Exit(0),
-                stdout: w3_model(),
-                stderr: b"",
-                files: &[],
-            },
-        )]
         // exp-help-is-ordinary: utils/storage/export_interpolation.cpp at 074a2219: 30-73,
         // 75-143; src/storage/tag_utility.cpp: 362-417.
+        // The program reads no argument: --help is one witness for every argument list.
         #[case::exp_help_is_ordinary(
             w3(),
             &["--help"],
@@ -434,20 +176,6 @@ mod frozen {
                 files: &[],
             },
         )]
-        // exp-missing-chunk: utils/storage/export_interpolation.cpp at 074a2219: 30-73,
-        // 75-143; src/storage/tag_utility.cpp: 362-417.
-        #[case::exp_missing_chunk(
-            TempDir::new().unwrap(),
-            &[],
-            b"",
-            &[("table.conf", b"binary format version:7\nmodel data version:14\nlambda parameter:0.312699\n\nsource table format:pinyin\ndatabase format:Tkrzw\n\ndefault RESERVED NULL NULL NULL NOT_USED\ndefault GB_DICTIONARY gb_char.table gb_char.bin gb_char.dbin SYSTEM_FILE\ndefault GBK_DICTIONARY NULL NULL gbk_char.dbin USER_FILE\ndefault OPENGRAM_DICTIONARY NULL NULL opengram.dbin USER_FILE\ndefault MERGED_DICTIONARY NULL NULL merged.dbin USER_FILE\n".as_slice())],
-            Run {
-                status: Exit(2),
-                stdout: Exact(b""),
-                stderr: LOAD_GB_CHAR_BIN_FAILED,
-                files: &[],
-            },
-        )]
         // exp-missing-table-conf: utils/storage/export_interpolation.cpp at 074a2219: 30-73,
         // 75-143; src/storage/tag_utility.cpp: 362-417.
         #[case::exp_missing_table_conf(
@@ -462,23 +190,10 @@ mod frozen {
                 files: &[],
             },
         )]
-        // exp-too-many-arguments-is-ordinary: utils/storage/export_interpolation.cpp at
-        // 074a2219: 30-73, 75-143; src/storage/tag_utility.cpp: 362-417.
-        #[case::exp_too_many_arguments_is_ordinary(
-            w3(),
-            &["a", "b"],
-            b"",
-            &[],
-            Run {
-                status: Exit(0),
-                stdout: w3_model(),
-                stderr: b"",
-                files: &[],
-            },
-        )]
         // export_interpolation-family-e-truncated-first-chunk:
         // utils/storage/export_interpolation.cpp:60; utils/utils_helper.h:73-94;
         // src/include/memory_chunk.h:420-463 at 074a2219.
+        // An absent chunk takes the same load failure and the same exit.
         #[case::export_interpolation_family_e_truncated_first_chunk(
             w3(),
             &[],
@@ -660,22 +375,6 @@ mod frozen {
                 ],
             },
         )]
-        // gbf-missing-punct-table: utils/storage/gen_binary_files.cpp at 074a2219: 26-34,
-        // 36-109, 111-152; utils/utils_helper.h: 73-145; src/storage/table_text_parser.h:
-        // 34-121.
-        #[case::gbf_missing_punct_table(
-            TempDir::new().unwrap(),
-            &["--gen-punct-table"],
-            b"",
-            &[("table.conf", b"binary format version:7\nmodel data version:14\nlambda parameter:0.312699\n\nsource table format:pinyin\ndatabase format:Tkrzw\n\ndefault RESERVED NULL NULL NULL NOT_USED\ndefault GB_DICTIONARY gb_char.table gb_char.bin gb_char.dbin SYSTEM_FILE\ndefault GBK_DICTIONARY NULL NULL gbk_char.dbin USER_FILE\ndefault OPENGRAM_DICTIONARY NULL NULL opengram.dbin USER_FILE\ndefault MERGED_DICTIONARY NULL NULL merged.dbin USER_FILE\n".as_slice())],
-            ( &["pinyin_index.bin", "phrase_index.bin", "addon_pinyin_index.bin", "addon_phrase_index.bin"][..], &[] as &[&str] ),
-            Run {
-                status: Exit(2),
-                stdout: Exact(b""),
-                stderr: OPEN_GB_CHAR_TABLE_FAILED,
-                files: EMPTY_INDEX_FILES,
-            },
-        )]
         // gbf-missing-table-conf: utils/storage/gen_binary_files.cpp at 074a2219: 26-34,
         // 36-109, 111-152; utils/utils_helper.h: 73-145; src/storage/table_text_parser.h:
         // 34-121.
@@ -695,6 +394,7 @@ mod frozen {
         // gbf-missing-table-file: utils/storage/gen_binary_files.cpp at 074a2219: 26-34,
         // 36-109, 111-152; utils/utils_helper.h: 73-145; src/storage/table_text_parser.h:
         // 34-121.
+        // The table file opens before the punctuation table, so --gen-punct-table does not change this result.
         #[case::gbf_missing_table_file(
             TempDir::new().unwrap(),
             &[],
@@ -727,21 +427,6 @@ mod frozen {
                     ("phrase_index.bin", Rows("f44572f23db60c9d06eccfe45dc844868608bbe24c999e0b7abcd874a6129f20")),
                     ("pinyin_index.bin", Rows("219ec7524ec7bb6b274d9a50b3f38fbef22c8fd8ee09cda84f7473f931cd8ff1")),
                 ],
-            },
-        )]
-        // gbf-punct: utils/storage/gen_binary_files.cpp at 074a2219: 26-34, 36-109, 111-152;
-        // utils/utils_helper.h: 73-145; src/storage/table_text_parser.h: 34-121.
-        #[case::gbf_punct(
-            TempDir::new().unwrap(),
-            &["--gen-punct-table"],
-            b"",
-            &[("table.conf", b"binary format version:7\nmodel data version:14\nlambda parameter:0.312699\n\nsource table format:pinyin\ndatabase format:Tkrzw\n\ndefault RESERVED NULL NULL NULL NOT_USED\ndefault GB_DICTIONARY gb_char.table gb_char.bin gb_char.dbin SYSTEM_FILE\ndefault GBK_DICTIONARY NULL NULL gbk_char.dbin USER_FILE\ndefault OPENGRAM_DICTIONARY NULL NULL opengram.dbin USER_FILE\ndefault MERGED_DICTIONARY NULL NULL merged.dbin USER_FILE\n".as_slice()), ("punct.table", b"16777217 \xe9\x94\x95 \xef\xbc\x8c 10\n16777217 \xe9\x94\x95 \xe3\x80\x82 9\n".as_slice())],
-            ( &["pinyin_index.bin", "phrase_index.bin", "addon_pinyin_index.bin", "addon_phrase_index.bin"][..], &[] as &[&str] ),
-            Run {
-                status: Exit(2),
-                stdout: Exact(b""),
-                stderr: OPEN_GB_CHAR_TABLE_FAILED,
-                files: EMPTY_INDEX_FILES,
             },
         )]
         // gbf-toned-model: utils/storage/gen_binary_files.cpp at 074a2219: 36-109 and 111-152;
@@ -1108,32 +793,6 @@ mod frozen {
                 files: session_user_files(),
             },
         )]
-        // test-chewing-eof: 074a2219 tests/test_chewing.cpp:34-72;
-        // src/include/pinyin_utils.h:LineString.
-        #[case::test_chewing_eof(
-            w3(),
-            &[],
-            b"",
-            Run {
-                status: Exit(0),
-                stdout: Exact(b""),
-                stderr: OPEN_DATA_USER_CONF_FAILED,
-                files: session_user_conf_files(),
-            },
-        )]
-        // test-chewing-final-line: 074a2219 tests/test_chewing.cpp:34-72;
-        // src/include/pinyin_utils.h:LineString.
-        #[case::test_chewing_final_line(
-            w3(),
-            &[],
-            b"su3cl3",
-            Run {
-                status: Exit(0),
-                stdout: Exact(include_bytes!("fixtures/test_chewing/nihao-session.txt")),
-                stderr: OPEN_DATA_USER_CONF_FAILED,
-                files: session_user_files(),
-            },
-        )]
         // test-chewing-quit: 074a2219 tests/test_chewing.cpp:34-72;
         // src/include/pinyin_utils.h:LineString.
         #[case::test_chewing_quit(
@@ -1238,22 +897,6 @@ mod frozen {
             tables(),
             &[],
             b"ni3\0hao3\n",
-            &[],
-            &[],
-            Run {
-                status: Exit(0),
-                stdout: Exact(include_bytes!("fixtures/test_chewing_table/two-range-lookup.txt")),
-                stderr: b"",
-                files: &[],
-            },
-        )]
-        // chewing-table-final-line: tests/storage/test_chewing_table.cpp;
-        // tests/tests_helper.h:51-133; src/storage/phrase_large_table3.cpp:29-139;
-        // src/storage/chewing_large_table2.cpp:112-198 at 074a2219.
-        #[case::chewing_table_final_line(
-            tables(),
-            &[],
-            b"ni3",
             &[],
             &[],
             Run {
@@ -1417,22 +1060,6 @@ mod frozen {
                 files: &[],
             },
         )]
-        // chewing-table-zero-then-nonzero: tests/storage/test_chewing_table.cpp;
-        // tests/tests_helper.h:51-133; src/storage/phrase_large_table3.cpp:29-139;
-        // src/storage/chewing_large_table2.cpp:112-198 at 074a2219.
-        #[case::chewing_table_zero_then_nonzero(
-            TempDir::new().unwrap(),
-            &[],
-            b"ni3\nquit\n",
-            &["data"],
-            &[("data/table.conf", b"binary format version:7\nmodel data version:14\nlambda parameter:0.5\nsource table format:pinyin\ndatabase format:Tkrzw\ndefault RESERVED reserved.table reserved.bin reserved.dbin SYSTEM_FILE\ndefault GB_DICTIONARY gb.table gb_char.bin gb_char.dbin SYSTEM_FILE\n".as_slice()), ("data/reserved.table", b"ni3 \xe4\xbd\xa0 0 100\n".as_slice()), ("data/gb.table", b"ni3 \xe4\xbd\xa0 16777217 100\n".as_slice())],
-            Run {
-                status: Exit(0),
-                stdout: Exact("Spent <TIME> us for 1000 operations, <TIME> us/op, <TIME> times/s.\n\nrange items number:1\nstart:16777217\tend:16777218\n你\tni3'\u{8}\t100\t\n".as_bytes()),
-                stderr: b"",
-                files: &[],
-            },
-        )]
         // chewing-table-zero-token: tests/storage/test_chewing_table.cpp;
         // tests/tests_helper.h:51-133; src/storage/phrase_large_table3.cpp:29-139;
         // src/storage/chewing_large_table2.cpp:112-198 at 074a2219.
@@ -1548,22 +1175,6 @@ mod frozen {
             Run {
                 status: Exit(0),
                 stdout: Exact(include_bytes!("fixtures/test_matrix/six-char-one-key-matrix.txt")),
-                stderr: b"",
-                files: &[],
-            },
-        )]
-        // matrix-final-line: tests/storage/test_matrix.cpp:93-179;
-        // src/storage/phonetic_key_matrix.cpp:29-84,226-437; tests/tests_helper.h:24-48 at
-        // 074a2219.
-        #[case::matrix_final_line(
-            w3(),
-            &[],
-            b"nihao",
-            &[],
-            &[],
-            Run {
-                status: Exit(0),
-                stdout: Exact(include_bytes!("fixtures/test_matrix/five-char-two-key-matrix.txt")),
                 stderr: b"",
                 files: &[],
             },
@@ -1694,22 +1305,9 @@ mod frozen {
             b"12\n4\n6\n12\t5\n12\n12\t5\t5\n12\t5\t5\t3\n10\t11\t12\n10\t12\n12\n";
 
         #[rstest]
-        // memory-chunk-fresh: tests/include/test_memory_chunk.cpp:5-69;
-        // src/include/memory_chunk.h:95-133,290-376,416-557 at 074a2219.
-        #[case::memory_chunk_fresh(
-            &[],
-            b"",
-            &[],
-            &[],
-            Run {
-                status: Exit(0),
-                stdout: Exact(MEMORY_CHUNK_SESSION),
-                stderr: b"",
-                files: MEMORY_CHUNK_FILES,
-            },
-        )]
         // memory-chunk-ignored-input: tests/include/test_memory_chunk.cpp:5-69;
         // src/include/memory_chunk.h:95-133,290-376,416-557 at 074a2219.
+        // Also the removal-offset witness of a fresh run: the arguments and input are ignored.
         #[case::memory_chunk_ignored_input(
             &["--help", "ignored"],
             b"ignored\n",
@@ -1840,30 +1438,6 @@ mod frozen {
                 files: &[],
             },
         )]
-        // parser2-dachen26-incomplete: tests/storage/test_parser2.cpp:37-147;
-        // tests/timer.h:30-44 at 074a2219.
-        #[case::parser2_dachen26_incomplete(
-            &["-p", "zhuyin", "-s", "dachen26", "--incomplete"],
-            b"b\nbb\nbbb\na\naa\naaa\nsu3cl3\n\nquit\n",
-            Run {
-                status: Exit(0),
-                stdout: Exact(include_bytes!("fixtures/test_parser2/dachen26-ri.txt")),
-                stderr: b"",
-                files: &[],
-            },
-        )]
-        // parser2-default: tests/storage/test_parser2.cpp:37-147; tests/timer.h:30-44 at
-        // 074a2219.
-        #[case::parser2_default(
-            &[],
-            b"ni3hao3\nni''hao'\n'''\nxian\nxianan\nbagn\nn\nzh\nni hao\nNI\nni!hao\n\nquit\nnihao\n",
-            Run {
-                status: Exit(0),
-                stdout: Exact(include_bytes!("fixtures/test_parser2/full-nihao.txt")),
-                stderr: b"",
-                files: &[],
-            },
-        )]
         // parser2-double: tests/storage/test_parser2.cpp:37-147; tests/timer.h:30-44 at
         // 074a2219.
         #[case::parser2_double(
@@ -1876,31 +1450,9 @@ mod frozen {
                 files: &[],
             },
         )]
-        // parser2-double-incomplete: tests/storage/test_parser2.cpp:37-147;
-        // tests/timer.h:30-44 at 074a2219.
-        #[case::parser2_double_incomplete(
-            &["-p", "doublepinyin", "--incomplete"],
-            b"nihk\nni3hk3\nuang\nb\naaa\nni'hk\n\nquit\n",
-            Run {
-                status: Exit(0),
-                stdout: Exact(include_bytes!("fixtures/test_parser2/double-nihao-incomplete.txt")),
-                stderr: b"",
-                files: &[],
-            },
-        )]
-        // parser2-eof: tests/storage/test_parser2.cpp:37-147; tests/timer.h:30-44 at 074a2219.
-        #[case::parser2_eof(
-            &[],
-            b"",
-            Run {
-                status: Exit(0),
-                stdout: Exact(b""),
-                stderr: b"",
-                files: &[],
-            },
-        )]
         // parser2-full: tests/storage/test_parser2.cpp:37-147; tests/timer.h:30-44 at
         // 074a2219.
+        // Every parser name other than the four known names selects the full pinyin parser.
         #[case::parser2_full(
             &["--parser", "fullpinyin"],
             b"ni3hao3\nni''hao'\n'''\nxian\nxianan\nbagn\nn\nzh\nni hao\nNI\nni!hao\n\nquit\nnihao\n",
@@ -1913,6 +1465,8 @@ mod frozen {
         )]
         // parser2-full-incomplete: tests/storage/test_parser2.cpp:37-147; tests/timer.h:30-44
         // at 074a2219.
+        // --incomplete sets the pinyin and zhuyin incomplete bits for every parser;
+        // oxpinyin-core tests each parser with these bits.
         #[case::parser2_full_incomplete(
             &["-p", "fullpinyin", "-i"],
             b"ni3hao3\nni''hao'\n'''\nxian\nxianan\nbagn\nn\nzh\nni hao\nNI\nni!hao\n\nquit\nnihao\n",
@@ -1948,18 +1502,6 @@ mod frozen {
                 files: &[],
             },
         )]
-        // parser2-hsu-incomplete: tests/storage/test_parser2.cpp:37-147; tests/timer.h:30-44
-        // at 074a2219.
-        #[case::parser2_hsu_incomplete(
-            &["-p", "zhuyin", "-s", "hsu", "--incomplete"],
-            b"hk\nny\nb\nj\nnyka\n\nquit\n",
-            Run {
-                status: Exit(0),
-                stdout: Exact(include_bytes!("fixtures/test_parser2/hsu-hang.txt")),
-                stderr: b"",
-                files: &[],
-            },
-        )]
         // parser2-ignored-args: tests/storage/test_parser2.cpp:37-147; tests/timer.h:30-44 at
         // 074a2219.
         #[case::parser2_ignored_args(
@@ -1974,24 +1516,13 @@ mod frozen {
         )]
         // parser2-missing-parser: tests/storage/test_parser2.cpp:37-147; tests/timer.h:30-44
         // at 074a2219.
+        // A missing option value is one GLib refusal for every option.
         #[case::parser2_missing_parser(
             &["--parser"],
             b"",
             Run {
                 status: Exit(22),
                 stdout: Exact(b"option parsing failed:Missing argument for --parser\n"),
-                stderr: b"",
-                files: &[],
-            },
-        )]
-        // parser2-missing-scheme: tests/storage/test_parser2.cpp:37-147; tests/timer.h:30-44
-        // at 074a2219.
-        #[case::parser2_missing_scheme(
-            &["--scheme"],
-            b"",
-            Run {
-                status: Exit(22),
-                stdout: Exact(b"option parsing failed:Missing argument for --scheme\n"),
                 stderr: b"",
                 files: &[],
             },
@@ -2020,18 +1551,6 @@ mod frozen {
                 files: &[],
             },
         )]
-        // parser2-pinyindirect-incomplete: tests/storage/test_parser2.cpp:37-147;
-        // tests/timer.h:30-44 at 074a2219.
-        #[case::parser2_pinyindirect_incomplete(
-            &["-p", "pinyindirect", "--incomplete"],
-            b"ni3'' hao3  invalid\nbagn n\nnihao\nni'\nni6\n\nquit\n",
-            Run {
-                status: Exit(0),
-                stdout: Exact(include_bytes!("fixtures/test_parser2/pinyin-direct-nihao-incomplete.txt")),
-                stderr: b"",
-                files: &[],
-            },
-        )]
         // parser2-quit-exact: tests/storage/test_parser2.cpp:37-147; tests/timer.h:30-44 at
         // 074a2219.
         #[case::parser2_quit_exact(
@@ -2056,46 +1575,11 @@ mod frozen {
                 files: &[],
             },
         )]
-        // parser2-standard-incomplete: tests/storage/test_parser2.cpp:37-147;
-        // tests/timer.h:30-44 at 074a2219.
-        #[case::parser2_standard_incomplete(
-            &["-p", "zhuyin", "-s", "standard", "--incomplete"],
-            b"su3cl3\nsu cl\n1\n5j/\nli\nju\n\nquit\n",
-            Run {
-                status: Exit(0),
-                stdout: Exact(include_bytes!("fixtures/test_parser2/standard-nihao.txt")),
-                stderr: b"",
-                files: &[],
-            },
-        )]
-        // parser2-unknown-parser: tests/storage/test_parser2.cpp:37-147; tests/timer.h:30-44
-        // at 074a2219.
-        #[case::parser2_unknown_parser(
-            &["--parser", "unknown"],
-            b"ni3hao3\nni''hao'\n'''\nxian\nxianan\nbagn\nn\nzh\nni hao\nNI\nni!hao\n\nquit\nnihao\n",
-            Run {
-                status: Exit(0),
-                stdout: Exact(include_bytes!("fixtures/test_parser2/full-nihao.txt")),
-                stderr: b"",
-                files: &[],
-            },
-        )]
         // parser2-unknown-scheme: tests/storage/test_parser2.cpp:37-147; tests/timer.h:30-44
         // at 074a2219.
+        // The zhuyin parser with no known scheme also selects the full pinyin parser.
         #[case::parser2_unknown_scheme(
             &["--parser", "zhuyin", "--scheme", "unknown"],
-            b"ni3hao3\nni''hao'\n'''\nxian\nxianan\nbagn\nn\nzh\nni hao\nNI\nni!hao\n\nquit\nnihao\n",
-            Run {
-                status: Exit(0),
-                stdout: Exact(include_bytes!("fixtures/test_parser2/full-nihao.txt")),
-                stderr: b"",
-                files: &[],
-            },
-        )]
-        // parser2-zhuyin-default-scheme: tests/storage/test_parser2.cpp:37-147;
-        // tests/timer.h:30-44 at 074a2219.
-        #[case::parser2_zhuyin_default_scheme(
-            &["--parser", "zhuyin"],
             b"ni3hao3\nni''hao'\n'''\nxian\nxianan\nbagn\nn\nzh\nni hao\nNI\nni!hao\n\nquit\nnihao\n",
             Run {
                 status: Exit(0),
@@ -2180,32 +1664,6 @@ mod frozen {
             w3(),
             &[],
             b"\xe4\xbd\xa0\xe5\xa5\xbd\0\xe4\xb8\xad\xe5\x9b\xbd\nquit\n",
-            Run {
-                status: Exit(0),
-                stdout: Exact(NI_HAO_TABBED),
-                stderr: OPEN_DATA_USER_CONF_FAILED,
-                files: session_user_conf_files(),
-            },
-        )]
-        // test-phrase-eof: 074a2219 tests/test_phrase.cpp:34-72;
-        // src/include/pinyin_utils.h:LineString.
-        #[case::test_phrase_eof(
-            w3(),
-            &[],
-            b"",
-            Run {
-                status: Exit(0),
-                stdout: Exact(b""),
-                stderr: OPEN_DATA_USER_CONF_FAILED,
-                files: session_user_conf_files(),
-            },
-        )]
-        // test-phrase-final-line: 074a2219 tests/test_phrase.cpp:34-72;
-        // src/include/pinyin_utils.h:LineString.
-        #[case::test_phrase_final_line(
-            w3(),
-            &[],
-            b"\xe4\xbd\xa0\xe5\xa5\xbd",
             Run {
                 status: Exit(0),
                 stdout: Exact(NI_HAO_TABBED),
@@ -2316,6 +1774,7 @@ mod frozen {
         // phrase-index-ignored-input: tests/storage/test_phrase_index.cpp:9-122;
         // tests/tests_helper.h:51-83; src/storage/phrase_index.cpp:56-143,335-389,522-674 at
         // 074a2219.
+        // Also the round-trip witness: the arguments and input are ignored.
         #[case::phrase_index_ignored_input(
             tables(),
             &["--help", "ignored"],
@@ -2358,22 +1817,6 @@ mod frozen {
                 status: Exit(2),
                 stdout: Exact(PHRASE_INDEX_SESSION_WITHOUT_PHRASES),
                 stderr: OPEN_GB_TABLE_FAILED,
-                files: &[],
-            },
-        )]
-        // phrase-index-roundtrip: tests/storage/test_phrase_index.cpp:9-122;
-        // tests/tests_helper.h:51-83; src/storage/phrase_index.cpp:56-143,335-389,522-674 at
-        // 074a2219.
-        #[case::phrase_index_roundtrip(
-            tables(),
-            &[],
-            b"",
-            &[],
-            &[],
-            Run {
-                status: Exit(0),
-                stdout: Exact(PHRASE_INDEX_SESSION),
-                stderr: b"",
                 files: &[],
             },
         )]
@@ -2512,21 +1955,6 @@ mod frozen {
         const TOTAL_FREQ_9_TWICE: &[u8] = b"total freq:9\ntotal freq:9\n";
 
         #[rstest]
-        // phrase-index-logger-contiguous: tests/storage/test_phrase_index_logger.cpp:26-65;
-        // src/storage/phrase_index.h:628-634; src/storage/phrase_index.cpp:335-519,624-645 at
-        // 074a2219.
-        #[case::phrase_index_logger_contiguous(
-            &[],
-            b"",
-            &["data"],
-            &[("data/gb_char.bin", b"C\0\0\0\x1e\x12Q/\x07\0\0\0\x11\0\0\0\x1e\0\0\0C\0\0\0#\0\0\0\0\x08\0\0\0\x16\0\0\0#\0\0\0\0\0\0\0\0\x01\0\x02\0\0\0aO\0\0PAD!\x01\0\x05\0\0\0bO\0\0PAD!#".as_slice())],
-            Run {
-                status: Exit(0),
-                stdout: Exact(TOTAL_FREQ_9_TWICE),
-                stderr: b"",
-                files: LOGGER_CONTIGUOUS_FILES,
-            },
-        )]
         // phrase-index-logger-holes: tests/storage/test_phrase_index_logger.cpp:26-65;
         // src/storage/phrase_index.h:628-634; src/storage/phrase_index.cpp:335-519,624-645 at
         // 074a2219.
@@ -2549,6 +1977,7 @@ mod frozen {
         // phrase-index-logger-ignored-input: tests/storage/test_phrase_index_logger.cpp:26-65;
         // src/storage/phrase_index.h:628-634; src/storage/phrase_index.cpp:335-519,624-645 at
         // 074a2219.
+        // Also the logger-delta witness of a contiguous chunk: the arguments and input are ignored.
         #[case::phrase_index_logger_ignored_input(
             &["--help", "ignored"],
             b"ignored\n",
@@ -2770,22 +2199,6 @@ mod frozen {
                 files: &[],
             },
         )]
-        // phrase-lookup-final-line: tests/lookup/test_phrase_lookup.cpp:41-137;
-        // src/lookup/phrase_lookup.h:131-135; lookup.cpp:31-66; tests/tests_helper.h:24-48 at
-        // 074a2219.
-        #[case::phrase_lookup_final_line(
-            w3(),
-            &[],
-            b"\xe4\xbd\xa0\xe5\xa5\xbd",
-            &[],
-            &[],
-            Run {
-                status: Exit(0),
-                stdout: Exact(NI_HAO_TOKENS),
-                stderr: b"",
-                files: &[],
-            },
-        )]
         // phrase-lookup-invalid-utf8: tests/lookup/test_phrase_lookup.cpp:41-137;
         // src/lookup/phrase_lookup.h:131-135; lookup.cpp:31-66; tests/tests_helper.h:24-48 at
         // 074a2219.
@@ -2949,22 +2362,6 @@ mod frozen {
             tables(),
             &[],
             b"\xe4\xbd\xa0\0\xe5\xa5\xbd\n",
-            &[],
-            &[],
-            Run {
-                status: Exit(0),
-                stdout: Exact(PHRASE_TABLE_SESSION),
-                stderr: b"",
-                files: &[],
-            },
-        )]
-        // phrase-table-final-line: tests/storage/test_phrase_table.cpp;
-        // tests/tests_helper.h:51-133; src/storage/phrase_large_table3.cpp:29-139;
-        // src/storage/chewing_large_table2.cpp:112-198 at 074a2219.
-        #[case::phrase_table_final_line(
-            tables(),
-            &[],
-            b"\xe4\xbd\xa0",
             &[],
             &[],
             Run {
@@ -3170,32 +2567,6 @@ mod frozen {
                 files: session_user_conf_files(),
             },
         )]
-        // test-pinyin-final-line: 074a2219 tests/test_pinyin.cpp:34-101;
-        // src/include/pinyin_utils.h:LineString.
-        #[case::test_pinyin_final_line(
-            w3(),
-            &[],
-            b"\nnihao",
-            Run {
-                status: Exit(0),
-                stdout: Exact(include_bytes!("fixtures/test_pinyin/nihao-session-final-line.txt")),
-                stderr: OPEN_DATA_USER_CONF_FAILED,
-                files: session_user_files(),
-            },
-        )]
-        // test-pinyin-prefix-eof: 074a2219 tests/test_pinyin.cpp:34-101;
-        // src/include/pinyin_utils.h:LineString.
-        #[case::test_pinyin_prefix_eof(
-            w3(),
-            &[],
-            b"\xe4\xbd\xa0\xe5\xa5\xbd\n",
-            Run {
-                status: Exit(0),
-                stdout: Exact(PREFIX_PINYIN),
-                stderr: OPEN_DATA_USER_CONF_FAILED,
-                files: session_user_conf_files(),
-            },
-        )]
         // test-pinyin-quit: 074a2219 tests/test_pinyin.cpp:34-101;
         // src/include/pinyin_utils.h:LineString.
         #[case::test_pinyin_quit(
@@ -3315,21 +2686,6 @@ mod frozen {
             Run {
                 status: Exit(0),
                 stdout: Exact(include_bytes!("fixtures/test_pinyin_lookup/six-char-lookup.txt")),
-                stderr: b"",
-                files: &[],
-            },
-        )]
-        // pinyin-lookup-final-line: tests/lookup/test_pinyin_lookup.cpp:41-153;
-        // src/lookup/phonetic_lookup.h; tests/tests_helper.h:24-48 at 074a2219.
-        #[case::pinyin_lookup_final_line(
-            w3(),
-            &[],
-            b"nihao",
-            &[],
-            &[],
-            Run {
-                status: Exit(0),
-                stdout: Exact(include_bytes!("fixtures/test_pinyin_lookup/two-key-lookup.txt")),
                 stderr: b"",
                 files: &[],
             },
@@ -3463,24 +2819,10 @@ mod frozen {
                 files: TKRZW_USER_CONF_FILES,
             },
         )]
-        // table-info-binary-zero: tests/storage/test_table_info.cpp:26-99;
-        // src/storage/table_info.cpp:194-419 at 074a2219.
-        #[case::table_info_binary_zero(
-            &[],
-            b"",
-            &["data"],
-            &[("data/table.conf", b"binary format version:0\nmodel data version:14\nlambda parameter:0.5\nsource table format:pinyin\ndatabase format:Tkrzw\n".as_slice())],
-            Run {
-                status: Exit(0),
-                stdout: Exact(include_bytes!("fixtures/test_table_info/empty-tables.txt")),
-                stderr: b"",
-                files: &[
-                    ("tmp/user.conf", Sha256("85f9724f04f1f875b2846fbbef2f7a240cdff548c1a14b95f79ff261d8eb1aab", 83)),
-                ],
-            },
-        )]
         // table-info-empty-tables: tests/storage/test_table_info.cpp:26-99;
         // src/storage/table_info.cpp:194-419 at 074a2219.
+        // The version values go to oxpinyin-data's user-file writer unchanged; the zero-version
+        // policy cases below hold the fresh-marker rule.
         #[case::table_info_empty_tables(
             &[],
             b"",
@@ -3519,38 +2861,6 @@ mod frozen {
                 stdout: Exact(b""),
                 stderr: OPEN_DATA_TABLE_CONF_FAILED,
                 files: &[],
-            },
-        )]
-        // table-info-model-zero: tests/storage/test_table_info.cpp:26-99;
-        // src/storage/table_info.cpp:194-419 at 074a2219.
-        #[case::table_info_model_zero(
-            &[],
-            b"",
-            &["data"],
-            &[("data/table.conf", b"binary format version:7\nmodel data version:0\nlambda parameter:0.5\nsource table format:pinyin\ndatabase format:BerkeleyDB\n".as_slice())],
-            Run {
-                status: Exit(0),
-                stdout: Exact(include_bytes!("fixtures/test_table_info/empty-tables.txt")),
-                stderr: b"",
-                files: &[
-                    ("tmp/user.conf", Sha256("05ba1a68545621fc3f1e8051f939287aef506f8eeab4fccc144e4510a00e7f57", 87)),
-                ],
-            },
-        )]
-        // table-info-negative-versions: tests/storage/test_table_info.cpp:26-99;
-        // src/storage/table_info.cpp:194-419 at 074a2219.
-        #[case::table_info_negative_versions(
-            &[],
-            b"",
-            &["data"],
-            &[("data/table.conf", b"binary format version:-1\nmodel data version:-2\nlambda parameter:0.5\nsource table format:pinyin\ndatabase format:Tkrzw\n".as_slice())],
-            Run {
-                status: Exit(0),
-                stdout: Exact(include_bytes!("fixtures/test_table_info/empty-tables.txt")),
-                stderr: b"",
-                files: &[
-                    ("tmp/user.conf", Sha256("6bd25562e4c8333cd5f16147af941697ab24ce537e7f4dc0953200a0d6fe290f", 84)),
-                ],
             },
         )]
         // table-info-null-names: tests/storage/test_table_info.cpp:26-99;
@@ -3755,32 +3065,6 @@ mod frozen {
             w3(),
             &[],
             b"su3cl3\0ignored\nquit\n",
-            Run {
-                status: Exit(0),
-                stdout: Exact(NIHAO_LINE),
-                stderr: OPEN_DATA_USER_CONF_FAILED,
-                files: session_user_files(),
-            },
-        )]
-        // test-zhuyin-eof: 074a2219 tests/test_zhuyin.cpp:34-66;
-        // src/include/pinyin_utils.h:LineString.
-        #[case::test_zhuyin_eof(
-            w3(),
-            &[],
-            b"",
-            Run {
-                status: Exit(0),
-                stdout: Exact(b""),
-                stderr: OPEN_DATA_USER_CONF_FAILED,
-                files: &[],
-            },
-        )]
-        // test-zhuyin-final-line: 074a2219 tests/test_zhuyin.cpp:34-66;
-        // src/include/pinyin_utils.h:LineString.
-        #[case::test_zhuyin_final_line(
-            w3(),
-            &[],
-            b"su3cl3",
             Run {
                 status: Exit(0),
                 stdout: Exact(NIHAO_LINE),

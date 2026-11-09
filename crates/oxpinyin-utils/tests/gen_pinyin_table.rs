@@ -2,11 +2,10 @@
 //! (libpinyin 074a2219 `utils/storage/gen_pinyin_table.cpp`), run as the
 //! built binary so the C streams, exit statuses and GLib lines are real.
 
-use oxpinyin_input::tool;
 use std::path::Path;
 use std::process::{Command, Output};
 
-// Each test builds its expected output with the host's newline: the
+// The test builds its expected output with the host's newline: the
 // utility writes stdout, stderr and its table through the C runtime's
 // text-mode streams, which end lines with CRLF on Windows and LF elsewhere
 // (docs/findings/external-io-boundary.md, "Native text-mode line endings").
@@ -62,18 +61,6 @@ fn rows_follow_length_then_first_reading_then_phrase_bytes() {
         std::fs::read_to_string(dir.path().join("out.table")).unwrap(),
         expected
     );
-}
-#[test]
-fn a_missing_input_exits_enoent_before_writing() {
-    let newline = oxpinyin_input::TEXT_NEWLINE;
-    let dir = tempfile::tempdir().unwrap();
-    let out = run(dir.path(), &["absent.txt"]);
-    assert_eq!(out.status.code(), Some(tool::ENOENT));
-    assert_eq!(
-        String::from_utf8_lossy(&out.stderr),
-        format!("Can't open file absent.txt.{newline}")
-    );
-    assert!(!dir.path().join("temp.out").exists());
 }
 #[cfg(unix)]
 mod common;

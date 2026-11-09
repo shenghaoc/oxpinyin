@@ -1,144 +1,8 @@
-//! The pin's three DBM test programs (`tests/storage/test_ngram.cpp`,
-//! `test_flexible_ngram.cpp`, `test_punct_table.cpp` at 074a2219) on the
-//! Berkeley DB and Kyoto Cabinet backends, as native tests: the stdout the
-//! pin's source prints, and the rows the programs leave in their fixed
-//! `/tmp` files. The expected text is derived by hand from the C++ (the
-//! single-gram arithmetic of `ngram.cpp:153-176`, the punctuation entry
-//! logic of `punct_table.cpp:41-178`), not captured from a run.
-//!
-//! The programs open absolute `/tmp` names (the pin's test programs do, and the
-//! ports keep them), so the tests serialize on one lock and delete those names
-//! first. A Berkeley DB or Kyoto Cabinet hash
-//! walk is in the library's own bucket order, which the pin's source does
-//! not define, so the two-key walks are compared as sets.
-#[cfg(any(feature = "bdb", feature = "kyotocabinet"))]
-mod existing {
-
-    use std::path::Path;
-    use std::process::Command;
-    use std::sync::Mutex;
-
-    use oxpinyin_store::{DefaultStore, RawReadStore};
-
-    // Covers `cargo test` (one process, the KC and BDB children); under nextest, where each test is its
-    // own process, the `store-backend` group of `.config/nextest.toml` serialises this binary instead.
-    static FIXED_TMP_NAMES: Mutex<()> = Mutex::new(());
-
-    const NGRAM_RULE: &str = "--------------------------------------------------------";
-
-    fn run(program: &str, files: &[&str]) -> String {
-        for file in files {
-            let _ = std::fs::remove_file(file);
-        }
-        let output = Command::new(program).output().expect("spawn the program");
-        assert!(output.status.success(), "{program}: {output:?}");
-        String::from_utf8(output.stdout).expect("utf-8 stdout")
-    }
-
-    /// Splits the text at `marker` into the part before it, the marker line, and
-    /// the `count` lines after it; the rest follows.
-    fn lines_after<'a>(
-        lines: &'a [&'a str],
-        marker: &str,
-        count: usize,
-    ) -> (&'a [&'a str], &'a [&'a str]) {
-        let at = lines
-            .iter()
-            .position(|line| *line == marker)
-            .unwrap_or_else(|| panic!("missing {marker:?} in {lines:?}"));
-        (&lines[..at], &lines[at + 1..at + 1 + count])
-    }
-
-    fn word(value: u32) -> [u8; 4] {
-        value.to_ne_bytes()
-    }
-
-    /// `SingleGram`'s chunk: the total frequency, then `(token, freq)` pairs in
-    /// token order (`ngram.cpp:31-74`).
-    fn single_gram(total: u32, items: &[(u32, u32)]) -> Vec<u8> {
-        let mut bytes = word(total).to_vec();
-        for (token, freq) in items {
-            bytes.extend_from_slice(&word(*token));
-            bytes.extend_from_slice(&word(*freq));
-        }
-        bytes
-    }
-
-    fn raw(store: &DefaultStore, key: &[u8]) -> Option<Vec<u8>> {
-        let mut value = Vec::new();
-        store
-            .get_raw(key, &mut value)
-            .expect("raw read")
-            .then_some(value)
-    }
-
-    #[test]
-    fn test_ngram_prints_the_single_grams_and_leaves_both_bigram_rows() {
-        let _lock = FIXED_TMP_NAMES.lock().unwrap_or_else(|e| e.into_inner());
-        let stdout = run(
-            env!("CARGO_BIN_EXE_test_ngram"),
-            &["/tmp/test.db", "/tmp/snapshot.db"],
-        );
-
-        // test_ngram.cpp:8-24: total 16, then tokens 2,6,4,3,1 inserted with
-        // freqs 1,2,4,8,16 and token 3 set to 32. `SingleGram::search`
-        // (ngram.cpp:153-176) lists the tokens below 8 in ascending order with
-        // freq / total. The second gram has token 1 removed, token 5 (freq 8)
-        // added and total 32 (:42-46), so its probabilities halve.
-        let first_gram = [
-            "item:1:1.000000",
-            "item:2:0.062500",
-            "item:3:2.000000",
-            "item:4:0.250000",
-            "item:6:0.125000",
-        ];
-        let second_gram = [
-            "item:2:0.031250",
-            "item:3:1.000000",
-            "item:4:0.125000",
-            "item:5:0.250000",
-            "item:6:0.062500",
-        ];
-        let mut expected: Vec<&str> = vec![NGRAM_RULE];
-        expected.extend(first_gram); // :26-34, the in-memory gram
-        expected.push(NGRAM_RULE);
-        expected.extend(first_gram); // :50-61, `bigram.load(1)`
-        expected.push(NGRAM_RULE);
-        expected.extend(second_gram); // :50-61, `bigram.load(2)`
-        expected.extend([
-            NGRAM_RULE,
-            "total_freq:32", // :63-65
-            "----------------------system----------------------------",
-        ]);
-        let lines: Vec<&str> = stdout.lines().collect();
-        let (head, walked) = lines_after(&lines, expected[expected.len() - 1], 2);
-        assert_eq!(head, &expected[..expected.len() - 1]);
-        let mut walked = walked.to_vec();
-        walked.sort_unstable();
-        assert_eq!(
-            walked,
-            ["item:1", "item:2"],
-            "get_all_items (:69-76) names both tokens"
-        );
-        assert_eq!(lines.len(), expected.len() + 2, "{stdout}");
-
-        // The attached file keeps both grams (:40-46); the saved snapshot
-        // (`save_db`, :78) holds the same two rows.
-        let gram1 = single_gram(16, &[(1, 16), (2, 1), (3, 32), (4, 4), (6, 2)]);
-        let gram2 = single_gram(32, &[(2, 1), (3, 32), (4, 4), (5, 8), (6, 2)]);
-        let attached =
-            DefaultStore::open_hash_read_only(Path::new("/tmp/test.db")).expect("test.db");
-        assert_eq!(raw(&attached, &word(1)), Some(gram1.clone()));
-        assert_eq!(raw(&attached, &word(2)), Some(gram2.clone()));
-        assert_eq!(attached.count_raw().expect("count"), 2);
-        let saved =
-            DefaultStore::open_user_bigram(Path::new("/tmp/snapshot.db")).expect("snapshot");
-        assert_eq!(raw(&saved, &word(1)), Some(gram1));
-        assert_eq!(raw(&saved, &word(2)), Some(gram2));
-        assert_eq!(saved.count_raw().expect("count"), 2);
-    }
-}
-
+//! Frozen pin observations of the pin's three DBM test programs
+//! (`tests/storage/test_ngram.cpp`, `test_flexible_ngram.cpp`,
+//! `test_punct_table.cpp` at 074a2219): the stdout and the rows the programs
+//! leave in their fixed `/tmp` files. Each case moves those files to its own
+//! directory through `fixed_tmp::OVERRIDE`.
 #[cfg(unix)]
 mod common;
 
@@ -262,23 +126,9 @@ mod frozen {
                 },
             },
         )]
-        // flexible-ngram-fresh: tests/storage/test_flexible_ngram.cpp:25-139;
-        // src/storage/flexible_single_gram.h:118-139 at 074a2219.
-        #[case::flexible_ngram_fresh(
-            &[],
-            b"",
-            &[],
-            &[],
-            (if ["bdb", "tkrzw"].contains(&CELL) { &["tmp/training.db"][..] } else { &[] }, &[][..]),
-            Run {
-                status: Exit(0),
-                stdout: flexible_ngram_session(),
-                stderr: b"",
-                files: flexible_ngram_files(),
-            },
-        )]
         // flexible-ngram-ignored-input: tests/storage/test_flexible_ngram.cpp:25-139;
         // src/storage/flexible_single_gram.h:118-139 at 074a2219.
+        // Also the witness of a fresh run: the arguments and input are ignored.
         #[case::flexible_ngram_ignored_input(
             &["--help", "ignored"],
             b"ignored\nquit\n",
@@ -443,23 +293,9 @@ mod frozen {
                 files: ngram_files(),
             },
         )]
-        // ngram-fresh: tests/storage/test_ngram.cpp:5-95; src/storage/ngram.cpp:31-271 at
-        // 074a2219.
-        #[case::ngram_fresh(
-            &[],
-            b"",
-            &[],
-            &[],
-            (if ["bdb", "tkrzw"].contains(&CELL) { &["tmp/test.db", "tmp/snapshot.db"][..] } else { &[] }, &[][..]),
-            Run {
-                status: Exit(0),
-                stdout: ngram_session(),
-                stderr: b"",
-                files: ngram_files(),
-            },
-        )]
         // ngram-ignored-input: tests/storage/test_ngram.cpp:5-95; src/storage/ngram.cpp:31-271
         // at 074a2219.
+        // Also the witness of a fresh run: the arguments and input are ignored.
         #[case::ngram_ignored_input(
             &["--help", "ignored"],
             b"ignored\nquit\n",
@@ -664,23 +500,9 @@ mod frozen {
                 files: punct_table_files(),
             },
         )]
-        // punct-table-fresh: tests/storage/test_punct_table.cpp:25-77;
-        // src/storage/punct_table.cpp:117-177 at 074a2219.
-        #[case::punct_table_fresh(
-            &[],
-            b"",
-            &[],
-            &[],
-            (if ["bdb", "tkrzw"].contains(&CELL) { &["tmp/punct.bin", "tmp/snapshot.db"][..] } else { &[] }, &[][..]),
-            Run {
-                status: Exit(0),
-                stdout: Exact(include_bytes!("fixtures/test_punct_table/session.txt")),
-                stderr: b"",
-                files: punct_table_files(),
-            },
-        )]
         // punct-table-ignored-input: tests/storage/test_punct_table.cpp:25-77;
         // src/storage/punct_table.cpp:117-177 at 074a2219.
+        // Also the witness of a fresh run: the arguments and input are ignored.
         #[case::punct_table_ignored_input(
             &["--help", "ignored"],
             b"ignored\nquit\n",

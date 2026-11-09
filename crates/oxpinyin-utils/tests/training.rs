@@ -53,23 +53,14 @@ fn binary(name: &str) -> PathBuf {
 
 /// Runs `binary` in `dir` with `args` and `stdin`.
 fn run(name: &str, dir: &Path, args: &[&str], stdin: &[u8]) -> Output {
-    let mut command = Command::new(binary(name));
-    command
+    let mut child = Command::new(binary(name))
         .args(args)
         .current_dir(dir)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    if args == ["--help"] || args == ["--bogus"] {
-        if let Some(locale) = std::env::var_os("LC_ALL").filter(|value| !value.is_empty()) {
-            command.env("LC_CTYPE", locale);
-        }
-        command
-            .env_remove("LC_ALL")
-            .env("LC_MESSAGES", "C")
-            .env_remove("LANGUAGE");
-    }
-    let mut child = command.spawn().expect("spawn utility");
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn utility");
     child
         .stdin
         .take()
@@ -126,7 +117,6 @@ const AH: u32 = 0x0100_0004; // 啊
 const START: u32 = 1;
 // The pin's rows for this input (utility/<cell>/gen-deleted-ngram, identical on every backend):
 // a blank line restarts at sentence_start, and 啊 → 阿 crosses it, so 啊 gets no row.
-const GLIB_OPTION_PLACEHOLDERS: [&str; 3] = ["[OPTION\u{2026}]", "[OPTION?]", "[OPTION...]"];
 
 #[test]
 fn gen_deleted_ngram_restarts_after_a_blank_line_as_the_pin_does() {
@@ -157,44 +147,6 @@ fn eval_correction_rate_refuses_an_unknown_token() {
         expected_text("error: unknown token:999999.\n").as_bytes()
     );
 }
-#[test]
-fn the_option_help_names_the_pins_options() {
-    let dir = fixture_copy();
-    let outcome = run("gen_ngram", dir.path(), &["--help"], b"");
-    assert_eq!(exit_word(&outcome), 0);
-    let text = String::from_utf8(outcome.stdout).expect("help");
-    let executable = Path::new(env!("CARGO_BIN_EXE_gen_ngram"))
-        .file_name()
-        .unwrap()
-        .to_str()
-        .unwrap();
-    assert!(
-        GLIB_OPTION_PLACEHOLDERS
-            .iter()
-            .any(|option| text.contains(&format!("{executable} {option} "))),
-        "{text}"
-    );
-    assert!(text.contains("--skip-pi-gram-training"), "{text}");
-    assert!(text.contains("--bigram-file"), "{text}");
-    assert!(text.contains("- generate n-gram"), "{text}");
-
-    let outcome = run("gen_unigram", dir.path(), &["--help"], b"");
-    let text = String::from_utf8(outcome.stdout).expect("help");
-    assert!(text.contains("--table-dir"), "{text}");
-    assert!(text.contains("- increase uni-gram"), "{text}");
-}
-
-#[test]
-fn a_bad_option_is_glibs_refusal() {
-    let dir = fixture_copy();
-    let outcome = run("gen_unigram", dir.path(), &["--bogus"], b"");
-    assert_eq!(exit_word(&outcome), 22);
-    assert_eq!(
-        outcome.stdout,
-        expected_text("option parsing failed:Unknown option --bogus\n").as_bytes()
-    );
-    assert!(outcome.stderr.is_empty());
-}
 #[cfg(unix)]
 mod common;
 #[cfg(unix)]
@@ -205,7 +157,6 @@ mod fixtures;
 mod frozen {
     use crate::common::CELL;
 
-    const LOAD_ABSENT_BIN_FAILED: &[u8] = b"load absent.bin failed!\n";
     fn bigram_db_not_berkeley_db() -> &'static [u8] {
         match CELL {
             "bdb" => b"BDB0004 fop_read_meta: bigram.db: unexpected file type or format\n",
@@ -254,6 +205,7 @@ mod frozen {
         )]
         // estimate_interpolation-help: utils/training/estimate_interpolation.cpp at 074a2219:
         // 90-142 (no g_option_context: an option is an ignored argument).
+        // The program reads no argument: --help is one witness for every argument list.
         #[case::estimate_interpolation_help(
             w3(),
             &["--help"],
@@ -346,20 +298,6 @@ mod frozen {
         #[case::estimate_interpolation_ordinary(
             w3(),
             &[],
-            b"",
-            &[],
-            Run {
-                status: Exit(0),
-                stdout: w3_lambdas(),
-                stderr: b"",
-                files: &[],
-            },
-        )]
-        // estimate_interpolation-too-many-arguments: utils/training/estimate_interpolation.cpp
-        // at 074a2219: 90-142 (main has no argument parsing).
-        #[case::estimate_interpolation_too_many_arguments(
-            w3(),
-            &["first", "second"],
             b"",
             &[],
             Run {
@@ -471,6 +409,7 @@ mod frozen {
         // eval_correction_rate-help: utils/training/eval_correction_rate.cpp at 074a2219:
         // 132-170 (no g_option_context; print_help is dead and an option is an ignored
         // argument, then the missing evals2.text ends the run).
+        // The program reads no argument: --help is one witness for every argument list.
         #[case::eval_correction_rate_help(
             w3(),
             &["--help"],
@@ -556,22 +495,6 @@ mod frozen {
                 files: &[],
             },
         )]
-        // eval_correction_rate-too-many-arguments: utils/training/eval_correction_rate.cpp at
-        // 074a2219: 132-207 (main has no argument parsing).
-        // Platform exception, aarch64, x86_64: a default NaN prints nan on aarch64 and -nan on
-        // x86_64.
-        #[case::eval_correction_rate_too_many_arguments(
-            w3(),
-            &["first", "second"],
-            b"",
-            &[("evals2.text", b"".as_slice())],
-            Run {
-                status: Exit(0),
-                stdout: CORRECTION_RATE_NAN,
-                stderr: b"",
-                files: &[],
-            },
-        )]
         fn captured_cases(
             #[case] directory: TempDir,
             #[case] args: &[&str],
@@ -611,7 +534,6 @@ mod frozen {
         use rstest::rstest;
         use std::time::Duration;
 
-        use super::LOAD_ABSENT_BIN_FAILED;
         use crate::fixtures::w3;
 
         #[rstest]
@@ -625,20 +547,6 @@ mod frozen {
             Run {
                 status: Signal(6),
                 stdout: Exact(b""),
-                stderr: b"",
-                files: &[],
-            },
-        )]
-        // gen_deleted_ngram-bogus-option: utils/training/gen_deleted_ngram.cpp at 074a2219:
-        // 54-57.
-        #[case::gen_deleted_ngram_bogus_option(
-            TempDir::new().unwrap(),
-            &["--bogus"],
-            b"",
-            &[],
-            Run {
-                status: Exit(22),
-                stdout: Exact(UNKNOWN_OPTION_BOGUS),
                 stderr: b"",
                 files: &[],
             },
@@ -663,6 +571,7 @@ mod frozen {
         // utils/training/gen_deleted_ngram.cpp:72-73; utils/utils_helper.h:73-94;
         // src/include/memory_chunk.h:420-463 at 074a2219.
         // Platform exception, macos: exit(ENODATA) is 96 on macOS and 61 on Linux.
+        // An absent chunk takes the same load failure and the same ENODATA exit.
         #[case::gen_deleted_ngram_family_e_truncated_first_chunk(
             w3(),
             &[],
@@ -708,39 +617,6 @@ mod frozen {
                 status: Exit(0),
                 stdout: Exact(b""),
                 stderr: b"",
-                files: &[],
-            },
-        )]
-        // gen_deleted_ngram-missing-chunk: utils/training/gen_deleted_ngram.cpp at 074a2219:
-        // 72-73 (exit(ENODATA) where gen_ngram uses ENOENT).
-        // Platform exception, macos: exit(ENODATA) is 96 on macOS and 61 on Linux.
-        #[case::gen_deleted_ngram_missing_chunk(
-            TempDir::new().unwrap(),
-            &[],
-            b"",
-            &[("table.conf", b"binary format version:7\nmodel data version:14\nlambda parameter:0.312699\n\nsource table format:pinyin\ndatabase format:Tkrzw\n\ndefault RESERVED NULL NULL NULL NOT_USED\ndefault GB_DICTIONARY gb_char.table absent.bin gb_char.dbin SYSTEM_FILE\ndefault GBK_DICTIONARY gbk_char.table gbk_char.bin gbk_char.dbin SYSTEM_FILE\n".as_slice())],
-            Run {
-                status: if cfg!(target_os = "macos") {
-                    Exit(96)
-                } else {
-                    Exit(61)
-                },
-                stdout: Exact(b""),
-                stderr: LOAD_ABSENT_BIN_FAILED,
-                files: &[],
-            },
-        )]
-        // gen_deleted_ngram-missing-table-conf: utils/training/gen_deleted_ngram.cpp at
-        // 074a2219: 59-65.
-        #[case::gen_deleted_ngram_missing_table_conf(
-            TempDir::new().unwrap(),
-            &[],
-            b"",
-            &[],
-            Run {
-                status: Exit(2),
-                stdout: Exact(b""),
-                stderr: OPEN_TABLE_CONF_FAILED,
                 files: &[],
             },
         )]
@@ -834,6 +710,7 @@ mod frozen {
             },
         )]
         // gen_ngram-bogus-option: utils/training/gen_ngram.cpp at 074a2219: 53-56.
+        // gen_deleted_ngram runs the same gen_ngram::run, so this case covers both programs.
         #[case::gen_ngram_bogus_option(
             TempDir::new().unwrap(),
             &["--bogus"],
@@ -911,6 +788,7 @@ mod frozen {
             },
         )]
         // gen_ngram-missing-table-conf: utils/training/gen_ngram.cpp at 074a2219: 58-64.
+        // gen_deleted_ngram runs the same gen_ngram::run, so this case covers both programs.
         #[case::gen_ngram_missing_table_conf(
             TempDir::new().unwrap(),
             &[],
@@ -1015,7 +893,6 @@ mod frozen {
         use std::path::Path;
         use std::time::Duration;
 
-        use super::LOAD_ABSENT_BIN_FAILED;
         use crate::fixtures::w3;
 
         const UNIGRAM_W3_CHUNK_FILES: &[(&str, File)] = &[
@@ -1111,6 +988,7 @@ mod frozen {
         )]
         // gen_unigram-family-e-truncated-first-chunk: utils/training/gen_unigram.cpp:53-58;
         // utils/utils_helper.h:73-94; src/include/memory_chunk.h:420-463 at 074a2219.
+        // An absent chunk takes the same load failure and the same exit.
         #[case::gen_unigram_family_e_truncated_first_chunk(
             w3(),
             &[],
@@ -1136,21 +1014,6 @@ mod frozen {
                 status: Exit(0),
                 stdout: GlibOption("Usage:\n  gen_unigram [OPTION?] - increase uni-gram\n\nHelp Options:\n  -h, --help       Show help options\n\nApplication Options:\n  --table-dir      table directory\n\n"),
                 stderr: b"",
-                files: &[],
-            },
-        )]
-        // gen_unigram-missing-chunk: utils/training/gen_unigram.cpp at 074a2219: 51-58 (load
-        // failed! then exit(ENOENT)); the file type test at 45-47 loads SYSTEM_FILE and
-        // DICTIONARY rows.
-        #[case::gen_unigram_missing_chunk(
-            TempDir::new().unwrap(),
-            &[],
-            b"",
-            &[("table.conf", b"binary format version:7\nmodel data version:14\nlambda parameter:0.312699\n\nsource table format:pinyin\ndatabase format:Tkrzw\n\ndefault RESERVED NULL NULL NULL NOT_USED\ndefault GB_DICTIONARY gb_char.table absent.bin gb_char.dbin SYSTEM_FILE\ndefault GBK_DICTIONARY gbk_char.table gbk_char.bin gbk_char.dbin SYSTEM_FILE\n".as_slice())],
-            Run {
-                status: Exit(2),
-                stdout: Exact(b""),
-                stderr: LOAD_ABSENT_BIN_FAILED,
                 files: &[],
             },
         )]

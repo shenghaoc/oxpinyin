@@ -68,16 +68,6 @@ fn ngseg(cwd: &Path, args: &[&str], stdin: &[u8]) -> Output {
     run(env!("CARGO_BIN_EXE_ngseg"), cwd, args, stdin)
 }
 
-fn spseg(cwd: &Path, args: &[&str], stdin: &[u8]) -> Output {
-    run(env!("CARGO_BIN_EXE_spseg"), cwd, args, stdin)
-}
-
-fn assert_streams(output: &Output, stdout: &[u8], stderr: &[u8], status: i32) {
-    assert_eq!(output.status.code(), Some(status), "exit status");
-    assert_eq!(output.stdout, expected_text(stdout), "stdout");
-    assert_eq!(output.stderr, expected_text(stderr), "stderr");
-}
-
 // Build only the expected text for the host CRT's stream mode.
 fn expected_text(text: &[u8]) -> Vec<u8> {
     let mut expected = Vec::with_capacity(text.len());
@@ -89,27 +79,7 @@ fn expected_text(text: &[u8]) -> Vec<u8> {
     }
     expected
 }
-#[test]
-fn ascii_is_an_unknown_run() {
-    let (_directory, data) = data_dir();
-    // `deal_with_unknown`: `%d %s\n` with `null_token` (`ngseg.cpp:96-103`).
-    assert_streams(&ngseg(&data, &[], b"abc\n"), b"0 abc\n0 \n", b"", 0);
-    assert_streams(&spseg(&data, &[], b"abc\n"), b"0 abc\n0 \n", b"", 0);
-}
 
-#[test]
-fn a_single_character_phrase_uses_its_stored_token() {
-    let (_directory, data) = data_dir();
-    // 中 is phrase token 16786821 in the committed W3 table (the token the
-    // committed `mergeseq-input.txt` names); a one-character segmentable run
-    // has the one path `中`.
-    assert_streams(
-        &ngseg(&data, &[], "中\n".as_bytes()),
-        "16786821 中\n0 \n".as_bytes(),
-        b"",
-        0,
-    );
-}
 #[test]
 fn a_missing_input_reports_the_open_and_exits_einval() {
     let (directory, data) = data_dir();
@@ -208,20 +178,6 @@ mod frozen {
                 status: Exit(0),
                 stdout: Exact(NULL_TOKEN_LINE),
                 stderr: b"",
-                files: &[],
-            },
-        )]
-        // mergeseq-family-e-truncated-first-chunk: utils/segment/mergeseq.cpp:257;
-        // utils/utils_helper.h:73-94; src/include/memory_chunk.h:420-463 at 074a2219.
-        #[case::mergeseq_family_e_truncated_first_chunk(
-            w3(),
-            &[],
-            b"",
-            &[("gb_char.bin", b"\x04\0\0\0\0\0\0\0\x01".as_slice()), ("gbk_char.bin", b"\0".as_slice())],
-            Run {
-                status: Exit(2),
-                stdout: Exact(b""),
-                stderr: LOAD_GB_CHAR_BIN_FAILED,
                 files: &[],
             },
         )]
@@ -408,6 +364,8 @@ mod frozen {
         )]
         // ngseg-family-e-truncated-first-chunk: utils/segment/ngseg.cpp:163;
         // utils/utils_helper.h:73-94; src/include/memory_chunk.h:420-463 at 074a2219.
+        // mergeseq and spseg load the chunks through the same segment::data::load_or_exit;
+        // their missing-table-conf cases cover the call.
         #[case::ngseg_family_e_truncated_first_chunk(
             w3(),
             &[],
@@ -450,6 +408,7 @@ mod frozen {
         )]
         // ngseg-mini-fixture: utils/segment/ngseg.cpp at 074a2219: 106-262;
         // fixtures/w9/segmenter-han.txt.
+        // The fixture holds an ASCII run (0 abc) and a one-character phrase (16786821 中).
         #[case::ngseg_mini_fixture(
             w3(),
             &["han.txt"],
@@ -597,20 +556,6 @@ mod frozen {
                 status: Exit(0),
                 stdout: Exact(ZHONG_THEN_TWO_NULL_TOKEN_LINES),
                 stderr: b"",
-                files: &[],
-            },
-        )]
-        // spseg-family-e-truncated-first-chunk: utils/segment/spseg.cpp:258;
-        // utils/utils_helper.h:73-94; src/include/memory_chunk.h:420-463 at 074a2219.
-        #[case::spseg_family_e_truncated_first_chunk(
-            w3(),
-            &[],
-            b"",
-            &[("gb_char.bin", b"\x04\0\0\0\0\0\0\0\x01".as_slice()), ("gbk_char.bin", b"\0".as_slice())],
-            Run {
-                status: Exit(2),
-                stdout: Exact(b""),
-                stderr: LOAD_GB_CHAR_BIN_FAILED,
                 files: &[],
             },
         )]

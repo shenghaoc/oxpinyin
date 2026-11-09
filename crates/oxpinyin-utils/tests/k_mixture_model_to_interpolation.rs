@@ -98,6 +98,7 @@ mod frozen {
         #[rstest]
         // kti-arguments-ignored: utils/training/k_mixture_model_to_interpolation.cpp at
         // 074a2219: 188-213, 55-186; src/storage/tag_utility.cpp: 118-264.
+        // Also the merged-model witness: the arguments are ignored and the input is MERGED_KMM.
         #[case::kti_arguments_ignored(
             &["--help", "-o", "out.txt", "missing.txt"],
             crate::MERGED_KMM.as_bytes(),
@@ -226,18 +227,6 @@ mod frozen {
                 } else {
                     Exact(INTERPOLATION_HEADER)
                 },
-                stderr: b"",
-                files: &[],
-            },
-        )]
-        // kti-merged: utils/training/k_mixture_model_to_interpolation.cpp at 074a2219:
-        // 188-213, 55-186; src/storage/tag_utility.cpp: 118-264.
-        #[case::kti_merged(
-            &[],
-            crate::MERGED_KMM.as_bytes(),
-            Run {
-                status: Exit(0),
-                stdout: Exact(include_bytes!("fixtures/k_mixture_model_to_interpolation/merged-model.txt")),
                 stderr: b"",
                 files: &[],
             },
