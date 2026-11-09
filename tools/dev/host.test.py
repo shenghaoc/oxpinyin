@@ -143,12 +143,16 @@ class CgroupCpuTests(unittest.TestCase):
         self.assertEqual(host.linux_cgroup_dirs(self.proc, controller='cpu'), [self.cpu])
 
     def test_inaccessible_or_invalid_mounts_remain_unknown(self):
-        for entry, mountinfo in (('/outside', self.mount(self.cpu, 'cpu,cpuacct', '/tenant')),
-                                  ('/tenant/../session', self.mounts[0]),
-                                  ('/session', ''), ('/session', 'invalid')):
+        for entry, mountinfo, reason in (
+                ('/outside', self.mount(self.cpu, 'cpu,cpuacct', '/tenant'), 'no visible cpu cgroup mount'),
+                ('/tenant/../session', self.mounts[0], 'invalid cgroup path'),
+                ('/session', '', 'no visible cpu cgroup mount'),
+                ('/session', 'invalid', 'not enough values')):
             with self.subTest(entry=entry, mountinfo=mountinfo):
                 (self.proc / 'self/cgroup').write_text(f'7:cpuacct,cpu:{entry}\n')
                 (self.proc / 'self/mountinfo').write_text(mountinfo)
+                with self.assertRaisesRegex(ValueError, reason):
+                    host.linux_cgroup_dirs(self.proc, controller='cpu')
                 snapshot = self.snapshot()
                 self.assertIn('cgroup v1 cpu limits=unknown', snapshot['notes'])
                 self.assertEqual(snapshot['cpus'], 4)

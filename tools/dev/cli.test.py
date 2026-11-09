@@ -66,6 +66,14 @@ class RealJustSmokeTests(unittest.TestCase):
                     self.assertEqual(result.returncode, status, result.stderr)
                     self.assertEqual(json.loads(result.stdout), values)
 
+    if sys.platform == 'win32':
+        def test_cpp_smoke_is_refused_with_its_reason(self):
+            # The gate links an ELF .so and reads it with readelf and ldd; the justfile refuses it before any tool runs.
+            result = self.invoke('cpp-smoke')
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertEqual(result.stdout.strip(),
+                             'cpp-smoke is unsupported on Windows: it needs readelf, ldd and an ELF .so.')
+
     def test_doctor_without_the_interpreter_names_just_python_and_installs_nothing(self):
         with tempfile.TemporaryDirectory() as directory:
             log = Path(directory) / 'uv.log'

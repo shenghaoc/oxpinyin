@@ -155,9 +155,25 @@ def extract(revision: str, destination: Path, root: Path = ROOT) -> None:
     archive.stdout.close()
     if archive.wait() or unpack.returncode:
         raise Failure(f'could not export {revision}')
-    for current, directories, files in os.walk(destination):
+    touch_tree(destination)
+
+
+def touch_tree(directory: Path) -> None:
+    """Set every mtime under directory to now without following a link out of it.
+
+    Where utime can act on a link itself it does. Elsewhere (Windows) a symbolic
+    link or a junction is skipped, so no timestamp changes outside the tree.
+    """
+    on_links = os.utime in os.supports_follow_symlinks
+    for current, directories, files in os.walk(directory):
+        if not on_links:
+            directories[:] = [name for name in directories if not os.path.isjunction(os.path.join(current, name))]
         for name in (*directories, *files):
-            os.utime(os.path.join(current, name), follow_symlinks=False)
+            path = os.path.join(current, name)
+            if on_links:
+                os.utime(path, follow_symlinks=False)
+            elif not os.path.islink(path):
+                os.utime(path)
 
 
 def build_env(source: Path, target: Path, cell: str) -> dict[str, str]:

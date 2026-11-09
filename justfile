@@ -294,8 +294,9 @@ cpp-smoke: python
     @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev cpp-smoke
 
 [windows]
-cpp-smoke: python
-    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev cpp-smoke; exit $LASTEXITCODE
+cpp-smoke:
+    @{{windows_args}} echo "cpp-smoke is unsupported on Windows: it needs readelf, ldd and an ELF .so."
+    @{{windows_args}} exit 1
 
 [unix]
 abi *args: python

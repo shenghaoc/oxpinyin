@@ -277,7 +277,7 @@ class Settings:
         source = dict(head=output('git', 'rev-parse', 'HEAD').strip(),
                       tracked_diff_sha256=hashlib.sha256(output('git', 'diff', 'HEAD', '--', '.').encode()).hexdigest())
         artifacts = {}
-        for name, filename in (('pinyin-capi', 'libpinyin_capi.so'), ('zhuyin-capi', 'libzhuyin_capi.so')):
+        for name, filename in (('pinyin-capi', cdylib('pinyin_capi')), ('zhuyin-capi', cdylib('zhuyin_capi'))):
             file = self.target / 'debug' / filename
             if file.exists():
                 stat = file.stat()
@@ -289,6 +289,13 @@ class Settings:
         staged = path.with_name(path.name + f'.{os.getpid()}')
         staged.write_text(json.dumps(record, indent=1, sort_keys=True) + '\n')
         os.replace(staged, path)
+
+
+def cdylib(stem: str) -> str:
+    """The file name cargo gives the cdylib of the crate library STEM on this host."""
+    if sys.platform == 'win32':
+        return stem + '.dll'
+    return 'lib' + stem + ('.dylib' if sys.platform == 'darwin' else '.so')
 
 
 def utc() -> str:
