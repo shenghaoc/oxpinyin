@@ -598,9 +598,12 @@ fn a_failed_deferred_closure_applies_nothing() {
     );
 }
 
+/// The pin asserts a record shorter than its array header
+/// (`flexible_ngram_bdb.h:388`, `flexible_ngram_kyotodb.h:371`,
+/// `flexible_ngram_tkrzwdb.h:388` at 074a2219); the store reports that fault
+/// as its own error, and the K-mixture tools abort on it.
 #[test]
-#[should_panic(expected = "shorter than the pin's")]
-fn get_array_header_asserts_the_records_header_length() {
+fn a_short_array_header_is_a_typed_fault() {
     let scratch = Scratch::new("short-header");
     let path = scratch.path().join("short.db");
     {
@@ -613,7 +616,10 @@ fn get_array_header_asserts_the_records_header_length() {
         .expect("short record");
     }
     let bigram = open_read_only(&path);
-    let _ = bigram.get_array_header(7);
+    assert!(matches!(
+        bigram.get_array_header(7),
+        Err(StoreError::ShortArrayHeader)
+    ));
 }
 
 // ── pin-written file ───────────────────────────────────────────────

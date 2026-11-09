@@ -65,12 +65,15 @@
 //!
 //! A missing key is a miss: [`FlexibleBigram::load`] answers `None`, the
 //! header getters `None`. A closed handle answers `false`/`None` through the
-//! `Option`/`bool` results. [`FlexibleBigram::get_array_header`] asserts the
-//! record is at least one array header long, the pin's
-//! `assert(db_data.size == sizeof(ArrayHeader))` and
+//! `Option`/`bool` results. Where the pin asserts that a record is at least
+//! one array header long, `assert(db_data.size == sizeof(ArrayHeader))` and
 //! `assert(retsize >= vsiz)` (`flexible_ngram_bdb.h:388`,
-//! `flexible_ngram_kyotodb.h:371`, `flexible_ngram_tkrzwdb.h:388`). A
-//! failing cursor walk in `get_all_items` prints the pin's
+//! `flexible_ngram_kyotodb.h:371`, `flexible_ngram_tkrzwdb.h:388`),
+//! [`FlexibleBigram::get_array_header`] returns
+//! [`StoreError::ShortArrayHeader`]. It does no work before that point, as
+//! the pin's read does none, and the K-mixture tools call
+//! `std::process::abort()` on it. A failing cursor walk in `get_all_items`
+//! prints the pin's
 //! `training db error, exit!` (no newline) to stderr and exits with the
 //! `EIO` status (`flexible_ngram_bdb.h:279-286`) — the error cannot be
 //! recovered in the pin either.
@@ -593,23 +596,16 @@ where
     /// row (`flexible_ngram_bdb.h:367-391`, `flexible_ngram_kyotodb.h:353-374`,
     /// `flexible_ngram_tkrzwdb.h:368-391`).
     ///
-    /// # Panics
-    ///
-    /// Panics when the stored value is shorter than the pin's array header:
-    /// the pin asserts the partial read's size
-    /// (`flexible_ngram_bdb.h:388`) or `retsize >= vsiz`
-    /// (`flexible_ngram_kyotodb.h:371`, `flexible_ngram_tkrzwdb.h:388`).
-    ///
     /// # Errors
     ///
-    /// Returns [`StoreError`] when the read fails or the header bytes do
-    /// not decode.
-    #[expect(
-        clippy::panic_in_result_fn,
-        reason = "the pin's get_array_header asserts the record's array header length \
-                  (flexible_ngram_bdb.h:388, flexible_ngram_kyotodb.h:371, \
-                  flexible_ngram_tkrzwdb.h:388); the panic is the required behaviour"
-    )]
+    /// Returns [`StoreError::ShortArrayHeader`] when the stored value is
+    /// shorter than the pin's array header, where the pin asserts the
+    /// partial read's size (`flexible_ngram_bdb.h:388`) or
+    /// `retsize >= vsiz` (`flexible_ngram_kyotodb.h:371`,
+    /// `flexible_ngram_tkrzwdb.h:388`). The read itself writes nothing, so
+    /// the caller has done all of the pin's work before that point. Returns
+    /// another [`StoreError`] when the read fails, which is the pin's
+    /// `false`, or when the header bytes do not decode.
     pub fn get_array_header(&self, token: u32) -> Result<Option<S::ArrayHeader>, StoreError> {
         let header_len = <S::ArrayHeader as FixedRecord>::LEN;
         #[cfg(feature = "bdb")]
@@ -617,11 +613,9 @@ where
             let Some(value) = self.read_partial(&token.to_ne_bytes(), 0, header_len as u32)? else {
                 return Ok(None);
             };
-            assert!(
-                value.len() == header_len,
-                "flexible bigram array header is {} bytes, shorter than the pin's {header_len}",
-                value.len(),
-            );
+            if value.len() != header_len {
+                return Err(StoreError::ShortArrayHeader);
+            }
             Ok(Some(S::ArrayHeader::decode(&value)?))
         }
         #[cfg(not(feature = "bdb"))]
@@ -629,12 +623,10 @@ where
             let Some(value) = self.read_value(&token.to_ne_bytes())? else {
                 return Ok(None);
             };
-            assert!(
-                value.len() >= header_len,
-                "flexible bigram array header is {} bytes, shorter than the pin's {header_len}",
-                value.len(),
-            );
-            Ok(Some(S::ArrayHeader::decode(&value[..header_len])?))
+            let Some(header) = value.get(..header_len) else {
+                return Err(StoreError::ShortArrayHeader);
+            };
+            Ok(Some(S::ArrayHeader::decode(header)?))
         }
     }
 

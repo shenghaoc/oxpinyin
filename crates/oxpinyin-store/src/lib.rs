@@ -113,6 +113,11 @@ pub enum StoreError {
     /// the size and then reads the body, and asserts when the two disagree
     /// (`ngram_kyotodb.cpp:131-139` at the pin).
     ReadAfterCheck,
+    /// A `FlexibleBigram` single gram is shorter than its array header.
+    /// The pin's `get_array_header` asserts on it (`flexible_ngram_bdb.h:388`,
+    /// `flexible_ngram_kyotodb.h:371` and `flexible_ngram_tkrzwdb.h:388` at
+    /// the pin); the K-mixture tools abort on it.
+    ShortArrayHeader,
 }
 
 /// A non-I/O failure the storage backend reported: its message, and the
@@ -183,6 +188,9 @@ impl fmt::Display for StoreError {
             Self::ReadOnly => f.write_str("store is read-only"),
             Self::InvalidInput(message) => write!(f, "invalid store input: {message}"),
             Self::ReadAfterCheck => f.write_str("store read failed after its size check"),
+            Self::ShortArrayHeader => {
+                f.write_str("flexible bigram single gram is shorter than its array header")
+            }
         }
     }
 }
@@ -192,7 +200,10 @@ impl std::error::Error for StoreError {
         match self {
             Self::Io(e) => Some(e),
             Self::Backend(e) => Some(e),
-            Self::ReadOnly | Self::InvalidInput(_) | Self::ReadAfterCheck => None,
+            Self::ReadOnly
+            | Self::InvalidInput(_)
+            | Self::ReadAfterCheck
+            | Self::ShortArrayHeader => None,
         }
     }
 }
