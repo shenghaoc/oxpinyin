@@ -890,16 +890,16 @@ class InImageCommandTests(unittest.TestCase):
         run.root, run.pin = Path('/checkout'), Path('/checkout/tools/oracle/oracle-pin.txt')
         run.cache, run.model_cache, run.deps_image = Path('/cache'), Path('/model'), 'deps:tag'
         command = run.in_image_command(['--libs-only'])
-        self.assertIn('/checkout/tools/oracle/build-oracle.sh:/usr/local/bin/build-oracle.sh:ro,z', command)
-        self.assertIn('/checkout/tools/lib/bash-floor.sh:/usr/local/lib/bash-floor.sh:ro,z', command)
+        self.assertIn(f'{run.root / "tools/oracle/build-oracle.sh"}:/usr/local/bin/build-oracle.sh:ro,z', command)
+        self.assertIn(f'{run.root / "tools/lib/bash-floor.sh"}:/usr/local/lib/bash-floor.sh:ro,z', command)
         run.ctr = 'container'
         # `container` names Apple's CLI only on macOS; on Windows it is wslc's alias.
         with mock.patch.object(provision.images, 'host_system', return_value='Darwin'):
             command = run.in_image_command(['--libs-only'])
-        self.assertIn('type=bind,source=/checkout,target=/opt/oracle-recipe,readonly', command)
+        self.assertIn(f'type=bind,source={run.root},target=/opt/oracle-recipe,readonly', command)
         self.assertEqual(command[command.index('--memory') + 1], '6G')
         self.assertIn('/opt/oracle-recipe/tools/oracle/build-oracle.sh', command)
-        self.assertFalse(any('source=/checkout/tools/' in part for part in command))
+        self.assertFalse(any(f'source={run.root / "tools"}' in part for part in command))
 
 
 if __name__ == '__main__':

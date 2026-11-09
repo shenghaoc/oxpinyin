@@ -326,9 +326,9 @@ uv run --no-project --managed-python python -B -X lazy_imports=normal tools/tkrz
    invocation's random token (not the shell's PID), labelled with it, and its ID
    is recorded with `--cidfile`. A failed build, or SIGINT or SIGTERM, starts no
    further cell, stops the running containers and ends the run, and removes only
-   containers whose recorded ID and label match this invocation; a `run` that
-   never created a container leaves nothing to remove, and a same-named
-   container this run did not create is never touched. Logs stay per cell in
+   containers whose label carries this invocation's token: the recorded ID, and
+   any container the runtime created before it wrote the `--cidfile`. A
+   same-named container this run did not create is never touched. Logs stay per cell in
    `<cache>/build-<cell>.log` and `<cache>/data-<cell>.log`.
    Setup validates the current pin/recipe stamp and the prefix's recorded
    library hashes and installed-version record. Stale or damaged provenance

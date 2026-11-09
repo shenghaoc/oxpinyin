@@ -8,8 +8,8 @@ tables are built from fixtures on any platform; the defaults read the real host.
 Standard library only.
 """
 import hashlib
-import os
 from pathlib import Path
+import platform
 import re
 from collections.abc import Callable, Sequence
 
@@ -47,8 +47,8 @@ def sha256(path) -> str:
 
 def uname(flags: str = 'srm') -> str:
     """The fields `uname -FLAGS` prints, in the order of FLAGS (s, r, v, m)."""
-    names = os.uname()
-    fields = {'s': names.sysname, 'r': names.release, 'v': names.version, 'm': names.machine}
+    names = platform.uname()    # os.uname() on POSIX; Windows has no os.uname
+    fields = {'s': names.system, 'r': names.release, 'v': names.version, 'm': names.machine}
     return ' '.join(fields[flag] for flag in flags)
 
 

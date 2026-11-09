@@ -81,7 +81,7 @@ class PathTests(Scratch):
         self.assertEqual(bench.pinned(['w'], '0', required=False, which=lambda name: '/usr/bin/taskset'),
                          ['taskset', '-c', '0', 'w'])
         self.assertEqual(bench.pinned(['w', Path('/x')], 0, required=False, which=lambda name: None),
-                         ['w', '/x'])
+                         ['w', str(Path('/x'))])
 
 
 class RuntimeGuardTests(Scratch):
@@ -100,10 +100,11 @@ class RuntimeGuardTests(Scratch):
         self.worker.write_bytes(b'\x7fELF')
         self.worker.chmod(0o755)
 
-    def test_the_object_then_a_native_executable_are_checked(self):
-        bench.guard('run-x.sh', 'auto', 'oxpinyin', self.so, [str(self.worker), '--perf'], env={'PATH': ''})
-        self.assertEqual([call[3] for call in self.calls], [str(self.so), str(self.worker)])
-        self.assertEqual({call[:3] for call in self.calls}, {('auto', 'run-x.sh', 'oxpinyin')})
+    if os.name == 'posix':
+        def test_the_object_then_a_native_executable_are_checked(self):
+            bench.guard('run-x.sh', 'auto', 'oxpinyin', self.so, [str(self.worker), '--perf'], env={'PATH': ''})
+            self.assertEqual([call[3] for call in self.calls], [str(self.so), str(self.worker)])
+            self.assertEqual({call[:3] for call in self.calls}, {('auto', 'run-x.sh', 'oxpinyin')})
 
     def test_a_refusal_is_a_failed_run_with_the_resolvers_words(self):
         with mock.patch.object(bench, 'check', side_effect=bench.RuntimeRefused('run-x.sh: pin: libtkrzw resolved to /usr')):
@@ -135,7 +136,7 @@ class BenchTests(Scratch):
     def test_environment_puts_the_library_first_and_sets_the_perf_variables(self):
         env = self.bench().environment(self.arm, 'speed', 8, repeats=3, extra={'PERF_HW': 'instructions'})
         self.assertEqual({key: env[key] for key in env if key.startswith(('PERF_', 'LD_'))},
-                         {'LD_LIBRARY_PATH': '/lib:/inherited', 'PERF_BACKEND': 'oxpinyin', 'PERF_MODE': 'speed',
+                         {'LD_LIBRARY_PATH': f'{Path("/lib")}:/inherited', 'PERF_BACKEND': 'oxpinyin', 'PERF_MODE': 'speed',
                           'PERF_CYCLES': '8', 'PERF_REPEATS': '3', 'PERF_HW': 'instructions'})
         self.assertEqual(env['PATH'], '/bin')
 
@@ -145,7 +146,8 @@ class BenchTests(Scratch):
         kinds = [event[0] for event in self.events]
         self.assertEqual(kinds, ['guard', 'capture'])
         self.assertEqual(self.events[0][1], ('run-x.sh', 'auto', 'oxpinyin', Path('/lib/libpinyin.so')))
-        self.assertEqual(self.events[1][1], ['taskset', '-c', '2', '/h/bisect', '--perf', '/lib/libpinyin.so', '/data'])
+        self.assertEqual(self.events[1][1], ['taskset', '-c', '2', str(Path('/h/bisect')), '--perf',
+                                             str(Path('/lib/libpinyin.so')), str(Path('/data'))])
 
     def test_sample_appends_stdout_and_stderr_and_a_failure_ends_the_run_after_the_append(self):
         out, err = self.root / 'speed.jsonl', self.root / 'x.err'
@@ -179,8 +181,9 @@ class BenchTests(Scratch):
                 (cell, runner, side, str(obj), kw['env']['LD_LIBRARY_PATH']))):
             self.bench(cell='auto').standalone('pin', self.arm)
             self.bench(cell='auto').standalone('subject', self.arm, 'tkrzw')
-        self.assertEqual(seen, [('auto', 'run-x.sh', 'pin', '/lib/libpinyin.so', '/lib:/inherited'),
-                                ('tkrzw', 'run-x.sh', 'subject', '/lib/libpinyin.so', '/lib:/inherited')])
+        library, loader = str(Path('/lib/libpinyin.so')), f'{Path("/lib")}:/inherited'
+        self.assertEqual(seen, [('auto', 'run-x.sh', 'pin', library, loader),
+                                ('tkrzw', 'run-x.sh', 'subject', library, loader)])
 
 
 class ProcessTests(Scratch):
@@ -191,9 +194,10 @@ class ProcessTests(Scratch):
                               'sys.stderr.write("err"); sys.exit(3)'])
         self.assertEqual((done.status, done.stdout, done.stderr), (3, b'out', b'err'))
 
-    def test_a_killed_child_has_the_shell_status(self):
-        done = bench.capture([sys.executable, '-c', 'import os, signal; os.kill(os.getpid(), signal.SIGKILL)'])
-        self.assertEqual(done.status, 128 + 9)
+    if os.name == 'posix':
+        def test_a_killed_child_has_the_shell_status(self):
+            done = bench.capture([sys.executable, '-c', 'import os, signal; os.kill(os.getpid(), signal.SIGKILL)'])
+            self.assertEqual(done.status, 128 + 9)
 
     def test_capture_runs_in_the_given_environment_and_directory(self):
         done = bench.capture([sys.executable, '-c', 'import os; print(os.getcwd(), os.environ["X"])'],
@@ -254,6 +258,8 @@ class ProcessTests(Scratch):
 
     @staticmethod
     def is_dead(pid):
+        if sys.platform == 'win32':
+            return not test_support.process_running(pid)    # os.kill(pid, 0) is no liveness probe there
         try:
             os.kill(pid, 0)
         except ProcessLookupError:

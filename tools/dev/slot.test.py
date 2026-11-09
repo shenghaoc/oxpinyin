@@ -79,6 +79,40 @@ class GroupTerminationTests(unittest.TestCase):
             slot.terminate_group(process)    # a timeout or another failure: no cancellation at all
         process.terminate.assert_called_once_with()
 
+    def windows_job(self, *, empty=True):
+        """A process that spawn put in a Job Object, and that job, for terminate_group on Windows."""
+        job = mock.Mock()
+        job.wait_empty.return_value = empty
+        process = mock.Mock(pid=123, job=job)
+        process.wait.return_value = 1
+        return process, job
+
+    def test_a_windows_group_ends_the_whole_job_and_waits_until_it_is_empty(self):
+        process, job = self.windows_job()
+        with mock.patch.object(sys, 'platform', 'win32'):
+            slot.terminate_group(process)
+        job.terminate.assert_called_once_with()
+        job.wait_empty.assert_called_once_with(5)
+        process.terminate.assert_called_once_with()
+
+    def test_a_windows_job_that_keeps_a_member_is_not_reported_as_ended(self):
+        process, job = self.windows_job(empty=False)
+        with mock.patch.object(sys, 'platform', 'win32'), self.assertRaises(RuntimeError):
+            slot.terminate_group(process)
+
+    def test_a_windows_leader_that_leaves_in_the_grace_still_has_its_job_ended(self):
+        process, job = self.windows_job()
+        process.wait.side_effect = [0]
+        saved = slot.CANCELLED.is_set(), slot.CANCELLED_SIGNAL
+        self.addCleanup(lambda: (slot.CANCELLED.set() if saved[0] else slot.CANCELLED.clear(),
+                                 setattr(slot, 'CANCELLED_SIGNAL', saved[1])))
+        slot.CANCELLED.set()
+        slot.CANCELLED_SIGNAL = signal.SIGINT
+        with mock.patch.object(sys, 'platform', 'win32'):
+            slot.terminate_group(process)
+        process.terminate.assert_not_called()
+        job.terminate.assert_called_once_with()
+
     if sys.platform != 'win32':
         # The group's PermissionError comes from os.killpg, which only POSIX has.
         def test_group_permission_errors_are_not_silenced(self):
@@ -145,6 +179,32 @@ class RunCommandWindowsTests(unittest.TestCase):
             self.assertIs(launch.call_args.kwargs['stdout'], target)
         self.assertEqual(status, 3)
         test_support.assert_windows_launches(self, launch, jobs, ntdll, cwd='work')
+
+
+class SpawnWindowsTests(unittest.TestCase):
+    """spawn starts a Windows child suspended in a Job Object and keeps the job on the process."""
+
+    def test_the_child_joins_its_job_before_it_runs_and_keeps_it(self):
+        with test_support.windows_launch() as (launch, jobs, ntdll):
+            process = slot.spawn(['child'], cwd='work')
+            test_support.assert_windows_launches(self, launch, jobs, ntdll, cwd='work')
+            self.assertIs(process.job, jobs[0])
+            slot.release(process)
+        self.assertTrue(jobs[0].closed)
+
+    def test_a_child_that_cannot_resume_is_ended_and_its_job_closed(self):
+        with test_support.windows_launch() as (launch, jobs, ntdll):
+            ntdll.NtResumeProcess.return_value = 1
+            with self.assertRaises(OSError):
+                slot.spawn(['child'])
+        self.assertTrue(jobs[0].closed)
+
+    def test_a_spawn_failure_closes_the_job(self):
+        with test_support.windows_launch() as (launch, jobs, ntdll):
+            launch.side_effect = FileNotFoundError('child')
+            with self.assertRaises(FileNotFoundError):
+                slot.spawn(['child'])
+        self.assertTrue(jobs[0].closed)
 
 
 class CancellationTests(unittest.TestCase):

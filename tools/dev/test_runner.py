@@ -92,7 +92,8 @@ HARNESS_DEPENDENCIES = {
     # The measure recipes (#1290). bench.py is the Valgrind recipes' service layer.
     'tools/dev/measure/bench.py': tuple(f'tools/dev/measure/{name}.test.py' for name in (
         'bench', 'neutrality', 'recipes', 'sentence', 'valgrind')),
-    'tools/dev/measure/identity.py': ('tools/dev/measure/bench.test.py', 'tools/dev/measure/valgrind.test.py'),
+    'tools/dev/measure/identity.py': ('tools/dev/measure/bench.test.py', 'tools/dev/measure/identity.test.py',
+                                      'tools/dev/measure/valgrind.test.py'),
     'tools/dev/measure/reports.py': ('tools/dev/measure/bench.test.py', 'tools/dev/measure/valgrind.test.py'),
     'tools/dev/measure/fake_world.py': ('tools/dev/measure/valgrind.test.py',),
     'tools/dev/measure/prepare.py': ('tools/dev/measure/prepare.test.py',),
@@ -229,7 +230,8 @@ def run_tools(files=(), pattern=None, changed=None):
                 if pattern is not None:
                     command += ['-k', pattern]
                 result = context.launch(command, env=child)
-                output = (result.stdout + result.stderr).decode(errors='replace')
+                # A Windows child writes CRLF; the text-mode stdout of emit() would turn each CR LF into CR CR LF.
+                output = (result.stdout + result.stderr).decode(errors='replace').replace('\r\n', '\n')
                 if result.status == 5 and pattern is not None and not files:
                     # unittest's no-tests status is selection, unless the file was explicit.
                     output += f'\ntools harness unselected (no tests match -k {pattern!r}): {path}\n'

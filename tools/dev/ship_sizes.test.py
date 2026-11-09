@@ -245,6 +245,26 @@ class ExtractTests(unittest.TestCase):
             self.assertGreater((destination / 'src/lib').stat().st_mtime, 1_000_000_000)
             ship_sizes.extract('HEAD', destination, repo.root)
 
+    def test_a_link_keeps_the_mtime_of_its_target(self):
+        with tempfile.TemporaryDirectory() as directory:
+            outside = Path(directory, 'outside')
+            (outside / 'inner').mkdir(parents=True)
+            (outside / 'file').write_text('a\n')
+            tree = Path(directory, 'tree')
+            tree.mkdir()
+            (tree / 'plain').write_text('b\n')
+            os.symlink(outside, tree / 'directory-link', target_is_directory=True)
+            os.symlink(outside / 'file', tree / 'file-link')
+            junction = tree / 'junction'
+            if sys.platform == 'win32':
+                subprocess.run(['cmd', '/c', 'mklink', '/J', str(junction), str(outside)], check=True, stdout=subprocess.DEVNULL)
+            for path in (outside, outside / 'inner', outside / 'file', tree / 'plain'):
+                os.utime(path, (1, 1))
+            ship_sizes.touch_tree(tree)
+            for path in (outside, outside / 'inner', outside / 'file'):
+                self.assertEqual(path.stat().st_mtime, 1, path)
+            self.assertGreater((tree / 'plain').stat().st_mtime, 1_000_000_000)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -9,12 +9,17 @@ assembled from pieces so this file states no request itself.
 from pathlib import Path
 import os
 import re
-import stat
+import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from tools.dev import test_support
 ALLOWED = ('.python-version', 'docs/findings/')
 # A request in uv's forms: the implementation prefix with a version, or an explicit version given
 # to `uv python install|find|pin` or `--python`. Managed-install directory names
@@ -92,6 +97,12 @@ class RequestLiteralTests(unittest.TestCase):
         self.assertFalse([name for name in names if name.startswith('docs/findings/')])
 
 
+# Stands in for uv: it records its working directory and arguments.
+RECORD_UV = ('import os, sys\n'
+             'with open(os.environ["RECORD"], "w") as stream:\n'
+             '    stream.write(os.getcwd() + "\\n" + "\\n".join(sys.argv[1:]) + "\\n")\n')
+
+
 class CheckoutInterpreterTests(unittest.TestCase):
     """An entry point run from outside the checkout selects the checkout's interpreter request."""
 
@@ -104,13 +115,11 @@ class CheckoutInterpreterTests(unittest.TestCase):
             stubs.mkdir()
             (outer / '.python-version').write_text(other + '\n')
             record = Path(scratch, 'argv')
-            stub = stubs / 'uv'
-            stub.write_text('#!/bin/sh\n{ pwd; for a in "$@"; do printf "%s\\n" "$a"; done; } > "$RECORD"\n')
-            stub.chmod(stub.stat().st_mode | stat.S_IXUSR)
+            test_support.python_tool(stubs, 'uv', RECORD_UV)
             env = {key: value for key, value in os.environ.items()
                    if key not in ('UV_PYTHON', 'PYTHONHOME', 'PYTHONPATH')}
             env.update(PATH=f'{stubs}{os.pathsep}{os.environ["PATH"]}', RECORD=str(record))
-            result = subprocess.run(['uv', 'run', '--no-project', '--managed-python', '--python', checkout_request, 'python', '-X', 'lazy_imports=normal', str(ROOT / 'tools/dev/__main__.py'), 'doctor'],
+            result = subprocess.run([shutil.which('uv', path=env['PATH']), 'run', '--no-project', '--managed-python', '--python', checkout_request, 'python', '-X', 'lazy_imports=normal', str(ROOT / 'tools/dev/__main__.py'), 'doctor'],
                                     cwd=outer, env=env, capture_output=True, text=True, check=False)
             self.assertEqual(result.returncode, 0, result.stderr)
             lines = record.read_text().splitlines()

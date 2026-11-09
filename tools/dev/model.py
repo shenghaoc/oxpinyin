@@ -95,20 +95,32 @@ def _inside(path, directory):
     return path == directory or directory in path.parents
 
 
+def _tool(name, env):
+    """The program that NAME names on the PATH of ENV, or None.
+
+    Windows starts a bare command name through the PATH of this process, not the PATH of the
+    environment it is given. The path found here is the one to run, on every host.
+    """
+    return shutil.which(name, path=env.get('PATH'))
+
+
 def _git_vets(root, env):
-    """True when git can answer ignore questions for ROOT's work tree."""
-    if shutil.which('git', path=env.get('PATH')) is None:
-        return False
-    return run(['git', 'rev-parse', '--is-inside-work-tree'], cwd=root, env=env, stdout=subprocess.DEVNULL,
+    """The git that can answer ignore questions for ROOT's work tree, or None."""
+    git = _tool('git', env)
+    if git is None:
+        return None
+    vets = run([git, 'rev-parse', '--is-inside-work-tree'], cwd=root, env=env, stdout=subprocess.DEVNULL,
                stderr=subprocess.DEVNULL, check=False) == 0
+    return git if vets else None
 
 
 def refuse_tracked(cache, root, env):
     """End the run when CACHE lies in ROOT where git would track model bytes."""
     if not _inside(cache, root):
         return
-    if _git_vets(root, env):
-        if run(['git', 'check-ignore', '-q', '--', cache], cwd=root, env=env, stdout=subprocess.DEVNULL,
+    git = _git_vets(root, env)
+    if git:
+        if run([git, 'check-ignore', '-q', '--', cache], cwd=root, env=env, stdout=subprocess.DEVNULL,
                stderr=subprocess.DEVNULL, check=False):
             fail(f'refusing to write model bytes to a path git would track: {cache}\n'
                  'use a build cache under target/ (the default) or another ignored path')
@@ -118,11 +130,12 @@ def refuse_tracked(cache, root, env):
 
 def download(url, destination, env):
     """Download URL to DESTINATION through a .part file."""
-    if shutil.which('curl', path=env.get('PATH')) is None:
+    curl = _tool('curl', env)
+    if curl is None:
         fail('required command not found: curl')
     print(f'downloading {url}', file=sys.stderr, flush=True)
     part = destination.with_name(destination.name + '.part')
-    status = run(['curl', '--fail', '--location', '--retry', '3', '--connect-timeout', '30',
+    status = run([curl, '--fail', '--location', '--retry', '3', '--connect-timeout', '30',
                   '--max-time', '600', '--show-error', '--output', part, url], env=env, check=False)
     if status:
         part.unlink(missing_ok=True)

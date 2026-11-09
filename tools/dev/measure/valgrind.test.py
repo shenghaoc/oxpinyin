@@ -245,7 +245,7 @@ class DifferentialTests(World):
         self.assertEqual(cell[cell.index('valgrind'):cell.index('valgrind') + 7],
                          ['valgrind', '--tool=callgrind', '--collect-atstart=no', '--toggle-collect=bisect_perf_steady_unit',
                           '--cache-sim=yes', '--branch-sim=yes', '--separate-threads=no'])
-        self.assertIn(f'--callgrind-out-file={self.out}/callgrind.libpinyin-tkrzw.r1.out', cell)
+        self.assertIn(f'--callgrind-out-file={self.out / "callgrind.libpinyin-tkrzw.r1.out"}', cell)
         self.assertEqual((profiled[1][1], profiled[1][3], profiled[1][4]), ('libpinyin-tkrzw', '4', '1'))
         native = [w for w in self.workers_of() if 'valgrind' not in w[6]]
         # hardware: 2 runs x 2 cells with PERF_HW, the allocation run, then the timing runs
@@ -337,9 +337,11 @@ class SystemImportProfileTests(World):
 
     def test_an_existing_output_directory_is_refused_before_the_driver_is_built(self):
         self.out.mkdir()
+        with self.assertRaises(FileExistsError) as exists:
+            self.out.mkdir(parents=True)
         status, _, err = self.run_recipe()
         self.assertEqual(status, 1)
-        self.assertEqual(err, f"mkdir: cannot create directory '{self.out}': File exists\n")
+        self.assertEqual(err, f"mkdir: cannot create directory '{self.out}': {exists.exception.strerror}\n")
         self.assertEqual(self.kinds('run'), [])
         self.assertEqual(self.calls, [])
 

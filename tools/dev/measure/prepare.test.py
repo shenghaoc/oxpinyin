@@ -69,7 +69,7 @@ class PreparationTests(unittest.TestCase):
         from tools.dev.measure import recipes
         def path(value):
             value = Path(value)
-            return root / value.relative_to('/') if value.is_absolute() and value.parts[1] in ('opt', 'performance') else value
+            return root / value.relative_to('/') if value.anchor and value.parts[1] in ('opt', 'performance') else value
         with mock.patch.object(prepare, 'Path', side_effect=path), \
              mock.patch.object(recipes, 'require_performance_environment'), \
              mock.patch.object(model, 'fetch', return_value=root / 'model'), \

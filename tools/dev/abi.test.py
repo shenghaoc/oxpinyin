@@ -111,11 +111,13 @@ class AllocationFailureGateTests(unittest.TestCase):
         status, calls, output, _ = self.gate()
         probes = [argv[1:] for argv in calls if Path(argv[0]).name == 'probe']
         self.assertEqual(status, 0)
+        data, pin_pinyin, pin_zhuyin = (str(Path(path)) for path in (
+            '/pin/lib/libpinyin/data', '/pin/lib/libpinyin.so', '/pin/lib/libzhuyin.so'))
         self.assertEqual([argv[:4] for argv in probes], [
-            ['libpinyin_capi.so', '/pin/lib/libpinyin/data', 'pinyin', 'subject'],
-            ['/pin/lib/libpinyin.so', '/pin/lib/libpinyin/data', 'pinyin', 'pin'],
-            ['libzhuyin_capi.so', '/pin/lib/libpinyin/data', 'zhuyin', 'subject'],
-            ['/pin/lib/libzhuyin.so', '/pin/lib/libpinyin/data', 'zhuyin', 'pin']])
+            ['libpinyin_capi.so', data, 'pinyin', 'subject'],
+            [pin_pinyin, data, 'pinyin', 'pin'],
+            ['libzhuyin_capi.so', data, 'zhuyin', 'subject'],
+            [pin_zhuyin, data, 'zhuyin', 'pin']])
         self.assertEqual([len(argv) for argv in probes], [5, 5, 5, 5])
         self.assertEqual([Path(probes[0][4]).name, probes[1][4], Path(probes[2][4]).name, probes[3][4]],
                          ['user-pinyin', '', 'user-zhuyin', ''])

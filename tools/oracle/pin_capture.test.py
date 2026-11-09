@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import sys
 import tempfile
 import unittest
@@ -154,7 +155,8 @@ class CaptureTests(unittest.TestCase):
         for label, change in (('backend', {'dbm': 'Tkrzw'}), ('library record', {'shared_object_sha256': '0' * 64})):
             with self.subTest(label):
                 self.write_record(prefix, record, **change)
-                self.assert_refused('oracle/kc: prefix_ok refused it')
+                # The message names the prefix as the host spells its path.
+                self.assert_refused(re.escape(str(Path('oracle', 'kc'))) + ': prefix_ok refused it')
         self.write_record(prefix, record)
 
     def test_a_build_tree_of_another_commit_is_refused(self):
@@ -175,11 +177,19 @@ class CaptureTests(unittest.TestCase):
         cell, subdir, program = UTILITIES[0]
         path = self.tree(cell) / 'utils' / subdir / program
         for label, setup in (('libtool wrapper', lambda: path.write_text('#! /bin/sh\n# libtool wrapper\n')),
-                             ('not executable', lambda: (path.write_bytes(b'\x7fELF'), path.chmod(0o644))),
                              ('missing', path.unlink)):
             with self.subTest(label):
                 setup()
                 self.assert_refused('not a built utility executable')
+
+    if os.name == 'posix':
+        # Windows has no execute bit: os.access(X_OK) is true for every file there.
+        def test_a_utility_without_the_execute_bit_is_refused(self):
+            cell, subdir, program = UTILITIES[0]
+            path = self.tree(cell) / 'utils' / subdir / program
+            path.write_bytes(b'\x7fELF')
+            path.chmod(0o644)
+            self.assert_refused('not a built utility executable')
 
     def test_nothing_is_written_outside_the_staging_directory(self):
         before = tree(self.root)
@@ -214,31 +224,33 @@ class CaptureTests(unittest.TestCase):
 
 
 class UtilityRunTests(unittest.TestCase):
-    def test_a_run_stages_its_end_streams_and_tree_and_leaves_the_fixture_alone(self):
-        with tempfile.TemporaryDirectory() as scratch:
-            root = Path(scratch)
-            fixture = root / 'fixtures/w3/tkt'
-            fixture.mkdir(parents=True)
-            (fixture / 'table.conf').write_bytes(b'conf\n')
-            (fixture / 'kept.bin').write_bytes(b'kept\n')
-            program = root / 'utility'
-            program.write_text('#!/bin/sh\ncat > out.txt\nprintf more >> table.conf\nrm kept.bin\n'
-                               'printf out; printf err >&2; exit 3\n')
-            program.chmod(0o755)
-            spec = pin_capture.Utility('tkrzw', 'training', 'utility', (), b'\xff stdin\n')
-            before = tree(root)
-            with mock.patch.dict(pin_capture.OBSERVATIONS, {'utility/test': spec}):
-                observation = pin_capture.run_utility('utility/test', program, root)
-            self.assertEqual(tree(root), before, 'the run changes only its private copy')
-        self.assertEqual(observation['end'], {'exit': 3})
-        self.assertEqual((observation['stdin'], observation['stdout'], observation['stderr']),
-                         ({'hex': 'ff20737464696e0a'}, {'text': 'out'}, {'text': 'err'}))
-        files = {entry['path']: entry for entry in observation['files']}
-        self.assertEqual(files['kept.bin'], {'path': 'kept.bin', 'kind': 'removed'})
-        self.assertEqual((files['table.conf']['unchanged'], files['table.conf']['size']), (False, 9))
-        self.assertEqual((files['out.txt']['unchanged'], files['out.txt']['size'], files['out.txt']['mode'][:2]),
-                         (False, 8, '0o'))
-        self.assertNotIn('rows', files['out.txt'], 'only DBM files are read as rows')
+    if os.name == 'posix':
+        # The utility is a '#!/bin/sh' script that Windows cannot launch.
+        def test_a_run_stages_its_end_streams_and_tree_and_leaves_the_fixture_alone(self):
+            with tempfile.TemporaryDirectory() as scratch:
+                root = Path(scratch)
+                fixture = root / 'fixtures/w3/tkt'
+                fixture.mkdir(parents=True)
+                (fixture / 'table.conf').write_bytes(b'conf\n')
+                (fixture / 'kept.bin').write_bytes(b'kept\n')
+                program = root / 'utility'
+                program.write_text('#!/bin/sh\ncat > out.txt\nprintf more >> table.conf\nrm kept.bin\n'
+                                   'printf out; printf err >&2; exit 3\n')
+                program.chmod(0o755)
+                spec = pin_capture.Utility('tkrzw', 'training', 'utility', (), b'\xff stdin\n')
+                before = tree(root)
+                with mock.patch.dict(pin_capture.OBSERVATIONS, {'utility/test': spec}):
+                    observation = pin_capture.run_utility('utility/test', program, root)
+                self.assertEqual(tree(root), before, 'the run changes only its private copy')
+            self.assertEqual(observation['end'], {'exit': 3})
+            self.assertEqual((observation['stdin'], observation['stdout'], observation['stderr']),
+                             ({'hex': 'ff20737464696e0a'}, {'text': 'out'}, {'text': 'err'}))
+            files = {entry['path']: entry for entry in observation['files']}
+            self.assertEqual(files['kept.bin'], {'path': 'kept.bin', 'kind': 'removed'})
+            self.assertEqual((files['table.conf']['unchanged'], files['table.conf']['size']), (False, 9))
+            self.assertEqual((files['out.txt']['unchanged'], files['out.txt']['size'], files['out.txt']['mode'][:2]),
+                             (False, 8, '0o'))
+            self.assertNotIn('rows', files['out.txt'], 'only DBM files are read as rows')
 
     def test_runs_that_differ_only_in_a_tkrzw_clock_or_bdb_container_bytes_stage_equal_entries(self):
         tkrzw = b'TkrzwHDB\n' + bytes(39) + b'%s' + bytes(72)  # 128 bytes, the clock at 48-56

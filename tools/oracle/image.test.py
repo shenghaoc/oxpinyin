@@ -574,6 +574,34 @@ class RuntimeAdapterTests(unittest.TestCase):
             self.assertIsNone(images.container_owner((engine,), cid, 'k', run=failed))
         self.assertIsNone(images.container_owner(('wslc',), cid, 'k', run=garbled))
 
+    def test_container_ids_per_runtime(self):
+        mine, other = 'c' * 64, 'd' * 64
+        listing = [{'configuration': {'id': mine, 'labels': {'k': 'tok'}}},
+                   {'configuration': {'id': other, 'labels': {'k': 'someone-else'}}},
+                   {'configuration': {'id': 'e' * 64}}]
+        answers = {'docker': f'{mine}\n', 'wslc': f'{mine}\r\n', 'container': json.dumps(listing)}
+        commands = {'docker': ['docker', 'container', 'ls', '-a', '-q', '--no-trunc', '--filter', 'label=k=tok'],
+                    'wslc': ['wslc', 'container', 'ls', '-a', '-q', '--no-trunc', '--filter', 'label=k=tok'],
+                    'container': ['container', 'ls', '-a', '--format', 'json']}
+        for engine, answer in answers.items():
+            with self.subTest(engine=engine):
+                calls = []
+
+                def run(argv, answer=answer):
+                    calls.append(argv)
+                    return subprocess.CompletedProcess(argv, 0, answer, '')
+                self.assertEqual(images.container_ids((engine,), 'k', 'tok', run=run), [mine])
+                self.assertEqual(calls, [commands[engine]])
+
+        def failed(argv):
+            return subprocess.CompletedProcess(argv, 1, '', '')
+
+        def garbled(argv):
+            return subprocess.CompletedProcess(argv, 0, 'not json', '')
+        for engine in ('docker', 'wslc', 'container'):
+            self.assertEqual(images.container_ids((engine,), 'k', 'tok', run=failed), [])
+        self.assertEqual(images.container_ids(('container',), 'k', 'tok', run=garbled), [])
+
 
 class ProvisionOracleTests(unittest.TestCase):
     """just provision-oracle: the performance image build and the provision oracle run, per runtime."""

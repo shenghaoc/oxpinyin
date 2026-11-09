@@ -8,6 +8,7 @@ counts and the argument positions or variable names that differ, never values.
 Standard library only.
 """
 import contextlib
+import os
 import sys
 from unittest import mock
 
@@ -28,6 +29,7 @@ def windows_launch(status=0, write=None):
     class Job:
         def __init__(self):
             self.assigned = []
+            self.closed = False
             jobs.append(self)
 
         def assign(self, handle):
@@ -35,6 +37,12 @@ def windows_launch(status=0, write=None):
 
         def terminate(self, code=1):
             pass
+
+        def wait_empty(self, timeout):
+            return True
+
+        def close(self):
+            self.closed = True
 
         def __enter__(self):
             return self
@@ -54,8 +62,36 @@ def windows_launch(status=0, write=None):
     with mock.patch.object(sys, 'platform', 'win32'), \
             mock.patch.object(slot, 'WindowsJob', Job), \
             mock.patch('ctypes.WinDLL', return_value=ntdll, create=True), \
+            mock.patch('ctypes.get_last_error', return_value=0, create=True), \
             mock.patch.object(slot.subprocess, 'Popen', side_effect=popen) as launch:
         yield launch, jobs, ntdll
+
+
+if sys.platform == 'win32':
+    def process_running(pid):
+        """True while PID is a live process; Windows has no os.kill(pid, 0) probe, so ask the process handle.
+
+        OpenProcess fails with ERROR_INVALID_PARAMETER once the PID is gone. A process
+        that has ended signals its handle, so a zombie held open by another process is not running.
+        """
+        import ctypes
+        from ctypes import wintypes
+        synchronize, query_limited, wait_timeout, invalid_parameter = 0x00100000, 0x1000, 0x102, 87
+        kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        handle = kernel32.OpenProcess(synchronize | query_limited, False, pid)
+        if not handle:
+            code = ctypes.get_last_error()
+            if code == invalid_parameter:
+                return False
+            raise ctypes.WinError(code)
+        try:
+            return kernel32.WaitForSingleObject(handle, 0) == wait_timeout
+        finally:
+            kernel32.CloseHandle(handle)
 
 
 def assert_windows_launches(test, launch, jobs, ntdll, cwd=None):
@@ -128,3 +164,27 @@ def collect_declarations(*registrars, registry=None, **injected):
     for register in registrars:
         register(case, **injected)
     return cases
+
+
+def python_tool(directory, name, source):
+    """Write the command NAME in DIRECTORY that runs the Python SOURCE with this interpreter; return its path.
+
+    A fake for tests that must run on every host. POSIX gets an executable script with a shebang,
+    named NAME. Windows cannot start such a file, so it gets NAME.py and a NAME.cmd that starts
+    this interpreter on it; shutil.which finds NAME.cmd through PATHEXT, and a caller that runs the
+    path it found starts it.
+    """
+    directory = os.fspath(directory)
+    if os.name != 'nt':
+        path = os.path.join(directory, name)
+        with open(path, 'w', newline='\n') as stream:
+            stream.write(f'#!{sys.executable}\n{source}')
+        os.chmod(path, 0o755)
+        return path
+    script = os.path.join(directory, name + '.py')
+    with open(script, 'w', newline='\n') as stream:
+        stream.write(source)
+    path = os.path.join(directory, name + '.cmd')
+    with open(path, 'w', newline='\r\n') as stream:
+        stream.write(f'@"{sys.executable}" "{script}" %*\n@exit /b %ERRORLEVEL%\n')
+    return path

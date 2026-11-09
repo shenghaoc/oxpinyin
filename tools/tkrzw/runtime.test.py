@@ -16,133 +16,159 @@ from tools.dev.drivers import DriverServices
 from tools.tkrzw import runtime
 
 
-class AdapterControlTests(unittest.TestCase):
-    def setUp(self):
-        temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(temporary.cleanup)
-        # Darwin's /var temporary root aliases /private/var; loader identities
-        # are physical paths on every host, just like the retained ELF fixtures.
-        self.directory = Path(temporary.name).resolve()
-        self.library = self.directory / 'libtkrzw.so.1'
-        self.library.write_bytes(b'verified')
-        self.other = self.directory / 'other.so'
-        self.other.write_bytes(b'other')
-        for name, program in {
-            'uname': 'printf "%s\\n" "${FAKE_HOST:-Linux}"',
-            'ldd': 'printf "%s\\n" "$FAKE_LDD"; exit "${FAKE_STATUS:-0}"',
-            'otool': 'printf "%s\\n" "$FAKE_LDD"; exit "${FAKE_STATUS:-0}"',
-        }.items():
-            path = self.directory / name
-            path.write_text('#!/bin/sh\n' + program + '\n')
-            path.chmod(0o755)
-        self.env = dict(os.environ, PATH=str(self.directory) + os.pathsep + os.environ['PATH'],
-                        OXPINYIN_TKRZW_LIBRARY=str(self.library), FAKE_LDD=f'libtkrzw.so.1 => {self.library} (0x1234)')
-        for name in ('DYLD_LIBRARY_PATH', 'DYLD_FALLBACK_LIBRARY_PATH', 'OXPINYIN_TKRZW_PREFIX', 'OXPINYIN_TKRZW_PREFIXES'):
-            self.env.pop(name, None)
+# The fixtures are /bin/sh stubs for uname, ldd and otool, and the adapter runs them: Unix loaders only.
+if sys.platform != 'win32':
+    class AdapterControlTests(unittest.TestCase):
+        def setUp(self):
+            temporary = tempfile.TemporaryDirectory()
+            self.addCleanup(temporary.cleanup)
+            # Darwin's /var temporary root aliases /private/var; loader identities
+            # are physical paths on every host, just like the retained ELF fixtures.
+            self.directory = Path(temporary.name).resolve()
+            self.library = self.directory / 'libtkrzw.so.1'
+            self.library.write_bytes(b'verified')
+            self.other = self.directory / 'other.so'
+            self.other.write_bytes(b'other')
+            for name, program in {
+                'uname': 'printf "%s\\n" "${FAKE_HOST:-Linux}"',
+                'ldd': 'printf "%s\\n" "$FAKE_LDD"; exit "${FAKE_STATUS:-0}"',
+                'otool': 'printf "%s\\n" "$FAKE_LDD"; exit "${FAKE_STATUS:-0}"',
+            }.items():
+                path = self.directory / name
+                path.write_text('#!/bin/sh\n' + program + '\n')
+                path.chmod(0o755)
+            self.env = dict(os.environ, PATH=str(self.directory) + os.pathsep + os.environ['PATH'],
+                            OXPINYIN_TKRZW_LIBRARY=str(self.library), FAKE_LDD=f'libtkrzw.so.1 => {self.library} (0x1234)')
+            for name in ('DYLD_LIBRARY_PATH', 'DYLD_FALLBACK_LIBRARY_PATH', 'OXPINYIN_TKRZW_PREFIX', 'OXPINYIN_TKRZW_PREFIXES'):
+                self.env.pop(name, None)
 
-    def invoke(self, args, **settings):
-        env = dict(self.env, **settings)
-        done = subprocess.run([sys.executable, '-m', 'tools.tkrzw.runtime', *map(str, args)],
-                              cwd=ROOT, env=env, capture_output=True, timeout=10)
-        return done
+        def invoke(self, args, **settings):
+            env = dict(self.env, **settings)
+            done = subprocess.run([sys.executable, '-m', 'tools.tkrzw.runtime', *map(str, args)],
+                                  cwd=ROOT, env=env, capture_output=True, timeout=10)
+            return done
 
-    def test_advisory_labels_never_bypass_a_loaded_library(self):
-        for cell in ('bdb', 'kc', 'tkrzw', 'unknown'):
-            done = self.invoke(['--print-path', cell, 'fixture', 'pin', '/object'])
+        def test_advisory_labels_never_bypass_a_loaded_library(self):
+            for cell in ('bdb', 'kc', 'tkrzw', 'unknown'):
+                done = self.invoke(['--print-path', cell, 'fixture', 'pin', '/object'])
+                self.assertEqual(done.returncode, 0)
+                self.assertEqual(done.stdout, (str(self.library) + '\n').encode())
+
+        def test_absent_library_is_allowed_for_every_cell(self):
+            done = self.invoke(['--print-path', 'tkrzw', 'fixture', 'pin', '/object'], FAKE_LDD='libc.so => /lib/libc.so (0x1)')
+            self.assertEqual((done.returncode, done.stdout, done.stderr), (0, b'', b''))
+
+        def test_wrong_missing_unresolved_and_failed_libraries_are_refused(self):
+            cases = [(f'libtkrzw.so.1 => {self.other} (0x1)', '0'),
+                     ('libtkrzw.so.1 => not found', '0'), ('libtkrzw.so.1 unresolved', '0'),
+                     ('', '1'), (f'libtkrzw.so.1 => {self.library} (0x1)', '1')]
+            for output, status in cases:
+                with self.subTest(output=output, status=status):
+                    done = self.invoke(['bdb', 'fixture', 'subject', '/object'], FAKE_LDD=output, FAKE_STATUS=status)
+                    self.assertEqual(done.returncode, 1)
+                    self.assertIn(b'REFUSED: fixture: subject:', done.stderr)
+
+        def test_aliases_are_one_library_but_distinct_libraries_are_ambiguous(self):
+            alias = self.directory / 'alias.so'
+            alias.symlink_to(self.library)
+            for path, expected in ((alias, 0), (self.other, 1)):
+                output = self.env['FAKE_LDD'] + f'\nlibtkrzw.so.1 => {path} (0x2)'
+                self.assertEqual(self.invoke(['bdb', 'fixture', 'L', '/object'], FAKE_LDD=output).returncode, expected)
+
+        def test_expected_library_then_prefix_then_first_prefix_precedence(self):
+            prefix = self.directory / 'prefix'
+            (prefix / 'lib').mkdir(parents=True)
+            (prefix / 'lib/libtkrzw.so.1').symlink_to(self.library)
+            for key in ('OXPINYIN_TKRZW_PREFIX', 'OXPINYIN_TKRZW_PREFIXES'):
+                env = dict(self.env)
+                env.pop('OXPINYIN_TKRZW_LIBRARY')
+                env[key] = str(prefix) + (':/ignored' if key.endswith('PREFIXES') else '')
+                self.assertEqual(runtime.check('bdb', 'fixture', 'pin', '/object', env=env), self.library)
+            done = self.invoke(['bdb', 'fixture', 'pin', '/object'], OXPINYIN_TKRZW_PREFIX='/ignored')
             self.assertEqual(done.returncode, 0)
-            self.assertEqual(done.stdout, (str(self.library) + '\n').encode())
+            done = self.invoke(['bdb', 'fixture', 'pin', '/object'], OXPINYIN_TKRZW_LIBRARY='')
+            self.assertEqual(done.returncode, 1)
 
-    def test_absent_library_is_allowed_for_every_cell(self):
-        done = self.invoke(['--print-path', 'tkrzw', 'fixture', 'pin', '/object'], FAKE_LDD='libc.so => /lib/libc.so (0x1)')
-        self.assertEqual((done.returncode, done.stdout, done.stderr), (0, b'', b''))
+        def test_relative_loader_entries_keep_the_callers_cwd(self):
+            env = dict(self.env, FAKE_LDD='libtkrzw.so.1 => ./libtkrzw.so.1 (0x1)', OXPINYIN_TKRZW_LIBRARY='./libtkrzw.so.1')
+            self.assertEqual(runtime.check('kc', 'fixture', 'pin', 'object', env=env, cwd=self.directory), self.library)
 
-    def test_wrong_missing_unresolved_and_failed_libraries_are_refused(self):
-        cases = [(f'libtkrzw.so.1 => {self.other} (0x1)', '0'),
-                 ('libtkrzw.so.1 => not found', '0'), ('libtkrzw.so.1 unresolved', '0'),
-                 ('', '1'), (f'libtkrzw.so.1 => {self.library} (0x1)', '1')]
-        for output, status in cases:
-            with self.subTest(output=output, status=status):
-                done = self.invoke(['bdb', 'fixture', 'subject', '/object'], FAKE_LDD=output, FAKE_STATUS=status)
-                self.assertEqual(done.returncode, 1)
-                self.assertIn(b'REFUSED: fixture: subject:', done.stderr)
+        def test_darwin_install_name_and_override_refusals(self):
+            output = f'\t{self.library} (compatibility version 1.0.0, current version 1.0.0)'
+            # The install-name parser requires .dylib as the shell did.
+            dylib = self.directory / 'libtkrzw.dylib'
+            dylib.symlink_to(self.library)
+            output = f'\t{dylib} (compatibility version 1.0.0, current version 1.0.0)'
+            self.assertEqual(self.invoke(['kc', 'fixture', 'oracle', '/object'], FAKE_HOST='Darwin', FAKE_LDD=output).returncode, 0)
+            for variable in ('DYLD_LIBRARY_PATH', 'DYLD_FALLBACK_LIBRARY_PATH'):
+                self.assertEqual(self.invoke(['bdb', 'fixture', 'oracle', '/object'], FAKE_HOST='Darwin', **{variable: '/override'}).returncode, 1)
 
-    def test_aliases_are_one_library_but_distinct_libraries_are_ambiguous(self):
-        alias = self.directory / 'alias.so'
-        alias.symlink_to(self.library)
-        for path, expected in ((alias, 0), (self.other, 1)):
-            output = self.env['FAKE_LDD'] + f'\nlibtkrzw.so.1 => {path} (0x2)'
-            self.assertEqual(self.invoke(['bdb', 'fixture', 'L', '/object'], FAKE_LDD=output).returncode, expected)
+        def test_child_status_and_quiet_stderr(self):
+            for code in (0, 7, 77, 127):
+                for quiet in ([], ['--quiet-stderr']):
+                    done = self.invoke([*quiet, 'bdb', 'fixture', 'pin', '/object', '--',
+                                        'bash', '-c', f'printf out; printf err >&2; exit {code}'])
+                    self.assertEqual(done.returncode, code)
+                    self.assertEqual(done.stdout, b'out')
+                    self.assertEqual(done.stderr, b'' if quiet else b'err')
 
-    def test_expected_library_then_prefix_then_first_prefix_precedence(self):
-        prefix = self.directory / 'prefix'
-        (prefix / 'lib').mkdir(parents=True)
-        (prefix / 'lib/libtkrzw.so.1').symlink_to(self.library)
-        for key in ('OXPINYIN_TKRZW_PREFIX', 'OXPINYIN_TKRZW_PREFIXES'):
-            env = dict(self.env)
-            env.pop('OXPINYIN_TKRZW_LIBRARY')
-            env[key] = str(prefix) + (':/ignored' if key.endswith('PREFIXES') else '')
-            self.assertEqual(runtime.check('bdb', 'fixture', 'pin', '/object', env=env), self.library)
-        done = self.invoke(['bdb', 'fixture', 'pin', '/object'], OXPINYIN_TKRZW_PREFIX='/ignored')
-        self.assertEqual(done.returncode, 0)
-        done = self.invoke(['bdb', 'fixture', 'pin', '/object'], OXPINYIN_TKRZW_LIBRARY='')
-        self.assertEqual(done.returncode, 1)
+        def test_missing_command_and_usage_status(self):
+            self.assertEqual(self.invoke([]).returncode, 2)
+            self.assertEqual(self.invoke(['bdb', 'fixture', 'pin', '/object', '--', 'not-a-real-command']).returncode, 1)
 
-    def test_relative_loader_entries_keep_the_callers_cwd(self):
-        env = dict(self.env, FAKE_LDD='libtkrzw.so.1 => ./libtkrzw.so.1 (0x1)', OXPINYIN_TKRZW_LIBRARY='./libtkrzw.so.1')
-        self.assertEqual(runtime.check('kc', 'fixture', 'pin', 'object', env=env, cwd=self.directory), self.library)
+        def test_scripts_launch_their_interpreter_and_other_files_themselves(self):
+            elf = self.directory / 'interpreter'
+            elf.write_bytes(b'\x7fELF' + b'payload')
+            script = self.directory / 'wrapper'
+            script.write_text(f'#!{elf} -e\nexec "$0.bin" "$@"\n')
+            nested = self.directory / 'nested'
+            nested.write_text(f'#! {script}\n')
+            relative = self.directory / 'relative'
+            relative.write_text('#!interpreter\n')
+            self.assertEqual(runtime.launched(script), elf)
+            self.assertEqual(runtime.launched(nested), elf)
+            self.assertEqual(runtime.launched(relative, self.directory), elf)
+            # Anything that is not a script, or a chain no kernel follows, is
+            # checked as itself, so the loader check still refuses what it cannot read.
+            loop = self.directory / 'loop'
+            loop.write_text(f'#!{loop}\n')
+            plain = self.directory / 'plain'
+            plain.write_text('exec true\n')
+            unreadable = self.directory / 'execute-only'
+            unreadable.write_bytes(b'\x7fELF')
+            unreadable.chmod(0o111)
+            fat = self.directory / 'universal'
+            fat.write_bytes(bytes.fromhex('cafebabe') + b'payload')
+            for path in (elf, fat, plain, loop, unreadable):
+                self.assertEqual(runtime.launched(path), path)
+            orphan = self.directory / 'orphan'
+            orphan.write_text(f'#!{self.directory / "missing"}\n')
+            for path in (self.directory / 'missing', self.directory, orphan):
+                self.assertIsNone(runtime.launched(path))
 
-    def test_darwin_install_name_and_override_refusals(self):
-        output = f'\t{self.library} (compatibility version 1.0.0, current version 1.0.0)'
-        # The install-name parser requires .dylib as the shell did.
-        dylib = self.directory / 'libtkrzw.dylib'
-        dylib.symlink_to(self.library)
-        output = f'\t{dylib} (compatibility version 1.0.0, current version 1.0.0)'
-        self.assertEqual(self.invoke(['kc', 'fixture', 'oracle', '/object'], FAKE_HOST='Darwin', FAKE_LDD=output).returncode, 0)
-        for variable in ('DYLD_LIBRARY_PATH', 'DYLD_FALLBACK_LIBRARY_PATH'):
-            self.assertEqual(self.invoke(['bdb', 'fixture', 'oracle', '/object'], FAKE_HOST='Darwin', **{variable: '/override'}).returncode, 1)
 
-    def test_child_status_and_quiet_stderr(self):
-        for code in (0, 7, 77, 127):
-            for quiet in ([], ['--quiet-stderr']):
-                done = self.invoke([*quiet, 'bdb', 'fixture', 'pin', '/object', '--',
-                                    'bash', '-c', f'printf out; printf err >&2; exit {code}'])
-                self.assertEqual(done.returncode, code)
-                self.assertEqual(done.stdout, b'out')
-                self.assertEqual(done.stderr, b'' if quiet else b'err')
+if sys.platform == 'win32':
+    class WindowsAdapterTests(unittest.TestCase):
+        """Windows has no uname, ldd or otool: the adapter refuses and never guesses a library."""
 
-    def test_missing_command_and_usage_status(self):
-        self.assertEqual(self.invoke([]).returncode, 2)
-        self.assertEqual(self.invoke(['bdb', 'fixture', 'pin', '/object', '--', 'not-a-real-command']).returncode, 1)
+        def invoke(self, args):
+            with tempfile.TemporaryDirectory() as empty:
+                return subprocess.run([sys.executable, '-m', 'tools.tkrzw.runtime', *map(str, args)],
+                                      cwd=ROOT, env=dict(os.environ, PATH=empty), capture_output=True,
+                                      text=True, timeout=10)
 
-    def test_scripts_launch_their_interpreter_and_other_files_themselves(self):
-        elf = self.directory / 'interpreter'
-        elf.write_bytes(b'\x7fELF' + b'payload')
-        script = self.directory / 'wrapper'
-        script.write_text(f'#!{elf} -e\nexec "$0.bin" "$@"\n')
-        nested = self.directory / 'nested'
-        nested.write_text(f'#! {script}\n')
-        relative = self.directory / 'relative'
-        relative.write_text('#!interpreter\n')
-        self.assertEqual(runtime.launched(script), elf)
-        self.assertEqual(runtime.launched(nested), elf)
-        self.assertEqual(runtime.launched(relative, self.directory), elf)
-        # Anything that is not a script, or a chain no kernel follows, is
-        # checked as itself, so the loader check still refuses what it cannot read.
-        loop = self.directory / 'loop'
-        loop.write_text(f'#!{loop}\n')
-        plain = self.directory / 'plain'
-        plain.write_text('exec true\n')
-        unreadable = self.directory / 'execute-only'
-        unreadable.write_bytes(b'\x7fELF')
-        unreadable.chmod(0o111)
-        fat = self.directory / 'universal'
-        fat.write_bytes(bytes.fromhex('cafebabe') + b'payload')
-        for path in (elf, fat, plain, loop, unreadable):
-            self.assertEqual(runtime.launched(path), path)
-        orphan = self.directory / 'orphan'
-        orphan.write_text(f'#!{self.directory / "missing"}\n')
-        for path in (self.directory / 'missing', self.directory, orphan):
-            self.assertIsNone(runtime.launched(path))
+        def test_usage_status(self):
+            done = self.invoke([])
+            self.assertEqual((done.returncode, done.stdout), (2, ''))
+            self.assertIn('usage: runtime.sh', done.stderr)
+
+        def test_a_missing_host_loader_command_is_refused_with_the_operating_system_error(self):
+            with self.assertRaises(FileNotFoundError) as missing:
+                subprocess.run(['no-such-loader-command'], capture_output=True)
+            done = self.invoke(['bdb', 'fixture', 'pin', 'object'])
+            self.assertEqual((done.returncode, done.stdout), (1, ''))
+            self.assertEqual(done.stderr.strip(),
+                             f'REFUSED: fixture: pin: libtkrzw resolved to <unknown>: {missing.exception}')
 
 
 if sys.platform.startswith('linux'):

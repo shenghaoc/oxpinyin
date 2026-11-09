@@ -7,13 +7,58 @@ does not probe an oracle installation or pass its variables to tests.
 import os
 from pathlib import Path
 import platform
+import shutil
 import subprocess
 import sys
 
 from . import cell, native
+from tools.tkrzw import build as tkrzw_build
 
 ROOT = Path(__file__).resolve().parents[2]
 USAGE = 'usage: tools/dev/check.sh [' + '|'.join(cell.BACKENDS) + ']'
+
+
+def windows_compiler(env, *, capture=subprocess.run, which=shutil.which):
+    """Whether the MSVC compiler the Windows build uses is available through ENV.
+
+    A developer shell has cl on PATH or has loaded the developer environment;
+    otherwise the Visual Studio found through vswhere is used, as the tkrzw
+    build finds it. The Rust and C++ bridge builds use MSVC, never cc.
+    """
+    if which('cl', path=tkrzw_build.lookup(env, 'PATH')):
+        return True
+    try:
+        tkrzw_build.msvc_environment(env, capture=capture)
+    except (tkrzw_build.RecipeError, OSError):
+        return False
+    return True
+
+
+def pkg_config_program(env):
+    """The program that answers pkg-config queries: PKG_CONFIG on Windows, else pkg-config.
+
+    Windows has no pkg-config; the setup names a pkgconf.exe in PKG_CONFIG.
+    """
+    if sys.platform == 'win32':
+        return tkrzw_build.lookup(env, 'PKG_CONFIG') or 'pkg-config'
+    return 'pkg-config'
+
+
+def missing_tool(tools):
+    """Name the first tool this host's checks need and TOOLS cannot find, or None.
+
+    POSIX needs cargo, rustup, cc and pkg-config. Windows needs cargo, rustup,
+    MSVC and the pkg-config program: cc is a Unix compiler driver, and the one
+    call of it (the Berkeley DB header) has no Windows build.
+    """
+    windows = sys.platform == 'win32'
+    for tool in ('cargo', 'rustup', 'msvc' if windows else 'cc', pkg_config_program(tools.environment)):
+        if tool == 'msvc':
+            if not windows_compiler(tools.environment):
+                return 'MSVC (cl, or the Visual Studio C++ tools)'
+        elif tools.which(tool) is None:
+            return tool
+    return None
 
 
 def run(backend=None, out=sys.stdout, err=sys.stderr, env=None):
@@ -29,10 +74,11 @@ def run(backend=None, out=sys.stdout, err=sys.stderr, env=None):
         print(USAGE, file=err, flush=True)
         return 2
     tools = native.Tools()
-    for tool in ('cargo', 'rustup', 'cc', 'pkg-config'):
-        if tools.which(tool) is None:
-            print(f'missing {tool}; see docs/runbooks/setup.md', file=err, flush=True)
-            return 1
+    missing = missing_tool(tools)
+    if missing is not None:
+        print(f'missing {missing}; see docs/runbooks/setup.md', file=err, flush=True)
+        return 1
+    pkg_config = pkg_config_program(tools.environment)
     print(f'System: {platform.system()} {platform.machine()}', file=out, flush=True)
     result = tools.run(['rustup', 'show', 'active-toolchain'])
     out.write(result.stdout)
@@ -50,13 +96,17 @@ def run(backend=None, out=sys.stdout, err=sys.stderr, env=None):
         return result.returncode
     target = os.environ.get('CARGO_TARGET_DIR') or 'target'
     print(f'Backend: {backend}; target directory: {target}', file=out, flush=True)
-    result = tools.run(['pkg-config', '--modversion', 'libclang'])
+    result = tools.run([pkg_config, '--modversion', 'libclang'])
     if result.returncode == 0:
         out.write(result.stdout)
         out.flush()
     else:
         print('libclang: discovered by bindgen during build (a .pc file is optional)', file=out, flush=True)
     if backend == 'bdb':
+        if sys.platform == 'win32':
+            print('bdb: reading db.h needs cc, which the MSVC build does not use; see docs/runbooks/setup.md',
+                  file=err, flush=True)
+            return 1
         command = ['cc']
         command += native.path_list_flags(os.environ, 'SYSTEM_DEPS_BDB_INCLUDE', '-I')
         command += ['-E', '-P', '-']
@@ -68,7 +118,7 @@ def run(backend=None, out=sys.stdout, err=sys.stderr, env=None):
         lines = result.stdout.rstrip().splitlines()
         print('Berkeley DB header: ' + (lines[-1] if lines else ''), file=out, flush=True)
     else:
-        result = tools.run(['pkg-config', '--modversion', backend])
+        result = tools.run([pkg_config, '--modversion', backend])
         out.write(result.stdout)
         out.flush()
         err.write(result.stderr)
@@ -78,7 +128,7 @@ def run(backend=None, out=sys.stdout, err=sys.stderr, env=None):
             return result.returncode
     args = ['--locked', *cell.feature_flags(backend), '-p', 'oxpinyin-store']
     if platform.system() == 'Linux':
-        result = tools.run(['pkg-config', '--modversion', 'glib-2.0'])
+        result = tools.run([pkg_config, '--modversion', 'glib-2.0'])
         out.write(result.stdout)
         out.flush()
         err.write(result.stderr)

@@ -50,6 +50,23 @@ class SettingsTests(unittest.TestCase):
             self.assertEqual(json.loads(path.read_text()), owner)
             self.assertEqual(list(Path(scratch).iterdir()), [path])
 
+    def test_identity_record_names_the_cdylibs_of_this_host(self):
+        expected = {'win32': ('pinyin_capi.dll', 'zhuyin_capi.dll'),
+                    'darwin': ('libpinyin_capi.dylib', 'libzhuyin_capi.dylib')}.get(
+                        sys.platform, ('libpinyin_capi.so', 'libzhuyin_capi.so'))
+        with tempfile.TemporaryDirectory() as scratch:
+            settings = Settings.read({**os.environ, 'CARGO_TARGET_DIR': scratch})
+            settings.claim()
+            for filename in expected:
+                (Path(scratch) / 'debug').mkdir(exist_ok=True)
+                (Path(scratch) / 'debug' / filename).write_bytes(b'0123')
+            settings.record()
+            artifacts = json.loads((Path(scratch) / 'oxpinyin-cell-identity.json').read_text())['artifacts']
+            self.assertEqual(sorted(artifacts), ['pinyin-capi', 'zhuyin-capi'])
+            for name, filename in zip(('pinyin-capi', 'zhuyin-capi'), expected):
+                self.assertEqual(artifacts[name]['path'], str(Path(scratch) / 'debug' / filename))
+                self.assertEqual(artifacts[name]['size'], 4)
+
     def test_unreadable_claim_fails_closed(self):
         with tempfile.TemporaryDirectory() as scratch:
             path = Path(scratch) / 'oxpinyin-cell-identity.json'
@@ -61,8 +78,9 @@ class SettingsTests(unittest.TestCase):
 
     def test_loader_entries_keep_tokens_and_caller_spelling(self):
         cwd = Path('/caller root')
+        root = str(cwd)  # the product prints the platform spelling of the caller's directory
         self.assertEqual(library_path('./lib::/absolute:lib:', cwd),
-                         '/caller root/./lib:/caller root:/absolute:/caller root/lib:/caller root')
+                         f'{root}/./lib:{root}:/absolute:{root}/lib:{root}')
         for token in ('$ORIGIN', '${ORIGIN}', '$LIB', '${LIB}', '$PLATFORM', '${PLATFORM}'):
             value = 'prefix/' + token + '/lib'
             self.assertEqual(library_path(value, cwd), value)
@@ -85,41 +103,44 @@ class BuildLaunchTests(unittest.TestCase):
         self.enterContext(mock.patch.dict(os.environ, env, clear=True))
         self.enterContext(contextlib.redirect_stderr(self.out))
 
-    def recording(self):
-        """Record the launches run_command makes, starting nothing."""
-        return mock.patch.object(slot.subprocess, 'Popen', side_effect=self.popen)
+    if sys.platform != 'win32':
+        # run_command launches cargo through subprocess.Popen(start_new_session=True) only on POSIX.
+        # Windows takes the Job Object path, which test_windows_builds_take_the_job_object_path covers.
+        def recording(self):
+            """Record the launches run_command makes, starting nothing."""
+            return mock.patch.object(slot.subprocess, 'Popen', side_effect=self.popen)
 
-    def popen(self, argv, *, env, start_new_session, cwd=None, stdout=None):
-        """Record what run_command gives cargo."""
-        self.calls.append(dict(argv=argv, cwd=cwd, stdout='file' if hasattr(stdout, 'write') else stdout,
-                               session=start_new_session, target=env.get('CARGO_TARGET_DIR'),
-                               jobs=env.get('CARGO_BUILD_JOBS')))
-        process = mock.MagicMock(args=argv)
-        process.__enter__.return_value = process
-        process.wait.return_value = 0
-        return process
+        def popen(self, argv, *, env, start_new_session, cwd=None, stdout=None):
+            """Record what run_command gives cargo."""
+            self.calls.append(dict(argv=argv, cwd=cwd, stdout='file' if hasattr(stdout, 'write') else stdout,
+                                   session=start_new_session, target=env.get('CARGO_TARGET_DIR'),
+                                   jobs=env.get('CARGO_BUILD_JOBS')))
+            process = mock.MagicMock(args=argv)
+            process.__enter__.return_value = process
+            process.wait.return_value = 0
+            return process
 
-    def assert_supervised(self, call):
-        """Cargo itself ran, supervised as the leader of its own process group."""
-        self.assertEqual(call['argv'][0], 'cargo')
-        self.assertNotIn('just', call['argv'])
-        self.assertTrue(call['session'])
-        self.assertEqual(call['target'], str(self.target))
-        # No job count is chosen here: cargo's own default applies.
-        self.assertIsNone(call['jobs'])
+        def assert_supervised(self, call):
+            """Cargo itself ran, supervised as the leader of its own process group."""
+            self.assertEqual(call['argv'][0], 'cargo')
+            self.assertNotIn('just', call['argv'])
+            self.assertTrue(call['session'])
+            self.assertEqual(call['target'], str(self.target))
+            # No job count is chosen here: cargo's own default applies.
+            self.assertIsNone(call['jobs'])
 
-    def test_artifact_build_runs_cargo_through_run_command(self):
-        library = self.target / 'debug/libpinyin_capi.so'
-        library.parent.mkdir(parents=True)
-        library.write_bytes(b'')
-        settings = Settings.read(self.env)
-        with self.recording():
-            self.assertEqual(settings.artifact('OXPINYIN_CAPI_SO', 'libpinyin_capi.so', 'oxpinyin-capi'), library)
-        [call] = self.calls
-        self.assertEqual(call['argv'], ['cargo', 'build', '--locked', '--manifest-path', str(ROOT / 'Cargo.toml'),
-                                        '-p', 'oxpinyin-capi', '--no-default-features', '--features', 'tkrzw'])
-        self.assertEqual((call['cwd'], call['stdout']), (ROOT, 2))
-        self.assert_supervised(call)
+        def test_artifact_build_runs_cargo_through_run_command(self):
+            library = self.target / 'debug/libpinyin_capi.so'
+            library.parent.mkdir(parents=True)
+            library.write_bytes(b'')
+            settings = Settings.read(self.env)
+            with self.recording():
+                self.assertEqual(settings.artifact('OXPINYIN_CAPI_SO', 'libpinyin_capi.so', 'oxpinyin-capi'), library)
+            [call] = self.calls
+            self.assertEqual(call['argv'], ['cargo', 'build', '--locked', '--manifest-path', str(ROOT / 'Cargo.toml'),
+                                            '-p', 'oxpinyin-capi', '--no-default-features', '--features', 'tkrzw'])
+            self.assertEqual((call['cwd'], call['stdout']), (ROOT, 2))
+            self.assert_supervised(call)
 
     def test_windows_builds_take_the_job_object_path(self):
         library = self.target / 'debug/libpinyin_capi.so'
