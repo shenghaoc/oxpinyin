@@ -360,9 +360,33 @@ gate is `:2295-2296` — `2292-2293` is the longer-candidate gate.~~
 (fixed with the §9 port: the doc comment now cites both gates
 correctly.)
 
-## The train gate under the widened law — pinyin measured, zhuyin an open gap (register row 38, 2026-09-20)
+## The train gate under the widened law — pinyin and zhuyin evidence by arm (register row 38)
 
-§9's port widened `InstanceCore::train`'s gate to the pin's own
+**Amended 2026-11-09 UTC (#1761).** Each train arm's evidence, by cell.
+"Captured" means the pin and oxpinyin were run and compared. "Source-derived"
+means the expectation is read from the pin source at 074a2219 and held by
+an oxpinyin test; no pin was run for it.
+
+| Facade | Arm | bdb | kc | tkrzw | Evidence |
+|---|---|---|---|---|---|
+| pinyin | fresh instance, no guess, no choose | captured | captured | captured | row 38, `train-index-diff` case `fresh`, 2026-10-04 UTC |
+| pinyin | parse → NORMAL choose → train, no guess | captured | captured | captured | row 38, case `choose-only` |
+| pinyin | choose → guess → train (selection arm) | captured | captured | captured | row 38, cases `0`, `1`, `2` |
+| pinyin | guess → train, no choose | source-derived (pin source at 074a2219) | source-derived (pin source at 074a2219) | captured, return value only | tkrzw: pin capture 2026-11-07, `train-index/nihao/{1,2,3}`, held by `oxpinyin-capi`'s `pinned_data_tests::training_the_last_two_nbest_results_succeeds` and `training_one_past_the_nbest_results_aborts`; also the ABI probe's §9 LONGER-choose phase above, where a LONGER choose that records no selection precedes the train. bdb, kc: `pinyin.cpp:2670-2691`, `lookup/phonetic_lookup.h:858-935` |
+| zhuyin | fresh instance, no guess, no choose | captured | captured | captured | row 38, case `fresh` |
+| zhuyin | parse → NORMAL choose → train, no guess | captured | captured | captured | row 38, case `choose-only` |
+| zhuyin | choose → guess → train (selection arm) | captured | captured | captured | row 38, case `0`, which chose 你 before `zhuyin_train` |
+| zhuyin | guess → train, no choose | source-derived (pin source at 074a2219) | source-derived (pin source at 074a2219) | source-derived (pin source at 074a2219) | `zhuyin.cpp:1696-1716`, `:1707`, `:551-552`, `:697`; `lookup/phonetic_lookup.h:858-935`; `storage/phrase_index.cpp:392-437`. Held by `oxpinyin-zhuyin-capi`'s `e2e_tests::train_without_a_choose_trains_nothing_and_without_a_user_store_refuses` |
+
+For the zhuyin arm with no choose, `zhuyin_train` answers `true` and logs
+nothing; the unigrams of the sentence's tokens and the sentence are
+unchanged; `zhuyin_save` answers `true` and then `false`; each saved
+journal is one `LOG_MODIFY_HEADER` record of an unchanged total; and the
+saved user bigram holds no record. This is an evidence classification, not
+a defect: the behaviour already matches the pin source. The 2026-09-20
+text below is the dated record of the gap.
+
+§9's port widened the train gate (now `Runtime::train_session`) to the pin's own
 disjunction — a recorded selection OR a live sentence result
 (`pinyin.cpp:2678-2679`; `sentence_lookup_active` is the engine's
 stand-in for `results.size() > 0`) — and both shipped C surfaces pass
@@ -381,7 +405,8 @@ occurrences of the letters "train" in it are the word "constrains" in
 two comments (`:227`, `:287`); no other driver calls `zhuyin_train`.
 The in-tree evidence is the zhuyin e2e
 (`crates/oxpinyin-zhuyin-capi/src/e2e_tests.rs::
-train_refuses_without_a_selection_or_a_user_store`), whose assertion
+train_without_a_choose_trains_nothing_and_without_a_user_store_refuses`,
+then named `train_refuses_without_a_selection_or_a_user_store`), whose assertion
 flipped in the same commit that widened the gate — a measurement of
 the code by the code that changed it, not independent evidence.
 
@@ -393,7 +418,9 @@ with no guess and no choose — still `false` on both; each phase
 dumping the user store's bigram/unigram state as the ABI probe does.
 That differential is owed work under register row 38
 (`compatibility-policy.md`; `revert-plan` §15), deliberately not
-built in PR #496.
+built in PR #496. Superseded 2026-11-09 UTC (#1761): arms (2) and (3)
+were captured by `train-index-diff` on 2026-10-04, and arm (1) is
+source-derived, as the table above records.
 
 ## Amendment — residue classification (2026-09-19 UTC)
 
