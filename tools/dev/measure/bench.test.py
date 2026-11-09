@@ -254,6 +254,8 @@ class ProcessTests(Scratch):
 
     @staticmethod
     def is_dead(pid):
+        if sys.platform == 'win32':
+            return not test_support.process_running(pid)    # os.kill(pid, 0) is no liveness probe there
         try:
             os.kill(pid, 0)
         except ProcessLookupError:

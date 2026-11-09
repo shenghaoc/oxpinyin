@@ -21,7 +21,6 @@ import os
 from pathlib import Path
 import re
 import shutil
-import subprocess
 import sys
 import time
 import traceback
@@ -207,7 +206,7 @@ def capture(command: Sequence, *, env: Mapping[str, str] | None = None, cwd=None
     """Run COMMAND with its output captured; return Completed(status, stdout, stderr).
 
     The status is the shell's (128 plus the signal). The command runs in its own
-    process group through pool.py's unit launcher: it is polled for cancellation
+    process group (a Job Object on Windows) through pool.py's unit launcher: it is polled for cancellation
     and reaped, with its descendants, before any error propagates. A command that
     does not exist raises FileNotFoundError, which the shared failure ladder
     (runners.guarded) reports with status 127.
@@ -226,7 +225,7 @@ def run(command: Sequence, *, env: Mapping[str, str] | None = None, cwd=None, st
     """Run COMMAND on the console (STDOUT may redirect it) and return the shell status.
 
     A nonzero status ends the run with that status unless CHECK_STATUS is false.
-    Cancellation terminates and reaps the command's process group first.
+    Cancellation terminates and reaps the command's process group (its Job Object on Windows) first.
     """
     command = [str(part) for part in command]
     sys.stdout.flush()
@@ -236,8 +235,8 @@ def run(command: Sequence, *, env: Mapping[str, str] | None = None, cwd=None, st
         streams['stdin'] = stdin
     if stderr is not None:
         streams['stderr'] = stderr
-    with subprocess.Popen(command, env=None if env is None else dict(env), cwd=cwd, stdout=stdout,
-                          start_new_session=True, **streams) as process:
+    with slot.supervised(command, env=None if env is None else dict(env), cwd=cwd, stdout=stdout,
+                         **streams) as process:
         code = shell_status(slot.wait_child(process))
     if check_status and code:
         raise Finished(code)

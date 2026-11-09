@@ -1,8 +1,8 @@
 """Cancellation and child-process supervision. Standard library only.
 
 A shared cancellation event set by SIGTERM, SIGINT and SIGHUP, process-group
-termination, and a supervised child runner. On Windows a Job Object kills the
-child tree when it closes.
+termination, and a supervised child runner. On Windows every supervised child
+runs in a Job Object that ends the child tree when it closes or is terminated.
 """
 import contextlib
 import os
@@ -16,6 +16,10 @@ from . import host
 
 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
 JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
+JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION = 1
+JOB_OBJECT_BASIC_PROCESS_ID_LIST = 3
+SYNCHRONIZE = 0x00100000
+ERROR_MORE_DATA = 234
 CREATE_SUSPENDED = 0x00000004
 
 
@@ -75,6 +79,20 @@ class WindowsJob:
                 ('PeakJobMemoryUsed', ctypes.c_size_t),
             ]
 
+        class ACCOUNTING(ctypes.Structure):
+            """Represent Job Object accounting; ActiveProcesses counts the members still running."""
+            _fields_ = [
+                ('TotalUserTime', LARGE_INTEGER),
+                ('TotalKernelTime', LARGE_INTEGER),
+                ('ThisPeriodTotalUserTime', LARGE_INTEGER),
+                ('ThisPeriodTotalKernelTime', LARGE_INTEGER),
+                ('TotalPageFaultCount', wintypes.DWORD),
+                ('TotalProcesses', wintypes.DWORD),
+                ('ActiveProcesses', wintypes.DWORD),
+                ('TotalTerminatedProcesses', wintypes.DWORD),
+            ]
+
+        self._accounting = ACCOUNTING
         self._ctypes = ctypes
         self._wintypes = wintypes
         self._kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
@@ -85,7 +103,13 @@ class WindowsJob:
                                                            ctypes.c_void_p, wintypes.DWORD]
         self._kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
         self._kernel32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
+        self._kernel32.QueryInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p,
+                                                             wintypes.DWORD, ctypes.c_void_p]
         self._kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        self._kernel32.OpenProcess.restype = wintypes.HANDLE
+        self._kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        self._kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        self._members = []
         self.handle = self._kernel32.CreateJobObjectW(None, None)
         if not self.handle:
             raise OSError(ctypes.get_last_error(), 'CreateJobObjectW failed')
@@ -108,16 +132,73 @@ class WindowsJob:
                 self._wintypes.HANDLE(self.handle), self._wintypes.HANDLE(process_handle)):
             raise OSError(self._ctypes.get_last_error(), 'AssignProcessToJobObject failed')
 
+    def _remember_members(self):
+        """Open a handle on every process in the job now, so wait_empty can wait for each one to end.
+
+        A handle keeps its process object, so no other process can take over its id meanwhile.
+        """
+        ctypes, wintypes = self._ctypes, self._wintypes
+        count = 64
+        while True:
+            class ID_LIST(ctypes.Structure):
+                """Represent the ids of the processes in a job."""
+                _fields_ = [('NumberOfAssignedProcesses', wintypes.DWORD),
+                            ('NumberOfProcessIdsInList', wintypes.DWORD),
+                            ('ProcessIdList', ctypes.c_size_t * count)]
+            info = ID_LIST()
+            if self._kernel32.QueryInformationJobObject(
+                    wintypes.HANDLE(self.handle), JOB_OBJECT_BASIC_PROCESS_ID_LIST,
+                    ctypes.byref(info), ctypes.sizeof(info), None):
+                break
+            if ctypes.get_last_error() != ERROR_MORE_DATA or info.NumberOfAssignedProcesses <= count:
+                return
+            count = info.NumberOfAssignedProcesses + 16
+        for index in range(info.NumberOfProcessIdsInList):
+            handle = self._kernel32.OpenProcess(SYNCHRONIZE, False, info.ProcessIdList[index])
+            if handle:    # none: the process has ended already
+                self._members.append(handle)
+
     def terminate(self, code=1):
-        """Request termination of all job members with code when a handle is open."""
+        """Request termination of all job members with code when a handle is open.
+
+        The members are noted first: wait_empty waits for each of them to end.
+        """
         if self.handle:
+            self._remember_members()
             self._kernel32.TerminateJobObject(self._wintypes.HANDLE(self.handle), code)
 
+    def wait_empty(self, timeout):
+        """Wait up to timeout seconds for every job member to end; return whether none is left.
+
+        TerminateJobObject returns before the members are gone, and a terminated
+        process already reports its exit code to Popen. A member is gone when the job
+        counts no active process and the process object of each member that terminate
+        noted is signalled: until then a member can still hold its working directory.
+        """
+        if self.handle is None:
+            return True    # closed: the kill-on-close policy has already run
+        deadline = time.monotonic() + timeout
+        while True:
+            info = self._accounting()
+            if not self._kernel32.QueryInformationJobObject(
+                    self._wintypes.HANDLE(self.handle), JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION,
+                    self._ctypes.byref(info), self._ctypes.sizeof(info), None):
+                raise OSError(self._ctypes.get_last_error(), 'QueryInformationJobObject failed')
+            if not info.ActiveProcesses and all(
+                    self._kernel32.WaitForSingleObject(self._wintypes.HANDLE(member), 0) == 0
+                    for member in self._members):
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(.005)
+
     def close(self):
-        """Close this job handle once, triggering its kill-on-close policy."""
+        """Close this job handle once, triggering its kill-on-close policy, and the member handles."""
         if self.handle:
             self._kernel32.CloseHandle(self._wintypes.HANDLE(self.handle))
             self.handle = None
+        while self._members:
+            self._kernel32.CloseHandle(self._wintypes.HANDLE(self._members.pop()))
 
     def __enter__(self):
         """Return the already-created job for context-managed cleanup."""
@@ -185,24 +266,48 @@ def cancellation_handlers():
             signal.signal(signum, handler)
 
 
+def prove_ended(job, process):
+    """Wait until no member of JOB, the Job Object of PROCESS, is left; the caller terminated it.
+
+    Raise RuntimeError when a member outlives five seconds, as terminate_group
+    does for a POSIX group it cannot prove gone.
+    """
+    if not job.wait_empty(5):
+        raise RuntimeError(f'job of process {process.pid} termination could not be proved')
+
+
 def terminate_group(process):
-    """Stop the group and reap its leader before the caller releases locks."""
+    """Stop the group and reap its leader before the caller releases locks.
+
+    On Windows the group is the Job Object that spawn gave the process: ending it
+    ends every descendant, one that outlives its leader too.
+    """
     if sys.platform == 'win32':
+        job = getattr(process, 'job', None)
         # A console Ctrl-C reaches every process on the console, this child too. Give it the
         # POSIX path's 5 s grace to finish its own cleanup (the pool removes the containers it
         # owns) before terminating it; any other cancellation or failure terminates at once.
         if CANCELLED.is_set() and CANCELLED_SIGNAL == signal.SIGINT:
             try:
                 process.wait(timeout=5)
+                if job is not None:
+                    job.terminate()
+                    prove_ended(job, process)
                 return
             except subprocess.TimeoutExpired:
                 pass
+        # Terminate the leader first: once the job has ended it, Popen reports an exit code
+        # before the process handle signals, and wait would return at once.
         process.terminate()
+        if job is not None:
+            job.terminate()
         try:
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait()
+        if job is not None:
+            prove_ended(job, process)
         return
     try:
         os.killpg(process.pid, signal.SIGTERM)
@@ -241,6 +346,79 @@ def terminate_group(process):
             if time.monotonic() >= deadline:
                 raise RuntimeError(f'process group {process.pid} termination could not be proved')
             time.sleep(.01)
+
+
+def spawn(command, **options):
+    """Start COMMAND as the leader of a tree that terminate_group ends whole; return its Popen.
+
+    OPTIONS go to subprocess.Popen. On POSIX the child leads a new session and
+    process group. On Windows it starts suspended, joins a new kill-on-close
+    WindowsJob (kept as process.job) and then resumes, so no descendant escapes
+    the job. A failure to start, assign or resume leaves nothing running and
+    propagates.
+    """
+    if sys.platform != 'win32':
+        return subprocess.Popen(command, start_new_session=True, **options)
+    import ctypes
+    from ctypes import wintypes
+    job = WindowsJob()
+    try:
+        process = subprocess.Popen(command, creationflags=CREATE_SUSPENDED, **options)
+    except BaseException:
+        job.close()
+        raise
+    try:
+        job.assign(process._handle)
+        ntdll = ctypes.WinDLL('ntdll', use_last_error=True)
+        ntdll.NtResumeProcess.restype = ctypes.c_long
+        ntdll.NtResumeProcess.argtypes = [wintypes.HANDLE]
+        if ntdll.NtResumeProcess(wintypes.HANDLE(process._handle)) != 0:
+            raise OSError(ctypes.get_last_error(), 'NtResumeProcess failed')
+    except BaseException:
+        job.terminate()
+        process.kill()
+        process.wait()
+        job.close()
+        raise
+    process.job = job
+    return process
+
+
+def end_job(job, process):
+    """End every member of JOB, the Job Object of PROCESS, prove that none is left, then close it.
+
+    This is the path cancellation takes, for a leader that exited by itself too: a descendant
+    that is still running is ended, and the caller may remove what it held (a working
+    directory, a file) as soon as this returns. Closing the job alone kills its members
+    asynchronously. The job is closed even when the proof fails.
+    """
+    try:
+        job.terminate()
+        prove_ended(job, process)
+    finally:
+        job.close()
+
+
+def release(process):
+    """End the Job Object of a process that spawn started (a no-op elsewhere).
+
+    Call this once the leader is reaped. Any member still running is ended and
+    proved gone before it returns.
+    """
+    job = getattr(process, 'job', None)
+    if job is not None:
+        end_job(job, process)
+
+
+@contextlib.contextmanager
+def supervised(command, **options):
+    """Run `with spawn(COMMAND, **OPTIONS) as process`, then release the Job Object."""
+    process = spawn(command, **options)
+    try:
+        with process:
+            yield process
+    finally:
+        release(process)
 
 
 def wait_child(process, timeout=None):
@@ -282,25 +460,5 @@ def run_command(command, env=None, *, cwd=None, stdout=None):
     child_env = dict(os.environ if env is None else env)
     with cancellation_handlers():
         check_cancelled()
-        if sys.platform == 'win32':
-            import ctypes
-            from ctypes import wintypes
-            with WindowsJob() as job:
-                process = subprocess.Popen(command, env=child_env, cwd=cwd, stdout=stdout,
-                                           creationflags=CREATE_SUSPENDED)
-                try:
-                    job.assign(process._handle)
-                    ntdll = ctypes.WinDLL('ntdll', use_last_error=True)
-                    ntdll.NtResumeProcess.restype = ctypes.c_long
-                    ntdll.NtResumeProcess.argtypes = [wintypes.HANDLE]
-                    if ntdll.NtResumeProcess(wintypes.HANDLE(process._handle)) != 0:
-                        raise OSError(ctypes.get_last_error(), 'NtResumeProcess failed')
-                    return wait_child(process)
-                except BaseException:
-                    job.terminate()
-                    process.kill()
-                    process.wait()
-                    raise
-        with subprocess.Popen(command, env=child_env, cwd=cwd, stdout=stdout,
-                              start_new_session=True) as process:
+        with supervised(command, env=child_env, cwd=cwd, stdout=stdout) as process:
             return wait_child(process)
