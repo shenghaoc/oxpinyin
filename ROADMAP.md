@@ -25,7 +25,7 @@ The round-2 audit (#573) and the init complexity tracker (#870) are closed.
 - Run every differential on all three cells.
 - Check every divergence-register row against the pin's source.
 - Include the round-2 audit items carried to round 3 (#573).
-- Record language artefacts under the [internal-language-artefact rule](docs/source-policy.md#internal-language-artefacts); do not reproduce them.
+- Record language artefacts under the [internal-language-artefact rule](docs/findings/compatibility-policy.md#internal-language-artefacts); do not reproduce them.
 
 ### Open items in the algorithm record
 
@@ -33,7 +33,7 @@ The [algorithm record](docs/findings/libpinyin-structures-and-algorithms.md) lis
 They do not block the sweep.
 
 - Write the §11 equivalence arguments.
-  Make each failed argument a separate defect.
+  Record each failed argument as a separate defect.
 - Argue each row of §§1–8 that is marked different or unverified.
   Compare its time and space complexity with the pin.
 - Complete the §9 inventory of coefficients and limits on the parity path, each with its pin value.

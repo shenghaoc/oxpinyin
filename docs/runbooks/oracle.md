@@ -1,10 +1,11 @@
 # Oracle — building the pin and running the differentials
 
+This procedure builds the oracle and runs the differentials against it.
 For contributor compatibility verification, use a
 [remote Linux host](cloud.md) provisioned for every gate.
 Ordinary work uses [native setup](setup.md), without an oracle or container.
-The direct build and runner operations below expose the existing machinery;
-extracting libraries alone is not passing parity evidence.
+The direct build and runner operations below expose the existing machinery.
+Extracting libraries alone is not passing parity evidence.
 
 The oracle is libpinyin built from the pinned commit, with the pinned
 model20 data. Every parity claim in this repository is a differential
@@ -15,16 +16,17 @@ A differential selects its cell with `PINYIN_ORACLE_DBM`.
 The oracle is built and run only in Linux. The commands that start a build
 are Python and run on Windows, macOS and Linux:
 `just provision-oracle`, `just provision` and
-`python -m tools.oracle.image build-image` select a container runtime
-(`wslc` on Windows, Apple `container` on macOS, Podman or Docker on Linux;
-see [container runtimes](setup.md#container-runtimes)) and run the builder,
+`python -m tools.oracle.image build-image`.
+Each command selects a container runtime: `wslc` on Windows, Apple `container`
+on macOS, Podman or Docker on Linux ([container runtimes](setup.md#container-runtimes)).
+It then runs the builder,
 [`tools/oracle/build.py`](../../tools/oracle/build.py), in a Linux container.
 No host needs Bash, Git Bash or a WSL shell for this.
 `build.py` itself runs only in Linux, where git, autoconf, make and the
-compilers are; it does not build libpinyin natively on Windows or macOS.
+compilers are. It does not build libpinyin natively on Windows or macOS.
 
 The model20 archive is not redistributable
-([model provenance](../findings/model-provenance.md)): no CI job fetches it, and nothing
+([model provenance](../findings/model-provenance.md)). No CI job fetches it, and nothing
 below that needs it runs on GitHub-hosted runners. No workflow in this
 repository builds the reference image. Build it on a host with
 `uv run --no-project --managed-python python -X lazy_imports=normal -m tools.oracle.image build-image`.
@@ -55,7 +57,7 @@ verifies it by `git rev-parse HEAD` equality. A commit SHA identifies the
 git tree itself, so a regenerated tarball or a moved tag cannot change it.
 The model archive is a plain file download, so its SHA-256 pins it.
 
-The pin's system data for the contract tests is a separate pin:
+The pin's system data for the contract tests has a separate pin:
 [`tools/oracle/libpinyin-data.json`](../../tools/oracle/libpinyin-data.json)
 (`just fetch-contract-data`).
 
@@ -110,7 +112,7 @@ change.
 
 - Only objects that the pin recipe builds are the oracle. Every parity run
   loads only those objects.
-- A distribution build of libpinyin may be compared for information. It never
+- You may compare a distribution build of libpinyin for information. It never
   gates a change and never becomes the oracle.
 - ibus-libpinyin supplies only the frontend-called ABI subset and the GSettings
   schema. A full build also proves that the pinned frontend builds against the
@@ -144,7 +146,7 @@ just provision-oracle --cells 'bdb kc tkrzw' --jobs 4
 The cells land in the provisioning cache under `oracle/<cell>`:
 the `pin-<commit>` entry of the [cache directory](setup.md#cache-directory).
 `OXPINYIN_CONTAINER` names a runtime other than the host's first choice.
-On Windows, run it from PowerShell 7; the runtime is `wslc`
+On Windows, run it from PowerShell 7. The runtime is `wslc`
 ([native Windows](setup.md#native-windows-and-wsl-containers)).
 [`just provision`](cloud.md) does the same work for a full compatibility
 host, with the builds pooled in the `deps` image.
@@ -160,7 +162,7 @@ host, with the builds pooled in the `deps` image.
 | Data regeneration | `--regen-data` | model-derived data, added to an existing libraries-only prefix |
 
 [`tools/oracle/dependencies.json`](../../tools/oracle/dependencies.json)
-lists the Debian build dependencies by mode and backend; a full build needs
+lists the Debian build dependencies by mode and backend. A full build needs
 the `full` group. The `deps` stage of `tools/oracle/Dockerfile.oracle` has the
 libraries-only and data-regeneration dependencies, and the `performance`
 stage has all of them.
@@ -198,7 +200,7 @@ The requirements are:
   keeps an inherited `PKG_CONFIG_PATH` after it, and sets `LD_LIBRARY_PATH`
   to the prefix alone. It passes `CC`, `CXX`, `CFLAGS`, `CXXFLAGS` and
   `LDFLAGS` through. Unset `CFLAGS` and `CXXFLAGS` become autoconf's
-  `-g -O2`; an empty value stays empty.
+  `-g -O2`. An empty value stays empty.
 
 Run `python3 tools/oracle/build.py --help` for every option.
 The last stdout line is the path of the built `libpinyin.so`.
@@ -213,9 +215,9 @@ The oracle never runs on GitHub Actions.
 ## 2a. Or pull the prebuilt libraries (any machine)
 
 The image uses unpinned Debian testing (`tools/oracle/Dockerfile.oracle`).
-Debian is the only major distribution whose libpinyin uses tkrzw, oxpinyin's
-default backend; Fedora and Arch still link Kyoto Cabinet (the
-[release lanes table](../packaging.md#release-artifacts-release-packagesyml)). Debian testing's package
+Debian is the only major distribution whose libpinyin uses tkrzw, the default
+backend of oxpinyin. Fedora and Arch still link Kyoto Cabinet (the
+[release lanes table](../packaging.md#release-artifacts-release-packagesyml)). The Debian testing package
 is therefore the reference, and its updates trigger pin changes. Both arms of a
 performance comparison run in the same container on the same base.
 
@@ -249,11 +251,11 @@ img=ghcr.io/shenghaoc/oxpinyin-oracle:$tag$suffix
 docker pull --platform "$platform" "$img"   # podman, or your runtime's equivalent
 ```
 
-Copy the cells out of the image (a `FROM scratch` image has no command, so
-`create` needs a dummy one) and point every cell's `.pc` files at the new
-location. The destination is created first and the *contents* of
-`/opt/pinyin-oracle` are copied into it (`/.` suffix), so a first run and a
-rerun give the same tree:
+Copy the cells out of the image, then point the `.pc` files of every cell at the new
+location. A `FROM scratch` image has no command, so `create` needs a dummy one.
+The commands create the destination first and copy the *contents* of
+`/opt/pinyin-oracle` into it (`/.` suffix). A first run and a
+second run therefore give the same tree:
 
 ```sh
 dest=$HOME/.local/opt/pinyin-oracle        # any directory
@@ -272,9 +274,9 @@ No tool compares a built digest with a frozen repository value.
 
 ### Native arm64
 
-The arm64 oracle uses the same recipe and pin as amd64, built natively with
+The arm64 oracle uses the same recipe and pin as amd64. It is built natively, with
 no emulation. Build the image with
-`--build-arg ORACLE_PLATFORM=linux/arm64` and `--platform linux/arm64`;
+`--build-arg ORACLE_PLATFORM=linux/arm64` and `--platform linux/arm64`.
 `tools/dev/provision.py` and `tools/cloud/setup.sh` select the platform from
 the host. On Apple `container`, provisioning builds the libraries in the deps
 image and does not pull the published image
@@ -284,9 +286,9 @@ Run the tkrzw cell only against a sound libtkrzw, and use `ldd` to make sure
 that the oracle resolves `libtkrzw.so.1` to it
 ([verification rule 9](verification.md#9-sound-tkrzw-library)).
 
-The pin's candidate frequency is target-dependent at two sites, so the arm64
+The pin's candidate frequency depends on the target at two sites, so the arm64
 pin orders some candidates differently from the amd64 pin. The amd64 pin is
-the reference. oxpinyin's results and the affected cases are class (b)
+the reference. The results of oxpinyin and the affected cases are class (b)
 divergences, recorded in [the arm64 portability record](../findings/arm64-pin-portability-1137.md)
 and [upstream divergences](../findings/upstream-divergences.md).
 
@@ -342,7 +344,24 @@ transaction or power-loss durability.
 When a tool reuses the prefix, it checks both manifest digests and all listed
 files against that prefix's record.
 
-Then use the prefix as if it had been built locally:
+1. It fetches the pinned libpinyin commit and builds it in a work
+   directory with the same configure arguments.
+2. It runs the pin's data build
+   (`data/Makefile.am`: `gen_binary_files`, `import_interpolation`,
+   `gen_unigram`) over the model into a staging area beside the prefix.
+3. It computes `oracle-data.sha256`, `oracle-data-unstable.sha256` and the data
+   fields of `oracle-pin.txt` in the staging area.
+4. It publishes the generated data, both manifests and their provenance together.
+   The pulled libraries stay unchanged.
+
+When a tool reuses the prefix, it checks both manifest digests and all listed files against the record of this prefix,
+not against the output of another toolchain.
+`--regen-data` needs the build dependencies of section 2. The `deps`
+stage of the pinned image has them: `docker build --target deps -f tools/oracle/Dockerfile.oracle
+.`. For the other cells, use `--dbm bdb` or `--dbm kc` with the matching
+subdirectory.
+
+Then use the prefix as if you had built it locally:
 
 ```sh
 export PINYIN_ORACLE_PREFIX="$dest/tkrzw"
@@ -366,8 +385,8 @@ The builder therefore splits the data manifest:
 
 `DATA_UNSTABLE_FILES` in `build.py` fixes the list. To move a file
 between the manifests, change the recipe. Neither manifest is frozen across
-toolchain updates. Verify both against the prefix's local manifest before any
-run that reads the oracle prefix's data.
+toolchain updates. Before any run that reads the data of the oracle prefix, verify both manifests
+against the local manifest of the prefix.
 
 ### Reproducing the libraries
 
@@ -385,20 +404,19 @@ prefix in one environment, and compares only those two sets of library hashes. I
 Image verification separately checks current pin/recipe provenance, recorded
 library bytes and absence of model-derived data.
 
-For oracle-only provisioning in the same native container:
+For oracle-only provisioning in the same native container, run:
 
 ```sh
 uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.provision oracle --cache-dir /performance/provision --cells 'bdb kc tkrzw' --jobs 4
 ```
 
-The provisioner rebuilds missing or stale pin/recipe prefixes, regenerates
-missing or damaged data, and validates all recorded outputs before returning.
-`just performance` sets `OXPINYIN_CACHE=/performance/cache` in the container, so model20 is on the volume.
+The provisioner rebuilds missing or stale pin/recipe prefixes and regenerates
+missing or damaged data. It validates all recorded outputs before it returns.
 
 ## 3. Produce the export
 
-The Rust side reads a system data directory built by libpinyin's own
-sequence; `oxpinyin-utils` provides the three programs under their pin
+The Rust side reads a system data directory that libpinyin's own
+sequence builds. `oxpinyin-utils` provides the three programs under their pin
 names. `table.conf` comes from the pin's configure (`data/table.conf.in`),
 so start from an installed `data/table.conf` for the same backend:
 
@@ -414,13 +432,13 @@ cargo run -p oxpinyin-utils \
 export PINYIN_EXPORT_DIR=/tmp/oxpinyin-export
 ```
 
-`/tmp/oxpinyin-export` is the default every harness reads
-(`PINYIN_EXPORT_DIR` overrides it).
+`/tmp/oxpinyin-export` is the default that every harness reads.
+`PINYIN_EXPORT_DIR` overrides it.
 
 ## 4. Run the differentials
 
 The C-boundary tests (below) hold the pin's frozen observations of the C
-ABI. The per-call C drivers retired with their frozen Rust tests; see
+ABI. The per-call C drivers are retired, together with their frozen Rust tests; see
 [pin captures](pin-captures.md).
 
 ### Pre-release fixture check
@@ -435,19 +453,19 @@ Every ordinary test run includes the tkrzw `libpinyin_data_dir` and `sentence_su
 
 ### The C-boundary tests
 
-The C-boundary tests with the pin's frozen observations are ordinary Rust tests in the
-`src` test modules of `crates/oxpinyin-capi` and `crates/oxpinyin-zhuyin-capi`; they
-never run the pin. Run them with `cargo test -p oxpinyin-capi --lib` and
-`cargo test -p oxpinyin-zhuyin-capi --lib` after `just fetch-contract-data`. The
+The C-boundary tests hold the pin's frozen observations. They are ordinary Rust tests in the
+`src` test modules of `crates/oxpinyin-capi` and `crates/oxpinyin-zhuyin-capi`, and they
+never run the pin. After `just fetch-contract-data`, run them with `cargo test -p oxpinyin-capi --lib` and
+`cargo test -p oxpinyin-zhuyin-capi --lib`. The
 local-only cross-open check is in [contract references](contract-references.md).
 
 ### Training through the C API
 
-`pinyin_train(instance, index)` trains the n-best result `index` and
+`pinyin_train(instance, index)` trains the n-best result `index`. It
 returns false unless `pinyin_guess_sentence` filled the n-best results
-first (`pinyin.cpp:2676` at the pin) — it does not consume the candidate
+first (`pinyin.cpp:2676` at the pin). It does not use the candidate
 list from `pinyin_guess_candidates`. Harnesses and benches therefore reset,
-parse, check full consumption and guess the sentence before training row 0
+parse, check full consumption and guess the sentence before they train row 0
 (see [verification](verification.md#procedure-specific-rules)).
 
 ### User-profile interchange
@@ -456,18 +474,18 @@ The two-way user-profile interchange property is no longer measured live. The
 property moves to frozen captures, to be added in the next pin capture. One
 capture certifies both directions:
 
-- **libpinyin to oxpinyin.** The capture holds a user directory written by the
-  pin. oxpinyin reads it and renders the same results the pin recorded for it.
+- **libpinyin to oxpinyin.** The capture holds a user directory that the pin
+  wrote. oxpinyin reads it and renders the same results that the pin recorded for it.
 - **oxpinyin to libpinyin.** From the same scripted input, oxpinyin writes a
-  user directory, and that directory is compared with the pin's:
-  - the files oxpinyin writes in its own format (`user.conf`, the `.dbin`
+  user directory. The check compares that directory with the directory of the pin:
+  - the files that oxpinyin writes in its own format (`user.conf`, the `.dbin`
     journals and the phrase-library chunks) must be byte-identical to the
-    pin's;
-  - the database files are written through the same tkrzw, Berkeley DB and
-    Kyoto Cabinet libraries the pin uses, so their bytes are not compared.
+    files of the pin;
+  - oxpinyin writes the database files through the same tkrzw, Berkeley DB and
+    Kyoto Cabinet libraries that the pin uses, so the check does not compare their bytes.
     They must hold identical records, key for key and value for value.
     libpinyin reads those files through the same libraries, so identical
-    records mean it can read them.
+    records mean that libpinyin can read them.
 
 Until those captures exist, nothing checks this property against the pin.
 

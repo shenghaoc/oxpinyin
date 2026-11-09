@@ -2,38 +2,39 @@
 
 Status: **record** (cross-distro matrix measured 2026-08-29; tkrzw
 1.0.34 measured 2026-10-01 and 2026-10-05). tkrzw 1.0.34 (`9ee8416`,
-2026-09-20) fixes defect 1 upstream and leaves defect 2, so everything
-below about defect 1 describes 1.0.33 and earlier. tkrzw is oxpinyin's
-default backend and reference cell. oxpinyin builds and CI use upstream
-tkrzw at `TKRZW_REV` (`tools/tkrzw/build.py`, 1.0.34), which needs no
-probe; `tools/tkrzw/distro-probe.sh` checks Ubuntu's packaged libtkrzw
+2026-09-20) fixes defect 1 upstream and leaves defect 2. Everything below
+about defect 1 therefore describes 1.0.33 and earlier. tkrzw is
+oxpinyin's default backend and reference cell. oxpinyin builds and CI use
+upstream tkrzw at `TKRZW_REV` (`tools/tkrzw/build.py`, 1.0.34), which
+needs no probe. `tools/tkrzw/distro-probe.sh` checks Ubuntu's packaged
+libtkrzw
 ([verification runbook §9](../runbooks/verification.md#9-sound-tkrzw-library)).
 
-Ubuntu's packaged libtkrzw breaks tkrzw's pointer-identity protocol, and
-`./configure && make` on the same sources is correct. This note
-establishes why, and how far it reaches.
+Ubuntu's packaged libtkrzw breaks tkrzw's pointer-identity protocol.
+`./configure && make` on the same sources is correct. This note states
+why, and how far the fault reaches.
 
-**The stakes changed: Debian has switched `libpinyin` to the tkrzw
-backend** (`2.11.91-1`, unstable/testing, 2026-08-12), so these faults
-now sit under a shipped input method's user dictionary, not only a
-command-line tool. Debian's tkrzw package is healthy (measured
-`1.0.32-1+b2`), so that shipped combination is safe today; the exposure
-is Ubuntu, whose tkrzw (`1.0.32-1build1`) is broken on both defects
-below, and which syncs `libpinyin` from Debian. See "Does anything
-actually ship against this?" for the measured per-distro backend matrix.
+**Debian has switched `libpinyin` to the tkrzw backend** (`2.11.91-1`,
+unstable/testing, 2026-08-12). These faults are therefore under a shipped
+input method's user dictionary, not only a command-line tool. Debian's
+tkrzw package is healthy (measured `1.0.32-1+b2`), so that shipped
+combination is safe today. The exposure is Ubuntu. Its tkrzw
+(`1.0.32-1build1`) is broken on both defects below, and it syncs
+`libpinyin` from Debian. See "Does anything actually ship against this?"
+for the measured per-distro backend matrix.
 
 **There are two independent defects, with two different causes.** Both
-come from build flags Ubuntu applies to every package and Debian applies
-to none, both are silent, and neither fixes the other:
+come from build flags that Ubuntu applies to every package and Debian
+applies to none. Both are silent, and neither fix repairs the other:
 
 | | Cause | Breaks | Symptom |
 | --- | --- | --- | --- |
 | **1** | `-flto` | `RecordProcessor::NOOP` / `REMOVE` — *data* | `Remove()` stores a tombstone instead of deleting; a NOOP processor overwrites the record; `Rebuild` mis-counts |
 | **2** | `-Wl,-Bsymbolic-functions` | the key comparators — *functions* | TreeDBM records comparator type 255 and can never reopen the file |
 
-This matters for the fix: Ubuntu bug [LP #2142937][lp] carries a patch
-that disables LTO, which resolves defect 1 and leaves defect 2 exactly
-as it was. See "Reported" below.
+This matters for the fix. Ubuntu bug [LP #2142937][lp] carries a patch
+that disables LTO. That patch resolves defect 1 and leaves defect 2
+unchanged. See "Reported" below.
 
 [lp]: https://bugs.launchpad.net/ubuntu/+source/tkrzw/+bug/2142937
 
@@ -49,17 +50,16 @@ Every Ubuntu release that carries tkrzw, checked with
 | 26.04.1 LTS (resolute) | supported | `1.0.32-1build1` | **tombstone** | **unreadable** |
 | 26.10 (stonking, devel) | development | `1.0.32-1build1` | — | — |
 
-Three consecutive releases, two upstream versions, three different
-Debian revision strings, both defects in every one. The development
-series still carries resolute's binary unchanged, so as of this note no
-fix has landed anywhere in Ubuntu.
+Three consecutive releases, two upstream versions and three different
+Debian revision strings all have both defects. The development series
+carries resolute's binary unchanged. At the date of this note, no fix is
+in Ubuntu.
 
-Questing's row is worth reading twice. Its version string is
-`1.0.32-1` — *identical* to Debian's, with no `buildN` suffix, because
-it is a straight source sync rather than a no-change rebuild. Same
-source, same version string, different binary, because Ubuntu built it.
-The `buildN` suffix is not what marks an affected package; being built
-by Ubuntu is.
+Note questing's row. Its version string is `1.0.32-1`, *identical* to
+Debian's, with no `buildN` suffix, because it is a direct source sync and
+not a no-change rebuild. The source and version string are the same, but
+the binary differs, because Ubuntu built it. The `buildN` suffix does not
+mark an affected package. A build by Ubuntu does.
 
 And the same source built elsewhere:
 
@@ -71,21 +71,21 @@ And the same source built elsewhere:
 | Debian source pkg `1.0.32-1`, Debian flags | ok | ok |
 | Debian source pkg `1.0.32-1`, Ubuntu flags | **tombstone** | **unreadable** |
 
-`1.0.32-1` is the version that matters: it is what Debian uploaded to
-unstable and what Ubuntu ships in questing, resolute and devel. Built
-with Ubuntu's flags it reproduces the shipped failure exactly; built
-with Debian's, from the same tarball on the same machine, it is clean.
+`1.0.32-1` is the important version. Debian uploaded it to unstable,
+and Ubuntu ships it in questing, resolute and devel. Built with Ubuntu's
+flags, it reproduces the shipped failure exactly. Built with Debian's
+flags, from the same tarball on the same machine, it is clean.
 
-"unreadable" is literal: `tkrzw_dbm_util create x.tkt` succeeds, and
-every subsequent open of that file by the same binary fails with
-`BROKEN_DATA_ERROR: invalid_key_comparator`. SkipDBM (`.tks`) is
-unaffected by defect 2 — it stores no comparator — but every DBM type is
-exposed to defect 1.
+"unreadable" is literal. `tkrzw_dbm_util create x.tkt` succeeds, and
+every later open of that file by the same binary fails with
+`BROKEN_DATA_ERROR: invalid_key_comparator`. Defect 2 does not affect
+SkipDBM (`.tks`), which stores no comparator. Every DBM type is exposed to
+defect 1.
 
 ## The bisection
 
-Four real rebuilds of Debian's `tkrzw_1.0.32-1` source package, all with
-`DEB_VENDOR=Ubuntu`, varying only the two flags:
+The bisection uses four real rebuilds of Debian's `tkrzw_1.0.32-1` source
+package, all with `DEB_VENDOR=Ubuntu`. Only the two flags vary:
 
 | Build | LTO | `-Bsymbolic-functions` | `remove` | `.tkt` | comparator GOT relocs |
 | --- | --- | --- | --- | --- | --- |
@@ -95,24 +95,21 @@ Four real rebuilds of Debian's `tkrzw_1.0.32-1` source package, all with
 | D — strip both | off | off | ok | ok | 18 |
 | Debian vendor, for reference | off | off | ok | ok | 18 |
 
-The two columns are cleanly orthogonal. LTO alone governs `remove`;
-`-Bsymbolic-functions` alone governs the comparator. Row D and the
-Debian reference agree, which is the check that nothing else in
-Ubuntu's flag set is involved.
-
-An earlier revision of this note claimed `-Bsymbolic-functions` was
-"necessary and sufficient" and called LTO a red herring. That was
-measured only against defect 2, where it holds, and wrongly generalised
-to defect 1. Row C above is the counter-example.
+The two columns are independent. LTO alone controls `remove`.
+`-Bsymbolic-functions` alone controls the comparator. Row D and the
+Debian reference agree. That agreement shows that nothing else in
+Ubuntu's flag set is involved. `-Bsymbolic-functions` is necessary and
+sufficient for defect 2 only. Row C shows that it does not explain
+defect 1.
 
 ## Defect 2 — the comparators
 
-tkrzw identifies some values by the *address* of a symbol rather than by
-its contents, and says so: `tkrzw_dbm.h` documents that the
+tkrzw identifies some values by the *address* of a symbol, not by its
+contents, and documents this. `tkrzw_dbm.h` states that the
 `RecordProcessor::NOOP` sentinel must be checked with
 `your_value.data() == NOOP.data()`. `TreeDBM` does the same for
-comparators — `tkrzw_dbm_tree.cc:1150` turns the caller's function
-pointer into the on-disk type byte purely by pointer equality:
+comparators. `tkrzw_dbm_tree.cc:1150` turns the caller's function pointer
+into the on-disk type byte by pointer equality only:
 
 ```cpp
 if (key_comparator_ == nullptr || key_comparator_ == LexicalKeyComparator) {
@@ -124,26 +121,26 @@ if (key_comparator_ == nullptr || key_comparator_ == LexicalKeyComparator) {
 }
 ```
 
-On reopen, `LoadMetadata` maps 1..5 and 101..105 back to a built-in;
-byte 255 means "the caller must re-supply the same custom comparator",
-and nothing in tkrzw can do that on its own — so the file is unreadable
+On reopen, `LoadMetadata` maps 1..5 and 101..105 back to a built-in.
+Byte 255 means "the caller must supply the same custom comparator again".
+Nothing in tkrzw can do that alone, so the file is unreadable
 (`tkrzw_dbm_tree.cc:1237`).
 
 The five comparators are `inline` functions in a header
 (`tkrzw_key_comparators.h:43`). Any translation unit that takes their
-address emits its own COMDAT copy, so `tkrzw_dbm_util` has one and
-`libtkrzw.so` has another. C++ requires the two to compare equal, and
-ELF delivers that by routing the library's address-taking through the
-GOT: a `R_X86_64_GLOB_DAT` relocation the dynamic linker resolves to the
-one canonical definition. A correct build of 1.0.32 keeps 18 such
-relocations; a broken one keeps none.
+address emits its own COMDAT copy. So `tkrzw_dbm_util` has one copy and
+`libtkrzw.so` has another. C++ requires the two to compare equal. ELF
+does this by routing the library's address-taking through the GOT: a
+`R_X86_64_GLOB_DAT` relocation that the dynamic linker resolves to the one
+canonical definition. A correct build of 1.0.32 keeps 18 such
+relocations. A broken build keeps none.
 
-`-Wl,-Bsymbolic-functions` is exactly the flag that removes them. It
-binds a shared library's function references to that library's own
-definitions at link time. `libtkrzw.so` then compares against its own
-copy, `tkrzw_dbm_util` passes its own copy — and no built-in comparator
-is ever recognised. `--comparator` defaults to `lex`
-(`tkrzw_dbm_util.cc:630`), so *every* `.tkt` the CLI creates records 255.
+`-Wl,-Bsymbolic-functions` is the flag that removes them. It binds a
+shared library's function references to that library's own definitions at
+link time. `libtkrzw.so` then compares against its own copy, and
+`tkrzw_dbm_util` passes its own copy. So tkrzw never recognises a built-in
+comparator. `--comparator` defaults to `lex` (`tkrzw_dbm_util.cc:630`), so
+*every* `.tkt` that the CLI creates records 255.
 
 ## Defect 1 — the sentinels
 
@@ -155,10 +152,10 @@ const std::string_view DBM::RecordProcessor::NOOP("\x00\xBE\xEF\x02\x11", 5);
 const std::string_view DBM::RecordProcessor::REMOVE("\x00\xDE\xAD\x02\x11", 5);
 ```
 
-`-Bsymbolic-functions` cannot touch these — it binds functions only —
-and indeed row B above still passes `remove` while failing `.tkt`. What
-breaks them is LTO, and the mechanism is visible in the binary. Counting
-occurrences of each backing literal inside `libtkrzw.so`:
+`-Bsymbolic-functions` cannot affect these, because it binds functions
+only. Row B above confirms this: it passes `remove` and fails `.tkt`. LTO
+breaks the sentinels, and the binary shows the mechanism. These are the
+counts of each backing literal inside `libtkrzw.so`:
 
 ```
 A stock Ubuntu (LTO + Bsym)    NOOP=10   REMOVE=11
@@ -167,21 +164,21 @@ C LTO, no Bsym                 NOOP=10   REMOVE=11
 D neither                      NOOP=1    REMOVE=1
 ```
 
-Without LTO there is exactly one copy of each, so the exported `NOOP`
-object and every comparison site necessarily agree. With LTO, GCC's
-partitioning gives most partitions their own copy — ten and eleven of
-them — so the address a comparison site was compiled against is not the
-address the exported object carries, and
+Without LTO there is exactly one copy of each. The exported `NOOP`
+object and every comparison site therefore agree. With LTO, GCC's
+partitioning gives most partitions their own copy (ten and eleven
+copies). The address that a comparison site was compiled against is then
+not the address that the exported object carries, and
 `value.data() == NOOP.data()` fails. `Remove` then writes the REMOVE
 sentinel as the record's value and reports success.
 
 ## It is not only the CLI
 
-Both defects reach any *client* of the library, which is what makes them
-dangerous for a backend like ours — and defect 1 reaches further than
-that, since row (d) below calls plain `dbm.Remove(key)` and passes no
-sentinel across the boundary at all. A client compiled against each
-build (a scratch identity probe, recorded evidence):
+Both defects reach any *client* of the library, which makes them
+dangerous for a backend like this one. Defect 1 reaches further: row (d)
+below calls plain `dbm.Remove(key)` and passes no sentinel across the
+boundary. The output below is from a client compiled against each build
+(a scratch identity probe, recorded evidence):
 
 ```
 ──── client compiled against the Debian-flags libtkrzw ────
@@ -199,17 +196,17 @@ build (a scratch identity probe, recorded evidence):
 (e) Rebuild()                           : CANCELED_ERROR
 ```
 
-Row (a) is the one piece of good news: leaving `key_comparator` at its
-`nullptr` default keeps the decision inside the library, where both
-sides of the comparison are the same copy. `oxpinyin-store` installs no
-comparator, so defect 2 does not reach its files. Rows (c)–(e) it *is*
-exposed to, and they are silent — a `Remove` that stores the sentinel as
-the value looks like a successful write.
+Row (a) is the safe case. A `key_comparator` left at its `nullptr`
+default keeps the decision inside the library, where both sides of the
+comparison are the same copy. `oxpinyin-store` installs no comparator, so
+defect 2 does not reach its files. `oxpinyin-store` *is* exposed to rows
+(c)–(e), and they are silent. A `Remove` that stores the sentinel as the
+value looks like a successful write.
 
 ## What decides it, per distro
 
-Each defect reduces to one bit about the distro's defaults, and both
-bits are readable from primary sources without installing tkrzw.
+Each defect depends on one bit of the distro's defaults. Primary sources
+give both bits, with no tkrzw install.
 
 | Distro | Source | `-Bsymbolic-functions` | LTO by default |
 | --- | --- | --- | --- |
@@ -220,59 +217,64 @@ bits are readable from primary sources without installing tkrzw.
 | Fedora | `redhat-rpm-config` | no | **yes** globally, but `tkrzw.spec` sets `%_lto_cflags %{nil}` |
 | RHEL 10 (via EPEL) | EPEL, Fedora spec lineage | no | no (`tkrzw.spec` opts out); not in RHEL's own repos |
 
-The dpkg figures are from dpkg's own git at tag **1.23.7** — the exact
-dpkg the `debian:sid-slim` image reports — so this is Debian's file, not
-Ubuntu's copy of it. Arch's full default `LDFLAGS` are
+The dpkg figures are from dpkg's own git at tag **1.23.7**, the exact
+dpkg that the `debian:sid-slim` image reports. So this is Debian's file,
+not Ubuntu's copy of it. Arch's full default `LDFLAGS` are
 
 ```
 -Wl,-O1 -Wl,--sort-common -Wl,--as-needed -Wl,-z,relro -Wl,-z,now -Wl,-z,pack-relative-relocs
 ```
 
-and its `-fno-plt` is not a hazard here: it changes how calls are
-routed, not how addresses are taken.
+Its `-fno-plt` is not a hazard here: it changes how calls are routed,
+not how addresses are taken.
 
-**Debian is clean on both counts; Arch is clean on defect 2 but exposed
-to defect 1** — Arch enables LTO globally via `OPTIONS=(... lto)`. Both
-are now measured rather than predicted (see "The matrix, measured"
-below): Debian testing probes healthy, and Arch — which packages no
-tkrzw to probe — reproduces defect 1 and not defect 2 from a source
-build under its own flags, exactly as the flag bits say. The Launchpad
-reporter had already run Debian and got the same clean result on
+**Debian is clean on both defects. Arch is clean on defect 2 but exposed
+to defect 1**, because Arch enables LTO globally through
+`OPTIONS=(... lto)`. Both results are measured (see "The matrix,
+measured" below):
+
+- Debian testing probes healthy.
+- Arch packages no tkrzw to probe. A source build under its own flags
+  reproduces defect 1 and not defect 2, as the flag bits predict.
+
+The Launchpad reporter ran Debian and got the same clean result on
 `1.0.32-1+b1` from trixie.
 
-A package can still reintroduce either flag itself, and tkrzw's does
-not: `debian/rules` never sets `LDFLAGS` — its only two mentions are a
-commented-out `DEB_LDFLAGS_MAINT_APPEND` — and the file is byte
-identical from `1.0.27-1.1` through `1.0.32-1`.
+A package can still add either flag itself. tkrzw's package does not.
+`debian/rules` never sets `LDFLAGS`: its only two mentions are a
+commented-out `DEB_LDFLAGS_MAINT_APPEND`. The file is byte identical from
+`1.0.27-1.1` through `1.0.32-1`.
 
 ## Does anything actually ship against this?
 
-The question that decides how much any of it matters: has a distro
-switched libpinyin from Berkeley DB to tkrzw, where these faults would
-land on a user's dictionary rather than on a command-line tool?
+This section answers one question: has a distro switched libpinyin from
+Berkeley DB to tkrzw, where these faults would affect a user's dictionary
+and not only a command-line tool?
 
-**Yes — Debian has, as of 2026-08-12.** `libpinyin 2.11.91-1`, in
-unstable and testing (sid, forky), sets `--with-dbm=Tkrzw` in
-`debian/rules` and Build-Depends `libtkrzw-dev`; its shipped
-`libpinyin.so.15` links `libtkrzw.so.1` and depends on
-`libtkrzw1t64 (>= 1.0.32)` — measured, not inferred. The changelog is
-explicit — "Switch from BerkeleyDB to Tkrzw" (Closes: #1119204,
-#993415) — and `debian/NEWS` warns that after "the engine switch from
-BerkeleyDB to Tkrzw ... all previous user data will be lost after the
-upgrade." Upstream only added the Tkrzw option in 2.11.91; its
-`configure.ac` still defaults to `DBM="BerkeleyDB"` and its `--with-dbm`
-help string still names only "BerkeleyDB or KyotoCabinet", so Debian is
-the first distro to select it, by its own choice rather than an upstream
-default that leaked. Debian stable is not affected — trixie and bookworm
-still carry `2.8.1-1` on Berkeley DB — but the switch is real and
-released into a rolling suite, which is exactly the event this note was
-written to get ahead of.
+**Yes. Debian has, from 2026-08-12.** The facts below are measured, not
+inferred:
 
-The full backend matrix, measured 2026-08-29 by reading each distro's
-installed `libpinyin.so` `DT_NEEDED` entries (`readelf`/`objdump`) for
-the directly linked storage library — and corroborated against each
-build recipe (`debian/rules`, Fedora `libpinyin.spec`, Arch `PKGBUILD`,
-nixpkgs `package.nix`):
+- `libpinyin 2.11.91-1`, in unstable and testing (sid, forky), sets
+  `--with-dbm=Tkrzw` in `debian/rules` and Build-Depends `libtkrzw-dev`.
+- Its shipped `libpinyin.so.15` links `libtkrzw.so.1` and depends on
+  `libtkrzw1t64 (>= 1.0.32)`.
+- The changelog says "Switch from BerkeleyDB to Tkrzw" (Closes: #1119204,
+  #993415). `debian/NEWS` warns that after "the engine switch from
+  BerkeleyDB to Tkrzw ... all previous user data will be lost after the
+  upgrade."
+
+Upstream added the Tkrzw option in 2.11.91 only. Its `configure.ac` still
+defaults to `DBM="BerkeleyDB"`, and its `--with-dbm` help string names
+only "BerkeleyDB or KyotoCabinet". Debian is therefore the first distro to
+select Tkrzw, by its own choice and not through an upstream default.
+Debian stable is not affected: trixie and bookworm carry `2.8.1-1` on
+Berkeley DB. But the switch is released into a rolling suite.
+
+The full backend matrix was measured 2026-08-29. The method read each
+distro's installed `libpinyin.so` `DT_NEEDED` entries
+(`readelf`/`objdump`) for the directly linked storage library. Each
+build recipe corroborates the result (`debian/rules`, Fedora
+`libpinyin.spec`, Arch `PKGBUILD`, nixpkgs `package.nix`):
 
 | Distro | libpinyin | DBM backend | evidence |
 | --- | --- | --- | --- |
@@ -285,86 +287,88 @@ nixpkgs `package.nix`):
 | openSUSE Tumbleweed | `2.10.3` | Kyoto Cabinet | links `libkyotocabinet.so.16` |
 | NixOS (nixpkgs) | `2.11.91` | Kyoto Cabinet | `package.nix --with-dbm=KyotoCabinet` |
 
-Three families, three backends: the RPM/Arch/Nix world is uniformly on
-Kyoto Cabinet, the `.deb` world was on Berkeley DB, and Debian has now
-moved its rolling suites to tkrzw. No *shipped* cell is on tkrzw **and**
-broken at once — yet. Debian's own tkrzw is healthy (the tkrzw matrix
-later in this note), so a Debian sid user gets the switch without the
-defects, losing only the old dictionary the NEWS warns about. The
-dangerous cell is empty by timing alone: **Ubuntu's tkrzw is broken on
-both defects, and Ubuntu tracks Debian.** The release that syncs
-`libpinyin 2.11.91`'s `--with-dbm=Tkrzw` onto Ubuntu's own libtkrzw puts
-defect 1 on every user dictionary — a `Remove` that stores the sentinel
-instead of deleting, silently. This is no longer "before anyone flips
-the switch": the switch is flipped upstream of Ubuntu, and only Ubuntu's
-release cadence is holding it off.
+There are three families and three backends. The RPM/Arch/Nix world is
+on Kyoto Cabinet. The `.deb` world is on Berkeley DB, except Debian's
+rolling suites, which are on tkrzw. No *shipped* cell is on tkrzw **and**
+broken at the same time, at the date of this note. Debian's own tkrzw is
+healthy (see the tkrzw matrix later in this note). A Debian sid user
+therefore gets the switch without the defects, and loses only the old
+dictionary that the NEWS warns about.
+
+The dangerous cell is empty only because of timing: **Ubuntu's tkrzw is
+broken on both defects, and Ubuntu tracks Debian.** The Ubuntu release
+that syncs `libpinyin 2.11.91`'s `--with-dbm=Tkrzw` onto Ubuntu's own
+libtkrzw puts defect 1 on every user dictionary. A `Remove` then silently
+stores the sentinel and does not delete. The switch is already made
+upstream of Ubuntu. Only Ubuntu's release cadence delays it.
 
 The exposure is not what the file layout suggests:
 
-- **The comparator fault does not reach libpinyin**, even though two of
-  its five tkrzw backends use TreeDBM. It has no `OpenAdvanced`, no
-  `TuningParameters` and no `key_comparator` in `src/` at all, so the
-  comparator stays `nullptr` and is resolved inside libtkrzw where both
-  sides of the comparison are the same copy — row (a) of the probe.
-- **The sentinel fault does.** Three `Remove()` call sites —
-  `ngram_tkrzwdb.cpp:140` (`Bigram::remove`),
-  `punct_table_tkrzwdb.cpp:157`, and `flexible_ngram_tkrzwdb.h:263`
-  (the user n-gram) — would leave the record in place carrying the
-  five-byte `REMOVE` sentinel as its value. That is user-dictionary
-  data.
-- The NOOP-returning processors are safe as written:
-  `KeyCollectProcessor` and `FlexibleKeyCollectProcessor` both run
-  under `ProcessEach(&processor, false)`, and the read-only traversal
-  never writes a return value back.
+- **The comparator fault does not reach libpinyin**, although two of its
+  five tkrzw backends use TreeDBM. Its `src/` has no `OpenAdvanced`, no
+  `TuningParameters` and no `key_comparator`. So the comparator stays
+  `nullptr` and is resolved inside libtkrzw, where both sides of the
+  comparison are the same copy (row (a) of the probe).
+- **The sentinel fault does reach libpinyin.** Three `Remove()` call sites
+  would leave the record in place, with the five-byte `REMOVE` sentinel
+  as its value: `ngram_tkrzwdb.cpp:140` (`Bigram::remove`),
+  `punct_table_tkrzwdb.cpp:157` and `flexible_ngram_tkrzwdb.h:263` (the
+  user n-gram). That is user-dictionary data.
+- The NOOP-returning processors are safe as written.
+  `KeyCollectProcessor` and `FlexibleKeyCollectProcessor` both run under
+  `ProcessEach(&processor, false)`, and the read-only traversal never
+  writes a return value back.
 
-Which is the general shape of the hazard. The sentinel fault is not a
-client/library boundary problem at all — `dbm.Remove(key)` passes no
-sentinel across anything, and still corrupts, because LTO duplicated
-the literal *inside* libtkrzw. Any consumer is exposed, in any
-language binding, whether or not it ever names a sentinel. The
-comparator fault is the narrower one: it needs a caller that names a
-built-in comparator itself, which is why `tkrzw_dbm_util` trips it and
-libpinyin would not.
+This shows the general shape of the hazard. The sentinel fault is not a
+client/library boundary problem. `dbm.Remove(key)` passes no sentinel
+across any boundary and still corrupts, because LTO duplicated the
+literal *inside* libtkrzw. Any consumer is exposed, in any language
+binding, whether or not it names a sentinel. The comparator fault is
+narrower. It needs a caller that names a built-in comparator itself. That
+is why `tkrzw_dbm_util` triggers it and libpinyin does not.
 
 ## What this means for us
 
 tkrzw is the default backend and the reference cell. `build.rs` requires
-tkrzw to be discoverable through `pkg-config`, but it does **not** verify
-the origin or health of a tkrzw that `pkg-config` finds: a broken distro
-`libtkrzw-dev` on `PKG_CONFIG_PATH` would link. oxpinyin's builds therefore
-use upstream tkrzw at `TKRZW_REV` (`just tkrzw-build`, the CI tkrzw action
-and `tools/cloud/setup.sh`), and `tools/tkrzw/distro-probe.sh` checks a
-packaged library before use. A result against a defective libtkrzw is
-invalid ([verification runbook §9](../runbooks/verification.md#9-sound-tkrzw-library)).
+`pkg-config` to find tkrzw. It does **not** verify the origin or health of
+the tkrzw that `pkg-config` finds, so a broken distro `libtkrzw-dev` on
+`PKG_CONFIG_PATH` would link. oxpinyin's builds therefore use upstream
+tkrzw at `TKRZW_REV` (`just tkrzw-build`, the CI tkrzw action and
+`tools/cloud/setup.sh`). `tools/tkrzw/distro-probe.sh` checks a packaged
+library before use. A result against a defective libtkrzw is invalid
+([verification runbook §9](../runbooks/verification.md#9-sound-tkrzw-library)).
 
-The quickest check on a candidate library, needing no build and no test
+The quickest check on a candidate library needs no build and no test
 database:
 
 ```sh
 readelf -rW /usr/lib/*/libtkrzw.so.1 | grep -c KeyComparator   # 0 = defect 2
 ```
 
-`tools/tkrzw/distro-probe.sh` wraps that plus a write-then-read round
-trip and exits non-zero on a broken build. The store suite's
+`tools/tkrzw/distro-probe.sh` runs that check and a write-then-read round
+trip. It exits non-zero on a broken build. The store suite's
 `tkrzw_library_honours_its_sentinel_protocol` checks defect 1 on each DBM
 class the backend opens.
 
 ## Reported
 
-Tracked in Ubuntu as [LP #2142937][lp], filed 2026-02-28 by Georgi
-Georgiev against `src:tkrzw`, from the HashDBM `remove` symptom on
-Ubuntu 25.10. The report correctly identifies it as Ubuntu-specific and
-shows Debian trixie's `1.0.32-1+b1` behaving correctly.
+Ubuntu tracks the fault as [LP #2142937][lp]. Georgi Georgiev filed it
+on 2026-02-28 against `src:tkrzw`, from the HashDBM `remove` symptom on
+Ubuntu 25.10. The report correctly identifies the fault as
+Ubuntu-specific and shows Debian trixie's `1.0.32-1+b1` behaving
+correctly.
 
-Two things about it are worth knowing before adding anything. It is
-still New / Undecided / Unassigned six months on, and it was filed
-against **25.10, which reached end of life in July 2026** — an Ubuntu
-bug whose only reproducer is an EOL interim release is easy to leave
-alone. The measurements above answer that directly: the same faults are
+Know two facts before adding to the report:
+
+- It is still New / Undecided / Unassigned after six months.
+- It was filed against **25.10, which reached end of life in July 2026**.
+  An Ubuntu bug whose only reproducer is an EOL interim release is easy
+  to leave alone.
+
+The measurements above answer the second point. The same faults are
 present, unchanged, on 24.04 LTS and 26.04 LTS, and the development
-series still ships resolute's binary, so nothing has been fixed
-anywhere. That, rather than a re-explanation of the mechanism, is what
-the report is missing.
+series ships resolute's binary. So no Ubuntu release has a fix. The
+report needs that fact, not a new explanation of the mechanism.
 
 **The patch attached there is incomplete.** It sets
 
@@ -372,9 +376,9 @@ the report is missing.
 export DEB_BUILD_MAINT_OPTIONS = hardening=+all optimize=-lto
 ```
 
-which is row B of the bisection: `remove` is fixed, and every TreeDBM
-file the library writes remains unreadable by the library itself. The
-complete fix needs both lines:
+This is row B of the bisection: `remove` is fixed, but the library still
+cannot read any TreeDBM file that it writes. The complete fix needs both
+lines:
 
 ```make
 export DEB_BUILD_MAINT_OPTIONS = hardening=+all optimize=-lto
@@ -383,64 +387,69 @@ export DEB_LDFLAGS_MAINT_STRIP = -Wl,-Bsymbolic-functions
 
 That is row D, which matches the Debian reference build exactly.
 
-Both lines are no-ops on Debian, which enables neither flag, so the
-natural home for them is Debian's `debian/rules`, from which Ubuntu
-syncs — no permanent Ubuntu delta to carry. Two things temper that
-route: `src:tkrzw` is orphaned in Debian (`Maintainer: Debian QA Group
-<packages@qa.debian.org>`, with Boyuan Yang doing QA uploads through
-`1.0.32-1`), so it may need an NMU or a merge request against
-`salsa.debian.org/debian/tkrzw`; and a sync reaches no released Ubuntu
-LTS, so 24.04 and 26.04 need SRUs through the Launchpad bug regardless.
+Both lines are no-ops on Debian, which enables neither flag. Their
+natural place is therefore Debian's `debian/rules`, from which Ubuntu
+syncs. Ubuntu then carries no permanent delta. Two facts limit that
+route:
 
-That sync is no longer hypothetical. Boyuan Yang — the same maintainer
-doing tkrzw's QA uploads — switched Debian's `libpinyin` to
-`--with-dbm=Tkrzw` in `2.11.91-1` (unstable, 2026-08-12). The two
-threads now meet in one archive: a libtkrzw that is healthy in Debian
-and broken in Ubuntu, and a libpinyin that has begun writing user
-dictionaries through it. Fixing the tkrzw build before Ubuntu's next
-libpinyin sync is what keeps defect 1 off those dictionaries; after the
-sync, the Launchpad bug stops being about a command-line tool.
+- `src:tkrzw` is orphaned in Debian (`Maintainer: Debian QA Group
+  <packages@qa.debian.org>`, with Boyuan Yang doing QA uploads through
+  `1.0.32-1`). It may need an NMU or a merge request against
+  `salsa.debian.org/debian/tkrzw`.
+- A sync reaches no released Ubuntu LTS. 24.04 and 26.04 need SRUs
+  through the Launchpad bug in any case.
+
+The libpinyin sync is real. Boyuan Yang, the same maintainer who does
+tkrzw's QA uploads, switched Debian's `libpinyin` to `--with-dbm=Tkrzw` in
+`2.11.91-1` (unstable, 2026-08-12). One archive therefore holds a
+libtkrzw that is healthy in Debian and broken in Ubuntu, and a libpinyin
+that writes user dictionaries through it. A fix to the tkrzw build before
+Ubuntu's next libpinyin sync keeps defect 1 off those dictionaries. After
+the sync, the Launchpad bug is about user data, not only a command-line
+tool.
 
 ## Upstream
 
-Defect 1 was fixed upstream on 2026-09-20, in `9ee8416` (release 1.0.34),
+Upstream fixed defect 1 on 2026-09-20, in `9ee8416` (release 1.0.34),
 by neither remedy proposed below. The check is still
-`value.data() == NOOP.data()`, an address identity; what changed is that
-each sentinel is backed by one named array instead of a string literal,
-so there is exactly one address to compare against. That is enough: an
-LTO build of 1.0.34 is healthy. Defect 2 is not fixed. Both defects are the same underlying decision:
-identifying a value by an address that C++ only guarantees under
-default ELF interposition and a single definition. A distro flag, LTO
-partitioning, a static link of one side, or `dlopen` with `RTLD_LOCAL`
-all break it, and each breaks it silently and on disk; on Windows, where
-each module gets its own copy of an inline function by default, it is
-hard to see how it can hold at all.
+`value.data() == NOOP.data()`, an address identity. The change is that a
+named array, not a string literal, backs each sentinel. So there is
+exactly one address to compare against. That is enough: an LTO build of
+1.0.34 is healthy. Defect 2 is not fixed.
 
-The fix is not to move the comparators out of the header. A function
-defined only in the shared library still fails under
-`-Bsymbolic-functions`: the library binds to its own definition while
+Both defects come from the same design decision: tkrzw identifies a value
+by an address that C++ guarantees only under default ELF interposition
+and a single definition. A distro flag, LTO partitioning, a static link
+of one side or `dlopen` with `RTLD_LOCAL` each break it, silently and on
+disk. On Windows, each module gets its own copy of an inline function by
+default, so the identity is unlikely to hold at all.
+
+A move of the comparators out of the header does not fix defect 2. A
+function defined only in the shared library still fails under
+`-Bsymbolic-functions`. The library binds to its own definition, while
 the client's address-taking yields a canonical PLT entry in the client.
-Nothing that keeps identifying a comparator by its address is safe. A
-one-byte enum in `TuningParameters` alongside the pointer costs nothing
-and is immune — and the on-disk format is already an enum byte, so only
-the derivation from a pointer has to change. The sentinels want the same
-treatment: a tagged return, or a comparison on contents rather than on
-`data()`.
+No design that identifies a comparator by its address is safe. A one-byte
+enum in `TuningParameters` beside the pointer costs nothing and is
+immune. The on-disk format is already an enum byte, so only the
+derivation from a pointer has to change. The sentinels need the same
+treatment: a tagged return, or a comparison on contents, not on `data()`.
 
-This is worth reporting upstream separately from the Ubuntu bug, since
-it is a different ask; it is not a Rust-mechanism divergence, so it does
-not belong in `upstream-divergences.md`.
+Report this upstream separately from the Ubuntu bug, because it is a
+different request. It is not a Rust-mechanism divergence, so it does not
+belong in `upstream-divergences.md`.
 
 ## The matrix, measured
 
-Run on 2026-08-29 with `tools/tkrzw/distro-probe.sh`, one rolling
-container per distro (podman; `:latest` / `testing` tags, deliberately
-unpinned), across the three packaging families. Defect 1 is the
-LTO/`remove` sentinel; defect 2 is the `-Bsymbolic-functions`/comparator.
+The matrix was run on 2026-08-29 with `tools/tkrzw/distro-probe.sh`, with
+one rolling container per distro across the three packaging families
+(podman; `:latest` / `testing` tags, deliberately unpinned). Defect 1 is
+the LTO/`remove` sentinel. Defect 2 is the
+`-Bsymbolic-functions`/comparator.
 
-The tags are rolling by design (the newest toolchain a distro ships is a
-property under test), so for reproducibility the images behind this and
-the backend matrix resolved on 2026-08-29 to these digests:
+The tags are rolling by design, because the newest toolchain that a
+distro ships is a property under test. For reproducibility, the images
+behind this matrix and the backend matrix resolved on 2026-08-29 to these
+digests:
 
 - `ubuntu:26.04` — `sha256:2260313b31c8c011cd2eebe728008efac1b3982be73eb71348ea2648d2c0e09b`
 - `debian:testing` — `sha256:dab11cdb0a9dcf4bbd68f671635b35f1f726b452b92396875b69bb2c7daa42a9`
@@ -457,87 +466,86 @@ the backend matrix resolved on 2026-08-29 to these digests:
 | `.rpm` | RHEL 10.2 + EPEL | `1.0.32-2.el10_1` | ok | ok (type 1, 18 relocs) | healthy |
 | Arch | Arch, from source | none packaged | **broken** | ok (type 1, 18 relocs) | **broken (defect 1)** |
 
-- **Ubuntu 26.04 LTS** reproduces both defects exactly as the release
-  row above predicts: `remove` stores the sentinel, the `.tkt`
-  comparator records type 255 and the file will not reopen, and the
-  library keeps zero comparator GOT relocations. `1.0.32-1build1`, live
-  from the archive.
-- **Debian testing** is healthy — the flags prediction, and the same
-  clean result the Launchpad reporter saw on trixie. `1.0.32-1+b2`.
-  `src:tkrzw` is orphaned in Debian (maintained by the Debian QA Group),
-  so it is QA-owned rather than actively maintained — the same status
-  the fix route runs into under "Reported".
-- **Fedora Rawhide** is healthy, and is the most instructive row.
-  Fedora enables LTO by default, so its tkrzw would carry defect 1 like
-  any LTO build — except the package escapes it deliberately:
-  `tkrzw.spec` sets `%global _lto_cflags %{nil}`, with the changelog
-  reason *"Disabled LTO, since it causes test failures on all
-  file-based database tests."* That is an independent maintainer hitting
-  defect 1 through the package's own `make check` and turning LTO off to
-  get a working build — outside corroboration of the bisection above,
-  from a distro that had every reason to keep LTO on. Fedora adds no
-  `-Bsymbolic-functions`, so defect 2 never arises. `1.0.32-5.fc45`.
-- **RHEL 10.2** carries no tkrzw in its *own* repositories — `dnf
-  install tkrzw` on `redhat/ubi10:latest` returns *"No match for
-  argument: tkrzw"* across BaseOS, AppStream and CodeReady Builder — but
-  **EPEL 10 ships it**, `tkrzw-1.0.32-2.el10_1` (vendor Fedora Project),
-  and that build is **healthy**: 18 comparator relocations, `remove`
-  clean, comparator type 1. EPEL follows the Fedora spec lineage, so it
-  inherits the `%_lto_cflags %{nil}` opt-out, and RHEL adds no
-  `-Bsymbolic-functions` — neither defect arises. A tkrzw backend built
-  against EPEL's libtkrzw on the RHEL 10.2 drop-in target is therefore
-  safe. Measured on that target itself (`crb`/EPEL enabled).
-- **Arch** ships no tkrzw in `core`/`extra` either (`pacman -Ss tkrzw`
-  is empty); the only Arch source is the AUR `tkrzw-git`, a stale 2020
-  VCS stub (0 votes, building upstream HEAD with a plain
-  `./configure && make`). With nothing packaged to probe, tkrzw 1.0.32
+- **Ubuntu 26.04 LTS** (`1.0.32-1build1`, live from the archive)
+  reproduces both defects, as the release row above predicts. `remove`
+  stores the sentinel. The `.tkt` comparator records type 255 and the
+  file does not reopen. The library keeps zero comparator GOT
+  relocations.
+- **Debian testing** (`1.0.32-1+b2`) is healthy. This matches the flags
+  prediction and the clean result that the Launchpad reporter saw on
+  trixie. `src:tkrzw` is orphaned in Debian (maintained by the Debian QA
+  Group). The fix route under "Reported" meets the same status.
+- **Fedora Rawhide** (`1.0.32-5.fc45`) is healthy, and is the most
+  informative row. Fedora enables LTO by default, so its tkrzw would
+  carry defect 1 like any LTO build. But the package deliberately avoids
+  it: `tkrzw.spec` sets `%global _lto_cflags %{nil}`, with the changelog
+  reason *"Disabled LTO, since it causes test failures on all file-based
+  database tests."* An independent maintainer found defect 1 through the
+  package's own `make check` and turned LTO off to get a working build.
+  This independently confirms the bisection above. Fedora adds no
+  `-Bsymbolic-functions`, so defect 2 does not occur.
+- **RHEL 10.2** carries no tkrzw in its *own* repositories. `dnf install
+  tkrzw` on `redhat/ubi10:latest` returns *"No match for argument:
+  tkrzw"* across BaseOS, AppStream and CodeReady Builder. **EPEL 10 ships
+  it**, as `tkrzw-1.0.32-2.el10_1` (vendor Fedora Project), and that
+  build is **healthy**: 18 comparator relocations, `remove` clean,
+  comparator type 1. EPEL follows the Fedora spec lineage, so it inherits
+  the `%_lto_cflags %{nil}` opt-out. RHEL adds no `-Bsymbolic-functions`.
+  So neither defect occurs. A tkrzw backend built against EPEL's libtkrzw
+  on the RHEL 10.2 drop-in target is therefore safe. This was measured on
+  that target (`crb`/EPEL enabled).
+- **Arch** ships no tkrzw in `core`/`extra` (`pacman -Ss tkrzw` is
+  empty). The only Arch source is the AUR `tkrzw-git`, a stale 2020 VCS
+  stub (0 votes, building upstream HEAD with a plain
+  `./configure && make`). With no package to probe, tkrzw 1.0.32 was
   built from the upstream release under Arch's stock `makepkg.conf`
-  (gcc 16.2.1; `OPTIONS=(... lto)`, no `-Bsymbolic-functions`)
-  reproduces row C of the bisection precisely — `remove` broken,
-  comparator intact. Arch has no distro-wide `_lto_cflags` opt-out, so a
-  tkrzw built there is exposed to defect 1 unless its own PKGBUILD
-  disables LTO, which neither the AUR stub nor a plain build does.
+  (gcc 16.2.1; `OPTIONS=(... lto)`, no `-Bsymbolic-functions`). It
+  reproduces row C of the bisection exactly: `remove` broken, comparator
+  intact. Arch has no distro-wide `_lto_cflags` opt-out. A tkrzw built
+  there is therefore exposed to defect 1 unless its own PKGBUILD disables
+  LTO. Neither the AUR stub nor a plain build does.
 
-The two `.deb` rows, Fedora and RHEL-via-EPEL were installed straight
-from each archive. Arch is the one package-absence row, its defect
+The two `.deb` rows, Fedora and RHEL-via-EPEL were installed directly
+from each archive. Arch is the one row with no package. Its defect was
 measured from a source build under the distro's own flags.
 
-`distro-probe.sh` covers both halves, and was checked against all four
+`distro-probe.sh` covers both defects. It was checked against all four
 rows of the bisection: it reports A broken on both, B broken on the
 comparator only, C broken on `remove` only, and D healthy. A distro that
 prints `RESULT : healthy` has neither defect.
 
 ## tkrzw 1.0.34 fixes defect 1 upstream
 
-Measured 2026-10-01 (UTC) at `c99ffb57`, and again 2026-10-05 at
-`e985b581`, after #621 (`eaeb26fd`) moved the libpinyin session into
-memory. The second measurement changes what a defect-1 library does to
-this backend, so the two are kept apart below. The drivers and probes
-these measurements used are not in the tree; the figures are recorded
-evidence.
+This section records two measurements: 2026-10-01 (UTC) at `c99ffb57`,
+and 2026-10-05 at `e985b581`, after #621 (`eaeb26fd`) moved the libpinyin
+session into memory. The second measurement changes what a defect-1
+library does to this backend, so the two stay separate below. The
+drivers and probes that these measurements used are not in the tree. The
+figures are recorded evidence.
 
 Upstream changed how the sentinels are stored on 2026-09-20:
 `estraier/tkrzw` commit `9ee8416`, "Change the object format of
-DBM::RecordProcessor::NOOP and DBM::RecordProcessor::REMOVE" — ChangeLog
-"Fix bugs of address instability of NOOP and REMOVE", release 1.0.34,
-library 1.77.0. It answers the sentinel half of "Upstream" above by a
-third route, and for defect 1 it is complete: an LTO build of 1.0.34 is
-healthy. Defect 2 is not touched.
+DBM::RecordProcessor::NOOP and DBM::RecordProcessor::REMOVE" (ChangeLog:
+"Fix bugs of address instability of NOOP and REMOVE"; release 1.0.34,
+library 1.77.0). It addresses the sentinel half of "Upstream" above by a
+third route. For defect 1 it is complete: an LTO build of 1.0.34 is
+healthy. It does not change defect 2.
 
-This section exists because that commit first arrived here as a
-suspect. A run of the tkrzw cell against a from-source `9ee8416` was
-reported on 2026-10-01 with `pinyin_save` returning `false` after any
-import or train on both C ABIs, the pin-built libpinyin saving fine
-against the same library, and a rebuild at the 1.0.32 state (`bcaa0fb`)
-passing — and the commit's "object format" change was taken to be the
-regression. **That attribution does not hold, and the failure did not
-reproduce**: oxpinyin passes against every build of `9ee8416` measured
-below, on two architectures. The symptom itself is real and exact,
-though. It is what a *defect-1* library did to this backend as it stood
-that day — the fault `9ee8416` removes. The reported run's environment
-was not examined, so which libtkrzw it actually loaded is not
-established here; the inversion is recorded as unexplained rather than
-explained away.
+A report on 2026-10-01 named `9ee8416` as a regression. That run of the
+tkrzw cell, against a from-source `9ee8416`, showed:
+
+- `pinyin_save` returning `false` after any import or train, on both C
+  ABIs;
+- the pin-built libpinyin saving correctly against the same library;
+- a rebuild at the 1.0.32 state (`bcaa0fb`) passing.
+
+**That attribution does not hold, and the failure did not reproduce.**
+oxpinyin passes against every build of `9ee8416` measured below, on two
+architectures. The symptom itself is real and exact. It is what a
+*defect-1* library did to this backend at that commit, and `9ee8416`
+removes that fault. The reported run's environment was not examined, so
+this record does not establish which libtkrzw it loaded. The inversion
+stays recorded as unexplained.
 
 ### What the commit changes, and what it does not
 
@@ -557,10 +565,10 @@ const std::string_view DBM::RecordProcessor::REMOVE(
     DBM_RECORD_PROCESSOR_REMOVE, sizeof(DBM_RECORD_PROCESSOR_REMOVE) - 1);
 ```
 
-Same type, same five bytes, same size. What changes is only what each
-`string_view` points at: an anonymous string literal, which GCC may
-materialise once per LTO partition, becomes a named array, which is one
-object with one address. `DBM::ANY_DATA` gets the same treatment.
+The type, the five bytes and the size are the same. Only the target of
+each `string_view` changes. An anonymous string literal, which GCC may
+materialise once per LTO partition, becomes a named array: one object
+with one address. `DBM::ANY_DATA` gets the same change.
 
 Nothing a client is compiled against moves:
 
@@ -569,41 +577,46 @@ Nothing a client is compiled against moves:
   installed include trees are byte-identical.
 - The C API's sentinels were never the C++ ones.
   `TKRZW_REC_PROC_NOOP` and `TKRZW_REC_PROC_REMOVE` are `(char*)-1` and
-  `(char*)-2` (`tkrzw_langc.cc:60,62`) — tags, the address of nothing —
-  and both built libraries read back `0xffffffffffffffff` and
+  `(char*)-2` (`tkrzw_langc.cc:60,62`): tags, not the address of any
+  object. Both built libraries read back `0xffffffffffffffff` and
   `0xfffffffffffffffe`.
-- The callback contract is the same: a `tkrzw_record_processor`
-  (`tkrzw_langc.h:144-153`) returns one of the two tags or a pointer
-  whose length it stores through its last argument, and
+- The callback contract is the same. A `tkrzw_record_processor`
+  (`tkrzw_langc.h:144-153`) returns one of the two tags, or a pointer
+  whose length it stores through its last argument.
   `RecordProcessorWrapper` (`tkrzw_langc.cc:64-91`) compares that return
-  against the tags by value before substituting the C++ sentinel.
+  against the tags by value, then substitutes the C++ sentinel.
 
 So `oxpinyin-store`'s tkrzw backend needs no change to work with both
-versions and no means of telling them apart: it reads the two tags from
-the library's own globals and hands them back, and everything after that
-happens inside libtkrzw on either version. A version gate that refused
-1.0.34 would refuse the one release that is immune to defect 1.
+versions, and no way to tell them apart. It reads the two tags from the
+library's own globals and returns them. Everything after that happens
+inside libtkrzw, on either version. A version gate that refused 1.0.34
+would refuse the one release that is immune to defect 1.
 
-`bcaa0fb..9ee8416` holds two more commits, and neither is involved.
-`9db46db` (the 1.0.33 change) frees a leaked iterator key buffer in
-`TreeDBM` and `BabyDBM`, reachable only by keys longer than 128 bytes;
-`17926f7` is the version number and a regenerated `configure` that emits
-the same compiler and linker flags.
+`bcaa0fb..9ee8416` holds two more commits, and neither is involved:
 
-Upstream was read from a fresh clone of `https://github.com/estraier/tkrzw`
-at those commits; the blob ids are `git rev-parse <commit>:<file>`.
+- `9db46db` (the 1.0.33 change) frees a leaked iterator key buffer in
+  `TreeDBM` and `BabyDBM`. Only keys longer than 128 bytes reach it.
+- `17926f7` is the version number and a regenerated `configure` that
+  emits the same compiler and linker flags.
+
+The upstream source was read from a fresh clone of
+`https://github.com/estraier/tkrzw` at those commits. The blob ids are
+`git rev-parse <commit>:<file>`.
 
 ### Measured 2026-10-01, at `c99ffb57`
 
-oxpinyin at `c99ffb57`: a libpinyin session still ran on a file-backed
-`TreeDBM` scratch, and the store suite counted 39 unit tests with this
-section's test in its first, three-class form.
+At `c99ffb57`, a libpinyin session ran on a file-backed `TreeDBM`
+scratch. The store suite counted 39 unit tests, with this section's test
+in its first, three-class form.
 
-Each commit built with `./configure --prefix=… && make && make install`
-in `debian:testing` (g++ 16.2.0) under three flag sets: **plain**
-(tkrzw's defaults, `-g -O2`), **LTO** (`-flto=auto -ffat-lto-objects`;
-LTO alone, as on Arch) and **Ubuntu** (LTO plus
-`-Wl,-Bsymbolic-functions`). arm64:
+Each commit was built with `./configure --prefix=… && make && make
+install` in `debian:testing` (g++ 16.2.0), under three flag sets:
+
+- **plain**: tkrzw's defaults, `-g -O2`;
+- **LTO**: `-flto=auto -ffat-lto-objects`, LTO alone, as on Arch;
+- **Ubuntu**: LTO plus `-Wl,-Bsymbolic-functions`.
+
+arm64:
 
 | tkrzw | flags | `.rodata` copies, NOOP / REMOVE | probe (c) (d) (e) | probe (b) | store suite | `pinyin_save`, `zhuyin_save` | the pin's save |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -616,30 +629,37 @@ LTO alone, as on Arch) and **Ubuntu** (LTO plus
 | 1.0.32 `bcaa0fb` | Ubuntu | 9 / 10 | **broken** | **broken** | **5 of 39 fail** | **`false`** | `true` |
 | 1.0.34 `9ee8416` | Ubuntu | 1 / 1 | ok | **broken** | 39 + 6 pass | `true` | `true` |
 
-"probe" is the identity probe above; the store suite is
-`oxpinyin-store`'s unit tests plus `tests/trait_laws.rs`; the two saves
-are the `save:` line of the `import-diff` and `zhuyin-import-diff` C
-drivers, run against oxpinyin's C ABI objects and against the pin-built
-libpinyin and libzhuyin, each loading the build in that row.
-Wherever both saves read `true` the two logs are identical, and so are
-the two `nbest-train-diff` logs (the train path); where oxpinyin reads
+The columns mean:
+
+- "probe" is the identity probe above.
+- The store suite is `oxpinyin-store`'s unit tests plus
+  `tests/trait_laws.rs`.
+- The two saves are the `save:` line of the `import-diff` and
+  `zhuyin-import-diff` C drivers. They ran against oxpinyin's C ABI
+  objects and against the pin-built libpinyin and libzhuyin, each loading
+  the build in that row.
+
+Where both saves read `true`, the two logs are identical, and so are the
+two `nbest-train-diff` logs (the train path). Where oxpinyin reads
 `false`, `nbest-train-diff` stops at `reopen: pinyin_save failed` and the
 pin's run completes. `distro-probe.sh` agrees with the probe columns on
-all eight builds. (`9db46db` reports itself as 1.0.32: its checked-in
-`configure` was not regenerated until `17926f7`.) Debian testing's own
-package, `1.0.32-1+b2` — the library CI's tkrzw child links — passes the
-same 39 + 6.
+all eight builds. `9db46db` reports itself as 1.0.32, because its
+checked-in `configure` was regenerated only at `17926f7`. Debian testing's
+own package, `1.0.32-1+b2`, passes the same 39 + 6. CI's tkrzw child
+links that library.
 
-On the two plain builds the wider gates pass as well: the tkrzw child of
-`store-backends.yml` (101 suites, 1076 passed, 0 failed, 16 ignored —
-the same counts on `bcaa0fb` and `9ee8416`), the user-directory round
-trip end to end (Phase C IDENTICAL, Phase D READABLE, its system-import
-phase IDENTICAL for pinyin libraries 1–4) and the zhuyin system-import
-round trip (IDENTICAL, libraries 1–4).
+On the two plain builds the wider gates also pass:
 
-The same four cells on amd64 (the same image under emulation; the pin
-prefix is arm64, so oxpinyin's side only) and the plain pair on macOS
-(arm64, Apple clang 21.0.0, store suite only):
+- the tkrzw child of `store-backends.yml` (101 suites, 1076 passed,
+  0 failed, 16 ignored; the same counts on `bcaa0fb` and `9ee8416`);
+- the user-directory round trip end to end (Phase C IDENTICAL, Phase D
+  READABLE, its system-import phase IDENTICAL for pinyin libraries 1–4);
+- the zhuyin system-import round trip (IDENTICAL, libraries 1–4).
+
+The next table has the same four cells on amd64 and the plain pair on
+macOS. amd64 used the same image under emulation. The pin prefix is
+arm64, so amd64 covers oxpinyin's side only. macOS is arm64, Apple clang
+21.0.0, store suite only:
 
 | tkrzw | flags | host | `.rodata` copies | probe (c) (d) (e) | store suite | `pinyin_save`, `zhuyin_save` |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -650,31 +670,31 @@ prefix is arm64, so oxpinyin's side only) and the plain pair on macOS
 | 1.0.32 `bcaa0fb` | plain | macOS | – | – | 39 + 6 pass | – |
 | 1.0.34 `9ee8416` | plain | macOS | – | – | 39 + 6 pass | – |
 
-Three things follow.
+Three results follow.
 
 **Defect 1 is fixed at the mechanism, not masked.** The LTO build of
-1.0.32 carries nine and ten copies of the two literals in `.rodata`
-(nine and twelve on amd64); the LTO build of 1.0.34 carries one of each,
-on both architectures.
+1.0.32 carries nine and ten copies of the two literals in `.rodata` (nine
+and twelve on amd64). The LTO build of 1.0.34 carries one of each, on
+both architectures.
 
-**Defect 2 is where it was.** With Ubuntu's flags 1.0.34 still keeps no
-GOT relocation for the comparators and still fails probe row (b). That
-does not reach this backend, which installs no comparator: its whole
-suite passes on that build, and its logs match the pin's. On that
-evidence a 1.0.34 built with Ubuntu's two flags is sound for oxpinyin
-and for libpinyin, and still unsound for `tkrzw_dbm_util` and any client
-that names a comparator. Ubuntu's own package, when it has one, still
-has to be probed rather than assumed.
+**Defect 2 is unchanged.** With Ubuntu's flags, 1.0.34 still keeps no GOT
+relocation for the comparators and still fails probe row (b). That does
+not reach this backend, which installs no comparator. Its whole suite
+passes on that build, and its logs match the pin's. On that evidence, a
+1.0.34 built with Ubuntu's two flags is sound for oxpinyin and for
+libpinyin. It is still unsound for `tkrzw_dbm_util` and any client that
+names a comparator. Probe Ubuntu's own package, when it has one; do not
+assume it is sound.
 
-**The literal count needs a section now.** An unstripped 1.0.34 holds
-each five-byte pattern twice in the file — once in `.rodata`, once in
-`.debug_info` as the named array's constant value — so the whole-file
-count under "Defect 1" reads 2 on a healthy build. Count within
+**Count the literal within one section.** An unstripped 1.0.34 holds
+each five-byte pattern twice in the file: once in `.rodata`, and once in
+`.debug_info` as the named array's constant value. The whole-file count
+under "Defect 1" therefore reads 2 on a healthy build. Count within
 `.rodata`.
 
 ### What a defect-1 library did at `c99ffb57`
 
-The row that matters is 1.0.32 with LTO, because it is the reported
+The important row is 1.0.32 with LTO, because it matches the reported
 symptom line for line:
 
 - `pinyin_save` and `zhuyin_save` returned `false` after an import or a
@@ -682,32 +702,32 @@ symptom line for line:
   line was the only line that differed from a healthy run.
 - The pin-built libpinyin, loading the same library, returned `true`.
   Its tkrzw sources never call `Rebuild` (`src/storage/*tkrzw*` at
-  `074a2219`), so nothing on its save path can fail this way. Its three
-  `Remove()` sites are where the fault would land instead, silently, as
-  described above — read from the source, not measured in the pin.
-- The error oxpinyin swallowed was `tkrzw status 6`
+  `074a2219`), so nothing on its save path can fail this way. Instead,
+  the fault would land silently at its three `Remove()` sites, as
+  described above. This is read from the source, not measured in the pin.
+- The error that oxpinyin swallowed was `tkrzw status 6`
   (`TKRZW_STATUS_CANCELED_ERROR`, empty message) from
-  `tkrzw_dbm_rebuild`, reached through `TkrzwStore::compact`, which
-  `UserStore::save` called on the session's scratch file after it had
-  written the profile. `ContextCore::save_user` turns any `Err` into
-  `false`, which is also the ABI's answer for "nothing modified" and "no
-  user dir", so the three cannot be told apart from outside. The rebuild
-  cancels because it replays every record through a processor that
-  answers `NOOP` (`tkrzw_dbm_hash.cc:1914-1934`) and takes any other
-  answer as a cancellation (`tkrzw_dbm_hash_impl.cc:427-428`, the only
-  place the DBM classes produce that status) — the same `data()`
-  comparison, between two partitions' copies of the literal. `TreeDBM`
-  rebuilds through its `HashDBM` (`tkrzw_dbm_tree.cc:907`), so both file
-  classes fail alike.
-- The profile was on disk by then: after `save: false` the user dir held
+  `tkrzw_dbm_rebuild`. The path was `TkrzwStore::compact`, which
+  `UserStore::save` called on the session's scratch file after it wrote
+  the profile. `ContextCore::save_user` turns any `Err` into `false`.
+  `false` is also the ABI's answer for "nothing modified" and "no user
+  dir", so the three cannot be told apart from outside.
+- The rebuild cancels because it replays every record through a
+  processor that answers `NOOP` (`tkrzw_dbm_hash.cc:1914-1934`). It takes
+  any other answer as a cancellation (`tkrzw_dbm_hash_impl.cc:427-428`,
+  the only place where the DBM classes produce that status). This is the
+  same `data()` comparison, between two partitions' copies of the
+  literal. `TreeDBM` rebuilds through its `HashDBM`
+  (`tkrzw_dbm_tree.cc:907`), so both file classes fail in the same way.
+- The profile was already on disk. After `save: false`, the user dir held
   the same eleven files, at the same sizes, as after a successful save.
-  The `false` was the session scratch store failing to compact, not the
-  write failing.
-- Removal is wrong as well, and silently. Removing an absent record
-  stores one whose value is `NOOP`'s five bytes (`00 be ef 02 11`);
-  removing a stored record leaves it in place carrying `REMOVE`'s
-  (`00 de ad 02 11`); both writes report success. That held on all
-  three DBM classes the backend then opened (`TreeDBM`, `HashDBM`, the
+  The `false` came from the session scratch store failing to compact, not
+  from the write.
+- Removal is also wrong, and silent. Removing an absent record stores one
+  whose value is `NOOP`'s five bytes (`00 be ef 02 11`). Removing a
+  stored record leaves it in place with `REMOVE`'s bytes
+  (`00 de ad 02 11`). Both writes report success. That held on all three
+  DBM classes that the backend then opened (`TreeDBM`, `HashDBM`, the
   user bigram's `TinyDBM`).
 
 In the store suite the same faults read:
@@ -721,51 +741,53 @@ tests::tkrzw_write::user_bigram_round_trips_through_its_own_seam
                                                     Err(Backend(TkrzwError { code: 6, message: "" }))
 ```
 
-and `tests::tkrzw_library_honours_its_sentinel_protocol`, added with
-this section, says so in words and names this document. In its first
-form it passed on the six healthy builds above and failed on the two
-defect-1 builds.
+`tests::tkrzw_library_honours_its_sentinel_protocol` reports the fault
+in words and names this document. In its first form it passed on the six
+healthy builds above and failed on the two defect-1 builds.
 
-The C API does not shield the backend from any of this, and the note in
-"It is not only the CLI" already says why: the sentinel fault is inside
-libtkrzw, between the wrapper that returns the C++ sentinel and the DBM
-class that compares it. Reading the tags from the library's globals
-guarantees agreement at the boundary and nothing beyond it.
+The C API does not protect the backend from any of this. "It is not only
+the CLI" gives the reason: the sentinel fault is inside libtkrzw, between
+the wrapper that returns the C++ sentinel and the DBM class that compares
+it. Reading the tags from the library's globals guarantees agreement at
+the boundary and nothing beyond it.
 
 ### What #621 changed — re-measured 2026-10-05, at `e985b581`
 
-#621 (`eaeb26fd`) took the libpinyin session off its temp file. It now
-runs on `WriteStore::create_in_memory`, which on this backend is tkrzw's
-`BabyDBM` through PolyDBM's empty-path form — a fourth DBM class beside
-`TreeDBM`, `HashDBM` and the user bigram's `TinyDBM`.
+#621 (`eaeb26fd`) moved the libpinyin session off its temp file. The
+session runs on `WriteStore::create_in_memory`. On this backend that is
+tkrzw's `BabyDBM` through PolyDBM's empty-path form: a fourth DBM class
+beside `TreeDBM`, `HashDBM` and the user bigram's `TinyDBM`.
 
-**The save path still reaches `tkrzw_dbm_rebuild`, and the call can no
-longer fail.** Every shipping save — `pinyin_save`, `zhuyin_save` — goes
-through `ContextCore::save_user`
-(`crates/oxpinyin-facade/src/context.rs:284-287`) into
-`GenericUserStore::save`, which still ends by compacting the session
-store (`crates/oxpinyin-user/src/store.rs:1516`), and
-`TkrzwStore::compact` still calls `tkrzw_dbm_rebuild`. On a `BabyDBM`
-that is a no-op: `PolyDBM::RebuildAdvanced` falls through to
-`BabyDBM::Rebuild` (`tkrzw_dbm_poly.cc:755`), whose whole body is
-`return Status(Status::SUCCESS)` under the comment "This method does
-nothing" (`tkrzw_dbm_baby.h:284-290`, blob `0b934760` at both commits).
-The only other `compact` call outside tests, benches and examples is the
-default `WriteStore::write_user_bigram`
-(`crates/oxpinyin-store/src/lib.rs:419`), on a `HashDBM` file, and no
-shipping path reaches it: `persistence::save_with_bigram` takes that
-branch only without a bigram container, a libpinyin session always
-passes its own, and `persistence::save`, which passes none, has test
-callers only. A store opened on a file path (`UserStore::open`,
-`create_standalone`) would still compact a `TreeDBM`, and only tests,
-benches, examples and the fuzz target open one. So the record replay
-that cancels — the mechanism behind every `false` in the table above —
-is out of reach of a shipping save.
+**The save path still reaches `tkrzw_dbm_rebuild`, but the call cannot
+fail.**
 
-**The defect is still in reach, through removal.** The same drivers at
-`e985b581`, each side loading the build in its row, and an
-`abi-probe-diff` driver (sort word `1e`), which saves after an import and
-again after a `pinyin_mask_out`:
+- Every shipping save (`pinyin_save`, `zhuyin_save`) goes through
+  `ContextCore::save_user` (`crates/oxpinyin-facade/src/context.rs:284-287`)
+  into `GenericUserStore::save`. That function still ends by compacting
+  the session store (`crates/oxpinyin-user/src/store.rs:1516`), and
+  `TkrzwStore::compact` still calls `tkrzw_dbm_rebuild`.
+- On a `BabyDBM` that call is a no-op. `PolyDBM::RebuildAdvanced` falls
+  through to `BabyDBM::Rebuild` (`tkrzw_dbm_poly.cc:755`). Its whole body
+  is `return Status(Status::SUCCESS)` under the comment "This method does
+  nothing" (`tkrzw_dbm_baby.h:284-290`, blob `0b934760` at both commits).
+- The only other `compact` call outside tests, benches and examples is the
+  default `WriteStore::write_user_bigram`
+  (`crates/oxpinyin-store/src/lib.rs:419`), on a `HashDBM` file. No
+  shipping path reaches it. `persistence::save_with_bigram` takes that
+  branch only without a bigram container, and a libpinyin session always
+  passes its own. `persistence::save`, which passes none, has test
+  callers only.
+- A store opened on a file path (`UserStore::open`, `create_standalone`)
+  would still compact a `TreeDBM`. Only tests, benches, examples and the
+  fuzz target open one.
+
+So a shipping save cannot reach the record replay that cancels, which is
+the mechanism behind every `false` in the table above.
+
+**The defect is still reachable, through removal.** The table uses the
+same drivers at `e985b581`, with each side loading the build in its row.
+It adds an `abi-probe-diff` driver (sort word `1e`), which saves after an
+import and again after a `pinyin_mask_out`:
 
 | tkrzw | flags | store suite | `import-diff`, `zhuyin-import-diff` save | `nbest-train-diff` | `abi-probe-diff` save after import, after `mask_out` | the pin, same four |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -773,57 +795,62 @@ again after a `pinyin_mask_out`:
 | 1.0.32 `bcaa0fb` | LTO | **6 of 40 fail** | `true` | completes | `true`, **`false`** | `true`, completes, `true`, `true` |
 | 1.0.34 `9ee8416` | LTO | 40 + 6 pass | `true` | completes | `true`, `true` | `true`, completes, `true`, `true` |
 
-On the LTO 1.0.32 the first three drivers' logs are now identical to the
-pin's — the `false` of 2026-10-01 is gone — and the fourth differs in
-three observations: `save(after-mask)`, `false` against the pin's
-`true`, and, in the context it then opens on the same user dir,
-`lookup_tokens(你好)` (two tokens against one) and the token
-`phrase_token[0]` reports, because the mask that could not be saved is
-not in the profile. On the LTO 1.0.34 all four logs are identical.
+On the LTO 1.0.32, the first three drivers' logs are identical to the
+pin's; the `false` of 2026-10-01 does not occur. The fourth log differs in
+three observations:
+
+- `save(after-mask)` is `false`, against the pin's `true`.
+- In the context that it then opens on the same user dir,
+  `lookup_tokens(你好)` gives two tokens against one.
+- The token that `phrase_token[0]` reports differs.
+
+The last two differ because the mask that could not be saved is not in
+the profile. On the LTO 1.0.34 all four logs are identical.
 
 This is the removal fault of the list above, now inside the session.
 `GenericUserStore::mask_out` issues `WriteTxn::remove` on the session
-store — as `remove_user_phrase` does behind
-`pinyin_remove_user_candidate`, and as a train that empties a
-predecessor's row does on the user bigram's `TinyDBM`. On a defect-1
-library `pinyin_mask_out` returns `true` while the rows it removed stay
-in the `BabyDBM`, carrying `REMOVE`'s five bytes. The next save that has
-something to write — the probe's context was already modified — runs
-`export_state`, which reads a pronunciation row that should be gone,
-finds five bytes where a value is 8 or 13, and fails with
-`corrupt pronunciation value`; `ContextCore::save_user` turns that into
+store. `remove_user_phrase` does the same behind
+`pinyin_remove_user_candidate`, and so does a train that empties a
+predecessor's row on the user bigram's `TinyDBM`. On a defect-1 library,
+`pinyin_mask_out` returns `true`, but the rows that it removed stay in the
+`BabyDBM`, with `REMOVE`'s five bytes. The next save that has something
+to write runs `export_state` (the probe's context was already modified).
+`export_state` reads a pronunciation row that should be gone. It finds
+five bytes where a value is 8 or 13, and fails with
+`corrupt pronunciation value`. `ContextCore::save_user` turns that into
 `false`. The pin, on the same library, answers `true`.
 
-So since #621 a defect-1 library is quieter on this backend, not safer.
-A save after an import or a train succeeds and matches the pin; the
-first removal breaks the session, and no call says so until the next
-save with something to write. #677 tracks it and carries the sequence
-save by save.
+So since #621, a defect-1 library is quieter on this backend, not safer.
+A save after an import or a train succeeds and matches the pin. The first
+removal breaks the session, and no call reports it until the next save
+with something to write. #677 tracks this and records the sequence save
+by save.
 
-In the store suite the in-memory class adds a sixth failure on the LTO
-1.0.32, `tests::tkrzw_write::in_memory_store_behaves_as_a_tree_store`
-(`left: Some([0, 222, 173, 2, 17])`), and this section's test now checks
-four classes. On that library `BabyDBM` stores a record for an absent
-removal and keeps a removed one, as the other three classes do, and its
-`compact` succeeds.
+In the store suite, the in-memory class adds a sixth failure on the LTO
+1.0.32: `tests::tkrzw_write::in_memory_store_behaves_as_a_tree_store`
+(`left: Some([0, 222, 173, 2, 17])`). This section's test checks four
+classes. On that library, `BabyDBM` stores a record for an absent removal
+and keeps a removed one, as the other three classes do. Its `compact`
+succeeds.
 
 ### The removal behind `save(after-mask)`, call by call
 
-Three facts for whoever takes that failing save further; they are the
-first two things #677 asks to have established before a fix. Nothing
-here is implemented: how the store removes a record is shipped code, and
-changing it is that issue's work.
+This section gives three facts for the work on that failing save. They
+are the first two things that #677 asks to establish before a fix.
+Nothing here is implemented. How the store removes a record is shipped
+code, and a change to it is that issue's work.
 
 **The oxpinyin call that relies on the sentinel.** The rows that outlive
 the mask are the masked phrases' pronunciation rows, which
 `GenericUserStore::mask_out` removes with `txn.remove(PRONUNCIATION, …)`
 at `crates/oxpinyin-user/src/store.rs:1724`, after the bigram, unigram
 and phrase rows at `:1643-1718`. The tkrzw backend only buffers that
-(`TkrzwWriteTxn::remove`, `crates/oxpinyin-store/src/tkrzw/mod.rs:1012-1016`).
-The call that relies on the sentinel comes at commit: `db_apply` hands
-the batch to `tkrzw_dbm_process_multi` (`mod.rs:741`), whose callback
-`apply_one` answers `TKRZW_REC_PROC_REMOVE` for a record that exists
-(`mod.rs:569`) and `TKRZW_REC_PROC_NOOP` for one that does not (`:567`).
+removal (`TkrzwWriteTxn::remove`,
+`crates/oxpinyin-store/src/tkrzw/mod.rs:1012-1016`). The call that relies
+on the sentinel comes at commit. `db_apply` hands the batch to
+`tkrzw_dbm_process_multi` (`mod.rs:741`). Its callback `apply_one`
+answers `TKRZW_REC_PROC_REMOVE` for a record that exists (`mod.rs:569`)
+and `TKRZW_REC_PROC_NOOP` for one that does not (`:567`).
 libtkrzw's wrapper turns the tag into the C++ `REMOVE`, and `BabyDBM`
 compares that by address (`tkrzw_dbm_baby.cc:1081-1103`). The user
 bigram's `TinyDBM` takes the same route (`TkrzwUserBigramDb::remove`,
@@ -831,8 +858,8 @@ bigram's `TinyDBM` takes the same route (`TkrzwUserBigramDb::remove`,
 surviving row back at `crates/oxpinyin-user/src/store_libpinyin.rs:441`.
 All at `e985b581`.
 
-**How the pin removes the same record.** It does not ask tkrzw to: the
-record is not in tkrzw. A phrase's pronunciations live in its
+**How the pin removes the same record.** It does not ask tkrzw to,
+because the record is not in tkrzw. A phrase's pronunciations live in its
 `PhraseItem` in the in-memory phrase index, and `pinyin_mask_out`
 (`src/pinyin.cpp:1224-1296` at `074a2219`) drops the item there
 (`:1290`, into `SubPhraseIndex::mask_out`,
@@ -850,7 +877,7 @@ pin deletes records from is the user bigram, a `TinyDBM`
 `Bigram::remove`, which is tkrzw's plain `m_db->Remove(key)` (`:140`).
 
 **Whether tkrzw's plain remove avoids the sentinel path.** It does not,
-on any class the store uses. `tkrzw_dbm_remove` is `PolyDBM::Remove`
+on any class that the store uses. `tkrzw_dbm_remove` is `PolyDBM::Remove`
 (`tkrzw_langc.cc:791-803`, `tkrzw_dbm_poly.cc:612-617`), and
 `DBM::Remove` is itself a record processor: `RecordProcessorRemove`
 answers the C++ `REMOVE` for a stored record and `NOOP` for an absent
@@ -868,38 +895,39 @@ On the LTO 1.0.34 and on Debian's 1.0.32 package the same calls return
 `true` and `false`, both keys read back absent, and one record is left,
 on all four classes.
 
-The pin's own exposure is that one call: its user-bigram `Remove`
+The pin's own exposure is that one call. Its user-bigram `Remove`
 (`ngram_tkrzwdb.cpp:140`) is `DBM::Remove` on a `TinyDBM` and goes
-through the same sentinel — one of the three `Remove()` sites under
+through the same sentinel. It is one of the three `Remove()` sites under
 "Does anything actually ship against this?". **That is inferred, not
-measured.** It rests on the probe above, whose `TinyDBM` case reaches
-the same `DBM::Remove` through the C API, and on the source. The pin was
-not driven through `Bigram::remove` on the LTO 1.0.32: the
-`abi-probe-diff` run observed its `pinyin_mask_out` and both of its
-saves answering `true` and nothing below the ABI, so whether that
-mask-out reached the call, and what the pin's user bigram held
-afterwards, are not established here. Where the pin's mask-out differs
-from oxpinyin's is in where the masked records live, not in how tkrzw
-removes them: its phrase items are not tkrzw records, and its index
-records are rewritten rather than removed.
+measured.** It rests on the source and on the probe above, whose
+`TinyDBM` case reaches the same `DBM::Remove` through the C API. The pin
+was not driven through `Bigram::remove` on the LTO 1.0.32. The
+`abi-probe-diff` run observed only that its `pinyin_mask_out` and both of
+its saves answered `true`, and nothing below the ABI. This record
+therefore does not establish whether that mask-out reached the call, or
+what the pin's user bigram held afterwards. The pin's mask-out differs
+from oxpinyin's in where the masked records live, not in how tkrzw
+removes them. Its phrase items are not tkrzw records, and it rewrites its
+index records; it does not remove them.
 
 ### If `pinyin_save` returns `false` on tkrzw
 
-On a defect-1 library no save fails until the context removes something —
-`pinyin_mask_out` is the measured case — and the next save with something
-to write does, while the pin still saves `true` (#677). Check the build of
-the library, not its version; below 1.0.34 the version says nothing.
+On a defect-1 library, no save fails until the context removes
+something (`pinyin_mask_out` is the measured case). Then the next save
+with something to write fails, while the pin still saves `true` (#677).
+Check the build of the library, not its version. Below 1.0.34 the version
+tells you nothing.
 
-1. **Find the libtkrzw the failing process loaded.** It need not be the
-   one the build linked. `oxpinyin-store`'s build script puts a RUNPATH
-   on that package's own targets (its unit-test, `trait_laws` and example
-   binaries, by `readelf -d`) and on nothing else — `rustc-link-arg` is
-   package-scoped. `libpinyin_capi.so`, `libzhuyin_capi.so` and the other
-   crates' test binaries carry none, and take whichever `libtkrzw.so.1`
-   `LD_LIBRARY_PATH` or the loader cache names. A store suite that passes
-   and a C-ABI driver that fails in the same shell can be two different
-   libraries. `ldd`, or `LD_DEBUG=libs` on the failing command, settles
-   it.
+1. **Find the libtkrzw that the failing process loaded.** It need not be
+   the one that the build linked. `oxpinyin-store`'s build script puts a
+   RUNPATH only on that package's own targets: its unit-test,
+   `trait_laws` and example binaries (by `readelf -d`). `rustc-link-arg`
+   is package-scoped. `libpinyin_capi.so`, `libzhuyin_capi.so` and the
+   other crates' test binaries carry no RUNPATH. They load the
+   `libtkrzw.so.1` that `LD_LIBRARY_PATH` or the loader cache names. So a
+   store suite that passes and a C-ABI driver that fails in the same
+   shell can use two different libraries. Use `ldd`, or `LD_DEBUG=libs`
+   on the failing command, to find out.
 2. **Probe that library.** Run `tools/tkrzw/distro-probe.sh` against it,
    or run this backend's own check:
 
@@ -908,11 +936,12 @@ the library, not its version; below 1.0.34 the version says nothing.
      cargo test -p oxpinyin-store tkrzw_library_honours_its_sentinel_protocol
    ```
 3. **Then read the version.** 1.0.34 passed under every flag set
-   measured here. 1.0.33 and earlier are healthy or not according to how
-   they were built: fine from `./configure && make` and from Debian,
-   Fedora and EPEL; broken from Ubuntu and under Arch's default flags.
+   measured here. Whether 1.0.33 and earlier are healthy depends on the
+   build. They are healthy from `./configure && make` and from Debian,
+   Fedora and EPEL. They are broken from Ubuntu and under Arch's default
+   flags.
 
-CI never links a distro libtkrzw: every job uses the tkrzw action's build
+CI never links a distro libtkrzw. Every job uses the tkrzw action's build
 of `TKRZW_REV` (`.github/actions/tkrzw`).
 
 ### Provenance — the command behind each figure
@@ -920,31 +949,31 @@ of `TKRZW_REV` (`.github/actions/tkrzw`).
 2026-10-01 (UTC), on an arm64 macOS host in Docker: `debian:testing` at
 `debian@sha256:16faa8d1cd99fcb2d30eebe90454e26b20499055fa7094e9b55d32d1a7666f08`
 (native, and `--platform linux/amd64` for the amd64 rows), g++ 16.2.0
-(Debian 16.2.0-3), GNU ld 2.47, rustc 1.97.1; apt set = the
-`store-backends.yml` test job's without `libtkrzw-dev`,
-`libkyotocabinet-dev` and `libdb-dev`, plus `python3` and `gdb`, so no
-distro libtkrzw existed in either container and a binary that missed the
-build under test could not fall back to another. oxpinyin at `c99ffb57`
-plus this section's change in its first form.
+(Debian 16.2.0-3), GNU ld 2.47, rustc 1.97.1. The apt set was the
+`store-backends.yml` test job's set without `libtkrzw-dev`,
+`libkyotocabinet-dev` and `libdb-dev`, plus `python3` and `gdb`. So no
+distro libtkrzw existed in either container, and a binary that missed the
+build under test could not fall back to another. oxpinyin was at
+`c99ffb57` plus this section's change in its first form.
 
 2026-10-05 (UTC), the same host under Apple `container` 1.5.0: the same
-image digest, arm64 native, the same g++, ld and rustc; apt set = that
-test job's in full, plus `python3` and `gdb`. Debian's `libtkrzw-dev
-1.0.32-1+b2` therefore sat beside the two from-source LTO builds, and
-every run was checked for the libtkrzw it loaded (the row below).
-oxpinyin at `e985b581` plus this change.
+image digest, arm64 native, the same g++, ld and rustc. The apt set was
+that test job's full set, plus `python3` and `gdb`. Debian's
+`libtkrzw-dev 1.0.32-1+b2` was therefore present beside the two
+from-source LTO builds. Every run was checked for the libtkrzw that it
+loaded (the row below). oxpinyin was at `e985b581` plus this change.
 
 The C drivers (`import-diff`, `zhuyin-import-diff`, `nbest-train-diff`,
 `abi-probe-diff`), the identity probe and the round-trip scripts are not
-in the tree; the figures they produced are recorded evidence. The table
-keeps the commands that need no deleted tool.
+in the tree. Their figures are recorded evidence. The table keeps the
+commands that need no deleted tool.
 
-`$P` is one build's prefix, `$T` a `CARGO_TARGET_DIR` of its own per
-build, `$ORACLE` a prefix from `python3 tools/oracle/build.py` (libpinyin
-2.11.92 at `074a2219`, `--with-dbm=Tkrzw`, with libzhuyin). The oracle
-was built once, on 2026-09-25 against Debian testing's 1.0.32 package,
-and not rebuilt per row: it reaches each build through the loader, which
-the identical headers make sound.
+`$P` is one build's prefix. `$T` is a separate `CARGO_TARGET_DIR` per
+build. `$ORACLE` is a prefix from `tools/oracle/build.py`
+(libpinyin 2.11.92 at `074a2219`, `--with-dbm=Tkrzw`, with libzhuyin). The
+oracle was built once, on 2026-09-25 against Debian testing's 1.0.32
+package, and not rebuilt per row. It reaches each build through the
+loader, which is sound because the headers are identical.
 
 | figure | command |
 | --- | --- |
@@ -984,9 +1013,9 @@ the identical headers make sound.
 One row rests on a scratch source that is in no repository, so it is
 printed here in full.
 
-tkrzw's plain remove, per class — `plain-remove-probe.c`. This is a
-shortened form of the program that first produced the per-class table,
-re-run on 2026-10-05 against the same three libraries with the same
+tkrzw's plain remove, per class: `plain-remove-probe.c`. This is a
+shortened form of the program that produced the per-class table. It was
+run again on 2026-10-05 against the same three libraries, with the same
 results. On a healthy library every class prints `remove(stored)=1
 remove(absent)=0/status 7 removed=absent absent=absent count=1`; on the
 LTO 1.0.32 every class prints `removed=00dead0211 absent=00beef0211
@@ -1038,6 +1067,6 @@ int main(void) {
 
 This document commits no captures: no build, probe, test or driver log of
 either date is committed. Figures from the deleted drivers are recorded
-evidence. The other figures stand on the commands in the table; where a
+evidence. The other figures rest on the commands in the table. Where a
 command needs a source that is in no repository, that source is printed
-in full beneath the table.
+in full below the table.

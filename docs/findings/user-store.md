@@ -269,14 +269,18 @@ tokens purely by the library nibble: `PHRASE_INDEX_LIBRARY_INDEX(token) == 7`
 **Unigram-factor reconciliation.** The `unigram_factor = 3` above and
 the training path's `unigram_factor = 7` (`src/lookup/phonetic_lookup.h:849`,
 §2) are **two distinct constants in two distinct functions for two distinct
-operations**, both **SHOWN**: `7` scales the *training* seed into the
-phrase-index unigram (§2.1–2.3 — `train_result3`,
-`pinyin_choose_candidate`'s special types, `pinyin_choose_predicted_candidate`),
-while `3` scales the *new-phrase* seeding count at allocation (§3.2 —
-`_add_phrase`, `pinyin.cpp:522`). There is no discrepancy: a phrase added by
-`pinyin_remember_user_input` seeds its unigram with `count * 3`, and later
-*selections* of it train with `seed * 7`. oxpinyin reproduces both as
-separate constants (`oxpinyin_user::seed::UNIGRAM_FACTOR` = 7,
+operations**. Both are **SHOWN**:
+
+- `7` scales the *training* seed into the phrase-index unigram (§2.1–2.3:
+  `train_result3`, the special types of `pinyin_choose_candidate`,
+  `pinyin_choose_predicted_candidate`).
+- `3` scales the *new-phrase* seeding count at allocation (§3.2:
+  `_add_phrase`, `pinyin.cpp:522`).
+
+There is no discrepancy. A phrase added by `pinyin_remember_user_input`
+seeds its unigram with `count * 3`, and later *selections* of it train
+with `seed * 7`. oxpinyin reproduces both as separate constants
+(`oxpinyin_user::seed::UNIGRAM_FACTOR` = 7,
 `oxpinyin_user::phrase::ADD_PHRASE_UNIGRAM_FACTOR` = 3).
 
 ### 3.3 Importing a phrase list
@@ -332,26 +336,32 @@ PHRASE_INDEX_LIBRARY_MASK | PHRASE_MASK, token)` (`:3763-3764`).
 log.
 
 **Reproduction target.** oxpinyin matches these values and writes them in
-the same files: (a) user-bigram counts per `(prev_token → token)` and each
-`prev_token` total (`user_bigram.db`); (b) user-token unigram frequencies in
-the user sub-index (`user.bin` and the other `USER_FILE` chunks); (c) user
-phrase-index entries (phrase string, pronunciations, count) and the
-pinyin/phrase table indices that reach them (`user_pinyin_index.bin`,
-`user_phrase_index.bin`); (d) the system-token unigram deltas, as each
-`SYSTEM_FILE` library's `.dbin` diff log.
+the same files:
+
+- (a) user-bigram counts per `(prev_token → token)` and each `prev_token`
+  total (`user_bigram.db`);
+- (b) user-token unigram frequencies in the user sub-index (`user.bin` and
+  the other `USER_FILE` chunks);
+- (c) user phrase-index entries (phrase string, pronunciations, count) and
+  the pinyin/phrase table indices that reach them (`user_pinyin_index.bin`,
+  `user_phrase_index.bin`);
+- (d) the system-token unigram deltas, as the `.dbin` diff log of each
+  `SYSTEM_FILE` library.
 
 **No format version (ruling, 2026-09-08).** libpinyin's user files carry
 no version. The drop-in contract is to match them, not to add guarantees
-they lack; the backend's own file header stays the only stamp. A hostile or truncated
-file degrades per file at the load, as upstream's does, never a panic
-(`crates/oxpinyin-user/src/persistence.rs`), with one exception: a
-`database format:` in `user.conf` that upstream's
-`to_table_database_format_type` does not know is the pin's abort
-(`table_info.cpp:122-133`, reached from `:353-354`). The load returns
-`UnknownDatabaseFormat` there, before anything is judged, wiped or
-written, and `pinyin_init` and `zhuyin_init` abort on it (register row
-44). Every other file error degrades that file alone. Do not reintroduce
-a version row without a fresh ask.
+that they lack. The backend's own file header stays the only stamp.
+
+- A hostile or truncated file degrades per file at the load, as
+  upstream's does, and never panics (`crates/oxpinyin-user/src/persistence.rs`).
+- One exception: a `database format:` in `user.conf` that upstream's
+  `to_table_database_format_type` does not know is the pin's abort
+  (`table_info.cpp:122-133`, reached from `:353-354`). The load returns
+  `UnknownDatabaseFormat` there, before anything is judged, wiped or
+  written. `pinyin_init` and `zhuyin_init` abort on it (register row 44).
+- Every other file error degrades that file alone.
+
+Do not reintroduce a version row without a fresh ask.
 
 ---
 
@@ -401,12 +411,12 @@ duplicated items are kept. An item-less user gram is still a gram:
 (`ngram.cpp:298-306`), so the overlay is non-zero whenever the container
 holds any key.
 
-**Seam note.** The merge sits in oxpinyin's language model
+**Seam note.** The merge is in oxpinyin's language model
 (`BigramLanguageModel::score`, count addition before the λ blend), **not** in
-`UserModel::score`, which stays `Ok(0)`: a `Cost` added after the λ blend
-would be a new weighting scheme — exactly what this section forbids — so the
-count-level merge must live in the language model. The `UserModel` seam is
-therefore observe-only.
+`UserModel::score`, which stays `Ok(0)`. A `Cost` added after the λ blend
+would be a new weighting scheme, which this section forbids. The
+count-level merge must therefore live in the language model, and the
+`UserModel` seam is observe-only.
 
 ---
 

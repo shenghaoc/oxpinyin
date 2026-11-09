@@ -31,7 +31,7 @@ Each had 1,571/1,571 rows.
 
 The [roadmap](../ROADMAP.md) records current status and exit gates.
 
-The [source policy](source-policy.md#stages) owns what each stage permits.
+The [source policy](source-policy.md#stages) states what each stage permits.
 
 ## Frontends and references
 

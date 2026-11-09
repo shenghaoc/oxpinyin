@@ -29,13 +29,11 @@ The [roadmap](../ROADMAP.md) records the stages and their status.
    - Keep public C ABI marshalling in `oxpinyin-capi` and `oxpinyin-zhuyin-capi`.
    - Give every unsafe block a `// SAFETY:` comment.
 
-   The system/addon mapping boundary is active: data uses the input mapping API
-   and has `#![forbid(unsafe_code)]`.
+   The system/addon mapping boundary is active: data uses the input mapping API and has `#![forbid(unsafe_code)]`.
    Crate-root `#![forbid]` attributes and scoped allows enforce the implemented allowlist.
    `undocumented_unsafe_blocks` requires a safety comment on every unsafe block.
    `missing_safety_doc` requires a `# Safety` section on every public unsafe function or method.
    CI enforces these lints.
-   This description supplies context; the compiler and lint checks enforce the rule.
 6. **Determinism.** On each host, output is a pure function of input, user state and configuration.
    Record results that depend on the host or its libc as platform-dependent native-host behaviour.
    See the [compatibility policy, #1303](findings/compatibility-policy.md#native-rust-implementation).
@@ -43,7 +41,7 @@ The [roadmap](../ROADMAP.md) records the stages and their status.
    Do not use transpiler dumps.
    Pin-built libpinyin is a test and migration subject.
    Do not link shipping code to it.
-8. **Uncertainty.** Stop when in doubt.
+8. **Uncertainty.** Stop when you are in doubt.
    Do not improvise.
 
 ## External interfaces
@@ -66,11 +64,9 @@ The `scripts2/` Python build generators are outside this tool scope.
 >
 > The C APIs and ABIs, their observable behavior, ownership and lifetime rules, required diagnostics, and compatible persistent data remain governed by the existing pinned-compatibility policy. Safety, determinism, portability, and performance requirements remain in force.
 
-Update all affected in-tree callers in the same change.
-This includes crates, tools, tests, benches, examples and fuzz targets.
-A change to a Rust public item is ordinary internal work.
-This includes traits, associated types, generic parameters, object safety, error types, visibility and module layout.
-It does not require an interface-change STOP.
+Update all affected in-tree callers in the same change: crates, tools, tests, benches, examples and fuzz targets.
+A change to a Rust public item is ordinary internal work and does not require an interface-change STOP.
+This includes changes to traits, associated types, generic parameters, object safety, error types, visibility and module layout.
 
 Rust public visibility, published crate names and doc comments create no stability obligation.
 Historical promises that a Rust interface is frozen or unchanged create no obligation either.

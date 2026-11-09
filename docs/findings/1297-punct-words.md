@@ -7,12 +7,17 @@
 - **Contract preserved:** exported symbols, C layouts, ownership, allocators, persistent layouts, data ownership, and the ruled LC_NUMERIC side effect are unchanged. Existing class (b) diagnostics stay at their boundaries. The input-dependent differences below are the entire admitted scope.
 - **Prior rulings:** none reversed; #923 remains in force.
 
-`punct_table.cpp:56-94` uses pointer differences and byte-end comparison, so 1–3 bytes after a terminated run can add an empty punctuation. `row_format::punct::decode_puncts` walks only `chunks_exact(4)` words. Predictions in both facades read it through the shared data reader; system writers emit complete zero-terminated u32 words, so valid values and their order remain identical. Crafted short/misaligned values lose only the spurious empty punctuation. Stored non-scalars and unterminated whole runs keep their established boundary encoding. The existing #1144 driver still invokes prediction and visits all candidates; accepted witnesses report the raw punctuation bytes, avoiding unrelated ranking fields.
+`punct_table.cpp:56-94` uses pointer differences and byte-end comparison. Thus 1–3 bytes after a terminated run can add an empty punctuation. `row_format::punct::decode_puncts` walks only `chunks_exact(4)` words. Predictions in both facades read it through the shared data reader. System writers emit complete zero-terminated u32 words, so valid values and their order stay identical.
+
+- Crafted short or misaligned values lose only the spurious empty punctuation.
+- Stored non-scalars and unterminated whole runs keep their established boundary encoding.
+
+The existing #1144 driver still calls prediction and visits all candidates. Accepted witnesses report the raw punctuation bytes, so they do not depend on unrelated ranking fields.
 
 **Tests:** `row_format` unit test `punct_stream_ignores_partial_words` holds the whole-word walk; `punct_stream_ends_an_unterminated_run` and `punct_stream_keeps_non_scalar_words` hold the neighbouring partitions. The `punct-decode/*` cases are recorded evidence; the accepted cases are listed below.
 
-**Conclusion:** accepted under the merged policy. Valid product grammar, ABI and persistent contracts remain. Runtime is linear in the input; parsing keeps borrowed header/row slices and removes the hex conversion/word-copy machinery.
+**Conclusion:** accepted under the merged policy. Valid product grammar, ABI and persistent contracts stay. Runtime is linear in the input. Parsing keeps borrowed header/row slices and has no hex conversion/word-copy machinery.
 
-Accepted cases, on every cell: `punct-decode/misaligned-short` and `punct-decode/misaligned-terminated`. In each, the pin returns one more empty punctuation from the 1–3 trailing bytes (`punct_table.cpp:56-94`) and oxpinyin does not (`row_format::punct::decode_puncts`); every other punctuation is identical.
+The accepted cases, on every cell, are `punct-decode/misaligned-short` and `punct-decode/misaligned-terminated`. In each case, the pin returns one more empty punctuation from the 1–3 trailing bytes (`punct_table.cpp:56-94`), and oxpinyin does not (`row_format::punct::decode_puncts`). Every other punctuation is identical.
 
 **Named mutation:** `M1297-byte-tail` restores the byte-length loop condition; `punct-decode/misaligned-terminated` detected it (DIFFER) in the recorded evidence.

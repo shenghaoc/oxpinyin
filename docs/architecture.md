@@ -48,9 +48,9 @@ No symbol is feature-gated, so a bopomofo-only facade would be additive: a new f
 ### Facades
 
 Both C-ABI facades consume `oxpinyin-facade`.
-It depends on core, engine, runtime and user.
-It holds runtime's concrete dictionary, language-model and user handles by value.
-It therefore forwards the complete backend feature matrix instead of staying generic over engine traits.
+`oxpinyin-facade` depends on core, engine, runtime and user.
+It holds the concrete dictionary, language-model and user handles of runtime by value.
+For that reason, it forwards the complete backend feature matrix and is not generic over engine traits.
 
 ## Backend selection
 
@@ -61,7 +61,8 @@ This follows libpinyin's `--with-dbm` model.
 Do not add runtime dispatch or fallback.
 `oxpinyin-store` emits `compile_error!` when zero or multiple backends are enabled.
 
-Saving makes the pin's synchronisation call for the selected backend (`ngram_tkrzwdb.cpp:80`, `ngram_kyotodb.cpp:102` and `ngram_bdb.cpp:103` at `074a2219`), so durability is the backend's for that call, and oxpinyin promises nothing beyond it.
+A save makes the pin's synchronisation call for the selected backend (`ngram_tkrzwdb.cpp:80`, `ngram_kyotodb.cpp:102` and `ngram_bdb.cpp:103` at `074a2219`).
+Durability is therefore the backend's durability for that call; oxpinyin promises nothing beyond it.
 
 ## Dependencies
 
@@ -85,7 +86,7 @@ Constructing the concrete classes directly, as the pin does, keeps the pin's lib
 The facades import 68 `kyotocabinet::` names, 67 among the pin's 77.
 The cdylibs hide the cxx runtime symbols of both bridges ([export gate](packaging.md#export-gate)).
 
-The `oxpinyin-input` boundary calls the C library through the `libc` crate, with no build step; its [C-library calls and macro checks](source-policy.md#external-io) apply.
+The `oxpinyin-input` boundary calls the C library through the `libc` crate, with no build step; the [C-library call and macro-check rules](findings/compatibility-policy.md#external-io) apply.
 It declares in Rust, per platform and in one place, the C library's `stdout` and `stderr` objects, which `libc` does not name.
 Its `tools` feature adds GLib through `glib-sys` and reads the C++ streams' lines with `std::io`.
 
@@ -105,7 +106,7 @@ Facades through `oxpinyin-facade`, capi and future adapters consume that assembl
 Do not assemble equivalents independently.
 This prevents native and C-ABI paths from silently diverging.
 
-Runtime wires the public Rust APIs of data, user and engine.
+Runtime connects the public Rust APIs of data, user and engine.
 Its deliberate pinned algorithms are:
 
 - The user-count overlay feed.
@@ -128,7 +129,7 @@ Read `table.conf` once through data's `table_info`, the input scanner and `Syste
 Its rows determine which libraries exist, their filenames and which calls accept them.
 Its header supplies λ and the versions used to check the user profile.
 Runtime opens the same system directory as `pinyin_init` for that backend.
-libpinyin's own `gen_binary_files` → `import_interpolation` → `gen_unigram` sequence, which `oxpinyin-utils` provides under those names, produces it; the frozen W3 fixture provenance is recorded in `fixtures/w3/README.md`.
+libpinyin's own `gen_binary_files` → `import_interpolation` → `gen_unigram` sequence, which `oxpinyin-utils` provides under those names, produces it; the committed `fixtures/w3` sets came from that sequence over the mini subset of the model (recorded evidence).
 The caller supplies directories to `Runtime`, which retains `StoragePaths`.
 Do not auto-detect a distribution layout.
 
@@ -157,7 +158,7 @@ Engine weights and language-model order are never user configuration.
 
 ## Decoder
 
-Use a weighted SegmentGraph with index-based arenas from the start, not references.
+Use a weighted SegmentGraph with index-based arenas, not references.
 Current EdgeKind variants are Exact and Segmentation.
 Fuzzy, Typo and Abbrev change output and are Stage 3 candidates behind an opt-in compile flag.
 Its Rust API is internal and can change under the [interface ruling](constitution.md#external-interfaces).

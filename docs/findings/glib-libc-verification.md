@@ -3,12 +3,12 @@
 Status: **partial coverage, removal gate** ·
 [Parent #915](https://github.com/shenghaoc/oxpinyin/issues/915).
 
-This ledger is keyed to G1–G17 of the merged
-[inventory](glib-libc-inventory.md) ([#1146](https://github.com/shenghaoc/oxpinyin/pull/1146)).
-Its [call-site list](glib-libc-call-sites.tsv) supplies the complete membership
-of each family: 1,179 sites an exported entry reaches, 190 only `utils/` programs
-reach and 188 no link keeps. Inventory membership is not proof that every input was investigated.
-The entries below preserve that distinction.
+This ledger records, for each family G1–G17 of the
+[inventory](glib-libc-inventory.md) ([#1146](https://github.com/shenghaoc/oxpinyin/pull/1146)),
+the verdict and how far the investigation goes. The inventory's
+[call-site list](glib-libc-call-sites.tsv) gives the complete membership of
+each family: 1,179 sites that an exported entry reaches, 190 that only
+`utils/` programs reach, and 188 that no link keeps. Inventory membership does not prove coverage of every input.
 
 ## Evidence and decision rules
 
@@ -16,23 +16,34 @@ The #894 phrase-text records (non-scalar and NUL stored text) are
 implemented in `PhraseText` and its consumers; their cases are ordinary
 MATCH cases.
 
-All pin citations below are `file:line` at libpinyin
-`074a2219c90feaf962d0d24f034514033ece5f99`; relative pin paths start at
-`src/` unless prefixed `utils/`. The pin source was read at `074a2219`,
-alongside the cited existing findings. The
-inventory's reference is GLib **2.84.4-3~deb13u5**, glibc **2.41-12+deb13u4**
-from Debian 13.7 (trixie), not the host libraries. Rust paths below start at
-`crates/oxpinyin-`; they cite items, not moving line numbers. “Both” means
-pinyin and zhuyin; backend-independent source arguments cover bdb/kc/tkrzw
-only to the stated extent, not three executed verification cells.
+Citation conventions:
 
-**Verdict and investigation are separate columns.** “Identical” states a
-source-derived equivalence for the named scope; it is not a test result.
-“Complete” applies only to that bounded source investigation. “Partial”
-means a cited result exists but the full partition/caller audit remains
-open. “Unverified; pending classification” is unread or unsettled work,
-not a policy question. “Needs a ruling” is reserved here for #923.
-A child or an inventory label alone does not admit a quirk exception.
+- All pin citations below are `file:line` at libpinyin
+  `074a2219c90feaf962d0d24f034514033ece5f99`. Relative pin paths start at
+  `src/` unless prefixed `utils/`. The pin source was read at `074a2219`,
+  beside the cited existing findings.
+- The inventory read GLib **2.84.4-3~deb13u5** and glibc
+  **2.41-12+deb13u4** (recorded evidence), not the host libraries.
+  The reference image is unpinned Debian testing.
+- Rust paths below start at `crates/oxpinyin-`. They cite items, not line
+  numbers, which move.
+- “Both” means pinyin and zhuyin. Backend-independent source arguments
+  cover bdb/kc/tkrzw only to the stated extent, not as three executed
+  verification cells.
+
+**Verdict and investigation are separate columns.** The terms mean:
+
+- “Identical”: a source-derived equivalence for the named scope. It is
+  not a test result.
+- “Complete”: applies only to that bounded source investigation.
+- “Partial”: a cited result exists, but the full partition/caller audit
+  is still open.
+- “Unverified; pending classification”: unread or unsettled work, not a
+  policy question.
+- “Needs a ruling to reverse”: reserved here for #923. The 2026-10-25 UTC ruling retains the pin's behaviour.
+
+A child issue or an inventory label alone does not admit a quirk
+exception.
 
 Follow the [policy decision order](compatibility-policy.md#decision-order):
 C contract first, classes (a)–(b) next, then individually recorded runtime
@@ -185,7 +196,9 @@ per consumed byte, each key at its `m_raw_begin`, zero keys in the gaps
 (apostrophes), and the reserved zero key at `parsed_len`, so
 `matrix.size() == parsed_len + 1`. Each export clamps the cursor with
 `std_lite::min(cursor, instance->m_parsed_len)` (`:3390`, `:3449`, `:3527`),
-leaving `cursor < matrix.size()`. `_get_aux_text_prefix` and
+leaving `cursor < matrix.size()`.
+
+`_get_aux_text_prefix` and
 `_get_aux_text_postfix` (`:3295-3379`) walk the same matrix, stop at the
 reserved last column, and build their result with `g_strconcat` over
 non-NULL pieces (`:3325`, `:3369`); the only NULL-argument stop is the final
@@ -203,12 +216,14 @@ The invariant `offset <= cursor` therefore holds until the walk reaches the
 reserved last column `size - 1 == parsed_len`, where
 `newoffset == offset == parsed_len` and the boundary branch fires because
 `cursor <= parsed_len`. `full` always sets `middle` before the loop ends.
+
 `double` and `chewing` (`:3460-3507`, `:3538-3567`) maintain the same
 invariant: if `cursor != offset`, then `offset < cursor`; the span at
 `offset` starts there, so either it contains the cursor and the split branch
 sets `middle`, or it ends at or before the cursor and `offset = end <= cursor`
 with `end > offset`. The walk cannot step over `cursor`, so it reaches
 `cursor == offset` no later than the reserved last column and sets `middle`.
+
 A reached empty column is the pin's `assert(matrix.get_column_size(offset) >= 1)`
 (`:3311`, `:3353`, `:3410`, `:3467`, `:3545`) and oxpinyin's `None`; it never
 reaches the concat. A `middle == NULL` arm would therefore be dead, and
@@ -225,10 +240,11 @@ oxpinyin has none.
 `end - start` bytes and appends a terminator. `g_utf8_offset_to_pointer`
 (`glib/gutf8.c:376-386`) steps `g_utf8_next_char` `end_pos - start_pos` times
 and does not check for the terminator. The second call therefore asks for
-`raw_end - len` scalars from scalar `len`, not for the `C - len` scalars that
-remain; when `raw_end > C` the call is outside GLib's documented domain and
-the walk passes the NUL; the copy reads beyond the allocation once the end
-pointer is at least one byte past the NUL (`raw_end >= C + 2`).
+`raw_end - len` scalars from scalar `len`, not for the `C - len` scalars
+that remain. When `raw_end > C`, the call is outside GLib's documented
+domain, and the walk passes the NUL. The copy reads beyond the allocation
+once the end pointer is at least one byte past the NUL
+(`raw_end >= C + 2`).
 
 `raw_end` is the absolute key end. For a first key it is the raw span `B`;
 for every later key it is larger. `B >= C` for every splittable
@@ -243,21 +259,26 @@ three scalars past the NUL and copies the NUL plus the bytes after it. The
 bound the copy. The zhuyin parser's spans are also absolute, so its later
 keys reach the same condition.
 
-The visible result is nevertheless deterministic while the pin returns.
+The visible result is still deterministic while the pin returns.
 `g_strconcat(left, "|", right, " ", NULL)` (`:3560`) measures `right` with
-`strlen`, and for `len <= C` the copied buffer begins at scalar `len` and
-ends at or after the spelling's NUL, so its first NUL is the spelling's end.
-The visible right half is the spelling from `len` to `C` (empty at
-`len == C`), matching `split_zhuyin`, even though bytes after the NUL were
-read. For `len > C` the copy begins after the NUL, so the visible right half
-is heap bytes; `split_zhuyin` returns an empty right half there as the
-deterministic class (b) choice. The class (b) difference is therefore the
-absent out-of-allocation read and possible fault where the copied end passes
-the terminator (`raw_end >= C + 2`), the out-of-domain walk for
-`raw_end == C + 1`, and the differing bytes for `len > C`; the visible bytes
-for `len <= C` equal only when the pin returns. `g_strconcat`
-(`glib/gstrfuncs.c:572-609`) is a plain concatenation once the NULL stop is
-removed.
+`strlen`. For `len <= C` the copied buffer begins at scalar `len` and ends
+at or after the spelling's NUL, so its first NUL is the spelling's end. The
+visible right half is the spelling from `len` to `C` (empty at `len == C`).
+This matches `split_zhuyin`, although bytes after the NUL were read. For
+`len > C` the copy begins after the NUL, so the visible right half is heap
+bytes. There, `split_zhuyin` returns an empty right half as the
+deterministic class (b) choice.
+
+The class (b) difference is therefore:
+
+- the absent out-of-allocation read, and possible fault, where the copied
+  end passes the terminator (`raw_end >= C + 2`);
+- the out-of-domain walk for `raw_end == C + 1`;
+- the differing bytes for `len > C`.
+
+The visible bytes for `len <= C` are equal only when the pin returns.
+`g_strconcat` (`glib/gstrfuncs.c:572-609`) is a plain concatenation once
+the NULL stop is removed.
 
 **Cases.** `aux-text-chewing-cursors` visits every byte cursor on four
 full-pinyin inputs plus the maximum `size_t`, covering both key boundaries,
@@ -274,21 +295,24 @@ keyboard spends one keystroke per zhuyin scalar plus the tone key, so an
 interior cursor's `len` stays below `C`; the terminator falls on the key
 boundary, which the `cursor == offset` branch takes rather than the substring
 branch. The terminator cut is therefore exercised on the shared-matrix path
-by `ni1@2` and `ni3hao4@6`.
-(Longer keyboards such as CP26 can spend two keys on one scalar, so their
-interior `len` can exceed `C`; `split_zhuyin` applies the same class (b)
-clamp there.)
+by `ni1@2` and `ni3hao4@6`. Longer keyboards such as CP26 can spend two
+keys on one scalar, so their interior `len` can exceed `C`. `split_zhuyin`
+applies the same class (b) clamp there.
+
 `aux-text-chewing-overrun-cursor` uses one past, seven past and the maximum
-`size_t` on both parse paths; all clamp to `parsed_len` at `:3527`. The
-cases compare the visible bytes; a match is conditional on the pin returning,
-and the out-of-allocation read itself is not reproduced. The missing-middle
-and `len > C` output partitions have no case for the reasons above.
-Output ownership is unchanged: the matrix-empty branch writes an allocated
-`""` and returns `false` (`:3385-3388`, `:3444-3447`, `:3522-3525`); every
-other answer is `true` plus one caller-owned allocation, still marshalled by
-the pin's `g_strdup`/`g_strconcat` (#1227). No preedit or candidate path calls `split_zhuyin`;
-the only callers are `SharedMatrix::chewing` and `chewing_aux_text`, both
-reached only from `pinyin_get_chewing_auxiliary_text`.
+`size_t` on both parse paths. All clamp to `parsed_len` at `:3527`. The
+cases compare the visible bytes. A match is conditional on the pin
+returning, and the out-of-allocation read itself is not reproduced. The
+missing-middle and `len > C` output partitions have no case, for the
+reasons above.
+
+Output ownership is unchanged. The matrix-empty branch writes an allocated
+`""` and returns `false` (`:3385-3388`, `:3444-3447`, `:3522-3525`). Every
+other answer is `true` plus one caller-owned allocation, still marshalled
+by the pin's `g_strdup`/`g_strconcat` (#1227). No preedit or candidate path
+calls `split_zhuyin`. The only callers are `SharedMatrix::chewing` and
+`chewing_aux_text`, which only `pinyin_get_chewing_auxiliary_text`
+reaches.
 
 ## G3 — Path joining
 

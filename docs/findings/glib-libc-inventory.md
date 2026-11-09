@@ -15,12 +15,11 @@ is listed separately.
 
 The exported surface reaches **70 distinct GLib/libc functions at 1,179
 call sites**: 43 GLib functions (874 sites) and 27 libc functions (305
-sites). They collapse into fifteen reachable semantic families, plus
-tool-only and dead groups. Most reachable boundaries have a dedicated
-child; one family is new (#1144). The internal container, hash and
-primitive rows are ordinary C-facing or internal parity with no
-language/runtime quirk. No entry changes a valid-input answer on the
-evidence read.
+sites). They form fifteen reachable semantic families, plus tool-only and
+dead groups. Most reachable boundaries have a dedicated child issue. One
+family is new (#1144). The internal container, hash and primitive rows are
+ordinary C-facing or internal parity, with no language/runtime quirk. On
+the evidence read, no entry changes a valid-input answer.
 
 Three results govern the sweep:
 
@@ -44,39 +43,45 @@ can call it without a test, tool or uninstantiated class in between.
 The matrix below follows that definition. The complete call-site list is
 [glib-libc-call-sites.tsv](glib-libc-call-sites.tsv), which records the
 family, library, facade, backend, pin file and line, function and call.
-Regenerate it with `just audit-glib-call-sites <pin-checkout>`; the
+Regenerate it with `just audit-glib-call-sites <pin-checkout>`. The
 [runbook](../runbooks/glib-call-sites.md) names the tools. The recipe runs
-`tools/audit/glib_call_sites.py`, which verifies the checkout is at
-`074a2219c90feaf962d0d24f034514033ece5f99`, parses the pin with libclang,
-and reads `facade` from the linker's maps. The one hand-kept input is
-`tools/audit/glib_call_sites.families.tsv`.
+`tools/audit/glib_call_sites.py`, which:
+
+- verifies that the checkout is at
+  `074a2219c90feaf962d0d24f034514033ece5f99`;
+- parses the pin with libclang;
+- reads `facade` from the linker's maps.
+
+The one hand-kept input is `tools/audit/glib_call_sites.families.tsv`.
 
 - 1,179 reachable sites (`pinyin`, `zhuyin` or `both`): 874 GLib, 305 libc.
 - 190 `tools` sites, kept only by `utils/` programs: `tag_utility.cpp`,
   `table_text_parser.h`, the `load_text` methods, the `FlexibleBigram` and
   `FlexibleSingleGram` classes behind the training utilities, and the
-  punctuation and parser helpers only `utils/` calls.
+  punctuation and parser helpers that only `utils/` calls.
 - 188 `none` sites, kept by no link: `PinyinLookup2` (never instantiated), the
   old `ChewingLargeTable` / `PhraseLargeTable2` and `FacadeChewingTable` /
   `FacadePhraseTable2` classes, the `PunctTableEntry` writer methods, and
   the debug dumps. Code under `#if 0` is not compiled and has no row.
-- Six of the `none` sites are in functions no link saw at all, because nothing
-  calls them: `memory_chunk.h:404`, `facade_chewing_table.h:115,185`,
+- Six of the `none` sites are in functions that no link sees at all,
+  because nothing calls them: `memory_chunk.h:404`, `facade_chewing_table.h:115,185`,
   `facade_phrase_table2.h:96,165` and `flexible_single_gram.h:136`.
 
-The negative list is in "Negative coverage" below. A closed candidate
-for a `zhuyin_parse_chewing` over-read is also recorded there: GLib's
-`g_utf8_strncpy` stops at the NUL and pads, so the candidate is not a
-read.
+The negative list is in "Negative coverage" below. It also records a
+closed candidate for a `zhuyin_parse_chewing` over-read. GLib's
+`g_utf8_strncpy` stops at the NUL and pads, so the candidate is not an
+over-read.
 
 ## Matrix
 
-Every row is at the pin and the image versions above. `Reach` is `both`
-for libpinyin and libzhuyin, `pinyin` for the prediction-only surfaces;
-`all` means bdb, kc and tkrzw. `Disposition` uses #1142's order:
-`contract` (C-facing behaviour on valid input), `(a)`/`(b)`/`(c)`,
-`quirk` (record-admitted language/runtime difference) and `ruling`
-(STOP).
+Every row is at the pin and the image versions above. The columns use
+these values:
+
+- `Reach`: `both` for libpinyin and libzhuyin, `pinyin` for the
+  prediction-only surfaces. `all` means bdb, kc and tkrzw.
+- `Disposition`, in #1142's order: `contract` (C-facing behaviour on valid
+  input), `(a)`/`(b)`/`(c)`, `quirk` (record-admitted language/runtime
+  difference) and `ruling` (STOP).
 
 | ID | Family and pin call sites | Reach | oxpinyin counterpart | Valid / malformed | Disposition | Child |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -104,63 +109,74 @@ for libpinyin and libzhuyin, `pinyin` for the prediction-only surfaces;
 
 The pin converts with GLib's `g_utf8_to_ucs4` and `g_ucs4_to_utf8` in
 three candidate/sentence/export paths (`pinyin.cpp:1627-1645` and
-`lookup.cpp:27-60`; the export is `pinyin.cpp:698-716`). GLib
-encodes surrogates and values above U+10FFFF and stops at an embedded
-U+0000. Rust `char`/`str` cannot represent the first two, so phrase text
-is carried as stored words (`PhraseText`) and encoded at the C boundary
-(`phrase_text_bytes`). The valid-input path is byte-identical; the
-malformed cases are #894 (phrase text) and #1144 (punctuation).
-`phrase_segment` calls the pin's `g_utf8_strlen` through `glib-sys`, so
-GLib writes its own NULL-input critical; its invalid-UTF-8 critical is not
-written ([1297-segment-critical](1297-segment-critical.md)).
+`lookup.cpp:27-60`; the export is `pinyin.cpp:698-716`). GLib encodes
+surrogates and values above U+10FFFF, and stops at an embedded U+0000.
+Rust `char`/`str` cannot represent surrogates or values above U+10FFFF.
+oxpinyin therefore carries phrase text as stored words (`PhraseText`) and
+encodes it at the C boundary (`phrase_text_bytes`). The valid-input path
+is byte-identical. The malformed cases are #894 (phrase text) and #1144
+(punctuation).
 
-`g_utf8_strlen` at `pinyin.cpp:1450` / `zhuyin.cpp:969` is the same
-gate. `g_utf8_strncpy` at `zhuyin_parser2.cpp:879` is cited by the
-negative coverage, not as a read: GLib `g_utf8_strncpy` uses `strncpy`,
-which stops at the NUL.
+`phrase_segment` calls the pin's `g_utf8_strlen` through `glib-sys`, so
+GLib writes its own NULL-input critical. The invalid-UTF-8 critical is not
+written ([1297-segment-critical](1297-segment-critical.md)).
+`g_utf8_strlen` at `pinyin.cpp:1450` / `zhuyin.cpp:969` is the same gate.
+The negative coverage cites `g_utf8_strncpy` at `zhuyin_parser2.cpp:879`,
+not as an over-read: GLib `g_utf8_strncpy` uses `strncpy`, which stops at
+the NUL.
 
 ### G2 and G3 — strings and paths
 
-`g_strdup_printf` builds `.tmp` names and diagnostic text; the formats
-are `%s` and `%d` over bytes, not a locale conversion.
-`g_strconcat` is the aux-text prefix/middle/postfix construction
-(`pinyin.cpp:3421-3431,3482-3509,3560-3569`) and the export joins
-(`pinyin.cpp:830,865`). `AuxMatrix`'s `join` preserves the
-`g_strconcat` NULL-postfix law: a missing middle drops the postfix
-(#925). `g_strjoinv`/`g_strfreev` at `pinyin.cpp:849,862` render the
-bigram export; the pin's array is not NULL-terminated (row 1, class
-(b)); oxpinyin renders owned strings before the iterator exists.
+- `g_strdup_printf` builds `.tmp` names and diagnostic text. The formats
+  are `%s` and `%d` over bytes, not a locale conversion.
+- `g_strconcat` builds the aux-text prefix/middle/postfix
+  (`pinyin.cpp:3421-3431,3482-3509,3560-3569`) and the export joins
+  (`pinyin.cpp:830,865`). `AuxMatrix`'s `join` keeps the `g_strconcat`
+  NULL-postfix law: a missing middle drops the postfix (#925).
+- `g_strjoinv`/`g_strfreev` at `pinyin.cpp:849,862` render the bigram
+  export. The pin's array is not NULL-terminated (row 1, class (b)).
+  oxpinyin renders owned strings before the iterator exists.
 
-**Punctuation order and duplicates (#928, closed 2026-10-26 UTC).**
-`pinyin_guess_predicted_candidates_with_punctuations` walks
-`m_prefixes` as `pinyin_guess_predicted_candidates` left it
-(`pinyin.cpp:2459-2463`), takes each token's `get_all_punctuations`
-array, counts it with `g_strv_length` and skips a string that
-`g_strv_contains` finds in the zero-terminated `punct_array`
-(`:2468-2483`); GLib 2.84.4 `g_strv_contains` is a `g_str_equal` walk
-(`gstrfuncs.c:3234-3247`), and `g_array_new(TRUE, TRUE, …)` allocates
-and terminates the empty array, so the first test sees no entry
-(`garray.c:356-361`). The reverse `g_array_prepend_val` (`:2488-2494`)
-leaves the kept strings first, in first-occurrence order, ahead of the
-predicted rows, which the test never sees. No entry is `NULL`
-(`g_strdup` of the cache string), so `g_strv_length` is the entry count.
-`prepend_punctuations` keeps the first of equal `phrase_text_bytes`
-values in the same order and puts them ahead of the candidates; those
-bytes are the pin's C string. The two agree on every stored value:
-duplicates within one value, across prefix tokens (shortest suffix
-first) and in empty strings from different stored words, non-scalar
-strings, and a punctuation equal to a predicted phrase (both kept). This
-is ordinary compatibility; `prepend_punctuations` reads the prefixes the
-prediction stored. Recorded evidence: the `punct-dedup/*` cases MATCHed on
-bdb, and the named mutation `M928-no-dedup` (every punctuation kept) made
-the five duplicate cases differ while the `distinct` and `candidate`
-controls matched.
+**Punctuation order and duplicates (#928, closed 2026-10-26 UTC).** This
+is ordinary compatibility. The pin's steps:
+
+1. `pinyin_guess_predicted_candidates_with_punctuations` walks
+   `m_prefixes` as `pinyin_guess_predicted_candidates` left it
+   (`pinyin.cpp:2459-2463`).
+2. It takes each token's `get_all_punctuations` array and counts it with
+   `g_strv_length`.
+3. It skips a string that `g_strv_contains` finds in the zero-terminated
+   `punct_array` (`:2468-2483`). GLib 2.84.4 `g_strv_contains` is a
+   `g_str_equal` walk (`gstrfuncs.c:3234-3247`).
+   `g_array_new(TRUE, TRUE, …)` allocates and terminates the empty array,
+   so the first test sees no entry (`garray.c:356-361`).
+4. The reverse `g_array_prepend_val` (`:2488-2494`) puts the kept strings
+   first, in first-occurrence order, ahead of the predicted rows. The test
+   never sees the predicted rows.
+
+No entry is `NULL` (`g_strdup` of the cache string), so `g_strv_length`
+is the entry count.
+
+`prepend_punctuations` reads the prefixes that the prediction stored. It
+keeps the first of equal `phrase_text_bytes` values in the same order and
+puts them ahead of the candidates. Those bytes are the pin's C string. The
+two agree on every stored value:
+
+- duplicates within one value;
+- duplicates across prefix tokens (shortest suffix first);
+- empty strings from different stored words;
+- non-scalar strings;
+- a punctuation equal to a predicted phrase (both kept).
+
+Recorded evidence: the `punct-dedup/*` cases MATCHed on bdb. The named
+mutation `M928-no-dedup` (every punctuation kept) made the five duplicate
+cases differ, while the `distinct` and `candidate` controls matched.
 
 `g_build_filename` is the only path constructor. oxpinyin calls it through
 `glib-sys` in `oxpinyin-input` `path.rs` (`build_filename`, `build_path`,
-`build_bytes`), so a name that starts with `/` stays beneath the directory
-and stderr gets the pin's bytes. The caller's directory bytes are kept as
-given. `g_rename` and `g_fsync` are G10.
+`build_bytes`). So a name that starts with `/` stays beneath the
+directory, and stderr gets the pin's bytes. The caller's directory bytes
+stay as given. `g_rename` and `g_fsync` are G10.
 
 **#922 result.** Every difference found was a defect and is fixed. The
 join is the pin's call. The Windows separator set follows GLib but has no
@@ -173,16 +189,18 @@ are ordinary bytes in both. The partition table is in
 The C ABI's `GArray` is a real GLib object. `g_array_set_size` and
 `g_array_append_vals` in `pinyin_lookup_tokens`,
 `pinyin_token_get_nth_pronunciation` and their zhuyin twins mutate the
-caller's `GArray` through `glib_sys`; a manual `Vec` write would corrupt
+caller's `GArray` through `glib_sys`. A manual `Vec` write would corrupt
 GLib's private `_GRealArray` metadata. This is MUST RETAIN (#924).
 Internal `GArray`/`GPtrArray` uses are ordinary step, candidate and
-lookup containers; their Rust counterparts are `Vec`, slices and fixed
+lookup containers. Their Rust counterparts are `Vec`, slices and fixed
 arrays. The malformed cases are the registered out-of-range index and
 empty-chunk sites, not a container-layout difference.
 
-The allocation contract is the same: returned `gchar *` is
-`malloc`-compatible and freed by `g_free`; `gchar **` is freed by
-`g_strfreev`; the two `.alloc` files enumerate every ownership slot.
+The allocation contract is the same as the pin's:
+
+- a returned `gchar *` is `malloc`-compatible and freed by `g_free`;
+- a `gchar **` is freed by `g_strfreev`;
+- the two `.alloc` files list every ownership slot.
 
 **#924 result.** Disposition: **retain** the GLib ABI. The per-operation
 MUST RETAIN / MAY DIVERGE matrix and the allocation-failure partitions are
@@ -204,35 +222,36 @@ registers). The `GArray` lifecycle is held by `oxpinyin-capi`
 Limits:
 
 - Earlier Rust allocations (`String`, `CString`, `Vec`) can terminate
-  before the final foreign allocation; no identical allocation graph or
-  whole-process OOM equivalence is claimed.
-- The `*_iterator_get_next_phrase` phrase conversion stays non-warning and
+  before the final foreign allocation. This record claims no identical
+  allocation graph and no whole-process OOM equivalence.
+- The `*_iterator_get_next_phrase` phrase conversion writes no warning. It
   may return NULL with success, as the pin's unchecked `g_ucs4_to_utf8`
   does (`pinyin.cpp:715-716,737,745`).
-- Diagnostic text with an embedded NUL has no producer in the C-facing call
-  graph; the helper difference is not an admitted outward one.
+- Nothing in the C-facing call graph produces diagnostic text with an
+  embedded NUL. The helper difference is therefore not an admitted outward
+  difference.
 - Per-trigger re-audit of the facade warning register belongs to G8.
 
-No unregistered discrepancy remains for #924's operations: every difference
-found is a fixed defect or a registered difference.
+No unregistered discrepancy remains for #924's operations. Every
+difference found is a fixed defect or a registered difference.
 
 ### G5 and G6 — sorts
 
 `g_ptr_array_sort` at `phonetic_lookup.h:337` orders the n-best tails
-with `trellis_value_compare`, which truncates the float difference to
-`gint` (`cvttss2si` in the bdb binary). Scores less than one unit apart
-compare equal, so the comparator is not transitive even on finite scores;
-NaN and ±∞ come from a λ outside `[0, 1]`.
+with `trellis_value_compare`. That comparator truncates the float
+difference to `gint` (`cvttss2si` in the bdb binary). Scores less than one
+unit apart compare equal, so the comparator is not transitive even on
+finite scores. NaN and ±∞ come from a λ outside `[0, 1]`.
 
 `g_array_sort_with_data` orders the pinyin and predicted candidate lists
-under `compare_item_with_sort_option` (`pinyin.cpp:2286,2443`), and
-`g_array_sort` the zhuyin lists (`zhuyin.cpp:1529,1610`). Their
-`gint` frequency key is a total order for λ in `[0, 1]` and wraps into
+under `compare_item_with_sort_option` (`pinyin.cpp:2286,2443`).
+`g_array_sort` orders the zhuyin lists (`zhuyin.cpp:1529,1610`). Their
+`gint` frequency key is a total order for λ in `[0, 1]`, and wraps into
 cycles outside it. The phrase-string dedup sorts (`pinyin.cpp:2067`,
-`zhuyin.cpp:1375`) are total; their winner rule is #913/#914, and the
-dedup winner and punctuation order are #928.
+`zhuyin.cpp:1375`) are total. Their winner rule is #913/#914. The dedup
+winner and punctuation order are #928.
 
-These comparators are language artefacts under the #1303 ruling, and
+These comparators are language artefacts under the #1303 ruling.
 oxpinyin does not port GLib's merge. The tails use a stable `sort_by` on
 raw possibility (S3, `nbest.rs` `tail_merge`). The candidate and predicted
 lists use `candidate::rank_by_frequency`: stable std sorting with the
@@ -242,44 +261,48 @@ pin's guarded wrapping frequency comparison
 ### G7 — hash tables
 
 `PhraseLookup` and the phonetic trellis use GLib hash tables for
-prefix/step lookup, and no iteration order reaches an exported result.
+prefix/step lookup. No iteration order reaches an exported result.
 `PinyinLookup2`'s copies are dead. Rust uses vectors keyed by step and
-token; there is no semantic difference to record.
+token. There is no semantic difference to record.
 
 ### G8 — diagnostics
 
 `g_return_val_if_fail` in `phrase_index.cpp:354-356` logs a critical
-when a loaded sub-index cannot be read; `pinyin_phrase_segment` and
-`zhuyin_phrase_segment` log the pin's exact precondition at `pinyin.cpp:1454`
-and `zhuyin.cpp:973`. Registered pin aborts outside these abort in the
-C adapters. The allocation and message
-text stay with #924; the segment gate is #918. A warning is observable:
-it is never a quirk by itself.
+when a loaded sub-index cannot be read. `pinyin_phrase_segment` and
+`zhuyin_phrase_segment` log the pin's exact precondition at
+`pinyin.cpp:1454` and `zhuyin.cpp:973`. Registered pin aborts outside
+these sites abort in the C adapters. The allocation and message text stay
+with #924. The segment gate is #918. A warning is observable, so it is
+never a quirk by itself.
 
 ### G10 — rename and sync
 
 `_rename_files` renames the library files by sub-index, then the user
-pinyin index, the phrase index and the bigram; `zhuyin_save` renames
-each file as it writes it. `MemoryChunk::save` calls `g_fsync` after the
-payload. The Rust `save_reporting` keeps the per-file
-tolerance, the rename order and the return value (#929), including the
-pin's own answers after a failed write or rename.
+pinyin index, the phrase index and the bigram. `zhuyin_save` renames each
+file as it writes it. `MemoryChunk::save` calls `g_fsync` after the
+payload. The Rust `save_reporting` keeps the per-file tolerance, the
+rename order and the return value (#929). This includes the pin's own
+answers after a failed write or rename.
 
-The chunk write is the pin's call sequence (external-I/O stages 2 and 3):
-`oxpinyin-input` `chunk::save` opens, writes the length word and the
-checksum word with one `write` each, writes the payload with one `write`,
-then calls `fsync` and `close`, ignoring both results
-(`memory_chunk.h:536-557`). `oxpinyin-user`'s `write_chunk_file` calls it.
+The chunk write is the pin's call sequence (external-I/O stages 2 and 3).
+`oxpinyin-user`'s `write_chunk_file` calls `oxpinyin-input` `chunk::save`,
+which (`memory_chunk.h:536-557`):
+
+1. opens the file;
+2. writes the length word and the checksum word, with one `write` each;
+3. writes the payload with one `write`;
+4. calls `fsync` and `close`, and ignores both results.
+
 A failed header write is the pin's `assert`, reproduced as an abort
 (register row 77, `ChunkHeaderWrite`). A short or failed payload write is
-the pin's soft `false` with no sync: `PersistenceError::Io`, tolerated by
-the reporting save as the pin's callers ignore the answer
+the pin's soft `false` with no sync. It is `PersistenceError::Io`, and the
+reporting save tolerates it, as the pin's callers ignore the answer
 (`pinyin.cpp:971,988`; `zhuyin.cpp:607,633`). There is no retry. File
 bytes, write and rename order, tolerance and return values are the pin's.
 
 **#929 result.** The ordered per-operation table is in
-[glib-libc-verification.md](glib-libc-verification.md) G10. Summary of what is
-mandatory for a valid profile:
+[glib-libc-verification.md](glib-libc-verification.md) G10. This table
+summarises what is mandatory for a valid profile:
 
 | Semantics | Status | Evidence |
 | --- | --- | --- |
@@ -295,39 +318,43 @@ mandatory for a valid profile:
 ### G11 — numeric parsing and locale
 
 `SystemTableInfo2::load` and `UserTableInfo::load` read their fields with
-`fscanf`; `atoi` cuts an addon index to `guint8`; `setlocale(LC_NUMERIC,
-"C")`'s return is the new name, and every early return skips the
-restore. The valid file surface is #919 (table.conf) and #920
+`fscanf`. `atoi` cuts an addon index to `guint8`. The return of
+`setlocale(LC_NUMERIC, "C")` is the new name, and every early return skips
+the restore. The valid file surface is #919 (table.conf) and #920
 (user.conf). The process-wide locale is row 39 and #923. The
 2026-10-25 UTC ruling retains it. Only a reversal needs a new ruling.
 
-Since external-I/O stage 1, oxpinyin makes the pin's own calls:
+From external-I/O stage 1, oxpinyin makes the pin's own calls.
 `oxpinyin-input` `config.rs` runs `setlocale`, `fopen`, `fscanf`, `feof`,
 `atoi`, `fprintf` and `fclose` through the `libc` crate, with the pin's
 format strings and call order. `data/src/table_info.rs` (`TableConf`) and
-`data/src/user_files.rs` (`UserTableInfo`) keep what the pin does with each
-answer. The host libc's scanner therefore decides malformed spellings, as
-it does for the pin; it is not a divergence
+`data/src/user_files.rs` (`UserTableInfo`) keep what the pin does with
+each answer. The host libc's scanner therefore decides malformed
+spellings, as it does for the pin. That is not a divergence
 ([source policy, external I/O](../source-policy.md#external-io)).
-`UserTableInfo::to_text` formats the two version fields through `i32`, so a
-value outside `int` is written back signed, as the pin's `%d` does.
+`UserTableInfo::to_text` formats the two version fields through `i32`. A
+value outside `int` is therefore written back signed, as the pin's `%d`
+does.
 
-Two class (b) refusals remain: a missing `source table format:` line
-reads the pin's uninitialised `char str[256]`
-(`TableConfError::UninitialisedSourceFormat`), and a five-word row merged
-with the next row's first word can make the pin read a NULL item and
-SIGSEGV. oxpinyin refuses the first deterministically and answers the
-second with the declared result; neither reproduces the uninitialised or
-invalid read.
+Two class (b) refusals remain:
+
+- A missing `source table format:` line reads the pin's uninitialised
+  `char str[256]` (`TableConfError::UninitialisedSourceFormat`). oxpinyin
+  refuses it deterministically.
+- A five-word row merged with the next row's first word can make the pin
+  read a NULL item and SIGSEGV. oxpinyin answers it with the declared
+  result.
+
+Neither refusal reproduces the uninitialised or invalid read.
 
 **Host scanner versions.** The glibc that this inventory read is 2.41 (recorded evidence). Its `%f`
 lexer sets `got_e = got_dot = 1` at an exponent mark but does not clear
-`got_digit` (`stdio-common/vfscanf-internal.c:2196-2201`), and the post-loop
+`got_digit` (`stdio-common/vfscanf-internal.c:2196-2201`). The post-loop
 conversion check tests only the empty buffer and the bare `0x` prefix
 (`:2545-2549`). glibc 2.42 rejects incomplete exponents, and 2.43 also
 rejects `0x.` (`vfscanf-internal.c:2218-2219`, `:2571-2576` at 2.43-3).
 2.41 therefore converts `1e`, `1e+`, `0x1p`, `0x1p+`, `0x1p-` and `0x.`,
-while `0x` and `infin` fail. These spellings are the `host_scanf` cases
+and fails on `0x` and `infin`. These spellings are the `host_scanf` cases
 of policy row 78, reported HOST-DEPENDENT on both facades:
 `table-conf-lambda-exponent-without-digits`,
 `table-conf-lambda-hex-exponent-without-digits`,
@@ -339,10 +366,10 @@ of policy row 78, reported HOST-DEPENDENT on both facades:
 table fields, and `%255s` is unchanged for the caller-provided 256-byte
 buffer.
 
-The #920 `user.conf` walk uses the same scanner: version and counter
-`%d` values take LP64 `strtol` saturation followed by the low 32 bits of
-the `int` store, so `4294967303` reads as 7 and `-9223372036854775808` as
-0; the marker's conformance, counter raise/lower and wipe/write sequence
+The #920 `user.conf` walk uses the same scanner. Version and counter `%d`
+values take LP64 `strtol` saturation, then the low 32 bits of the `int`
+store. So `4294967303` reads as 7 and `-9223372036854775808` as 0. The
+marker's conformance, the counter raise/lower and the wipe/write sequence
 then decide user state. A NUL inside the `database format:` token ends the
 C string, as the pin's `strcmp` does. `oxpinyin-capi`'s
 `pinned_data_tests::user_conf_versions_past_int_take_the_scanners_int`
@@ -355,16 +382,20 @@ from the cell's `table.conf`.
 
 > Maintainer ruling, 2026-10-25 UTC: **retain** the pinned `LC_NUMERIC` side effect (register row 39, #539/#618). The default build stays bug-for-bug, and no opt-in departure is planned. The maintainer intends to report the defect upstream; oxpinyin changes only if libpinyin does.
 
-The default build stays bug-for-bug, there is no departure behind a
-feature, and the row 39 entry in `upstream-divergences.md` and
-`compatibility-policy.md` is unchanged. The mechanism is the pin's:
-`SystemTableInfo2::load`, `UserTableInfo::load` and `UserTableInfo::save`
-save `setlocale(LC_NUMERIC, "C")`'s return, which is the new name `"C"`
-(`table_info.cpp:197,291`; `:328,372`; `:378,394`), so the closing call
-re-installs `"C"` and every early return skips it. oxpinyin makes the same
-calls at the same points through `oxpinyin-input` `config.rs` (the readers
-and the writer). Side-effect table (sequencing is before any parse or
-return, so no legal return or error path leaves a different locale):
+The default build stays bug-for-bug. There is no departure behind a
+feature. The row 39 entry in `upstream-divergences.md` and
+`compatibility-policy.md` is unchanged.
+
+The mechanism is the pin's. `SystemTableInfo2::load`,
+`UserTableInfo::load` and `UserTableInfo::save` save the return of
+`setlocale(LC_NUMERIC, "C")`, which is the new name `"C"`
+(`table_info.cpp:197,291`; `:328,372`; `:378,394`). So the closing call
+re-installs `"C"`, and every early return skips it. oxpinyin makes the
+same calls at the same points through `oxpinyin-input` `config.rs` (the
+readers and the writer).
+
+The side-effect table follows. The `setlocale` call comes before any parse
+or return, so no legal return or error path leaves a different locale:
 
 | Exported call | Pin site | Locale after | oxpinyin site (`context.rs`) |
 | --- | --- | --- | --- |
@@ -377,54 +408,60 @@ return, so no legal return or error path leaves a different locale):
 
 Guards: `oxpinyin-capi` `tests/locale.rs`
 (`lc_numeric_follows_the_pins_table_info_sites`) and `oxpinyin-zhuyin-capi`
-`tests/locale.rs` (`a_failed_init_leaves_lc_numeric_at_c`). The
-"Locale after" results assume no other thread changes the locale
-concurrently. `setlocale` is process-wide and not thread-safe, in the pin as
-in oxpinyin. Retaining the side effect (the 2026-10-25 UTC ruling) accepts
-that concurrency impact unchanged; no removal is proposed, so none is
-assessed. Upstream's own fix would be to copy `setlocale(LC_NUMERIC, NULL)`
-first and restore it on every path; oxpinyin changes only if libpinyin does.
+`tests/locale.rs` (`a_failed_init_leaves_lc_numeric_at_c`).
+
+The "Locale after" results assume that no other thread changes the locale
+at the same time. `setlocale` is process-wide and not thread-safe, in the
+pin and in oxpinyin. The 2026-10-25 UTC ruling retains the side effect and
+so accepts that concurrency impact unchanged. No removal is proposed, so
+none is assessed. An upstream fix would copy `setlocale(LC_NUMERIC, NULL)`
+first and restore it on every path. oxpinyin changes only if libpinyin
+does.
 
 ### G12 — file I/O
 
 `MemoryChunk` maps the file, checks the 8-byte header, the length word
 and the checksum, and reads the payload. A short or unreadable chunk is
-the pin's empty-chunk fault (rows 76 and 96); a sparse chunk is row 109.
-`unlink` belongs to `_clean_user_files` and the user-file rewrite;
+the pin's empty-chunk fault (rows 76 and 96). A sparse chunk is row 109.
+`unlink` belongs to `_clean_user_files` and the user-file rewrite.
 `fprintf` is the raw stderr channel of the same paths. The writes are
-G10. The mapping is `oxpinyin-input` `chunk::load` (the pin's `open`,
-header reads and `mmap`) with the same header checks.
+G10. oxpinyin's mapping is `oxpinyin-input` `chunk::load` (the pin's
+`open`, header reads and `mmap`), with the same header checks.
 
 ### G13 — C primitives
 
 `memset`/`memcpy`/`memmove`/`memcmp`/`strlen`/`strcmp`/`strchr` are
 ordinary byte and string operations in the pin's parsers, chunk and
-candidate code. The Rust equivalents are slices and `str`; no observable
-difference exists on valid data. The malformed NULL/unreadable cases are
+candidate code. The Rust equivalents are slices and `str`. There is no
+observable difference on valid data. The malformed NULL/unreadable cases are
 the registered class (b) rows 80 and 106.
 
 ### G14 — libm
 
-The only reachable libm call is `log`: the n-best trellis and the phrase
+The only reachable libm call is `log`. The n-best trellis and the phrase
 lookup accumulate natural logs in `gfloat`. Three of the seven sites
-(`phonetic_lookup.h:39,250`, `phrase_lookup.cpp:40`) pass a `float`, so they
-resolve to `std::log(float)` in `<cmath>`. oxpinyin uses Rust's standard
-maths (`f64::log2` in `core/src/cost.rs`, `ln` in `engine/src/phrase.rs`);
-the class (a) register is row 11. A last-bit libm difference is recorded,
-not chased.
+(`phonetic_lookup.h:39,250`, `phrase_lookup.cpp:40`) pass a `float`, so
+they resolve to `std::log(float)` in `<cmath>`. oxpinyin uses Rust's
+standard maths (`f64::log2` in `core/src/cost.rs`, `ln` in
+`engine/src/phrase.rs`). The class (a) register is row 11. A last-bit libm
+difference is recorded and not investigated further.
 
 ### G15 — punctuation
 
-Closed (#1144). `decode_puncts` walks a stored value in whole words
-(`punct_table.cpp:57-94` walks bytes; see
-[1297-punct-words](1297-punct-words.md)) and keeps each punctuation's
-stored words (`PhraseText`); `prepend_punctuations` encodes
-them with `phrase_text_bytes`, the encoder #894 and #1198 use, which is
-the `g_string_append_unichar` form (GLib 2.84.4 `gstring.c:816-888`
-copies `g_unichar_to_utf8`, `gutf8.c:546-596`). `PunctTable::punctuations`
-fails only on a failed read; an unopened table, an absent entry and a
-zero-length value answer `Ok(Vec::new())`, as the pin's
-`get_all_punctuations` answers `false` on a zero-size chunk (`:78-79`).
+Closed (#1144).
+
+- `decode_puncts` walks a stored value in whole words and keeps each
+  punctuation's stored words (`PhraseText`). The pin's
+  `punct_table.cpp:57-94` walks bytes; see
+  [1297-punct-words](1297-punct-words.md).
+- `prepend_punctuations` encodes them with `phrase_text_bytes`, the
+  encoder that #894 and #1198 use. That is the `g_string_append_unichar`
+  form (GLib 2.84.4 `gstring.c:816-888` copies `g_unichar_to_utf8`,
+  `gutf8.c:546-596`).
+- `PunctTable::punctuations` fails only on a failed read. An unopened
+  table, an absent entry and a zero-length value answer `Ok(Vec::new())`,
+  as the pin's `get_all_punctuations` answers `false` on a zero-size chunk
+  (`:78-79`).
 
 | Partition | Pin (`074a2219`) | oxpinyin | Case |
 | --- | --- | --- | --- |
@@ -437,17 +474,16 @@ zero-length value answer `Ok(Vec::new())`, as the pin's
 | Absent DBM entry, unopened table | no row | no row | — |
 
 The unterminated read is class (b), registered as
-[Unterminated punctuation value over-read](upstream-divergences.md#unterminated-punctuation-value-over-read):
-the rows match whenever the pin returns, and only the read and its
-possible fault are not reproduced. The misaligned partition is the
-language-artefact record above; the other partitions are ordinary
+[Unterminated punctuation value over-read](upstream-divergences.md#unterminated-punctuation-value-over-read).
+The rows match whenever the pin returns. Only the read and its possible
+fault are not reproduced. The misaligned partition is the
+language-artefact record above. The other partitions are ordinary
 compatibility.
 
 ### G16 and G17 — tools and dead code
 
-`tag_utility.cpp` is included by `pinyin_internal.h` but no exported
-entry calls `taglib_*`; it is used by `utils/training` and
-`utils/storage`. `table_text_parser.h` and the `load_text` methods are
+`pinyin_internal.h` includes `tag_utility.cpp`, but no exported entry
+calls `taglib_*`. `utils/training` and `utils/storage` use it. `table_text_parser.h` and the `load_text` methods are
 used only by `utils/storage/gen_binary_files.cpp`.
 `PinyinLookup2` is never instantiated; `PhraseLookup` uses
 `FacadePhraseTable3` and `FacadePhraseIndex`, not the old
@@ -462,11 +498,12 @@ other utilities under the pin's names.
 
 ## Exported C string inputs
 
-The #1279 per-parameter inventory covers all 25
-exported functions with string inputs (29 parameters), their pin conversion,
-invalid/non-scalar/NULL outcomes, prior state changes, and current Rust
-helper. It records source-derived defects and the pending session-interface
-coordination; it is not a completed verification claim.
+The #1279 per-parameter inventory covers all 25 exported functions with
+string inputs (29 parameters). For each, it records the pin conversion,
+the invalid/non-scalar/NULL outcomes, prior state changes and the current
+Rust helper. It records source-derived defects and the pending
+session-interface coordination. It is not a completed verification
+claim.
 
 ## Executable copies of external-library algorithms (2026-10-29 UTC)
 
@@ -504,14 +541,14 @@ gives the current code.
 | E | A Python transcription of libstdc++ `__lower_bound` in the contract-case tooling chose the user gram for `user-gram-unsorted-phrase-segment`. | Removed with that tooling. The case's recorded pin observations and provenance stay in [1297-gram-partition-segmentation.md](1297-gram-partition-segmentation.md). | The case's captured pin observations stay. | `user-gram-unsorted-phrase-segment` is POLICY-ACCEPTED. | — |
 
 **Item A.** Candidate lists use stable `slice::sort_by` over cached enabled
-keys and retain the dedup-only `m_freq`; predicted lists sort their rows
+keys and keep the dedup-only `m_freq`. Predicted lists sort their rows
 directly. The eight-bit pinyin span and its defined unsigned wrap remain
 contract. The maintainer decision dated 2026-10-30 retains the frequency
 comparison as `rhs.wrapping_sub(lhs) as i32`. A linear guard on each equal
-length/span group proves consistency before stable std sorting; only cyclic
-groups use defined numeric-descending fallback. λ alone does not decide
-consistency: wrapped/failed-token total updates can produce large scores at
-stock λ. All four `row58-signed-{score,duplicate}-{off,on}` cases must
+length/span group proves consistency before stable std sorting. Only
+cyclic groups use the defined numeric-descending fallback. λ alone does
+not decide consistency: wrapped/failed-token total updates can produce
+large scores at stock λ. All four `row58-signed-{score,duplicate}-{off,on}` cases must
 MATCH and are never registered as differences. The proof is in
 [1297-candidate-numeric-sort](1297-candidate-numeric-sort.md).
 
@@ -520,10 +557,10 @@ MATCH and are never registered as differences. The proof is in
 **Item B: std selection and direct node slots.** `nbest.rs` has no heap
 transcription. `Node::keep` writes physical slots directly. Beam and
 final-tail selection call the same fixed-row
-`select_top(Vec<BeamEntry>, count, nstore)` helper and comparator; the mode
-is captured, rather than adding per-facade sort bodies. S3's stable
-raw-score `tail_merge` orders the final tails, and zhuyin keeps the pin's
-raw single-slot admission.
+`select_top(Vec<BeamEntry>, count, nstore)` helper and comparator. The
+comparator captures the mode, so there are no per-facade sort bodies.
+S3's stable raw-score `tail_merge` orders the final tails. Zhuyin keeps the
+pin's raw single-slot admission.
 
 The pin was read from Git tree `074a2219c90feaf962d0d24f034514033ece5f99`:
 `src/lookup/phonetic_lookup_heap.h` blob `299ddedfa55e` and
@@ -533,9 +570,9 @@ come from `phonetic_lookup_heap.h:56-81`; the single-slot rule is
 (`phonetic_lookup.h:282-293`); successors store them at `:665,695` and
 advance to later steps at `:667,697`, after predecessor slots are final.
 
-Selection followed by sorting the retained prefix costs O(m + k log k), in
+Selection, then a sort of the retained prefix, costs O(m + k log k), in
 place over the existing batch. Heapify-and-pop costs O(m + k log m) and
-O(k) separate result storage; a measured comparison on the production
+O(k) separate result storage. A measured comparison on the production
 `BeamEntry` layout chose selection. Direct node transitions cost O(1) time
 and space.
 
@@ -596,14 +633,17 @@ and space.
 
 ## Classification on main (#1297, 2026-10-31 UTC)
 
-This is the current classification, under the maintainer rulings of
-2026-10-29 UTC (no ported external-library internals) and 2026-10-31 UTC
-(no hand-written C or C++ shims; macros such as `g_return_val_if_fail` and
-`G_STRFUNC` are not reproduced), both in
-[source-policy.md](../source-policy.md). Pin read from a `git archive` of
+This is the current classification. It follows two maintainer rulings,
+both in [source-policy.md](../source-policy.md):
+
+- 2026-10-29 UTC: no ported external-library internals.
+- 2026-10-31 UTC: no hand-written C or C++ shims; macros such as
+  `g_return_val_if_fail` and `G_STRFUNC` are not reproduced.
+
+The pin was read from a `git archive` of
 `074a2219c90feaf962d0d24f034514033ece5f99` (`src/pinyin.cpp` blob
-`f27f7cf7`, `src/zhuyin.cpp` blob `d1520c18`). Every crate under
-`crates/` was searched for GLib, glibc and libstdc++ names and for sorts,
+`f27f7cf7`, `src/zhuyin.cpp` blob `d1520c18`). The search covered every
+crate under `crates/`, for GLib, glibc and libstdc++ names and for sorts,
 searches, joins, scanners and diagnostics shaped like them.
 
 Buckets:
@@ -657,21 +697,25 @@ The table has no row 28. That row covered `oxpinyin-dictool` and `oxpinyin-datag
 **D1 — the pin's own `g_return_val_if_fail` criticals (rows 5 and 6).**
 Approved as a narrow exception to the library stderr ruling (#545). For
 both facades' `phrase_segment` and for `SubPhraseIndex::load`, oxpinyin
-keeps the pin's return values, state changes and continuation exactly,
+keeps the pin's return values, state changes and continuation exactly. It
 emits no critical and substitutes no other log call. Two observable
-differences are POLICY-ACCEPTED: the missing critical (the caller's log
-handler, and stderr under GLib's default handler) and the missing abort
-under GLib fatal-critical settings (`G_DEBUG=fatal-criticals`,
-`g_log_set_always_fatal`), where the pin aborts and oxpinyin continues.
-The second is an intentional observable difference, not exact
-compatibility. This is not a general exception for copying GLib macros,
-and it changes no other native GLib call and no class (c) ruling.
+differences are POLICY-ACCEPTED:
+
+- the missing critical (to the caller's log handler, and to stderr under
+  GLib's default handler);
+- the missing abort under GLib fatal-critical settings
+  (`G_DEBUG=fatal-criticals`, `g_log_set_always_fatal`), where the pin
+  aborts and oxpinyin continues. This is an intentional observable
+  difference, not exact compatibility.
+
+This is not a general exception for copying GLib macros. It changes no
+other native GLib call and no class (c) ruling.
 
 **D2 — `g_build_filename` (row 18).** External-I/O stage 3 implements it
-as the pin's call. It keeps the pin's path behaviour, including a file name
-that begins with a separator, which stays beneath its directory (policy row
-78); `std::path::Path::join` is not a drop-in replacement, because an
-absolute name replaces the directory there.
+as the pin's call. It keeps the pin's path behaviour. This includes a file
+name that begins with a separator, which stays beneath its directory
+(policy row 78). `std::path::Path::join` is not a drop-in replacement,
+because there an absolute name replaces the directory.
 
 ### Result
 
@@ -689,8 +733,8 @@ oxpinyin's floating-point sites call `std` directly: `core/src/cost.rs`
 (`f64::log2`), `engine/src/nbest.rs` and `engine/src/phrase.rs` (`ln`),
 and `training/src/eval/decode.rs` (`ln`). The scaled candidate frequency in
 `session/lookup.rs` `amplified_frequency_with_bigram` is `f32` arithmetic
-stored with `as u32`; its saturation on out-of-range scores is class (b)
-(#1416). None is a C-maths imitation. A last-bit difference from the pin's
+stored with `as u32`. Its saturation on out-of-range scores is class (b)
+(#1416). None of these is a C-maths imitation. A last-bit difference from the pin's
 `gfloat` `log` is class (a), row 11.
 
 ## Negative coverage

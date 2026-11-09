@@ -3,12 +3,12 @@
 - **Status:** accepted under the maintainer decision dated 2026-10-30 UTC.
 - **Disposition:** the four row58 cases must MATCH and are unregistered.
   Only cyclic frequency groups can differ through this sorting change.
-  Existing λ observations remain under #1378; their selection
+  Existing λ observations stay under #1378. Their selection
   differences are independent of candidate sorting.
 - **Policy limb:** the frequency comparator is libpinyin's product rule,
-  reproduced with Rust's defined wrapping arithmetic. Only std sorting's
-  violated order precondition admits a fallback difference. GLib's internal
-  sorting algorithm is not transcribed.
+  reproduced with Rust's defined wrapping arithmetic. Only a violated order
+  precondition of std sorting admits a fallback difference. oxpinyin does
+  not transcribe GLib's internal sorting algorithm.
 - **Pin:** libpinyin 2.11.92 at `074a2219c90feaf962d0d24f034514033ece5f99`.
   Verified git blobs: `src/pinyin.cpp`
   `f27f7cf776724ead8d55e14b4af390e790054a91`, `src/zhuyin.cpp`
@@ -16,19 +16,21 @@
   time of the record (recorded evidence). Both facades; the rule applies to
   every backend.
 - **Pin derivation:** `src/pinyin.cpp:1678-1709` compares enabled phrase
-  length, pinyin span and frequency, descending, and returns zero after
+  length, pinyin span and frequency, descending. It returns zero after
   enabled keys tie. `:1692-1694` prescribes the unsigned eight-bit span;
   this width and wrap stay. `:1701-1705` subtracts two `guint32` frequencies
-  before conversion to `gint`, reversing the numeric sign for gaps above
-  2³¹ (and failing antisymmetry at exactly 2³¹). `:2286,2440-2445` use
+  before conversion to `gint`. This reverses the numeric sign for gaps above
+  2³¹, and fails antisymmetry at exactly 2³¹. `:2286,2440-2445` use
   stable GLib array sorting. `src/zhuyin.cpp:1129-1144,1529,1610` always
   uses phrase length then frequency. Stability is the documented contract.
-- **Rust counterpart:** `candidate::rank_by_frequency` stably groups rows
-  by descending enabled `(phrase_length, pinyin_span)`, checks each group's
-  frequency relation, then uses stable std sorting with
-  `rhs.wrapping_sub(lhs) as i32` on consistent groups and stable numeric
-  descending frequency on cyclic groups. One comparator closure serves both
-  modes; its captured consistency flag selects the comparison. Both
+- **Rust counterpart:** `candidate::rank_by_frequency` does these steps:
+  1. It stably groups rows by descending enabled `(phrase_length, pinyin_span)`.
+  2. It checks the frequency relation of each group.
+  3. It uses stable std sorting with `rhs.wrapping_sub(lhs) as i32` on
+     consistent groups, and stable numeric descending frequency on cyclic groups.
+
+  One comparator closure serves both modes. Its captured consistency flag
+  selects the comparison. Both
   `session::rank_candidates` and the C API's `predict::sort_predicted` call
   it. `m_freq` stays available to dedup but never breaks a sort tie.
   `RankKey::Ord` is absent.
@@ -36,23 +38,23 @@
   collection → stored unigram/bigram frequency calculation → enabled key
   construction → stable sort → LONGER/NBEST insertion and existing text
   dedup → candidate getters. Prediction enters through
-  `pinyin_guess_predicted_candidates`, collects bigram/prefix rows, computes
-  their phrase lengths and frequencies, sorts, then deduplicates.
+  `pinyin_guess_predicted_candidates`. It collects bigram/prefix rows,
+  computes their phrase lengths and frequencies, sorts, then deduplicates.
 - **Backward trace:** after-cursor and before-cursor lists share the same
-  candidate sorter. Zhuyin fixes length/frequency dimensions regardless of
-  the pinyin sort word; prediction enables length/frequency only. All DBM
-  backends feed these same routines. Tails use their existing S3 comparator;
-  beam, node and final-tail selection are outside item A. Scoring and the
+  candidate sorter. Zhuyin fixes the length/frequency dimensions, whatever
+  the pinyin sort word is. Prediction enables length/frequency only. All DBM
+  backends feed these same routines. Tails use their existing S3 comparator.
+  Beam, node and final-tail selection are outside item A. Scoring and the
   conversion that produces `m_freq` are unchanged.
-- **Input partition and difference:** wrapping comparison is preserved
+- **Input partition and difference:** the wrapping comparison stays
   whenever each enabled length/span tie group fits in an open circular
-  semicircle, including groups crossing zero with large numeric gaps.
-  Only groups failing that condition use the numeric fallback. With consistent
-  unigram/total ratios and λ in `[0, 1]`, scaled frequencies remain below
-  2²⁴ (`src/pinyin.cpp:1820-1824`). λ alone is insufficient: the pin's
+  semicircle. This includes groups that cross zero with large numeric gaps.
+  Only groups that fail that condition use the numeric fallback. With consistent
+  unigram/total ratios and λ in `[0, 1]`, scaled frequencies stay below
+  2²⁴ (`src/pinyin.cpp:1820-1824`). λ alone is not sufficient. The pin's
   defined total-counter wrap and failed-token update can leave a unigram
-  larger than its total; the row58 diagnosis below demonstrates that at
-  default λ. Those row58 groups are consistent and must retain pin order.
+  larger than its total. The row58 diagnosis below shows this at
+  default λ. Those row58 groups are consistent and must keep the pin order.
   The guard proof below includes antipodal pairs and longer cycles.
   Empty/singleton lists and disabled dimensions keep their existing results.
   NaN/∞ scores convert to zero candidate frequencies and introduce no
@@ -62,15 +64,15 @@
   diagnostics, scoring, dedup winners and physical trellis slots are
   unchanged. Only cyclic groups may use a different candidate order.
 - **Rulings:** the maintainer decision dated 2026-10-30 governs candidate
-  frequency. The no-ported-internals rule requires stable std sorting; the
-  contract-not-implementation rule retains the eight-bit span.
+  frequency. The no-ported-internals rule requires stable std sorting. The
+  contract-not-implementation rule keeps the eight-bit span.
 
 ## Consistency proof and guard
 
 Let `H = 2^31`, and let `compare(a,b)` be the sign of
 `b.wrapping_sub(a) as i32`. Equal frequencies compare equal. Frequencies
-separated by exactly H compare Less in both directions, violating
-antisymmetry; the guard rejects such pairs as a two-way cycle.
+separated by exactly H compare Less in both directions, which violates
+antisymmetry. The guard rejects such pairs as a two-way cycle.
 
 For non-antipodal distinct frequencies, the relation is a circular
 tournament. It is consistent on a finite list exactly when there is a
@@ -106,12 +108,16 @@ auxiliary storage, with no extra guard allocation. No cyclic comparator
 is ever passed to std sorting. This is a domain guard around the standard
 API, not a port of GLib internals.
 
-Tests compare the guard with independent antisymmetry/transitivity checks
-over boundary triples; include empty lists, ties, wraparound, antipodal
-pairs and three-way cycles; and prove that leading length/span dimensions
-isolate groups, that cyclic fallback is deterministic, and that stable
-ties and aligned dedup frequencies survive. Prediction's test expects
-wrapping order across zero.
+The tests do these things:
+
+- They compare the guard with independent antisymmetry/transitivity checks
+  over boundary triples.
+- They include empty lists, ties, wraparound, antipodal pairs and three-way cycles.
+- They prove that leading length/span dimensions isolate groups.
+- They prove that cyclic fallback is deterministic.
+- They prove that stable ties and aligned dedup frequencies survive.
+
+The prediction test expects wrapping order across zero.
 
 ## Scoped correction gate
 
@@ -130,14 +136,14 @@ Of the registered λ views, only
 sorter. The first two have frequency groups that fit across zero inside an
 interval narrower than 2³¹, so they keep wrapping order. Their accepted
 differences are the independent #1378 sentence/selection differences. At
-λ=million, cyclic frequency groups use the defined fallback, while
-consistent length groups keep the wrapping order. The pin's results are
+λ=million, cyclic frequency groups use the defined fallback.
+Consistent length groups keep the wrapping order. The pin's results are
 unchanged. The three cases stay POLICY-ACCEPTED; no row58 case is
 registered as a difference.
 
-The wrapping mechanism is reached at ordinary λ too: the row58 fixtures
-retain λ `0.312699`, import count 1,431,655,631 (unigram 4,294,966,893), then
-use the pin's defined wrapping/failed-token update to make total 20,000,000
+Ordinary λ also reaches the wrapping mechanism. The row58 fixtures
+keep λ `0.312699` and import count 1,431,655,631 (unigram 4,294,966,893).
+They then use the pin's defined wrapping/failed-token update to make total 20,000,000
 (`src/storage/phrase_index.h:628-634` at the pin). The f32 score is
 2,476,262,656, exceeding `gint::MAX` while the denominator does not.
 These consistent groups must use wrapping order; the cases keep
@@ -146,18 +152,18 @@ These consistent groups must use wrapping order; the cases keep
 Named mutation **M1297-frequency-ascending** changes only the guarded,
 consistent-group sort to ascending numeric frequency. On BDB all three
 `glib-sort-candidates-{pinyin,zhuyin}` / `glib-sort-predicted` controls
-DIFFER. Restoring the source returns all three to MATCH. The guard stays
-enabled and std never receives a cyclic comparison during the mutation.
+DIFFER. When the source is restored, all three return to MATCH. During the
+mutation, the guard stays enabled and std never receives a cyclic comparison.
 
 ## Representation choice
 
 Cached `(RankKey, original_index)` rows keep one compact per-call buffer
-and the frequency keys that text dedup needs. Candidate rows are permuted by
-cycle swaps after sorting. Sorting bare indices needs a separate key buffer;
-sorting decorated rows moves a larger element. Prediction needs no post-sort
-key array, so its owned rows sort directly using their cheap stored fields.
-The two row types stay separate: a shared representation brings back the
-index-to-row work that measured slower. The guard adds no allocation. Both
+and the frequency keys that text dedup needs. After sorting, cycle swaps
+permute the candidate rows. A sort of bare indices needs a separate key buffer.
+A sort of decorated rows moves a larger element. Prediction needs no post-sort
+key array, so its owned rows sort directly on their cheap stored fields.
+The two row types stay separate. A shared representation brings back the
+index-to-row work, which measured slower. The guard adds no allocation. Both
 paths remain O(n log n) worst-case time and O(n) auxiliary storage, with
 O(n) guarding.
 

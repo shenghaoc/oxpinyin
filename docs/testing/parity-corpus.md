@@ -2,38 +2,41 @@
 
 Date: 2026-08-09 · Source tier: Architect derivation; human freeze pending.
 
-This finding freezes the sampling methodology, byte domain and reproducibility
-contract for the Stage 1 parity corpus. The corpus is the input set of the
-`candidate_surface` test.
+This finding freezes the sampling method, the byte domain and the reproducibility
+contract of the Stage 1 parity corpus. The corpus was the input set of the
+`candidate_surface` test. Its input files under `tests/parity/corpus/inputs/`
+are retired (#1764): the test now iterates the inputs that
+`fixtures/w4/oracle-candidate-structure.txt` holds. The generator is not in the tree.
+The generator, layout, strata and digests below are recorded evidence.
 
-The corpus holds **inputs only**. The pin's outputs are frozen captures
-under `fixtures/w4/`, not part of the corpus.
+The corpus holds **inputs only**. The outputs of the pin are frozen captures
+under `fixtures/w4/`, and they are not part of the corpus.
 
 ## Why generated rather than harvested
 
 Parity is measured over *keystroke sequences*, not over Chinese text. A
-generated corpus is preferable to a harvested one here for three reasons:
+generated corpus is better here than a harvested one, for three reasons:
 
-- **Redistribution.** Harvested Chinese text carries licensing weight the
-  project does not need. Generated pinyin strings derive from an inventory the
+- **Redistribution.** Harvested Chinese text has licensing obligations that the
+  project does not need. Generated pinyin strings come from an inventory that the
   repository already holds.
 - **Coverage control.** Adversarial shapes (partial tails, junk positions,
-  apostrophe misuse) are rare in natural text but are exactly where a parser
-  diverges. Stratified generation guarantees a floor on each.
-- **Reproducibility.** A committed generator plus a fixed seed is auditable. A
-  harvest is a snapshot no reviewer can re-derive.
+  apostrophe misuse) are rare in natural text, but a parser
+  diverges on exactly these shapes. Stratified generation guarantees a minimum count of each.
+- **Reproducibility.** A reviewer can audit a generator and a fixed seed. A
+  harvest is a snapshot that no reviewer can derive again.
 
-The trade-off is that inter-syllable frequency does not match real typing. That
-matters for *ranking* work (W4 onward) and not for the parse-level comparison
+The trade-off is that the inter-syllable frequency does not match real typing. That
+matters for *ranking* work (W4 onward), and not for the parse-level comparison that
 W2-T3 performs. When ranking parity is measured, an additional
-frequency-weighted family should be derived from F-B; that is out of scope here
-and is recorded as a known limitation rather than silently ignored.
+frequency-weighted family should be derived from F-B. That family is out of scope here.
+This finding records it as a known limitation.
 
 ## Source inventory
 
 Syllables come from `oxpinyin_core::FULL_PINYIN_SYLLABLES`: the 405 active
-complete syllables frozen by `docs/findings/parser-spec.md`, in their source
-numeric-ID order. The generator read that constant rather than restating it, so
+complete syllables that `docs/findings/parser-spec.md` freezes, in their source
+numeric-ID order. The generator read that constant and did not copy it, so
 the corpus could not drift from the frozen inventory.
 
 ## Byte domain
@@ -41,7 +44,7 @@ the corpus could not drift from the frozen inventory.
 Every emitted line is printable ASCII in `0x20..=0x7e`, with no TAB, CR, LF or
 NUL.
 
-The exclusions are deliberate and each has coverage elsewhere:
+The exclusions are deliberate, and other tests cover each of them:
 
 | Excluded | Why | Where it is covered |
 |---|---|---|
@@ -49,49 +52,49 @@ The exclusions are deliberate and each has coverage elsewhere:
 | CR, LF, TAB | Would break the one-record-per-line corpus and log formats | fuzz target |
 | Non-ASCII and malformed UTF-8 | Not representable in a line-oriented ASCII corpus | parser proptest and `cargo-fuzz` (F-E-12) |
 
-So the corpus is not the totality gate. Totality over arbitrary bytes is
-already proven by the parser's property and fuzz tiers; the corpus exists to
-measure *parity*, and it stays in the domain both engines can represent.
+The corpus is therefore not the totality gate. The property and fuzz tiers of the parser
+already prove totality over arbitrary bytes. The corpus exists to
+measure *parity*, and it stays in the domain that both engines can represent.
 
 ## Result-bound exclusion
 
-`docs/findings/parser-spec.md` bounds the materialised path set at
-`MAX_PARSE_RESULTS` (4,096) and returns `ParseError::TooManyAlternatives`
-beyond it. The generator excludes inputs that would cross that bound, in two
+`docs/findings/parser-spec.md` limits the materialised path set to
+`MAX_PARSE_RESULTS` (4,096), and returns `ParseError::TooManyAlternatives`
+above it. The generator excludes inputs that would cross that limit, in two
 layers:
 
-1. structurally, by capping apostrophe-separated groups per utterance at 8;
-2. by assertion, rejecting any candidate input for which the frozen parser does
+1. structurally, by a limit of 8 apostrophe-separated groups per utterance;
+2. by assertion, by rejecting any candidate input for which the frozen parser does
    not return `Ok`.
 
 Resource-bound behaviour is therefore *not* a parity question in this corpus.
-It is already pinned exactly by the parser's own
-`cartesian_path_limit_is_exact` test, which asserts the boundary at 12 and 13
-two-way groups. Nothing is lost by keeping it out of the differential run,
-and including it would otherwise show up as divergence noise unrelated to
+The parser's own
+`cartesian_path_limit_is_exact` test already pins it exactly: it asserts the boundary at 12 and 13
+two-way groups. The exclusion from the differential run loses nothing.
+If the corpus included these inputs, they would show as divergence noise unrelated to
 segmentation.
 
 ## Determinism
 
-The generator uses SplitMix64 seeded with a constant, implemented inline. No
-dependency is added, and no system entropy, clock, hash-map iteration order,
-filesystem order or thread scheduling is consulted. Output is a pure function
+The generator uses SplitMix64 seeded with a constant, implemented inline. It adds no
+dependency. It does not use system entropy, the clock, hash-map iteration order,
+filesystem order or thread scheduling. The output is a pure function
 of the frozen inventory and the seed.
 
 ```text
 seed = 0x5061_7269_7479_3031   // "Parity01"
 ```
 
-SplitMix64 was chosen because it is a dozen lines, has no state-initialisation
-subtleties, and is trivially portable — the corpus must regenerate identically
-on every supported host, not merely on Linux.
+SplitMix64 was chosen because it is about twelve lines, has no state-initialisation
+subtleties, and is portable. The corpus must regenerate identically
+on every supported host, not only on Linux.
 
 Indices are drawn with rejection sampling against the largest multiple of the
-range below `2^64`, so no modulo bias skews the syllable distribution.
+range below `2^64`, so no modulo bias changes the syllable distribution.
 
 ## Strata
 
-Counts are fixed, not sampled, so the corpus size is stable across
+The counts are fixed, not sampled, so the corpus size is stable across
 regenerations.
 
 | File | Stratum | Count | Shape |
@@ -107,16 +110,18 @@ regenerations.
 | `09-edge.txt` | Boundary shapes | 60 | empty, single letters, apostrophe misuse, long junk |
 | **Total** | | **10,465** | |
 
-Stratum 01 is exhaustive rather than sampled: every syllable must appear at
-least once, and 405 lines is cheap. Stratum 07 is seeded from the syllables
-that `parser-path-set.md` records as admitting more than one complete
-segmentation, which is where tie-swap divergences concentrate. Stratum 09 mirrors
-the F-A edge cases so the corpus and the curated fixture agree on shape.
+- Stratum 01 is exhaustive, not sampled: every syllable must appear at
+  least once, and 405 lines are cheap.
+- Stratum 07 starts from the syllables
+  that `parser-path-set.md` records as admitting more than one complete
+  segmentation. Tie-swap divergences concentrate there.
+- Stratum 09 mirrors
+  the F-A edge cases, so that the corpus and the curated fixture agree on shape.
 
-Duplicates are removed within each stratum, preserving first occurrence, and
-each stratum is emitted in generation order. Across strata a line may repeat;
-that is intentional, because a short utterance may legitimately also be a
-syllable pair and de-duplicating globally would make counts depend on draw
+Duplicates are removed within each stratum; the first occurrence stays. Each
+stratum is emitted in generation order. A line may repeat across strata.
+This is intentional: a short utterance may also be a
+syllable pair, and global de-duplication would make the counts depend on the draw
 order.
 
 ## Layout and format
@@ -127,18 +132,18 @@ tests/parity/corpus/inputs/01-single-syllable.txt
 tests/parity/corpus/inputs/09-edge.txt
 ```
 
-One input per LF-terminated line, no trailing blank line, no comments, no
-escaping. Because the byte domain excludes CR, LF and NUL, a line *is* its
-input and no decoding step can introduce ambiguity.
+Each file has one input per LF-terminated line, no trailing blank line, no comments and no
+escaping. The byte domain excludes CR, LF and NUL, so a line *is* its
+input and no decoding step can add ambiguity.
 
-The empty input in stratum 09 is the sole case a line-oriented file cannot
-express, and it is represented by the single empty line at the head of
-`09-edge.txt`. Readers must therefore preserve an empty first line rather than
-skipping blanks.
+The empty input in stratum 09 is the only case that a line-oriented file cannot
+express. The single empty line at the start of
+`09-edge.txt` represents it. Readers must therefore keep an empty first line and not
+skip blank lines.
 
 ## Frozen output
 
-Generated 2026-08-09 with the committed generator. Running it twice produced
+The generator produced these files on 2026-08-09. Two runs produced
 byte-identical files, which is the W2-T2 acceptance criterion.
 
 | File | Inputs | SHA-256 |
@@ -156,13 +161,12 @@ byte-identical files, which is the W2-T2 acceptance criterion.
 
 ## Reproducibility contract
 
-The corpus is frozen input files. It has no generator in the tree, and the
+The corpus was a set of frozen input files. It has no generator in the tree, and the
 digests above are the byte record.
-`crates/oxpinyin-runtime/tests/candidate_surface.rs` reads every file in the
-directory, checks the count of distinct inputs and compares the candidates of
-each input with the frozen pin capture. It does not check the per-stratum line
-counts or find a duplicate line; the digests above are the byte record.
+`crates/oxpinyin-runtime/tests/candidate_surface.rs` reads no corpus file.
+It reads the inputs from `fixtures/w4/oracle-candidate-structure.txt`, checks their count and compares the candidates of
+each input with the frozen pin capture.
 
-A corpus change is a deliberate, reviewed act: it moves the `candidate_surface`
-counts and needs a new pin capture, so it belongs in its own commit alongside the edited files and
+A change to the retained inputs is a deliberate, reviewed act. It moves the `candidate_surface`
+counts and needs a new pin capture. It therefore belongs in its own commit, together with the edited capture and
 the reason for the change.

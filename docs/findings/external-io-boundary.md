@@ -1,14 +1,23 @@
 # External I/O boundary
 
 Date: 2026-10-28 UTC · Status: **maintainer ruling and implementation
-plan; stage 1 implemented (2026-10-28 UTC), stage 2 implemented (2026-11-03 UTC, #1576), stage 4 implemented (2026-10-30 UTC, #1437), stage 5 in progress; stage 2's save calls moved in stage 3 (2026-11-01 UTC)**. The pin is libpinyin
-`074a2219c90feaf962d0d24f034514033ece5f99`; oxpinyin source is main
+plan.** Stage state:
+
+- stage 1 implemented (2026-10-28 UTC);
+- stage 2 implemented (2026-11-03 UTC, #1576); its save calls moved in
+  stage 3 (2026-11-01 UTC);
+- stage 4 implemented (2026-10-30 UTC, #1437);
+- stage 5 in progress.
+
+This record states the external I/O ruling, the per-call inventory and
+the staged implementation. The pin is libpinyin
+`074a2219c90feaf962d0d24f034514033ece5f99`. oxpinyin source is main
 `a52461cc297a4e67b07406167e6581e0e9f211fa`. The pin source read was the
 clean `/tmp/libpinyin-src` checkout at that commit. Pin citations below
-are paths and lines in [that tree](https://github.com/libpinyin/libpinyin/tree/074a2219c90feaf962d0d24f034514033ece5f99);
+are paths and lines in [that tree](https://github.com/libpinyin/libpinyin/tree/074a2219c90feaf962d0d24f034514033ece5f99).
 oxpinyin citations name files and items, not line numbers. The source
-comparison used Rust 1.97.1, GLib 2.84.4 and glibc 2.41 where specified;
-those versions do not establish the implementation of every native host.
+comparison used Rust 1.97.1, GLib 2.84.4 and glibc 2.41 where specified.
+Those versions do not establish the implementation of every native host.
 No oracle, probe or differential was run for this record.
 
 ## Ruling and scope
@@ -21,38 +30,44 @@ file paths are the interface. The binaries live in nonshipping
 
 Maintainer ruling, 2026-10-28 UTC:
 
-1. Every call crossing the program's edge, in the library and utilities,
-   on input and output, uses the pin's exact call. Use host ISO C/POSIX
-   calls, GLib calls where the pin uses GLib, and (since the 2026-10-31
-   UTC ruling in item 5) Rust `std::io` under the C++ contract for the
-   pin's C++ streams. Rust std otherwise is allowed only when source for both
-   implementations proves identical observable results for every
-   input. NOT EQUIVALENT and UNSETTLED both require the pin call.
+1. Every call that crosses the program's edge, in the library and
+   utilities, on input and output, uses the pin's exact call. Use:
+   - host ISO C/POSIX calls;
+   - GLib calls where the pin uses GLib;
+   - Rust `std::io` under the C++ contract for the pin's C++ streams
+     (the 2026-10-31 UTC ruling in item 5).
+
+   Otherwise, Rust std is allowed only when the source of both
+   implementations proves identical observable results for every input.
+   NOT EQUIVALENT and UNSETTLED both require the pin call.
 2. The tools are drop-in replacements for the pin's utilities: binary
    names, options, help, messages, inputs and outputs. K-mixture working
    models use the pin's backend DBM through `oxpinyin-store`.
 3. `scripts2/` Python build generators are out of scope: they are build
    steps, not installed tools. The utility list below includes the pin's
    `noinst_PROGRAMS` as well as `bin_PROGRAMS`, per the tool ruling.
-4. Same call is not same defect. The existing class (b) records for
-   undefined reads stand, including `1297-punct-words`; the pin's asserts
-   and aborts are reproduced as aborts. Policy row 39 (`LC_NUMERIC`) stands. Row 109's
-   mapping call is active; its release follows the later external API misuse
-   ruling below.
-5. **Amended 2026-11-02 UTC:** library bindings and permitted semantic
+4. The same call is not the same defect. The existing class (b) records
+   for undefined reads stand, including `1297-punct-words`. The pin's
+   asserts and aborts are reproduced as aborts. Policy row 39
+   (`LC_NUMERIC`) stands. Row 109's mapping call is active. Its release
+   follows the later external API misuse ruling below.
+5. **Ruling of 2026-11-02 UTC:** library bindings and permitted semantic
    adapters follow the [Rust/C++ interoperability ruling](compatibility-policy.md#rust-cpp-interoperability).
-   The 2026-10-31 UTC C-library and macro rules remain: C library calls go through the `libc` crate (approved for
-   `oxpinyin-input`) or `extern "C"` declarations, GLib calls through the
-   workspace's `glib-sys`, and C++ streams through Rust `std::io` under the
-   C++ contract. Only a function neither crate binds is declared by hand.
-   Macros (`assert`, `g_return_val_if_fail`, `G_STRFUNC`) are not
-   reproduced: their checks are plain Rust and their text is not imitated,
-   recorded as a POLICY-ACCEPTED language artefact
-   ([eio-tool-check-messages](eio-tool-check-messages.md)). The tools
-   follow it, and so do the library's stage 1 and 4 calls:
-   The earlier C config and diagnostic shims are gone,
-   their calls made through `libc` in `native.rs`. Backend binding choices
-   and the frozen Kyoto Cabinet contract are governed by the interoperability ruling.
+   The 2026-10-31 UTC C-library and macro rules remain:
+   - C library calls go through the `libc` crate (approved for
+     `oxpinyin-input`) or `extern "C"` declarations.
+   - GLib calls go through the workspace's `glib-sys`.
+   - C++ streams go through Rust `std::io` under the C++ contract.
+   - Only a function that neither crate binds is declared by hand.
+   - Macros (`assert`, `g_return_val_if_fail`, `G_STRFUNC`) are not
+     reproduced. Their checks are plain Rust, and their text is not
+     imitated. This is recorded as a POLICY-ACCEPTED language artefact
+     ([eio-tool-check-messages](eio-tool-check-messages.md)).
+
+   The tools follow this rule, and so do the library's stage 1 and 4
+   calls through `libc` in `oxpinyin-input`'s `native.rs`. The
+   interoperability ruling governs backend binding choices and the frozen
+   Kyoto Cabinet contract.
 6. A new bidirectional `oxpinyin-input` crate owns these calls in scoped
    unsafe modules with `// SAFETY:` comments and safe typed functions.
    `oxpinyin-data` becomes `forbid(unsafe_code)` after extraction. The C
@@ -61,26 +76,29 @@ Maintainer ruling, 2026-10-28 UTC:
 The ruling replaces #1304's language-artefact treatment **for external
 I/O**. It does not change the remaining internal language-artefact
 policy, class (a) maths, class (b), or Rust-interface freedom. C API
-arguments and marshalling stay in the C adapters. DBM records and the
-backend calls that obtain and persist them stay in `oxpinyin-store`;
-decoding their contents remains in the owning data/domain layer.
+arguments and marshalling stay in the C adapters. DBM records, and the
+backend calls that obtain and persist them, stay in `oxpinyin-store`.
+Decoding their contents stays in the owning data/domain layer.
 
 **Implementation must not start until the last #1175 extraction has
-landed.** That prerequisite was met when #1374 merged (main `410c9ca5`).
-Stage 1 then created the crate and changed the case markers its records
-own; the inventory below keeps the source comparison as it was made and
-notes where stage 1 now makes the pin's call.
+landed.** #1374 met that prerequisite (main `410c9ca5`). The inventory
+below keeps the source comparison as it was made, and notes where stage 1
+makes the pin's call.
 
 ## Stage 2 mapping preparation
 
 Member 1 prepares `MappingSource`, `PendingMapping` and `Mapping` in
-`oxpinyin-input/src/chunk.rs`. The source opens with libc, seeks end then
-start, and exposes individual four-byte reads. Consuming it makes exactly
-one whole-file writable private mapping. The data caller interprets
-and validates the header and checksum while the pending owner keeps the
-descriptor open. Rejecting it drops the mapping before the descriptor;
-`finish` closes the descriptor and returns the sole mapping owner.
-Reads borrow that owner; writes require its exclusive borrow.
+`oxpinyin-input/src/chunk.rs`:
+
+- The source opens with libc, seeks end then start, and exposes
+  individual four-byte reads.
+- Consuming the source makes exactly one whole-file writable private
+  mapping.
+- The data caller interprets and validates the header and checksum while
+  the pending owner keeps the descriptor open.
+- Rejecting the pending mapping drops the mapping before the descriptor.
+  `finish` closes the descriptor and returns the sole mapping owner.
+- Reads borrow that owner. Writes require its exclusive borrow.
 
 The pin sites are `src/include/memory_chunk.h:475-524`; callers are
 `src/pinyin.cpp:250-260,284-294,952-959,1260-1268` and
@@ -107,14 +125,14 @@ a time, and stops at the first fault (rows 76, 91, 92, 96, 97, 108). The walk's
 the merge are a header and MODIFYs, so `ShortAdd` cannot occur there and a
 mismatch only ends a merge. No later library is opened after a fault.
 
-The argument below is the historical source-derived proposal; it is not a
-measurement. The initial B implementation eagerly stored `present: Vec<bool>`,
-`unigrams: Vec<u32>` and `readable: Vec<bool>`. Rust `Vec<bool>` uses one
-byte per element: their logical storage was `6S` bytes plus allocation
-overhead, not `4S` plus two packed bitmaps.
+The complexity argument below is a source-derived proposal, kept as the
+record. It is not a measurement. The eager B form stored
+`present: Vec<bool>`, `unigrams: Vec<u32>` and `readable: Vec<bool>`. Rust
+`Vec<bool>` uses one byte per element, so that logical storage was `6S`
+bytes plus allocation overhead, not `4S` plus two packed bitmaps.
 
-Member 4 removed `LibraryHistory`'s first-write scan and its full presence
-bitmap and unigram array. A journal-addressed slot now saves only its offset,
+`LibraryHistory` has no first-write scan and no full presence bitmap or
+unigram array (member 4). A journal-addressed slot saves only its offset,
 readability and unigram before that slot's first mutation. The sparse entries
 are accompanied by the loaded offset array's slot count: every later slot has
 an explicitly absent original even if the live array grows during an import.
@@ -416,7 +434,7 @@ Maintainer ruling recorded 2026-11-01 UTC (`date -u`).
 
 **Maintainer ruling: external API misuse.** Where the pin calls an external library or system API incorrectly, by passing an argument that contradicts the pin's own state or the API's documented use, oxpinyin uses the API correctly and does not reproduce the consequence of the misuse. Each such case is recorded with its pin citation and its affected cases marked POLICY-ACCEPTED. This covers external calls only. Defects in the pin's own logic are still reproduced bug for bug unless separately ruled.
 
-**First application, mapping lifetime (row 109).** `MemoryChunk::mmap` maps `file_size` bytes but does not keep that length. `freemem` (`src/include/memory_chunk.h:72-78` at `074a2219`) passes `munmap` a length recomputed from the chunk, `header + capacity()`, which is short of the mapping when `guint32 data_len = file_size - header` wraps. A partial `munmap` is a valid call. The misuse is the pin's: it passes a length that contradicts the mapping it made, so the rest of that mapping is never released, which is a lifetime defect. oxpinyin uses the memmap2 crate, whose `Drop` releases exactly what was mapped. For every file whose size passes the pin's length check without wrapping, this is the pin's own `munmap(base, file_size)`. No `ManuallyDrop`, hand-written `libc::munmap`, or other means of leaving part of a mapping behind.
+**First application, mapping lifetime (row 109).** `MemoryChunk::mmap` maps `file_size` bytes but does not keep that length. `freemem` (`src/include/memory_chunk.h:72-78` at `074a2219`) passes `munmap` a length recomputed from the chunk, `header + capacity()`. That length is short of the mapping when `guint32 data_len = file_size - header` wraps. A partial `munmap` is a valid call. The misuse is the pin's: it passes a length that contradicts the mapping it made. So the rest of that mapping is never released, which is a lifetime defect. oxpinyin uses the memmap2 crate, whose `Drop` releases exactly what was mapped. For every file whose size passes the pin's length check without wrapping, this is the pin's own `munmap(base, file_size)`. oxpinyin uses no `ManuallyDrop`, hand-written `libc::munmap` or other means of leaving part of a mapping behind.
 
 ## Stage 1 rulings
 
@@ -430,8 +448,8 @@ Maintainer rulings, 2026-10-28 UTC, recorded 2026-10-28 17:57 UTC
   calculation takes over on overflow. A finite pin score never becomes
   `UNKNOWN_COST` or a missing step because `u128` overflowed. Tested with
   `5e-1`, `1e-30` and the smallest positive `f32` in a nonzero bigram
-  context. **Retired from real-table sentence and phrase scoring by
-  #1406:** these paths use the scanned `f32` directly. The pre-frequency
+  context. **Real-table sentence and phrase scoring does not use this
+  routing (#1406):** these paths use the scanned `f32` directly. The pre-frequency
   fallback scorer still uses the rational routing and overflow fallback;
   #1378 PR C retains them to preserve that scorer's behavior. See
   the reachability inventory.
@@ -467,9 +485,9 @@ clone and verified against that commit.
 
 The host C runtime therefore writes LF on Linux/macOS and CRLF on
 Windows, where text-mode input translates CRLF back to LF. A Windows
-build of the pin follows the same text-mode round trip. The boundary
-keeps the pin's `"w"` and `"r"` calls under the 2026-10-28 external-I/O
-ruling, now as `libc::fopen` with the same mode strings; it does not
+build of the pin follows the same text-mode round trip. Under the
+2026-10-28 external-I/O ruling, the boundary keeps the pin's `"w"` and
+`"r"` calls, as `libc::fopen` with the same mode strings. It does not
 force binary mode or normalize the written bytes.
 `user_files::tests::user_conf_round_trips_and_conforms` and
 `config::tests::the_writer_prints_the_four_lines` assert the exact
@@ -513,10 +531,9 @@ the inspected sources, not a newly executed result.
 The pin has no direct `sscanf`, `fread`, `fwrite`, `getenv`, `g_getenv`,
 `strto*`, `truncate`, or `ftruncate` call in the scoped `src/` and
 `utils/` source. It calls `g_ascii_strtoull` directly. Called libraries
-can of course make additional calls internally. This is an inventory of
-the pin's explicit calls and the identified library effects, not a claim
-that all transitive runtime/environment reads of every dependency have
-been proved. Cwd, file type and permissions, umask, descriptor state,
+can make more calls internally. This is an inventory of the pin's explicit
+calls and the identified library effects. It does not claim proof of all
+transitive runtime/environment reads of every dependency. Cwd, file type and permissions, umask, descriptor state,
 signal interruption, locale and native library versions affect the calls.
 
 ## Input inventory
@@ -687,45 +704,46 @@ oxpinyin-input/
 
 `scan_system_config` uses the actual ordered `fopen`/`fscanf` stream and
 returns the raw `f32` lambda. The training loader and
-`lm::set_lambda_from_table_conf` must share it. The current line-only
-rational reader cannot be the pin scanner: nonfinite and out-of-range
-values need their actual `f32`, not a fallback when conversion to the
-current rational `Lambda` fails. `scan_user_config` and
+`lm::set_lambda_from_table_conf` must share it. A line-only rational
+reader cannot be the pin scanner. Nonfinite and out-of-range values need
+their actual `f32`, not a fallback when conversion to the rational
+`Lambda` fails. `scan_user_config` and
 `write_user_config` preserve the marker's native calls and error checks.
 Chunk helpers own the selected open/read/map/write/sync/close sequence;
 path and diagnostic helpers own their corresponding pin calls.
 
 The native modules use scoped unsafe with `// SAFETY:` on every block.
 Under the 2026-10-31 UTC ruling they call the `libc` crate and
-`glib-sys`, and declare by hand only what neither binds: the C library's
-`stdout` and `stderr` objects, once per platform in `native.rs` for the
-library and the tools (Linux, Apple/FreeBSD/DragonFly and Windows; any
-other target is a `compile_error!`). `g_utf8_next_char`'s step is the
+`glib-sys`. They declare by hand only what neither crate binds: the C
+library's `stdout` and `stderr` objects. `native.rs` declares these once
+per platform, for the library and the tools (Linux, Apple/FreeBSD/DragonFly
+and Windows; any other target is a `compile_error!`). `g_utf8_next_char`'s step is the
 lead byte's sequence length in plain Rust, not GLib's `g_utf8_skip` table
 ([eio-utf8-next-char-invalid-lead](eio-utf8-next-char-invalid-lead.md)).
 The crate has no build script.
 No borrowed raw pointer escapes the safe facade. `oxpinyin-data` is
-`forbid(unsafe_code)`; its mmap implementation moved to `oxpinyin-input`; user,
-runtime, core and engine retain their existing forbids. C facades retain
-ABI marshalling; store retains DBM calls. `oxpinyin-data`'s config,
+`forbid(unsafe_code)`; its mmap implementation moved to `oxpinyin-input`. User, runtime,
+core and engine keep their existing forbids. C facades keep ABI
+marshalling. Store keeps DBM calls. `oxpinyin-data`'s config,
 mapping and `pin_stderr` call mechanics, `oxpinyin-user`'s persistence
 file calls, and `oxpinyin-runtime`'s config probing move to the boundary;
 their domain logic stays put.
 
-**Do not start implementation before #1175's last extraction lands.** Then each numbered stage is a separately reviewable,
-independently gated change. Keep the selected backend and applicable
-verification-cell rules from the contributor rules; do not alter frozen cases or
-specifications in advance of the stage that owns them.
+**Do not start implementation before #1175's last extraction lands.** Each
+numbered stage is then a separately reviewable, independently gated
+change. Keep the selected backend and the applicable verification-cell
+rules from the contributor rules. Do not alter frozen cases or
+specifications before the stage that owns them.
 
 1. **Library config read/write and locale** (implemented 2026-10-28
-   UTC, with the rulings above). Create the minimal boundary
-   and C shim; move system/user config scans, marker writing and locale
-   calls together, including the shared lambda scanner. Gate both facade
-   paths and the touched crates; preserve class (b) handling and the reproduced aborts. Since
-   2026-10-31 UTC `config.c` is gone: `oxpinyin-input` `native.rs` makes
-   the same `setlocale`, `fopen`, `fscanf`, `feof`, `atoi`, `fprintf`
-   and `fclose` calls through the `libc` crate, with the same format
-   strings, call order and result checks.
+   UTC, with the rulings above). Create the minimal boundary. Move the
+   system/user config scans, marker writing and locale calls together,
+   including the shared lambda scanner. Gate both facade paths and the
+   touched crates. Preserve class (b) handling and the reproduced aborts.
+   `config.c` is gone (2026-10-31 UTC ruling): `oxpinyin-input`
+   `native.rs` makes the same `setlocale`, `fopen`, `fscanf`, `feof`,
+   `atoi`, `fprintf` and `fclose` calls through the `libc` crate, with the
+   same format strings, call order and result checks.
 2. **Chunks** (implemented 2026-11-03 UTC, #1576). System/addon mapping is
    active through the input boundary; the live sub-index owns the one mapping
    and data forbids unsafe code. Row 109's whole-mapping release follows the
@@ -733,52 +751,56 @@ specifications in advance of the stage that owns them.
    payload read. The system chunk fallback is not compiled in the pin's build
    (`LIBPINYIN_USE_MMAP`, see the chunk row) and is not connected. Existing
    class (b) records stand; the wrapped length rule is settled below.
-3. **Save and rename** (implemented 2026-11-01 UTC). Move pin path
-   building, unlink, staging and rename calls while preserving pinyin's
-   two-pass and zhuyin's interleaved order. Gate failure ordering and both
-   facades; DBM calls stay in store. Path building takes over the
-   `g_build_filename` row of the #1297 classification
-   (`glib-libc-inventory.md`, row 18; maintainer decision 2026-10-31 UTC):
-   it keeps the pin's paths, including a name that begins with a separator,
-   which `Path::join` does not, and it settles the Windows/macOS question
-   and the `glib-sys` dependency of `oxpinyin-input`'s library path.
-   The chunk `open`/`write`/`fsync`/`close` calls moved with it
-   (`chunk.rs`), so stage 2's save half is implemented here; system/addon mapping and user chunk load now also use the boundary.
+3. **Save and rename** (implemented 2026-11-01 UTC). Move the pin's path
+   building, unlink, staging and rename calls. Preserve pinyin's two-pass
+   order and zhuyin's interleaved order. Gate failure ordering and both
+   facades. DBM calls stay in store.
+   - Path building takes over the `g_build_filename` row of the #1297
+     classification (`glib-libc-inventory.md`, row 18; maintainer decision
+     2026-10-31 UTC). It keeps the pin's paths, including a name that
+     begins with a separator, which `Path::join` does not keep. It settles
+     the Windows/macOS question and the `glib-sys` dependency of
+     `oxpinyin-input`'s library path.
+   - The chunk `open`/`write`/`fsync`/`close` calls are in this stage
+     (`chunk.rs`), so stage 2's save half is implemented here.
+     System/addon mapping and user chunk load also use the boundary.
 4. **Diagnostics** (implemented 2026-10-30 UTC, #1437). Move the
    library's raw formatted writes and GLib diagnostics to the correct
-   native calls; gate exact bytes, channels, ordering and existing
-   class-(b) warnings. oxpinyin's own warnings stay the
-   facades' `g_log` in the pin's domain; the pin has no call there.
-   Since 2026-10-31 UTC `diagnostic.c` is gone: each line is
-   `libc::fprintf` on the C library's own `stderr` object.
+   native calls. Gate exact bytes, channels, ordering and existing
+   class-(b) warnings. oxpinyin's own warnings stay the facades' `g_log` in
+   the pin's domain; the pin has no call there. `diagnostic.c` is gone
+   (2026-10-31 UTC ruling): each line is `libc::fprintf` on the C
+   library's own `stderr` object.
 5. **Tools, in small independently gated slices.** First add the
    tool-only stream and GLib option/text boundary. Then port each
    utility family with the pin names and interface, including the two
    missing table generators. Move KMM working files to native backend
    DBMs through store; a change touching backend code follows the
    three-cell path rule. Gate each utility or cohesive small family on
-   its own rather than waiting for the whole tools set. **In progress:**
-   the boundary (`oxpinyin-input` `tools`) and `gen_pinyin_table`
-   (`oxpinyin-utils`) landed together (2026-10-30 UTC, #1436), so CI
-   builds and tests the boundary through its first user;
-   `gen_zhuyin_table` followed (#1450). `k_mixture_model_to_interpolation`
-   (2026-10-31 UTC) adds the shared taglib port and the `assert` and
-   `abort()` sites a `tool-diff` case reproduces on both sides as
-   SIGABRT, and replaces `oxpinyin-kmm to-interpolation`. The same change
-   moves the three tools off `native/tool.c` and the C++ stream shim onto
-   `libc`, `glib-sys` and `std::io` (2026-10-31 UTC ruling, item 5). The
-   trainer runs the utility's conversion in memory; it still links GLib,
-   because taglib's character classes and warnings are GLib's calls
-   (`g_unichar_isspace`/`isgraph`, `g_log`), so the Windows lane keeps
-   excluding `oxpinyin-training` until GLib-on-Windows. The DBM-attached KMM family
-   (`estimate_`, `merge_`, `prune_`, `validate_k_mixture_model`) needs
-   neither stage 2 nor stage 3 and is the next stack. The utilities that load phrase-library chunks use the stage 2
-   `MemoryChunk::load` boundary. Their chunk saves use the save boundary
-   and reload the newly stored chunk into the index.
+   its own; do not wait for the whole tools set. **In progress:**
+   - The boundary (`oxpinyin-input` `tools`) and `gen_pinyin_table`
+     (`oxpinyin-utils`) landed together (2026-10-30 UTC, #1436), so CI
+     builds and tests the boundary through its first user.
+     `gen_zhuyin_table` followed (#1450).
+   - `k_mixture_model_to_interpolation` (2026-10-31 UTC) adds the shared
+     taglib port and the `assert` and `abort()` sites that a `tool-diff`
+     case reproduces on both sides as SIGABRT. It replaces
+     `oxpinyin-kmm to-interpolation`. The same change moves the three
+     tools off `native/tool.c` and the C++ stream shim onto `libc`,
+     `glib-sys` and `std::io` (2026-10-31 UTC ruling, item 5).
+   - The trainer runs the utility's conversion in memory. It still links
+     GLib, because taglib's character classes and warnings are GLib's calls
+     (`g_unichar_isspace`/`isgraph`, `g_log`). So the Windows lane
+     excludes `oxpinyin-training` until GLib-on-Windows.
+   - The DBM-attached KMM family (`estimate_`, `merge_`, `prune_`,
+     `validate_k_mixture_model`) needs neither stage 2 nor stage 3, and is
+     the next stack.
+   - The utilities that load phrase-library chunks use the stage 2
+     `MemoryChunk::load` boundary. Their chunk saves use the save boundary
+     and reload the newly stored chunk into the index.
 
 Each stage derives expected behavior from the pin and its native library
-sources before using a differential as a gate. The present docs-only
-change needs the requested fmt gate only; it does not run those stages.
+sources before it uses a differential as a gate.
 
 ## Open questions — differential confirmation
 
@@ -793,7 +815,7 @@ This list records the remaining questions and the rulings that settled others:
 Row 109's post-fini release is settled by the [mapping lifetime ruling](#mapping-lifetime-ruling);
 production activation is complete.
 
-Stage 5 follow-up: `gen_zhuyin_table` now uses the same tool boundary and
+Stage 5 follow-up: `gen_zhuyin_table` uses the same tool boundary and
 shared phrase tree as `gen_pinyin_table`. The
 [frozen tool cases](../runbooks/tool-diff.md) hold both generators to the
 pin, including source-derived class (b) refusal records.

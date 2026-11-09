@@ -2,9 +2,9 @@
 
 Date: 2026-08-09 · Status: frozen Foundation capture
 
-The Task 4 execution amendment selects line-oriented text rather than JSON.
-The authored Foundation spec files remain unchanged; this finding freezes the
-wire format used by the task output.
+This finding freezes the wire format of the F-A and F-C capture output.
+The Task 4 execution amendment selects line-oriented text, not JSON.
+The authored Foundation spec files stay unchanged.
 
 ## Reference and reproduction
 
@@ -14,14 +14,17 @@ Every record carries this name-version-revision stamp:
 libpinyin-2.11.91-0c5e80e1200f84fab185d1c5bde458b770a0636c+model20-59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155+dbm-tkrzw
 ```
 
-The capture launcher is retired. To check the frozen files:
+The reproduction below is recorded evidence. Its capture recipe no longer exists:
 
-```bash
+```text
+python3 tools/oracle/build.py --dbm tkrzw --work-dir target/oracle --jobs 4
+# The `the retired compatibility launcher capture` recipe was removed on 2026-11-06 UTC with the
+# compat launcher; no replacement recipe exists yet.
 sha256sum fixtures/foundation/f-a.txt fixtures/foundation/f-c.txt
 ```
 
-The runner validates `oracle-pin.txt`, the public header, shared object, data
-manifest, and every generated data file before accepting the pin ref.
+The runner validated `oracle-pin.txt`, the public header, the shared object, the data
+manifest, and every generated data file before it accepted the pin ref.
 
 Frozen outputs:
 
@@ -31,35 +34,35 @@ Frozen outputs:
 | `fixtures/foundation/f-c.txt` | 46 | `e24aa79f0beb60f99924606962eaeec0941c0335a29335806bed25533033bfb5` |
 
 The runner creates a new empty user directory for each family. The harness
-never calls training, remembering, choosing, or saving APIs. The
-`DYNAMIC_ADJUST` bit is rejected by the harness and absent from every record.
-The benign oracle diagnostic about a missing fresh `user.conf` is emitted on
+never calls training, remembering, choosing or saving APIs. The harness rejects the
+`DYNAMIC_ADJUST` bit, and no record contains it.
+The benign oracle diagnostic about a missing fresh `user.conf` goes to
 stderr and is not part of either fixture.
 
 ## Line protocol
 
 A fixture is UTF-8 text with exactly one record per LF-terminated line. Each
-record is a sequence of TAB-separated `key=value` fields. `\\`, TAB, CR, LF
-and other control bytes inside values are escaped as `\\\\`, `\\t`, `\\r`,
+record is a sequence of TAB-separated `key=value` fields. Inside values, `\\`, TAB, CR, LF
+and other control bytes are escaped as `\\\\`, `\\t`, `\\r`,
 `\\n` and `\\xNN`. Records contain:
 
 - `schema=pinyin-capture-v1`;
 - the full `pin_ref` above;
 - `family` and stable `case` identifiers;
-- the per-record public `pinyin.h` `api_sequence` affecting the observation;
+- the per-record public `pinyin.h` `api_sequence` that affects the observation;
 - escaped `input` and hexadecimal `flags`;
-- `parse_return`, `parsed_input_length`, `segments`, `candidate_total`,
-  `candidates_hex`, and `remainder` outputs.
+- the outputs `parse_return`, `parsed_input_length`, `segments`, `candidate_total`,
+  `candidates_hex` and `remainder`.
 
-`pinyin_init` and `pinyin_fini` are family-scoped setup/teardown and are not
-misreported as per-record calls.
+`pinyin_init` and `pinyin_fini` are family-scoped setup and teardown. They are not
+reported as per-record calls.
 
 A segment is `canonical@begin:end:complete|partial`. Byte positions are
-half-open offsets into `input`; apostrophe separator bytes therefore appear as
-gaps between adjacent segments. `segments=-` represents no parsed segment.
-Candidates are capped at the first ten deterministic results and encoded as
-comma-separated UTF-8 byte strings in lowercase hexadecimal; `candidate_total`
-retains the uncapped count.
+half-open offsets into `input`. Apostrophe separator bytes therefore appear as
+gaps between adjacent segments. `segments=-` means no parsed segment.
+Candidates are limited to the first ten deterministic results. They are encoded as
+comma-separated UTF-8 byte strings in lowercase hexadecimal. `candidate_total`
+keeps the full count.
 
 ## F-A coverage
 
@@ -75,31 +78,31 @@ USE_RESPLIT_TABLE`, with dynamic adjustment off. It freezes:
 - empty input;
 - a 4,096-byte junk input.
 
-F-A records the pinned oracle's selected segmentation only. It does not define
-the portable parser's path set. The parser SPEC must add every valid
-segmentation, including alternatives not selected by the oracle, before Rust
+F-A records only the segmentation that the pinned oracle selected. It does not define
+the path set of the portable parser. The parser SPEC must add every valid
+segmentation, including alternatives that the oracle does not select, before Rust
 implementation begins.
 
 ## F-C coverage
 
-F-C uses `IS_PINYIN` as the baseline and captures an off/on pair with
-identical input for each additional full-pinyin parser bit. It covers
+F-C uses `IS_PINYIN` as the baseline. For each additional full-pinyin parser bit, it captures an off/on pair with
+identical input. It covers
 incomplete parsing, tone handling, divided and resplit tables, all ten pinyin
 ambiguity bits, and all eight pinyin correction bits. Candidate totals and the
-first ten candidates expose matching/scoring effects even when the selected
+first ten candidates show matching and scoring effects, also when the selected
 segmentation is unchanged. Zhuyin-only bits are outside this full-pinyin
-family; `DYNAMIC_ADJUST` is excluded by the capture protocol. The `force-tone`
+family. The capture protocol excludes `DYNAMIC_ADJUST`. The `force-tone`
 pair deliberately records no observed output change at this public API
-surface rather than inferring unobserved behavior.
+surface; it does not infer unobserved behavior.
 
 ## Amendment — pin 074a2219 (2026-09-06 UTC)
 
-Regenerated against the new pin (recorded evidence: the deleted
-[archived run capture source](https://github.com/shenghaoc/oxpinyin/blob/e79802e8bf7c393142e979eadba10a2720860799/tools/capture/run-capture.sh) over the git-fetch-built oracle; every record's `pin_ref` stamp moves to
-`libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99+model20-59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155+dbm-tkrzw`;
-the captured behavior is unchanged — the corpus surfaces re-verified
-byte-identical, see `oracle-pin-074a221-verification`).
-The table above is the 2.11.91 freeze and stands unedited.
+The fixtures were regenerated against the new pin. This is recorded evidence: the deleted
+[archived run capture source](https://github.com/shenghaoc/oxpinyin/blob/e79802e8bf7c393142e979eadba10a2720860799/tools/capture/run-capture.sh) ran over the git-fetch-built oracle. The `pin_ref` stamp of every record moves to
+`libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99+model20-59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155+dbm-tkrzw`.
+The captured behavior is unchanged: the corpus surfaces were verified again as
+byte-identical (see `oracle-pin-074a221-verification`).
+The table above is the 2.11.91 freeze and stays unedited.
 
 | Family | Records | SHA-256 |
 |---|---:|---|

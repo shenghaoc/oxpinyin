@@ -11,38 +11,44 @@ the pin. The other records of the stack are
 
 Neither row has a pin abort to reproduce. The pin's state for a library
 unload or reload and for the phrase export is in memory and cannot fail.
-oxpinyin has no failing site there either: no user-store write or read on
+oxpinyin also has no failing site there: no user-store write or read on
 these paths can refuse.
 
 ## The pin
 
-`pinyin_unload_phrase_library` asserts the index is below 16, answers
-`false` for every library but `GBK_DICTIONARY`, then calls
-`FacadePhraseIndex::unload` and answers `true` whatever it returned
-(`src/pinyin.cpp:464-475`). `zhuyin_unload_phrase_library` does the same
-for every library but `TSI_DICTIONARY` (`src/zhuyin.cpp:379-390`), so the
-zhuyin facade can also unload the `USER_FILE` libraries. `unload` deletes
+`pinyin_unload_phrase_library` does these steps (`src/pinyin.cpp:464-475`):
+
+1. It asserts that the index is below 16.
+2. It returns `false` for every library but `GBK_DICTIONARY`.
+3. It calls `FacadePhraseIndex::unload`, and returns `true` whatever that call returned.
+
+`zhuyin_unload_phrase_library` does the same for every library but
+`TSI_DICTIONARY` (`src/zhuyin.cpp:379-390`). Thus the zhuyin facade can also
+unload the `USER_FILE` libraries. `unload` deletes
 the sub-index and takes its total out of the facade total
 (`src/storage/phrase_index.cpp:261-268`). Nothing is read from or written
 to disk.
 
-`pinyin_load_phrase_library` answers `false` for an index of 16 or more,
-asserts the row is `SYSTEM_FILE` or `USER_FILE` (`:446-459`), and calls
-`_load_phrase_library` (`:234-322`; zhuyin `:178-266`). That answers
-`false` when `get_range` finds the sub-index loaded (`:242-244`). For a
-system library it maps the system chunk, loads it as the new sub-index
-(`FacadePhraseIndex::load`, `phrase_index.cpp:237-248`), loads the user
-`.dbin` into a `MemoryChunk` and merges it (`:262-276`). `MemoryChunk::load`
-answers `false` and leaves the chunk empty when the file cannot be opened,
-is shorter than its header, or has a wrong length or checksum
-(`src/include/memory_chunk.h:416-464`). The merge of an empty log changes
-nothing. For a `USER_FILE` library it loads the saved chunk, or calls
-`create_sub_phrase` for an empty sub-index when the chunk does not load
-(`:303-321`). The answer is `true`. Only the merge's own asserts (rows 91
+`pinyin_load_phrase_library` returns `false` for an index of 16 or more.
+It asserts that the row is `SYSTEM_FILE` or `USER_FILE` (`:446-459`), and calls
+`_load_phrase_library` (`:234-322`; zhuyin `:178-266`). That function returns
+`false` when `get_range` finds the sub-index loaded (`:242-244`).
+
+- For a system library, it maps the system chunk and loads it as the new
+  sub-index (`FacadePhraseIndex::load`, `phrase_index.cpp:237-248`). It then
+  loads the user `.dbin` into a `MemoryChunk` and merges it (`:262-276`).
+  `MemoryChunk::load` returns `false` and leaves the chunk empty when the
+  file cannot be opened, is shorter than its header, or has a wrong length
+  or checksum (`src/include/memory_chunk.h:416-464`). The merge of an empty
+  log changes nothing.
+- For a `USER_FILE` library, it loads the saved chunk. When the chunk does
+  not load, it calls `create_sub_phrase` for an empty sub-index (`:303-321`).
+
+The return value is `true`. Only the asserts of the merge (rows 91
 and 108) and the mapping of a directory (row 96) can stop it.
 
 `pinyin_save` and `zhuyin_save` write and rename the library files in
-sub-index order and skip a library whose `get_range` answers
+sub-index order. They skip a library whose `get_range` returns
 `ERROR_NO_SUB_PHRASE_INDEX` (`pinyin.cpp:929-932` in `_write_files`,
 `:1032-1035` in `_rename_files`; `zhuyin.cpp:562-565`). The saved file of an
 unloaded library stays on disk as it was. Neither transition sets
@@ -54,7 +60,7 @@ failures are the asserts of row 62.
 
 ## oxpinyin
 
-A libpinyin session's values are process memory. `open_session` is the
+The values of a libpinyin session are process memory. `open_session` is the
 only constructor of a libpinyin target, and it uses the in-memory
 `SessionValues`. The session phrases live in per-library arenas (#1455).
 A transition changes only that session state and the runtime's visibility
@@ -62,50 +68,51 @@ mask. A save skips an unloaded library, so it does not write an emptied
 sub-index over the saved `.dbin` or user chunk.
 
 - `ContextCore::unload_phrase_library` returns `bool`. It drops the
-  library's arena, overrides, unigram deltas and facade share, sets the
-  mask bit and answers the runtime's `true`.
+  arena, overrides, unigram deltas and facade share of the library. It sets
+  the mask bit and returns the runtime's `true`.
 - `ContextCore::load_phrase_library` returns `Result<bool,
   LibraryLoadFault>`, where the fault is only a pin assert: `Row`
   (`NotLoadable` at `pinyin.cpp:457`, `ChunkHeaderRead` for row 96) or
-  `Journal` (rows 91 and 108). It replaces the library with the system
-  chunk plus the saved `.dbin`, or with the saved user chunk or an empty
-  one, before it clears the mask.
-  A system file that cannot be mapped again (row 76) replaces nothing:
-  the library stays unloaded behind its mask, the call still answers
+  `Journal` (rows 91 and 108). Before it clears the mask, it replaces the
+  library with the system chunk plus the saved `.dbin`, or with the saved
+  user chunk or an empty one.
+  A system file that cannot be mapped again (row 76) replaces nothing.
+  The library stays unloaded behind its mask, the call still returns
   `true`, and the next load maps the file again. The mask clears only
-  for a library the remap mapped, and a `SYSTEM_FILE` row is mapped
+  for a library that the remap mapped. A `SYSTEM_FILE` row is mapped
   whether or not it names a user file (`pinyin.cpp:246-264`).
 - `UserStore::unload_system_libraries`, `load_user_library` and
   `unload_user_library` return nothing. `load_system_libraries` and
   `reload_system_libraries` return only `JournalFault`. Their table writes
-  go through `in_session` (`crates/oxpinyin-user/src/store.rs`). On a
-  session's in-memory values these writes cannot fail: the transaction
+  go through `in_session` (`crates/oxpinyin-user/src/store.rs`). On the
+  in-memory values of a session, these writes cannot fail. The transaction
   refuses only an empty or NUL table name or a re-entrant borrow, and the
   rows are the store's own encodings.
-- `arena_replacement` retains structurally valid empty persisted items
-  within the current arena limits. It still leaves out an item the arena
+- `arena_replacement` keeps structurally valid empty persisted items
+  within the current arena limits. It still leaves out an item that the arena
   cannot hold. The arena-past-`u32` omission is an interim **KNOWN
   DIVERGENCE** from the pin's wrap/overwrite behavior, tracked in
   [#1514](https://github.com/shenghaoc/oxpinyin/issues/1514).
 - The save skips an unloaded library. `Runtime::save_disk_baseline`
-  answers `SaveBaseline::Unloaded` for an unloaded system library, and the
+  returns `SaveBaseline::Unloaded` for an unloaded system library. The
   session records an unloaded `USER_FILE` library in
-  `SessionPhrases::unloaded`. Neither file is written or renamed.
+  `SessionPhrases::unloaded`. The save does not write or rename either file.
 - The export cursor reads are infallible. `phrase_export_cursor` returns
   the cursor, and `get_next_with` returns the `ExportStep`. A session
-  answers both reads from its arenas. A standalone row store, which no C
-  context holds, still maps an undecodable item to its assert site and
+  serves both reads from its arenas. No C context holds a standalone row
+  store. Such a store still maps an undecodable item to its assert site, and
   reads any other failure as no item.
 
-Deleted: `store_first`, `StoreWriteFailed`, `LibraryLoadFault::StoreWrite`,
-`fail_replace` and `fail_next_replace`, the two refusal warnings in each C
-adapter, the export iterator's NULL and `false` arms with their warnings,
-and `store_first_tests`.
+The code has none of these: `store_first`, `StoreWriteFailed`,
+`LibraryLoadFault::StoreWrite`, `fail_replace` and `fail_next_replace`, the
+two refusal warnings in each C adapter, the NULL and `false` arms of the
+export iterator with their warnings, and `store_first_tests`.
 
-No abort is added. The fuzz harnesses need no filter: `capi_commands.rs`
-walks the export iterator, which has no refusal arm, and has no
-library load or unload in its alphabet. `user_store_ops.rs` drives a
-standalone store, which has no library transitions.
+These paths add no abort. The fuzz harnesses need no filter:
+
+- `capi_commands.rs` walks the export iterator, which has no refusal arm.
+  Its alphabet has no library load or unload.
+- `user_store_ops.rs` drives a standalone store, which has no library transitions.
 
 ## Tests and cases
 
@@ -143,13 +150,13 @@ The export iterator cases are those whose names contain `iterator`.
 
 - Arena-limit behavior: see #1514 user content offset wrap.
 
-The pin's `pinyin_mask_out` is sequential: it masks the tables and bigrams,
-then loads and merges each library before compacting
-(`src/pinyin.cpp:1224-1295` at `074a2219`). The empty-item cases establish
-preservation within the current arena limits; they provide no evidence
+The pin's `pinyin_mask_out` is sequential. It masks the tables and bigrams,
+then loads and merges each library, then compacts
+(`src/pinyin.cpp:1224-1295` at `074a2219`). The empty-item cases show
+that items are kept within the current arena limits. They give no evidence
 about failure ordering.
 
 ## Verification
 
-The Rust tests named above hold the behaviour; the contract cases are
+The Rust tests named above hold the behaviour. The contract cases are
 recorded evidence.

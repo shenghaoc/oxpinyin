@@ -80,11 +80,12 @@ Two disjoint model representations share one corpus-counting algorithm:
   is algorithmically the same as `gen_ngram` (§7), and its λ math is the
   same deleted-interpolation EM (§5).
 
-The bootstrap circularity (the segmenter needs a bigram to score Viterbi, yet
-produces the corpus that trains that bigram) is resolved by seeding the
-segmenter with a pre-existing model: the shipped `SYSTEM_BIGRAM`, or a prior
-epoch's model (**INFERRED** — the trainer carries no first-model generator;
-`segment.py`/`ngseg.cpp` consume an already-populated bigram).
+The segmenter needs a bigram to score Viterbi, but it produces the
+corpus that trains that bigram. Seeding the segmenter with an existing
+model resolves this bootstrap circularity: the shipped `SYSTEM_BIGRAM`, or
+the model of a prior epoch (**INFERRED**: the trainer carries no
+first-model generator; `segment.py`/`ngseg.cpp` consume an
+already-populated bigram).
 
 ---
 
