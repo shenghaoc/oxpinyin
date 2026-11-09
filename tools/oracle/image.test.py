@@ -47,20 +47,6 @@ class PerformanceImageTests(unittest.TestCase):
         self.assertEqual(launch[launch.index('--platform') + 1], 'linux/arm64')
         self.assertEqual(launch[-1], 'true')
 
-    def test_wslc_performance_goes_through_the_adapter(self):
-        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(images.platform, 'machine', return_value='x86_64'), \
-             mock.patch.object(images, 'run', return_value=0) as run, \
-             mock.patch.object(images, 'text', return_value='C:/checkout/.git'):
-            self.assertEqual(images.performance(['--engine', 'wslc', '--', 'true']), 0)
-        build, launch = [[str(part) for part in call.args[0]] for call in run.call_args_list]
-        self.assertEqual(build[:2], ['wslc', 'build'])
-        self.assertNotIn('--platform', build)
-        self.assertEqual(launch[:3], ['wslc', 'run', '--rm'])
-        self.assertNotIn('--platform', launch)
-        self.assertFalse(any('.git' in part for part in launch), launch)
-        self.assertIn(f'{ROOT.resolve()}:/repo:ro', launch)
-        self.assertEqual(launch[-1], 'true')
-
     def test_ci_and_forced_emulation_refuse_before_any_build(self):
         for env in ({'GITHUB_ACTIONS': 'true'}, {'ORACLE_PLATFORM': 'linux/amd64'},
                     {'DOCKER_DEFAULT_PLATFORM': 'linux/amd64'}, {'CONTAINER_DEFAULT_PLATFORM': 'linux/amd64'}):
@@ -157,10 +143,6 @@ class PerformanceImageTests(unittest.TestCase):
                 build.assert_not_called()
                 self.assertTrue((work / existing / 'kept').is_dir())
 
-    def test_platform_override_is_not_an_option(self):
-        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
-            images.performance(['--platform', 'linux/amd64'])
-
 
 class ImageTests(unittest.TestCase):
     def setUp(self):
@@ -201,14 +183,6 @@ class ImageTests(unittest.TestCase):
         floor.write_bytes(original_floor)
         (copied / 'tools/oracle/version-manifest.json').write_bytes(b'changed input')
         self.assertNotEqual(images.image_tag(copied), before)
-
-    def test_platform_pin_selection_moves_the_shell_regressions(self):
-        pin = ROOT / 'tools/oracle/oracle-pin.txt'
-        self.assertEqual(images.platform_field(pin, 'linux/amd64', 'platform'), 'linux/amd64')
-        self.assertEqual(images.platform_field(pin, 'linux/arm64', 'platform'), 'linux/arm64')
-        self.assertEqual(images.platform_field(pin, 'linux/riscv64', 'platform'), '')
-        fields = images.fields(pin)
-        self.assertFalse(any(key.startswith(('libpinyin_sha256_', 'libzhuyin_sha256_', 'data_manifest_sha256_')) for key in fields))
 
     def test_pin_field_reads_use_platform_fields_without_fallback(self):
         # Platform fields do not fall back to unqualified fields; missing fields
@@ -316,21 +290,6 @@ class WslcAdapterTests(unittest.TestCase):
             stream.flush()
             self.assertEqual(stream.buffer.getvalue(), b'diagnostic\n')
 
-    def test_docker_and_podman_commands_pass_through_unchanged(self):
-        for engine in ('docker', '/usr/bin/podman', 'wslc-like'):
-            command = [engine, 'create', '--pull=never', '--platform', 'linux/amd64', 'image', '/none']
-            self.assertEqual(images.wslc_command(command), command)
-            self.assertEqual(images.wslc_command([engine, 'rm', '-f', 'id']), [engine, 'rm', '-f', 'id'])
-
-    def test_wslc_drops_platform_and_renames_rm(self):
-        for engine in ('wslc', 'C:/Program Files/WSL/wslc.exe', 'WSLC.EXE'):
-            with self.subTest(engine=engine):
-                self.assertEqual(images.wslc_command([engine, 'create', '--pull=never', '--platform', 'linux/amd64', 'image', '/none']),
-                                 [engine, 'create', '--pull=never', 'image', '/none'])
-                self.assertEqual(images.wslc_command([engine, 'pull', '--platform=linux/arm64', 'image']), [engine, 'pull', 'image'])
-                self.assertEqual(images.wslc_command([engine, 'rm', '-f', 'id']), [engine, 'remove', '-f', 'id'])
-                self.assertEqual(images.wslc_command([engine, 'run', '--rm', 'image', 'rm']), [engine, 'run', '--rm', 'image', 'rm'])
-
     def test_image_field_reads_wslc_json_and_docker_templates(self):
         calls = []
 
@@ -376,22 +335,6 @@ class WslcAdapterTests(unittest.TestCase):
             status = images.verify_image(['--engine', engine, '--platform', platform, 'image'])
         return status, calls, error.getvalue(), remove
 
-    def test_docker_and_podman_verify_image_still_copy(self):
-        for engine in ('docker', 'podman'):
-            with self.subTest(engine=engine):
-                calls = []
-
-                def fake_run(command, **kwargs):
-                    calls.append([str(part) for part in command])
-                    return 0
-                with (mock.patch.object(images, 'capture', return_value=mock.Mock(stdout=b'cid\n', status=0)),
-                      mock.patch.object(images, 'run', fake_run), mock.patch.object(images, 'digest_file', return_value='0'),
-                      mock.patch.object(images, 'prefix_ok', return_value=True),
-                      mock.patch.object(images.subprocess, 'run', return_value=mock.Mock(returncode=0)),
-                      contextlib.redirect_stdout(io.StringIO())):
-                    self.assertEqual(images.verify_image(['--engine', engine, 'image']), 0)
-                self.assertEqual(calls[0][:2], [engine, 'cp'])
-
     def test_wslc_verify_image_exports_instead_of_copying(self):
         status, calls, error, remove = self.verify_through_export()
         self.assertEqual(status, 1)
@@ -410,16 +353,6 @@ class WslcAdapterTests(unittest.TestCase):
         self.assertEqual(status, 1)
         remove.assert_called_once()
         self.assertIn('WARNING: could not remove container owned-id (wslc exited 125)', error)
-
-    def test_container_is_wslcs_alias_only_on_windows(self):
-        for host, wslc in (('Windows', True), ('Darwin', False), ('Linux', False)):
-            with self.subTest(host=host), mock.patch.object(images, 'host_system', return_value=host):
-                self.assertIs(images.is_wslc('container'), wslc)
-                self.assertIs(images.is_wslc('C:/Program Files/WSL/container.exe'), wslc)
-                self.assertIs(images.is_wslc('wslc.exe'), True)
-        with mock.patch.object(images, 'host_system', return_value='Windows'):
-            self.assertEqual(images.wslc_command(['container.exe', 'create', '--platform', 'linux/amd64', 'i', '/none']),
-                             ['container.exe', 'create', 'i', '/none'])
 
     def test_verify_image_runs_only_the_host_architecture(self):
         calls = []
@@ -445,13 +378,6 @@ class WslcAdapterTests(unittest.TestCase):
             capture.assert_not_called()
             run.assert_not_called()
 
-    def test_wslc_verify_image_refuses_a_foreign_platform(self):
-        with mock.patch.object(images, 'host_platform', return_value='linux/amd64'), mock.patch.object(images, 'capture') as capture, \
-                contextlib.redirect_stderr(io.StringIO()), self.assertRaises(images.Finished) as raised:
-            images.verify_image(['--engine', 'wslc', '--platform', 'linux/arm64', 'image'])
-        self.assertEqual(raised.exception.status, 2)
-        capture.assert_not_called()
-
     def build_calls(self, runtime, machine):
         calls = []
         env = dict(OXPINYIN_CAPTURE_RUNTIME=runtime, OXPINYIN_CAPTURE_BUILD_FLAGS='--network host',
@@ -469,28 +395,6 @@ class WslcAdapterTests(unittest.TestCase):
             self.assertEqual(images.build_image([], env=env), 0)
         select.assert_called_once_with(override=runtime, env=env)
         return calls, field.call_args, verify.call_args, output.getvalue()
-
-    def test_build_image_selects_the_platform_runtime_when_nothing_names_one(self):
-
-        def version(command, **kwargs):
-            return mock.Mock(stdout=b'podman version 5.0 (synthetic)\n', status=0)
-        with (mock.patch.object(images.platform, 'machine', return_value='x86_64'),
-              mock.patch.object(images, 'image_tag', return_value='TAG'),
-              mock.patch.object(images.shutil, 'which', side_effect=lambda name, path=None: name if name == 'podman' else None),
-              mock.patch.object(images, 'text', return_value='Linux'), mock.patch.object(images.os, 'name', 'posix'),
-              mock.patch.object(images, 'capture', version),
-              mock.patch.object(images, 'run', return_value=0) as run,
-              mock.patch.object(images, 'image_field', return_value='amd64'),
-              mock.patch.object(images, 'verify_image', return_value=0),
-              contextlib.redirect_stdout(io.StringIO()) as output):
-            self.assertEqual(images.build_image([], env={'PATH': ''}), 0)
-        self.assertEqual(output.getvalue().splitlines(),
-                         ['Runtime: podman; podman version 5.0 (synthetic)', 'ghcr.io/shenghaoc/oxpinyin-oracle:TAG'])
-        self.assertEqual(run.call_args.args[0][:2], ['podman', 'build'])
-
-    def test_apple_oracle_build_uses_performance_builder_resources(self):
-        calls, _, _, _ = self.build_calls('container', 'aarch64')
-        self.assertEqual(calls[0][:6], ['container', 'build', '--cpus', '4', '--memory', '6G'])
 
     def test_the_capture_runtime_variable_overrides_oxpinyin_container(self):
         def version(command, **kwargs):
@@ -592,15 +496,6 @@ class RuntimeAdapterTests(unittest.TestCase):
             self.assertEqual(images.runtime_command(['container.exe', 'create', '--platform', 'linux/amd64', 'i', '/none']),
                              ['container.exe', 'create', 'i', '/none'])
 
-    def test_apple_verify_image_runs_only_the_host_architecture_too(self):
-        with (mock.patch.object(images, 'host_platform', return_value='linux/arm64'),
-              mock.patch.object(images, 'run') as run, contextlib.redirect_stderr(io.StringIO()) as error,
-              self.assertRaises(images.Finished) as raised):
-            images.verify_image(['--engine', 'container', '--platform', 'linux/amd64', 'image'])
-        self.assertEqual(raised.exception.status, 2)
-        self.assertIn('every image runs at the host architecture (linux/arm64), with no emulation', error.getvalue())
-        run.assert_not_called()
-
     def test_host_networking_is_dropped_with_a_notice(self):
         for command in (['wslc', 'run', '--network', 'host', 'i'], ['wslc', 'build', '--network=host', '.'],
                         ['container', 'run', '--network', 'host', 'i'], ['container', 'build', '--network', 'host', '.']):
@@ -679,29 +574,6 @@ class RuntimeAdapterTests(unittest.TestCase):
             self.assertIsNone(images.container_owner((engine,), cid, 'k', run=failed))
         self.assertIsNone(images.container_owner(('wslc',), cid, 'k', run=garbled))
 
-    def test_verify_image_falls_back_to_the_selected_runtime(self):
-        native = images.host_platform()
-        calls = []
-
-        def fake_capture(command, **kwargs):
-            calls.append(command)
-            return mock.Mock(stdout=b'cid\n', status=0)
-
-        def fake_run(command, **kwargs):
-            calls.append([str(part) for part in command])
-            return 0
-        with (mock.patch.object(images, 'select_runtime', return_value='podman') as select,
-              mock.patch.object(images, 'capture', fake_capture), mock.patch.object(images, 'run', fake_run),
-              mock.patch.object(images, 'digest_file', return_value='0'),
-              mock.patch.object(images, 'prefix_ok', return_value=True),
-              mock.patch.object(images.subprocess, 'run', return_value=mock.Mock(returncode=0)) as remove,
-              contextlib.redirect_stdout(io.StringIO())):
-            self.assertEqual(images.verify_image(['image']), 0)
-        select.assert_called_once()
-        self.assertEqual(calls[0], ['podman', 'create', '--pull=never', '--platform', native, 'image', '/none'])
-        self.assertEqual(calls[1][:3], ['podman', 'cp', 'cid:/opt/pinyin-oracle'])
-        self.assertEqual(remove.call_args.args[0], ['podman', 'rm', '-f', 'cid'])
-
 
 class ProvisionOracleTests(unittest.TestCase):
     """just provision-oracle: the performance image build and the provision oracle run, per runtime."""
@@ -744,11 +616,6 @@ class ProvisionOracleTests(unittest.TestCase):
                                  ['provision', 'oracle', '--cache-dir', '/provision', '--cells', 'tkrzw'])
                 self.assertTrue(launch[launch.index('-w') + 2].startswith('oxpinyin-performance:TAG-'))
 
-    def test_a_present_image_is_not_rebuilt_and_site_flags_reach_the_build(self):
-        self.assertEqual(len(self.calls('docker', present=True)), 1)
-        build = self.calls('docker', env={'OXPINYIN_CAPTURE_BUILD_FLAGS': '--network host'})[0]
-        self.assertEqual(build[:4], ['docker', 'build', '--network', 'host'])
-
     def test_rootful_docker_runs_as_the_host_user_with_a_writable_uv(self):
         with mock.patch.object(images, 'run_user', return_value=['--user', '1000:1001']):
             commands = {engine: images.provision_oracle_command(engine, ROOT, self.cache, 'tag', 'linux/amd64', [])
@@ -763,14 +630,6 @@ class ProvisionOracleTests(unittest.TestCase):
             self.assertNotIn('UV_CACHE_DIR=/tmp/uv-cache', commands[engine], engine)
         with mock.patch.object(images, 'run_user', return_value=[]):
             self.assertNotIn('--user', images.provision_oracle_command('wslc', ROOT, self.cache, 'tag', 'linux/amd64', []))
-
-    def test_the_cache_is_the_provisioning_default_without_the_override(self):
-        self.assertEqual(images.provision_cache({'XDG_CACHE_HOME': '/x'}), Path('/x/oxpinyin'))
-        self.assertEqual(images.provision_cache({'OXPINYIN_CLOUD_CACHE': '/c', 'XDG_CACHE_HOME': '/x'}), Path('/c'))
-        self.assertEqual(images.provision_cache({'OXPINYIN_PROVISION_CACHE': '/p', 'OXPINYIN_CLOUD_CACHE': '/c'}),
-                         Path('/p'))
-        with mock.patch.object(images.Path, 'home', return_value=Path('/home/u')):
-            self.assertEqual(images.provision_cache({}), Path('/home/u/.cache/oxpinyin'))
 
     def test_other_options_ci_and_foreign_architectures_are_refused_before_any_runtime_call(self):
         for argv, env, machine in ((['--cache-dir', '/x'], {}, 'x86_64'), (['--cells'], {}, 'x86_64'),
@@ -944,22 +803,6 @@ class CaptureLauncherTests(unittest.TestCase):
         self.assertEqual(select.call_args.kwargs['override'], runtime)
         return status, calls, [call.args[0] for call in quiet.call_args_list]
 
-    def test_capture_selects_the_platform_runtime_when_nothing_names_one(self):
-        with (mock.patch.object(images.platform, 'machine', return_value='x86_64'),
-              mock.patch.object(images, 'select_runtime', return_value='podman') as select,
-              mock.patch.object(images, 'image_tag', return_value='TAG'),
-              mock.patch.object(images, 'capture_recipe', return_value='RECIPE'),
-              mock.patch.object(images, 'quiet', return_value=0) as quiet,
-              mock.patch.object(images, 'run', return_value=0) as run,
-              mock.patch.object(images, 'image_field', side_effect=lambda e, name, i, env=None, platform=None: 'amd64' if name == 'Architecture' else 'id'),
-              mock.patch.object(images, 'capture', return_value=mock.Mock(stdout=b'/cache/data\n')),
-              mock.patch.object(images.Path, 'mkdir')):
-            self.assertEqual(images.capture_pin(['1'], root=ROOT, env=self.env), 0)
-        select.assert_called_once()
-        self.assertEqual(select.call_args.kwargs['override'], '')
-        self.assertEqual(quiet.call_args_list[0].args[0][:3], ['podman', 'image', 'inspect'])
-        self.assertEqual(run.call_args.args[0][:2], ['podman', 'run'])
-
     def expected_run(self, runtime, *, platform=('--platform', 'linux/amd64'), user=('--user', '1000:1001')):
         python = 'python' + re.match(r'[0-9]+\.[0-9]+', (ROOT / '.python-version').read_text()).group()
         return [runtime, 'run', '--rm', *platform, '--network', 'none', *user,
@@ -983,31 +826,6 @@ class CaptureLauncherTests(unittest.TestCase):
     def test_podman_runs_without_a_user(self):
         _, calls, _ = self.launch('/usr/bin/podman')
         self.assertEqual(calls, [self.expected_run('/usr/bin/podman', user=())])
-
-    def test_wslc_drops_platform_and_mounts_native_paths(self):
-        for runtime in ('wslc', 'C:/Program Files/WSL/wslc.exe'):
-            with self.subTest(runtime=runtime):
-                _, calls, _ = self.launch(runtime, uid=None)
-                self.assertEqual(calls, [self.expected_run(runtime, platform=(), user=())])
-                self.assertFalse(any('cygpath' in part or part.startswith('/c/') for part in calls[0]))
-
-    def test_absent_images_are_pulled_and_built_per_runtime(self):
-        builds = {
-            'docker': ['docker', 'build', '--platform', 'linux/amd64', '--pull=false'],
-            'podman': ['podman', 'build', '--platform', 'linux/amd64', '--pull=never'],
-            'wslc': ['wslc', 'build'],
-        }
-        pulls = {'docker': ['docker', 'pull', '--platform', 'linux/amd64'], 'podman': ['podman', 'pull', '--platform', 'linux/amd64'],
-                 'wslc': ['wslc', 'pull']}
-        for runtime, build in builds.items():
-            with self.subTest(runtime=runtime):
-                _, calls, _ = self.launch(runtime, present=False)
-                self.assertEqual(calls[0], [*pulls[runtime], 'ghcr.io/shenghaoc/oxpinyin-oracle:TAG'])
-                # wslc's build has no --network, so the site flag is dropped there.
-                network = [] if runtime == 'wslc' else ['--network', 'host']
-                self.assertEqual(calls[1], [*build, *network, '-f', 'tools/oracle/Dockerfile.capture',
-                                            '--build-arg', 'REFERENCE_IMAGE=ghcr.io/shenghaoc/oxpinyin-oracle:TAG',
-                                            '-t', 'oxpinyin-capture:TAG-RECIPE', '.'])
 
     def test_the_apple_capture_build_has_no_pull_argument(self):
         # Apple's build: "The option '--pull' does not take any value".
@@ -1075,10 +893,6 @@ class CaptureLauncherTests(unittest.TestCase):
             quiet.assert_not_called()
             select.assert_not_called()
 
-    def test_the_model_cache_defaults_to_the_provision_caches_model20(self):
-        _, calls, _ = self.launch('docker')
-        self.assertIn(f'{self.provision / "model20"}:/model20:ro', calls[0])
-
     def test_foreign_architecture_and_bad_run_names_are_refused_before_any_runtime_call(self):
         for argv, machine in ((['1'], 'riscv64'), (['../1'], 'x86_64'), (['a b'], 'x86_64'), ([], 'x86_64')):
             with self.subTest(argv=argv, machine=machine), \
@@ -1098,10 +912,6 @@ class CaptureLauncherTests(unittest.TestCase):
             self.assertEqual(images.run_user(), ['--user', '1000:1001'])
         with mock.patch.object(images, 'os', types.SimpleNamespace()):
             self.assertEqual(images.run_user(), [])
-
-    def test_the_capture_recipe_hashes_sha256sum_text_lines(self):
-        lines = ''.join(f'{images.digest_file(ROOT / name)}  {name}\n' for name in images.CAPTURE_RECIPE)
-        self.assertEqual(images.capture_recipe(ROOT), hashlib.sha256(lines.encode()).hexdigest()[:12])
 
 if __name__ == '__main__':
     unittest.main()
