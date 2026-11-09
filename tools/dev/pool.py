@@ -14,8 +14,11 @@ follow unit order, never completion order. A unit must stop when
 
 Containers: `remove_owned` removes a container only when the runtime reports an ID
 equal to the one recorded in the unit's cidfile and the label equal to the run's
-token. A run that never created a container (empty cidfile) leaves nothing to
-remove, and a container this run did not create is never touched, whatever its name.
+token. The runtime writes the cidfile after it creates the container, so a stop
+in between leaves a container the cidfile does not name. `remove_labelled` then
+removes each container that carries the run's token, which only this run's
+containers carry. A container this run did not create is never touched, whatever
+its name.
 """
 import argparse
 import collections
@@ -443,6 +446,35 @@ def remove_owned(owned: OwnedContainer, run: Callable[[Sequence[str]], subproces
     return True
 
 
+def remove_labelled(owned: OwnedContainer, run: Callable[[Sequence[str]], subprocess.CompletedProcess] = _capture) -> int:
+    """Remove every container that carries this run's token, whatever the cidfile holds.
+
+    The runtime creates the container and then writes its ID to the cidfile. A pool that stops
+    the runtime between the two leaves a container no cidfile names. The token is this
+    invocation's alone, so the label still does. Each candidate is inspected first and removed
+    only when the runtime reports its ID and this token. Return how many were removed.
+    """
+    from tools.oracle import image
+    removed = 0
+    for candidate in image.container_ids(owned.runtime, owned.label, owned.token, run=run):
+        found = image.container_owner(owned.runtime, candidate, owned.label, run=run)
+        if found is None:
+            continue
+        identity, _, label = found.partition(' ')
+        if identity != candidate or label != owned.token:
+            continue
+        run(image.runtime_command([*owned.runtime, 'container', 'rm', '-f', candidate]))
+        removed += 1
+    return removed
+
+
+def remove_run_containers(owned: OwnedContainer, run: Callable[[Sequence[str]], subprocess.CompletedProcess] = _capture,
+                          out=sys.stderr) -> bool:
+    """Remove the container OWNED recorded, then any container of this run the cidfile never named."""
+    recorded = remove_owned(owned, run, out)
+    return remove_labelled(owned, run) > 0 or recorded
+
+
 def run_leased(units: Sequence[tuple[str, Callable[[UnitContext], object]]], *,
                cancelled: Callable[[], bool], serial: bool = False, cpus: Sequence[int] | None = None,
                max_workers: int | None = None,
@@ -505,7 +537,7 @@ def build_tasks(args, chosen: Plan, token: str = '', cid_dir: Path | None = None
     """Expand the command template once per item.
 
     With --container-runtime, TOKEN and a cidfile under CID_DIR belong to each item: its cleanup
-    removes only the container the runtime recorded there, and only if its label carries TOKEN.
+    removes the container the runtime recorded there and any other container whose label carries TOKEN.
     """
     tasks = []
     for item in args.items:
@@ -516,7 +548,7 @@ def build_tasks(args, chosen: Plan, token: str = '', cid_dir: Path | None = None
         cleanup = None
         if args.container_runtime and cidfile is not None:
             owned = OwnedContainer(tuple(shlex.split(args.container_runtime)), cidfile, args.container_label, token)
-            cleanup = functools.partial(remove_owned, owned)
+            cleanup = functools.partial(remove_run_containers, owned)
         tasks.append(Task(item, [sub(part) for part in args.command],
                           log=Path(sub(args.log)) if args.log else None,
                           cleanup=cleanup))

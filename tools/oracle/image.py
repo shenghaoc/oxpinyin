@@ -236,6 +236,28 @@ def container_owner(engine, container, label, *, run=None):
         return None
 
 
+def container_ids(engine, label, value, *, run=None):
+    """The IDs of the containers that carry LABEL=VALUE, or [] when the runtime cannot list them.
+
+    docker, podman and wslc filter the listing; Apple's container lists JSON and the labels are
+    read here. The listing only names candidates: the caller checks each with container_owner.
+    RUN is as there."""
+    run = run or (lambda argv: subprocess.run(list(argv), stdin=subprocess.DEVNULL, capture_output=True,
+                                              text=True, check=False, timeout=60))
+    if is_apple(engine[0]):
+        found = run(runtime_command([*engine, 'container', 'ls', '-a', '--format', 'json']))
+        if found.returncode:
+            return []
+        try:
+            records = [item['configuration'] for item in json.loads(found.stdout)]
+            return [record['id'] for record in records if (record.get('labels') or {}).get(label) == value]
+        except (ValueError, LookupError, TypeError):
+            return []
+    found = run(runtime_command([*engine, 'container', 'ls', '-a', '-q', '--no-trunc',
+                                 '--filter', f'label={label}={value}']))
+    return [] if found.returncode else found.stdout.split()
+
+
 def digest_file(path):
     """Return the hexadecimal SHA-256 of file bytes; read errors propagate."""
     with Path(path).open('rb') as stream:

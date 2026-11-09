@@ -230,7 +230,7 @@ class CliTests(unittest.TestCase):
                     self.assertFalse(running(pid), f'{pid} still running')
 
 FAKE_RUNTIME = """
-import json, os, secrets, subprocess, sys
+import json, os, secrets, subprocess, sys, time
 state, args = sys.argv[1], sys.argv[2:]
 # Invocations overlap: one `run` scans every record while another writes its own. A record is written
 # under a temporary name beside it and renamed into place, as a real runtime does
@@ -271,8 +271,17 @@ if args[0] == 'run':
     cid = secrets.token_hex(32)
     key, _, value = options['--label'].partition('=')
     write(record(cid), json.dumps({'name': options['--name'], 'labels': {key: value}}))
+    # The window between the container and its cidfile: one item's runtime stays in it.
+    delayed = os.environ.get('FAKE_CID_DELAY_ITEM')
+    if delayed and options['--name'].endswith('-' + delayed):
+        time.sleep(30)
     open(options['--cidfile'], 'w').write(cid)
     sys.exit(subprocess.call(rest))
+elif args[:2] == ['container', 'ls']:
+    key, _, value = args[args.index('--filter') + 1].removeprefix('label=').partition('=')
+    for cid, found in containers().items():
+        if found['labels'].get(key) == value:
+            print(cid)
 elif args[:2] == ['container', 'inspect']:
     cid, template = args[-1], args[3]
     if not os.path.exists(record(cid)):
@@ -318,6 +327,23 @@ class ContainerOwnershipTests(unittest.TestCase):
         script = 'import sys, time; sys.exit(3) if sys.argv[1] == "a" else time.sleep(60)'
         result = subprocess.run(self.cli(*self.arguments('a,b', 'owned-{token}-{item}', script)), cwd=ROOT,
                                 capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn('a: failed with status 3', result.stderr)
+        self.assertEqual(self.left(), [self.bystander])
+
+    def test_a_container_created_before_its_cidfile_is_written_is_removed_too(self):
+        # The runtime records the container, then writes the cidfile. Item b stays between the two
+        # while item a fails, so the pool stops b's runtime with an empty cidfile. Only the label,
+        # which carries this run's token, still names b's container.
+        script = ('import os, sys, time\n'
+                  'if sys.argv[1] == "a":\n'
+                  f'    while len([n for n in os.listdir({str(self.state)!r}) if not n.endswith(".tmp")]) < 3:\n'
+                  '        time.sleep(0.01)\n'
+                  '    sys.exit(3)\n'
+                  'time.sleep(60)\n')
+        result = subprocess.run(self.cli(*self.arguments('a,b', 'owned-{token}-{item}', script)), cwd=ROOT,
+                                capture_output=True, text=True, timeout=60,
+                                env=dict(os.environ, FAKE_CID_DELAY_ITEM='b'))
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertIn('a: failed with status 3', result.stderr)
         self.assertEqual(self.left(), [self.bystander])
@@ -371,6 +397,35 @@ class ContainerOwnershipTests(unittest.TestCase):
                 self.assertEqual([call[2] for call in calls], ['inspect', 'rm'] if removed else ['inspect'])
                 if removed:
                     self.assertEqual(calls[1], ['rt', 'container', 'rm', '-f', cid])
+
+    def test_remove_labelled_removes_only_candidates_the_runtime_confirms_as_this_runs(self):
+        mine, other, gone = 'a' * 64, 'b' * 64, 'c' * 64
+        owned = self.owned(mine)
+        calls = []
+
+        def run(argv):
+            calls.append(list(argv))
+            if argv[2] == 'ls':
+                return subprocess.CompletedProcess(argv, 0, f'{mine}\n{other}\n{gone}\n', '')
+            if argv[2] == 'inspect':
+                answers = {mine: f'{mine} mine\n', other: f'{other} someone-else\n'}
+                found = answers.get(argv[-1])
+                return subprocess.CompletedProcess(argv, 0 if found else 1, found or '', '')
+            return subprocess.CompletedProcess(argv, 0, '', '')
+        self.assertEqual(pool.remove_labelled(owned, run), 1)
+        self.assertEqual([call[2] for call in calls], ['ls', 'inspect', 'rm', 'inspect', 'inspect'])
+        self.assertEqual(calls[2], ['rt', 'container', 'rm', '-f', mine])
+        self.assertEqual(calls[0][3:], ['-a', '-q', '--no-trunc', '--filter', 'label=k=mine'])
+
+    def test_remove_labelled_removes_nothing_when_the_runtime_cannot_list(self):
+        owned = self.owned('a' * 64)
+        calls = []
+
+        def run(argv):
+            calls.append(list(argv))
+            return subprocess.CompletedProcess(argv, 1, '', '')
+        self.assertEqual(pool.remove_labelled(owned, run), 0)
+        self.assertEqual([call[2] for call in calls], ['ls'])
 
     def test_wslc_and_apple_owners_are_read_from_their_json(self):
         from tools.oracle import image
