@@ -3,7 +3,7 @@
 Status: implemented, 2026-10-31 UTC (member 5c of the stack that retires
 class (c); `date -u` at writing: 2026-10-31 13:31 UTC). Rule: [compatibility
 policy, class (c)
-retired](compatibility-policy.md#amendment--class-c-retired-pin-aborts-reproduced-2026-10-31-utc).
+retired](compatibility-policy.md#failure-behaviour).
 Pin: libpinyin `074a2219c90feaf962d0d24f034514033ece5f99`, read from a
 `git archive` of the pin; `check_result` is `assert` in the reference build
 (`src/include/pinyin_utils.h:27-31`). The earlier members' records are

@@ -16,11 +16,11 @@ its worst — is row 37; the export iterator's last-row return is row
 measured**; the measured causes per word and the residues are
 recorded below.
 
-The §(e) rule (`docs/findings/compatibility-policy.md`) wants, for
+The [E2E I/O compatibility rule](compatibility-policy.md#the-e2e-io-compatibility-rule) wants, for
 every exported symbol, a probe that asserts its
 whole observable surface: return status, out-params and the data they
 point to, written lengths, and handle state. This document is the
-coverage matrix the rule's consequence 3 calls for, the description of
+coverage matrix the rule's verification clause calls for, the description of
 the whole-surface probe (`tools/bisection/abi-probe-diff.c` +
 [archived run abi probe diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-abi-probe-diff.sh)), and the record of its oracle runs.
 
@@ -980,7 +980,7 @@ served the cached list. `Session::candidates_at(offset)` already
 builds the pin's whole-matrix window at any offset without disturbing
 the cached list (`lookup.rs:283-312`); it is simply never called for
 an offset behind the composition. The closed mid-syllable entry
-(`upstream-divergences.md`, "Mid-syllable candidate-lookup offset")
+(`compatibility-policy.md`, row 13)
 ported the pin's `start = offset` law only for offsets past the
 composition offset.
 

@@ -13,7 +13,8 @@ scoped, counted or bounded by which consumer calls what; named
 consumers' call sites appear only as reachability evidence for specific
 behaviours. The E2E probe obligation over this set is
 `docs/findings/probe-coverage-abi.md`; the compatibility rule itself is
-`compatibility-policy.md` §(e).
+the E2E I/O compatibility rule in
+[`compatibility-policy.md`](compatibility-policy.md#the-e2e-io-compatibility-rule).
 
 ## Source identity
 

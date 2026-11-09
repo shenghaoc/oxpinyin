@@ -698,9 +698,7 @@ deterministic but not reproducibly so. Two consequences, stated explicitly:
    **defined-residual**, not a parity target: it holds the frozen numbers and
    the mechanism invariants (`0` order-only, the `6` distinct-same), and any
    move remains a deliberate re-freeze of this section, never a silent drift.
-2. The report-back entry in `upstream-divergences.md` ("N-best trellis
-   accumulates gfloat log costs") carries the mechanism for libpinyin and is
-   amended with this ruling.
+2. Row 11 of `compatibility-policy.md` carries the classification.
 
 **Re-opening condition:** a deliberate pin re-freeze that itself accepts
 platform-locked floating point — which the constitution does not permit for
@@ -1315,7 +1313,7 @@ selecting position 8 (㴰) and position 3 (鎒). S3 cannot change the
 selected set.
 
 **Ruling.** The S2 text of the
-[witnessed algorithm-precondition amendment](compatibility-policy.md#amendment--witnessed-algorithm-precondition-violations-2026-10-28-utc)
+[witnessed algorithm-precondition amendment](compatibility-policy.md#algorithm-precondition-violations)
 says: "Selection uses the total key `(ordered S, batch_position)`, with
 earlier batch position first on equal S." The
 [source policy](../source-policy.md#internal-language-artefacts) says:

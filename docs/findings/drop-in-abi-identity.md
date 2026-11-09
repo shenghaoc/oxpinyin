@@ -173,6 +173,6 @@ improvise.
 > `_pinyin_string`, `_pinyin_strings`, `_zhuyin_string`) are real
 > implementations (`crates/oxpinyin-capi/src/cursor.rs`) and the two
 > `key_rest` symbols closed with them
-> (`docs/findings/compatibility-policy.md`, consequence 2). This section
+> ([E2E I/O compatibility rule](compatibility-policy.md#the-e2e-io-compatibility-rule)). This section
 > and the §3 counts above stay as the 2026-08-28 snapshot they were
 > written at.

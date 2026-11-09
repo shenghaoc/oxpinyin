@@ -2,7 +2,7 @@
 
 Status: accepted, 2026-10-31 UTC (maintainer ruling retiring class (c)).
 Disposition: POLICY-ACCEPTED for the stderr line only; the SIGABRT status
-is MATCH. Rule: [compatibility policy, class (c) retired](compatibility-policy.md#amendment--class-c-retired-pin-aborts-reproduced-2026-10-31-utc).
+is MATCH. Rule: [compatibility policy, class (c) retired](compatibility-policy.md#failure-behaviour).
 Pin: libpinyin 074a2219, the asserts-live reference build (`-g -O2`, no
 `-DNDEBUG`); `check_result` is `assert` there
 (`src/include/pinyin_utils.h:27-31`).

@@ -7,7 +7,7 @@ oracle pin from `python3 tools/oracle/build.py`), fetched by commit SHA
 into a scratch checkout and verified with `git rev-parse`.
 
 Amendment 2026-10-29 UTC: the constitution §4 quotation below is historical;
-current guidance is [the pin-matched panic amendment](compatibility-policy.md#amendment--pin-matched-panics-and-error-handling).
+current guidance is the [failure-behaviour rule](compatibility-policy.md#failure-behaviour).
 The recorded typed refusals, class (b) dispositions and results below
 remain unchanged. The new policy reverses none of these decisions.
 

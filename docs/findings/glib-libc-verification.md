@@ -42,7 +42,7 @@ open. “Unverified; pending classification” is unread or unsettled work,
 not a policy question. “Needs a ruling” is reserved here for #923.
 A child or an inventory label alone does not admit a quirk exception.
 
-Follow the [policy decision order](compatibility-policy.md#the-languageruntime-quirk-exception--outside-the-classes):
+Follow the [policy decision order](compatibility-policy.md#decision-order):
 C contract first, classes (a)–(b) next, then individually recorded runtime
 quirks; otherwise a defect to revert or an opt-in Stage 3 departure.
 Differences link their records; identical paths need no discrepancy form.
@@ -209,6 +209,7 @@ and its removal changes no supported output.
 `g_utf8_substring(zhuyin, 0, len)` and `g_utf8_substring(zhuyin, len, end)`
 (`:3557-3558`), where `len = cursor - begin` is a raw-input byte delta and
 `end = m_raw_end` is an **absolute** raw-input byte offset. GLib 2.89.4-2
+(recorded evidence: the Debian testing package that this reading used; tag `2.89.4`)
 `g_utf8_substring` (`glib/gutf8.c:298-322`) resolves
 `start = g_utf8_offset_to_pointer(str, len)` and
 `end = g_utf8_offset_to_pointer(start, end_pos - len)`, then copies
@@ -903,10 +904,10 @@ files use absolute paths rather than repository paths.
 | Same-backend bytes and no data loss on valid completed saves | `src/pinyin.cpp:963-1018`; `src/zhuyin.cpp:596-685`; DBM writers cited above | Mandatory: encoded chunk/diff content, indexed records, bigram values and reload results. Native round trips also compare every data file byte-for-byte before fini and after conforming reopen (excluding only the lifecycle marker). An authorized pin-only repeat control demonstrates variable BDB file IDs and unused-page residue, not changed records. Two replacement C-facade logical cases compare every key/value byte and reciprocal cross-open/re-save results. Detailed classification is below; interior crash-order coverage remains open. Do not mask an unexplained byte difference as a filesystem quirk. |
 | GLib/platform boundary and errno wording | Call sites `src/pinyin.cpp:1059-1124`, `src/zhuyin.cpp:609-690`, `src/include/memory_chunk.h:555`; GLib tag `2.84.4`, `glib/gstdio.h:60-84`, `glib/gstdio.c:99-140,1157-1198,1684-1702`; glibc tag `glibc-2.41`, `sysdeps/unix/sysv/linux/rename.c:25-35`, `sysdeps/unix/sysv/linux/fsync.c:24-28` | Source trace completed below for Unix macro selection, Windows wrapper behavior and the Linux libc `rename`/`fsync` wrappers. Rename diagnostics at these callers contain no errno text; syscall/backend diagnostic equivalence and non-Linux execution remain open. No new platform exception is admitted. |
 
-Source follow-through, re-derived 2026-10-25 UTC against the trixie reference
-(#1229): GLib tag [`2.84.4`](https://github.com/GNOME/glib/tree/2.84.4), commit
-`41eca60845d3fc309af361f5e7f801ba339099aa`, the upstream version of trixie's
-`libglib2.0-0t64` **2.84.4-3~deb13u5** (`tools/oracle/version-manifest.json`),
+Source follow-through, re-derived 2026-10-25 UTC (#1229; recorded evidence):
+GLib tag [`2.84.4`](https://github.com/GNOME/glib/tree/2.84.4), commit
+`41eca60845d3fc309af361f5e7f801ba339099aa`, the upstream version of the
+`libglib2.0-0t64` package **2.84.4-3~deb13u5** that this reading used,
 read through the authorized GitHub mirror, not by executing the pin. The
 trixie source package `glib2.0_2.84.4-3~deb13u5` (snapshot.debian.org; archives
 checked against the `.dsc` SHA-256 entries) carries `glib/gstdio.c` and
@@ -933,8 +934,8 @@ only line numbers changed.
 | `glib/gstdio.c:1684-1702` | The callable wrapper uses `_commit` on Windows (:1688). Its Unix implementation uses `F_FULLFSYNC` when configured, otherwise fsync, and retries EINTR (:1689-1698); without either facility it returns zero (:1700). **These Unix wrapper branches are not the reference pin's macro-expanded call.** The Unix header also prevents attributing the wrapper's macOS stronger-sync branch to ordinary pin callers. #1221 owns the proposed natural Rust sync and its documented macOS stronger-sync consideration. |
 | Pin `src/include/memory_chunk.h:549-557`, `src/pinyin.cpp:971,988`, `src/zhuyin.cpp:607,633` | After a complete payload write, invoke sync, ignore its result, close, ignore that result, return true. Callers ignore the chunk save return and continue according to each facade's ordering. The missing subject sync is a real open implementation issue (#1221), not excused by the ignored result. |
 
-The reference libc is trixie's `libc6` **2.41-12+deb13u4**
-(`tools/oracle/version-manifest.json`). Source read at the authorized
+Recorded evidence: the libc of this reading is `libc6` **2.41-12+deb13u4**.
+Source read at the authorized
 `bminor/glibc` tag `glibc-2.41`, commit
 `74f59e9271cbb4071671e5a474e7d4f1622b186f`. The trixie source package
 `glibc_2.41-12+deb13u4` (snapshot.debian.org; archives checked against the
@@ -1153,7 +1154,7 @@ Pin: `storage/table_info.cpp:160,197-291,328-394` (scanner sites
 `locale.rs::pin_table_info_locale`; `training/src/segment/model.rs`,
 `parse_table_conf_lambda`.
 
-The reference scanner is glibc **2.41-12+deb13u4** from the Debian
+Recorded evidence: the scanner of this reading is glibc **2.41-12+deb13u4** from the Debian
 `glibc-source` package: `stdio-common/vfscanf-internal.c` for the
 `%d`/`%f`/`%255s` state machines and `stdlib/strtod_l.c` for the float
 value. The source walk below is the basis for each verdict; the corpus
@@ -1455,4 +1456,4 @@ and links; `git diff --check`. No new runtime or measurement result.
 
 [non-scalar]: ../../crates/oxpinyin-core/src/ucs4.rs
 [nul]: ../../crates/oxpinyin-core/src/ucs4.rs
-[math-record]: upstream-divergences.md#n-best-trellis-accumulates-gfloat-log-costs--not-reproducible-in-fixed-point-frozen-as-a-permanent-stage-1-divergence
+[math-record]: compatibility-policy.md#classification-table

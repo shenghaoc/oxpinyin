@@ -160,7 +160,7 @@ Do not add specialised maths dependencies, such as SIMD crates.
 
 Report an intentional difference under a still-applicable recorded exception as `POLICY-ACCEPTED`, never as `MATCH`.
 Retain its case and pin evidence.
-Existing case dispositions remain governed by the [disposition definitions](findings/compatibility-policy.md#discrepancy-records-and-the-policy-accepted-disposition).
+Existing case dispositions remain governed by the [disposition definitions](findings/compatibility-policy.md#dispositions-and-discrepancy-records).
 
 ### Adapter placement
 
@@ -225,7 +225,7 @@ Existing class (b) records stand, including punctuation refusals.
 The class (c) assertion refusals are retired (2026-10-31 UTC); the pin's aborts are reproduced.
 `LC_NUMERIC` row 39 stands.
 Row 109's mapping call follows the pin.
-Its post-fini residual mapping remains open.
+Its release follows the [external API misuse ruling](findings/compatibility-policy.md#external-api-misuse); the wrapped-size residual is `POLICY-ACCEPTED`.
 
 ### Internal language artefacts
 

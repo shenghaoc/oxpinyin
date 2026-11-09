@@ -22,7 +22,7 @@ pub const USE_TONE: u32 = 1 << 5;
 /// parser honours it nested inside `USE_TONE` exactly like the pin
 /// (`pinyin_parser2.cpp:176-190`), and nowhere else — the double-pinyin
 /// and zhuyin shapes are a different law, unmeasured here
-/// (`docs/findings/upstream-divergences.md`).
+/// (`docs/findings/compatibility-policy.md`, rows 16, 24 and 30).
 pub const FORCE_TONE: u32 = 1 << 6;
 
 /// `USE_DIVIDED_TABLE = 1U << 7` (`pinyin_custom2.h:38`).

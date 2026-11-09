@@ -1,7 +1,7 @@
 # Pinyin trellis adjusted-cost comparison
 
 Date: 2026-10-28 UTC (`date -u`). Policy: [witnessed algorithm-precondition
-violations, S1/S2](compatibility-policy.md#amendment--witnessed-algorithm-precondition-violations-2026-10-28-utc).
+violations, S1/S2](compatibility-policy.md#algorithm-precondition-violations).
 This is the registered product-level ruling, not the language-artefact exception.
 The pin is libpinyin 2.11.92 at `074a2219c90feaf962d0d24f034514033ece5f99`;
 its named source blobs were read at that revision. Base: `2506b264`.
@@ -56,11 +56,11 @@ are each licensed by the linked S1/S2 amendment:
 
 | Changed expectation | Attribution |
 | --- | --- |
-| NaN at length 3 loses to finite cost 10 at length 3, formerly a tie | [S1/S2 special-cost completion](compatibility-policy.md#amendment--witnessed-algorithm-precondition-violations-2026-10-28-utc) |
-| NaN at length 3 loses to finite cost 10 at length 4, formerly preferred | [S1/S2 special-cost completion](compatibility-policy.md#amendment--witnessed-algorithm-precondition-violations-2026-10-28-utc) |
-| Finite cost 10 at length 4 no longer loses to NaN at length 3 | [S1/S2 special-cost completion](compatibility-policy.md#amendment--witnessed-algorithm-precondition-violations-2026-10-28-utc) |
-| `(length=3,cost=0)` no longer loses to `(2,263)`; they tie | [S1/S2 threshold equivalence](compatibility-policy.md#amendment--witnessed-algorithm-precondition-violations-2026-10-28-utc) |
-| Former cycle's `(6,68730)` no longer loses to `(4,70848)` | [S1/S2 adjusted-cost ordering](compatibility-policy.md#amendment--witnessed-algorithm-precondition-violations-2026-10-28-utc) |
+| NaN at length 3 loses to finite cost 10 at length 3, formerly a tie | [S1/S2 special-cost completion](compatibility-policy.md#algorithm-precondition-violations) |
+| NaN at length 3 loses to finite cost 10 at length 4, formerly preferred | [S1/S2 special-cost completion](compatibility-policy.md#algorithm-precondition-violations) |
+| Finite cost 10 at length 4 no longer loses to NaN at length 3 | [S1/S2 special-cost completion](compatibility-policy.md#algorithm-precondition-violations) |
+| `(length=3,cost=0)` no longer loses to `(2,263)`; they tie | [S1/S2 threshold equivalence](compatibility-policy.md#algorithm-precondition-violations) |
+| Former cycle's `(6,68730)` no longer loses to `(4,70848)` | [S1/S2 adjusted-cost ordering](compatibility-policy.md#algorithm-precondition-violations) |
 
 The 500-row and 8,592-input live sentence checks require real-table inputs and
 are ignored by ordinary CI. Their active tests validate fixture structure and
@@ -225,7 +225,7 @@ The #1400 registration check used the supported cloud setup on native Debian
 trixie Linux amd64, repository Rust, debug opt-level 1 libraries, verified
 oracle/data manifests for each cell, and the sound tkrzw 1.0.34 runtime.
 
-The compatibility run used canonical Debian trixie Linux amd64, the matching
+The compatibility run used Debian trixie Linux amd64 (recorded evidence), the matching
 unpatched BDB reference and verified model20 data. Native tests and shipping
 builds used Ubuntu 26.10 x86_64 and repository Rust 1.97.1. The harness wrapper
 requires disk-backed TMPDIR, as documented in the setup guide.

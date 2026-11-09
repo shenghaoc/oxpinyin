@@ -235,7 +235,7 @@ Implement from frozen behavioural SPECs and fixtures.
 A freeze of a Rust signature alone no longer binds.
 Keep unsafe code within the [constitution's allowlist](docs/constitution.md).
 Do not silence lints.
-Use only the narrow, justified expectations permitted by the [panic amendment](docs/findings/compatibility-policy.md#amendment--pin-matched-panics-and-error-handling).
+Use only the narrow, justified expectations that the [failure-behaviour rule](docs/findings/compatibility-policy.md#failure-behaviour) permits.
 
 ## Pull request descriptions
 

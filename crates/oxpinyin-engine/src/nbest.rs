@@ -1178,8 +1178,7 @@ impl<'a> ConstraintSpelling<'a> {
     /// stored pronunciation matches it with a nonzero frequency
     /// (`matched > 0` over a nonzero total). It decides what the `f32`
     /// `< FLT_EPSILON` test does on the pinned data, where no per-token
-    /// total reaches 2^23 (`docs/findings/upstream-divergences.md`, the
-    /// `validate_constraint` entry).
+    /// total reaches 2^23 (`docs/findings/compatibility-policy.md`, row 7).
     ///
     /// `length` is the forced phrase's stored length
     /// ([`PhraseText::phrase_length`]); it only bounds

@@ -29,7 +29,7 @@ Do not admit one by analogy.
 - **(c) AVAILABILITY:** retired 2026-10-31 UTC.
   Where the pin asserts or aborts, oxpinyin aborts with `std::process::abort()` after the pin's preceding work.
   The missing `assert` message is `POLICY-ACCEPTED`.
-  See the [class (c) retirement](findings/compatibility-policy.md#amendment--class-c-retired-pin-aborts-reproduced-2026-10-31-utc).
+  See the [failure-behaviour rule](findings/compatibility-policy.md#failure-behaviour).
   There is no "tolerate and warn" class.
 - **(d) CONSUMER SCOPE:** retired 2026-09-06.
 
@@ -48,10 +48,8 @@ Class (b) records stand.
 Stop for a product-level change or an unruled reversal of a prior ruling.
 See the [native Rust policy](findings/compatibility-policy.md#native-rust-implementation).
 
-Registered standing divergences are individual entries under the exception.
-The existing example is tkrzw's `SYSTEM_ERROR`/`UNKNOWN_ERROR` collapse through its C API.
-The divergence register holds these entries.
-Report their notes upstream after the rewrite.
+Other accepted differences come from the [standing maintainer rulings](findings/compatibility-policy.md#standing-maintainer-rulings), each of which admits only the difference it names.
+The [divergence register](findings/upstream-divergences.md) lists every accepted difference and every outstanding upstream defect.
 
 ## Internal improvements
 

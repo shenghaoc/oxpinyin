@@ -341,8 +341,7 @@ pub extern "C" fn pinyin_remove_user_candidate(
 /// that cursor starts no span, so the next `pinyin_guess_candidates`
 /// there offers no word candidates and the frontend re-runs
 /// `pinyin_guess_sentence` under the forcings `diff_result` wrote
-/// (`docs/findings/upstream-divergences.md`, the closed row-choose-cursor
-/// entry).
+/// (`docs/findings/compatibility-policy.md`, row 9).
 ///
 /// Resolves the candidate by pointer identity over the instance's snapshot
 /// and calls `Session::select`, which records the constraint — the selected

@@ -85,8 +85,7 @@ and a three-byte key carries its `1`..`5` digit as the tone only under
 `USE_TONE`. Status at freeze:
 
 - the one-key seam (`pinyin_parse_double_pinyin`) implements this law in
-  full — the Tier-A amendment in the `upstream-divergences.md` FORCE_TONE
-  entry, measured IDENTICAL against the pin over 2,131 probe lines
+  full — recorded under `compatibility-policy.md` row 16, measured IDENTICAL against the pin over 2,131 probe lines
   ([archived run key surface diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-key-surface-diff.sh), double schemes 1–6);
 - the batch seam does not yet: the landed W13 batch parse runs the
   tone-less profile (a three-byte key refuses and the greedy walk retries
@@ -163,7 +162,7 @@ closed by W14 (`docs/findings/sentence-surface.md` §6–§8, PR #113 and
 follow-ups) — `get_sentence` decodes on every input and NBEST rows are
 present on the double-pinyin and bopomofo surfaces alike. The measured
 sentence residual is the trellis-side §12 entry, shared with full pinyin
-and registered in `upstream-divergences.md` (n-best gfloat accumulation);
+and classified in `compatibility-policy.md` (row 11);
 it is not scheme-specific.
 
 ## Auxiliary text
