@@ -66,8 +66,8 @@ PLATFORMS = {'x86_64': 'linux/amd64', 'aarch64': 'linux/arm64'}
 LIBRARIES = {'pinyin': ('lib/libpinyin.so', 'shared_object_sha256'),
              'zhuyin': ('lib/libzhuyin.so', 'zhuyin_shared_object_sha256')}
 W3_DIRECTORIES = {'bdb': 'db', 'kc': 'kct', 'tkrzw': 'tkt'}
-UNTOUCHED = 0xABCDEF  # contract_abi.UNTOUCHED
-UNTOUCHED_U16 = 0xCDEF  # contract_abi.UNTOUCHED & 0xffff
+UNTOUCHED = 0xABCDEF  # out-parameter sentinel
+UNTOUCHED_U16 = 0xCDEF  # UNTOUCHED & 0xffff
 UNTOUCHED_U8 = 0xEF
 WORKER_TIMEOUT = 120  # seconds for one observation's worker, as the Rust death tests allow a child
 LC_NUMERIC = 1  # glibc's <locale.h>; the capture image is Linux

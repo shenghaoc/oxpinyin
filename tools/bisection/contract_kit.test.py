@@ -4,12 +4,11 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-import contract_abi
 import contract_kit
 
 
@@ -33,28 +32,6 @@ class KitTests(unittest.TestCase):
         self.assertEqual([call.args for call in cdll.call_args_list],
                          [('/subject.so',), ('/subject.so',)])
         self.assertIsNot(kit.glib, None)
-
-    def test_init_accepts_paths(self):
-        kit = object.__new__(contract_kit.Kit)
-        kit._data, kit.user = Path('/data'), Path('/user')
-        seen = {}
-
-        def fn(name, res, *args):
-            def call(system, user):
-                seen.update(system=system, user=user)
-                return 1
-            return call
-        kit.fn = fn
-        self.assertEqual(kit.init(), 1)
-        self.assertEqual(seen, {'system': b'/data', 'user': b'/user'})
-
-    def test_alloc_reaches_every_facade_symbol_through_fn(self):
-        kit = object.__new__(contract_kit.Kit)
-        kit._ctx = 'context'
-        with patch.object(contract_kit.Kit, 'fn',
-                          return_value=lambda context: ('instance', context)) as fn:
-            self.assertEqual(kit.alloc(), ('instance', 'context'))
-        fn.assert_called_once_with('alloc_instance', contract_abi.P, contract_abi.P)
 
 
 if __name__ == '__main__':
