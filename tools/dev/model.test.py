@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tools.dev import model
+from tools.dev import model, test_support
 
 
 def write_archive(path, names=model.EXPECTED_MODEL_FILES):
@@ -37,15 +37,13 @@ class FetchTests(unittest.TestCase):
         self.cache = self.work / 'cache'
         self.bin = self.work / 'bin'
         self.bin.mkdir()
-        self.env = dict(os.environ, PATH=f'{self.bin}:{os.environ.get("PATH", os.defpath)}')
+        self.env = dict(os.environ, PATH=f'{self.bin}{os.pathsep}{os.environ.get("PATH", os.defpath)}')
         self.env.pop('PINYIN_MODEL_CACHE', None)
         self.env.pop('PINYIN_MODEL_URL', None)
 
-    def fake(self, name, body):
-        path = self.bin / name
-        path.write_text('#!/bin/sh\n' + body)
-        path.chmod(0o755)
-        return path
+    def fake(self, name, source):
+        """Put a Python program NAME first on PATH, so a test never starts the real curl or git."""
+        return test_support.python_tool(self.bin, name, source)
 
     def main(self, *argv, env=None):
         out, err = io.StringIO(), io.StringIO()
@@ -78,7 +76,9 @@ class FetchTests(unittest.TestCase):
         self.assertFalse((self.cache / 'extracted').exists())
 
     def test_failed_download_names_the_url_and_leaves_no_part_file(self):
-        self.fake('curl', 'for a; do prev=$out; out=$a; done\n: > "$prev"; exit 7\n')
+        self.fake('curl', 'import sys\n'
+                          'open(sys.argv[sys.argv.index("--output") + 1], "w").close()\n'
+                          'sys.exit(7)\n')
         url = 'https://127.0.0.1:1/model20.text.tar.gz'
         status, out, err = self.main('--cache-dir', str(self.cache), '--url', url)
         self.assertEqual((status, out), (1, ''))
@@ -87,7 +87,9 @@ class FetchTests(unittest.TestCase):
 
     def test_url_defaults_to_the_environment_then_the_pin(self):
         log = self.work / 'curl.log'
-        self.fake('curl', f'printf "%s\\n" "$@" > {log}; exit 22\n')
+        self.fake('curl', 'import sys\n'
+                          f'open({str(log)!r}, "w").write("\\n".join(sys.argv[1:]) + "\\n")\n'
+                          'sys.exit(22)\n')
         self.main('--cache-dir', str(self.cache))
         self.assertEqual(log.read_text().splitlines()[-1], model.MODEL_URL)
         self.main('--cache-dir', str(self.cache), env=dict(self.env, PINYIN_MODEL_URL='https://example.invalid/m'))
@@ -96,7 +98,8 @@ class FetchTests(unittest.TestCase):
     def test_download_extracts_and_a_second_run_skips(self):
         source = self.work / 'served.tar.gz'
         with self.pinned(source):
-            self.fake('curl', f'for a; do prev=$out; out=$a; done\ncp {source} "$prev"\n')
+            self.fake('curl', 'import shutil, sys\n'
+                              f'shutil.copyfile({str(source)!r}, sys.argv[sys.argv.index("--output") + 1])\n')
             status, out, err = self.main('--cache-dir', str(self.cache))
             self.assertEqual(status, 0, err)
             extracted = self.cache / 'extracted'
@@ -106,7 +109,7 @@ class FetchTests(unittest.TestCase):
             self.assertEqual((self.cache / 'verified').read_text(),
                              f'schema=pinyin-model-cache-v1\nurl={model.MODEL_URL}\nsha256={model.MODEL20_SHA256}\n')
             self.assertEqual([path.name for path in self.cache.iterdir() if path.name.startswith('.extract.')], [])
-            self.fake('curl', 'exit 99\n')
+            self.fake('curl', 'import sys\nsys.exit(99)\n')
             status, out, err = self.main('--cache-dir', str(self.cache))
             self.assertEqual((status, out, err), (0, f'{extracted}\n', 'verified model cache present; skipping fetch\n'))
             # The cached download is reused without curl until --force discards it.
@@ -136,15 +139,15 @@ class FetchTests(unittest.TestCase):
 
     def test_refuses_a_tracked_cache_path(self):
         cache = ROOT / 'tools/dev/__must_not_vendor_model20'
-        status, _, err = self.main('--cache-dir', str(cache), '--archive', '/dev/null')
+        status, _, err = self.main('--cache-dir', str(cache), '--archive', os.devnull)
         self.assertFalse(cache.exists())
         self.assertEqual((status, err), (1, f'refusing to write model bytes to a path git would track: {cache}\n'
                                             'use a build cache under target/ (the default) or another ignored path\n'))
 
     def test_refuses_the_repository_when_git_is_unavailable(self):
-        self.fake('git', 'exit 1\n')
+        self.fake('git', 'import sys\nsys.exit(1)\n')
         cache = ROOT / 'tools/dev/__must_not_vendor_model20_nogit'
-        status, _, err = self.main('--cache-dir', str(cache), '--archive', '/dev/null')
+        status, _, err = self.main('--cache-dir', str(cache), '--archive', os.devnull)
         self.assertFalse(cache.exists())
         self.assertEqual((status, err), (1, 'refusing to write model bytes under the repository without git '
                                             f'ignore checks: {cache}\n'))
