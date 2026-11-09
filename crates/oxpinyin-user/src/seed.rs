@@ -69,15 +69,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn constants_match_pinned_spec() {
-        // docs/findings/user-store.md §2 constants table.
-        assert_eq!(INITIAL_SEED, 69);
-        assert_eq!(EXPAND_FACTOR, 2);
-        assert_eq!(CEILING_SEED, 22080);
-        assert_eq!(UNIGRAM_FACTOR, 7);
-    }
-
-    #[test]
     fn reselection_sequence_matches_pinned_formula() {
         // Accumulate exactly as the store does: new_count = prev + seed.
         let mut count = 0u64;

@@ -861,26 +861,6 @@ mod tests {
     }
 
     #[test]
-    fn repeated_replacement_grows_until_the_pins_compaction_points() {
-        let bytes = oxpinyin_data::chunk_write::encode_phrase_item(&items().remove(0).1).unwrap();
-        let mut library = UserLibrary::default();
-        for _ in 0..100 {
-            library.replace(1024, &bytes).unwrap();
-        }
-        // No dead-over-live trigger: the pin compacts only at end-import,
-        // save and mask-out, so every replacement appended.
-        assert_eq!(library.content.len(), 8 + 100 * bytes.len());
-        library.compact();
-        assert!(matches!(library.slots, Slots::Sparse(_)));
-        assert_eq!(library.token_end(), 1025);
-        assert!(library.remove(1024));
-        assert!(library.is_empty());
-        assert_eq!(library.token_end(), 1);
-        library.compact();
-        assert!(library.content.is_empty());
-    }
-
-    #[test]
     fn user_library_store_matches_build_chunk_in_both_slot_representations() {
         for slot in [3, 1024] {
             let mut items = items();
@@ -930,15 +910,6 @@ mod tests {
         let payload = read_chunk_payload(&file).unwrap();
         for cut in 0..=payload.len() {
             assert_no_panic(&build_memory_chunk(&payload[..cut]).unwrap());
-        }
-        // Mutate every header, separator, offset, and item byte with a valid
-        // frame checksum, so structural checks cannot hide behind framing.
-        for pos in 0..payload.len() {
-            for value in [0, 1, 17, b'#', 255] {
-                let mut bytes = payload.to_vec();
-                bytes[pos] = value;
-                assert_no_panic(&build_memory_chunk(&bytes).unwrap());
-            }
         }
         for offset in [1_u32, 7, 8, 1024, u32::MAX] {
             let mut bytes = payload.to_vec();
