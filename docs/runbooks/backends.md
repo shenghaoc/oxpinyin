@@ -2,8 +2,8 @@
 
 `oxpinyin-store` compiles exactly one peer backend per binary;
 the store refuses zero or more than one with a `compile_error!`. tkrzw is
-the workspace default. The crate map (`docs/architecture.md`) and
-`backend-selection-audit` carry the why.
+the workspace default. The [architecture](../architecture.md#backend-selection)
+carries the why.
 
 ## Selecting a backend
 
@@ -25,8 +25,8 @@ self-built one (`just tkrzw-build DIR`, what CI uses) is selected with
 | backend | Debian/Ubuntu packages | macOS (Homebrew) |
 | --- | --- | --- |
 | tkrzw | `libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev pkg-config g++` (the cxx bridge is C++17; no libclang) | `tkrzw`, and `export LIBRARY_PATH="$(brew --prefix)/lib"` (see [setup](setup.md#macos): `cargo test` links lz4/zstd from there, `cargo check`/`clippy` never link and are not evidence) |
-| kyotocabinet | `libkyotocabinet-dev pkg-config g++` (the cxx bridge is C++) | `kyoto-cabinet`; the keg ships `kyotocabinet.pc`, pkg-config resolves it, and the store suite passes (verified on 1.2.80, 2026-09-13). The old "the KC dylib does not dlopen on macOS" note does not reproduce on today's bottled formula — the dylib dlopens by absolute path, and the backend links at link time, so bare-name lookup never enters the picture |
-| bdb | `libdb-dev` (resolves to `libdb5.3-dev`) `libclang-dev pkg-config`; Fedora: `libdb-devel` | `berkeley-db@5` — 5.3.28 under the Sleepycat license, the surveyed version; the default `berkeley-db` formula is 18.1 AGPL-3.0-only and stays unusable. The keg is keg-only and ships no `.pc`, so point the [overrides](#discovery-and-overrides) at it (the build's rpath flag lets the test binaries find the dylib). Clippy and the full suite pass with the same counts as Linux — 36/0/4 (verified 2026-09-13) |
+| kyotocabinet | `libkyotocabinet-dev pkg-config g++` (the cxx bridge is C++) | `kyoto-cabinet`; the keg ships `kyotocabinet.pc` and pkg-config resolves it. The backend links at link time, so bare-name dylib lookup does not apply |
+| bdb | `libdb-dev` (resolves to `libdb5.3-dev`) `libclang-dev pkg-config`; Fedora: `libdb-devel` | `berkeley-db@5` — 5.3.28 under the Sleepycat license, the surveyed version; the default `berkeley-db` formula is 18.1 AGPL-3.0-only and stays unusable. The keg is keg-only and ships no `.pc`, so point the [overrides](#discovery-and-overrides) at it (the build's rpath flag lets the test binaries find the dylib) |
 
 Every backend links a **system** library, the one the distribution
 ships and patches. oxpinyin vendors none of them. Berkeley DB is bound
@@ -99,16 +99,14 @@ the installed header keeps the declarations and the linked `.so` in
 lockstep by construction. `crates/oxpinyin-store/build.rs` carries the
 full reasoning.
 
-`OXPINYIN_BDB_ALLOW_UNSURVEYED_VERSION` is CI-only. Unset or blank, the
+`OXPINYIN_BDB_ALLOW_UNSURVEYED_VERSION` is for CI hosts that have no
+surveyed libdb. Unset or blank, the
 Berkeley DB backend refuses any linked libdb other than 5.3 at open
 (`check_runtime_version` in `crates/oxpinyin-store/src/bdb/ffi.rs`). Set
 to a non-empty value, that comparison alone warns once — the line names
 the linked version and the surveyed 5.3 — and the open continues. It
-does not skip any other check. The nightly `test-windows` job
-(`verify-nightly.yml`) sets it because the vcpkg
-`berkeleydb` port is 4.8.30 and no surveyed build is packagable on that
-runner today. A developer recipe does not set it: Linux `libdb-dev` and
-Homebrew `berkeley-db@5` are the surveyed 5.3.
+does not skip any other check. No workflow or developer recipe sets it:
+Linux `libdb-dev` and Homebrew `berkeley-db@5` are the surveyed 5.3.
 
 The two C-ABI crates additionally need `libglib2.0-dev` and `g++`; they
 are Linux-first.
@@ -131,5 +129,5 @@ the DBM files carry libpinyin's names on Kyoto Cabinet, tkrzw and
 Berkeley DB. This is what happens when a distribution switches
 libpinyin's own backend. A change of the default backend is the same
 transition for from-source builds: a user store written by a build on
-the earlier default is wiped on open under the same rule (see
-`docs/findings/compatibility-policy.md`).
+the earlier default is wiped on open under the same rule (see the
+[compatibility policy](../findings/compatibility-policy.md)).

@@ -1,16 +1,11 @@
 # Verification
 
-Maintainer ruling 2026-10-04 UTC.
-The maintainer decision of 2026-10-30 UTC supersedes its choice of Berkeley DB as the reference cell, because tkrzw is maintained upstream.
-
 A cell uses one DBM backend on both sides of a comparison.
 [`tools/dev/cell.py`](../../tools/dev/cell.py) manages cells.
-These rules replace older instructions that require all three cells for every change.
 
 ## 1. Reference cell
 
-Use tkrzw (`PINYIN_ORACLE_DBM=tkrzw`, the default; maintainer decision 2026-10-30 UTC).
-Berkeley DB was the reference cell from 2026-10-04 to 2026-10-30 UTC.
+Use tkrzw (`PINYIN_ORACLE_DBM=tkrzw`, the default), because tkrzw is maintained upstream.
 Run baselines, differentials, revert-and-check and the gate there by default.
 
 ## 2. Backend selection
@@ -43,12 +38,12 @@ These runs cover bdb and kc outside the per-change gate.
 
 Run revert-and-check only on the reference cell, tkrzw.
 Use a deliberate, named mutation of oxpinyin when there is no fix to revert.
-This applies when the differential covers behaviour that oxpinyin already reproduces, as in the round-2 audit.
+This applies when the differential covers behaviour that oxpinyin already reproduces.
 Never mutate the pin.
 
 ## 5. Local test gate
 
-Maintainer ruling 2026-11-08 UTC: run the local checks proportionally.
+Run the local checks proportionally.
 
 While iterating, run `cargo fmt --all --check`, `cargo clippy --locked -p <crate> --all-targets -- -D warnings` and fail-fast `cargo nextest run -p <crate>` for each crate you changed. Fix diagnostics as they appear.
 
@@ -93,13 +88,12 @@ If a new driver is necessary, explain why no existing driver could cover the cas
 
 Use repository `just` recipes and in-tree Python tools for builds, gates, differentials and measurements.
 Use managed CPython through `uv`.
-The tooling consolidation plan describes the migration.
-Existing documented shell entry points remain supported until migration.
+The documented shell entry points remain supported.
 Put new repeatable orchestration in shared Python tooling.
 Expose it through `just`.
 Do not use ad-hoc drivers, private operators or out-of-tree controllers.
 Add only the missing capability needed for the task, with proportionate tests.
-Do not expand an unrelated tooling migration or build reporting infrastructure.
+Do not expand unrelated tooling or build reporting infrastructure.
 Report an unavailable required check as not run.
 State its blocker.
 Do not substitute a private procedure or claim that an unrun check passed.
@@ -133,8 +127,7 @@ Stop when applicable checks pass and concrete failures are addressed.
 Additional runs require a relevant input change, a specific unresolved failure or an explicit maintainer request.
 Do not repeat runs merely to collect more evidence.
 
-Rules 5 and 7 describe the **completion gate** (maintainer rulings
-2026-10-19 UTC, 2026-10-30 UTC and 2026-11-08 UTC).
+Rules 5 and 7 describe the **completion gate**.
 
 Run the local checks that CI does not cover when a coherent fix is ready, before a push for review.
 Between completion gates, use iteration feedback while the fix is taking shape:
@@ -162,7 +155,7 @@ Keep and reuse one target directory per cell.
 Do not delete target directories between issues.
 Clean once when the work is finished.
 
-Maintainer ruling 2026-11-06 UTC: no memory admission; it withdraws the 2026-10-19 UTC ruling.
+No memory admission applies.
 Run cargo build, test and clippy directly.
 Anyone who wants to limit builds sets `CARGO_BUILD_JOBS` in their own Cargo configuration.
 

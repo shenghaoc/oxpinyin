@@ -46,7 +46,7 @@ existing lock handling.
 **Enums and matches (maintainer decision 2026-10-30 UTC):**
 `#[non_exhaustive]` is for public APIs that other teams use (Google Rust
 style guide). oxpinyin has no such API, because its Rust interfaces are
-internal (2026-10-18 ruling). Do not mark an enum or a struct
+internal ([interface ruling](constitution.md#external-interfaces)). Do not mark an enum or a struct
 `#[non_exhaustive]`. A match on an oxpinyin enum lists every variant and
 has no wildcard arm. Then the compiler flags every in-tree match when a
 variant is added. If only one variant is necessary, use `if let`,

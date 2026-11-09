@@ -293,7 +293,7 @@ keystrokes positionally derived from the selected keyboard's tables
 
 ## Verification input set
 
-The differential corpus (`tools/bisection/chewing-diff.c`) names zhuyin
+The differential corpus (recorded evidence; the C driver is retired) names zhuyin
 symbol sequences plus an optional tone; the keystroke strings are
 **derived at startup** from the pinned STANDARD symbol/tone tables
 embedded in the driver (verbatim copies of `zhuyin_table.h:9-58`), and
@@ -315,7 +315,7 @@ keystroke is hand-authored. Coverage, re-derived per run:
   `ㄌㄣ`, `ㄖㄨㄚ`) at consumed 0;
 - `pinyin_in_chewing_keyboard` symbol vectors for symbol and tone keys.
 
-Gate: `SCHEME_DIFF_PARSE_AUX_ONLY=1 ./run-scheme-diff.sh bopomofo` →
+Recorded evidence: the bopomofo scheme differential's parse/aux filter →
 `PARSE_AUX_IDENTICAL` (re-measured with this corpus; double-pinyin
 PARSE_AUX unchanged). ~~The full-log run still diverges in the
 documented candidate/sentence class only.~~ Superseded by the exact
@@ -418,18 +418,15 @@ this record.
 - **Re-measured for the freeze (2026-09-03).** In the debian-testing
   gate container (`oxpinyin-validate`, pin-built tkrzw oracle,
   `pin_ref=libpinyin-2.11.91-0c5e80e1…+model20-59c68e89…+dbm-tkrzw`),
-  `chewing-diff.c` driven against `libpinyin_capi.so` built from this
-  tree and against the oracle, both on full model20 tables compiled by
-  `oxpinyin-datagen`: the full log is byte-identical for all eight
+  the chewing differential driver run against `libpinyin_capi.so` built
+  from this tree and against the oracle, both on full model20 tables
+  compiled from the model text: the full log is byte-identical for all eight
   keyboards (1 STANDARD 888 lines over the 45-input corpus, 2 HSU 255,
   3 IBM 206, 4 GINYIEH 206, 5 ETEN 206, 6 ETEN26 268, 8 HSU_DVORAK 255,
   9 DACHEN_CP26 665) and the runner's `PARSE_AUX_ONLY` filter is
   identical on each; double scheme 2 re-run as a control, identical.
   The drivers were run directly with the runner's own arguments and
-  filter because [archived run scheme diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-scheme-diff.sh)'s completeness check still
-  requires `.redb` table names while the default build writes `.kct`
-  (a runner defect, flagged separately, not a scheme result). The
-  driver's embedded STANDARD tables are verbatim `zhuyin_table.h:9-58`;
+  filter. The driver's embedded STANDARD tables are verbatim `zhuyin_table.h:9-58`;
   its other keyboards' tables are set-identical to the pin, with the
   GINYIEH and ETEN apostrophe rows relocated — harmless, the lookup is
   by key.
@@ -437,24 +434,21 @@ this record.
   parser laws, the tables and indexes, the post-match tone-validity
   stop, the aux rendering, the index-fidelity rows, and the exact-seam
   routing — under the option word the standing gate uses
-  (`IS_ZHUYIN | ZHUYIN_INCOMPLETE | USE_TONE`, `chewing-diff.c:53`) and
-  the one-key seam's FORCE_TONE profiles ([archived run key surface diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-key-surface-diff.sh)).
+  (`IS_ZHUYIN | ZHUYIN_INCOMPLETE | USE_TONE`) and the one-key seam's
+  FORCE_TONE profiles.
 - **What remains provisional.** (1) Tone stays outside the frozen
   `SyllableKey` vocabulary (the Tone section's decision and its
   sign-off condition are unchanged). (2) STANDARD_DVORAK (7) stays the
-  abort slot until upstream fixes the fallthrough. (3) The **open
-  implementation item**: the pinyin facade's chewing batch seam does
-  not forward `FORCE_TONE` (register entry "pinyin-facade chewing batch
-  seam does not forward `FORCE_TONE`"); the frozen law for that seam is
-  the pin's — the whole word minus `ZHUYIN_CORRECT_ALL` crosses, with
-  `FORCE_TONE` nested under `USE_TONE` for Simple and CP26 and
-  unconditional for Discrete — the same law the libzhuyin facade
-  already implements. Closing it means the one-line
-  `parse_with_options` forward plus a FORCE_TONE profile in
-  `chewing-diff.c`, and must keep every gate below green.
-- **Standing gates.** `[archived run scheme diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-scheme-diff.sh) bopomofo <k>` for k in
-  1 2 3 4 5 6 8 9 (full log and `SCHEME_DIFF_PARSE_AUX_ONLY=1`) and
-  [archived run key surface diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-key-surface-diff.sh) (one-key seam, 2,131 probe lines).
+  abort slot until upstream fixes the fallthrough. (3) The pinyin
+  facade's chewing batch seam and `FORCE_TONE`: **CLOSED**
+  (`compatibility-policy.md` row 30; closure note below). The frozen
+  law for that seam is the pin's — the whole word minus
+  `ZHUYIN_CORRECT_ALL` crosses, with `FORCE_TONE` nested under
+  `USE_TONE` for Simple and CP26 and unconditional for Discrete — the
+  same law the libzhuyin facade implements.
+- **Recorded evidence.** The bopomofo scheme differential for keyboards
+  1 2 3 4 5 6 8 9 (full log and the parse/aux filter) and the one-key
+  seam differential (2,131 probe lines).
 - **Re-opening condition.** A pin-observed behaviour of the four
   functions that a gate cannot reproduce under the frozen law, or
   evidence that the pinned bopomofo candidate surface needs tone in the
@@ -464,17 +458,16 @@ this record.
   draft is frozen without further amendment: the "What is frozen" list
   above is the contract, the "What remains provisional" items keep their
   stated status, and the standing gates and the re-opening condition
-  apply from this date. The open implementation item — the pinyin
-  facade's chewing batch seam does not forward `FORCE_TONE` — stays open
-  under the frozen law, carried by its register entry
-  (`docs/findings/compatibility-policy.md`, row 30); W13 work proceeds against this
-  SPEC as frozen.
+  apply from this date. The implementation item — the pinyin facade's
+  chewing batch seam did not forward `FORCE_TONE` — was carried by its
+  register entry (`docs/findings/compatibility-policy.md`, row 30) and
+  is closed (next note).
 - **Closure note — 2026-09-14.** The one open implementation item the
   freeze carried is closed, per the fix shape its own record prescribed:
   the seam forwards the whole option word after the `ZHUYIN_CORRECT_ALL`
   strip (`pinyin.cpp:1582-1609`), capi tests pin the register's measured
-  shape, and `tools/bisection/chewing-diff.c` gained the FORCE_TONE
-  profile pass. The frozen law itself is unchanged — this is its
+  shape, and the chewing differential driver gained the FORCE_TONE
+  profile pass (recorded evidence). The frozen law itself is unchanged — this is its
   implementation, not an amendment of it. The profile's live run against
   the pin was taken 2026-09-16 — all eight implemented keyboards
   IDENTICAL (register amendment,

@@ -3,7 +3,6 @@
 oxpinyin is a Rust rewrite of libpinyin under the same license, GPL-3.0-or-later.
 Reading and copying upstream C++ source is expected and encouraged.
 There is no clean-room restriction.
-The original restriction avoided verbatim copying.
 Clean-room reverse engineering adds time and effort without benefit when the source is legally available.
 
 This page owns how contributors work against the pin: reading and citing its source, the method for each subsystem, the decision order for language and runtime differences, and the stages.
@@ -25,8 +24,8 @@ Dated records keep the line numbers of the tree they name.
 
 Maintainer ruling 2026-10-16 UTC.
 
-Amended 2026-10-18 UTC: binary size follows Constitution §2's recording
-and disclosure rule, separately from runtime time/space comparisons.
+Binary size follows Constitution §2's recording and disclosure rule,
+separately from runtime time/space comparisons.
 
 Stage 2 requires compatibility with the pin.
 It permits internal refactoring, idiomatic Rust rewrites, and performance or memory improvements when compatibility remains intact.
@@ -134,10 +133,10 @@ Take the sizes from the `shipping-sizes` CI job summary.
 
 Read the [compatibility policy](findings/compatibility-policy.md) before recording a divergence.
 It defines class (a)–(b) and records retired class (c), the language/runtime-quirk exception, citations and register classifications.
-Class (d), consumer scope, was retired 2026-09-06.
+Class (d), consumer scope, is retired.
 
-Maintainer rulings, 2026-10-24 UTC, as amended 2026-10-28 UTC: internal
-behaviour follows the language-artefact decision order below.
+Internal behaviour follows the language-artefact decision order below
+(maintainer rulings 2026-10-24 UTC and 2026-10-28 UTC).
 
 External I/O follows the pin's call on Linux ([platform scope](#platform-scope-of-pinned-behaviour)).
 Use Rust's `std` maths at full speed under class (a).
@@ -163,8 +162,6 @@ Retain its case and pin evidence.
 Existing case dispositions remain governed by the [disposition definitions](findings/compatibility-policy.md#dispositions-and-discrepancy-records).
 
 ### Adapter placement
-
-**Adapter placement (amended 2026-10-28 UTC).**
 
 Place external file, locale and tool I/O calls in `oxpinyin-input`.
 Place DBM backend calls in `oxpinyin-store`.
@@ -193,18 +190,17 @@ Use Rust `std::io` under the C++ contract for C++ streams.
 
 Permit a Rust equivalent only after reading both implementations' sources proves identical observable results for every input.
 Use the pin's call when the comparison is unsettled.
-This replaces #1304's external-I/O language-artefact treatment.
 
-**External-library bindings (amended 2026-11-02 UTC).**
+**External-library bindings.**
 Permit generated Rust–C++ interoperability and minimal semantic adapters under the [Rust/C++ interoperability ruling](findings/compatibility-policy.md#rust-cpp-interoperability).
-It supersedes the blanket prohibition on hand-written C++ shims and governs backend binding choices and their source-proof obligations.
+That ruling governs backend binding choices and their source-proof obligations.
 
 **Macro checks (maintainer ruling 2026-10-31 UTC).**
 Do not reproduce macros such as `assert`, `g_return_val_if_fail` or `G_STRFUNC`.
 Make their checks plain Rust: answer the pin's value, or abort where the pin aborts.
 Do not imitate their message text; record the stderr difference as a POLICY-ACCEPTED language artefact.
 Stop and report a call or behaviour that has no equivalent with the same documented result.
-`oxpinyin-input` has no C shim left; the Kyoto Cabinet adapter is retained under the [Kyoto Cabinet exception](#kyoto-cabinet-exception).
+`oxpinyin-input` has no C shim; the Kyoto Cabinet and tkrzw semantic adapters follow the [Rust/C++ interoperability ruling](findings/compatibility-policy.md#rust-cpp-interoperability).
 
 #### Platform scope of pinned behaviour
 
@@ -216,9 +212,6 @@ Do not start a Windows libpinyin build project.
 Differences that come from a platform's native facilities (file and mapping APIs, text mode, C runtime streams) are platform-dependent behaviour, recorded where known and tested where practical.
 This does not cover platform-independent product behaviour (ranking, parsing, training, data handling), safety, determinism, the C API/ABI, its symbol names and its ownership and lifetime rules, or persistent file formats, which must be the same on every platform.
 The [interoperability ruling](findings/compatibility-policy.md#rust-cpp-interoperability) applies on every platform.
-
-<a id="kyoto-cabinet-exception"></a>**Kyoto Cabinet exception.**
-Superseded by the [Rust/C++ interoperability ruling](findings/compatibility-policy.md#rust-cpp-interoperability), which owns the frozen contract and separate migration.
 
 The call rule does not require an undefined read or abort.
 Existing class (b) records stand, including punctuation refusals.
@@ -342,14 +335,13 @@ Performance does not define that boundary.
 
 Stage 1, exact-output parity with the pin-built oracle on the corpus surfaces, is complete.
 
-Amended 2026-10-28 UTC: the language-artefact exception remains for
-internal behaviour but no longer applies to external I/O. Data formats
-and ABI remain unchanged.
+The language-artefact exception applies to internal behaviour, not to
+external I/O. Data formats and ABI do not change.
 
 Earlier records use "Stage 2" for compatible performance work.
 That work remains Stage 2 under this ruling.
 Keep those records' wording.
-References to output changes, such as `EdgeKind` Fuzzy/Typo/Abbrev variants or a model upgrade, now belong to Stage 3.
+References to output changes, such as `EdgeKind` Fuzzy/Typo/Abbrev variants or a model upgrade, belong to Stage 3.
 Give new benchmarks names that do not include a stage.
 
 ### Stage 2

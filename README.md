@@ -60,7 +60,7 @@ consolidated Cargo package when running or testing them, for example:
 ## Upstream
 
 - Behaviour oracle: [libpinyin](https://github.com/libpinyin/libpinyin) — pin in
-  `docs/testing/oracle-environment.md`; its
+  [`tools/oracle/oracle-pin.txt`](tools/oracle/oracle-pin.txt) ([pin identity](docs/runbooks/oracle.md#pin-identity)); its
   [wiki](https://github.com/libpinyin/libpinyin/wiki) is the upstream
   documentation (n-gram model format, internals, multiple dictionaries)
 - Frontend ABI/settings surface:

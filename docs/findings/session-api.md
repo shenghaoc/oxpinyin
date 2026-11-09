@@ -1,17 +1,16 @@
 # Framework-neutral session API SPEC
 
-Date: 2026-08-09 · Status: **frozen for W4-T0** (behavioural contract); the
-Rust-signature freeze below was **retired 2026-10-18 UTC** by the maintainer's
-ruling that the C APIs/ABIs are the only supported external interfaces
-([interface ruling](../constitution.md#external-interfaces))
+Date: 2026-08-09 · Status: **behaviour frozen**. The Rust signatures are
+not frozen: the C APIs/ABIs are the only supported external interfaces
+([interface ruling](../constitution.md#external-interfaces), 2026-10-18 UTC).
 
-This SPEC freezes the `oxpinyin-engine` session surface before any decoder work
-lands on top of it. Every later W4 task fills these signatures in; none of them
-may change one. A signature change after this branch is an Architect+human
-correction, recorded in the log at the end of this file.
+This SPEC freezes the behaviour of the `oxpinyin-engine` session surface:
+candidate order, preedit coverage, selection and commit semantics, and the
+error conditions that the C facades surface. The Rust signatures below
+describe the current internal surface and may change.
 
 The rules it implements are already stated in `docs/architecture.md`
-under **Portability seam**. This finding turns them into a named, frozen API so
+under **Portability**. This finding turns them into a named API so
 that a shell author — IBus today, TSF/IMK/ArkTS later — can read one document
 and know exactly what they consume.
 
@@ -66,8 +65,8 @@ pub struct KeyInput { /* private */ }
 
 `KeyInput` carries the logical key, the modifier set, and the **text** the key
 would commit if the engine ignored it (empty for non-text keys). Fields are
-private with constructors and accessors so the struct can grow without breaking
-the freeze; `LogicalKey` is `#[non_exhaustive]` for the same reason.
+private with constructors and accessors so the struct can grow;
+`LogicalKey` is `#[non_exhaustive]` for the same reason.
 
 A shell that only knows how to send characters can use
 `KeyInput::character(ch)`. `Unknown` exists so a shell never has to invent a
@@ -151,9 +150,8 @@ where
     pub fn dictionary(&self) -> &D;
     pub fn language_model(&self) -> &L;
 
-    // W6-T3 added the training surface. The frozen W4-T0 methods above
-    // did not change; these are additions. `train` is method-generic over
-    // `UserModel` so the engine stays user-agnostic.
+    // The training surface. `train` is method-generic over `UserModel`
+    // so the engine stays user-agnostic.
     pub fn train<U>(&self, user: &mut U) -> Result<(), EngineError>
     where
         U: UserModel<Token = PhraseToken>,
@@ -161,16 +159,14 @@ where
     pub fn selected_tokens(&self) -> &[PhraseToken];
     pub fn composition_keys(&self) -> Result<Vec<SyllableKey>, EngineError>;
 
-    // W14 added the sentence surface (docs/findings/sentence-surface.md).
-    // Additions again; nothing frozen above changed. `guess_sentence` is
-    // the m_nbest_results gate: rows live until the next guess or reset,
+    // The sentence surface (docs/findings/sentence-surface.md).
+    // `guess_sentence` is the m_nbest_results gate: rows live until the next guess or reset,
     // and `candidates` prepends them as NBEST rows while they do.
     pub fn guess_sentence(&mut self) -> Result<bool, EngineError>;
     pub fn sentence_lookup_active(&self) -> bool;
     pub fn sentence_text(&self, index: u8) -> Option<&str>;
 
-    // #757 added the deferred list build (human approval, 2026-10-16).
-    // Additions again; nothing frozen above changed. Off by default, so
+    // The deferred list build (#757). Off by default, so
     // the parse seams and sentence guesses build `candidates` eagerly as
     // before; on (the C facades), they leave it stale, `select`,
     // `select_promoted` and `Space` rebuild it before indexing it, and a
@@ -183,10 +179,9 @@ pub enum KeyOutcome { Ignored, Consumed, Commit(String) }   // #[non_exhaustive]
 pub enum Selection { Continued, Completed }                 // #[non_exhaustive]
 ```
 
-The bounds are part of the freeze. They name concrete `oxpinyin-core` types
-(`SyllableKey`, `PhraseEntry`, `PhraseToken`) precisely so the decoder can be
-added later without widening them, and the `Display` bounds exist because the
-frozen `core-trait-seam.md` traits leave `Error` unbounded — the engine
+The bounds name concrete `oxpinyin-core` types
+(`SyllableKey`, `PhraseEntry`, `PhraseToken`), and the `Display` bounds exist
+because the `core-trait-seam.md` traits leave `Error` unbounded — the engine
 type-erases backend failures into `EngineError` rather than leaking an
 associated type into its public surface.
 
@@ -237,9 +232,7 @@ pub enum EngineError {                    // #[non_exhaustive]
 }
 ```
 
-`#[non_exhaustive]`, `Display` and `std::error::Error`. Later tasks add
-variants; adding a variant to a `#[non_exhaustive]` enum is the documented
-growth path and is not a freeze violation. Removing or renaming one is.
+`#[non_exhaustive]`, `Display` and `std::error::Error`.
 
 ## Decoder vocabulary types
 
@@ -270,13 +263,11 @@ the pin's incomplete-key set and makes them graph edges.
 
 **2026-08-15 — W6-T3 training surface.** `Session` gained `train`,
 `selected_tokens`, and `composition_keys`. `EngineError` gained
-`UserModel`. None of the frozen W4-T0 signatures changed; these are
-additions. `train` is method-generic over `UserModel` so the engine
-stays user-agnostic. Recorded by W6-T4 so the SPEC and the code agree.
+`UserModel`. `train` is method-generic over `UserModel` so the engine
+stays user-agnostic.
 
 **2026-10-16 — #757 deferred candidate list (human approval, 2026-10-16).**
-`Session` gained `set_defer_list_builds` and `refresh_candidates`. None
-of the frozen W4-T0 signatures changed; these are additions, and the
+`Session` gained `set_defer_list_builds` and `refresh_candidates`. The
 default keeps the eager list, its parse length and the errors the parse
 seams and sentence guesses return. The C facades turn the mode on: the
 pin builds candidates only in `pinyin_guess_candidates`
@@ -284,16 +275,6 @@ pin builds candidates only in `pinyin_guess_candidates`
 window it re-anchors there, so in that mode a sort-word change on a
 composing session (`set_sort_options`) also leaves the list stale, the
 pin taking the word as that call's argument (`pinyin.cpp:2198`).
-Recorded by the #757 change so the SPEC and the code agree.
-
-**2026-10-18 UTC — Rust-signature freeze retired (maintainer ruling).** The
-C APIs/ABIs are the only supported external library interfaces; no external
-Rust consumers are expected or supported. This SPEC's frozen signatures, the
-"none of them may change one" rule and the Architect+human correction process
-for a signature change no longer bind. Its behavioural contract (candidate
-order, preedit coverage, selection and commit semantics, error conditions that
-the C facades surface) stays in force. Entries above are history and are not
-rewritten.
 
 **2026-11-07 UTC — configuration framework removed (maintainer ruling).** The
 ibus-libpinyin defaults do not belong in oxpinyin. `Config`, `ConfigValue`,

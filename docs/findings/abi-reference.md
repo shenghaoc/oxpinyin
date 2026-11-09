@@ -1,6 +1,6 @@
 # Reference — the exported libpinyin ABI
 
-Date: 2026-08-14 · updated 2026-09-17 · Status: living reference.
+Status: living reference.
 
 ## Scope
 
@@ -19,17 +19,12 @@ the E2E I/O compatibility rule in
 ## Source identity
 
 - Backend API: **libpinyin** tag `2.11.92`, commit
-  `074a2219c90feaf962d0d24f034514033ece5f99` (the oracle pin;
-  `docs/testing/oracle-environment.md`).
+  `074a2219c90feaf962d0d24f034514033ece5f99` (the pin;
+  `tools/oracle/oracle-pin.txt`).
 - Header: `libpinyin/src/pinyin.h` — mirrored at
   `crates/oxpinyin-capi/pinyin.h`; the export lists are
   `crates/oxpinyin-capi/libpinyin.ver` and
   `crates/oxpinyin-zhuyin-capi/libzhuyin.ver`.
-- A historical note for the record: the 2026-08-14 audit enumerated the
-  symbols two reference frontends call, and a 51-symbol bootstrap
-  contract stood until the full 79/79 export target landed 2026-08-30.
-  Those per-consumer enumerations are retired as scope instruments; the
-  per-symbol facts below stand for the whole exported set.
 
 ## 1. Per-symbol signatures and ownership/lifetime semantics
 
@@ -867,10 +862,10 @@ surface stays minimal.
 
 ## Boundary notes
 
-Every exported `pinyin_*` symbol is in scope and implemented live —
-the 79/79 target met 2026-08-30, no placeholder bodies anywhere.
-Symbols needed only by the differential harness may be added to
-`pinyin-oracle`; they are not part of the drop-in surface.
+Every exported `pinyin_*` symbol is in scope and implemented live, with
+no placeholder bodies. Test-only fixture hooks are compiled out of the
+shipped build (`--features shipped`) and are not part of the drop-in
+surface.
 Every C-ABI symbol requires a dedicated task, a `// SAFETY:` argument for
 each unsafe block, NULL/invalid-input coverage, and an oracle-backed
 behavioural test before freeze.

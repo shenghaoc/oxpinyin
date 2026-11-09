@@ -1,8 +1,7 @@
 //! [`UserModel`] wiring for [`UserStore`].
 //!
-//! This is the first implementor of the `oxpinyin-core` seam — T0
-//! (`docs/findings/user-store.md` §7) found the trait had zero implementors.
-//! T1 wired `observe`. T4 exposes the stored counts as
+//! This implements the `oxpinyin-core` seam: `observe` records training,
+//! and the stored counts are exposed as
 //! [`oxpinyin_core::UserCountDelta`] for the decode-time additive merge.
 //! The seam carries counts only: decode reads them through the language
 //! model, because a `Cost` added after the λ blend would be a new weighting

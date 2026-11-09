@@ -275,9 +275,8 @@ fn sort_word_defaults_to_parity_and_sets_cleanly() {
 
 #[test]
 fn a_longer_row_surfaces_when_bit_2_clear_and_vanishes_when_set() {
-    // FrequencyFixtureModel: the §9 row is built only under the
-    // production frequency-ranked construction
-    // (`has_real_unigrams`, `lookup.rs`).
+    // FrequencyFixtureModel: the §9 row is built by the production
+    // frequency-ranked construction (`lookup.rs`).
     let mut session = Session::new(
         SessionSettings::default(),
         FixtureDictionary::parse(LONGER_VOCAB).expect("authored fixture"),
@@ -1553,7 +1552,7 @@ fn amplified_frequency_pins_the_class_a_probe_values() {
     // The denominator is the pin's phrase-index total over model20:
     // interpolation2 sum 50_913_735 + 138_096 items, each item's baked
     // unigram being its interpolation2 count + 1 (probe-verified over
-    // the whole index; `docs/testing/corpus-tail.md` Class A). The
+    // the whole index; `docs/findings/candidate-construction.md` §8.4 Class A). The
     // values are the amplified keys the 12 top-1 tie-swaps collapse on.
     const PIN_TOTAL: u64 = 51_051_831;
     // 0: the 量比/两笔, 建仓/减仓, 拜倒/白道, 冰坝/并把, 长着/唱着 pairs.

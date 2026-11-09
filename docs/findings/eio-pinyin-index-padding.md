@@ -102,44 +102,31 @@
   contract controls also MATCHed on all three cells. `oxpinyin-capi`'s
   `boundary_tests::an_import_reading_parses_with_the_corrections` holds the
   `egn` control.
-- **Prior rulings:** none reversed. The same artefact was recorded for
-  the deleted `oxpinyin-datagen` producer in
-  `datagen-compat-2026-09-01` (the padding divergence) and was
-  tolerated by its `libpinyin_parity` test; this record binds it in the
-  tool-diff runner instead.
-- **Evidence:** `bash [archived compat source](https://github.com/shenghaoc/oxpinyin/blob/3b7a115a00be2b7d159fd6ca01d9b72e42565d68/tools/oracle/compat.sh) --cell bdb --runners
-  tool-diff --memory-mib 1536 --jobs 1` (2026-11-01 UTC, macOS arm64
-  host, Apple `container`), then the case's pin and subject
-  `pinyin_index.bin` from the run's `observations.log` read with
+- **Prior rulings:** none reversed.
+- **Evidence:** recorded evidence (2026-11-01 UTC, bdb): the case's pin
+  and subject `pinyin_index.bin`, read with
   `cargo run -p oxpinyin-store --example raw_records --no-default-features
-  --features bdb -- tree <file>` and compared field by field at the
-  item stride: 190 records, 3 differing in tail padding only, 0 field
-  mismatches. The capture is local working data and is not committed.
+  --features bdb -- tree <file>` and compared field by field at the item
+  stride: 190 records, 3 differing in tail padding only, 0 field
+  mismatches. The capture is not committed.
 - **Conclusion:** accepted under the maintainer's #1500 instruction to mask only these tail padding bytes.
 
-## Comparator correction (2026-11-01 UTC)
+## Comparator
 
 `mask_pinyin_index_row` in `crates/oxpinyin-utils/tests/common/mod.rs` retains every key and value. It
 masks only the two tail bytes of each odd-N item, where N is half the DBM
 key length and each item stride is `(4 + 2*N + 3) & ~3`. Empty continuation
 rows remain present. Invalid key or item lengths fail. No token, spelling
-key, record order or value length is dropped. The old key-only comparison
-has been removed. `rows_digest` in the same file sorts whole DBM rows to
+key, record order or value length is dropped. `rows_digest` in the same file sorts whole DBM rows to
 exclude container metadata; it does not reorder items within a value.
 
-The comparator is O(B) time and space in the helper's B output bytes, as
-was the existing logical-row digest path; masking adds no asymptotic
-change. The helper already materializes the rows. No measurement is needed.
+The comparator is O(B) time and space in the helper's B output bytes.
 
 The selected case reports POLICY-ACCEPTED when complete observations match
 after this narrowly defined mask, and DIFFER for every remaining mismatch.
 Tests distinguish token, packed-key and item-order mutations; verify odd
 and even lengths and empty continuation rows; and reject truncated items.
-Named mutations `pinyin-index-keys-only` and `pinyin-index-value-token-zero`
-are caught by the focused harness test and `gbf-toned-model`, respectively;
-the latter produces DIFFER. Restoring hash-first DBM opening makes the
-same case fail record-layout validation because tkrzw exposes internal
-tree pages; the restored tree-first helper returns POLICY-ACCEPTED.
-`gbf-mini-fixture` alone does not catch that helper mutation. No invalid
-observation is counted as a differential pass. The fixture check on all
-three cells reports 13 identical files, 0 differ and 3 pinned per cell.
+Recorded evidence: the named mutations `pinyin-index-keys-only` and
+`pinyin-index-value-token-zero` were caught by the focused harness test and
+`gbf-toned-model` (DIFFER), respectively. The helper opens a DBM as a tree
+first, because tkrzw exposes internal tree pages to a hash-first open.

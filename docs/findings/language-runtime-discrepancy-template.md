@@ -1,20 +1,19 @@
 # Language/runtime discrepancy record — template
 
-Status: **current template** (policy, 2026-10-24 UTC; #915/#916;
-amended 2026-10-26 UTC, #1303) · Not
-itself a register entry. Canonical policy:
-`docs/findings/compatibility-policy.md`, "The language/runtime-quirk
-exception". Owner issue: #915.
+Status: **current template** (policy; #915/#916, #1303) · Not itself a
+register entry. Canonical policy:
+[compatibility policy, "Internal language artefacts"](compatibility-policy.md#internal-language-artefacts)
+and [dispositions and discrepancy records](compatibility-policy.md#dispositions-and-discrepancy-records).
+Owner issue: #915.
 
 Use this record for a proposed difference from the pinned libpinyin that
 is a GLib, glibc or C++ language/runtime quirk rather than class (a)
-math, (b) memory safety or (c) availability: a behaviour of another
-language or of a library written for one, which oxpinyin does not
-reproduce (decision-order limb 3, 2026-10-26 UTC). No approval is
-needed. One record per independent
+math or (b) memory safety: a behaviour of another language or of a
+library written for one, which oxpinyin does not reproduce
+(decision-order limb 3). No approval is needed. One record per independent
 semantic difference, named `docs/findings/<issue-or-topic>-<slug>.md`.
 The record is linked from the register entry in
-`docs/findings/upstream-divergences.md` and from the contract-diff case.
+`docs/findings/upstream-divergences.md`, and it names its cases.
 
 The record must be complete before code changes. It is not a place to
 record a result discovered by running the oracle; derive the pin's
@@ -28,7 +27,7 @@ settle it).
 
 - **Status:** proposed | accepted | superseded · <YYYY-MM-DD> UTC · issue #N · PR #N
 - **Disposition:** POLICY-ACCEPTED (never MATCH)
-- **Policy limb:** language artefact. Why not (a), (b) or (c), and why
+- **Policy limb:** language artefact. Why not (a) or (b), and why
   a language-neutral requirement would not mention it: <one or two
   sentences>.
 - **Pin:** libpinyin 2.11.92 at 074a2219; tree read: <checkout path,
@@ -62,14 +61,15 @@ settle it).
   artefact reaches, characterised as precisely as the source permits,
   with representative pin and oxpinyin results and controls showing
   that product behaviour elsewhere is unchanged.
-- **Tests:** contract-diff case IDs and expected disposition
-  (`MATCH` or `POLICY-ACCEPTED`); unit/contract tests; malformed-input
-  witnesses; controls. Name the existing driver; a new driver needs the
-  reason no existing one can take the cases.
+- **Cases:** the case IDs and their disposition (`MATCH` or
+  `POLICY-ACCEPTED`); the record lists the `POLICY-ACCEPTED` cases.
+- **Tests:** the Rust tests that hold the accepted behaviour and its
+  controls, by crate, target and test name; malformed-input witnesses.
 - **Prior rulings:** none reversed. If one is involved, STOP and cite
   it.
-- **Evidence:** commands that produced the figures; no captures are
-  committed. Say where the capture environment is ephemeral.
+- **Evidence:** the pin citation, the exact inputs, the pin and oxpinyin
+  observations, the `POLICY-ACCEPTED` cases and the Rust tests above. No
+  captures or logs are committed.
 - **Conclusion:** accepted | retained as normal parity | needs a
   ruling. Reviewer and date.
 ```

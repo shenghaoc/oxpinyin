@@ -1,39 +1,31 @@
-# Phrase-index union at lookup — W11 Phase 0 scope and proposed design
+# Phrase-index union at lookup
 
-Date: 2026-08-17 · Status: **Phase 0 approved** · Workstream: W11 ·
-Base: current main (`5fcce53`)
+Date: 2026-08-17 · Status: **implemented** (W11)
 
-This finding is the mandatory scope-and-design gate for W11. It records what
-upstream actually unions, maps oxpinyin's current single-system-index
-assumptions, and proposes a design for the second PR in the stack. §9 records
-the approved ground for that implementation PR. No runtime behaviour is
-changed by this document.
+This finding records what upstream unions at lookup (§3) and how oxpinyin
+reproduces it (§4–§6). User, network and addon phrases surface in
+candidates; `pinyin_load_addon_phrase_library` loads addon libraries; and
+prediction (`pinyin_guess_predicted_candidates_with_punctuations`,
+`pinyin_choose_predicted_candidate`) produces candidates.
 
 ## 1. Scope
 
-> **Backend removed (2026-09-20 UTC, branch `refactor/drop-redb-backend`).** The table below maps `SystemDictionary` lookups onto a `pinyin_index.redb` / `phrase_index.redb` pair — the naming of that backend's files; today's equivalent names are the selected DBM's own.
-
-
-W11 makes user, network, and addon phrases surface in candidates, makes
-`pinyin_load_addon_phrase_library` real, and closes the prediction gap
-(`pinyin_guess_predicted_candidates_with_punctuations`,
-`pinyin_choose_predicted_candidate`). The corpus pins must not move: at zero
-user data and zero loaded addons the union must be the identity, exactly as
-the W6-T4 empty-store merge is.
+The union covers the default facade (system, user, network and
+choose-promoted addon phrases), the addon facade, and prediction. At zero
+user data and zero loaded addons the union is the identity: the corpus
+pins do not move.
 
 ## 2. Source set
 
-- libpinyin pinned tag `2.11.91`, on disk at `/tmp/libpinyin-2.11.91`.
-  Upstream paths below beginning `src/` are relative to that root.
-- oxpinyin: this repo. Paths beginning `crates/` are repo-relative, valid
-  against main `1c7cbd0`.
-- Prior art that this finding leans on:
-  `docs/findings/user-store.md` (W6 user store and the additive merge),
-  `data-layer-export` (why the raw `pinyin_index.bin` is not
-  the runtime schema),
-  `docs/findings/data-formats.md` (raw addon/custom content formats),
-  `docs/findings/candidate-construction.md` (the frozen window-scan
-  construction).
+- libpinyin: the pin (`074a2219`; `tools/oracle/oracle-pin.txt` is
+  authoritative). Upstream paths below beginning `src/` are relative to its
+  root. The line citations in §3 were first read at 2.11.91.
+- oxpinyin: this repo. Paths beginning `crates/` are repo-relative.
+- Related records: [`user-store.md`](user-store.md) (the user store and the
+  additive merge), [`data-formats.md`](data-formats.md) (the system and
+  addon data files), [`candidate-construction.md`](candidate-construction.md)
+  (the frozen window-scan construction) and
+  [`addon-choose-promotion.md`](addon-choose-promotion.md).
 
 ## 3. Upstream behaviour (pinned)
 
@@ -232,143 +224,82 @@ prefix token.
 `pinyin_choose_predicted_candidate` (`pinyin.cpp:2589-2639`) applies a **flat**
 `initial_seed = 69` to the chosen token's unigram (`+69 * 7 = 483`) and to the
 user bigram `(last → token)` plus `last`'s total (`+69`). `last` is
-`_get_previous_token(instance, 0)`, defaulting to `sentence_start`. W6 already
-stores this arithmetic (`oxpinyin_user::observe_predicted`), but nothing
-currently produces a predicted candidate for the call to consume.
+`_get_previous_token(instance, 0)`, defaulting to `sentence_start`. oxpinyin
+stores this arithmetic in `UserStore::observe_predicted` (§6.5).
 
-## 4. oxpinyin current single-index assumptions — the gap map
+## 4. oxpinyin implementation map
 
 ### 4.1 Data layer
 
-| Site | Current assumption | Upstream equivalent |
-|---|---|---|
-| `crates/oxpinyin-data/src/dict.rs` `SystemDictionary::lookup` | One `pinyin_index.redb` / `phrase_index.redb` pair; every token resolved through that one phrase index | Default facade + addon facade, two pinyin tables and two phrase indexes |
-| `SystemDictionary::phrase_prefix_exists` | Prefix probe only over the system pinyin key lists | Prefix probe over system + user pinyin tables, and separately addon pinyin table |
-| `SystemDictionary` unigram map | Aggregated system export frequencies only | Default facade total (system + user deltas) and addon facade total |
-| `crates/oxpinyin-data/src/phrase_library.rs` `ContentTable` | Parses addon `.bin` records, but has no runtime loader and no text/pinyin resolution | `SubPhraseIndex::load` for a `DICTIONARY` addon sub-index |
-| `crates/oxpinyin-data/src/lm/mod.rs` `BigramLanguageModel` | `interpolation2.text` real unigrams are the system phrase-index counts only | System phrase-index counts plus user deltas for the default pool; addon pool is separate |
+| Upstream | oxpinyin |
+|---|---|
+| Default facade: system pinyin and phrase DBMs, system chunk files | `SystemDictionary` (`crates/oxpinyin-data/src/dict.rs`) over `pinyin_index.bin`, `phrase_index.bin` and the system chunks |
+| Addon facade: `addon_pinyin_index.bin`, `addon_phrase_index.bin`, addon chunks loaded per call | `AddonDictionary` (`crates/oxpinyin-data/src/dict.rs`), held by the runtime's `AddonSet` |
+| Default facade total (system + user) and addon facade total | `BigramLanguageModel` unigram total; `addon_unigram_total` |
 
 ### 4.2 Engine
 
-| Site | Current assumption | Gap |
-|---|---|---|
-| `crates/oxpinyin-engine/src/session/mod.rs` `refresh` / `collect_window_scan` | Calls only `dictionary.lookup` and `dictionary.phrase_prefix_exists` | No second addon pass, no user-dictionary union in `D`, no source tagging |
-| `Session::candidate_frequencies` | Reads only `LanguageModel::unigram_freq` | No addon-frequency path or addon-total denominator |
-| `crates/oxpinyin-engine/src/candidate.rs` `CandidateKind` | `Phrase`, `Sentence`, `Fallback` only | Upstream additionally distinguishes `ADDON_CANDIDATE`, `PREDICTED_*`, `LONGER_CANDIDATE`, `ZOMBIE_CANDIDATE` |
+| Upstream | oxpinyin |
+|---|---|
+| Two `search_matrix` passes per window | `Dictionary::lookup` then `lookup_addon` per window (`crates/oxpinyin-engine/src/session/lookup.rs`) |
+| `ADDON_CANDIDATE` type | `CandidateKind::Addon` (`crates/oxpinyin-engine/src/candidate.rs`) |
+| Addon frequency: addon total, no bigram | `Session::candidate_frequencies` addon branch |
 
 ### 4.3 C ABI
 
-| Site | Current assumption | Gap |
-|---|---|---|
-| `crates/oxpinyin-capi/src/state.rs` `SharedDict` | Thin `Arc<SystemDictionary>` | No user lookup, no addon set |
-| `SharedLm` | User-count overlay on the system LM only | No addon total/ranking path |
-| `CapiCandidate` / `pinyin_get_candidate_type` | Maps `Phrase → NORMAL_CANDIDATE`, `Sentence → NBEST_MATCH_CANDIDATE` | Cannot report `ADDON_CANDIDATE` or `PREDICTED_*` |
-| `crates/oxpinyin-capi/src/config.rs` `pinyin_load_addon_phrase_library` | Always `false` | Needs real addon sub-index loading |
-| `crates/oxpinyin-capi/src/sentence.rs` predicted entry points | Always `false` | Needs prediction enumeration |
-| `crates/oxpinyin-capi/src/candidates.rs` `pinyin_choose_predicted_candidate` | Correct store write, but no predicted candidate is ever generated | Needs predicted candidates to surface first |
+| Upstream | oxpinyin |
+|---|---|
+| `lookup_candidate_type_t` per candidate | `CapiCandidate::candidate_type` (`crates/oxpinyin-capi/src/state.rs`) |
+| `pinyin_load_addon_phrase_library` | `crates/oxpinyin-capi/src/config.rs`, `RuntimeDict::load_addon` |
+| Prediction and punctuation prepend | `crates/oxpinyin-capi/src/predict.rs`, `crates/oxpinyin-facade/src/predict.rs` |
 
 ### 4.4 User store
 
-| Site | Current assumption | Gap |
-|---|---|---|
-| `crates/oxpinyin-user/src/store.rs` | Stores user phrase text, token, pronunciation, counts | No exact `SyllableKey[] → phrases` lookup, no incomplete/prefix probe, no phrase-text prefix/suffix search |
-| `crates/oxpinyin-user/src/phrase.rs` | Has nibble helpers for `USER_DICTIONARY` only | Does not model addon tokens; addon ambiguity (§3.5) must live outside the token nibble |
-| `crates/oxpinyin-capi/src/iterators.rs` export | Only `USER_DICTIONARY` exports; system/addon exports are empty | Acceptable for the user export ABI; not a candidate-surface blocker |
+| Upstream | oxpinyin |
+|---|---|
+| User, network and addon `USER_FILE` sub-indexes 7, 6 and 5 in the default facade | `oxpinyin_user` (`USER_DICTIONARY`, `NETWORK_DICTIONARY`, `ADDON_DICTIONARY` in `phrase.rs`) |
+| User pinyin and phrase tables | `UserLookup` (`crates/oxpinyin-user/src/lookup.rs`) |
+| Choose-promotion into nibble 5 | [`addon-choose-promotion.md`](addon-choose-promotion.md) |
 
-There is also no source for default-facade `USER_FILE` nibbles 5
-(`ADDON_DICTIONARY`, choose-promoted addon phrases) or 6
-(`NETWORK_DICTIONARY`). Upstream treats both as `USER_FILE` sub-indexes
-in the default facade, like user (7). oxpinyin has no `addon.bin` /
-`network.bin` store, so a promoted addon or a restored `network.txt`
-has nowhere to land. See §9.
+## 5. Addon data
 
-## 5. Addon data availability — a load-bearing decision
+The runtime reads the addon data that libpinyin ships: the
+`addon_pinyin_index.bin` and `addon_phrase_index.bin` DBMs, attached at
+init, and one `MemoryChunk` file per addon library, mapped when
+`pinyin_load_addon_phrase_library` loads it
+([`data-formats.md`](data-formats.md) §1–§3). There is no conversion or
+export step. `oxpinyin-utils`' `gen_binary_files` writes the same files
+from the model's `.table` text.
 
-W3 `addon_*.redb` cannot be the runtime addon tables. Those files were
-`oxpinyin-migrate convert` passthroughs of the raw Tkrzw files, i.e. the
-same **undocumented sectioned binary format** that
-`data-layer-export` deliberately refused to parse for the
-system pinyin index. Concretely:
-
-- `fixtures/w3/addon_pinyin_index.redb` has 117 records, all with 6-byte keys
-  of the `00 00 00 00 [u16 BE]` family, and sectioned values — not the
-  string-keyed `pinyin_index.redb` schema `SystemDictionary` reads.
-- `fixtures/w3/addon_phrase_index.redb` has 68 records, also 6-byte keys and
-  sectioned values — not the token→UTF-8 schema `SystemDictionary` reads.
-
-Therefore "use the existing addon_*.redb" can mean one of two very different
-implementations:
-
-**Option A — regenerate the addon tables in the established public-ABI schema.**
-Add a data-preparation step (analogous to
-`data-layer-export`) that reads the model archive's addon
-`.table` text files and writes string-keyed pinyin indexes plus token→text
-phrase indexes, one per addon library. Runtime `pinyin_load_addon_phrase_library`
-then opens those files exactly like `SystemDictionary` opens the system pair.
-This is the low-risk path, reuses the existing loader, and keeps the raw
-sectioned format out of the hot path. It changes the provenance of the
-`addon_*.redb` fixtures from raw Tkrzw copies to schema exports (flagged
-below). W3's `ContentTable` remains useful as an independent parser/validator
-for the `.bin` records.
-
-**Option B — port a raw binary decoder.** Read upstream C++ to reconstruct the
-sectioned `pinyin_index.bin`/`phrase_index.bin` format and implement it for the
-raw W3 addon tables. This is exactly the path `data-layer-export` rejected
-for system tables after measuring that the raw key space does not match
-`ChewingKey::get_table_index()` and the value layout is a sectioned
-multi-record format. It is much larger and is not required by any runtime
-contract.
-
-**Recommendation: Option A.** It follows the project's own precedent for system
-tables, avoids reading a legacy format the public-ABI export already
-side-stepped, and keeps runtime complexity additive rather than replacing a
-known-good loader. It does require a maintainer decision because the W11
-prompt names the W3 files; that decision is the first stop point of this
-Phase 0.
-
-## 6. Proposed design (Option A)
+## 6. Design
 
 ### 6.1 Union point
 
-Mirror upstream's two-facade split without changing the frozen `Session<D, L>`
-signature:
+oxpinyin mirrors upstream's two-facade split:
 
 - **Default union** = `SystemDictionary` + `UserLookup`, exposed as one
-  `Dictionary` implementation. Its `lookup` returns system entries first, then
-  default `USER_FILE` entries in nibble order (5, then 6, then 7), matching
-  upstream's ascending library-nibble append. Its `phrase_prefix_exists`
-  ORs the system probe and the user-file probe. At zero user-file data the
-  second half is empty, so this is bit-identical to today.
-- **Addon set** = one `AddonDictionary` per loaded library, kept separate and
-  not folded into `lookup`, so an addon token never needs to be distinguished
-  from system `MERGED_DICTIONARY` by nibble alone.
+  `Dictionary` implementation (`RuntimeDict`, `crates/oxpinyin-runtime`). Its
+  `lookup` returns tokens in ascending library-nibble order — system, then
+  default `USER_FILE` entries 5, 6 and 7 — as upstream's append does. Its
+  `phrase_prefix_exists` ORs the system probe and the user-file probe. At
+  zero user-file data the second half is empty.
+- **Addon set** = the `AddonDictionary` with its loaded libraries, kept
+  separate and not folded into `lookup`, so an addon token never needs to be
+  distinguished from system `MERGED_DICTIONARY` by nibble alone.
 
 ### 6.2 Data structures
 
-`UserLookup` (in `oxpinyin-user` or a small capi-side wrapper):
-
-- exact map: `BTreeMap<String, Vec<(u32 token, String text)>>` keyed by
-  `'`-joined `SyllableKey` spellings, rebuilt lazily from the user phrase
-  pronunciation table when the store changes;
-- incomplete/prefix set: the same keys projected through
-  `SystemDictionary::initial_key` logic (or a shared helper), so
-  `phrase_prefix_exists` matches the system incomplete-index probe;
-- phrase-text suffix/prefix maps for prediction: `BTreeMap<String, Vec<u32>>`
-  over user phrase text.
-
-`AddonDictionary`:
-
-- generated from Option A as a pinyin-keyed table and a token→text table, with
-  a per-library `unigrams: BTreeMap<u32,u64>` and `unigram_total: u64`;
-- one instance per loaded addon index; `lookup` and `phrase_prefix_exists`
-  reuse the `SystemDictionary` implementation shape;
-- loading/unloading idempotence follows `_load_phrase_library`
-  (`get_range` already loaded → `false`).
+- `UserLookup` (`crates/oxpinyin-user/src/lookup.rs`) borrows the user
+  store's session tables: the user pinyin index (complete and incomplete
+  key spaces) and the user phrase table. It holds no second copy.
+- `AddonDictionary` holds the addon DBM pair and the loaded addon
+  libraries. Loading an already loaded index answers `false`, as
+  `_load_phrase_library` does (`get_range` already loaded).
 
 ### 6.3 Candidate collection
 
-Add defaulted methods to the `Dictionary` and `LanguageModel` seams
-(`docs/findings/core-trait-seam.md`: the seam grows by defaulted methods only):
+The `Dictionary` and `LanguageModel` seams carry defaulted addon methods
+([`core-trait-seam.md`](core-trait-seam.md)). The shape:
 
 ```rust
 trait Dictionary {
@@ -386,103 +317,88 @@ trait Dictionary {
 }
 ```
 
-In the real-frequency window scan, after the existing default lookup the engine
+In the real-frequency window scan, after the default lookup the engine
 also calls `lookup_addon` on each complete key-path and tags those entries
 `CandidateKind::Addon`; the widening probe ORs `phrase_prefix_exists_addon`.
-Existing implementors return empty/false, so the no-addon path is unchanged.
+Implementors without addon data return empty/false, so the no-addon path is
+unchanged.
 
 ### 6.4 Scoring/ranking
 
-- Default candidates keep the current frozen ranking; the W6-T4
-  `UserCountDelta` overlay already adds user unigram deltas into the system LM
-  before the λ blend.
-- Addon candidates need a separate denominator. Add defaulted
+- Default candidates keep the frozen ranking; the `UserCountDelta` overlay
+  adds user unigram deltas into the system LM before the λ blend.
+- Addon candidates use a separate denominator, through defaulted
   `LanguageModel` accessors:
   ```rust
   fn addon_unigram_freq(&self, token: &Self::Token) -> Result<Option<u64>, Self::Error> { Ok(None) }
   fn addon_unigram_total(&self) -> Result<Option<u64>, Self::Error> { Ok(None) }
   ```
-  `SharedLm` supplies these from the loaded addon set. When a candidate is
+  `RuntimeLm` supplies these from the loaded addon set. When a candidate is
   `Addon`, `Session::candidate_frequencies` uses the addon path (no bigram
   term, addon total denominator) rather than the system path.
-- `CandidateKind` grows `Addon`, `PredictedBigram`, `PredictedPrefix`,
-  `PredictedPunctuation` (and, if needed for the C ABI mapping, `Longer`).
-  The engine's existing sort/dedup is source-aware only where frequency comes
-  from.
+- `CandidateKind` has `Addon`. The predicted candidate types live on the C
+  ABI row (§6.6). The engine's sort/dedup is source-aware only where
+  frequency comes from.
 
 ### 6.5 Prediction
 
-Prediction is implemented at the data/capi boundary rather than inside the
-generic `Session`, because it needs concrete phrase-table and user-bigram
-surfaces that `Session` deliberately does not model:
+Prediction lives at the facade and C ABI boundary rather than inside the
+generic `Session`, because it needs the phrase table and the user bigram:
 
-- Add reverse phrase lookup methods to `SystemDictionary` and `UserLookup`:
-  suffix search (for `_compute_prefixes`) and prefix suggestion (for
-  `_compute_predicted_prefix_candidates`).
-- Add a `UserBigram` successor iterator to `UserStore` (or expose the existing
-  bigram table read) with the copied `filter = 10` skip
-  (`pinyin.cpp:2311`, `:2349-2350`).
-- `SharedLm`/`SharedDict` expose a `predict(prefix)` method that reproduces
-  `_compute_prefixes` → `_compute_predicted_bigram_candidates` →
-  `_compute_predicted_prefix_candidates` → sort/dedup.
-- `pinyin_guess_predicted_candidates` snapshots those results into
-  `inst.candidates` with the correct `lookup_candidate_type_t`.
-- `pinyin_guess_predicted_candidates_with_punctuations` prepends punctuation
-  candidates from `punct.redb` (a W11 sub-task if punctuation is in scope for
-  the fork call surface; otherwise the punctuation list is empty and the
-  function still returns the non-punctuation prediction list).
-- `pinyin_choose_predicted_candidate` is already correct on the store side and
-  becomes reachable.
+- `compute_prefixes` (`crates/oxpinyin-facade/src/predict.rs`) reproduces
+  `_compute_prefixes`: a suffix search over the system and user phrase
+  tables.
+- `crates/oxpinyin-capi/src/predict.rs` reproduces
+  `_compute_predicted_bigram_candidates` (with the copied `filter = 10`,
+  `pinyin.cpp:2311`, `:2349-2350`) and
+  `_compute_predicted_prefix_candidates` (`merged_suggestions`, over
+  `search_suggestion`), then sort and dedup.
+- `pinyin_guess_predicted_candidates_with_punctuations` prepends the
+  punctuation candidates from `punct.bin` for each prefix token.
+- `pinyin_choose_predicted_candidate` trains the store
+  (`UserStore::observe_predicted`, `observe_predicted_prefix`).
 
 ### 6.6 C ABI candidate typing
 
-Rather than infer candidate type from `CandidateKind` alone, add a
-`candidate_type: lookup_candidate_type_t` field to `CapiCandidate`, populated
-when the candidate is built:
+`CapiCandidate` carries its `lookup_candidate_type_t` (a one-byte tag),
+populated when the candidate is built, rather than inferring the type from
+`CandidateKind` alone:
 
 - default window-scan phrase → `NORMAL_CANDIDATE`;
 - addon window-scan phrase → `ADDON_CANDIDATE`;
 - predicted bigram/prefix/punctuation → the corresponding enum value;
 - sentence/fallback → current mapping.
 
-`pinyin_get_candidate_type` returns that field directly. This keeps the
+`pinyin_get_candidate_type` returns that tag directly. This keeps the
 token-nibble ambiguity for addon index 4 inside the collection code and out of
 the C ABI.
 
-### 6.7 Addon data preparation (Option A implementation shape)
+### 6.7 Addon data
 
-- Add an addon-export data-preparation step that reads `data/*.table` from
-  the model archive and writes one string-keyed `pinyin_index` plus one
-  `token→text` phrase index per addon library, with counts taken from the
-  `.table` count column.
-- Regenerate `fixtures/w3/addon_*.redb` accordingly, keeping the system
-  fixtures and all corpus pins untouched.
-- Runtime `CapiContext` discovers addon table paths from a small manifest next
-  to the tables (or a fixed naming convention), never by scanning.
+The runtime reads the shipped addon files directly (§5). The system
+directory's `table.conf` names the addon libraries; nothing is discovered
+by scanning.
 
 ## 7. Complexity comparison vs upstream
 
-| Concern | Upstream | Proposed oxpinyin |
+| Concern | Upstream | oxpinyin |
 |---|---|---|
-| Lookup | Two facades × 16 possible sub-indexes, DBM pinyin-table lookups | Two logical unions; default `lookup` = system map + user map, addon pass = one map per loaded library |
-| User phrase surface | User pinyin table + user sub-index inside default facade | In-memory exact + initial-key maps over user pronunciations |
-| Addon surface | Aggregate addon pinyin/phrase tables + per-library content-file sub-index | One generated pinyin/phrase table per loaded addon library |
-| Candidate collection | Two `search_matrix` passes per window, range arrays per nibble | One existing default pass + one defaulted addon pass per window |
-| User ranking | Shared unigram total over default facade | Existing W6-T4 additive count merge; total already includes user delta |
-| Addon ranking | Separate addon total, no bigram | Defaulted `addon_unigram_*` path, separate total |
-| Prediction | Phrase-table suffix/prefix search + user bigram walk + punctuation table | In-memory reverse maps + user bigram iterator + optional punctuation list |
+| Lookup | Two facades × 16 possible sub-indexes, DBM pinyin-table lookups | The same two facades over the same DBMs; default `lookup` = system + user, addon pass = the addon facade |
+| User phrase surface | User pinyin table + user sub-index inside default facade | The same tables in the user store's session state |
+| Addon surface | Aggregate addon pinyin/phrase tables + per-library content-file sub-index | The same files |
+| Candidate collection | Two `search_matrix` passes per window, range arrays per nibble | One default pass + one addon pass per window |
+| User ranking | Shared unigram total over default facade | Additive count merge; the total includes the user delta |
+| Addon ranking | Separate addon total, no bigram | `addon_unigram_*` path, separate total |
+| Prediction | Phrase-table suffix/prefix search + user bigram walk + punctuation table | The same three inputs |
 
-No step worsens both time and space. The addon and prediction paths are
-additive; at zero user data and zero addons they are empty/false, which is the
-identity property the pins require. The main new memory is the user reverse
-index and per-loaded-addon tables, both proportional to loaded data rather
-than to the system index.
+At zero user data and zero addons the addon and prediction paths are
+empty/false, which is the identity property the pins require.
 
-## 8. Verification plan
+## 8. Verification
 
 ### 8.1 Pin identity
 
-Before any feature is active, the empty-store profile must remain bit-identical:
+The empty-store profile stays bit-identical:
 
 ```text
 top-1      10190
@@ -492,59 +408,27 @@ absent     0
 tie-swaps  0
 ```
 
-Movement means a leak into existing behaviour and is a STOP. Pins reflect
-the 2026-08-22 third amendment — the Class A comparator port
-(`pin-refreeze-2026-08`;
-`docs/testing/corpus-tail.md`).
+Movement means a leak into existing behaviour and is a STOP. These pins
+are the Class A comparator port's; `oxpinyin-runtime`'s `candidate_surface`
+test asserts the candidate surface
+([goldens and pins](../runbooks/goldens-and-pins.md)).
 
-### 8.2 New differentials
+### 8.2 Differentials
 
-Unique names under `tools/bisection/`, not edits to [archived run import diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-import-diff.sh) or
-[archived run train diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-train-diff.sh):
+Recorded evidence: import, addon-load and train-then-predict differentials
+compared candidate lists in both engines. The train-then-predict profile
+un-blinds the training path the corpus profile skips.
 
-- import a user phrase through the add/iterator/end trio in both engines,
-  re-parse, and assert the phrase appears at the same candidate position;
-- load the same addon library in both engines and compare candidate lists;
-- train then predict in both engines and compare predicted lists. This
-  un-blinds the training path the corpus profile skips; the profile used must
-  be recorded in the report.
+## 9. Decisions (Phase 0, 2026-08-17)
 
-### 8.3 Existing gates
+1. **Network index 6 is in scope** — the same default-facade mechanism as
+   user. Default nibble 5 (`ADDON_DICTIONARY` / `addon.bin`) is the same
+   `USER_FILE` slot and the choose-promotion target (`pinyin.cpp:2532-2561`;
+   #105).
+2. **Punctuation prediction** reads `punct.bin` (§6.5).
+3. **Trait additions are defaulted methods**; other implementors compile
+   unchanged.
 
-- import/train diffs remain IDENTICAL;
-- bisect and valgrind remain 0/0;
-- C++ smoke, `fmt`, `clippy`, `test`.
-
-## 9. Approved decisions (Phase 0)
-
-1. **Addon data: Option A.** Regenerate from the `.table` text via a
-   data-preparation tool. Conditions: (a) differential-verify the regenerated
-   tables — pinned libpinyin loads the same `.table` through its own addon
-   path, ADDON candidates compared exactly; (b) remove the raw W3
-   `addon_*.redb` in the implementation PR unless a manifest/test still pins
-   them — if pinned, keep and mark superseded instead of deleting.
-2. **Network index 6 is in scope** for the implementation PR — same
-   default-facade mechanism as user. Confirm from the pinned frontend which
-   index its network import targets and reproduce exactly (W7-T1 made only
-   index 7 writable; if extending writability to 6 is structurally more than
-   a second nibble in the same path, report and it splits out). Default
-   nibble 5 (`ADDON_DICTIONARY` / `addon.bin`) is the same `USER_FILE`
-   slot and the choose-promotion target (`pinyin.cpp:2532-2561`); same
-   split-out rule if promotion is more than a third nibble (#105).
-3. **Punctuation prediction is conditional.** Check `punct.redb`
-   consumability first. Consumable → include punctuation in the first
-   prediction PR. Not → stub empty, run the prediction differential in
-   non-punctuation mode, register the gap as #104. Phrase
-   prediction is differential-exact in the first PR either way.
-4. **Trait additions are within W11 ground** (defaulted methods; other
-   implementors compile unchanged). W10 owns `config.rs` / parser masking;
-   W13 owns new parsers. Flag the seam additions in the implementation
-   report.
-
-The ROADMAP W11 "unions up to 16 libraries by token nibble" claim is
-superseded by §3.2: two facades (`m_phrase_index` vs
-`m_addon_phrase_index`), not one 16-way union (`pinyin.cpp:432-435`).
-
-Expected fork-side consequence: the fork's parity gate can run with stock
-`network.txt` only after the default facade has a `USER_FILE` source for index
-6 as well as 7. The fork itself is not run here.
+The "unions up to 16 libraries by token nibble" claim is wrong: §3.2
+shows two facades (`m_phrase_index` vs `m_addon_phrase_index`), not one
+16-way union (`pinyin.cpp:432-435`).

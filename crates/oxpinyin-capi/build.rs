@@ -14,8 +14,8 @@
 //!
 //! The real library defines its symbols *versioned* — `pinyin_init@@LIBPINYIN`
 //! — so every consumer linked against it records `File: libpinyin.so.15 ->
-//! Name: LIBPINYIN` in `.gnu.version_r`. Three library shapes were measured
-//! against a consumer carrying that reference:
+//! Name: LIBPINYIN` in `.gnu.version_r`. Three library shapes behave
+//! differently against a consumer carrying that reference:
 //!
 //! | shape | result |
 //! |---|---|
@@ -38,7 +38,7 @@
 //! run by `just packaging install` on Linux after `cargo cinstall`,
 //! replaces the installed object with the versioned relink and verifies the
 //! export set against this crate's `libpinyin.ver` in both directions
-//! (docs/findings/drop-in-abi-identity.md §2 carries the measurement).
+//! (docs/packaging.md#drop-in-identity states the requirement).
 //!
 //! Symbol scope is therefore enforced in the source — the shipped
 //! artifact defines every symbol in `libpinyin.ver` and nothing else —
@@ -48,7 +48,7 @@
 //!
 //! # The complete `libpinyin.pc`
 //!
-//! cargo-c 0.10.24 generates a `libpinyin.pc` from
+//! cargo-c generates a `libpinyin.pc` from
 //! `[package.metadata.capi.pkg_config]`, but its field set is closed and it
 //! cannot emit the four variables real consumers read (`pkgdatadir`,
 //! `database_format`, `libpinyinincludedir`, `libpinyin_binary_version`); it

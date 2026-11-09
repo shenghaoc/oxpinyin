@@ -33,7 +33,8 @@ separate questions:
 The **parity path** is code whose result reaches either C ABI —
 libpinyin's 79 `pinyin_*` exports or libzhuyin's 52 — or the files
 they write, and the offline tools whose output is promised identical
-to the pin's (`oxpinyin-datagen`'s system files).
+to the pin's (`oxpinyin-utils`' pin-named utilities and the system files
+they write).
 
 A row is a survey result, not a proof of equivalence. Rows whose
 behaviour is unverified, and the open gaps, are listed at the end (§11);
@@ -143,8 +144,7 @@ dependencies (`docs/architecture.md` has the full map):
 | Wiring done in `pinyin_init` | `oxpinyin-runtime` |
 | Context and instance state shared by both APIs | `oxpinyin-facade` |
 | `pinyin.cpp` / `zhuyin.cpp` as ABI | `oxpinyin-capi`, `oxpinyin-zhuyin-capi`, sharing `oxpinyin-capi-marshal` |
-| `utils/storage` | `oxpinyin-datagen` |
-| `utils/training`, `utils/segment` | `oxpinyin-kmm`, `oxpinyin-training` |
+| `utils/storage`, `utils/training`, `utils/segment` | `oxpinyin-utils` (the pin-named binaries), over `oxpinyin-kmm` and `oxpinyin-training` |
 
 The differences are deliberate: the backend is a seam rather than an
 `#ifdef`, the two ABIs share one facade rather than two API files, and
@@ -652,7 +652,7 @@ per-token map and requires no new per-item storage.
 | Item | Pin | oxpinyin | Mark |
 | --- | --- | --- | --- |
 | K-mixture model | `utils/training` (`k_mixture_model.h` and tools) | `oxpinyin-kmm`, audited term by term in `kmm-arithmetic-audit` | same / argued (`kmm-arithmetic-audit`); output in token order, an iteration cap and `Err` for asserts (that audit's §7) |
-| System data | `gen_binary_files`, `import_interpolation`, `gen_unigram` | `oxpinyin-datagen`, one compiler from `model20` (`datagen-model20`) | different / argued — byte-identical output (`datagen-model20`) |
+| System data | `gen_binary_files`, `import_interpolation`, `gen_unigram` | `oxpinyin-utils`' utilities of the same names, run in the pin's `data/Makefile.am` sequence | different / argued — byte-identical output (recorded evidence: regenerated `fixtures/w3` sets compared equal to the committed ones) |
 
 ## 9. Constants
 
@@ -735,15 +735,11 @@ rows that carry distance 1 are listed in §9.
   enumerate different string sets and are not comparable.
 - *Fixed (#832, 2026-10-17 UTC).* Each edge carries its row's distance
   and `fewest_keys` ranks by (key count, total distance).
-- *Verified at the C ABI (#832, reference cell bdb).* The option-sweep
-  differential logs every parsed key and key rest, and its parse-only
-  `pairs` mode covers every ordered pair of the 662 pinned
-  `pinyin_index` spellings with an admitted alias member
-  (`tools/bisection/option-sweep.c`; the spellings are in
-  `option-sweep-tables.h`, whose generator over the pin's table is in
-  its header comment). Run as
-  `PINYIN_ORACLE_PREFIX=<bdb oracle prefix> [archived run option sweep source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-option-sweep.sh)`
-  (exit 0 identical, 2 divergence). Before the fix, 291 of 253,344
+- *Verified at the C ABI (#832, cell bdb; recorded evidence).* The
+  option-sweep differential logged every parsed key and key rest, and its
+  parse-only `pairs` mode covered every ordered pair of the 662 pinned
+  `pinyin_index` spellings with an admitted alias member. Before the
+  fix, 291 of 253,344
   strings differed under every correction bit (`0x1fe00188`), all
   `PINYIN_CORRECT_ON_ONG` splits, and 223 of 22,219 under that bit
   alone; with it, every pair sweep and option case is identical.
@@ -817,15 +813,13 @@ The `Cost` type stays as the type of `Candidate::cost` and `NbestRow::cost`; eve
   `validate_constraint` and `compute_pronunciation_possibility` through
   `Dictionary::phrase_item_pronunciations`, carrying the last item read
   across a pass as the pin's single `PhraseItem` does.
-- *Verified (#828, reference cell bdb, hash-pinned oracle, full
-  model20).* Cases in [archived contract diff source](https://github.com/shenghaoc/oxpinyin/blob/1b91c898795b6edd8b92dd1fecf65ec6f4d1a434/tools/bisection/contract-diff.py):
+- *Verified (#828, cell bdb, hash-pinned oracle, full model20;
+  recorded evidence).* Contract cases
   `constraint-survives-{zhonghuarenmin,zhonghuarm,zhhrenmin,zhonghrm,zhhrm,zhhrmghg}`,
   `constraint-survives-reconcile-{juezhonghuarm,juezhhrm}` and
-  `constraint-stale-item-{keeps-nini,drops-nihao}`, run as
-  `[archived run contract diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-contract-diff.sh) bdb <oracle prefix> <libpinyin_capi.so> -- --cases <names>`;
-  with `--expect-parent` against the parent build, the over-cap and
-  `keeps-nini` cases differ and the controls match. All match with the
-  fix.
+  `constraint-stale-item-{keeps-nini,drops-nihao}`: against the parent
+  build, the over-cap and `keeps-nini` cases differed and the controls
+  matched. All match with the fix.
 - *Scope of that verification.* The phrases are user imports on full
   model20, not phrases of the model. For the six original inputs the
   chosen phrase is taken from its NORMAL row, because on full data the
@@ -843,7 +837,7 @@ facades build on `InstanceCore`, whose session is
 `Session<RuntimeDict, RuntimeLm>`, and `RuntimeLm` forwarded to a
 `BigramLanguageModel` that reported real unigrams unconditionally. The
 branch, `k_best`, `Scorer`, `ScoringConfig` and the trait method
-`has_real_unigrams` are deleted (spec task 4a).
+`has_real_unigrams` are deleted.
 
 **The value inventory is not yet proven complete.** §9's second table
 came from a search of the runtime crates for numeric constants; limits
@@ -866,7 +860,7 @@ match, but the argument is not in this record:
   empty check;
 - `compact_libraries` against `FacadePhraseIndex::compact`, and the
   export iterators' per-pronunciation order;
-- `parse_pinyin_keys` (`oxpinyin-datagen`) against `PinyinDirectParser2::parse` with `USE_TONE`;
+- the table-text pinyin parser (`crates/oxpinyin-utils/src/storage/pinyin.rs`) against `PinyinDirectParser2::parse` with `USE_TONE`;
 - double pinyin's handling of a table whose first yunmu slot is empty
   and second is not (no shipped table has one).
 

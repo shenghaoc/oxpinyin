@@ -1,24 +1,16 @@
 # Store key-ordering contract — one place for the whole stack
 
-Date: 2026-08-24 (updated 2026-08-25 for the tkrzw backend; 2026-09-12
-for the Berkeley DB backend; 2026-09-13 for the Stage 2 hash/tree note,
-rechecked against the landed Berkeley DB backend; **2026-09-21 peer-set
-sweep** — the LMDB and redb peers were removed 2026-09-20
-(`refactor/drop-redb-lmdb-backends`, `refactor/drop-redb-backend`), so the
-peer enumerations below name the surviving set, the LMDB backend's
-comparator section is deleted rather than annotated — it documented a
-configuration that no longer exists — and every figure measured on a
-removed peer stands as measured at its own date; **2026-10-31** adds the
-`FlexibleBigram` training-container layout and its backend-native walk) ·
-Status:
-**audit finding** (verification + tests only; no key encoding changed) ·
-Branch: `audit/store-key-ordering`.
+Status: **contract** (the store's key-ordering rule) · Backends: tkrzw
+(default), Kyoto Cabinet, Berkeley DB.
 
-> **Named-table tier removed (2026-11-07 UTC).** `ReadStore` and the `table || 0x00 || key` framing are gone: each store file is one raw keyspace, as each pin DBM file is one database opened with no subdatabase name. `open_read_only` moved to `RawReadStore`, and `WriteStore` now extends `RawReadStore`. The byte-order rule below holds for the raw walks (`scan_raw`, `range_raw`); mentions of `ReadStore`, its `range`/`for_each`/`is_empty` and the framing describe the earlier tier.
-
-`oxpinyin-store` is an ordered byte key–value store, its interface split into
-a [`ReadStore`] tier (point get, ranged scan, full scan, emptiness) and a
-[`WriteStore`] tier (creation, atomic writes, compaction). This note states,
+`oxpinyin-store` is an ordered byte key–value store. Each store file is one
+raw keyspace, as each pin DBM file is one database opened with no
+subdatabase name. Its interface is split into a `RawReadStore` tier (open,
+point get, ranged scan, full scan) and a `WriteStore` tier, which extends
+`RawReadStore` (creation, atomic writes, compaction). The framed
+`ReadStore` tier and its `table || 0x00 || key` framing no longer exist;
+where a section below names `ReadStore`, its `range`/`for_each`/`is_empty`
+or the framing, it describes that removed tier. This note states,
 in one place, the single ordering rule the store guarantees, the encoding each
 layer above it chooses, and why those choices are consistent — so a new
 backend or a future encode site cannot drift out of contract without a test
@@ -26,39 +18,25 @@ going red.
 
 ## The one rule
 
-> **Backend removed (2026-09-20 UTC, branch `refactor/drop-redb-backend`).** The ordering benchmarks below include a redb leg; the byte-order law they all confirm is backend-independent and still enforced per surviving peer.
-
-
 **The store orders keys by ascending byte order — `memcmp` on the raw stored
-key bytes — and nothing else.** `ReadStore::range` and `for_each` visit rows in
-exactly that order; `range` bounds are compared the same way. This is a pure
+key bytes — and nothing else.** The raw walks (`scan_raw`, `range_raw`) visit
+rows in exactly that order; `range` bounds are compared the same way. This is a pure
 property of the stored bytes: the store never decodes a key, so it has no
 notion of "integer order". Any meaning a key's bytes carry is imposed by the
 layer that encoded them.
 
-Every surviving backend satisfies exactly this rule. redb's mechanism
-is recorded first because it is why the encoding choice below matters;
-the peer itself was removed 2026-09-20.
+Every backend satisfies exactly this rule.
 
-- **redb** (removed 2026-09-20; surveyed as `--no-default-features --features redb`).
-  The store uses `TableDefinition<&[u8], &[u8]>`. redb's
-  `Key for &[u8]` is `data1.cmp(data2)` — plain lexicographic byte compare
-  (`redb-4.1.0/src/types.rs:347`). (redb's *typed* integer keys are a
-  different animal: they store `to_le_bytes()` but compare by the *decoded*
-  integer, `from_bytes(a).cmp(from_bytes(b))`, `types.rs:645`. oxpinyin does
-  not use typed integer keys in the store; it uses the raw `&[u8]` path, which
-  is pure memcmp. That distinction is the whole reason encoding choice matters
-  below.)
-- **tkrzw** (`cxx` shim over TreeDBM, feature `tkrzw`; the default selection
-  2026-09-05 → 2026-09-20, Berkeley DB since). `open_db` (`crates/oxpinyin-store/src/tkrzw/adapter.cc`) calls
+- **tkrzw** (`cxx` adapter over TreeDBM, feature `tkrzw`; the default
+  backend). The adapter (`crates/oxpinyin-store/src/tkrzw/adapter.cc`) calls
   `db->dbm.Open(path, writable, options)` with `options` being only
   `File::OPEN_DEFAULT` or `File::OPEN_NO_CREATE`. **The fourth argument —
   `TreeDBM::TuningParameters` — is omitted**, so it is default-constructed and
   its `key_comparator` stays `nullptr`, which `TreeDBM` resolves to its default
   **`LexicalKeyComparator`: plain unsigned byte order (`memcmp`)**. No
   `Decimal`, `Hexadecimal`, `RealNumber` or any other comparator is installed —
-  exactly as libpinyin's `tkrzwdb_utils.h` leaves it. This is stated in both
-  `tkrzw/shim.h` and `tkrzw/mod.rs`. It is checked directly by
+  exactly as libpinyin's `tkrzwdb_utils.h` leaves it. This is stated in
+  `tkrzw/mod.rs`. It is checked directly by
   `tkrzw_orders_keys_as_unsigned_bytes` (which probes `0x80..=0xff`, the high
   half a *signed*-char comparison would misplace) and by the per-peer
   byte-order tests below.
@@ -84,12 +62,9 @@ the peer itself was removed 2026-09-20.
   integer order (`docs/findings/berkeleydb-backend.md`). Setting a
   comparator here would silently reorder files libpinyin wrote.
 
-**Obligation discharged, and carried forward.** When this note was first
-written, "a new backend must match the default lexicographic comparator" was a
-forward-looking promise with two backends in hand. Every backend added since —
-tkrzw (2026-08-25) and Berkeley DB (2026-09-12), the fifth peer — has been
-verified against exactly that requirement (above). **Any further backend must
-likewise leave the default lexicographic (memcmp) comparator in place** —
+**Obligation.** Every backend is verified against this requirement (above).
+**Any further backend must likewise leave the default lexicographic (memcmp)
+comparator in place** —
 integer comparators, locale collation, reverse order, or a signed-char
 compare all break cross-backend parity and are out of contract.
 
@@ -123,9 +98,9 @@ arrives out of order, so a drift degrades performance rather than silently
 returning wrong results — but the invariant is what keeps the fast path taken.
 String-keyed loaders (`pinyin_index`) need no wrapper: UTF-8 byte order is the
 `str`/`Box<str>` `Ord`, which already equals the walk order. `punct.rs` and
-`interp.rs` are not part of this invariant — they slurp into a `BTreeMap`
-(punct) or parse a text file and sort by integer (interp), each internally
-consistent.
+the interpolation readers in `oxpinyin-utils` are not part of this
+invariant — they slurp into a `BTreeMap` (punct) or parse a text file and
+sort by integer (interpolation), each internally consistent.
 
 > **Trap — do not "simplify" a data table to a redb typed integer key.**
 > The data tables use the raw `&[u8]` path (`TableDefinition<&[u8], &[u8]>`),
@@ -196,14 +171,11 @@ key encoding was changed.**
   yields `for_each` and `range` sequences equal to the mathematical
   byte-ordered sequence on key sets that cross 256; the store-backends CI
   matrix, which runs every peer build, is what turns those independent
-  results into **redb == Kyoto Cabinet == tkrzw == Berkeley DB**. Plus, in every build, that swapping an encode site's
-  endianness changes the observed walk order (non-vacuity). The invariant
-  itself is proven separately by [archived backend matrix source](https://github.com/shenghaoc/oxpinyin/blob/01475357ab03f74951fce25983193395b97eef3c/tools/store/backend-matrix.sh) (the
-  `backend-matrix` CI job), which checks that each single-feature
-  selection compiles and that every pairwise combination, the all-peers
-  combination, and the zero-backend build are refused by the guard — this
-  replaced the older "cross-backend conformance in one binary" job, which the
-  invariant makes architecturally impossible.
+  results into **Kyoto Cabinet == tkrzw == Berkeley DB**. Plus, in every
+  build, that swapping an encode site's endianness changes the observed walk
+  order (non-vacuity). The invariant itself is the two `compile_error!`
+  guards in `crates/oxpinyin-store/src/lib.rs`, which refuse every pairwise
+  combination of backends and the zero-backend build.
 - `crates/oxpinyin-data/src/table.rs` tests — the load-without-sort invariant:
   the store walk of 256-crossing LE keys is already `LeByteKey`-sorted (fast
   path taken) while the same walk is *not* integer-sorted (a loader assuming
@@ -211,7 +183,7 @@ key encoding was changed.**
 - `crates/oxpinyin-user/src/store.rs` tests — the bigram successor scan
   returns the complete, correctly ordered successor set across 256 under the
   `user_store_tests!` macro, which now carries an arm for **every peer**
-  (`redb`, `tkrzw`, `kc`, `bdb`), each `#[cfg]`-gated on its feature
+  (`tkrzw`, `kc`, `bdb`), each `#[cfg]`-gated on its feature
   so exactly one suite compiles per build — Kyoto Cabinet is covered by its
   own arm now, not by a separate conformance suite. Alongside them,
   `bigram_walks_and_successors_follow_be_integer_order` asserts the current
@@ -256,8 +228,8 @@ hash constructors and reproduces that native walk rather than sorting.
 | Kyoto Cabinet | `HashDB`, `OREADER\|OWRITER` then `\|OCREATE` (`flexible_ngram_kyotodb.h:129-180`) | same |
 | tkrzw | `HashDBM`, `Open(path, writable, OPEN_NO_CREATE)` then the create form (`flexible_ngram_tkrzwdb.h:128-188`) | same |
 
-These are the same constructors datagen's `write_hash_with` uses for
-libpinyin's `bigram.db`, so the container class matches the pin's `attach`.
+These are the same constructors that write libpinyin's `bigram.db`, so the
+container class matches the pin's `attach`.
 
 ### Records
 
@@ -356,9 +328,8 @@ it on every peer that has a hash/tree distinction at all: Kyoto Cabinet
 behind `KcStore`, Tkrzw behind `TkrzwStore`, Berkeley DB behind
 `BdbStore`. The pure-Rust peer had one container class, so its
 `create_hash` / `open_hash_read_only` defaults delegated to
-`create` / `open_read_only` and the question did not arise for it (that
-peer, and the LMDB peer this section was written alongside, were both
-removed 2026-09-20).
+`create` / `open_read_only` and the question did not arise for it; that
+peer no longer exists.
 
 ### What the framed tier would do on a hash handle
 
@@ -405,12 +376,6 @@ Every hash-constructor call site in the workspace uses only the raw tier
 |---|---|---|
 | `crates/oxpinyin-data/src/bigram_table.rs:56` | `open_hash_read_only` | wraps in `RawChewingDbm` |
 | `crates/oxpinyin-data/tests/language_model.rs:44` | `create_hash` | `put_raw` |
-| `[archived write source](https://github.com/shenghaoc/oxpinyin/blob/494766c37c0c87c6571d1000240a33b3d688cf83/crates/oxpinyin-datagen/src/write.rs):299` (`get_hash`) | `open_hash_read_only` | `get_raw` |
-| `[archived write source](https://github.com/shenghaoc/oxpinyin/blob/494766c37c0c87c6571d1000240a33b3d688cf83/crates/oxpinyin-datagen/src/write.rs):326` (`count_hash`) | `open_hash_read_only` | `count_raw` |
-| `[archived write source](https://github.com/shenghaoc/oxpinyin/blob/494766c37c0c87c6571d1000240a33b3d688cf83/crates/oxpinyin-datagen/src/write.rs):448` (`write_hash_with`) | `create_hash` | `put_raw` |
-| `[archived write source](https://github.com/shenghaoc/oxpinyin/blob/494766c37c0c87c6571d1000240a33b3d688cf83/crates/oxpinyin-datagen/src/write.rs):467` (`verify_hash`) | `open_hash_read_only` | `get_raw` |
-| `[archived libpinyin parity source](https://github.com/shenghaoc/oxpinyin/blob/494766c37c0c87c6571d1000240a33b3d688cf83/crates/oxpinyin-datagen/tests/libpinyin_parity.rs):146` | `open_hash_read_only` | `get_raw` |
-| `[archived mod source](https://github.com/shenghaoc/oxpinyin/blob/dc51303cc031d2bedef982a0feb9001b8f69922e/crates/oxpinyin-store/benches/support/mod.rs):88` | `open_hash_read_only` | open cost only |
 | `crates/oxpinyin-store/tests/bdb_libpinyin_files.rs:64` | `open_hash_read_only` | `range_raw` |
 | `crates/oxpinyin-store/tests/bdb_libpinyin_files.rs:94` | `open_hash_read_only` | `count_raw` |
 | `crates/oxpinyin-store/tests/bdb_libpinyin_files.rs:118` | `open_hash_read_only` | `get_raw` |
@@ -447,7 +412,7 @@ Not ranked; each has a different blast radius and the redesign picks one.
 1. **Separate concrete types.** A distinct hash type per backend
    (`KcHashStore` beside `KcStore`, and so on), with only the tree type
    implementing `ReadStore`. Strongest guarantee; changes every
-   `RawReadStore` bound in `oxpinyin-data`, `oxpinyin-datagen` and
+   `RawReadStore` bound in `oxpinyin-data`, `oxpinyin-utils` and
    `oxpinyin-user`, and doubles the per-backend type surface.
 2. **A sealed marker type parameter.** One type carrying the container
    class in its type — `Store<Tree>` / `Store<Hash>` — with the ordered

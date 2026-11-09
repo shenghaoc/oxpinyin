@@ -21,8 +21,8 @@ no entry supports a blanket claim that Rust code cannot crash.
 | F-E-02 | stale/invalid candidate access | engine replay + fuzz | registered |
 | F-E-03 | interruption during save/config change | user store hard-kill + replay | registered |
 | F-E-04 | cancelled/superseded async request | provider ownership tests | registered |
-| F-E-05 | table I/O early return | data/migrate RAII gate | registered |
-| F-E-06 | data-tool early return | dictool RAII gate | registered |
+| F-E-05 | table I/O early return | none: test not written, `oxpinyin-migrate` is deleted | registered |
+| F-E-06 | data-tool early return | none: test not written, `oxpinyin-dictool` is deleted | registered |
 | F-E-07 | prolonged unique workload | bounded-cache benchmark | registered |
 | F-E-08 | English-mode dangling lifetime | compile-time ownership | registered |
 | F-E-09 | i686 table generation/load | loader cross-check | registered |
@@ -30,7 +30,7 @@ no entry supports a blanket claim that Rust code cannot crash.
 | F-E-11 | stale Berkeley DB sidecar lock | user-store hard-kill gate | legacy trigger registered |
 | F-E-12 | `zhuan` user input | parser totality + fuzz | F-A seed; proptest + cargo-fuzz |
 | F-E-13 | cloud request through system proxy | provider/FFI ASan | registered |
-| F-E-14 | lone apostrophe `'` (oracle abort) | oracle harness guard + sentinel | registered; same root cause as #570 |
+| F-E-14 | lone apostrophe `'` (oracle abort) | capi parse and abort tests | registered; same root cause as #570 |
 
 ## Evidence entries
 
@@ -87,7 +87,8 @@ no entry supports a blanket claim that Rust code cannot crash.
 - **Source evidence:** `reference/memory-safety-bugs.md` §2.2.
 - **Trigger:** import/export a missing, truncated, permission-denied, and
   malformed table repeatedly while sampling open descriptors.
-- **Reproduction command:** data/migration test `f_e_05_table_io_raii`.
+- **Reproduction command:** data/migration test `f_e_05_table_io_raii`
+  (not written; the `oxpinyin-migrate` crate is deleted).
 - **Passing artifact:** each operation returns `Err`; descriptor count returns
   to baseline after every iteration. Shipping paths use owned Rust files and
   paths rather than raw `FILE*`.
@@ -97,7 +98,8 @@ no entry supports a blanket claim that Rust code cannot crash.
 - **Source evidence:** `reference/memory-safety-bugs.md` §2.3.
 - **Trigger:** run every dictool conversion against valid, truncated, and
   malformed input in a loop under the leak-checking job.
-- **Reproduction command:** dictool test `f_e_06_tool_raii` plus the same
+- **Reproduction command:** dictool test `f_e_06_tool_raii` (not written; the
+  `oxpinyin-dictool` crate is deleted) plus the same
   corpus under ASan/LSan if any foreign parser remains.
 - **Passing artifact:** deterministic `Err` output and stable live allocation
   and descriptor counts after warm-up.
@@ -191,21 +193,23 @@ no entry supports a blanket claim that Rust code cannot crash.
 
 ### F-E-14 — pinned oracle aborts on apostrophe-only input
 
-- **Source evidence:** W2-T3 live measurement;
-  `docs/testing/oracle-apostrophe-abort.md`. Same class as F-E-12 (`assert()`
-  on user input) on a different path; not a catalogue row in
-  `reference/memory-safety-bugs.md`. Same root cause as
+- **Source evidence:** live measurement on the pin (recorded evidence). Same
+  class as F-E-12 (`assert()` on user input) on a different path; not a
+  catalogue row in `reference/memory-safety-bugs.md`. Same root cause as
   [ibus-libpinyin #570](https://github.com/libpinyin/ibus-libpinyin/issues/570)
   (reported 2026-08-06 via the frontend path). Our API-level repro (lone
   apostrophe) is a simpler trigger.
 - **Trigger:** fresh pin-built oracle; parse lone `'` (also `''`, `'''`);
-  call `pinyin_get_pinyin_key(instance, 0)`. Without the harness guard the
-  process aborts.
+  call `pinyin_get_pinyin_key(instance, 0)`. The parse and
+  `pinyin_get_parsed_input_length` answer the input length, but the matrix
+  has no key column, so the key query asserts and the process aborts. A
+  lowercase letter in the parsed prefix gives a key column, so `ni'`, `'ni`,
+  `a'a` and `ni''hao` do not abort.
 - **One-character API repro:** `'` → `assert()` → `abort()`.
-- **Harness guard (accepted):** skip the key walk when
-  `parsed_input_length > 0` and the parsed prefix has no ASCII lowercase
-  letter; emit `<no-key-columns>` sentinel. Differential runner reports
-  `oracle-sentinel` / class `theirs-bug`.
-- **Passing artifact:** parity corpus run survives the three apostrophe-only
-  inputs in `09-edge.txt`; each appears as an `oracle-sentinel` divergence
-  rather than a process death.
+- **Passing artifact:** oxpinyin reproduces the pin's parse and abort.
+  `crates/oxpinyin-capi/src/parse.rs` holds
+  `an_apostrophe_only_parse_matches_the_pin` (parse and parsed lengths of
+  `'`, `''`, `'''`) and `a_key_query_on_an_apostrophe_only_parse_aborts`
+  (pin observations `key-abort/'`, `key-abort/''`, `key-abort/'''`).
+  `crates/oxpinyin-zhuyin-capi/src/parse.rs` holds the zhuyin parse. The
+  three apostrophe-only inputs stay in the corpus stratum `09-edge.txt`.

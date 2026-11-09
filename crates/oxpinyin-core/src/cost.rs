@@ -11,7 +11,8 @@
 //! means.
 //!
 //! Costs are integers on a fixed-point negative-log₂ scale. The logarithm is
-//! Rust's standard `f64::log2`, used at full speed (AGENTS.md, math rule); a
+//! Rust's standard `f64::log2`, used at full speed (the maths rule in
+//! `docs/findings/compatibility-policy.md`, class (a)); a
 //! last-bit difference from the pin's libm is class (a) and is not chased.
 
 use crate::Cost;
@@ -29,9 +30,8 @@ pub const COST_PER_BIT: i64 = 1_000;
 /// wins.
 pub const UNKNOWN_COST: Cost = 40 * COST_PER_BIT;
 
-/// A cost that is not a number in the fallback model: a `log` of a
-/// negative argument or `inf - inf`. The fallback score methods preserve
-/// it before adding the edge cost.
+/// A cost that is not a number: a `log` of a negative argument or
+/// `inf - inf`.
 pub const NAN_COST: Cost = Cost::MIN;
 
 /// A cost of `+inf` — a possibility of 0, `log(0) = -inf` in the pin.

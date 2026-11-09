@@ -170,9 +170,8 @@ tells users to reset by deleting its `user.conf`:
   `*.dbin` logs are the backend's native files. The Kyoto Cabinet lanes
   (Fedora, Arch) keep the same ones a KC-built libpinyin keeps; the
   tkrzw lane (Debian) the same ones a tkrzw-built libpinyin keeps.
-  Measured against pin-built Kyoto Cabinet and tkrzw oracles by
-  [archived user dir round trip source](https://github.com/shenghaoc/oxpinyin/blob/e79802e8bf7c393142e979eadba10a2720860799/tools/oracle/user-dir-round-trip.sh) (`docs/findings/user-store.md`
-  §11).
+  The recorded evidence is the round trip against pin-built oracles in
+  [user-store §11](findings/user-store.md#11-implementation-record--the-store-persists-in-libpinyins-own-files-2026-09-09).
 - **Different backend: fresh start, as with libpinyin.** A build on
   another backend cannot read the user dir and starts fresh: libpinyin's
   tkrzw build cannot read its Berkeley DB user files either
@@ -211,8 +210,8 @@ These are independent and move for different reasons:
    `libpinyin.so.15` in `DT_NEEDED`. It moves only when upstream bumps its
    ABI current — never with the crate version.
 3. **Pinned oracle** — libpinyin `2.11.92`. Re-pinning the oracle is a
-   deliberate event with its own re-freeze (`pin-refreeze-*.md` convention),
-   independent of the crate version and SONAME. The drop-in's installed
+   deliberate event with its own re-freeze
+   ([goldens and pins](runbooks/goldens-and-pins.md#3-the-oracle-pin)), independent of the crate version and SONAME. The drop-in's installed
    identity — the `.pc` `Version:`, the `libpinyin-<version>/` header
    subdirectory, the packages' versioned Provides — is the pin's own
    `configure.ac` version and moves with it: its one source is
@@ -220,8 +219,8 @@ These are independent and move for different reasons:
    scripts read (and check their `[package.metadata.capi]` tables against)
    and `just packaging pc-version` prints for package assembly.
 4. **Parity pins** — `10190 / 10190 / 98930` of `98930` candidate symbols,
-   `0` absent, `0` tie-swaps (per `pin-refreeze-2026-08`
-   2026-08-22 amendment). These freeze the decode/predict output the
+   `0` absent, `0` tie-swaps
+   ([frozen parity numbers](runbooks/goldens-and-pins.md#2-the-frozen-parity-numbers)). These freeze the decode/predict output the
    oracle is held to; packaging must not move them.
 
 Streams 1 and 2 are decoupled by construction: cargo-c would otherwise
@@ -291,7 +290,7 @@ libpinyin's own `.pc` exports `pkgdatadir` (plus `database_format`,
 them — ibus-libpinyin's build resolves its system data directory from
 `pkgdatadir` and refuses to configure without it. cargo-c cannot emit custom
 pkg-config variables (its `[package.metadata.capi.pkg_config]` is a closed
-seven-key set, verified against 0.10.24) and offers no way to opt out of
+seven-key set) and offers no way to opt out of
 writing its own incomplete `libpinyin.pc`.
 
 The contract is therefore carried outside cargo-c: each crate's build.rs
@@ -332,84 +331,118 @@ prefix is a system path (`/usr`), because pkg-config elides
 `PKG_CONFIG_SYSROOT_DIR`, used by distro build roots) resolves the staged
 paths. This is the standard DESTDIR relocation mechanism, not a defect.
 
+## Drop-in identity
+
+A consumer loads the replacement with `dlopen("libpinyin.so.15")`, or
+through `DT_NEEDED`, with no source change. Three properties decide
+whether that works.
+
+**SONAME.** The pin's `configure.ac` sets `libpinyin_abi_current = 15` and
+`libpinyin_abi_revision = 0`. libtool's `-version-info 15:0` gives the SONAME
+`libpinyin.so.15`, and a consumer records that string in `DT_NEEDED`.
+`crates/oxpinyin-capi/build.rs` passes it as a `cdylib` link argument;
+`[package.metadata.capi.library]` `name = "pinyin"` / `version = "15.0.0"`
+names the installed file. `libzhuyin.so.15` follows the same rule.
+
+**Symbol versioning.** The pin defines its symbols under the `LIBPINYIN`
+version node (`pinyin_init@@LIBPINYIN`), so a linked consumer records
+`File: libpinyin.so.15 → Name: LIBPINYIN` in `.gnu.version_r`. Three library
+shapes behave differently against that reference:
+
+| Library shape | Outcome |
+| --- | --- |
+| No version definitions | loads and runs; glibc warns `no version information available` once per start |
+| Symbols versioned under `LIBPINYIN` | loads and runs clean, the pin's shape |
+| Version definitions present, symbols unversioned | **hard failure**: `version 'LIBPINYIN' not found` |
+
+rustc always gives a cdylib its own anonymous version script, and a second,
+named script cannot be combined with it. GNU ld rejects the pair. rust-lld
+accepts the definitions but does not reassign the symbols, which gives the
+third shape. So the cargo-built cdylib has no version script and is the
+first shape. On Linux, `just packaging install` relinks the installed object
+from the staticlib with `-Wl,-soname` and the crate's `.ver` script, which
+gives the second shape (see [Export gate](#export-gate)). `libzhuyin.so.15`
+uses `LIBZHUYIN` and its 52 symbols the same way.
+
+**Symbol scope.** The shipped library exports every symbol in its `.ver`
+script and nothing else. The `shipped` feature compiles out the fixture
+hooks (`oxpinyin_init_for_fixtures` and `oxpinyin_test_set_user_bigram`).
+The feature is subtractive: an additive, default-on hook feature would ride
+on the default features that also select the backend, so every
+non-default-backend build would drop the hooks.
+
 ## Export gate
 
-`just abi exports` is the mechanical form of the drop-in
-promise on the symbol side: it builds both cdylibs and proves the set of
-exported `pinyin_*` / `zhuyin_*` symbols is exactly the pin's version
+`just abi exports` is the mechanical form of the drop-in promise on the
+symbol side (`check_exports` in `tools/dev/abi.py`). It proves that the set
+of exported `pinyin_*` / `zhuyin_*` symbols is exactly the pin's version
 script — `crates/oxpinyin-capi/libpinyin.ver` (79) and
-`crates/oxpinyin-zhuyin-capi/libzhuyin.ver` (52), both checked in
-verbatim from the pin — with nothing missing and nothing extra, and that
-no other symbol leaks. CI runs it twice on every change: on the
-development build, where the two `oxpinyin_*` fixture hooks the ABI
-tests drive are the only permitted extras, and with `--features
-shipped`, the packaged artifact, where only the version script's set may
-remain. Its first run found the shipped library one symbol short
-(`pinyin_set_full_pinyin_scheme`, gated out under the retired subset
-scoping); nothing in a version script is gated any more.
+`crates/oxpinyin-zhuyin-capi/libzhuyin.ver` (52), both checked in verbatim
+from the pin — with nothing missing and nothing extra, and that no other
+symbol leaks. CI runs it twice on every change: on the development build,
+where the two `oxpinyin_*` fixture hooks the ABI tests drive are the only
+permitted extras, and with `--shipped`, the packaged artifact, where only
+the version script's set may remain. No symbol in a version script is
+feature-gated.
 
-The version scripts stopped being the record only on 2026-09-14: on Linux
-`just packaging install` now relinks the installed shared object from
+On Linux `just packaging install` relinks the installed shared object from
 the staticlib under the crate's `.ver` script
-(`just packaging relink-versioned`), so the shipped library carries
-upstream's symbol versioning — `pinyin_init@@LIBPINYIN` — and consumers
-load it with no glibc version warning. The relink itself verifies the
-export set against the `.ver` list in both directions before replacing
-anything; `just abi exports` keeps comparing the cdylib cargo builds
-(names, not versions), which is still the right gate for the development
-artifact the relink then supersedes on install.
+(`just packaging relink-versioned`), with `-Wl,-z,defs`, so the shipped
+library carries the pin's symbol versioning. The relink verifies the export
+set and the version tag of every export against the `.ver` list in both
+directions before it replaces the installed file. It keeps the same file
+name, so cargo-c's symlinks keep resolving. `just abi exports` compares the
+cdylib that cargo builds (names, not versions), which is the gate for the
+development artifact.
 
-On macOS, `just packaging install` also relinks from the cargo-c staticlib.
-It derives one `-exported_symbols_list` from the `.ver` globals, prefixing
-each name with `_`. A second list on rustc's cdylib link would be additive,
-not restrictive. The replacement preserves cargo-c's install name, versions,
-architecture and deployment target. Both `nm -gU` (all external defined
-types) and the export trie must equal the `.ver` set before replacement.
-The installed native dylib must then load and resolve its entry point.
-The nightly `test-macos` job provisions cargo-c, stages both release
-libraries and runs `just abi exports --shipped` with `OXPINYIN_CAPI_SO` and
-`OXPINYIN_ZHUYIN_SO` pointing to those installed files. Without overrides,
-that command still checks Cargo development artifacts with fixture hooks
-disabled. See [macOS shipped exports](findings/macos-shipped-exports.md)
-for the linker constraints, non-vacuity check and added nightly cost.
+On macOS, `just packaging install` also relinks from the cargo-c staticlib
+(`relink_darwin` in `tools/dev/packaging.py`). The Apple linker rejects
+`--exclude-libs`, cannot combine nonempty exported and unexported lists, and
+takes the union of two exported lists. A second list on rustc's cdylib link
+would therefore add exports, not restrict them. The relink uses one
+`-exported_symbols_list`, derived from the `.ver` globals with each name
+prefixed by `_`, so the restriction holds for every archive symbol,
+including the transitive `#[export_name]` symbols. The replacement keeps
+cargo-c's install name, compatibility and current versions, architecture
+and deployment target. Before the atomic replacement, both `nm -gU` (all
+external defined types, including data, absolute and weak symbols) and the
+export trie (`dyld_info -exports`) must equal the `.ver` set. The installed
+native dylib must then load and resolve its entry point. The nightly
+`test-macos` job provisions cargo-c, stages both release libraries and runs
+`just abi exports --shipped` with `OXPINYIN_CAPI_SO` and `OXPINYIN_ZHUYIN_SO`
+pointing to those installed files. Without overrides, that command checks
+Cargo development artifacts with fixture hooks disabled. The packaging and
+ABI tests in `tools/dev/packaging.test.py` and `tools/dev/abi.test.py`
+cover identity preservation, failure atomicity and leak detection.
 
-The tkrzw backend's cxx bridge links the `cxx` crate, whose Rust runtime
-defines `#[export_name]` symbols (`cxxbridge1$slice$*`, `cxxbridge1$string$*`,
-`cxxbridge1$exception`, ...). rustc lists every such upstream symbol as a
-C-level export of a `cdylib`, so without a counter-measure the cargo-built
-cdylibs export the whole runtime (166 symbols on Linux, referenced or not).
-Both relinks above already exclude them from the shipped libraries: the
-Linux version script's `local: *` and the macOS `-exported_symbols_list`.
-For the development cdylibs the gate checks, both capi build scripts pass
-`-Wl,--exclude-libs,ALL` to the Linux cdylib link when the tkrzw feature is
-on: GNU ld gives every symbol defined in an archive — the rlibs and the
-bridge's static library — hidden visibility, which rustc's anonymous version
-script cannot override, while the `pinyin_*` and `zhuyin_*` symbols come
-from the capi crates' own object files and are untouched. No such flag
-exists on macOS, where the development cdylibs carry the extra symbols;
-`just abi exports` there is run against the relinked installed files, as the
-nightly job does.
+The tkrzw and Kyoto Cabinet backends' cxx bridges link the `cxx` crate,
+whose Rust runtime defines `#[export_name]` symbols (`cxxbridge1$slice$*`,
+`cxxbridge1$string$*`, `cxxbridge1$exception`, ...). rustc lists every such
+upstream symbol as a C-level export of a `cdylib`, so without a
+counter-measure the cargo-built cdylibs export the whole runtime. Both
+relinks above exclude them from the shipped libraries: the Linux version
+script's `local: *` and the macOS `-exported_symbols_list`. For the
+development cdylibs the gate checks, both capi build scripts pass
+`-Wl,--exclude-libs,ALL` to the Linux cdylib link when the tkrzw or
+kyotocabinet feature is on: GNU ld gives every symbol defined in an archive —
+the rlibs and the bridge's static library — hidden visibility, which rustc's
+anonymous version script cannot override, while the `pinyin_*` and
+`zhuyin_*` symbols come from the capi crates' own object files and are
+untouched. No such flag exists on macOS, where the development cdylibs
+carry the extra symbols; `just abi exports` there is run against the
+relinked installed files, as the nightly job does.
 
 ## Function layout
 
-Maintainer ruling, 2026-10-30 UTC ([#1448](https://github.com/shenghaoc/oxpinyin/issues/1448)).
-
 The compiler and linker control function layout. oxpinyin does not keep function-order policies or enforce function placement.
 Source, dependency and toolchain changes need no policy regeneration.
-Do not add PGO, BOLT, linker call-graph sorting or another layout system in their place.
-
-Checking or regenerating the six policies needed six fat-LTO release builds: two facades on each of bdb, kc and tkrzw.
-For this one-person project, that development cost is larger than the recorded benefit.
-The Linux bdb findings recorded resident text of 512 KiB with ordering and 1,800 KiB without ordering, a reduction of about 1.3 MiB.
-The M5 findings recorded cold first-candidate times of 12.72 ms with ordering and 13.73 ms without ordering, with identical stripped size.
-These are historical results. They were not measured again for the removal.
+Do not add PGO, BOLT, linker call-graph sorting or another layout system.
 
 Linux keeps the versioned relink described in [Export gate](#export-gate), including the version script and `-Wl,-z,defs`.
 macOS uses the export-controlled relink described in [Export gate](#export-gate); `just packaging install` then loads the replaced file with `dlopen` and looks up `pinyin_init` or `zhuyin_init`, and fails if either step fails.
 On macOS, install with `--prefix=/usr/local` or another non-system prefix. A `/usr` prefix gives the dylibs `/usr/lib` install names, which macOS reserves for its shared cache; the link then fails with "Shared cache eligible dylib cannot link to ineligible dylib" against a library outside the shared cache, such as Homebrew's tkrzw.
 A target whose architecture differs from the running process's (`--target x86_64-apple-darwin` on Apple silicon) is not loaded: the install prints one line saying the load check was skipped.
-The check exists because rustc 1.97.x stripped a Mach-O `cdylib` with its bundled `llvm-objcopy`, which left `LC_SYMTAB`'s string table offset only 4-byte aligned, and dyld on macOS 27 refused the file (`mis-aligned LINKEDIT string pool`, [#1536](https://github.com/shenghaoc/oxpinyin/issues/1536)).
-That is [rust-lang/rust#157750](https://github.com/rust-lang/rust/issues/157750), fixed by [rust-lang/rust#158410](https://github.com/rust-lang/rust/pull/158410) in Rust 1.98.0; the pinned 1.99.1 installs dylibs that load, with no strip step of ours.
+The load check catches a dylib that dyld refuses, such as one with a misaligned `LINKEDIT` string pool ([rust-lang/rust#157750](https://github.com/rust-lang/rust/issues/157750)).
 The release profile keeps fat LTO and one codegen unit.
 Export verification, backend identification, artifact provenance, input-digest checks and runtime compatibility checks still apply.
 This internal Stage 2 change must preserve exported symbols, symbol versions, the C ABI, outputs and data files.
@@ -500,10 +533,8 @@ path: `just packaging install` (cargo cinstall plus the complete `.pc`)
 once per library, with `--destdir` pointing at the staging root and the
 backend selected by cargo-c's ordinary
 `--no-default-features --features <backend>` (plus `shipped` on the pinyin
-crate). cargo-c forwards both flags — its subcommands register cargo's
-full feature argument set (checked in its source and exercised on 0.10.24
-by building the kyotocabinet drop-in through it), so an earlier note here
-saying it did not was wrong. Each lane uses its distro's own `cargo-c`
+crate). cargo-c forwards both flags to `cargo build`: its subcommands
+register cargo's full feature argument set. Each lane uses its distro's own `cargo-c`
 package, the one the distro's libpinyin packaging would use; rustc and
 cargo still come from `rust-toolchain.toml`. The script then strips the
 shared objects and re-gates the tree (the fixed file list of

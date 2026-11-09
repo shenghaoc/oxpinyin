@@ -24,24 +24,20 @@ A parenthetical after a status is a note about scope or provenance, not a new st
 | [`1378-zhuyin-selection`](1378-zhuyin-selection.md) | #1378 — zhuyin selection order | policy record |
 | [`1501-gint16-input-cap`](1501-gint16-input-cap.md) | 1501-gint16-input-cap — the full-pinyin parse's 16-bit steps | policy record |
 | [`1501-guint16-key-positions`](1501-guint16-key-positions.md) | 1501-guint16-key-positions — key positions past byte 65535 | policy record |
-| [`918-boundary-follow-through`](918-boundary-follow-through.md) | #918 — remaining input, caller and store partitions | current reference |
-| [`abi-allocator-pairing`](abi-allocator-pairing.md) | ABI allocator pairing — the audit and the gate | contract (the two `.alloc` registers) + audit |
+| [`abi-allocator-pairing`](abi-allocator-pairing.md) | ABI allocator pairing — the register and the gate | contract (the two `.alloc` registers) |
 | [`abi-reference`](abi-reference.md) | Reference — the exported libpinyin ABI (all 79 `pinyin_*` symbols; signatures, state model, config, error behaviour) | living reference |
 | [`addon-choose-promotion`](addon-choose-promotion.md) | Addon choose-promotion (default nibble 5) — #105 | record (#105) |
 | [`algorithm-precondition-witnesses-2026-10-28`](algorithm-precondition-witnesses-2026-10-28.md) | Reachable algorithm-precondition witnesses | evidence (policy registered sites) |
 | [`arm64-pin-portability-1137`](arm64-pin-portability-1137.md) | Pin-built libpinyin on arm64: five non-crash contract cases, two out-of-range float-to-`guint32` stores (#1137) | policy record |
 | [`bdb-failed-handle`](bdb-failed-handle.md) | bdb-failed-handle — Berkeley DB handles whose open failed | policy record |
-| [`berkeleydb-backend`](berkeleydb-backend.md) | BerkeleyDB backend — drop-in task 10 | current reference |
-| [`bigram-punct-format-2026-09-01`](bigram-punct-format-2026-09-01.md) | libpinyin bigram and punctuation formats — P4 source-level findings | verified (P4) |
+| [`berkeleydb-backend`](berkeleydb-backend.md) | BerkeleyDB backend | implemented |
+| [`bigram-punct-format-2026-09-01`](bigram-punct-format-2026-09-01.md) | libpinyin bigram and punctuation formats | verified |
 | [`bopomofo-spec`](bopomofo-spec.md) | Bopomofo/Zhuyin scheme SPEC | frozen |
-| [`candidate-construction`](candidate-construction.md) | Candidate-construction SPEC (Discrepancy 2) | frozen (§8); §1-7 record |
-| [`chewing-crate-seam`](chewing-crate-seam.md) | Findings — the oxpinyin-chewing crate seam (D6) | design rationale |
+| [`candidate-construction`](candidate-construction.md) | Candidate-construction SPEC (Discrepancy 2) | frozen (§8) |
 | [`compatibility-policy`](compatibility-policy.md) | Compatibility policy — what oxpinyin may diverge on, and what it may not | policy |
-| [`core-trait-seam`](core-trait-seam.md) | Core trait seam SPEC | behaviour frozen; Rust-signature freeze retired 2026-10-18 |
-| [`data-formats`](data-formats.md) | Data formats — pinned oracle table files | current reference (§2-3); §1 historical |
-| [`decode-differential`](decode-differential.md) | Decode-level differential SPEC | frozen |
+| [`core-trait-seam`](core-trait-seam.md) | Core trait seam SPEC | behaviour frozen |
+| [`data-formats`](data-formats.md) | Data formats — libpinyin system data files | current reference |
 | [`double-pinyin-spec`](double-pinyin-spec.md) | Double-pinyin scheme SPEC | frozen |
-| [`drop-in-abi-identity`](drop-in-abi-identity.md) | What `dlopen("libpinyin.so.15")` actually requires | record |
 | [`dynamic-adjust`](dynamic-adjust.md) | DYNAMIC_ADJUST | record (implemented, #204) |
 | [`eio-flexible-bigram-malformed-records`](eio-flexible-bigram-malformed-records.md) | FlexibleBigram malformed records (class (b), 2026-11-01 UTC) | discrepancy record (accepted) |
 | [`eio-flexible-bigram-unsorted-records`](eio-flexible-bigram-unsorted-records.md) | FlexibleBigram item search and the unsorted KC fixture | discrepancy record (accepted) |
@@ -58,41 +54,36 @@ A parenthetical after a status is a note about scope or provenance, not a new st
 | [`glib-libc-inventory`](glib-libc-inventory.md) | GLib and libc at the pin: reachable calls and oxpinyin counterparts | current reference |
 | [`glib-libc-verification`](glib-libc-verification.md) | GLib/libc verification coverage | current reference |
 | [`installed-naming`](installed-naming.md) | The installed tree takes libpinyin's name; the source tree keeps ours | implemented |
-| [`interpolation2-grammar`](interpolation2-grammar.md) | The `interpolation2.text` taglib grammar — one shared reader, and the duplicate/zero-count policy split | record (implemented) |
-| [`kbest-search`](kbest-search.md) | K-best search SPEC | frozen |
+| [`interpolation2-grammar`](interpolation2-grammar.md) | The `interpolation2.text` taglib grammar — one taglib port | record (implemented) |
 | [`language-runtime-discrepancy-template`](language-runtime-discrepancy-template.md) | Language/runtime discrepancy record — template | template |
 | [`libpinyin-structures-and-algorithms`](libpinyin-structures-and-algorithms.md) | libpinyin's components, data structures, algorithms and coefficients beside oxpinyin's, with the open gaps | register |
-| [`libpinyin-system-data-formats-2026-09-01`](libpinyin-system-data-formats-2026-09-01.md) | libpinyin system-data formats vs the #269 sysimage — source-level comparison | record (P1 input) |
 | [`library-transitions-in-memory`](library-transitions-in-memory.md) | Library transitions in memory | current reference |
-| [`macos-shipped-exports`](macos-shipped-exports.md) | Staticlib relink for exact shipped Mach-O exports, transitive dependency negative control and nightly cost | verified |
 | [`matrix-split-tables`](matrix-split-tables.md) | Matrix split tables SPEC | frozen |
 | [`model-provenance`](model-provenance.md) | Model and table provenance | policy (model20 not redistributable) |
-| [`option-bits`](option-bits.md) | Findings — option bits | record (W10 Phase 0) |
-| [`oracle-arm64-1132`](oracle-arm64-1132.md) | Pin-built oracle on native arm64 Linux (#1132) | current reference |
-| [`oracle-data-reproducibility`](oracle-data-reproducibility.md) | Oracle data reproducibility | record (issue #358) |
+| [`option-bits`](option-bits.md) | Option bits | record (implemented) |
 | [`parser-path-set`](parser-path-set.md) | Full-pinyin parser path-set SPEC | frozen |
 | [`parser-spec`](parser-spec.md) | Full-pinyin parser SPEC | frozen |
-| [`phrase-dbm-format-2026-09-01`](phrase-dbm-format-2026-09-01.md) | libpinyin phrase-index DBM format — P3 source-level findings | verified (P3) |
-| [`phrase-union`](phrase-union.md) | Phrase-index union at lookup — W11 Phase 0 scope and proposed design | approved (W11 Phase 0) |
+| [`phrase-dbm-format-2026-09-01`](phrase-dbm-format-2026-09-01.md) | libpinyin phrase-index DBM format | verified |
+| [`phrase-union`](phrase-union.md) | Phrase-index union at lookup | implemented (W11) |
 | [`pin-abort-assert-line`](pin-abort-assert-line.md) | Reproduced library aborts write no assertion line | discrepancy record (accepted) |
 | [`pin-aborts-journal-replay`](pin-aborts-journal-replay.md) | Pin aborts reproduced in the journal replay | current reference |
 | [`pin-aborts-pinyin-facade`](pin-aborts-pinyin-facade.md) | Pin aborts reproduced in the pinyin C facade | current reference |
 | [`pin-aborts-remaining`](pin-aborts-remaining.md) | Pin aborts reproduced: the short user-bigram total and the directory library | current reference |
 | [`pin-aborts-zhuyin-facade`](pin-aborts-zhuyin-facade.md) | Pin aborts reproduced in the zhuyin C facade | current reference |
-| [`pinyin-dbm-format-2026-09-01`](pinyin-dbm-format-2026-09-01.md) | libpinyin pinyin-index DBM format — P2 source-level findings | verified (P2) |
-| [`probe-coverage-abi`](probe-coverage-abi.md) | Findings — probe coverage over the full exported ABI (79 symbols, four unclassified residues) | current reference (live matrix; residues closed) |
+| [`pinyin-dbm-format-2026-09-01`](pinyin-dbm-format-2026-09-01.md) | libpinyin pinyin-index DBM format | verified |
+| [`probe-coverage-abi`](probe-coverage-abi.md) | Probe coverage over the full exported ABI (79 symbols; residues closed) | current reference (live matrix) |
 | [`returned-string-allocation`](returned-string-allocation.md) | Returned-string allocation (#1227) | current reference |
 | [`robustness-evidence`](robustness-evidence.md) | F-E cross-lane robustness evidence register | register (F-E) |
-| [`scoring-spec`](scoring-spec.md) | Scoring SPEC | frozen |
+| [`scoring-spec`](scoring-spec.md) | Scoring: the language-model term, the cost scale and incomplete keys | current reference |
 | [`segment-graph`](segment-graph.md) | SegmentGraph SPEC | frozen |
 | [`sentence-surface`](sentence-surface.md) | Sentence surface (W14) | machine-read (frozen) |
-| [`session-api`](session-api.md) | Framework-neutral session API SPEC | behaviour frozen; Rust-signature freeze retired 2026-10-18 |
+| [`session-api`](session-api.md) | Framework-neutral session API SPEC | behaviour frozen |
 | [`session-replay`](session-replay.md) | Session replay SPEC | frozen |
 | [`store-key-ordering`](store-key-ordering.md) | Store key-ordering contract — one place for the whole stack | contract |
-| [`tkrzw-distro-compat`](tkrzw-distro-compat.md) | Debian now ships libpinyin on tkrzw; Ubuntu's tkrzw silently corrupts records | record (distro matrix; amended 2026-10-05 — tkrzw 1.0.34 fixes the sentinel defect upstream; what a defect-1 library does to the backend before and after #621) |
-| [`trainer-parity-audit`](trainer-parity-audit.md) | Trainer-workflow parity audit (W9 full-scope re-audit) | audit (current trainer record) |
-| [`training-algorithm`](training-algorithm.md) | libpinyin training pipeline — algorithm characterization (W9-T0) | verified (W9-T0) |
+| [`tkrzw-distro-compat`](tkrzw-distro-compat.md) | Debian ships libpinyin on tkrzw; Ubuntu's tkrzw corrupts records | record (distro matrix) |
+| [`trainer-parity-audit`](trainer-parity-audit.md) | Trainer-workflow parity audit | audit (current trainer record) |
+| [`training-algorithm`](training-algorithm.md) | libpinyin training pipeline — algorithm characterization | verified |
 | [`trellis-adjusted-cost-s1-s2`](trellis-adjusted-cost-s1-s2.md) | Pinyin trellis adjusted-cost comparison | policy record |
 | [`upstream-divergences`](upstream-divergences.md) | Upstream divergences | register (living) |
 | [`upstream-report-drafts`](upstream-report-drafts.md) | Upstream report drafts — the libpinyin report-back batch | open (drafts, not filed) |
-| [`user-store`](user-store.md) | libpinyin user store — behaviour characterization (W6-T0) | characterization (W6) |
+| [`user-store`](user-store.md) | libpinyin user store — behaviour characterization | characterization |

@@ -24,6 +24,8 @@ Every assertion at the pin is active.
 - Preserve all 79 `pinyin_*` exports and all 52 Zhuyin exports.
   Consumer usage does not limit ABI scope.
 
+[Drop-in identity](packaging.md#drop-in-identity) states what `dlopen("libpinyin.so.15")` requires of the installed library.
+
 ## Behaviour
 
 For every exported symbol, reproduce the pin's result for the same inputs and state:
@@ -71,7 +73,7 @@ Existing examples include:
 - Predicted-candidate ranking and training follow rules derived from the pin's source.
   Do not tune them until examples agree.
 
-Only the classes and recorded internal language artefacts permit departures.
+Only the grounds that the compatibility policy lists permit departures ([the default is the pin](findings/compatibility-policy.md#the-default-is-the-pin)).
 External I/O still uses the pin's call.
 An undefined read follows its class (b) record.
 An abort is reproduced with `std::process::abort()` (class (c) retired 2026-10-31 UTC).

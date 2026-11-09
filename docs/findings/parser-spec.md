@@ -232,14 +232,15 @@ separator and starts the remainder. A run of consecutive apostrophes after
 a fully consumed left group is a single separator when the group after it
 consumes at least one byte.
 
-**Evidence.** [archived oracle candidates source](https://github.com/shenghaoc/oxpinyin/blob/928345a9c0b2ee193b1c89b435f642ddea619114/fixtures/w4/oracle-candidates.txt) `ni''hao` (stratum
+**Evidence.** `fixtures/w4/oracle-candidate-structure.txt` `ni''hao` (stratum
 `09-edge.txt` line 33) → oracle top-1 `你好`; every candidate in the
 oracle's top-10 requires the doubled apostrophe to act as a single
 separator. Before this correction, `ni''hao` was the sole `absent` input in
-the W2 residual (`docs/testing/corpus-tail.md`, W12 Class B).
+the W2 residual (`docs/findings/candidate-construction.md` §8.4, Class B).
 
-**Freeze move.** `real_tables_session_reports_parity` re-freezes from
-10,177 / 10,189 / 94,871 of 98,930 / absent 1 to
+**Freeze move** (recorded evidence; the test is deleted).
+`real_tables_session_reports_parity` re-freezes from 10,177 / 10,189 /
+94,871 of 98,930 / absent 1 to
 **10,178 / 10,190 / 94,872 of 98,930 / absent 0**; tie-swaps stay at
 1,036. Recorded in `pin-refreeze-2026-08`
 (the doubled-apostrophe amendment).

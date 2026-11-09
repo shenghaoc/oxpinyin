@@ -3,12 +3,11 @@
 Date: 2026-08-09 · Source tier: Architect derivation; human freeze pending.
 
 This finding freezes the sampling methodology, byte domain and reproducibility
-contract for the Stage 1 parity corpus. It is the implementation contract for
-W2-T2 and the input set for W2-T3.
+contract for the Stage 1 parity corpus. The corpus is the input set of the
+`candidate_surface` test.
 
-The corpus holds **inputs only**. Expected outputs are not committed here:
-W2-T3 produces the oracle side by observation, so a committed expectation would
-be a second, unverified oracle.
+The corpus holds **inputs only**. The pin's outputs are frozen captures
+under `fixtures/w4/`, not part of the corpus.
 
 ## Why generated rather than harvested
 
@@ -34,8 +33,8 @@ and is recorded as a known limitation rather than silently ignored.
 
 Syllables come from `oxpinyin_core::FULL_PINYIN_SYLLABLES`: the 405 active
 complete syllables frozen by `docs/findings/parser-spec.md`, in their source
-numeric-ID order. The generator reads that constant rather than restating it, so
-the corpus cannot drift from the frozen inventory.
+numeric-ID order. The generator read that constant rather than restating it, so
+the corpus could not drift from the frozen inventory.
 
 ## Byte domain
 
@@ -46,7 +45,7 @@ The exclusions are deliberate and each has coverage elsewhere:
 
 | Excluded | Why | Where it is covered |
 |---|---|---|
-| NUL (`0x00`) | Not representable across the oracle's `const char *` boundary; `Session::observe` rejects it | `interior_nul_is_rejected_without_reaching_the_oracle` |
+| NUL (`0x00`) | Not representable across the oracle's `const char *` boundary | parser proptest and `cargo-fuzz` |
 | CR, LF, TAB | Would break the one-record-per-line corpus and log formats | fuzz target |
 | Non-ASCII and malformed UTF-8 | Not representable in a line-oriented ASCII corpus | parser proptest and `cargo-fuzz` (F-E-12) |
 
@@ -157,13 +156,13 @@ byte-identical files, which is the W2-T2 acceptance criterion.
 
 ## Reproducibility contract
 
-The corpus is frozen input files. Its generator was deleted on 2026-11-06 UTC with
-`pinyin-oracle`, and the digests above stay the byte record.
+The corpus is frozen input files. It has no generator in the tree, and the
+digests above are the byte record.
 `crates/oxpinyin-runtime/tests/candidate_surface.rs` reads every file in the
 directory, checks the count of distinct inputs and compares the candidates of
 each input with the frozen pin capture. It does not check the per-stratum line
 counts or find a duplicate line; the digests above are the byte record.
 
-A corpus change is a deliberate, reviewed act: it moves the W2-T3 divergence
-baseline, so it belongs in its own commit alongside the edited files and
+A corpus change is a deliberate, reviewed act: it moves the `candidate_surface`
+counts and needs a new pin capture, so it belongs in its own commit alongside the edited files and
 the reason for the change.

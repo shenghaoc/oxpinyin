@@ -62,9 +62,9 @@
 #   <verified>  How <notes> was established. The gate checks that every
 #            line carries one of these kinds, never the evidence it names:
 #     pin-probe:<case>       measured at the pin and on oxpinyin, identical,
-#                            on the reference cell (tkrzw; bdb to 2026-10-30) by <case>: a
-#                            the recorded contract diff harness case, or a
-#                            runner in `tools/bisection/`.
+#                            on the reference cell (tkrzw) by <case>: a
+#                            recorded contract case or a runner in
+#                            `tools/bisection/`.
 #     source:<file>:<lines>  argued from the pin's `src/<file>` at 074a2219.
 #     unverified             executed against oxpinyin only, never compared
 #                            with the pin.

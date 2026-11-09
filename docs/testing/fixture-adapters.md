@@ -2,9 +2,7 @@
 
 Date: 2026-08-09 · Status: **frozen for W4-T0b**
 
-The decoder needs a `Dictionary` and a `LanguageModel` to develop against
-before either exists for real. This finding records what that data is, where
-every part of it came from, and what it may not be mistaken for.
+This page records the fixture doubles' data, provenance and limits.
 
 ## Location (updated 2026-11-06 UTC)
 
@@ -18,18 +16,8 @@ reorganization.
 
 ## Why not the real thing
 
-Three separate reasons, and each one alone would be enough:
-
-1. **W4 must not depend on W3.** The table loaders are a parallel workstream.
-   The `core-trait-seam.md` traits exist precisely so the decoder can be
-   written against one implementation and run against another.
-2. **The oracle is Linux-only and must be built.** A decoder test that needs
-   `tools/oracle/build.py` cannot run in portable CI, which is where
-   most of these tests have to run.
-3. **The model archive is not vendored.** `model-provenance.md`'s no-vendor
-   rule: `interpolation2.text`, the eighteen `.table` files, and **converted
-   or compiled derivatives of either** must not appear in this repository. A
-   committed probability table would be exactly such a derivative.
+Portable decoder tests use authored fixture doubles. Model redistribution follows
+the scoped [provenance ruling](../findings/model-provenance.md).
 
 ## What F-B would have been, and why this is not it
 
@@ -132,8 +120,9 @@ config) on every operating system. The fixed-point logarithm is integer
 squaring and shifting only.
 
 The interpolation weight here is one half — an authored, deliberately neutral
-value. `docs/findings/scoring-spec.md` (W4-T3) freezes the constants that
-matter for parity; nothing in this module claims to be one of them.
+value. The real model's λ comes from `table.conf`
+([scoring](../findings/scoring-spec.md#the-interpolated-bigram)); nothing in
+this module claims to be one of the model's constants.
 
 ## Replacing this with real data
 
