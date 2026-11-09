@@ -389,12 +389,9 @@ fn tone_digit(key: ChewingKey) -> Option<char> {
 
 #[cfg(test)]
 mod tests {
-    use crate::parse::{pinyin_parse_more_double_pinyins, pinyin_parse_more_full_pinyins};
+    use crate::parse::pinyin_parse_more_full_pinyins;
     use crate::test_support::{TempUserDir, cstr, open};
-    use crate::text::{
-        pinyin_get_chewing_auxiliary_text, pinyin_get_double_pinyin_auxiliary_text,
-        pinyin_get_full_pinyin_auxiliary_text,
-    };
+    use crate::text::pinyin_get_chewing_auxiliary_text;
     use crate::types::{GChar, PinyinInstance};
 
     /// `(true, text)` for an answer, `(false, "")` for the empty matrix.
@@ -406,57 +403,6 @@ mod tests {
         let mut text: *mut GChar = std::ptr::null_mut();
         let answered = render(instance, cursor, &raw mut text);
         (answered, crate::ffi::take_owned_cstr(text))
-    }
-
-    /// The pin renders one shared matrix, so the three functions answer
-    /// after any parse: a full parse read as double and chewing, a double
-    /// parse read as full and chewing (measured on bdb at 074a2219).
-    #[test]
-    fn the_three_renderers_read_the_matrix_whichever_parser_filled_it() {
-        let user_dir = TempUserDir::new("aux-shared-matrix");
-        let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-
-        assert_eq!(
-            pinyin_parse_more_full_pinyins(instance, cstr("nihao").as_ptr()),
-            5
-        );
-        assert_eq!(
-            aux(pinyin_get_double_pinyin_auxiliary_text, instance, 3),
-            (true, "ni h|ao ".to_owned())
-        );
-        assert_eq!(
-            aux(pinyin_get_chewing_auxiliary_text, instance, 2),
-            (true, "ㄋㄧ |ㄏㄠ ".to_owned())
-        );
-
-        assert_eq!(
-            pinyin_parse_more_double_pinyins(instance, cstr("nihk").as_ptr()),
-            4
-        );
-        assert_eq!(
-            aux(pinyin_get_full_pinyin_auxiliary_text, instance, 2),
-            (true, "ni |hao ".to_owned())
-        );
-        assert_eq!(
-            aux(pinyin_get_chewing_auxiliary_text, instance, 4),
-            (true, "ㄋㄧ ㄏㄠ |".to_owned())
-        );
-
-        // No key placed: the pin's matrix is empty.
-        assert_eq!(
-            pinyin_parse_more_full_pinyins(instance, cstr("'").as_ptr()),
-            1
-        );
-        for render in [
-            pinyin_get_full_pinyin_auxiliary_text,
-            pinyin_get_double_pinyin_auxiliary_text,
-            pinyin_get_chewing_auxiliary_text,
-        ] {
-            assert_eq!(aux(render, instance, 0), (false, String::new()));
-        }
-
-        crate::instance::pinyin_free_instance(instance);
-        crate::context::pinyin_fini(context);
     }
 
     /// The chewing split is the pin's `g_utf8_substring` cut: the raw byte

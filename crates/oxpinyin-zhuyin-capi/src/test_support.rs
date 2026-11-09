@@ -642,6 +642,7 @@ pub fn link_file(target: &std::path::Path, link: &std::path::Path) {
 /// pin's `MemoryChunk::mmap` asserts on its header read
 /// (`memory_chunk.h:493`, register row 96); elsewhere it is row 76's
 /// unmappable library. Answers which.
+#[cfg(unix)]
 pub fn directory_library(system: &std::path::Path, file: &str) -> bool {
     let path = system.join(file);
     std::fs::remove_file(&path).expect("unlink the library");

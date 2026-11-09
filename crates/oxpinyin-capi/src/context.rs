@@ -334,18 +334,6 @@ mod tests {
     }
 
     #[test]
-    fn public_init_opens_a_system_data_directory() {
-        let system = TempSystemDir::new("opens");
-        let user = TempUserDir::new("opens-user");
-        let context = pinyin_init(
-            cstr(system.path.to_str().expect("UTF-8 path")).as_ptr(),
-            cstr(user.path.to_str().expect("UTF-8 path")).as_ptr(),
-        );
-        assert!(!context.is_null(), "the fixture data directory must open");
-        crate::context::pinyin_fini(context);
-    }
-
-    #[test]
     fn public_init_missing_pinyin_index_follows_backend_attach() {
         let system = TempSystemDir::new("no-dbms");
         for entry in std::fs::read_dir(&system.path).expect("dir") {

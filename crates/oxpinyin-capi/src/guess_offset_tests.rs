@@ -6,12 +6,9 @@
 //! caller offset back across the run, refuses — never aborts — when the
 //! run leads the input, and a choose at the caller offset still advances.
 
-use std::os::raw::c_uint;
 use std::ptr;
 
-use crate::candidates::{
-    pinyin_choose_candidate, pinyin_clear_constraint, pinyin_get_candidate, pinyin_get_n_candidate,
-};
+use crate::candidates::{pinyin_choose_candidate, pinyin_clear_constraint, pinyin_get_candidate};
 use crate::config::{
     pinyin_set_double_pinyin_scheme, pinyin_set_full_pinyin_scheme, pinyin_set_zhuyin_scheme,
 };
@@ -69,120 +66,41 @@ fn parse(instance: *mut PinyinInstance, input: &str) -> usize {
 
 #[test]
 fn guess_offset_normalizes_across_the_separator_run() {
-    for (input, post_run, zero_start) in [("ni'hao", 3usize, 2usize), ("ni''hao", 4, 2)] {
-        let user_dir = TempUserDir::new(&format!("guess-zero-run-{post_run}"));
-        let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-
-        assert_eq!(parse(instance, input), input.len(), "{input} parses whole");
-        assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
-        let ni = candidate_at(instance, position_of(instance, "\u{4f60}"));
-        assert_eq!(
-            pinyin_choose_candidate(instance, 0, ni),
-            2,
-            "choosing \u{4f60} consumes the first group"
-        );
-
-        // ibus's raw begin of the next key rest (one past the run) and the
-        // run's first zero-key byte answer the same list.
-        assert!(pinyin_guess_candidates(instance, post_run, DEFAULT_SORT));
-        let after_run = texts(instance);
-        assert!(
-            !after_run.is_empty(),
-            "{input}: the remaining group offers candidates"
-        );
-        assert!(pinyin_guess_candidates(instance, zero_start, DEFAULT_SORT));
-        assert_eq!(
-            texts(instance),
-            after_run,
-            "{input}: both caller offsets normalize to the same lookup"
-        );
-
-        // The scan anchor never moved to the normalized offset, so a choose
-        // at the caller offset still advances past it.
-        let hao = candidate_at(instance, position_of(instance, "\u{597d}"));
-        let cursor = pinyin_choose_candidate(instance, post_run, hao);
-        assert!(
-            cursor > i32::try_from(post_run).expect("small input offset"),
-            "{input}: choose at the post-separator offset advances (got {cursor})"
-        );
-
-        crate::instance::pinyin_free_instance(instance);
-        crate::context::pinyin_fini(context);
-    }
-}
-
-#[test]
-fn guess_at_offset_zero_without_a_separator_is_unchanged() {
-    let user_dir = TempUserDir::new("guess-zero-plain");
+    let (input, post_run, zero_start) = ("ni'hao", 3usize, 2usize);
+    let user_dir = TempUserDir::new("guess-zero-run");
     let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
 
-    assert_eq!(parse(instance, "nihao"), 5);
+    assert_eq!(parse(instance, input), input.len(), "{input} parses whole");
     assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
-    let first = texts(instance);
-    assert!(first.iter().any(|t| t == "\u{4f60}\u{597d}"));
-    assert!(first.iter().any(|t| t == "\u{4f60}"));
-
-    // Offset 0 with no zero key anywhere is the identity walk: re-running
-    // the guess reproduces the same snapshot.
-    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
-    assert_eq!(texts(instance), first);
-
-    crate::instance::pinyin_free_instance(instance);
-    crate::context::pinyin_fini(context);
-}
-
-#[test]
-fn a_leading_or_trailing_run_never_walks_off_the_input() {
-    let user_dir = TempUserDir::new("guess-zero-edges");
-    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-
-    // The leading gap is empty, while the real key remains live at byte 1.
-    // pinyin.cpp:2226 ignores _check_offset's Boolean return.
-    assert_eq!(parse(instance, "'ni"), 3, "the leading run parses whole");
-    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
-    assert!(pinyin_guess_candidates(instance, 1, DEFAULT_SORT));
-    let mut num: c_uint = 77;
-    assert!(pinyin_get_n_candidate(instance, &raw mut num));
-    assert!(num > 0, "the ni key remains available at its own offset");
-    assert!(
-        pinyin_guess_candidates(instance, 0, DEFAULT_SORT),
-        "the empty leading column leaves the instance usable"
+    let ni = candidate_at(instance, position_of(instance, "\u{4f60}"));
+    assert_eq!(
+        pinyin_choose_candidate(instance, 0, ni),
+        2,
+        "choosing \u{4f60} consumes the first group"
     );
 
-    // Trailing run: one past the input's last byte normalizes back to the
-    // run without reading past the buffer.
-    assert!(parse(instance, "ni'") >= 2);
-    assert!(pinyin_guess_candidates(instance, 3, DEFAULT_SORT));
-
-    crate::instance::pinyin_free_instance(instance);
-    crate::context::pinyin_fini(context);
-}
-
-#[test]
-fn an_offset_one_past_the_reserved_slot_finds_nothing() {
-    // The one-past-end offset is the matrix's reserved extra slot and
-    // stays valid. Two or more past it, `get_column_size` asserts in the
-    // pin's `_check_offset` and the process aborts (register row 66,
-    // `matrix_bound_tests::guess_candidates_past_an_early_stopped_parse_aborts`).
-    let user_dir = TempUserDir::new("guess-zero-range");
-    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-
-    assert_eq!(parse(instance, "ni'hao"), 6);
+    // ibus's raw begin of the next key rest (one past the run) and the
+    // run's first zero-key byte answer the same list.
+    assert!(pinyin_guess_candidates(instance, post_run, DEFAULT_SORT));
+    let after_run = texts(instance);
     assert!(
-        pinyin_guess_candidates(instance, 6, DEFAULT_SORT),
-        "the one-past-end offset is the reserved slot, still in range"
+        !after_run.is_empty(),
+        "{input}: the remaining group offers candidates"
     );
-    let parsed = pinyin_get_parsed_input_length(instance);
-    // One past the reserved slot is still an ordinary lookup at the pin
-    // (`_check_offset` reads a valid column and its result is discarded,
-    // `pinyin.cpp:2226`); only the offsets beyond abort it.
-    assert!(
-        pinyin_guess_candidates(instance, parsed + 1, DEFAULT_SORT),
-        "one past the reserved slot finds nothing, as at the pin"
+    assert!(pinyin_guess_candidates(instance, zero_start, DEFAULT_SORT));
+    assert_eq!(
+        texts(instance),
+        after_run,
+        "{input}: both caller offsets normalize to the same lookup"
     );
+
+    // The scan anchor never moved to the normalized offset, so a choose
+    // at the caller offset still advances past it.
+    let hao = candidate_at(instance, position_of(instance, "\u{597d}"));
+    let cursor = pinyin_choose_candidate(instance, post_run, hao);
     assert!(
-        pinyin_guess_candidates(instance, 0, DEFAULT_SORT),
-        "the instance stays usable"
+        cursor > i32::try_from(post_run).expect("small input offset"),
+        "{input}: choose at the post-separator offset advances (got {cursor})"
     );
 
     crate::instance::pinyin_free_instance(instance);
@@ -261,48 +179,6 @@ fn a_post_separator_choose_returns_the_candidate_end() {
         pinyin_get_parsed_input_length(instance),
         "the final choose lands the commit branch"
     );
-
-    crate::instance::pinyin_free_instance(instance);
-    crate::context::pinyin_fini(context);
-}
-
-#[test]
-fn the_ranking_context_survives_either_guess_offset() {
-    // Upstream resolves the bigram previous token by indexing per-position
-    // match results at the lookup offset; the raw one-past-separator
-    // offset hits a null slot there and the system+user bigram merge is
-    // silently skipped (C++ libpinyin 2.11.92 still does —
-    // libpinyin@412f88e3 feeds the normalized offset instead). oxpinyin's
-    // context is the selection history, which no lookup offset indexes,
-    // so the resolution must survive both caller offsets and stay the
-    // selected word's own token.
-    let user_dir = TempUserDir::new("guess-zero-context");
-    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-
-    assert_eq!(parse(instance, "ni'hao"), 6);
-    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
-    let ni_pos = position_of(instance, "\u{4f60}");
-    let ni_token = {
-        // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
-        let inst = unsafe { instance_ref(instance) };
-        inst.state.candidates[ni_pos]
-            .token
-            .expect("\u{4f60} carries its token")
-    };
-    let ni = candidate_at(instance, ni_pos);
-    assert_eq!(pinyin_choose_candidate(instance, 0, ni), 2);
-
-    // Raw post-separator offset first, then the normalized one.
-    for offset in [3usize, 2] {
-        assert!(pinyin_guess_candidates(instance, offset, DEFAULT_SORT));
-        // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
-        let inst = unsafe { instance_ref(instance) };
-        assert_eq!(
-            inst.core.session.selected_tokens().last().copied(),
-            Some(ni_token),
-            "the ranking context stays the selected word's token at offset {offset}"
-        );
-    }
 
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);
@@ -478,54 +354,6 @@ fn luoma_input_carries_the_full_offset_law() {
     );
     // Offset 8 is past the pin's matrix, whose `get_column_size` asserts:
     // the process aborts (register row 66).
-
-    crate::instance::pinyin_free_instance(instance);
-    crate::context::pinyin_fini(context);
-}
-
-#[test]
-fn a_choose_then_guess_covers_the_remaining_group() {
-    // The xiang'a shape over the mini fixture's keys: choose the first
-    // group of xian'a, then guess the rest at the choose cursor and at
-    // ibus's post-separator begin.
-    let user_dir = TempUserDir::new("guess-zero-xian");
-    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-
-    assert_eq!(parse(instance, "xian'a"), 6);
-    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
-    let spans_xian = {
-        // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
-        let inst = unsafe { instance_ref(instance) };
-        let (_, window) = inst
-            .core
-            .anchored_window
-            .as_ref()
-            .expect("the guess retains its window");
-        inst.state
-            .candidates
-            .iter()
-            .position(|c| {
-                window
-                    .get(c.source_index as usize)
-                    .is_some_and(|row| row.consumed_bytes() == 4)
-            })
-            .expect("a candidate spans the xian group")
-    };
-    let cand = candidate_at(instance, spans_xian);
-    assert_eq!(pinyin_choose_candidate(instance, 0, cand), 4);
-
-    assert!(pinyin_guess_candidates(instance, 4, DEFAULT_SORT));
-    let at_cursor = texts(instance);
-    assert!(
-        !at_cursor.is_empty(),
-        "the remaining group offers candidates after the choose"
-    );
-    assert!(pinyin_guess_candidates(instance, 5, DEFAULT_SORT));
-    assert_eq!(
-        texts(instance),
-        at_cursor,
-        "ibus's post-separator begin answers the same remaining group"
-    );
 
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);

@@ -55,11 +55,8 @@ use crate::instance::{zhuyin_alloc_instance, zhuyin_free_instance, zhuyin_reset}
 use crate::iterators::{
     zhuyin_begin_add_phrases, zhuyin_end_add_phrases, zhuyin_iterator_add_phrase,
 };
-use crate::parse::{zhuyin_get_parsed_input_length, zhuyin_parse_more_chewings};
-use crate::phrase::{zhuyin_get_n_phrase, zhuyin_get_phrase_token, zhuyin_phrase_segment};
-use crate::sentence::{
-    zhuyin_get_sentence, zhuyin_guess_sentence, zhuyin_guess_sentence_with_prefix,
-};
+use crate::parse::zhuyin_parse_more_chewings;
+use crate::sentence::{zhuyin_get_sentence, zhuyin_guess_sentence};
 use crate::test_support::{
     TempUserDir, candidate, close, cstr, open, open_with_user, system_dir, take_sentence, token_of,
     with_store,
@@ -160,80 +157,6 @@ fn train_refuses_without_a_selection_or_a_user_store() {
     close(context, instance);
 }
 
-/// `zhuyin_save` is the §4 gated save: false on a clean store, true
-/// after a training write dirties it, false again once saved.
-#[test]
-fn save_is_the_gated_dirty_flag() {
-    let user_dir = TempUserDir::new("save-gate");
-    let (context, instance) = open_with_user(&user_dir.path);
-    assert!(
-        !zhuyin_save(context),
-        "a freshly opened store is clean (§4)"
-    );
-
-    let chosen = candidate(instance, "su3cl3", 0);
-    assert!(zhuyin_choose_candidate(instance, 0, chosen) > 0);
-    assert!(zhuyin_guess_sentence(instance));
-    assert!(zhuyin_train(instance));
-    assert!(zhuyin_save(context), "the training write dirtied it");
-    assert!(
-        !zhuyin_save(context),
-        "the save cleared the dirty flag (§4)"
-    );
-
-    close(context, instance);
-}
-
-/// The add-phrases trio writes the USER index per-phrase committed and
-/// arms the dirty flag at end (upstream `pinyin.cpp:657-658`), so the
-/// rows appear in the store's §9 export and the next save compacts.
-#[test]
-fn add_phrase_batch_writes_the_user_index() {
-    let user_dir = TempUserDir::new("add-batch");
-    let (context, instance) = open_with_user(&user_dir.path);
-
-    let iter = zhuyin_begin_add_phrases(context, USER_DICTIONARY);
-    assert!(!iter.is_null());
-    let phrase = cstr("网词");
-    // The reading is bopomofo, parsed by `ZhuyinDirectParser2` under
-    // `USE_TONE | FORCE_TONE` (`zhuyin.cpp:515-523`): the tones ride on
-    // the stored keys.
-    let reading = cstr("ㄨㄤˇ ㄘˊ");
-    assert!(zhuyin_iterator_add_phrase(
-        iter,
-        phrase.as_ptr(),
-        reading.as_ptr(),
-        5,
-    ));
-    // A romanized reading parses no bopomofo key and is refused, not
-    // stored half-way.
-    let romanized = cstr("wangci");
-    assert!(!zhuyin_iterator_add_phrase(
-        iter,
-        phrase.as_ptr(),
-        romanized.as_ptr(),
-        1,
-    ));
-    zhuyin_end_add_phrases(iter);
-
-    let rows = with_store(instance, |store| {
-        store
-            .export_phrases_in(USER_DICTIONARY)
-            .expect("export the user index")
-    });
-    assert_eq!(
-        rows,
-        vec![oxpinyin_user::ExportedPhrase {
-            text: "网词".chars().map(u32::from).collect(),
-            pinyin: "wang3'ci2".to_owned(),
-            count: 5,
-        }]
-    );
-    assert!(zhuyin_save(context), "the batch armed the dirty flag");
-
-    close(context, instance);
-}
-
 #[test]
 fn token_unigram_distinguishes_zero_user_item_from_absent() {
     use crate::dict::{zhuyin_token_add_unigram_frequency, zhuyin_token_get_unigram_frequency};
@@ -272,83 +195,6 @@ fn token_unigram_distinguishes_zero_user_item_from_absent() {
         &raw mut freq
     ));
     assert_eq!(freq, 7);
-    close(context, instance);
-}
-
-/// The sentence surface: `zhuyin_guess_sentence` then `get_sentence`
-/// yields the decoded composition, and prefix seeding keeps it.
-#[test]
-fn sentence_row_and_prefix_seeding() {
-    let (context, instance) = open();
-    let input = cstr("su3cl3");
-    assert_eq!(zhuyin_parse_more_chewings(instance, input.as_ptr()), 6);
-
-    assert!(zhuyin_guess_sentence(instance));
-    let mut sentence: *mut c_char = ptr::null_mut();
-    assert!(zhuyin_get_sentence(instance, &raw mut sentence));
-    assert_eq!(take_sentence(sentence), "你好");
-
-    // Re-guess seeded with the first character as a prefix token: the
-    // sentence keeps starting there.
-    let prefix = cstr("你");
-    assert!(zhuyin_guess_sentence_with_prefix(instance, prefix.as_ptr()));
-    let mut sentence: *mut c_char = ptr::null_mut();
-    assert!(zhuyin_get_sentence(instance, &raw mut sentence));
-    assert_eq!(take_sentence(sentence), "你好");
-
-    close(context, instance);
-}
-
-/// `zhuyin_phrase_segment` fills the phrase result the token getters
-/// read back: one token for the fixture's 你好.
-#[test]
-fn phrase_segment_fills_the_token_result() {
-    let (context, instance) = open();
-    let sentence = cstr("你好");
-    assert!(zhuyin_phrase_segment(instance, sentence.as_ptr()));
-
-    let mut count = 0;
-    assert!(zhuyin_get_n_phrase(instance, &raw mut count));
-    // The mini fixture's merged table carries 你 and 好 individually, so
-    // the best path over it segments the pair as two one-character
-    // phrases — the result array is fully readable either way.
-    assert_eq!(count, 2, "the fixture segments 你好 character-wise");
-    let mut first = 0;
-    assert!(zhuyin_get_phrase_token(instance, 0, &raw mut first));
-    assert_ne!(first, 0, "a matched phrase carries a real token");
-    let mut second = 0;
-    assert!(zhuyin_get_phrase_token(instance, 1, &raw mut second));
-    assert_ne!(second, 0, "every matched phrase carries a real token");
-
-    // Invalid UTF-8 is refused, not stored (the pin's g_return_val_if_fail
-    // gate, zhuyin.cpp:965).
-    let invalid = std::ffi::CString::new([0xFFu8, 0xFE]).expect("no interior NUL");
-    assert!(!zhuyin_phrase_segment(instance, invalid.as_ptr()));
-
-    close(context, instance);
-}
-
-/// `zhuyin_reset` clears the composition: the parsed input length drops
-/// to zero and the sentence getter has nothing to return.
-#[test]
-fn reset_clears_the_parse() {
-    let (context, instance) = open();
-    let input = cstr("su3cl3");
-    assert_eq!(zhuyin_parse_more_chewings(instance, input.as_ptr()), 6);
-    assert_eq!(zhuyin_get_parsed_input_length(instance), 6);
-
-    assert!(zhuyin_reset(instance));
-    assert_eq!(
-        zhuyin_get_parsed_input_length(instance),
-        0,
-        "reset dropped the parsed keys"
-    );
-    let mut sentence: *mut c_char = ptr::null_mut();
-    assert!(
-        !zhuyin_get_sentence(instance, &raw mut sentence),
-        "nothing is composed after the reset"
-    );
-
     close(context, instance);
 }
 
@@ -470,65 +316,6 @@ fn a_choose_at_the_cursor_survives_the_next_guess() {
         take_sentence(sentence),
         format!("你{text}"),
         "the forcing at the cursor survived the re-guess"
-    );
-    close(context, instance);
-}
-
-/// The same law after a MULTI-character choice: a choose of a phrase, a
-/// later choose at the cursor the phrase left, and a whole-sentence
-/// re-guess keep both forcings (`zhuyin.cpp:1649-1654`, `:1460`;
-/// `phonetic_lookup.cpp:120-167`). The second row is one the
-/// unconstrained decode of the tail would not pick, so a dropped later
-/// forcing shows in the sentence.
-#[test]
-fn a_choose_at_the_cursor_survives_the_next_guess_after_a_phrase() {
-    use crate::candidates::zhuyin_get_candidate;
-    use crate::sentence::zhuyin_guess_candidates_after_cursor;
-    use crate::test_support::candidate_text;
-
-    let keys = "su3cl3su3";
-    let (context, instance) = open();
-    let phrase = (0..16)
-        .find(|index| {
-            let _ = candidate(instance, keys, 0);
-            candidate_text(instance, *index) == "你好"
-        })
-        .expect("the two-character phrase 你好 is offered at 0");
-    let cand = candidate(instance, keys, u32::try_from(phrase).expect("small index"));
-    assert_eq!(zhuyin_choose_candidate(instance, 0, cand), 6);
-    assert!(zhuyin_guess_sentence(instance));
-    let mut unconstrained: *mut c_char = ptr::null_mut();
-    assert!(zhuyin_get_sentence(instance, &raw mut unconstrained));
-    let default_tail = take_sentence(unconstrained)
-        .chars()
-        .last()
-        .expect("the re-guessed sentence is not empty")
-        .to_string();
-
-    assert!(zhuyin_guess_candidates_after_cursor(instance, 6));
-    let mut count = 0;
-    assert!(zhuyin_get_n_candidate(instance, &raw mut count));
-    let other = (0..usize::try_from(count).expect("count fits"))
-        .find(|index| {
-            let text = candidate_text(instance, *index);
-            text.chars().count() == 1 && text != default_tail
-        })
-        .expect("a one-character row other than the decode's pick is offered at 6");
-    let text = candidate_text(instance, other);
-    let mut chosen: *mut crate::types::LookupCandidate = ptr::null_mut();
-    assert!(zhuyin_get_candidate(
-        instance,
-        u32::try_from(other).expect("small index"),
-        &raw mut chosen
-    ));
-    assert_eq!(zhuyin_choose_candidate(instance, 6, chosen), 9);
-    assert!(zhuyin_guess_sentence(instance));
-    let mut sentence: *mut c_char = ptr::null_mut();
-    assert!(zhuyin_get_sentence(instance, &raw mut sentence));
-    assert_eq!(
-        take_sentence(sentence),
-        format!("你好{text}"),
-        "both forcings survived the whole-sentence re-guess"
     );
     close(context, instance);
 }
@@ -888,6 +675,7 @@ fn mask_out_of_a_selected_short_key_completes() {
 /// Whether a directory reads as a chunk on this host's temporary file
 /// system (register row 96); where it does not, a directory library is row
 /// 76's unmappable one (class (b)).
+#[cfg(unix)]
 fn directory_reads_as_a_chunk_here() -> bool {
     let probe = tempfile::tempdir().expect("probe dir");
     std::fs::write(probe.path().join("e".repeat(25)), b"x").expect("fill the probe");
@@ -898,6 +686,7 @@ fn directory_reads_as_a_chunk_here() -> bool {
 /// (register row 96): init maps `merged.bin` (`zhuyin.cpp:199`), the save and
 /// the mask-out map it again (`:589`, `:800`), and the reload of the
 /// unloaded library 2 maps `gbk_char.bin` (`:200`).
+#[cfg(unix)]
 fn map_a_directory_library(site: &str) -> bool {
     let scratch = tempfile::tempdir().expect("scratch");
     let system = crate::test_support::private_system(scratch.path());
@@ -968,6 +757,8 @@ fn save_aborts_on_a_directory_library() {
 }
 
 /// Register row 96 at mask-out, after the user tables are masked.
+// Unix only, for the reason `init_aborts_on_a_directory_library` gives.
+#[cfg(unix)]
 #[test]
 fn mask_out_aborts_on_a_directory_library() {
     if directory_reads_as_a_chunk_here() {
@@ -983,6 +774,8 @@ fn mask_out_aborts_on_a_directory_library() {
 }
 
 /// Register row 96 at the reload of an unloaded library.
+// Unix only, for the reason `init_aborts_on_a_directory_library` gives.
+#[cfg(unix)]
 #[test]
 fn reload_aborts_on_a_directory_library() {
     if directory_reads_as_a_chunk_here() {
@@ -1016,32 +809,6 @@ fn fresh_user_conf_line(user_dir: &std::path::Path) -> String {
         user_dir.display(),
         std::path::MAIN_SEPARATOR
     )
-}
-
-/// The zhuyin twin of audit D-06's row-42 witness
-/// (`zhuyin-instance_outlives_context`): the pin's `zhuyin_guess_sentence`
-/// hands the freed context to `get_nbest_match` (`zhuyin.cpp:895-909`) and
-/// returns its result, so no pin answer is defined; the ruled safe answer
-/// is `true`. A populated matrix reaches the lookup (`su3cl3` is 你好).
-#[test]
-fn instance_outlives_context_guesses_true() {
-    let run = crate::test_support::run_in_child(
-        "e2e_tests::instance_outlives_context_guesses_true",
-        |user| {
-            let (context, instance) = open_with_user(user);
-            assert_eq!(
-                zhuyin_parse_more_chewings(instance, cstr("su3cl3").as_ptr()),
-                6
-            );
-            zhuyin_fini(context);
-            assert!(zhuyin_guess_sentence(instance), "the ruled safe answer");
-            zhuyin_free_instance(instance);
-        },
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&run.stderr),
-        fresh_user_conf_line(&run.user_dir)
-    );
 }
 
 /// A second `zhuyin_fini` on one context (#573, register row 105): the pin

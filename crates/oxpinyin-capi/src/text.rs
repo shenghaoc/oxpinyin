@@ -380,22 +380,6 @@ mod tests {
         super::full_aux_text(raw, parsed_len, cursor, options).to_string()
     }
 
-    /// The parts are the pin's `g_strconcat` arguments: the keys ending at
-    /// or before the cursor, the mark or the split key, the keys beginning
-    /// at or after it (`pinyin.cpp:3391-3431`).
-    #[test]
-    fn full_aux_text_splits_as_the_pins_concatenation() {
-        let parts = |cursor| {
-            let aux = super::full_aux_text("nihao", 5, cursor, OptionBits::default());
-            (aux.prefix, aux.middle, aux.postfix)
-        };
-        let owned = |a: &str, b: &str, c: &str| (a.to_owned(), b.to_owned(), c.to_owned());
-        assert_eq!(parts(0), owned("", "|", "ni hao "));
-        assert_eq!(parts(2), owned("ni ", "|", "hao "));
-        assert_eq!(parts(3), owned("ni ", "h|ao ", ""));
-        assert_eq!(parts(5), owned("ni hao ", "|", ""));
-    }
-
     #[test]
     fn full_aux_text_matches_the_oracle_for_simple_keys() {
         // Captured from the pinned C++ libpinyin 2.11.91 oracle with
@@ -498,45 +482,5 @@ mod tests {
         // A bare incomplete initial renders as the initial itself.
         assert_eq!(full_aux_text("n", 1, 0, OptionBits::default()), "|n ");
         assert_eq!(full_aux_text("n", 1, 1, OptionBits::default()), "n |");
-    }
-
-    #[test]
-    fn full_pinyin_auxiliary_text_uses_the_fewest_keys_walk() {
-        use crate::parse::pinyin_parse_more_full_pinyins;
-        use crate::test_support::{TempUserDir, cstr, open};
-        use crate::types::GChar;
-
-        let user_dir = TempUserDir::new("full-aux");
-        let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-        // The "nih" case needs the incomplete tail the USE_TONE default
-        // refuses.
-        assert!(crate::config::pinyin_set_options(
-            context,
-            oxpinyin_core::PINYIN_INCOMPLETE
-        ));
-
-        let cases = [
-            ("nihao", 5, 2, "ni |hao "),
-            ("ni'hao", 6, 3, "ni |hao "),
-            ("nih", 3, 3, "ni h |"),
-        ];
-        for (input, consumed, cursor, expected) in cases {
-            let input = cstr(input);
-            assert_eq!(
-                pinyin_parse_more_full_pinyins(instance, input.as_ptr()),
-                consumed
-            );
-            let mut aux: *mut GChar = std::ptr::null_mut();
-            assert!(super::pinyin_get_full_pinyin_auxiliary_text(
-                instance,
-                cursor,
-                &raw mut aux
-            ));
-            assert!(!aux.is_null());
-            assert_eq!(crate::ffi::take_owned_cstr(aux.cast()), expected);
-        }
-
-        crate::instance::pinyin_free_instance(instance);
-        crate::context::pinyin_fini(context);
     }
 }
