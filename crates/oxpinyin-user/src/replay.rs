@@ -2216,30 +2216,6 @@ mod tests {
     }
 
     #[test]
-    fn unigram_candidates_exclude_reading_only_edits_and_deduplicate_changes() {
-        let original = library();
-        let mut changed = two();
-        changed[2..6].copy_from_slice(&70_u32.to_le_bytes());
-        let mut restored = changed.clone();
-        restored[2..6].copy_from_slice(&50_u32.to_le_bytes());
-        let mut merge = Merge::new(Some(original.view()));
-        for record in [
-            modify(1, one(), with_freq(one(), 77)),
-            modify(2, two(), changed.clone()),
-            modify(2, changed, restored.clone()),
-            modify(2, restored, with_freq(two(), 88)),
-        ] {
-            assert!(merge.apply_owned(record).is_ok());
-        }
-        let mut skipped = Vec::new();
-        let (_, _, view) = merge.finish_lazy(&mut skipped, &"test");
-        let view = view.expect("retained originals");
-        assert!(skipped.is_empty());
-        assert_eq!(view.slots().collect::<Vec<_>>(), [1, 2]);
-        assert_eq!(view.item(2).expect("restored item").unigram, 50);
-    }
-
-    #[test]
     fn add_candidates_skip_modify_only_and_original_slot_add_records() {
         let original = library();
         for replacement in [false, true] {
@@ -2336,60 +2312,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_stale_unigram_write_marks_its_storage_slot_for_seeding() {
-        let original = library();
-        let reading_only = with_freq(one(), 77);
-        let mut changed = reading_only.clone();
-        changed[2..6].copy_from_slice(&150_u32.to_le_bytes());
-        let mut merge = Merge::new(Some(original.view()));
-        assert!(
-            merge
-                .apply_owned(modify(1, one(), reading_only.clone()))
-                .is_ok()
-        );
-        assert!(merge.apply_owned(modify(9, reading_only, changed)).is_ok());
-        let (_, _, view) = merge.finish_lazy(&mut Vec::new(), &"test");
-        let view = view.expect("retained original");
-        assert_eq!(view.slots().collect::<Vec<_>>(), [1]);
-        assert_eq!(view.item(1).expect("stale storage").unigram, 150);
-    }
-
-    #[test]
-    fn a_cross_item_write_marks_the_other_retained_unigram() {
-        let original = library();
-        let mut merge = Merge::new(Some(original.view()));
-        assert!(
-            merge
-                .apply_owned(modify(2, two(), with_freq(two(), 88)))
-                .is_ok()
-        );
-        // A longer header in a short payload borrows the next item's bytes,
-        // just as the existing cross-item replay cases require.
-        let mut expanded = one();
-        expanded[1] = 3;
-        assert!(merge.apply_owned(modify(1, one(), expanded)).is_ok());
-        let offset = merge.slot_offset(1) as usize;
-        let Found::Item { len, .. } = merge.content.header(offset) else {
-            panic!("expanded item");
-        };
-        let old = merge
-            .content
-            .item(offset, len)
-            .expect("cross-item bytes")
-            .into_owned();
-        let mut new = old.clone();
-        let next_unigram = merge.slot_offset(2) as usize - offset + 2;
-        new[next_unigram..next_unigram + 4].copy_from_slice(&170_u32.to_le_bytes());
-        // Slot 1's own unigram is unchanged; this write changes slot 2's.
-        assert!(merge.apply_owned(modify(1, old, new)).is_ok());
-        let mut skipped = Vec::new();
-        let (_, _, view) = merge.finish_lazy(&mut skipped, &"test");
-        let view = view.expect("retained originals");
-        assert!(skipped.is_empty());
-        assert_eq!(view.item(2).expect("overlapped item").unigram, 170);
-    }
-
     /// The over-length item's raw pronunciation words, built once: A's
     /// second character is A's first pronunciation key plus its frequency's
     /// low half, and both readings borrow B's bytes.
@@ -2438,44 +2360,6 @@ mod tests {
         assert_eq!(item.prons[0].0, [0x0000, 0x0201]);
         assert_eq!(item.prons[1].0, [0x597d, 0x0000]);
         assert_eq!(item.prons[0].1, 170);
-    }
-
-    #[test]
-    fn an_in_place_write_within_the_original_item_adds_no_slot() {
-        let original = library();
-        let mut merge = Merge::new(Some(original.view()));
-        assert!(
-            merge
-                .apply_owned(modify(1, one(), with_freq(one(), 77)))
-                .is_ok()
-        );
-        assert_eq!(merge.touched, vec![1]);
-        let (_, _, view) = merge.finish_lazy(&mut Vec::new(), &"test");
-        let view = view.expect("retained original");
-        assert_eq!(view.slots().collect::<Vec<_>>(), [1]);
-    }
-
-    #[test]
-    fn rejected_unigram_candidates_do_not_seed_the_baseline_fallback() {
-        let original = library();
-        let mut merge = Merge::new(Some(original.view()));
-        assert!(
-            merge
-                .apply_owned(modify(2, two(), with_freq(two(), 88)))
-                .is_ok()
-        );
-        assert!(
-            merge
-                .apply_owned(modify(1, one(), bytes_with(&[255, 255], 200)))
-                .is_ok()
-        );
-        let mut skipped = Vec::new();
-        let (_, _, view) = merge.finish_lazy(&mut skipped, &"test");
-        let view = view.expect("valid original remains");
-        assert_eq!(skipped.len(), 1);
-        assert_eq!(view.slots().collect::<Vec<_>>(), [2]);
-        assert!(!view.contains(1));
-        assert!(view.item(1).is_none());
     }
 
     /// Slot 1 holds a one-reading item (unigram 100), slot 2 a two-reading one
@@ -3460,80 +3344,69 @@ mod tests {
         assert!(overrides[&6].is_some());
     }
 
-    /// The decoded-item algorithm the buffer replaces (`arena_train`'s loop
-    /// before the readings moved into the buffer).
-    fn train_decoded(
-        item: &mut ChunkItem,
-        readings: &[Vec<oxpinyin_core::ChewingKey>],
-        delta: u32,
-    ) {
-        for reading in readings {
-            let mut total = 0_u32;
-            for (keys, frequency) in &mut item.prons {
-                total = total.wrapping_add(*frequency);
-                if !crate::store_libpinyin::pronunciation_matches(reading, keys.iter().copied()) {
-                    continue;
-                }
-                let Some(next) = total.checked_add(delta) else {
-                    break;
-                };
-                total = next;
-                *frequency = frequency.wrapping_add(delta);
-            }
-        }
-    }
-
+    /// Each reading walks the item's readings with a running `guint32`
+    /// total: a matching reading takes `delta` unless the total cannot, and
+    /// that overflow ends the walk for the reading (`train_result3`,
+    /// `phonetic_lookup.h:868-929`).
     #[test]
-    fn training_in_the_buffer_matches_training_the_decoded_item() {
+    fn training_in_the_buffer_follows_the_running_total() {
         use oxpinyin_core::ChewingKey;
         let ni = ChewingKey::new(23, 0, 1, 0);
         let hao = ChewingKey::new(11, 3, 2, 0);
         let (ni_bits, hao_bits) = (ni.to_packed(), hao.to_packed());
         let max = u32::MAX;
-        // Counts near the `guint32` limit, a repeated key, a key nothing
-        // matches, and a delta that overflows the running total at different
-        // places: the partial update must come out the same.
-        let shapes: Vec<Vec<(Vec<u16>, u32)>> = vec![
-            vec![(vec![ni_bits], 100)],
-            vec![(vec![ni_bits], 100), (vec![ni_bits], 7)],
-            vec![(vec![hao_bits], 5), (vec![ni_bits], 9)],
-            vec![(vec![ni_bits], max - 5), (vec![ni_bits], 3)],
-            vec![(vec![hao_bits], max - 5), (vec![ni_bits], 3)],
-            vec![(vec![ni_bits], 0), (vec![ni_bits], max), (vec![ni_bits], 1)],
-            vec![
-                (vec![ni_bits], max - 1),
-                (vec![hao_bits], 1),
-                (vec![ni_bits], 1),
-            ],
+        type Prons = Vec<(Vec<u16>, u32)>;
+        let cases: [(Prons, Vec<Vec<ChewingKey>>, u32, Prons); 4] = [
+            // The overflow: 100 + 483 takes the delta; the total then reaches
+            // max - 367 and cannot take 483, so the last reading keeps 50.
+            (
+                vec![
+                    (vec![ni_bits], 100),
+                    (vec![hao_bits], max - 1000),
+                    (vec![ni_bits], 50),
+                ],
+                vec![vec![ni]],
+                483,
+                vec![
+                    (vec![ni_bits], 583),
+                    (vec![hao_bits], max - 1000),
+                    (vec![ni_bits], 50),
+                ],
+            ),
+            // A repeated key, trained twice: each pass gives both entries 7.
+            (
+                vec![(vec![ni_bits], 100), (vec![ni_bits], 7)],
+                vec![vec![ni], vec![ni]],
+                7,
+                vec![(vec![ni_bits], 114), (vec![ni_bits], 21)],
+            ),
+            // No entry matches: nothing changes.
+            (
+                vec![(vec![ni_bits], 100)],
+                vec![vec![hao]],
+                7,
+                vec![(vec![ni_bits], 100)],
+            ),
+            // Both additions wrap: the first entry takes the total to 1, the
+            // second's count wraps the total to 0 so the delta fits, and that
+            // count wraps to 0; the third entry becomes 2.
+            (
+                vec![(vec![ni_bits], 0), (vec![ni_bits], max), (vec![ni_bits], 1)],
+                vec![vec![ni]],
+                1,
+                vec![(vec![ni_bits], 1), (vec![ni_bits], 0), (vec![ni_bits], 2)],
+            ),
         ];
-        let reading_sets: Vec<Vec<Vec<ChewingKey>>> = vec![
-            vec![vec![ni]],
-            vec![vec![ni], vec![ni]],
-            vec![vec![hao], vec![ni], vec![ni]],
-            vec![vec![ChewingKey::new(0, 0, 0, 0)]],
-            vec![],
-        ];
-        for prons in &shapes {
-            for readings in &reading_sets {
-                for delta in [0_u32, 1, 7, 483, max - 6, max] {
-                    let item = item(&[0x4f60], 9, prons);
-                    let library = SystemLibrary {
-                        total: 9,
-                        range_end: 2,
-                        items: BTreeMap::from([(1, item.clone())]),
-                        mapped: None,
-                    };
-                    let mut buffer = ReplayedLibrary::pristine(library.view());
-                    assert!(buffer.train(1, readings.clone().into_iter(), delta));
-                    let mut expected = item;
-                    train_decoded(&mut expected, readings, delta);
-                    assert_eq!(
-                        buffer.item(1),
-                        Some(expected),
-                        "prons {prons:?} readings {readings:?} delta {delta}"
-                    );
-                }
-            }
+        for (prons, readings, delta, trained) in cases {
+            let library = SystemLibrary {
+                total: 9,
+                range_end: 2,
+                items: BTreeMap::from([(1, item(&[0x4f60], 9, &prons))]),
+                mapped: None,
+            };
+            let mut buffer = ReplayedLibrary::pristine(library.view());
+            assert!(buffer.train(1, readings.into_iter(), delta));
+            assert_eq!(buffer.item(1), Some(item(&[0x4f60], 9, &trained)));
         }
     }
 

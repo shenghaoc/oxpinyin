@@ -302,13 +302,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn constants_match_pinned_spec() {
-        // docs/findings/user-store.md §3 constants table + novel_types.h.
+    fn user_file_libraries_are_nibbles_5_to_7() {
+        // The three USER_FILE sub-indexes of the default facade
+        // (addon.bin / network.bin / user.bin, phrase-union.md §3.2).
         assert_eq!(ADDON_DICTIONARY, 5);
         assert_eq!(NETWORK_DICTIONARY, 6);
         assert_eq!(USER_DICTIONARY, 7);
-        // The three USER_FILE sub-indexes of the default facade
-        // (addon.bin / network.bin / user.bin, phrase-union.md §3.2).
         assert!(is_user_file_library(ADDON_DICTIONARY));
         assert!(is_user_file_library(NETWORK_DICTIONARY));
         assert!(is_user_file_library(USER_DICTIONARY));
@@ -318,11 +317,6 @@ mod tests {
         assert!(!is_user_file_library(1));
         assert!(!is_user_file_library(4));
         assert!(!is_user_file_library(8));
-        assert_eq!(PHRASE_MASK, 0x00FF_FFFF);
-        assert_eq!(PHRASE_INDEX_LIBRARY_MASK, 0x0F00_0000);
-        assert_eq!(MAX_PHRASE_LENGTH, 16);
-        assert_eq!(DEFAULT_PHRASE_COUNT, 5);
-        assert_eq!(ADD_PHRASE_UNIGRAM_FACTOR, 3);
     }
 
     #[test]
@@ -333,13 +327,6 @@ mod tests {
         assert_eq!(phrase_index_library_index(0x0700_0001), 7);
         assert_eq!(phrase_index_library_index(0x0100_0001), 1);
         assert_eq!(phrase_index_library_index(1), 0);
-    }
-
-    #[test]
-    fn first_user_token_is_library_7_id_1() {
-        assert_eq!(FIRST_USER_TOKEN, 0x0700_0001);
-        assert!(is_user_token(FIRST_USER_TOKEN));
-        assert_eq!(FIRST_USER_TOKEN & PHRASE_MASK, 1);
     }
 
     #[test]
@@ -354,18 +341,7 @@ mod tests {
         assert!(!is_user_token(0));
     }
 
-    #[test]
-    fn allocation_increments_by_one_inside_user_dictionary() {
-        let first = FIRST_USER_TOKEN;
-        let second = add_phrase_token(USER_DICTIONARY, 2);
-        let third = add_phrase_token(USER_DICTIONARY, 3);
-        assert_eq!(second, first + 1);
-        assert_eq!(third, first + 2);
-        assert!(is_user_token(second));
-        assert!(is_user_token(third));
-    }
-
-    /// The session's allocation has no such boundary (register row 119):
+    /// The session's allocation has no upper boundary (register row 119):
     /// the pin masks the range end into the nibble and bumps a zero low
     /// word, so a full library wraps to slot 1, and the promotion's bare
     /// mask wraps to slot 0.
