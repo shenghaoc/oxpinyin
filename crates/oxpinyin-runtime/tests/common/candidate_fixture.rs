@@ -1,7 +1,6 @@
-//! The W4 structure capture and its candidate-only projection.
+//! The W4 structure capture.
 #![allow(dead_code)]
 
-use std::collections::BTreeMap;
 use std::io;
 use std::path::Path;
 
@@ -143,25 +142,5 @@ impl CandidateFixture {
             });
         }
         Ok(Self { pin_ref, rows })
-    }
-
-    /// Candidate-only view in exactly the structure capture's order.
-    pub fn candidates(&self) -> impl Iterator<Item = (&str, usize, &str)> {
-        self.rows
-            .iter()
-            .map(|row| (row.input.as_str(), row.rank, row.text.as_str()))
-    }
-
-    /// Group the candidate-only view by exact input, retaining list order and duplicates.
-    #[must_use]
-    pub fn candidate_lists(&self) -> BTreeMap<String, Vec<String>> {
-        let mut lists: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        for (input, _, text) in self.candidates() {
-            lists
-                .entry(input.to_owned())
-                .or_default()
-                .push(text.to_owned());
-        }
-        lists
     }
 }

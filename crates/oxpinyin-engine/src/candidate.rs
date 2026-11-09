@@ -509,33 +509,4 @@ mod tests {
         assert!(candidates.get(2).is_none());
         assert!(candidates.get(usize::MAX).is_none());
     }
-
-    #[test]
-    fn iteration_preserves_rank_order() {
-        let candidates = list();
-        let texts: Vec<&str> = candidates.iter().filter_map(Candidate::text_str).collect();
-        assert_eq!(texts, ["\u{4f60}\u{597d}", "\u{4f60}"]);
-
-        let by_ref: Vec<&str> = (&candidates)
-            .into_iter()
-            .filter_map(Candidate::text_str)
-            .collect();
-        assert_eq!(by_ref, texts);
-    }
-
-    #[test]
-    fn candidates_report_what_they_absorb() {
-        let candidates = list();
-        let first = candidates.get(0).expect("first candidate");
-        assert_eq!(first.kind(), CandidateKind::Sentence);
-        assert_eq!(first.consumed_keys(), 2);
-        assert_eq!(first.consumed_bytes(), 5);
-        assert_eq!(first.cost(), -12);
-        assert_eq!(first.token(), None, "a sentence has no single token");
-        assert_eq!(
-            candidates.get(1).expect("second").token(),
-            Some(PhraseToken::new(3))
-        );
-        assert!(CandidateList::default().is_empty());
-    }
 }

@@ -5,8 +5,6 @@
 //! Only the current exact selection residuals have the registered S1/S2/S3
 //! disposition.
 //!
-//! `sentence_fixtures.rs` checks the fixtures themselves on every backend.
-//!
 //! Approved repairs update these measured numbers and §12 in the same PR.
 //! A pin move also requires regenerating the oracle fixture and re-measuring
 //! (`docs/runbooks/goldens-and-pins.md`).

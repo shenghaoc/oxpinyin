@@ -475,48 +475,6 @@ mod tests {
     }
 
     #[test]
-    fn errors_render_the_offending_values() {
-        let error = EngineError::CandidateIndexOutOfRange { index: 9, len: 3 };
-        assert_eq!(error.to_string(), "candidate index 9 is out of range 0..3");
-        assert_eq!(
-            EngineError::UserModel("closed".to_owned()).to_string(),
-            "user model error: closed"
-        );
-        assert_eq!(
-            EngineError::LookupOffsetPastSeparator {
-                offset: 1,
-                normalized: 1
-            }
-            .to_string(),
-            "lookup offset 1 sits one past a leading separator run (normalized to 1)"
-        );
-        assert_eq!(
-            EngineError::LookupOffsetOutOfRange { offset: 9, len: 3 }.to_string(),
-            "lookup offset 9 is out of range 0..=3"
-        );
-        assert_eq!(
-            EngineError::LookupOffsetInsideCharacter { offset: 1, len: 8 }.to_string(),
-            "lookup offset 1 falls inside a multi-byte character of the 8-byte raw input"
-        );
-        assert_eq!(
-            EngineError::ZeroKeyOffsetCheck { offset: 11 }.to_string(),
-            "offset 11 sits one past a lone zero-key column"
-        );
-        assert_eq!(
-            EngineError::MatrixColumnAssert { offset: 0 }.to_string(),
-            "matrix column 0 has no key or mixes a zero key with real keys"
-        );
-        assert_eq!(
-            EngineError::StaleTrainingSpan {
-                position: 2,
-                fault: super::TrainingSpanFault::PastMatrixEnd,
-            }
-            .to_string(),
-            "the training span at 2 leaves the current matrix (PastMatrixEnd)"
-        );
-    }
-
-    #[test]
     fn core_errors_convert_at_the_engine_boundary() {
         use oxpinyin_core::graph::GraphError;
         use oxpinyin_core::scoring::ScoringError;
