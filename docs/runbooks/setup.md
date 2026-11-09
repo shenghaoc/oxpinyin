@@ -527,11 +527,7 @@ can support, and its pins are unchanged.
 
 ### Native Windows and WSL containers
 
-These run natively on Windows through the `[windows]` pwsh recipes: `build`,
-`test`, `test-doc`, `fmt`, `clippy`, `fuzz`, `coverage`, `python`, `doctor`,
-`fetch-contract-data`, `tkrzw-build`, `oracle-versions`, `rust-tables`,
-`cpp-smoke`, `abi` and `cell-artifacts`. None
-of them starts a container. `sanitize` is Linux and Darwin only.
+Every recipe has a Windows form, or prints why it is refused on Windows; see the `justfile`.
 
 The pin runs only in a Linux container. On Windows that container is a
 [WSL container](https://learn.microsoft.com/en-us/windows/wsl/wsl-container)
