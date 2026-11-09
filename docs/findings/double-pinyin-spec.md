@@ -12,8 +12,8 @@ The full-pinyin corpus never reaches this parser; a moved corpus pin is a
 leak and must STOP the workstream.
 
 Source identity: libpinyin `2.11.91`, commit
-`0c5e80e1200f84fab185d1c5bde458b770a0636c` (the same pin as
-`docs/testing/oracle-environment.md`).
+`0c5e80e1200f84fab185d1c5bde458b770a0636c` (the pin at the freeze; the
+current pin is in `tools/oracle/oracle-pin.txt`).
 
 ## Scheme ABI
 
@@ -82,30 +82,18 @@ into the parser (`src/pinyin.cpp:1543`), so
 `pinyin_parse_more_double_pinyins` must honour the same law as the one-key
 seam: under `FORCE_TONE` a key that is not exactly three bytes refuses,
 and a three-byte key carries its `1`..`5` digit as the tone only under
-`USE_TONE`. Status at freeze:
+`USE_TONE`. Status:
 
 - the one-key seam (`pinyin_parse_double_pinyin`) implements this law in
-  full — recorded under `compatibility-policy.md` row 16, measured IDENTICAL against the pin over 2,131 probe lines
-  ([archived run key surface diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-key-surface-diff.sh), double schemes 1–6);
-- the batch seam does not yet: the landed W13 batch parse runs the
-  tone-less profile (a three-byte key refuses and the greedy walk retries
-  length 2 — matching the pin only when `USE_TONE` is unset), so with
-  `FORCE_TONE` set it is observably less restrictive than the pin. This is
-  the open implementation item the freeze creates; the divergence register
-  carries it (FORCE_TONE entry, double-pinyin batch seam).
+  full — recorded under `compatibility-policy.md` row 16; recorded
+  evidence: IDENTICAL against the pin over 2,131 probe lines (double
+  schemes 1–6);
+- the batch seam implements it too (5ec782ea): the caller's option word
+  crosses the seam, and the greedy walk honours the length-3 gate and the
+  tone carriage. `compatibility-policy.md` row 16 is CLOSED.
 
 The pinned full-pinyin corpus is tone-less and the fork's double-pinyin
-context does not set `USE_TONE`, which is why the landed W13 batch
-implementation could ship the tone-less profile without perturbing the
-frozen scheme sweeps. The freeze does not change that scope boundary — it
-fixes the law the batch seam must grow into.
-
-**Amendment (2026-09-02, 5ec782ea):** the batch seam implements the frozen
-law — the caller's option word crosses the seam and the greedy walk honours
-the length-3 gate and the tone carriage; the measured closure and the one
-pre-existing scheme-3 trellis residual are recorded in the divergence
-register's FORCE_TONE entry (Double-pinyin batch closure amendment). The
-"Status at freeze" bullets above stay as the freeze-time snapshot.
+context does not set `USE_TONE`.
 
 ### Maximum forward match
 
@@ -207,13 +195,10 @@ Phase 0 draft against the pinned source and the landed implementation:
   gap, replacing the draft's `type_pinyin` shortcut and pre-W14
   measurements; and the Xiaohe yunmu/fallback table rows carry their exact
   line numbers (`:369`/`:399`).
-- The recorded gates for this surface used [archived run scheme diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-scheme-diff.sh) (parse,
-  aux, and full-candidate differentials over the six schemes) and
-  [archived run key surface diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-key-surface-diff.sh) (the one-key seam, 2,131 probe lines). Any
-  future change to the batch parse — including the open `FORCE_TONE` gate
-  — must keep both green against the pinned oracle.
+- The recorded evidence for this surface is the scheme differential
+  (parse, aux, and full-candidate comparisons over the six schemes) and
+  the one-key seam differential (2,131 probe lines).
 
 The freeze's one open implementation item — the batch seam's `FORCE_TONE`
-length-3 gate — was closed by 5ec782ea on the same day, stacked on the
-freeze PR, keeping both standing gates green (see the Tone section
-amendment and the divergence register's FORCE_TONE entry).
+length-3 gate — was closed by 5ec782ea on the same day (see the Tone
+section and `compatibility-policy.md` row 16).

@@ -11,7 +11,7 @@
 //! are the libpinyin-compatible and libzhuyin-compatible C APIs and ABIs.
 //!
 //! The format notes live under `docs/findings/`:
-//! `libpinyin-system-data-formats-2026-09-01.md` (overview),
+//! `data-formats.md` (overview),
 //! `pinyin-dbm-format-2026-09-01.md`, `phrase-dbm-format-2026-09-01.md`,
 //! `bigram-punct-format-2026-09-01.md`.
 #![forbid(unsafe_code)]

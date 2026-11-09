@@ -94,8 +94,8 @@ surface rather than inferring unobserved behavior.
 
 ## Amendment — pin 074a2219 (2026-09-06 UTC)
 
-Regenerated against the new pin (same recipe, [archived run capture source](https://github.com/shenghaoc/oxpinyin/blob/e79802e8bf7c393142e979eadba10a2720860799/tools/capture/run-capture.sh) over the
-git-fetch-built oracle; every record's `pin_ref` stamp moves to
+Regenerated against the new pin (recorded evidence: the deleted
+[archived run capture source](https://github.com/shenghaoc/oxpinyin/blob/e79802e8bf7c393142e979eadba10a2720860799/tools/capture/run-capture.sh) over the git-fetch-built oracle; every record's `pin_ref` stamp moves to
 `libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99+model20-59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155+dbm-tkrzw`;
 the captured behavior is unchanged — the corpus surfaces re-verified
 byte-identical, see `oracle-pin-074a221-verification`).

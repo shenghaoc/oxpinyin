@@ -1,17 +1,15 @@
 # The installed tree takes libpinyin's name; the source tree keeps ours
 
-Date: 2026-08-28 · Status: **implemented** · Branch:
-`feat/libpinyin-installed-naming`.
+Status: **implemented**.
 
 Precedent is universal — LibreSSL installs `libssl.so`/`libcrypto.so`,
 MariaDB installs `libmysqlclient.so` and `mysqlclient.pc`, Mesa installs
 `libGL.so`. The source repository keeps its own identity; the installed
-artifacts take the name the ecosystem already knows. PR 3 did the
-SONAME; this completes the rest of the installed tree.
+artifacts take the name the ecosystem already knows.
 
-## What the real package actually looks like
+## What the real package looks like
 
-Read off Ubuntu's `libpinyin15-dev` rather than assumed:
+Read off Ubuntu's `libpinyin15-dev`:
 
 ```
 /usr/lib/x86_64-linux-gnu/pkgconfig/libpinyin.pc     ← libpinyin.pc, not pinyin.pc
@@ -40,18 +38,25 @@ Libs: -L${libdir} -lpinyin
 Cflags: -I${libpinyinincludedir}
 ```
 
-Two details worth stating because they are easy to get wrong: the module
-name is **`libpinyin`** while the link flag is **`-lpinyin`** (pkg-config
-name and library name differ), and `database_format` is **`KyotoCabinet`**,
-one word, no space.
+Two details are easy to get wrong: the module name is **`libpinyin`**
+while the link flag is **`-lpinyin`**, and `database_format` is one word
+with no space (`KyotoCabinet`).
 
-`pkgdatadir` points at `@libdir@/libpinyin` — one level *above* where the
-data actually lives (`@libdir@/libpinyin/data`).
+`pkgdatadir` points at `@libdir@/libpinyin`, one level *above* where the
+data lives (`@libdir@/libpinyin/data`).
 
-## What this PR produces
+## What the install produces
+
+The version is `libpinyin_tag` in `tools/oracle/oracle-pin.txt`
+(2.11.92). Both capi build scripts read it
+(`crates/oxpinyin-capi/build_pin_version.rs` also rejects a
+`[package.metadata.capi]` table that disagrees), and
+`just packaging pc-version` prints it for package assembly.
 
 ```
-/usr/include/libpinyin-2.11.91/pinyin.h
+/usr/include/libpinyin-2.11.92/pinyin.h
+/usr/include/libpinyin-2.11.92/novel_types.h
+/usr/include/libpinyin-2.11.92/pinyin_custom2.h
 /usr/lib/x86_64-linux-gnu/libpinyin.a
 /usr/lib/x86_64-linux-gnu/libpinyin.so
 /usr/lib/x86_64-linux-gnu/libpinyin.so.15
@@ -59,43 +64,30 @@ data actually lives (`@libdir@/libpinyin/data`).
 /usr/lib/x86_64-linux-gnu/pkgconfig/libpinyin.pc
 ```
 
-`find <prefix> -name '*oxpinyin*'` → nothing. Measured gates:
+`find <prefix> -name '*oxpinyin*'` finds nothing. `libzhuyin` follows the
+same pattern.
 
-| Gate | Result |
-| --- | --- |
-| `pkg-config --libs libpinyin` | `-lpinyin` (plus `-lglib-2.0` from Requires, as the real one) |
-| `pkg-config --cflags libpinyin` | `-I…/include/libpinyin-2.11.91` |
-| `pkg-config --modversion libpinyin` | `2.11.91` — satisfies fcitx's `libpinyin>=2.6.0` |
-| `pkg-config --variable=exec_prefix libpinyin` | the prefix |
-| `readelf -d libpinyin.so.15.0.0` | `SONAME libpinyin.so.15` |
-| `cc $(pkg-config --cflags --libs libpinyin) test.c` | compiles, links, runs; `DT_NEEDED: libpinyin.so.15` |
-
-## The resolution — build.rs generates the `.pc`, a wrapper installs it
+## The mechanism — build.rs generates the `.pc`, a wrapper installs it
 
 `pkgdatadir`, `database_format`, `libpinyinincludedir` and
-`libpinyin_binary_version` are **not producible through cargo-c**. This
-is not a configuration miss; it is a fixed limit, verified against
-cargo-c 0.10.24's own source:
+`libpinyin_binary_version` are **not producible through cargo-c**. This is
+a fixed limit of cargo-c, read from cargo-c 0.10.24's source:
 
 - `build.rs:358` — the `PkgConfigCApiConfig` struct has exactly seven
   fields (`name`, `filename`, `description`, `version`, `requires`,
   `requires_private`, `strip_include_path_components`) and no
   custom-variable map. The table is parsed leniently, so extra keys —
-  `generate` included — are silently ignored, which is how the probe for
-  `pkgdatadir` / `database_format` failed quietly rather than erroring.
+  `generate` included — are silently ignored.
 - No install prefix reaches build scripts: the crate's only `set_var`
   calls are `CARGO_C_CARGO` (`config.rs:11`) and `INLINE_C_RS_CFLAGS`
-  (`build.rs:1402`). There is no `CARGO_CAPI_PREFIX` — a build script
-  cannot know `--prefix`.
+  (`build.rs:1402`). A build script cannot know `--prefix`.
 - `install.rs:216-220` installs cargo-c's own `.pc` into
   `<libdir>/pkgconfig` unconditionally and first; `install.rs:233-236`
   installs build-generated data assets under `datadir`, never the
-  pkg-config dir. A `.pc` a build script writes cannot be routed into
-  place through `cargo cinstall`.
+  pkg-config dir.
 
-**Why it matters, and why it is worse than a build break.**
-fcitx-libpinyin reads three of these at cmake configure time
-(`CMakeLists.txt:12-14`):
+**Why it matters.** fcitx-libpinyin reads three of these at cmake
+configure time (`CMakeLists.txt:12-14`):
 
 ```cmake
 pkg_get_variable(LIBPINYIN_PKGDATADIR      "libpinyin" "pkgdatadir")
@@ -103,131 +95,75 @@ pkg_get_variable(LIBPINYIN_EXECPREFIX      "libpinyin" "exec_prefix")
 pkg_get_variable(LIBPINYIN_DATABASE_FORMAT "libpinyin" "database_format")
 ```
 
-`exec_prefix` is a cargo-c built-in and resolves. The other two do not,
-and a missing pkg-config variable **resolves to the empty string with
-exit status 0** — measured, not assumed. So the consumer does not fail
-to configure; it configures with an empty system-data path and an empty
-backend name, silently. That is the failure mode this closes.
+`exec_prefix` is a cargo-c built-in. A missing pkg-config variable
+**resolves to the empty string with exit status 0**. The consumer then
+configures with an empty system-data path and an empty backend name,
+silently.
 
-**The chosen mechanism — option (iii) with a placement wrapper.** Because
-cargo-c can neither be told to skip its `.pc` (no `generate = false`), be
-handed a build-generated one (data assets land in `datadir`), nor expose
-the prefix to build.rs, the work splits in two:
+**The mechanism.** The work splits in two:
 
 - **`build.rs` owns the content.** It bakes the build-time fields of
-  `crates/oxpinyin-capi/libpinyin.pc.in` — `@VERSION@` (2.11.91),
+  `crates/oxpinyin-capi/libpinyin.pc.in` — `@VERSION@`,
   `@LIBPINYIN_BINARY_VERSION@` (15.0) and `@DATABASE_FORMAT@` — into
-  `libpinyin.pc.in.baked`, dropping the template's `#` header (it
-  describes the source, not the installed file) and leaving the
-  install-time `@prefix@` / `@libdir@` for the wrapper. It writes to
-  `$OUT_DIR` and mirrors the file to `<target>/<profile>/` so the wrapper
-  can read it without discovering the build-hash directory.
-- **`just packaging install` owns placement.** For the one library
-  named on its command line (`libpinyin` or `libzhuyin` — one per
-  invocation, so each stays installable on its own) it runs
-  `cargo cinstall --prefix=… --libdir=…`, then fills that crate's baked
-  template and **overwrites** the incomplete `.pc` cargo-c just
-  installed. For `libpinyin` that is `libpinyin.pc.in.baked` →
-  `libpinyin.pc`, with `@prefix@` / `@libdir@` substituted (the template
-  hardcodes `exec_prefix` and `includedir` off `${prefix}`). For
-  `libzhuyin` it is `libzhuyin.pc.in.baked` → `libzhuyin.pc`, with all
-  four filled: `@prefix@` / `@libdir@` as real paths, and `@exec_prefix@`
-  / `@includedir@` as the symbolic `${prefix}` / `${prefix}/include`
-  autoconf substitutes upstream.
+  `libpinyin.pc.in.baked`. It drops the template's `#` header and leaves
+  the install-time `@prefix@`, `@exec_prefix@`, `@libdir@` and
+  `@includedir@` for the wrapper. It writes to `$OUT_DIR` and mirrors the
+  file to `<target>/<profile>/`, so the wrapper can read it without
+  discovering the build-hash directory. Below its header,
+  `libpinyin.pc.in` is the pin's template line for line.
+- **`just packaging install` owns placement** (`tools/dev/packaging.py`).
+  For the one library named on its command line (`libpinyin` or
+  `libzhuyin`) it runs `cargo cinstall`, then fills that crate's baked
+  template and **overwrites** the incomplete `.pc` that cargo-c installed.
+  It fills `@prefix@`, `@exec_prefix@`, `@libdir@` and `@includedir@` as
+  the pin's configure does: `--libdir`/`--includedir` verbatim when given,
+  otherwise `${exec_prefix}/lib` and `${prefix}/include`.
+  `just packaging check-pc-metadata` compares the installed tree with a
+  pin install, field for field.
 
 The wrapper is the **supported installation path**. A plain
-`cargo capi install` still leaves cargo-c's incomplete `.pc` — the
-**accepted silent window**: the four variables are absent and
-`pkg_get_variable` reads empty, exactly as before. Use the wrapper for
-any install a consumer will configure against. `Cargo.toml` carries
-`generate = false` for intent and forward compatibility; 0.10.24 ignores
-it (hence the overwrite), but a future cargo-c that honours it would drop
-the redundant first write.
+`cargo capi install` still leaves cargo-c's incomplete `.pc`, with the
+four variables absent. Use the wrapper for any install a consumer will
+configure against. `Cargo.toml` carries `generate = false` for intent; the
+current cargo-c ignores it, so the wrapper overwrites the file.
 
-**The `database_format` caveat.** build.rs sets it to the active peer
-backend of `oxpinyin-capi`, mirroring `oxpinyin_store::DefaultStore` —
-`KyotoCabinet` under the default features (KC is the workspace's default
-selection), and `Tkrzw` / `LMDB` / `redb` when the corresponding peer
-feature is selected via `--no-default-features --features <peer>`.
-*(Amended 2026-09-27 UTC, #552: the default features now select Berkeley
-DB, so the token is `BerkeleyDB` (`crates/oxpinyin-capi/build.rs:150-165`);
-Kyoto Cabinet and tkrzw are peers, and the LMDB and redb peers were
-removed 2026-09-20. `compatibility-policy.md`, "Backends and user
-data".)* The variable reads whichever peer the library was
-compiled against. *(Amended 2026-11-07 UTC: `oxpinyin-store`'s build script
-selects the token once from its backend feature, as the pin's
-`configure.ac:134-135` sets one `DATABASE_FORMAT`, and both `.pc` files
-read it through `DEP_OXPINYIN_STORE_DATABASE_FORMAT`; there is no build-time
-override.)*
+**`database_format`.** `oxpinyin-store`'s build script selects the token
+once from its backend feature, as the pin's `configure.ac:134-135` sets
+one `DATABASE_FORMAT`. Both `.pc` files read it through
+`DEP_OXPINYIN_STORE_DATABASE_FORMAT`; there is no build-time override. The
+default backend is tkrzw, so a default-feature build gives `Tkrzw`
+([compatibility policy, "Backends and user data"](compatibility-policy.md#backends-and-user-data)).
+A `--no-default-features --features <peer>` build gives its own backend's
+token (`BerkeleyDB`, `KyotoCabinet`).
 
-**Gate.** After `just packaging install libpinyin --prefix=$P` (with
-`PKG_CONFIG_PATH=$P/lib/pkgconfig`):
+**Gate.** After `just packaging install libpinyin --prefix=$P` on a
+default-feature build (with `PKG_CONFIG_PATH=$P/lib/pkgconfig`):
 
 ```console
 $ pkg-config --variable=pkgdatadir libpinyin       → $P/lib/libpinyin
-$ pkg-config --variable=database_format libpinyin  → BerkeleyDB
+$ pkg-config --variable=database_format libpinyin  → Tkrzw
 $ pkg-config --variable=exec_prefix libpinyin      → $P
 $ pkg-config --libs libpinyin                      → -lpinyin -lglib-2.0
 $ pkg-config --modversion libpinyin                → 2.11.92
 ```
 
-*(Amended 2026-10-02 UTC: the expected values are those of a default-feature
-build at `a3ef00f5` — the default store is Berkeley DB (#552) and the drop-in
-version follows the pin, 2.11.92 (#592); a `--no-default-features --features
-<peer>` build reads its own token.)*
+All five are non-empty. The version satisfies consumers' `>=`
+constraints, such as fcitx's `libpinyin>=2.6.0`; it is a libpinyin
+version, not the crate version.
 
-All five come back non-empty — the silent misconfiguration the four
-missing variables would otherwise cause is closed on the wrapper path.
+## Notes
 
-## Notes carried forward
-
-- **`Requires: glib-2.0` is mirrored deliberately.** oxpinyin's
-  `pinyin.h` is glib-free (`stddef`/`stdbool`/`stdint`), so we do not
-  need it — but the real `.pc` has it, consumers reach us through
-  cmake's `IMPORTED_TARGET`, and a consumer relying on libpinyin to pull
-  glib in would otherwise lose it. One line to drop if we would rather
-  not impose the dependency.
-- **Version is `2.11.91`**, the pin oxpinyin targets, not the crate
-  version. It has to be a libpinyin version to satisfy consumers'
-  `>=` constraints.
-- **fcitx5-oxpinyin follow-up, NOT changed here.** Its `CMakeLists.txt`
-  has `pkg_check_modules(OXPINYIN oxpinyin)`, which stops resolving once
-  the `.pc` is renamed. It must become
+- **`Requires: glib-2.0` is mirrored deliberately.** The real `.pc` has
+  it, and a consumer that relies on libpinyin to pull GLib in would
+  otherwise lose it. `pinyin.h` includes `novel_types.h` and
+  `pinyin_custom2.h`, which include `glib.h`; all three ship verbatim.
+- **Consumers find the library as `libpinyin`.** There is no `oxpinyin`
+  pkg-config module. A consumer uses
   `pkg_check_modules(LibPinyin "libpinyin>=2.6.0" REQUIRED IMPORTED_TARGET)`
-  plus the same `pkg_get_variable` reads fcitx-libpinyin does. Separate
-  repository, separate change.
-- **Header completeness is a separate gap.** The real `pinyin.h`
-  includes `novel_types.h` and `pinyin_custom2.h`; oxpinyin ships
-  neither. A consumer relying on those transitively still breaks, which
-  is an abi-reference §6 matter rather than a naming one.
+  plus the same `pkg_get_variable` reads as fcitx-libpinyin.
 - **fcitx-libpinyin also probes for libpinyin's utility binaries**
   (`gen_binary_files`, `gen_unigram`, `import_interpolation`) under
   `${LIBPINYIN_EXECPREFIX}/bin`, and sets `LIBPINYIN_TOOLS_FOUND 0` when
-  they are absent. Not fatal, and a build-time concern only, but the
-  drop-in does not provide them.
-
-## Amendment — version follows the pin (2026-09-26 UTC, #592)
-
-The `2.11.91` in the tree listing, the gate table, the build.rs
-description, the gate console and "Notes carried forward" above is the
-version this record measured and is left as written. It no longer
-describes the tree:
-
-- **Ruling (human, 2026-09-26 UTC):** oxpinyin's behaviour follows the
-  pinned libpinyin (`074a2219`), so its drop-in identity follows the pin
-  too — `Version: 2.11.92`, headers under `include/libpinyin-2.11.92/`.
-  This supersedes the version split of PR #363, which held the drop-in at
-  `2.11.91` until upstream tagged a release.
-- **Derivation:** the version is `libpinyin_tag` in
-  `tools/oracle/oracle-pin.txt`, read by both capi build scripts
-  (`crates/oxpinyin-capi/build_pin_version.rs`, which also rejects a
-  `[package.metadata.capi]` table that disagrees) and by
-  `just packaging pc-version` for the release scripts.
-- **Template and placement (same PR):** `libpinyin.pc.in` is now the
-  pin's template line for line, so it no longer hardcodes `exec_prefix`
-  and `includedir`; `just packaging install` fills `@prefix@`,
-  `@exec_prefix@`, `@libdir@` and `@includedir@` for both libraries as
-  the pin's configure does — `--libdir`/`--includedir` verbatim when
-  given, otherwise the prefix-relative `${exec_prefix}/lib` and
-  `${prefix}/include`. `just packaging check-pc-metadata` diffs the
-  installed tree against a pin install field for field.
+  they are absent. This is not fatal and is a build-time concern only.
+  The library install does not place them; `oxpinyin-utils` builds them
+  under the pin's names ([trainer layout](../packaging.md#trainer-utility-layout)).

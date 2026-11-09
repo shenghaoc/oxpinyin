@@ -2,9 +2,8 @@
 
 Pin-comparison campaigns use the local oracle `performance` stage; see
 [where measurements run](benches.md#where-measurements-run). Native development
-and native-only measurements are unchanged. The oxpinyin-only nightly snapshot
-uses plain unpinned Debian testing, like every other Linux environment.
-
+and native-only measurements need no container. The oxpinyin-only nightly
+snapshot uses plain unpinned Debian testing, like every other Linux environment.
 
 Start from [CONTRIBUTING](../../CONTRIBUTING.md). These instructions build
 and test local files; they do not install an input method or replace your
@@ -163,13 +162,6 @@ relies on 3.15's `-X lazy_imports` modes. Do not use a system Python, a virtual
 environment, `pyproject.toml` or `uv.lock`; the checkout's `.python-version`
 and `uv.toml` name the same interpreter series and uv floor.
 
-To regenerate the W3 content fixtures, run this command from the checkout root:
-
-```text
-uv run --no-project --managed-python python -X lazy_imports=normal \
-  [archived generate w3 fixtures source](https://github.com/shenghaoc/oxpinyin/blob/494766c37c0c87c6571d1000240a33b3d688cf83/tools/generate_w3_fixtures.py)
-```
-
 `just build`, `just clippy` and `just fmt` pass Cargo arguments unchanged to
 Cargo. To limit parallel builds, set `CARGO_BUILD_JOBS` or `[build] jobs` in
 your own `~/.cargo/config.toml`. Select the same native packages
@@ -203,17 +195,14 @@ including staged and unstaged edits, and includes untracked files. Changed test
 files select themselves; `HARNESS_DEPENDENCIES` in `tools/dev/test_runner.py`
 maps known modules to their tests. Any unknown path or missing mapped test
 selects the full suite. An empty diff selects no files. Explicit files and
-`--changed` cannot be combined. Every mode retains the credential filter,
-existing exclusions. Memory-backed TMPDIRs are refused only when the selection
-includes [archived teardown.test source](https://github.com/shenghaoc/oxpinyin/blob/be122d32979caf6d58e60ab8b62bb8d60653a255/tools/bisection/teardown.test.py), whose cold tests need real eviction.
+`--changed` cannot be combined. Every mode keeps the credential filter and the
+existing exclusions.
 
 `--changed` is iteration feedback only: `HARNESS_DEPENDENCIES` is hand-maintained
 and can under-select. The full `just test-tools` remains the completion gate.
 With `-k` and no explicit FILE, files with no matching tests are reported as
 unselected. A named file with no matches remains a failure, as does a pattern
 that matches no tests across all selected files.
-
-The surviving checks run through their own recipes or cargo commands.
 
 The Windows recipes use PowerShell and preserve the child status explicitly.
 Their argument transport remains TODO (no Windows host).
@@ -362,9 +351,6 @@ The nightly macOS CI job uses this broader portable scope:
 cargo test --locked --workspace
 ```
 
-The [validation status](#validated-on--not-validated) distinguishes native macOS CI
-from hands-on setup evidence.
-
 CI's macOS job builds tkrzw with `.github/actions/tkrzw` instead of
 Homebrew's. Berkeley DB is a non-default backend: `brew install berkeley-db@5`,
 export the keg-only `SYSTEM_DEPS_BDB_*` overrides
@@ -475,7 +461,7 @@ The job also installs vcpkg's `glib` port, found through the same
 `PKG_CONFIG` and `PKG_CONFIG_PATH`, so it builds and tests
 the full workspace, including `oxpinyin-utils`, `oxpinyin-training`, KMM
 and both C-ABI crates. The locale tests select `.UTF-8` on Windows.
-Text expectations use the host newline. All 18 local KMM tests passed.
+Text expectations use the host newline.
 The `test-windows` job in `verify-nightly.yml` excludes no crate. The oracle's Linux FFI feature is
 not selected. Native Windows oracle behavior is not established by those
 tests. Physical Windows hardware is not needed to use
@@ -504,7 +490,7 @@ path. Bash scripts run from the same session through Git for Windows'
 `test-windows` job in `verify-nightly.yml`. It is best-effort and never a PR
 merge condition: it runs every night on main and before a release
 ([verification rule 10](verification.md#10-ci-merge-conditions)). Windows
-remains a supported native target; only the verification frequency changed.
+is a supported native target.
 To reproduce a Windows-only failure, dispatch the job on a branch with
 `windows_only` set:
 
@@ -516,10 +502,8 @@ With `windows_only` set, every other nightly job is skipped, the macOS job
 included. A dispatch without it runs the whole nightly workflow, including
 the Windows job.
 
-Recent upstream MinGW portability changes were checked separately from
-oxpinyin's MSVC support; see the [validation status](#validated-on--not-validated).
 The frozen oracle does not define which native operating systems oxpinyin
-can support, and its pins are unchanged.
+can support.
 
 ### Native Windows and WSL containers
 
@@ -705,32 +689,20 @@ libraries and retain their existing debug settings.
 
 Run the local checks in [verification rule 5](verification.md#5-local-test-gate); they scale with the change and its stage.
 
-CI is the full gate: a passing CI run on your final source tree satisfies the required checks. For a changed file under `crates/`, find the containing package's `Cargo.toml` and use its `[package]` → `name` value as the `-p` argument in the iteration commands in verification rule 5. For a storage-dependent package on a non-default backend, add `--no-default-features --features bdb` to the Clippy and nextest iteration commands in verification rule 5. For documentation-only edits, follow the Markdown-only and source-comment rules in verification rule 5.
-For repository build/config changes, identify affected packages or ask the maintainer when scope is unclear; CI stays the full gate.
+Use the containing package's `Cargo.toml` name for iteration commands.
+Select a non-default backend with `--no-default-features --features bdb`;
+keep separate target and user-data directories ([backends](backends.md)).
+For build/config changes, identify the affected packages or ask the maintainer.
+CI is the full gate.
 
-`--no-default-features` turns off the [default selection](backends.md);
-`--features bdb` selects Berkeley DB explicitly (exactly one backend is allowed).
-Clippy's `--` separates Cargo options from the lint options that follow.
-Use your preferred native editor/debugger with this same toolchain and
-terminal environment; no particular IDE or container is required. CI owns
-the full workspace test sweep. Use separate target and user-data directories
-when changing backends; see [backends](backends.md). Ordinary native tests
-are not proof of bug-for-bug compatibility with upstream.
+Ordinary native tests do not establish pin compatibility. Changes to parsing,
+candidates, native data, user files or the C API need the relevant differential
+on a [provisioned remote Linux host](cloud.md). Use the reference tkrzw cell
+unless the [backend rules](verification.md#2-backend-selection) select others.
+If no matching differential is apparent, ask the maintainer.
 
-Changes to parsing/candidate behavior, native data/user files or C API
-behavior need a relevant differential. Use a [provisioned remote Linux host](cloud.md).
-For example, key parsing/surface changes use the C-boundary tests
-(see [oracle](oracle.md#the-c-boundary-tests)). Use the associated check, or ask the maintainer if no matching check is
-apparent rather than guessing that ordinary unit tests establish parity. The normal cell
-(one backend on both sides) is tkrzw, the reference cell. Backend-affecting changes use the
-[backend selection rules](verification.md#2-backend-selection); they do not require every ordinary
-contributor to provision all backends. Packaging and performance tools belong
-to their existing task runbooks.
-
-Report the applicable checks and final outcomes under
-[results and reproduction](../../CONTRIBUTING.md#results-and-reproduction).
-Stop after the required checks; full logs and evidence uploads are not part
-of completing a contribution.
+Follow [results and reproduction](../../CONTRIBUTING.md#results-and-reproduction),
+and stop after the required checks.
 
 ## Troubleshooting and resumption
 
@@ -756,45 +728,3 @@ of completing a contribution.
 - Missing oracle/model inputs do not block ordinary native tests. They must
   be supplied for the selected compatibility checks, where a skipped/missing
   prerequisite is a failed verification, not a pass.
-
-## Validated on / not validated
-
-- Native Linux x86_64: Rust-only first check (410 passed), BDB link/run
-  (172 passed, four ignored), and fresh-terminal resume passed.
-- Native macOS arm64: the full portable CI command above passed locally with
-  Homebrew Berkeley DB 5.3.28 (1,218 passed, zero failed, 22 ignored; doctests:
-  four passed, zero failed, two ignored). This exercised the full six-exclude
-  workspace scope; the narrower `just check bdb` was not run separately.
-- Native Windows: the maintained CI scope passed at `56618e7f`.
-  No local Windows storage installation was executed.
-  That run used vcpkg's Berkeley DB 4.8, then the default; since 2026-10-30
-  the job runs the [default backend](backends.md) built with MSVC by `.github/actions/tkrzw`.
-- Canonical Debian/Linux amd64 compatibility environment: BDB `same-data-dir-diff` (retired since) and cache/
-  environment-isolation resume passed on rootless Podman. Other runtime
-  interoperability was not executed. Apple's volume-reader result retrieval
-  is source-verified only, not runtime-tested.
-- Native Linux arm64: Apple container, Debian 13 arm64, 4 CPUs, 16 GiB,
-  ext4, no emulation. Two independent builds of each cell produced identical
-  arm64 library hashes. a historical `tools/cloud/setup.sh --cells
-  "bdb kc tkrzw"` run in a container verified all three cells against the arm64 pin fields,
-  regenerated the recorded data manifests, and replaced the host's broken
-  libtkrzw with the healthy upstream build. The full gate then reported
-  0 DIFFER on every cell: bdb 2,880 MATCH / 15 SKIP / 4 HOST-DEPENDENT, kc
-  2,875 / 20 / 4, tkrzw 2,877 / 18 / 4. Each cell's SKIPs include the 13
-  arm64-only #1137 exclusions; same-data was identical on 15/15 drivers.
-  See [the arm64 oracle finding](../findings/oracle-arm64-1132.md).
-- Historical Debian/Linux amd64 compatibility run (glibc 2.41, GLib 2.84).
-  The current oracle uses unpinned `debian:testing`; the compat launcher is retired.
-  At `8ba13c53` (preserved on wip/1229-pre-squash), before `0x.`
-  was registered with `host_scanf`: the contract differential on 3,017 cases per cell
-  reported bdb 2,988 MATCH / 15 POLICY-ACCEPTED / 10 HOST-DEPENDENT / 2 SKIP
-  / 2 DIFFER, kc 2,983 / 15 / 10 / 7 / 2, tkrzw 2,985 / 15 / 10 / 5 / 2. The
-  2 DIFFER are the `0x.` glibc-version host-dependence finding; the 10
-  HOST-DEPENDENT are the exponent spellings. A targeted bdb rerun of the
-  eight affected cases at the same revision returned the same 2 DIFFER and
-  6 HOST-DEPENDENT. The
-  perf-matrix and callgrind images built on debian:testing and their smoke
-  steps passed.
-- Anonymous oracle artifact retrieval/hash verification passed. Anonymous
-  `-deps` retrieval awaits normal publication. See the PR for final-head CI
-  and the current cloud-provisioning/compatibility smoke status.

@@ -38,7 +38,7 @@ Stage 3 构建需显式启用。只改变可观察输出的 Stage 3 构建保留
 
 ## 上游
 
-- 行为 oracle：[libpinyin](https://github.com/libpinyin/libpinyin)——pin 见 `docs/testing/oracle-environment.md`；其 [wiki](https://github.com/libpinyin/libpinyin/wiki) 是上游文档（n-gram 模型格式、内部实现、多词库）
+- 行为 oracle：[libpinyin](https://github.com/libpinyin/libpinyin)——pin 见 [`tools/oracle/oracle-pin.txt`](tools/oracle/oracle-pin.txt)（[pin 说明](docs/runbooks/oracle.md#pin-identity)）；其 [wiki](https://github.com/libpinyin/libpinyin/wiki) 是上游文档（n-gram 模型格式、内部实现、多词库）
 - 前端 ABI/设置接口：[ibus-libpinyin](https://github.com/libpinyin/ibus-libpinyin)——其 [wiki](https://github.com/libpinyin/ibus-libpinyin/wiki) 记录了使用方的功能与安装方法
 
 ## 许可证

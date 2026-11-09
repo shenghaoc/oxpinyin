@@ -2,7 +2,7 @@
 
 Date: 2026-08-09 · Status: **frozen for W4-T4b**
 
-Recorded `KeyInput` sequences driven through the session API, asserting what
+Recorded input sequences driven through the session API, asserting what
 comes out. It is the first cross-platform consumer of the seam
 `session-api.md` froze, and it is what turns "the API is portable" from a
 design claim into a run on three operating systems.
@@ -23,6 +23,11 @@ A real F-D capture would replace the file without changing the harness. The
 scenario format below is what such a capture would have to produce.
 
 ## Format
+
+`crates/oxpinyin-engine/tests/session_replay.rs` does not read this file: it
+drives the same scenarios through `Session::replace_raw`, `select` and `reset`
+directly, because `KeyInput` and `process_key` no longer exist. The file
+format stays as frozen.
 
 [archived f d session source](https://github.com/shenghaoc/oxpinyin/blob/71092202e489262fd3ccbdf116fa19fccab8f928/fixtures/w4/f-d-session.txt), line-oriented UTF-8, TAB-separated `key=value`
 fields — the shape used by every other fixture here. Blank lines and lines
@@ -94,11 +99,9 @@ The harness discovers no path, reads no environment, uses no clock, and
 contains no `cfg(target_os)`; neither does anything beneath it. CI runs it on
 Linux, macOS and Windows.
 
-The `test-portable` job covers `oxpinyin-core`, `oxpinyin-data`, `oxpinyin-user`,
-`oxpinyin-engine` and `pinyin-oracle` — the last with its `oracle-ffi` feature
-off, which is how the graph and decode-level differentials also run on all
-three. `oxpinyin-capi` stays Linux-first per `docs/architecture.md`
-and is covered by the existing job.
+The nightly `test-windows` and `test-macos` jobs (`verify-nightly.yml`) run
+the workspace tests, this harness and the graph differential among them, on
+Windows and macOS; the PR `test` job runs them on Linux.
 
 Extending CI was an explicit maintainer decision: the contributor rules lists editing CI
 policy among the hard forbids without an ask, and this is the recorded ask.

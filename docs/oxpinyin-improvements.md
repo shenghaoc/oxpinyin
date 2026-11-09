@@ -19,9 +19,8 @@ Justify a new entry under its class or its own discrepancy record.
 Do not admit one by analogy.
 
 - **(a) MATH:** platform-dependent floating-point accumulation with a transcendental, not merely a float in the call graph.
-  The former six sentence residuals are historical: five now match the pin,
-  and `kaliantai` is an S1/S2/S3 selection residual, not class (a)
-  ([current record](findings/sentence-surface.md#1378-current-sentence-selection-residuals), row 11, #1378).
+  No sentence residual is class (a): `kaliantai` is an S1/S2/S3 selection residual
+  ([current record](findings/sentence-surface.md#1378-current-sentence-selection-residuals), row 11).
   Use Rust's standard maths at full speed.
   Record resulting last-bit differences as class (a).
   Do not chase them.

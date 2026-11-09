@@ -1,29 +1,23 @@
 # libpinyin training pipeline — algorithm characterization (W9-T0)
 
-Date: 2026-08-14 · Status: **SHOWN-verified against libpinyin 2.11.91 source** ·
-Original decision: W9 reproduces the legacy counting + λ-estimation
-pipeline; the K-mixture-model (KMM) path is out of scope for W9 (see §7).
+Date: 2026-08-14 · Status: **SHOWN-verified against libpinyin 2.11.91 source, the pin at freeze**
 
-> **SUPERSEDED (2026-08-30) — KMM is now in scope.** The §7 recommendation
-> to skip KMM has been superseded by the full-scope W9 re-audit,
-> `docs/findings/trainer-parity-audit.md`. A source-level call-graph trace
-> shows the trainer's five-stage main pipeline invokes `gen_k_mixture_model`
-> (not `gen_ngram`), and produces the shipped `interpolation2.text` via
-> `k_mixture_model_to_interpolation` off a merged-and-pruned KMM. The
-> legacy path this document characterises (`gen_unigram`/`gen_ngram`/
-> `gen_deleted_ngram`/`export_interpolation`) is **not invoked by the
-> trainer** — it is a set of valid but off-path libpinyin utilities. This
-> document's §2–§5 characterisation of the segmenters, the shared
-> boundary logic, and the `estimate_interpolation` λ EM remains accurate
-> and load-bearing (the λ EM is on the real path inside `evaluate.py`);
-> only the §1 pipeline framing and the §7 KMM-skip decision are
-> superseded. See the re-audit for the KMM data model, formats, and the
-> per-document counting algorithm.
+The trainer's main pipeline runs the K-mixture-model (KMM) path: it
+invokes `gen_k_mixture_model` (not `gen_ngram`) and produces the shipped
+`interpolation2.text` with `k_mixture_model_to_interpolation` from a merged
+and pruned KMM (§1, §7). [`trainer-parity-audit.md`](trainer-parity-audit.md)
+is the record for the KMM data model, formats and per-document counting.
+The legacy utilities this document characterises (`gen_unigram`,
+`gen_ngram`, `gen_deleted_ngram`, `export_interpolation`) are valid
+libpinyin utilities that the trainer does not invoke. §2–§5 (the
+segmenters, the shared boundary logic and the `estimate_interpolation` λ
+EM) apply to both paths; the λ EM runs inside `evaluate.py`.
 
-This finding records, with source file + line citations, the exact algorithm a
-later Rust implementation must reproduce to train a model that is
-*algorithmically identical* to libpinyin's on identical input. It is a
-characterization of the training toolchain, not an implementation.
+This finding records, with source file and line citations, the algorithm
+oxpinyin reproduces to train a model that is *algorithmically identical* to
+libpinyin's on identical input. `oxpinyin-utils` provides the utilities
+under their libpinyin names; `oxpinyin-training` and `oxpinyin-kmm` hold
+the training-only code.
 
 Every algorithmic claim below is tagged **SHOWN** (read directly from the cited
 source) or **INFERRED** (not directly verifiable from the cited source, e.g.
@@ -32,13 +26,12 @@ shipped model's provenance, which upstream does not document).
 
 ## Source set
 
-- libpinyin source: pinned tag `2.11.91`, on disk at `/tmp/libpinyin-2.11.91`.
-  Paths below are relative to that root.
+- libpinyin source: tag `2.11.91`, the pin at freeze, on disk at `/tmp/libpinyin-2.11.91`.
+  Paths and line numbers below are relative to that tree.
 - Trainer orchestration: `/tmp/tr/trainer-main/` (the `libpinyin/trainer`
   repository) — Python glue and docs only.
-- Output-format cross-check: `crates/oxpinyin-data/src/lm/mod.rs` (this repo),
-  at commit `98e9192` (branch `feat/perf-exploration`); **not present on the
-  current branch** — see §8.
+- The current pin is `074a2219` (`tools/oracle/oracle-pin.txt`).
+  Some cited line numbers differ at `074a2219`; the citations are recorded evidence from the 2.11.91 tree.
 
 Constants (all **SHOWN**, `src/include/novel_types.h`):
 
@@ -78,17 +71,14 @@ Five stages:
 Two disjoint model representations share one corpus-counting algorithm:
 
 - **Legacy interpolation path** — `gen_unigram` (§3) + `gen_ngram` (§4) +
-  `gen_deleted_ngram` (§4.3) + `estimate_interpolation` (§5).
-  **SUPERSEDED (2026-08-30):** the trainer never invokes the first three;
-  they are valid off-path libpinyin utilities. Only `estimate_interpolation`
-  (§5) is on the real path (inside `evaluate.py`).
+  `gen_deleted_ngram` (§4.3) + `estimate_interpolation` (§5). The trainer
+  never invokes the first three. Only `estimate_interpolation` (§5) is on
+  the trainer's path (inside `evaluate.py`).
 - **K-mixture-model (KMM) path** — `gen_k_mixture_model` +
-  `estimate_k_mixture_model` + prune + `k_mixture_model_to_interpolation`. This
-  is the *modern* path that actually produces the shipped
-  `interpolation2.text`, but its corpus counting is algorithmically the same as
-  `gen_ngram` (§7), and its λ math is the same deleted-interpolation EM (§5).
-  **SUPERSEDED (2026-08-30):** this is the load-bearing W9 path; the former
-  "skip KMM" recommendation (§7) no longer applies.
+  `estimate_k_mixture_model` + prune + `k_mixture_model_to_interpolation`.
+  This path produces the shipped `interpolation2.text`. Its corpus counting
+  is algorithmically the same as `gen_ngram` (§7), and its λ math is the
+  same deleted-interpolation EM (§5).
 
 The bootstrap circularity (the segmenter needs a bigram to score Viterbi, yet
 produces the corpus that trains that bigram) is resolved by seeding the
@@ -310,12 +300,10 @@ shrink. The floor and the total are coupled; both must be reproduced.
 
 ---
 
-## 7. K-mixture-model (KMM) path and recommendation (**SHOWN**, KMM sources)
+## 7. K-mixture-model (KMM) path (**SHOWN**, KMM sources)
 
-> **SUPERSEDED (2026-08-30).** The recommendation below to skip KMM is
-> retained as the historical record only; W9 now reproduces the full KMM
-> pipeline (`docs/findings/trainer-parity-audit.md`). The source
-> characterisation in this section remains accurate.
+oxpinyin reproduces the full KMM pipeline
+([`trainer-parity-audit.md`](trainer-parity-audit.md)).
 
 The KMM path is a *different storage* for the same counts, plus a pruning and
 conversion stage:
@@ -336,29 +324,11 @@ conversion stage:
   format — removing `sentence_start` from the unigram section (`:131-132`) and
   skipping zero-freq unigrams (`:137-138`).
 
-**Recommendation (Decision, SUPERSEDED): skip KMM for W9.** Justification (**SHOWN**):
-
-1. The shipped, `interp.rs`-consumed format is `interpolation2.text` (§8), and
-   `k_mixture_model_to_interpolation` produces exactly that format. The values
-   it contains (unigram counts, bigram counts) are the corpus counts, which
-   `gen_unigram` + `gen_ngram` reproduce directly.
-2. The KMM-specific math (α, γ, B, `compute_Pr_G_3`) is used only for KMM's
-   *pruning*; the interpolation weight λ is computed identically in both paths.
-3. Therefore W9 can emit `interpolation2.text` from the legacy path (§3–§5)
-   without reproducing KMM storage, pruning, or conversion. KMM becomes
-   relevant only if a later task needs libpinyin's KMM pruning behaviour or a
-   byte-identical KMM `.db`; both are out of W9 scope.
-
-This recommendation is conditional: if a future parity test requires matching
-the *exact* shipped `interpolation2.text` (rather than algorithmic parity on
-identical input), the KMM prune/conversion stage may need to be revisited,
-because the shipped file's count values were produced through KMM pruning
-(§1). For W9's "algorithmically identical output on identical input" goal, the
-legacy path suffices.
+The shipped file's count values were produced through KMM pruning (§1).
 
 ---
 
-## 8. Output format and `interp.rs` cross-check
+## 8. Output format
 
 ### 8.1 The textual interpolation format (**SHOWN**)
 
@@ -377,27 +347,12 @@ Two independent tools emit the identical textual format:
 So `export_interpolation` is the **textual dump tool** the differential test
 should compare against (§9).
 
-### 8.2 `interp.rs` — the consumer pinning the format (**SHOWN**, `crates/oxpinyin-data/src/lm/mod.rs` @ `98e9192`)
+### 8.2 Consumers
 
-`interp.rs` parses only the `\1-gram` section of `interpolation2.text`; it
-skips `\2-gram` (the system bigram arrives separately in `bigram.redb`). It
-rejects zero counts and duplicates, sorts by token, and computes the total as
-the sum of unigram counts. Fields parsed: `token` (u32) and `count` (u64); the
-phrase text is **not** parsed — `interp.rs` locates `count` as the
-second-to-last field.
-
-This confirms round-trippability: the unigram values `export_interpolation`
-emits (`token`, raw count) are exactly what `interp.rs` consumes. The W9 output
-must therefore emit, at minimum, a `\1-gram` section whose `token → count`
-pairs match the legacy counter's unigram output (§4), with the `\2-gram`
-section optional for `interp.rs` but required for the full differential
-comparison (§9).
-
-**Caveat (SHOWN):** `interp.rs` is not on the current branch; it lives at
-commit `98e9192` and on-disk in the main checkout's
-`crates/oxpinyin-data/src/lm/mod.rs`. The parser is stable for the purpose of
-pinning the format; W9 must ensure the Rust trainer's `interpolation2.text`
-emitter matches it.
+`oxpinyin-utils`' `import_interpolation` reads this format through the
+pin's tagger ([`interpolation2-grammar.md`](interpolation2-grammar.md)).
+It applies the `\1-gram` counts to the phrase-library chunks and the
+`\2-gram` rows to `bigram.db`.
 
 ---
 
@@ -409,52 +364,42 @@ identical input, not reproduction of the shipped `interpolation2.text` bytes.
 
 **Comparison surface (SHOWN):** `utils/storage/export_interpolation` emits the
 value-level dump to compare against — `token → count` pairs (unigram) and
-`prev → (cur → count)` triples (bigram) as plain text. The Rust trainer should
-emit the same three value sets from the same raw input, and the differential
-test asserts they are byte-identical modulo line ordering (the exporter
-iterates in token order; `interp.rs` also sorts by token, so a canonical
-sorted dump is the stable comparison form).
+`prev → (cur → count)` triples (bigram) as plain text. The exporter
+iterates in token order, so a sorted dump is the stable comparison form.
 
-**Plan:**
+**Comparison:**
 
 1. Pin one segmentation model (e.g. `spseg`, §2.2) so both sides consume the
    *same* tokenized input; feed identical raw text.
-2. Run the legacy pipeline on libpinyin (`gen_unigram` → `gen_ngram` →
-   `gen_deleted_ngram` → `estimate_interpolation`) and the Rust equivalents.
-3. Dump libpinyin via `export_interpolation`; dump the Rust model in the same
-   shape; assert value-level equality:
+2. Run the same utilities on libpinyin and on `oxpinyin-utils`.
+3. Dump both through `export_interpolation` and compare values:
    - unigram `token → count` (freq-1 floor + corpus counts, §3–§4),
    - bigram `prev → (cur → count)` raw counts (§4, §4.1),
    - λ = arithmetic mean of per-context EM results (§5).
-4. Byte layouts differ by design: libpinyin stores `MemoryChunk`/DBM binaries,
-   the Rust side uses redb. Comparison is at the **value level** via the
-   textual dumps, never at the binary level.
+4. Both sides write the backend's own `MemoryChunk` and DBM files, so the
+   binary files are a second comparison surface.
 
-**Known divergence to document:** the shipped `interpolation2.text` was
-produced through the KMM prune path (§7), so its *count values* may differ from
-a fresh legacy-path run over the same corpus by KMM pruning choices. W9's
-parity target is the legacy path's output, which the differential test asserts;
-matching the shipped file's exact counts is explicitly out of scope (§7).
+The shipped `interpolation2.text` was produced through the KMM prune path
+(§7). Without the original corpus, matching the shipped file's exact counts
+is out of scope.
 
 ---
 
 ## 10. Dependencies and non-goals
 
-**W9 implementation PR depends on (blocking):**
+**Dependencies:**
 
 - A **training corpus** — none is pinned or redistributable
-  (`docs/findings/model-provenance.md`); the trainer needs a documented,
-  terms-cleared corpus before any training run.
-- A **segmenter** (§2) reproducing `ngseg` or `spseg` to produce the tokenized
-  input the counters consume.
+  ([`model-provenance.md`](model-provenance.md)); a training run needs a
+  documented, terms-cleared corpus.
+- A **segmenter** (§2): `oxpinyin-utils` provides `ngseg` and `spseg`.
 
-**Non-goals for W9:**
+**Non-goals:**
 
-- No code, no `Cargo.toml` change, no ROADMAP.md edit, no corpus vendoring.
-- No KMM storage/pruning/conversion (§7).
+- No corpus vendoring.
 - No byte-identical reproduction of the shipped `interpolation2.text` (§9).
-- No redistribution of the shipped model or tables (unchanged from
-  `docs/findings/model-provenance.md`).
+- No redistribution of the shipped model or tables
+  ([`model-provenance.md`](model-provenance.md)).
 
 ---
 
@@ -475,6 +420,5 @@ matching the shipped file's exact counts is explicitly out of scope (§7).
 | `get_phrase_item` `ERROR_OK == 0` convention | `src/storage/phrase_index.cpp` | 179-197 | SHOWN |
 | KMM math + counting + conversion | `utils/training/k_mixture_model.h`, `gen_k_mixture_model.cpp`, `k_mixture_model_to_interpolation.cpp` | 45-118, 70-135, 78/117-177 | SHOWN |
 | Textual interpolation export | `utils/storage/export_interpolation.cpp` | 33-40, 76-104, 106-143 | SHOWN |
-| `interp.rs` unigram-only parser | `crates/oxpinyin-data/src/lm/mod.rs` @ `98e9192` | (whole file) | SHOWN |
 | Multi-epoch orchestration / bootstrap | trainer `docs/fileformat`, `*.py` | (whole files) | INFERRED |
 | Shipped corpus provenance | — | — | INFERRED (absent) |

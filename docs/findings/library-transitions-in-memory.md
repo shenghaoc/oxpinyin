@@ -1,7 +1,6 @@
 # Library transitions in memory
 
-Status: implemented, 2026-10-31 UTC (member 5b of the stack that retires
-class (c)). Rule: [compatibility policy, class (c)
+Status: implemented, 2026-10-31 UTC. Rule: [compatibility policy, class (c)
 retired](compatibility-policy.md#failure-behaviour).
 Rows: 103, and row 62's store-read sub-shape. Pin: libpinyin
 `074a2219c90feaf962d0d24f034514033ece5f99`, read from a `git archive` of
@@ -10,12 +9,10 @@ the pin. The other records of the stack are
 [pin-aborts-zhuyin-facade.md](pin-aborts-zhuyin-facade.md) and
 [pin-aborts-journal-replay.md](pin-aborts-journal-replay.md).
 
-Neither row had a pin abort to reproduce. Both were oxpinyin refusals with
-no pin counterpart: a user store write that could fail during a library
-unload or reload, and a user store read that could fail during the phrase
-export. The pin's state for both is in memory and cannot fail. The
-refusals are deleted, and the implementation now has no failing site
-either.
+Neither row has a pin abort to reproduce. The pin's state for a library
+unload or reload and for the phrase export is in memory and cannot fail.
+oxpinyin has no failing site there either: no user-store write or read on
+these paths can refuse.
 
 ## The pin
 
@@ -42,8 +39,7 @@ is shorter than its header, or has a wrong length or checksum
 nothing. For a `USER_FILE` library it loads the saved chunk, or calls
 `create_sub_phrase` for an empty sub-index when the chunk does not load
 (`:303-321`). The answer is `true`. Only the merge's own asserts (rows 91
-and 108, member 5a) and the mapping of a directory (row 96, member 5c)
-can stop it.
+and 108) and the mapping of a directory (row 96) can stop it.
 
 `pinyin_save` and `zhuyin_save` write and rename the library files in
 sub-index order and skip a library whose `get_range` answers
@@ -56,35 +52,14 @@ The export iterator reads the sub-index through `get_range` and
 `get_phrase_item` (`pinyin.cpp:662-768`), both in memory. Its only
 failures are the asserts of row 62.
 
-## oxpinyin before
-
-`ContextCore::unload_phrase_library` and `load_phrase_library`
-(`crates/oxpinyin-facade/src/context.rs`) ran each transition through
-`store_first`. The user store's replacement was written first, and the
-runtime's visibility mask changed only when the write succeeded. A failed
-write answered `false` and emitted one `g_warning` in each C adapter
-(`LibraryLoadFault::StoreWrite`, `StoreWriteFailed`). The user store's
-transitions (`UserStore::{load,unload}_system_libraries`,
-`{load,unload}_user_library`) returned `UserStoreError`, and a test-only
-`fail_replace` flag injected the failure.
-
-A save did not know a library was unloaded. It wrote the emptied sub-index
-over the saved `.dbin` or user chunk and renamed it into place. The
-`unload-save-skips-*` cases below DIFFER against the parent build for that
-reason.
-
-`ContextCore::phrase_export_cursor` and `PhraseExportCursor::get_next_with`
-returned `Result<_, UserStoreError>`. `pinyin_begin_get_phrases` answered
-NULL with one warning, and `pinyin_iterator_get_next_phrase` answered
-`false` with one warning, for a store that could not be read.
-
-## oxpinyin after
+## oxpinyin
 
 A libpinyin session's values are process memory. `open_session` is the
 only constructor of a libpinyin target, and it uses the in-memory
-`SessionValues`. Since #1455 the session phrases live in per-library
-arenas. A transition now changes only that session state and the runtime's
-visibility mask.
+`SessionValues`. The session phrases live in per-library arenas (#1455).
+A transition changes only that session state and the runtime's visibility
+mask. A save skips an unloaded library, so it does not write an emptied
+sub-index over the saved `.dbin` or user chunk.
 
 - `ContextCore::unload_phrase_library` returns `bool`. It drops the
   library's arena, overrides, unigram deltas and facade share, sets the
@@ -128,7 +103,7 @@ adapter, the export iterator's NULL and `false` arms with their warnings,
 and `store_first_tests`.
 
 No abort is added. The fuzz harnesses need no filter: `capi_commands.rs`
-walks the export iterator, which now has no refusal arm, and has no
+walks the export iterator, which has no refusal arm, and has no
 library load or unload in its alphabet. `user_store_ops.rs` drives a
 standalone store, which has no library transitions.
 
@@ -140,14 +115,13 @@ Unit tests:
   `unload_then_reload_restores_the_saved_library`,
   `unload_then_save_leaves_the_unloaded_librarys_log_alone` and
   `reload_after_an_unreadable_log_loads_the_system_chunk_alone` (a missing
-  and a short `.dbin`). These replace `store_first_tests`.
+  and a short `.dbin`).
 - `a_save_skips_an_unloaded_user_library` and
-  `library_transitions_keep_the_independent_index` (which replaces the
-  failure-injection test) in `crates/oxpinyin-user/src/store_libpinyin.rs`.
+  `library_transitions_keep_the_independent_index` in `crates/oxpinyin-user/src/store_libpinyin.rs`.
 - `an_undecodable_item_is_an_assert_site_and_a_store_failure_is_not` in
   `crates/oxpinyin-facade/src/export_rows.rs`.
 
-New cases in [archived contract library reload source](https://github.com/shenghaoc/oxpinyin/blob/cf33028a2fc793ef1e8ae08cabdc7b0d3ae203f6/tools/bisection/contract_library_reload.py):
+Contract cases (recorded evidence):
 
 | Case | What it holds | Parent build |
 |---|---|---|
@@ -177,4 +151,5 @@ about failure ordering.
 
 ## Verification
 
-The commands and results are in the change's report.
+The Rust tests named above hold the behaviour; the contract cases are
+recorded evidence.

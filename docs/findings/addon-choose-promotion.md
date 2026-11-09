@@ -61,10 +61,9 @@ facade and records the constraint under the promoted token — and a later
 ## 2. oxpinyin mapping
 
 The default facade's writable, persisted phrase index is the user store
-(`oxpinyin-user`), served by `oxpinyin_store::DefaultStore` — Kyoto Cabinet
-under the workspace's default features, redb under
-`--no-default-features --features redb` (as written; the default is
-Berkeley DB since 2026-09-20 and redb was removed that day); nibbles 6/7 already live there and
+(`oxpinyin-user`), served by `oxpinyin_store::DefaultStore` — tkrzw under
+the workspace's default features, or the Berkeley DB or Kyoto Cabinet peer
+selected with `--no-default-features`; nibbles 6/7 already live there and
 `addon.bin` (nibble 5) is a `USER_FILE` of the same facade, so promotion
 writes there too:
 
@@ -81,7 +80,7 @@ writes there too:
   promotion for an `ADDON` candidate before selecting, rewrites the snapshot
   candidate to `NORMAL_CANDIDATE` at the promoted token, and records the promoted
   token in the sentence via `Session::select_promoted`
-  (`crates/oxpinyin-engine/src/session/mod.rs`).
+  (`crates/oxpinyin-engine/src/session/selection.rs`).
 
 After promotion the phrase surfaces through `UserLookup` (which indexes every
 stored phrase regardless of nibble, ascending nibble then token — nibble 5 sorts

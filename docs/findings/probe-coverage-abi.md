@@ -1,28 +1,18 @@
 # Findings — probe coverage over the full exported pinyin ABI
 
-Date: 2026-09-17 · Status: recorded; **amended 2026-09-19** with
-classes for residues B/C/D (B/C registered as rows 33–34; D no ABI
-divergence). Residue A is **one specific absent path** on the
-`nihaoshijie` dump — the pin's rank-0 user-phrase tail, which
-oxpinyin's language model never prices, an instance of the wider
-refusal of every user-library token (characterised 2026-09-19; the
-common-root experiment against B/C refutes a shared cause) —
-registered as row 35, **closed in code 2026-09-19** (the gate now
-prices user-file tokens from their user delta; ruled REVERT TARGET
-2026-09-19). Residue E —
-the candidate window behind the composition offset, an empty list at
-its worst — is row 37; the export iterator's last-row return is row
-36. The union probe's oracle run **diverges at every sort word
-measured**; the measured causes per word and the residues are
-recorded below.
+Date: 2026-09-17 · Status: **current reference** (coverage matrix; the
+residues are closed). The whole-surface probe ran 2026-09-16/17 and
+2026-09-19/20. Residues A, B, C, E and F are compatibility-policy rows
+35, 33, 34, 37 and 36, all **CLOSED**; residue D is no ABI divergence.
+The sections below are the dated measurements behind those rows.
 
 The [E2E I/O compatibility rule](compatibility-policy.md#the-e2e-io-compatibility-rule) wants, for
 every exported symbol, a probe that asserts its
 whole observable surface: return status, out-params and the data they
 point to, written lengths, and handle state. This document is the
 coverage matrix the rule's verification clause calls for, the description of
-the whole-surface probe (`tools/bisection/abi-probe-diff.c` +
-[archived run abi probe diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-abi-probe-diff.sh)), and the record of its oracle runs.
+the whole-surface probe, and the record of its oracle runs. The probe's
+C driver and runner are retired; their runs are recorded evidence.
 
 ## Name correction
 
@@ -43,29 +33,19 @@ is `pinyin_get_pinyin_offset`.
   below). Rust tests are supporting evidence, never coverage on their
   own.
 - **Void destructors** (`pinyin_fini`, `pinyin_free_instance`) are
-  COVERED when both hold: the leak gates are clean (valgrind
-  [archived run bisect source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-bisect.sh) mode 2; the alloc-pairing LSan harness of
-  `just abi alloc-pairing`), and every runner completes
-  without a crash. Both hold for the runs recorded here
+  COVERED when both hold: the leak gates are clean (valgrind, and the
+  allocator-pairing gate `just abi alloc-pairing`,
+  [`abi-allocator-pairing.md`](abi-allocator-pairing.md)), and every
+  runner completes without a crash. Both hold for the runs recorded here
   (maintainer ruling 2026-09-17).
 - A call made only as setup counts as **UNCOVERED**.
-- A symbol covered only by `bisect.c` stays **PARTIAL** — bisect's
-  differential mode cannot run today: [archived run bisect source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-bisect.sh), like
-  [archived run dynamic adjust diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-dynamic-adjust-diff.sh) and [archived run train diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-train-diff.sh), still resolves
-  the capi data to the pre-split flat `fixtures/w3` root and exits 1
-  (`missing file: … pinyin_index.bin` / `fatal: redb tables not
-  found`) since the fixture moved to per-backend subdirectories.
-  Three stale runners, reported, not fixed here (tools, outside this
-  PR's purpose).
+- A symbol covered only by the bisect driver (`tools/bisection/bisect.c`)
+  stays **PARTIAL**.
 - A runner that skips or fails provides no coverage.
-- The capture-replay suite (`pinyin-oracle` tests, 6 passing on the
-  pin-built `.so`) replays recorded pin captures against the oracle —
-  pin-side regression evidence, not an oxpinyin differential; it never
-  counts as coverage.
 
 ## The probe
 
-`abi-probe-diff.c` resolves all 79 exported symbols (refusing to run
+The probe resolved all 79 exported symbols (refusing to run
 when any is missing, so a completed run also proves the export surface)
 and walks every symbol's observable surface in deterministic phases —
 setup, import, full parse ×2, choose/nbest/train/remember, prediction,
@@ -81,10 +61,9 @@ counts, handle state, and every iterator predicate result. Row 0 of
 log): 0x1e is the parity word every other differential passes, 0x1c
 and 0x14 are ibus-libpinyin's presets (0x1c the GSettings default),
 0x1f the third preset, 0x16 fcitx-libpinyin's phrase-length word, 0
-the raw word fcitx5-oxpinyin passes. [archived run abi probe diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-abi-probe-diff.sh) drives
-the binary into oxpinyin-capi and the pin and diffs the logs
-(0 = identical, 1 = build/run failure, 2 = divergence), env-gated on
-the pin oracle and resolving its system dir through [archived system dir source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/system-dir.sh).
+the raw word fcitx5-oxpinyin passes. The runner drove the binary into
+oxpinyin-capi and the pin and diffed the logs (0 = identical, 1 =
+build/run failure, 2 = divergence).
 
 Oracle caller contracts honoured, with the pin's assert landmines the
 probe documents in-source (each found by crashing exactly once):
@@ -108,7 +87,7 @@ probe documents in-source (each found by crashing exactly once):
 - `get_left/right_pinyin_offset` run a second `_check_offset` on the
   computed offset (`pinyin.cpp:3055/:3090`) that asserts for tail
   cursors (upstream fixed it after the pin, `95e3af7`) — the probe uses
-  `uncovered-surface-diff.c`'s smoke-proved-safe cursor set.
+  the uncovered-surfaces differential's smoke-proved-safe cursor set.
 
 ## Matrix
 
@@ -199,7 +178,7 @@ it confers no coverage; every symbol's class rests on the D set.
 | 69 | `pinyin_get_n_phrase` | COVERED | phrase-surface | — |
 | 70 | `pinyin_get_phrase_token` | COVERED | phrase-surface | — |
 | 71 | `pinyin_get_pinyin_is_incomplete` | COVERED | key-surface | — |
-| 72 | `pinyin_set_full_pinyin_scheme` | COVERED | fullpin scheme 1 ([archived run scheme diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-scheme-diff.sh) full): ret + scheme effects, IDENTICAL | — |
+| 72 | `pinyin_set_full_pinyin_scheme` | COVERED | fullpin scheme 1 (scheme differential, full): ret + scheme effects, IDENTICAL | — |
 | 73 | `pinyin_token_get_phrase` | COVERED | dict-surface: per-token reads | — |
 | 74 | `pinyin_token_get_n_pronunciation` | COVERED | dict-surface | — |
 | 75 | `pinyin_token_get_nth_pronunciation` | COVERED | dict-surface | — |
@@ -217,7 +196,7 @@ All runs: 2026-09-16/17 UTC, `debian:testing` container `a15849ef7dd2`
 (image
 `docker.io/library/debian@sha256:5056ab8a99336d6d71390d640f72229649f12e3d38e987cf6b24dc8675325d73`),
 pin oracle prefix read-only, both sides tkrzw (oracle: the pin's own
-`data/`; capi: a datagen tkrzw compile, native names +
+`data/`; capi: a tkrzw compile of the model text, native names +
 `interpolation2.text`). Trees: `main` for the 0x1e-baseline
 reproductions; a stack of `main` + PR #476 + PR #471 + PR #472 for the
 per-word walks (the row-5b out-of-enum rows agree there by
@@ -255,6 +234,8 @@ figure (`w3/perturbed-1e.log`, `w3/post-revert-1e.log`,
 `w3/abi-perturbed-{capi,oracle}-1e.log`).
 
 ## The open residues (measured; classification is the maintainer's)
+
+This section records the residues as measured before the fixes. Residues A, B, C, E and F are now CLOSED (register rows 35, 33, 34, 37 and 36). Residue D is no ABI divergence.
 
 **A — the nbest result set: paths on the pin, texts on the capi.**
 After the import (你好/5, 你好世界/9, 测试/3), parse `nihaoshijie`,
@@ -335,7 +316,7 @@ PR #481's parameterised sweep measured the corpus while the gap stood:
 `OPTION_SWEEP_SORT=1e` passed 21/21; `0x1c` and `0x14` stopped on every
 case (the pin's TEXT sets carried the LONGER rows). After the §9 port
 (2026-09-20) all three words pass 24/24, and the ABI probe's LONGER
-choose phase (`tools/bisection/abi-probe-diff.c`) runs IDENTICAL:
+choose phase runs IDENTICAL:
 row `方面` typed 7, `choose=1`, `train=true`, no user-store writes;
 the trained token's unigram reads `23253` before the choose and
 `23736` after — the `+483` read back through the phrase index,
@@ -398,39 +379,22 @@ phase above runs IDENTICAL, and its `train(after-longer)=true` line —
 a train with a live sentence result and NO recorded selection — is
 exactly the widened arm, on both sides, with no store writes.
 
-The **zhuyin** surface has no differential. Checked 2026-09-20:
-[archived run zhuyin diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-zhuyin-diff.sh) exists, and
-`tools/bisection/zhuyin-diff.c` contains **no train call** — the only
-occurrences of the letters "train" in it are the word "constrains" in
-two comments (`:227`, `:287`); no other driver calls `zhuyin_train`.
-The in-tree evidence is the zhuyin e2e
-(`crates/oxpinyin-zhuyin-capi/src/e2e_tests.rs::
-train_without_a_choose_trains_nothing_and_without_a_user_store_refuses`,
-then named `train_refuses_without_a_selection_or_a_user_store`), whose assertion
-flipped in the same commit that widened the gate — a measurement of
-the code by the code that changed it, not independent evidence.
+The **zhuyin** surface: register row 38 records the train-index
+differential (`train-index-diff`) — the zhuyin cases `0`, `fresh` and
+`choose-only` match the pin on bdb, kc and tkrzw. Every successful
+zhuyin case of that differential chooses a candidate first;
+`guess_sentence` followed by `zhuyin_train` with no choose is
+source-derived (#1761), as the table above records
+([`compatibility-policy.md`](compatibility-policy.md), row 38).
 
-What a differential would need to exercise, on both sides: (1)
-guess-sentence-then-train with no choose — the widened arm; the pin
-answers `true` and writes nothing; (2) choose-then-train — the
-selection arm, unchanged by the widening; (3) a fresh instance's train
-with no guess and no choose — still `false` on both; each phase
-dumping the user store's bigram/unigram state as the ABI probe does.
-That differential is owed work under register row 38
-(`compatibility-policy.md`; `revert-plan` §15), deliberately not
-built in PR #496. Superseded 2026-11-09 UTC (#1761): arms (2) and (3)
-were captured by `train-index-diff` on 2026-10-04, and arm (1) is
-source-derived, as the table above records.
+## Residue classification (2026-09-19 UTC)
 
-## Amendment — residue classification (2026-09-19 UTC)
-
-Diagnosis recorded; classes ruled 2026-09-19 (A by the settling
-measurement below, sharpened the same day to the one missing tail and
-ruled REVERT TARGET as row 35; B/C/D by maintainer ruling). No
-shipped-crate behaviour change in this amendment. Pin cites are from the checkout
-at `074a2219` (blob tree read 2026-09-19). Mechanism probe:
-`tools/bisection/residue-mechanism-diff.c` +
-[archived run residue mechanism diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-residue-mechanism-diff.sh). Measurement environment:
+Classes ruled 2026-09-19 (A by the settling measurement below, ruled
+REVERT TARGET as row 35; B/C/D by maintainer ruling). Every REVERT
+TARGET below is closed (register rows 33–37). Pin cites are from the
+checkout at `074a2219`. The mechanism probe and the residue-A tail probe
+are retired C drivers; their runs are recorded evidence. Measurement
+environment:
 `debian:testing` container
 `fd969584d8c60edcdfbc22fea20a0682aa4db90874ce35915b8b14866ed0e8a1`,
 image
@@ -442,12 +406,11 @@ pin oracle tkrzw at `/work/oracle/prefix` (pin_ref
 
 ### B — whole-row choose + train (**REVERT TARGET**, register row 33)
 
-**Amended 2026-11-09 UTC:** the test-only `Session::train` is removed;
-production training is `Runtime::train_session` → `Session::prepare_training`
-→ `TrainingPlan::observe`, where a row with spans trains only the spans
-with a OneStep cell, and a row with empty spans replays the selection
-history with no OneStep gate.
-The historical mechanism and measurements below are unchanged.
+Current training is `Runtime::train_session` → `Session::prepare_training`
+→ `TrainingPlan::observe`: a row with spans trains only the spans with a
+OneStep cell, and a row with empty spans replays the selection history
+with no OneStep gate. The mechanism and measurements below are the
+2026-09-19 state that register row 33 records.
 
 **Mechanism.** A row-0 `NBEST_MATCH_CANDIDATE` choose runs
 `diff_result(best, best)` and installs no `CONSTRAINT_ONESTEP` —
@@ -472,7 +435,7 @@ deliberate class-(a)/(b) exception: it is a missing guard that
 export stays empty through two `train(0)` calls. Capi records
 `你好世界|ni'hao'shi'jie|138` after the first train and `|414` after
 the second — the export's stored-count×2 rendering of seeds 69 then
-138 ([archived run train diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-train-diff.sh) header; `user-store.md` §2.1). Logs:
+138 (`user-store.md` §2.1). Logs:
 `same-dir/{oracle,capi}.log`.
 
 **User-visible consequence.** After N sessions of the same whole-row
@@ -484,19 +447,11 @@ oxpinyin and not on the pin. This is the only residue that corrupts
 stored user state and compounds with use.
 
 **Class.** **REVERT TARGET** — missing "no OneStep ⇒ observe nothing"
-guard; not (a)/(b). Registered as compatibility-policy row 33;
-work order `revert-plan` §10.
-
-**Fix shape (do not implement).** Drop the history fallback whenever
-no OneStep cell is present — `Session::train` observes nothing, as
-`train_result3` does. Pre-registered differential: phase B of
-`residue-mechanism-diff` must print empty bigram rows on both sides
-after `train(0)` and `train(0)again` — **and** (amended 2026-09-19,
-from the common-root experiment under A) the user 你好世界 token's
-unigram must stay 27 on both sides after both trains: an A fix alone
-moves the fallback's pair to `sentence_start → 你好世界`, which the
-export never renders, so the export line goes empty while the fallback
-still writes. `residue-a-tail-diff` phase B prints both observables.
+guard; not (a)/(b). Registered as compatibility-policy row 33, now
+CLOSED. The closing gate: empty bigram rows on both sides after
+`train(0)` twice, **and** the user 你好世界 token's unigram staying 27 on
+both sides — an A fix alone moves the fallback's pair to
+`sentence_start → 你好世界`, which the export never renders.
 
 ### A — the missing user-phrase tail (**closed in code 2026-09-19**, register row 35)
 
@@ -516,13 +471,10 @@ pin oracle tkrzw at `/inputs/oracle-tkrzw/prefix` (pin_ref
 (`04-baseline/`). Import state as before (`set_options(0x18a)`, 你好/5,
 你好世界/9, 测试/3, `save`), parse `nihaoshijie`, `guess_sentence`. Pin
 tails from a second oracle prefix built with
-`--apply-patches tools/bisection/patches/nbest-tails-dump` (an
-env-gated `stderr` dump inside `get_nbest_match`; its stdout is
-byte-identical to the unpatched pin's — the runner checks), oxpinyin
-rows from `crates/oxpinyin-runtime/examples/nbest_tail_probe` (nats =
-`cost / 1000 · ln 2`). Runner:
-[archived run residue a tail diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-residue-a-tail-diff.sh) with
-`RESIDUE_A_SAME_DIR=1 RESIDUE_A_DUMP_PREFIX=… RESIDUE_A_PROBE=1`.
+a retired diagnostic patch (an env-gated `stderr` dump inside
+`get_nbest_match`; its stdout was byte-identical to the unpatched
+pin's), oxpinyin rows from a runtime probe (nats =
+`cost / 1000 · ln 2`). Recorded evidence.
 
 | rank | pin tail: `m_poss`, `m_last_step`, result tokens | ox row: text, cost, nats |
 |---|---|---|
@@ -606,7 +558,7 @@ Probe output (baseline, `04-baseline/ox-probe.log`):
 | `0x07000002` 你好世界 | 7 | 27 | **None / None** |
 
 **What consumes the path rather than the text — measured.** Same-dir
-ABI probe (`residue-a-tail-diff.c`, phases X/B/D):
+ABI probe (residue-A tail probe, phases X/B/D):
 
 - **Choose cursors and constraints.** `pinyin_choose_candidate` of an
   NBEST row runs `diff_result(best, other)` (`pinyin.cpp:2513-2519`;
@@ -650,8 +602,7 @@ ABI probe (`residue-a-tail-diff.c`, phases X/B/D):
   window at `0x1e` in this state.
 
 **Class.** **REVERT TARGET** — registered as compatibility-policy
-row 35 (maintainer ruling 2026-09-19); work order `revert-plan`
-§12, **executed and closed 2026-09-19**. At its true width: every
+row 35 (maintainer ruling 2026-09-19), **closed 2026-09-19**. At its true width: every
 user-library token was
 refused an n-best step cost, so no imported or learned phrase could
 enter a sentence path; the `nihaoshijie` tail is one instance. The
@@ -664,7 +615,7 @@ mechanism is involved and no blocker was found: the step-cost seam
 already holds the user delta it needs. Not (a) — the 4.8-nat gap is an
 absent step, not accumulation. Not (b), not (c).
 
-**Fix shape (do not implement).** In
+**Fix shape (landed).** In
 `nbest_step_costs_with_user_delta`, price a token whose library owns
 no system item from its user delta alone — `count = 0 +
 user.unigram_delta` — for the user-file libraries (nibbles 6 and 7)
@@ -675,8 +626,8 @@ rows: 你好世界 at `surprisal(0.6873010 × 27, 51051882)` = 21392
 millibits (14.8278 nats), 你好世界 (the system pair, 19.644), 你好时节
 (24.715) — the candidate windows then dedup the second to `n = 128`.
 
-**Pre-registered differential.** [archived run residue a tail diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-residue-a-tail-diff.sh) same-dir
-on the pin's `data/`: phase A IDENTICAL — `sentence[0..2]` = 你好世界 /
+**Closing differential** (recorded evidence; residue-A tail probe,
+same-dir on the pin's `data/`): phase A IDENTICAL — `sentence[0..2]` = 你好世界 /
 你好世界 / 你好时节, `A-1e:n=128`, NBEST ranks 0 and 2; phase X
 IDENTICAL — `clear_constraint(0)=true`, the 你好时节 row at nbest
 index 2, unigram 你好 161 → 644 after the train; phase D `n=303`. The
@@ -769,17 +720,11 @@ resolve. A near-tie on an input where the two sides agree does not
 explain a different input where they do not.
 
 **`tuihui` vs `sentence-surface.md`.** The §12 example (oracle
-`[退回, 退回, 退会]` vs port `[退回, 退会]`) is the
-`sentence_tail` / `sentence_surface_parity` configuration: exported
-model20 tables (`PINYIN_EXPORT_DIR`) against
-`fixtures/w4/oracle-sentence-surface.txt` (fixture line: `tuihui`
-sentences `退回 / 退回 / 退会`). On P6 native pin `data/` (this
-same-dir dump) the port emits all three texts, matching the pin. Not
-a stale record and not a search-time text-dedup: two table
-configurations, two survivor sets. The claim that oxpinyin never
-places the duplicate-text path among the survivors is false on pin
-`data/`; it remains a possible outcome of `sentence_tail` over the
-exported tables, where the frozen gate still holds 6 distinct-same.
+`[退回, 退回, 退会]` vs port `[退回, 退会]`) was measured over exported
+model20 tables against `fixtures/w4/oracle-sentence-surface.txt`
+(fixture line: `tuihui` sentences `退回 / 退回 / 退会`). On the pin's
+own `data/` (this same-dir dump) the port emits all three texts,
+matching the pin: two table configurations, two survivor sets.
 
 **Settling measurement (2026-09-19 UTC) — `nihaoshijie`, ABI-probe
 state.** Container `fd969584d8c6`, same image. Sequence:
@@ -833,15 +778,14 @@ defects?
 
 **Design.** Neutralise A's mechanism alone and re-measure B and C in
 the same state. The counterfactual is a scratch build of
-oxpinyin-capi with
-`tools/bisection/patches/residue-a-counterfactual/nbest-step-costs-user-token.patch`
+oxpinyin-capi with a scratch patch
 applied — the first gate of `nbest_step_costs_with_user_delta`
 replaced by `unwrap_or(0)`, so a token without a system item is priced
 from its user delta — and nothing else changed. Never part of the
 shipped tree: applied with `patch -p1` in the container, built into
 `target/cf`, run, reverted (`patch -R`); the worktree carries no
 counterfactual line. Both builds are driven through the same ABI
-probe (`residue-a-tail-diff.c`, phases A/C/B/X/D) and the same
+probe (residue-A tail probe, phases A/C/B/X/D) and the same
 runtime probe, same-dir on the pin's `data/`, against the same pin.
 The B observable is widened beyond the bigram export on purpose:
 the export skips `sentence_start` pairs on both sides
@@ -869,10 +813,7 @@ pin oracle tkrzw at `/inputs/oracle-tkrzw/prefix`; logs
 (ABI logs + `ox-probe.log`), driver log `05-experiment-driver.log`
 (patch applied, `target/cf` built — sha256
 `0d2a49d9…dcc849` against the baseline `846d0614…36ab` — probe run,
-patch reverted). Baseline: `04-baseline/`. Command:
-`RESIDUE_A_CAPI_SO=target/cf/debug/libpinyin_capi.so
-RESIDUE_A_SAME_DIR=1 RESIDUE_A_OUT=… [archived run residue a tail diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-residue-a-tail-diff.sh)`, then
-`target/cf/debug/examples/nbest_tail_probe <data> <tmp>`.
+patch reverted). Baseline: `04-baseline/`.
 
 **Result.**
 
@@ -915,16 +856,13 @@ after both trains), which `residue-a-tail-diff` phase B prints. Row 34
 (C) survives unchanged: its `0x1f` probe has the same outcome with or
 without A.
 
-**Consequence for the work order (`revert-plan`).** Ruled
-2026-09-19: A executes first (§12), then 10, 11, 9 — a one-line
-ordering fix inside an invariant the same function already documents
-for the bigram path, blocking a whole feature rather than perturbing
-presentation, and B's corrected gate is easier to write once the
-unigram observable is live. The order is safe exactly because of the
-finding above: §10's gate reads the unigram, never the old export-only
-line, once A has landed; §10 cross-references this section.
+**Consequence for the fixes (ruled 2026-09-19).** A landed first, then
+B and C. B's gate reads the user token's unigram, never the export-only
+line, because of the finding above.
 
 ### E — the candidate window behind the composition offset (**REVERT TARGET**, register row 37)
+
+Register row 37 is CLOSED: oxpinyin rebuilds the window at the caller's offset (#604, #609, #625). The symptom and mechanism below are the state before the fix.
 
 **Symptom.** After a choose, `pinyin_guess_candidates(offset, …)` at an
 offset at or behind the offset the choose advanced to answers the
@@ -1009,8 +947,7 @@ is reached, a frontend offers the wrong window — the remaining
 input's phrases, or one candidate where libpinyin offers 128.
 
 **Class.** **REVERT TARGET** — registered as compatibility-policy
-row 37 (maintainer ruling 2026-09-19); work order `revert-plan`
-§14, executing second. At its worst measured point: `(0, 0x1f)` after
+row 37 (maintainer ruling 2026-09-19), now CLOSED. At its worst measured point: `(0, 0x1f)` after
 a whole-composition choose answers 127 candidates on the pin and 0 —
 an empty list — on oxpinyin; at the ordinary partial choose oxpinyin
 answers the offset-5 list where the pin answers the offset-0 one.
@@ -1021,7 +958,7 @@ cached-list rule was a design choice guarding the *choose* leg's
 composition regression, extended to the display leg where the pin has
 no such notion.
 
-**Fix shape (do not implement).** Display leg: in
+**Fix shape (landed).** Display leg: in
 `pinyin_guess_candidates`, re-anchor whenever `normalized !=
 composition_offset()` — both directions — through
 `Session::candidates_at(normalized)`, leaving the composition offset
@@ -1031,13 +968,12 @@ a behind-window starts before the composition offset, which
 `selection.rs:157-167`); the pin's `add_constraint` clears the
 overlapped forcings and the answered cursor moves back
 (`phonetic_lookup.cpp:61-86`), so the record must re-anchor to the
-earlier span rather than refuse. Not measured here — the choose leg's
-probe (choose 你 from the offset-0 window after 你好 was chosen: pin
-cursor 2, constraint 你@0..2 replacing 你好) is to be added as a phase
-E3 when the fix lands.
+earlier span rather than refuse. The choose leg's shape (choose 你 from
+the offset-0 window after 你好 was chosen: pin cursor 2, constraint
+你@0..2 replacing 你好) is phase E3.
 
-**Pre-registered differential.** [archived run residue a tail diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-residue-a-tail-diff.sh) phase E,
-same-dir on the pin's `data/`, must match the pin at **every row of
+**Closing differential** (recorded evidence; residue-A tail probe phase
+E, same-dir on the pin's `data/`) matches the pin at **every row of
 the E1/E2 table** — after the whole-composition choose: `(0, 0x1e)`
 `n=128` with NBEST ranks 0 and 2, `(0, 0x1f)` `n=127` with `cand[0]`
 the imported user 你好世界, `(5, 0x1e)` `n=303`, `(11, 0x1e)` `n=2`;
@@ -1049,15 +985,20 @@ the whole phase runs IDENTICAL; the phase's phrase-row counts (126 at
 offset 0, 301 at offset 5) are the A-independent half of the same
 gate.
 
-**Amendment (2026-09-27, maintainer ruling of that date).** Both legs landed
-(`revert-plan` §14 amendment): the display leg re-anchors at any
+**Landed (2026-09-27, maintainer ruling of that date).** Both legs
+landed: the display leg re-anchors at any
 offset other than the composition's, and the choose leg no longer hits
 `SelectionAnchorBeforeComposition` for a token-bearing row — the span is
 forced over the overlapped forcings and the record moves back. The E3
-shape above is pinned in the engine and C tests named there and
-measured on both libraries by `candidate-assembly-diff` phase M.
+shape is pinned in the engine test
+`choosing_behind_the_composition_moves_the_record_back`
+(`crates/oxpinyin-engine/src/session/tests.rs`), and recorded evidence
+from the candidate-assembly differential (phase M) measured it on both
+libraries.
 
 ### F — bigram export iterator, last-row return value (**REVERT TARGET**, register row 36)
+
+Register row 36 is CLOSED: oxpinyin returns the pin's value on the last row (#607). The mechanism below is the state before the fix.
 
 **Mechanism.** The pin's `pinyin_bigram_iterator_get_next_phrase`
 fills the out-params, advances the pinyin index, and returns
@@ -1083,11 +1024,10 @@ pin's last row and completes on oxpinyin. Release builds discard the
 value; the export contents are identical.
 
 **Class.** **REVERT TARGET** — a plain ABI return-value divergence;
-not (a)/(b). Registered as compatibility-policy row 36; work order
-`revert-plan` §13.
+not (a)/(b). Registered as compatibility-policy row 36, now CLOSED (#607).
 
-**Fix shape (do not implement).** Return `handle.index <
-handle.rows.len()` after the increment. Pre-registered differential:
+**Fix shape (landed).** Return `handle.index <
+handle.rows.len()` after the increment. Closing differential:
 phase X2's `bigram[0]` line identical, plus a two-row export (import
 two pairs, train each) asserting `true` then `false` on both sides.
 
@@ -1123,6 +1063,8 @@ the ABI getter.
 
 ### C — imported phrase as a user row (**REVERT TARGET**, register row 34)
 
+Register row 34 is CLOSED: oxpinyin keeps the n-best rows across a parse (#598) and keeps the user row at `0x1f` (#596). The mechanism below is the state before the fix.
+
 **Mechanism — what the second guess changes.**
 
 Fresh window (parse → `guess_candidates` only): both sides surface
@@ -1157,35 +1099,15 @@ pin and may not on oxpinyin; after re-parse + `0x1e` the pin can still
 show live sentence rows and oxpinyin rebuilds phrase-only.
 
 **Class.** **REVERT TARGET** — nbest lifetime and candidate-rebuild
-mismatch; not (a)/(b). Registered as compatibility-policy row 34;
-work order `revert-plan` §11.
+mismatch; not (a)/(b). Registered as compatibility-policy row 34, now
+CLOSED.
 
-**Fix shape (do not implement).** (1) Keep nbest across parse; clear
+**Fix shape (landed).** (1) Keep nbest across parse; clear
 only on full reset / a new `guess_sentence`, matching the pin.
 (2) When `SORT_WITHOUT_SENTENCE` is set, rebuild the phrase window
 without the prior NBEST-wins dedup (or rebuild from scratch every
-`guess_candidates` as the pin does). Pre-registered differential:
+`guess_candidates` as the pin does). Closing differential:
 import 你好世界 → parse → `guess_sentence` →
 `guess_candidates(0, 0x1f)` → assert NORMAL + `is_user` on both;
 then re-parse → `guess_candidates(0, 0x1e)` → assert nbest rows still
 present on both.
-
-### Stale runners — would they have caught B or D?
-
-| Runner | Would have caught B? | Would have caught D? |
-|---|---|---|
-| [archived run train diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-train-diff.sh) | **No.** Drives NORMAL chooses of 你 then 好 (installs OneStep); `train_result3` trains on both sides. Never exercises whole-row NBEST choose. | **No.** No `token_get_unigram_frequency` of a fresh system token. |
-| [archived run bisect source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-bisect.sh) | **Unreliable.** Chooses candidate[0] after guess and trains, but does not export the user bigram; a whole-row empty-train would look like success (`train: true`). | **No.** |
-| [archived run dynamic adjust diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-dynamic-adjust-diff.sh) | **No.** Compares post-choose candidate windows under DYNAMIC_ADJUST, not the bigram export after a constraint-free train. | **No.** |
-
-Repairing the three runners' pre-split `fixtures/w3` paths remains
-useful for their own gates; it is **not** higher priority for B or D
-than the residue-mechanism probe (B) or same-dir dict reads (D) —
-neither residue rides on those three scripts' intended surfaces.
-
-### ROADMAP Stage 1 line
-
-Applied 2026-09-19. `ROADMAP.md` Stage 1 now records the corpus claim
-together with the open ABI/user-store residues (B/C as rows 33–34,
-register row 32) under the frozen sentence-trellis exception (A /
-row 11).

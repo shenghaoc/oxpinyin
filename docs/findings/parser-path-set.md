@@ -112,7 +112,7 @@ and its selected segmentation do not reorder or remove portable parser paths.
 - 2026-08-21, W12 Class B: the `ni''hao` example now shows both `[ni, hao]`
   and `[ni, ha, o]` with an empty remainder. Consecutive apostrophes are a
   single separator when the right group consumes at least one byte; matches
-  the pin ([archived oracle candidates source](https://github.com/shenghaoc/oxpinyin/blob/928345a9c0b2ee193b1c89b435f642ddea619114/fixtures/w4/oracle-candidates.txt) `ni''hao` top-1 `你好`).
+  the pin (`fixtures/w4/oracle-candidate-structure.txt` `ni''hao` top-1 `你好`).
   Cross-referenced in `parser-spec.md` architect correction log
   (2026-08-21) and `parser-spec-contradiction-incomplete-keys`
   (decision 3, doubled half now closed).

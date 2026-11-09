@@ -1,19 +1,21 @@
-# libpinyin pinyin-index DBM format — P2 source-level findings
+# libpinyin pinyin-index DBM format
 
 Date: 2026-09-01 · Status: **verified against pinned source and real bytes**
 
-Findings for the P2 implementation: direct consumption of libpinyin's
-`pinyin_index.bin` DBM. All facts verified against the pinned source tree
-(`libpinyin-2.11.91`, `0c5e80e1`) and/or the real data files from the
-perf-matrix container.
+The format of libpinyin's `pinyin_index.bin` and
+`addon_pinyin_index.bin` DBMs, which oxpinyin reads directly. The facts
+were verified against the pinned source and against data files built by
+the pinned libpinyin. The directory overview is
+[`data-formats.md`](data-formats.md).
 
 ---
 
 ## 1. DBM container
 
-`pinyin_index.bin` is a **backend DBM** — KC TreeDB or Tkrzw TreeDBM,
-selected by `--with-dbm` at libpinyin's build time. It is NOT a
-MemoryChunk/mmap file (those are the per-library `.bin` files: P1 scope).
+`pinyin_index.bin` is a **backend DBM** — KC TreeDB, Tkrzw TreeDBM or
+Berkeley DB `DB_BTREE`, selected by `--with-dbm` at libpinyin's build
+time. It is not a `MemoryChunk` file; those are the per-library `.bin`
+files ([`data-formats.md`](data-formats.md) §2).
 
 Source: `gen_binary_files.cpp` — `ChewingLargeTable2::attach(pinyin_index.bin,
 READWRITE|CREATE)`.
@@ -39,15 +41,15 @@ struct _ChewingKey {
 };
 ```
 
-`static_assert(sizeof(ChewingKey) == 2)` verified by
-`tools/bisection/key-surface-diff.c:49`.
+`sizeof(ChewingKey) == 2`; a size probe compiled against the pinned
+headers confirmed it (recorded evidence).
 
 Packing: `((initial & 0x1f) | ((middle & 0x3) << 5) | ((final & 0x1f) << 7) | ((tone & 0x7) << 12))`.
 
 Element counts: `NUM_INITIALS = 24`, `NUM_MIDDLES = 4`, `NUM_FINALS = 18`
 (`chewing_enum.h`).
 
-Rust implementation: `oxpinyin-chewing/src/chewing_key.rs` —
+Rust implementation: `crates/oxpinyin-chewing/src/chewing_key.rs` —
 `ChewingKey::to_packed()` / `ChewingKey::from_packed()`.
 
 ## 3. Two key spaces in one DBM
@@ -106,9 +108,9 @@ alignment of `m_token`:
 
 Formula: `stride = (4 + 2*L + 3) & ~3`.
 
-Verified by a size probe compiled against the pinned headers
-(`docs/findings/libpinyin-system-data-formats-2026-09-01.md` §5):
-`sizeof(PinyinIndexItem2<1>) == 8`, not 6.
+A size probe compiled against the pinned headers confirmed
+`sizeof(PinyinIndexItem2<1>) == 8`, not 6 (recorded evidence).
+`row_format::pinyin_index::item2_stride` holds the formula.
 
 **Any Rust reader must stride by `sizeof`, not by the field sum.**
 
@@ -174,9 +176,10 @@ matching records.
   (byte order).
 - Tkrzw: `tkrzw_dbm_open` with no comparator → default
   `LexicalKeyComparator` (unsigned byte order).
+- Berkeley DB: `DB_BTREE` with no `set_bt_compare` → byte-wise `memcmp`.
 
-Both are consistent with oxpinyin-store's existing key-ordering
-contract.
+All three are consistent with the store's key-ordering contract
+([`store-key-ordering.md`](store-key-ordering.md)).
 
 ## 11. The DBM is opened lazily
 
@@ -187,11 +190,14 @@ to per-keystroke lookups.
 
 ## 12. Rust implementation
 
-- `crates/oxpinyin-data/src/chewing_table.rs` — ChewingTable: the Rust
-  equivalent of `ChewingLargeTable2`. Key encoding, value decoding with
-  correct ABI stride, search semantics matching the upstream.
-- `crates/oxpinyin-data/src/chewing_table.rs` — ChewingDictionary:
-  bridges `ChewingTable` to the `Dictionary` trait via `SyllableKey` →
-  `ChewingKey` conversion.
-- `crates/oxpinyin-store/src/lib.rs` — `RawReadStore` trait: unframed
-  key access for consuming libpinyin's flat-keyspace DBM files directly.
+- `crates/oxpinyin-data/src/row_format.rs` (`pinyin_index`) — the key
+  encoders, the record decoder and the ABI stride, shared with the
+  `gen_binary_files` writer in `oxpinyin-utils`.
+- `crates/oxpinyin-data/src/chewing_table.rs` — `ChewingTable`: the Rust
+  equivalent of `ChewingLargeTable2`. It holds the search semantics and
+  the prefix probe.
+- `crates/oxpinyin-data/src/dict.rs` — `SystemDictionary` and
+  `AddonDictionary`: they implement the `Dictionary` trait over
+  `ChewingTable` and convert `SyllableKey` → `ChewingKey`.
+- `crates/oxpinyin-store/src/lib.rs` — `RawReadStore`: unframed key
+  access to libpinyin's DBM files.

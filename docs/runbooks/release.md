@@ -1,6 +1,6 @@
 # Release — cutting one and what the pipeline gates
 
-`docs/packaging.md` is the design record (cargo-c, the installed tree,
+[`docs/packaging.md`](../packaging.md) is the design record (cargo-c, the installed tree,
 the four version streams, the distro recipes). This is the procedure.
 
 ## Trigger
@@ -26,9 +26,9 @@ and attaches them with a `SHA256SUMS` to the release.
    (`just abi alloc-pairing`; CI runs it on every change).
    Linux only — `--static-only` is the portable half.
 5. Frozen pins unchanged since the last verified run, or re-verified
-   (`goldens-and-pins.md`).
-6. Version streams agree (`docs/packaging.md`, "The four version
-   streams"): the drop-in identity is the pin's libpinyin version
+   ([goldens and pins](goldens-and-pins.md)).
+6. Version streams agree ([the four version
+   streams](../packaging.md#the-four-version-streams)): the drop-in identity is the pin's libpinyin version
    (`just packaging pc-version`; CI's `python -m tools.dev.packaging
    check-pc-version` holds the manifests to it); the crate version is the workspace's `0.x` lockstep.
 
@@ -54,8 +54,8 @@ just packaging release-rpm  kyotocabinet <version> target/release-stage/kyotocab
 just packaging release-arch kyotocabinet <version> target/release-stage/kyotocabinet <outdir> --data=<arch data dir> --data-version=<ver>  # without --data the package cannot init on the system it replaced
 ```
 
-Each maker's header states its arguments; the workflow is the reference
-invocation.
+`tools/dev/packaging.py` states each maker's arguments; the workflow is the
+reference invocation.
 
 The staged tree is the complete install (runtime + dev); the makers
 split it the way each distro splits libpinyin.

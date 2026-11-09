@@ -1,7 +1,8 @@
 # Pin-built libpinyin on arm64: five non-crash contract cases, two out-of-range float-to-`guint32` stores (#1137)
 
-Recorded 2026-10-24 UTC. No captures or logs are committed; the commands
-below reproduce every figure.
+Recorded 2026-10-24 UTC. No captures or logs are committed. The
+observations are recorded evidence; the disassembly commands below
+reproduce the instruction figures.
 
 This document diagnoses the five #1132 contract cases that exit 0 and
 are byte-identical between the amd64 pin and oxpinyin, but return a
@@ -69,8 +70,7 @@ the predicted-prefix branch, which reads no bigram.
   and
   `e90429560584cf9dfee345d41e608092032d3a1c7248e04feeedc899dcfd24b5`,
   equal to the `_linux_arm64` rows of `tools/oracle/oracle-pin.txt`.
-  Build and host details are in
-  [`oracle-arm64-1132.md`](oracle-arm64-1132.md).
+  Build and host details were recorded in #1132.
 - Observations: the arm64 side is #1132's `--observations` JSONL for the
   13 excluded cases (`arm64-13-{bdb,kc,tkrzw}.jsonl` in that lane). The
   amd64 side is the #1132 amd64 capture recorded in issue comment
@@ -136,8 +136,8 @@ any figure below.
 ### Case input
 
 Both `row58-unsigned-score-*` cases do the same thing; `-on` sets the
-`DYNAMIC_ADJUST` bit and `-off` clears it. The probe is
-`row58_signed_score` in [archived contract diff source](https://github.com/shenghaoc/oxpinyin/blob/1b91c898795b6edd8b92dd1fecf65ec6f4d1a434/tools/bisection/contract-diff.py):
+`DYNAMIC_ADJUST` bit and `-off` clears it. The probe (recorded
+evidence) does this:
 
 1. Import one phrase `我甲甲` (`wo3'jia3'jia3`) with count
    `1431655631`. `_add_phrase` stores `count * 3`
@@ -428,7 +428,7 @@ exclusions because their keys do not split the two architectures:
 
 - **The host scanner.** The inputs are `1e6`, `1.5` and `2`, all
   ordinary decimal `%f` spellings accepted by any conforming C library.
-  The `host_scanf` marker in [archived contract diff source](https://github.com/shenghaoc/oxpinyin/blob/1b91c898795b6edd8b92dd1fecf65ec6f4d1a434/tools/bisection/contract-diff.py) covers only the malformed
+  The `host_scanf` marker covers only the malformed
   exponent-without-digits spellings (`1e` and `0x1p`); it does not cover
   these cases. A scanner that rejected them would fail init, not reorder
   candidates; the pin exits 0 and returns the full list.
@@ -490,42 +490,18 @@ here.
 
 ## Oxpinyin's position
 
-**Superseded 2026-10-30 UTC (#1416).** The low-32-bit imitation
-described below was removed under decision-order limb 3 (processor and
-compiler behaviour is not reproduced; [source policy](../source-policy.md#internal-language-artefacts)). `oxpinyin_engine::session::
-amplified_frequency_with_bigram`, which the predicted rows now call too,
-stores the score with Rust's `as u32`: in range it truncates like both
-pins; a negative or NaN score is 0 and a score at or above 2³² is
-`0xffffffff`, which is what the arm64 pin's `fcvtzu` stores. The
-amd64-only wrap is class (b) (C leaves the conversion undefined), held
-POLICY-ACCEPTED by the cases named in `upstream-divergences.md`. The
-text below records the position at the time of the #1137 reading.
-
-Oxpinyin reproduced the amd64 pin, not the arm64 pin, on both
-architectures, and that was the Stage 2 target (the contributor rules, "Stage 2";
-`docs/findings/compatibility-policy.md` row 83). The relevant code was:
-
-- Predicted candidates: `oxpinyin_capi::predict::amplified_frequency`
-  computes the same `f32` expression and converts with
-  `u64::from(score as i64 as u32)`, which keeps the low 32 bits of the
-  x86-64 `cvttss2si` result for finite in-range scores. It is the same
-  law as `oxpinyin_engine::session::guint32_of_score`, which the engine
-  uses for ordinary candidate lists.
-- Ordinary candidates, both facades:
-  `oxpinyin_engine::session::amplified_frequency_with_bigram` and
-  `guint32_of_score` (`crates/oxpinyin-engine/src/session/mod.rs`). The
-  latter returns 0 for non-finite or 64-bit-out-of-range scores, which
-  is the low 32 bits of `cvttss2si`'s `INT64_MIN`.
-- Candidate order: `oxpinyin_engine::session::glib_rank_sort` and
-  `RankKey::pin_compare` reproduce the pin's `guint32` subtraction and
-  GLib's merge, as row 83 records.
-
-Both paths therefore produce `0x27318a00` for the `row58` candidate and
-`2³² - k` for the zhuyin negative frequencies on arm64 as well as amd64.
-That is why the arm64 subject hashes equal the amd64 pin hashes in the
-#1132 table. No oxpinyin change is owed. No case shows oxpinyin
-depending on pin undefined behaviour beyond the deliberate
-`cvttss2si` reproduction that row 83 already records.
+`oxpinyin_engine::session::amplified_frequency_with_bigram` computes the
+`f32` score for ordinary and predicted rows and stores it with Rust's
+`as u32` (#1416). In range it truncates like both pins. A negative or NaN
+score is 0, and a score at or above 2³² is `0xffffffff`, which is what the
+arm64 pin's `fcvtzu` stores. Processor and compiler behaviour is not
+reproduced (decision-order limb 3,
+[source policy](../source-policy.md#internal-language-artefacts)). The
+amd64 pin's low-32-bit wrap is class (b), because C leaves the conversion
+undefined; the cases that tell the two apart are POLICY-ACCEPTED, named in
+`upstream-divergences.md` and recorded in the policy file below. Candidate
+order is `candidate::rank_by_frequency`
+([1297-candidate-numeric-sort](1297-candidate-numeric-sort.md)).
 
 ## Proposed upstream issues
 
@@ -622,38 +598,18 @@ git -C /tmp/libpinyin-074a2219 checkout \
   074a2219c90feaf962d0d24f034514033ece5f99
 ```
 
-amd64 objects (the published image, bdb cell):
-
-```sh
-TAG=$(python -m tools.oracle.image image-tag)
-TOKEN=$(curl -fsSL \
-  "https://ghcr.io/token?scope=repository:shenghaoc/oxpinyin-oracle:pull" \
-  | jq -r .token)
-DIGEST=$(curl -fsSL -H "Authorization: Bearer $TOKEN" \
-  -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' \
-  "https://ghcr.io/v2/shenghaoc/oxpinyin-oracle/manifests/$TAG" \
-  | jq -r '.layers[0].digest')
-curl -fsSL -H "Authorization: Bearer $TOKEN" \
-  "https://ghcr.io/v2/shenghaoc/oxpinyin-oracle/blobs/$DIGEST" \
-  -o /tmp/oracle-amd64.tgz
-mkdir -p /tmp/oracle-amd64 && tar xzf /tmp/oracle-amd64.tgz \
-  -C /tmp/oracle-amd64
-shasum -a 256 \
-  /tmp/oracle-amd64/opt/pinyin-oracle/bdb/lib/libpinyin.so.15.0.0 \
-  /tmp/oracle-amd64/opt/pinyin-oracle/bdb/lib/libzhuyin.so.15.0.0
-# 754499651c302efd91fe7f72dd6a791978400b268cb6206d2ebe644015721f30
-# cf4ccbce9f70f6c7e412b92a52a243ba64fdea1ff197cbc44019c6b85650d53b
-```
-
-arm64 objects: build with the recipe in
-[`oracle-arm64-1132.md`](oracle-arm64-1132.md), then verify
+Objects: a pin-built bdb prefix for each architecture
+(recorded evidence), verified against the SHA-256 values in
+`tools/oracle/oracle-pin.txt`:
 
 ```sh
 shasum -a 256 \
   <prefix>/bdb/lib/libpinyin.so.15.0.0 \
   <prefix>/bdb/lib/libzhuyin.so.15.0.0
-# 473187d8d040b8a5763a188509d6be031e224a712ad9b7716defdb4ff1293a2f
-# e90429560584cf9dfee345d41e608092032d3a1c7248e04feeedc899dcfd24b5
+# amd64: 754499651c302efd91fe7f72dd6a791978400b268cb6206d2ebe644015721f30
+#        cf4ccbce9f70f6c7e412b92a52a243ba64fdea1ff197cbc44019c6b85650d53b
+# arm64: 473187d8d040b8a5763a188509d6be031e224a712ad9b7716defdb4ff1293a2f
+#        e90429560584cf9dfee345d41e608092032d3a1c7248e04feeedc899dcfd24b5
 ```
 
 The conversion sites (LLVM objdump; GNU objdump uses the same numeric
@@ -661,7 +617,7 @@ The conversion sites (LLVM objdump; GNU objdump uses the same numeric
 
 ```sh
 P=/tmp/libpinyin-074a2219
-A=/tmp/oracle-amd64/opt/pinyin-oracle/bdb/lib
+A=<amd64-prefix>/bdb/lib
 R=<arm64-prefix>/bdb/lib
 
 # pinyin _compute_frequency_of_items, both targets
@@ -693,33 +649,8 @@ objdump -dlS -C --no-show-raw-insn --prefix-strip=3 --prefix=$P \
   --start-address=0x79880 --stop-address=0x798a0 $R/libpinyin.so.15.0.0
 ```
 
-The five contract cases reproduce with the maintained driver command:
-
-```text
-[archived run contract diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-contract-diff.sh) bdb $PINYIN_ORACLE_PREFIX \
-  target-bdb/debug/libpinyin_capi.so target-bdb/debug/libzhuyin_capi.so \
-  -- --run-platform-excluded \
-  --cases row58-unsigned-score-off,row58-unsigned-score-on,table-conf-lambda-million-zhuyin,table-conf-lambda-one-and-a-half-zhuyin,table-conf-lambda-two-zhuyin \
-  --observations obs-bdb.jsonl
-```
-
-`--run-platform-excluded` is required on arm64: without it the five
-cases are SKIPs and `obs-bdb.jsonl` stays empty. With it, each case runs
-and a JSON line on stderr states `override: "platform-excluded"`, the
-registry reason and `note: "not an ordinary gate"`; the stdout verdict is
-then the ordinary MATCH/DIFFER.
-The flag does not bypass the backend `cells=` skip or any other skip
-kind, so a case whose fixture belongs to another cell still prints SKIP.
-On amd64 the flag changes nothing because the platform check does not
-fire. On arm64 this command exits 1 by design: the five selected cases
-are the differences this document diagnoses, so the driver reports five
-`DIFFER` verdicts; it is the reproduction, not a passing gate.
-
-The arm64 side needs the arm64 oracle and subject from #1132; the amd64
-side needs the amd64 oracle and subject. The #1132 comment records the
-amd64 command; `oracle-arm64-1132.md` records the arm64 one and the
-13-case hashes. The five arm64-pin rows quoted above are in
-`arm64-13-bdb.jsonl`.
+The five contract cases are recorded evidence from the #1132 captures;
+the two `row58-unsigned-score-*` cases are the policy cases below.
 
 ## Limits
 

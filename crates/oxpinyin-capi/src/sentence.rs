@@ -566,8 +566,8 @@ pub extern "C" fn pinyin_guess_candidates(
     );
     for (window_index, cand) in candidates.iter().enumerate() {
         // The engine's remaining-raw-input `Fallback` row is the
-        // session-API affordance (`session-api.md`: it keeps `Space`
-        // and `select` meaningful before a decoder result exists) —
+        // session-API affordance (`session-api.md`: it keeps `select`
+        // meaningful when no phrase is found) —
         // the pin has no raw-input fallback: an empty matrix answers
         // false (`pinyin.cpp:2193`), an empty result answers true
         // with no rows. The C ABI translates the engine shape, it

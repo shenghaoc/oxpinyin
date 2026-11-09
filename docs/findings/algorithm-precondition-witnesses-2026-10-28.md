@@ -1,10 +1,10 @@
 # Reachable algorithm-precondition witnesses
 
-Date: 2026-10-28 UTC (`date -u`). Diagnostic tools based on oxpinyin
-`1cb70696ecf8f80aa1fdcf3e2ba62ba7e0d27fd7`; no production changes.
-Source read: a clean libpinyin checkout at
-`074a2219c90feaf962d0d24f034514033ece5f99`, independently fetched and
-verified at the same commit by `python3 tools/oracle/build.py`.
+Date: 2026-10-28 UTC. Recorded evidence, taken with diagnostic tools at
+oxpinyin `1cb70696ecf8f80aa1fdcf3e2ba62ba7e0d27fd7`. Those tools are no
+longer in the tree, and the record has no current reproduction. Source
+read: a clean libpinyin checkout at
+`074a2219c90feaf962d0d24f034514033ece5f99`.
 
 ## Results
 
@@ -89,12 +89,11 @@ The equality relation is not transitive.
 uses a qsort-style comparison and promises a stable sort. The captured
 triple violates the consistent total ordering requirement in
 [C11 N1570 §7.22.5 paragraph 4](https://www.open-std.org/jtc1/sc22/wg14/www/docs/n1570.pdf).
-This is a reachable triple, not the illustrative arbitrary-score triple
-in `921-927-glib-sorts`.
+This is a reachable triple, not an illustrative arbitrary-score triple.
 
 ## Inputs and environment
 
-`tools/bisection/nbest-precondition-cases.tsv` is the complete input list:
+The complete input list was 138 spellings:
 20 divided-table spellings and 85 concatenated resplit-table spellings
 from `src/storage/special_table.h:10–29,33–117 at 074a2219`, 29 additional
 segmentation/ambiguity fixtures, and four Microsoft double-pinyin strings
@@ -115,31 +114,9 @@ the model in `tools/oracle/oracle-pin.txt`; both data manifests verified.
 The patch-manifest identity was
 `7cf51d5b3496eddfcfd695017c76690f4986fba96a3e7d1394658613e79d8be0`.
 
-## Reproduction
+## Related records
 
-Run from the repository root with the environment above and the setup in
-`docs/runbooks/setup.md`. `PINYIN_ORACLE_PREFIX` names an unpatched BDB
-reference prefix with its system data. Use a fresh diagnostic prefix:
-
-```text
-python3 tools/oracle/build.py --libs-only --dbm bdb \
-  --apply-patches tools/bisection/patches/nbest-tails-dump \
-  --work-dir target/algorithm-preconditions/build \
-  --prefix target/algorithm-preconditions/pin
-PINYIN_ORACLE_DBM=bdb the recorded runner nbest-train-diff \
-  --pin-witness-cases tools/bisection/nbest-precondition-cases.tsv \
-  --prefix target/algorithm-preconditions/pin \
-  --data "$PINYIN_ORACLE_PREFIX/lib/libpinyin/data"
-uv run --no-project --managed-python python -X lazy_imports=normal \
-  tools/dev/runners.test.py NbestWitnessTests -v
-just fmt --check
-git diff --check
-```
-
-The diagnostic library and existing C driver built successfully; all five
-focused runner tests passed. No shipping library was changed, so shipping
-size measurements and production differentials do not apply. Policy and
-upstream drafts are in `docs/findings/compatibility-policy.md` and
-`docs/findings/upstream-report-drafts.md`. The separate legacy
-`print_surface` sentence-index defect is tracked in
+The policy is in [compatibility-policy.md](compatibility-policy.md), and the
+upstream draft is in [upstream-report-drafts.md](upstream-report-drafts.md).
+The separate legacy `print_surface` sentence-index defect is tracked in
 [#1345](https://github.com/shenghaoc/oxpinyin/issues/1345).

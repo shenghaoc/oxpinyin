@@ -19,8 +19,7 @@ it, with the before/after numbers in the message.
 
 ### The next pin capture
 
-The Rust capture programs were deleted on 2026-11-06 UTC, and Python is the
-capture side. Each of these needs a Python regenerator in the next pin capture,
+The Rust capture programs are deleted, and Python is the capture side. Each of these needs a Python regenerator in the next pin capture,
 alongside the [user-profile interchange captures](oracle.md#user-profile-interchange).
 The behaviours the retired C drivers in `tools/bisection/` covered alone are observations
 of the [pin capture](pin-captures.md). None of these regenerators exists yet:
@@ -33,8 +32,7 @@ of the [pin capture](pin-captures.md). None of these regenerators exists yet:
 | F-C | `fixtures/foundation/f-c.txt` |
 | ZH | `fixtures/w4/oracle-zhuyin-parse.txt` |
 
-The live utility differentials in `crates/oxpinyin-utils/tests/` were deleted on
-2026-11-07 UTC. The frozen utility cases cover what they compared, except for the
+The live utility differentials in `crates/oxpinyin-utils/tests/` are deleted. The frozen utility cases cover what they compared, except for the
 observations below. Each runs the pin-built utility in a private copy of
 `fixtures/w3/<ext>/` on the bdb, kc and tkrzw cells, as the `utility/<cell>/kmm-import-unigram`,
 `utility/<cell>/gen-ngram` and `utility/<cell>/gen-deleted-ngram` observations of the
@@ -81,32 +79,32 @@ residual (496 1-best, 492 distinct-set and 491 ordered of 500) is asserted by th
 
 ## 3. The oracle pin
 
-`tools/oracle/oracle-pin.txt` is the authoritative pin record (libpinyin
-version and commit, ibus-libpinyin tag and commit, model SHA-256, DBM).
-The builder and host model fetcher both read the model archive digest there.
-Changing the record changes the recipe hash and invalidates prefixes from
-the old recipe. Change every field of one pin move together. The
-2026-09-06 move to 074a2219 is the worked example
-(`oracle-pin-074a221-verification`,
-`docs/testing/oracle-environment.md`, "Amendment — pin 074a2219"):
+This is the only procedure for changing the oracle pin.
+[`tools/oracle/oracle-pin.txt`](../../tools/oracle/oracle-pin.txt) is the
+authoritative pin record (libpinyin version and commit, ibus-libpinyin tag
+and commit, model SHA-256, DBM). The builder and host model fetcher both read
+the model archive digest there. Changing the record changes the recipe hash
+and invalidates prefixes from the old recipe.
+[Pin identity](oracle.md#pin-identity) explains each field. Change every
+field of one pin move together, in one commit:
 
-1. Bump the pin fields; rebuild the oracle (`oracle.md`); the build
-   verifies the fetched commit by `git rev-parse`.
-2. Re-run the W2 candidate surface (must stay byte-identical unless the
+1. Edit the pin fields in `oracle-pin.txt`. Rebuild
+   every cell from an empty prefix ([oracle](oracle.md#2-build-the-oracle));
+   the build verifies each fetched commit by `git rev-parse`.
+2. Re-run the W2 candidate surface (it must stay byte-identical unless the
    upstream change is the point), the sentence-surface counts, the
    `_check_offset` and abort families, and the C-boundary tests
    ([oracle](oracle.md#the-c-boundary-tests)).
-3. Record what moved, what did not, and what is build-nondeterministic
-   (the six DBM-backed data files are; issue #358) in a verification
-   finding; amend `oracle-environment.md`.
-4. The drop-in identity (`libpinyin-<version>` header dir, `.pc` version)
-   moves with the pin: the capi builds read `libpinyin_tag` from
+3. Record in the pull request what moved, what did not, and what is
+   build-nondeterministic. The six DBM-backed data files are
+   build-nondeterministic at any pin
+   ([regenerate the data](oracle.md#regenerate-the-data-after-every-pull)).
+4. Move the drop-in identity (`libpinyin-<version>` header directory, `.pc`
+   version) with the pin. The capi builds read `libpinyin_tag` from
    `oracle-pin.txt` and refuse a `[package.metadata.capi]` table that
-   disagrees, so the bump edits both capi `Cargo.toml` files in the same
-   commit; then run `just packaging check-pc-metadata` against the
-   rebuilt pin (issue #537).
+   disagrees, so edit both capi `Cargo.toml` files in the same commit.
+   Then run `just packaging check-pc-metadata` against the rebuilt pin
+   (issue #537).
 
 Re-run the pins after any rebase that touches engine, capi or data
 ([rebase procedure](../../CONTRIBUTING.md#checkpoints-and-rebases)); whoever merges later re-runs them.
-
-2026-09-27: #612 corrects oxpinyin-generated `RECORDS_GOLDEN`’s `.dbin` MODIFY token from `0x01000001` to local slot `0x00000001`; pin `074a2219` (`phrase_index.cpp:394–442`) reproduces all 62 payload bytes with only offset 25 changing `01` → `00` (maintainer-approved).

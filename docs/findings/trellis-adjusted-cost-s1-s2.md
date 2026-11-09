@@ -66,13 +66,12 @@ The 500-row and 8,592-input live sentence checks require real-table inputs and
 are ignored by ordinary CI. Their active tests validate fixture structure and
 the existing six-residual membership, not new decoder outputs. Frozen corpus
 generation and capture-replay tests validate their committed inputs/captures.
-No frozen corpus or golden is regenerated. No workflow invokes the legacy
-`nbest-train-diff` gate; its verdict machinery is not extended here.
+No frozen corpus or golden is regenerated.
 
-The focused BDB ranking selection reuses [archived contract diff source](https://github.com/shenghaoc/oxpinyin/blob/1b91c898795b6edd8b92dd1fecf65ec6f4d1a434/tools/bisection/contract-diff.py) and its complete
-sentence-rank observer, including the captured S1/S2 spellings and table-off
-controls. Every intentionally moved case is listed below and reported
-`POLICY-ACCEPTED`; other observations failed. The broader
+The focused BDB ranking selection used the complete sentence-rank
+observer, including the captured S1/S2 spellings and table-off controls
+(recorded evidence). Every intentionally moved case is listed below and
+reported `POLICY-ACCEPTED`; other observations failed. The broader
 behavioral campaign, including corpus-wide movements, is PR4.
 
 ## Exact verified-cell expectations
@@ -196,29 +195,16 @@ These checks used the supported Debian cloud environment. Tkrzw 1.0.34 passed
 the health probe; `ldd` showed the pin and subject loading the same sound
 library. No Ubuntu host was used.
 
-Reproduce the #1398 selection after the supported cloud setup, selecting each
-provisioned cell and its matching debug artifacts from
-`just cell-artifacts --artifacts pinyin-capi`:
-
-```text
-the recorded runner contract-diff "$PINYIN_ORACLE_DBM" "$PINYIN_ORACLE_PREFIX" \
-  "${CARGO_TARGET_DIR:-target/cells/$PINYIN_ORACLE_DBM}/debug/libpinyin_capi.so" -- \
-  --cases longer-normal-frequency-dedup,longer-normal-frequency-tie,longer-normal-disabled,s2-nbest-longer-normal-precedence
-```
-
 Original repair verification: 196 unit tests, 39 integration tests and four doctests
 passed. The focused contract-driver and verdict harnesses passed 163 and 35
 tests respectively. Formatting and engine Clippy passed. No existing session,
 replay or frozen-corpus golden changed; the five comparator expectation changes
 are listed above.
 
-```text
+```sh
 cargo fmt --all --check
-just clippy --locked -p oxpinyin-engine --all-targets -- -D warnings
+cargo clippy --locked -p oxpinyin-engine --all-targets -- -D warnings
 cargo test --locked -p oxpinyin-engine
-just test-tools [archived contract diff.test source](https://github.com/shenghaoc/oxpinyin/blob/1b91c898795b6edd8b92dd1fecf65ec6f4d1a434/tools/bisection/contract-diff.test.py) [archived contract verdict.test source](https://github.com/shenghaoc/oxpinyin/blob/1b91c898795b6edd8b92dd1fecf65ec6f4d1a434/tools/bisection/contract_verdict.test.py)
-bash [archived compat source](https://github.com/shenghaoc/oxpinyin/blob/3b7a115a00be2b7d159fd6ca01d9b72e42565d68/tools/oracle/compat.sh) --runtime podman --cell bdb --runners contract-diff --cases trellis-adjusted-score/resplit-jianai-on,trellis-adjusted-score/resplit-jianai-off,trellis-adjusted-score/divided-bian-on,trellis-adjusted-score/divided-bian-off,glib-sort-tails-pinyin,glib-sort-tails-zhuyin,nbest-user-table-order-pinyin,nbest-user-table-order-zhuyin,j-choose-nbest-diff-result,final-step-pinyin-ni-20,final-step-pinyin-nihao-20,final-step-pinyin-n-28,table-conf-lambda-one,table-conf-lambda-one-zhuyin,table-conf-lambda-one-and-a-half,table-conf-lambda-two,table-conf-lambda-million,itemless-user-total-guess-above-one,itemless-user-total-guess-above-one-control,import-wrapped-facade-total-guess
-uv run --no-project --managed-python python -X lazy_imports=normal [archived run all source](https://github.com/shenghaoc/oxpinyin/blob/4b5e821ea6ead7fc282678382512efebed755955/tools/bisection/run-all.py) --runners contract-diff --cells bdb,kc,tkrzw --cases table-conf-row-removed-gb,table-conf-not-used-gb,table-conf-lambda-negative-half,table-conf-lambda-negative-two,table-conf-lambda-one-and-a-half,table-conf-lambda-two,table-conf-lambda-million
 ```
 
 The #1400 registration check used the supported cloud setup on native Debian
@@ -227,8 +213,7 @@ oracle/data manifests for each cell, and the sound tkrzw 1.0.34 runtime.
 
 The compatibility run used Debian trixie Linux amd64 (recorded evidence), the matching
 unpatched BDB reference and verified model20 data. Native tests and shipping
-builds used Ubuntu 26.10 x86_64 and repository Rust 1.97.1. The harness wrapper
-requires disk-backed TMPDIR, as documented in the setup guide.
+builds used Ubuntu 26.10 x86_64 and repository Rust 1.97.1.
 
 Both revisions' shipping files were built in the same run with the BDB
 release-stage recipe and equivalent source-path remapping, and verified

@@ -12,7 +12,7 @@
   nor availability is involved, and a language-neutral requirement for the
   line tagger would not mention a five- or six-byte step.
 - **Pin:** libpinyin 2.11.92 at 074a2219, `src/storage/tag_utility.cpp`
-  blob `232a07dc`. GLib of the reference image: 2.84.4 (trixie). Facade:
+  blob `232a07dc`. GLib at the time of the record: 2.84.4 (recorded evidence). Facade:
   neither; tools only. Backend: none (the tagger reads text).
 - **Pin derivation:** `split_line` (`tag_utility.cpp:118-169`) steps every
   character with `g_utf8_next_char` (`:122`, `:132`, `:136`, `:141`,
@@ -26,7 +26,9 @@
   `g_unichar_isgraph` are false for it.
 - **Rust counterpart:** `oxpinyin_input::tool::utf8_next_char_step`, the
   length of the UTF-8 sequence the byte leads (`u8::leading_ones` of 2, 3
-  or 4), else 1. Its one caller is `oxpinyin_utils::taglib::split_line`.
+  or 4), else 1. Its one caller is `oxpinyin_kmm::taglib::split_line`
+  (`crates/oxpinyin-kmm/src/taglib.rs`, re-exported as
+  `oxpinyin_utils::taglib`).
   `g_utf8_get_char`, `g_unichar_isspace` and `g_unichar_isgraph` are still
   GLib's, through `glib-sys`.
 - **Forward trace:** `k_mixture_model_to_interpolation` stdin →
@@ -75,16 +77,13 @@
   | `F5 'abc d'` (control) | `["", "d"]` | `["", "d"]` |
 
 - **Tests:** `split_line_steps_one_byte_from_a_byte_that_leads_no_sequence`
-  (`crates/oxpinyin-kmm/src/taglib.rs`) holds the oxpinyin tokens and
-  the control, and `tool.rs`'s boundary test holds the step for every byte
-  class. No `tool-diff` case reaches these bytes: the 16 registered
-  `k_mixture_model_to_interpolation` cases feed `stdin.text`, a JSON
-  string, so their input is valid UTF-8 by construction. The cases above
-  are therefore unit cases with derived pin results, not contract-diff
-  cases. The nightly `KMM live: to_interpolation` gate and the registered
-  cases on the tkrzw cell cover valid input.
+  (`crates/oxpinyin-kmm/src/taglib.rs`) holds the oxpinyin tokens and the
+  control, and `oxpinyin-input`'s `tool.rs` boundary test holds the step
+  for every byte class. The frozen `k_mixture_model_to_interpolation`
+  cases in `crates/oxpinyin-utils/tests/` feed valid UTF-8 text, so none
+  reaches these bytes; the cases above are unit cases with pin results
+  derived from source.
 - **Prior rulings:** none reversed.
-- **Evidence:** `cargo test -p oxpinyin-input -p
-  oxpinyin-utils -p oxpinyin-training`; the pin derivation above, from the
-  source.
+- **Evidence:** the pin derivation above, from source, and the tests
+  above (`cargo test -p oxpinyin-input -p oxpinyin-kmm -p oxpinyin-utils`).
 - **Conclusion:** accepted, 2026-10-31 UTC.

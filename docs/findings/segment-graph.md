@@ -99,7 +99,8 @@ For each node ascending, emit by key length descending. At a fixed position a
 given length matches at most one key — the complete and initial-only
 inventories are disjoint sets of exact spellings — so there is at most one
 edge per `(node, length)` and the order is total. Edge ids follow that order,
-which is what makes the k-best tie-break in `kbest-search.md` well defined.
+which is what makes the first-found tie-break of `SegmentGraph::fewest_keys`
+well defined.
 
 ## Reachability and consumed length
 
@@ -128,7 +129,7 @@ remainder-starting; and maintainer decision 3 in
 `parser-spec-contradiction-incomplete-keys` leaves the disagreement open.
 The graph follows the frozen SPEC. These are the only two corpus inputs where
 the graph and the pin disagree, they are named in
-the recorded graph paths implementation, and that list is where the
+`crates/oxpinyin-core/tests/graph_paths.rs`, and that list is where the
 decision will show up when it is made.
 
 Settling an open question as a side effect of building something else would
@@ -159,17 +160,9 @@ It was recovered from a W2-T3 live run, in two halves:
   F-E-01 missing-string shape). They have no usable path and are excluded,
   which is why the fixture holds 10,459 and not 10,465.
 
-The W2 comparator and `parity-diff` have been retired. The committed fixture
-remains the portable regression input; it does not need regeneration for an
-ordinary test run. `oracle-paths` is retained only to import an existing pair
-of historical W2 logs:
-
-```text
-recorded pinyin-oracle invocation (retired package):  --bin oracle-paths -- /path/to/historical-w2-run /tmp/oracle-paths.txt
-```
-
-The unique live assertions for the six excluded sentinel inputs are retained
-in `tests/graph_paths.rs`, alongside checks of the production graph.
+The committed fixture is the portable regression input. It has no
+regenerator: the W2 logs it came from no longer exist, so it stays frozen
+(`docs/runbooks/goldens-and-pins.md`).
 
 Format: a leading `#` header block, then one record per line with three
 TAB-separated fields — escaped input, consumed length, and the path in
@@ -180,7 +173,7 @@ emits a raw TAB.
 
 ## Acceptance
 
-Measured by the recorded graph paths implementation, in portable CI:
+Measured by `crates/oxpinyin-core/tests/graph_paths.rs`, in portable CI:
 
 | Check | Result |
 |---|---|

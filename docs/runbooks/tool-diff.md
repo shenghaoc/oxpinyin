@@ -1,7 +1,7 @@
 # Utility compatibility cases
 
 The pin's standalone utilities are checked by 331 ordinary Rust integration tests.
-Their results were frozen from the pin in #1656 at `b1b4c6d9` and are written in the tests as Rust values.
+Their results are frozen from the pin and written in the tests as Rust values.
 Running a test never captures the pin, reads a data file of expected results, or writes an expected value.
 
 ```sh
@@ -11,7 +11,7 @@ cargo nextest list --locked -p oxpinyin-utils
 
 The default cell is tkrzw. Select a peer with `--no-default-features --features bdb` or `--no-default-features --features kyotocabinet`.
 These tests need neither the pin nor downloaded model data. They reuse the committed `fixtures/w3/<backend>` and other shared inputs.
-As before, the frozen cases run on Unix; the existing portable utility tests also run on Windows.
+The frozen cases run on Unix; the portable utility tests also run on Windows.
 
 ## Test layout
 
@@ -66,7 +66,7 @@ A read-only case therefore has `files: &[]`, and any changed, missing or extra p
 
 Cell, OS and architecture differences are explicit arms inside the value:
 `match CELL`, `cfg!(target_os = "macos")` and `cfg!(target_arch = "aarch64")`.
-`CELL` is derived from the default store extension, as before.
+`CELL` is derived from the default store extension.
 No entry is selected at run time, and no platform falls back to another's value.
 
 Short streams are byte literals; non-ASCII text is a string literal with `.as_bytes()`.
@@ -103,6 +103,5 @@ Policy-accepted cases cite their records, which state the pin's result and its s
 ## Pin bumps and recapture
 
 Recapture is a separate, explicit maintenance step outside the test binaries.
-Open item: provide and document that external step for a future pin bump, including repeat-run stability checks and review of architecture, OS and policy variants.
-This change does not implement recapture tooling or take new pin captures.
+No recapture tooling exists yet. A pin bump must provide and document that external step, including repeat-run stability checks and review of architecture, OS and policy variants.
 Do not regenerate expected values from oxpinyin test output.

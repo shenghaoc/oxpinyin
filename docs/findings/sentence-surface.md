@@ -1,29 +1,23 @@
 # Sentence surface (W14)
 
-Date: 2026-08-17 · Current status: #1378's re-measurement at the end
-of §12 supersedes the integer-era counts and math declaration. The
-500-row gate is 496 / 492 / 491; the supplementary fixture has 8,436
-pin-equal inputs and 156 exact ruled selection residuals. The earlier
-sections retain their historical measurements and decisions.
-
+Date: 2026-08-17 · Status: **machine-read**. The current declaration is
+the `#1378 current sentence-selection residuals` subsection of §12 and the
+subsections after it. The 500-row gate is 496 / 492 / 491; the
+supplementary fixture has 8,436 pin-equal inputs and 156 exact ruled
+selection residuals. §1–§11 and the earlier §12 subsections are dated
+measurements.
 
 The three-part W14 divergence (#100): sentence candidates do not emit with
 real unigrams, the merged rows are not typed `NBEST_MATCH`, and
 `pinyin_get_sentence` returns the raw form instead of the decoded 1-best.
 This note characterizes the pinned oracle (libpinyin 2.11.91 @ 0c5e80e, tree
 at `target/oracle-pin-build/src/libpinyin-2.11.91/`, `$S` below) from source
-and from a live probe over the model20 tables.
-
-> **Amended 2026-10-04 (lane C, #542).** The third part, the raw form from
-> `pinyin_get_sentence`, is closed in code: with no n-best row the call
-> answers `false` and leaves `*sentence` untouched, as the pin does
-> (`pinyin.cpp:1470-1471`). Register row 53 in `compatibility-policy.md`
-> carries the measurement; the paragraph above is the record as filed.
+and from a live probe over the model20 tables. The third part is closed: with
+no n-best row, `pinyin_get_sentence` answers `false` and leaves `*sentence`
+untouched, as the pin does (`pinyin.cpp:1470-1471`; register row 53 in
+`compatibility-policy.md`).
 
 ## 1. Where the rows come from
-
-> **Backend removed (2026-09-20 UTC, branch `refactor/drop-redb-backend`).** The `sentence_tail::measure` re-measure (tip `4eb72efd`) and the `PINYIN_EXPORT_DIR=<exported redb>` provisioning ran on redb; the sentence-surface laws they pin are backend-independent. The figures stand as measured at the recorded tip.
-
 
 There is no `collect_sentence` upstream. The sentence surface is the n-best
 lookup plus two passes at the end of `pinyin_guess_candidates`:
@@ -55,8 +49,7 @@ AND_FREQUENCY` = 0x1e (`pinyin.h:66-69`) does **not** carry
 `m_nbest_results` is non-empty — i.e. when `pinyin_guess_sentence` ran since
 the last reset (`pinyin_reset` clears it, `pinyin.cpp:2698`; nothing else
 does). The frozen corpus profile never calls `pinyin_guess_sentence`
-([archived live source](https://github.com/shenghaoc/oxpinyin/blob/6c12717e75d0d489efed8ea29a5f316740b30402/crates/pinyin-oracle/src/live.rs), `observe_without_reset` →
-`collect_candidates`), which is why the W4 candidate fixture and the pin
+(the capture's `observe_without_reset` → `collect_candidates`), which is why the W4 candidate fixture and the pin
 suite exclude sentence rows: **a pin move when rows are correctly gated
 behind `guess_sentence` is a leak**.
 
@@ -216,9 +209,8 @@ Ported divergences (recorded, not chased):
   fallback DP's rows carry tokens too — without this, the
   `predict-diff` driver's train-then-predict flow lost the second
   phrase's token (the driver picks the NBEST row for `nihao` → `你好`,
-  which has no single token) and the user bigram never landed. Caught by
-  [archived run predict diff source](https://github.com/shenghaoc/oxpinyin/blob/75038e9390d29f16054e727d3f7de15eabfb8994/tools/bisection/run-predict-diff.sh); regression-tested green after
-  the fix.
+  which has no single token) and the user bigram never landed. The
+  prediction differential caught it (recorded evidence).
 - C ABI: `pinyin_guess_sentence` fills the rows and marks the lookup
   active (`Session::sentence_lookup_active`, cleared only by `reset`);
   while a lookup is active, `pinyin_get_sentence` answers decoded-or-
@@ -235,10 +227,10 @@ Ported divergences (recorded, not chased):
 
 `fixtures/w4/oracle-sentence-surface.txt` freezes the oracle's surface for
 a deterministic 503-input W2 sample (every 20th corpus input plus the
-`nihao` / `nihaoshijie` / `cecenihao` / `zhongguoren` anchors); regenerate
-with `recorded pinyin-oracle invocation (retired package):  --features oracle-ffi --bin
-oracle-sentence-surface`. `sentence_surface_reports_parity` pins the
-engine's agreement against it:
+`nihao` / `nihaoshijie` / `cecenihao` / `zhongguoren` anchors). The
+fixture has no regenerator today
+([goldens and pins](../runbooks/goldens-and-pins.md)). The parity test
+pinned the engine's agreement against it:
 
 - **typing and structure exact everywhere**: NBEST rows at the head in
   tail order, `n/0` first; no sentence candidate before `guess_sentence`
@@ -260,16 +252,15 @@ Before the pronunciation discount the row-0 agreement was 74.5% on a
 200-input probe — the polyphone term is the load-bearing scoring input,
 not a refinement.
 
-`sentence_surface_fixture_is_fresh` (oracle-ffi, ignored) re-captures the
-sample live and asserts the fixture matches; it passed against the pinned
-oracle at freeze time.
+At freeze time a live re-capture of the sample matched the fixture
+(recorded evidence).
 
 ## 6. W13 scheme re-measure — the C ABI n-best wiring gap
 
 Date: 2026-08-19 · main tip `489e94d` (PR #113 merge, W14 landed).
 
-The #97 verdict table re-run against the current tip through
-[archived run scheme diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-scheme-diff.sh):
+The #97 verdict table re-run at that tip through the scheme
+differential (recorded evidence):
 
 | Surface | Pre-W14 (#97) | Post-W14 (`489e94d`) |
 |---|---|---|
@@ -352,7 +343,7 @@ Re-verification:
   `guess_sentence: true`, `get_sentence(0): 你好`, `cand[0]` is
   `NBEST_MATCH` with n-best index 0, 126 candidates — byte-identical to
   the same probe against the pin-built oracle.
-- [archived run scheme diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-scheme-diff.sh) double and STANDARD bopomofo (pin model both
+- The scheme differential, double and STANDARD bopomofo (pin model both
   sides): `get_sentence` is decoded text on every input, no `(null)`,
   NBEST rows present on both surfaces. Both still end DIVERGE — the
   residual is the known tie-order class (tail order and decoded-1-best
@@ -371,7 +362,7 @@ Date: 2026-08-19 · branch `fix/w14-nbest-select-path`.
 
 **The defect.** `Session::select_inner` recorded a chosen n-best row's
 token path as `nbest_rows[list_position]` (the `kind == Sentence &&
-index < nbest_rows.len()` test, pre-fix at `session.rs:346-357`). The
+index < nbest_rows.len()` test, pre-fix). The
 NBEST-wins dedup keeps the lower-index row when two rows share a string,
 so a surviving row's list position equals its rank only while no earlier
 row was dropped. Rows `[好, 好, 浩]` present 好 (rank 0) at position 0 and
@@ -379,8 +370,8 @@ row was dropped. Rows `[好, 好, 浩]` present 好 (rank 0) at position 0 and
 and `pinyin_train` then wrote 你→好 instead of 你→浩. Upstream never had
 the problem because `pinyin_choose_candidate` keeps the chosen
 `MatchResult` on the instance (`pinyin.cpp:2511-2519`) and train walks
-that, not a positional lookup. [archived run train diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-train-diff.sh) could not see it: its
-sequence always chooses 你→好, whose candidate sits at position 0 = row
+that, not a positional lookup. The training differential could not see
+it: its sequence always chooses 你→好, whose candidate sits at position 0 = row
 0.
 
 Found while building a user-merged-costs n-best differential: training
@@ -405,7 +396,7 @@ through the list position again.
   1 with rank 2 (the shift precondition) and records 浩's tokens.
   Reverting the lookup to the positional form fails the test with
   `[0x101]` (the deduped 好 row) against `[0x102]` expected.
-- C ABI ([archived run nbest train diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-nbest-train-diff.sh), matched model20
+- C ABI (n-best training differential, recorded evidence; matched model20
   tables, export lines vs the pin-built oracle): (你→浩) × 3 exports
   `你浩|ni'hao|1242` + `你好|ni'hao|1242` — identical to the oracle, with
   你浩 doubling 138 → 414 → 1242 across rounds instead of stalling at
@@ -473,8 +464,8 @@ denominators, before the observed-successor gate.
   and the blended denominator is `system_row_total + user_total`, not
   the user total alone. Both user-trained shapes undercut the
   unigram-only branch; the system-only answer has no blended step.
-- C ABI ([archived run nbest train diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-nbest-train-diff.sh), matched model20
-  tables, pin-built oracle): the runner now diffs the **full logs** —
+- C ABI (n-best training differential, recorded evidence; matched
+  model20 tables, pin-built oracle): the runner diffed the **full logs** —
   probe surfaces included, not just the export triples. That widening is
   load-bearing: with the `count_delta` forward dropped, the export
   triples stay identical (training still lands the same user state
@@ -557,8 +548,8 @@ count + 1, total 51,051,831), and the window scan flushes each window
 token-ascending — the array order the oracle's stable
 `g_array_sort_with_data` keeps for comparator-0 pairs. The W12 Class A
 candidate residual closed to zero (10,190 / 10,190 / 98,930 of 98,930 /
-absent 0 / tie-swaps 0; `docs/testing/corpus-tail.md`,
-`pin-refreeze-2026-08` third amendment).
+absent 0 / tie-swaps 0; recorded evidence, `pin-refreeze-2026-08` third
+amendment).
 
 **This surface:** `loses_to`, the trellis, and the n-best row machinery
 are untouched — §3's trellis divergences stand. The measured agreement:
@@ -584,7 +575,7 @@ Date: 2026-08-24 · branch `feat/gfloat-accumulation-parity`
 The `488 / 385 / 379` of §5/§11 are **three comparison strictnesses over one
 set of 496 comparable inputs** (the 7 junk-leading inputs the oracle cannot
 parse are excluded — no surface on either side), not one measure at three
-surfaces. Named the way `corpus-tail.md` separates top-1 / top-5-set /
+surfaces. Named the way candidate-construction §8.2 separates top-1 / top-5-set /
 order-only:
 
 - **1-best agreement — 488/496.** `pinyin_get_sentence(0)` equal: the decoded
@@ -609,27 +600,19 @@ read-only `sentence-tail` binary finds **0 candidate-surface leaks** — the 83
 rows it labels "phrase-window" are the phrase slice shifting as the surviving-
 NBEST-row count differs (an intact phrase order seen through a shifted 6-row
 window; `guanyo` the exemplar), and the candidate surface is bit-identical on
-the same tables (`corpus-tail`: 10190/10190, absent 0, order-only 0,
+the same tables (recorded evidence: 10190/10190, absent 0, order-only 0,
 prefix-10 gap 0).
 
-Reproduce, read-only, no oracle FFI (the fixture holds the pin's answer):
-
-```text
-# PINYIN_MODEL_DIR must be a COMPLETE extracted model20 (all 18 files: the 17
-# phrase tables plus interpolation2.text). locate_model_dir rejects a partial
-# dir such as the 4-file ~/.cache/oxpinyin-data, so point it at a full extract.
-PINYIN_EXPORT_DIR=<exported redb> PINYIN_MODEL_DIR=<complete extracted model20> \
-  recorded pinyin-oracle invocation (retired package):  --release --bin sentence-tail
-```
-
-The same measurement is the gate: the integration test
-`sentence_surface_parity` (`crates/pinyin-oracle/tests/`) calls the shared
-`pinyin_oracle::sentence_tail::measure` and asserts `488 / 385 / 379` plus the
-residual invariants (`0` order-only, the `6` distinct-same). It self-skips
-when the tables are absent — the same self-skip the real-tables tier uses — so
-`cargo test --workspace` stays green without them, and fails loudly for anyone
-who runs it with them if the numbers move. A move is a deliberate re-freeze of
-this section, not a silent drift.
+The measurement is read-only and runs no pin: the fixture holds the pin's
+answer. The gate is the integration test `sentence_surface_parity`
+(`crates/oxpinyin-runtime/tests/`), which calls
+`sentence_tail::measure` over the pinned libpinyin-data package
+(`just fetch-contract-data`) and asserts the current numbers (see
+[the current declaration](#1378-current-sentence-selection-residuals)).
+A missing package is a failure. A move is a deliberate re-freeze of this
+section, not a silent drift. At the time of this subsection the gate held
+`488 / 385 / 379` plus the residual invariants (`0` order-only, the `6`
+distinct-same).
 
 **Where the 117 live.** First divergence at row 0: 8, row 1: 83, row 2: 26 (a
 shorter list first missing a rank counts at that rank);
@@ -640,14 +623,11 @@ only). The residual is **hypothesis selection**, not display order: port and
 pin keep *different* 1st/2nd/3rd survivors in the top-3, the 8 row-0 misses
 being a different global best (`跑錶` vs `炮表`, `杂拴帕清` vs `杂树安帕清`).
 
-**`tuihui` note (2026-09-19 UTC).** The example above is this section's
-`sentence_tail` configuration: exported model20 tables
-(`PINYIN_EXPORT_DIR`) against `fixtures/w4/oracle-sentence-surface.txt`.
-On P6 native pin `data/` (same-dir ABI dump, `probe-coverage-abi.md` A)
+**`tuihui` note (2026-09-19 UTC).** The example above was measured over
+exported model20 tables against `fixtures/w4/oracle-sentence-surface.txt`.
+On the pin's own `data/` (same-dir ABI dump, `probe-coverage-abi.md` A)
 the port emits `[退回, 退回, 退会]`, matching the pin — the duplicate-
-text path is among the survivors. Two table configurations, two
-survivor sets; the §12 numbers and the 6 distinct-same invariant are
-unchanged.
+text path is among the survivors.
 
 **Why it is not portable — the Phase-1 gate, now confirmed by the dump.** The
 selection runs on `gfloat m_poss`, accumulated `m_poss += log(...)` per step
@@ -667,7 +647,7 @@ tiebreak too — heap-pop order is seeded by the exact-float comparator — so n
 fixed-point transform recovers the order either.
 
 This is **not** the Class A species. Class A's `amplified_frequency`
-(`crates/oxpinyin-engine/src/session/mod.rs`) is
+(`amplified_frequency`, `crates/oxpinyin-engine/src/session/mod.rs`) is
 `(1−λ)·unigram/total·2²⁴` — multiply, divide, cast: IEEE-754 basic ops,
 correctly rounded and bit-identical on every platform, which is why it ported
 to 100%. The `gfloat` cost adds a transcendental. And the surfaces do not
@@ -707,8 +687,8 @@ this project — or a measured leak of the residual onto the candidate surface
 
 ### §12 re-freeze — 2026-09-04
 
-Re-measured at tip `4eb72efd` by `sentence_tail::measure` (redb backend;
-backend-independent, reproduced at the freeze ref and P6 bracket). The
+Re-measured at tip `4eb72efd` by `sentence_tail::measure`
+(backend-independent, reproduced at the freeze ref and P6 bracket). The
 entire move is `345af16` (P6 — run the production engine on libpinyin's
 own data): the sentence trellis's P_unigram switched from the
 interpolation2.text-derived construction (UNKNOWN_COST floor) to
@@ -776,11 +756,10 @@ The first four had different generation counts (pin/subject:
 below (#639) and they now match. The four separator rows pre-exist the
 port. No arithmetic attribution is claimed for these.
 
-Reproduction: `sentence-tail`, `sentence_surface_parity --include-ignored`,
-full 10,465-input C-ABI corpus enumeration, and
-[archived run candidate assembly diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-candidate-assembly-diff.sh) over pin-built data, plus ZIGUANG and the
-卧 selection replay; the per-cell PR tables record results and commands.
-Bulk comparison captures were ephemeral and are not retained or committed.
+Recorded evidence: `sentence_surface_parity`, the full 10,465-input C-ABI
+corpus enumeration and the candidate-assembly differential over pin-built
+data, plus ZIGUANG and the 卧 selection replay. The per-cell PR tables
+record the results. Bulk comparison captures were not retained.
 The #574 coverage member corrects the sample header and adds four inputs
 with native-cost assertions, detecting a +1 per-step mutation even when
 the visible sentence surface does not move.
@@ -796,16 +775,14 @@ test in sentence_surface_parity.rs asserts native first-sentence costs
 phrase expansion must fail; reverting it must pass. These assertions
 cover the four recovered G-m1 inputs even if the port's retention changes
 which visible rows the mutation alters. This extension changes coverage,
-not scoring or selection. Run both tests with --include-ignored under
-PINYIN_EXPORT_DIR and PINYIN_MODEL_DIR. No mutable test hook ships.
+not scoring or selection. The companion test is
+`sentence_surface_detects_per_step_score_shift`, which now asserts the
+f32 bits of each first-sentence log possibility. No mutable test hook ships.
 
-The fixture generator keeps these four inputs as anchors. The old header
-count included `#yaguai`, whose rendered capture is a comment to the reader;
-the corrected header counts readable data rows and retains capture order.
-Regenerate with the unpatched tkrzw oracle using `cargo run --release
---locked <retired oracle package> --no-default-features --features tkrzw,oracle-ffi
---bin oracle_sentence_surface` and `PINYIN_ORACLE_PREFIX` pointing to that
-pin-built prefix.
+These four inputs are anchors of the fixture. The old header count included
+`#yaguai`, whose rendered capture is a comment to the reader; the corrected
+header counts readable data rows and retains capture order. The fixture has
+no regenerator today ([goldens and pins](../runbooks/goldens-and-pins.md)).
 
 ### Resplit after a separator — 2026-10-07 UTC (#639)
 
@@ -846,7 +823,7 @@ There is no earlier-step fallback. A zero-sized input matrix instead
 returns false before clearing existing results (:743–748).
 
 On the retained bdb oracle under Fedora 44, both facades match in **50/50**
-`final-step-*` cases of [archived contract diff source](https://github.com/shenghaoc/oxpinyin/blob/1b91c898795b6edd8b92dd1fecf65ec6f4d1a434/tools/bisection/contract-diff.py): `ba'kua`, `li'shi`, `xi'an`,
+`final-step-*` cases (recorded evidence): `ba'kua`, `li'shi`, `xi'an`,
 `ni'hao`, `ba'ku`, `ni'h`, `nihao'`, `n`, `nih`, `ni`, `nihao`, `zhongguo`
 at explicit `USE_TONE` (0x20) and `USE_TONE | PINYIN_INCOMPLETE` (0x28),
 plus a fresh `罢跨/ba'kua/5` import on each facade. Complete ordered
@@ -872,38 +849,14 @@ including no extra 把垮. These are controls against current main, which
 already implements the rule, not claims of a new production repair.
 The frozen fixture expectations are not re-measured by this scoped lane.
 
-Reproduction inside `oxpinyin-lane-594`, with a fresh user directory per
-worker, read-only oracle data, one Cargo job, a 3 GiB memory cap, and
-one retained bdb target directory:
+The 50 cases are recorded evidence from the contract differential of
+that date. The engine guards cover an empty final step after three earlier
+values on both shapes and a two-value final step after three earlier
+values on the pinyin shape.
 
-```text
-cargo build --locked -j 1 -p oxpinyin-capi -p oxpinyin-zhuyin-capi
-cases=$(python3 - <<'PYCASES'
-import runpy
-cases = runpy.run_path('[archived contract diff source](https://github.com/shenghaoc/oxpinyin/blob/1b91c898795b6edd8b92dd1fecf65ec6f4d1a434/tools/bisection/contract-diff.py)')['CASES']
-print(','.join(name for name in cases if name.startswith('final-step-')))
-PYCASES
-)
-oracle_prefix=/path/to/bdb-oracle-prefix
-pinyin_so=target/debug/libpinyin_capi.so
-zhuyin_so=target/debug/libzhuyin_capi.so
-[archived run contract diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-contract-diff.sh) bdb "$oracle_prefix" \
-  "$pinyin_so" "$zhuyin_so" -- --cases "$cases"
-```
-
-Per the user instruction on 2026-10-10 UTC, results are recorded as text
-only. Captures remain local; no evidence archive, log or attachment is
-uploaded or linked. The engine guards cover an empty final step after three earlier values on both shapes and
-a two-value final step after three earlier values on the pinyin shape.
-
-Scoped gate: `cargo test --locked -j 1 -p oxpinyin-engine --features
-oxpinyin-testsupport/bdb` passes 188 tests plus 4 doctests; `cargo fmt -p
-oxpinyin-engine --check` and `cargo clippy --locked -j 1 -p oxpinyin-engine
---all-targets --features oxpinyin-testsupport/bdb -- -D warnings` pass.
-One bdb revert-and-check temporarily reinstates the earlier-populated-step
-selection: `cargo test -p oxpinyin-engine --features oxpinyin-testsupport/bdb
-nbest::tests::tails_` fails the empty-final-step assertion (exit 101), then
-both guards pass after byte-for-byte source restoration. The 50 facade
+A revert-and-check that reinstated the earlier-populated-step selection
+failed the empty-final-step assertion in `nbest::tests::tails_*`; both
+guards passed after byte-for-byte source restoration. The 50 facade
 cases also match under this single-rule mutation and again after restoration:
 these current-model controls confirm parity; the direct engine guard supplies
 the fallback-rule sensitivity. No wider differential was run.
@@ -1218,15 +1171,11 @@ passed with nine exact residual bindings, zero unexpected surfaces and
 aggregate counts stayed unchanged, but the exact binding rejected it.
 The mutation was removed, restoring the tested source exactly.
 
-After the [oracle environment setup](../runbooks/cloud.md#the-environment-file), with a sound
-tkrzw library and matching model20 tables:
+Run the gate over the pinned libpinyin-data package (`just fetch-contract-data`, tkrzw):
 
-```text
-export PINYIN_ORACLE_DBM=tkrzw
-. "$HOME/.oxpinyin-oracle.env"
-export PINYIN_EXPORT_DIR="$OXPINYIN_ORACLE_DATA_TKRZW"
-recorded pinyin-oracle invocation (retired package): --locked  --test sentence_surface_parity \
-  sentence_surface_matches_the_declared_residual -- --exact --include-ignored --nocapture
+```sh
+cargo test --locked -p oxpinyin-runtime --test sentence_surface_parity \
+  sentence_surface_matches_the_declared_residual -- --exact --nocapture
 ```
 
 CI supplies the Rust tests, Clippy and rustdoc gate. No shipping scoring,
@@ -1238,9 +1187,8 @@ Recorded 2026-11-04T23:43:12Z (`date -u`). The pin was read from the
 `074a2219c90feaf962d0d24f034514033ece5f99` Git blobs and oxpinyin at
 `fedf2451`. Model inputs are the pinned model20 text tables.
 
-The teardown startup preflight ([archived teardown source](https://github.com/shenghaoc/oxpinyin/blob/be122d32979caf6d58e60ab8b62bb8d60653a255/tools/bisection/teardown.py), tkrzw,
-pinyin facade, `phrases` profile, options `0x18a`, sort word `0x1e`)
-shows two complete-observation differences, identical on every oxpinyin
+The teardown startup preflight (recorded evidence; tkrzw, pinyin facade,
+`phrases` profile, options `0x18a`, sort word `0x1e`) showed two complete-observation differences, identical on every oxpinyin
 arm. Each is the third n-best sentence, the `NBEST_MATCH_CANDIDATE` row
 with n-best index 2.
 
@@ -1253,8 +1201,8 @@ Both are POLICY-ACCEPTED under the existing S2 ruling, with the same
 disposition as `fupie` above. They exist only on the `phrases` profile,
 so the fresh-profile fixtures do not hold them and
 `crates/oxpinyin-runtime/tests/fixtures/sentence-surface/residuals.txt` is unchanged. The preflight
-compares complete observations and has no policy verdict, so its
-`phrases` witness leaves both inputs out (`WITNESS_EXCLUSIONS`).
+compared complete observations and had no policy verdict, so its
+`phrases` witness left both inputs out.
 
 **Profile.** The profile imports 10,000 library-1 rows at count 20000.
 An import of a phrase already in that library adds the count to the
@@ -1326,5 +1274,4 @@ deduplication (`src/pinyin.cpp:1934–1947,2116–2125`) remove the selected
 character's NORMAL row on each side. The remaining NORMAL rows keep one
 relative order on both sides; no other row moves.
 
-No shipping code changes. `just test-tools [archived teardown.test source](https://github.com/shenghaoc/oxpinyin/blob/be122d32979caf6d58e60ab8b62bb8d60653a255/tools/bisection/teardown.test.py)`
-covers the witness exclusion.
+No shipping code changes.

@@ -68,7 +68,7 @@ Extend shared tooling when a required capability is missing.
 Do not publish or install a Python package, and add no console entry point without a new ruling.
 A missing input that a caller requested explicitly is a failure, never a successful skip.
 Do not depend on scripts or environments that exist only on your machine.
-Existing documented shell entry points remain supported during migration.
+The documented shell entry points (`tools/cloud/setup.sh`, `tools/tkrzw/distro-probe.sh`) remain supported.
 
 Report the conclusion, relevant final results and reproduction commands.
 Identify only the revisions, inputs, build options and environment details needed to interpret and repeat the result.
@@ -122,7 +122,7 @@ A local time zone ahead of UTC can date a record into the future (PR #363).
 
 ### Shell placement
 
-Write orchestration in Python, in `tools.dev` or an existing maintained harness.
+Write orchestration in Python, in `tools.dev` or an existing harness.
 Keep a shell script only for one of these reasons:
 
 1. **Bootstrap:** it runs before managed CPython exists, to provision it.
@@ -232,7 +232,7 @@ Rust interfaces remain internal under the [interface ruling](docs/constitution.m
 
 Obtain approval before adding or upgrading dependencies, or changing frozen SPECs, goldens or CI policy.
 Implement from frozen behavioural SPECs and fixtures.
-A freeze of a Rust signature alone no longer binds.
+A freeze of a Rust signature alone does not bind.
 Keep unsafe code within the [constitution's allowlist](docs/constitution.md).
 Do not silence lints.
 Use only the narrow, justified expectations that the [failure-behaviour rule](docs/findings/compatibility-policy.md#failure-behaviour) permits.

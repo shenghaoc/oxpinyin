@@ -503,7 +503,7 @@ non-empty valid controls.
   the DBM value. The padding bytes are whatever happened to sit on that
   stack region during `gen_binary_files` — unreproducible garbage
   (observed `17, 236` and `90, 237` in the pin's real files).
-- **What oxpinyin does instead:** datagen zeroes the padding
+- **What oxpinyin does instead:** the table generators zero the padding
   (`oxpinyin_data::row_format::pinyin_index::encode_item`, written from
   `crates/oxpinyin-data/src/table_entries.rs`), and the runtime reader
   (`pinyin_index::decode_items` via `ChewingTable::search`,

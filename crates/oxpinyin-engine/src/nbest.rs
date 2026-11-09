@@ -53,8 +53,7 @@ use crate::session::{
 /// larger of the two shapes, so neither allocates per node. The live cap
 /// is [`NbestShape::nstore`].
 const NSTORE: usize = 2;
-/// Sentence rows extracted from the tails (`nbest`) on the pinyin surface;
-/// also the fallback DP's row cap there.
+/// Sentence rows extracted from the tails (`nbest`) on the pinyin surface.
 pub const NBEST_ROWS: usize = 3;
 
 /// The two template constants of upstream's `PhoneticLookup<nstore,

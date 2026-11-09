@@ -1,28 +1,26 @@
 # Pin aborts reproduced in the pinyin C facade
 
-Status: implemented, 2026-10-31 UTC (member 3 of the stack that retires
-class (c)). Rule: [compatibility policy, class (c)
+Status: implemented, 2026-10-31 UTC. Rule: [compatibility policy, class (c)
 retired](compatibility-policy.md#failure-behaviour).
 Pin: libpinyin `074a2219c90feaf962d0d24f034514033ece5f99`, read from a
 `git archive` of the pin; `check_result` is `assert` in the reference build
 (`src/include/pinyin_utils.h:27-31`).
 
-The pinyin C facade (`crates/oxpinyin-capi`) used to answer `false`,
-NULL or `-1`/`0` with one `libpinyin` warning at each site below. It now
-calls `std::process::abort()` where the pin asserts or aborts. The shared
-Rust crates still return the typed error at the pin's point (the engine,
-facade and user store are unchanged except where noted), and the C entry
-point turns that error into the abort. Every refusal text these sites
-logged is deleted. The zhuyin facade is member 4 and is unchanged here;
-the rows member 5 owns (85, 91, 92, 96, 97, 103, 108 and row 62's
-store-read failures) keep their refusals.
+The pinyin C facade (`crates/oxpinyin-capi`) calls
+`std::process::abort()` at each site below, where the pin asserts or
+aborts. The shared Rust crates return the typed error at the pin's point,
+and the C entry point turns that error into the abort. These sites log no
+refusal text. The zhuyin facade is
+[pin-aborts-zhuyin-facade.md](pin-aborts-zhuyin-facade.md); rows 85, 91,
+92, 96, 97, 103, 108 and row 62's store-read failures are in
+[pin-aborts-remaining.md](pin-aborts-remaining.md) and
+[library-transitions-in-memory.md](library-transitions-in-memory.md).
 
 **Disposition.** An `abort()` site writes nothing on either side: the
 case is MATCH. An `assert` site writes glibc's assertion line at the pin
 only: the case is POLICY-ACCEPTED for that line
 ([pin-abort-assert-line.md](pin-abort-assert-line.md)) and MATCH on the
-SIGABRT status, the earlier stderr and, with `userdir`, the files. The
-cases are registered `sigabrt=True` in `tools/bisection/contract_*.py`.
+SIGABRT status, the earlier stderr and, with `userdir`, the files.
 
 **Preceding work.** For every site the pin's path from the API entry to
 the abort was read. Before the abort the pin changes only in-memory state
@@ -111,10 +109,9 @@ Notes:
   anyway. oxpinyin's reader answers no token, which no format matches, so
   `UserTableInfo::load` returns `UserConfError::UnknownDatabaseFormat` for
   all five `open-counter-diff` shapes (`crates/oxpinyin-data/src/user_files.rs`),
-  and the pinyin init aborts. The `open-counter-diff` runner
-  ([archived runner protocols source](https://github.com/shenghaoc/oxpinyin/blob/6c4467dc826d11a0cbd8517e907b7027ae440fd9/tools/dev/runner_protocols.py)) now expects SIGABRT, no refusal line
-  and an unchanged user directory from the pinyin subject; the zhuyin
-  expectation is member 4's.
+  and the pinyin init aborts with no refusal line and an unchanged user
+  directory. The zhuyin expectation is in
+  [pin-aborts-zhuyin-facade.md](pin-aborts-zhuyin-facade.md).
 - Row 79 keeps two class (b) shapes: the missing `source table format:`
   line (row 80, `table-conf-abort-source-format-line-missing` and its
   `919` twin), and a chunkless row on a directory that does not read as a
@@ -130,12 +127,12 @@ Notes:
   table first (`pinyin.cpp:1228-1230`). Where a profile has both an
   unmappable system library and an over-long user index key, oxpinyin
   writes the `mmap %s failed!` line before it aborts and the pin does not.
-  The order belongs to member 5's work on those checks (rows 91, 92, 96,
-  97).
+  The order belongs to those checks (rows 91, 92, 96, 97;
+  [pin-aborts-remaining.md](pin-aborts-remaining.md)).
 
-## Corrections after the external review (2026-10-31 UTC)
+## Abort predicates and order
 
-Each of these carried the old refusal's predicate or order into the abort:
+Each abort is decided by the pin's own predicate and order:
 
 - Row 4: see the paragraph under Sites; the abort is decided by the search
   that reaches the pin's assert, not by a pre-scan of the matrix.
@@ -267,4 +264,5 @@ are not reachable from the harness's alphabet.
 
 ## Verification
 
-The commands and results are in the change's report.
+The Rust tests named above hold each site; the contract cases are recorded
+evidence.

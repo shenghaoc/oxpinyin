@@ -728,8 +728,10 @@ pinyin_guess_candidates(inst, 0, SORT_BY_PINYIN_LENGTH);
 
 **Suggested fix:** compare the spans as `guint16` (or `gint`) values.
 
-oxpinyin reproduces the wrap (#1275; contract-diff
-`pinyin-length-wrap/span-*`). Nothing has been filed upstream.
+oxpinyin reproduces the wrap (#1275; recorded evidence
+`pinyin-length-wrap/span-*`; unit test
+`session::tests::the_pinyin_length_key_wraps_at_eight_bits`). Nothing has
+been filed upstream.
 
 ---
 
@@ -767,11 +769,11 @@ intent; for length gaps d≥2 it replaces unconditional shorter preference
 with a probability-ratio threshold `1.2^d`, a deliberate semantic choice.
 Keep the node admission tie rule separate from the selection tie key.
 
-Full candidate identities, the complete case set, environment and
-reproduction commands are in
+Full candidate identities, the complete case set and the environment are
+in
 `docs/findings/algorithm-precondition-witnesses-2026-10-28.md`. Across the
 276 cases, 26 beam ranges and 32 final-tail ranges contain witnesses.
-No repair is implemented in this diagnostic lane. Nothing is filed upstream.
+Nothing is filed upstream.
 
 ---
 
@@ -805,7 +807,7 @@ not substitute the adjusted selection score. Policy for NaN from a
 λ outside `[0, 1]` is a separate question.
 
 The 276-case BDB set witnesses this defect in 37 pre-sort arrays. Full
-results and commands are in
+results are in
 `docs/findings/algorithm-precondition-witnesses-2026-10-28.md`; the
 [GLib 2.84.4 sort contract](https://github.com/GNOME/glib/blob/2.84.4/glib/garray.c#L2240-L2295)
 and [C11 §7.22.5 paragraph 4](https://www.open-std.org/jtc1/sc22/wg14/www/docs/n1570.pdf)

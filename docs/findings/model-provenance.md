@@ -46,7 +46,8 @@ The provenance and licence terms of that corpus remain unresolved.
 ## 2026-08-14 archive inspection and build-time fetch ruling
 
 The original ruling prohibited redistribution and permitted a build-time
-fetch of the archive pinned by `docs/testing/oracle-environment.md`.
+fetch of the archive pinned by `model_archive_sha256` in
+[`tools/oracle/oracle-pin.txt`](../../tools/oracle/oracle-pin.txt).
 The inspection record follows.
 
 ## Examined artefacts
@@ -85,8 +86,8 @@ sport.table
 technology.table
 ```
 
-The pinned libpinyin source tag carries a
-[GPL licence text](https://raw.githubusercontent.com/libpinyin/libpinyin/2.11.91/COPYING).
+The pinned libpinyin source carries a
+[GPL licence text](https://raw.githubusercontent.com/libpinyin/libpinyin/074a2219c90feaf962d0d24f034514033ece5f99/COPYING).
 That notice establishes terms for the source release, but the separately
 published model archive does not say that its trained model, tables, source
 corpora, or generated contents are covered by those terms. The SourceForge
