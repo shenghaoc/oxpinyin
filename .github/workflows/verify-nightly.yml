@@ -183,10 +183,10 @@ jobs:
           rust-cache: 'true'
       - run: cargo test --locked --workspace --release --no-default-features --features kyotocabinet
 
-  # Coverage floor: the reusable job in coverage.yml, which is also an
-  # advisory path-filtered PR check. Called here unconditionally so the whole-tree
-  # number is measured nightly whatever a PR touched. The floor and its
-  # history live in that file.
+  # Coverage floor: the nightly caller of the reusable job in coverage.yml,
+  # which has no pull request trigger. Called here unconditionally so the
+  # whole-tree number is measured nightly. The floor and its history live
+  # in that file.
   coverage:
     # Skipped by a windows_only or macos_only dispatch; runs on the schedule.
     if: ${{ !inputs.windows_only && !inputs.macos_only }}
