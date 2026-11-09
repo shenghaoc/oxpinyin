@@ -1,113 +1,84 @@
 # Session replay SPEC
 
-Date: 2026-08-09 · Status: **frozen for W4-T4b**
+Date: 2026-08-09 · Status: **current reference**
 
-Recorded input sequences driven through the session API, asserting what
-comes out. It is the first cross-platform consumer of the seam
-`session-api.md` froze, and it is what turns "the API is portable" from a
-design claim into a run on three operating systems.
+The replay scenarios are authored, not captured, so they are not a compatibility contract ([frozen-SPEC ruling](compatibility-policy.md#frozen-specs)).
+What binds is the pin behaviour that they check: every expected candidate is one that the pin emitted.
+The scenarios, the harness, the test names and the CI jobs are current reference and change with the code.
+
+Session replay asserts the results of recorded input sequences through the session API.
 
 ## What this stands in for
 
-`spec-derivation` reserves family **F-D** for "guess → choose → re-guess
-remainder", feeding the engine API and the capi templates. F-D was never
-captured; Phase 0 produced F-A and F-C only.
+The foundation fixture plan reserved family **F-D** for "guess → choose → re-guess remainder", which feeds the engine API and the capi templates (recorded evidence; the plan is not in the repository).
+F-D has no capture; Phase 0 produced F-A and F-C only.
 
-These scenarios are therefore **authored**, and the file says so in its own
-header. What is not authored is what they expect: every candidate asserted
-here is one the pinned oracle really emitted, taken from the candidate lists
-in `fixtures/foundation/f-a.txt`, restricted to what the mini vocabulary can
-reach. So the scenarios are ours and the expectations are the pin's.
+So these scenarios are **authored**.
+Their expectations are not authored.
+Every candidate asserted here is one that the pinned oracle emitted, taken from the candidate lists in `fixtures/foundation/f-a.txt` and limited to what the mini vocabulary can reach.
+The scenarios are oxpinyin's, and the expectations are the pin's.
 
-A real F-D capture would replace the file without changing the harness. The
-scenario format below is what such a capture would have to produce.
+## Harness
 
-## Format
+`crates/oxpinyin-engine/tests/session_replay.rs` holds the scenarios inline and reads no scenario file.
+It opens each session with `Session::new` and `SessionSettings::default()`.
+The dictionary and the language model are fixture doubles over `fixtures/w4/mini-vocab.txt` and `fixtures/w4/mini-bigram.txt`.
 
-`crates/oxpinyin-engine/tests/session_replay.rs` does not read this file: it
-drives the same scenarios through `Session::replace_raw`, `select` and `reset`
-directly, because `KeyInput` and `process_key` no longer exist. The file
-format stays as frozen.
+| Operation | Use in the test |
+|---|---|
+| `replace_raw` | supplies the whole raw input as text |
+| `candidates` | gives the list that the test checks by index and text |
+| `select` | chooses by index and returns `Selection::Continued` or `Selection::Completed` |
+| `selected_text`, `composition_offset`, `raw_input` | give the retained text, the consumed byte count and the raw input |
+| `reset`, `is_composing` | discard the composition and confirm that nothing is composing |
 
-[archived f d session source](https://github.com/shenghaoc/oxpinyin/blob/71092202e489262fd3ccbdf116fa19fccab8f928/fixtures/w4/f-d-session.txt), line-oriented UTF-8, TAB-separated `key=value`
-fields — the shape used by every other fixture here. Blank lines and lines
-starting with `#` are comments. A `scenario=` line starts a scenario; `step=`
-lines belong to the scenario above them and run in order.
-
-| Step | Fields | Meaning |
-|---|---|---|
-| `type` | `text` | one `process_key` per character |
-| `key` | `name` | `enter`, `escape`, `space`, `backspace` |
-| `select` | `index` | choose by index |
-| `select-text` | `text` | choose the candidate with this text |
-| `expect-preedit` | `text` | the whole preedit text |
-| `expect-candidate` | `index`, `text` | that position holds that text |
-| `expect-absent` | `text` | that text is not offered |
-| `expect-empty` | — | nothing is composing |
-| `commit` | `text` | commit, and assert what came out |
-
-`select-text` exists because a candidate's *index* is a property of the
-current ranking and a scenario that hard-codes one is asserting the ranking by
-accident. Where the index is the point — F-E-02 — the scenario says `select`.
-
-Every `expect-preedit` also checks the spans: contiguous, ascending, and
-covering the text exactly. That invariant is easy to break and invisible from
-the text alone.
+The session has no key, preedit or commit operation, so no scenario uses one.
 
 ## Scenarios
 
-Nine, covering the F-D shape and the shapes W4 added:
+The test `recorded_candidate_scenarios_use_direct_operations` runs seven scenarios, each in a new session:
 
-| Scenario | What it holds |
+| Input | What it holds |
 |---|---|
-| `guess-choose-commit` | the basic loop |
-| `guess-choose-reguess` | choose a phrase, decode the remainder, choose again |
-| `cross-segmentation-choice` | `xian` offers `西安` from a segmentation the pin did not select |
-| `incomplete-tail` | `nih` reaches `你好` through an initial-only key |
-| `apostrophe-boundary` | `chang'an` |
-| `backspace-undoes-a-choice` | a selection is undone, not just the last letter |
-| `space-accepts-the-first-candidate` | |
-| `f-e-12-zhuan-totality` | the registered `zhuan` trigger, at session level |
-| `unknown-input-falls-back` | `qqq` offers itself back |
-
-Each is replayed twice in a fresh session and must give the same answer, which
-is constitution item 6 at the level a shell sees.
+| `nihao` | the basic loop: first candidate `你好`, and `select(0)` completes the composition |
+| `nihaozhongguo` | choose `你好`, decode the remainder `zhongguo`, choose `中国` |
+| `xian` | offers `西安` first and `西岸` second |
+| `nih` | reaches `你好` through an initial-only key |
+| `chang'an` | the apostrophe boundary: `长安` |
+| `zhuan` | the registered F-E-12 trigger: `传` |
+| `qqq` | offers itself back and does not offer `你好` |
 
 ## Registered robustness evidence made executable
 
-`docs/findings/robustness-evidence.md` registers two rows against this lane.
-Both now have the artifact it names:
+[robustness-evidence.md](robustness-evidence.md) registers two rows against this lane.
+Each has the artifact that the register names:
 
-- **F-E-02**, `f_e_02_candidate_replay`. Take a candidate snapshot,
-  regenerate the list, then replay every stale index including `len`, `len+1`
-  and `usize::MAX`. Upstream's defect is an unchecked candidate index; here
-  every one is `EngineError::CandidateIndexOutOfRange`, and the session serves
-  a second request afterwards. That last part is the claim — not that an index
-  is rejected, but that rejecting it leaves the session usable.
-- **F-E-12**, `f_e_12_zhuan_session_replay`. The register asks explicitly for
-  the full frontend-equivalent sequence rather than a parse in isolation
-  before any session-level claim is made: parse `zhuan`, take a candidate,
-  commit, and keep going on the same session.
+- **F-E-02**, `f_e_02_candidate_replay`.
+  The test takes a candidate snapshot, regenerates the list, then replays every stale index, including `len`, `len+1` and `usize::MAX`.
+  Upstream's defect is an unchecked candidate index.
+  Here every stale index gives `EngineError::CandidateIndexOutOfRange`, and the session then serves a second request.
+  That last part is the claim: the rejection leaves the session usable.
+- **F-E-12**, `f_e_12_zhuan_session_replay`.
+  The register requires the full frontend-equivalent sequence, not a parse in isolation, before any session-level claim.
+  The test parses `zhuan`, takes a candidate, reads the retained text, resets, and continues on the same session.
 
-A third test feeds every character in `U+0000..=U+00FF` plus `你` and
-`U+10FFFF`, then every logical key, and requires no panic and no error — the
-totality property at session level.
+A third test, `arbitrary_characters_never_panic`, appends every character in `U+0000..=U+00FF`, then `你` and `U+10FFFF`, and calls `replace_raw` after each one.
+It requires no panic and no error: the totality property at session level.
 
 ## Portability
 
-The harness discovers no path, reads no environment, uses no clock, and
-contains no `cfg(target_os)`; neither does anything beneath it. CI runs it on
-Linux, macOS and Windows.
+The harness discovers no path, reads no environment, uses no clock, and contains no `cfg(target_os)`.
+Nothing beneath it does these things either.
+CI runs it on Linux, macOS and Windows:
 
-The nightly `test-windows` and `test-macos` jobs (`verify-nightly.yml`) run
-the workspace tests, this harness and the graph differential among them, on
-Windows and macOS; the PR `test` job runs them on Linux.
+- the PR `test` job runs the workspace tests, this harness and the graph differential on Linux;
+- the nightly `test-windows` and `test-macos` jobs (`verify-nightly.yml`) run them on Windows and macOS.
 
-Extending CI was an explicit maintainer decision: the contributor rules lists editing CI
-policy among the hard forbids without an ask, and this is the recorded ask.
+The CI extension is a recorded maintainer decision.
+The contributor rules list a CI policy edit among the changes that need an explicit ask.
 
 ## Acceptance
 
-- Every scenario replays, twice, identically.
+- Every scenario passes.
 - F-E-02 and F-E-12 pass.
-- All of it on Linux, macOS and Windows.
+- All of it passes on Linux, macOS and Windows.

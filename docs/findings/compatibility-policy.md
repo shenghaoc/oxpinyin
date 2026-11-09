@@ -83,6 +83,16 @@ Every native Rust interface is an implementation detail; it can change incompati
 A Rust-interface constraint is never a reason to diverge and never an exception class.
 Where a register entry calls a Rust signature change an "engine interface change" or an "approved interface change", no STOP applies to it.
 
+### Frozen SPECs
+
+Maintainer ruling, 2026-11-09:
+
+- A frozen SPEC binds only the pin-derived behaviour that falls within oxpinyin's supported compatibility surfaces: the C APIs and ABIs, persistent data, and drop-in utilities.
+- Approved compatibility decisions also bind.
+- Frozen oracle observations remain verification evidence under their existing pin rules.
+- Internal Rust interfaces, implementation designs and authored test scenarios do not become binding compatibility requirements merely because a document labels them frozen.
+  A SPEC's descriptions of Rust types, traits, functions, tests, fixtures and implementation plans are current reference and change with the code.
+
 ## Decision order
 
 Decide every proposed difference in this order.
