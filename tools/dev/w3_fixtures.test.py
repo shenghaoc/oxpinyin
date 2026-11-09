@@ -122,9 +122,13 @@ class CompareTests(unittest.TestCase):
         scratch = tempfile.TemporaryDirectory(prefix='oxpinyin-w3-compare-')
         self.addCleanup(scratch.cleanup)
         self.work = Path(scratch.name)
-        self.reader = self.work / 'raw_records'
-        self.reader.write_text('#!/bin/sh\ncat "$2"\n')
-        self.reader.chmod(0o755)
+        if sys.platform == 'win32':
+            self.reader = self.work / 'raw_records.cmd'
+            self.reader.write_bytes(b'@type "%~2"\r\n')
+        else:
+            self.reader = self.work / 'raw_records'
+            self.reader.write_text('#!/bin/sh\ncat "$2"\n')
+            self.reader.chmod(0o755)
         self.produced, self.committed = self.work / 'produced', self.work / 'committed'
         for directory in (self.produced, self.committed):
             directory.mkdir()
@@ -231,6 +235,15 @@ class CommandTests(unittest.TestCase):
             status, _, err = self.main('check', '--model-dir', str(extracted), '--cells', 'tkrzw,lmdb')
         self.assertEqual(status, 2)
         self.assertIn("unknown cell 'lmdb'", err)
+
+    def test_a_cell_without_a_windows_build_is_refused_on_windows(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            extracted = write_model(Path(scratch) / 'cache' / 'extracted')
+            with mock.patch.object(w3_fixtures.sys, 'platform', 'win32'):
+                for cell in ('bdb', 'kc'):
+                    status, _, err = self.main('check', '--model-dir', str(extracted), '--cells', cell)
+                    self.assertEqual(status, 1)
+                    self.assertIn(f'the {cell} cell is unsupported on Windows', err)
 
     def test_content_hash_only_lists_the_committed_content_tables(self):
         status, out, _ = self.main('content', '--hash-only')

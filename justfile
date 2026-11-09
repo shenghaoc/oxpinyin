@@ -66,6 +66,10 @@ provision *args: python
 fetch-model *args: python
     @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev fetch-model "$@"
 
+[windows]
+fetch-model *args: python
+    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev fetch-model @forwarded; exit $LASTEXITCODE
+
 # Fetch, verify and extract the pinned libpinyin-data package (the contract system data) into target/contract-data.
 [unix]
 fetch-contract-data *args: python
@@ -80,6 +84,10 @@ fetch-contract-data *args: python
 [unix]
 w3-fixtures *args: python
     @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev w3-fixtures "$@"
+
+[windows]
+w3-fixtures *args: python
+    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev w3-fixtures @forwarded; exit $LASTEXITCODE
 
 # Report native capabilities and the managed interpreter identity. Doctor
 # installs nothing: it names `just python` when the interpreter is missing.
@@ -100,13 +108,28 @@ doctor:
 packaging *args: python
     @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev packaging "$@"
 
+[windows]
+packaging *args:
+    @{{windows_args}} echo "packaging is unsupported on Windows: the assemblies need chmod, readelf, dpkg and the Linux package layout."
+    @{{windows_args}} exit 1
+
 # Stage built utilities in the tree expected by epico/trainer.
 [unix]
 trainer-layout target *args: python
     @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev packaging trainer-layout "$@"
 
+[windows]
+trainer-layout target *args:
+    @{{windows_args}} echo "trainer-layout is unsupported on Windows: it copies extensionless executables for a Unix make tree."
+    @{{windows_args}} exit 1
+
+[unix]
 check backend="": python
     @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev check {{backend}}
+
+[windows]
+check backend="": python
+    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev check {{backend}}; exit $LASTEXITCODE
 
 # A distro tkrzw is found through pkg-config with nothing more. To use this
 # build instead, put DIR/lib/pkgconfig on PKG_CONFIG_PATH and DIR/lib on the
@@ -129,10 +152,14 @@ test *args:
 test *args:
     @{{windows_args}} cargo nextest run --profile local @forwarded; exit $LASTEXITCODE
 
-# Run the CI Python harness discovery and exclusions (Linux and macOS).
+# Run the CI Python harness discovery and exclusions (Linux, macOS and Windows).
 [unix]
 test-tools *args: python
     @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev test-tools "$@"
+
+[windows]
+test-tools *args: python
+    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev test-tools @forwarded; exit $LASTEXITCODE
 
 # Run doctests separately; nextest does not run them.
 [unix]
@@ -309,3 +336,7 @@ measure recipe *args: python
 [unix]
 performance *args: python
     @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.oracle.image performance "$@"
+
+[windows]
+performance *args: python
+    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.oracle.image performance @forwarded; exit $LASTEXITCODE

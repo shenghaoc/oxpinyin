@@ -31,6 +31,7 @@ import shutil
 import struct
 import subprocess
 import sys
+import sysconfig
 import tempfile
 
 from . import cell, model, slot
@@ -94,6 +95,8 @@ HASHES = ('bigram.db', 'deleted_bigram.db')
 PINNED = ('k_mixture_model.db', 'k_mixture_model_zero.db', 'k_mixture_model_edom.db')
 CELLS = cell.CELLS
 UTILITIES = ('gen_binary_files', 'import_interpolation', 'gen_unigram', 'gen_deleted_ngram')
+# The cells with a Windows build: only tkrzw has one (`just tkrzw-build`, the CI tkrzw action).
+WINDOWS_CELLS = ('tkrzw',)
 
 
 class Refused(Exception):
@@ -141,7 +144,7 @@ def kept_tokens(rows, keys):
 
 def write_rows(path, rows, kept):
     """The rows of KEPT tokens, in file order, as the model wrote them."""
-    path.write_text(''.join(line + '\n' for line, _, _, token, _ in rows if token in kept), encoding='utf-8')
+    path.write_text(''.join(line + '\n' for line, _, _, token, _ in rows if token in kept), encoding='utf-8', newline='\n')
 
 
 def subset_interpolation(source, destination, kept):
@@ -169,7 +172,7 @@ def subset_interpolation(source, destination, kept):
         elif fields == ['\\2-gram']:
             section = '2'
         out.append(raw)
-    destination.write_text(''.join(line + '\n' for line in out), encoding='utf-8')
+    destination.write_text(''.join(line + '\n' for line in out), encoding='utf-8', newline='\n')
 
 
 def subset(model_dir, work):
@@ -225,8 +228,9 @@ def build_tools(settings, out=sys.stderr):
         if slot.run_command(command, env=settings.environment, cwd=ROOT, stdout=2):
             raise Refused(f'FAIL: building for the {settings.cell} cell: {" ".join(command)}')
     debug = settings.target / 'debug'
-    tools = {name: debug / name for name in UTILITIES}
-    tools['raw_records'] = debug / 'examples/raw_records'
+    suffix = sysconfig.get_config_var('EXE') or ''
+    tools = {name: debug / (name + suffix) for name in UTILITIES}
+    tools['raw_records'] = debug / 'examples' / ('raw_records' + suffix)
     for path in tools.values():
         if not path.is_file():
             raise Refused(f'FAIL: missing artifact {path}')
@@ -257,12 +261,12 @@ def produce(settings, tools, work, out, environment=None):
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     environment = dict(os.environ if environment is None else environment)
-    (out / 'table.conf').write_text(table_conf(settings.dbm_name, build=True), encoding='utf-8')
+    (out / 'table.conf').write_text(table_conf(settings.dbm_name, build=True), encoding='utf-8', newline='\n')
     for program, arguments, stdin in sequence(work):
         run_tool(tools[program], arguments, out, environment, stdin=stdin)
     run_tool(tools['gen_deleted_ngram'], ['--deleted-bigram-file', 'deleted_bigram.db'], out, environment,
              stdin=DELETED_CORPUS.encode())
-    (out / 'table.conf').write_text(table_conf(settings.dbm_name), encoding='utf-8')
+    (out / 'table.conf').write_text(table_conf(settings.dbm_name), encoding='utf-8', newline='\n')
 
 
 # ── the comparison ───────────────────────────────────────────────────
@@ -327,7 +331,7 @@ def write_checksums(fixtures=FIXTURES):
                        key=lambda p: os.fsencode(p.relative_to(fixtures).as_posix())):
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         lines.append(f'{digest}  fixtures/w3/{path.relative_to(fixtures).as_posix()}\n')
-    (fixtures / 'fixtures.sha256').write_text(''.join(lines))
+    (fixtures / 'fixtures.sha256').write_text(''.join(lines), newline='\n')
 
 
 # ── the model directory ──────────────────────────────────────────────
@@ -509,7 +513,7 @@ def content(args, out=sys.stdout, err=sys.stderr):
     print(f'Pin ref: {pin_ref}\nOutput:  {dst_dir}\n'
           f'Generating addon content fixtures (max {args.max_records} records each):', file=err)
     results = generate_content(args.data_dir, dst_dir, args.max_records, err)
-    (dst_dir / 'pin-ref.txt').write_text(f'{pin_ref}\n')
+    (dst_dir / 'pin-ref.txt').write_text(f'{pin_ref}\n', newline='\n')
     if dst_dir == FIXTURES:
         write_checksums(dst_dir)
     print(f'\nDone: {sum(results.values())} records across {len(results)} files', file=err)
@@ -525,6 +529,8 @@ def regenerate(args, check, out=sys.stdout, err=sys.stderr):
     for name in cells:
         if name not in CELLS:
             raise Refused(f'fatal: unknown cell {name!r}; cells are {", ".join(CELLS)}', 2)
+        if sys.platform == 'win32' and name not in WINDOWS_CELLS:
+            raise Refused(f'fatal: the {name} cell is unsupported on Windows: only the tkrzw cell has a Windows build; pass --cells tkrzw', 1)
     print(f'model: {model_path}', file=err)
     status = 0
     with tempfile.TemporaryDirectory(prefix='oxpinyin-w3-') as scratch:
