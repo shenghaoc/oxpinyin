@@ -348,6 +348,7 @@ pub mod phrase_index {
 /// `docs/findings/bigram-punct-format-2026-09-01.md`, `ngram_tkrzwdb.cpp`.
 pub mod bigram {
     use crate::dict::DictError;
+    use crate::single_gram::decode_single_gram;
 
     /// One previous-token row of the system bigram.
     ///
@@ -361,44 +362,17 @@ pub mod bigram {
         pub records: Vec<(u32, u32)>,
     }
 
-    /// Encodes a bigram row into a DBM value: 4 bytes `total` then
-    /// 8-byte records.
-    #[must_use]
-    pub fn encode_value(row: &BigramRow) -> Vec<u8> {
-        let mut buf = Vec::with_capacity(4 + row.records.len() * 8);
-        buf.extend_from_slice(&row.total.to_le_bytes());
-        for &(next, count) in &row.records {
-            buf.extend_from_slice(&next.to_le_bytes());
-            buf.extend_from_slice(&count.to_le_bytes());
-        }
-        buf
-    }
-
     /// Decodes a bigram value as `(total, [{next_token, count}])`.
     ///
     /// # Errors
     ///
     /// Returns `DictError::Parse` when the value length is not `4 + 8n`.
     pub fn parse_value(data: &[u8]) -> Result<BigramRow, DictError> {
-        if data.len() < 4 || !(data.len() - 4).is_multiple_of(8) {
-            return Err(DictError::Parse(format!(
-                "bigram value length {} is not 4 + 8n",
-                data.len()
-            )));
-        }
-        let total = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
-        let records = data[4..]
-            .as_chunks::<8>()
-            .0
-            .iter()
-            .map(|chunk| {
-                (
-                    u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]),
-                    u32::from_le_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]),
-                )
+        decode_single_gram(data)
+            .map(|(total, records)| BigramRow { total, records })
+            .map_err(|_| {
+                DictError::Parse(format!("bigram value length {} is not 4 + 8n", data.len()))
             })
-            .collect();
-        Ok(BigramRow { total, records })
     }
 }
 
@@ -674,18 +648,22 @@ mod tests {
         assert!(decode_tokens(&[0, 0, 0]).is_err());
     }
 
+    /// `parse_value` keeps the row API's own error: the `DictError::Parse`
+    /// variant and its message, not the codec error it maps.
     #[test]
-    fn bigram_value_round_trip() {
-        use bigram::{BigramRow, encode_value, parse_value};
-        let row = BigramRow {
-            total: 100,
-            records: vec![(0x0100_0010, 60), (0x0100_0020, 40)],
-        };
-        let encoded = encode_value(&row);
-        assert_eq!(encoded.len(), 4 + 2 * 8);
-        assert_eq!(parse_value(&encoded).unwrap(), row);
-        assert!(parse_value(&[0, 0, 0]).is_err(), "shorter than the header");
-        assert!(parse_value(&[0; 7]).is_err(), "not 4 + 8n");
+    fn bigram_value_rejections_are_parse_errors() {
+        use crate::dict::DictError;
+        use bigram::parse_value;
+        assert!(matches!(
+            parse_value(&[0, 0, 0]),
+            Err(DictError::Parse(message))
+                if message == "bigram value length 3 is not 4 + 8n"
+        ));
+        assert!(matches!(
+            parse_value(&[0; 7]),
+            Err(DictError::Parse(message))
+                if message == "bigram value length 7 is not 4 + 8n"
+        ));
     }
 
     #[test]
