@@ -32,15 +32,6 @@ _test-argv status *args: python
 _test-argv status *args: python
     @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -c 'import json, sys; print(json.dumps(sys.argv[2:])); sys.exit(int(sys.argv[1]))' @forwarded; exit $LASTEXITCODE
 
-# Record or check the pin-reference image's tool versions. Requires the
-# Debian image environment (dpkg-query); the image builds run the same check.
-[unix]
-oracle-versions *args: python
-    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev oracle-versions "$@"
-
-[windows]
-oracle-versions *args: python
-    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev oracle-versions @forwarded; exit $LASTEXITCODE
 
 # Provision the interpreter .python-version names, the one place the version is
 # stated. uv reads the file itself and does nothing when the interpreter is there.

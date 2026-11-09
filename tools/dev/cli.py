@@ -1,35 +1,9 @@
 """One CLI for the native tooling services. Standard library only."""
 import argparse
-import importlib.util
-import json
 import sys
-from pathlib import Path
 
 from . import abi, cell, check, doctor, pool, test_runner
 from .measure import recipes
-
-
-def _oracle_versions():
-    """Load the standalone oracle version checker shipped in tools/oracle."""
-    path = Path(__file__).resolve().parents[1] / 'oracle' / 'versions.py'
-    spec = importlib.util.spec_from_file_location('oracle_versions', path)
-    if spec is None or spec.loader is None:
-        raise SystemExit(f'cannot load {path}')
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def oracle_versions_command(args):
-    """Forward the oracle version check's options and return its status."""
-    forwarded = []
-    for name in ('manifest', 'record'):
-        value = getattr(args, name)
-        if value is not None:
-            forwarded += [f'--{name}', str(value)]
-    if args.print_only:
-        forwarded.append('--print')
-    return _oracle_versions().main(forwarded)
 
 
 def packaging_command(args):
@@ -105,13 +79,6 @@ def build_parser():
     p = sub.add_parser('doctor', help='report native capabilities and the interpreter identity')
     p.set_defaults(func=doctor_command)
 
-    p = sub.add_parser('oracle-versions',
-                       help='record or check the pin-reference image tool versions')
-    p.add_argument('--manifest', type=Path)
-    p.add_argument('--record', type=Path)
-    p.add_argument('--print', dest='print_only', action='store_true',
-                   help='print installed versions without checking ranges')
-    p.set_defaults(func=oracle_versions_command)
 
     p = sub.add_parser('host', help='report host capabilities only')
     p.set_defaults(func=host_command)
