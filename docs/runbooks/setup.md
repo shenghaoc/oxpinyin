@@ -395,12 +395,11 @@ keeps its existing sanitizer commands and paths.
 
 ### When the macOS job runs
 
-The macOS workspace job is the `test-macos` job in `verify-nightly.yml`. It
-runs every night and on manual dispatch, not on every pull request: platforms
-other than Linux are unstable but not unusable (maintainer decision
-2026-10-31). Pull-request CI tests Linux only. Before merging a change that
-can behave differently on macOS (the cases listed for Windows below apply),
-dispatch the job on the branch with `macos_only` set:
+The macOS workspace job is the `test-macos` job in `verify-nightly.yml`. It is
+best-effort and never a PR merge condition: it runs every night on main and
+before a release ([verification rule 10](verification.md#10-ci-merge-conditions)).
+Pull-request CI tests Linux only. To reproduce a macOS-only failure, dispatch
+the job on a branch with `macos_only` set:
 
 ```bash
 gh workflow run verify-nightly.yml --ref <branch> -f macos_only=true
@@ -499,18 +498,12 @@ path. Bash scripts run from the same session through Git for Windows'
 `bash.exe` (`& 'C:\Program Files\Git\bin\bash.exe' SCRIPT`).
 
 **When the Windows job runs:** the full Windows workspace job is the
-`test-windows` job in `verify-nightly.yml`. It runs every night and on manual
-dispatch, not on every pull request. Windows remains a supported native
-target; only the verification frequency changed. Before merging any of the
-following, dispatch the job on the branch with `windows_only` set:
-
-- changes to Windows-sensitive storage, filesystem or native-build code
-  (the store backends and their build scripts, path and file handling,
-  build scripts that compile or link native code);
-- toolchain updates and relevant dependency updates (`rust-toolchain.toml`,
-  `Cargo.lock` changes that reach the portable workspace, the tkrzw
-  revision in `tools/tkrzw/build.py`);
-- releases.
+`test-windows` job in `verify-nightly.yml`. It is best-effort and never a PR
+merge condition: it runs every night on main and before a release
+([verification rule 10](verification.md#10-ci-merge-conditions)). Windows
+remains a supported native target; only the verification frequency changed.
+To reproduce a Windows-only failure, dispatch the job on a branch with
+`windows_only` set:
 
 ```bash
 gh workflow run verify-nightly.yml --ref <branch> -f windows_only=true

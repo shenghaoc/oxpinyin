@@ -69,11 +69,10 @@ Markdown-only changes: `git diff --check` and a check of their links. Source-com
 
 These WIP-checkpoint and Markdown-only rules override the pre-push requirement above.
 
-CI is the full gate. These checks cover only the host’s cfg arms and backend features, so a change under an OS gate or a backend feature also needs that OS or backend, or a `verify-nightly` dispatch.
+CI is the full gate. These checks cover only the host's cfg arms and backend features. A Linux pass is enough to merge: [section 10](#10-ci-merge-conditions) decides the platform and backend conditions.
 
 Each stack member must pass its required verification independently.
 Successful CI on that member's final source tree satisfies the full-gate checks for the required package, feature and platform scope.
-PR CI tests Linux; the macOS and Windows jobs run in `verify-nightly.yml` every night and on dispatch ([setup](setup.md#when-the-macos-job-runs)).
 A check that is missing, cancelled or skipped when it applies does not count as a pass.
 A check skipped because it does not apply to the change is not a failure.
 Run locally the checks that CI does not cover: the issue's differentials, revert-and-check and any measurement that a concrete unresolved question affecting a decision requires ([controlling rule](../source-policy.md#controlling-rule)).
@@ -203,3 +202,16 @@ If none is available, report "tkrzw: not run (no sound libtkrzw on this host)" a
 - Use Bash 5.0 or newer for shell scripts.
   ShellCheck 0.11.0 is the lint floor.
   See [setup](setup.md).
+
+## 10. CI merge conditions
+
+These four rules govern the CI gates. State each rule here only. A workflow or a runbook that needs a rule links to this section.
+
+1. **A Linux pass is enough to merge.** The required check is `ci-aggregate`, which also requires the called store-backends gate.
+   macOS and Windows are best-effort: they run nightly on main and before a release, never as a PR merge condition.
+   A lane never dispatches a workflow.
+2. **tkrzw is the default backend.** Berkeley DB and Kyoto Cabinet are tested only in CI, and only when their KV code changes.
+   Rule 2 decides that by path, not by judgement.
+   The full-data contract tests run on tkrzw only.
+3. **Fuzzing runs nightly, never on the PR gate.** Do not change its schedule.
+4. **Coverage is advisory.** It never drives new tests.
