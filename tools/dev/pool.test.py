@@ -8,6 +8,7 @@ import io
 import json
 import os
 from pathlib import Path
+import shlex
 import signal
 import subprocess
 import sys
@@ -126,7 +127,7 @@ class PoolLoopTests(unittest.TestCase):
         class Stubborn(FakeProcess):
             def wait(self, timeout=None):
                 self.waited = True
-                return None if not self.killed else -signal.SIGKILL
+                return None if not self.killed else -signal.SIGTERM    # only a fake exit code
         original = launcher.launch
 
         def launch(task):
@@ -290,7 +291,8 @@ class ContainerOwnershipTests(unittest.TestCase):
         self.state = self.directory / 'state'
         self.state.mkdir()
         (self.directory / 'runtime.py').write_text(FAKE_RUNTIME)
-        self.runtime = f'{sys.executable} {self.directory / "runtime.py"} {self.state}'
+        self.runtime_argv = [sys.executable, str(self.directory / 'runtime.py'), str(self.state)]
+        self.runtime = shlex.join(self.runtime_argv)    # pool splits --container-runtime with shlex
         self.bystander = 'b' * 64
         (self.state / self.bystander).write_text('{"name": "fixed-a", "labels": {"oxpinyin.test": "someone-else"}}')
 
@@ -299,7 +301,7 @@ class ContainerOwnershipTests(unittest.TestCase):
         return sorted(path.name for path in self.state.iterdir() if path.suffix != '.tmp')
 
     def command(self, name, script):
-        return [*self.runtime.split(), 'run', '--name', name, '--label', 'oxpinyin.test={token}',
+        return [*self.runtime_argv, 'run', '--name', name, '--label', 'oxpinyin.test={token}',
                 '--cidfile', '{cidfile}', '--', sys.executable, '-c', script, '{item}']
 
     def arguments(self, items, name, script):
@@ -717,13 +719,14 @@ class UnitRunnerTests(unittest.TestCase):
         script = ('import os, sys\nprint(os.environ["UNIT_PROBE"], flush=True)\n'
                   'print("to stderr", file=sys.stderr)\nsys.exit(3)')
         done = context.launch([sys.executable, '-c', script])
-        self.assertEqual((done.status, done.stdout, done.stderr), (3, b'unit\n', b'to stderr\n'))
+        eol = os.linesep.encode()    # a child's print() writes the platform newline to a pipe
+        self.assertEqual((done.status, done.stdout, done.stderr), (3, b'unit' + eol, b'to stderr' + eol))
 
     def test_launch_closes_stdin_and_honours_an_explicit_environment(self):
         context = pool.UnitContext('u', threading.Event(), environment={'UNIT_PROBE': 'unit'})
         done = context.launch([sys.executable, '-c', 'import os, sys; print(repr(sys.stdin.read()), os.environ.get("UNIT_PROBE"))'],
                               env={'ONLY': '1'})
-        self.assertEqual(done.stdout, b"'' None\n")
+        self.assertEqual(done.stdout, b"'' None" + os.linesep.encode())
 
     def test_launch_delivers_binary_input_across_communicate_timeouts(self):
         context = pool.UnitContext('u', threading.Event())

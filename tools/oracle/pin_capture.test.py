@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import sys
 import tempfile
 import unittest
@@ -154,7 +155,8 @@ class CaptureTests(unittest.TestCase):
         for label, change in (('backend', {'dbm': 'Tkrzw'}), ('library record', {'shared_object_sha256': '0' * 64})):
             with self.subTest(label):
                 self.write_record(prefix, record, **change)
-                self.assert_refused('oracle/kc: prefix_ok refused it')
+                # The message names the prefix as the host spells its path.
+                self.assert_refused(re.escape(str(Path('oracle', 'kc'))) + ': prefix_ok refused it')
         self.write_record(prefix, record)
 
     def test_a_build_tree_of_another_commit_is_refused(self):

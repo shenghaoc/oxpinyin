@@ -50,8 +50,8 @@ class Streams:
 
     def __enter__(self):
         self.out_bytes, self.err_bytes = io.BytesIO(), io.BytesIO()
-        self.out = io.TextIOWrapper(self.out_bytes, encoding='utf-8', write_through=True)
-        self.err = io.TextIOWrapper(self.err_bytes, encoding='utf-8', write_through=True)
+        self.out = io.TextIOWrapper(self.out_bytes, encoding='utf-8', newline='\n', write_through=True)
+        self.err = io.TextIOWrapper(self.err_bytes, encoding='utf-8', newline='\n', write_through=True)
         self.stack = contextlib.ExitStack()
         self.stack.enter_context(mock.patch.object(sys, 'stdout', self.out))
         self.stack.enter_context(mock.patch.object(sys, 'stderr', self.err))
