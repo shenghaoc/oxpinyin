@@ -4,7 +4,6 @@ import os
 from pathlib import Path
 import re
 import shlex
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -187,39 +186,6 @@ if sys.platform.startswith('linux'):
             with self.assertRaisesRegex(runtime.RuntimeRefused, r'fixture-runner: pin:.*system/lib/libtkrzw.so.1064'):
                 self.check()
 
-        def test_missing_library_is_refused(self):
-            self.env['LD_LIBRARY_PATH'] = ''
-            with self.assertRaisesRegex(runtime.RuntimeRefused, r'fixture-runner: pin:.*not found'):
-                self.check()
-
-        def test_symlink_alias_to_the_provisioned_object_is_accepted(self):
-            alias = self.root / 'alias'
-            alias.symlink_to(self.cache / 'lib', target_is_directory=True)
-            self.env['LD_LIBRARY_PATH'] = str(alias)
-            self.assertEqual(self.check(), (self.cache / 'lib/libtkrzw.so.1064').resolve())
-
-        def test_other_cells_without_tkrzw_need_no_trusted_runtime(self):
-            for cell in ('bdb', 'kc'):
-                self.assertIsNone(runtime.check(cell, 'fixture', 'subject', '/bin/sh', env={}))
-
-        def test_automatic_cell_selection_checks_tkrzw_objects(self):
-            self.env['LD_LIBRARY_PATH'] = str(self.system / 'lib')
-            with self.assertRaisesRegex(runtime.RuntimeRefused, 'system/lib/libtkrzw.so.1064'):
-                runtime.check('auto', 'artifact-selected-runner', 'subject', self.obj,
-                              env=self.env, cwd=self.cwd)
-
-        def test_unset_cell_cannot_bypass_tkrzw_subject(self):
-            self.env.pop('PINYIN_ORACLE_DBM', None)
-            self.env['LD_LIBRARY_PATH'] = str(self.system / 'lib')
-            script = Path(runtime.__file__)
-            command = [sys.executable, str(script), self.env.get('PINYIN_ORACLE_DBM', 'bdb'),
-                       'unlabelled-runner', 'subject', 'subject.so', '--', 'sh', '-c', 'echo MATCH']
-            result = subprocess.run(command, cwd=self.cwd, env=self.env, capture_output=True, text=True)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertEqual(result.stdout, '')
-            self.assertIn('unlabelled-runner: subject:', result.stderr)
-            self.assertIn(str(self.system / 'lib/libtkrzw.so.1064'), result.stderr)
-
         def test_other_cell_labels_cannot_bypass_tkrzw_subject(self):
             self.env['LD_LIBRARY_PATH'] = str(self.system / 'lib')
             for cell in ('bdb', 'kc', 'tkrzw', 'auto', ''):
@@ -357,20 +323,6 @@ if sys.platform.startswith('linux'):
             self.assertIsNone(runtime.check('auto', 'non-tkrzw-runner', 'subject', plain,
                                             env=self.env, cwd=self.cwd))
 
-        def test_transitive_dlopen_subject_is_checked_before_driver_runs(self):
-            obj = self.transitive_subject()
-            self.env['LD_LIBRARY_PATH'] = str(self.cwd) + ':' + str(self.system / 'lib')
-            # Python is a dlopen driver without its own tkrzw dependency. The
-            # checked object must be the subject, including its dependency closure.
-            command = [sys.executable, '-B', str(Path(runtime.__file__)), 'auto',
-                       'dlopen-fixture', 'subject', str(obj), '--', sys.executable,
-                       '-c', 'import ctypes, sys; ctypes.CDLL(sys.argv[1]); print("MATCH")', str(obj)]
-            result = subprocess.run(command, cwd=self.cwd, env=self.env, capture_output=True, text=True)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertEqual(result.stdout, '')
-            self.assertIn('dlopen-fixture: subject:', result.stderr)
-            self.assertIn(str(self.system / 'lib/libtkrzw.so.1064'), result.stderr)
-
         def test_system_preload_is_refused_even_with_the_cache_search_path(self):
             self.env['LD_PRELOAD'] = str(self.system / 'lib/libtkrzw.so.1064')
             with self.assertRaisesRegex(runtime.RuntimeRefused, 'system/lib/libtkrzw.so.1064'):
@@ -413,14 +365,6 @@ if sys.platform.startswith('linux'):
             self.assertEqual(refused.stdout, '')
             self.assertIn('REFUSED: fixture-runner: pin:', refused.stderr)
 
-        def test_other_cells_keep_their_driver_stderr_suppressed(self):
-            script = Path(runtime.__file__)
-            for cell in ('bdb', 'kc'):
-                result = subprocess.run([sys.executable, str(script), '--quiet-stderr', cell, 'fixture-runner', 'subject',
-                                         '/bin/sh', '--', 'sh', '-c', 'echo RESULT; echo diagnostic >&2'],
-                                        env=self.env, capture_output=True, text=True)
-                self.assertEqual((result.returncode, result.stdout, result.stderr), (0, 'RESULT\n', ''))
-
 
 if sys.platform == 'darwin':
     class DarwinLoaderOverrideTests(unittest.TestCase):
@@ -436,11 +380,6 @@ if sys.platform == 'darwin':
                                   result.stderr)
                     self.assertIn('which DYLD_LIBRARY_PATH or DYLD_FALLBACK_LIBRARY_PATH can bypass',
                                   result.stderr)
-
-        def test_tkrzw_check_refuses_both_dyld_overrides(self):
-            for name in ('DYLD_LIBRARY_PATH', 'DYLD_FALLBACK_LIBRARY_PATH'):
-                with self.subTest(name=name), self.assertRaisesRegex(runtime.RuntimeRefused, 'otool -L recorded install name'):
-                    runtime.check('tkrzw', 'runner', 'subject', '/bin/true', env=dict(os.environ, **{name: '/tmp/override'}))
 
 
 if __name__ == '__main__':

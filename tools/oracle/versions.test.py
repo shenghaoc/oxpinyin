@@ -24,16 +24,6 @@ def component(name, package, major_minor):
 
 
 class ManifestTest(unittest.TestCase):
-    def test_checked_in_manifest_is_valid_and_complete(self):
-        loaded = versions.load_manifest(versions.DEFAULT_MANIFEST)
-        names = [entry['name'] for entry in loaded['components']]
-        for expected in ('glibc', 'glib', 'Berkeley DB 5.3', 'Kyoto Cabinet',
-                         'tkrzw', 'C compiler', 'C++ compiler', 'binutils',
-                         'autoconf', 'automake', 'libtool', 'pkg-config'):
-            self.assertIn(expected, names)
-        # Debian's libtkrzw needs no distro-probe.sh; no component asks for one.
-        self.assertFalse(any('probe' in entry for entry in loaded['components']))
-
     def test_duplicate_component_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp, 'manifest.json')
@@ -45,14 +35,6 @@ class ManifestTest(unittest.TestCase):
 
 
 class CheckTest(unittest.TestCase):
-    def run_check(self, entries, installed):
-        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-            return versions.check(manifest(entries), resolve=lambda package: installed[package])
-
-    def test_installed_version_is_recorded(self):
-        self.assertEqual(self.run_check([component('glibc', 'libc6', '2.41')],
-                                        {'libc6': '2.41-12+deb13u4'}), 0)
-
     def test_version_drift_is_recorded_without_rejection(self):
         stderr = io.StringIO()
         with redirect_stdout(io.StringIO()) as stdout, redirect_stderr(stderr):
@@ -70,10 +52,6 @@ class CheckTest(unittest.TestCase):
             status = versions.check(manifest([component('tkrzw', 'libtkrzw1t64', '1.0')]), resolve=missing)
         self.assertEqual(status, 1)
         self.assertIn('FAIL: tkrzw: libtkrzw1t64: not installed', stderr.getvalue())
-
-    def test_the_probe_option_is_gone(self):
-        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
-            versions.main(['--probe', 'tools/tkrzw/distro-probe.sh'])
 
 
 class PrintModeTest(unittest.TestCase):

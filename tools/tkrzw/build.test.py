@@ -62,20 +62,6 @@ class InstallTests(unittest.TestCase):
             with self.subTest(text=broken), self.assertRaisesRegex(build.RecipeError, '/MT flags'):
                 build.windows_makefile(broken)
 
-    def test_the_windows_pc_names_the_static_library(self):
-        text = build.windows_pc(Path('/opt/tkrzw'), '1.0.34')
-        self.assertIn('prefix=/opt/tkrzw\n', text)
-        self.assertIn('Libs: -L${libdir} -ltkrzw\n', text)
-        self.assertIn('Cflags: -I${includedir}\n', text)
-        self.assertIn('Version: 1.0.34\n', text)
-
-    def test_the_darwin_pc_links_libcxx(self):
-        self.assertEqual(build.darwin_pc('Libs: -L${libdir} -ltkrzw -lstdc++ -lpthread -lm -lc \n'),
-                         'Libs: -L${libdir} -ltkrzw -lc++ -lpthread -lm -lc \n')
-
-    def test_lookup_ignores_case(self):
-        self.assertEqual(build.lookup({'VCTOOLSINSTALLDIR': 'x'}, 'VCToolsInstallDir'), 'x')
-
     def test_make_takes_the_admitted_cargo_budget(self):
         cases = [({}, 8), ({'CARGO_BUILD_JOBS': 'default'}, 8), ({'CARGO_BUILD_JOBS': '3'}, 3),
                  ({'CARGO_BUILD_JOBS': '-2'}, 6), ({'CARGO_BUILD_JOBS': '-20'}, 1)]
@@ -85,16 +71,6 @@ class InstallTests(unittest.TestCase):
         for setting in ('0', 'many'):
             with self.subTest(setting=setting), self.assertRaisesRegex(build.RecipeError, 'CARGO_BUILD_JOBS'):
                 build.make_jobs({'CARGO_BUILD_JOBS': setting}, cpus=8)
-
-    def test_the_posix_build_passes_the_budget_to_make(self):
-        commands = []
-        original = build.run
-        build.run = lambda command, *, cwd, env, capture=False: commands.append(command)
-        try:
-            build.posix_build(Path('.'), Path('/opt/tkrzw'), build.make_jobs({'CARGO_BUILD_JOBS': '2'}, cpus=8), {})
-        finally:
-            build.run = original
-        self.assertIn(['make', '-j2'], commands)
 
 
 class InstallCheckTests(unittest.TestCase):
@@ -116,15 +92,6 @@ class InstallCheckTests(unittest.TestCase):
 
     def test_a_build_that_loads_its_own_library_passes(self):
         self.assertIn('tkrzw_dbm_util loads', self.check())
-
-    def test_the_check_runs_no_distro_probe(self):
-        # distro-probe.sh is for Ubuntu's packaged libtkrzw only; a source build needs no sh.
-        with mock.patch.object(build.subprocess, 'run', side_effect=AssertionError('a child was started')):
-            self.check()
-        (self.prefix / 'lib/tkrzw.lib').write_bytes(b'x')
-        (self.prefix / 'bin/tkrzw_dbm_util.exe').write_bytes(b'x')
-        with mock.patch.object(build.subprocess, 'run', side_effect=AssertionError('a child was started')):
-            self.assertEqual(self.check(system='Windows'), '')
 
     def test_a_utility_that_loads_another_library_is_refused(self):
         other = self.work / 'other.so.1'

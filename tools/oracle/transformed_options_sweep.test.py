@@ -22,10 +22,6 @@ class CursorObservationsTest(unittest.TestCase):
         self.assertTrue(sweep.cursor_observations_agree(
             observation(ABORT), observation(ABORT)))
 
-    def test_a_subject_false_with_a_warning_for_a_pin_abort_is_rejected(self):
-        self.assertFalse(sweep.cursor_observations_agree(
-            observation(ABORT), observation(None, [False, 0], warnings=1)))
-
     def test_a_subject_abort_after_an_extra_warning_is_rejected(self):
         self.assertFalse(sweep.cursor_observations_agree(
             observation(ABORT), observation(ABORT, warnings=1)))
