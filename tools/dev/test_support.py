@@ -28,6 +28,7 @@ def windows_launch(status=0, write=None):
     class Job:
         def __init__(self):
             self.assigned = []
+            self.closed = False
             jobs.append(self)
 
         def assign(self, handle):
@@ -35,6 +36,12 @@ def windows_launch(status=0, write=None):
 
         def terminate(self, code=1):
             pass
+
+        def wait_empty(self, timeout):
+            return True
+
+        def close(self):
+            self.closed = True
 
         def __enter__(self):
             return self
@@ -54,8 +61,36 @@ def windows_launch(status=0, write=None):
     with mock.patch.object(sys, 'platform', 'win32'), \
             mock.patch.object(slot, 'WindowsJob', Job), \
             mock.patch('ctypes.WinDLL', return_value=ntdll, create=True), \
+            mock.patch('ctypes.get_last_error', return_value=0, create=True), \
             mock.patch.object(slot.subprocess, 'Popen', side_effect=popen) as launch:
         yield launch, jobs, ntdll
+
+
+if sys.platform == 'win32':
+    def process_running(pid):
+        """True while PID is a live process; Windows has no os.kill(pid, 0) probe, so ask the process handle.
+
+        OpenProcess fails with ERROR_INVALID_PARAMETER once the PID is gone. A process
+        that has ended signals its handle, so a zombie held open by another process is not running.
+        """
+        import ctypes
+        from ctypes import wintypes
+        synchronize, query_limited, wait_timeout, invalid_parameter = 0x00100000, 0x1000, 0x102, 87
+        kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        handle = kernel32.OpenProcess(synchronize | query_limited, False, pid)
+        if not handle:
+            code = ctypes.get_last_error()
+            if code == invalid_parameter:
+                return False
+            raise ctypes.WinError(code)
+        try:
+            return kernel32.WaitForSingleObject(handle, 0) == wait_timeout
+        finally:
+            kernel32.CloseHandle(handle)
 
 
 def assert_windows_launches(test, launch, jobs, ntdll, cwd=None):

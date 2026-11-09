@@ -3,6 +3,7 @@
 fake launcher, callable units under the same loop, and a real SIGTERM against the CLI. No platform is
 skipped: /proc and CPU affinity are faked, and a unit's real children are plain Python."""
 import argparse
+import contextlib
 import io
 import json
 import os
@@ -20,11 +21,13 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tools.dev import host, pool
+from tools.dev import host, pool, test_support
 
 
 def running(pid):
     """True while PID is a live process; a killed child awaiting an init that does not reap it is not."""
+    if sys.platform == 'win32':
+        return test_support.process_running(pid)    # os.kill(pid, 0) would send CTRL_C_EVENT
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -395,6 +398,21 @@ class ContainerOwnershipTests(unittest.TestCase):
         process.kill.assert_called_once_with()
         killpg.assert_not_called()
 
+    def test_a_windows_task_in_a_job_is_stopped_with_every_descendant(self):
+        process, job = mock.Mock(pid=123), mock.Mock()
+        job.wait_empty.return_value = True
+        process.wait.return_value = 1
+        handle = pool.Handle(process, job)
+        with mock.patch.object(pool.sys, 'platform', 'win32'):
+            handle.terminate()
+            handle.kill()
+        self.assertEqual(job.terminate.call_count, 2)
+        self.assertEqual(job.wait_empty.call_count, 2)
+        job.close.assert_not_called()    # the job outlives the stop until the leader is reaped
+        process.poll.return_value = 1
+        self.assertEqual(handle.poll(), 1)
+        job.close.assert_called_once_with()
+
 
 class UnitRunnerTests(unittest.TestCase):
     """Callable units under the pool loop; the children are real."""
@@ -616,6 +634,83 @@ class UnitRunnerTests(unittest.TestCase):
         self.assertEqual(self.events, ['reaped-a'])
         self.assertEqual(len(observed), 2)
         self.assert_reaped_and_stopped(observed)
+
+    if sys.platform == 'win32':
+        # The twin of the POSIX test above, which needs setpgid and killpg: a Job Object ends the tree.
+        def test_windows_cancellation_and_failure_kill_descendants_after_the_leader_exits(self):
+            for reason in ('cancelled', 'sibling failed'):
+                with self.subTest(reason=reason):
+                    ready = self.work / (reason + '.pids')
+                    # The leader exits at once; the descendant inherits its output pipe, so the launch
+                    # stays open until the pool ends the descendant.
+                    leader = ('import os, subprocess, sys\n'
+                              'child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])\n'
+                              f'open({str(ready)!r}, "w").write(f"{{os.getpid()}} {{child.pid}}")\n')
+                    flag, pids = threading.Event(), []
+
+                    def hold(context):
+                        return context.launch([sys.executable, '-c', leader], poll=.01)
+
+                    def stop(context):
+                        deadline = time.monotonic() + 10
+                        while time.monotonic() < deadline:
+                            if ready.exists() and ready.read_text().count(' '):
+                                pids.extend(map(int, ready.read_text().split()))
+                                break
+                            context.check()
+                            time.sleep(.01)
+                        else:
+                            raise AssertionError('descendant did not become ready')
+                        while running(pids[0]) and time.monotonic() < deadline:
+                            context.check()
+                            time.sleep(.01)
+                        if running(pids[0]) or not running(pids[1]):
+                            raise AssertionError('the leader must have exited with its descendant running')
+                        if reason == 'cancelled':
+                            flag.set()
+                        else:
+                            raise ValueError(reason)
+
+                    try:
+                        error = pool.UnitsCancelled if reason == 'cancelled' else ValueError
+                        with self.assertRaisesRegex(error, reason):
+                            self.run_units([('leader', hold), ('stop', stop)], cancelled=flag.is_set)
+                        self.assert_reaped_and_stopped(pids)
+                    finally:
+                        for pid in pids:
+                            with contextlib.suppress(OSError):
+                                os.kill(pid, signal.SIGTERM)    # Windows: TerminateProcess
+
+    if sys.platform == 'win32':
+        def test_windows_a_leader_that_exits_normally_leaves_no_descendant_and_no_held_directory(self):
+            # The descendant keeps its working directory in the slot directory and holds no pipe of
+            # the pool. A directory that a live process holds cannot be removed on Windows.
+            for kind in ('task', 'unit'):
+                with self.subTest(kind=kind):
+                    slot_directory, pidfile = self.work / (kind + '-slot'), self.work / (kind + '.pid')
+                    slot_directory.mkdir()
+                    leader = ('import subprocess, sys\n'
+                              'child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"],\n'
+                              f'                         cwd={str(slot_directory)!r}, stdin=subprocess.DEVNULL,\n'
+                              '                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n'
+                              f'open({str(pidfile)!r}, "w").write(str(child.pid))\n')
+                    try:
+                        if kind == 'task':
+                            result = pool.run_pool([pool.Task('leader', [sys.executable, '-c', leader])], 1,
+                                                   pool.ProcessLauncher(), cancelled=lambda: False, poll=.01,
+                                                   out=io.StringIO())
+                            self.assertTrue(result.ok, result)
+                        else:
+                            done = self.run_units([('leader', lambda context: context.launch(
+                                [sys.executable, '-c', leader], poll=.01))], workers=1)
+                            self.assertEqual(done[0].status, 0)
+                        pid = int(pidfile.read_text())
+                        self.assertFalse(running(pid), 'the descendant is gone when the pool returns')
+                        os.rmdir(slot_directory)    # at once: a live process in it makes this fail
+                    finally:
+                        if pidfile.exists():
+                            with contextlib.suppress(OSError):
+                                os.kill(int(pidfile.read_text()), signal.SIGTERM)    # Windows: TerminateProcess
 
     def test_launch_returns_status_and_output_with_the_units_environment(self):
         context = pool.UnitContext('u', threading.Event(), environment={'UNIT_PROBE': 'unit'})

@@ -67,7 +67,10 @@ class Result:
 
 
 class ProcessLauncher:
-    """Start each task in its own session so the pool can stop and reap its whole tree."""
+    """Start each task through slot.spawn so the pool can stop and reap its whole tree.
+
+    That is a session of its own on POSIX and a Job Object on Windows.
+    """
 
     def __init__(self, env: Mapping[str, str] | None = None,
                  cpus: Sequence[int] = (), wake: threading.Event | None = None,
@@ -104,39 +107,51 @@ class ProcessLauncher:
             task.log.parent.mkdir(parents=True, exist_ok=True)
             log = task.log.open('wb')
         try:
-            process = subprocess.Popen(task.argv, env=None if self.env is None else dict(self.env),
-                                       stdin=subprocess.DEVNULL, stdout=log or subprocess.DEVNULL,
-                                       stderr=subprocess.STDOUT if log else subprocess.DEVNULL,
-                                       start_new_session=True)
+            process = slot.spawn(task.argv, env=None if self.env is None else dict(self.env),
+                                 stdin=subprocess.DEVNULL, stdout=log or subprocess.DEVNULL,
+                                 stderr=subprocess.STDOUT if log else subprocess.DEVNULL)
         finally:
             if log is not None:
                 log.close()
-        return Handle(process)
+        return Handle(process, getattr(process, 'job', None))
 
 
 class Handle:
     """The pool's view of a started task; tests substitute a fake with the same methods."""
 
-    def __init__(self, process: subprocess.Popen):
-        """Wrap PROCESS, the leader of its own process group."""
-        self.process = process
+    def __init__(self, process: subprocess.Popen, job=None):
+        """Wrap PROCESS, the leader of its own process group, or JOB, the Windows Job Object it runs in."""
+        self.process, self.job = process, job
+
+    def _release(self, status: int | None) -> int | None:
+        """End the job once the leader has ended, descendants included, and pass STATUS on."""
+        if status is not None and self.job is not None:
+            job, self.job = self.job, None
+            slot.end_job(job, self.process)
+        return status
 
     def poll(self) -> int | None:
         """Return the exit status, or None while the task runs."""
-        return self.process.poll()
+        return self._release(self.process.poll())
 
     def terminate(self) -> None:
-        """Send SIGTERM to the task's whole process group; Windows has no groups, so the task alone."""
+        """Send SIGTERM to the task's whole process group; Windows ends the whole job at once."""
         if sys.platform == 'win32':
             self.process.terminate()
+            if self.job is not None:
+                self.job.terminate()
+                slot.prove_ended(self.job, self.process)
             return
         with contextlib.suppress(ProcessLookupError):
             os.killpg(self.process.pid, signal.SIGTERM)
 
     def kill(self) -> None:
-        """Send SIGKILL to the task's whole process group; Windows has no groups, so the task alone."""
+        """Send SIGKILL to the task's whole process group; Windows ends the whole job."""
         if sys.platform == 'win32':
             self.process.kill()
+            if self.job is not None:
+                self.job.terminate()
+                slot.prove_ended(self.job, self.process)
             return
         with contextlib.suppress(ProcessLookupError):
             os.killpg(self.process.pid, signal.SIGKILL)
@@ -144,7 +159,7 @@ class Handle:
     def wait(self, timeout: float | None = None) -> int | None:
         """Wait for the leader; return None if TIMEOUT seconds pass first."""
         try:
-            return self.process.wait(timeout=timeout)
+            return self._release(self.process.wait(timeout=timeout))
         except subprocess.TimeoutExpired:
             return None
 
@@ -261,7 +276,7 @@ class UnitContext:
                poll: float = 0.1,
                cwd: Path | None = None, merge_stderr: bool = False, umask: int = -1,
                input: bytes = b'') -> Completed:
-        """Run ARGV in its own session and return its status and captured output.
+        """Run ARGV in its own session (a Job Object on Windows) and return its status and captured output.
 
         INPUT is written to stdin, then stdin is closed (empty by default).
         Every POLL seconds the unit checks for a stop; on a
@@ -269,10 +284,9 @@ class UnitContext:
         SIGTERM, then SIGKILL through slot.terminate_group, and its leader is reaped before the
         error propagates. ENV defaults to the unit's environment.
         """
-        with subprocess.Popen(list(argv), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                              stderr=subprocess.STDOUT if merge_stderr else subprocess.PIPE, cwd=cwd, umask=umask,
-                              env=dict(self.environment if env is None else env),
-                              start_new_session=True) as process:
+        with slot.supervised(list(argv), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT if merge_stderr else subprocess.PIPE, cwd=cwd, umask=umask,
+                             env=dict(self.environment if env is None else env)) as process:
             try:
                 first = True
                 while True:
