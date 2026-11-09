@@ -116,29 +116,39 @@ fn bigram_rows_are_point_reads() {
 }
 
 #[test]
-fn scoring_blends_bigram_and_unigram_over_the_corpus_counts() {
+fn nbest_steps_blend_bigram_and_unigram_over_the_corpus_counts() {
     let fix = Fixture::new();
     let (lm, _) = fix.open();
     let ni = PhraseToken::new(NI);
     let hao = PhraseToken::new(HAO);
     let nihao = PhraseToken::new(NIHAO);
-    // 好 after 你: a seen transition costs less than the unigram alone.
-    let seen = lm.score(&[ni], &hao, 0).unwrap();
-    let unseen = lm.score(&[hao], &ni, 0).unwrap();
-    assert!(seen < unseen, "seen {seen} vs unseen {unseen}");
-    // A never-seen phrase carries gen_unigram's 1: finite, never the floor.
-    let rare = lm.score(&[], &nihao, 0).unwrap();
-    assert!(rare < oxpinyin_core::cost::UNKNOWN_COST);
-    assert!(rare > lm.score(&[], &ni, 0).unwrap(), "rarer than 你");
-    // A token with no item at all does floor.
-    let absent = lm.score(&[], &PhraseToken::new(0x0300_0001), 0).unwrap();
-    assert_eq!(absent, oxpinyin_core::cost::UNKNOWN_COST);
+    // 好 after 你: the seen transition adds the bigram term to the unigram
+    // branch.
+    let seen = lm.nbest_step_costs(&ni, &hao).unwrap();
+    assert!(seen.blended.is_some() && seen.unigram.is_some());
+    assert!(seen.blended.unwrap() > seen.unigram.unwrap() * f64::from(seen.unigram_lambda));
+    // 你 after 好: no transition, so the unigram branch stands alone.
+    let unseen = lm.nbest_step_costs(&hao, &ni).unwrap();
+    assert!(unseen.blended.is_none());
+    assert!(unseen.unigram.is_some());
+    // A never-seen phrase carries gen_unigram's 1: a real item, priced.
+    let rare = lm.nbest_step_costs(&hao, &nihao).unwrap();
+    assert!(rare.unigram.is_some());
+    assert!(
+        rare.unigram.unwrap() < unseen.unigram.unwrap(),
+        "rarer than 你"
+    );
+    // A token with no item at all keeps the default answer.
+    assert_eq!(
+        lm.nbest_step_costs(&hao, &PhraseToken::new(0x0300_0001))
+            .unwrap(),
+        oxpinyin_core::NbestStepCosts::default()
+    );
     // The user overlay raises the rare one.
     let raised = lm
-        .score_with_user_delta(
-            &[],
+        .nbest_step_costs_with_user_delta(
+            &hao,
             &nihao,
-            0,
             UserCountDelta {
                 unigram_delta: 3,
                 unigram_total_delta: 3,
@@ -146,17 +156,11 @@ fn scoring_blends_bigram_and_unigram_over_the_corpus_counts() {
             },
         )
         .unwrap();
-    assert!(raised < rare);
-    // n-best step costs carry both branches for the seen transition.
-    let step = lm.nbest_step_costs(&ni, &hao).unwrap();
-    assert!(step.blended.is_some());
-    assert!(step.unigram.is_some());
+    assert!(raised.unigram.unwrap() > rare.unigram.unwrap());
 }
 
 #[test]
 fn wrapped_bigram_fields_keep_record_presence_and_nan_costs() {
-    use oxpinyin_core::cost::{NAN_COST, NEG_INF_COST};
-
     let fix = Fixture::new();
     let (lm, _) = fix.open();
     let ni = PhraseToken::new(NI);
@@ -167,12 +171,6 @@ fn wrapped_bigram_fields_keep_record_presence_and_nan_costs() {
         bigram_total: u64::from(u32::MAX - 6),
         ..UserCountDelta::ZERO
     };
-    for edge in [0, 17] {
-        assert_eq!(
-            lm.score_with_user_delta(&[ni], &hao, edge, delta).unwrap(),
-            NAN_COST
-        );
-    }
     assert!(
         lm.nbest_step_costs_with_user_delta(&ni, &hao, delta)
             .unwrap()
@@ -186,10 +184,6 @@ fn wrapped_bigram_fields_keep_record_presence_and_nan_costs() {
         bigram_total: 0,
         ..UserCountDelta::ZERO
     };
-    assert_eq!(
-        lm.score_with_user_delta(&[hao], &ni, 0, delta).unwrap(),
-        NEG_INF_COST
-    );
     assert_eq!(
         lm.nbest_step_costs_with_user_delta(&hao, &ni, delta)
             .unwrap()
@@ -487,50 +481,6 @@ fn conf_with_lambda(lambda: &str) -> oxpinyin_data::table_info::TableConf {
     oxpinyin_data::table_info::TableConf::load_from_dir(dir.path()).unwrap()
 }
 
-/// The scanned `gfloat` is the only source of λ (maintainer ruling
-/// 2026-10-28 UTC, D1). `5e-1` scans to 0.5 and takes the rational path of
-/// `0.5`; `1e-30` has a rational whose products overflow `u128` with these
-/// totals, and the smallest positive `gfloat` has none: both price the step
-/// with the pin's float arithmetic instead of the floor. At these magnitudes
-/// `λ·bigram` vanishes against the unigram term, so both equal `-0`, whose
-/// `gfloat` path is the raw one throughout.
-#[test]
-fn lambda_routes_by_the_scanned_gfloat_and_overflow_takes_the_float_path() {
-    let fix = Fixture::new();
-    let (mut lm, _) = fix.open();
-    let ni = PhraseToken::new(NI);
-    let hao = PhraseToken::new(HAO);
-    let delta = UserCountDelta {
-        bigram_count: 1 << 30,
-        bigram_total: 1 << 31,
-        unigram_delta: 1 << 30,
-        unigram_total_delta: 1 << 31,
-        unigram_live: None,
-    };
-    let mut costs = |lambda: &str| {
-        lm.set_lambda_from_conf(&conf_with_lambda(lambda));
-        (
-            lm.score_with_user_delta(&[ni], &hao, 0, delta).unwrap(),
-            lm.nbest_step_costs_with_user_delta(&ni, &hao, delta)
-                .unwrap(),
-        )
-    };
-    assert_eq!(costs("5e-1"), costs("0.5"));
-    let float = costs("-0");
-    for lambda in ["1e-30", "1e-45"] {
-        let (score, step) = costs(lambda);
-        assert_ne!(score, oxpinyin_core::cost::UNKNOWN_COST, "{lambda}");
-        assert!(step.blended.is_some() && step.unigram.is_some(), "{lambda}");
-        assert_eq!((score, step), float, "{lambda}");
-    }
-}
-
-/// The merged row prices each item as the per-pair overlay does wherever
-/// that overlay can express the row: one load and merge per predecessor,
-/// `get_freq` per successor. A stored zero-count user item is the one
-/// thing the pair overlay cannot express (its presence gate is a positive
-/// count); the merged row keeps it, as the pin's merge does, and it takes
-/// the blended branch.
 #[test]
 fn merged_row_items_price_as_the_pair_overlay_at_wrap_presence_and_lambda_edges() {
     use oxpinyin_core::{MergedGram, NbestStepRow};

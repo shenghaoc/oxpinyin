@@ -189,19 +189,11 @@ mod tests {
     #[test]
     fn prepared_lookup_keeps_the_consumed_bound() {
         use crate::fixture_doubles::FixtureDictionary;
-        use oxpinyin_core::{Cost, LanguageModel, NbestStepCosts, PhraseToken};
+        use oxpinyin_core::{LanguageModel, NbestStepCosts, PhraseToken};
         struct Model;
         impl LanguageModel for Model {
             type Error = core::convert::Infallible;
             type Token = PhraseToken;
-            fn score(
-                &self,
-                _: &[PhraseToken],
-                _: &PhraseToken,
-                cost: Cost,
-            ) -> Result<Cost, Self::Error> {
-                Ok(cost)
-            }
             fn nbest_step_costs(
                 &self,
                 _: &PhraseToken,

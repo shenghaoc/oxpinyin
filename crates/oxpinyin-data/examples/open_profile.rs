@@ -93,21 +93,21 @@ fn main() {
         "ke'yi",
     ];
     let mut hits = 0_usize;
-    let mut scored: i64 = 0;
+    let mut steps = 0_usize;
     for _ in 0..100 {
         for probe in probes {
             let keys = syllables(probe);
             let entries = dict.lookup(&keys).expect("lookup");
             hits += entries.len();
             if let Some(first) = entries.first() {
-                scored = scored.wrapping_add(
-                    lm.score(&[PhraseToken::new(0x0100_0001)], &first.token(), 0)
-                        .expect("score"),
-                );
+                let step = lm
+                    .nbest_step_costs(&PhraseToken::new(0x0100_0001), &first.token())
+                    .expect("n-best step");
+                steps += usize::from(step.blended.is_some() || step.unigram.is_some());
             }
             let _ = dict.phrase_prefix_exists(&keys[..1]).expect("probe");
         }
     }
-    report("800 lookups + prefix probes + scores", &mut prev);
-    println!("  hits {hits} · score checksum {scored}");
+    report("800 lookups + prefix probes + n-best steps", &mut prev);
+    println!("  hits {hits} · priced steps {steps}");
 }

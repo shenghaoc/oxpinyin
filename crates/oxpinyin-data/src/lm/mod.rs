@@ -42,14 +42,12 @@ use std::fmt;
 use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use oxpinyin_core::cost::{UNKNOWN_COST, cost_of_probability, reduce_ratio, surprisal};
-use oxpinyin_core::{Cost, LanguageModel, PhraseToken, UserCountDelta, single_gram};
+use oxpinyin_core::{LanguageModel, PhraseToken, UserCountDelta, single_gram};
 
 use crate::bigram_table::{BigramTable, SystemGram};
 use crate::dict::DictError;
 use crate::phrase_libraries::PhraseLibraries;
 use crate::table::TableError;
-use crate::table_conf::Lambda;
 
 /// Error conditions for bigram lookups.
 #[derive(Debug)]
@@ -112,46 +110,6 @@ impl LmError {
             ))
         )
     }
-}
-
-/// Divides empty-history unigram surprisal so it ranks by frequency without
-/// overpowering `phrase_key_bonus`.
-///
-/// Measured on the pin export: 你 vs 你好 differ by ~11,615 cost units of
-/// raw unigram surprisal. With `phrase_key_bonus` at its swept value of
-/// 1,000, full unigram would still drown coverage; a factor of 16 leaves a
-/// ~700-unit frequency signal — enough to order same-length phrases, small
-/// enough that a two-key phrase still wins.
-const UNIGRAM_TIEBREAK_SCALE: i64 = 16;
-
-/// Interpolated `(numerator, denominator)` for `λ·b/bt + (1 − λ)·u/ut` over a
-/// common denominator, where `λ = lambda_num / lambda_den`.
-///
-/// Returns `None` if any `u128` product overflows — reachable for a λ whose
-/// decimal needs a large denominator (`1e-30`). The caller then prices the
-/// step with the pin's float arithmetic on the `gfloat` λ instead
-/// (maintainer ruling 2026-10-28 UTC, D1). [`Lambda`] keeps
-/// `lambda_num ≤ lambda_den`, so the `(1 − λ)` weight never underflows.
-fn interpolate_ratio(
-    lambda_num: u128,
-    lambda_den: u128,
-    bigram_count: u128,
-    bigram_total: u128,
-    unigram: u128,
-    unigram_total: u128,
-) -> Option<(u128, u128)> {
-    let one_minus_lambda = lambda_den.saturating_sub(lambda_num);
-    let bigram_term = lambda_num
-        .checked_mul(bigram_count)?
-        .checked_mul(unigram_total)?;
-    let unigram_term = one_minus_lambda
-        .checked_mul(unigram)?
-        .checked_mul(bigram_total)?;
-    let numerator = bigram_term.checked_add(unigram_term)?;
-    let denominator = lambda_den
-        .checked_mul(bigram_total)?
-        .checked_mul(unigram_total)?;
-    Some((numerator, denominator))
 }
 
 /// Additive merge of one count pair (`merge_single_gram`, §5).
@@ -242,79 +200,11 @@ pub struct BigramLanguageModel<L = PhraseLibraries, T = BigramTables, M = Atomic
 /// Bigram DBM and interpolation parameters, without phrase byte ownership.
 pub struct BigramTables {
     bigram: BigramTable,
-    /// Bigram/unigram interpolation weight λ, read from the model's
-    /// `table.conf` when available and [`Lambda::PINNED`] (`0.312699`,
-    /// `data-formats.md` §3) otherwise. Read from config rather than
-    /// hardcoded.
-    lambda: Lambda,
-    /// λ as the pin's `gfloat` when the scanned value has no exact
-    /// rational ([`Lambda::from_f32`]: outside `[0, 1]`, `inf`, `nan`, or a
-    /// decimal too long for a `u128`): the interpolation then runs the pin's
-    /// `gfloat`/`gdouble` arithmetic (`phonetic_lookup.h:663`, `:693`) up to
-    /// the `log`. A rational λ whose step overflows `u128` takes the same
-    /// arithmetic on [`Self::lambda_f32`] for that step.
-    lambda_raw: Option<f32>,
-    /// λ as the pin's `gfloat`, whichever way it was installed: the weight of
-    /// the candidate frequency law.
+    /// Bigram/unigram interpolation weight λ as the pin's `gfloat`, read
+    /// from the model's `table.conf` when available and
+    /// [`crate::table_conf::Lambda::PINNED`] (`0.312699`, `data-formats.md` §3) otherwise.
+    /// Read from config rather than hardcoded.
     lambda_f32: f32,
-}
-
-/// `unigram_lambda(1. - lambda)` (`phonetic_lookup.h:712-713`): the double
-/// subtraction, stored as a `gfloat`.
-fn unigram_lambda(lambda: f32) -> f32 {
-    (1.0_f64 - f64::from(lambda)) as f32
-}
-
-/// The cost of a probability `x` computed the pin's way: `-log₂ x` on the
-/// fixed-point scale. Where the pin's `log` is not a finite negative number
-/// the cost is the matching special value — NaN for a negative or NaN
-/// argument, `+inf` for 0, a negative cost above one, `-inf` for `inf` — and
-/// the pin keeps the step. `None` only where the probability underflows the
-/// scale, as before.
-fn probability_cost(x: f64) -> Option<Cost> {
-    const SCALE: u64 = 1 << 62;
-    if x.is_nan() || x <= 0.0 || x > 1.0 {
-        return Some(cost_of_probability(x));
-    }
-    let count = (x * SCALE as f64) as u64;
-    match surprisal(count, SCALE) {
-        UNKNOWN_COST => None,
-        cost => Some(cost),
-    }
-}
-
-/// `log(bigram_lambda * bigram_poss + unigram_lambda * unigram_poss)`
-/// without the pronunciation factor (`phonetic_lookup.h:608`, `:693`): the
-/// bigram term in `gfloat`, the unigram term in `gdouble`.
-fn raw_blend_cost(
-    lambda: f32,
-    bigram_count: u64,
-    bigram_total: u64,
-    unigram: u64,
-    unigram_total: u64,
-) -> Option<Cost> {
-    if unigram_total == 0 {
-        return None;
-    }
-    // A wrapped SingleGram total remains present. The pin divides in
-    // gfloat even at zero (`phonetic_lookup.h:608`), yielding infinity
-    // for a positive count; probability_cost preserves its special cost.
-    let bigram_poss = bigram_count as f32 / bigram_total as f32;
-    let unigram_poss = unigram as f64 / unigram_total as f64;
-    probability_cost(
-        f64::from(lambda * bigram_poss) + f64::from(unigram_lambda(lambda)) * unigram_poss,
-    )
-}
-
-/// The integer-ratio path's equivalent of the pin's positive count / 0.
-/// `lambda * inf` is NaN at zero lambda, infinity otherwise. Preserve
-/// those existing special costs without a transcendental or wider sum.
-fn zero_total_bigram_cost(lambda_num: u128) -> Cost {
-    if lambda_num == 0 {
-        oxpinyin_core::cost::NAN_COST
-    } else {
-        oxpinyin_core::cost::NEG_INF_COST
-    }
 }
 
 impl<L, T: std::borrow::Borrow<BigramTables>, M> std::ops::Deref for BigramLanguageModel<L, T, M> {
@@ -342,8 +232,6 @@ impl BigramTables {
     fn with_table(bigram: BigramTable) -> Self {
         Self {
             bigram,
-            lambda: Lambda::PINNED,
-            lambda_raw: None,
             lambda_f32: crate::table_conf::PINNED_LAMBDA,
         }
     }
@@ -400,7 +288,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, M: std::borrow::Borrow<AtomicU32>>
     /// and tkrzw) over the facade's `libraries`, with every library
     /// visible.
     ///
-    /// λ defaults to [`Lambda::PINNED`] (`0.312699`, `data-formats.md` §3);
+    /// λ defaults to [`crate::table_conf::Lambda::PINNED`] (`0.312699`, `data-formats.md` §3);
     /// override it from a real install's config with
     /// `set_lambda_from_conf`.
     ///
@@ -433,22 +321,9 @@ impl<L: std::borrow::Borrow<PhraseLibraries>> BigramLanguageModel<L> {
 }
 
 impl BigramTables {
-    /// The interpolation weight λ currently in effect.
-    #[must_use]
-    pub const fn lambda(&self) -> Lambda {
-        self.lambda
-    }
-
     /// Installs λ from the parsed system `table.conf`.
     pub fn set_lambda_from_conf(&mut self, conf: &crate::table_info::TableConf) {
         self.lambda_f32 = conf.lambda_f32();
-        match conf.lambda_unit() {
-            Some(lambda) => {
-                self.lambda = lambda;
-                self.lambda_raw = None;
-            }
-            None => self.lambda_raw = Some(conf.lambda_f32()),
-        }
     }
 }
 
@@ -512,7 +387,7 @@ impl<
             .unigram_total_unloaded(self.library_mask.borrow().load(Ordering::SeqCst))
     }
 
-    /// The facade total the n-best step and the score divide by
+    /// The facade total the n-best step divides by
     /// (074a2219 `phonetic_lookup.h:651`, `:679`; `phrase_lookup.cpp:315`,
     /// `:334`): the visible libraries' total plus `extra`, everything the
     /// user side and `add_unigram_frequency` added to it. The pin keeps one
@@ -598,173 +473,6 @@ impl<
         })
     }
 
-    /// Interpolated model cost of `token` after `history`, without `edge_cost`.
-    ///
-    /// Empty-history ranking: a *scaled-down* unigram surprisal acts as a
-    /// tie-break within the same structural cost. Full unigram surprisal
-    /// (~8–20k on the export) drowns the provisional `phrase_key_bonus` and
-    /// makes longer phrases lose to their first syllable; dividing by
-    /// [`UNIGRAM_TIEBREAK_SCALE`] keeps the order of frequencies without
-    /// undoing coverage credit. Bigram transitions keep full scale — that is
-    /// the term that should move multi-phrase sentences. A history whose
-    /// previous token has no bigram entry floors at [`UNKNOWN_COST`], like a
-    /// count-0 next-token, so an unseen transition never undercuts a rare but
-    /// observed one.
-    ///
-    /// `user` is the §5 additive overlay. Zero is identity: the frozen
-    /// λ-blend (`docs/findings/scoring-spec.md`) runs over the same counts
-    /// as before. Bigram fields wrap at their stored `guint32` width
-    /// *before* the probability is taken; λ is not touched.
-    fn model_cost(
-        &self,
-        history: &[PhraseToken],
-        token: &PhraseToken,
-        user: UserCountDelta,
-        transition: impl FnOnce(u32) -> Result<Option<(u64, u64, bool)>, LmError>,
-    ) -> Result<Cost, LmError> {
-        if !self.has_unigrams() {
-            return Self::pure_bigram_cost(history, transition);
-        }
-
-        let unigram = self.live_unigram_count(token.value(), &user);
-        let unigram_total = self.facade_total(user.unigram_total_delta);
-        if unigram == 0 || unigram_total == 0 {
-            return Ok(UNKNOWN_COST);
-        }
-
-        let unigram_cost = surprisal(unigram, unigram_total);
-
-        let Some(prev) = history.last() else {
-            return Ok(unigram_cost / UNIGRAM_TIEBREAK_SCALE);
-        };
-
-        match transition(prev.value())? {
-            Some((bigram_count, bigram_total, _)) if self.lambda_raw.is_some() => {
-                let lambda = self.lambda_raw.unwrap_or_default();
-                Ok(
-                    raw_blend_cost(lambda, bigram_count, bigram_total, unigram, unigram_total)
-                        .unwrap_or(UNKNOWN_COST),
-                )
-            }
-            Some((0, 0, true)) => Ok(oxpinyin_core::cost::NAN_COST),
-            Some((bigram_count, 0, _)) if bigram_count > 0 => {
-                Ok(zero_total_bigram_cost(self.lambda.numerator()))
-            }
-            Some((bigram_count, bigram_total, _)) => {
-                // λ·b/bt + (1 − λ)·u/ut over a common denominator, with λ =
-                // lambda_num / lambda_den from the model config. Checked
-                // arithmetic: where a product overflows `u128` the step takes
-                // the pin's float arithmetic on the `gfloat` λ (D1).
-                // The inputs are the merged counts; the formula is unchanged.
-                match interpolate_ratio(
-                    self.lambda.numerator(),
-                    self.lambda.denominator(),
-                    u128::from(bigram_count),
-                    u128::from(bigram_total),
-                    u128::from(unigram),
-                    u128::from(unigram_total),
-                ) {
-                    Some((numerator, denominator)) => {
-                        let (numerator, denominator) = reduce_ratio(numerator, denominator);
-                        Ok(surprisal(numerator, denominator))
-                    }
-                    None => Ok(raw_blend_cost(
-                        self.lambda_f32,
-                        bigram_count,
-                        bigram_total,
-                        unigram,
-                        unigram_total,
-                    )
-                    .unwrap_or(UNKNOWN_COST)),
-                }
-            }
-            // Previous token absent from both grams (no evidence of this
-            // transition at all): floor at
-            // UNKNOWN_COST — the same floor a count-0 next-token gets — so an
-            // unseen transition never scores cheaper than a rare observed one.
-            None => Ok(UNKNOWN_COST),
-        }
-    }
-
-    /// Pre-interpolation behaviour: pure bigram when history exists, else
-    /// pass-through (dictionary order carries unigram ranking).
-    fn pure_bigram_cost(
-        history: &[PhraseToken],
-        transition: impl FnOnce(u32) -> Result<Option<(u64, u64, bool)>, LmError>,
-    ) -> Result<Cost, LmError> {
-        let Some(prev) = history.last() else {
-            return Ok(0);
-        };
-        match transition(prev.value())? {
-            Some((count, total, _)) => Ok(surprisal(count, total)),
-            None => Ok(UNKNOWN_COST),
-        }
-    }
-
-    /// [`LanguageModel::score`] with an explicit §5 user-count overlay.
-    ///
-    /// `UserCountDelta::ZERO` is bit-identical to [`LanguageModel::score`].
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LmError`] when the system table cannot be read.
-    pub fn score_with_user_delta(
-        &self,
-        history: &[PhraseToken],
-        token: &PhraseToken,
-        edge_cost: Cost,
-        user: UserCountDelta,
-    ) -> Result<Cost, LmError> {
-        let model = self.model_cost(history, token, user, |prev| {
-            self.merged_transition(prev, token.value(), user)
-        })?;
-        if model == oxpinyin_core::cost::NAN_COST {
-            return Ok(model);
-        }
-        Ok(edge_cost.saturating_add(model))
-    }
-
-    /// [`Self::score_with_user_delta`] over the previous token's merged row
-    /// instead of a per-pair overlay: `row` loads it (see
-    /// [`Self::load_merged_row`]) and the bigram is `get_freq` and
-    /// `get_total_freq` on it. `user` supplies the unigram fields only.
-    /// No pin call scores this way; it is the test-double scoring path.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LmError`] when a table cannot be read, or
-    /// [`LmError::Parse`] for a merged row the pin could not read.
-    pub fn score_with_merged_row(
-        &self,
-        history: &[PhraseToken],
-        token: &PhraseToken,
-        edge_cost: Cost,
-        user: UserCountDelta,
-        row: impl FnOnce(u32) -> Result<Option<oxpinyin_core::MergedGram>, LmError>,
-    ) -> Result<Cost, LmError> {
-        let model = self.model_cost(history, token, user, |prev| {
-            let Some(gram) = row(prev)? else {
-                return Ok(None);
-            };
-            let unreadable = |fault| {
-                LmError::Parse(format!(
-                    "the merged bigram row of {prev:#010x} cannot be read ({fault:?})"
-                ))
-            };
-            let freq = gram.get_freq(token.value()).map_err(unreadable)?;
-            let total = gram.total().map_err(unreadable)?;
-            Ok(Some((
-                u64::from(freq.unwrap_or(0)),
-                u64::from(total),
-                freq.is_some(),
-            )))
-        })?;
-        if model == oxpinyin_core::cost::NAN_COST {
-            return Ok(model);
-        }
-        Ok(edge_cost.saturating_add(model))
-    }
-
     /// The unigram the model scores `token` with: the live item field when the
     /// user side holds one for a visible library, else the stored value plus
     /// the user delta, merged as `guint32` (`phrase_index.cpp:173-175`).
@@ -804,9 +512,9 @@ impl<
     /// [`LanguageModel::nbest_step_costs`] with an explicit §5 user-count
     /// overlay.
     ///
-    /// Both branches run over the same additive merge as
-    /// [`Self::score_with_user_delta`]. The bigram merge happens *before*
-    /// the count > 0 presence gate, so a user-trained successor with no
+    /// Both branches run over the same additive count merge. The bigram
+    /// merge happens *before* the count > 0 presence gate, so a
+    /// user-trained successor with no
     /// system count — including a prev that has a system row but not this
     /// next token — takes the blended branch over the merged denominator.
     /// The presence gate itself is the pin's `get_phrase_item` over the
@@ -948,17 +656,6 @@ impl<
 
     fn amplification_lambda(&self) -> f32 {
         self.lambda_f32
-    }
-
-    fn score(
-        &self,
-        history: &[Self::Token],
-        token: &Self::Token,
-        edge_cost: Cost,
-    ) -> Result<Cost, Self::Error> {
-        // Always the merge path: a zero overlay is identity, so existing
-        // callers stay bit-identical and the empty-store pin stays honest.
-        self.score_with_user_delta(history, token, edge_cost, UserCountDelta::ZERO)
     }
 
     fn unigram_freq(&self, token: &Self::Token) -> Result<Option<u64>, Self::Error> {
@@ -1114,22 +811,6 @@ mod merge_tests {
         assert_eq!(
             merge_bigram(Some((2, 2)), u64::from(u32::MAX), u64::from(u32::MAX)),
             Some((1, 1))
-        );
-    }
-
-    #[test]
-    fn wrapped_zero_total_keeps_the_pins_infinite_probability() {
-        assert_eq!(
-            super::raw_blend_cost(0.312699, 2, 0, 1, 10),
-            Some(oxpinyin_core::cost::NEG_INF_COST)
-        );
-        assert_eq!(
-            super::zero_total_bigram_cost(1),
-            oxpinyin_core::cost::NEG_INF_COST
-        );
-        assert_eq!(
-            super::zero_total_bigram_cost(0),
-            oxpinyin_core::cost::NAN_COST
         );
     }
 }
