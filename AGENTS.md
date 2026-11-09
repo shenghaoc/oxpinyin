@@ -28,7 +28,7 @@ Read `.kiro/steering/` as always-loaded context; it uses Kiro's steering format 
 - Never request or trigger a review on any PR, by any means: no comment mentioning a review bot, no request to a reviewer or team, no "Trigger review" checkbox. A human's question about whether a PR is ready is a question: answer it and do nothing else.
 - Never change a PR's draft or ready state.
 - Never close a PR. Never rewrite history on a merged branch.
-- Author and commit as Shenghao Chen <shenghaoc@outlook.com>. Check both identities with `git log --format='%an <%ae> %cn <%ce>'` before pushing.
+- Commit under the Git identity that is already configured. If none is configured, stop; do not commit. Never set or change a Git identity unless the human explicitly instructs you to.
 
 Precedents:
 
