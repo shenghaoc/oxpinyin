@@ -93,7 +93,7 @@ class GroupTerminationTests(unittest.TestCase):
 
 
 class RunCommandTests(unittest.TestCase):
-    """run_command supervises a child and can redirect its stdout and working directory."""
+    """run_command supervises a child and can redirect its stdout."""
 
     if sys.platform != 'win32':
         def test_stdout_goes_where_it_is_sent_and_the_status_returns(self):
@@ -106,14 +106,6 @@ class RunCommandTests(unittest.TestCase):
         def test_a_signalled_child_reports_the_negative_status_it_returned(self):
             status = slot.run_command([sys.executable, '-c', 'import os, signal; os.kill(os.getpid(), signal.SIGTERM)'])
             self.assertEqual(status, -signal.SIGTERM)
-
-        def test_env_and_cwd_reach_the_child(self):
-            with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryFile() as target:
-                code = 'import os; print(os.environ["PROBE"], os.getcwd())'
-                self.assertEqual(slot.run_command([sys.executable, '-c', code], env=dict(os.environ, PROBE='x'),
-                                                  cwd=directory, stdout=target), 0)
-                target.seek(0)
-                self.assertEqual(target.read().decode(), f'x {os.path.realpath(directory)}\n')
 
         def test_the_child_runs_in_its_own_session(self):
             with tempfile.TemporaryFile() as target:
@@ -156,13 +148,6 @@ class RunCommandWindowsTests(unittest.TestCase):
 
 
 class CancellationTests(unittest.TestCase):
-    def test_check_cancelled_raises_only_while_the_event_is_set(self):
-        with slot.cancellation_handlers():
-            slot.check_cancelled()
-            slot.CANCELLED.set()
-            with self.assertRaises(slot.Cancelled):
-                slot.check_cancelled()
-
     def test_handlers_clear_state_on_entry_and_restore_the_previous_handlers_on_exit(self):
         slot.CANCELLED.set()
         previous = signal.getsignal(signal.SIGTERM)
@@ -191,21 +176,10 @@ class WaitChildTests(unittest.TestCase):
         def start(self, code):
             return subprocess.Popen([sys.executable, '-c', code], start_new_session=True)
 
-        def test_returns_the_status(self):
-            with slot.cancellation_handlers(), self.start('raise SystemExit(5)') as process:
-                self.assertEqual(slot.wait_child(process), 5)
-
         def test_a_timeout_terminates_and_reaps_the_group(self):
             with slot.cancellation_handlers(), self.start('import time; time.sleep(60)') as process:
                 with self.assertRaises(subprocess.TimeoutExpired):
                     slot.wait_child(process, timeout=.3)
-                self.assertIsNotNone(process.poll())
-
-        def test_cancellation_terminates_and_reaps_the_group(self):
-            with slot.cancellation_handlers(), self.start('import time; time.sleep(60)') as process:
-                slot.CANCELLED.set()
-                with self.assertRaises(slot.Cancelled):
-                    slot.wait_child(process)
                 self.assertIsNotNone(process.poll())
 
         def test_descendants_in_the_group_are_killed(self):

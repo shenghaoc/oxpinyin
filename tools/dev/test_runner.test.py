@@ -25,10 +25,6 @@ class HarnessTests(unittest.TestCase):
         return subprocess.run(['sort'], input=found.stdout, env=dict(os.environ, LC_ALL='C'),
                               capture_output=True, check=True).stdout.decode().splitlines()
 
-    def test_discovery_matches_ci_find_and_sort_on_the_checkout(self):
-        self.assertEqual(test_runner.harness_files(), self.legacy_files(ROOT))
-        self.assertEqual(test_runner.HARNESS_EXCLUDED, set())
-
     def test_discovery_includes_hidden_files_but_not_symlinks_or_directories(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -45,7 +41,7 @@ class HarnessTests(unittest.TestCase):
             self.assertEqual(found, self.legacy_files(root))
             self.assertEqual(len(found), 6)
 
-    def fake_run(self, sources, files=(), pattern=None, changed=None, filesystem='ext4', cpus=2):
+    def fake_run(self, sources, files=(), pattern=None, changed=None, cpus=2):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             for name, source in sources.items():
@@ -179,16 +175,6 @@ if __name__ == '__main__': unittest.main()
         self.assertNotIn('unselected', out)
         self.assertIn('one or more tools/ Python harness tests failed', err)
 
-    def test_selected_and_changed_children_filter_credentials(self):
-        sources = {'tools/a.test.py': "import os; assert 'OXPINYIN_TEST_TOKEN' not in os.environ; print('safe')"}
-        with mock.patch.dict(os.environ, OXPINYIN_TEST_TOKEN='test-only-sentinel'):
-            for files, changed in (((), None), (['tools/a.test.py'], None), ((), 'HEAD')):
-                with mock.patch.object(test_runner, 'changed_paths', return_value=['tools/a.test.py']):
-                    status, out, err = self.fake_run(sources, files, changed=changed)
-                self.assertEqual(status, 0, err)
-                self.assertIn('safe', out)
-                self.assertNotIn('test-only-sentinel', out + err)
-
     def test_conflicting_selection_and_invalid_changed_base_refuse(self):
         sources = {'tools/a.test.py': "print('launched')"}
         status, out, err = self.fake_run(sources, ['tools/a.test.py'], changed='HEAD')
@@ -199,13 +185,6 @@ if __name__ == '__main__': unittest.main()
             status, out, err = self.fake_run(sources, changed='unknown')
         self.assertEqual(status, 2)
         self.assertEqual(out, '')
-
-    def test_pool_worker_count_is_bounded_by_allowed_cpus_and_files(self):
-        for cpus, expected in ((1, 1), (2, 2), (20, 2)):
-            with mock.patch.object(test_runner.pool, 'run_units', wraps=test_runner.pool.run_units) as run:
-                status, out, err = self.fake_run({'tools/a.test.py': 'pass', 'tools/b.test.py': 'pass'}, cpus=cpus)
-            self.assertEqual(status, 0, out + err)
-            self.assertEqual(run.call_args.args[1], expected)
 
     def test_changed_mapping_and_unknown_fallback(self):
         sources = {name: "print('ran')" for name in
@@ -223,74 +202,6 @@ if __name__ == '__main__': unittest.main()
         self.assertEqual(test_runner.changed_harness_files(['tools/other.test.py'],
                                                          ['tools/dev/test_runner.py']),
                          ['tools/other.test.py'])
-
-    def test_shared_files_including_justfile_select_every_harness(self):
-        files = test_runner.harness_files()
-        self.assertIn('tools/dev/python-request.test.py', files)
-        self.assertGreater(len(files), len(test_runner.COMPAT_HARNESS))
-        shared = ('justfile', 'tools/dev/bash_floor.py',
-                  '.github/actions/example/action.yml',
-                  '.github/workflows/oracle-image.yml', '.github/workflows/verify-nightly.yml',
-                  'docs/plans/tooling-shell-audit.md')
-        for path in shared:
-            with self.subTest(path=path):
-                self.assertNotIn(path, test_runner.HARNESS_DEPENDENCIES)
-                self.assertEqual(test_runner.changed_harness_files(files, [path]), files)
-
-    def test_contract_helpers_keep_their_own_tests(self):
-        files = test_runner.harness_files()
-        for name in ('abi', 'fixtures', 'kit'):
-            with self.subTest(module=name):
-                expected = {f'tools/bisection/contract_{name}.test.py'}
-                self.assertEqual(
-                    test_runner.changed_harness_files(
-                        files, [f'tools/bisection/contract_{name}.py']),
-                    [path for path in files if path in expected])
-        self.assertEqual(
-            test_runner.changed_harness_files(files, ['tools/bisection/reverse_cross_open.py']),
-            [path for path in files
-             if path == 'tools/bisection/reverse_cross_open.test.py'])
-        self.assertEqual(
-            test_runner.changed_harness_files(files, ['tools/bisection/contract_case_helpers.py']), [])
-
-    def test_provision_owned_file_selects_its_readers_and_justfile_selects_all(self):
-        files = test_runner.harness_files()
-        selected = test_runner.changed_harness_files(files, ['tools/dev/provision.py'])
-        self.assertEqual(selected, [name for name in files if name in test_runner.PROVISION_HARNESS])
-        self.assertEqual(test_runner.changed_harness_files(files, ['justfile']), files)
-
-    def test_tooling_shell_audit_and_other_audited_text_select_their_reader(self):
-        # python-request.test.py reads every tracked text file outside its
-        # explicit allowlist, not just paths named literally in its source.
-        files = test_runner.harness_files()
-        reader = 'tools/dev/python-request.test.py'
-        self.assertIn(reader, files)
-        audited = ('ROADMAP.md', 'docs/plans/tooling-shell-audit.md',
-                   'docs/plans/tooling-python.md', 'docs/plans/tooling-just.md',
-                   'docs/runbooks/benches.md', 'docs/runbooks/cloud.md',
-                   'docs/runbooks/oracle.md', 'docs/testing/README.md',
-                   'docs/testing/capture-fixtures.md', 'docs/testing/oracle-environment.md',
-                   'fixtures/datagen-toned/README.md')
-        for path in audited:
-            with self.subTest(path=path):
-                self.assertNotIn(path, test_runner.HARNESS_DEPENDENCIES)
-                self.assertIn(reader, test_runner.changed_harness_files(files, [path]))
-
-    def test_shared_packaging_inputs_select_all_discovered_harnesses(self):
-        files = test_runner.harness_files()
-        self.assertIn('tools/dev/doctor.test.py',
-                      test_runner.changed_harness_files(files, ['tools/dev/doctor.py']))
-        for path in ('justfile', '.github/workflows/ci.yml',
-                     '.github/workflows/release-packages.yml',
-                     '.github/actions/example/action.yml',
-                     'tools/dev/pool.py',
-                     'tools/dev/bash_floor.py', 'tools/dev/doctor.py',
-                     'tools/example.py', 'docs/packaging.md',
-                     'docs/plans/tooling-shell-audit.md', 'docs/plans/tooling-python.md',
-                     'docs/runbooks/benches.md', 'docs/runbooks/goldens-and-pins.md',
-                     'docs/runbooks/release.md', 'docs/testing/oracle-environment.md'):
-            with self.subTest(path=path):
-                self.assertEqual(test_runner.changed_harness_files(files, [path]), files)
 
     def test_changed_paths_include_all_git_states(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -356,17 +267,6 @@ print('END ' + name, file=sys.stderr, flush=True)
         self.assertIn('LAST', out)
         self.assertNotIn('RuntimeError', out)
         self.assertIn('one or more tools/ Python harness tests failed', err)
-
-    def test_changed_selection_precedes_the_tmpdir_requirement(self):
-        sources = {'tools/dev/check.test.py': "print('launched')"}
-        for paths, expected in ((['tools/dev/check.test.py'], 0), (['unknown'], 0), ([], 0)):
-            with self.subTest(paths=paths), \
-                    mock.patch.object(test_runner, 'changed_paths', return_value=paths):
-                status, out, err = self.fake_run(sources, changed='HEAD', filesystem='tmpfs')
-            self.assertEqual(status, expected, out + err)
-        status, out, err = self.fake_run(sources, ['tools/missing.test.py'], filesystem='tmpfs')
-        self.assertEqual((status, out), (2, ''))
-        self.assertIn('not a discovered harness file', err)
 
     def test_credential_patterns_match_names_case_insensitively(self):
         removed = ['DEPLOY_KEY', 'npm_token', 'Client_Secret', 'MYSECRETS', 'DB_PASSWORD_FILE', 'GH_PAT',

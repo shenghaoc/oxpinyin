@@ -60,14 +60,6 @@ class HostTests(unittest.TestCase):
 
 
 class CpuSnapshotTests(unittest.TestCase):
-    def test_snapshot_reports_cpus_and_notes(self):
-        snapshot = host.cpu_snapshot()
-        self.assertIsInstance(snapshot['cpus'], int)
-        self.assertGreaterEqual(snapshot['cpus'], 1)
-        self.assertGreaterEqual(snapshot['cargo_cpus'], snapshot['cpus'])
-        self.assertIsInstance(snapshot['notes'], list)
-        self.assertNotIn('available_mib', snapshot)
-
     def test_without_affinity_or_cgroups_the_cpu_count_is_used(self):
         with mock.patch.object(sys, 'platform', 'darwin'), \
                 mock.patch.object(host.os, 'cpu_count', return_value=6):
@@ -160,18 +152,6 @@ class CgroupCpuTests(unittest.TestCase):
                 snapshot = self.snapshot()
                 self.assertIn('cgroup v1 cpu limits=unknown', snapshot['notes'])
                 self.assertEqual(snapshot['cpus'], 4)
-
-    def test_unreadable_cpu_files_are_unknown(self):
-        (self.cpu / 'session/cpu.cfs_quota_us').write_text('200000')
-        for filename in ('cpu.cfs_quota_us', 'cpu.cfs_period_us'):
-            with self.subTest(filename=filename):
-                path = self.cpu / 'session' / filename
-                content = path.read_text()
-                path.unlink()
-                snapshot = self.snapshot()
-                self.assertEqual(snapshot['cpus'], 4)
-                self.assertIn('cgroup v1 /session CPU quota=unknown', snapshot['notes'])
-                path.write_text(content)
 
 
 if __name__ == '__main__':

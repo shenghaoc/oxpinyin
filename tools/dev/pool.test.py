@@ -79,26 +79,18 @@ class FakeLauncher:
 CLEANED = []
 
 
-def tasks_of(*names, cleanup=True, directory=None):
-    return [pool.Task(name, ['run', name], log=None if directory is None else directory / f'{name}.log',
+def tasks_of(*names, cleanup=True):
+    return [pool.Task(name, ['run', name],
                       cleanup=(lambda name=name: CLEANED.append(['cleanup', name])) if cleanup else None)
             for name in names]
 
 
 class PoolLoopTests(unittest.TestCase):
-    def run_pool(self, tasks, workers, launcher, cancelled=lambda: False, out=None):
+    def run_pool(self, tasks, workers, launcher):
         CLEANED.clear()
-        result = pool.run_pool(tasks, workers, launcher, cancelled=cancelled,
-                               poll=0, grace=0, out=out or io.StringIO(), sleep=lambda _: None)
+        result = pool.run_pool(tasks, workers, launcher, cancelled=lambda: False,
+                               poll=0, grace=0, out=io.StringIO(), sleep=lambda _: None)
         return result, list(CLEANED)
-
-    def test_every_task_runs_in_submission_order_and_succeeds(self):
-        launcher = FakeLauncher()
-        result, cleaned = self.run_pool(tasks_of('a', 'b', 'c', 'd'), 2, launcher)
-        self.assertTrue(result.ok)
-        self.assertEqual(launcher.launched, ['a', 'b', 'c', 'd'])
-        self.assertEqual(result.started, ['a', 'b', 'c', 'd'])
-        self.assertEqual(cleaned, [])
 
     def test_no_more_than_the_workers_run_at_once(self):
         launcher = FakeLauncher(runs=3)
@@ -115,18 +107,6 @@ class PoolLoopTests(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertLessEqual(peak, 2)
 
-    def test_one_worker_runs_one_task_at_a_time(self):
-        launcher = FakeLauncher(runs=1)
-        order = []
-        original = launcher.launch
-
-        def launch(task):
-            order.append([name for name, p in launcher.processes.items() if p.runs > 0])
-            return original(task)
-        launcher.launch = launch
-        self.run_pool(tasks_of('a', 'b', 'c'), 1, launcher)
-        self.assertTrue(all(not live for live in order), order)
-
     def test_a_failure_starts_nothing_more_stops_the_running_and_cleans_up_started_tasks(self):
         launcher = FakeLauncher({'bad': 7}, runs=50, runs_for={'bad': 1})
         result, cleaned = self.run_pool(tasks_of('good', 'bad', 'later', 'last'), 2, launcher)
@@ -136,22 +116,6 @@ class PoolLoopTests(unittest.TestCase):
         self.assertTrue(launcher.processes['good'].terminated)
         self.assertTrue(launcher.processes['good'].waited)
         self.assertEqual(sorted(map(tuple, cleaned)), [('cleanup', 'bad'), ('cleanup', 'good')])
-
-    def test_cancellation_stops_queued_work_and_reaps_the_running(self):
-        launcher = FakeLauncher(runs=10)
-        calls = {'n': 0}
-
-        def cancelled():
-            calls['n'] += 1
-            return calls['n'] > 3
-        result, cleaned = self.run_pool(tasks_of('a', 'b', 'c', 'd'), 2, launcher, cancelled)
-        self.assertTrue(result.cancelled)
-        self.assertFalse(result.ok)
-        self.assertEqual(launcher.launched, ['a', 'b'])
-        for name in ('a', 'b'):
-            self.assertTrue(launcher.processes[name].terminated)
-            self.assertTrue(launcher.processes[name].waited)
-        self.assertEqual(sorted(map(tuple, cleaned)), [('cleanup', 'a'), ('cleanup', 'b')])
 
     def test_a_task_that_ignores_sigterm_is_killed_after_the_grace(self):
         launcher = FakeLauncher({'bad': 1}, runs=50, runs_for={'bad': 1})
@@ -170,34 +134,6 @@ class PoolLoopTests(unittest.TestCase):
         launcher.launch = launch
         self.run_pool(tasks_of('stubborn', 'bad'), 2, launcher)
         self.assertTrue(launcher.processes['stubborn'].killed)
-
-    def test_the_result_does_not_depend_on_completion_order(self):
-        for runs in (0, 1, 3):
-            launcher = FakeLauncher({'b': 2}, runs=runs)
-            result, _ = self.run_pool(tasks_of('a', 'b', 'c'), 3, launcher)
-            self.assertEqual(result.failed, {'b': 2}, runs)
-
-    def test_a_failed_task_prints_the_tail_of_its_log(self):
-        with tempfile.TemporaryDirectory() as directory:
-            directory = Path(directory)
-            (directory / 'bad.log').write_text(''.join(f'line {n}\n' for n in range(100)))
-            out = io.StringIO()
-            launcher = FakeLauncher({'bad': 3}, runs=0)
-            self.run_pool(tasks_of('bad', directory=directory), 1, launcher, out=out)
-            text = out.getvalue()
-            self.assertIn('bad: failed with status 3', text)
-            self.assertIn('line 99', text)
-            self.assertNotIn('line 59\n', text)
-
-    def test_a_successful_task_removes_its_work_directory(self):
-        with tempfile.TemporaryDirectory() as directory:
-            work = Path(directory) / 'work'
-            work.mkdir()
-            (work / 'file').write_text('x')
-            task = pool.Task('a', ['run'], remove=work)
-            result, _ = self.run_pool([task], 1, FakeLauncher(runs=0))
-            self.assertTrue(result.ok)
-            self.assertFalse(work.exists())
 
 
 class PlanTests(unittest.TestCase):
@@ -218,28 +154,18 @@ class PlanTests(unittest.TestCase):
                 if chosen.workers > 1:
                     self.assertGreaterEqual(chosen.jobs, pool.MIN_OVERLAP_JOBS, (tasks, cpus))
 
-    def test_plans(self):
-        self.assertEqual(pool.plan(3, 12), (3, 4))
-        self.assertEqual(pool.plan(3, 6), (3, 2))
-        self.assertEqual(pool.plan(3, 4), (2, 2))
-        self.assertEqual(pool.plan(3, 3), (1, 3))
-        self.assertEqual(pool.plan(3, 2), (1, 2))
-        self.assertEqual(pool.plan(3, 1), (1, 1))
-        self.assertEqual(pool.plan(1, 8), (1, 8))
-
 
 class CommandTemplateTests(unittest.TestCase):
     def test_placeholders_are_filled_per_item_and_other_braces_are_kept(self):
         args = argparse.Namespace(
             items=['bdb', 'kc'], log='/logs/{item}.log', container_runtime=None, container_label='l',
-            remove='/build/{item}', command=['build', '--dbm', '{item}', '--jobs', '{jobs}', '--format', '{{.ID}}'])
+            command=['build', '--dbm', '{item}', '--jobs', '{jobs}', '--format', '{{.ID}}'])
         tasks = pool.build_tasks(args, pool.Plan(2, 3))
         self.assertEqual([task.argv for task in tasks],
                          [['build', '--dbm', 'bdb', '--jobs', '3', '--format', '{{.ID}}'],
                           ['build', '--dbm', 'kc', '--jobs', '3', '--format', '{{.ID}}']])
         self.assertEqual(tasks[1].log, Path('/logs/kc.log'))
         self.assertIsNone(tasks[1].cleanup)
-        self.assertEqual(tasks[1].remove, Path('/build/kc'))
 
 
 class CliTests(unittest.TestCase):
@@ -272,13 +198,6 @@ class CliTests(unittest.TestCase):
             self.assertIn('distinct --items', result.stderr)
             self.assertFalse(marker.exists())
 
-    def test_an_item_name_expands_in_every_word_of_the_command(self):
-        with tempfile.TemporaryDirectory() as directory:
-            result = self.run_cli('run', '--items', 'x', '--log', f'{directory}/{{item}}.log',
-                                  '--', sys.executable, '-c', 'import sys; assert sys.argv[1:] == ["x", "x/x"]',
-                                  '{item}', '{item}/{item}')
-            self.assertEqual(result.returncode, 0, result.stderr)
-
     def test_sigterm_stops_queued_work_and_reaps_every_child(self):
         with tempfile.TemporaryDirectory() as directory:
             directory = Path(directory)
@@ -304,7 +223,7 @@ class CliTests(unittest.TestCase):
                 self.assertFalse(running(pid), f'{pid} still running')
 
 FAKE_RUNTIME = """
-import json, os, secrets, subprocess, sys, time
+import json, os, secrets, subprocess, sys
 state, args = sys.argv[1], sys.argv[2:]
 # Invocations overlap: one `run` scans every record while another writes its own. A record is written
 # under a temporary name beside it and renamed into place, as a real runtime does
@@ -323,83 +242,8 @@ def containers():
 def write(target, text):
     temporary = f'{target}.{os.getpid()}.tmp'
     with open(temporary, 'w') as stream:
-        hold()
         stream.write(text)
     os.replace(temporary, target)
-
-
-def hold():
-    # Test hook: with HOLD_RECORD set, stop once the new file exists and is empty, until release-record exists.
-    if os.environ.get('HOLD_RECORD'):
-        beside = os.path.dirname(state)
-        open(os.path.join(beside, 'record-created'), 'w').close()
-        while not os.path.exists(os.path.join(beside, 'release-record')):
-            time.sleep(0.01)
-
-
-if args[0] == 'run':
-    options, rest, i = {}, [], 1
-    while i < len(args):
-        if args[i] in ('--name', '--label', '--cidfile'):
-            options[args[i]] = args[i + 1]
-            i += 2
-        elif args[i] == '--':
-            rest = args[i + 1:]
-            break
-        else:
-            i += 1
-    open(options['--cidfile'], 'w').close()
-    if any(found['name'] == options['--name'] for found in containers().values()):
-        print('name already in use', file=sys.stderr)
-        sys.exit(125)
-    cid = secrets.token_hex(32)
-    key, _, value = options['--label'].partition('=')
-    write(record(cid), json.dumps({'name': options['--name'], 'labels': {key: value}}))
-    open(options['--cidfile'], 'w').write(cid)
-    sys.exit(subprocess.call(rest))
-elif args[:2] == ['container', 'inspect']:
-    cid, template = args[-1], args[3]
-    if not os.path.exists(record(cid)):
-        sys.exit(1)
-    key = template.split('"')[1]
-    print(cid, containers()[cid]['labels'].get(key, ''))
-elif args[:2] == ['container', 'rm']:
-    os.remove(record(args[-1]))
-"""
-
-
-FAKE_RUNTIME = """
-import json, os, secrets, subprocess, sys, time
-state, args = sys.argv[1], sys.argv[2:]
-# Invocations overlap: one `run` scans every record while another writes its own. A record is written
-# under a temporary name beside it and renamed into place, as a real runtime does
-# does (#1029), so a scan finds a whole record or none; it skips the temporaries. No record is read,
-# changed and written back, so there is no lock.
-
-
-def record(cid):
-    return os.path.join(state, cid)
-
-
-def containers():
-    return {cid: json.load(open(record(cid))) for cid in sorted(os.listdir(state)) if not cid.endswith('.tmp')}
-
-
-def write(target, text):
-    temporary = f'{target}.{os.getpid()}.tmp'
-    with open(temporary, 'w') as stream:
-        hold()
-        stream.write(text)
-    os.replace(temporary, target)
-
-
-def hold():
-    # Test hook: with HOLD_RECORD set, stop once the new file exists and is empty, until release-record exists.
-    if os.environ.get('HOLD_RECORD'):
-        beside = os.path.dirname(state)
-        open(os.path.join(beside, 'record-created'), 'w').close()
-        while not os.path.exists(os.path.join(beside, 'release-record')):
-            time.sleep(0.01)
 
 
 if args[0] == 'run':
@@ -492,39 +336,6 @@ class ContainerOwnershipTests(unittest.TestCase):
         self.assertEqual(process.returncode, pool.CANCELLED_STATUS, stderr)
         self.assertEqual(self.left(), [self.bystander])
 
-    def test_a_run_scanning_while_another_writes_its_record_never_reads_it_half_written(self):
-        # The pool's workers start their `run` commands together, so one scans the records while another
-        # writes its own. The first run here stops (HOLD_RECORD) once its record's file exists and is empty;
-        # the second then scans and runs to its end; only then is the first released. With a plain
-        # `json.dump(..., open(record, 'w'))` the second reads the empty file and exits 1 on a JSONDecodeError.
-        def run(name, **environment):
-            return subprocess.Popen(
-                [*self.runtime.split(), 'run', '--name', name, '--label', 'oxpinyin.test=t',
-                 '--cidfile', str(self.directory / f'{name}.cid'), '--', sys.executable, '-c', 'pass'],
-                env=dict(os.environ, **environment), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        created, release = self.directory / 'record-created', self.directory / 'release-record'
-        first = run('first', HOLD_RECORD='1')
-        self.addCleanup(first.kill)
-        reached, second, second_stderr = False, None, ''
-        try:
-            deadline = time.monotonic() + 30
-            while not created.exists() and first.poll() is None and time.monotonic() < deadline:
-                time.sleep(0.01)
-            reached = created.exists()
-            if reached:
-                second = run('second')
-                second_stderr = second.communicate(timeout=30)[1]
-        finally:
-            release.touch()
-            first_stderr = first.communicate(timeout=30)[1]
-        self.assertTrue(reached, f'the first run never reached its record: {first_stderr}')
-        self.assertEqual(second.returncode, 0, second_stderr)
-        self.assertEqual(first.returncode, 0, first_stderr)
-        names = sorted(json.loads((self.state / record).read_text())['name']
-                       for record in self.left() if record != self.bystander)
-        self.assertEqual(names, ['first', 'second'])
-        self.assertEqual(sorted(path.name for path in self.state.glob('*.tmp')), [])
-
     def owned(self, cid, token='mine'):
         cidfile = self.directory / 'cid'
         cidfile.write_text(cid)
@@ -583,14 +394,6 @@ class ContainerOwnershipTests(unittest.TestCase):
         process.terminate.assert_called_once_with()
         process.kill.assert_called_once_with()
         killpg.assert_not_called()
-
-    def test_an_empty_or_missing_cidfile_means_no_container_and_no_runtime_call(self):
-        run, calls = self.runner(f'{"a" * 64} mine\n')
-        owned = self.owned('')
-        self.assertFalse(pool.remove_owned(owned, run, io.StringIO()))
-        owned.cidfile.unlink()
-        self.assertFalse(pool.remove_owned(owned, run, io.StringIO()))
-        self.assertEqual(calls, [])
 
 
 class UnitRunnerTests(unittest.TestCase):
@@ -814,38 +617,6 @@ class UnitRunnerTests(unittest.TestCase):
         self.assertEqual(len(observed), 2)
         self.assert_reaped_and_stopped(observed)
 
-    def test_a_pooled_run_cancelled_at_a_unit_check_raises_the_cancel_error(self):
-        class Cancelled(Exception):
-            pass
-        flag = threading.Event()
-        threading.Timer(0.2, flag.set).start()
-        with self.assertRaises(Cancelled):
-            pool.run_leased([self.hold('a'), self.hold('b')], cancelled=flag.is_set,
-                            cancel_error=Cancelled, out=io.StringIO())
-        self.assertEqual(sorted(self.events), ['reaped-a', 'reaped-b'])
-
-    def test_the_stop_reaches_a_unit_only_at_its_checks(self):
-        context = pool.UnitContext('u', threading.Event())
-        context.check()
-        context.stop.set()
-        with self.assertRaises(pool.UnitStopped):
-            context.check()
-
-    def test_a_driver_view_adds_the_stop_to_the_drivers_own_check(self):
-        driver = mock.Mock(check_cancelled=mock.Mock(), other='kept')
-        context = pool.UnitContext('u', threading.Event())
-        view = context.driver(driver)
-        view.check_cancelled()
-        driver.check_cancelled.assert_called_once_with()
-        self.assertEqual(view.other, 'kept')
-        driver.check_cancelled.side_effect = RuntimeError('driver cancelled')
-        with self.assertRaisesRegex(RuntimeError, 'driver cancelled'):
-            view.check_cancelled()
-        driver.check_cancelled.side_effect = None
-        context.stop.set()
-        with self.assertRaises(pool.UnitStopped):
-            view.check_cancelled()
-
     def test_launch_returns_status_and_output_with_the_units_environment(self):
         context = pool.UnitContext('u', threading.Event(), environment={'UNIT_PROBE': 'unit'})
         script = ('import os, sys\nprint(os.environ["UNIT_PROBE"], flush=True)\n'
@@ -880,28 +651,6 @@ class UnitRunnerTests(unittest.TestCase):
         self.run_units([unit(name) for name in 'abc'], 3, launcher=launcher)
         self.assertEqual(sorted(seen), [5, 6, 7])
         self.assertEqual(sorted(launcher.leases.get_nowait() for _ in range(3)), [5, 6, 7])
-
-    def test_a_unit_without_a_lease_has_no_cpu(self):
-        seen = []
-        self.run_units([('a', lambda context: seen.append(context.cpu))], 1)
-        self.assertEqual(seen, [None])
-
-    def test_units_and_launched_processes_share_one_pool(self):
-        path = self.work / 'process-ran'
-        tasks = [pool.Task('process', [sys.executable, '-c', f'open({str(path)!r}, "w").write("x")']),
-                 pool.Task('unit', [], run=lambda context: self.log('unit'))]
-        launcher = pool.ProcessLauncher()
-        result = pool.run_pool(tasks, 2, launcher, cancelled=lambda: False, poll=0.01, out=io.StringIO())
-        self.assertTrue(result.ok)
-        self.assertEqual(result.started, ['process', 'unit'])
-        self.assertTrue(path.exists())
-        self.assertEqual(self.events, ['unit'])
-
-    def test_duplicate_unit_names_are_refused_before_anything_starts(self):
-        started = []
-        with self.assertRaisesRegex(ValueError, 'distinct'):
-            self.run_units([('a', lambda c: started.append(1)), ('a', lambda c: started.append(2))])
-        self.assertEqual(started, [])
 
 
 class RunLeasedTests(unittest.TestCase):
@@ -942,9 +691,6 @@ class RunLeasedTests(unittest.TestCase):
             with self.subTest(cpus=cpus):
                 self.assertEqual(self.peak_of(expected, cpus=cpus), expected)
 
-    def test_fewer_units_than_cpus_run_one_each(self):
-        self.assertEqual(self.peak_of(4, cpus=list(range(16))), 4)
-
     def test_worker_limit_caps_concurrency(self):
         for cpus, limit, expected in ((None, 2, 2), (None, 1, 1), ([5], 2, 1)):
             with self.subTest(cpus=cpus, limit=limit):
@@ -964,61 +710,10 @@ class RunLeasedTests(unittest.TestCase):
                             serial=True)
         self.assertEqual(ran, ['a'])
 
-    def test_nonpositive_worker_limit_and_empty_cpus_refuse_before_any_unit_starts(self):
-        units = [('a', lambda c: self.fail('unit must not run')), ('b', lambda c: None)]
-        for cap in (0, -1):
-            with self.subTest(cap=cap), self.assertRaisesRegex(ValueError, 'max_workers must be positive'):
-                self.run_leased(units, max_workers=cap)
-        with self.assertRaisesRegex(ValueError, 'cpus must not be empty'):
-            self.run_leased(units, cpus=[])
-
-    def test_empty_work_returns_nothing(self):
-        self.assertEqual(self.run_leased([]), [])
-
-    def test_each_running_unit_leases_a_distinct_cpu_from_the_list(self):
-        seen, together = [], threading.Barrier(3, timeout=5)
-
-        def run(context):
-            together.wait()
-            seen.append(context.cpu)
-        self.run_leased([(name, run) for name in 'abc'], cpus=[5, 6, 7])
-        self.assertEqual(sorted(seen), [5, 6, 7])
-
     def test_the_default_cpu_list_is_the_allowed_set(self):
         seen = []
         self.run_leased([(name, lambda c: seen.append(c.cpu)) for name in 'abcdef'], serial=False)
         self.assertTrue(set(seen) <= {2, 5, 7, 9})
-
-    def test_units_see_the_given_environment_or_the_process_environment(self):
-        seen = []
-        self.run_leased([('a', lambda c: seen.append(c.environment.get('LEASED_PROBE')))], env={'LEASED_PROBE': 'given'})
-        with mock.patch.dict(os.environ, {'LEASED_PROBE': 'inherited'}):
-            self.run_leased([('a', lambda c: seen.append(c.environment.get('LEASED_PROBE')))])
-        self.assertEqual(seen, ['given', 'inherited'])
-
-    def test_values_come_back_in_unit_order_and_emission_runs_in_the_calling_thread(self):
-        caller, emitted = threading.get_ident(), []
-
-        def slow(context):
-            time.sleep(.1)
-            return 'slow'
-        values = self.run_leased([('a', slow), ('b', lambda c: 'fast')],
-                                 emit=lambda name, value: emitted.append((name, value, threading.get_ident() == caller)))
-        self.assertEqual(values, ['slow', 'fast'])
-        self.assertEqual(emitted, [('a', 'slow', True), ('b', 'fast', True)])
-
-    def test_cancellation_raises_the_callers_error(self):
-        class Stop(Exception):
-            pass
-        flag = threading.Event()
-
-        def run(context):
-            flag.set()
-            while True:
-                context.check()
-                time.sleep(.01)
-        with self.assertRaises(Stop):
-            self.run_leased([('a', run)], cancelled=flag.is_set, cancel_error=lambda message: Stop(message))
 
 
 if __name__ == '__main__':

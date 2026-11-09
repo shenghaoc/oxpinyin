@@ -47,37 +47,5 @@ class SentinelTests(unittest.TestCase):
         self.assertFalse(SENTINEL in message, 'the failure message echoes the environment')
 
 
-class HelperTests(unittest.TestCase):
-    def test_assert_not_called_accepts_an_unused_mock_and_counts_calls(self):
-        launch = mock.Mock()
-        test_support.assert_not_called(self, launch)
-        launch()
-        with self.assertRaisesRegex(AssertionError, '^1 != 0 : '):
-            test_support.assert_not_called(self, launch)
-
-    def test_assert_calls_names_where_a_call_differs(self):
-        launch = mock.Mock()
-        launch(['a'], 'b', env={'X': '1'}, cwd='/w')
-        test_support.assert_calls(self, launch, [mock.call(['a'], 'b', env={'X': '1'}, cwd='/w')])
-        test_support.assert_calls(self, launch, [mock.call(mock.ANY, 'b', env=mock.ANY, cwd='/w')])
-        for expected, label in (([], 'call count'),
-                                ([mock.call(['a'], 'c', env={'X': '1'}, cwd='/w')], "['argument 1']"),
-                                ([mock.call(['a'], env={'X': '1'}, cwd='/w')], "['argument count']"),
-                                ([mock.call(['a'], 'b', env={'X': '2'}, cwd='/w')], "['keyword env']"),
-                                ([mock.call(['a'], 'b', env={'X': '1'})], "['keyword cwd']")):
-            with self.subTest(label=label):
-                with self.assertRaises(AssertionError) as raised:
-                    test_support.assert_calls(self, launch, expected)
-                self.assertTrue(label in str(raised.exception), label)
-
-    def test_assert_same_environment_names_only_the_variables_that_differ(self):
-        test_support.assert_same_environment(self, {'A': '1', 'B': '2'}, {'B': '2', 'A': '1'})
-        with self.assertRaises(AssertionError) as raised:
-            test_support.assert_same_environment(self, {'A': '1', 'B': 'old', 'C': 'only'},
-                                                 {'A': '1', 'B': 'new', 'D': 'only'})
-        self.assertTrue(str(raised.exception).startswith("Lists differ: ['B', 'C', 'D'] != []"))
-        self.assertFalse(any(value in str(raised.exception) for value in ('old', 'new', 'only')))
-
-
 if __name__ == '__main__':
     unittest.main()

@@ -18,8 +18,6 @@ from . import host, native, pool, slot
 
 ROOT = Path(__file__).resolve().parents[2]
 
-HARNESS_EXCLUDED = frozenset()
-
 
 # No harness test file inherits a variable whose name matches one of these
 # patterns, compared case-insensitively. A failing mock assertion prints the
@@ -72,15 +70,13 @@ PACKAGING_PATHS = (
     'tools/dev/packaging_templates.py',
 )
 
-# Each listed contract module selects its own test and the shared integration tests.
+# Each listed contract module selects its own test.
 # Keep this list explicit: new or removed paths still use the unknown-path fallback.
-CONTRACT_HARNESS = ()
-CONTRACT_MODULES = ('abi', 'fixtures', 'kit')
+CONTRACT_MODULES = ('fixtures', 'kit')
 
 HARNESS_DEPENDENCIES = {
     **dict.fromkeys(PACKAGING_PATHS, PACKAGING_HARNESSES),
-    **{f'tools/bisection/contract_{name}.py':
-       (f'tools/bisection/contract_{name}.test.py', *CONTRACT_HARNESS)
+    **{f'tools/bisection/contract_{name}.py': (f'tools/bisection/contract_{name}.test.py',)
        for name in CONTRACT_MODULES},
     'tools/dev/test_runner.py': ('tools/dev/test_runner.test.py', 'tools/dev/cli.test.py',
                                  'tools/dev/sanitize.test.py'),
@@ -115,7 +111,6 @@ HARNESS_DEPENDENCIES = {
 COMPAT_HARNESS = (
     'tools/tkrzw/runtime.test.py',
     'tools/dev/bash_floor.test.py',
-    'tools/bisection/cell-identity.test.py',
     'tools/dev/measure/bench.test.py',
 )
 HARNESS_DEPENDENCIES.update(dict.fromkeys((
@@ -208,8 +203,6 @@ def run_tools(files=(), pattern=None, changed=None):
     print(f'tools harness: credential-shaped environment variables removed: {removed}', flush=True)
 
     def execute(path, context):
-        if path in HARNESS_EXCLUDED:
-            return None, ''
         # Harnesses are light work. Private roots keep real lock tests independent.
         try:
             with tempfile.TemporaryDirectory(prefix='oxpinyin-harness-') as directory:
@@ -233,9 +226,6 @@ def run_tools(files=(), pattern=None, changed=None):
             return 1, f'{error}\n'
 
     def emit(path, result):
-        if path in HARNESS_EXCLUDED:
-            print(f'tools harness excluded (missing CI input): {path}', flush=True)
-            return
         print(f'tools harness: {path}', flush=True)
         print(result[1], end='' if result[1].endswith('\n') or not result[1] else '\n', flush=True)
 
