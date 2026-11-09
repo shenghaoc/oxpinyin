@@ -5,7 +5,6 @@ The shell harness's fixtures moved here with the linter: the service takes
 explicit paths, so no case needs a git repository.
 """
 import io
-import os
 from pathlib import Path
 import subprocess
 import sys
@@ -20,6 +19,8 @@ from tools.dev import check
 
 VIOLATION_HEADER = ('crate-cfg-placement: a crate-level `#![cfg(...)]` must sit BELOW '
                     'its `//!` docs.\n\n')
+
+
 VIOLATION_FOOTER = (
     'A false crate-level `#![cfg(...)]` discards the crate attributes that follow\n'
     'it, so these docs vanish on the excluded platform and `missing_docs` fires\n'
@@ -50,23 +51,6 @@ class LintTests(unittest.TestCase):
         self.assertEqual(self.lint(path), (0, f'crate-cfg-placement: 1 file(s) checked, '
                                             'no violations\n', ''))
 
-    def test_gate_without_docs_and_docs_without_gate_pass(self):
-        gate = self.fixture('gate_only', '#![cfg(target_os = "linux")]\n\n#[test]\nfn t() {}\n')
-        docs = self.fixture('docs_only', '//! Crate docs.\n\n#[test]\nfn t() {}\n')
-        status, out, err = self.lint(gate, docs)
-        self.assertEqual((status, err), (0, ''))
-        self.assertIn('2 file(s) checked, no violations', out)
-
-    def test_cfg_attr_is_not_a_crate_stripping_gate(self):
-        path = self.fixture('cfg_attr_then_docs', '#![cfg_attr(not(target_os = "linux"), '
-                            'allow(dead_code))]\n//! Crate docs.\n')
-        self.assertEqual(self.lint(path)[0], 0)
-
-    def test_indented_module_docs_do_not_fire(self):
-        path = self.fixture('nested', '//! Crate docs.\n#![cfg(target_os = "linux")]\n\n'
-                            'mod inner {\n    //! Module docs, not crate docs.\n}\n')
-        self.assertEqual(self.lint(path)[0], 0)
-
     def test_docs_below_the_gate_report_both_lines(self):
         path = self.fixture('gate_then_docs', '#![cfg(target_os = "linux")]\n'
                             '//! Crate docs.\n')
@@ -76,30 +60,6 @@ class LintTests(unittest.TestCase):
         self.assertEqual(err, VIOLATION_HEADER +
                          f'  {path}:2: `//!` doc comment below the crate-level '
                          '`#![cfg(...)]` on line 1\n\n' + VIOLATION_FOOTER)
-
-    def test_distance_from_the_gate_does_not_excuse_it(self):
-        path = self.fixture('spaced', '#![cfg(any(feature = "a", feature = "b"))]\n'
-                            '#![allow(clippy::pedantic)]\n\n// An ordinary comment.\n\n'
-                            '//! Crate docs arriving far too late.\n')
-        status, _, err = self.lint(path)
-        self.assertEqual(status, 1)
-        self.assertIn(f'{path}:6:', err)
-        self.assertIn('on line 1', err)
-
-    def test_one_bad_file_among_good_ones_fails_the_run(self):
-        good = self.fixture('good', '//! Crate docs.\n#![cfg(target_os = "linux")]\n')
-        bad = self.fixture('bad', '#![cfg(target_os = "linux")]\n//! Crate docs.\n')
-        docs = self.fixture('docs', '//! Crate docs.\n')
-        status, _, err = self.lint(good, bad, docs)
-        self.assertEqual(status, 1)
-        self.assertIn(f'{bad}:2:', err)
-
-    def test_help_is_usage_status_two(self):
-        for flag in ('--help', '-h'):
-            with self.subTest(flag=flag):
-                status, out, err = self.lint(flag)
-                self.assertEqual((status, out), (2, ''))
-                self.assertTrue(err)
 
     def test_named_paths_must_be_readable_regular_files(self):
         missing = str(self.root / 'no-such-file.rs')

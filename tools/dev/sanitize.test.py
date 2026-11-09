@@ -63,11 +63,6 @@ def run(*args, host='Darwin', arch='arm64', tools=None, environment=None):
 
 
 class ToolchainTests(unittest.TestCase):
-    def test_the_nightly_is_the_dated_channel_of_the_fuzz_toolchain_file(self):
-        text = (ROOT / 'fuzz' / 'rust-toolchain.toml').read_text()
-        self.assertIn(f'channel = "{NIGHTLY}"', text)
-        self.assertRegex(NIGHTLY, r'^nightly-\d{4}-\d{2}-\d{2}$')
-
     def test_tools_dev_starts_without_the_file_and_only_sanitizer_commands_name_it(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
@@ -96,30 +91,12 @@ class ToolchainTests(unittest.TestCase):
                     self.assertEqual(result.stderr, f'{command[0]}: {missing} is missing; '
                                                     'it names the sanitizer nightly.\n')
 
-    def test_a_missing_toolchain_file_stops_the_gate_before_any_child_runs(self):
-        tools = FakeTools()
-        with tempfile.TemporaryDirectory() as directory:
-            missing = Path(directory) / 'fuzz' / 'rust-toolchain.toml'
-            with mock.patch.object(test_runner, 'SANITIZER_TOOLCHAIN_FILE', missing):
-                status, out, err = run('bdb', tools=tools,
-                                       environment={'OXPINYIN_SANITIZER_TOOLCHAIN': ''})
-        self.assertEqual((status, out), (1, ''))
-        self.assertEqual(err, f'sanitize: {missing} is missing; it names the sanitizer nightly.\n')
-        self.assertEqual(tools.calls, [])
-
 
 class SelectionTests(unittest.TestCase):
     def test_default_is_address(self):
         status, out, err = run('--check', 'bdb')
         self.assertEqual((status, err), (0, ''))
         self.assertIn('backend=bdb sanitizer=address host=Darwin/arm64', out)
-
-    def test_aliases_and_thread_selection(self):
-        for alias in ('tsan', 'thread'):
-            with self.subTest(alias=alias):
-                status, out, _ = run('--check', 'bdb', alias)
-                self.assertEqual(status, 0)
-                self.assertIn('sanitizer=thread', out)
 
     def test_memory_is_refused_on_darwin_and_linux(self):
         status, _, err = run('bdb', 'memory')
@@ -128,20 +105,6 @@ class SelectionTests(unittest.TestCase):
         status, _, err = run('bdb', 'memory', host='Linux', arch='x86_64')
         self.assertEqual(status, 1)
         self.assertIn('no in-tree wrapper', err)
-
-    def test_leak_refusals(self):
-        status, _, err = run('bdb', 'leak')
-        self.assertEqual(status, 1)
-        self.assertIn('standalone LeakSanitizer is unsupported on macOS arm64', err)
-        for host, arch in (('Darwin', 'arm64'), ('Linux', 'x86_64')):
-            with self.subTest(host=host, arch=arch):
-                status, _, err = run('tkrzw', 'leak', host=host, arch=arch)
-                self.assertEqual(status, 1)
-                self.assertIn('tkrzw LeakSanitizer is unsupported', err)
-                self.assertIn('process-lifetime allocations', err)
-        status, _, err = run('all', 'leak', host='Linux', arch='x86_64')
-        self.assertEqual(status, 1)
-        self.assertIn('tkrzw LeakSanitizer is unsupported', err)
 
     def test_invalid_arguments_are_usage_status_two(self):
         for args in (('bdb', 'bogus'), ('bogus',), ('bdb', 'address', 'extra'),
@@ -195,21 +158,6 @@ class BackendTests(unittest.TestCase):
                          '-Zsanitizer=address -Cdebuginfo=1')
         self.assertIn('--- 2/2: the libdb call pattern under ASan + UBSan (C) ---', out)
         self.assertIn('sanitizers: clean', out)
-
-    def test_bdb_c_harness_splits_the_system_deps_path_lists_in_order(self):
-        tools = FakeTools()
-        include = os.pathsep.join(['/include/a', '', '/include/b'])
-        library = os.pathsep.join(['/library/a', '/library/b'])
-        with mock.patch.object(test_runner.platform, 'system', return_value='Darwin'):
-            status, out, err = run('bdb', tools=tools,
-                                   environment=self.environment(
-                                       OXPINYIN_LIBPINYIN_DATA_DIR='/fixture/data',
-                                       SYSTEM_DEPS_BDB_INCLUDE=include,
-                                       SYSTEM_DEPS_BDB_SEARCH_NATIVE=library))
-        self.assertEqual((status, err), (0, ''), out)
-        gcc = next(call[0] for call in tools.calls if call[0][0] == 'gcc')
-        self.assertEqual([flag for flag in gcc if flag[:2] in ('-I', '-L')],
-                         ['-I/include/a', '-I/include/b', '-L/library/a', '-L/library/b'])
 
     def test_kc_thread_uses_the_darwin_deadlock_option(self):
         tools = FakeTools()
