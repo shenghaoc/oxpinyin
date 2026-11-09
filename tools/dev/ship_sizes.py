@@ -12,8 +12,12 @@ recipe key: the tree ids of every input that can change the libraries plus the
 toolchain fingerprint. The key does not name a commit, so every main commit
 with the same inputs shares one result.
 
-The key and report subcommands, and the path list that tools/dev/ci_tree.py
-gates the job on, use the standard library only.
+The crate input is all of crates/, a conservative superset of the C API crates'
+dependency closure: the key needs no Cargo and no closure read at the head, so a
+base revision is keyed by its own tree. A change in a crate outside the closure
+only misses the cache.
+
+The key and report subcommands use the standard library only.
 """
 from __future__ import annotations
 
@@ -33,19 +37,12 @@ ROOT = Path(__file__).resolve().parents[2]
 LIBRARIES = {'libpinyin': ('oxpinyin-capi', 'pinyin'), 'libzhuyin': ('oxpinyin-zhuyin-capi', 'zhuyin')}
 SCHEMA = 1
 KEY_PREFIX = 'ship-sizes-v1-'
-# Normal and build path dependencies of the two capi crates. ship_sizes.test.py
-# compares this tuple with cargo metadata, so a new crate in the graph fails there.
-# The CI path gate runs without Cargo and reads this tuple.
-SHIPPING_CRATES = ('oxpinyin-capi', 'oxpinyin-capi-marshal', 'oxpinyin-chewing', 'oxpinyin-core',
-                   'oxpinyin-data', 'oxpinyin-engine', 'oxpinyin-facade', 'oxpinyin-input',
-                   'oxpinyin-runtime', 'oxpinyin-store', 'oxpinyin-user', 'oxpinyin-zhuyin-capi')
-# Inputs that can change a library byte: they key the cached base result.
-INPUTS = (*('crates/' + name for name in SHIPPING_CRATES),
-          'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', '.cargo',
+# Inputs that can change a library byte: they key the cached base result. The
+# same set CI_INPUTS["ship"] gates the job on, less the report-only paths.
+INPUTS = ('crates', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', '.cargo',
           'tools/codegen/string_tables.rs',
           'tools/dev/packaging.py', 'tools/dev/packaging_templates.py', 'tools/oracle/oracle-pin.txt')
-# Inputs that cannot change a byte but change this report or its job.
-REPORT_INPUTS = ('justfile', 'tools/dev/cell.py', 'tools/dev/ship_sizes.py', '.github/workflows/ci.yml', '.github/actions')
+
 PACKAGES = ('binutils', 'gcc', 'g++', 'libc6', 'libglib2.0-dev')
 # Distribution packages each backend's build needs, beside the common set above.
 BACKEND_PACKAGES = {

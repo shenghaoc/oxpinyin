@@ -49,20 +49,6 @@ class Repo:
         return self.git('rev-parse', 'HEAD')
 
 
-class ClosureTests(unittest.TestCase):
-    def test_shipping_crates_are_the_capi_dependency_closure(self):
-        metadata = json.loads(subprocess.check_output(
-            ['cargo', 'metadata', '--no-deps', '--locked', '--format-version', '1'], cwd=ROOT))
-        packages = {package['name']: package for package in metadata['packages']}
-        closure, pending = set(), [crate for crate, _ in ship_sizes.LIBRARIES.values()]
-        while pending:
-            name = pending.pop()
-            if name not in closure:
-                closure.add(name)
-                pending += [dependency['name'] for dependency in packages[name]['dependencies']
-                            if dependency.get('path') and dependency['kind'] in (None, 'build')]
-        self.assertEqual(set(ship_sizes.SHIPPING_CRATES), closure)
-
 
 class KeyTests(unittest.TestCase):
     def setUp(self):
@@ -79,7 +65,7 @@ class KeyTests(unittest.TestCase):
     def test_key_follows_inputs_not_commits(self):
         first = self.repo.commit({'crates/oxpinyin-core/lib': 'a\n'})
         key = self.key()
-        self.repo.commit({'docs/note': 'x\n', 'crates/oxpinyin-corpus/lib': 'z\n'})
+        self.repo.commit({'docs/note': 'x\n'})
         self.assertEqual(self.key(), key)
         self.assertEqual(self.key(first), key)
         self.assertRegex(key, r'^ship-sizes-v1-[0-9a-f]{32}$')
@@ -88,7 +74,8 @@ class KeyTests(unittest.TestCase):
         self.repo.commit({'crates/oxpinyin-core/lib': 'a\n', 'Cargo.lock': 'l\n'})
         key = self.key()
         self.assertNotEqual(self.key(facts={**self.facts, 'rustc': '1.98.0'}), key)
-        for path in ('crates/oxpinyin-core/lib', 'Cargo.lock', 'tools/dev/packaging.py'):
+        # Any crate under crates/ moves the key, not only the C API closure.
+        for path in ('crates/oxpinyin-core/lib', 'crates/oxpinyin-corpus/lib', 'Cargo.lock', 'tools/dev/packaging.py'):
             with self.subTest(path=path):
                 before = self.repo.commit({path: 'new ' + path + '\n'})
                 self.assertNotEqual(self.key(), key)
