@@ -660,6 +660,7 @@ dependencies = [
  "libc",
  "memmap2",
  "tempfile",
+ "windows-sys",
 ]
 
 [[package]]

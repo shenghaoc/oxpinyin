@@ -41,3 +41,7 @@ memmap2.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+
+# The handle-inheritance witness reads HANDLE_FLAG_INHERIT. Windows only.
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation"] }
