@@ -310,5 +310,41 @@ print('END ' + name, file=sys.stderr, flush=True)
             'None kept'])
 
 
+class InterpreterTests(unittest.TestCase):
+    def test_an_interpreter_outside_a_junction_is_used_as_it_is(self):
+        with tempfile.TemporaryDirectory() as directory:
+            executable = os.path.join(directory, 'python.exe')
+            with mock.patch.object(sys, 'executable', executable):
+                self.assertEqual(test_runner.harness_interpreter(), executable)
+
+    def test_harness_files_start_with_the_resolved_interpreter(self):
+        launched = []
+
+        class Context:
+            def launch(self, command, env):
+                launched.append(command[0])
+                return SimpleNamespace(status=0, stdout=b'', stderr=b'')
+
+        def run_units(units, workers, **options):
+            return [unit(Context()) for _, unit in units]
+        with mock.patch.object(test_runner, 'harness_interpreter', return_value='resolved-python'), \
+                mock.patch.object(test_runner.pool, 'run_units', run_units), \
+                contextlib.redirect_stdout(io.StringIO()):
+            test_runner.run_tools(['tools/dev/test_runner.test.py'])
+        self.assertEqual(launched, ['resolved-python'])
+
+    if sys.platform == 'win32':
+        def test_an_interpreter_behind_a_junction_is_resolved(self):
+            with tempfile.TemporaryDirectory() as directory:
+                target = os.path.realpath(os.path.join(directory, 'python-3.15.2'))
+                link = os.path.join(directory, 'python-3.15')
+                os.mkdir(target)
+                subprocess.run(['cmd', '/c', 'mklink', '/J', link, target], check=True, capture_output=True)
+                self.assertTrue(os.path.isjunction(link))
+                with mock.patch.object(sys, 'executable', os.path.join(link, 'python.exe')):
+                    self.assertEqual(test_runner.harness_interpreter(), os.path.join(target, 'python.exe'))
+                os.rmdir(link)
+
+
 if __name__ == '__main__':
     unittest.main()

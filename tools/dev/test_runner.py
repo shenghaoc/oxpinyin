@@ -186,6 +186,19 @@ def select_harness_files(files, requested, changed):
     return [path for path in files if not requested or path in selected]
 
 
+def harness_interpreter():
+    """The interpreter that runs each harness file: sys.executable, resolved when it sits behind a junction.
+
+    uv keeps its managed interpreter under a junction and, on Windows, deletes and creates that
+    junction again at every `uv python install`, which `just python` runs. A Python that starts
+    through the junction in that moment cannot import its standard library, and the install itself
+    fails with a sharing violation. The resolved path never goes through the junction, so no
+    harness file or child of one starts through it. Elsewhere sys.executable is returned as it is.
+    """
+    executable = sys.executable
+    return os.path.realpath(executable) if os.path.isjunction(os.path.dirname(executable)) else executable
+
+
 def run_tools(files=(), pattern=None, changed=None):
     """Run selected harness files concurrently, returning 1 if any fails.
 
@@ -213,7 +226,7 @@ def run_tools(files=(), pattern=None, changed=None):
                 locks.mkdir()
                 child = dict(env, TMPDIR=str(temporary), TMP=str(temporary), TEMP=str(temporary),
                              OXPINYIN_LOCK_DIR=str(locks))
-                command = [sys.executable, '-X', 'lazy_imports=normal', str(ROOT / path)]
+                command = [harness_interpreter(), '-X', 'lazy_imports=normal', str(ROOT / path)]
                 if pattern is not None:
                     command += ['-k', pattern]
                 result = context.launch(command, env=child)
