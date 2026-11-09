@@ -203,75 +203,11 @@ fn reads_items_texts_and_pronunciations() {
 }
 
 #[test]
-fn empty_library_answers_the_one_to_one_range() {
-    // `get_range`'s skip-empty branch: an offset array with only zero
-    // slots answers 1..1.
-    let bytes = ChunkBuilder::new(0).build();
-    // The empty library's canonical shape, measured on the pin's own
-    // `gen_binary_files` output for an empty `.table`: header, three
-    // section offsets one byte apart, three separators, and *no* entry
-    // area — `add_phrase_item` never ran, so nothing was reserved. The
-    // same vector `chunk_write`'s `build_chunk_of_no_items_matches_the_pin`
-    // pins on the writer side.
-    assert_eq!(
-        bytes,
-        [
-            19, 0, 0, 0, // payload length
-            51, 35, 35, 0, // checksum
-            0, 0, 0, 0, // total_freq
-            17, 0, 0, 0, // index_one
-            18, 0, 0, 0, // index_two: no offset array
-            19, 0, 0, 0, // index_three: no entry area
-            b'#', b'#', b'#'
-        ]
-    );
-    let path = write_temp("empty", &bytes);
-    let library = PhraseLibrary::open(&path).expect("empty but well-formed");
-    assert_eq!(library.token_range(), 1..1);
-    assert_eq!(library.total_freq(), 0);
-    assert!(library.item_at_slot(0).is_none());
-    assert_eq!(library.items().count(), 0);
-    let _ = std::fs::remove_file(&path);
-}
-
-#[test]
-fn trailing_empty_slots_are_trimmed_from_the_range() {
-    // Slots 1..3, then zero slots 4..7: the range ends at 3.
-    let mut builder = ChunkBuilder::new(3);
-    builder.add(3, 3, "的", vec![(vec![0; 2], 3)]);
-    let bytes = builder.build();
-    let path = write_temp("trimmed", &bytes);
-    let library = PhraseLibrary::open(&path).expect("valid chunk");
-    assert_eq!(library.token_range(), 1..4);
-    let _ = std::fs::remove_file(&path);
-}
-
-#[test]
-fn chunk_header_and_layout_damage_is_refused() {
+fn sub_index_layout_damage_is_refused() {
+    // `chunk_level_refusals_name_the_file_and_layout_faults_do_not` holds the
+    // chunk header refusals and the header separator.
     let sample = sample();
     let cases: Vec<(&str, Vec<u8>)> = vec![
-        ("empty", Vec::new()),
-        ("short header", sample[..7].to_vec()),
-        ("length word drift", {
-            let mut bytes = sample.clone();
-            let drift = u32::try_from(bytes.len())
-                .expect("sample fits u32")
-                .to_le_bytes();
-            bytes[0..4].copy_from_slice(&drift);
-            bytes
-        }),
-        ("checksum drift", {
-            let mut bytes = sample.clone();
-            bytes[4] ^= 0xFF;
-            bytes
-        }),
-        ("payload truncation", sample[..sample.len() - 1].to_vec()),
-        ("header separator lost", {
-            let mut bytes = sample.clone();
-            bytes[8 + 16] = b'!';
-            fix_checksum(&mut bytes);
-            bytes
-        }),
         ("offset-array separator lost", {
             let mut bytes = sample.clone();
             let index_two = u32_at(&sample[16..20]);

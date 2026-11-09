@@ -1,36 +1,19 @@
-//! Black-box trait laws over the public `Store` surface — G2 of the
-//! testing-strategy assessment (`testing-strategy.md` §2): the crate had
-//! 47 unit tests and the backend matrix, but no single test body run
-//! identically through every backend's public traits.
+//! Black-box trait laws over the public `Store` surface that no backend
+//! unit test holds: the literal `#` in a store path, the 511/512-byte key
+//! boundary, and the removal of an absent key.
 //!
 //! Exactly one backend is compiled per build (the crate's
 //! `compile_error!` guards), so `DefaultStore` resolves this file's
 //! backend the same way every consumer's does, and the
 //! `store-backends.yml` matrix runs this file once per peer by running
-//! the whole workspace sweep under each backend feature. The laws:
-//!
-//! - **ordered iteration**: the raw walk visits keys in ascending byte
-//!   order regardless of insertion order;
-//! - **prefix-scan boundaries**: a half-open raw range yields exactly the
-//!   keys whose bytes fall inside it — the plan's `[b"a", b"a\xff"]`
-//!   under `b"a"..b"b"` law;
-//! - **max key length**: a 511-byte and a 512-byte key are legal
-//!   everywhere and round-trip;
-//! - **reopen equality**: rows written through one handle read back
-//!   identically through a fresh `open_read_only` handle;
-//! - **transaction semantics**: a closure returning `Err` rolls the whole
-//!   transaction back.
+//! the whole workspace sweep under each backend feature.
 //!
 //! No backend leaves a file beside the store: tkrzw locks the data file
 //! itself with `fcntl` (`tkrzw_file_mmap.cc:124-133` at 1.0.34), Berkeley
 //! DB opens without an environment, and Kyoto Cabinet's only companion is
 //! its `<file>.wal`. The guard below removes the store's own path on drop.
 
-use std::ops::Bound;
-
-use oxpinyin_store::{
-    DEFAULT_STORE_EXT, DefaultStore, RawReadStore, StoreError, WriteStore, WriteTxn,
-};
+use oxpinyin_store::{DEFAULT_STORE_EXT, DefaultStore, RawReadStore, WriteStore, WriteTxn};
 
 /// Owns a temporary store path and removes the data file or directory
 /// when it drops — including on panic, so a failed law leaves nothing
@@ -106,87 +89,6 @@ fn hash_paths_create_and_reopen_tree_and_hash_files() {
     }
 }
 
-/// The assessment's example row set.
-fn seeded_keys(store: &DefaultStore) {
-    store
-        .write(|txn| {
-            for (key, value) in [
-                (&b"a\xff"[..], &b"v-high"[..]),
-                (b"b".as_slice(), b"v-b".as_slice()),
-                (b"a".as_slice(), b"v-a".as_slice()),
-            ] {
-                txn.put_raw(key, value)?;
-            }
-            Ok(())
-        })
-        .unwrap();
-}
-
-/// The raw walk visits keys in ascending byte order whatever order they
-/// were inserted in, and the half-open `a..b` scan returns exactly the
-/// keys whose bytes fall inside it.
-#[test]
-fn iteration_is_ordered_and_prefix_scans_respect_boundaries() {
-    let path = temp_path("ordered");
-    let store = DefaultStore::create(&path).unwrap();
-    seeded_keys(&store);
-
-    let mut seen = Vec::new();
-    store
-        .range_raw(Bound::Unbounded, Bound::Unbounded, |key, _| {
-            seen.push(key.to_vec());
-            Ok(())
-        })
-        .unwrap();
-    let expected = vec![b"a".to_vec(), b"a\xff".to_vec(), b"b".to_vec()];
-    assert_eq!(seen, expected, "iteration must be ascending byte order");
-
-    // The plan's law: exactly the two `a…` keys, `b` excluded by the
-    // exclusive bound and everything below `a` by the low bound.
-    let mut in_range = Vec::new();
-    store
-        .range_raw(
-            Bound::Included(b"a".as_slice()),
-            Bound::Excluded(b"b".as_slice()),
-            |key, _| {
-                in_range.push(key.to_vec());
-                Ok(())
-            },
-        )
-        .unwrap();
-    assert_eq!(in_range, vec![b"a".to_vec(), b"a\xff".to_vec()]);
-
-    // Inclusive upper bound flips `b` in.
-    let mut through_b = Vec::new();
-    store
-        .range_raw(
-            Bound::Included(b"a".as_slice()),
-            Bound::Included(b"b".as_slice()),
-            |key, _| {
-                through_b.push(key.to_vec());
-                Ok(())
-            },
-        )
-        .unwrap();
-    assert_eq!(
-        through_b,
-        vec![b"a".to_vec(), b"a\xff".to_vec(), b"b".to_vec()]
-    );
-}
-
-/// Point reads return the last written value, unharmed by embedded NULs
-/// and non-UTF-8 bytes on either side of the pair.
-#[test]
-fn point_reads_round_trip_arbitrary_bytes() {
-    let path = temp_path("roundtrip");
-    let store = DefaultStore::create(&path).unwrap();
-    store
-        .write(|txn| txn.put_raw(b"k\x00\x01\xff", &[0u8, 255, 0, 1]))
-        .unwrap();
-    assert_eq!(read(&store, b"k\x00\x01\xff"), Some(vec![0u8, 255, 0, 1]));
-    assert_eq!(read(&store, b"absent"), None);
-}
-
 /// The 511/512-byte key boundary: every peer accepts both.
 #[test]
 fn key_length_edges_follow_the_documented_contract() {
@@ -206,55 +108,14 @@ fn key_length_edges_follow_the_documented_contract() {
     assert_eq!(read(&store, &key_512), Some(b"edge-512".to_vec()));
 }
 
-/// Rows written through one handle read back identically through a
-/// fresh read-only handle over the same file — the drop-in consumer's
-/// exact shape (the storage utilities write, the runtime reads).
+/// Removing an absent key is a no-op, not an error.
 #[test]
-fn rows_survive_reopen_through_a_read_only_handle() {
-    let path = temp_path("reopen");
-    {
-        let store = DefaultStore::create(&path).unwrap();
-        seeded_keys(&store);
-    }
-    let reader = DefaultStore::open_read_only(&path).unwrap();
-    let mut seen = Vec::new();
-    reader
-        .range_raw(Bound::Unbounded, Bound::Unbounded, |key, value| {
-            seen.push((key.to_vec(), value.to_vec()));
-            Ok(())
-        })
-        .unwrap();
-    let expected = vec![
-        (b"a".to_vec(), b"v-a".to_vec()),
-        (b"a\xff".to_vec(), b"v-high".to_vec()),
-        (b"b".to_vec(), b"v-b".to_vec()),
-    ];
-    assert_eq!(seen, expected);
-    assert_eq!(read(&reader, b"a\xff"), Some(b"v-high".to_vec()));
-}
-
-/// An `Err` out of the closure rolls the whole transaction back —
-/// `WriteTxn`'s atomicity contract.
-#[test]
-fn transactions_roll_back_on_err() {
-    let path = temp_path("txn");
+fn removing_an_absent_key_succeeds() {
+    let path = temp_path("absent-remove");
     let store = DefaultStore::create(&path).unwrap();
     store.write(|txn| txn.put_raw(b"kept", b"1")).unwrap();
-
-    // The whole transaction unwinds when the closure fails, including
-    // writes that preceded the failure.
-    let blown: Result<(), StoreError> = store.write(|txn| {
-        txn.put_raw(b"doomed", b"1")?;
-        txn.put_raw(b"also-doomed", b"2")?;
-        Err(StoreError::InvalidInput("deliberate failure"))
-    });
-    assert!(blown.is_err());
-    assert_eq!(read(&store, b"kept"), Some(b"1".to_vec()));
-    assert_eq!(read(&store, b"doomed"), None);
-    assert_eq!(read(&store, b"also-doomed"), None);
-
-    // Removing an absent key is a no-op, not an error.
     store
         .write(|txn| txn.remove_raw(b"never-there"))
         .expect("removing an absent key must succeed");
+    assert_eq!(read(&store, b"kept"), Some(b"1".to_vec()));
 }

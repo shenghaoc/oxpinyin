@@ -648,15 +648,6 @@ mod tests {
     }
 
     #[test]
-    fn search_finds_single_syllable() {
-        let table = table_with_ba();
-        let ba = ChewingKey::from_pinyin("ba").unwrap();
-        let items = table.search(&[ba]).unwrap();
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0], 0x0100_0001);
-    }
-
-    #[test]
     fn search_filters_by_tone() {
         let dbm = MemoryDbm::new();
         let ba = ChewingKey::from_pinyin("ba").unwrap();

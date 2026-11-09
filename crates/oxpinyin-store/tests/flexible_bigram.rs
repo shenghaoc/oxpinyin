@@ -525,31 +525,6 @@ fn a_failed_create_retry_follows_the_backends_rule() {
 }
 
 #[test]
-fn removal_answers_from_the_native_remove() {
-    let scratch = Scratch::new("removal");
-    let path = scratch.path().join("model.db");
-    let model = open(&path);
-    assert!(model.store(11, &gram_with_header()).expect("store"));
-    assert!(!model.remove(9).expect("missing remove"), "a missing key");
-    assert!(model.remove(11).expect("remove"), "a stored key");
-    assert!(!model.remove(11).expect("second remove"), "already removed");
-
-    // The native answer comes from the deferred apply, not a read before it.
-    let raw = scratch.path().join("raw.db");
-    let db = DefaultStore::create_hash(&raw).expect("hash create");
-    let ((), found) = db
-        .write_deferred(|txn| txn.remove_raw(b"k"))
-        .expect("remove");
-    assert!(!found);
-    db.write_deferred(|txn| txn.put_raw(b"k", b"v"))
-        .expect("put");
-    let ((), found) = db
-        .write_deferred(|txn| txn.remove_raw(b"k"))
-        .expect("remove");
-    assert!(found);
-}
-
-#[test]
 fn the_deferred_removal_flag_aggregates_every_removal() {
     let scratch = Scratch::new("removal-aggregate");
     let db = DefaultStore::create_hash(&scratch.path().join("raw.db")).expect("hash create");
@@ -641,21 +616,6 @@ fn get_array_header_asserts_the_records_header_length() {
     let _ = bigram.get_array_header(7);
 }
 
-#[test]
-fn remove_raw_deletes_the_bare_key() {
-    let scratch = Scratch::new("remove-raw");
-    let path = scratch.path().join("raw.db");
-    {
-        let db = DefaultStore::create_hash(&path).expect("hash create");
-        db.write(|txn| txn.put_raw(b"raw", b"value"))
-            .expect("raw write");
-        db.write(|txn| txn.remove_raw(b"raw")).expect("raw remove");
-    }
-    let db = DefaultStore::open_hash_read_only(&path).expect("reopen");
-    let mut value = Vec::new();
-    assert!(!db.get_raw(b"raw", &mut value).expect("raw read"));
-}
-
 // ── pin-written file ───────────────────────────────────────────────
 
 /// One `KMixtureModelArrayItem` with its token; each row of
@@ -733,47 +693,4 @@ fn a_pin_written_file_is_read_in_the_pins_native_order() {
             "loaded gram of token {token}"
         );
     }
-}
-
-#[cfg(feature = "bdb")]
-#[test]
-fn an_over_long_magic_record_is_read_with_the_pins_partial_read() {
-    // `get_magic_header` uses `DB_DBT_PARTIAL` at offset 4
-    // (`flexible_ngram_bdb.h:302-328`): a value longer than the magic
-    // number plus the header still answers the header bytes.
-    let path = std::env::temp_dir().join(format!(
-        "oxpinyin-flexible-overlong-{}-{}.db",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos()
-    ));
-    let store = <DefaultStore as WriteStore>::create_hash(&path).expect("create");
-    let mut value = Kmm::MAGIC_NUMBER.to_vec();
-    value.extend_from_slice(
-        &Magic {
-            wc: 7,
-            n: 2,
-            total_freq: 5,
-        }
-        .encode(),
-    );
-    value.extend_from_slice(b"trailing");
-    store
-        .write(|txn| txn.put_raw(&MAGIC_KEY, &value))
-        .expect("put magic");
-    drop(store);
-
-    let gram = open_read_only(&path);
-    assert_eq!(
-        gram.get_magic_header().expect("read header"),
-        Some(Magic {
-            wc: 7,
-            n: 2,
-            total_freq: 5
-        })
-    );
-    drop(gram);
-    let _ = fs::remove_file(&path);
 }

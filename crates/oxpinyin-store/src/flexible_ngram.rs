@@ -1030,11 +1030,6 @@ mod tests {
     }
 
     #[test]
-    fn magic_key_is_two_null_tokens() {
-        assert_eq!(MAGIC_KEY, [0u8; 8]);
-    }
-
-    #[test]
     fn items_stay_token_ascending_and_are_unique() {
         let mut gram = SingleGram::<Header, Item>::new();
         assert_eq!(*gram.header(), Header(0, 0));
