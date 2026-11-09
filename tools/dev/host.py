@@ -5,7 +5,7 @@ answer.
 """
 import math
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import subprocess
 import sys
@@ -36,7 +36,7 @@ def linux_cgroup_dirs(proc=Path('/proc'), root=Path('/sys/fs/cgroup'), *, contro
     entry = entries.get(controller or '')
     if entry is None:
         return []
-    relative = Path(entry)
+    relative = PurePosixPath(entry)
     if not relative.is_absolute() or '..' in relative.parts:
         raise ValueError('invalid cgroup path')
     if controller is not None:
@@ -47,9 +47,11 @@ def linux_cgroup_dirs(proc=Path('/proc'), root=Path('/sys/fs/cgroup'), *, contro
             if filesystem[0] != 'cgroup' or controller not in filesystem[2].split(','):
                 continue
             # mountinfo escapes whitespace and backslashes with octal codes.
-            mount_root, mount_point = (Path(re.sub(r'\\([0-7]{3})',
-                                                  lambda match: chr(int(match[1], 8)), field))
+            mount_root, mount_point = (re.sub(r'\\([0-7]{3})', lambda match: chr(int(match[1], 8)), field)
                                        for field in fields[3:5])
+            # The root is a path inside the cgroup tree (POSIX form on every host);
+            # the mount point is a path on this host.
+            mount_root, mount_point = PurePosixPath(mount_root), Path(mount_point)
             if (not mount_root.is_absolute() or not mount_point.is_absolute()
                     or '..' in mount_root.parts or '..' in mount_point.parts):
                 raise ValueError('invalid cgroup mount path')
@@ -111,7 +113,7 @@ def cpu_snapshot(proc: Path = Path('/proc'), cgroup_root: Path = Path('/sys/fs/c
             directories = []
             notes.append('cgroup v2 CPU limits=unknown')
         for directory in directories:
-            label = '/' if directory == cgroup_root else '/' + str(directory.relative_to(cgroup_root))
+            label = '/' if directory == cgroup_root else '/' + directory.relative_to(cgroup_root).as_posix()
             try:
                 quota, period = (directory / 'cpu.max').read_text().split()
                 period = int(period)

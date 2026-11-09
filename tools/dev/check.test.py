@@ -106,5 +106,103 @@ esac
         self.assertIn('missing cargo; see docs/runbooks/setup.md', err.getvalue())
 
 
+if sys.platform == 'win32':
+    class WindowsToolTests(unittest.TestCase):
+        """Windows needs MSVC and the pkg-config program PKG_CONFIG names, not cc and pkg-config."""
+
+        def setUp(self):
+            temporary = tempfile.TemporaryDirectory()
+            self.addCleanup(temporary.cleanup)
+            self.bin = Path(temporary.name, 'bin')
+            self.bin.mkdir()
+            # The empty files are found by PATH and PATHEXT; the tests launch none of them.
+            for name in ('cargo.exe', 'rustup.exe', 'cl.exe', 'pkgconf.exe'):
+                (self.bin / name).write_bytes(b'')
+            self.empty = Path(temporary.name, 'empty')
+            self.empty.mkdir()
+            # Only a compiler: the real cargo and rustup stay first on PATH for the run tests.
+            self.compiler = Path(temporary.name, 'compiler')
+            self.compiler.mkdir()
+            (self.compiler / 'cl.exe').write_bytes(b'')
+            self.environment = {'PATH': str(self.bin), 'PKG_CONFIG': str(self.bin / 'pkgconf.exe'),
+                                'ProgramFiles(x86)': str(self.empty)}
+
+        def missing(self, **changes):
+            environment = {**self.environment, **changes}
+            return check.missing_tool(native.Tools(environment={key: value for key, value in environment.items()
+                                                                if value is not None}))
+
+        def test_cargo_rustup_msvc_and_the_named_pkg_config_are_enough(self):
+            self.assertIsNone(self.missing())
+
+        def test_cc_is_not_required(self):
+            self.assertFalse((self.bin / 'cc.exe').exists())
+            self.assertIsNone(self.missing())
+
+        def test_each_missing_tool_is_named(self):
+            for name in ('cargo', 'rustup'):
+                with self.subTest(tool=name):
+                    (self.bin / f'{name}.exe').unlink()
+                    self.assertEqual(self.missing(), name)
+                    (self.bin / f'{name}.exe').write_bytes(b'')
+            (self.bin / 'cl.exe').unlink()
+            self.assertEqual(self.missing(), 'MSVC (cl, or the Visual Studio C++ tools)')
+            (self.bin / 'cl.exe').write_bytes(b'')
+            (self.bin / 'pkgconf.exe').unlink()
+            self.assertEqual(self.missing(), str(self.bin / 'pkgconf.exe'))
+
+        def test_pkg_config_defaults_to_the_plain_name(self):
+            self.assertEqual(check.pkg_config_program({}), 'pkg-config')
+            self.assertEqual(check.pkg_config_program({'Pkg_Config': 'C:\\tools\\pkgconf.exe'}), 'C:\\tools\\pkgconf.exe')
+            self.assertEqual(self.missing(PKG_CONFIG=None), 'pkg-config')
+            (self.bin / 'pkg-config.exe').write_bytes(b'')
+            self.assertIsNone(self.missing(PKG_CONFIG=None))
+
+        def test_the_compiler_is_found_on_path_in_the_developer_environment_or_through_vswhere(self):
+            self.assertTrue(check.windows_compiler(self.environment))
+            bare = {**self.environment, 'PATH': str(self.empty)}
+            # No cl and no vswhere under ProgramFiles(x86): vswhere cannot launch.
+            self.assertFalse(check.windows_compiler(bare))
+            self.assertTrue(check.windows_compiler({**bare, 'VCToolsInstallDir': 'C:\\VC\\Tools\\'}))
+
+            def vswhere(command, **options):
+                if isinstance(command, list):
+                    self.assertEqual(Path(command[0]).name, 'vswhere.exe')
+                    return subprocess.CompletedProcess(command, 0, stdout=str(self.empty) + '\n', stderr='')
+                return subprocess.CompletedProcess(command, 0, stdout='VCToolsInstallDir=C:\\VC\\Tools\\\n', stderr='')
+
+            self.assertTrue(check.windows_compiler(bare, capture=vswhere))
+
+            def none_found(command, **options):
+                return subprocess.CompletedProcess(command, 1, stdout='', stderr='')
+
+            self.assertFalse(check.windows_compiler(bare, capture=none_found))
+
+        def test_run_uses_the_named_pkg_config_for_every_query(self):
+            log = self.empty / 'pkg-config.log'
+            stub = self.empty / 'pkgconf.cmd'
+            stub.write_text(f'@echo %* >> "{log}"\r\n@echo fixture-version\r\n')
+            environment = {**os.environ, 'PATH': os.environ['PATH'] + os.pathsep + str(self.compiler),
+                           'PKG_CONFIG': str(stub), 'CARGO_TARGET_DIR': 'fixture-target'}
+            out, err = io.StringIO(), io.StringIO()
+            with mock.patch.dict(os.environ, environment, clear=True), \
+                    mock.patch.object(native.slot, 'run_command', return_value=0) as cargo:
+                status = check.run('tkrzw', out=out, err=err)
+            self.assertEqual((status, err.getvalue()), (0, ''))
+            self.assertEqual([line.strip() for line in log.read_text().splitlines()],
+                             ['--modversion libclang', '--modversion tkrzw'])
+            self.assertEqual(cargo.call_args.args[0][:2], ['cargo', 'test'])
+
+        def test_bdb_is_refused_without_cc(self):
+            out, err = io.StringIO(), io.StringIO()
+            stub = self.empty / 'pkgconf.cmd'
+            stub.write_text('@echo fixture-version\r\n')
+            environment = {**os.environ, 'PATH': os.environ['PATH'] + os.pathsep + str(self.compiler),
+                           'PKG_CONFIG': str(stub)}
+            with mock.patch.dict(os.environ, environment, clear=True):
+                self.assertEqual(check.run('bdb', out=out, err=err), 1)
+            self.assertIn('bdb: reading db.h needs cc', err.getvalue())
+
+
 if __name__ == '__main__':
     unittest.main()
