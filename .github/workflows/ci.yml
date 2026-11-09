@@ -2,7 +2,7 @@
 # job (`python3 -m tools.dev.ci_tree gate`; CI_INPUTS in tools/dev/ci_tree.py
 # holds each job's paths), and a job runs only when its flag is true. A skipped
 # job still reports `skipped`, so the required `ci-aggregate` check sees it.
-# Paths that no job reads, such as docs/, reference/, .kiro/ and the root
+# Paths that no job reads, such as docs/, reference/ and the root
 # Markdown files, select no job. The `changes` job itself checks the one rule
 # that reads every tracked file: the Python version request is written once.
 #
