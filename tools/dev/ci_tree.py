@@ -23,7 +23,7 @@ from urllib.error import URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from . import cell, ship_sizes
+from . import cell
 
 
 @dataclass(frozen=True)
@@ -100,13 +100,20 @@ SHARED = (".github/workflows/ci.yml", ".github/actions", "tools/lib", "rust-tool
 RUST = (*SHARED, "crates", "Cargo.toml", "Cargo.lock", "fixtures", "tests/parity", "tools")
 # The tools/ paths that no Rust lane imports, runs or reads. `python -m tools.dev`
 # imports every other tools/dev module, so a change there still selects the Rust lanes.
-PYTHON_ONLY = ("tools/*.test.py", "tools/audit", "tools/bisection/*.py", "tools/bisection/coverage_review_rules",
+PYTHON_ONLY = ("tools/*.test.py", "tools/audit", "tools/bisection/*.py",
                "tools/capture", "tools/cloud", "tools/oracle", "tools/scripts2")
 # The exceptions: `python -m tools.dev` imports these modules, and the Rust lanes read the pin records.
 RUST_READS = (
               "tools/bisection/startup_profile.py", 
               "tools/oracle/image.py", "tools/oracle/versions.py",
               "tools/oracle/oracle-pin.txt", "tools/oracle/libpinyin-data.json")
+# The shipping-size job's path gate. `crates` over-selects the three crates
+# outside the capi closure; the gate must not need a Cargo toolchain.
+SHIP = ("crates", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo",
+        "tools/codegen/string_tables.rs", "tools/dev/packaging.py",
+        "tools/dev/packaging_templates.py", "tools/oracle/oracle-pin.txt",
+        "justfile", "tools/dev/cell.py", "tools/dev/ship_sizes.py",
+        ".github/workflows/ci.yml", ".github/actions")
 CI_INPUTS = {
     # ShellCheck reads every tracked script; cargo fmt reads the fuzz workspace.
     "lint": Inputs((*RUST, "fuzz", "clippy.toml", "*.sh"), PYTHON_ONLY,
@@ -116,9 +123,14 @@ CI_INPUTS = {
     "deny": Inputs((".github/workflows/ci.yml", ".github/actions/bootstrap", "tools/lib", "rust-toolchain.toml",
                     ".cargo", "Cargo.toml", "Cargo.lock", "crates/*/Cargo.toml", "deny.toml",
                     "fuzz/Cargo.toml", "fuzz/Cargo.lock")),
-    # The harness tests read files throughout the repository.
-    "harness": Inputs(("*",)),
-    "ship": Inputs((*ship_sizes.INPUTS, *ship_sizes.REPORT_INPUTS)),
+    # Every tracked text file is an input: tools/dev/python-request.test.py reads
+    # them all, and fails when one writes a Python version request. The dated
+    # findings records are its only exception; one test reads the call-site TSV
+    # in that directory.
+    "harness": Inputs(("*",), ("docs/findings",), ("docs/findings/glib-libc-call-sites.tsv",)),
+    # Every crate is a safe superset of the C API dependency closure: this job
+    # runs without Cargo, and ship_sizes keys the base result on the same crates.
+    "ship": Inputs(SHIP),
 }
 
 

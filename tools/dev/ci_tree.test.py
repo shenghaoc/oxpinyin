@@ -457,7 +457,8 @@ class GateTests(unittest.TestCase):
     def test_paths_select_the_jobs_that_read_them(self):
         cases = {
             'docs/note.md': {'harness'},
-            'docs/findings/compatibility-policy.md': {'harness'},
+            'docs/findings/compatibility-policy.md': set(),
+            'docs/findings/glib-libc-call-sites.tsv': {'harness'},
             'AGENTS.md': {'harness'},
             '.github/workflows/store-backends.yml': {'harness'},
             '.github/workflows/verify-nightly.yml': {'harness'},
@@ -470,9 +471,9 @@ class GateTests(unittest.TestCase):
             'tools/oracle/oracle-pin.txt': {'lint', 'test', 'harness', 'ship'},
             'tools/bisection/startup_profile.py': {'lint', 'test', 'harness'},
             'tools/bisection/bisect.c': {'lint', 'test', 'harness'},
-            'crates/oxpinyin-corpus/src/lib.rs': {'lint', 'test', 'harness'},
+            'crates/oxpinyin-corpus/src/lib.rs': {'lint', 'test', 'harness', 'ship'},
             'crates/oxpinyin-core/src/lib.rs': {'lint', 'test', 'harness', 'ship'},
-            'crates/oxpinyin-corpus/Cargo.toml': {'lint', 'test', 'deny', 'harness'},
+            'crates/oxpinyin-corpus/Cargo.toml': {'lint', 'test', 'deny', 'harness', 'ship'},
             'fixtures/w3/fixtures.sha256': {'lint', 'test', 'harness'},
             'fuzz/Cargo.lock': {'lint', 'deny', 'harness'},
             'fuzz/fuzz_targets/x.rs': {'lint', 'harness'},
