@@ -10,7 +10,7 @@
 use std::path::PathBuf;
 
 use oxpinyin_core::{Dictionary, LanguageModel, PhraseToken, SyllableKey};
-use oxpinyin_engine::{KeyOutcome, Selection, SessionSettings};
+use oxpinyin_engine::{Selection, SessionSettings};
 use oxpinyin_runtime::{OpenError, Runtime, RuntimeSession, TableConfError};
 use oxpinyin_user::{FIRST_USER_TOKEN, PinyinKey, SENTENCE_START};
 
@@ -248,11 +248,10 @@ fn opens_the_w3_fixture_and_decodes_nihao() {
     let mut session = runtime
         .new_session(SessionSettings::default())
         .expect("session");
-    let outcome = runtime
+    runtime
         .session(&mut session)
-        .type_pinyin("nihao")
+        .replace_raw("nihao")
         .expect("batch typing");
-    assert_eq!(outcome, KeyOutcome::Consumed);
     let first = runtime
         .session(&mut session)
         .candidates()
@@ -334,7 +333,7 @@ fn selection_advances_and_reset_clears_the_chosen_text() {
         .expect("session");
     runtime
         .session(&mut session)
-        .type_pinyin("nihao")
+        .replace_raw("nihao")
         .expect("typing");
     let advanced = runtime
         .session(&mut session)
@@ -896,7 +895,7 @@ fn a_store_write_between_guesses_reaches_the_second_guess() {
     let dir = tmp.path().to_path_buf();
     let mut runtime = Runtime::open(&w3_dir(), Some(&dir)).unwrap();
     let mut session = runtime.new_session(SessionSettings::default()).unwrap();
-    runtime.session(&mut session).type_pinyin("nihao").unwrap();
+    runtime.session(&mut session).replace_raw("nihao").unwrap();
     let mut guess = |runtime: &Runtime| {
         runtime.session(&mut session).guess_sentence().unwrap();
         runtime

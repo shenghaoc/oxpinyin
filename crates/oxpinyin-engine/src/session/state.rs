@@ -276,12 +276,6 @@ where
     /// (class B2 of the W12 differential). The decoder
     /// hard-stops on them; this seam must not pre-filter them away.
     ///
-    /// The batch [`Session::type_pinyin`] keeps its printable-ASCII
-    /// accept set (the frozen F1 design, `f1-junk-aware-parse.md`): the
-    /// two seams are deliberately different. The corpus and sentence pins
-    /// feed through `type_pinyin` only — no path reaches this seam — so
-    /// the loosened filter here cannot move them.
-    ///
     /// # Errors
     ///
     /// Returns [`EngineError`] when the refresh under the new input hits

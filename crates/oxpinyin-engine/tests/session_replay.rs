@@ -66,11 +66,7 @@ fn recorded_candidate_scenarios_use_direct_operations() {
         ("qqq", "qqq"),
     ] {
         let mut session = session();
-        for character in input.chars() {
-            session
-                .type_pinyin(character.encode_utf8(&mut [0; 4]))
-                .expect("type");
-        }
+        session.replace_raw(input).expect("type");
         assert_eq!(session.raw_input(), input);
         assert_eq!(session.candidates().get(0).unwrap().text(), first);
         if input == "xian" {
@@ -93,11 +89,7 @@ fn recorded_candidate_scenarios_use_direct_operations() {
     }
 
     let mut session = session();
-    for character in "nihaozhongguo".chars() {
-        session
-            .type_pinyin(character.encode_utf8(&mut [0; 4]))
-            .expect("type");
-    }
+    session.replace_raw("nihaozhongguo").expect("type");
     assert_eq!(
         session.select(0).expect("select prefix"),
         Selection::Continued
@@ -113,10 +105,6 @@ fn recorded_candidate_scenarios_use_direct_operations() {
         Selection::Completed
     );
     assert_eq!(session.selected_text(), "你好中国");
-    session.erase().expect("undo selection");
-    assert_eq!(session.composition_offset(), 0);
-    assert!(session.selected_text().is_empty());
-    assert_eq!(session.raw_input(), "nihaozhongguo");
     session.reset();
     assert!(!session.is_composing());
 }
@@ -131,21 +119,15 @@ fn recorded_candidate_scenarios_use_direct_operations() {
 #[test]
 fn f_e_02_candidate_replay() {
     let mut session = session();
-    for character in "nihaozhongguo".chars() {
-        session
-            .type_pinyin(character.encode_utf8(&mut [0; 4]))
-            .expect("typing cannot fail");
-    }
+    session
+        .replace_raw("nihaozhongguo")
+        .expect("typing cannot fail");
     let stale = session.candidates().len();
     assert!(stale > 1, "the snapshot needs several candidates");
 
     // Regenerate: a shorter composition offers fewer candidates.
     session.reset();
-    for character in "ni".chars() {
-        session
-            .type_pinyin(character.encode_utf8(&mut [0; 4]))
-            .expect("typing cannot fail");
-    }
+    session.replace_raw("ni").expect("typing cannot fail");
     let live = session.candidates().len();
 
     for index in [live, live + 1, stale, stale + 1, usize::MAX] {
@@ -172,11 +154,7 @@ fn f_e_02_candidate_replay() {
 #[test]
 fn f_e_12_zhuan_session_replay() {
     let mut session = session();
-    for character in "zhuan".chars() {
-        session
-            .type_pinyin(character.encode_utf8(&mut [0; 4]))
-            .expect("typing cannot fail");
-    }
+    session.replace_raw("zhuan").expect("typing cannot fail");
     assert_eq!(
         session
             .candidates()
@@ -192,11 +170,7 @@ fn f_e_12_zhuan_session_replay() {
 
     // A second request on the same session, which is what the upstream
     // assertion path never reached.
-    for character in "zhuan".chars() {
-        session
-            .type_pinyin(character.encode_utf8(&mut [0; 4]))
-            .expect("typing cannot fail");
-    }
+    session.replace_raw("zhuan").expect("typing cannot fail");
     assert_eq!(session.raw_input(), "zhuan");
     assert!(!session.candidates().is_empty());
 }
@@ -205,12 +179,11 @@ fn f_e_12_zhuan_session_replay() {
 #[test]
 fn arbitrary_characters_never_panic() {
     let mut session = session();
+    let mut text = String::new();
     for character in ('\u{0}'..='\u{ff}').chain(['\u{4f60}', '\u{10ffff}']) {
-        session
-            .type_pinyin(character.encode_utf8(&mut [0; 4]))
-            .expect("no input is an error");
+        text.push(character);
+        session.replace_raw(&text).expect("no input is an error");
     }
-    session.erase().expect("erase after arbitrary input");
     assert!(session.composition_offset() <= session.raw_input().len());
     session.reset();
     assert!(session.raw_input().is_empty());

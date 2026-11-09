@@ -43,7 +43,7 @@ pub use cursor::{
 pub use error::{EngineError, TrainingSpanFault};
 pub use nbest::NbestShape;
 pub use session::{
-    CandidateRanking, KeyOutcome, Selection, Session, SessionSettings, SessionState, TrainingPlan,
+    CandidateRanking, Selection, Session, SessionSettings, SessionState, TrainingPlan,
     amplified_frequency, check_lookup_offset_range, normalize_lookup_offset, parse_time_keys,
 };
 pub use storage::StoragePaths;

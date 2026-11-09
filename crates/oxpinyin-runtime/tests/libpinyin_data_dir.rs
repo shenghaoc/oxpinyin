@@ -10,7 +10,7 @@
 //! over the same package ([contract references](../../../docs/runbooks/contract-references.md)).
 
 use oxpinyin_core::{Dictionary, LanguageModel, PhraseToken, SyllableKey};
-use oxpinyin_engine::{KeyOutcome, SessionSettings};
+use oxpinyin_engine::SessionSettings;
 use oxpinyin_runtime::Runtime;
 
 #[path = "common/contract_data.rs"]
@@ -140,10 +140,7 @@ fn an_unmodified_libpinyin_data_directory_opens_and_decodes() {
         .new_session(SessionSettings::default())
         .expect("session");
     let mut session = runtime.session(&mut session);
-    assert_eq!(
-        session.type_pinyin("nihao").expect("typing"),
-        KeyOutcome::Consumed
-    );
+    session.replace_raw("nihao").expect("typing");
     let first = session
         .candidates()
         .get(0)

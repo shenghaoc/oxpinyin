@@ -64,8 +64,8 @@ fn observe_port(owner: &mut PortSession, input: &str) -> Result<PortSurface, Str
     let mut session = owner.session();
     session.reset();
     session
-        .type_pinyin(input)
-        .map_err(|error| format!("type_pinyin {input:?}: {error:?}"))?;
+        .replace_raw(input)
+        .map_err(|error| format!("replace_raw {input:?}: {error:?}"))?;
     let guessed = session
         .guess_sentence()
         .map_err(|error| format!("guess_sentence {input:?}: {error:?}"))?;

@@ -30,15 +30,6 @@ pub const MAX_PHRASE_LENGTH: usize = 16;
 /// longer all-initial span.
 pub const SCAN_EXPANSION_LIMIT: usize = 4_096;
 
-/// Whether an input-editing operation changed the session.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum KeyOutcome {
-    /// The session accepted no input and is unchanged.
-    Ignored,
-    /// The session changed its input or selection.
-    Consumed,
-}
-
 /// What choosing a candidate left behind.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Selection {
@@ -323,7 +314,6 @@ use sentence::SentenceState;
 // `Session::name`. Shared constants, free functions, the state types
 // above and the scan-matrix helpers stay here.
 mod guess;
-mod input;
 mod lookup;
 mod offsets;
 mod selection;
@@ -1166,22 +1156,6 @@ fn dedup_ranked_by_text(ranked: &mut Vec<Candidate>, keys: &[(RankKey, u32)]) {
     }
     let mut keep = keep.into_iter();
     ranked.retain(|_| keep.next().unwrap_or(false));
-}
-
-/// Whether the engine batch path ([`Session::type_pinyin`]) accepts
-/// `character`.
-///
-/// Printable ASCII (`0x21..=0x7E`), including junk the parity corpus embeds
-/// in inputs. The decoder (`SegmentGraph`) treats non-`a-z`/`'` bytes as
-/// hard boundaries; see `docs/testing/f1-junk-aware-parse.md`. Space and
-/// controls are excluded from this batch-input surface.
-///
-/// This filter belongs to `type_pinyin` ONLY. The capi parse seam
-/// ([`Session::replace_raw`]) keeps every character so the decoder sees —
-/// and stops at — the bytes the pin stops at; the corpus and sentence
-/// pins never reach that seam.
-const fn is_batch_input_character(character: char) -> bool {
-    character.is_ascii_graphic()
 }
 
 /// Extends a filtered key-path end over the apostrophe run following it.

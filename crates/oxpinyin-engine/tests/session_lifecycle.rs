@@ -14,7 +14,7 @@
 //! map onto `set_options`/`set_incomplete_pinyin`/`set_scoring_config`.
 
 use oxpinyin_core::OptionBits;
-use oxpinyin_engine::{KeyOutcome, Selection, Session, SessionSettings};
+use oxpinyin_engine::{Selection, Session, SessionSettings};
 
 #[path = "../../oxpinyin-core/tests/common/fixture_doubles.rs"]
 mod fixture_doubles;
@@ -49,7 +49,7 @@ fn reset_clears_the_composition_but_not_the_configuration() {
         .expect("the option toggles");
     let options = session.options();
 
-    session.type_pinyin("nihao").expect("typing");
+    session.replace_raw("nihao").expect("typing");
     assert!(session.is_composing());
 
     session.reset();
@@ -58,23 +58,20 @@ fn reset_clears_the_composition_but_not_the_configuration() {
 
     // The live option survives reset and still controls decoding.
     assert_eq!(session.options(), options);
-    assert_eq!(
-        session.type_pinyin("n").expect("typing"),
-        KeyOutcome::Consumed
-    );
+    session.replace_raw("n").expect("typing");
     assert_eq!(session.full_parsed_len(), 0);
 }
 
 #[test]
 fn the_reset_session_converts_identically_to_a_fresh_one() {
     let mut fresh = session();
-    fresh.type_pinyin("zhong,guo").expect("typing");
+    fresh.replace_raw("zhong,guo").expect("typing");
     let mut reset = session();
-    reset.type_pinyin("zhong,guo").expect("typing");
+    reset.replace_raw("zhong,guo").expect("typing");
     reset.select(0).expect("choose");
     reset.reset();
 
-    reset.type_pinyin("zhong,guo").expect("typing");
+    reset.replace_raw("zhong,guo").expect("typing");
     let fresh_candidates: Vec<String> = fresh
         .candidates()
         .iter()
@@ -99,10 +96,10 @@ fn reset_composition_keeps_the_parse_more_split_state() {
     // keeps the raw buffer and selection record alive (the
     // `pinyin_parse_more_*` re-parse seam).
     let mut session = session();
-    session.type_pinyin("ni").expect("typing");
+    session.replace_raw("ni").expect("typing");
     session.reset_composition();
     // The parse state is gone; the session survives and accepts input.
-    assert!(session.type_pinyin("h").is_ok());
+    assert!(session.replace_raw("nih").is_ok());
 }
 
 // ── libchewing test-keyboardless.c: programmatic selection ─────────
@@ -123,7 +120,7 @@ fn an_out_of_range_choice_fails_and_leaves_the_composition() {
     // `cand_choose_out_of_range`: index == count and index past the end
     // both fail; the composition state is unchanged afterwards.
     let mut session = session();
-    session.type_pinyin("ni").expect("typing");
+    session.replace_raw("ni").expect("typing");
     let before = (
         session.raw_input().to_owned(),
         session.selected_text().clone(),
@@ -152,7 +149,7 @@ fn an_out_of_range_choice_fails_and_leaves_the_composition() {
 fn a_programmatic_choice_retains_the_chosen_phrase() {
     // `cand_choose_word`: choosing by index retains the exact phrase.
     let mut session = session();
-    session.type_pinyin("ni,hao").expect("typing");
+    session.replace_raw("ni,hao").expect("typing");
     let chosen = session
         .candidates()
         .get(0)
@@ -189,7 +186,7 @@ fn a_mid_composition_choice_targets_the_offset_window() {
     // of the composition through `candidates_at` + `select_anchored`,
     // retaining the raw input alongside the selected text.
     let mut session = session();
-    session.type_pinyin("ni,hao,zhong,guo").expect("typing");
+    session.replace_raw("ni,hao,zhong,guo").expect("typing");
     let full = session.raw_input().to_owned();
     assert!(!full.is_empty());
 
@@ -236,7 +233,7 @@ fn an_option_word_with_undefined_bits_is_accepted_and_inert() {
                 .with(oxpinyin_core::PINYIN_INCOMPLETE, true),
         )
         .expect("the option toggles");
-    session.type_pinyin("n").expect("typing");
+    session.replace_raw("n").expect("typing");
     assert!(
         session.is_composing(),
         "incomplete pinyin still composes past an initial"
