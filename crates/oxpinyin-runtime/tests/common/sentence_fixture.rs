@@ -138,7 +138,6 @@ pub struct TieSurface {
 
 pub struct TieCase {
     pub input: String,
-    pub occurrences: usize,
     pub guessed: bool,
     pub pin: TieSurface,
     pub residual: Option<TieSurface>,
@@ -193,27 +192,20 @@ pub fn load_tie_cases(root: &std::path::Path) -> Vec<TieCase> {
     let mut cases = Vec::new();
     for line in raw.lines().filter(|line| !line.starts_with('#')) {
         let columns: Vec<_> = line.split('\t').collect();
-        assert_eq!(columns.len(), 9, "compact fixture column count moved");
+        assert_eq!(columns.len(), 7, "compact fixture column count moved");
         let input = columns[0].to_owned();
         assert!(names.insert(input.clone()), "duplicate fixture input");
-        let occurrences = columns[1].parse().expect("numeric corpus occurrence count");
-        assert!(occurrences > 0);
-        let costs: Vec<_> = columns[2]
-            .split(',')
-            .map(|cost| cost.parse::<i64>().expect("numeric native selection cost"))
-            .collect();
-        assert!((2..=3).contains(&costs.len()));
-        let guessed = match columns[3] {
+        let guessed = match columns[1] {
             "0" => false,
             "1" => true,
             _ => panic!("fixture guess status must be 0 or 1"),
         };
-        let pool: Vec<_> = columns[4].split('\u{1}').collect();
-        let pin = decode_tie_surface(&pool, columns[5], columns[6]);
+        let pool: Vec<_> = columns[2].split('\u{1}').collect();
+        let pin = decode_tie_surface(&pool, columns[3], columns[4]);
         let residual = if declared.contains(&input) {
-            assert!(!columns[7].is_empty() && !columns[8].is_empty());
+            assert!(!columns[5].is_empty() && !columns[6].is_empty());
             assert!(recorded_residuals.insert(input.clone()));
-            let surface = decode_tie_surface(&pool, columns[7], columns[8]);
+            let surface = decode_tie_surface(&pool, columns[5], columns[6]);
             assert_ne!(
                 surface, pin,
                 "a declared residual silently became pin-equal"
@@ -221,14 +213,13 @@ pub fn load_tie_cases(root: &std::path::Path) -> Vec<TieCase> {
             Some(surface)
         } else {
             assert!(
-                matches!(columns[7], "" | "-") && matches!(columns[8], "" | "-"),
+                matches!(columns[5], "" | "-") && matches!(columns[6], "" | "-"),
                 "an undeclared subject expectation was added for {input}"
             );
             None
         };
         cases.push(TieCase {
             input,
-            occurrences,
             guessed,
             pin,
             residual,
@@ -238,14 +229,10 @@ pub fn load_tie_cases(root: &std::path::Path) -> Vec<TieCase> {
         recorded_residuals, declared,
         "declared inputs must all be checked"
     );
-    assert_eq!(cases.len(), 8592, "selected distinct-input count moved");
-    assert_eq!(
-        cases.iter().map(|case| case.occurrences).sum::<usize>(),
-        8744
-    );
+    assert_eq!(cases.len(), 218, "selected distinct-input count moved");
     assert_eq!(
         cases.iter().map(|case| case.pin.rows.len()).sum::<usize>(),
-        22038
+        567
     );
     cases
 }

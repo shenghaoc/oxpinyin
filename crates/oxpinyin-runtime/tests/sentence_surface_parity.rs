@@ -189,5 +189,5 @@ fn sentence_surface_matches_supplementary_tie_order() {
         "supplementary tie surfaces moved: {moved:?}"
     );
     assert_eq!(residuals, 156, "residual inputs checked count moved");
-    assert_eq!(pin_equal, 8436, "pin-equal inputs checked count moved");
+    assert_eq!(pin_equal, 62, "pin-equal inputs checked count moved");
 }

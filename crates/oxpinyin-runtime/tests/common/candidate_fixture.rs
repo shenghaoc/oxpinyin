@@ -82,6 +82,10 @@ pub struct StructuredCandidateRow {
 pub struct CandidateFixture {
     /// Pin identity copied from the capture header.
     pub pin_ref: String,
+    /// The header's `total_inputs` count: the distinct inputs the capture holds.
+    pub total_inputs: usize,
+    /// The header's `total_triples` count: the rows the capture holds.
+    pub total_triples: usize,
     /// Structured rows in capture order.
     pub rows: Vec<StructuredCandidateRow>,
 }
@@ -104,6 +108,21 @@ impl CandidateFixture {
             .filter(|pin| !pin.is_empty())
             .ok_or_else(|| invalid("missing pin_ref header"))?
             .to_owned();
+        // `# total_inputs=N (...)`: the count is the first token after `=`.
+        let header_count = |key: &'static str| {
+            raw.lines()
+                .find_map(|line| line.strip_prefix(key))
+                .and_then(|rest| rest.split_whitespace().next())
+                .and_then(|count| count.parse::<usize>().ok())
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("missing or non-numeric {key} header"),
+                    )
+                })
+        };
+        let total_inputs = header_count("# total_inputs=")?;
+        let total_triples = header_count("# total_triples=")?;
         let mut rows = Vec::new();
         for (index, line) in raw.lines().enumerate() {
             if line.starts_with('#') || line.is_empty() {
@@ -141,6 +160,11 @@ impl CandidateFixture {
                 nbest_index,
             });
         }
-        Ok(Self { pin_ref, rows })
+        Ok(Self {
+            pin_ref,
+            total_inputs,
+            total_triples,
+            rows,
+        })
     }
 }

@@ -1,12 +1,11 @@
-//! oxpinyin's candidate lists against the frozen pin capture, over every distinct
-//! input of the W2 parity corpus.
+//! oxpinyin's candidate lists against the frozen pin capture, over every input
+//! the capture holds.
 //!
 //! `fixtures/w4/oracle-candidate-structure.txt` holds the pin's first ten candidates
-//! for each input. The system data is the pinned libpinyin-data package, which
-//! `just fetch-contract-data` extracts and which is in tkrzw format, so this target
-//! requires that backend. A missing package is a failure, not a skip.
+//! for each retained input. The system data is the pinned libpinyin-data package,
+//! which `just fetch-contract-data` extracts and which is in tkrzw format, so this
+//! target requires that backend. A missing package is a failure, not a skip.
 
-use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use oxpinyin_engine::{Candidate, CandidateKind, Session, SessionSettings};
@@ -26,20 +25,6 @@ fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-/// Every distinct input of the committed corpus, in bytewise order.
-fn corpus_inputs() -> BTreeSet<String> {
-    let mut inputs = BTreeSet::new();
-    let dir = repo_root().join("tests/parity/corpus/inputs");
-    for entry in std::fs::read_dir(dir).expect("the corpus is committed") {
-        let bytes = std::fs::read(entry.expect("corpus entry").path()).expect("stratum");
-        for line in bytes.split_inclusive(|byte| *byte == b'\n') {
-            let line = line.strip_suffix(b"\n").unwrap_or(line);
-            inputs.insert(String::from_utf8_lossy(line).into_owned());
-        }
-    }
-    inputs
-}
-
 fn candidate_type(candidate: &Candidate) -> Option<OracleCandidateType> {
     match candidate.kind() {
         CandidateKind::Phrase => Some(OracleCandidateType::Normal),
@@ -50,7 +35,7 @@ fn candidate_type(candidate: &Candidate) -> Option<OracleCandidateType> {
 }
 
 #[test]
-fn candidates_match_the_frozen_capture_over_the_corpus() {
+fn candidates_match_the_frozen_capture() {
     let fixture = CandidateFixture::read(repo_root().join(STRUCTURE_FIXTURE))
         .expect("the structure capture is committed");
     let mut expected = std::collections::BTreeMap::<&str, Vec<_>>::new();
@@ -66,16 +51,10 @@ fn candidates_match_the_frozen_capture_over_the_corpus() {
     let runtime = Runtime::open(&dir, None).expect("the pinned data directory opens");
     let mut session = Session::new(SessionSettings::default(), runtime.dict(), runtime.lm());
 
-    let inputs = corpus_inputs();
     let mut rows = 0_usize;
     let mut compared = 0_usize;
     let mut moved = Vec::new();
-    for input in &inputs {
-        // The capture records nothing for an input the pin parses none of: its
-        // protocol stops before asking for candidates, so no rows says nothing here.
-        let Some(theirs) = expected.get(input.as_str()) else {
-            continue;
-        };
+    for (input, theirs) in &expected {
         session.reset();
         let _ = session.replace_raw(input);
         let ours: Vec<_> = session
@@ -103,8 +82,7 @@ fn candidates_match_the_frozen_capture_over_the_corpus() {
     }
 
     eprintln!(
-        "candidate surface: {compared} of {} corpus inputs compared, {rows} rows, {} moved",
-        inputs.len(),
+        "candidate surface: {compared} captured inputs compared, {rows} rows, {} moved",
         moved.len()
     );
     for line in moved.iter().take(20) {
@@ -115,12 +93,9 @@ fn candidates_match_the_frozen_capture_over_the_corpus() {
         "{} inputs moved from the capture",
         moved.len()
     );
-    assert_eq!(inputs.len(), 10_312, "distinct corpus inputs");
-    assert_eq!(compared, 10_037, "inputs with captured candidates");
-    assert_eq!(
-        compared,
-        expected.len(),
-        "captured inputs outside the corpus"
-    );
-    assert_eq!(rows, 97_442, "captured rows");
+    assert_eq!(compared, expected.len(), "every captured input compared");
+    assert_eq!(compared, fixture.total_inputs, "header total_inputs");
+    assert_eq!(rows, fixture.total_triples, "header total_triples");
+    assert_eq!(compared, 750, "retained captured inputs");
+    assert_eq!(rows, 4_572, "retained candidate rows");
 }

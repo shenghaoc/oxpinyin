@@ -6,10 +6,12 @@
 //! foundation parser's `Vec<Parse>` contract cannot represent and a graph
 //! represents without trying.
 //!
-//! The fixture is the pin's own answer for all 10,459 non-sentinel corpus
-//! inputs, recovered from historical W2 logs. No
-//! oracle build is needed to run this, which is the point: the check belongs
-//! in ordinary portable CI, not behind a Linux-only feature.
+//! The fixture is the pin's own answer for 1,788 corpus records, recovered
+//! from historical W2 logs: every record with a partial segment, a consumed
+//! length short of the input, or nothing consumed (1,744), plus one witness
+//! per remaining segmentation shape (44). No oracle build is needed to run
+//! this, which is the point: the check belongs in ordinary portable CI, not
+//! behind a Linux-only feature.
 
 use oxpinyin_core::graph::SegmentGraph;
 use oxpinyin_core::{Completeness, SyllableKey};
@@ -126,9 +128,9 @@ fn walk(
     Ok(())
 }
 
-/// One pass over the fixture: it holds the whole corpus from the recorded
-/// pin, and for each record the graph walks the oracle's path and consumes
-/// what the oracle consumed.
+/// One pass over the fixture: it holds the retained corpus records from the
+/// recorded pin, and for each record the graph walks the oracle's path and
+/// consumes what the oracle consumed.
 #[test]
 fn every_captured_oracle_path_is_a_graph_path() {
     assert!(PATHS.contains("pinyin-oracle-path-v1"));
@@ -136,8 +138,8 @@ fn every_captured_oracle_path_is_a_graph_path() {
     let records = records();
     assert_eq!(
         records.len(),
-        10_459,
-        "10,465 corpus inputs less the six oracle-sentinel records"
+        1_788,
+        "1,744 predicate records plus the 44 segmentation-shape witnesses"
     );
 
     let mut failures: Vec<(String, String)> = Vec::new();

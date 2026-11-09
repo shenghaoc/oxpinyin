@@ -24,14 +24,18 @@ fn structure_fixture_has_valid_format_and_candidate_types() {
         .expect("committed structure fixture");
     let fixture = CandidateFixture::parse(&raw).expect("well-formed structure fixture");
     assert_eq!(fixture.pin_ref, EXPECTED_PIN_REF);
-    let header_triples: usize = raw
-        .lines()
-        .find_map(|line| line.strip_prefix("# total_triples="))
-        .and_then(|rest| rest.split_whitespace().next())
-        .expect("total_triples header")
-        .parse()
-        .expect("numeric total_triples");
-    assert_eq!(fixture.rows.len(), header_triples);
+    assert_eq!(
+        fixture.rows.len(),
+        fixture.total_triples,
+        "header total_triples"
+    );
+    let distinct_inputs = fixture
+        .rows
+        .iter()
+        .map(|row| row.input.as_str())
+        .collect::<std::collections::BTreeSet<_>>()
+        .len();
+    assert_eq!(distinct_inputs, fixture.total_inputs, "header total_inputs");
     let mut previous_input = None;
     let mut expected_rank = 1;
     for row in &fixture.rows {
