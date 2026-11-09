@@ -25,7 +25,7 @@ use std::ffi::{CStr, CString};
 
 use oxpinyin_input::tool::{self, DirectHashTable, LineReader, k_mixture_model as edge};
 
-use crate::database::Database;
+use crate::database::{Database, Loaded, exit_on_short_single_gram};
 use crate::phrase::PhraseIndex;
 use crate::records::{KMixtureModelArrayItem, KmmGram};
 
@@ -203,7 +203,13 @@ fn train_second_word(
     token1: u32,
     params: GenerateParams,
 ) -> bool {
-    let mut single_gram = bigram.load(token1).unwrap_or_default();
+    let mut single_gram = match bigram.load(token1) {
+        Some(Loaded::Gram(gram)) => gram,
+        None => KmmGram::new(),
+        // `train_single_gram`'s first read of the gram's header (`:220`)
+        // reads outside a short record: class (b).
+        Some(Loaded::Short) => exit_on_short_single_gram(),
+    };
     let saved_array_header_wc = single_gram.header().m_wc;
 
     let second_index = match pairs.lookup(token1) {
@@ -324,4 +330,42 @@ fn post_processing_unigram(bigram: &Database, hash_of_unigram: &DirectHashTable)
     }
     magic_header.m_total_freq = magic_header.m_total_freq.wrapping_add(total_freq);
     bigram.set_magic_header_checked(&magic_header);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{GenerateParams, train_second_word};
+    use crate::database::Database;
+    use crate::database::tests::{SHORT, TOKEN, assert_short_single_gram_exit, child_dir, plant};
+    use oxpinyin_input::tool::DirectHashTable;
+
+    /// A first word whose stored row is shorter than the array header: the
+    /// pin's `load` succeeds (`:252`) and `train_single_gram` reads the
+    /// header outside the record (`:220`, class (b)), so the tool takes the
+    /// store-error exit.
+    #[test]
+    fn a_short_first_word_row_takes_the_store_error_exit() {
+        if let Some(dir) = child_dir() {
+            let model = plant(&dir, "model.db", &[(TOKEN, SHORT)]);
+            let bigram = Database::open_read_write(Some(&model));
+            let mut pairs = DirectHashTable::new();
+            pairs.insert(TOKEN, 0);
+            let mut second = DirectHashTable::new();
+            second.insert(TOKEN + 1, 1);
+            let mut unigram = DirectHashTable::new();
+            unigram.insert(TOKEN + 1, 1);
+            let _ = train_second_word(
+                &mut unigram,
+                &bigram,
+                &pairs,
+                &[second],
+                TOKEN,
+                GenerateParams::default(),
+            );
+            return;
+        }
+        assert_short_single_gram_exit(
+            "generate::tests::a_short_first_word_row_takes_the_store_error_exit",
+        );
+    }
 }

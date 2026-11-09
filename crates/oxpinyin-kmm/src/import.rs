@@ -15,9 +15,9 @@ use std::io::BufRead;
 
 use oxpinyin_input::tool::{self, LineReader, k_mixture_model as edge};
 
-use crate::database::Database;
+use crate::database::{Database, Loaded, exit_on_short_single_gram};
 use crate::phrase::PhraseIndex;
-use crate::records::{KMixtureModelArrayHeader, KMixtureModelArrayItem};
+use crate::records::{KMixtureModelArrayHeader, KMixtureModelArrayItem, KmmGram};
 use crate::taglib::{Required, TagLib};
 
 /// `enum LINE_TYPE` (`:42-49`).
@@ -213,7 +213,7 @@ impl<R: BufRead> Converter<'_, R> {
             .add_tag(GRAM_2_ITEM_LINE, c"\\item", 4, c"count:T:N_n_0:n_1:Mr", c"");
 
         let mut last_token = NULL_TOKEN;
-        let mut last_single_gram: Option<crate::records::KmmGram> = None;
+        let mut last_single_gram: Option<KmmGram> = None;
         loop {
             self.check_read();
             match self.line_type {
@@ -257,7 +257,13 @@ impl<R: BufRead> Converter<'_, R> {
                         {
                             self.bigram.store(last_token, &single_gram);
                         }
-                        let single_gram = self.bigram.load(token1).unwrap_or_default();
+                        let single_gram = match self.bigram.load(token1) {
+                            Some(Loaded::Gram(gram)) => gram,
+                            None => KmmGram::new(),
+                            // `insert_array_item` (`:233`) reads outside a
+                            // short record: class (b).
+                            Some(Loaded::Short) => exit_on_short_single_gram(),
+                        };
                         last_token = token1;
                         last_single_gram = Some(single_gram);
                     }
