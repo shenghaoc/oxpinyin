@@ -36,7 +36,7 @@ def posix_shell():
 
 
 def old_bash():
-    """Return a Bash older than the floor, or None."""
+    """Return macOS's Bash older than the floor, or None."""
     for name in ('/bin/bash', '/usr/bin/bash'):
         executable = shutil.which(name)
         if executable is None:
@@ -75,36 +75,36 @@ class FloorFileTests(unittest.TestCase):
 
 
 class RunTimeTests(unittest.TestCase):
-    def test_the_floor_rejects_a_non_bash_shell(self):
-        shell = posix_shell()
-        if shell is None:
-            self.skipTest('no POSIX shell without BASH_VERSION')
-        result = run_source(shell)
-        self.assertEqual(result.returncode, 1, result.stderr)
-        self.assertRegex(result.stderr, MESSAGE)
-        self.assertIn('(found not bash)', result.stderr)
+    if sys.platform != 'win32':
+        def test_the_floor_accepts_the_bash_5_ci_uses(self):
+            bash = shutil.which('bash')
+            self.assertIsNotNone(bash, 'bash is required on this platform')
+            version = subprocess.run([bash, '-c', 'printf %s "${BASH_VERSION%%.*}"'],
+                                     capture_output=True, text=True).stdout
+            self.assertTrue(version.isdigit() and int(version) >= 5,
+                            f'bash on PATH is {version}, not the CI floor')
+            result = run_source(bash)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stderr, '')
 
-    def test_the_floor_accepts_the_bash_5_ci_uses(self):
-        bash = shutil.which('bash')
-        if bash is None:
-            self.skipTest('no bash on PATH')
-        version = subprocess.run([bash, '-c', 'printf %s "${BASH_VERSION%%.*}"'],
-                                 capture_output=True, text=True).stdout
-        if not version.isdigit() or int(version) < 5:
-            self.skipTest(f'bash on PATH is {version}, not the CI floor')
-        result = run_source(bash)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stderr, '')
+    if sys.platform.startswith('linux'):
+        def test_the_floor_rejects_a_non_bash_shell(self):
+            shell = posix_shell()
+            self.assertIsNotNone(shell, 'Linux needs a POSIX shell that does not set BASH_VERSION')
+            result = run_source(shell)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertRegex(result.stderr, MESSAGE)
+            self.assertIn('(found not bash)', result.stderr)
 
-    def test_the_floor_rejects_macos_bash_3_2_when_present(self):
-        found = old_bash()
-        if found is None:
-            self.skipTest('no Bash older than the floor on this host')
-        executable, version = found
-        result = run_source(executable)
-        self.assertEqual(result.returncode, 1, result.stderr)
-        self.assertRegex(result.stderr, MESSAGE)
-        self.assertIn(f'(found {version})', result.stderr)
+    if sys.platform == 'darwin':
+        def test_the_floor_rejects_macos_bash_3_2(self):
+            found = old_bash()
+            self.assertIsNotNone(found, 'macOS /bin/bash must be older than the floor')
+            executable, version = found
+            result = run_source(executable)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertRegex(result.stderr, MESSAGE)
+            self.assertIn(f'(found {version})', result.stderr)
 
 
 if __name__ == '__main__':

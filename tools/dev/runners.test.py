@@ -71,8 +71,6 @@ def live_descendants(pid, proc=Path('/proc')):
 OWNERSHIP_CEILING = 60
 
 
-@unittest.skipUnless(sys.platform == 'linux' and Path('/proc/self/stat').is_file(),
-                     'Linux /proc process-liveness facilities')
 class LinuxOwnershipTests(unittest.TestCase):
     def live(self, pid):
         try:
@@ -185,8 +183,9 @@ raise SystemExit(result)
                 if failure is not None:
                     failure.add_note('wrapper stderr:\n' + stderr.decode(errors='replace'))
 
-    def test_sigterm_reaps_descendants_and_removes_scratch(self):
-        self.exercise(signal.SIGTERM)
+    if sys.platform.startswith('linux'):
+        def test_sigterm_reaps_descendants_and_removes_scratch(self):
+            self.exercise(signal.SIGTERM)
 
 
 if __name__ == '__main__':

@@ -7,20 +7,22 @@ pin, so it changes only when the pin, the generator or the family table changes.
 
 ## Tools
 
-The audit runs natively on macOS. Install these from Homebrew:
+The audit runs natively on macOS. The script's shebang pins the clang bindings, and
+`--print-llvm-major` prints the matching LLVM major. Install these from Homebrew:
 
 ```bash
-brew install llvm@21 bear glib gettext autoconf automake libtool tkrzw kyoto-cabinet berkeley-db@5
+llvm_major=$(uv run --no-project --managed-python python tools/audit/glib_call_sites.py --print-llvm-major)
+brew install "llvm@${llvm_major}" bear glib gettext autoconf automake libtool tkrzw kyoto-cabinet berkeley-db@5
 ```
 
-`llvm@21` is the keg whose libclang matches the bindings the recipe pins (`clang==21.1.7`
-from PyPI; PyPI has no later release). `berkeley-db@5` is the major version
-libpinyin's configure asks for. The recipe checks for each tool and names any that is
-missing; it installs nothing itself.
+The `llvm@<major>` keg's libclang matches the bindings the recipe pins (the version in
+the script's shebang, from PyPI; PyPI has no later release). `berkeley-db@5` is the major
+version libpinyin's configure asks for. The recipe checks for each tool and names any
+that is missing; it installs nothing itself.
 
 On Linux the same recipe needs `autoconf automake libtool bear g++ make pkg-config`,
-`libclang-21-dev`, and the development packages of GLib, Berkeley DB, Kyoto Cabinet and
-Tkrzw. Use Debian testing’s `libclang-21-dev` package.
+`libclang-<major>-dev`, and the development packages of GLib, Berkeley DB, Kyoto Cabinet
+and Tkrzw. Use Debian testing's package for the major that the command above prints.
 
 ## Run
 
@@ -82,5 +84,7 @@ list with the [inventory](../findings/glib-libc-inventory.md#reachability-and-ne
 After a generator or table change, also run the recipe once on Linux and compare the two
 lists row by row. A difference is a finding to record, not a reason to require Linux.
 
-`just test-tools` runs the merge and render tests. Its end-to-end test runs where the tools
-above are installed and otherwise skips, naming what is missing. No CI job installs libclang.
+`just test-tools` runs the merge and render tests. The end-to-end test is
+defined on Linux and macOS. The Linux harness job installs Clang, libclang and
+GNU ld; the macOS nightly job installs the Homebrew LLVM and GLib. The test is
+required in both jobs.

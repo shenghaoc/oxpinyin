@@ -1,6 +1,7 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
 """Tests for the GLib/libc call-site generator."""
 import csv
+import ctypes
 import importlib.util
 import json
 import os
@@ -233,7 +234,12 @@ class RecipeTests(unittest.TestCase):
             pin = root / 'pin checkout with spaces'
             pin.mkdir()
             uv = root / 'uv'
-            uv.write_text(f'#!{sys.executable}\nimport json, sys\nsys.argv[1:3] == ["python", "install"] and sys.exit(0)\nprint(json.dumps(sys.argv[1:]))\n')
+            uv.write_text(
+                f'#!{sys.executable}\n'
+                'import json, sys\n'
+                'if sys.argv[1:3] == ["python", "install"]: sys.exit(0)\n'
+                f'if sys.argv[-1] == "--print-clang-requirement": print({driver.CLANG_REQUIREMENT!r}); sys.exit(0)\n'
+                'print(json.dumps(sys.argv[1:]))\n')
             uv.chmod(0o755)
             result = subprocess.run(
                 ['just', '--justfile', str(ROOT / 'justfile'), 'audit-glib-call-sites', str(pin)],
@@ -241,7 +247,7 @@ class RecipeTests(unittest.TestCase):
                 capture_output=True, text=True, timeout=30)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(json.loads(result.stdout)[-10:], [
-                'run', '--no-project', '--managed-python', '--with', 'clang==21.1.7',
+                'run', '--no-project', '--managed-python', '--with', driver.CLANG_REQUIREMENT,
                 'python', '-X', 'lazy_imports=normal', 'tools/audit/glib_call_sites.py', str(pin)])
 
 
@@ -266,94 +272,114 @@ UNPLACED = [
 ]
 
 
-def missing_requirement():
-    """Why the end-to-end test cannot run here, or None."""
-    missing = driver.missing_tools()
-    for tool in ("uv", "c++filt", "pkg-config"):
-        if shutil.which(tool) is None:
-            missing.append(tool)
-    return f"not installed: {', '.join(missing)}" if missing else None
+def end_to_end_missing():
+    """The tools this end-to-end test needs and does not have, by name."""
+    missing = [name for name in ("uv", "c++", "c++filt", "pkg-config", "ld")
+               if shutil.which(name) is None]
+    if sys.platform == "darwin":
+        opt = driver.brew_opt()
+        missing += [name for name in ("glib", f"llvm@{driver.LLVM_MAJOR}")
+                    if not (opt / name).exists()]
+        if shutil.which("xcrun") is None:
+            missing.append("xcrun")
+        environment = ({**os.environ, **driver.toolchain().environment}
+                       if "xcrun" not in missing else dict(os.environ))
+    else:
+        environment = dict(os.environ)
+        library = f"libclang-{driver.LLVM_MAJOR}.so.1"
+        try:
+            ctypes.CDLL(library)
+        except OSError:
+            missing.append(library)
+        resource = f"/usr/lib/llvm-{driver.LLVM_MAJOR}/lib/clang/{driver.LLVM_MAJOR}"
+        if not Path(resource).is_dir():
+            missing.append(resource)
+    if "pkg-config" not in missing and subprocess.run(
+            ["pkg-config", "--exists", "glib-2.0"], env=environment).returncode:
+        missing.append("glib-2.0")
+    return missing
 
 
-class EndToEndTests(unittest.TestCase):
-    """Clang and GNU ld on a small tree: the fixture stands for the pin."""
+if sys.platform in ("linux", "darwin"):
+    class EndToEndTests(unittest.TestCase):
+        """Clang and the platform linker on a small tree: the fixture stands for the pin."""
 
-    def setUp(self):
-        reason = missing_requirement()
-        if reason:
-            self.skipTest(reason)
+        def setUp(self):
+            missing = end_to_end_missing()
+            if missing:
+                self.fail("missing tools: " + ", ".join(missing))
 
-    def build(self, work):
-        real = work / "bdb/real"
-        reach = work / "bdb/reach"
-        tools = driver.toolchain()
-        env = {**os.environ, **tools.environment}
-        for tree in (real, reach):
-            shutil.copytree(FIXTURE / "src", tree / "src")
-        shutil.copytree(FIXTURE / "utils", reach / "utils")
-        glib = subprocess.check_output(["pkg-config", "--cflags", "glib-2.0"], text=True,
-                                       env=env).split()
-        libs = subprocess.check_output(["pkg-config", "--libs", "glib-2.0"], text=True,
-                                       env=env).split()
-        sources = ("common", "pinyin", "zhuyin")
-        database = [{"directory": str((real / "src").resolve()), "file": f"{name}.cpp",
-                     "arguments": ["g++", "-I.", *glib, "-O2", "-c", f"{name}.cpp"]}
-                    for name in sources]
-        (real / "compile_commands.json").write_text(json.dumps(database))
-        source = reach / "src"
-        cxxflags = tools.reach_cxxflags.split()
-        for name in sources:
-            subprocess.run(["c++", *cxxflags, "-fPIC", "-w", *glib, "-c", f"{name}.cpp"],
-                           cwd=source, check=True, env=env)
-        for library in ("pinyin", "zhuyin"):
-            if sys.platform == "darwin":
-                link = ["-dynamiclib", "-Wl,-dead_strip", f"-Wl,-map,lib{library}.la.map",
-                        f"-Wl,-exported_symbol,_{library}_entry"]
-            else:
-                link = ["-shared", "-Wl,--gc-sections", f"-Wl,-Map=lib{library}.la.map",
-                        f"-Wl,--version-script={FIXTURE.resolve()}/lib{library}.ver"]
-            subprocess.run(["c++", *link, "common.o", f"{library}.o",
-                            "-o", f"lib{library}.so", *libs],
-                           cwd=source, check=True, env=env)
-        link = (["-Wl,-dead_strip", "-Wl,-map,tool.map"] if sys.platform == "darwin"
-                else ["-Wl,--gc-sections", "-Wl,-Map=tool.map"])
-        subprocess.run(["c++", *cxxflags, "-w", "-I../src", *glib, "tool.cpp",
-                        "../src/common.o", *link, "-o", "tool", *libs],
-                       cwd=reach / "utils", check=True, env=env)
+        def build(self, work):
+            real = work / "bdb/real"
+            reach = work / "bdb/reach"
+            tools = driver.toolchain()
+            env = {**os.environ, **tools.environment}
+            for tree in (real, reach):
+                shutil.copytree(FIXTURE / "src", tree / "src")
+            shutil.copytree(FIXTURE / "utils", reach / "utils")
+            glib = subprocess.check_output(["pkg-config", "--cflags", "glib-2.0"], text=True,
+                                           env=env).split()
+            libs = subprocess.check_output(["pkg-config", "--libs", "glib-2.0"], text=True,
+                                           env=env).split()
+            sources = ("common", "pinyin", "zhuyin")
+            database = [{"directory": str((real / "src").resolve()), "file": f"{name}.cpp",
+                         "arguments": ["g++", "-I.", *glib, "-O2", "-c", f"{name}.cpp"]}
+                        for name in sources]
+            (real / "compile_commands.json").write_text(json.dumps(database))
+            source = reach / "src"
+            cxxflags = tools.reach_cxxflags.split()
+            for name in sources:
+                subprocess.run(["c++", *cxxflags, "-fPIC", "-w", *glib, "-c", f"{name}.cpp"],
+                               cwd=source, check=True, env=env)
+            for library in ("pinyin", "zhuyin"):
+                if sys.platform == "darwin":
+                    link = ["-dynamiclib", "-Wl,-dead_strip", f"-Wl,-map,lib{library}.la.map",
+                            f"-Wl,-exported_symbol,_{library}_entry"]
+                else:
+                    link = ["-shared", "-Wl,--gc-sections", f"-Wl,-Map=lib{library}.la.map",
+                            f"-Wl,--version-script={FIXTURE.resolve()}/lib{library}.ver"]
+                subprocess.run(["c++", *link, "common.o", f"{library}.o",
+                                "-o", f"lib{library}.so", *libs],
+                               cwd=source, check=True, env=env)
+            link = (["-Wl,-dead_strip", "-Wl,-map,tool.map"] if sys.platform == "darwin"
+                    else ["-Wl,--gc-sections", "-Wl,-Map=tool.map"])
+            subprocess.run(["c++", *cxxflags, "-w", "-I../src", *glib, "tool.cpp",
+                            "../src/common.o", *link, "-o", "tool", *libs],
+                           cwd=reach / "utils", check=True, env=env)
 
-    def generate(self, work, families):
-        program = (
-            "import importlib.util, json, sys\n"
-            "from pathlib import Path\n"
-            "spec = importlib.util.spec_from_file_location('glib_call_sites', sys.argv[1])\n"
-            "driver = importlib.util.module_from_spec(spec)\n"
-            "sys.modules['glib_call_sites'] = driver\n"
-            "spec.loader.exec_module(driver)\n"
-            "table = driver.read_families(Path(sys.argv[3]))\n"
-            "rows, missing = driver.generate(Path(sys.argv[2]), ['bdb'], table)\n"
-            "print(json.dumps([driver.render(driver.build_rows(rows, table)), missing]))\n")
-        return subprocess.run(
-            ["uv", "run", "--no-project", "--managed-python", "--with", "clang==21.1.7",
-             "python", "-X", "lazy_imports=normal", "-c", program,
-             str(Path(__file__).with_name("glib_call_sites.py")), str(work), str(families)],
-            capture_output=True, text=True, timeout=300, check=False)
+        def generate(self, work, families):
+            program = (
+                "import importlib.util, json, sys\n"
+                "from pathlib import Path\n"
+                "spec = importlib.util.spec_from_file_location('glib_call_sites', sys.argv[1])\n"
+                "driver = importlib.util.module_from_spec(spec)\n"
+                "sys.modules['glib_call_sites'] = driver\n"
+                "spec.loader.exec_module(driver)\n"
+                "table = driver.read_families(Path(sys.argv[3]))\n"
+                "rows, missing = driver.generate(Path(sys.argv[2]), ['bdb'], table)\n"
+                "print(json.dumps([driver.render(driver.build_rows(rows, table)), missing]))\n")
+            return subprocess.run(
+                ["uv", "run", "--no-project", "--managed-python", "--with", driver.CLANG_REQUIREMENT,
+                 "python", "-X", "lazy_imports=normal", "-c", program,
+                 str(Path(__file__).with_name("glib_call_sites.py")), str(work), str(families)],
+                capture_output=True, text=True, timeout=300, check=False)
 
-    def test_the_fixture_is_reproduced_and_the_table_is_closed(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            work = Path(temporary)
-            self.build(work)
-            result = self.generate(work, FIXTURE / "families.tsv")
-            self.assertEqual(result.returncode, 0, result.stderr)
-            text, missing = json.loads(result.stdout)
-            self.assertEqual(sorted(text.splitlines()), sorted(EXPECTED))
-            self.assertEqual(missing, UNPLACED)
-            shorter = work / "shorter.tsv"
-            shorter.write_text("".join(
-                line for line in (FIXTURE / "families.tsv").read_text().splitlines(True)
-                if not line.startswith("strcmp")))
-            result = self.generate(work, shorter)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn("1 calls to functions outside the table: strcmp (libc)", result.stderr)
+        def test_the_fixture_is_reproduced_and_the_table_is_closed(self):
+            with tempfile.TemporaryDirectory() as temporary:
+                work = Path(temporary)
+                self.build(work)
+                result = self.generate(work, FIXTURE / "families.tsv")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                text, missing = json.loads(result.stdout)
+                self.assertEqual(sorted(text.splitlines()), sorted(EXPECTED))
+                self.assertEqual(missing, UNPLACED)
+                shorter = work / "shorter.tsv"
+                shorter.write_text("".join(
+                    line for line in (FIXTURE / "families.tsv").read_text().splitlines(True)
+                    if not line.startswith("strcmp")))
+                result = self.generate(work, shorter)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("1 calls to functions outside the table: strcmp (libc)", result.stderr)
 
 
 if __name__ == "__main__":

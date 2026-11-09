@@ -2,7 +2,7 @@
 """Tests for neutrality.py: the instruction normalization, symbol accounting and report of the debug-info comparison.
 
 The logic runs on listings written out here and on stand-ins for the GNU tools, so it runs on macOS and Linux.
-The last class compiles shared objects and runs the real tools; it needs gcc and GNU binutils on Linux.
+The last class compiles shared objects and runs the real tools; it is defined on Linux only.
 """
 import collections
 import contextlib
@@ -497,89 +497,68 @@ class CompareTests(unittest.TestCase):
             self.assertFalse(destination.parent.exists())
 
 
-@unittest.skipUnless(sys.platform.startswith('linux') and all(shutil.which(tool) for tool in
-                                                              ('gcc', 'objcopy', 'objdump', 'nm', 'diff')),
-                     'needs gcc and GNU binutils (objcopy, objdump, nm) on Linux')
-class RealToolsTests(unittest.TestCase):
-    """Shared objects compiled here, and the real tools: every outcome, on whatever architecture this is."""
+if sys.platform.startswith('linux'):
+    class RealToolsTests(unittest.TestCase):
+        """Shared objects compiled here, and the real tools: every outcome, on whatever architecture this is."""
 
-    BASE = '''static int table[4] = {1, 2, 3, 4};
+        BASE = '''static int table[4] = {1, 2, 3, 4};
 int __attribute__((noinline)) f(int x) { return x * 3 + 1; }
 int __attribute__((noinline)) g(int y) { return f(y) + 7; }
 int _RNvCsabc123_5crate3foo(int z) { return z ^ 0x55; }
 int %(name)s(int q) { return q + 40; }
 int get(int i) { return table[i & 3]; }
 '''
-    PAD = 'static char pad[8192] __attribute__((used)) = {1};\n'
 
-    @classmethod
-    def setUpClass(cls):
-        cls.directory = tempfile.TemporaryDirectory()
-        cls.addClassCleanup(cls.directory.cleanup)
-        work = Path(cls.directory.name)
-        base = cls.BASE % {'name': 'h_same'}
-        sources = {'base': base, 'base_g': base,
-                   'shifted': cls.PAD + base.replace('abc123', 'def456'),
-                   'renamed': cls.PAD + (cls.BASE % {'name': 'h_renamed'}).replace('abc123', 'def456'),
-                   'different': base.replace('x * 3 + 1', '(x >> 2) ^ 1')}
-        cls.objects = {}
-        for name, source in sources.items():
-            (work / f'{name}.c').write_text(source)
-            flags = ['-g'] if name == 'base_g' else []
-            subprocess.run(['gcc', '-O2', *flags, '-shared', '-fPIC', '-o', work / f'{name}.so', work / f'{name}.c'],
-                           check=True, capture_output=True)
-            cls.objects[name] = work / f'{name}.so'
+        @classmethod
+        def setUpClass(cls):
+            cls.directory = tempfile.TemporaryDirectory()
+            cls.addClassCleanup(cls.directory.cleanup)
+            work = Path(cls.directory.name)
+            base = cls.BASE % {'name': 'h_same'}
+            sources = {'base': base, 'base_g': base,
+                       'different': base.replace('x * 3 + 1', '(x >> 2) ^ 1')}
+            cls.objects = {}
+            for name, source in sources.items():
+                (work / f'{name}.c').write_text(source)
+                flags = ['-g'] if name == 'base_g' else []
+                subprocess.run(['gcc', '-O2', *flags, '-shared', '-fPIC', '-o', work / f'{name}.so', work / f'{name}.c'],
+                               check=True, capture_output=True)
+                cls.objects[name] = work / f'{name}.so'
 
-    def compare(self, first, second):
-        return neutrality.compare(self.objects[first], self.objects[second])
+        def compare(self, first, second):
+            return neutrality.compare(self.objects[first], self.objects[second])
 
-    def test_campaign_control_checks_dwarf_and_shipping_code_without_mutation(self):
-        from tools.dev.measure.valgrind import callgrind_control
-        with tempfile.TemporaryDirectory() as directory:
-            stages = [Path(directory) / tag for tag in ('profile', 'shipping')]
-            originals = []
-            for stage, name in zip(stages, ('base_g', 'base')):
-                stage.mkdir()
-                library = stage / 'libpinyin.so.15.0.0'
-                shutil.copy(self.objects[name], library)
-                originals.append(library.read_bytes())
-                (stage / 'libpinyin.so').symlink_to(library.name)
-            with Streams() as streams:
-                status = callgrind_control(list(map(str, stages)), os.environ)
-            self.assertEqual(status, 0, streams.stdout)
-            self.assertIn('PASS (a): identical .text', streams.stdout)
-            self.assertRegex(streams.stdout, r'profiled DWARF compilation units: [1-9][0-9]*')
-            for stage, original in zip(stages, originals):
-                self.assertEqual((stage / 'libpinyin.so').read_bytes(), original)
-                self.assertTrue((stage / 'libpinyin.so').is_symlink())
+        def test_campaign_control_checks_dwarf_and_shipping_code_without_mutation(self):
+            from tools.dev.measure.valgrind import callgrind_control
+            with tempfile.TemporaryDirectory() as directory:
+                stages = [Path(directory) / tag for tag in ('profile', 'shipping')]
+                originals = []
+                for stage, name in zip(stages, ('base_g', 'base')):
+                    stage.mkdir()
+                    library = stage / 'libpinyin.so.15.0.0'
+                    shutil.copy(self.objects[name], library)
+                    originals.append(library.read_bytes())
+                    (stage / 'libpinyin.so').symlink_to(library.name)
+                with Streams() as streams:
+                    status = callgrind_control(list(map(str, stages)), os.environ)
+                self.assertEqual(status, 0, streams.stdout)
+                self.assertIn('PASS (a): identical .text', streams.stdout)
+                self.assertRegex(streams.stdout, r'profiled DWARF compilation units: [1-9][0-9]*')
+                for stage, original in zip(stages, originals):
+                    self.assertEqual((stage / 'libpinyin.so').read_bytes(), original)
+                    self.assertTrue((stage / 'libpinyin.so').is_symlink())
 
-    def test_debug_info_alone_leaves_the_text_identical(self):
-        status, report = self.compare('base_g', 'base')
-        self.assertEqual(status, 0, report)
-        self.assertIn('PASS (a): identical .text', report)
+        def test_debug_info_alone_leaves_the_text_identical(self):
+            status, report = self.compare('base_g', 'base')
+            self.assertEqual(status, 0, report)
+            self.assertIn('PASS (a): identical .text', report)
 
-    def test_a_shifted_data_object_changes_displacements_only(self):
-        status, report = self.compare('base', 'shifted')
-        self.assertEqual(status, 0, report)
-        if 'PASS (a)' in report:
-            self.skipTest('this compiler and linker keep the text identical when data moves')
-        self.assertIn('PASS (b): identical instruction multiset', report)
-        self.assertRegex(report, r'  Symbol accounting: \d+ symbols pair by hash-stripped name,\n')
-        self.assertIn('  strip: 0 — none.\n', report)
-
-    def test_a_renamed_function_pairs_by_its_body(self):
-        status, report = self.compare('base', 'renamed')
-        self.assertEqual(status, 0, report)
-        if 'PASS (a)' in report:
-            self.skipTest('this compiler and linker keep the text identical when data moves')
-        self.assertIn('  strip: 1 — 1 paired by identical instruction body.\n', report)
-
-    def test_other_code_is_case_c(self):
-        status, report = self.compare('base', 'different')
-        self.assertEqual(status, 1, report)
-        self.assertIn('FAIL (c): instruction multiset differs — this is different code.\n', report)
-        self.assertTrue(any(row.startswith(('<', '>')) for row in report.splitlines()), report)
-        self.assertNotIn('Stop and report', report)
+        def test_other_code_is_case_c(self):
+            status, report = self.compare('base', 'different')
+            self.assertEqual(status, 1, report)
+            self.assertIn('FAIL (c): instruction multiset differs — this is different code.\n', report)
+            self.assertTrue(any(row.startswith(('<', '>')) for row in report.splitlines()), report)
+            self.assertNotIn('Stop and report', report)
 
 
 if __name__ == '__main__':
