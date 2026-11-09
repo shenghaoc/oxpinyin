@@ -149,5 +149,28 @@ class InstallCheckTests(unittest.TestCase):
             build.build(self.prefix, env=self.env)
 
 
+class CheckCommandTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.prefix = Path(temporary.name).resolve() / 'tkrzw'
+        self.prefix.mkdir()
+        (self.prefix / build.MARKER).write_text(build.TKRZW_REV + '\n')
+
+    def test_check_accepts_a_marked_install_and_refuses_the_rest(self):
+        with mock.patch.object(build, 'check_install') as install:
+            self.assertEqual(build.main(['check', '--prefix', str(self.prefix)]), 0)
+        install.assert_called_once_with(self.prefix)
+        with mock.patch.object(build, 'check_install', side_effect=build.RecipeError('the install is incomplete')), \
+                contextlib.redirect_stderr(io.StringIO()) as error:
+            self.assertEqual(build.main(['check', '--prefix', str(self.prefix)]), 1)
+        self.assertIn('FAIL: the install is incomplete', error.getvalue())
+        (self.prefix / build.MARKER).unlink()
+        with mock.patch.object(build, 'check_install') as install, \
+                contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(build.main(['check', '--prefix', str(self.prefix)]), 1)
+        install.assert_not_called()
+
+
 if __name__ == '__main__':
     unittest.main()

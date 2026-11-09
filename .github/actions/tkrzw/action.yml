@@ -10,9 +10,11 @@ description: |-
   toolchain inside a container job (the compiler and /etc/os-release; a
   rolling debian:testing changes them without changing the runner image),
   the install prefix (the macOS install name and tkrzw.pc record it), and a
-  hash of the recipe. A miss builds, checks the install and saves; a hit
-  restores. A build from this recipe needs no distro-probe.sh, which is for
-  Ubuntu's packaged libtkrzw only (docs/findings/tkrzw-distro-compat.md).
+  hash of the build recipe (tools/tkrzw/build.py). The runtime check and
+  this action are not inputs: neither changes the installed files. A miss
+  builds and checks the install; main saves it. A hit restores and checks
+  the install. A build from this recipe needs no distro-probe.sh, which is
+  for Ubuntu's packaged libtkrzw only (docs/findings/tkrzw-distro-compat.md).
 
   Afterwards the build is found the way a developer points at a self-built
   tkrzw: DIR/lib/pkgconfig first on PKG_CONFIG_PATH, DIR/lib on the runtime
@@ -68,7 +70,17 @@ runs:
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.key.outputs.prefix }}
-        key: ${{ steps.key.outputs.key }}-recipe-${{ hashFiles('tools/tkrzw/build.py', 'tools/tkrzw/runtime.py', '.github/actions/tkrzw/action.yml') }}
+        key: ${{ steps.key.outputs.key }}-recipe-${{ hashFiles('tools/tkrzw/build.py') }}
+
+    - name: Check the restored tkrzw build
+      if: steps.restore.outputs.cache-hit == 'true'
+      shell: bash
+      env:
+        PYTHON: ${{ steps.key.outputs.python }}
+        PREFIX: ${{ steps.key.outputs.prefix }}
+      run: |
+        set -euo pipefail
+        "$PYTHON" -m tools.tkrzw.build check --prefix "$PREFIX"
 
     - name: Build tkrzw (cache miss)
       if: steps.restore.outputs.cache-hit != 'true'
@@ -82,9 +94,10 @@ runs:
         "$PYTHON" -m tools.tkrzw.build build --prefix "$PREFIX"
 
     # Saved right after the build, before the caller's own steps, so a red
-    # test run still keeps the build; skipped on an exact hit.
+    # test run still keeps the build; skipped on an exact hit. Only main
+    # writes the cache; every other ref restores only.
     - name: Save the tkrzw build
-      if: steps.restore.outputs.cache-hit != 'true'
+      if: steps.restore.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.key.outputs.prefix }}
