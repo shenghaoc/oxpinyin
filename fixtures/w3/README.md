@@ -15,7 +15,7 @@ files at this level:
   the backend. The runtime and C-ABI test suites open
   `fixtures/w3/<DEFAULT_STORE_EXT>`.
 
-  `just w3-fixtures generate --model-dir <model20 extraction>` writes
+  The retired generator wrote
   the three directories (`tools/dev/w3_fixtures.py`, standard library
   only). The subset step selects the phrases that the `MINI_KEYS`
   spellings (`a`, `ni`, `hao`, `ni'hao`, `ni'men`, `zhong`, `guo`,
@@ -34,15 +34,14 @@ files at this level:
   runs with a `table.conf` whose addon list is art, and the committed
   rendering with the pin's full list is written afterwards.
 
-  `just w3-fixtures check --cells bdb,kc,tkrzw` regenerates each
-  directory into a temporary location and compares it with the
+  The retired checker regenerated each
+  directory into a temporary location and compared it with the
   committed tree: the chunk files and `table.conf` byte for byte, and
   the DBM files record by record, read through
-  `crates/oxpinyin-store/examples/raw_records.rs`, because the container
+  [archived raw records source](https://github.com/shenghaoc/oxpinyin/blob/71092202e489262fd3ccbdf116fa19fccab8f928/crates/oxpinyin-store/examples/raw_records.rs), because the container
   bytes are the writing library's own layout and change with its
   version. The model20 archive is not redistributable and CI does not
-  have it: both commands take `--model-dir` (default `$PINYIN_MODEL_DIR`,
-  then the extraction of `just fetch-model`) and refuse an
+  have it. Both retired commands used the verified model extraction and refused an
   extraction whose cache lacks the fetch's verified marker.
 - **`*/deleted_bigram.db`** — a training input, not part of the compiled
   set: the pin's `gen_deleted_ngram` (built for the directory's own
@@ -54,8 +53,7 @@ files at this level:
   the other containers do.
 - **Content `.bin` files** (art … technology, at this level) — truncated
   copies of the oracle's custom-content tables for the custom-content
-  loader tests, regenerated with `just w3-fixtures content --data-dir
-  <oracle data dir>`.
+  loader tests, captured from the oracle data directory by the retired content generator.
 
 ### KMM tool fixtures (2026-10-31 UTC)
 
@@ -84,12 +82,11 @@ The layout is the pin's: the eight-byte magic key with `KMMP` and
 the 12-byte magic header, then one four-byte-token-keyed single gram
 (`KMMP`-less: the 8-byte array header followed by 20-byte token/item
 records in token order, except for the malformed KC row above). They are
-pinned inputs: `just w3-fixtures` neither writes nor checks them, and
-reports them as pinned. `fixtures.sha256` covers all of them.
+pinned inputs: the retired W3 generator did not write or check them. `fixtures.sha256` covers all of them.
 
 `pin-ref.txt` names the oracle pin the fixtures are deterministic
 against. `fixtures.sha256` lists the checksums of every fixture file;
-`just w3-fixtures generate` and `content` rewrite it, and so does:
+To update the checksum list after a deliberate fixture change:
 
 ```bash
 cd fixtures/w3 && find . -type f ! -name fixtures.sha256 | LC_ALL=C sort | sed 's|^\./||' | xargs sha256sum | sed 's|  |  fixtures/w3/|' > fixtures.sha256

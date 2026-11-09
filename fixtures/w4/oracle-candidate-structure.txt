@@ -10,7 +10,7 @@
 # sorted by input (bytewise) then rank (ascending)
 # one line per (input,rank,candidate) triple at depth 10
 # deduplicated by input: corpus cross-strata duplicates share the same oracle output
-# (input,rank,candidate_text) columns match fixtures/w4/oracle-candidates.txt
+# (input,rank,candidate_text) columns match the retired fixture
 a	1	阿	NORMAL_CANDIDATE	-
 a	2	啊	NORMAL_CANDIDATE	-
 a	3	呵	NORMAL_CANDIDATE	-

@@ -134,9 +134,9 @@ tree and are kept as history, not as the current gate.
 
 Reproduction:
 
-```sh
-bash tools/oracle/compat.sh --runtime docker --cell bdb --runners contract-diff --issue 894
-uv run python tools/bisection/contract-diff.test.py
+```text
+bash [archived compat source](https://github.com/shenghaoc/oxpinyin/blob/3b7a115a00be2b7d159fd6ca01d9b72e42565d68/tools/oracle/compat.sh) --runtime docker --cell bdb --runners contract-diff --issue 894
+uv run python [archived contract diff.test source](https://github.com/shenghaoc/oxpinyin/blob/1b91c898795b6edd8b92dd1fecf65ec6f4d1a434/tools/bisection/contract-diff.test.py)
 ```
 The two #894 records are dated superseded notes; the differential, not a
 recorded expectation, is the evidence. Do not mutate the pin or use these
@@ -699,7 +699,7 @@ No new difference has been proved impossible or unsafe to reproduce at a
 safe C-adapter boundary, so none is admitted in `upstream-divergences.md`.
 **Refs #924** remains appropriate.
 
-New contract cases use the existing `contract-diff.py` driver. Array cases
+New contract cases use the existing [archived contract diff source](https://github.com/shenghaoc/oxpinyin/blob/1b91c898795b6edd8b92dd1fecf65ec6f4d1a434/tools/bisection/contract-diff.py) driver. Array cases
 exercise each facade's lookup and nth-pronunciation output after a seeded
 clear callback, append 257 caller elements, shrink, call a refusing lookup,
 verify clearing and zero termination, grow with zero fill, detach with
@@ -734,7 +734,7 @@ mechanism (its axis-c exclusion belongs to the separate replacement suite).
 The four NULL-array definitions and registrations were removed unchanged
 from the active driver and preserved in the prepared bug-report body;
 they remain recoverable verbatim from `371de917`,
-`tools/bisection/contract-diff.py::glib_924_null_array` and its registration
+`[archived contract diff source](https://github.com/shenghaoc/oxpinyin/blob/1b91c898795b6edd8b92dd1fecf65ec6f4d1a434/tools/bisection/contract-diff.py)::glib_924_null_array` and its registration
 loop. Publication is pending: the required REST duplicate-issue lookup
 returned Forbidden, so no issue was created or guessed. After #1190 merges,
 a separate fix in both dictionary adapters must restore these four cases
@@ -755,19 +755,19 @@ There are no shipping-code changes or new runtime divergence records.
 Reproduction (after cloud provisioning and sourcing its environment; one
 bdb target directory, managed CPython per the setup guide):
 
-```sh
+```text
 export CARGO_TARGET_DIR="$PWD/target/bdb"
-just heavy -- cargo test --locked -p oxpinyin-capi -p oxpinyin-zhuyin-capi
-just heavy -- cargo clippy --locked -p oxpinyin-capi -p oxpinyin-zhuyin-capi --all-targets -- -D warnings
+cargo test --locked -p oxpinyin-capi -p oxpinyin-zhuyin-capi
+cargo clippy --locked -p oxpinyin-capi -p oxpinyin-zhuyin-capi --all-targets -- -D warnings
 just fmt --all --check
-just heavy -- cargo build --locked -p oxpinyin-capi -p oxpinyin-zhuyin-capi
-just heavy -- tools/bisection/run-contract-diff.sh bdb "$PINYIN_ORACLE_PREFIX" \
+cargo build --locked -p oxpinyin-capi -p oxpinyin-zhuyin-capi
+[archived run contract diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-contract-diff.sh) bdb "$PINYIN_ORACLE_PREFIX" \
   "$CARGO_TARGET_DIR/debug/libpinyin_capi.so" \
   "$CARGO_TARGET_DIR/debug/libzhuyin_capi.so" -- --issue 924
-just heavy -- tools/abi/check-alloc-pairing.sh
-just heavy -- tools/abi/check-exports.sh
+just abi alloc-pairing
+just abi exports
 uv run --no-project --managed-python --python cpython@3.15+gil \
-  python -X lazy_imports=normal tools/bisection/contract-diff.test.py
+  python -X lazy_imports=normal [archived contract diff.test source](https://github.com/shenghaoc/oxpinyin/blob/1b91c898795b6edd8b92dd1fecf65ec6f4d1a434/tools/bisection/contract-diff.test.py)
 ```
 
 ### #924 Allocation-failure injection follow-through — 2026-10-25 UTC
@@ -983,13 +983,13 @@ write differences and overly broad “previous profile intact” comments in
 per-file staging, replacement, explicit sync and ignored error results naturally;
 there is no reason to imitate GLib containers or C ownership mechanisms here.
 
-Verification and reproduction: `just heavy -- cargo test -p oxpinyin-user`,
-`just heavy -- cargo clippy -p oxpinyin-user --all-targets -- -D warnings`,
+Verification and reproduction: `cargo test -p oxpinyin-user`,
+`cargo clippy -p oxpinyin-user --all-targets -- -D warnings`,
 `cargo fmt --all --check`. The four new tests in
 `crates/oxpinyin-user/tests/save_semantics_929.rs` exercise both facade laws. The `/dev/null`
 sync-rejection case proves only the outward continuation result, **not that the
 subject issued a sync**. The contract selection is `--issue 929` in the existing
-`tools/bisection/run-contract-diff.sh` runner; cell selection is
+[archived run contract diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-contract-diff.sh) runner; cell selection is
 `tools/bisection/cells-for-diff.py origin/main`. On this Linux amd64 host, 231 user-crate tests and 142 contract-harness tests
 passed; fmt/clippy passed. The selector chose bdb only; all 12 new contract
 cases MATCH on bdb. A temporary subject-only mutation retaining dirty after
@@ -1013,7 +1013,7 @@ uses the pin's independent row-name/type parsing
 and bigram after the chunk interruption, committed phrases and bigram after
 completed saves, and exact preservation of all data bytes across reopen.
 
-The existing `tools/bisection/contract-diff.py` now adds these cases without
+The existing [archived contract diff source](https://github.com/shenghaoc/oxpinyin/blob/1b91c898795b6edd8b92dd1fecf65ec6f4d1a434/tools/bisection/contract-diff.py) now adds these cases without
 altering any pre-existing case or selection rule:
 
 | New case family | Source-derived boundary | BDB result |
@@ -1038,8 +1038,8 @@ a claim derived by probing unspecified pin behavior.
 
 Reproduce that historical unmasked control at `a4dd7637` (preserved on wip/929-pre-squash), after provisioning:
 
-```sh
-just heavy -- tools/bisection/run-contract-diff.sh bdb "$OXPINYIN_ORACLE_PREFIX_BDB" \
+```text
+[archived run contract diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-contract-diff.sh) bdb "$OXPINYIN_ORACLE_PREFIX_BDB" \
   "$OXPINYIN_ORACLE_PREFIX_BDB/lib/libpinyin.so" \
   "$OXPINYIN_ORACLE_PREFIX_BDB/lib/libzhuyin.so" -- \
   --cases save-929-physical-bytes-pinyin,save-929-physical-bytes-zhuyin
@@ -1453,6 +1453,6 @@ G14 tracks #1152. This docs PR implements no child.
 Documentation validation: reviewed cited records, source sites, item names
 and links; `git diff --check`. No new runtime or measurement result.
 
-[non-scalar]: 894-non-scalar-phrase-text
-[nul]: 894-nul-phrase-text
+[non-scalar]: ../../crates/oxpinyin-core/src/ucs4.rs
+[nul]: ../../crates/oxpinyin-core/src/ucs4.rs
 [math-record]: upstream-divergences.md#n-best-trellis-accumulates-gfloat-log-costs--not-reproducible-in-fixed-point-frozen-as-a-permanent-stage-1-divergence

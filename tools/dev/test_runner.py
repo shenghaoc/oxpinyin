@@ -272,7 +272,7 @@ SANITIZER_TOOLCHAIN_FILE = ROOT / 'fuzz' / 'rust-toolchain.toml'
 SANITIZER_ALIASES = {'asan': 'address', 'tsan': 'thread', 'lsan': 'leak', 'msan': 'memory'}
 SANITIZER_NAMES = ('address', 'thread', 'leak', 'memory')
 SANITIZER_BACKENDS = cell.CELLS
-SANITIZE_USAGE = ('usage: sanitize.sh [--check] <bdb|kc|tkrzw|all> '
+SANITIZE_USAGE = ('usage: just sanitize [--check] <bdb|kc|tkrzw|all> '
                   '[address|thread|leak|memory]\n')
 
 
@@ -676,7 +676,7 @@ def sanitize(argv=None, *, out=sys.stdout, err=sys.stderr, environment=None, too
     selection_os = environment.get('OXPINYIN_SANITIZER_HOST_OS') or platform.system()
     selection_arch = environment.get('OXPINYIN_SANITIZER_HOST_ARCH') or platform.machine()
     # The backend scripts read the real host; the override only selects and
-    # refuses in the dispatcher, as tools/sanitize.sh did.
+    # refuses in the dispatcher, as the earlier sanitizer entry point did.
     host_os = platform.system()
     if sanitizer == 'memory':
         if selection_os == 'Darwin':

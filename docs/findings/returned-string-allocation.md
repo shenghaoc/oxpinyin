@@ -117,8 +117,8 @@ expects GLib's `g_error` then SIGTRAP or SIGABRT, and for `g_strdup_printf`
 `g_log`.
 
 ```sh
-just heavy -- cargo build --locked -p oxpinyin-capi -p oxpinyin-zhuyin-capi
-just heavy -- just abi alloc-failure "$PINYIN_ORACLE_PREFIX" \
+cargo build --locked -p oxpinyin-capi -p oxpinyin-zhuyin-capi
+just abi alloc-failure "$PINYIN_ORACLE_PREFIX" \
   "$CARGO_TARGET_DIR/debug/libpinyin_capi.so" \
   "$CARGO_TARGET_DIR/debug/libzhuyin_capi.so"
 ```

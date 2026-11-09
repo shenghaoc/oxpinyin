@@ -46,7 +46,7 @@ apostrophe) is a simpler trigger.
 ## Reproduction
 
 Pin: `libpinyin-2.11.91-0c5e80e1200f84fab185d1c5bde458b770a0636c+model20-59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155+dbm-tkrzw`,
-built by `tools/oracle/build-oracle.sh`. Flags `0x18a` (the F-A profile).
+built by `python3 tools/oracle/build.py`. Flags `0x18a` (the F-A profile).
 
 Sequence: `pinyin_init` → `pinyin_set_options` → `pinyin_alloc_instance` →
 `pinyin_parse_more_full_pinyins(instance, "'")` →

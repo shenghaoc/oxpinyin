@@ -24,7 +24,7 @@ scenario format below is what such a capture would have to produce.
 
 ## Format
 
-`fixtures/w4/f-d-session.txt`, line-oriented UTF-8, TAB-separated `key=value`
+[archived f d session source](https://github.com/shenghaoc/oxpinyin/blob/71092202e489262fd3ccbdf116fa19fccab8f928/fixtures/w4/f-d-session.txt), line-oriented UTF-8, TAB-separated `key=value`
 fields — the shape used by every other fixture here. Blank lines and lines
 starting with `#` are comments. A `scenario=` line starts a scenario; `step=`
 lines belong to the scenario above them and run in order.

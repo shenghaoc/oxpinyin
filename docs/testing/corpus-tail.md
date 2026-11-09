@@ -5,7 +5,7 @@ Class A closed 2026-08-22 — candidate residual is zero**
 
 > **Status (2026-09-12):** the numbers here are the 2026-08 measurements at
 > pin `0c5e80e` over the 2026-08-22 fixture (10,190 inputs, 98,930 prefix
-> rows). The committed `fixtures/w4/oracle-candidates.txt` now carries
+> rows). The committed [archived oracle candidates source](https://github.com/shenghaoc/oxpinyin/blob/928345a9c0b2ee193b1c89b435f642ddea619114/fixtures/w4/oracle-candidates.txt) now carries
 > 10,465 inputs (10,312 distinct, 10,037 with candidates, 97,442 triples);
 > the sentence surface re-froze at 491/396/390 on 2026-09-04; the gate test
 > named below (`real_tables_session_reports_parity`) was deleted in
@@ -34,10 +34,10 @@ Reproducible from the exports in `/tmp/oxpinyin-export` and a fetched
 `interpolation2.text` (matching the scoring path of
 `real_tables_session_reports_parity`):
 
-```bash
+```text
 PINYIN_EXPORT_DIR=/tmp/oxpinyin-export \
 PINYIN_MODEL_DIR=<extracted-model20> \
-cargo run -p pinyin-oracle --release --bin corpus-tail
+recorded pinyin-oracle invocation (retired package):  --release --bin corpus-tail
 ```
 
 Measured 2026-08-21, before and after the Class B fix, and 2026-08-22
@@ -205,7 +205,7 @@ same zero.
 
 `docs/findings/option-bits.md:194-207` labels six inputs as W12
 outside the W2 corpus, measured through the C ABI top-10 by
-`tools/bisection/run-option-sweep.sh` under ALL-BITS-OFF (`0x0`):
+[archived run option sweep source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-option-sweep.sh) under ALL-BITS-OFF (`0x0`):
 
 | input | verdict | cause |
 |---|---|---|
@@ -220,9 +220,9 @@ These are the prefix-10 residual class showing up in the option-sweep
 window rather than in the W2 corpus fixture. Each input's all-off parse,
 top-1, divergence rank, and class are enumerated in
 `all-off-tails` (reproduced with
-`bin/corpus-tail --all-off-tails`, no live oracle). The `option-sweep.sh`
+`bin/corpus-tail --all-off-tails`, no live oracle). The recorded option sweep harness
 gate already excludes them from W10's STOP set
-(`run-option-sweep.sh:116-124,151-155`); no additional gate is added
+(`[archived run option sweep source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-option-sweep.sh):116-124,151-155`); no additional gate is added
 here.
 
 **Closed 2026-08-24**: these six were the same prefix-10 species the

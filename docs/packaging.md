@@ -171,7 +171,7 @@ tells users to reset by deleting its `user.conf`:
   (Fedora, Arch) keep the same ones a KC-built libpinyin keeps; the
   tkrzw lane (Debian) the same ones a tkrzw-built libpinyin keeps.
   Measured against pin-built Kyoto Cabinet and tkrzw oracles by
-  `tools/oracle/user-dir-round-trip.sh` (`docs/findings/user-store.md`
+  [archived user dir round trip source](https://github.com/shenghaoc/oxpinyin/blob/e79802e8bf7c393142e979eadba10a2720860799/tools/oracle/user-dir-round-trip.sh) (`docs/findings/user-store.md`
   §11).
 - **Different backend: fresh start, as with libpinyin.** A build on
   another backend cannot read the user dir and starts fresh: libpinyin's
@@ -334,7 +334,7 @@ paths. This is the standard DESTDIR relocation mechanism, not a defect.
 
 ## Export gate
 
-`tools/abi/check-exports.sh` is the mechanical form of the drop-in
+`just abi exports` is the mechanical form of the drop-in
 promise on the symbol side: it builds both cdylibs and proves the set of
 exported `pinyin_*` / `zhuyin_*` symbols is exactly the pin's version
 script — `crates/oxpinyin-capi/libpinyin.ver` (79) and
@@ -355,7 +355,7 @@ the staticlib under the crate's `.ver` script
 upstream's symbol versioning — `pinyin_init@@LIBPINYIN` — and consumers
 load it with no glibc version warning. The relink itself verifies the
 export set against the `.ver` list in both directions before replacing
-anything; `check-exports.sh` keeps comparing the cdylib cargo builds
+anything; `just abi exports` keeps comparing the cdylib cargo builds
 (names, not versions), which is still the right gate for the development
 artifact the relink then supersedes on install.
 

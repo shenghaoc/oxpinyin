@@ -65,9 +65,9 @@ Before a push for review or merge, and after any rebase, run one `cargo clippy -
 
 WIP checkpoint pushes: `cargo fmt --all --check` only.
 
-Markdown-only changes: `git diff --check` and a check of their links. Source-comment changes also run `cargo fmt --all --check`.
+For documentation and source comments, follow [verification scope and precedence](#verification-scope-and-precedence).
 
-These WIP-checkpoint and Markdown-only rules override the pre-push requirement above.
+The WIP-checkpoint rule and [verification scope and precedence](#verification-scope-and-precedence) override the pre-push requirement above.
 
 CI is the full gate. These checks cover only the host's cfg arms and backend features. A Linux pass is enough to merge: [section 10](#10-ci-merge-conditions) decides the platform and backend conditions.
 
@@ -106,21 +106,25 @@ Do not substitute a private procedure or claim that an unrun check passed.
 
 ## 7. Proportionate verification
 
+### Verification scope and precedence
+
+Re-verification is proportional to what changed since the last green gate.
+Documentation or comments only need the format check: `git diff --check`, plus `cargo fmt --all --check` for source comments; review changed text and check its links.
+Do not run builds, tests, differentials or backend-selection checks for these changes, including comments in backend files.
+A conflict-free rebase that brings in no file the change touches needs no local re-gate; CI covers it.
+These rules take precedence over the general local-gate and rebase requirements.
+For code changes and rebases that affect touched files, all applicable code-verification requirements remain: use rule 5, re-run affected pin checks when engine, capi or data changes affect the branch, and verify changed generators and their artifacts.
+
 Run the local checks in [verification rule 5](#5-local-test-gate); they scale with the change and its stage.
 
 Choose checks from the changes since the last green gate:
 
-- **Documentation, comments or findings only:** review the changed text and links.
-  Follow the Markdown-only and source-comment rules in verification rule 5.
-  Do not run builds, tests, differentials or backend-selection checks.
-  This case overrides rule 2, including comments-only changes in backend files.
+- **Documentation, comments or findings only:** follow [verification scope and precedence](#verification-scope-and-precedence).
 - **A review fix in code:** use the iteration checks in verification rule 5, then its pre-push checks on the final tree.
   Run the issue's differentials on the reference cell.
   CI is the full gate.
 - **Revert-and-check:** repeat it only if the differential changed.
-- **A conflict-free rebase:** run the workspace Clippy check in verification rule 5 on the new head.
-  CI is the full gate.
-  If the rebase brings in no file the branch touches, only the differentials and other change-specific checks are unnecessary.
+- **A conflict-free rebase:** follow [verification scope and precedence](#verification-scope-and-precedence).
 - **A stack:** run the checks in verification rule 5 on each member's new head.
   CI is the full gate.
   Repeat the local checks CI does not run only for the changed commit and higher commits that touch the same files.
@@ -187,8 +191,7 @@ If none is available, report "tkrzw: not run (no sound libtkrzw on this host)" a
 
 ## Procedure-specific rules
 
-- Run independent campaign subprocesses and builds in bounded pools.
-  See [independent campaign work](../plans/tooling-python.md#independent-campaign-work-1232) for isolation exceptions and the audit.
+- Run independent subprocesses and builds in the bounded pool under the [parallel-work rule](../../CONTRIBUTING.md#independent-work-in-parallel).
 - Use `.python-version` as the sole managed Python version declaration.
   Provision Python with `just python`.
   Do not repeat the version elsewhere.

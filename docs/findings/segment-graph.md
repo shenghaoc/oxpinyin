@@ -128,7 +128,7 @@ remainder-starting; and maintainer decision 3 in
 `parser-spec-contradiction-incomplete-keys` leaves the disagreement open.
 The graph follows the frozen SPEC. These are the only two corpus inputs where
 the graph and the pin disagree, they are named in
-`crates/pinyin-oracle/tests/graph_paths.rs`, and that list is where the
+the recorded graph paths implementation, and that list is where the
 decision will show up when it is made.
 
 Settling an open question as a side effect of building something else would
@@ -164,8 +164,8 @@ remains the portable regression input; it does not need regeneration for an
 ordinary test run. `oracle-paths` is retained only to import an existing pair
 of historical W2 logs:
 
-```bash
-just heavy -- cargo run -p pinyin-oracle --bin oracle-paths -- /path/to/historical-w2-run /tmp/oracle-paths.txt
+```text
+recorded pinyin-oracle invocation (retired package):  --bin oracle-paths -- /path/to/historical-w2-run /tmp/oracle-paths.txt
 ```
 
 The unique live assertions for the six excluded sentinel inputs are retained
@@ -180,7 +180,7 @@ emits a raw TAB.
 
 ## Acceptance
 
-Measured by `crates/pinyin-oracle/tests/graph_paths.rs`, in portable CI:
+Measured by the recorded graph paths implementation, in portable CI:
 
 | Check | Result |
 |---|---|

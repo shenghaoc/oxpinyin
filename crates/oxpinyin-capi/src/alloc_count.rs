@@ -3,7 +3,7 @@
 //! Gated behind the non-default `alloc-count` cargo feature and absent
 //! from every default build: with the feature off this module does not
 //! exist, no `#[global_allocator]` is declared, and none of the accessor
-//! symbols are exported. `tools/abi/check-exports.sh` and a plain
+//! symbols are exported. `just abi exports` and a plain
 //! `nm -D` on a default artifact are the checks.
 //!
 //! Two different questions are asked of this counter, and they want

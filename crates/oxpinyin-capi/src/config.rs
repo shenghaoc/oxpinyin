@@ -55,7 +55,7 @@ pub extern "C" fn pinyin_set_options(context: *mut PinyinContext, options: Pinyi
 /// Exported in every build: it is in the pin's `libpinyin.ver`. It was
 /// compiled out of the shipped artifact while the subset scoping
 /// (exception (d), retired 2026-09-06) stood; the export gate
-/// (`tools/abi/check-exports.sh --shipped`) found the packaged library
+/// (`just abi exports --shipped`) found the packaged library
 /// one symbol short of the version script on 2026-09-08.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_set_full_pinyin_scheme(

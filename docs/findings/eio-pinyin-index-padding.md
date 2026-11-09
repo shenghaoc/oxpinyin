@@ -107,7 +107,7 @@
   `datagen-compat-2026-09-01` (the padding divergence) and was
   tolerated by its `libpinyin_parity` test; this record binds it in the
   tool-diff runner instead.
-- **Evidence:** `bash tools/oracle/compat.sh --cell bdb --runners
+- **Evidence:** `bash [archived compat source](https://github.com/shenghaoc/oxpinyin/blob/3b7a115a00be2b7d159fd6ca01d9b72e42565d68/tools/oracle/compat.sh) --cell bdb --runners
   tool-diff --memory-mib 1536 --jobs 1` (2026-11-01 UTC, macOS arm64
   host, Apple `container`), then the case's pin and subject
   `pinyin_index.bin` from the run's `observations.log` read with

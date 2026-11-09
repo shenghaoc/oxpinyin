@@ -743,6 +743,6 @@ The individual CLIs remain for stage-wise use (`ngseg`, `spseg`,
 
 | Flow | Test | Result |
 |---|---|---|
-| raw corpus → **final interpolation model + λ + correction rate** | `oxpinyin-train/tests/end_to_end.rs::raw_corpus_to_final_model_and_correction_rate` | correction rate 0.5 (中 dominates 钟), λ ∈ [0,1], every stage's on-disk product verified, second run resumes identically |
-| segmented corpus → **recognized words + pinyin** | `oxpinyin-word/tests/word_pipeline.rs::recognizes_the_merged_word_with_combined_pinyin` | `甲乙\tjia'yi\t100` |
-| segmented corpus → **puncts.table** | `oxpinyin-punct/tests/punct_pipeline.rs::two_stage_pipeline_golden` | `10 甲 。 5` after per-index + global prune |
+| raw corpus → **final interpolation model + λ + correction rate** | `the recorded end to end.rs harness::raw_corpus_to_final_model_and_correction_rate` | correction rate 0.5 (中 dominates 钟), λ ∈ [0,1], every stage's on-disk product verified, second run resumes identically |
+| segmented corpus → **recognized words + pinyin** | `[archived word pipeline source](https://github.com/shenghaoc/oxpinyin/blob/d84088f6e71c56ec6a223f9991cbd49565a8cb06/crates/oxpinyin-word/tests/word_pipeline.rs)::recognizes_the_merged_word_with_combined_pinyin` | `甲乙\tjia'yi\t100` |
+| segmented corpus → **puncts.table** | `[archived punct pipeline source](https://github.com/shenghaoc/oxpinyin/blob/d84088f6e71c56ec6a223f9991cbd49565a8cb06/crates/oxpinyin-punct/tests/punct_pipeline.rs)::two_stage_pipeline_golden` | `10 甲 。 5` after per-index + global prune |

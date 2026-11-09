@@ -165,9 +165,9 @@ and `uv.toml` name the same interpreter series and uv floor.
 
 To regenerate the W3 content fixtures, run this command from the checkout root:
 
-```bash
+```text
 uv run --no-project --managed-python python -X lazy_imports=normal \
-  tools/generate_w3_fixtures.py
+  [archived generate w3 fixtures source](https://github.com/shenghaoc/oxpinyin/blob/494766c37c0c87c6571d1000240a33b3d688cf83/tools/generate_w3_fixtures.py)
 ```
 
 `just build`, `just clippy` and `just fmt` pass Cargo arguments unchanged to
@@ -205,7 +205,7 @@ maps known modules to their tests. Any unknown path or missing mapped test
 selects the full suite. An empty diff selects no files. Explicit files and
 `--changed` cannot be combined. Every mode retains the credential filter,
 existing exclusions. Memory-backed TMPDIRs are refused only when the selection
-includes `tools/bisection/teardown.test.py`, whose cold tests need real eviction.
+includes [archived teardown.test source](https://github.com/shenghaoc/oxpinyin/blob/be122d32979caf6d58e60ab8b62bb8d60653a255/tools/bisection/teardown.test.py), whose cold tests need real eviction.
 
 `--changed` is iteration feedback only: `HARNESS_DEPENDENCIES` is hand-maintained
 and can under-select. The full `just test-tools` remains the completion gate.

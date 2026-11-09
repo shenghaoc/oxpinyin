@@ -6,7 +6,7 @@
 // typedefs/constants must be valid C++), links `libpinyin_capi.so`, and
 // exercises the W8 gap symbol with its pinned semantics.
 //
-// Build/run: tools/bisection/run-cpp-smoke.sh.
+// Build/run: just cpp-smoke.
 
 #include <pinyin.h>
 

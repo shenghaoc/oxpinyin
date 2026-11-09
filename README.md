@@ -12,21 +12,13 @@ opt-in Stage 3 build that changes the ABI or the native data formats does
 not use libpinyin's SONAME, pkg-config file or header directory, unless a
 maintainer ruling permits it.
 
-- Stage 1 (complete): exact-output parity with the pin on the corpus surfaces.
-- Stage 2 (current): bug-for-bug compatibility across the whole exported ABI,
-  with internal improvements. Performance work is allowed when compatibility
-  stays. It is not complete. Open work is tracked in the open issues with the
-  `bug-for-bug` label; the current tracker is #870.
-- Stage 3 (next): opt-in departures from the pin, such as a new language
-  model or an incompatible data format. The default build stays bug-for-bug.
+The [source policy](docs/source-policy.md#stages) defines the stages and the [roadmap](ROADMAP.md) lists the remaining work.
 
 **Status:** Stage 1 complete — 1,571/1,571 corpus rows; 79/79 exported
 symbols; drop-in as `libpinyin.so.15` verified on Fedora rawhide, Debian
-testing, and NixOS. Stage 2 (bug-for-bug) is current. The round-2 audit
-closed on 2026-10-17 (#573). The open work is the init complexity
-tracker (#870), then a third bug-for-bug sweep (`ROADMAP.md`). Performance
-work that keeps compatibility continues in Stage 2. Stage 3
-(opt-in departures) follows.
+testing, and NixOS. Stage 2 (bug-for-bug) is current. Its exit gate is a
+third bug-for-bug sweep (`ROADMAP.md`). Performance work that keeps
+compatibility continues in Stage 2. Stage 3 (opt-in departures) follows.
 
 (中文文档在 [这里](README.中文.md), 快看过来!)
 
@@ -50,22 +42,16 @@ storage backend and gives each platform's packages and settings for it.
 | Path | What |
 |---|---|
 | `crates/*` | 20 workspace packages, none stubs (grouped below); crate map in `docs/architecture.md` |
-| `ROADMAP.md` | Stages, pin, workstream names |
+| `ROADMAP.md` | Current stage, pin and open work |
 | [docs/constitution.md](docs/constitution.md) | Project rules and supported external interfaces |
 | [docs/source-policy.md](docs/source-policy.md) | Source-reading method, compatibility decisions and stage rules |
 | `docs/runbooks/` | How to: backends, the oracle and differentials, Callgrind and Massif recipes, goldens and pins, releases |
 | `docs/findings/` | Decisions, divergence records, audit trail — indexed with a status per file |
 | `docs/testing/` | Corpus pipeline, oracle environment, fixture formats |
 | `docs/packaging.md` | cargo-c packaging and installed-tree layout |
-| `docs/oxidation-journey.md` | How libpinyin has been turned into Rust so far, and the method that follows from it |
 | `tools/oracle/` | Pin build recipe (`docs/runbooks/oracle.md`) |
-| [docs/specs/](docs/specs/) | Requirements, designs and task records for foundation, drop-in compatibility, oxidation and Stage 3 |
 
-| Group | Crates |
-|---|---|
-| Engine / data / runtime / bindings | `oxpinyin-core`, `oxpinyin-chewing`, `oxpinyin-store`, `oxpinyin-data`, `oxpinyin-user`, `oxpinyin-engine`, `oxpinyin-facade`, `oxpinyin-runtime`, `oxpinyin-capi`, `oxpinyin-zhuyin-capi`, `oxpinyin-capi-marshal` |
-| Training toolchain (never ships) | `oxpinyin-training` (the `eval` decode behind `eval_correction_rate`; no command line of its own), `oxpinyin-kmm` (the KMM operations on the pin's flexible-bigram container) |
-| Pin-named utilities (never ship) | `oxpinyin-utils` (`gen_pinyin_table`, `gen_zhuyin_table`, `k_mixture_model_to_interpolation`, `ngseg`, `spseg`, `mergeseq`, `gen_binary_files`, `import_interpolation`, `export_interpolation`, `gen_unigram`, `gen_ngram`, `gen_deleted_ngram`, `estimate_interpolation`, `eval_correction_rate`, `validate_k_mixture_model`, `merge_k_mixture_model`, `prune_k_mixture_model`, `estimate_k_mixture_model`, `import_k_mixture_model`, `export_k_mixture_model`, `gen_k_mixture_model`) |
+See the [crate map](docs/architecture.md#crates) for package ownership.
 
 The remaining stage binaries keep their names and arguments. Select the
 consolidated Cargo package when running or testing them, for example:

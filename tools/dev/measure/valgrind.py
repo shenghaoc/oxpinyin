@@ -26,7 +26,7 @@ from . import bench, identity, reports
 from .bench import Arm, Bench, fail, setting
 
 SCRATCH = Path('/performance/tmp')
-CALLGRIND = 'run-callgrind-differential.sh'
+CALLGRIND = 'just measure-callgrind-differential'
 SYSTEM_IMPORT = 'system-import-profile'
 LP_ROOT = Path('/opt/libpinyin-tkrzw')
 DATA = LP_ROOT / 'lib/libpinyin/data'

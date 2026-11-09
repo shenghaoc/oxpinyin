@@ -227,7 +227,7 @@ class Layout:
 
     @classmethod
     def parse(cls, argv, tools):
-        usage = ('usage: tools/packaging/install.sh <libpinyin|libzhuyin> --prefix=DIR '
+        usage = ('usage: just packaging install <libpinyin|libzhuyin> --prefix=DIR '
                  '[--libdir=DIR] [--includedir=DIR] [--destdir=DIR] [-- <extra cargo cinstall args>]\n'
                  '       one library per invocation; run twice to install both')
         if not argv or argv[0] not in LIBRARIES:
@@ -473,7 +473,7 @@ def relink(argv, tools):
     values = dict(staticlib='', ver='', soname='', dest='', backend='', features=tools.env.get('OXPINYIN_RELINK_FEATURES') or '',
                   cc=tools.env.get('CC') or 'cc')
     index = 0
-    usage = ('usage: tools/packaging/relink-versioned.sh --staticlib PATH --ver PATH --soname NAME '
+    usage = ('usage: just packaging relink-versioned --staticlib PATH --ver PATH --soname NAME '
              '--dest PATH [--backend BACKEND] [--features LIST] [--cc CC]')
     while index < len(argv):
         key, value, index = option(argv, index)
@@ -485,7 +485,7 @@ def relink(argv, tools):
     if not all((archive, ver, soname, dest)):
         fail(usage, 2)
     if tools.text(['uname', '-s']) != 'Linux':
-        fail('error: relink-versioned.sh is Linux-only (ELF symbol versioning); run it in the Linux packaging lane')
+        fail('error: just packaging relink-versioned is Linux-only (ELF symbol versioning); run it in the Linux packaging lane')
     cc = values['cc']
     for tool in (cc, 'nm', 'readelf'):
         if not tools.which(tool):
@@ -792,7 +792,7 @@ def release_stage(argv, tools):
     from . import packaging_templates as templates
     from tools.tkrzw.runtime import RuntimeRefused, check
     pcver = version(tools.root)
-    usage = 'usage: tools/packaging/release-stage.sh <' + '|'.join(cell.BACKENDS) + '> --prefix=DIR --libdir=DIR [--dest=DIR]'
+    usage = 'usage: just packaging release-stage <' + '|'.join(cell.BACKENDS) + '> --prefix=DIR --libdir=DIR [--dest=DIR]'
     if not argv or argv[0] not in cell.BACKENDS:
         fail(usage, 2)
     backend, values, index = argv[0], dict(prefix='', libdir='', dest=''), 1
@@ -885,7 +885,7 @@ def release_stage(argv, tools):
             for library in LIBRARIES:
                 program = Path(smoke) / ('smoke_' + library[3:])
                 try:
-                    check(backend, 'release-stage.sh', 'subject', program, env=env)
+                    check(backend, 'just packaging release-stage', 'subject', program, env=env)
                     tools.run([program], env=env)
                 except (RuntimeRefused, Finished) as error:
                     if isinstance(error, RuntimeRefused):

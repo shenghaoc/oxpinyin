@@ -31,13 +31,13 @@ The pin is unchanged: libpinyin 2.11.92 at
 and the bdb, kc and tkrzw backends from the pinned `debian:testing` image
 and apt snapshot `20260831T000000Z`.
 
-Each cell was built twice with `build-oracle.sh --libs-only
+Each cell was built twice with `python3 tools/oracle/build.py --libs-only
 --enable-libzhuyin` from different work directories and prefixes:
 
 ```sh
-tools/oracle/build-oracle.sh --libs-only --enable-libzhuyin --dbm bdb \
+python3 tools/oracle/build.py --libs-only --enable-libzhuyin --dbm bdb \
   --work-dir /build/a/bdb --prefix /opt/oracle-a/bdb --jobs 4
-tools/oracle/build-oracle.sh --libs-only --enable-libzhuyin --dbm bdb \
+python3 tools/oracle/build.py --libs-only --enable-libzhuyin --dbm bdb \
   --work-dir /build/elsewhere/b/bdb --prefix /opt/oracle-b/bdb --jobs 4
 ```
 
@@ -82,9 +82,9 @@ per cell naming the arm64 library hashes and `data manifest OK`.
 
 ## Gates
 
-```sh
+```text
 source /work/oracle.env
-tools/bisection/run-all.py \
+[archived run all source](https://github.com/shenghaoc/oxpinyin/blob/4b5e821ea6ead7fc282678382512efebed755955/tools/bisection/run-all.py) \
   --runners contract-diff,same-data-dir-diff \
   --cells bdb,kc,tkrzw --jobs 1 \
   --oracle-root /work/cache/oracle --target-root /work/targets-final \
@@ -137,8 +137,8 @@ which runs the cases the host registry would skip and prints each case's
 reason on stderr; it replaces the session-only wrapper that overrode
 `HOST_ORACLE_PLATFORM`:
 
-```sh
-tools/bisection/run-contract-diff.sh "$cell" /work/cache/oracle/$cell \
+```text
+[archived run contract diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-contract-diff.sh) "$cell" /work/cache/oracle/$cell \
   /work/targets-final/$cell/debug/libpinyin_capi.so \
   /work/targets-final/$cell/debug/libzhuyin_capi.so \
   -- --run-platform-excluded \

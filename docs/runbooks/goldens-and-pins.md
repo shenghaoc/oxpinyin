@@ -8,8 +8,8 @@ differential, and a maintainer ruling recorded in the findings.
 
 | what | where | regenerate with |
 | --- | --- | --- |
-| the mini data set, per backend | `fixtures/w3/<ext>/` | `just w3-fixtures generate --model-dir <model20 extraction>` (`tools/dev/w3_fixtures.py`): the Python subset of the model20 text, then `oxpinyin-utils`' `gen_binary_files` / `import_interpolation` / `gen_unigram` / `gen_deleted_ngram` built for each backend. `just w3-fixtures check` regenerates into a temporary directory and compares records and chunk bytes with the committed tree; `fixtures/w3/README.md` has the details |
-| W4 oracle goldens (candidate structure, sentence surface, paths, tie order) | `fixtures/w4/oracle-*.txt` | no regenerator today, except the tie order (`contract_sentence_ties.py`); see [the next pin capture](#the-next-pin-capture). `oracle-paths.txt` came from W2 logs that no longer exist and stays frozen |
+| the mini data set, per backend | `fixtures/w3/<ext>/` | frozen output of the model subset and the pin program sequence; see `fixtures/w3/README.md`. The generation/check CLI is retired. |
+| W4 oracle goldens (candidate structure, sentence surface, paths, tie order) | `fixtures/w4/oracle-*.txt` | no regenerator today, except the tie order ([archived contract sentence ties source](https://github.com/shenghaoc/oxpinyin/blob/1b91c898795b6edd8b92dd1fecf65ec6f4d1a434/tools/bisection/contract_sentence_ties.py)); see [the next pin capture](#the-next-pin-capture). `oracle-paths.txt` came from W2 logs that no longer exist and stays frozen |
 | parity corpus inputs | `tests/parity/corpus/inputs/` | frozen input files; a change is a deliberate edit, with the digests in [the corpus record](../testing/parity-corpus.md) updated with it |
 | trainer manifests and goldens | `fixtures/w9/` (`segmenter-han.txt`, `segmenter-spseg-w3.txt`, `mergeseq-input.txt`, `segmenter-mergeseq-w3.txt`) | `oxpinyin-utils`' segmentation tests compare against these; regenerate with the pin tool the test names and commit only when it agrees |
 

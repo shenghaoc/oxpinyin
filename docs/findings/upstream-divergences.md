@@ -112,7 +112,7 @@ what used to differ.
   one context reuses stale storage and the pinned oracle segfaults.
   The per-round train differential runs one export per fresh context
   for the oracle and compares those rows to oxpinyin
-  (`tools/bisection/run-train-diff.sh`).
+  ([archived run train diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-train-diff.sh)).
 
 ### Chewing auxiliary substring over-read
 
@@ -183,7 +183,7 @@ what used to differ.
   Class (b): the out-of-bounds read and its possible fault are not
   reproduced.
 - **Cases:** `punct-decode/unterminated`, `punct-decode/unterminated-zero`
-  and `punct-decode/misaligned-unterminated` of `contract-diff.py` MATCH on
+  and `punct-decode/misaligned-unterminated` of [archived contract diff source](https://github.com/shenghaoc/oxpinyin/blob/1b91c898795b6edd8b92dd1fecf65ec6f4d1a434/tools/bisection/contract-diff.py) MATCH on
   bdb (#1144, 2026-10-26 UTC). `punct-decode/misaligned-short` and
   `punct-decode/misaligned-terminated` are POLICY-ACCEPTED on every cell:
   the pin returns the empty punctuation and oxpinyin does not
@@ -217,7 +217,7 @@ what used to differ.
   intact candidate text, which neither #542 nor the pin's defined parts
   give.
 - **Cases:** `punct-alias/borrowed-candidates` and
-  `punct-alias/borrowed-predicted` of `contract-diff.py` (`pin_not_run`:
+  `punct-alias/borrowed-predicted` of [archived contract diff source](https://github.com/shenghaoc/oxpinyin/blob/1b91c898795b6edd8b92dd1fecf65ec6f4d1a434/tools/bisection/contract-diff.py) (`pin_not_run`:
   the pin is not driven into the read; the subject is held to the defined
   parts) pass on bdb and differ against the parent build;
   `punct-alias/owned-*` pass a copy of the same text and MATCH the pin
@@ -250,7 +250,7 @@ what used to differ.
 - **Externally observable:** yes. The pin faults; oxpinyin answers the
   no-prefix outcome. Class (b): the NULL dereference is not reproduced.
 - **Cases:** `prefix-convert/{predicted,punctuation,pinyin-sentence,zhuyin-sentence}-null`
-  of `contract-diff.py` (`crash=`: the pin dies of SIGSEGV after the
+  of [archived contract diff source](https://github.com/shenghaoc/oxpinyin/blob/1b91c898795b6edd8b92dd1fecf65ec6f4d1a434/tools/bisection/contract-diff.py) (`crash=`: the pin dies of SIGSEGV after the
   subject's stderr, and the subject answers the outcome above) pass on bdb.
   Against the #1276 build, all but `punctuation-null` differ; that entry
   already gave the outcome (2026-10-26 UTC).
@@ -292,7 +292,7 @@ what used to differ.
   resplit/divided tables never match a toned key (`ChewingKey`
   `operator==` includes `m_tone`, `chewing_key.h:81-91`). Measured:
   `SCHEME_DIFF_TONE=1 SCHEME_DIFF_PARSE_AUX_ONLY=1
-  run-scheme-diff.sh full 1` → PARSE_AUX_IDENTICAL, with the tone-less
+  [archived run scheme diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-scheme-diff.sh) full 1` → PARSE_AUX_IDENTICAL, with the tone-less
   full-1 sweep staying PARSE_AUX_IDENTICAL over its unchanged corpus.
 - **Back-reference:** distinct from #130's aux over-read (a buffer
   split in the aux renderer, not parser consumption) — carrying the
@@ -463,7 +463,7 @@ what used to differ.
   tail slot starts no span on either engine; the old draft's
   guess-at-the-cursor chain only passed because the old row-own-end
   answer happened to equal the chosen phrase's extent there). Old answer
-  `nbest-cursor: 4` vs the pin's 9 → `run-union-diff.sh` DIVERGENCE;
+  `nbest-cursor: 4` vs the pin's 9 → [archived run union diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-union-diff.sh) DIVERGENCE;
   new answer 9 = 9 → IDENTICAL end to end. live-typing differential
   IDENTICAL; the frozen candidate and sentence-surface pins
   bit-identical.
@@ -494,7 +494,7 @@ what used to differ.
   bullets below are the original record; their "straddle the
   `m_count ≥ 10` filter" explanation is superseded.
 
-- **Where:** `tools/bisection/run-same-data-dir-diff.sh union-diff` on a
+- **Where:** `[archived run same data dir diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-same-data-dir-diff.sh) union-diff` on a
   `--with-dbm=KyotoCabinet` libpinyin install's own `data/` — one line,
   `pred: type=4 text=你` (a `PREDICTED_BIGRAM_CANDIDATE`), present on
   oxpinyin's C ABI and not the pin's, after the union differential's
@@ -510,7 +510,7 @@ what used to differ.
   single-character bigram prediction.
 - **Independent of the P6 runtime switch:** the user-store training code
   (`oxpinyin-user`) is unchanged by P6, and the divergence is stable
-  across the scoring change; the standard `run-union-diff.sh` (oxpinyin on
+  across the scoring change; the standard [archived run union diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-union-diff.sh) (oxpinyin on
   its own generated data vs the pin on its own) stays green, because there
   the two decodes settle the same way. It surfaces only when oxpinyin
   reads the pin's exact bytes and the trellis residual tips this filter.
@@ -606,7 +606,7 @@ pin-equal, and 156 exact selection residuals are unchanged from main.
   ruling 2026-09-02 at 488/385/379 and re-frozen 2026-09-04 at 491/396/390
   after P6 (`345af16d`) moved the trellis's P_unigram source —
   `sentence-surface.md` §12, asserted by
-  `crates/pinyin-oracle/tests/sentence_surface_parity.rs`; enumerate with
+  the recorded sentence surface parity implementation; enumerate with
   the read-only `pinyin-oracle` `sentence-tail` binary.
 
 ### Predicted-candidate tie order is the Tkrzw HashDBM bucket walk
@@ -850,7 +850,7 @@ Text, candidate type and counts cannot.
   and `pinyin_parse_chewing` implements the Simple/Discrete/CP26
   `FORCE_TONE` placements (`zhuyin_parser2.cpp:178` nested under
   `USE_TONE`; `:373`+`:387` unconditional for Discrete; `:602` nested).
-  Measured: `tools/bisection/run-key-surface-diff.sh` is IDENTICAL
+  Measured: [archived run key surface diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-key-surface-diff.sh) is IDENTICAL
   against the pin (2,131 probe lines) across double schemes 1–6 and
   chewing keyboards 1–6, 8, 9. The FORCE_TONE law parity itself is
   the `0x1ea` (`USE_TONE|FORCE_TONE`) and `0x1ca` (FORCE_TONE alone)
@@ -904,7 +904,7 @@ Text, candidate type and counts cannot.
   tables: the scheme differential is byte-identical for double schemes
   1, 2, 4, 5, 6 including the new `tonelaw` probe section (142 lines
   each: three FORCE_TONE/USE_TONE profiles over thirteen tone-digit
-  inputs) and for all eight bopomofo keyboards; `run-key-surface-diff.sh`
+  inputs) and for all eight bopomofo keyboards; [archived run key surface diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-key-surface-diff.sh)
   stays IDENTICAL (2,131 probe lines). Revert-and-check: the pristine
   parser diverges from the pin on 130 of the new probe lines under the
   same driver. The one residual in the comparison — scheme 3 (Ziguang)
@@ -1015,8 +1015,8 @@ Text, candidate type and counts cannot.
 
 - **Where:** the removed `oxpinyin-data/src/compat` module (libpinyin
   drop-in loader) and its removed
-  `tools/bisection/run-pred-order-dropin.sh` /
-  `run-dropin-fedora-kc.sh` / `run-dropin-debian-tkrzw.sh` container
+  [archived run pred order dropin source](https://github.com/shenghaoc/oxpinyin/blob/ed1b50a27df2768833bc66fa78d6f220cb7e74d5/tools/bisection/run-pred-order-dropin.sh) /
+  [archived run dropin fedora kc source](https://github.com/shenghaoc/oxpinyin/blob/ed1b50a27df2768833bc66fa78d6f220cb7e74d5/tools/bisection/run-dropin-fedora-kc.sh) / [archived run dropin debian tkrzw source](https://github.com/shenghaoc/oxpinyin/blob/ed1b50a27df2768833bc66fa78d6f220cb7e74d5/tools/bisection/run-dropin-debian-tkrzw.sh) container
   harnesses.
 - **The measurement:** dual-dlopen differential — the distro's own
   libpinyin (the oracle) and oxpinyin's `libpinyin_capi.so` (the subject)
@@ -1533,7 +1533,7 @@ composition**; multi-syllable before-cursor is a genuine engine gap.
   2026-09-05 table's three cursor cells (6/5/7 vs the pin's 3/0/3) are
   the ones #374 closed; nothing else in the battery moved. Build note
   for the next run: libpinyin's `configure` takes the DBM in its own
-  spelling (`Tkrzw`, as `tools/oracle/build-oracle.sh` maps it) — the
+  spelling (`Tkrzw`, as `python3 tools/oracle/build.py` maps it) — the
   lower-case form is accepted silently and leaves every backend type
   undefined.)
 
@@ -1721,7 +1721,7 @@ freezes — was never in that enumeration. This entry completes it.
   gate.)
 
   (Amended 2026-09-16: **live differential RUN — IDENTICAL on all eight
-  implemented keyboards.** `run-scheme-diff.sh bopomofo N` for N = 1–6,
+  implemented keyboards.** `[archived run scheme diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-scheme-diff.sh) bopomofo N` for N = 1–6,
   8, 9 (STANDARD, HSU, IBM, GINYIEH, ETEN, ETEN26, HSU_DVORAK,
   DACHEN_CP26; 7 STANDARD_DVORAK aborts the pin and is never sent) each
   exited 0 IDENTICAL with no `SKIP:` line and both sides visibly
@@ -1732,7 +1732,7 @@ freezes — was never in that enumeration. This entry completes it.
   the default `cargo build -p oxpinyin-capi` then resolved the tkrzw backend (Berkeley DB since 2026-09-20) —
   with the capi on a P6-native data directory (libpinyin-native
   `.bin`/`.db` naming). The measurement tree was `main` @ `93a462f`
-  overlayed with PR #476's `system-dir.sh` (the native-layout
+  overlayed with PR #476's [archived system dir source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/system-dir.sh) (the native-layout
   acceptance; these records change no runner or driver). The
   full both-side driver logs for `bopomofo 1` run 1512 lines each; the
   FORCE_TONE profile section (log line 889) carries the toneless `su`
@@ -1816,7 +1816,7 @@ section.
   `LC_ALL=zh_CN.UTF-8` set by the host, `setlocale(LC_NUMERIC, NULL)`
   reads `C` after the pin's init and read `zh_CN.UTF-8` after
   oxpinyin's, before #618. A consumer that formats numbers after init
-  saw the difference; `tools/bisection/run-locale-diff.sh` now diffs it
+  saw the difference; [archived run locale diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-locale-diff.sh) now diffs it
   byte for byte.
 - **Status:** ruled bug-for-bug (recorded 2026-09-27 UTC,
   `compatibility-policy.md` "Amendment — rulings recorded" item 4):
@@ -1865,10 +1865,10 @@ section.
   aliases (`jv`, `zon`) produce no key and the divided/resplit tables
   add no alternatives, so the guess is empty and `xian`'s inventory
   shrinks.
-- **What oxpinyin does:** the same gates (`crates/oxpinyin-engine/src/session/mod.rs:609`,
+- **What oxpinyin does:** the same gates (`crates/oxpinyin-engine/src/session/mod.rs`,
   `:626`), and no raw-text fallback when the parse consumed nothing
   (`8ec75085`).
-- **Status:** closed; `run-option-sweep.sh` with the `0x0` and
+- **Status:** closed; [archived run option sweep source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-option-sweep.sh) with the `0x0` and
   divided-contrast cases ran 2026-09-16, 24/24 PASS. Registered here
   2026-09-27 UTC (#548): until then the row's only record was the
   parked paragraph in `all-off-tails`.
@@ -1948,7 +1948,7 @@ section.
 - **What oxpinyin does:** since `7c9a6923` (2026-09-20),
   `nbest_step_costs_with_user_delta` prices a visible `USER_FILE` token
   with no system unigram from its user delta
-  (`crates/oxpinyin-data/src/lm/mod.rs:570-576`); a masked library's
+  (`crates/oxpinyin-data/src/lm/mod.rs`); a masked library's
   token and a missing item keep the default, as the pin's failing
   `get_phrase_item` does.
 - **Status:** closed; `7c9a6923`'s same-dir measurement on the pin's
@@ -2025,7 +2025,7 @@ Empty results return false quietly, including zhuyin
 
 Measured on linux/amd64, debian:testing digest
 `sha256:16faa8d1cd99fcb2d30eebe90454e26b20499055fa7094e9b55d32d1a7666f08`:
-`python3 tools/bisection/train-index-diff.py bdb PREFIX PINYIN_SO ZHUYIN_SO`
+`python3 the recorded train index diff harness bdb PREFIX PINYIN_SO ZHUYIN_SO`
 runs 10 cases; `kc` and `tkrzw` run the same 10. Identical pre-training pinyin rows are 今天/今田/今添;
 zhuyin row zero is 你好. Valid calls match returns, native exported records
 and complete saved `.dbin` bytes. Pinyin rows 0/1/2 train 今 followed by
@@ -2083,7 +2083,7 @@ tkrzw oracles (linux/amd64) against `main` @ `8cd06566`.
   the train and the save, wrote nothing and left `LC_NUMERIC` alone at
   the save. With a chdir after init the pin's save and fini write into
   the new directory and the first keeps the raised open counter.
-  `tools/bisection/run-locale-diff.sh` — row 39's differential,
+  [archived run locale diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-locale-diff.sh) — row 39's differential,
   extended — diffs the two libraries on five forms of the argument — an
   absolute directory, `""`, `""` with a chdir after init, NULL and `"."`
   — two consecutive processes each, byte for byte on every step's
@@ -2159,7 +2159,7 @@ tkrzw oracles (linux/amd64) against `main` @ `8cd06566`.
   not a stable crash and is not part of this entry.
 - **Held by:** `oxpinyin-zhuyin-capi`'s
   `boundary_tests::null_arguments_answer_the_declared_value`. The pin
-  observation `zhuyin-add-phrase-library-16` of `contract-diff.py`
+  observation `zhuyin-add-phrase-library-16` of [archived contract diff source](https://github.com/shenghaoc/oxpinyin/blob/1b91c898795b6edd8b92dd1fecf65ec6f4d1a434/tools/bisection/contract-diff.py)
   (added 2026-10-11 UTC, #563): on bdb the pin exits -11 (SIGSEGV) at
   library 16 after writing the same stderr bytes the subject writes, and
   the subject answers `false` with no warning. The case builds no fixture,
@@ -2247,7 +2247,7 @@ tkrzw oracles (linux/amd64) against `main` @ `8cd06566`.
   dereferenced the freed Rust context and crashed (valgrind: invalid read in
   `ContextCore::alloc_instance`; SIGSEGV).
 - **Externally observable:** yes — `alloc-instance-after-fini` in
-  `contract-diff.py`: the pin returns an instance and exits 0, the parent
+  [archived contract diff source](https://github.com/shenghaoc/oxpinyin/blob/1b91c898795b6edd8b92dd1fecf65ec6f4d1a434/tools/bisection/contract-diff.py): the pin returns an instance and exits 0, the parent
   build exits with SIGSEGV, this change returns NULL and exits 0. Class (b).
   A new context at a reused address is live again, which the registry cannot
   tell from the old one.
@@ -2265,7 +2265,7 @@ This was a port defect, not an exception: at pin 074a2219,
 `pinyin.cpp:331-338` / `zhuyin.cpp:275-282` resolve an empty system
 directory in cwd; NULL instead fails on the empty filename. Both C
 facades now preserve that distinction and the NULL failure's exact raw
-stderr. `contract-diff.py`'s ten `init-system-*` cases cover both facades,
+stderr. [archived contract diff source](https://github.com/shenghaoc/oxpinyin/blob/1b91c898795b6edd8b92dd1fecf65ec6f4d1a434/tools/bisection/contract-diff.py)'s ten `init-system-*` cases cover both facades,
 including parse/guess after a successful open and dot/absolute controls.
 The pin tree read was `/home/sheng/work/libpinyin` at 074a2219.
 
@@ -2330,7 +2330,7 @@ Approved additive internal Rust APIs are documented in
   (`crates/oxpinyin-capi/src/iterators.rs:641`; the walk names the state
   `BigramStep::Undefined`, `crates/oxpinyin-facade/src/export_rows.rs:1036-1038`).
 - **Externally observable:** yes: the pin's process dies, and oxpinyin
-  answers `false`. Class (b). Not a `contract-diff.py` case, because which
+  answers `false`. Class (b). Not a [archived contract diff source](https://github.com/shenghaoc/oxpinyin/blob/1b91c898795b6edd8b92dd1fecf65ec6f4d1a434/tools/bisection/contract-diff.py) case, because which
   predecessor a walk loads last depends on the backend's hash order.
 - **Measured** on bdb, linux/amd64 under Rosetta (native amd64 not run),
   2026-10-08 UTC, from the repository root at `3b016f48`, with `TMPDIR` on the
@@ -2356,10 +2356,10 @@ Approved additive internal Rust APIs are documented in
 
   `bigram-905.py`:
 
-  ```python
+  ```text
   # Run from the repository root: python3 bigram-905.py <libpinyin.so> <data-dir>
   import ctypes as C, runpy, sys, tempfile
-  h = runpy.run_path('tools/bisection/contract-diff.py')
+  h = runpy.run_path('[archived contract diff source](https://github.com/shenghaoc/oxpinyin/blob/1b91c898795b6edd8b92dd1fecf65ec6f4d1a434/tools/bisection/contract-diff.py)')
   P, B, I, S, Z = h['P'], h['B'], h['I'], h['S'], h['Z']
   k = h['Kit']('pinyin', sys.argv[1], sys.argv[2], tempfile.mkdtemp())
   for text, first, second in ((b'nihao', '你', '好'), (b'shijie', '世', '界')):
@@ -2469,7 +2469,7 @@ Approved additive internal Rust APIs are documented in
   last output; oxpinyin writes the line and goes on. Class (b).
 - **Measured** on bdb, native amd64, 2026-10-09 UTC, in a Debian testing
   container over `1be4e35d` with this change: the `stderr-library-*` cases
-  of `tools/bisection/contract-diff.py` break `merged.bin`, `gbk_char.bin` or
+  of [archived contract diff source](https://github.com/shenghaoc/oxpinyin/blob/1b91c898795b6edd8b92dd1fecf65ec6f4d1a434/tools/bisection/contract-diff.py) break `merged.bin`, `gbk_char.bin` or
   `art.bin` in a private copy of the system directory (absent, cut to four
   bytes, last payload byte flipped) and compare stderr up to the crash. 39
   crash cases (21 pinyin, 18 zhuyin, fresh and non-conforming user dirs among them) match:
@@ -2480,7 +2480,7 @@ Approved additive internal Rust APIs are documented in
 
   ```
   gcc -shared -fPIC -o segv-addr.so segv-addr.c
-  LD_PRELOAD=$PWD/segv-addr.so tools/bisection/run-contract-diff.sh bdb <prefix> \
+  LD_PRELOAD=$PWD/segv-addr.so [archived run contract diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-contract-diff.sh) bdb <prefix> \
       <target>/debug/libpinyin_capi.so <target>/debug/libzhuyin_capi.so \
       -- --cases stderr-library-save-missing --observations obs.jsonl
   ```
@@ -2527,7 +2527,7 @@ site as row 76. Held by `crash-oob-layout-{pinyin,zhuyin}` (pin SIGSEGV,
 subject `init` false; no critical) and `short-chunk-layout-{pinyin,zhuyin}`
 (the pin's empty sub-index + one critical matched by the subject's Layout
 empty sub-index + one critical; the out-of-object read itself is not
-performed) of `contract-diff.py`, all MATCH on bdb; the OOB cases are controls
+performed) of [archived contract diff source](https://github.com/shenghaoc/oxpinyin/blob/1b91c898795b6edd8b92dd1fecf65ec6f4d1a434/tools/bisection/contract-diff.py), all MATCH on bdb; the OOB cases are controls
 that also match the parent build.
 
 ### A sparse chunk's whole mapping is retained after `fini` (#865; policy row 109)
@@ -2592,7 +2592,7 @@ Registered 2026-10-10 UTC. Pin source read at `074a2219c90feaf962d0d24f034514033
   line and no warning; a missing `source table format:` line is an
   uninitialised read at the pin (row 80). λ is read as `%f` reads it; and
   outside `[0, 1]` the costs go negative or NaN, reproduced with GLib's merge sorts ported (row 83).
-- **Evidence:** `tools/bisection/run-contract-diff.sh bdb <oracle prefix>
+- **Evidence:** `[archived run contract diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-contract-diff.sh) bdb <oracle prefix>
   <libpinyin_capi.so> <libzhuyin_capi.so> -- --cases <the table-conf-* names>`
   (141 cases; the abort cases hold the pin's SIGABRT, the crash cases its
   SIGSEGV, and the init aborts compare the user directory each side leaves).
@@ -2721,7 +2721,7 @@ previous token's gram).
   call; oxpinyin returns the list without the dropped item. Every other
   observation of the path (frequencies, readings, ranks, the facade total while
   the library is unloaded, library 1 staying loaded) matches the pin.
-- **Held by:** the `reload-*` cases in `tools/bisection/contract-diff.py`
+- **Held by:** the `reload-*` cases in [archived contract diff source](https://github.com/shenghaoc/oxpinyin/blob/1b91c898795b6edd8b92dd1fecf65ec6f4d1a434/tools/bisection/contract-diff.py)
   (`reload-dangling-token-candidates` for each facade as the class (b) case;
   the rest as plain differentials with their saved-first controls), and
   `reloading_a_system_library_drops_the_unsaved_session`
@@ -2739,7 +2739,7 @@ previous token's gram).
   context the live-context registry does not hold (row 60's registries), with
   no log, since the pin has no path to mirror.
 - **Externally observable:** yes. Bdb, `fini-twice` and `zhuyin-fini-twice`
-  in `contract-diff.py`, six runs (command in policy row 105): the pin dies of
+  in [archived contract diff source](https://github.com/shenghaoc/oxpinyin/blob/1b91c898795b6edd8b92dd1fecf65ec6f4d1a434/tools/bisection/contract-diff.py), six runs (command in policy row 105): the pin dies of
   SIGSEGV every run on both facades and the subject returns. The cases hold
   the exit status and leave stderr out, since the pin reads freed memory.
 - **Left as is:** a second `pinyin_free_instance` / `zhuyin_free_instance`
@@ -2785,7 +2785,7 @@ previous token's gram).
 - **Externally observable:** yes. `removed-predict-sole-pinyin`,
   `removed-predict-choose-pinyin`, `removed-predict-class-b-pinyin`
   (crash: pin SIGSEGV, subject true with the live candidate) and
-  `removed-predict-stale-skip-pinyin` in `contract-diff.py`; the stale
+  `removed-predict-stale-skip-pinyin` in [archived contract diff source](https://github.com/shenghaoc/oxpinyin/blob/1b91c898795b6edd8b92dd1fecf65ec6f4d1a434/tools/bisection/contract-diff.py); the stale
   case is bdb-only by registration, and the other three run on bdb, kc and
   tkrzw and MATCH on all three. The C ABI has no facade-total getter; the 483-total and
   unloaded-unchanged effects are also held by the in-crate test

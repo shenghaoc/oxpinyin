@@ -250,13 +250,13 @@ by the inherited value. The remaining overwrites were classified as follows:
 | Sites | Classification |
 | --- | --- |
 | `measure callgrind-differential`: all five launch sites | Defects; use each selected object's directory, then inheritance. |
-| `release-stage.sh` and `capture/run-capture.sh` | Additional defects; linked smoke/capture processes also need inheritance and the check. |
+| `just packaging release-stage` and `capture/run-capture.sh` | Additional defects; linked smoke/capture processes also need inheritance and the check. |
 | `just cpp-smoke`: cleared-path `ldd` assertion | Intentional SONAME/RPATH test; the subsequent executable launch is checked with its actual environment. |
 | `tools/oracle/build.py`: generation-prefix assignment | Intentional isolation in the pinned build recipe; not a differential launch. |
 | `tools/dev/provision.py`: generated-path parsing and host-probe filtering; setup's cache-probe assignments | Intentional parsing without caller inheritance, or isolation of the host or selected cache while provisioning. |
 
 No listed remaining measurement overwrite is exempt as never-tkrzw.
-`teardown.py` checks each copied object before every native, fixture-population
+[archived teardown source](https://github.com/shenghaoc/oxpinyin/blob/be122d32979caf6d58e60ab8b62bb8d60653a255/tools/bisection/teardown.py) checks each copied object before every native, fixture-population
 and profile-reader launch.
 The profiling and
 packaging launches, and Python contract/gcov/training/ordering tools share
@@ -355,19 +355,19 @@ uv run --no-project --managed-python python -B -X lazy_imports=normal tools/tkrz
    `9ee84164cf45e441aa8186418c03a02c9b89f08b` (1.0.34: its sentinel fix
    makes defect 1 immune to LTO; 1.0.32 is healthy only without LTO,
    `docs/findings/tkrzw-distro-compat.md`) with `env -u CFLAGS -u CXXFLAGS
-   -u LDFLAGS ./configure --prefix=<cache>/tkrzw && make && make install`,
+   -u LDFLAGS ./configure --prefix=<root>/tkrzw-<revision> && make && make install`,
    so no LTO or `-Bsymbolic-functions` can come in from the environment.
    The build is refused unless its `tkrzw_dbm_util` loads the cache's own
    `libtkrzw`; it runs no probe. The
-   environment file puts `<cache>/tkrzw` first on `PKG_CONFIG_PATH`,
+   environment file puts `<root>/tkrzw-<revision>` first on `PKG_CONFIG_PATH`,
    `LD_LIBRARY_PATH` and `PATH` (so `tkrzw_dbm_util` is the built one), and
    the script checks with `ldd` that the tkrzw oracle `libpinyin.so`
-   resolves `libtkrzw.so.1` to `<cache>/tkrzw/lib`. A rerun skips the
+   resolves `libtkrzw.so.1` to `<root>/tkrzw-<revision>/lib`. A rerun skips the
    build when the cached revision is present and loads its own library.
 4. Uses model20 fetched early with the model fetch (`tools/dev/model.py`) into
-   `<cache>/model20`, runs `build.py --regen-data` per cell inside
+   `<root>/model20-<digest>`, runs `build.py --regen-data` per cell inside
    the image, and re-verifies the installed files with the shared
-   [data verification](#data-verification). The data is generated in a
+   [data verification](oracle.md#regenerate-the-data-after-every-pull). The data is generated in a
    staging area and published with its own manifest hashes. Reuse checks these
    recorded hashes and every listed file; no generated output is frozen in
    the repository pin.

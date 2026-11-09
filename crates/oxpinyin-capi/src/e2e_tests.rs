@@ -1082,7 +1082,7 @@ fn train_one_multiphrase_sentence(instance: *mut PinyinInstance) {
 /// Register row 62: a `USER_FILE` reading the probe counts
 /// (`pinyin.cpp:682`) but `get_pinyin_string` cannot spell (`:728` →
 /// `chewing_key.cpp:48`) is read, not skipped, and the pin's assert aborts
-/// the process. No `contract-diff.py` fixture can plant the reading in the
+/// the process. No recorded contract diff harness fixture can plant the reading in the
 /// pin's sub-index, so this death test holds the site.
 // Unix only: the out-params live in a page shared through `mmap(MAP_SHARED)` (`assert_aborts_sharing`).
 #[cfg(unix)]

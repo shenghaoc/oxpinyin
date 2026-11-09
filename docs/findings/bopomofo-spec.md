@@ -426,7 +426,7 @@ this record.
   9 DACHEN_CP26 665) and the runner's `PARSE_AUX_ONLY` filter is
   identical on each; double scheme 2 re-run as a control, identical.
   The drivers were run directly with the runner's own arguments and
-  filter because `run-scheme-diff.sh`'s completeness check still
+  filter because [archived run scheme diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-scheme-diff.sh)'s completeness check still
   requires `.redb` table names while the default build writes `.kct`
   (a runner defect, flagged separately, not a scheme result). The
   driver's embedded STANDARD tables are verbatim `zhuyin_table.h:9-58`;
@@ -438,7 +438,7 @@ this record.
   stop, the aux rendering, the index-fidelity rows, and the exact-seam
   routing — under the option word the standing gate uses
   (`IS_ZHUYIN | ZHUYIN_INCOMPLETE | USE_TONE`, `chewing-diff.c:53`) and
-  the one-key seam's FORCE_TONE profiles (`run-key-surface-diff.sh`).
+  the one-key seam's FORCE_TONE profiles ([archived run key surface diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-key-surface-diff.sh)).
 - **What remains provisional.** (1) Tone stays outside the frozen
   `SyllableKey` vocabulary (the Tone section's decision and its
   sign-off condition are unchanged). (2) STANDARD_DVORAK (7) stays the
@@ -452,9 +452,9 @@ this record.
   already implements. Closing it means the one-line
   `parse_with_options` forward plus a FORCE_TONE profile in
   `chewing-diff.c`, and must keep every gate below green.
-- **Standing gates.** `run-scheme-diff.sh bopomofo <k>` for k in
+- **Standing gates.** `[archived run scheme diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-scheme-diff.sh) bopomofo <k>` for k in
   1 2 3 4 5 6 8 9 (full log and `SCHEME_DIFF_PARSE_AUX_ONLY=1`) and
-  `run-key-surface-diff.sh` (one-key seam, 2,131 probe lines).
+  [archived run key surface diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-key-surface-diff.sh) (one-key seam, 2,131 probe lines).
 - **Re-opening condition.** A pin-observed behaviour of the four
   functions that a gate cannot reproduce under the frozen law, or
   evidence that the pinned bopomofo candidate surface needs tone in the

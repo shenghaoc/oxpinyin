@@ -14,12 +14,9 @@ Every record carries this name-version-revision stamp:
 libpinyin-2.11.91-0c5e80e1200f84fab185d1c5bde458b770a0636c+model20-59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155+dbm-tkrzw
 ```
 
-Reproduce from a clean ignored build directory:
+The capture launcher is retired. To check the frozen files:
 
 ```bash
-python3 tools/oracle/build.py --dbm tkrzw --work-dir target/oracle --jobs 4
-# The `just compat capture` recipe was removed on 2026-11-06 UTC with the
-# compat launcher; no replacement recipe exists yet.
 sha256sum fixtures/foundation/f-a.txt fixtures/foundation/f-c.txt
 ```
 
@@ -97,7 +94,7 @@ surface rather than inferring unobserved behavior.
 
 ## Amendment — pin 074a2219 (2026-09-06 UTC)
 
-Regenerated against the new pin (same recipe, `run-capture.sh` over the
+Regenerated against the new pin (same recipe, [archived run capture source](https://github.com/shenghaoc/oxpinyin/blob/e79802e8bf7c393142e979eadba10a2720860799/tools/capture/run-capture.sh) over the
 git-fetch-built oracle; every record's `pin_ref` stamp moves to
 `libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99+model20-59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155+dbm-tkrzw`;
 the captured behavior is unchanged — the corpus surfaces re-verified

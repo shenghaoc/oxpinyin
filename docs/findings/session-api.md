@@ -301,5 +301,4 @@ ibus-libpinyin defaults do not belong in oxpinyin. `Config`, `ConfigValue`,
 are gone; `Session::new` and `Runtime::new_session` take a
 `SessionSettings` value. The session's default options, each C facade's
 initial option word and the point at which an option change reaches existing
-instances are unchanged. `upstream-schema.md` stays as a historical finding
-that no code reads.
+instances are unchanged.

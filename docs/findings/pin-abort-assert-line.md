@@ -20,8 +20,8 @@ wrote to stderr before the assertion line, the files the pin left
 (`userdir=True` cases) and the ABI are unchanged. Only the trailing
 assertion line is missing.
 
-**Differential.** `contract-diff.py` cases registered `sigabrt=True`
-(`contract_verdict.sigabrt_reproduced`): both sides must die of SIGABRT,
+**Differential.** [archived contract diff source](https://github.com/shenghaoc/oxpinyin/blob/1b91c898795b6edd8b92dd1fecf65ec6f4d1a434/tools/bisection/contract-diff.py) cases registered `sigabrt=True`
+(the recorded abort-verdict rule): both sides must die of SIGABRT,
 the subject's stderr must equal the pin's less exactly one trailing
 glibc assertion line (`stderr_less_assert_line`; the line may follow
 earlier text that did not end in a newline, such as `open %s failed.`),

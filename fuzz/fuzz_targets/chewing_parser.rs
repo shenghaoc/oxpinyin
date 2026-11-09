@@ -1,6 +1,6 @@
 #![no_main]
 //! Hostile bytes through the eight parseable Zhuyin keyboards — the G1
-//! gap in the testing-strategy assessment (`testing-strategy.md` §2):
+//! gap in the testing-strategy assessment (`docs/testing/upstream-test-coverage.md` §2):
 //! the `parser` target exercises `FullPinyinParser` only, so the chewing
 //! path below the ABI was unproven at the byte level against
 //! constitution rule 4 (nothing panics on any input).

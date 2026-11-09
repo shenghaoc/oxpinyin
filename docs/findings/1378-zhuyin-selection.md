@@ -48,8 +48,8 @@
 - **Prior rulings:** the 2026-10-29 ruling supplies these exact keys. It
   preserves single-slot admission and pinyin front eviction.
 - **Reproduction:** provision with `tools/cloud/setup.sh`; build debug
-  artifacts with `just heavy -- just cell-artifacts`; run `just heavy --
-  just runner contract-diff bdb "$PINYIN_ORACLE_PREFIX" "$OXPINYIN_CAPI_SO"
+  artifacts with `just cell-artifacts`; run `
+  the recorded runner contract-diff bdb "$PINYIN_ORACLE_PREFIX" "$OXPINYIN_CAPI_SO"
   "$OXPINYIN_ZHUYIN_SO" -- --cases nbest-user-table-order-zhuyin,glib-sort-tails-zhuyin,table-conf-lambda-one-zhuyin`.
   Verification output stays local and disposable.
 

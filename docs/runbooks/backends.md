@@ -117,12 +117,10 @@ are Linux-first.
 
 `fixtures/w3/<db|kct|tkt>/` is the committed mini data set, one
 directory per backend, with each backend's native file names.
-`just w3-fixtures generate` writes it: a Python subset of the model20
-text, then the pin's own program sequence from `oxpinyin-utils`, built
-for each backend (`fixtures/w3/README.md`). `just w3-fixtures check
---cells bdb,kc,tkrzw` regenerates every directory into a temporary
-location and compares it with the committed tree, chunk files byte for
-byte and DBM files record by record (`goldens-and-pins.md`).
+The retired generator used a Python subset of model20 followed by the pin's
+program sequence from `oxpinyin-utils`, built per backend. It compared chunks
+byte for byte and DBMs record by record. The frozen provenance is in
+`fixtures/w3/README.md`; no generation or comparison CLI remains.
 
 ## Switching is a format transition
 
@@ -130,11 +128,8 @@ A user dir written by one backend is not opened by another: `user.conf`'s
 `database format` line names the backend family, and a profile that does
 not conform is wiped on open exactly as libpinyin's `check_format` does;
 the DBM files carry libpinyin's names on Kyoto Cabinet, tkrzw and
-Berkeley DB. This
-matches what distributions do for libpinyin's own backend switches
-(`ROADMAP.md`, the dated default-backend notes). Swapping the default
-from tkrzw to Berkeley DB (2026-09-20) is one such transition for
-from-source builds: a user store written by a pre-2026-09-20
-default-features build is wiped on open under the same rule, and its
-family line changes `Tkrzw` → `BerkeleyDB` (see
+Berkeley DB. This is what happens when a distribution switches
+libpinyin's own backend. A change of the default backend is the same
+transition for from-source builds: a user store written by a build on
+the earlier default is wiped on open under the same rule (see
 `docs/findings/compatibility-policy.md`).

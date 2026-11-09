@@ -50,7 +50,7 @@ pinyin_fini(ctx);
 ```
 
 **Build configuration of the verified oracle** (the assert findings
-depend on it): built by `tools/oracle/build-oracle.sh` with no caller
+depend on it): built by `python3 tools/oracle/build.py` with no caller
 CFLAGS/CXXFLAGS, plain `./configure --disable-static --with-dbm=Tkrzw`
 — autotools' default `-g -O2`, **no `-DNDEBUG`**, so `assert()` is
 live. The aborts in findings 2 and 3 are assertion firings, not
@@ -528,21 +528,11 @@ commands then reported:
 | zhuyin | 1 | 0 B / 0 blocks | 0 B / 0 blocks |
 | zhuyin | 10 | 0 B / 0 blocks | 0 B / 0 blocks |
 
-**Supporting reproduction from #993** (the exact existing attribution
-command, retained as historical evidence). It requires the oxpinyin harness at
-[`11da1d7adb324f516d1b2cf87db831096e33f486`](https://github.com/shenghaoc/oxpinyin/tree/11da1d7adb324f516d1b2cf87db831096e33f486),
-the final head of [#993](https://github.com/shenghaoc/oxpinyin/pull/993);
-this documentation PR does not supply that unmerged harness. Run from
-`/src` at that ref in the prepared #993 Debian Linux amd64 BDB cell,
-with its pin-built `/work/reference`, equivalent system data, and
-shipping facade libraries under `/work/shipping`. Preparation and input
-identities are recorded in #993. Keep the normal container reservation
-and host admission from the [compatibility runbook](../runbooks/compatibility-container.md);
-these paths are reproduction inputs, not retained artifact links.
-
-```sh
-uv run --no-project --managed-python --python cpython@3.15.0+gil python -B -X lazy_imports=normal -c 'import sys; from tools.dev.native import shell_status; from tools.dev.runners import guarded; from tools.dev.slot import run_command; raise SystemExit(guarded(lambda: shell_status(run_command(sys.argv[1:]))))' uv run --no-project --managed-python --python cpython@3.15.0+gil python -B -X lazy_imports=normal tools/bisection/contract-diff.py bdb /work/reference /work/shipping/lib/libpinyin.so --zhuyin-so /work/shipping/lib/libzhuyin.so --teardown --teardown-stage attribute --teardown-attribution-case journals --teardown-work-dir /work/measure
-```
+**Supporting reproduction from #993.** The invocation and preparation are recorded at
+[the historical harness revision](https://github.com/shenghaoc/oxpinyin/tree/11da1d7adb324f516d1b2cf87db831096e33f486)
+and [#993](https://github.com/shenghaoc/oxpinyin/pull/993).
+The results above use its Debian Linux amd64 BDB cell, pin-built reference,
+equivalent system data and shipping facade libraries.
 
 The attribution stage includes the empty-profile Memcheck loop for
 both facades and all three subjects. The native child keeps its library

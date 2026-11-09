@@ -675,7 +675,7 @@ mod character_offset_tests {
     /// `'`), with the out-param untouched. At 3 and 4 they abort
     /// (`_check_offset` on the separator's zero key, then the range
     /// assert), and so does the facade: `abort-get-character-offset-*` of
-    /// `contract-diff.py` hold those shapes.
+    /// the recorded contract diff harness hold those shapes.
     #[test]
     fn a_non_hanzi_phrase_answers_false_before_the_separator() {
         let (context, instance, _user_dir) = parity_instance("char-offset-non-hanzi");

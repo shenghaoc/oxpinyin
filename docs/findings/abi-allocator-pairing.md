@@ -6,7 +6,7 @@ register) + audit (§2)
 `oxpinyin-capi` and `oxpinyin-zhuyin-capi` ship as drop-in replacements for
 `libpinyin.so.15` / `libzhuyin.so.15`. Every pointer the ABI hands a consumer
 is owned by exactly one side and released by exactly one function. Until this
-change nothing held the library to that: `tools/abi/check-exports.sh` froze
+change nothing held the library to that: `just abi exports` froze
 *which* symbols cross the boundary, and nothing froze *what crosses with
 them*. The safety profile said so at Layer 8, listing
 "the `g_free`/malloc pairing assumption" among the things that remain
@@ -133,10 +133,10 @@ instrumentation patch that the bigram differential requires (it changes no
 returns):
 
 ```
-tools/oracle/build-oracle.sh --dbm bdb \
+python3 tools/oracle/build.py --dbm bdb \
     --apply-patches tools/bisection/patches/bigram-export-strjoinv \
     --prefix <patched-prefix> --model-dir <model20>/extracted
-PINYIN_ORACLE_DBM=bdb tools/bisection/run-bigram-export-diff.sh \
+PINYIN_ORACLE_DBM=bdb [archived run bigram export diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-bigram-export-diff.sh) \
     <patched-prefix>/lib/libpinyin.so <target>/debug/libpinyin_capi.so \
     <patched-prefix>/lib/libpinyin/data
 ```
@@ -174,7 +174,7 @@ The figures come from the fourteen `alloc-register-*` cases (the seven
 `-zero-key` probes and their `-real-key` controls), run as
 
 ```
-python3 tools/bisection/contract-diff.py bdb <oracle-prefix> \
+python3 [archived contract diff source](https://github.com/shenghaoc/oxpinyin/blob/1b91c898795b6edd8b92dd1fecf65ec6f4d1a434/tools/bisection/contract-diff.py) bdb <oracle-prefix> \
     <target>/debug/libpinyin_capi.so \
     --zhuyin-so <target>/debug/libzhuyin_capi.so \
     --cases alloc-register-pinyin_get_pinyin-zero-key,\
@@ -190,13 +190,13 @@ where `<oracle-prefix>` is the pin-built bdb prefix. Add `--expect-parent`
 for the parent-build check; the cases are controls, so they match there too.
 
 The eight lines are now `false-nulls` (six) and `false-untouched` (two),
-verified by the `alloc-register-*-zero-key` cases of `contract-diff.py`, and
+verified by the `alloc-register-*-zero-key` cases of [archived contract diff source](https://github.com/shenghaoc/oxpinyin/blob/1b91c898795b6edd8b92dd1fecf65ec6f4d1a434/tools/bisection/contract-diff.py), and
 both C++ drivers call the getters on the zero key. The statements in (b) and
 (c) that these slots are unreachable are superseded by this item.
 
 ## 3. The gate
 
-`tools/abi/check-alloc-pairing.sh`, run in CI's `test` job beside the two
+`just abi alloc-pairing`, run in CI's `test` job beside the two
 export gates. It stands on a checked-in register per ABI —
 `crates/oxpinyin-capi/libpinyin.alloc`,
 `crates/oxpinyin-zhuyin-capi/libzhuyin.alloc` — a sibling of the `.ver` files
@@ -208,7 +208,7 @@ because a green gate proves it against oxpinyin only:
 
 | `<verified>` | Meaning |
 |---|---|
-| `pin-probe:<case>` | measured identical at the pin and on oxpinyin, on the reference cell (bdb), by a `tools/bisection/contract-diff.py` case or a `tools/bisection/` runner |
+| `pin-probe:<case>` | measured identical at the pin and on oxpinyin, on the reference cell (bdb), by a [archived contract diff source](https://github.com/shenghaoc/oxpinyin/blob/1b91c898795b6edd8b92dd1fecf65ec6f4d1a434/tools/bisection/contract-diff.py) case or a `tools/bisection/` runner |
 | `pin-aborts:row<N>` | the path the gate probes aborts the pin; the note is oxpinyin's answer there, registered as row N of `docs/findings/compatibility-policy.md` |
 | `source:<file>:<lines>` | argued from the pin's `src/<file>` at 074a2219 |
 | `unverified` | executed against oxpinyin only, never compared with the pin |
@@ -223,7 +223,7 @@ names. Every `pin-probe` and
 `MATCH`:
 
 ```
-tools/bisection/run-contract-diff.sh bdb <oracle-prefix> <pinyin-so> <zhuyin-so> -- \
+[archived run contract diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-contract-diff.sh) bdb <oracle-prefix> <pinyin-so> <zhuyin-so> -- \
     --cases sentence-before-guess,aux-text-no-parse,token-get-phrase-out,\
 zhuyin-sentence-before-guess,zhuyin-token-get-phrase-out,\
 abort-iterator-get-next-phrase,abort-get-pinyin-key-empty-matrix,\
@@ -231,7 +231,7 @@ abort-get-pinyin-key-rest-empty-matrix,abort-zhuyin-get-zhuyin-key-empty-matrix,
 abort-zhuyin-get-zhuyin-key-rest-empty-matrix
 ```
 
-plus `run-bigram-export-diff.sh` for the bigram iterator's two slots, §2(d).
+plus [archived run bigram export diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-bigram-export-diff.sh) for the bigram iterator's two slots, §2(d).
 
 Three checks, then a control:
 
@@ -307,8 +307,8 @@ Run in a `debian:testing` container provisioned with the `test` job's apt set
 added). Commands, not captures:
 
 ```
-tools/abi/check-alloc-pairing.sh                 # 38/38 slots, both controls fire
-tools/abi/check-alloc-pairing.sh --static-only   # checks 1-2, host-portable
+just abi alloc-pairing                 # 38/38 slots, both controls fire
+just abi alloc-pairing --static-only   # checks 1-2, host-portable
 ```
 
 Four fault injections were used to establish that the gate can fail, each

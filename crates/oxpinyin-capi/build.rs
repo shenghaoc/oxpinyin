@@ -34,8 +34,8 @@
 //! So a version script here would turn a working drop-in into a broken one.
 //! Reaching upstream's shape needs the cdylib linked manually from the
 //! staticlib in the packaging step, where rustc's anonymous script is not in
-//! the link line. That step exists: `tools/packaging/relink-versioned.sh`,
-//! run by `tools/packaging/install.sh` on Linux after `cargo cinstall`,
+//! the link line. That step exists: `just packaging relink-versioned`,
+//! run by `just packaging install` on Linux after `cargo cinstall`,
 //! replaces the installed object with the versioned relink and verifies the
 //! export set against this crate's `libpinyin.ver` in both directions
 //! (docs/findings/drop-in-abi-identity.md §2 carries the measurement).
@@ -56,7 +56,7 @@
 //! `.pc` into the pkg-config dir. So this script bakes the build-time-known
 //! fields of `libpinyin.pc.in` into `$OUT_DIR/libpinyin.pc.in.baked`, leaving
 //! the install-time `@prefix@` / `@libdir@` placeholders for the packaging
-//! wrapper (`tools/packaging/install.sh`) to fill after `cargo cinstall`. See
+//! wrapper (`just packaging install`) to fill after `cargo cinstall`. See
 //! `docs/findings/installed-naming.md` for the full rationale and the
 //! verified cargo-c limits. `database_format` is the token `oxpinyin-store`'s
 //! build script selects from the backend, the value `libzhuyin.pc` carries

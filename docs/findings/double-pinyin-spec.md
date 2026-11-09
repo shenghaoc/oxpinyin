@@ -87,7 +87,7 @@ and a three-byte key carries its `1`..`5` digit as the tone only under
 - the one-key seam (`pinyin_parse_double_pinyin`) implements this law in
   full — the Tier-A amendment in the `upstream-divergences.md` FORCE_TONE
   entry, measured IDENTICAL against the pin over 2,131 probe lines
-  (`tools/bisection/run-key-surface-diff.sh`, double schemes 1–6);
+  ([archived run key surface diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-key-surface-diff.sh), double schemes 1–6);
 - the batch seam does not yet: the landed W13 batch parse runs the
   tone-less profile (a three-byte key refuses and the greedy walk retries
   length 2 — matching the pin only when `USE_TONE` is unset), so with
@@ -208,9 +208,9 @@ Phase 0 draft against the pinned source and the landed implementation:
   gap, replacing the draft's `type_pinyin` shortcut and pre-W14
   measurements; and the Xiaohe yunmu/fallback table rows carry their exact
   line numbers (`:369`/`:399`).
-- The standing gates for this surface are `run-scheme-diff.sh` (parse,
+- The recorded gates for this surface used [archived run scheme diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-scheme-diff.sh) (parse,
   aux, and full-candidate differentials over the six schemes) and
-  `run-key-surface-diff.sh` (the one-key seam, 2,131 probe lines). Any
+  [archived run key surface diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-key-surface-diff.sh) (the one-key seam, 2,131 probe lines). Any
   future change to the batch parse — including the open `FORCE_TONE` gate
   — must keep both green against the pinned oracle.
 

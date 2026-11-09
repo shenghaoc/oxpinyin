@@ -7,7 +7,7 @@ Status: recorded 2026-09-06 (issue #358). Upstream report-back candidate.
 A determinism control — two clean builds of libpinyin 2.11.91
 (`0c5e80e1200f84fab185d1c5bde458b770a0636c`) in separate work dirs, the
 same model20 export, the same container image, an unmodified
-`tools/oracle/build-oracle.sh` — shows that 6 of the 23 files
+`python3 tools/oracle/build.py` — shows that 6 of the 23 files
 `make install` ships to `lib/libpinyin/data` are **not reproducible at a
 fixed pin**:
 
@@ -43,13 +43,13 @@ The build recipe splits the payload manifest:
   the only data digest comparable across prefixes.
 - `oracle-data-unstable.sha256` — the **informational** manifest: the 6
   files above, digest recorded as `data_unstable_manifest_sha256`. It keeps
-  the audit trail and the tamper-evidence `run-capture.sh` relies on
+  the audit trail and the tamper-evidence [archived run capture source](https://github.com/shenghaoc/oxpinyin/blob/e79802e8bf7c393142e979eadba10a2720860799/tools/capture/run-capture.sh) relies on
   (both manifests are re-checked against the prefix before a capture), but
   it does not pretend to reproducibility and nothing compares it across
   builds. The harness accepts a manifest without the field, so a prefix
   built before the split still verifies.
 
-The unstable list is fixed in `build-oracle.sh` (`DATA_UNSTABLE_FILES`);
+The unstable list is fixed in `python3 tools/oracle/build.py` (`DATA_UNSTABLE_FILES`);
 a file that moves from one class to the other is a recipe change, made
 deliberately, not something the split infers per build.
 
@@ -66,7 +66,7 @@ hashes:
 - `libpinyin.so` also differed between the builds; that is build
   nondeterminism in the shared object, outside this note's scope, and is
   why `shared_object_sha256` is likewise not comparable across prefixes.
-- `run-capture.sh` accepted the prefix, and the F-A and F-C captures it
+- [archived run capture source](https://github.com/shenghaoc/oxpinyin/blob/e79802e8bf7c393142e979eadba10a2720860799/tools/capture/run-capture.sh) accepted the prefix, and the F-A and F-C captures it
   produced matched `fixtures/foundation/` exactly. Appending a byte to
   `punct.bin` was rejected with the payload-mismatch failure.
 

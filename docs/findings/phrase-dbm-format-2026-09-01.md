@@ -105,7 +105,7 @@ are stored in native byte order — LE on all supported targets.
 - `crates/oxpinyin-data/src/phrase_table.rs` — PhraseTable: the Rust
   equivalent of `PhraseLargeTable3`. UCS-4 key encoding, token array
   decoding, exact-match search, prefix probe.
-- `crates/oxpinyin-data/src/chewing_dict.rs` — ChewingDictionary now
+- `crates/oxpinyin-data/src/chewing_table.rs` — ChewingDictionary now
   supports an optional `PhraseTable` for `tokens_for_text` lookups via
   `open_with_phrase_dbm()`. Falls back to scanning the legacy phrase
   index when no phrase DBM is provided.

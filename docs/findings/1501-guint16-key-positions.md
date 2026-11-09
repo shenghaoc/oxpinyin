@@ -13,7 +13,7 @@
 - **Why accepted:** the ruling: a ring of 65536 columns puts syllables 65536 bytes apart in one column, which no IME composition reaches.
 - **Contract preserved:** C ABI and layout unchanged; positions past 65535 reach the caller wrapped, as the pin's do.
 - **Affected inputs:** double-pinyin and chewing compositions longer than 65535 bytes, on both facades.
-- **Tests:** unit tests `oxpinyin_capi::cursor::preedit_key_tests::key_rest_positions_past_byte_65535_wrap` and `oxpinyin_zhuyin_capi::e2e_tests::key_rest_positions_past_byte_65535_wrap`. `contract-diff.py` recorded MATCH `key-position-past-65535/{double-pinyin,chewing-zhuyin}-crossing-key` and POLICY-ACCEPTED `key-position-past-65535/{double-pinyin,chewing-zhuyin}-past-key`.
+- **Tests:** unit tests `oxpinyin_capi::cursor::preedit_key_tests::key_rest_positions_past_byte_65535_wrap` and `oxpinyin_zhuyin_capi::e2e_tests::key_rest_positions_past_byte_65535_wrap`. [archived contract diff source](https://github.com/shenghaoc/oxpinyin/blob/1b91c898795b6edd8b92dd1fecf65ec6f4d1a434/tools/bisection/contract-diff.py) recorded MATCH `key-position-past-65535/{double-pinyin,chewing-zhuyin}-crossing-key` and POLICY-ACCEPTED `key-position-past-65535/{double-pinyin,chewing-zhuyin}-past-key`.
 - **Prior rulings:** none reversed; the 2026-11-01 UTC `gint16` decision stands.
 - **Evidence:** the pin derivation above. On bdb, kc and tkrzw, at key position 65537 the pin answers `false` and oxpinyin answers `true` with the real key rest; the unit tests above hold oxpinyin's side.
 - **Conclusion:** accepted. Maintainer ruling 2026-11-01 UTC (#1501).

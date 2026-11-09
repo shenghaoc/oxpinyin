@@ -47,7 +47,7 @@ tkrzw = ["oxpinyin-facade/tkrzw"]
 # the shipped drop-in artifact (`cargo capi install --features shipped`), so
 # every in-tree harness keeps working untouched. Nothing in libpinyin.ver
 # is gated: `pinyin_set_full_pinyin_scheme` was, under the retired
-# subset scoping, until tools/abi/check-exports.sh caught the
+# subset scoping, until just abi exports caught the
 # shipped artifact one symbol short (2026-09-08). The gate runs in CI in
 # both modes.
 #
@@ -165,7 +165,7 @@ version = "2.11.92"
 requires = "glib-2.0"
 # Intent: do not let cargo-c own the .pc — the complete file (with pkgdatadir,
 # database_format, libpinyinincludedir, libpinyin_binary_version) is generated
-# by build.rs and placed by tools/packaging/install.sh. cargo-c 0.10.24 has no
+# by build.rs and placed by just packaging install. cargo-c 0.10.24 has no
 # such key and silently ignores this, so it still writes an incomplete
 # libpinyin.pc that the wrapper OVERWRITES; the flag is kept for intent and for
 # a future cargo-c that honours it. See docs/findings/installed-naming.md.

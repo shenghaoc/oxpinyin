@@ -29,13 +29,7 @@ The results are top-1 10,190/10,190, top-5-set 10,190, absent 0, order-only 0 an
 Drop-in measurements covered Fedora rawhide with Kyoto Cabinet, Debian testing with tkrzw, and NixOS.
 Each had 1,571/1,571 rows.
 
-**Stage 2: current, not complete.**
-The round-2 audit closed on 2026-10-17 (#573).
-Remaining work is the init complexity tracker #870, followed by a third bug-for-bug sweep.
-The roadmap records landed performance work.
-This includes P1–P6, fat LTO, the key-cost table and store/user hot paths.
-
-**Stage 3: after Stage 2.**
+The [roadmap](../ROADMAP.md) records current status and exit gates.
 
 The [source policy](source-policy.md#stages) owns what each stage permits.
 

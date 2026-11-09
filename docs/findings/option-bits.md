@@ -149,7 +149,7 @@ cited sites).
 The fork masks `DYNAMIC_ADJUST` out entirely (`PYPConfig.cc:145`), so
 bit-clear is the fork's permanent state and this gate is
 default-settings-critical. Verification is the populated-store
-differential (`run-train-diff-dynamic-off.sh`): identical training, bit
+differential ([archived run train diff dynamic off source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-train-diff-dynamic-off.sh)): identical training, bit
 CLEAR, compare candidate TEXT/ORDER at offset 0 and after choosing 你.
 
 Measured 2026-08-17 against the pin-built oracle (`0x188`, one training
@@ -175,7 +175,7 @@ to the empty case).
 
 ## Sweep TEXT/ORDER (ABI, top-10)
 
-`run-option-sweep.sh` now diffs parse/aux **and** top-10 candidate
+[archived run option sweep source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-option-sweep.sh) now diffs parse/aux **and** top-10 candidate
 TEXT/ORDER through `pinyin_get_candidate_string`. Asserting through the
 ABI is verification, not W11 ground.
 
@@ -234,7 +234,7 @@ Upstream draws a corrected key's inventory from the **same** `content_table` slo
 six rows are class (iii), not divergences. The DIFF verdicts in the table
 are pre-`e941090` measurements of the Class A comparator species;
 post-port the lists are bit-identical to the pin at `0x0` (live-oracle
-control, 2026-08-24), and the `run-option-sweep.sh` exclusion list never
+control, 2026-08-24), and the [archived run option sweep source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-option-sweep.sh) exclusion list never
 fires.
 
 `DYNAMIC_ADJUST` bit-SET (fold `λ · bigram_poss · DISCOUNT` into the

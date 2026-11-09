@@ -69,7 +69,7 @@ generation and capture-replay tests validate their committed inputs/captures.
 No frozen corpus or golden is regenerated. No workflow invokes the legacy
 `nbest-train-diff` gate; its verdict machinery is not extended here.
 
-The focused BDB ranking selection reuses `contract-diff.py` and its complete
+The focused BDB ranking selection reuses [archived contract diff source](https://github.com/shenghaoc/oxpinyin/blob/1b91c898795b6edd8b92dd1fecf65ec6f4d1a434/tools/bisection/contract-diff.py) and its complete
 sentence-rank observer, including the captured S1/S2 spellings and table-off
 controls. Every intentionally moved case is listed below and reported
 `POLICY-ACCEPTED`; other observations failed. The broader
@@ -200,8 +200,8 @@ Reproduce the #1398 selection after the supported cloud setup, selecting each
 provisioned cell and its matching debug artifacts from
 `just cell-artifacts --artifacts pinyin-capi`:
 
-```sh
-just heavy -- just runner contract-diff "$PINYIN_ORACLE_DBM" "$PINYIN_ORACLE_PREFIX" \
+```text
+the recorded runner contract-diff "$PINYIN_ORACLE_DBM" "$PINYIN_ORACLE_PREFIX" \
   "${CARGO_TARGET_DIR:-target/cells/$PINYIN_ORACLE_DBM}/debug/libpinyin_capi.so" -- \
   --cases longer-normal-frequency-dedup,longer-normal-frequency-tie,longer-normal-disabled,s2-nbest-longer-normal-precedence
 ```
@@ -212,13 +212,13 @@ tests respectively. Formatting and engine Clippy passed. No existing session,
 replay or frozen-corpus golden changed; the five comparator expectation changes
 are listed above.
 
-```sh
-just heavy -- cargo fmt --all --check
+```text
+cargo fmt --all --check
 just clippy --locked -p oxpinyin-engine --all-targets -- -D warnings
-just heavy -- cargo test --locked -p oxpinyin-engine
-just test-tools tools/bisection/contract-diff.test.py tools/bisection/contract_verdict.test.py
-bash tools/oracle/compat.sh --runtime podman --cell bdb --runners contract-diff --cases trellis-adjusted-score/resplit-jianai-on,trellis-adjusted-score/resplit-jianai-off,trellis-adjusted-score/divided-bian-on,trellis-adjusted-score/divided-bian-off,glib-sort-tails-pinyin,glib-sort-tails-zhuyin,nbest-user-table-order-pinyin,nbest-user-table-order-zhuyin,j-choose-nbest-diff-result,final-step-pinyin-ni-20,final-step-pinyin-nihao-20,final-step-pinyin-n-28,table-conf-lambda-one,table-conf-lambda-one-zhuyin,table-conf-lambda-one-and-a-half,table-conf-lambda-two,table-conf-lambda-million,itemless-user-total-guess-above-one,itemless-user-total-guess-above-one-control,import-wrapped-facade-total-guess
-uv run --no-project --managed-python python -X lazy_imports=normal tools/bisection/run-all.py --runners contract-diff --cells bdb,kc,tkrzw --cases table-conf-row-removed-gb,table-conf-not-used-gb,table-conf-lambda-negative-half,table-conf-lambda-negative-two,table-conf-lambda-one-and-a-half,table-conf-lambda-two,table-conf-lambda-million
+cargo test --locked -p oxpinyin-engine
+just test-tools [archived contract diff.test source](https://github.com/shenghaoc/oxpinyin/blob/1b91c898795b6edd8b92dd1fecf65ec6f4d1a434/tools/bisection/contract-diff.test.py) [archived contract verdict.test source](https://github.com/shenghaoc/oxpinyin/blob/1b91c898795b6edd8b92dd1fecf65ec6f4d1a434/tools/bisection/contract_verdict.test.py)
+bash [archived compat source](https://github.com/shenghaoc/oxpinyin/blob/3b7a115a00be2b7d159fd6ca01d9b72e42565d68/tools/oracle/compat.sh) --runtime podman --cell bdb --runners contract-diff --cases trellis-adjusted-score/resplit-jianai-on,trellis-adjusted-score/resplit-jianai-off,trellis-adjusted-score/divided-bian-on,trellis-adjusted-score/divided-bian-off,glib-sort-tails-pinyin,glib-sort-tails-zhuyin,nbest-user-table-order-pinyin,nbest-user-table-order-zhuyin,j-choose-nbest-diff-result,final-step-pinyin-ni-20,final-step-pinyin-nihao-20,final-step-pinyin-n-28,table-conf-lambda-one,table-conf-lambda-one-zhuyin,table-conf-lambda-one-and-a-half,table-conf-lambda-two,table-conf-lambda-million,itemless-user-total-guess-above-one,itemless-user-total-guess-above-one-control,import-wrapped-facade-total-guess
+uv run --no-project --managed-python python -X lazy_imports=normal [archived run all source](https://github.com/shenghaoc/oxpinyin/blob/4b5e821ea6ead7fc282678382512efebed755955/tools/bisection/run-all.py) --runners contract-diff --cells bdb,kc,tkrzw --cases table-conf-row-removed-gb,table-conf-not-used-gb,table-conf-lambda-negative-half,table-conf-lambda-negative-two,table-conf-lambda-one-and-a-half,table-conf-lambda-two,table-conf-lambda-million
 ```
 
 The #1400 registration check used the supported cloud setup on native Debian
@@ -242,7 +242,7 @@ stripped. Each regular shipping file is counted once (#864):
 Run separately at base and repair, using each checkout's own target directory:
 
 ```sh
-RUSTFLAGS="--remap-path-prefix=$PWD=/oxpinyin" just heavy -- just packaging release-stage bdb --prefix=/usr --libdir=/usr/lib
+RUSTFLAGS="--remap-path-prefix=$PWD=/oxpinyin" just packaging release-stage bdb --prefix=/usr --libdir=/usr/lib
 file target/release-stage/bdb/usr/lib/libpinyin.so.15.0.0 target/release-stage/bdb/usr/lib/libzhuyin.so.15.0.0
 stat -c '%n %s' target/release-stage/bdb/usr/lib/libpinyin.so.15.0.0 target/release-stage/bdb/usr/lib/libzhuyin.so.15.0.0
 ```

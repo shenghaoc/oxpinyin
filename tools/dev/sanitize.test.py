@@ -114,7 +114,7 @@ class SelectionTests(unittest.TestCase):
             with self.subTest(args=args):
                 status, out, err = run(*args)
                 self.assertEqual((status, out), (2, ''))
-                self.assertTrue(err.startswith('usage: sanitize.sh '))
+                self.assertTrue(err.startswith('usage: just sanitize '))
 
     def test_missing_toolchain_streams_and_allow_skip(self):
         tools = FakeTools(nightly='')

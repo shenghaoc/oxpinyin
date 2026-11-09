@@ -132,7 +132,7 @@ Read `table.conf` once through data's `table_info`, the input scanner and `Syste
 Its rows determine which libraries exist, their filenames and which calls accept them.
 Its header supplies λ and the versions used to check the user profile.
 Runtime opens the same system directory as `pinyin_init` for that backend.
-libpinyin's own `gen_binary_files` → `import_interpolation` → `gen_unigram` sequence, which `oxpinyin-utils` provides under those names, produces it; `just w3-fixtures` (`tools/dev/w3_fixtures.py`) runs that sequence over the mini subset of the model to regenerate and check `fixtures/w3`.
+libpinyin's own `gen_binary_files` → `import_interpolation` → `gen_unigram` sequence, which `oxpinyin-utils` provides under those names, produces it; the frozen W3 fixture provenance is recorded in `fixtures/w3/README.md`.
 The caller supplies directories to `Runtime`, which retains `StoragePaths`.
 Do not auto-detect a distribution layout.
 

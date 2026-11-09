@@ -35,9 +35,7 @@ observations, never a live pin run. A missing input is a test failure.
 | [`f3-bigram-kbest`](f3-bigram-kbest.md) | F3: bigram-in-kbest — negative result |
 | [`fixture-adapters`](fixture-adapters.md) | W4 fixture data seam |
 | [`oracle-apostrophe-abort`](oracle-apostrophe-abort.md) | Findings — pinned oracle aborts on apostrophe-only input |
-| [`oracle-bisect-differential-abort`](oracle-bisect-differential-abort.md) | Findings — pinned oracle aborts under bisect's differential mode |
 | [`oracle-environment`](oracle-environment.md) | Oracle reference freeze |
-| [`oracle-ffi-seam`](oracle-ffi-seam.md) | Findings — W2-T1 oracle FFI seam |
 | [`parity-corpus`](parity-corpus.md) | Findings — W2-T2 parity corpus |
 | [`upstream-test-coverage`](upstream-test-coverage.md) | Upstream test coverage ledger |
 | [`upstream-test-strategies`](upstream-test-strategies.md) | Upstream IME test-strategy study — libpinyin and libchewing |

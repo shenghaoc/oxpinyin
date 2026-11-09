@@ -2,7 +2,7 @@
 #
 # Every pointer-shaped slot the frozen `pinyin.h` declares — a pointer
 # return, or a `T **` out-parameter — is classified here exactly once, and
-# `tools/abi/check-alloc-pairing.sh` proves three things against it: that
+# `just abi alloc-pairing` proves three things against it: that
 # the register covers the header's slot set with nothing missing and
 # nothing extra; that each class agrees with the C type the header gives
 # the slot; and, by running a C++ consumer built from this file under
@@ -63,7 +63,7 @@
 #            line carries one of these kinds, never the evidence it names:
 #     pin-probe:<case>       measured at the pin and on oxpinyin, identical,
 #                            on the reference cell (tkrzw; bdb to 2026-10-30) by <case>: a
-#                            `tools/bisection/contract-diff.py` case, or a
+#                            the recorded contract diff harness case, or a
 #                            runner in `tools/bisection/`.
 #     source:<file>:<lines>  argued from the pin's `src/<file>` at 074a2219.
 #     unverified             executed against oxpinyin only, never compared

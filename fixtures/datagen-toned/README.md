@@ -14,7 +14,7 @@ library (`er4'huang2` / `er'huang`). `interpolation2.text` carries
 `\1-gram` counts for some tokens only (the others take `gen_unigram`'s
 bare `+1`), a `<start>` bigram, and a two-token row.
 
-It was the input of `just compat drop-in` (removed 2026-11-06 UTC with the compat launcher): libpinyin's own
+It was the input of the retired drop-in comparison (removed 2026-11-06 UTC with the compat launcher): libpinyin's own
 `gen_binary_files` / `import_interpolation` / `gen_unigram` compile it on
 one side, `oxpinyin-utils`' ports under the same names on the other, and
 the recipe compares every chunk file byte for byte (tone bits included).

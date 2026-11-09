@@ -281,10 +281,10 @@ fire, and restoring.
 ## What is NOT verified
 
 **The differential did not run.** `tools/bisection/dynamic-adjust-diff.c`
-and `run-dynamic-adjust-diff.sh` are in-tree and the driver compiles
+and [archived run dynamic adjust diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-dynamic-adjust-diff.sh) are in-tree and the driver compiles
 clean under `-Wall -Wextra -Werror`, but the runner **self-skipped**
 (exit 0) because the pin-built oracle is not present in this
-environment: `tools/oracle/build-oracle.sh` fetches SHA-pinned tarballs
+environment: `python3 tools/oracle/build.py` fetches SHA-pinned tarballs
 from `codeload.github.com`, which the network policy answers with 403.
 Nothing in this branch has been compared against upstream.
 

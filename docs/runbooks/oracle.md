@@ -425,28 +425,13 @@ ABI. The per-call C drivers retired with their frozen Rust tests; see
 
 ### Pre-release fixture check
 
-Before each release, run the three-cell sweep required by [verification rule 3](verification.md#3-sweep-and-release-coverage).
-This pre-release procedure owns `just w3-fixtures check --cells bdb,kc,tkrzw` with
-model20, which regenerates `fixtures/w3` through the pin's program sequence built
-for each backend and compares records and chunk bytes with the committed tree.
-It needs model20; the committed fixtures do not replace that input.
-Report each result or outstanding input limitation before release.
+Before each release, run the three-cell sweep that [verification rule 3](verification.md#3-sweep-and-release-coverage) requires.
+The command that regenerated `fixtures/w3` from model20 and compared it with the committed tree is retired (#1764).
+Before the release, report each result or each outstanding input limitation.
 
-The `model_archive_sha256` field of
-[`tools/oracle/oracle-pin.txt`](../../tools/oracle/oracle-pin.txt) identifies
-the archive; use its verified extraction for `PINYIN_MODEL_DIR`. Record
-the model20 digest, host and cell with the results. The fixture check consumes model20 and
-produces its own backend files; it does not read the oracle's data directory or
-link libpinyin. From the repository root:
-
-```sh
-export PINYIN_MODEL_DIR="$(just fetch-model | tail -n 1)"
-just w3-fixtures check --cells bdb,kc,tkrzw
-```
-
-The tkrzw `libpinyin_data_dir` and `sentence_surface_parity` tests, and
-`package_libraries` in `oxpinyin-data`, read the pinned libpinyin-data package
-(`just fetch-contract-data`) in every ordinary test run.
+Every ordinary test run includes the tkrzw `libpinyin_data_dir` and `sentence_surface_parity` tests, and
+`package_libraries` in `oxpinyin-data`. These tests read the pinned libpinyin-data package
+(`just fetch-contract-data`).
 
 ### The C-boundary tests
 

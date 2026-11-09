@@ -13,7 +13,7 @@
 # Pin source: libpinyin 074a2219 src/lookup/phonetic_lookup.h:174-178 (gint tail comparison).
 # Selection covers complete indexed native tails before display dedup, including duplicate texts.
 # No column is selection metadata: the columns are the pin's guess status, pool and vectors, and the exact residual vectors.
-# No regenerator exists: tools/bisection/contract-diff.py (--regenerate-sentence-ties) was retired. The pin status, pool and vectors are frozen rows from the read-only bdb pin run, with the exact residual expectations preserved.
+# No regenerator exists: the recorded contract diff harness (--regenerate-sentence-ties) was retired. The pin status, pool and vectors are frozen rows from the read-only bdb pin run, with the exact residual expectations preserved.
 # This file holds the subset selected under #1764: every declared residual and one witness per tie class; the selection rule is recorded on #1764.
 # Exact subject expectations exist only for the current selection residuals declared in sentence-surface.md §12.
 # The original six subject vectors came from selection_main (#747); current vectors are the approved #1378 re-measurement.

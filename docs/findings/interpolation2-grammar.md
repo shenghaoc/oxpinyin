@@ -1,9 +1,9 @@
 # The `interpolation2.text` grammar — one reader, and one recorded policy split
 
 Date: 2026-09-10 · Status: **recorded / implemented**
-(`crates/oxpinyin-data/src/interp_grammar.rs`) · Upstream tree read:
+(`crates/oxpinyin-kmm/src/taglib.rs`) · Upstream tree read:
 libpinyin at **`074a2219c90feaf962d0d24f034514033ece5f99`** (2.11.92, the
-oracle pin from `tools/oracle/build-oracle.sh`), fetched by commit SHA
+oracle pin from `python3 tools/oracle/build.py`), fetched by commit SHA
 into a scratch checkout and verified with `git rev-parse`.
 
 Amendment 2026-10-29 UTC: the constitution §4 quotation below is historical;
@@ -18,9 +18,9 @@ observable ways, found during the shared-row-schema refactor
 (`f3805133`), which left them alone because it was byte-identity
 constrained:
 
-- `crates/oxpinyin-data/src/interp.rs` — `parse_interpolation2`, feeding
+- `crates/oxpinyin-data/src/lm/mod.rs` — `parse_interpolation2`, feeding
   the decoder's `UnigramTable`. Reads only `\1-gram`.
-- `crates/oxpinyin-datagen/src/system.rs` — `read_interpolation`, feeding
+- [archived system source](https://github.com/shenghaoc/oxpinyin/blob/494766c37c0c87c6571d1000240a33b3d688cf83/crates/oxpinyin-datagen/src/system.rs) — `read_interpolation`, feeding
   the model20 compile. Reads both sections and validates token↔word.
 
 A third reader turned up while measuring: `oxpinyin-counter`'s
@@ -75,7 +75,7 @@ second token, and acceptance turns on **parity**, not on field count.
 `taglib_read` reports refusal by returning `false`, and every caller
 wraps it in `check_result` (`src/include/pinyin_utils.h:26-31`), which is
 `assert(expr)` unless `NDEBUG` or `G_DISABLE_ASSERT` is defined. The
-pin's `configure.ac` defines neither and `build-oracle.sh` passes no
+pin's `configure.ac` defines neither and `python3 tools/oracle/build.py` passes no
 `CFLAGS` override, so **the pin-built tools abort on a refused line**.
 
 ## The measurement
@@ -268,7 +268,7 @@ tokens `["a", "b"]`, while `a \x01b` is three `["a", "", "b"]`.
 ## §6 The third reader, reported not changed
 
 `oxpinyin-counter::parse_interpolation_dump`
-(`crates/oxpinyin-counter/src/parse.rs:72`) is a fourth divergence on the
+(`the recorded parse implementation:72`) is a fourth divergence on the
 same file, on an axis the original four did not name:
 
 - It is **lenient by design** — any line it cannot parse is skipped
@@ -292,7 +292,7 @@ Linux, `debian:testing` with the `ci.yml` test-job apt set, tkrzw
 backend, toolchain `1.97.1` from `rust-toolchain.toml`:
 
 ```
-PINYIN_MODEL_DIR=<model20 cache> cargo test -p oxpinyin-datagen -- --include-ignored
+PINYIN_MODEL_DIR=<model20 cache> recorded oxpinyin-datagen invocation (retired package):  -- --include-ignored
 ```
 
 `fixtures_identity` (`mini_compile_reproduces_the_committed_fixture_directory`)

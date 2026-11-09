@@ -4,7 +4,7 @@ Date: 2026-08-11 · Status: **measured — negative result**
 
 > **Status (2026-09-12):** the numbers here are the 2026-08 measurements at
 > pin `0c5e80e` over the 2026-08 fixture (10,190 inputs, 98,930 prefix
-> rows). The committed `fixtures/w4/oracle-candidates.txt` now carries
+> rows). The committed [archived oracle candidates source](https://github.com/shenghaoc/oxpinyin/blob/928345a9c0b2ee193b1c89b435f642ddea619114/fixtures/w4/oracle-candidates.txt) now carries
 > 10,465 inputs (10,312 distinct, 10,037 with candidates, 97,442 triples);
 > the sentence surface re-froze at 491/396/390 on 2026-09-04; the gate test
 > named below (`real_tables_session_reports_parity`) was deleted in
@@ -53,13 +53,13 @@ No `EdgeCost`, `Dictionary`, or `LanguageModel` trait signatures were changed.
 
 Portable parity test on `feat/parity-climb-2` after F1 (64% top-1 baseline):
 
-```bash
-cargo test --release -p pinyin-oracle --test real_tables_integration -- --nocapture
+```text
+recorded pinyin-oracle invocation (retired package): --release  --test real_tables_integration -- --nocapture
 ```
 
 Metric: `real_tables_session_reports_parity` over the W2 corpus (10,190 inputs
 with oracle candidates, 98,930 prefix-10 depth) against
-`fixtures/w4/oracle-candidates.txt` via `/tmp/oxpinyin-export`.
+[archived oracle candidates source](https://github.com/shenghaoc/oxpinyin/blob/928345a9c0b2ee193b1c89b435f642ddea619114/fixtures/w4/oracle-candidates.txt) via `/tmp/oxpinyin-export`.
 
 ## Results
 
@@ -90,6 +90,6 @@ here and the branch retains only the F1 code change (64%/90%/70 floor).
 ## References
 
 - `crates/oxpinyin-core/src/scoring.rs` — `Scorer`, `key_cost_table`, `EdgeCost`
-- `crates/oxpinyin-core/src/kbest.rs` — `EdgeCost` trait (frozen)
+- [archived kbest source](https://github.com/shenghaoc/oxpinyin/blob/784ea0aba3f326ac97b3d82fe64809fc2a13ceea/crates/oxpinyin-core/src/kbest.rs) — `EdgeCost` trait (frozen)
 - `crates/oxpinyin-data/src/lm/mod.rs` — `BigramLanguageModel`
 - `crates/oxpinyin-core/src/cost.rs` — `UNKNOWN_COST`
