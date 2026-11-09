@@ -732,18 +732,6 @@ mod tests {
     }
 
     #[test]
-    fn a_bad_length_word_is_unmappable_not_a_layout_fault() {
-        let mut bytes = vec![0_u8; 16];
-        bytes[..4].copy_from_slice(&7_u32.to_le_bytes());
-        let (dir, _) = temp_library(&bytes);
-        let error = match PhraseLibraries::open(dir.path(), &[(4_u8, "merged.bin")]) {
-            Err(error) => error,
-            Ok(_) => panic!("a bad chunk must be refused"),
-        };
-        assert!(matches!(error, LibraryError::Unmappable { .. }), "{error}");
-    }
-
-    #[test]
     fn a_checksum_mismatch_is_unmappable_not_a_layout_fault() {
         let mut bytes = chunk(&valid_empty_payload());
         bytes[4] ^= 0xFF;

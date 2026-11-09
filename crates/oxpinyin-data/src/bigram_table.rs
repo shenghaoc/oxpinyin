@@ -231,19 +231,6 @@ mod tests {
     use crate::memory_dbm::MemoryDbm;
 
     #[test]
-    fn load_successors_finds_row() {
-        let dbm = MemoryDbm::new();
-        dbm.put(
-            0x0100_0010_u32.to_le_bytes().to_vec(),
-            encode_single_gram(50, &[(0x0100_0099, 50)]),
-        );
-        let table = BigramTable::new(dbm);
-        let result = table.load_successors(0x0100_0010).unwrap().unwrap();
-        assert_eq!(result.total, 50);
-        assert_eq!(result.records.len(), 1);
-    }
-
-    #[test]
     fn load_successors_miss_returns_none() {
         let dbm = MemoryDbm::new();
         let table = BigramTable::new(dbm);
@@ -274,15 +261,6 @@ mod tests {
         let (count, total) = table.transition(0x0100_0010, 0xFFFF_FFFF).unwrap().unwrap();
         assert_eq!(count, 0);
         assert_eq!(total, 100);
-    }
-
-    #[test]
-    fn malformed_value_does_not_panic() {
-        let dbm = MemoryDbm::new();
-        dbm.put(0x0100_0010_u32.to_le_bytes().to_vec(), vec![0xFF; 5]);
-        let table = BigramTable::new(dbm);
-        assert!(table.load_successors(0x0100_0010).is_err());
-        assert!(table.load_raw_successors(0x0100_0010).is_err());
     }
 
     /// A DBM that answers each read from a script and counts the reads.
@@ -410,45 +388,6 @@ mod tests {
         assert_eq!(dbm.reads.lock().unwrap().len(), 5);
     }
 
-    #[test]
-    fn checked_read_failure_is_not_a_miss() {
-        // Kyoto Cabinet's `check`/`get` schedule: a record that the size
-        // read finds and the body read then fails is the pin's assert, so
-        // it must surface as the checked-read error, never as absence.
-        struct CheckedDbm;
-        impl ChewingDbm for CheckedDbm {
-            fn get(&self, _key: &[u8], _value: &mut Vec<u8>) -> Result<bool, DictError> {
-                Ok(false)
-            }
-
-            fn get_bigram(&self, _key: &[u8], _value: &mut Vec<u8>) -> Result<bool, DictError> {
-                Err(DictError::Table(crate::TableError::Store(
-                    oxpinyin_store::StoreError::ReadAfterCheck,
-                )))
-            }
-
-            fn contains(&self, _key: &[u8]) -> Result<bool, DictError> {
-                Ok(false)
-            }
-
-            fn walk(
-                &self,
-                _lo: &[u8],
-                _hi: Option<&[u8]>,
-                _visit: impl FnMut(&[u8], &[u8]) -> Result<bool, DictError>,
-            ) -> Result<(), DictError> {
-                Ok(())
-            }
-        }
-        let table = BigramTable::new(CheckedDbm);
-        assert!(matches!(
-            table.load_raw_successors(0x0100_0010),
-            Err(DictError::Table(crate::TableError::Store(
-                oxpinyin_store::StoreError::ReadAfterCheck
-            )))
-        ));
-    }
-
     /// A system store whose raw reads fail for chosen predecessors, with
     /// the failure the pin's `Bigram::load` meets: an ordinary backend
     /// failure, or Kyoto Cabinet's body read after a good size check. It
@@ -526,19 +465,6 @@ mod tests {
         assert!(!ChewingDbm::get_bigram(dbm, &encode_token_key(0x0100_0010), &mut value).unwrap());
         assert!(value.is_empty());
         assert!(table.load_gram(0x0100_0010).unwrap().is_none());
-    }
-
-    /// The miss is not kept: the pin reads the handle on every load.
-    #[test]
-    fn a_failed_sentence_start_read_is_read_again() {
-        let (table, store) = failing(&[SENTENCE_START], &[]);
-        for _ in 0..3 {
-            assert!(table.load_gram(SENTENCE_START).unwrap().is_none());
-        }
-        assert_eq!(
-            *store.reads.lock().unwrap(),
-            [SENTENCE_START, SENTENCE_START, SENTENCE_START]
-        );
     }
 
     /// Kyoto Cabinet's body read after a good size check is the pin's

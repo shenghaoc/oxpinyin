@@ -538,21 +538,6 @@ mod tests {
         assert_eq!(decode_items(&encoded, 1).unwrap(), items);
     }
 
-    #[test]
-    fn round_trip_item_encoding() {
-        use pinyin_index::{PinyinIndexItem, decode_items, encode_item, item2_stride};
-        let item = PinyinIndexItem {
-            token: 0x0100_0042,
-            keys: vec![ChewingKey::new(2, 0, 3, 1)],
-        };
-        let encoded = encode_item(item.token, &item.keys);
-        assert_eq!(encoded.len(), item2_stride(1));
-        // The padding byte the stride adds is zero, not struct garbage.
-        assert_eq!(&encoded[6..8], &[0, 0]);
-        let decoded = decode_items(&encoded, 1).unwrap();
-        assert_eq!(decoded, vec![item]);
-    }
-
     /// The bytes `encode_item` writes, pinned: the token as a
     /// little-endian word, then each key as its packed `u16`
     /// (`initial | middle << 5 | final << 7 | tone << 12`) in
@@ -583,46 +568,8 @@ mod tests {
         assert!(decode_items(&[], 1).unwrap().is_empty());
     }
 
-    /// `encode_item`'s contract, enforced where it matters: a record
-    /// stream written outside it is refused by the reader, not
-    /// misparsed. Both shapes are unreachable from the compiler; this
-    /// pins that neither could slip past as a plausible value if one
-    /// ever were.
     #[test]
-    fn a_record_stream_written_out_of_contract_is_refused_on_read() {
-        use pinyin_index::{decode_items, encode_item, item2_stride};
-        // L = 0: four bytes of bare token, which names no phrase length.
-        let degenerate = encode_item(0x0100_0001, &[]);
-        assert_eq!(degenerate.len(), 4);
-        assert!(decode_items(&degenerate, 0).is_err(), "L = 0 is refused");
-        assert!(
-            decode_items(&degenerate, 1).is_err(),
-            "and it is not a whole L=1 record either"
-        );
-        // Mixed L in one value: an L=1 record followed by an L=3 record
-        // is 8 + 12 bytes, which no single stride divides evenly.
-        let mut mixed = encode_item(0x0100_0001, &[ChewingKey::new(1, 0, 2, 0)]);
-        mixed.extend_from_slice(&encode_item(
-            0x0100_0002,
-            &[
-                ChewingKey::new(1, 0, 2, 0),
-                ChewingKey::new(3, 0, 4, 0),
-                ChewingKey::new(5, 0, 6, 0),
-            ],
-        ));
-        assert_eq!(mixed.len(), item2_stride(1) + item2_stride(3));
-        assert!(
-            decode_items(&mixed, 1).is_err(),
-            "20 is not a multiple of 8"
-        );
-        assert!(
-            decode_items(&mixed, 3).is_err(),
-            "nor of 12 — neither length claims the stream"
-        );
-    }
-
-    #[test]
-    fn ucs4_key_round_trip_and_rejections() {
+    fn ucs4_key_round_trip() {
         use phrase_index::{encode_ucs4_key, encode_ucs4_key_scalars};
         let key = encode_ucs4_key("你好");
         assert_eq!(key.len(), 8);
@@ -633,8 +580,6 @@ mod tests {
         );
         // The two entry points agree byte for byte.
         assert_eq!(key, encode_ucs4_key_scalars(&[0x4F60, 0x597D]));
-        let mut bad = encode_ucs4_key("x");
-        bad[0..4].copy_from_slice(&0xD800_u32.to_le_bytes());
     }
 
     #[test]

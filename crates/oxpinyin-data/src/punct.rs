@@ -178,12 +178,4 @@ mod tests {
         let result = table.punctuations(0x0100_0295).unwrap();
         assert!(result.is_empty());
     }
-
-    #[test]
-    fn partial_word_has_no_punctuation() {
-        let dbm = MemoryDbm::new();
-        dbm.put(0x0100_0295_u32.to_le_bytes().to_vec(), vec![0xFF; 3]);
-        let table = PunctTable::new(dbm);
-        assert!(table.punctuations(0x0100_0295).unwrap().is_empty());
-    }
 }

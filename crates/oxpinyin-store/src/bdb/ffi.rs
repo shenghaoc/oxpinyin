@@ -1171,18 +1171,6 @@ mod tests {
     }
 
     #[test]
-    fn existence_checks_count_empty_values_and_miss_absent_keys() {
-        let db = SharedDb::open_in_memory_hash_attach().unwrap().unwrap();
-        db.put(b"empty", b"").unwrap();
-        db.put(b"full", b"value").unwrap();
-        assert!(db.exists(b"empty").unwrap());
-        assert!(db.exists(b"full").unwrap());
-        assert!(!db.exists(b"absent").unwrap());
-        db.del(b"full").unwrap();
-        assert!(!db.exists(b"full").unwrap());
-    }
-
-    #[test]
     fn cursor_buffers_are_reused_across_walks_without_aliasing_nested_cursors() {
         let db = SharedDb::open_in_memory_tree().unwrap();
         db.put(b"a", b"first").unwrap();

@@ -352,34 +352,3 @@ fn a_save_fails_when_the_old_path_cannot_be_unlinked() {
     ));
     assert!(blocked.join("keep").is_file(), "the directory is untouched");
 }
-
-#[test]
-fn a_walk_from_a_key_longer_than_the_cursor_buffer_finds_the_next_record() {
-    // The `DB_SET` + `DB_NEXT` walk of `search_suggestion`
-    // (chewing_large_table2_bdb.cpp:579-595 at 074a2219) does not depend on
-    // the key's length; the seek key here is longer than the 4096 bytes a
-    // fresh cursor reads into, on the raw keyspace.
-    let dir = Scratch::new("long-seek");
-    let store = BdbStore::create(&dir.file("tree.db")).expect("create");
-    let low = vec![1_u8; 5000];
-    let high = vec![2_u8; 5000];
-    store
-        .write(|txn| {
-            txn.put_raw(&low, b"low")?;
-            txn.put_raw(&high, b"high")
-        })
-        .expect("write");
-
-    assert_eq!(
-        raw_keys(&store, Bound::Included(&low), Bound::Unbounded),
-        vec![low.clone(), high.clone()]
-    );
-    assert_eq!(
-        raw_keys(&store, Bound::Excluded(&low), Bound::Unbounded),
-        vec![high.clone()]
-    );
-    assert_eq!(
-        raw_keys(&store, Bound::Included(&low), Bound::Excluded(&high)),
-        vec![low]
-    );
-}

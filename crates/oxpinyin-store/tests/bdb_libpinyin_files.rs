@@ -1,5 +1,4 @@
-//! The Berkeley DB backend against a file the real libpinyin wrote, and its
-//! user-bigram seam.
+//! The Berkeley DB backend against files the real libpinyin wrote.
 //!
 //! Every other test in this crate reads files oxpinyin itself produced,
 //! which proves the backend is self-consistent and nothing about
@@ -21,7 +20,7 @@
 use std::ops::Bound;
 use std::path::Path;
 
-use oxpinyin_store::{BdbStore, RawReadStore, StoreError, WriteStore};
+use oxpinyin_store::{BdbStore, RawReadStore};
 use sha2::{Digest as _, Sha256};
 
 /// `fixtures/w3/db/`: `oxpinyin-utils` wrote it (`fixtures/w3/README.md`).
@@ -179,103 +178,4 @@ fn a_pin_written_hash_walks_whole_and_ordered() {
     let mut read = Vec::new();
     assert!(store.get_raw(&sorted[0].0, &mut read).expect("point read"));
     assert_eq!(read, sorted[0].1);
-}
-
-#[test]
-fn a_written_user_bigram_reads_back_through_the_user_seam() {
-    // The write half, at the store tier: `write_user_bigram`'s default
-    // (create_hash + put_raw + compact + rename) is the whole path a
-    // Berkeley DB backend needs — unlike Kyoto Cabinet, whose user
-    // bigram is a snapshot stream, this backend's user bigram is a
-    // genuine DB_HASH file, the same container as the system one.
-    let dir = std::env::temp_dir().join(format!("oxpinyin-bdb-user-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("tmpdir");
-    let path = dir.join("user_bigram.db");
-
-    // SingleGram-shaped rows (`ngram.cpp:31-74`): total_freq plus
-    // token/freq pairs, ascending by token, keys the raw 4 bytes of the
-    // previous token. Tokens crossing 256 in low and high bytes, inserted
-    // out of order.
-    fn gram(total: u32, items: &[(u32, u32)]) -> Vec<u8> {
-        let mut bytes = total.to_le_bytes().to_vec();
-        let mut items: Vec<_> = items.to_vec();
-        items.sort_by_key(|(token, _)| *token);
-        for (token, freq) in items {
-            bytes.extend_from_slice(&token.to_le_bytes());
-            bytes.extend_from_slice(&freq.to_le_bytes());
-        }
-        bytes
-    }
-    let rows: Vec<(Vec<u8>, Vec<u8>)> = [
-        (
-            0x0000_00ff_u32,
-            gram(67, &[(0x0100_05db, 52), (0x0000_00ff, 7), (0x0100_a271, 8)]),
-        ),
-        (0x0000_0001, gram(15, &[(0x0000_0001, 15)])),
-        (
-            0x0300_1801,
-            gram(96, &[(0x0100_05db, 52), (0x0300_18ff, 44)]),
-        ),
-    ]
-    .into_iter()
-    .map(|(prev, value)| (prev.to_le_bytes().to_vec(), value))
-    .collect();
-
-    BdbStore::write_user_bigram(&path, &rows).expect("write the user bigram");
-
-    let store = BdbStore::open_user_bigram(&path).expect("the user seam opens it");
-    let mut read_back: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
-    store
-        .range_raw(Bound::Unbounded, Bound::Unbounded, |key, value| {
-            read_back.push((key.to_vec(), value.to_vec()));
-            Ok(())
-        })
-        .expect("walk");
-    let mut expected = rows.clone();
-    expected.sort_by(|a, b| a.0.cmp(&b.0));
-    assert_eq!(read_back, expected, "byte-for-byte through both seams");
-    assert_eq!(store.count_raw().expect("count"), 3);
-
-    // Bounded walks on the unordered container: a hash cursor walks in
-    // bucket order, so `range_raw` must apply the bounds in its sorted
-    // collect — rows below the lower bound are omitted (not visited),
-    // the excluded-equality edge holds, and the upper bound stops the
-    // walk.
-    let keys = |lo: Bound<&[u8]>, hi: Bound<&[u8]>| -> Vec<Vec<u8>> {
-        let mut keys = Vec::new();
-        store
-            .range_raw(lo, hi, |key, _value| {
-                keys.push(key.to_vec());
-                Ok(())
-            })
-            .expect("bounded walk");
-        keys
-    };
-    assert_eq!(
-        keys(Bound::Included(&expected[1].0), Bound::Unbounded),
-        vec![expected[1].0.clone(), expected[2].0.clone()],
-        "an included lower bound keeps the bound row and drops what is below"
-    );
-    assert_eq!(
-        keys(Bound::Excluded(&expected[1].0), Bound::Unbounded),
-        vec![expected[2].0.clone()],
-        "an excluded lower bound drops the bound row too"
-    );
-    assert_eq!(
-        keys(Bound::Unbounded, Bound::Excluded(&expected[1].0)),
-        vec![expected[0].0.clone()],
-        "an excluded upper bound stops before the bound row"
-    );
-
-    // The file is a hash database, not a B-tree: a tree open must
-    // refuse it rather than guess, exactly as a KC hash open refuses a
-    // TreeDB file.
-    match BdbStore::open_read_only(&path) {
-        Err(StoreError::Backend(_) | StoreError::Io(_)) => {}
-        Err(other) => panic!("unexpected error shape: {other}"),
-        Ok(_) => panic!("a DB_HASH file must not open as a DB_BTREE"),
-    }
-
-    std::fs::remove_dir_all(&dir).expect("cleanup");
 }

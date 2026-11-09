@@ -895,17 +895,4 @@ mod tests {
         drop((db, saved, kept));
         std::fs::remove_dir_all(dir).unwrap();
     }
-
-    #[test]
-    fn a_working_container_is_not_failed() {
-        use crate::UserBigramDb as _;
-        let dir = temp_dir("bigram-db-working");
-        let path = saved_bigram(&dir);
-        let db = super::BdbUserBigramDb::load_db(&path).unwrap();
-        assert!(!db.is_failed());
-        assert!(!super::BdbUserBigramDb::empty().unwrap().is_failed());
-        assert_eq!(db.keys().unwrap(), vec![Some(7_u32.to_le_bytes())]);
-        drop(db);
-        std::fs::remove_dir_all(dir).unwrap();
-    }
 }

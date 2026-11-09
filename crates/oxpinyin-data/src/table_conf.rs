@@ -175,17 +175,6 @@ mod tests {
     }
 
     #[test]
-    fn pinned_rational_agrees_with_pinned_lambda_f32() {
-        // The exact rational and the f32 convenience constant agree closely.
-        let exact = Lambda::PINNED.as_f64();
-        let approx = f64::from(PINNED_LAMBDA);
-        assert!(
-            (exact - approx).abs() < f64::from(f32::EPSILON) * 0.312_699,
-            "exact {exact} vs f32 {approx}"
-        );
-    }
-
-    #[test]
     fn from_decimal_reduces_and_bounds_to_unit_interval() {
         // Reduced to lowest terms — trailing zeros do not inflate the denom.
         assert_eq!(

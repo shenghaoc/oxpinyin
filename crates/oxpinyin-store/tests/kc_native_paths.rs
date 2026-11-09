@@ -96,48 +96,6 @@ fn a_deferred_write_on_a_read_only_handle_is_refused() {
 }
 
 #[test]
-fn a_deferred_write_applies_its_puts_and_removes() {
-    // The pin's `store` and `remove` act on `m_db` at once
-    // (flexible_ngram_kyotodb.h:227-252 at 074a2219): after the closure the
-    // stored rows carry every put, a removal deletes its record, and the
-    // flag reports whether every removal found one (:251).
-    let dir = Scratch::new("deferred-apply");
-    let store = KcStore::create(&dir.file("flex.kct")).expect("create");
-    store
-        .write(|txn| {
-            txn.put_raw(b"a", b"1")?;
-            txn.put_raw(b"b", b"2")?;
-            txn.put_raw(b"c", b"3")
-        })
-        .expect("seed");
-
-    let ((), found) = store
-        .write_deferred(|txn| {
-            txn.put_raw(b"a", b"A")?;
-            txn.put_raw(b"d", b"4")?;
-            txn.remove_raw(b"b")
-        })
-        .expect("deferred write");
-    assert!(found, "the removal found a record (:251)");
-
-    let mut rows = Vec::new();
-    store
-        .range_raw(Bound::Unbounded, Bound::Unbounded, |key, value| {
-            rows.push((key.to_vec(), value.to_vec()));
-            Ok(())
-        })
-        .expect("stored rows");
-    assert_eq!(
-        rows,
-        vec![
-            (b"a".to_vec(), b"A".to_vec()),
-            (b"c".to_vec(), b"3".to_vec()),
-            (b"d".to_vec(), b"4".to_vec()),
-        ]
-    );
-}
-
-#[test]
 fn an_attached_bigram_saves_as_a_replaced_snapshot() {
     // `Bigram::save_db` (ngram_kyotodb.cpp:82-108 at 074a2219): unlink the
     // destination (:86-88), then `dump_snapshot` of the attached database

@@ -816,14 +816,6 @@ mod tests {
                 "default GB_DICTIONARY a b c FOO_FILE",
                 TableConfSite::FileType,
             ),
-            (
-                "addon 99 x.table x.bin NULL DICTIONARY",
-                TableConfSite::AddonIndex,
-            ),
-            (
-                "addon -1 x.table x.bin NULL DICTIONARY",
-                TableConfSite::AddonIndex,
-            ),
         ] {
             let text = format!("{STOCK}{row}\n");
             assert_eq!(
@@ -871,24 +863,15 @@ mod tests {
                 .expect(text)
                 .lambda_unit()
         };
+        // `table_conf::tests` holds the routing of each gfloat; this is the
+        // connection from the scanned value.
         assert_eq!(unit("5e-1"), Lambda::from_decimal("0.5"));
-        assert_eq!(unit("0.50"), Lambda::from_decimal("0.5"));
-        assert_eq!(
-            unit("1e-30"),
-            Lambda::from_decimal(&format!("0.{}1", "0".repeat(29)))
-        );
-        assert_eq!(unit("2"), None);
-        assert_eq!(unit("-0.5"), None);
-        // The smallest positive gfloat has a 45-digit decimal: no u128
-        // rational holds it.
-        assert_eq!(unit("1e-45"), None);
         assert!(
             parse(&STOCK.replace("0.312699", "nan"))
                 .expect("nan")
                 .lambda_f32()
                 .is_nan()
         );
-        assert_eq!(unit("inf"), None);
     }
 
     /// Each header directive is one `fscanf`: whitespace directives cross

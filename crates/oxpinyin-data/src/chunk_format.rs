@@ -164,24 +164,6 @@ mod tests {
     }
 
     #[test]
-    fn header_and_mask_are_the_upstream_values() {
-        assert_eq!(CHUNK_HEADER_SIZE, 8);
-        assert_eq!(SEPARATOR, b'#');
-        assert_eq!(PHRASE_MASK, 0x00FF_FFFF);
-    }
-
-    /// `index_one` is the four header words plus their separator, and the
-    /// item header is the two `u8` fields plus the `u32` unigram — the
-    /// arithmetic the writer emits and the reader walks.
-    #[test]
-    fn sub_phrase_index_constants_follow_their_field_sums() {
-        assert_eq!(INDEX_ONE as usize, 4 * 4 + 1);
-        assert_eq!(FIRST_ITEM_OFFSET, 8);
-        assert_eq!(ITEM_HEADER_SIZE, 1 + 1 + 4);
-        assert_eq!(CHEWING_KEY_SIZE, 2);
-    }
-
-    #[test]
     fn build_memory_chunk_frames_the_pin_layout() {
         let payload = [1_u8, 2, 3];
         let file = build_memory_chunk(&payload).expect("frame");

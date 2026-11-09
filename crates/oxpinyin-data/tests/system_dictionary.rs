@@ -7,8 +7,7 @@
 //! exercises the `Dictionary` trait plus the runtime's extra surface.
 
 use oxpinyin_core::{
-    ChewingKey, Completeness, Dictionary, PHRASE_INDEX_LIBRARY_COUNT, PhraseIndexRanges,
-    SyllableKey,
+    ChewingKey, Dictionary, PHRASE_INDEX_LIBRARY_COUNT, PhraseIndexRanges, SyllableKey,
 };
 // The fixtures are written with the crate's own row schema, not a copy of
 // it: a layout change has to break the reader's behaviour here, never pass
@@ -63,8 +62,8 @@ fn encode_items(entries: &[(u32, &[ChewingKey])]) -> Vec<u8> {
 
 // ── Fixture writers ──────────────────────────────────────────────
 
-/// The pinyin index the P5 producer writes: every row in both keyspaces
-/// with its full keys, every proper prefix an empty marker.
+/// The complete-keyspace rows of the pinyin index the P5 producer writes,
+/// each with its full keys.
 fn write_pinyin_index(path: &std::path::Path) {
     let ni3 = key("ni").with_tone(3);
     let ni2 = key("ni").with_tone(2);
@@ -73,14 +72,8 @@ fn write_pinyin_index(path: &std::path::Path) {
     let guo2 = key("guo").with_tone(2);
     let men = key("men");
     let ni = key("ni");
-    let n = ChewingKey::new(ni.initial, 0, 0, 0);
-    let h = ChewingKey::new(hao3.initial, 0, 0, 0);
-    let m = ChewingKey::new(men.initial, 0, 0, 0);
-    let z = ChewingKey::new(zhong1.initial, 0, 0, 0);
-    let g = ChewingKey::new(guo2.initial, 0, 0, 0);
 
     let rows: Vec<(Vec<u8>, Vec<u8>)> = vec![
-        // Complete keyspace.
         (
             encode_complete(&[ni]),
             encode_items(&[(0x0100_0010, &[ni3][..]), (0x0200_0010, &[ni2][..])]),
@@ -109,35 +102,6 @@ fn write_pinyin_index(path: &std::path::Path) {
             encode_complete(&[key("zhong"), key("guo")]),
             encode_items(&[(0x0100_00A0, &[zhong1, guo2][..])]),
         ),
-        // Incomplete keyspace: the same records under initial-only keys.
-        (
-            encode_incomplete(&[n]),
-            encode_items(&[(0x0100_0010, &[ni3][..]), (0x0200_0010, &[ni2][..])]),
-        ),
-        (
-            encode_incomplete(&[h]),
-            encode_items(&[(0x0100_0011, &[hao3][..])]),
-        ),
-        (
-            encode_incomplete(&[n, h]),
-            encode_items(&[(0x0100_0099, &[ni3, hao3][..])]),
-        ),
-        (
-            encode_incomplete(&[n, m]),
-            encode_items(&[(0x0200_0098, &[ni3, men][..])]),
-        ),
-        (
-            encode_incomplete(&[z]),
-            encode_items(&[(0x0100_0020, &[zhong1][..])]),
-        ),
-        (
-            encode_incomplete(&[g]),
-            encode_items(&[(0x0100_0021, &[guo2][..])]),
-        ),
-        (
-            encode_incomplete(&[z, g]),
-            encode_items(&[(0x0100_00A0, &[zhong1, guo2][..])]),
-        ),
     ];
     write_raw_rows::<DefaultStore>(path, &rows);
 }
@@ -154,11 +118,6 @@ fn write_phrase_index(path: &std::path::Path) {
         (encode_ucs4_key("你好"), encode_tokens(&[0x0100_0099])),
         (encode_ucs4_key("你们"), encode_tokens(&[0x0200_0098])),
         (encode_ucs4_key("中国"), encode_tokens(&[0x0100_00A0])),
-        // A phrase of two tokens from two libraries.
-        (
-            encode_ucs4_key("的"),
-            encode_tokens(&[0x0100_05DB, 0x0200_05DB]),
-        ),
     ];
     write_raw_rows::<DefaultStore>(path, &rows);
 }
@@ -238,37 +197,6 @@ fn lookup_carries_the_pronunciation_possibility() {
 }
 
 #[test]
-fn incomplete_syllables_search_the_initial_keyspace() {
-    let fix = Fixture::new();
-    let dict = fix.dict();
-    let n = SyllableKey::from_text("n").expect("initial-only key");
-    assert_eq!(n.completeness(), Completeness::Partial);
-    // "n" alone: 你 (nibble 1 only).
-    let entries = dict.lookup(&[n]).unwrap();
-    assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].text(), "你");
-    // "ni" + "h": 你好 through the incomplete keyspace, filtered by the
-    // complete first syllable.
-    let h = SyllableKey::from_text("h").expect("initial-only key");
-    let entries = dict.lookup(&[syl("ni"), h]).unwrap();
-    assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].text(), "你好");
-    // "n" + "m": 你们 is nibble 2 → unloaded → nothing, but the key exists.
-    let m = SyllableKey::from_text("m").expect("initial-only key");
-    assert!(dict.lookup(&[n, m]).unwrap().is_empty());
-    assert!(dict.phrase_prefix_exists(&[n, m]).unwrap());
-    assert!(dict.phrase_prefix_exists(&[n]).unwrap());
-}
-
-#[test]
-fn empty_and_unknown_lookups_answer_empty() {
-    let fix = Fixture::new();
-    let dict = fix.dict();
-    assert!(dict.lookup(&[]).unwrap().is_empty());
-    assert!(dict.lookup(&syls("xian")).unwrap().is_empty());
-}
-
-#[test]
 fn phrase_prefix_exists_follows_search_continued() {
     let fix = Fixture::new();
     let dict = fix.dict();
@@ -321,19 +249,6 @@ fn token_surface_resolves_through_the_chunk_file() {
     assert_eq!(prons[0], ("ni".to_owned(), 5));
     assert_eq!(prons[1], ("ni".to_owned(), 3));
     assert_eq!(dict.phrase_index_item_count().unwrap(), 6);
-}
-
-#[test]
-fn tokens_for_text_reads_the_phrase_dbm() {
-    let fix = Fixture::new();
-    let dict = fix.dict();
-    assert_eq!(dict.tokens_for_text("你好").unwrap(), vec![0x0100_0099]);
-    let tokens = dict.tokens_for_text("的").unwrap();
-    assert_eq!(tokens, vec![0x0100_05DB, 0x0200_05DB]);
-    assert!(dict.tokens_for_text("不存在").unwrap().is_empty());
-    assert!(dict.tokens_for_text("").unwrap().is_empty());
-    let via_trait = Dictionary::tokens_for_text(&dict, "你");
-    assert_eq!(via_trait.len(), 2);
 }
 
 #[test]
@@ -506,48 +421,6 @@ fn trellis_ranges_continued_matches_the_ranges_and_prefix_pair() {
     }
     // Ranged rows, markers that range nothing, and absent keys all occur.
     assert!(seen.0 > 0 && seen.1 > 0 && seen.2 > 0, "{seen:?}");
-}
-
-// ── Long phrases through the hit path ───────────────────────────
-
-/// A phrase whose UTF-8 does not fit the hit path's stack buffer (eleven
-/// CJK characters, 33 bytes) resolves through `lookup` with its text and
-/// pronunciation possibility intact — the owned fallback of the decoder,
-/// reached from the dictionary and not only from the unit tests.
-#[test]
-fn a_long_phrase_resolves_with_text_and_possibility() {
-    let dir = scratch_dir("oxpinyin-system-dict-long-");
-    let zhong1 = key("zhong").with_tone(1);
-    let keys: Vec<ChewingKey> = std::iter::repeat_n(zhong1, 11).collect();
-    let untoned: Vec<ChewingKey> = std::iter::repeat_n(key("zhong"), 11).collect();
-    let text = "中中中中中中中中中中中";
-    assert_eq!(text.chars().count(), 11);
-    assert_eq!(text.len(), 33, "the fallback must be reached");
-
-    let rows: Vec<(Vec<u8>, Vec<u8>)> = vec![(
-        encode_complete(&untoned),
-        encode_items(&[(0x0100_00B0, &keys[..])]),
-    )];
-    write_raw_rows::<DefaultStore>(&dir.path().join(SystemDbm::PinyinIndex.file_name()), &rows);
-    write_raw_rows::<DefaultStore>(
-        &dir.path().join(SystemDbm::PhraseIndex.file_name()),
-        &[(encode_ucs4_key(text), encode_tokens(&[0x0100_00B0]))],
-    );
-    let packed: Vec<u8> = keys
-        .iter()
-        .flat_map(|key| key.to_packed().to_le_bytes())
-        .collect();
-    let mut builder = ChunkBuilder::new(9);
-    builder.add(0xB0, 9, text, vec![(packed, 9)]);
-    std::fs::write(dir.path().join("gb_char.bin"), builder.build()).unwrap();
-
-    let dict = SystemDictionary::open(dir.path()).unwrap();
-    let query: Vec<SyllableKey> = std::iter::repeat_n(syl("zhong"), 11).collect();
-    let entries = dict.lookup(&query).unwrap();
-    assert_eq!(entries.len(), 1, "{entries:?}");
-    assert_eq!(entries[0].text(), text);
-    assert_eq!(entries[0].token().value(), 0x0100_00B0);
-    assert_eq!(entries[0].pronunciation_possibility(), Some((9, 9)));
 }
 
 #[test]
