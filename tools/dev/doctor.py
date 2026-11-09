@@ -209,9 +209,8 @@ def _parse_shellcheck(text):
 
 
 # One row per tool. A minimum is the oldest version the repository has run
-# or documents. Where the tool has its own configuration for it (the
-# justfile, .config/nextest.toml, uv.toml, setup.sh) doctor.test.py keeps the
-# two in step.
+# or documents. Some tools also hold a minimum in their own configuration (the
+# justfile, .config/nextest.toml, uv.toml, setup.sh) and enforce it themselves.
 TOOLS = (
     Tool('pwsh', 'pwsh', ('--version',), _semver_format('PowerShell'), PWSH_MINIMUM,
          'install PowerShell from docs/runbooks/setup.md#native-windows', platform='win32', required=True),

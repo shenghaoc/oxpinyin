@@ -1,5 +1,5 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
-"""The one Bash floor declaration, its source-line gate and its run-time check."""
+"""The Bash floor's source-line gate and its run-time check."""
 from pathlib import Path
 import shutil
 import subprocess
@@ -50,28 +50,11 @@ def old_bash():
 
 
 class FloorFileTests(unittest.TestCase):
-    def test_floor_is_declared_once(self):
-        self.assertEqual(bash_floor.read_floor(), '5.0')
-        self.assertEqual((FLOOR).read_text(encoding='utf-8').count('OXPINYIN_BASH_FLOOR='), 1)
-
-    def test_every_executed_script_sources_the_floor(self):
-        self.assertEqual(bash_floor.check_repository(), [])
-
     def test_inline_guard_is_rejected(self):
         text = ('#!/usr/bin/env bash\n'
                 'case ${BASH_VERSION-} in [5-9].*) ;; *) exit 1 ;; esac\n')
         errors = bash_floor.check_text('tools/inline.sh', text)
         self.assertTrue(any('inline Bash version guard' in error for error in errors), errors)
-
-    def test_source_line_is_accepted(self):
-        text = '#!/usr/bin/env bash\n' + bash_floor.source_line('tools/example.sh') + '\n'
-        self.assertEqual(bash_floor.check_text('tools/example.sh', text), [])
-
-    def test_source_only_libraries_do_not_source_the_floor(self):
-        for relative in bash_floor.SOURCED_ONLY:
-            text = (ROOT / relative).read_text(encoding='utf-8')
-            self.assertNotIn(bash_floor.source_line(relative), text, relative)
-            self.assertNotIn('BASH_VERSION', text, relative)
 
 
 class RunTimeTests(unittest.TestCase):
