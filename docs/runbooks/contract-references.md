@@ -31,19 +31,8 @@ write a profile in a fresh worker, copies that profile, and lets the pin read an
 re-save it. The case asserts the stored rows and, for `issue1114`, the saved
 bytes outside the timestamp.
 
-The S2 witness prints one oxpinyin observation and has no frozen expectation. It
-needs the system data of the cell it names. The pinned package data is a tkrzw
-directory: `table.conf` with a HashDBM `bigram.db`:
-
-```sh
-data=$(just fetch-contract-data | tail -n 1)
-uv run --no-project --managed-python python -X lazy_imports=normal \
-  tools/bisection/reverse_cross_open.py --cell tkrzw --data "$data" --s2 \
-  target/debug/libpinyin_capi.so
-```
-
 The issue1114 handoff cases also read tkrzw HashDBM bytes, so they run only on
 the tkrzw cell. The save-929 cases run on every supported cell.
 
 Run the handoff check after a change to a persistence writer, to serialisation or
-to a database format. No workflow and no just recipe calls either command.
+to a database format. No workflow and no just recipe calls the command.

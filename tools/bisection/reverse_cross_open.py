@@ -2,12 +2,11 @@
 """Local-only cross-open checks for the user profile formats.
 
     reverse_cross_open.py --cell tkrzw --pin-prefix PREFIX --data DIR \
-        [--s2] target/debug/libpinyin_capi.so target/debug/libzhuyin_capi.so
+        target/debug/libpinyin_capi.so target/debug/libzhuyin_capi.so
 
 The four handoff cases run oxpinyin first, then the pin, in fresh workers. The
 pin reads the profile oxpinyin wrote and re-saves it; the case asserts the rows
-and the saved bytes. The S2 witness prints one oxpinyin observation and has no
-frozen expectation. No workflow or just recipe calls this module.
+and the saved bytes. No workflow or just recipe calls this module.
 """
 import argparse
 import ctypes as C
@@ -25,10 +24,8 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools/bisection'))
 sys.path.insert(0, str(ROOT))
 
-from contract_abi import Arr, B, I, P, S, U, Z, tokens_of  # noqa: E402
-from contract_case_helpers import (  # noqa: E402
-    TOKEN_REUSE_PHRASES, _gram_bytes, _replace_user_bigram, d18_gram, guess_rows,
-)
+from contract_abi import Arr, B, I, P, S, U  # noqa: E402
+from contract_case_helpers import TOKEN_REUSE_PHRASES, d18_gram  # noqa: E402
 import contract_fixtures  # noqa: E402
 from contract_fixtures import (  # noqa: E402
     _craft_bdb, _craft_kc, _craft_tkrzw, _write_user_conf,
@@ -194,37 +191,11 @@ def save_929_logical_roundtrip(k):
     return dict(rows=after, tokens=tokens)
 
 
-def s2_nbest_precedence(k):
-    """Print the n-best precedence of a LONGER and a NORMAL row under xian."""
-    for library, reading in ((6, "xi1'an1"), (7, "xian1'ni1")):
-        iterator = k.fn('begin_add_phrases', P, P, U)(k.ctx, library)
-        assert iterator
-        assert k.fn('iterator_add_phrase', B, P, S, S, I)(
-            iterator, '甲乙'.encode(), reading.encode(), 10000000)
-        k.fn('end_add_phrases', None, P)(iterator)
-    token, = (token for token in tokens_of(k, '甲乙') if token >> 24 == 6)
-    assert k.fn('save', B, P)(k.ctx)
-    _replace_user_bigram(k, [(1, _gram_bytes(1000000, [(token, 1000000)]))])
-    assert k.fn('set_options', B, P, U)(k.ctx, 0x38a)
-    inst = k.inst
-    parsed = k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'xian')
-    assert parsed == 4
-    sort = 1
-    out = dict(parsed=parsed, at_end=guess_rows(k, inst, parsed, sort))
-    assert [7, '甲乙'] in out['at_end']['rows'], 'the LONGER fixture row is missing'
-    out['without_sentence'] = guess_rows(k, inst, 0, sort)
-    out['guess_sentence'] = k.fn('guess_sentence', B, P)(inst)
-    out['with_sentence'] = guess_rows(k, inst, 0, sort & ~1)
-    out['sentence_suppressed'] = guess_rows(k, inst, 0, sort)
-    return out
-
-
 CASES = {
     'issue1114-collision-load-save-pinyin': ('pinyin', issue1114_collision_saves),
     'issue1114-collision-load-save-zhuyin': ('zhuyin', issue1114_collision_saves),
     'save-929-logical-cross-open-pinyin': ('pinyin', save_929_logical_roundtrip),
     'save-929-logical-cross-open-zhuyin': ('zhuyin', save_929_logical_roundtrip),
-    's2-nbest-longer-normal-precedence': ('pinyin', s2_nbest_precedence),
 }
 
 
@@ -265,7 +236,7 @@ def handoff_cases(cell):
     the tkrzw cell. The save-929 cases run on every supported cell.
     """
     return [case for case in CASES
-            if not case.startswith('s2-') and (cell == 'tkrzw' or not case.startswith('issue1114-'))]
+            if cell == 'tkrzw' or not case.startswith('issue1114-')]
 
 
 def require_pin(prefix, mode):
@@ -281,7 +252,6 @@ def main(argv):
     parser.add_argument('--cell', choices=['bdb', 'kc', 'tkrzw'], default='tkrzw')
     parser.add_argument('--pin-prefix', type=Path)
     parser.add_argument('--data', type=Path)
-    parser.add_argument('--s2', action='store_true', help='print the S2 witness observation')
     parser.add_argument('--worker', help=argparse.SUPPRESS)
     parser.add_argument('--mode', choices=['pinyin', 'zhuyin'], help=argparse.SUPPRESS)
     parser.add_argument('--library', type=Path, help=argparse.SUPPRESS)
@@ -303,23 +273,9 @@ def main(argv):
         os._exit(0)
 
     CELL = args.cell
-    if args.s2:
-        if args.data is None:
-            parser.error('the S2 witness reads the system data: pass --data DIR (just fetch-contract-data)')
-        if not (args.data / 'table.conf').is_file():
-            parser.error(f'the S2 witness needs an existing system-data directory: {args.data}')
     if args.cell == 'tkrzw' and args.data is None:
         parser.error('the tkrzw cell reads the package data: pass --data DIR (just fetch-contract-data)')
     data = args.data or Path('/nonexistent-contract-data')
-    if args.s2:
-        if args.pinyin_so is None:
-            parser.error('the S2 witness needs PINYIN_SO')
-        with tempfile.TemporaryDirectory(prefix='reverse-cross-open-') as root:
-            observation = run_worker('s2-nbest-longer-normal-precedence', 'pinyin',
-                                     args.pinyin_so, data, Path(root))
-        print(json.dumps(dict(case='s2-nbest-longer-normal-precedence', cell=CELL,
-                              observation=observation), ensure_ascii=False))
-        return 0
     if args.pin_prefix is None:
         parser.error('the reverse cross-open check runs the pin: pass --pin-prefix PREFIX')
     if args.pinyin_so is None:

@@ -21,7 +21,7 @@ class CommandTests(unittest.TestCase):
         return raised.exception.code, stderr.getvalue()
 
     def test_the_tkrzw_cell_requires_the_package_data(self):
-        code, stderr = self.main(['--cell', 'tkrzw', '--s2', '/subject.so'])
+        code, stderr = self.main(['--cell', 'tkrzw', '/subject.so'])
         self.assertEqual(code, 2)
         self.assertIn('--data', stderr)
 
