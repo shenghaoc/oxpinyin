@@ -100,10 +100,11 @@ class RuntimeGuardTests(Scratch):
         self.worker.write_bytes(b'\x7fELF')
         self.worker.chmod(0o755)
 
-    def test_the_object_then_a_native_executable_are_checked(self):
-        bench.guard('run-x.sh', 'auto', 'oxpinyin', self.so, [str(self.worker), '--perf'], env={'PATH': ''})
-        self.assertEqual([call[3] for call in self.calls], [str(self.so), str(self.worker)])
-        self.assertEqual({call[:3] for call in self.calls}, {('auto', 'run-x.sh', 'oxpinyin')})
+    if os.name == 'posix':
+        def test_the_object_then_a_native_executable_are_checked(self):
+            bench.guard('run-x.sh', 'auto', 'oxpinyin', self.so, [str(self.worker), '--perf'], env={'PATH': ''})
+            self.assertEqual([call[3] for call in self.calls], [str(self.so), str(self.worker)])
+            self.assertEqual({call[:3] for call in self.calls}, {('auto', 'run-x.sh', 'oxpinyin')})
 
     def test_a_refusal_is_a_failed_run_with_the_resolvers_words(self):
         with mock.patch.object(bench, 'check', side_effect=bench.RuntimeRefused('run-x.sh: pin: libtkrzw resolved to /usr')):
@@ -193,9 +194,10 @@ class ProcessTests(Scratch):
                               'sys.stderr.write("err"); sys.exit(3)'])
         self.assertEqual((done.status, done.stdout, done.stderr), (3, b'out', b'err'))
 
-    def test_a_killed_child_has_the_shell_status(self):
-        done = bench.capture([sys.executable, '-c', 'import os, signal; os.kill(os.getpid(), signal.SIGKILL)'])
-        self.assertEqual(done.status, 128 + 9)
+    if os.name == 'posix':
+        def test_a_killed_child_has_the_shell_status(self):
+            done = bench.capture([sys.executable, '-c', 'import os, signal; os.kill(os.getpid(), signal.SIGKILL)'])
+            self.assertEqual(done.status, 128 + 9)
 
     def test_capture_runs_in_the_given_environment_and_directory(self):
         done = bench.capture([sys.executable, '-c', 'import os; print(os.getcwd(), os.environ["X"])'],

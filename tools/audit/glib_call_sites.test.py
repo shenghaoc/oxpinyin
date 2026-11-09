@@ -118,27 +118,44 @@ class RowTests(unittest.TestCase):
 
 
 class RecipeTests(unittest.TestCase):
-    def test_just_recipe_preserves_a_pin_path_with_spaces(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            pin = root / 'pin checkout with spaces'
-            pin.mkdir()
-            uv = root / 'uv'
-            uv.write_text(
-                f'#!{sys.executable}\n'
-                'import json, sys\n'
-                'if sys.argv[1:3] == ["python", "install"]: sys.exit(0)\n'
-                f'if sys.argv[-1] == "--print-clang-requirement": print({driver.CLANG_REQUIREMENT!r}); sys.exit(0)\n'
-                'print(json.dumps(sys.argv[1:]))\n')
-            uv.chmod(0o755)
-            result = subprocess.run(
-                ['just', '--justfile', str(ROOT / 'justfile'), 'audit-glib-call-sites', str(pin)],
-                env=dict(os.environ, PATH=str(root) + os.pathsep + os.environ['PATH']),
-                capture_output=True, text=True, timeout=30)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(json.loads(result.stdout)[-10:], [
-                'run', '--no-project', '--managed-python', '--with', driver.CLANG_REQUIREMENT,
-                'python', '-X', 'lazy_imports=normal', 'tools/audit/glib_call_sites.py', str(pin)])
+    if os.name == 'posix':
+        # The uv stub is a shebang script that Windows cannot launch.
+        def test_just_recipe_preserves_a_pin_path_with_spaces(self):
+            with tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                pin = root / 'pin checkout with spaces'
+                pin.mkdir()
+                uv = root / 'uv'
+                uv.write_text(
+                    f'#!{sys.executable}\n'
+                    'import json, sys\n'
+                    'if sys.argv[1:3] == ["python", "install"]: sys.exit(0)\n'
+                    f'if sys.argv[-1] == "--print-clang-requirement": print({driver.CLANG_REQUIREMENT!r}); sys.exit(0)\n'
+                    'print(json.dumps(sys.argv[1:]))\n')
+                uv.chmod(0o755)
+                result = subprocess.run(
+                    ['just', '--justfile', str(ROOT / 'justfile'), 'audit-glib-call-sites', str(pin)],
+                    env=dict(os.environ, PATH=str(root) + os.pathsep + os.environ['PATH']),
+                    capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads(result.stdout)[-10:], [
+                    'run', '--no-project', '--managed-python', '--with', driver.CLANG_REQUIREMENT,
+                    'python', '-X', 'lazy_imports=normal', 'tools/audit/glib_call_sites.py', str(pin)])
+
+    if os.name == 'nt':
+        # The audit needs bear, make and Unix linker options: the recipe refuses on Windows.
+        def test_just_recipe_refuses_on_windows(self):
+            with tempfile.TemporaryDirectory() as temporary:
+                pin = Path(temporary) / 'pin checkout with spaces'
+                # pwsh is the supported interactive caller; avoid legacy argument conversion.
+                command = 'just ' + ' '.join("'" + value.replace("'", "''") + "'" for value in
+                                             ['--justfile', str(ROOT / 'justfile'), 'audit-glib-call-sites', str(pin)])
+                result = subprocess.run(['pwsh', '-NoLogo', '-NoProfile', '-Command',
+                                         command + '; exit $LASTEXITCODE'],
+                                        cwd=ROOT, capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn('audit-glib-call-sites is unsupported on Windows: ', result.stdout + result.stderr)
+                self.assertFalse(pin.exists())
 
 
 EXPECTED = """\
