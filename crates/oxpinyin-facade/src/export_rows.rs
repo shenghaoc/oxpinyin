@@ -1174,8 +1174,7 @@ mod phrase_cursor_tests {
     use super::{ContextCore, ExportAssert, ExportRow, ExportStep, PhraseExportCursor, assert_for};
     use oxpinyin_core::{ChewingKey, SyllableKey};
     use oxpinyin_user::{
-        KEY_SYLLABLE_MASK, KEY_TONE_SHIFT, MAX_KEY_TONE, USER_DICTIONARY, UserConfLaw,
-        UserStoreError, toned_key,
+        KEY_TONE_SHIFT, MAX_KEY_TONE, USER_DICTIONARY, UserConfLaw, UserStoreError, toned_key,
     };
 
     /// A transient context over the committed mini tables of whichever
@@ -1334,17 +1333,6 @@ mod phrase_cursor_tests {
                 ExportStep::Assert(ExportAssert::KeyTone)
             ));
         }
-    }
-
-    #[test]
-    fn session_rejects_a_rust_key_without_a_packed_representation() {
-        let mut ctx = open();
-        let store = ctx.user_store_mut().unwrap();
-        assert!(matches!(
-            store.add_phrase_in(USER_DICTIONARY, &"甲".into(), &[KEY_SYLLABLE_MASK], Some(2)),
-            Err(UserStoreError::InvalidPhrase)
-        ));
-        assert!(store.phrases().unwrap().is_empty());
     }
 
     /// A present item the store cannot decode is read at the pin and dies

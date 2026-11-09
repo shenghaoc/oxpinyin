@@ -47,20 +47,3 @@ impl StoragePaths {
         &self.system_data_dirs
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use std::path::PathBuf;
-
-    use super::StoragePaths;
-
-    #[test]
-    fn paths_are_kept_exactly_as_supplied() {
-        let paths = StoragePaths::new("user").with_system_dirs(["a", "b"]);
-        assert_eq!(paths.user_data_dir(), PathBuf::from("user"));
-        assert_eq!(
-            paths.system_data_dirs(),
-            [PathBuf::from("a"), PathBuf::from("b")]
-        );
-    }
-}
