@@ -14,7 +14,7 @@
 //! the C ABI reach; it exposes the counts as a
 //! [`oxpinyin_core::UserCountDelta`] so decode can merge them additively
 //! with the system model, the §4 `m_modified` gate
-//! ([`UserStore::is_modified`] / [`UserStore::save`]) behind `pinyin_save`,
+//! ([`UserStore::is_modified`] / [`UserStore::save_reporting`]) behind `pinyin_save`,
 //! and the §9 export surface ([`UserStore::export_phrases_in`] /
 //! [`UserStore::bigram_predecessors`]) behind the C ABI's export iterators.
 //! Nothing is durable between saves: `save` writes the pin's own user file

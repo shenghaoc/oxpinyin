@@ -260,12 +260,6 @@ impl UserIndex {
         self.records.contains_key(key)
     }
 
-    /// Every record in ascending key order: arena records with the
-    /// overlay's edits applied, plus the keys the overlay created.
-    pub(crate) fn rows(&self) -> Vec<(Vec<u8>, Vec<u8>)> {
-        self.records.rows()
-    }
-
     /// Every key in ascending order, arena and overlay merged.
     #[cfg(test)]
     pub(crate) fn keys(&self) -> Vec<Vec<u8>> {
@@ -492,22 +486,30 @@ impl UserIndex {
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn indexed_set(&self) -> BTreeSet<(u32, Vec<u16>)> {
         let mut set = BTreeSet::new();
-        for (key, value) in self.records.rows() {
-            if value.is_empty() || !key.len().is_multiple_of(2) {
-                continue;
-            }
-            let len = key.len() / 2;
-            if len == 0 || len > MAX_PHRASE_LENGTH {
-                continue;
-            }
-            if let Ok(items) = oxpinyin_data::row_format::pinyin_index::decode_items(&value, len) {
-                for item in items {
-                    set.insert((
-                        item.token,
-                        item.keys.iter().map(|key| key.to_packed()).collect(),
-                    ));
-                }
-            }
+        if let Err(infallible) =
+            self.records
+                .for_each_record::<std::convert::Infallible>(|key, value| {
+                    if value.is_empty() || !key.len().is_multiple_of(2) {
+                        return Ok(());
+                    }
+                    let len = key.len() / 2;
+                    if len == 0 || len > MAX_PHRASE_LENGTH {
+                        return Ok(());
+                    }
+                    if let Ok(items) =
+                        oxpinyin_data::row_format::pinyin_index::decode_items(value, len)
+                    {
+                        for item in items {
+                            set.insert((
+                                item.token,
+                                item.keys.iter().map(|key| key.to_packed()).collect(),
+                            ));
+                        }
+                    }
+                    Ok(())
+                })
+        {
+            match infallible {}
         }
         set
     }
@@ -579,10 +581,21 @@ impl UserIndex {
     /// value-only save: the derived table is authoritative and the caller's
     /// index carries the retained empty keys.
     pub(crate) fn merge_missing(&mut self, other: &Self) {
-        for (key, value) in other.records.rows() {
-            if !self.contains_key(&key) {
-                self.records.insert(key, value);
-            }
+        let mut missing = Vec::new();
+        if let Err(infallible) =
+            other
+                .records
+                .for_each_record::<std::convert::Infallible>(|key, value| {
+                    if !self.contains_key(key) {
+                        missing.push((key.to_vec(), value.to_vec()));
+                    }
+                    Ok(())
+                })
+        {
+            match infallible {}
+        }
+        for (key, value) in missing {
+            self.records.insert(key, value);
         }
     }
 

@@ -132,24 +132,18 @@ the same hooks, instead of in an up-front pass. A row 76 library before a
 directory library is written and the loop continues (class (b): the pin
 dies of SIGSEGV there), so the later directory aborts. Directory size decisions are covered by filesystem-independent Rust tests.
 
-### The save's staged files and `finish_save`
+### The save's staged files
 
-The C adapters' save goes through `UserStore::save_reporting_with_baseline`
-→ `persistence::save_reporting`, the lenient save the pin's `_write_files`
+The save goes through `UserStore::save_reporting_with_baseline` →
+`persistence::save_reporting`, the lenient save the pin's `_write_files`
 and `_rename_files` model. On `LibraryChunkHeaderRead` it returns from
 `stage_all` at once: no rename pass, no `user.conf`, and no clean-up, so the
 user directory keeps exactly the pin's files (libpinyin: the earlier
 libraries' `.tmp`; libzhuyin: the earlier libraries renamed, by
-`Staged::push` as each was written). `persistence::finish_save`, which
-deletes staged `.tmp` files after a write or rename failure, is not on this
-path: it serves only the strict save (`persistence::save_session`, reached
-from `persistence::save` / `save_with_bigram` and `UserStore::save`), whose
-callers are the store's Rust API, tests and tools, never the C adapters,
-and it is given no baseline hook, so it never meets a row 96 stop. Row 96
-therefore needs no change to it. External-I/O stage 3 (2026-11-01 UTC)
-removed its clean-up: a strict-save failure now leaves every staged `.tmp`
-in place as the pin does. The strict API still answers its first failure;
-the C facades' reporting save carries on.
+`Staged::push` as each was written). A failed write or rename leaves every
+staged `.tmp` in place as the pin does, and the save carries on and reports
+each failure. The strict Rust save that stopped at its first failure was
+retired (2026-11-09 UTC). Row 96 therefore needs no change.
 
 ## A Kyoto Cabinet bigram read after its size check
 

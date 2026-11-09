@@ -13,7 +13,7 @@
 //! list by them, so two entries with the same keys stay two entries.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use oxpinyin_core::{ChewingKey, PhraseToken, UserModel};
 use oxpinyin_data::chunk_write::{ChunkItem, encode_phrase_item};
@@ -240,7 +240,7 @@ fn a_replayed_item_opens_without_reading_rows_and_trains_from_its_counts() {
     train(&mut store, 1, key("ni", 3), 1);
     assert_eq!(counts(&store, 1), [176, 40]);
     assert_eq!(exported(&store, &base, 1), [176, 40]);
-    assert!(store.save().expect("save"));
+    store.save_reporting().expect("save");
     drop(store);
 
     // The saved profile replays to the same item, again with no row; a second
@@ -252,7 +252,7 @@ fn a_replayed_item_opens_without_reading_rows_and_trains_from_its_counts() {
     // gram is no longer new (`seed.rs`).
     assert_eq!(counts(&store, 1), [314, 40]);
     assert_eq!(exported(&store, &base, 1), [314, 40]);
-    assert!(store.save().expect("save again"));
+    store.save_reporting().expect("save again");
     drop(store);
     let store = open(&dir, &base);
     assert_eq!(counts(&store, 1), [314, 40]);
@@ -325,7 +325,7 @@ fn an_unrecorded_overlapped_slot_is_visible_seeded_and_saved() {
         170
     );
     store.mark_modified();
-    assert!(store.save().expect("save"));
+    store.save_reporting().expect("save");
     drop(store);
     let store = open(&dir, &base);
     assert_eq!(
@@ -379,7 +379,7 @@ fn entries_with_the_same_keys_stay_separate_through_import_save_and_reopen() {
     assert_eq!(counts(&store, 2), [39, 40]);
     assert_eq!(exported(&store, &base, 2), [39, 40]);
     store.mark_modified();
-    assert!(store.save().expect("save"));
+    store.save_reporting().expect("save");
     drop(store);
 
     let store = open(&dir, &base);
@@ -426,7 +426,7 @@ fn a_mask_leaves_nothing_of_the_replayed_counts() {
     assert_eq!(counts(&store, 1), [104, 40]);
     assert_eq!(exported(&store, &base, 1), [104, 40]);
     store.mark_modified();
-    assert!(store.save().expect("save"));
+    store.save_reporting().expect("save");
     drop(store);
     let store = open(&dir, &base);
     assert_eq!(counts(&store, 1), [104, 40]);
@@ -444,11 +444,13 @@ fn a_populated_user_library_and_an_independent_index_beside_a_replayed_item() {
     let old = item(0x4f60, 100, &[(ni3.clone(), 100)]);
     let new = item(0x4f60, 100, &[(ni3, 130)]);
     let base = library_of(vec![(1, old.clone())]);
-    // What the save writes to the user's own files: the user libraries'
-    // items, the pinyin index entries and the raw phrase table, which the
-    // replayed item has no part in.
-    let user_view = |store: &UserStore| {
-        let state = export_state(store, &base).expect("export");
+    // What the save writes to the user's own files, read back through the
+    // production load: the user libraries' items, the pinyin index entries
+    // and the raw phrase table, which the replayed item has no part in.
+    let user_view = |dir: &Path| {
+        let state = crate::persistence::load(dir, &base, &versions(), UserConfLaw::Pinyin)
+            .expect("load the saved profile")
+            .state;
         let libraries: BTreeMap<_, _> = state
             .libraries
             .iter()
@@ -475,7 +477,7 @@ fn a_populated_user_library_and_an_independent_index_beside_a_replayed_item() {
             .expect("removed");
         assert!(store.remove_user_phrase(removed).expect("remove"));
         store.mark_modified();
-        assert!(store.save().expect("save"));
+        store.save_reporting().expect("save");
         kept
     };
     // The same user session over a profile with the journal and over one
@@ -486,7 +488,7 @@ fn a_populated_user_library_and_an_independent_index_beside_a_replayed_item() {
         &[header(100, 100), modify(1, &old, &new)],
     );
     let kept = user_session(&mut store);
-    let view = user_view(&store);
+    let view = user_view(&dir);
     drop(store);
     let control = tempdir("user-library-control");
     std::fs::write(
@@ -496,13 +498,13 @@ fn a_populated_user_library_and_an_independent_index_beside_a_replayed_item() {
     .expect("marker");
     let mut plain = open(&control, &base);
     user_session(&mut plain);
-    assert_eq!(view, user_view(&plain));
+    assert_eq!(view, user_view(&control));
     drop(plain);
 
     let mut store = open(&dir, &base);
     // Both the user arena and the replayed item own their reading counts.
     assert_eq!(counts(&store, 1), [130]);
-    assert_eq!(view, user_view(&store));
+    assert_eq!(view, user_view(&dir));
     let phrases = store
         .export_phrases_in(crate::USER_DICTIONARY)
         .expect("export");
@@ -513,12 +515,12 @@ fn a_populated_user_library_and_an_independent_index_beside_a_replayed_item() {
     );
     train(&mut store, 1, key("ni", 3), 1);
     assert_eq!(counts(&store, 1), [199]);
-    assert!(store.save().expect("save again"));
+    store.save_reporting().expect("save again");
     drop(store);
 
     let store = open(&dir, &base);
     assert_eq!(counts(&store, 1), [199]);
-    assert_eq!(view, user_view(&store));
+    assert_eq!(view, user_view(&dir));
     assert_eq!(
         store
             .token_for_phrase_in(crate::USER_DICTIONARY, "龘")
@@ -565,14 +567,14 @@ fn training_moves_each_matching_entry_on_its_own_count() {
         train(&mut store, 1, key("ni", 3), 1);
         assert_eq!(counts(&store, 1), first, "{name}: live");
         assert_eq!(exported(&store, &base, 1), first, "{name}: saved");
-        assert!(store.save().expect("save"));
+        store.save_reporting().expect("save");
         drop(store);
         let mut store = open(&dir, &base);
         assert_eq!(counts(&store, 1), first, "{name}: reopened");
         train(&mut store, 1, key("ni", 3), 1);
         assert_eq!(counts(&store, 1), second, "{name}: live again");
         assert_eq!(exported(&store, &base, 1), second, "{name}: saved again");
-        assert!(store.save().expect("save again"));
+        store.save_reporting().expect("save again");
         drop(store);
         let store = open(&dir, &base);
         assert_eq!(counts(&store, 1), second, "{name}: reopened again");
@@ -583,7 +585,8 @@ fn training_moves_each_matching_entry_on_its_own_count() {
 
 /// What a session answers for a mixed profile, in the order a caller asks:
 /// the readings and the unigram delta of each system token, the count reads,
-/// the grams, the user library and what a save would write.
+/// the grams, the user phrases and the saved shape's overrides and phrase
+/// table.
 fn mixed_view(store: &UserStore, base: &SystemOriginals, tokens: &[u32]) -> String {
     let mut out = String::new();
     for &token in tokens {
@@ -608,7 +611,9 @@ fn mixed_view(store: &UserStore, base: &SystemOriginals, tokens: &[u32]) -> Stri
     let state = export_state(store, base).expect("export");
     out.push_str(&format!(
         "{:?} {:?} {:?}\n",
-        state.system_overrides, state.libraries, state.indexed
+        state.system_overrides,
+        store.phrases().expect("user phrases"),
+        state.phrase_table
     ));
     out
 }
@@ -693,7 +698,7 @@ fn a_mixed_profile_keeps_shipped_appended_and_user_state_apart() {
     let live = mixed_view(&store, &base, &tokens);
     assert!(live.contains(&format!("{:#x} Some([", LIBRARY | 1)));
     store.mark_modified();
-    assert!(store.save().expect("save"));
+    store.save_reporting().expect("save");
     drop(store);
 
     // The saved profile is the live one: every view, the user library and
@@ -720,7 +725,7 @@ fn a_mixed_profile_keeps_shipped_appended_and_user_state_apart() {
     let again = mixed_view(&store, &base, &tokens);
     assert_ne!(again, live);
     store.mark_modified();
-    assert!(store.save().expect("save again"));
+    store.save_reporting().expect("save again");
     drop(store);
     let store = open(&dir, &base);
     assert_eq!(mixed_view(&store, &base, &tokens), again);
@@ -894,7 +899,7 @@ fn a_replayed_add_and_the_imports_live_only_in_the_buffer() {
 
     // The save reads the buffer, and a reopen finds the same items.
     store.mark_modified();
-    assert!(store.save().expect("save"));
+    store.save_reporting().expect("save");
     drop(store);
     let store = open(&dir, &base);
     assert!(!arena_library(&store));

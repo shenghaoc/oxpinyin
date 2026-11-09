@@ -322,7 +322,7 @@ fn user_dir_with_bigram_row(
         bigram: vec![row],
         ..persistence::UserState::default()
     };
-    persistence::save(
+    persistence::save_state_reporting(
         &dir,
         &state,
         &oxpinyin_user::SystemOriginals::from(std::collections::BTreeMap::new()),

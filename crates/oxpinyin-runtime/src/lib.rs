@@ -2831,7 +2831,7 @@ mod tests {
                 .add_phrase_in(library, &"龘".into(), &keys, Some(20))
                 .unwrap();
             store.mark_modified();
-            assert!(store.save().unwrap());
+            store.save_reporting().unwrap();
             let original = std::fs::read(&chunk).unwrap();
             // Only the store's own unload drops the items and arms save's
             // skip. A runtime unload/load pair must not clear that marker
@@ -2845,7 +2845,7 @@ mod tests {
             let store = runtime.user_store_mut().unwrap();
             assert!(store.phrase(saved).unwrap().is_none());
             store.mark_modified();
-            assert!(store.save().unwrap());
+            store.save_reporting().unwrap();
             assert_eq!(std::fs::read(&chunk).unwrap(), original);
             assert!(!dir.path().join("user.bin.tmp").exists());
 
@@ -2861,13 +2861,13 @@ mod tests {
             let store = runtime.user_store_mut().unwrap();
             assert!(store.phrase(added).unwrap().is_some());
             store.mark_modified();
-            assert!(store.save().unwrap());
+            store.save_reporting().unwrap();
             let updated = std::fs::read(&chunk).unwrap();
             assert_ne!(updated, original, "the loaded store saves its new item");
             assert!(runtime.load_library(u32::from(library)));
             let store = runtime.user_store_mut().unwrap();
             store.mark_modified();
-            assert!(store.save().unwrap());
+            store.save_reporting().unwrap();
             assert_eq!(std::fs::read(&chunk).unwrap(), updated);
         }
     }

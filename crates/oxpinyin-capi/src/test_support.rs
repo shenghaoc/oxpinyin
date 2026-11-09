@@ -377,7 +377,7 @@ pub fn plant_bigram(user_dir: &std::path::Path, rows: Vec<(Vec<u8>, Vec<u8>)>) {
         bigram: rows,
         ..oxpinyin_user::persistence::UserState::default()
     };
-    oxpinyin_user::persistence::save(
+    oxpinyin_user::persistence::save_state_reporting(
         user_dir,
         &state,
         &oxpinyin_user::SystemOriginals::from(std::collections::BTreeMap::new()),
@@ -416,8 +416,14 @@ pub fn set_phrase_table_row(user_dir: &std::path::Path, phrase: &str, tokens: &[
         .collect();
     let value = tokens.iter().flat_map(|t| t.to_le_bytes()).collect();
     state.phrase_table.insert(key, value);
-    oxpinyin_user::persistence::save(user_dir, &state, &originals, &versions, open_counter)
-        .expect("write the profile");
+    oxpinyin_user::persistence::save_state_reporting(
+        user_dir,
+        &state,
+        &originals,
+        &versions,
+        open_counter,
+    )
+    .expect("write the profile");
 }
 
 /// A private system directory under `parent`: every fixture file linked in,

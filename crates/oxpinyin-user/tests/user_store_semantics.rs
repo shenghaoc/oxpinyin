@@ -121,7 +121,7 @@ fn a_bigram_table_roundtrips_through_the_store_file() {
             total_before + (store.bigram_count(a, b).unwrap() - count_before),
             "the total absorbs exactly the count's delta"
         );
-        assert!(store.save().unwrap());
+        store.save_reporting().unwrap();
     }
 
     // The reopen reads back the exact recorded numbers.
@@ -131,8 +131,9 @@ fn a_bigram_table_roundtrips_through_the_store_file() {
             store.bigram_count(a, b).unwrap(),
             store.bigram_total(a).unwrap(),
         );
-        assert!(
-            !store.save().unwrap(),
+        assert_eq!(
+            store.save_reporting().unwrap(),
+            Default::default(),
             "nothing changed, nothing is written"
         );
         counts
@@ -263,7 +264,7 @@ fn add_lookup_remove_roundtrip_and_persists_across_handles() {
             .unwrap();
         assert_eq!(store.token_for_phrase(&text).unwrap(), Some(token));
         store.mark_modified();
-        assert!(store.save().unwrap());
+        store.save_reporting().unwrap();
         token
     };
 
@@ -279,7 +280,7 @@ fn add_lookup_remove_roundtrip_and_persists_across_handles() {
         assert!(store.remove_user_phrase(token).unwrap());
         assert!(store.token_for_phrase(&text).unwrap().is_none());
         store.mark_modified();
-        assert!(store.save().unwrap());
+        store.save_reporting().unwrap();
     }
 
     let store = session_in(dir.path());

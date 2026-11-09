@@ -880,8 +880,8 @@ checkout of `074a2219c90feaf962d0d24f034514033ece5f99`. No save implementation
 or fsync/rename policy is changed. The C-facing path is `context::save_context`
 / `zhuyin_save` → `facade::ContextCore::save_user_with_layout_faults` →
 `UserStore::save_reporting_with_baseline` → `persistence::save_reporting`.
-The separate strict Rust `UserStore::save`/`persistence::finish_save` path
-stops and cleans pending files on error; it is not the C facade's contract.
+The strict Rust save path was retired (2026-11-09 UTC); the reporting save
+is the only save.
 `UserConfLaw` selects staged pinyin versus interleaved zhuyin writes.
 Paths in this section are relative to the identified repository root
 (oxpinyin, pinned libpinyin, or the named GLib tag); installed reference-image

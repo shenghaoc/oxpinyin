@@ -41,7 +41,7 @@
 //! behind it.
 //!
 //! `compact` is no longer where `pinyin_save` reaches storage, though.
-//! `UserStore::save` still calls it, but since the libpinyin session
+//! `UserStore::save_reporting` still calls it, but since the libpinyin session
 //! moved into memory (#621) the store it compacts is the `ProtoTreeDB`
 //! of [`WriteStore::create_in_memory`], which has no file. The profile
 //! `pinyin_save` writes goes out through `write_user_index` and the
@@ -523,8 +523,8 @@ impl WriteStore for KcStore {
         // `compact` also does not shrink the file). Making the current state
         // durable on the device is the honest implementation — and it is
         // a file-backed store's one stable-storage point. It is no longer
-        // where `pinyin_save` reaches storage: `UserStore::save` still
-        // calls this, but on the in-memory session store (#621), which
+        // where `pinyin_save` reaches storage: `UserStore::save_reporting`
+        // still calls this, but on the in-memory session store (#621), which
         // has no file.
         self.db.sync(true)
     }
