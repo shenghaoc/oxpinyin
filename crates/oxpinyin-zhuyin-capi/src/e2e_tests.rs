@@ -51,6 +51,7 @@ use oxpinyin_user::{SENTENCE_START, USER_DICTIONARY};
 
 use crate::candidates::{zhuyin_choose_candidate, zhuyin_get_n_candidate, zhuyin_train};
 use crate::context::{zhuyin_fini, zhuyin_init, zhuyin_save};
+use crate::dict::zhuyin_token_get_unigram_frequency;
 use crate::instance::{zhuyin_alloc_instance, zhuyin_free_instance, zhuyin_reset};
 use crate::iterators::{
     zhuyin_begin_add_phrases, zhuyin_end_add_phrases, zhuyin_iterator_add_phrase,
@@ -58,8 +59,8 @@ use crate::iterators::{
 use crate::parse::zhuyin_parse_more_chewings;
 use crate::sentence::{zhuyin_get_sentence, zhuyin_guess_sentence};
 use crate::test_support::{
-    TempUserDir, candidate, close, cstr, open, open_with_user, system_dir, take_sentence, token_of,
-    with_store,
+    LogCapture, TempUserDir, candidate, close, cstr, open, open_with_user, system_dir,
+    take_sentence, token_of, tokens_of, with_store,
 };
 
 /// The choose-then-train seed sequence through the wired zhuyin path:
@@ -123,30 +124,120 @@ fn train_records_the_pinned_doubling_sequence() {
     close(context, instance);
 }
 
-/// `zhuyin_train` refuses without a sentence result (no guess ran) and
-/// without a user store (nowhere to write) — the two false arms of the
-/// facade's train law, `zhuyin_train`'s own gates
-/// (`zhuyin.cpp:1696-1706`: user dir, then `results.size()`).
+/// The decoded sentence of n-best row 0.
+fn sentence_of(instance: *mut crate::types::ZhuyinInstance) -> String {
+    let mut sentence: *mut c_char = ptr::null_mut();
+    assert!(zhuyin_get_sentence(instance, &raw mut sentence));
+    take_sentence(sentence)
+}
+
+/// Each token's unigram, as `zhuyin_token_get_unigram_frequency` reads it.
+fn unigrams_of(instance: *mut crate::types::ZhuyinInstance, tokens: &[u32]) -> Vec<u32> {
+    tokens
+        .iter()
+        .map(|&token| {
+            let mut freq = 0;
+            assert!(zhuyin_token_get_unigram_frequency(
+                instance,
+                token,
+                &raw mut freq
+            ));
+            freq
+        })
+        .collect()
+}
+
+/// `zhuyin_train` after `zhuyin_guess_sentence` with no choose trains
+/// nothing, answers true and arms the save; without a user store it refuses.
+///
+/// At 074a2219, `zhuyin_train` (`zhuyin.cpp:1696-1716`) answers false only
+/// without a user dir or without a sentence result; otherwise it sets
+/// `m_modified` (`:1707`) before `train_result3`. That walk trains only at a
+/// `CONSTRAINT_ONESTEP` position or right after one
+/// (`lookup/phonetic_lookup.h:858-935`); with no choose there is none, so it
+/// writes no bigram and no unigram and answers true. `zhuyin_save` answers
+/// false unless `m_modified` (`zhuyin.cpp:551-552`), so the save writes the
+/// user files and clears the flag (`:697`), and a second save answers false.
+/// Each system library's journal is `SubPhraseIndex::diff`'s one
+/// `LOG_MODIFY_HEADER` record of an unchanged total, with no item records
+/// (`storage/phrase_index.cpp:392-437`, `phrase_index_logger.h:281-295`), and
+/// the saved user bigram (`zhuyin.cpp:680-693`) holds no record.
 #[test]
-fn train_refuses_without_a_selection_or_a_user_store() {
-    // A guess alone runs the train and writes nothing: the pin's
-    // `train_result3` walks a constraint-free result and answers true
-    // (`phonetic_lookup.h:844-936`), so `zhuyin_train` answers true
-    // after `zhuyin_guess_sentence` with no choose behind it.
+fn train_without_a_choose_trains_nothing_and_without_a_user_store_refuses() {
     let user_dir = TempUserDir::new("train-noselect");
     let (context, instance) = open_with_user(&user_dir.path);
+    let logs = LogCapture::new();
     let input = cstr("su3cl3");
     assert_eq!(zhuyin_parse_more_chewings(instance, input.as_ptr()), 6);
     assert!(zhuyin_guess_sentence(instance));
+    let sentence = sentence_of(instance);
+    // Every token of the sentence and of each of its characters: the
+    // decoded row's tokens are among them, whatever its segmentation.
+    let mut tokens = tokens_of(instance, &sentence);
+    for ch in sentence.chars() {
+        tokens.extend(tokens_of(instance, &ch.to_string()));
+    }
+    assert!(!tokens.is_empty(), "the sentence {sentence:?} has tokens");
+    let unigrams = unigrams_of(instance, &tokens);
+
     assert!(
         zhuyin_train(instance),
         "the live sentence result admits the train"
     );
+    assert_eq!(unigrams_of(instance, &tokens), unigrams, "no unigram moved");
+    assert_eq!(sentence_of(instance), sentence, "the retained result");
     with_store(instance, |store| {
-        // The constraint-free walk writes nothing: no bigram anywhere.
         assert_eq!(store.bigram_total(SENTENCE_START).unwrap(), 0);
     });
+    assert!(zhuyin_guess_sentence(instance));
+    assert_eq!(sentence_of(instance), sentence, "a fresh decode");
+
+    assert!(zhuyin_save(context), "the train armed the save");
+    assert!(!zhuyin_save(context), "the save cleared the flag");
+    assert_eq!(logs.take(), Vec::new(), "no diagnostics");
+    drop(logs);
     close(context, instance);
+
+    let mut journals = 0;
+    for entry in std::fs::read_dir(&user_dir.path).expect("the user dir") {
+        let path = entry.expect("a user file").path();
+        if path.extension().is_none_or(|extension| extension != "dbin") {
+            continue;
+        }
+        journals += 1;
+        let bytes = std::fs::read(&path).expect("the journal");
+        // One record: type 4, null token, length 4, old total, new total.
+        assert_eq!(bytes.len(), 8 + 18, "{}", path.display());
+        let total = &bytes[18..22];
+        let record = [&4u32.to_le_bytes()[..], &[0; 4], &[4, 0], total, total].concat();
+        assert_eq!(
+            bytes,
+            oxpinyin_data::chunk_format::build_memory_chunk(&record).expect("frame"),
+            "{}",
+            path.display()
+        );
+    }
+    assert!(journals > 0, "the save wrote the system journals");
+    assert!(
+        user_dir
+            .path
+            .join(oxpinyin_data::user_files::UserDbm::Bigram.file_name())
+            .is_file()
+    );
+    let conf = oxpinyin_data::table_info::TableConf::load_from_dir(&system_dir())
+        .expect("fixture table.conf");
+    let loaded = oxpinyin_user::persistence::load(
+        &user_dir.path,
+        &oxpinyin_user::SystemOriginals::from(std::collections::BTreeMap::new()),
+        &oxpinyin_data::user_files::SystemVersions::from_conf(&conf),
+        oxpinyin_user::persistence::UserConfLaw::Zhuyin,
+    )
+    .expect("the saved profile");
+    // A conforming profile is read, not wiped, so its bigram rows are loaded.
+    // The journals are checked above; with no originals given, this read
+    // skips them.
+    assert!(!loaded.wiped, "the save wrote a conforming user.conf");
+    assert_eq!(loaded.state.bigram, Vec::new(), "no user bigram record");
 
     // No user dir: the corpus driver's shape — training degrades to
     // refusing, never to a write.
