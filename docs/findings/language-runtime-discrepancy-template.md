@@ -94,50 +94,10 @@ settle it).
    Rust is the point; adding a crate to avoid a documented difference is
    a dependency change and stops for approval.
 
-## Existing driver's case marker (#894)
+## Tests of an accepted case
 
-Register an ordinary surviving case with `policy_record="<record>.md"`
-in `tools/bisection/contract-diff.py`. The filename is relative to
-`docs/findings`; the register must link it. The machine evidence is in `fixtures/contract-policy/<record>.json`,
-which `just policy-record` writes from the differential's `--observations` capture.
-The JSON has the existing policy schema and is formatted with sorted keys.
-
-Derive the complete observations from source before executing the case,
-then record the capture:
-
-```sh
-just runner contract-diff bdb "$PINYIN_ORACLE_PREFIX" <capi.so> <zhuyin.so> -- --cases <case> --observations obs.jsonl
-just policy-record docs/findings/<record>.md obs.jsonl
-```
-
-The JSON file is part of the reviewed discrepancy record, but it holds no
-observation. Each side keeps the SHA-256 of its complete stable observation
-(exit, result with its logs, stderr in the driver's scratch-path
-normalization, and userfiles for a user-directory case), a 16-hex digest per
-top-level field for diagnosis, and the pin-to-subject divergence as text:
-one line per moved field, with list edits in the pin's indices. The serialized
-divergence field is limited to 4,096 UTF-8 bytes per case/backend pair,
-including JSON escaping, indentation and an omission marker. Bounded previews
-show affected paths, lengths and representative changes; rendering stops when
-the budget is exhausted. Full observations still determine acceptance. An entry
-escapes surrogate code points in values and paths for UTF-8 output while
-keeping ordinary non-ASCII text. Digests use a single canonical JSON encoding
-(sorted keys, no spaces, ASCII escapes), including invalid UTF-8 stderr bytes
-preserved by the driver's `surrogateescape` decoding. An entry
-under `cells` applies to that DBM cell; an entry without `cells` applies to
-every cell. A POLICY-ACCEPTED verdict needs both complete observations to
-digest to the recorded values: there are no wildcards, ignored `~` fields or
-partial matches. Both sides must terminate normally (or the pin as a
-registered abort) and match their recorded digests exactly; a mismatch is
-DIFFER and the report names the side and the fields whose digests moved. A
-missing, unregistered, superseded, schema-1 or malformed record is INVALID;
-an unexpected observation is DIFFER and fails even under `--expect-parent`.
-Equality cannot turn a marked case into MATCH. Record the case again with
-`just policy-record` when its accepted observation legitimately changes; the
-command replaces only that case's entry for the captured cell.
-The accepted case reports its record and both observations, and contributes
-only to the separate POLICY-ACCEPTED count. An existing `abort=` case may
-retain its pin SIGABRT with a null result and exact stderr; the subject
-must terminate normally. A different pin signal remains invalid. Other
-crash and host-dependent markers cannot be combined with this marker;
-those cases keep their existing class-specific comparison rules.
+The record states the pin's and oxpinyin's results and their source
+derivation. The test that holds oxpinyin's side names the record in a
+comment, with the case's original ID and the pin source lines. Where the
+pin is not run (`pin_not_run`, class (b)), the comment says so, and the
+expectation is the source-derived result.

@@ -111,8 +111,8 @@ mod frozen {
         )]
         // kti-bigram-assert: utils/training/k_mixture_model_to_interpolation.cpp at 074a2219:
         // 188-213, 55-186; src/storage/tag_utility.cpp: 118-264.
-        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; the pin's
-        // own result is in fixtures/contract-policy/eio-tool-check-messages.json.
+        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; only the pin
+        // writes the check macro's message.
         #[case::kti_bigram_assert(
             &[],
             b"\\data model \"k mixture model\" count 20 N 2 total_freq 20\n\\2-gram\n\\item 1 a 2 b T 1\n",
@@ -125,9 +125,8 @@ mod frozen {
         )]
         // kti-blank-line: utils/training/k_mixture_model_to_interpolation.cpp at 074a2219:
         // 188-213, 55-186; src/storage/tag_utility.cpp: 118-264.
-        // Policy-accepted on every cell:
-        // docs/findings/eio-kmm-to-interpolation-undefined-lines.md; the pin's own result is
-        // in fixtures/contract-policy/eio-kmm-to-interpolation-undefined-lines.json.
+        // Policy-accepted on every cell: docs/findings/eio-kmm-to-interpolation-undefined-lines.md;
+        // the pin dies with SIGSEGV where oxpinyin refuses with exit 1.
         #[case::kti_blank_line(
             &[],
             b"\\data model \"k mixture model\" count 20 N 2 total_freq 20\n\\1-gram\n\\item 10 \xe7\x94\xb2 freq 1\n\n\\end\n",
@@ -157,9 +156,8 @@ mod frozen {
         )]
         // kti-end-missing: utils/training/k_mixture_model_to_interpolation.cpp at 074a2219:
         // 188-213, 55-186; src/storage/tag_utility.cpp: 118-264.
-        // Policy-accepted on every cell:
-        // docs/findings/eio-kmm-to-interpolation-undefined-lines.md; the pin's own result is
-        // in fixtures/contract-policy/eio-kmm-to-interpolation-undefined-lines.json.
+        // Policy-accepted on every cell: docs/findings/eio-kmm-to-interpolation-undefined-lines.md;
+        // the pin dies with SIGSEGV where oxpinyin refuses with exit 1.
         #[case::kti_end_missing(
             &[],
             b"\\data model \"k mixture model\" count 20 N 2 total_freq 20\n\\1-gram\n\\item 10 \xe7\x94\xb2 freq 1\n",
@@ -213,8 +211,8 @@ mod frozen {
         )]
         // kti-last-line-reread-assert: utils/training/k_mixture_model_to_interpolation.cpp at
         // 074a2219: 188-213, 55-186; src/storage/tag_utility.cpp: 118-264.
-        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; the pin's
-        // own result is in fixtures/contract-policy/eio-tool-check-messages.json.
+        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; only the pin
+        // writes the check macro's message.
         // Platform exception, macos: abort() flushes stdio on macOS, so buffered stdout
         // survives; glibc's discards it.
         #[case::kti_last_line_reread_assert(
@@ -250,8 +248,8 @@ mod frozen {
         )]
         // kti-missing-value-assert: utils/training/k_mixture_model_to_interpolation.cpp at
         // 074a2219: 188-213, 55-186; src/storage/tag_utility.cpp: 118-264.
-        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; the pin's
-        // own result is in fixtures/contract-policy/eio-tool-check-messages.json.
+        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; only the pin
+        // writes the check macro's message.
         #[case::kti_missing_value_assert(
             &[],
             b"\\data model \"k mixture model\" count 20 N 2 total_freq 20\n\\1-gram\n\\item 10\n",
@@ -288,9 +286,8 @@ mod frozen {
         )]
         // kti-trailing-escape: utils/training/k_mixture_model_to_interpolation.cpp at
         // 074a2219: 188-213, 55-186; src/storage/tag_utility.cpp: 118-264.
-        // Policy-accepted on every cell:
-        // docs/findings/eio-kmm-to-interpolation-undefined-lines.md; the pin's own result is
-        // in fixtures/contract-policy/eio-kmm-to-interpolation-undefined-lines.json.
+        // Policy-accepted on every cell: docs/findings/eio-kmm-to-interpolation-undefined-lines.md;
+        // the pin dies with SIGSEGV where oxpinyin refuses with exit 1.
         #[case::kti_trailing_escape(
             &[],
             b"\\data model \"k mixture model\" count 20 N 2 total_freq 20\n\\1-gram\n\\item 10 \"\xe7\x94\xb2\\",
@@ -303,8 +300,8 @@ mod frozen {
         )]
         // kti-unknown-line-assert: utils/training/k_mixture_model_to_interpolation.cpp at
         // 074a2219: 188-213, 55-186; src/storage/tag_utility.cpp: 118-264.
-        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; the pin's
-        // own result is in fixtures/contract-policy/eio-tool-check-messages.json.
+        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; only the pin
+        // writes the check macro's message.
         #[case::kti_unknown_line_assert(
             &[],
             b"\\data model \"k mixture model\" count 20 N 2 total_freq 20\n\\1-gram\n\\item 10 \xe7\x94\xb2 freq 1\nitem 20 \xe4\xb9\x99 freq 1\n",

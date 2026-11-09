@@ -15,7 +15,5 @@
 - **Affected inputs:** double-pinyin and chewing compositions longer than 65535 bytes, on both facades.
 - **Tests:** unit tests `oxpinyin_capi::cursor::preedit_key_tests::key_rest_positions_past_byte_65535_wrap` and `oxpinyin_zhuyin_capi::e2e_tests::key_rest_positions_past_byte_65535_wrap`. `contract-diff.py` recorded MATCH `key-position-past-65535/{double-pinyin,chewing-zhuyin}-crossing-key` and POLICY-ACCEPTED `key-position-past-65535/{double-pinyin,chewing-zhuyin}-past-key`.
 - **Prior rulings:** none reversed; the 2026-11-01 UTC `gint16` decision stands.
-- **Evidence:** `just runner contract-diff <cell> "$PINYIN_ORACLE_PREFIX" <capi.so> <zhuyin.so> -- --cases key-position-past-65535/double-pinyin-past-key,key-position-past-65535/chewing-zhuyin-past-key --observations obs.jsonl`, then `just policy-record docs/findings/1501-guint16-key-positions.md obs.jsonl`, independently for bdb, kc and tkrzw with each cell's own prefix, libraries and capture.
+- **Evidence:** the pin derivation above. On bdb, kc and tkrzw, at key position 65537 the pin answers `false` and oxpinyin answers `true` with the real key rest; the unit tests above hold oxpinyin's side.
 - **Conclusion:** accepted. Maintainer ruling 2026-11-01 UTC (#1501).
-
-Policy evidence is in [1501-guint16-key-positions.json](../../fixtures/contract-policy/1501-guint16-key-positions.json).

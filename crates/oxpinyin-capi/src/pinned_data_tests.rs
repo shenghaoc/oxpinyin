@@ -588,10 +588,9 @@ fn journal_walk(data: &[u8]) -> (Option<(u32, u32)>, [u32; 4]) {
     (header, counts)
 }
 
-/// A save over a library replaced by a chunk whose layout fails diffs
-/// against an empty sub-index: true, no GLib critical, and every original
-/// item is journalled as added (fixtures/contract-policy record
-/// 1297-layout-criticals.md).
+/// A save over a library replaced by a chunk whose layout fails diffs against
+/// an empty sub-index: true, no GLib critical, and every original item is
+/// journalled as added (docs/findings/1297-layout-criticals.md).
 #[test]
 fn a_save_over_a_failed_layout_journals_against_an_empty_index() {
     let run = crate::test_support::run_in_child(
@@ -899,9 +898,9 @@ fn item_readings(item: &[u8]) -> Vec<&[u8]> {
         .collect()
 }
 
-/// A merged-library item removed by the journal adds no candidate, and
-/// the search over its reading answers normally (fixtures/contract-policy
-/// record compatibility-policy.md, row 102).
+/// A merged-library item removed by the journal adds no candidate, and the
+/// search over its reading answers normally
+/// (docs/findings/compatibility-policy.md, row 102).
 #[test]
 fn a_journal_removed_item_adds_no_candidate() {
     let (total, items) = system_items("merged.bin");
@@ -983,7 +982,7 @@ fn a_journal_removed_item_adds_no_candidate() {
 }
 
 /// The segmenter reads an unsorted sentence-start user gram as stored
-/// (fixtures/contract-policy record 1297-gram-partition-segmentation.md).
+/// (docs/findings/1297-gram-partition-segmentation.md).
 #[test]
 fn the_segmenter_reads_an_unsorted_user_gram_as_stored() {
     let user = TempUserDir::new("unsorted-segment");

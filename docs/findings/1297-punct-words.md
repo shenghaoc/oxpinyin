@@ -13,6 +13,6 @@
 
 **Conclusion:** accepted under the merged policy. Valid product grammar, ABI and persistent contracts remain. Runtime is linear in the input; parsing keeps borrowed header/row slices and removes the hex conversion/word-copy machinery.
 
-Policy evidence is in [1297-punct-words.json](../../fixtures/contract-policy/1297-punct-words.json).
+Accepted cases, on every cell: `punct-decode/misaligned-short` and `punct-decode/misaligned-terminated`. In each, the pin returns one more empty punctuation from the 1–3 trailing bytes (`punct_table.cpp:56-94`) and oxpinyin does not (`row_format::punct::decode_puncts`); every other punctuation is identical.
 
 **Named mutation (2026-10-26 UTC):** `M1297-byte-tail` — restore the byte-length loop condition; `punct-decode/misaligned-terminated` detects it (DIFFER, exit 1). Every mutated source was restored byte-for-byte. Rebuild with `just cell-artifacts --artifacts pinyin-capi,zhuyin-capi` for C-facing witnesses, then run the existing contract driver with the named `--cases`; tool and sink witnesses use `just heavy -- cargo test` with their existing test target. The restored touched-crate gate passes, and the three C-facing mutation witnesses return to their declared MATCH/POLICY-ACCEPTED outcomes.

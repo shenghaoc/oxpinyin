@@ -48,10 +48,15 @@ Return values, the phrase result and every other state are the pin's.
 The NULL-sentence path is not covered by this record: it makes the pin's
 own `g_utf8_strlen` call, whose critical is GLib's.
 
-`fixtures/contract-policy/1297-segment-critical.json` lists every case this
-record covers, bound with `just policy-record` from each cell's own capture (bdb, kc and
-tkrzw). Matching controls are outside this policy record.
+The record covers these cases, each in both facades:
+
+- On bdb, kc and tkrzw: `glib-924-segment-critical-{pinyin,zhuyin}` and
+  `issue542-phrase-segment-invalid-utf8-{pinyin,zhuyin}`, where only the pin
+  logs the critical; and `glib-924-segment-fatal-critical-{pinyin,zhuyin}`,
+  where the pin terminates with SIGTRAP and oxpinyin returns `false`.
+- On tkrzw only: `axis-c-encoding-{pinyin,zhuyin}-phrase_segment-ff-start`,
+  where only the pin logs the critical.
+
+Matching controls are outside this policy record.
 Unit tests: `surrogate_segment_matches_pin_length_and_no_critical` in both
 facades.
-
-Policy evidence is in [1297-segment-critical.json](../../fixtures/contract-policy/1297-segment-critical.json).

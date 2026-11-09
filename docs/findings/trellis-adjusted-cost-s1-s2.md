@@ -71,18 +71,15 @@ No frozen corpus or golden is regenerated. No workflow invokes the legacy
 
 The focused BDB ranking selection reuses `contract-diff.py` and its complete
 sentence-rank observer, including the captured S1/S2 spellings and table-off
-controls. Every intentionally moved case must match one complete pin/subject
-pair below and report `POLICY-ACCEPTED`; other observations fail. The broader
+controls. Every intentionally moved case is listed below and reported
+`POLICY-ACCEPTED`; other observations failed. The broader
 behavioral campaign, including corpus-wide movements, is PR4.
 
 ## Exact verified-cell expectations
 
-Status: accepted under the S1/S2 ruling. Each case has one registered
-pin/subject pair per verified cell (BDB, KC and sound-tkrzw), including the
-unchanged fresh-profile diagnostic. The block keeps the SHA-256 of each
-side's complete observation, a digest per field and the divergence as text,
-written by `just policy-record` from the differential's `--observations`
-capture.
+Status: accepted under the S1/S2 ruling. Each case is accepted on every
+verified cell (BDB, KC and sound-tkrzw) unless its row names fewer cells; the
+fresh-profile diagnostic is unchanged.
 
 | Moved case | Attribution |
 | --- | --- |
@@ -92,7 +89,7 @@ capture.
 | `table-conf-lambda-million` | S1/S2 special-cost completion: finite blended paths precede NaN unigram paths in beam and final-tail selection; only sentence/NBEST-prefix observations change. |
 | `table-conf-row-removed-gb` | S2 tie rule: with the GB dictionary row removed, 蠔, 獆, 皥 and 滈 tie at count 2 among the final tails. The pin breaks the tie by heap pop order (`get_top_results`, `src/lookup/phonetic_lookup.h:142-171 at 074a2219`, over the candidates `get_candidates` lists in node and slot order, `:272-297`, from `get_tails`, `:330-341`) and gets 獆; the ruled key breaks it by earlier batch position and gets 蠔. |
 | `table-conf-not-used-gb` | The same S2 tie rule with `gb_char.dbin NOT_USED`: the pin's heap pops 獆, the ruled key keeps 蠔. |
-| `axis-c-layout-pinyin-3-00000000`, `axis-c-layout-pinyin-4-00000000` | S2 tie rule on the syllable ri (`u` under scheme 3, `n` under scheme 4). 鈤 (`gbk_char.bin`, slot 8963) and 馹 (`gb_char.bin`, slot 5541) each have unigram 1, one pronunciation of frequency 3 for the key `ri`, and no sentence-start bigram row (frequency 0 of 13,857,886) in `libpinyin-data` 2.11.92-1. The pin therefore computes the same `m_poss` for both (`src/lookup/phonetic_lookup.h:650-663`; `src/storage/phrase_index.h:136-165`), and `trellis_value_less_than` (`:55-83`) orders neither first. It breaks the tie by heap pop order (`get_top_results`, `:142-171`, over the candidates `get_candidates` lists in node and slot order, `:272-297`, from `get_tails`, `:330-341`) and puts 鈤 second among the n-best sentences; the ruled key breaks it by earlier batch position and puts 馹 there. The other seven candidates and the nine-candidate multiset are identical. |
+| `axis-c-layout-pinyin-3-00000000`, `axis-c-layout-pinyin-4-00000000` | Registered on tkrzw only. S2 tie rule on the syllable ri (`u` under scheme 3, `n` under scheme 4). 鈤 (`gbk_char.bin`, slot 8963) and 馹 (`gb_char.bin`, slot 5541) each have unigram 1, one pronunciation of frequency 3 for the key `ri`, and no sentence-start bigram row (frequency 0 of 13,857,886) in `libpinyin-data` 2.11.92-1. The pin therefore computes the same `m_poss` for both (`src/lookup/phonetic_lookup.h:650-663`; `src/storage/phrase_index.h:136-165`), and `trellis_value_less_than` (`:55-83`) orders neither first. It breaks the tie by heap pop order (`get_top_results`, `:142-171`, over the candidates `get_candidates` lists in node and slot order, `:272-297`, from `get_tails`, `:330-341`) and puts 鈤 second among the n-best sentences; the ruled key breaks it by earlier batch position and puts 馹 there. The other seven candidates and the nine-candidate multiset are identical. |
 | `table-conf-lambda-negative-half` | S1/S2 special-cost completion: a negative λ leaves `bigram_lambda` negative and `unigram_lambda = 1 − λ` above one (`src/lookup/phonetic_lookup.h:712-713 at 074a2219`), so unigram steps stay finite (`:663`) while a blended step (`:692-693`) takes the log of a negative number, NaN, wherever −λ·b > (1−λ)·u. The ruled order puts NaN last; the pin's comparator does not order NaN at all. |
 | `table-conf-lambda-negative-two` | The same special-cost completion at λ = −2. |
 | `s2-nbest-longer-normal-precedence` | S2 changes the selected sentence tails for `xian`; `甲乙` becomes NBEST instead of NORMAL. The sentence prepend and NBEST-over-phrase precedence (`src/pinyin.cpp:1934-1947,2116-2125 at 074a2219`) remove its duplicate phrase row. The before-guess and sentence-suppressed lists remain identical. Registered on BDB only. |
@@ -120,23 +117,18 @@ fixtures and the separate S2 witness below.
 
 After #1400 merged, PR B rebased onto `9789880a`. The four GB/negative-lambda
 registrations and KC/tkrzw entries for the three positive-lambda cases now
-come from main. Their complete pin and subject digests are identical to PR B's
+come from main. Their pin and subject results are identical to PR B's
 prior observations; float scoring does not change them. PR B adds no duplicate
 registration or replacement record for those seven cases. The original BDB
 S1/S2 pairs are also unchanged. KC/tkrzw user-table-order pairs retain PR B's registrations. The three
 longer-normal registrations are replaced by the #913/#1398 split below.
 
-`just policy-record --migrate` converts the prior complete observations to
-schema 2. Acceptance still requires the digest of each complete observation;
-field digests and bounded divergence text provide diagnostics, not a weaker
-acceptance condition. The historical performance and size results were not
-rerun for this rebase.
+The historical performance and size results were not rerun for this rebase.
 
 The #1398 split preserves the former dynamic `longer-normal-*` full-model
 observation as `s2-nbest-longer-normal-precedence`. This witness retains the
 full model and its 757-row candidate lists because it protects the S2 selection
-interaction that contaminated the deduplication regression. Only digests are
-committed; the lists are compared live. On the pin, the sentence rows are 县
+interaction that contaminated the deduplication regression. On the pin, the sentence rows are 县
 and 现 and 甲乙 remains NORMAL at the end of the list. On the subject, the
 sentence rows are 甲乙 and 县 and NBEST precedence removes the NORMAL 甲乙.
 Only `with_sentence` differs; the other three observed lists agree.
@@ -151,8 +143,6 @@ equal-frequency case is `[(7, 甲乙)]`, and the LONGER-disabled control is
 the first two are `[(7, 甲乙)]` and the control is empty. These expectations
 follow `src/pinyin.cpp:1845-1866,1916-1927,2116-2138,2292-2300 at 074a2219`;
 there is only one complete sentence path, so S2 cannot select a different text.
-
-Policy evidence is in [trellis-adjusted-cost-s1-s2.json](../../fixtures/contract-policy/trellis-adjusted-cost-s1-s2.json).
 
 ## Verification
 
@@ -176,8 +166,8 @@ from #1400; the #913/#1398 split now removes their PR B registrations.
 
 The three `longer-normal-*` cases are not registered
 here; their reduced #913/#1398 fixture reports 3 MATCH on BDB, KC and tkrzw. The separate
-`s2-nbest-longer-normal-precedence` witness reports POLICY-ACCEPTED under
-the digest pair above, recorded with `just policy-record`. On the original
+`s2-nbest-longer-normal-precedence` witness reports POLICY-ACCEPTED on BDB
+with the difference described above. On the original
 #1411 head, removing the final
 `dedup_ranked_by_text(collected, &keys)` call in `Session::refresh_candidates`
 (`session/lookup.rs`), mutation `M913-drop-final-dedup`, makes the dynamic and
@@ -193,7 +183,7 @@ while the user bigram is a StashDB snapshot (`:53-90`). Tkrzw attaches HashDBM
 were verified against that pin. Both the pin and oxpinyin open the resulting
 system containers in the selected cases. Before the fixture correction at
 `21397188`, KC's three cases were INVALID: the pin exited 0 but oxpinyin failed
-initialization on the snapshot. No S2 digest or case registration changed.
+initialization on the snapshot. No S2 result or case registration changed.
 
 | Cell | Three #913 cases before | Three #913 cases after | Separate S2 witness before / after |
 | --- | --- | --- | --- |

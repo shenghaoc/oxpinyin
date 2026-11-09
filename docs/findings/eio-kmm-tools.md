@@ -25,16 +25,8 @@ Three registered `tool-diff` cases reach such a site:
   `check_result(bigram.get_magic_header(...))` fails
   (`gen_k_mixture_model.cpp:380`).
 
-Each case registers `pin_signal: -6` and `reproduces_signal: true`, and
-`fixtures/contract-policy/eio-kmm-tools.json` binds the complete observations.
-These utilities open the working container, so the entries are per cell, unlike the database-free
-marker records.
-
-Refreshed 2026-11-03 UTC: the entries were first bound at `494766c3`,
-when each cell's `fixtures/w3` directory still held `datagen-manifest.txt`.
-`4d60c774` (#1500) deleted that file. The tool runner copies the whole
-cell directory into the case's working directory, so both sides' `files`
-listing lost one name. That is the only change: exit, stdout and stderr
-digests are as first recorded.
-
-Policy evidence is in [eio-kmm-tools.json](../../fixtures/contract-policy/eio-kmm-tools.json).
+In each case both sides raise SIGABRT with the same stdout and files; only
+the pin writes the macro text on stderr. These utilities open the working
+container, so each case is accepted on bdb, kc and tkrzw, unlike the
+database-free records. The cases in `crates/oxpinyin-utils/tests/kmm_tools.rs`
+hold oxpinyin's side.

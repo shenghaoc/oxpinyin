@@ -61,9 +61,8 @@ mod frozen {
             },
         )]
         // zhuyin-invalid-utf8: utils/storage/gen_zhuyin_table.cpp at 074a2219: 101-334.
-        // Policy-accepted on every cell: docs/findings/eio-table-generator-invalid-utf8.md;
-        // the pin's own result is in
-        // fixtures/contract-policy/eio-table-generator-invalid-utf8.json.
+        // Policy-accepted on every cell: docs/findings/eio-table-generator-invalid-utf8.md; the pin
+        // dies with SIGSEGV where oxpinyin refuses with exit 1.
         #[case::zhuyin_invalid_utf8(
             &["in.txt"],
             b"",
@@ -77,9 +76,8 @@ mod frozen {
         )]
         // zhuyin-invalid-utf8-after-row: utils/storage/gen_zhuyin_table.cpp at 074a2219:
         // 101-334.
-        // Policy-accepted on every cell: docs/findings/eio-table-generator-invalid-utf8.md;
-        // the pin's own result is in
-        // fixtures/contract-policy/eio-table-generator-invalid-utf8.json.
+        // Policy-accepted on every cell: docs/findings/eio-table-generator-invalid-utf8.md; the pin
+        // dies with SIGSEGV where oxpinyin refuses with exit 1.
         #[case::zhuyin_invalid_utf8_after_row(
             &["in.txt"],
             b"",
@@ -92,8 +90,8 @@ mod frozen {
             },
         )]
         // zhuyin-missing-frequency: utils/storage/gen_zhuyin_table.cpp at 074a2219: 101-334.
-        // Policy-accepted on every cell: docs/findings/eio-zhuyin-missing-frequency.md; the
-        // pin's own result is in fixtures/contract-policy/eio-zhuyin-missing-frequency.json.
+        // Policy-accepted on every cell: docs/findings/eio-zhuyin-missing-frequency.md; the pin
+        // dies with SIGSEGV where oxpinyin refuses with exit 1.
         #[case::zhuyin_missing_frequency(
             &["in.txt"],
             b"",

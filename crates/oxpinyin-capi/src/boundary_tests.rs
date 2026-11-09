@@ -1,9 +1,8 @@
 //! Decisions of the C boundary on the w3 mini fixture: refusals, aborts,
 //! out-parameters and the files a call writes. Each test asserts only the
-//! deciding values. An abort test asserts the abort status alone: the
-//! child's only stderr is the first init's `open …/user.conf failed.` line
-//! (fixtures/contract-policy record pin-abort-assert-line.md: oxpinyin
-//! writes no assertion line).
+//! deciding values. An abort test asserts the abort status alone: the child's
+//! only stderr is the first init's `open …/user.conf failed.` line
+//! (docs/findings/pin-abort-assert-line.md: oxpinyin writes no assertion line).
 
 use std::ffi::c_char;
 use std::path::Path;
@@ -1378,8 +1377,8 @@ fn an_absolute_user_file_lands_under_the_user_directory() {
 // ── User store and training ───────────────────────────────────────────────
 
 /// Training over an unpartitioned sentence-start gram whose items are not
-/// sorted answers true where the pin aborts (fixtures/contract-policy
-/// record 1297-gram-partition-training.md).
+/// sorted answers true where the pin aborts
+/// (docs/findings/1297-gram-partition-training.md).
 #[test]
 fn training_over_an_unsorted_start_gram_answers_true() {
     let user = TempUserDir::new("train-unsorted-gram");
@@ -1865,9 +1864,9 @@ fn glib_utf8(words: &[u32]) -> Vec<u8> {
     out
 }
 
-/// A NULL prefix to `guess_sentence_with_prefix` is no prefix: true, and
-/// the sentence is the unigram choice 丙 (fixtures/contract-policy record
-/// upstream-divergences.md, "NULL prediction prefix").
+/// A NULL prefix to `guess_sentence_with_prefix` is no prefix: true, and the
+/// sentence is the unigram choice 丙 (docs/findings/upstream-divergences.md,
+/// "NULL prediction prefix").
 #[test]
 fn a_null_sentence_prefix_is_no_prefix() {
     let scratch = tempfile::tempdir().expect("scratch");
@@ -1914,10 +1913,9 @@ fn a_sentence_prefix_above_unicode_is_converted() {
     close(context, instance);
 }
 
-/// The punctuation prediction on a candidate's own borrowed string answers
-/// true with no row and leaves the sentence (fixtures/contract-policy
-/// record upstream-divergences.md, "Aliased prediction prefix
-/// use-after-free").
+/// The punctuation prediction on a candidate's own borrowed string answers true
+/// with no row and leaves the sentence (docs/findings/upstream-divergences.md,
+/// "Aliased prediction prefix use-after-free").
 #[test]
 fn a_borrowed_punctuation_prefix_answers_true_with_no_row() {
     let user = TempUserDir::new("punct-alias");
@@ -2072,9 +2070,9 @@ fn auxiliary_text_without_a_parse_is_an_empty_string() {
 const CRITICAL: glib_sys::GLogLevelFlags = glib_sys::G_LOG_LEVEL_CRITICAL;
 
 /// NULL string arguments after defined prior work (#1279,
-/// fixtures/contract-policy record upstream-divergences.md, "NULL string
-/// conversion after defined prior work"): the segment and parse entries
-/// answer as for an empty string, the others refuse.
+/// docs/findings/upstream-divergences.md, "NULL string conversion after defined
+/// prior work"): the segment and parse entries answer as for an empty string,
+/// the others refuse.
 #[test]
 fn null_string_arguments_after_prior_work() {
     let user = TempUserDir::new("null-strings");

@@ -173,16 +173,21 @@ what used to differ.
   punctuation (`maxlen` zero) when 1–3 bytes remain after a terminated run.
 - **What oxpinyin does instead:** `crates/oxpinyin-data/src/row_format.rs`
   `punct::decode_puncts` ends the run at the value's last whole word without
-  reading past it, and walks a misaligned tail as the pin's compiled walk
-  does. Its result is the pin's visible result.
-- **Externally observable:** only when the pin's read faults, which needs
-  the copied value to end where mapped memory ends. Otherwise the rows
-  are identical. Class (b): the out-of-bounds read and its possible fault
-  are not reproduced.
-- **Cases:** `punct-decode/unterminated`, `punct-decode/unterminated-zero`,
-  `punct-decode/misaligned-terminated`,
-  `punct-decode/misaligned-unterminated` and `punct-decode/misaligned-short`
-  of `contract-diff.py` MATCH on bdb (#1144, 2026-10-26 UTC).
+  reading past it, and ignores 1–3 trailing bytes, so a misaligned value
+  gets no extra empty punctuation. Otherwise its result is the pin's
+  visible result.
+- **Externally observable:** when the pin's read faults, which needs
+  the copied value to end where mapped memory ends, and in the pin's
+  extra empty punctuation when 1–3 bytes follow a terminated run or form
+  the whole value. Otherwise the rows are identical.
+  Class (b): the out-of-bounds read and its possible fault are not
+  reproduced.
+- **Cases:** `punct-decode/unterminated`, `punct-decode/unterminated-zero`
+  and `punct-decode/misaligned-unterminated` of `contract-diff.py` MATCH on
+  bdb (#1144, 2026-10-26 UTC). `punct-decode/misaligned-short` and
+  `punct-decode/misaligned-terminated` are POLICY-ACCEPTED on every cell:
+  the pin returns the empty punctuation and oxpinyin does not
+  ([1297-punct-words](1297-punct-words.md)).
 
 ### Aliased prediction prefix use-after-free
 
@@ -2856,9 +2861,8 @@ texts are in
   `session::tests::candidate_scores_follow_rusts_saturating_conversion`,
   which holds oxpinyin's value. The pin observations `row58-unsigned-score-off`
   and `row58-unsigned-score-on` were `POLICY-ACCEPTED` on bdb, kc and sound tkrzw against the amd64 pin,
-  with the digests in
-  [`arm64-pin-portability-1137.md`](arm64-pin-portability-1137.md)
-  (recorded 2026-10-30 UTC, #1416; before #1416 they were MATCH on the
+  as [`arm64-pin-portability-1137.md`](arm64-pin-portability-1137.md)
+  records (2026-10-30 UTC, #1416; before #1416 they were MATCH on the
   three cells and arm64-excluded by #1137).
 - **Proposed upstream report:** issue A in
   `arm64-pin-portability-1137.md` ("pinyin candidate frequency:
@@ -2902,10 +2906,10 @@ texts are in
 - **Held by:** `table-conf-lambda-million-zhuyin`,
   `table-conf-lambda-one-and-a-half-zhuyin` and
   `table-conf-lambda-two-zhuyin`, `POLICY-ACCEPTED` on bdb, kc and
-  sound tkrzw against the amd64 pin with the digests in
-  [`1378-zhuyin-selection.md`](1378-zhuyin-selection.md), whose entries
-  already held the #1378 selection difference in the same cases
-  (re-recorded 2026-10-30 UTC, #1416, on the three cells).
+  sound tkrzw against the amd64 pin under
+  [`1378-zhuyin-selection.md`](1378-zhuyin-selection.md), which
+  already accepted the #1378 selection difference in the same cases
+  (recorded 2026-10-30 UTC, #1416, on the three cells).
 - **Proposed upstream report:** issue B in
   `arm64-pin-portability-1137.md` ("libzhuyin candidate frequency: λ > 1
   orders candidates differently on arm64").
@@ -2993,8 +2997,7 @@ lambda validation, external calls, persistent formats and C ABI are unchanged.
 
 - **Record:** [1297-gram-partition-segmentation](1297-gram-partition-segmentation.md).
 - **Status:** accepted. `user-gram-unsorted-phrase-segment` is
-  POLICY-ACCEPTED on bdb, kc and sound tkrzw, with its complete-observation
-  digests recorded separately for each cell.
+  POLICY-ACCEPTED on bdb, kc and sound tkrzw.
 - **Upstream source cite:** `src/storage/ngram.cpp:231–250,308–349`
   and `src/lookup/phrase_lookup.cpp:268–290` at `074a2219`.
 - **Mechanism:** the stored-order merge of an out-of-order gram violates
@@ -3010,8 +3013,7 @@ lambda validation, external calls, persistent formats and C ABI are unchanged.
 - **Record:** [1297-gram-partition-training](1297-gram-partition-training.md).
 - **Status:** accepted. `abort-train-unsorted-set-freq-miss-pinyin` and
   `abort-train-unsorted-set-freq-miss-zhuyin` are POLICY-ACCEPTED on bdb,
-  kc and sound tkrzw, each with complete-observation digests recorded
-  separately for each cell.
+  kc and sound tkrzw.
 - **Upstream source cite:** `src/storage/ngram.cpp:178–205,231–271`
   and `src/lookup/phonetic_lookup.h:888–903` at `074a2219`.
 - **Mechanism:** an out-of-order user gram violates the search predicate's
@@ -3097,7 +3099,7 @@ of a line without a token, and reads through the NULL `split_line`
 answers for an escape ending the line (`src/storage/tag_utility.cpp:137`,
 `:181-190`); the reference pin dies with SIGSEGV. oxpinyin's utility makes
 the pin's calls up to that read, GLib's criticals included, then refuses
-with exit 1. Recorded and bound in
+with exit 1. Recorded in
 [eio-kmm-to-interpolation-undefined-lines.md](eio-kmm-to-interpolation-undefined-lines.md).
 A truncated UTF-8 sequence at the line's end, whose next `*cur` reads
 whatever follows the string, is refused the same way; the pin has no
@@ -3121,7 +3123,7 @@ steps 5 or 6, differ. Recorded with its cases in
 utilities' `assert` (`check_result`) and `g_return_val_if_fail` checks are
 plain Rust: on the pin's condition oxpinyin answers the pin's value or
 aborts where the pin aborts, without glibc's assertion line or GLib's
-critical. Stdout and the SIGABRT exit are the pin's. Recorded and bound in
+critical. Stdout and the SIGABRT exit are the pin's. Recorded in
 [eio-tool-check-messages.md](eio-tool-check-messages.md).
 
 The same ruling covers the seven KMM utilities' asserts:
@@ -3152,7 +3154,7 @@ facades' `phrase_segment` on invalid UTF-8 (`pinyin.cpp:1454`,
 (`phrase_index.cpp:354-356`, `:361`) keep the pin's return values, state
 and continuation and log no critical. Lost: the critical a caller's log
 handler or stderr receives, and the pin's abort under GLib fatal-critical
-settings. Recorded and bound in
+settings. Recorded in
 [1297-segment-critical.md](1297-segment-critical.md) and
 [1297-layout-criticals.md](1297-layout-criticals.md).
 
@@ -3262,5 +3264,5 @@ Any distinguishing unsorted result is a language artefact under the
 
 ### Berkeley DB handles whose open failed (2026-11-02 UTC, #1516)
 
-[bdb-failed-handle](bdb-failed-handle.md) holds the accepted digests.
+[bdb-failed-handle](bdb-failed-handle.md) lists the accepted cases.
 The explanation is [compatibility register, row 113](compatibility-policy.md#bdb-failed-handles).
