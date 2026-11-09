@@ -6,9 +6,10 @@ use oxpinyin_core::Dictionary;
 use oxpinyin_engine::{EngineError, MatrixKey, key_pronounced_by, remember_walk};
 use oxpinyin_user::{PinyinKey, toned_key};
 
-use crate::iterators::{ImportPlan, ImportRead, plan_add};
+use crate::iterators::{ImportPlan, ImportRead};
 use crate::state::{instance_mut, instance_ref};
 use crate::types::PinyinInstance;
+use oxpinyin_facade::plan_add;
 
 /// Remember a user-provided phrase with its current pinyin context.
 ///
@@ -153,7 +154,13 @@ fn add_remembered_path(
         let Some(user) = read.user else {
             return false;
         };
-        match plan_add(&read, user, phrase.clone(), keys.clone()) {
+        match plan_add(
+            read.index,
+            read.dict.as_ref(),
+            user,
+            phrase.clone(),
+            keys.clone(),
+        ) {
             ImportPlan::Abort => std::process::abort(),
             ImportPlan::Refuse | ImportPlan::LookupFailed => return false,
             ImportPlan::Add { phrase, .. } => phrase,

@@ -5,7 +5,8 @@
 use std::sync::atomic::Ordering;
 
 use oxpinyin_core::{
-    DoublePinyinParse, FullPinyinIndexParse, OptionBits, PhraseToken, ZhuyinParse,
+    Dictionary, DoublePinyinParse, FullPinyinIndexParse, LanguageModel, OptionBits, PhraseText,
+    PhraseToken, ZhuyinParse,
 };
 use oxpinyin_engine::{
     CandidateList, EngineError, check_lookup_offset_range, normalize_lookup_offset,
@@ -273,6 +274,57 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
         self.session.normalized_lookup_offset(offset)
     }
 
+    /// The phrase-table tokens stored for `phrase`, in library order.
+    #[must_use]
+    pub fn phrase_tokens(&self, phrase: &PhraseText) -> Vec<u32> {
+        self.dict
+            .tokens_for_ucs4(&phrase.outward_words().collect::<Vec<_>>())
+            .iter()
+            .map(|token| token.value())
+            .collect()
+    }
+
+    /// The phrase text of `token`, when its library is loaded and owns it.
+    #[must_use]
+    pub fn token_text(&self, token: u32) -> Option<PhraseText> {
+        self.dict.token_text(token)
+    }
+
+    /// The stored pronunciation count of `token`.
+    #[must_use]
+    pub fn token_pronunciation_count(&self, token: u32) -> Option<u32> {
+        self.dict.token_pronunciation_count(token)
+    }
+
+    /// The active parse's consumed input length, in its own coordinates.
+    #[must_use]
+    pub fn parsed_input_length(&self) -> usize {
+        self.parsed_len
+    }
+
+    /// Whether a sentence lookup has run since the last full reset.
+    #[must_use]
+    pub fn sentence_lookup_active(&self) -> bool {
+        self.session.sentence_lookup_active()
+    }
+
+    /// The decoded phrases of n-best row `index`, while a lookup is active.
+    pub fn sentence_phrases(&self, index: u8) -> Option<impl Iterator<Item = &PhraseText>> {
+        self.session.sentence_phrases(index)
+    }
+
+    /// The phrase-segment result's token count.
+    #[must_use]
+    pub fn phrase_count(&self) -> usize {
+        self.phrase_result.len()
+    }
+
+    /// The phrase-segment result's token at `index`, if the result has one.
+    #[must_use]
+    pub fn phrase_token(&self, index: usize) -> Option<u32> {
+        self.phrase_result.get(index).map(|token| token.value())
+    }
+
     /// Whether training row `index` reaches one of the pin's own
     /// training aborts — the index past nonempty results, a stale forced
     /// phrase or a span outside the matrix
@@ -293,6 +345,39 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
                 | EngineError::StaleTrainingConstraint { .. }
                 | EngineError::StaleTrainingSpan { .. })
         )
+    }
+
+    /// The token's unigram frequency, including the in-memory add overlay:
+    /// the system library answers from the language model, the user-file
+    /// libraries from the store, and a token whose library or item is absent
+    /// answers `None`.
+    #[must_use]
+    pub fn token_unigram_frequency(&self, token: u32) -> Option<u64> {
+        let nibble = token >> 24;
+        let is_system = u8::try_from(nibble).is_ok_and(|index| self.dict.is_system_library(index));
+        let base = match nibble {
+            _ if is_system => {
+                if !self.dict.token_exists(token) {
+                    None
+                } else {
+                    self.lm
+                        .unigram_freq(&PhraseToken::new(token))
+                        .ok()
+                        .flatten()
+                }
+            }
+            5..=7 => self
+                .user
+                .filter(|_| self.dict.library_visible(nibble))
+                .and_then(|store| store.user_unigram_frequency(token).ok().flatten()),
+            _ => None,
+        }?;
+        let overlay = if is_system {
+            0
+        } else {
+            self.dict.unigram_delta(token).unwrap_or(0)
+        };
+        Some(base + overlay)
     }
 }
 
@@ -343,6 +428,128 @@ impl<
         self.parse_matrix.clear();
     }
 
+    /// Segment `text` and retain the result on the instance.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] from the engine's phrase span DP.
+    pub fn segment_phrases(&mut self, text: &str) -> Result<bool, EngineError> {
+        let (matched, tokens) = self.session.phrase_segment(text)?;
+        self.phrase_result = tokens;
+        Ok(matched)
+    }
+
+    /// Segment raw UCS-4 words and retain the result on the instance.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] from the engine's phrase span DP.
+    pub fn segment_phrases_ucs4(&mut self, words: &[u32]) -> Result<bool, EngineError> {
+        let (matched, tokens) = self.session.phrase_segment_ucs4(words)?;
+        self.phrase_result = tokens;
+        Ok(matched)
+    }
+
+    /// Selects the candidate at `source_index` in the window the caller saw,
+    /// or its promoted token when the facade promoted an addon row first.
+    /// Clears the re-anchored window and answers the chosen row's absolute
+    /// end in that window, when the window was anchored.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] from the engine's selection.
+    pub fn select_candidate(
+        &mut self,
+        source_index: usize,
+        promoted: Option<PhraseToken>,
+    ) -> Result<Option<usize>, EngineError> {
+        let (window_end, selection) = {
+            let state = self.state.borrow();
+            let window = state.anchored_window.as_ref();
+            let window_end = window.and_then(|(anchor, window)| {
+                window
+                    .get(source_index)
+                    .map(|row| anchor + row.span_start() + row.consumed_bytes())
+            });
+            let selection = match (promoted, window) {
+                (Some(promoted), Some((anchor, window))) => {
+                    self.session
+                        .select_anchored_promoted(source_index, window, *anchor, promoted)
+                }
+                (Some(promoted), None) => self.session.select_promoted(source_index, promoted),
+                (None, Some((anchor, window))) => {
+                    self.session.select_anchored(source_index, window, *anchor)
+                }
+                (None, None) => self.session.select(source_index),
+            };
+            (window_end, selection)
+        };
+        selection?;
+        self.state.borrow_mut().anchored_window = None;
+        Ok(window_end)
+    }
+
+    /// Clears the constraint at `offset`, mapping the caller's original-input
+    /// offset to the active parse mode's session coordinates first. The
+    /// caller selects the transformed seams its facade can populate.
+    pub fn clear_abi_constraint(
+        &mut self,
+        offset: usize,
+        map_double_pinyin: bool,
+        map_full_pinyin: bool,
+    ) -> bool {
+        let session_offset = if let Some(parse) = self.zhuyin_parse.as_ref() {
+            crate::zhuyin_session_offset(parse, offset)
+        } else if map_double_pinyin && let Some(parse) = self.double_parse.as_ref() {
+            crate::double_session_offset(parse, offset)
+        } else if map_full_pinyin && let Some(parse) = self.full_parse.as_ref() {
+            crate::full_session_offset(parse, offset)
+        } else {
+            offset
+        };
+        self.session.clear_constraint(session_offset)
+    }
+
+    /// Runs the n-best sentence lookup after the caller's matrix check. A
+    /// parse without keys validates against the empty matrix and keeps the
+    /// previous sentence rows.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] from the lookup.
+    pub fn guess_sentence_with_matrix(
+        &mut self,
+        matrix_has_keys: bool,
+    ) -> Result<bool, EngineError> {
+        if !matrix_has_keys {
+            self.session.discard_composition();
+            return Ok(false);
+        }
+        self.session.guess_sentence()
+    }
+
+    /// Runs the prefix-seeded sentence lookup after the caller's matrix
+    /// check.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] from the lookup.
+    pub fn guess_sentence_with_prefix_and_matrix(
+        &mut self,
+        prefixes: &[u32],
+        matrix_has_keys: bool,
+    ) -> Result<bool, EngineError> {
+        if !matrix_has_keys {
+            self.session.discard_composition();
+            return Ok(false);
+        }
+        let prefix_tokens: Vec<PhraseToken> = prefixes
+            .iter()
+            .map(|&token| PhraseToken::new(token))
+            .collect();
+        self.session.guess_sentence_with_prefix(&prefix_tokens)
+    }
+
     /// The full reset — `pinyin_reset`/`zhuyin_reset`'s law: the parse
     /// path, the phrase result, and the whole session (input, selection
     /// record, n-best rows, constraint store) all go.
@@ -361,4 +568,40 @@ impl<
     pub fn begin_parse(&mut self, _original: &[u8]) {
         self.reset_parse_state();
     }
+}
+
+/// The lookup faults of a predecessor's user bigram. A value too short for
+/// its total is the pin's assert in `get_total_freq`; a Kyoto Cabinet read
+/// that fails after its size check also aborts. A read past the value logs
+/// the one warning and answers `true`; every other fault answers `false`.
+pub fn refuse_lookup_gram(name: &str, error: &EngineError, log: impl FnOnce(&str)) -> bool {
+    let message = match error {
+        EngineError::TonedIncompleteKey => std::process::abort(),
+        EngineError::ShortLookupPredecessor { .. } | EngineError::ReadAfterCheck { .. } => {
+            std::process::abort();
+        }
+        EngineError::UnsafeLookupPredecessor { .. } => {
+            "a user bigram value would be read past its end (upstream reads past it)"
+        }
+        EngineError::CandidateIndexOutOfRange { .. }
+        | EngineError::LookupOffsetPastSeparator { .. }
+        | EngineError::LookupOffsetOutOfRange { .. }
+        | EngineError::LookupOffsetInsideCharacter { .. }
+        | EngineError::SelectionAnchorBeforeComposition { .. }
+        | EngineError::ZeroKeyOffsetCheck { .. }
+        | EngineError::MatrixColumnAssert { .. }
+        | EngineError::StaleTrainingConstraint { .. }
+        | EngineError::UnsafeTrainingPredecessor { .. }
+        | EngineError::ShortTrainingPredecessor { .. }
+        | EngineError::TrainingSetFreqMiss { .. }
+        | EngineError::FailedUserBigramStore { .. }
+        | EngineError::StaleTrainingSpan { .. }
+        | EngineError::OverlongUserIndexKey { .. }
+        | EngineError::ReduceTokensCount { .. }
+        | EngineError::UserModel(_)
+        | EngineError::Graph(_)
+        | EngineError::Scoring(_) => return false,
+    };
+    log(&format!("{name}: {message}"));
+    true
 }

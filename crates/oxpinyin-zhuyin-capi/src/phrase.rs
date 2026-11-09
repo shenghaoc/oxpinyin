@@ -39,11 +39,8 @@ pub extern "C" fn zhuyin_phrase_segment(
         unsafe {
             glib_sys::g_utf8_strlen(sentence, -1);
         }
-        return match inst.core.session.phrase_segment("") {
-            Ok((matched, tokens)) => {
-                inst.core.phrase_result = tokens;
-                matched
-            }
+        return match inst.core.segment_phrases("") {
+            Ok(matched) => matched,
             Err(error) => {
                 crate::sentence::refuse_lookup_gram("phrase_segment", &error);
                 false
@@ -60,17 +57,13 @@ pub extern "C" fn zhuyin_phrase_segment(
         return false;
     };
     let outcome = match text.as_str() {
-        Some(text) => inst.core.session.phrase_segment(text),
+        Some(text) => inst.core.segment_phrases(text),
         None => inst
             .core
-            .session
-            .phrase_segment_ucs4(text.stored_words().unwrap_or_default()),
+            .segment_phrases_ucs4(text.stored_words().unwrap_or_default()),
     };
     match outcome {
-        Ok((matched, tokens)) => {
-            inst.core.phrase_result = tokens;
-            matched
-        }
+        Ok(matched) => matched,
         Err(error) => {
             crate::sentence::refuse_lookup_gram("zhuyin_phrase_segment", &error);
             false
@@ -93,7 +86,7 @@ pub extern "C" fn zhuyin_get_n_phrase(instance: *mut ZhuyinInstance, num: *mut G
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
-    let count = inst.core.phrase_result.len();
+    let count = inst.core.phrase_count();
     if !num.is_null() {
         // SAFETY: Null-checked above.
         unsafe {
@@ -129,13 +122,13 @@ pub extern "C" fn zhuyin_get_phrase_token(
             *token = crate::types::null_token;
         }
     }
-    if index as usize >= inst.core.phrase_result.len() {
+    let Some(value) = inst.core.phrase_token(index as usize) else {
         return false;
-    }
+    };
     if !token.is_null() {
         // SAFETY: Null-checked above.
         unsafe {
-            *token = inst.core.phrase_result[index as usize].value();
+            *token = value;
         }
     }
     true

@@ -25,10 +25,8 @@ pub extern "C" fn zhuyin_guess_sentence(instance: *mut ZhuyinInstance) -> bool {
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
     let mut inst = unsafe { instance_mut(instance) };
-    if refuse_empty_matrix(&mut inst) {
-        return false;
-    }
-    match inst.core.session.guess_sentence() {
+    let matrix_has_keys = matrix_has_keys(&inst.read());
+    match inst.core.guess_sentence_with_matrix(matrix_has_keys) {
         Ok(found) => found,
         Err(error) => {
             refuse_lookup_gram("zhuyin_guess_sentence", &error);
@@ -48,49 +46,7 @@ pub extern "C" fn zhuyin_guess_sentence(instance: *mut ZhuyinInstance) -> bool {
 /// `:167`, `:318-349`; register row 98, class (b)) logs the one warning, and
 /// the call answers `true` when `error` is that read.
 pub(crate) fn refuse_lookup_gram(name: &str, error: &oxpinyin_engine::EngineError) -> bool {
-    let message = match error {
-        // Register row 4, `pinyin_phrase3.h:152`: a table search of the
-        // guess met a key path whose first initial-only key carries a tone.
-        oxpinyin_engine::EngineError::TonedIncompleteKey => std::process::abort(),
-        oxpinyin_engine::EngineError::ShortLookupPredecessor { .. }
-        | oxpinyin_engine::EngineError::ReadAfterCheck { .. } => std::process::abort(),
-        oxpinyin_engine::EngineError::UnsafeLookupPredecessor { .. } => {
-            "a user bigram value would be read past its end (upstream reads past it)"
-        }
-        oxpinyin_engine::EngineError::CandidateIndexOutOfRange { .. }
-        | oxpinyin_engine::EngineError::LookupOffsetPastSeparator { .. }
-        | oxpinyin_engine::EngineError::LookupOffsetOutOfRange { .. }
-        | oxpinyin_engine::EngineError::LookupOffsetInsideCharacter { .. }
-        | oxpinyin_engine::EngineError::SelectionAnchorBeforeComposition { .. }
-        | oxpinyin_engine::EngineError::ZeroKeyOffsetCheck { .. }
-        | oxpinyin_engine::EngineError::MatrixColumnAssert { .. }
-        | oxpinyin_engine::EngineError::StaleTrainingConstraint { .. }
-        | oxpinyin_engine::EngineError::UnsafeTrainingPredecessor { .. }
-        | oxpinyin_engine::EngineError::ShortTrainingPredecessor { .. }
-        | oxpinyin_engine::EngineError::TrainingSetFreqMiss { .. }
-        | oxpinyin_engine::EngineError::FailedUserBigramStore { .. }
-        | oxpinyin_engine::EngineError::StaleTrainingSpan { .. }
-        | oxpinyin_engine::EngineError::OverlongUserIndexKey { .. }
-        | oxpinyin_engine::EngineError::ReduceTokensCount { .. }
-        | oxpinyin_engine::EngineError::UserModel(_)
-        | oxpinyin_engine::EngineError::Graph(_)
-        | oxpinyin_engine::EngineError::Scoring(_) => return false,
-    };
-    crate::ffi::log_warning(&format!("{name}: {message}"));
-    true
-}
-
-// fill_matrix leaves an empty matrix whenever the parser places no keys,
-// even when separators consume bytes (074a2219, phonetic_key_matrix.cpp:34-38).
-// Validate against it, but keep the previous sentence rows: get_nbest_match
-// returns false before results->clear (074a2219, phonetic_lookup.h:743-748;
-// zhuyin.cpp:902-907). The same rule applies to the prefix-seeded lookup.
-fn refuse_empty_matrix(inst: &mut crate::state::CapiInstanceMut<'_>) -> bool {
-    if matrix_has_keys(&inst.read()) {
-        return false;
-    }
-    inst.core.session.discard_composition();
-    true
+    oxpinyin_facade::refuse_lookup_gram(name, error, crate::ffi::log_warning)
 }
 
 fn matrix_has_keys(inst: &crate::state::CapiInstanceRead<'_>) -> bool {
@@ -149,14 +105,11 @@ pub extern "C" fn zhuyin_guess_sentence_with_prefix(
     else {
         std::process::abort();
     };
-    if refuse_empty_matrix(&mut inst) {
-        return false;
-    }
-    let prefix_tokens: Vec<oxpinyin_core::PhraseToken> = prefixes
-        .iter()
-        .map(|&token| oxpinyin_core::PhraseToken::new(token))
-        .collect();
-    match inst.core.session.guess_sentence_with_prefix(&prefix_tokens) {
+    let matrix_has_keys = matrix_has_keys(&inst.read());
+    match inst
+        .core
+        .guess_sentence_with_prefix_and_matrix(&prefixes, matrix_has_keys)
+    {
         Ok(found) => found,
         Err(error) => {
             refuse_lookup_gram("zhuyin_guess_sentence_with_prefix", &error);
@@ -192,10 +145,10 @@ pub extern "C" fn zhuyin_get_sentence(
     // `zhuyin_guess_sentence` since the last reset — it returns `false` and
     // leaves `*sentence` untouched (`zhuyin.cpp:988-989`). The raw preedit
     // is never an answer.
-    if !inst.core.session.sentence_lookup_active() {
+    if !inst.core.sentence_lookup_active() {
         return false;
     }
-    match inst.core.session.sentence_phrases(0) {
+    match inst.core.sentence_phrases(0) {
         Some(phrases) => write_owned_sentence(phrases, sentence),
         None => false,
     }

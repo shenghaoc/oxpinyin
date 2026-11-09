@@ -9,8 +9,8 @@ use std::ptr;
 
 use oxpinyin_core::graph::SegmentGraph;
 use oxpinyin_core::{OptionBits, PINYIN_CORRECT_ALL, USE_TONE};
-use oxpinyin_facade::{BigramExportWalk, BigramStep, ExportStep};
-use oxpinyin_user::{MAX_PHRASE_LENGTH, PinyinKey, UserStore, is_user_file_library, toned_key};
+use oxpinyin_facade::{BigramExportWalk, BigramStep, ExportStep, plan_add};
+use oxpinyin_user::{MAX_PHRASE_LENGTH, PinyinKey, UserStore, toned_key};
 
 use crate::ffi::{malloc_cstr_with, strconcat_pair, strdup, strdup_raw, strjoinv};
 use crate::state::{ContextOwner, context_mut, context_owner, context_ref, owner_mut, owner_ref};
@@ -134,7 +134,7 @@ pub fn begin_add_phrases_impl(context: *mut PinyinContext, index: u8) -> *mut Im
     // `begin_add_phrases` starts with a compact (`pinyin.cpp:657`,
     // `zhuyin.cpp:542`); a layout-failed empty sub-index's local total
     // becomes zero there.
-    let _compacted = ctx.core.compact_layout_failed();
+    ctx.core.begin_import();
     // SAFETY: the public context is live for this serialized constructor call.
     let owner = unsafe { context_owner(context) };
     let handle = ImportHandle {
@@ -252,25 +252,7 @@ pub extern "C" fn pinyin_iterator_add_phrase(
 }
 
 /// What [`pinyin_iterator_add_phrase`] does with one pair before it writes.
-pub(crate) enum ImportPlan {
-    /// The pin's ordinary `false`.
-    Refuse,
-    /// A phrase-table lookup failed outright: no pin counterpart, one
-    /// warning and `false`.
-    LookupFailed,
-    /// One of the pin's asserts: `reduce_tokens`' count
-    /// (`phrase_large_table3.h:95`, register row 74) or `_add_phrase`'s
-    /// same-library, length and text checks (`pinyin.cpp:554`, `:568`,
-    /// `:571`, row 93).
-    Abort,
-    /// The add goes ahead, with the same-library token the phrase table
-    /// already holds for the phrase, if any.
-    Add {
-        phrase: oxpinyin_core::PhraseText,
-        keys: Vec<PinyinKey>,
-        original: Option<u32>,
-    },
-}
+pub(crate) use oxpinyin_facade::ImportPlan;
 
 /// `pinyin.cpp:614-652` and `_add_phrase` (`:514-611`) up to the add calls:
 /// the parse, the length gates and the phrase-table checks, in the pin's
@@ -312,79 +294,7 @@ fn plan_import(
     if length == 0 || length >= MAX_PHRASE_LENGTH || length != keys.len() {
         return ImportPlan::Refuse;
     }
-    plan_add(handle, user, phrase, keys)
-}
-
-/// `_add_phrase` (`pinyin.cpp:514-611`) up to its add calls: the phrase-table
-/// search and the asserts it carries, for the library `handle.index`. The
-/// import path and `pinyin_remember_user_input` (through
-/// `_remember_phrase_recur`, `pinyin.cpp:3702`) both reach it.
-pub(crate) fn plan_add(
-    handle: &ImportRead<'_>,
-    user: &UserStore,
-    phrase: oxpinyin_core::PhraseText,
-    keys: Vec<PinyinKey>,
-) -> ImportPlan {
-    let length = phrase.phrase_length();
-    // Search once and preserve both tables' token multiplicity before
-    // reduce_tokens validates the combined count (074a2219
-    // phrase_large_table3.h:77-95).
-    let Ok(tokens) = phrase_table_tokens(user, handle.dict.as_ref(), &phrase) else {
-        return ImportPlan::LookupFailed;
-    };
-    if tokens.len() > 4 {
-        return ImportPlan::Abort;
-    }
-    // 074a2219 pinyin.cpp:533-571: the pin then walks the phrase table's
-    // tokens for the phrase. Two tokens in the same sub-index library trip
-    // `assert(PHRASE_INDEX_LIBRARY_INDEX(token) != index)` (`:554`); a lone
-    // one whose phrase-index item has another length trips
-    // `assert(phrase_length == item.get_phrase_length())` (`:568`), and one
-    // of the same length with other text the `memcmp` assert (`:571`). The
-    // phrase table is the `user_phrase_index` membership plus the system
-    // phrase index; the item text is read without its pronunciation view.
-    let same_library: Vec<u32> = tokens
-        .into_iter()
-        .filter(|token| token >> 24 == u32::from(handle.index))
-        .collect();
-    if same_library.len() > 1 {
-        return ImportPlan::Abort;
-    }
-    if let Some(&token) = same_library.first() {
-        let item_text = if let Some(dict) = handle.dict.as_ref() {
-            dict.token_text(token)
-        } else {
-            user.phrase_text(token).ok().flatten().and_then(|words| {
-                oxpinyin_core::PhraseText::from_stored_words(words.into_iter().map(Some))
-            })
-        };
-        // A missing item leaves the pin's PhraseItem at length zero;
-        // :568 then asserts before any import mutation.
-        // The stored length first, then every stored word (`pinyin.cpp:568-571`).
-        let same_length = item_text
-            .as_ref()
-            .is_some_and(|text| text.phrase_length() == length);
-        let same_words = item_text.as_ref().is_some_and(|text| {
-            text.stored_words().map_or_else(
-                || text.outward_words().eq(phrase.outward_words()),
-                |words| words.iter().copied().eq(phrase.outward_words()),
-            )
-        });
-        if !(same_length && same_words) {
-            return ImportPlan::Abort;
-        }
-    }
-    // The pin walks the tokens and asserts for any library index
-    // (`pinyin.cpp:544-571`); only then does `get_range` reject a library
-    // that is not loaded (`:586-588`).
-    if !is_user_file_library(handle.index) && !user.is_system_library(handle.index) {
-        return ImportPlan::Refuse;
-    }
-    ImportPlan::Add {
-        phrase,
-        keys,
-        original: same_library.first().copied(),
-    }
+    plan_add(handle.index, handle.dict.as_ref(), user, phrase, keys)
 }
 
 /// Whether [`pinyin_iterator_add_phrase`] of this pair reaches one of the
@@ -415,32 +325,6 @@ pub fn oxpinyin_import_aborts(
             ImportPlan::Abort
         )
     }
-}
-
-/// Search the system table followed by the user table, then concatenate
-/// the per-library arrays as reduce_tokens does at 074a2219
-/// phrase_large_table3.h:77-95. Duplicates remain observable.
-///
-/// # Errors
-///
-/// Returns `Err(())` if either table lookup fails.
-fn phrase_table_tokens(
-    user: &UserStore,
-    dict: Option<&oxpinyin_runtime::RuntimeDict>,
-    phrase: &oxpinyin_core::PhraseText,
-) -> Result<Vec<u32>, ()> {
-    let words: Vec<u32> = phrase.outward_words().collect();
-    let mut tokens = if let Some(dict) = dict {
-        dict.system().tokens_for_ucs4(&words).map_err(|_| ())?
-    } else {
-        Vec::new()
-    };
-    tokens.extend(user.phrase_table_tokens_for_ucs4(&words).map_err(|_| ())?);
-    if let Some(dict) = dict {
-        tokens.retain(|token| dict.phrase_table_token_enabled(*token));
-    }
-    tokens.sort_by_key(|token| token >> 24);
-    Ok(tokens)
 }
 
 /// `FullPinyinParser2::parse` under `PINYIN_CORRECT_ALL | USE_TONE`
@@ -493,12 +377,7 @@ pub extern "C" fn pinyin_end_add_phrases(iter: *mut ImportIterator) {
     };
     // SAFETY: the iterator retains the allocation; serialized C calls grant exclusive access.
     let context = unsafe { owner_mut(owner) };
-    if let Some(user) = context.core.user_store_mut() {
-        // The compact (`pinyin.cpp:657`) rebuilds each library's total from
-        // its items.
-        user.compact_libraries();
-        user.mark_modified();
-    };
+    context.core.end_import();
 }
 
 // ── Export iterator (unigram phrases) ────────────────────────────────
