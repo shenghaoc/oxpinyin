@@ -119,10 +119,6 @@ def build_parser():
     p.add_argument('args', nargs=argparse.REMAINDER)
     p.set_defaults(func=cpp_smoke_command)
 
-    p = sub.add_parser('w3-fixtures', help='regenerate or check the committed fixtures/w3 data sets')
-    p.add_argument('args', nargs=argparse.REMAINDER)
-    p.set_defaults(func=lambda args: __import__('tools.dev.w3_fixtures', fromlist=['main']).main(args.args))
-
     p = sub.add_parser('rust-tables', help='check the pinned scripts2 Rust tables offline, or regenerate with --write')
     p.add_argument('args', nargs=argparse.REMAINDER)
     p.set_defaults(func=lambda args: __import__('tools.dev.rust_tables', fromlist=['main']).main(args.args))

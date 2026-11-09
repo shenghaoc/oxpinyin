@@ -70,16 +70,6 @@ fetch-contract-data *args: python
 fetch-contract-data *args: python
     @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev fetch-contract-data @forwarded; exit $LASTEXITCODE
 
-# Regenerate (`generate`) or check (`check`) the committed fixtures/w3 data
-# sets from the model20 cache; `content` truncates the oracle's content tables.
-[unix]
-w3-fixtures *args: python
-    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev w3-fixtures "$@"
-
-[windows]
-w3-fixtures *args: python
-    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev w3-fixtures @forwarded; exit $LASTEXITCODE
-
 # Report native capabilities and the managed interpreter identity. Doctor
 # installs nothing: it names `just python` when the interpreter is missing.
 [unix]

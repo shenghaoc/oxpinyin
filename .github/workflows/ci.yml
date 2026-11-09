@@ -214,12 +214,6 @@ jobs:
         # points pkg-config at it. The tkrzw cxx bridge compiles with g++;
         # bindgen (libclang) serves the Berkeley DB lanes.
         run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libglib2.0-dev
-      # A check, not the regeneration command in fixtures/w3/README.md, which
-      # would overwrite the drift it must find. The manifest's paths are
-      # relative to the repository root.
-      - name: Verify the w3 fixture checksums
-        if: needs.changes.outputs.reuse != 'true'
-        run: sha256sum -c fixtures/w3/fixtures.sha256
       # Before the cache refresh, which builds against it.
       - name: Provision tkrzw (built at the setup.sh revision and cached)
         uses: ./.github/actions/tkrzw

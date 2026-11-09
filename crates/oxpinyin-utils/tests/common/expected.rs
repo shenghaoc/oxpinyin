@@ -1,6 +1,6 @@
 //! A frozen case's pin evidence as a Rust value, and the one comparison every frozen case makes.
 //! Invocation, setup, masks and the inventory stay in the tests.
-use super::{CELL, Snapshot};
+use super::Snapshot;
 use assert_cmd::prelude::*;
 use std::collections::BTreeSet;
 #[cfg(unix)]
@@ -139,37 +139,4 @@ pub const NNODES_2: &[u8] = b"nnodes: 2\n";
 pub const NNODES_5: &[u8] = b"nnodes: 5\n";
 pub const NO_ROWS: File = Rows("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
 pub const OPEN_TABLE_CONF_FAILED: &[u8] = b"open table.conf failed.\nload table.conf failed.\n";
-pub const SAVE_GB_CHAR_BIN_FAILED: &[u8] = b"save gb_char.bin failed.";
 pub const UNKNOWN_OPTION_BOGUS: &[u8] = b"option parsing failed:Unknown option --bogus\n";
-pub fn refused_save_bigram_db_files() -> &'static [(&'static str, File)] {
-    match CELL {
-        "bdb" => &[],
-        "kc" => &[(
-            "bigram.db",
-            Sha256(
-                "def690c1ffdaaf5e177959d6dd2b4fe339b01e443f88c08334378b59d901825f",
-                6302040,
-            ),
-        )],
-        "tkrzw" => {
-            if cfg!(target_os = "macos") {
-                &[(
-                    "bigram.db",
-                    Sha256(
-                        "320955bdd7f3be92f9ce0683b48f8811a74b38fb71da83857bfc1225bd011c86",
-                        4210688,
-                    ),
-                )]
-            } else {
-                &[(
-                    "bigram.db",
-                    Sha256(
-                        "5969b91494df56dc8b90485006582ad95f2060b209126a09695dd8d06c633280",
-                        4202496,
-                    ),
-                )]
-            }
-        }
-        _ => unreachable!("unknown cell {CELL}"),
-    }
-}

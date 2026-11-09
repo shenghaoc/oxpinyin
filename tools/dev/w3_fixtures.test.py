@@ -1,14 +1,9 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
-"""The w3 fixture recipe: the subset, the build table.conf, the comparison and the commands."""
-import contextlib
-import hashlib
-import io
-import os
+"""The w3 subset recipe: the subset, the table.conf renderings and the model directory."""
 from pathlib import Path
 import sys
 import tempfile
 import unittest
-from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -115,90 +110,6 @@ class TableConfTests(unittest.TestCase):
         self.assertIn('default GB_DICTIONARY gb_char.table gb_char.bin gb_char.dbin SYSTEM_FILE\n', text)
 
 
-class CompareTests(unittest.TestCase):
-    """The comparison over a fake record reader that prints the file's own lines."""
-
-    def setUp(self):
-        scratch = tempfile.TemporaryDirectory(prefix='oxpinyin-w3-compare-')
-        self.addCleanup(scratch.cleanup)
-        self.work = Path(scratch.name)
-        if sys.platform == 'win32':
-            self.reader = self.work / 'raw_records.cmd'
-            self.reader.write_bytes(b'@type "%~2"\r\n')
-        else:
-            self.reader = self.work / 'raw_records'
-            self.reader.write_text('#!/bin/sh\ncat "$2"\n')
-            self.reader.chmod(0o755)
-        self.produced, self.committed = self.work / 'produced', self.work / 'committed'
-        for directory in (self.produced, self.committed):
-            directory.mkdir()
-            (directory / 'gb_char.bin').write_bytes(b'chunk')
-            (directory / 'table.conf').write_text('conf')
-            (directory / 'pinyin_index.bin').write_text('00 aa\n01 bb\n')
-            (directory / 'bigram.db').write_text('02 cc\n')
-        (self.committed / 'k_mixture_model.db').write_bytes(b'pinned')
-
-    def statuses(self):
-        return {name: (status, detail) for name, status, detail in
-                w3_fixtures.compare(self.reader, self.produced, self.committed)}
-
-    def test_identical_trees_report_bytes_and_records(self):
-        got = self.statuses()
-        self.assertEqual(got['gb_char.bin'], ('identical', '5 bytes'))
-        self.assertEqual(got['pinyin_index.bin'], ('identical', '2 records'))
-        self.assertEqual(got['bigram.db'], ('identical', '1 records'))
-        self.assertEqual(got['k_mixture_model.db'][0], 'pinned')
-
-    def test_a_changed_record_names_its_row_and_key(self):
-        (self.produced / 'pinyin_index.bin').write_text('00 aa\n01 bc\n')
-        status, detail = self.statuses()['pinyin_index.bin']
-        self.assertEqual(status, 'differ')
-        self.assertIn('row 1 differs (key 01 vs 01)', detail)
-
-    def test_a_missing_or_extra_file_differs(self):
-        (self.produced / 'extra.bin').write_bytes(b'')
-        (self.produced / 'gb_char.bin').unlink()
-        got = self.statuses()
-        self.assertEqual(got['extra.bin'], ('differ', 'produced, but not in the committed tree'))
-        self.assertEqual(got['gb_char.bin'], ('differ', 'committed, but the recipe does not produce it'))
-
-    def test_a_changed_chunk_reports_both_sizes(self):
-        (self.produced / 'gb_char.bin').write_bytes(b'chunk2')
-        self.assertEqual(self.statuses()['gb_char.bin'], ('differ', '6 produced vs 5 committed bytes'))
-
-    def test_the_report_counts_and_flags_a_difference(self):
-        (self.produced / 'bigram.db').write_text('02 cd\n')
-        settings = mock.Mock(extension='tkt', cell='tkrzw')
-        out = io.StringIO()
-        differs = w3_fixtures.report(settings, w3_fixtures.compare(self.reader, self.produced, self.committed), out)
-        self.assertTrue(differs)
-        self.assertIn('tkt/bigram.db: differ', out.getvalue())
-        self.assertIn('tkrzw (tkt): 3 identical, 1 differ, 1 pinned\n', out.getvalue())
-
-
-class ChecksumTests(unittest.TestCase):
-    def test_every_file_is_listed_in_byte_order_with_the_readme_prefix(self):
-        with tempfile.TemporaryDirectory() as scratch:
-            fixtures = Path(scratch)
-            (fixtures / 'tkt').mkdir()
-            (fixtures / 'tkt' / 'b.bin').write_bytes(b'b')
-            (fixtures / 'a.bin').write_bytes(b'a')
-            (fixtures / 'fixtures.sha256').write_text('stale')
-            w3_fixtures.write_checksums(fixtures)
-            lines = (fixtures / 'fixtures.sha256').read_text().splitlines()
-        self.assertEqual(lines, [f'{hashlib.sha256(b"a").hexdigest()}  fixtures/w3/a.bin',
-                                 f'{hashlib.sha256(b"b").hexdigest()}  fixtures/w3/tkt/b.bin'])
-
-    def test_the_committed_checksums_match_the_tree(self):
-        fixtures = ROOT / 'fixtures/w3'
-        with tempfile.TemporaryDirectory() as scratch:
-            copy = Path(scratch) / 'w3'
-            import shutil
-            shutil.copytree(fixtures, copy)
-            w3_fixtures.write_checksums(copy)
-            self.assertEqual((copy / 'fixtures.sha256').read_text(), (fixtures / 'fixtures.sha256').read_text())
-
-
 class ModelDirTests(unittest.TestCase):
     def test_an_incomplete_or_unverified_directory_is_refused(self):
         with tempfile.TemporaryDirectory() as scratch:
@@ -213,56 +124,6 @@ class ModelDirTests(unittest.TestCase):
             with self.assertRaises(w3_fixtures.Refused) as caught:
                 w3_fixtures.model_dir(None, {'PINYIN_MODEL_DIR': str(extracted)})
             self.assertIn('does not record the pinned archive digest', str(caught.exception))
-
-
-class CommandTests(unittest.TestCase):
-    def main(self, *argv):
-        out, err = io.StringIO(), io.StringIO()
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            status = w3_fixtures.main(list(argv), out, err)
-        return status, out.getvalue(), err.getvalue()
-
-    def test_usage_errors_and_help(self):
-        self.assertEqual(self.main()[0], 2)
-        self.assertEqual(self.main('--bogus')[0], 2)
-        status, out, _ = self.main('check', '--help')
-        self.assertEqual(status, 0)
-        self.assertIn('--model-dir', out)
-
-    def test_an_unknown_cell_is_refused_before_any_build(self):
-        with tempfile.TemporaryDirectory() as scratch:
-            extracted = write_model(Path(scratch) / 'cache' / 'extracted')
-            status, _, err = self.main('check', '--model-dir', str(extracted), '--cells', 'tkrzw,lmdb')
-        self.assertEqual(status, 2)
-        self.assertIn("unknown cell 'lmdb'", err)
-
-    def test_a_cell_without_a_windows_build_is_refused_on_windows(self):
-        with tempfile.TemporaryDirectory() as scratch:
-            extracted = write_model(Path(scratch) / 'cache' / 'extracted')
-            with mock.patch.object(w3_fixtures.sys, 'platform', 'win32'):
-                for cell in ('bdb', 'kc'):
-                    status, _, err = self.main('check', '--model-dir', str(extracted), '--cells', cell)
-                    self.assertEqual(status, 1)
-                    self.assertIn(f'the {cell} cell is unsupported on Windows', err)
-
-    def test_content_hash_only_lists_the_committed_content_tables(self):
-        status, out, _ = self.main('content', '--hash-only')
-        self.assertEqual(status, 0)
-        self.assertEqual(len(out.splitlines()), 12)
-        self.assertTrue(out.startswith(hashlib.sha256((ROOT / 'fixtures/w3/art.bin').read_bytes()).hexdigest()))
-
-    def test_content_refuses_a_missing_data_directory(self):
-        status, _, err = self.main('content', '--data-dir', '/absent/data')
-        self.assertEqual(status, 1)
-        self.assertIn('data directory not found', err)
-
-    def test_content_truncates_the_same_bytes_the_committed_tables_hold(self):
-        # The committed art.bin is its own 151-record source truncated to 100 records
-        # or fewer; re-truncating it must leave it as it is.
-        committed = (ROOT / 'fixtures/w3/art.bin').read_bytes()
-        truncated, keep, original = w3_fixtures.truncate_content(committed, 100)
-        self.assertEqual(keep, original)
-        self.assertEqual(truncated, committed)
 
 
 if __name__ == '__main__':

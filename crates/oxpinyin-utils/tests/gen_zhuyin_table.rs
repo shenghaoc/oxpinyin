@@ -192,7 +192,7 @@ mod frozen {
             output.stderr = mask_glib_prefix(&output.stderr);
             check(
                 output,
-                &inventory(directory.path(), &inputs, &[], &[], &[], &[]),
+                &inventory(directory.path(), &inputs, &[], &[], &[]),
                 &inputs,
                 &expected,
             );

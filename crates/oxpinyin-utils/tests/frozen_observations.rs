@@ -147,7 +147,7 @@ fn tree() -> (tempfile::TempDir, Snapshot) {
 }
 
 fn after(directory: &Path, before: &Snapshot) -> String {
-    inventory(directory, before, &["rows.db"], &[], &[], &[])
+    inventory(directory, before, &["rows.db"], &[], &[])
 }
 
 #[rstest::rstest]
