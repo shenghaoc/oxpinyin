@@ -236,8 +236,10 @@ fn decoding_is_deterministic() {
 /// Authored mini-vocab so hard-stop-at-`b` and full `bing` can be told apart.
 ///
 /// Incomplete `b` expands to complete keys (`bu`, `bing`, …). `不` rides on
-/// `bu` (cheaper unigram) and `并` on `bing`. Fixture justification:
-/// `fixtures/w4/oracle-candidate-structure.txt` has `b#ing\t1\t不` and `bing\t1\t并`.
+/// `bu` (cheaper unigram) and `并` on `bing`. Fixture justification: the full
+/// W4 capture (`fixtures/w4/oracle-candidate-structure.txt` before the #1764
+/// reduction) had `b#ing\t1\t不` and `bing\t1\t并`; neither input is in the
+/// retained subset.
 const JUNK_VOCAB: &str = "\
 token=1\tkeys=bu\ttext=不\tunigram=1000
 token=2\tkeys=bing\ttext=并\tunigram=100
