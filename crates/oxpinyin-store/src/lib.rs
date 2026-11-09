@@ -114,9 +114,12 @@ pub enum StoreError {
     /// (`ngram_kyotodb.cpp:131-139` at the pin).
     ReadAfterCheck,
     /// A `FlexibleBigram` single gram is shorter than its array header.
-    /// The pin's `get_array_header` asserts on it (`flexible_ngram_bdb.h:388`,
-    /// `flexible_ngram_kyotodb.h:371` and `flexible_ngram_tkrzwdb.h:388` at
-    /// the pin); the K-mixture tools abort on it.
+    /// From `get_array_header` it is the pin's assert
+    /// (`flexible_ngram_bdb.h:388`, `flexible_ngram_kyotodb.h:371` and
+    /// `flexible_ngram_tkrzwdb.h:388` at the pin), and the K-mixture tools
+    /// abort. From `load` it is a value the pin later reads outside of
+    /// (class (b), `eio-flexible-bigram-malformed-records.md`), and the tools
+    /// report it as a store error.
     ShortArrayHeader,
 }
 

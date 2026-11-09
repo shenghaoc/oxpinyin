@@ -58,10 +58,12 @@ pub fn abort() -> ! {
     std::process::abort()
 }
 
-/// A store error that has no pin counterpart, such as an unsupported
-/// linked libdb: one line on stderr, then `exit(1)`. Callers make it before
-/// they create or write anything, so it is never read as a missing
-/// container.
+/// A store error that has no pin counterpart: one line on stderr, then
+/// `exit(1)`. An attach error, such as an unsupported linked libdb, takes it
+/// before the caller creates or writes anything, so it is never read as a
+/// missing container. A K-mixture single gram shorter than its array header
+/// takes it where the pin reads outside the record, after the pin's
+/// earlier work (class (b), `eio-flexible-bigram-malformed-records.md`).
 pub fn exit_on_store_error(error: &dyn std::fmt::Display) -> ! {
     print_text(c_stderr(), c"%s\n", &store_error_line(error));
     exit(1)

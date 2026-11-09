@@ -12,13 +12,16 @@
 //!
 //! The pin's `assert(0 != magic.m_total_freq)`, `assert(0 != header.m_WC)`
 //! and `check_result(get_magic_header(…))` abort; they are reached only when
-//! the candidate's own header is inconsistent with the deleted model.
+//! the candidate's own header is inconsistent with the deleted model. A row
+//! of either model shorter than its array header is read outside its record
+//! at `:134` or `:136` (class (b)); it takes the tools' store-error exit
+//! before the token's line.
 
 use std::ffi::CStr;
 
 use oxpinyin_input::tool::k_mixture_model as edge;
 
-use crate::database::Database;
+use crate::database::{Database, Loaded, exit_on_short_single_gram};
 use crate::records::KmmGram;
 
 /// Seed `next_lambda` (`estimate_k_mixture_model.cpp:40`).
@@ -37,6 +40,13 @@ pub fn run(bigram_filename: Option<&CStr>, deleted_bigram_filename: Option<&CStr
     for &token in &deleted_bigram.get_all_items() {
         let single_gram = bigram.load(token);
         let deleted_single_gram = deleted_bigram.load_checked(token);
+        let single_gram = match single_gram {
+            Some(Loaded::Gram(gram)) => Some(gram),
+            None => None,
+            // `check_result(single_gram->get_array_header(…))` (`:134`)
+            // reads outside a short record: class (b).
+            Some(Loaded::Short) => exit_on_short_single_gram(),
+        };
         let deleted_array_header = *deleted_single_gram.header();
 
         if deleted_array_header.m_wc != 0 {
@@ -105,4 +115,29 @@ fn compute_interpolation(
         next_lambda /= f64::from(deleted_bigram.header().m_wc);
     }
     next_lambda
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::database::tests::{
+        SHORT, TOKEN, WHOLE, assert_short_single_gram_exit, child_dir, plant,
+    };
+
+    /// A candidate row shorter than the array header for a token of the
+    /// deleted model: the pin's `load` succeeds (`:127`) and
+    /// `check_result(single_gram->get_array_header(…))` reads outside the
+    /// record (`:134`, class (b)), so the tool takes the store-error exit
+    /// instead of treating the row as missing.
+    #[test]
+    fn a_short_candidate_row_takes_the_store_error_exit() {
+        if let Some(dir) = child_dir() {
+            let bigram = plant(&dir, "bigram.db", &[(TOKEN, SHORT)]);
+            let deleted = plant(&dir, "deleted.db", &[(TOKEN, WHOLE)]);
+            super::run(Some(&bigram), Some(&deleted));
+            return;
+        }
+        assert_short_single_gram_exit(
+            "estimate::tests::a_short_candidate_row_takes_the_store_error_exit",
+        );
+    }
 }

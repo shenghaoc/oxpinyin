@@ -4,8 +4,8 @@
 //! Per matching `(W1, W2)`, `merge_two_phrase_array` (`:38-94`) sums
 //! `m_WC`, `m_N_n_0` and `m_n_1` and takes the larger `m_Mr`; the array
 //! header and then the magic header sum field-wise. A token new to the
-//! target is stored as the source's whole single gram, in the source
-//! file's native token order (`merge_array_items`, `:131-200`). The magic
+//! target gets the source's stored value unchanged, in the source file's
+//! native token order (`merge_array_items`, `:131-200`). The magic
 //! header's `m_WC` and `m_total_freq` sums are checked against the pin's
 //! `sum < max(a, b)` overflow test; `EOVERFLOW` exits after the rows have
 //! already been merged (`:96-129`, `:232-233`).
@@ -14,7 +14,7 @@ use std::ffi::CStr;
 
 use oxpinyin_input::tool::{self, k_mixture_model as edge};
 
-use crate::database::Database;
+use crate::database::{Database, Loaded, exit_on_short_single_gram};
 use crate::records::{
     ArrayItemWithToken, KMixtureModelArrayHeader, KMixtureModelArrayItem, KMixtureModelMagicHeader,
     KmmGram,
@@ -43,17 +43,31 @@ fn merge_two_k_mixture_model(target: &Database, new_one: &Database) -> bool {
     merge_array_items(target, new_one) && merge_magic_header(target, new_one)
 }
 
-/// `merge_array_items` (`:131-200`):
+/// `merge_array_items` (`:131-200`). The pin's `load` succeeds on a row
+/// shorter than its array header. A row the target lacks is copied unchanged, short or
+/// not (`:142-146`). Otherwise the two `check_result(get_array_header(…))`
+/// calls (`:155-156`) abort on a short row, as the pin's asserts do.
 fn merge_array_items(target: &Database, new_one: &Database) -> bool {
     for token in new_one.get_all_items() {
-        let new_single_gram = new_one.load_checked(token);
+        // `check_result(new_one->load(…))` (`:142`).
+        let Some(new_single_gram) = new_one.load(token) else {
+            std::process::abort()
+        };
         let Some(target_single_gram) = target.load(token) else {
-            target.store(token, &new_single_gram);
+            target.copy_single_gram(token, new_one);
             continue;
         };
 
-        let new_array_header = *new_single_gram.header();
-        let target_array_header = *target_single_gram.header();
+        let new_array_header = new_one.array_header_checked(token);
+        let target_array_header = target.array_header_checked(token);
+        // A short row aborted at `:155` or `:156`, so only a row that
+        // changed since its load is short here. The pin reads it outside
+        // its record (`retrieve_all`, `:171`, `:175`): class (b).
+        let (Loaded::Gram(new_single_gram), Loaded::Gram(target_single_gram)) =
+            (new_single_gram, target_single_gram)
+        else {
+            exit_on_short_single_gram()
+        };
         let merged_array_header = KMixtureModelArrayHeader {
             m_wc: target_array_header.m_wc.wrapping_add(new_array_header.m_wc),
             m_freq: target_array_header
@@ -185,5 +199,52 @@ mod tests {
         assert_eq!(three.m_n_n_0, 8);
         assert_eq!(three.m_n_1, 0);
         assert_eq!(three.m_mr, 9);
+    }
+
+    /// A short target row with a whole source row: the pin loads both
+    /// (`:142-143`) and asserts at `check_result(target->get_array_header(…))`
+    /// (`:156`).
+    #[test]
+    fn a_short_target_row_aborts_at_the_targets_header() {
+        use crate::database::tests::{SHORT, TOKEN, WHOLE, assert_aborts, child_dir, plant};
+        if let Some(dir) = child_dir() {
+            let target = plant(&dir, "target.db", &[(TOKEN, SHORT)]);
+            let source = plant(&dir, "source.db", &[(TOKEN, WHOLE)]);
+            let _ = super::merge_array_items(
+                &crate::database::Database::open_read_write(Some(&target)),
+                &crate::database::Database::open_read_only(Some(&source)),
+            );
+            return;
+        }
+        assert_aborts("merge::tests::a_short_target_row_aborts_at_the_targets_header");
+    }
+
+    /// A short source row that the target lacks: the pin stores the gram it
+    /// loaded, its bytes unchanged (`:142-146`), and the merge goes on.
+    #[test]
+    fn a_short_source_row_the_target_lacks_is_copied_unchanged() {
+        use crate::database::tests::{SHORT, TOKEN, plant};
+        use oxpinyin_store::{
+            AttachMode, DefaultStore, HashAttach, MAGIC_KEY, RawReadStore as _, WriteStore as _,
+        };
+        let dir = tempfile::tempdir().expect("scratch directory");
+        let target = plant(dir.path(), "target.db", &[]);
+        let source = plant(dir.path(), "source.db", &[(TOKEN, SHORT)]);
+        {
+            let target = crate::database::Database::open_read_write(Some(&target));
+            let source = crate::database::Database::open_read_only(Some(&source));
+            assert!(super::merge_array_items(&target, &source));
+        }
+        let HashAttach::Opened(db) = DefaultStore::attach_hash(
+            &dir.path().join("target.db"),
+            AttachMode::ReadOnly,
+            (&MAGIC_KEY, b"KMMP"),
+        )
+        .expect("reopen the target") else {
+            panic!("the target opens");
+        };
+        let mut value = Vec::new();
+        assert!(db.get_raw(&TOKEN.to_ne_bytes(), &mut value).expect("read"));
+        assert_eq!(value, SHORT);
     }
 }

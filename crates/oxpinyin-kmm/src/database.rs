@@ -25,6 +25,24 @@ pub fn open_path(filename: &CStr) -> Option<PathBuf> {
     oxpinyin_input::path::path_from_bytes_checked(filename.to_bytes())
 }
 
+/// A single gram that [`Database::load`] found.
+pub enum Loaded {
+    /// A whole single gram.
+    Gram(KmmGram),
+    /// A stored value shorter than the array header. The pin's `load`
+    /// answers true for it, and the pin then reads outside the record
+    /// wherever it uses the gram (class (b),
+    /// `eio-flexible-bigram-malformed-records.md`).
+    Short,
+}
+
+/// The tools' store-error exit for a short single gram that the pin reads
+/// outside of (class (b), `eio-flexible-bigram-malformed-records.md`): one
+/// stderr line, then status 1. The pin's work before that read is done.
+pub fn exit_on_short_single_gram() -> ! {
+    oxpinyin_input::tool::exit_on_store_error(&StoreError::ShortArrayHeader)
+}
+
 /// One `KMixtureModelBigram` after its `attach`.
 pub struct Database {
     inner: Option<KmmBigram>,
@@ -108,18 +126,48 @@ impl Database {
             .unwrap_or_default()
     }
 
-    /// `load`; `None` when the token has no row.
+    /// `load`; `None` where the pin's `load` answers false: no object, no
+    /// row or a failed read (`flexible_ngram_bdb.h:169-181`,
+    /// `flexible_ngram_kyotodb.h:196-205`, `flexible_ngram_tkrzwdb.h:
+    /// 204-214`). A value shorter than the array header is
+    /// [`Loaded::Short`], since the pin's `load` succeeds on it. A value
+    /// with a partial item tail is also `None`.
+    /// Kyoto Cabinet's body read after a good size check aborts where the
+    /// pin's `check_result` does (`flexible_ngram_kyotodb.h:209-210`).
     #[must_use]
-    pub fn load(&self, token: u32) -> Option<KmmGram> {
-        self.inner.as_ref()?.load(token).ok().flatten()
+    pub fn load(&self, token: u32) -> Option<Loaded> {
+        match self.inner.as_ref()?.load(token) {
+            Ok(gram) => gram.map(Loaded::Gram),
+            Err(StoreError::ShortArrayHeader) => Some(Loaded::Short),
+            Err(StoreError::ReadAfterCheck) => abort(),
+            Err(
+                StoreError::Io(_)
+                | StoreError::Backend(_)
+                | StoreError::ReadOnly
+                | StoreError::InvalidInput(_),
+            ) => None,
+        }
     }
 
-    /// `check_result(load(…))`: the caller knows the row exists.
+    /// `check_result(load(…))` where the caller then uses the gram. A
+    /// missing row aborts at the `check_result`. A short row takes the
+    /// store-error exit ([`exit_on_short_single_gram`]), where the pin reads
+    /// outside it.
     #[must_use]
     pub fn load_checked(&self, token: u32) -> KmmGram {
         match self.load(token) {
-            Some(gram) => gram,
+            Some(Loaded::Gram(gram)) => gram,
+            Some(Loaded::Short) => exit_on_short_single_gram(),
             None => abort(),
+        }
+    }
+
+    /// The pin's `store` of the gram it just loaded from `source`, which
+    /// writes the loaded bytes unchanged (`merge_k_mixture_model.cpp:
+    /// 142-146`); the ignored-answer form.
+    pub fn copy_single_gram(&self, token: u32, source: &Self) {
+        if let (Some(inner), Some(source)) = (self.inner.as_ref(), source.inner.as_ref()) {
+            let _ = inner.copy_single_gram(token, source);
         }
     }
 
@@ -225,7 +273,7 @@ fn abort() -> ! {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::attached;
     use oxpinyin_store::StoreError;
 
@@ -252,25 +300,48 @@ mod tests {
         assert!(stderr.contains("unsupported library 6.2"), "{stderr}");
     }
 
-    /// Set in the child to the scratch directory: build the container and
-    /// run the abort site instead of the test body.
-    const ABORT_CHILD: &str = "OXPINYIN_KMM_ABORT_CHILD";
+    /// Set in the child to its scratch directory: the child builds its
+    /// containers there and runs the site under test instead of the body.
+    const CHILD_DIR: &str = "OXPINYIN_KMM_CHILD_DIR";
 
-    /// The token whose single gram the abort tests plant.
-    const TOKEN: u32 = 7;
+    /// The token whose single gram these tests plant.
+    pub(crate) const TOKEN: u32 = 7;
 
-    /// Run the test `name` again as a child with `ABORT_CHILD` set to a
-    /// scratch directory, and require it to abort with no Rust panic text
-    /// on either stream.
-    /// SIGABRT on Unix; Rust's abort fast-fails on Windows with
-    /// STATUS_STACK_BUFFER_OVERRUN, as the store's death tests check.
-    fn assert_aborts_without_a_panic(name: &str) {
+    /// A stored value shorter than the eight-byte array header.
+    pub(crate) const SHORT: &[u8] = &[1, 2, 3, 4];
+
+    /// A whole single gram: a zero array header and no items.
+    pub(crate) const WHOLE: &[u8] = &[0; 8];
+
+    /// The scratch directory when this process is the child that
+    /// [`run_child`] started.
+    pub(crate) fn child_dir() -> Option<std::path::PathBuf> {
+        std::env::var_os(CHILD_DIR).map(std::path::PathBuf::from)
+    }
+
+    /// Run the test `name` (its `--exact` path) again as a child with a
+    /// scratch [`child_dir`], and require no Rust panic text on either
+    /// stream: the child's libtest reports a captured panic on stdout and
+    /// the default hook writes it to stderr.
+    fn run_child(name: &str) -> std::process::Output {
         let dir = tempfile::tempdir().expect("scratch directory");
         let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
             .args(["--exact", name, "--test-threads=1"])
-            .env(ABORT_CHILD, dir.path())
+            .env(CHILD_DIR, dir.path())
             .output()
             .expect("child test");
+        for stream in [&output.stdout, &output.stderr] {
+            let text = String::from_utf8_lossy(stream);
+            assert!(!text.contains("panicked"), "{name}: {text}");
+        }
+        output
+    }
+
+    /// Require the child test `name` to abort where the pin asserts:
+    /// SIGABRT on Unix, and on Windows Rust's abort fast-fails with
+    /// STATUS_STACK_BUFFER_OVERRUN, as the store's death tests check.
+    pub(crate) fn assert_aborts(name: &str) {
+        let output = run_child(name);
         #[cfg(unix)]
         {
             use std::os::unix::process::ExitStatusExt as _;
@@ -282,43 +353,68 @@ mod tests {
             Some(i32::from_ne_bytes(0xC000_0409_u32.to_ne_bytes())),
             "{name}: {output:?}"
         );
-        // The child's libtest reports a captured panic on stdout and the
-        // default hook writes it to stderr, so neither stream may carry it.
-        for stream in [&output.stdout, &output.stderr] {
-            let text = String::from_utf8_lossy(stream);
-            assert!(!text.contains("panicked"), "{name}: {text}");
-        }
     }
 
-    /// A `KMMP` container at `dir/name` whose only single gram, of
-    /// [`TOKEN`], is `value`, opened read-only as the pin's tools open it.
-    fn planted(dir: &std::ffi::OsStr, name: &str, value: &[u8]) -> super::Database {
+    /// Require the child test `name` to take the tools' store-error exit for
+    /// a short single gram: status 1 and exactly that one stderr line.
+    pub(crate) fn assert_short_single_gram_exit(name: &str) {
+        let output = run_child(name);
+        assert_eq!(output.status.code(), Some(1), "{name}: {output:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr),
+            format!("{}\n", StoreError::ShortArrayHeader),
+            "{name}"
+        );
+    }
+
+    /// Create a `KMMP` container at `dir/name` holding `rows`, written as
+    /// raw values, and answer its file name for `attach`.
+    pub(crate) fn plant(
+        dir: &std::path::Path,
+        name: &str,
+        rows: &[(u32, &[u8])],
+    ) -> std::ffi::CString {
         use oxpinyin_store::{DefaultStore, MAGIC_KEY, WriteStore as _, WriteTxn as _};
-        let path = std::path::Path::new(dir).join(name);
-        {
-            let db = DefaultStore::create_hash(&path).expect("hash create");
-            db.write(|txn| {
-                txn.put_raw(&MAGIC_KEY, b"KMMP")?;
-                txn.put_raw(&TOKEN.to_ne_bytes(), value)
-            })
-            .expect("planted record");
-        }
-        let filename = std::ffi::CString::new(path.into_os_string().into_encoded_bytes())
-            .expect("path without NUL");
-        super::Database::open_read_only(Some(&filename))
+        let path = dir.join(name);
+        let db = DefaultStore::create_hash(&path).expect("hash create");
+        db.write(|txn| {
+            txn.put_raw(&MAGIC_KEY, b"KMMP")?;
+            for (token, value) in rows {
+                txn.put_raw(&token.to_ne_bytes(), value)?;
+            }
+            Ok(())
+        })
+        .expect("planted rows");
+        std::ffi::CString::new(path.into_os_string().into_encoded_bytes())
+            .expect("path without NUL")
     }
 
-    /// `get_array_header` on a four-byte single gram: the pin asserts
+    /// `get_array_header` on a short single gram: the pin asserts
     /// (`flexible_ngram_bdb.h:388`, `flexible_ngram_kyotodb.h:371`,
     /// `flexible_ngram_tkrzwdb.h:388`), and the tools abort there too.
     #[test]
     fn a_short_array_header_aborts_without_a_panic() {
-        if let Some(dir) = std::env::var_os(ABORT_CHILD) {
-            let _ = planted(&dir, "short.db", &[0; 4]).get_array_header(TOKEN);
+        if let Some(dir) = child_dir() {
+            let model = plant(&dir, "short.db", &[(TOKEN, SHORT)]);
+            let _ = super::Database::open_read_only(Some(&model)).get_array_header(TOKEN);
             return;
         }
-        assert_aborts_without_a_panic(
-            "database::tests::a_short_array_header_aborts_without_a_panic",
+        assert_aborts("database::tests::a_short_array_header_aborts_without_a_panic");
+    }
+
+    /// `check_result(load(…))` on a short single gram, as export, validate,
+    /// prune and estimate's deleted model make it: the pin's `load` succeeds
+    /// and the gram is then read outside its record (class (b)), so the
+    /// tools take the store-error exit.
+    #[test]
+    fn a_checked_load_of_a_short_row_takes_the_store_error_exit() {
+        if let Some(dir) = child_dir() {
+            let model = plant(&dir, "short.db", &[(TOKEN, SHORT)]);
+            let _ = super::Database::open_read_only(Some(&model)).load_checked(TOKEN);
+            return;
+        }
+        assert_short_single_gram_exit(
+            "database::tests::a_checked_load_of_a_short_row_takes_the_store_error_exit",
         );
     }
 }

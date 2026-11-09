@@ -52,7 +52,11 @@ pub fn run(filename: Option<&CStr>, prune_k: i32, cdf: f64) {
         }
         progress += 1;
 
-        let mut single_gram = db.load(token).unwrap_or_else(|| std::process::abort());
+        // The token came from the walk, so the pin's ignored `load` (`:150`)
+        // finds it. A short row is read outside its record by
+        // `retrieve_all` in `prune_k_mixture_model` (class (b)) and takes
+        // the store-error exit.
+        let mut single_gram = db.load_checked(token);
         let mut removed_array = Vec::new();
         prune_k_mixture_model(
             &mut magic_header,
