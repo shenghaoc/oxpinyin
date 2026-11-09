@@ -9,8 +9,9 @@
 //! stays at `0` and decode reads the counts through the language model.
 //!
 //! T3 types the seam with the engine's vocabulary token
-//! ([`PhraseToken`], `docs/findings/session-api.md`): [`Session::train`]
-//! passes the recorded sentence to `observe`, and the engine never interprets
+//! ([`PhraseToken`], `docs/findings/session-api.md`): the engine's
+//! `prepare_training`/`observe` path passes the recorded sentence to
+//! `observe`, and the engine never interprets
 //! the numeric value. The store itself stays keyed on the raw `u32`
 //! `phrase_token_t` layout; the impl converts at the seam.
 

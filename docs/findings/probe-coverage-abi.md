@@ -415,6 +415,13 @@ pin oracle tkrzw at `/work/oracle/prefix` (pin_ref
 
 ### B — whole-row choose + train (**REVERT TARGET**, register row 33)
 
+**Amended 2026-11-09 UTC:** the test-only `Session::train` is removed;
+production training is `Runtime::train_session` → `Session::prepare_training`
+→ `TrainingPlan::observe`, where a row with spans trains only the spans
+with a OneStep cell, and a row with empty spans replays the selection
+history with no OneStep gate.
+The historical mechanism and measurements below are unchanged.
+
 **Mechanism.** A row-0 `NBEST_MATCH_CANDIDATE` choose runs
 `diff_result(best, best)` and installs no `CONSTRAINT_ONESTEP` —
 pin `pinyin.cpp:2515-2520` / `phonetic_lookup.cpp:172-205`; oxpinyin
@@ -867,7 +874,7 @@ because the fallback's trained pair moved from 你好→世界 to
 fallback itself keeps writing (user unigram 27 → 510 → 1476; the pin's
 stays 27). Three independent defects: A is the language-model gate on
 user-file tokens (`lm/mod.rs:540-543`); B is the history fallback in
-`Session::train` (`selection.rs:333-337`); C is the n-best lifetime
+`Session::train` (`selection.rs:333-337`, removed 2026-11-09 UTC); C is the n-best lifetime
 across parse plus the NBEST-wins dedup ahead of the `0x1f` filter
 (`instance.rs:145-155`, `state.rs:170-172`, `lookup.rs:558-580`).
 
