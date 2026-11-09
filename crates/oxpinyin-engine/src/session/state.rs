@@ -18,14 +18,10 @@ where
     /// Opens a session over the supplied backends.
     ///
     /// Settings and backend handles arrive as data; the session reads no
-    /// environment and discovers no path.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`EngineError`] when a backend rejects the settings it is
-    /// opened with. Construction currently always succeeds.
-    pub fn new(settings: SessionSettings, dictionary: D, model: L) -> Result<Self, EngineError> {
-        Ok(Self::init(Settings::read(settings), dictionary, model))
+    /// environment and discovers no path. Construction cannot fail: it
+    /// reads no dictionary or model record.
+    pub fn new(settings: SessionSettings, dictionary: D, model: L) -> Self {
+        Self::init(Settings::read(settings), dictionary, model)
     }
 
     pub(super) fn init(settings: Settings, dictionary: D, model: L) -> Self {

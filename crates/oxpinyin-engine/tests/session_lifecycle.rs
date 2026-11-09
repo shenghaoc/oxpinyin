@@ -29,7 +29,7 @@ type TestSession = Session<FixtureDictionary, FrequencyFixtureModel>;
 fn session() -> TestSession {
     let dictionary = FixtureDictionary::parse(VOCAB).expect("committed fixture");
     let model = FrequencyFixtureModel::parse(VOCAB, BIGRAM).expect("committed fixtures");
-    Session::new(SessionSettings::default(), dictionary, model).expect("session builds")
+    Session::new(SessionSettings::default(), dictionary, model)
 }
 
 // ── libchewing test-reset.c ─────────────────────────────────────────

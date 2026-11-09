@@ -535,7 +535,7 @@ impl<'a> RuntimeDict<'a> {
                     .flatten()
             },
         )?;
-        let user = self.user_lookup()?;
+        let user = self.user_lookup();
         self.note_user_search(syllables);
         // System-index hits were already priced by the callback above. A
         // user-index hit may name a system token too; price that result once
@@ -598,7 +598,7 @@ impl<'a> RuntimeDict<'a> {
         query: &[oxpinyin_core::ChewingKey],
         ranges: &mut PhraseIndexRanges<()>,
     ) -> Result<(), DictError> {
-        let tokens = self.user_lookup()?.search_toned(query);
+        let tokens = self.user_lookup().search_toned(query);
         ranges.convert(
             tokens
                 .into_iter()
@@ -664,7 +664,7 @@ impl<'a> RuntimeDict<'a> {
     /// token: the user table's lookup and the path's tone-less keys.
     fn path_pricing(&self, syllables: &[SyllableKey]) -> Result<PathPricing, DictError> {
         Ok(PathPricing {
-            user: self.user_lookup()?.lookup(syllables),
+            user: self.user_lookup().lookup(syllables),
             keys:
                 SystemDictionary::<oxpinyin_data::phrase_libraries::PhraseLibraries>::trellis_keys(
                     syllables,
@@ -747,15 +747,8 @@ impl<'a> RuntimeDict<'a> {
         Ok(Some(priced))
     }
 
-    fn user_lookup(&self) -> Result<UserLookup<'_>, DictError> {
-        self.user.map_or_else(
-            || Ok(UserLookup::empty()),
-            |store| {
-                store
-                    .lookup()
-                    .map_err(|error| DictError::Parse(error.to_string()))
-            },
-        )
+    fn user_lookup(&self) -> UserLookup<'_> {
+        self.user.map_or_else(UserLookup::empty, UserStore::lookup)
     }
 
     /// The underlying system table set, without the user overlay.
@@ -1308,7 +1301,7 @@ impl Dictionary for RuntimeDict<'_> {
             .system
             .trellis_ranges_continued_with(syllables, tones, ranges, loaded, scratch)?;
         self.user_trellis_ranges(&query, ranges)?;
-        let user = self.user_lookup()?;
+        let user = self.user_lookup();
         self.note_user_search(syllables);
         if system_extends {
             return Ok(true);
@@ -1436,7 +1429,7 @@ impl Dictionary for RuntimeDict<'_> {
         }
         Ok(Some((
             unreadable,
-            self.user_lookup()?.phrase_prefix_exists(syllables),
+            self.user_lookup().phrase_prefix_exists(syllables),
         )))
     }
 
@@ -1471,7 +1464,7 @@ impl Dictionary for RuntimeDict<'_> {
         // The pin searches the system table and then the user table with no
         // early return (`facade_chewing_table2.h:120-126` at 074a2219), so
         // the user lookup and its search note come before the answer.
-        let user = self.user_lookup()?;
+        let user = self.user_lookup();
         self.note_user_search(syllables);
         if system_extends {
             return Ok(true);
@@ -1641,7 +1634,7 @@ impl Dictionary for RuntimeDict<'_> {
         {
             return Ok(None);
         }
-        let user = self.user_lookup()?;
+        let user = self.user_lookup();
         if let Some(store) = self.user {
             store.note_pinyin_suggestion(|| chewing_query(syllables));
         }
@@ -2350,15 +2343,10 @@ impl Runtime {
     /// embedders pass [`SessionSettings::default`]), because the session
     /// reads them once at construction.
     ///
-    /// # Errors
-    ///
-    /// Forwards any [`EngineError`] from session construction, currently
-    /// infallible for the runtime's [`BigramLanguageModel`]. [`Session::new`] reads no dictionary or model records.
-    pub fn new_session(
-        &self,
-        settings: SessionSettings,
-    ) -> Result<oxpinyin_engine::SessionState, EngineError> {
-        Session::new(settings, self.dict(), self.lm()).map(Session::into_state)
+    /// Construction cannot fail: [`Session::new`] reads no dictionary or
+    /// model record.
+    pub fn new_session(&self, settings: SessionSettings) -> oxpinyin_engine::SessionState {
+        Session::new(settings, self.dict(), self.lm()).into_state()
     }
 
     /// Borrow the merged dictionary for one operation.
@@ -3571,18 +3559,12 @@ mod tests {
             runtime
                 .dict()
                 .user_lookup()
-                .unwrap()
                 .lookup(&syllables)
                 .iter()
                 .any(|entry| entry.token().value() == token && entry.text() == phrase)
         );
         assert_eq!(
-            runtime
-                .dict()
-                .user_lookup()
-                .unwrap()
-                .phrase_text(token)
-                .unwrap(),
+            runtime.dict().user_lookup().phrase_text(token).unwrap(),
             phrase
         );
         let row_generation = runtime.user_store_mut().unwrap().phrase_table_generation();
@@ -3664,7 +3646,6 @@ mod tests {
             runtime
                 .dict()
                 .user_lookup()
-                .unwrap()
                 .tokens_for_ucs4(&phrase.chars().map(u32::from).collect::<Vec<_>>())
                 .is_empty()
         );

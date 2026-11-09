@@ -33,9 +33,7 @@ impl PortSession {
     pub fn open(dir: &Path) -> Result<Self, String> {
         let runtime = Runtime::open(dir, None)
             .map_err(|error| format!("cannot open the runtime: {error}"))?;
-        let state = runtime
-            .new_session(SessionSettings::default())
-            .map_err(|error| format!("cannot create Session: {error}"))?;
+        let state = runtime.new_session(SessionSettings::default());
         Ok(Self { runtime, state })
     }
 

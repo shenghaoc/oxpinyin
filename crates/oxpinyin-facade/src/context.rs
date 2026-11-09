@@ -440,16 +440,14 @@ impl ContextCore {
     }
 
     /// Allocates one instance's orchestration state over this context's
-    /// assembly. `None` when the session cannot be built.
+    /// assembly. [`Runtime::new_session`](oxpinyin_runtime::Runtime::new_session)
+    /// cannot fail.
     #[must_use]
-    pub fn alloc_instance(&self) -> Option<crate::instance::InstanceCore> {
+    pub fn alloc_instance(&self) -> crate::instance::InstanceCore {
         let runtime = &self.runtime;
-        let mut session = runtime.new_session(self.settings).ok()?;
+        let mut session = runtime.new_session(self.settings);
         runtime.session(&mut session).set_defer_list_builds(true);
-        Some(crate::instance::InstanceCore::new(
-            session,
-            self.live.clone(),
-        ))
+        crate::instance::InstanceCore::new(session, self.live.clone())
     }
 
     /// `save`'s body: [`SaveOutcome::NotSaved`] without a user dir or when
@@ -1061,7 +1059,6 @@ mod library_transition_tests {
                 ctx.user_store()
                     .unwrap()
                     .lookup()
-                    .unwrap()
                     .tokens_for_ucs4(&[0x4f60]),
                 [token]
             );

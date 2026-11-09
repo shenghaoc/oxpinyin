@@ -1773,14 +1773,9 @@ impl UserStore {
     }
 
     /// Borrows the session's canonical tables.
-    ///
-    /// # Errors
-    /// None: the `Result` is the callers' signature.
-    pub fn lookup(&self) -> Result<crate::UserLookup<'_>, UserStoreError> {
-        Ok(crate::UserLookup::session(
-            &self.inner.libpinyin.phrases,
-            &self.inner.system_items,
-        ))
+    #[must_use]
+    pub fn lookup(&self) -> crate::UserLookup<'_> {
+        crate::UserLookup::session(&self.inner.libpinyin.phrases, &self.inner.system_items)
     }
 
     pub(crate) fn index_entries(&self) -> Vec<(Token, Vec<u16>)> {

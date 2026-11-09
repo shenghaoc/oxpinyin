@@ -30,7 +30,6 @@ fn session() -> Fixtures {
         FixtureDictionary::parse(VOCAB).expect("committed fixture"),
         FrequencyFixtureModel::parse(VOCAB, BIGRAM).expect("committed fixtures"),
     )
-    .expect("the fixtures open")
 }
 
 fn typed(text: &str) -> Fixtures {
@@ -45,7 +44,6 @@ fn session_from(vocab: &str) -> Fixtures {
         FixtureDictionary::parse(vocab).expect("test vocabulary"),
         FrequencyFixtureModel::parse(vocab, "# no bigrams\n").expect("test model"),
     )
-    .expect("the test fixtures open")
 }
 
 fn texts(session: &Fixtures) -> Vec<String> {
@@ -253,8 +251,7 @@ fn replace_raw_b_hash_ing_prefers_bu_family_not_bing() {
         SessionSettings::default(),
         FixtureDictionary::parse(JUNK_VOCAB).expect("junk vocab"),
         FrequencyFixtureModel::parse(JUNK_VOCAB, "").expect("junk unigrams"),
-    )
-    .expect("session opens");
+    );
 
     session.replace_raw("b#ing").expect("parse cannot fail");
     assert_eq!(session.raw_input(), "b#ing");
@@ -274,8 +271,7 @@ fn replace_raw_b_hash_ing_prefers_bu_family_not_bing() {
         SessionSettings::default(),
         FixtureDictionary::parse(JUNK_VOCAB).expect("junk vocab"),
         FrequencyFixtureModel::parse(JUNK_VOCAB, "").expect("junk unigrams"),
-    )
-    .expect("session opens");
+    );
     collapsed.replace_raw("bing").expect("parse cannot fail");
     let collapsed_top = collapsed
         .candidates()
@@ -317,8 +313,7 @@ fn turning_incomplete_pinyin_off_stops_at_the_initial() {
         },
         FixtureDictionary::parse(VOCAB).expect("committed fixture"),
         FrequencyFixtureModel::parse(VOCAB, BIGRAM).expect("committed fixtures"),
-    )
-    .expect("the fixtures open");
+    );
 
     session.replace_raw("nih").expect("typing cannot fail");
 

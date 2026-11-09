@@ -2624,8 +2624,7 @@ mod tests {
             SessionSettings::default(),
             FixtureDictionary::default(),
             FixtureLanguageModel::default(),
-        )
-        .expect("the fixtures open");
+        );
         assert!(!session.is_composing());
     }
 }

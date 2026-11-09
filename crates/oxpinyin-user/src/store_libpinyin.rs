@@ -3601,7 +3601,7 @@ mod tests {
         let reused = store
             .add_phrase_in(crate::USER_DICTIONARY, &"鱺".into(), &dense(3), Some(20))
             .expect("another phrase takes the dropped token");
-        let found = store.lookup().expect("lookup").lookup(&[ni_key()]);
+        let found = store.lookup().lookup(&[ni_key()]);
         assert!(found.iter().any(|entry| entry.token().value() == reused));
         drop(store);
         std::fs::remove_dir_all(dir).expect("cleanup");

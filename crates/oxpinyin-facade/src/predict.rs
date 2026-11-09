@@ -35,7 +35,7 @@ pub fn compute_prefixes(
         return Ok(Vec::new());
     };
     let prefix: Vec<u32> = prefix.outward_words().collect();
-    let user_lookup = user.and_then(|store| store.lookup().ok());
+    let user_lookup = user.map(UserStore::lookup);
     let max = prefix.len().min(oxpinyin_user::MAX_PHRASE_LENGTH);
     let mut tokens = Vec::new();
     for length in 1..=max {
@@ -86,13 +86,7 @@ pub fn merged_suggestions(
         .into_iter()
         .filter(|token| dict.phrase_table_token_enabled(*token))
         .collect();
-    let mut user_rows = if let Some(store) = user
-        && let Ok(lookup) = store.lookup()
-    {
-        lookup.suggest_after(&prefix)
-    } else {
-        Vec::new()
-    };
+    let mut user_rows = user.map_or_else(Vec::new, |store| store.lookup().suggest_after(&prefix));
     // PhraseTableEntry::search skips disabled library arrays
     // (074a2219 phrase_large_table3.cpp:40-42) in both tables.
     user_rows.retain(|(token, _)| dict.phrase_table_token_enabled(*token));

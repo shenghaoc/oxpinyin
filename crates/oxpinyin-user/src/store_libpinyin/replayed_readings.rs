@@ -920,10 +920,7 @@ fn live_appended_item_keeps_its_lookup_text() {
     let token = LIBRARY | 5;
     store.mask_out(u32::MAX, 0).expect("mask other token");
     assert!(store.with_live_item(token, |_| ()).is_some());
-    assert_eq!(
-        store.lookup().expect("lookup").phrase_text(token),
-        Some("五".into())
-    );
+    assert_eq!(store.lookup().phrase_text(token), Some("五".into()));
     drop(store);
     std::fs::remove_dir_all(dir).expect("cleanup");
 }
@@ -972,10 +969,7 @@ fn live_new_import_keeps_text_and_accepts_another_reading_after_failed_mask() {
         .expect("import new");
     store.mask_out(u32::MAX, 0).expect("mask other token");
     assert!(store.with_live_item(token, |_| ()).is_some());
-    assert_eq!(
-        store.lookup().expect("lookup").phrase_text(token),
-        Some("五".into())
-    );
+    assert_eq!(store.lookup().phrase_text(token), Some("五".into()));
     store.plant_raw_bigram(1, &[0, 0, 0, 0, 1]);
     assert!(matches!(
         store.mask_out(u32::MAX, 0),

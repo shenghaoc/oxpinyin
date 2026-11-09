@@ -136,9 +136,7 @@ fn an_unmodified_libpinyin_data_directory_opens_and_decodes() {
     assert!(art.iter().any(|entry| entry.text() == "二簧"), "{art:?}");
 
     // A session decodes over the same handles.
-    let mut session = runtime
-        .new_session(SessionSettings::default())
-        .expect("session");
+    let mut session = runtime.new_session(SessionSettings::default());
     let mut session = runtime.session(&mut session);
     session.replace_raw("nihao").expect("typing");
     let first = session
