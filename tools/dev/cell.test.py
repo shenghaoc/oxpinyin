@@ -50,6 +50,23 @@ class SettingsTests(unittest.TestCase):
             self.assertEqual(json.loads(path.read_text()), owner)
             self.assertEqual(list(Path(scratch).iterdir()), [path])
 
+    def test_identity_record_names_the_cdylibs_of_this_host(self):
+        expected = {'win32': ('pinyin_capi.dll', 'zhuyin_capi.dll'),
+                    'darwin': ('libpinyin_capi.dylib', 'libzhuyin_capi.dylib')}.get(
+                        sys.platform, ('libpinyin_capi.so', 'libzhuyin_capi.so'))
+        with tempfile.TemporaryDirectory() as scratch:
+            settings = Settings.read({**os.environ, 'CARGO_TARGET_DIR': scratch})
+            settings.claim()
+            for filename in expected:
+                (Path(scratch) / 'debug').mkdir(exist_ok=True)
+                (Path(scratch) / 'debug' / filename).write_bytes(b'0123')
+            settings.record()
+            artifacts = json.loads((Path(scratch) / 'oxpinyin-cell-identity.json').read_text())['artifacts']
+            self.assertEqual(sorted(artifacts), ['pinyin-capi', 'zhuyin-capi'])
+            for name, filename in zip(('pinyin-capi', 'zhuyin-capi'), expected):
+                self.assertEqual(artifacts[name]['path'], str(Path(scratch) / 'debug' / filename))
+                self.assertEqual(artifacts[name]['size'], 4)
+
     def test_unreadable_claim_fails_closed(self):
         with tempfile.TemporaryDirectory() as scratch:
             path = Path(scratch) / 'oxpinyin-cell-identity.json'
