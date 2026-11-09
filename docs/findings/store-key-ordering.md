@@ -50,7 +50,7 @@ the peer itself was removed 2026-09-20.
   is pure memcmp. That distinction is the whole reason encoding choice matters
   below.)
 - **tkrzw** (`cxx` shim over TreeDBM, feature `tkrzw`; the default selection
-  2026-09-05 → 2026-09-20, Berkeley DB since). `open_db` (`crates/oxpinyin-store/src/tkrzw/shim.cc`) calls
+  2026-09-05 → 2026-09-20, Berkeley DB since). `open_db` (`crates/oxpinyin-store/src/tkrzw/adapter.cc`) calls
   `db->dbm.Open(path, writable, options)` with `options` being only
   `File::OPEN_DEFAULT` or `File::OPEN_NO_CREATE`. **The fourth argument —
   `TreeDBM::TuningParameters` — is omitted**, so it is default-constructed and
@@ -198,7 +198,7 @@ key encoding was changed.**
   matrix, which runs every peer build, is what turns those independent
   results into **redb == Kyoto Cabinet == tkrzw == Berkeley DB**. Plus, in every build, that swapping an encode site's
   endianness changes the observed walk order (non-vacuity). The invariant
-  itself is proven separately by `tools/store/backend-matrix.sh` (the
+  itself is proven separately by [archived backend matrix source](https://github.com/shenghaoc/oxpinyin/blob/01475357ab03f74951fce25983193395b97eef3c/tools/store/backend-matrix.sh) (the
   `backend-matrix` CI job), which checks that each single-feature
   selection compiles and that every pairwise combination, the all-peers
   combination, and the zero-backend build are refused by the guard — this
@@ -405,12 +405,12 @@ Every hash-constructor call site in the workspace uses only the raw tier
 |---|---|---|
 | `crates/oxpinyin-data/src/bigram_table.rs:56` | `open_hash_read_only` | wraps in `RawChewingDbm` |
 | `crates/oxpinyin-data/tests/language_model.rs:44` | `create_hash` | `put_raw` |
-| `crates/oxpinyin-datagen/src/write.rs:299` (`get_hash`) | `open_hash_read_only` | `get_raw` |
-| `crates/oxpinyin-datagen/src/write.rs:326` (`count_hash`) | `open_hash_read_only` | `count_raw` |
-| `crates/oxpinyin-datagen/src/write.rs:448` (`write_hash_with`) | `create_hash` | `put_raw` |
-| `crates/oxpinyin-datagen/src/write.rs:467` (`verify_hash`) | `open_hash_read_only` | `get_raw` |
-| `crates/oxpinyin-datagen/tests/libpinyin_parity.rs:146` | `open_hash_read_only` | `get_raw` |
-| `crates/oxpinyin-store/benches/support/mod.rs:88` | `open_hash_read_only` | open cost only |
+| `[archived write source](https://github.com/shenghaoc/oxpinyin/blob/494766c37c0c87c6571d1000240a33b3d688cf83/crates/oxpinyin-datagen/src/write.rs):299` (`get_hash`) | `open_hash_read_only` | `get_raw` |
+| `[archived write source](https://github.com/shenghaoc/oxpinyin/blob/494766c37c0c87c6571d1000240a33b3d688cf83/crates/oxpinyin-datagen/src/write.rs):326` (`count_hash`) | `open_hash_read_only` | `count_raw` |
+| `[archived write source](https://github.com/shenghaoc/oxpinyin/blob/494766c37c0c87c6571d1000240a33b3d688cf83/crates/oxpinyin-datagen/src/write.rs):448` (`write_hash_with`) | `create_hash` | `put_raw` |
+| `[archived write source](https://github.com/shenghaoc/oxpinyin/blob/494766c37c0c87c6571d1000240a33b3d688cf83/crates/oxpinyin-datagen/src/write.rs):467` (`verify_hash`) | `open_hash_read_only` | `get_raw` |
+| `[archived libpinyin parity source](https://github.com/shenghaoc/oxpinyin/blob/494766c37c0c87c6571d1000240a33b3d688cf83/crates/oxpinyin-datagen/tests/libpinyin_parity.rs):146` | `open_hash_read_only` | `get_raw` |
+| `[archived mod source](https://github.com/shenghaoc/oxpinyin/blob/dc51303cc031d2bedef982a0feb9001b8f69922e/crates/oxpinyin-store/benches/support/mod.rs):88` | `open_hash_read_only` | open cost only |
 | `crates/oxpinyin-store/tests/bdb_libpinyin_files.rs:64` | `open_hash_read_only` | `range_raw` |
 | `crates/oxpinyin-store/tests/bdb_libpinyin_files.rs:94` | `open_hash_read_only` | `count_raw` |
 | `crates/oxpinyin-store/tests/bdb_libpinyin_files.rs:118` | `open_hash_read_only` | `get_raw` |

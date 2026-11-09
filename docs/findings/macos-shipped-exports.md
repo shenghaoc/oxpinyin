@@ -117,7 +117,7 @@ export RUNNER_TEMP="$(mktemp -d)"
 export RUSTFLAGS='-D warnings'
 time {
   CARGO_TARGET_DIR="$RUNNER_TEMP/cargo-c-target" \
-    just heavy -- cargo install cargo-c --version 0.10.25 --locked --root "$RUNNER_TEMP/cargo-c"
+    cargo install cargo-c --version 0.10.25 --locked --root "$RUNNER_TEMP/cargo-c"
   export PATH="$RUNNER_TEMP/cargo-c/bin:$PATH"
   export CARGO_TARGET_DIR="$RUNNER_TEMP/target"
   stage="$RUNNER_TEMP/macos-shipped"

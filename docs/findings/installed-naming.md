@@ -122,7 +122,7 @@ the prefix to build.rs, the work splits in two:
   install-time `@prefix@` / `@libdir@` for the wrapper. It writes to
   `$OUT_DIR` and mirrors the file to `<target>/<profile>/` so the wrapper
   can read it without discovering the build-hash directory.
-- **`tools/packaging/install.sh` owns placement.** For the one library
+- **`just packaging install` owns placement.** For the one library
   named on its command line (`libpinyin` or `libzhuyin` — one per
   invocation, so each stays installable on its own) it runs
   `cargo cinstall --prefix=… --libdir=…`, then fills that crate's baked
@@ -160,7 +160,7 @@ selects the token once from its backend feature, as the pin's
 read it through `DEP_OXPINYIN_STORE_DATABASE_FORMAT`; there is no build-time
 override.)*
 
-**Gate.** After `tools/packaging/install.sh libpinyin --prefix=$P` (with
+**Gate.** After `just packaging install libpinyin --prefix=$P` (with
 `PKG_CONFIG_PATH=$P/lib/pkgconfig`):
 
 ```console
@@ -222,12 +222,12 @@ describes the tree:
   `tools/oracle/oracle-pin.txt`, read by both capi build scripts
   (`crates/oxpinyin-capi/build_pin_version.rs`, which also rejects a
   `[package.metadata.capi]` table that disagrees) and by
-  `tools/packaging/pc-version.sh` for the release scripts.
+  `just packaging pc-version` for the release scripts.
 - **Template and placement (same PR):** `libpinyin.pc.in` is now the
   pin's template line for line, so it no longer hardcodes `exec_prefix`
-  and `includedir`; `tools/packaging/install.sh` fills `@prefix@`,
+  and `includedir`; `just packaging install` fills `@prefix@`,
   `@exec_prefix@`, `@libdir@` and `@includedir@` for both libraries as
   the pin's configure does — `--libdir`/`--includedir` verbatim when
   given, otherwise the prefix-relative `${exec_prefix}/lib` and
-  `${prefix}/include`. `tools/packaging/check-pc-metadata.sh` diffs the
+  `${prefix}/include`. `just packaging check-pc-metadata` diffs the
   installed tree against a pin install field for field.

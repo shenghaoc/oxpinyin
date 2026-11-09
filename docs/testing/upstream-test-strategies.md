@@ -57,7 +57,7 @@ The most instructive of the three directories. Components:
   (escape syntax like `<E>`, `<D>`, `<C1>`) replayed against a real session,
   printing commit strings; `materials.txt` is a golden table of
   `keystrokes → expected Chinese output` drawn from real-world sentences.
-  A human/script diff closes the loop (`simulate.sh`).
+  A human/script diff closes the loop (the recorded simulate harness).
 - **`test-regression.c`** — one minimal repro function per historical bug,
   named for its tracker issue (`test_libchewing_googlecode_issue_472` …).
   Most just assert "no longer crashes" on a gnarly keystroke string. This
@@ -185,4 +185,4 @@ decade of IME fuzzing converged on) and the config-mutation trick (fold
 | ABI size/pin guard | — | test-struct-size.c | checked-in pinyin.h + C++ smoke gate | none — keep |
 | Stateful C-API fuzzer | — | fuzzer.rs (AFL++) | `capi-commands` (landed) | done |
 | Hostile data-file fuzzer | — | trieloader/cdbloader | `dict-loader`, `phrase-library`, `table-conf` (landed) | done |
-| Interactive oracle tools | 4 REPL drivers | debug-chewing-shell.sh | oracle harness bins | none — equivalent exists |
+| Interactive oracle tools | 4 REPL drivers | the recorded debug chewing shell harness | oracle harness bins | none — equivalent exists |

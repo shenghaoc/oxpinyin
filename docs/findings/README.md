@@ -30,10 +30,6 @@ A parenthetical after a status is a note about scope or provenance, not a new st
 | [`addon-choose-promotion`](addon-choose-promotion.md) | Addon choose-promotion (default nibble 5) — #105 | record (#105) |
 | [`algorithm-precondition-witnesses-2026-10-28`](algorithm-precondition-witnesses-2026-10-28.md) | Reachable algorithm-precondition witnesses | evidence (policy registered sites) |
 | [`arm64-pin-portability-1137`](arm64-pin-portability-1137.md) | Pin-built libpinyin on arm64: five non-crash contract cases, two out-of-range float-to-`guint32` stores (#1137) | policy record |
-| [`axis-j-bdb-ledger`](axis-j-bdb-ledger.md) | Axis J: Berkeley DB internal coverage ledger | machine-read |
-| [`axis-j-kc-ledger`](axis-j-kc-ledger.md) | Axis J: Kyoto Cabinet internal coverage delta ledger | machine-read |
-| [`axis-j-tkrzw-ledger`](axis-j-tkrzw-ledger.md) | Axis J: Tkrzw internal coverage delta ledger | machine-read |
-| [`bdb-access-patterns-2026-10-22`](bdb-access-patterns-2026-10-22.md) | Berkeley DB adapter access patterns | current reference |
 | [`bdb-failed-handle`](bdb-failed-handle.md) | bdb-failed-handle — Berkeley DB handles whose open failed | policy record |
 | [`berkeleydb-backend`](berkeleydb-backend.md) | BerkeleyDB backend — drop-in task 10 | current reference |
 | [`bigram-punct-format-2026-09-01`](bigram-punct-format-2026-09-01.md) | libpinyin bigram and punctuation formats — P4 source-level findings | verified (P4) |
@@ -64,7 +60,6 @@ A parenthetical after a status is a note about scope or provenance, not a new st
 | [`installed-naming`](installed-naming.md) | The installed tree takes libpinyin's name; the source tree keeps ours | implemented |
 | [`interpolation2-grammar`](interpolation2-grammar.md) | The `interpolation2.text` taglib grammar — one shared reader, and the duplicate/zero-count policy split | record (implemented) |
 | [`kbest-search`](kbest-search.md) | K-best search SPEC | frozen |
-| [`kyotocabinet-backend`](kyotocabinet-backend.md) | Kyoto Cabinet compat backend | record (backend; the compat framing is pre-P6) |
 | [`language-runtime-discrepancy-template`](language-runtime-discrepancy-template.md) | Language/runtime discrepancy record — template | template |
 | [`libpinyin-structures-and-algorithms`](libpinyin-structures-and-algorithms.md) | libpinyin's components, data structures, algorithms and coefficients beside oxpinyin's, with the open gaps | register |
 | [`libpinyin-system-data-formats-2026-09-01`](libpinyin-system-data-formats-2026-09-01.md) | libpinyin system-data formats vs the #269 sysimage — source-level comparison | record (P1 input) |
@@ -100,5 +95,4 @@ A parenthetical after a status is a note about scope or provenance, not a new st
 | [`trellis-adjusted-cost-s1-s2`](trellis-adjusted-cost-s1-s2.md) | Pinyin trellis adjusted-cost comparison | policy record |
 | [`upstream-divergences`](upstream-divergences.md) | Upstream divergences | register (living) |
 | [`upstream-report-drafts`](upstream-report-drafts.md) | Upstream report drafts — the libpinyin report-back batch | open (drafts, not filed) |
-| [`upstream-schema`](upstream-schema.md) | Findings — upstream GSettings schema | historical (pre-P6) |
 | [`user-store`](user-store.md) | libpinyin user store — behaviour characterization (W6-T0) | characterization (W6) |

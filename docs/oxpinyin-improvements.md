@@ -85,7 +85,7 @@ Stage 2 permits internal performance, memory and safety work with no observable 
 An implementation can be faster or smaller than the pin by any amount.
 The floor is the complexity rule, derived from the source and compared with the pin ([source policy](source-policy.md#performance-standard)).
 Measurement is the exception ([controlling rule](source-policy.md#controlling-rule)).
-The [roadmap](../ROADMAP.md) records landed work.
+The [roadmap](../ROADMAP.md) lists the open internal improvements.
 
 ## Stage 3
 
@@ -95,4 +95,4 @@ Examples include a new language model, different candidate behaviour or an incom
 Put each departure behind an opt-in cargo feature, off by default.
 Keep the default build bug-for-bug compatible.
 Do not claim libpinyin's binary identity for a build that breaks the ABI or data formats.
-See the [Stage 3 roadmap](../ROADMAP.md#stage-3--opt-in-departures-after-stage-2).
+See the [Stage 3 roadmap](../ROADMAP.md#stage-3-after-stage-2).

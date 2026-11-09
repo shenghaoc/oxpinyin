@@ -81,7 +81,7 @@ writes there too:
   promotion for an `ADDON` candidate before selecting, rewrites the snapshot
   candidate to `NORMAL_CANDIDATE` at the promoted token, and records the promoted
   token in the sentence via `Session::select_promoted`
-  (`crates/oxpinyin-engine/src/session.rs`).
+  (`crates/oxpinyin-engine/src/session/mod.rs`).
 
 After promotion the phrase surfaces through `UserLookup` (which indexes every
 stored phrase regardless of nibble, ascending nibble then token — nibble 5 sorts

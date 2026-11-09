@@ -157,7 +157,7 @@ def key_walk(facade, text):
 
 def zhuyin_key_abort(facade, text):
     """The zhuyin twin of key_abort: libzhuyin's key query reads the column at the offset itself
-    (contract_separator_before_cursor.py:256-259), so the pinyin values do not carry over."""
+    (the pin's zhuyin key-query derivation), so the pinyin values do not carry over."""
     facade.call('zhuyin_parse_more_full_pinyins', text)
     facade.call('zhuyin_get_parsed_input_length')
     facade.call('zhuyin_get_zhuyin_key', 0)

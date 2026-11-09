@@ -75,7 +75,7 @@ it, so only `data_manifest_sha256` is comparable across prefixes. See
 ## Multi-backend bench oracles
 
 Added 2026-09-06 (append-only; everything above is unchanged). For
-backend-comparison benchmarking only, `tools/oracle/build-oracle.sh`
+backend-comparison benchmarking only, `python3 tools/oracle/build.py`
 accepts `--dbm <tkrzw|kc|bdb>` and configures libpinyin with the
 corresponding DBM (`Tkrzw`, `KyotoCabinet`, `BerkeleyDB`). The choice is
 recorded in the pin ref (`+dbm-<name>`) and in the `dbm=` field of
@@ -87,7 +87,7 @@ the no-flag path is now Berkeley DB; see the amendment below.)*
 *(`pinyin-oracle` and this link check were deleted 2026-11-06 UTC.)*
 A bench prefix is linked by setting `PINYIN_ORACLE_PREFIX` plus
 `PINYIN_BENCH_DBM=kc|bdb`, which relaxes the frozen pin-ref comparison
-in `crates/pinyin-oracle/build.rs` to a `dbm-<name>` containment check
+in [archived build source](https://github.com/shenghaoc/oxpinyin/blob/6c12717e75d0d489efed8ea29a5f316740b30402/crates/pinyin-oracle/build.rs) to a `dbm-<name>` containment check
 (the manifest still records the full pin, hashes included). The
 relaxation is CI-guarded — `PINYIN_BENCH_DBM` set under `CI` fails the
 build — and the capture recipe (removed 2026-11-06 UTC with the compat
@@ -137,7 +137,7 @@ The pin itself is unchanged: ibus-libpinyin stays `1.16.5` /
 `2d2cdac0187101aa0cd7ac06694a8340721ddfbb`. Only its fetch and
 verification form moves, to match libpinyin's:
 
-- **Fetch form:** `tools/oracle/build-oracle.sh` now fetches
+- **Fetch form:** `python3 tools/oracle/build.py` now fetches
   ibus-libpinyin by commit SHA (`git fetch --depth=1 <repo> <sha>`,
   `git checkout FETCH_HEAD`, verified by `git rev-parse HEAD` equality)
   instead of downloading the `1.16.5` tag tarball and checking its
@@ -194,14 +194,14 @@ bare `./configure`, which selects `BerkeleyDB` (`configure.ac:94` at
 recorded"). The tkrzw, bdb and kc cells all stay explicitly selectable.
 What changed, and what did not:
 
-- `tools/oracle/build-oracle.sh` defaults to `--dbm bdb`; `--dbm tkrzw`
+- `python3 tools/oracle/build.py` defaults to `--dbm bdb`; `--dbm tkrzw`
   and `--dbm kc` build the other cells. `tools/oracle/oracle-pin.txt`
   records `dbm=BerkeleyDB`.
 - Differentials that compare against a full pin ref choose the cell with
   `PINYIN_ORACLE_DBM=bdb|kc|tkrzw` (default `bdb`,
-  `tools/bisection/oracle-cell.sh`), build oxpinyin with the matching
+  [archived oracle cell source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/oracle-cell.sh)), build oxpinyin with the matching
   cargo feature, and refuse data written by another backend
-  (`tools/bisection/system-dir.sh`).
+  ([archived system dir source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/system-dir.sh)).
 - **Unchanged — the tkrzw cell stays the pin for the frozen goldens.** The
   capture fixtures (`fixtures/foundation`, `fixtures/w4`, `fixtures/w3/pin-ref.txt`)
   carry `+dbm-tkrzw`; the removed capture recipe and `just profile-w8`

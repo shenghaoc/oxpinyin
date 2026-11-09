@@ -4,7 +4,7 @@ Date: 2026-10-28 UTC (`date -u`). Diagnostic tools based on oxpinyin
 `1cb70696ecf8f80aa1fdcf3e2ba62ba7e0d27fd7`; no production changes.
 Source read: a clean libpinyin checkout at
 `074a2219c90feaf962d0d24f034514033ece5f99`, independently fetched and
-verified at the same commit by `tools/oracle/build-oracle.sh`.
+verified at the same commit by `python3 tools/oracle/build.py`.
 
 ## Results
 
@@ -121,12 +121,12 @@ Run from the repository root with the environment above and the setup in
 `docs/runbooks/setup.md`. `PINYIN_ORACLE_PREFIX` names an unpatched BDB
 reference prefix with its system data. Use a fresh diagnostic prefix:
 
-```sh
-just heavy -- tools/oracle/build-oracle.sh --libs-only --dbm bdb \
+```text
+python3 tools/oracle/build.py --libs-only --dbm bdb \
   --apply-patches tools/bisection/patches/nbest-tails-dump \
   --work-dir target/algorithm-preconditions/build \
   --prefix target/algorithm-preconditions/pin
-PINYIN_ORACLE_DBM=bdb just heavy -- just runner nbest-train-diff \
+PINYIN_ORACLE_DBM=bdb the recorded runner nbest-train-diff \
   --pin-witness-cases tools/bisection/nbest-precondition-cases.tsv \
   --prefix target/algorithm-preconditions/pin \
   --data "$PINYIN_ORACLE_PREFIX/lib/libpinyin/data"

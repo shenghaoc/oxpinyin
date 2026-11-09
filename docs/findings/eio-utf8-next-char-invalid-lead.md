@@ -75,7 +75,7 @@
   | `F5 'abc d'` (control) | `["", "d"]` | `["", "d"]` |
 
 - **Tests:** `split_line_steps_one_byte_from_a_byte_that_leads_no_sequence`
-  (`crates/oxpinyin-utils/src/taglib.rs`) holds the oxpinyin tokens and
+  (`crates/oxpinyin-kmm/src/taglib.rs`) holds the oxpinyin tokens and
   the control, and `tool.rs`'s boundary test holds the step for every byte
   class. No `tool-diff` case reaches these bytes: the 16 registered
   `k_mixture_model_to_interpolation` cases feed `stdin.text`, a JSON
@@ -84,7 +84,7 @@
   cases. The nightly `KMM live: to_interpolation` gate and the registered
   cases on the tkrzw cell cover valid input.
 - **Prior rulings:** none reversed.
-- **Evidence:** `just heavy -- cargo test -p oxpinyin-input -p
+- **Evidence:** `cargo test -p oxpinyin-input -p
   oxpinyin-utils -p oxpinyin-training`; the pin derivation above, from the
   source.
 - **Conclusion:** accepted, 2026-10-31 UTC.

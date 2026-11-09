@@ -137,7 +137,7 @@ any figure below.
 
 Both `row58-unsigned-score-*` cases do the same thing; `-on` sets the
 `DYNAMIC_ADJUST` bit and `-off` clears it. The probe is
-`row58_signed_score` in `tools/bisection/contract-diff.py`:
+`row58_signed_score` in [archived contract diff source](https://github.com/shenghaoc/oxpinyin/blob/1b91c898795b6edd8b92dd1fecf65ec6f4d1a434/tools/bisection/contract-diff.py):
 
 1. Import one phrase `我甲甲` (`wo3'jia3'jia3`) with count
    `1431655631`. `_add_phrase` stores `count * 3`
@@ -428,7 +428,7 @@ exclusions because their keys do not split the two architectures:
 
 - **The host scanner.** The inputs are `1e6`, `1.5` and `2`, all
   ordinary decimal `%f` spellings accepted by any conforming C library.
-  The `host_scanf` marker in `contract-diff.py` covers only the malformed
+  The `host_scanf` marker in [archived contract diff source](https://github.com/shenghaoc/oxpinyin/blob/1b91c898795b6edd8b92dd1fecf65ec6f4d1a434/tools/bisection/contract-diff.py) covers only the malformed
   exponent-without-digits spellings (`1e` and `0x1p`); it does not cover
   these cases. A scanner that rejected them would fail init, not reorder
   candidates; the pin exits 0 and returns the full list.
@@ -537,7 +537,7 @@ Both are drafts. Nothing has been filed.
 >
 > **Version:** libpinyin 2.11.92, commit
 > `074a2219c90feaf962d0d24f034514033ece5f99`, built with GCC 15.3.0
-> by `tools/oracle/build-oracle.sh` (autoconf `-g -O2`, assertions
+> by `python3 tools/oracle/build.py` (autoconf `-g -O2`, assertions
 > live).
 >
 > **Summary:** `_compute_frequency_of_items` (`src/pinyin.cpp:1794-1868`)
@@ -625,7 +625,7 @@ git -C /tmp/libpinyin-074a2219 checkout \
 amd64 objects (the published image, bdb cell):
 
 ```sh
-TAG=$(tools/oracle/image-tag.sh)
+TAG=$(python -m tools.oracle.image image-tag)
 TOKEN=$(curl -fsSL \
   "https://ghcr.io/token?scope=repository:shenghaoc/oxpinyin-oracle:pull" \
   | jq -r .token)
@@ -695,8 +695,8 @@ objdump -dlS -C --no-show-raw-insn --prefix-strip=3 --prefix=$P \
 
 The five contract cases reproduce with the maintained driver command:
 
-```sh
-tools/bisection/run-contract-diff.sh bdb $PINYIN_ORACLE_PREFIX \
+```text
+[archived run contract diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-contract-diff.sh) bdb $PINYIN_ORACLE_PREFIX \
   target-bdb/debug/libpinyin_capi.so target-bdb/debug/libzhuyin_capi.so \
   -- --run-platform-excluded \
   --cases row58-unsigned-score-off,row58-unsigned-score-on,table-conf-lambda-million-zhuyin,table-conf-lambda-one-and-a-half-zhuyin,table-conf-lambda-two-zhuyin \

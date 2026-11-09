@@ -22,8 +22,8 @@ Baselines and neighbours: `parity-climb-residual`,
 ## 0. The pinned baseline (the climb floor)
 
 The frozen number every change in this area is measured against, pinned in
-`crates/pinyin-oracle/tests/real_tables_integration.rs`
-(`real_tables_session_reports_parity`) over `fixtures/w4/oracle-candidates.txt`,
+[archived real tables integration source](https://github.com/shenghaoc/oxpinyin/blob/6c12717e75d0d489efed8ea29a5f316740b30402/crates/pinyin-oracle/tests/real_tables_integration.rs)
+(`real_tables_session_reports_parity`) over [archived oracle candidates source](https://github.com/shenghaoc/oxpinyin/blob/928345a9c0b2ee193b1c89b435f642ddea619114/fixtures/w4/oracle-candidates.txt),
 re-frozen on 2026-08-16 by `pin-refreeze-2026-08`, amended
 on 2026-08-21 by the doubled-apostrophe fix, and on 2026-08-22 by the Class A
 comparator tie-law port (`docs/testing/corpus-tail.md`):
@@ -58,7 +58,7 @@ finding):
 > along them, greedy-DPs over the collected phrases, and applies bigrams
 > post-hoc so they cannot influence segmentation.
 
-The rest of §1 separates what `fixtures/w4/oracle-candidates.txt` demonstrably
+The rest of §1 separates what [archived oracle candidates source](https://github.com/shenghaoc/oxpinyin/blob/928345a9c0b2ee193b1c89b435f642ddea619114/fixtures/w4/oracle-candidates.txt) demonstrably
 shows from what the hypothesis asserts about oracle internals the fixture does
 not expose. Every claim is tagged **SHOWN** (grounded in cited fixture lines) or
 **INFERRED** (not fixture-derivable; a capture extension named in §1.6 would
@@ -103,7 +103,7 @@ signal we have, and §1.3 uses it against the candidate fixture.
 
 ### 1.2 SHOWN: candidate construction pools phrases across segmentations
 
-`fixtures/w4/oracle-candidates.txt`, verbatim:
+[archived oracle candidates source](https://github.com/shenghaoc/oxpinyin/blob/928345a9c0b2ee193b1c89b435f642ddea619114/fixtures/w4/oracle-candidates.txt), verbatim:
 
 ```text
 xian	1	西安
@@ -278,7 +278,7 @@ the contract on that evidence.
 ### 1.5 Residual buckets, and why the fixture caps the analysis
 
 From `parity-climb-residual` (regenerate with
-`cargo run -p pinyin-oracle --release --bin parity-worst`), the 3,755 top-1
+`recorded pinyin-oracle invocation (retired package):  --release --bin parity-worst`), the 3,755 top-1
 misses over 10,190:
 
 | Bucket | Count | Share of misses |
@@ -543,8 +543,8 @@ regression envelope that must hold regardless.
 
 1. **Portable parity (primary metric).**
 
-   ```bash
-   cargo test -p pinyin-oracle --features oracle-ffi \
+   ```text
+   recorded pinyin-oracle invocation (retired package):  --features oracle-ffi \
        --test real_tables_integration -- --ignored --nocapture
    ```
 
@@ -552,16 +552,16 @@ regression envelope that must hold regardless.
    prefix-depth, and Δ order-only against the baseline top-1 10190,
    top-5-set 10190, absent 0, prefix-10 overlap 98930, prefix-depth
    98930, order-only 0. Requires the committed fixtures
-   (`fixtures/w4/oracle-candidates.txt`,
+   ([archived oracle candidates source](https://github.com/shenghaoc/oxpinyin/blob/928345a9c0b2ee193b1c89b435f642ddea619114/fixtures/w4/oracle-candidates.txt),
    `fixtures/w4/oracle-sentence-surface.txt`), the W2 corpus
    (`tests/parity/corpus/inputs`), and the discoverable pin-built oracle
-   (`tools/oracle/build-oracle.sh`; resolved by
+   (`python3 tools/oracle/build.py`; resolved by
    `pinyin_oracle::OraclePrefix::locate`), per
-   `crates/pinyin-oracle/tests/real_tables_integration.rs`.
+   [archived real tables integration source](https://github.com/shenghaoc/oxpinyin/blob/6c12717e75d0d489efed8ea29a5f316740b30402/crates/pinyin-oracle/tests/real_tables_integration.rs).
 2. **Thread-order independence.**
 
-   ```bash
-   PARITY_SERIAL=1 cargo test --release --locked -p pinyin-oracle \
+   ```text
+   PARITY_SERIAL=1 recorded pinyin-oracle invocation (retired package): --release --locked  \
        --features oracle-ffi --test real_tables_integration \
        -- --ignored --nocapture
    ```
@@ -570,8 +570,8 @@ regression envelope that must hold regardless.
    number under parallelism is a determinism bug, not a parity gain.
 3. **Rank-1 recovery and bucket movement.**
 
-   ```bash
-   cargo run -p pinyin-oracle --release --bin parity-worst
+   ```text
+   recorded pinyin-oracle invocation (retired package):  --release --bin parity-worst
    ```
 
    Report how often the oracle's rank-1 becomes our rank-1, and the movement of
@@ -638,7 +638,7 @@ is frozen in §8.
 ### 7.1 What was captured
 
 `fixtures/w4/oracle-candidate-structure.txt`, produced by
-`cargo run -p pinyin-oracle --features oracle-ffi --bin oracle-candidate-structure`
+`recorded pinyin-oracle invocation (retired package):  --features oracle-ffi --bin oracle-candidate-structure`
 over the pinned oracle (`Session::observe_candidate_infos`, the same
 `pinyin_guess_candidates(_, 0, 0x1e)` stage as `oracle-candidates.txt`). Wall
 clock: **3.6 s** for the whole corpus — the observe path is fast; the "~3h"
@@ -647,7 +647,7 @@ note on the older freshness test is not representative of a single capture pass.
 Provenance matches the sister fixture exactly: `total_inputs=10465 (distinct
 10312)`, `total_triples=97442 (distinct inputs with candidates 10037)`. The
 portable test `structure_fixture_matches_sister_triples`
-(`crates/pinyin-oracle/tests/candidate_structure.rs`) asserts the two files'
+([archived candidate structure source](https://github.com/shenghaoc/oxpinyin/blob/6c12717e75d0d489efed8ea29a5f316740b30402/crates/pinyin-oracle/tests/candidate_structure.rs)) asserts the two files'
 `(input, rank, candidate_text)` columns are byte-identical, so the type /
 n-best columns are read against the *same* candidates the pinned metrics use.
 

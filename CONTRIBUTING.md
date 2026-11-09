@@ -1,6 +1,7 @@
 # Contributing
 
-Read the [constitution](docs/constitution.md) and [source policy](docs/source-policy.md) before changing the project.
+For every task, read the [constitution](docs/constitution.md), [compatibility policy](docs/findings/compatibility-policy.md) and [approval rules](#approval-conditions).
+When a change touches compatibility, the pin or a stage, also read the [roadmap](ROADMAP.md) and [source policy](docs/source-policy.md).
 
 The usual workflow is:
 
@@ -110,13 +111,39 @@ When a measurement compares arms, run them in one job on one machine and report 
 Do not use an absolute figure from another run, host or CPU as a baseline.
 Follow the [measurement procedure](docs/runbooks/benches.md).
 
-## Dates and shell placement
+## Dates
 
 Capture freeze-document, findings and patch-metadata dates with `date -u` on the machine executing the step.
 Capture them at run time.
 Do not write dates by hand.
 A local time zone ahead of UTC can date a record into the future (PR #363).
-Follow the [Python orchestration and shell-placement rule](docs/plans/tooling-python.md#shell-placement-rule-1260).
+
+## Tooling
+
+### Shell placement
+
+Write orchestration in Python, in `tools.dev` or an existing maintained harness.
+Keep a shell script only for one of these reasons:
+
+1. **Bootstrap:** it runs before managed CPython exists, to provision it.
+2. **Environment:** it runs where managed CPython is not available, such as a reference-image build or a container before provisioning.
+3. **External interface:** an outside tool requires a shell entry point, and the script is only a thin wrapper.
+
+State the reason at the top of each retained script, with its caller and boundary.
+A `just` recipe, a workflow `run:` block, a Docker `CMD`, a sourced helper or an existing file name is not a reason to keep shell: update the caller.
+Keep each `just` recipe as one line that delegates: under `sh -cu` on Unix, and under the `pwsh` shell that the `justfile` sets on Windows.
+Use the Bash floor in `tools/lib/bash-floor.sh`; do not copy its guards.
+
+### Independent work in parallel
+
+Run independent subprocesses and builds in the bounded pool, `tools/dev/pool.py`.
+Size the pool from the allowed CPUs.
+Give each worker private writable state.
+Make output independent of completion order.
+The first failure or cancellation starts no new unit, stops the running units and reaps their children.
+Serialize dependent steps and work that needs isolation, and state the reason in the tool or its runbook.
+The backend builds in `tools/oracle/Dockerfile.oracle` stay serial: no `tools/dev` module is copied into the reference image (#1234).
+Run timing, residency, cache-sensitive and sampling-profile observations in isolation.
 
 ## Toolchain and platforms
 
@@ -148,11 +175,10 @@ After rebasing:
 
 1. List committed artifacts whose generators changed on main since the branch point.
 2. Regenerate those artifacts.
-3. Re-run pins if the rebase changes engine, capi or data crates.
+3. Re-verify according to the [verification scope and precedence](docs/runbooks/verification.md#verification-scope-and-precedence).
 
 See PR #363 against #358 for the oracle-data manifest split example.
-The contributor who merges later re-runs the affected pin checks.
-Do not assume pre-rebase results remain valid.
+The contributor who merges later follows the same [verification scope and precedence](docs/runbooks/verification.md#verification-scope-and-precedence).
 Fmt failures block merging.
 A reviewed, formatting-only commit is safe when its diff contains only formatting.
 

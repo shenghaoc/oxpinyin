@@ -121,8 +121,8 @@ one until the real tables are behind it.
 
 ## Reproduction
 
-```bash
-cargo test -p pinyin-oracle --test decode_differential -- --nocapture
+```text
+recorded pinyin-oracle invocation (retired package):  --test decode_differential -- --nocapture
 ```
 
 No oracle prefix, no `oracle-ffi`, no Linux requirement. The live tier is

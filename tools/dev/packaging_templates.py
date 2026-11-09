@@ -189,10 +189,10 @@ int main(void) {
 }
 '''
 
-METADATA_USAGE = r'''Usage: tools/packaging/check-pc-metadata.sh --pin-root=DIR --subject-root=DIR
+METADATA_USAGE = r'''Usage: just packaging check-pc-metadata --pin-root=DIR --subject-root=DIR
            --prefix=DIR [--libdir=DIR] [--includedir=DIR]
            [--build-subject=FEATURES] [--modules="libpinyin libzhuyin"]
-  --build-subject  run install.sh for both libraries into --subject-root
+  --build-subject  run just packaging install for both libraries into --subject-root
                    first (emptying it), with `--profile dev --locked
                    --no-default-features --features FEATURES` (libpinyin
                    also gets `shipped`); FEATURES is the backend

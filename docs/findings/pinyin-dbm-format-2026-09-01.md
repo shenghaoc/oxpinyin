@@ -190,7 +190,7 @@ to per-keystroke lookups.
 - `crates/oxpinyin-data/src/chewing_table.rs` — ChewingTable: the Rust
   equivalent of `ChewingLargeTable2`. Key encoding, value decoding with
   correct ABI stride, search semantics matching the upstream.
-- `crates/oxpinyin-data/src/chewing_dict.rs` — ChewingDictionary:
+- `crates/oxpinyin-data/src/chewing_table.rs` — ChewingDictionary:
   bridges `ChewingTable` to the `Dictionary` trait via `SyllableKey` →
   `ChewingKey` conversion.
 - `crates/oxpinyin-store/src/lib.rs` — `RawReadStore` trait: unframed

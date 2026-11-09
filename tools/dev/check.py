@@ -22,7 +22,7 @@ from . import cell, native
 from tools.tkrzw import build as tkrzw_build
 
 ROOT = Path(__file__).resolve().parents[2]
-USAGE = 'usage: tools/dev/check.sh [' + '|'.join(cell.BACKENDS) + ']'
+USAGE = 'usage: just check [' + '|'.join(cell.BACKENDS) + ']'
 
 
 def windows_compiler(env, *, capture=subprocess.run, which=shutil.which):
@@ -155,7 +155,7 @@ def run(backend=None, out=sys.stdout, err=sys.stderr, env=None):
     return 0
 
 
-LINT_USAGE = ('usage: lint-crate-cfg-placement.sh [file...]\n'
+LINT_USAGE = ('usage: python -c "from tools.dev.check import lint_crate_cfg_placement; import sys; sys.exit(lint_crate_cfg_placement(sys.argv[1:]))" [file...]\n'
               '       with no arguments, lints every tracked *.rs file\n')
 LINT_VIOLATION_HEADER = ('crate-cfg-placement: a crate-level `#![cfg(...)]` must sit BELOW '
                          'its `//!` docs.\n\n')

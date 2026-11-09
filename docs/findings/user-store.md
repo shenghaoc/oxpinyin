@@ -635,7 +635,7 @@ project memory).
   `Cargo.toml` change and therefore a maintainer-ask per contributor guidance "Hard
   forbids"; W6-T1 must raise it, not slip it in.
 - The `UserModel` seam (`crates/oxpinyin-core/src/lib.rs:87`) and the engine
-  `Session` (`crates/oxpinyin-engine/src/session.rs`).
+  `Session` (`crates/oxpinyin-engine/src/session/mod.rs`).
 - The oracle export symbols (§9) and the parity harness.
 - W9 (training pipeline) is **independent** — it builds the *system* model
   offline; the user store shares the bigram/λ math but does not depend on W9
@@ -848,7 +848,7 @@ Semantics this reverts or preserves, on purpose:
   it is the context's `*_fini`. A process that dies before its fini
   leaves the counter raised, so seven killed launches in a row wipe the
   profile at the eighth, where the pin wipes it too. The differential
-  is `tools/bisection/run-open-counter-diff.sh`.
+  is [archived run open counter diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-open-counter-diff.sh).
 * **Amendment (2026-09-25, #538): every open is a session of its own.**
   Task 9 shared one session per user dir through the process registry.
   A second `pinyin_init` on a dir another live context had open reused
@@ -861,7 +861,7 @@ Semantics this reverts or preserves, on purpose:
   fresh scratch per open and runs `check_format` every time, so two
   contexts on one dir are independent, and when both save, the later
   save's files are the profile. The differential is
-  `tools/bisection/run-two-context-diff.sh`.
+  [archived run two context diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-two-context-diff.sh).
 * **Amendment (2026-09-25, #583): the counter reads as `%d` reads it.**
   Task 9 parsed `open counter:` as a bare unsigned decimal and read
   anything else as 0. Upstream reads the line with
@@ -886,7 +886,7 @@ Semantics this reverts or preserves, on purpose:
   the identity fields still rejects it. Counter discovery advances
   monotonically rather than rescanning whitespace suffixes. The
   differential is the seeded protocol of
-  `tools/bisection/run-open-counter-diff.sh`.
+  [archived run open counter diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-open-counter-diff.sh).
 
 * **Amendment (2026-09-27, #589/#590): the whole marker is the pin's
   `fscanf` sequence, and its abort point is a refusal.** The #583
@@ -920,7 +920,7 @@ Semantics this reverts or preserves, on purpose:
   code read the token as unknown and wiped the profile. One GLib warning
   per attempt: `check_format: unknown database format in user.conf`.
   The differential is the seeded protocol of
-  `tools/bisection/run-open-counter-diff.sh`: the counter seeds keep
+  [archived run open counter diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-open-counter-diff.sh): the counter seeds keep
   their byte-for-byte comparison, the `conf-*` cases cover the whole
   sequence, and the `abort-*` expectation channel asserts the pin's
   SIGABRT against the refusal.
@@ -940,14 +940,14 @@ Semantics this reverts or preserves, on purpose:
   `Option<&str>`), `Runtime::open` opens the store on an empty path and
   keeps it relative, and the DBM sidecar cleanup unlinks its two names
   by path instead of walking the directory, which an empty path cannot
-  open. The differential is `tools/bisection/run-locale-diff.sh`,
+  open. The differential is [archived run locale diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-locale-diff.sh),
   which now runs every form of the user-dir argument.
 
 Verification: unit goldens and round-trips at every layer (codecs,
 persistence, bridge, e2e); the backend matrix through the
 `oxpinyin-validate` container (Kyoto Cabinet and tkrzw suites, 282 and
 287 tests) plus redb, LMDB and tkrzw on the host; and
-`tools/oracle/user-dir-round-trip.sh` — the seamless claim itself,
+[archived user dir round trip source](https://github.com/shenghaoc/oxpinyin/blob/e79802e8bf7c393142e979eadba10a2720860799/tools/oracle/user-dir-round-trip.sh) — the seamless claim itself,
 measured against three real pin-built oracles on 2026-09-13, on the
 script's default inputs (`nihao nisha`):
 
@@ -959,7 +959,7 @@ script's default inputs (`nihao nisha`):
 
 The three rows the pin renders are `P 你好 ni'hao 5`, `P 你沙 ni'sha 5`
 and `B 你好 ni'hao 138` — byte-identical on all three DBMs. The
-three-input set `tools/oracle/docker-user-rt.sh` drives (`nihao nisha
+three-input set [archived docker user rt source](https://github.com/shenghaoc/oxpinyin/blob/e79802e8bf7c393142e979eadba10a2720860799/tools/oracle/docker-user-rt.sh) drives (`nihao nisha
 nihaoa`) was measured on tkrzw the same day: `IDENTICAL` at 6 rows,
 `READABLE` at 3 phrase rows. The driver runs ibus's
 `remember-every-input` path (`pinyin_get_sentence` →

@@ -668,7 +668,7 @@ pub(crate) fn save_chunk(path: &CStr, bytes: &[u8]) -> ChunkWrite {
     }
     // GLib 2.84.4 glib/gstdio.h:60,82 makes g_fsync a macro for fsync on
     // ordinary Unix builds. The 074a2219 tkrzw linux/amd64 objects from
-    // tools/oracle/build-oracle.sh confirm fsync@plt in
+    // python3 tools/oracle/build.py confirm fsync@plt in
     // pinyin::MemoryChunk::save(char const*) [clone .isra.0]: +0x108 in
     // libpinyin.so.15.0.0 and +0x118 in libzhuyin.so.15.0.0.
     // SAFETY: `fd` is the open descriptor and `fsync` only reads it; the

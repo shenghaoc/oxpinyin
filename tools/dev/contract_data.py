@@ -43,7 +43,7 @@ def read_pin(path=PIN):
 
 
 def content_digest(directory):
-    """The same digest contract_reference.data_identity computes."""
+    """Hash the sorted relative paths and file bytes of the pinned data."""
     rows = sorted((file.name, hashlib.sha256(file.read_bytes()).hexdigest())
                   for file in Path(directory).iterdir() if file.is_file())
     text = json.dumps(rows, sort_keys=True, separators=(',', ':'), ensure_ascii=True)

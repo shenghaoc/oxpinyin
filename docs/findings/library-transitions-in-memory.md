@@ -147,7 +147,7 @@ Unit tests:
 - `an_undecodable_item_is_an_assert_site_and_a_store_failure_is_not` in
   `crates/oxpinyin-facade/src/export_rows.rs`.
 
-New cases in `tools/bisection/contract_library_reload.py`:
+New cases in [archived contract library reload source](https://github.com/shenghaoc/oxpinyin/blob/cf33028a2fc793ef1e8ae08cabdc7b0d3ae203f6/tools/bisection/contract_library_reload.py):
 
 | Case | What it holds | Parent build |
 |---|---|---|

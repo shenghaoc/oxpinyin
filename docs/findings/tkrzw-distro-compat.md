@@ -185,7 +185,7 @@ Both defects reach any *client* of the library, which is what makes them
 dangerous for a backend like ours — and defect 1 reaches further than
 that, since row (d) below calls plain `dbm.Remove(key)` and passes no
 sentinel across the boundary at all. A client compiled against each
-build (`tools/tkrzw/identity-probe.cc`):
+build ([archived identity probe source](https://github.com/shenghaoc/oxpinyin/blob/efe3d18f65b6a5496a8372e1b6dbe3f48af2fa41/tools/tkrzw/identity-probe.cc)):
 
 ```
 ──── client compiled against the Debian-flags libtkrzw ────
@@ -273,7 +273,7 @@ released into a rolling suite, which is exactly the event this note was
 written to get ahead of.
 
 The full backend matrix, measured 2026-08-29 with
-`tools/tkrzw/libpinyin-backend-probe.sh` — it reads each distro's
+[archived libpinyin backend probe source](https://github.com/shenghaoc/oxpinyin/blob/01475357ab03f74951fce25983193395b97eef3c/tools/tkrzw/libpinyin-backend-probe.sh) — it reads each distro's
 installed `libpinyin.so` `DT_NEEDED` entries (`readelf`/`objdump`) for
 the directly linked storage library — and corroborated against each
 build recipe (`debian/rules`, Fedora `libpinyin.spec`, Arch `PKGBUILD`,
@@ -352,7 +352,7 @@ readelf -rW /usr/lib/*/libtkrzw.so.1 | grep -c KeyComparator   # 0 = defect 2
 ```
 
 `tools/tkrzw/distro-probe.sh` wraps that plus a write-then-read round
-trip; `tools/tkrzw/identity-probe.cc` exercises all three
+trip; [archived identity probe source](https://github.com/shenghaoc/oxpinyin/blob/efe3d18f65b6a5496a8372e1b6dbe3f48af2fa41/tools/tkrzw/identity-probe.cc) exercises all three
 pointer-identity sites through the library API, which is what a backend
 actually touches. Both exit non-zero on a broken build.
 
@@ -628,7 +628,7 @@ LTO alone, as on Arch) and **Ubuntu** (LTO plus
 | 1.0.32 `bcaa0fb` | Ubuntu | 9 / 10 | **broken** | **broken** | **5 of 39 fail** | **`false`** | `true` |
 | 1.0.34 `9ee8416` | Ubuntu | 1 / 1 | ok | **broken** | 39 + 6 pass | `true` | `true` |
 
-"probe" is `tools/tkrzw/identity-probe.cc`; the store suite is
+"probe" is [archived identity probe source](https://github.com/shenghaoc/oxpinyin/blob/efe3d18f65b6a5496a8372e1b6dbe3f48af2fa41/tools/tkrzw/identity-probe.cc); the store suite is
 `oxpinyin-store`'s unit tests plus `tests/trait_laws.rs`; the two saves
 are the `save:` line of `tools/bisection/import-diff.c` and
 `zhuyin-import-diff.c` driven into oxpinyin's C ABI objects and into the
@@ -645,9 +645,9 @@ same 39 + 6.
 On the two plain builds the wider gates pass as well: the tkrzw child of
 `store-backends.yml` (101 suites, 1076 passed, 0 failed, 16 ignored —
 the same counts on `bcaa0fb` and `9ee8416`),
-`tools/oracle/user-dir-round-trip.sh` end to end (Phase C IDENTICAL,
+[archived user dir round trip source](https://github.com/shenghaoc/oxpinyin/blob/e79802e8bf7c393142e979eadba10a2720860799/tools/oracle/user-dir-round-trip.sh) end to end (Phase C IDENTICAL,
 Phase D READABLE, its system-import phase IDENTICAL for pinyin libraries
-1–4) and `tools/bisection/run-system-import-round-trip.sh zhuyin`
+1–4) and `[archived run system import round trip source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-system-import-round-trip.sh) zhuyin`
 (IDENTICAL, libraries 1–4).
 
 The same four cells on amd64 (the same image under emulation; the pin
@@ -916,13 +916,13 @@ In both cases check the build of the library, not its version; below
    package-scoped. `libpinyin_capi.so`, `libzhuyin_capi.so` and the other
    crates' test binaries (`oxpinyin-user`, `-data`, `-runtime` checked)
    carry none, and take whichever `libtkrzw.so.1` `LD_LIBRARY_PATH` or the
-   loader cache names. `tools/bisection/run-system-import-round-trip.sh` also
+   loader cache names. [archived run system import round trip source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-system-import-round-trip.sh) also
    replaces `LD_LIBRARY_PATH` with the directory of the object under
    test, so there the loader cache decides for both sides. A store suite
    that passes and a C-ABI driver that fails in the same shell can be
    two different libraries. `ldd`, or `LD_DEBUG=libs` on the failing
    command, settles it.
-2. **Probe that library.** Build `tools/tkrzw/identity-probe.cc` against
+2. **Probe that library.** Build [archived identity probe source](https://github.com/shenghaoc/oxpinyin/blob/efe3d18f65b6a5496a8372e1b6dbe3f48af2fa41/tools/tkrzw/identity-probe.cc) against
    it (rows (c)–(e)), or run this backend's own check:
 
    ```sh
@@ -968,7 +968,7 @@ every run was checked for the libtkrzw it loaded (the row below).
 oxpinyin at `e985b581` plus this change.
 
 `$P` is one build's prefix, `$T` a `CARGO_TARGET_DIR` of its own per
-build, `$ORACLE` a prefix from `tools/oracle/build-oracle.sh` (libpinyin
+build, `$ORACLE` a prefix from `python3 tools/oracle/build.py` (libpinyin
 2.11.92 at `074a2219`, `--with-dbm=Tkrzw`, with libzhuyin). The oracle
 was built once, on 2026-09-25 against Debian testing's 1.0.32 package,
 and not rebuilt per row: it reaches each build through the loader, which
@@ -991,7 +991,7 @@ the identical headers make sound.
 | tag values | `gdb -batch -ex 'p/x (long)TKRZW_REC_PROC_NOOP' -ex 'p/x (long)TKRZW_REC_PROC_REMOVE' $P/lib/libtkrzw.so.1` |
 | `.rodata` copies | `objcopy --dump-section .rodata=ro.bin $P/lib/libtkrzw.so.1 discard.so && LC_ALL=C grep -a -o -P '\x00\xBE\xEF\x02\x11' ro.bin \| wc -l` for `NOOP`, `'\x00\xDE\xAD\x02\x11'` for `REMOVE`; `.debug_info` the same way, and the `grep` on the library itself for the whole-file count. The tables' counts were first read by a script that placed each whole-file match in a section by the offsets of `readelf -SW`; this command gave the same counts on the two LTO builds when re-run on 2026-10-05 |
 | comparator relocations | `readelf -rW $P/lib/libtkrzw.so.1 \| grep -c KeyComparator` |
-| probe rows | `g++ -std=c++17 -O2 -I $P/include tools/tkrzw/identity-probe.cc -o probe -L $P/lib -Wl,-rpath,$P/lib -ltkrzw -lpthread && ./probe DIR` |
+| probe rows | `g++ -std=c++17 -O2 -I $P/include [archived identity probe source](https://github.com/shenghaoc/oxpinyin/blob/efe3d18f65b6a5496a8372e1b6dbe3f48af2fa41/tools/tkrzw/identity-probe.cc) -o probe -L $P/lib -Wl,-rpath,$P/lib -ltkrzw -lpthread && ./probe DIR` |
 | `distro-probe.sh` | `PATH=$P/bin:$PATH LD_LIBRARY_PATH=$P/lib sh tools/tkrzw/distro-probe.sh` |
 | store suite | `PKG_CONFIG_PATH=$P/lib/pkgconfig LD_LIBRARY_PATH=$P/lib CARGO_TARGET_DIR=$T cargo test --locked --no-fail-fast -p oxpinyin-store --no-default-features --features tkrzw` |
 | store suite, Debian package | the `store-backends.yml` test job's apt line in a fresh `debian:testing`, then `RUSTFLAGS="-D warnings" cargo test --locked --no-fail-fast -p oxpinyin-store --no-default-features --features tkrzw`; the package is `dpkg-query -W libtkrzw-dev libtkrzw1t64` |
@@ -1004,7 +1004,7 @@ the identical headers make sound.
 | `zhuyin_save`, both sides | `cc -std=gnu11 -Wall -Wextra -Werror -O2 tools/bisection/zhuyin-import-diff.c $(pkg-config --cflags --libs glib-2.0) -ldl -o zhuyin-import-diff`, then, in an empty directory, `LD_LIBRARY_PATH=$P/lib ./zhuyin-import-diff $T/debug/libzhuyin_capi.so $ORACLE/lib/libpinyin/data 1`; the pin's form is `$ORACLE/lib/libzhuyin.so` with `:$ORACLE/lib` on the library path |
 | train path | `gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o nbest-train-diff tools/bisection/nbest-train-diff.c -ldl`; `cp -r $ORACLE/lib/libpinyin/data sysdir`, model20's `interpolation2.text` copied into it; then `LD_LIBRARY_PATH=$P/lib ./nbest-train-diff $T/debug/libpinyin_capi.so sysdir`, and the pin's form on `$ORACLE/lib/libpinyin.so` |
 | log identity, oxpinyin against the pin | each log is a driver's stdout: `diff <(sort pin.log) <(sort ox.log)` for `import-diff`, plain `diff pin.log ox.log` for `zhuyin-import-diff`, `nbest-train-diff` and `abi-probe-diff`. "The only line that differed from a healthy run" is `diff` of oxpinyin's `import-diff` stdout on the plain and on the LTO build of `bcaa0fb` |
-| round trips | `echo $P/lib > /etc/ld.so.conf.d/00-tkrzw-under-test.conf && ldconfig`, then `PKG_CONFIG_PATH=$P/lib/pkgconfig CARGO_TARGET_DIR=$T tools/oracle/user-dir-round-trip.sh $ORACLE` and `tools/bisection/run-system-import-round-trip.sh zhuyin $ORACLE/lib/libzhuyin.so.15 $T/debug/libzhuyin_capi.so $ORACLE/lib/libpinyin/data` |
+| round trips | `echo $P/lib > /etc/ld.so.conf.d/00-tkrzw-under-test.conf && ldconfig`, then `PKG_CONFIG_PATH=$P/lib/pkgconfig CARGO_TARGET_DIR=$T [archived user dir round trip source](https://github.com/shenghaoc/oxpinyin/blob/e79802e8bf7c393142e979eadba10a2720860799/tools/oracle/user-dir-round-trip.sh) $ORACLE` and `[archived run system import round trip source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-system-import-round-trip.sh) zhuyin $ORACLE/lib/libzhuyin.so.15 $T/debug/libzhuyin_capi.so $ORACLE/lib/libpinyin/data` |
 | the swallowed error | the one-line scratch patch printed below the table, at `c99ffb57`; the C ABI objects rebuilt against the LTO 1.0.32 into a `$T` of their own; then the three drivers with `2>&1 \| grep -E 'save\|SCRATCH-DIAG'` |
 | files after `save: false` | `ls -la /tmp/importdiff-user-*` after the `import-diff` run, which leaves its user dir there, on the LTO 1.0.32 and on the LTO 1.0.34 |
 | what the pin calls | `git grep -nE 'Rebuild\|Remove\(\|Synchronize\|ProcessEach' 074a2219 -- 'src/storage/*tkrzw*'` |

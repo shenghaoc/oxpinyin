@@ -245,14 +245,14 @@ currently produces a predicted candidate for the call to consume.
 | `crates/oxpinyin-data/src/dict.rs` `SystemDictionary::lookup` | One `pinyin_index.redb` / `phrase_index.redb` pair; every token resolved through that one phrase index | Default facade + addon facade, two pinyin tables and two phrase indexes |
 | `SystemDictionary::phrase_prefix_exists` | Prefix probe only over the system pinyin key lists | Prefix probe over system + user pinyin tables, and separately addon pinyin table |
 | `SystemDictionary` unigram map | Aggregated system export frequencies only | Default facade total (system + user deltas) and addon facade total |
-| `crates/oxpinyin-data/src/content.rs` `ContentTable` | Parses addon `.bin` records, but has no runtime loader and no text/pinyin resolution | `SubPhraseIndex::load` for a `DICTIONARY` addon sub-index |
-| `crates/oxpinyin-data/src/lm.rs` `BigramLanguageModel` | `interpolation2.text` real unigrams are the system phrase-index counts only | System phrase-index counts plus user deltas for the default pool; addon pool is separate |
+| `crates/oxpinyin-data/src/phrase_library.rs` `ContentTable` | Parses addon `.bin` records, but has no runtime loader and no text/pinyin resolution | `SubPhraseIndex::load` for a `DICTIONARY` addon sub-index |
+| `crates/oxpinyin-data/src/lm/mod.rs` `BigramLanguageModel` | `interpolation2.text` real unigrams are the system phrase-index counts only | System phrase-index counts plus user deltas for the default pool; addon pool is separate |
 
 ### 4.2 Engine
 
 | Site | Current assumption | Gap |
 |---|---|---|
-| `crates/oxpinyin-engine/src/session.rs` `refresh` / `collect_window_scan` | Calls only `dictionary.lookup` and `dictionary.phrase_prefix_exists` | No second addon pass, no user-dictionary union in `D`, no source tagging |
+| `crates/oxpinyin-engine/src/session/mod.rs` `refresh` / `collect_window_scan` | Calls only `dictionary.lookup` and `dictionary.phrase_prefix_exists` | No second addon pass, no user-dictionary union in `D`, no source tagging |
 | `Session::candidate_frequencies` | Reads only `LanguageModel::unigram_freq` | No addon-frequency path or addon-total denominator |
 | `crates/oxpinyin-engine/src/candidate.rs` `CandidateKind` | `Phrase`, `Sentence`, `Fallback` only | Upstream additionally distinguishes `ADDON_CANDIDATE`, `PREDICTED_*`, `LONGER_CANDIDATE`, `ZOMBIE_CANDIDATE` |
 
@@ -499,8 +499,8 @@ the 2026-08-22 third amendment — the Class A comparator port
 
 ### 8.2 New differentials
 
-Unique names under `tools/bisection/`, not edits to `run-import-diff.sh` or
-`run-train-diff.sh`:
+Unique names under `tools/bisection/`, not edits to [archived run import diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-import-diff.sh) or
+[archived run train diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-train-diff.sh):
 
 - import a user phrase through the add/iterator/end trio in both engines,
   re-parse, and assert the phrase appears at the same candidate position;

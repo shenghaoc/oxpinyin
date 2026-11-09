@@ -4,7 +4,7 @@
 # Phrase text is captured pinned-oracle output.  Key sequences are
 # authored.  unigram = 1000 - 100 * best captured candidate rank.
 # No model-archive probability data appears here; see
-# docs/findings/fixture-adapters.md and model-provenance.md.
+# docs/testing/fixture-adapters.md and model-provenance.md.
 token=1	keys=ni	text=你	unigram=1000
 token=2	keys=ni	text=尼	unigram=900
 token=3	keys=ni	text=呢	unigram=800

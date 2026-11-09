@@ -52,7 +52,7 @@ binary like the other four:
   `DEFAULT_STORE_EXT = "db"` for the scratch and datagen-native names.
 - Tests: the shared `store_read_tests!`/`store_write_tests!` arms, the
   `user_store_tests!(bdb, …)` arm, `tests/bdb_libpinyin_files.rs`
-  (below), `tools/bdb/{hash-walk.c,btree-order.c,run-sanitizers.sh}`
+  (below), `tools/bdb/{hash-walk.c,btree-order.c,just sanitize}`
   (from the shelved branch), the `backend_matrix_bdb` bench, and a
   `bdb-sanitizers` CI lane that gates the merge like the tkrzw one.
 
@@ -91,9 +91,9 @@ The macOS host has no libdb; everything ran in containers
   `cargo test --locked --workspace --no-default-features --features bdb`
   with CI's seven excludes — 103 test suites green, zero failures;
   `clippy --all-targets -- -D warnings` and `fmt --check` clean.
-- **Exactly-one-backend gate**: `tools/store/backend-matrix.sh` —
+- **Exactly-one-backend gate**: [archived backend matrix source](https://github.com/shenghaoc/oxpinyin/blob/01475357ab03f74951fce25983193395b97eef3c/tools/store/backend-matrix.sh) —
   18/18 (six valid selections, ten pairs + a four-way + zero refused).
-- **Sanitizers**: `tools/bdb/run-sanitizers.sh` — Rust suite under
+- **Sanitizers**: `just sanitize bdb` — Rust suite under
   ASan/LSan clean; the C harnesses under ASan+UBSan clean; the harness
   half also walks a `bigram.db` the backend itself wrote
   (`--example bdb_write_profile`), checking every `SingleGram`
@@ -113,7 +113,7 @@ The macOS host has no libdb; everything ran in containers
 ## The drop-in differential, and a harness regression found on the way
 
 The oracle is the pin at `074a2219` built `--with-dbm=BerkeleyDB`
-(`tools/oracle/build-oracle.sh --dbm bdb`, model from the local cache);
+(`python3 tools/oracle/build.py --dbm bdb`, model from the local cache);
 a tkrzw twin was built for comparison. With
 `OX_CARGO_FEATURES="--no-default-features --features bdb"`:
 

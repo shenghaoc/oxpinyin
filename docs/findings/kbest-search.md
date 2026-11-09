@@ -38,7 +38,7 @@ dynamic-programming state is not the node:
 So the state is `(node, last edge)` — equivalently "arrived here via this
 edge" — and the sweep keeps up to `k` entries **per state**, not per node.
 Ranking per node is a wrong answer that looks right on small examples; the
-`k = 1` property test in `crates/oxpinyin-core/src/kbest.rs` is what catches it,
+`k = 1` property test in [archived kbest source](https://github.com/shenghaoc/oxpinyin/blob/784ea0aba3f326ac97b3d82fe64809fc2a13ceea/crates/oxpinyin-core/src/kbest.rs) is what catches it,
 and it caught it.
 
 Keeping `k` per state is exact. Any path in the true top `k` ends in some
@@ -94,7 +94,7 @@ cost the decoder and the parser agree about which alternative reads first.
 
 ## Acceptance
 
-Goldens in `crates/oxpinyin-core/src/kbest.rs`, including tie cases, first-order
+Goldens in [archived kbest source](https://github.com/shenghaoc/oxpinyin/blob/784ea0aba3f326ac97b3d82fe64809fc2a13ceea/crates/oxpinyin-core/src/kbest.rs), including tie cases, first-order
 costs that change the winner, the chained-initial path for `zzzzzzzz`, and the
 bound.
 

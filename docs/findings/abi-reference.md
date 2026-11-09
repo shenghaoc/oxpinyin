@@ -35,7 +35,7 @@ behaviours. The E2E probe obligation over this set is
 Signatures from `libpinyin/src/pinyin.h`. This section is the prose form;
 the machine-readable one is `crates/oxpinyin-capi/libpinyin.alloc` (and
 `crates/oxpinyin-zhuyin-capi/libzhuyin.alloc`), which
-`tools/abi/check-alloc-pairing.sh` holds against the frozen header and
+`just abi alloc-pairing` holds against the frozen header and
 against the library's actual behaviour under LeakSanitizer — see
 `abi-allocator-pairing.md`. The vocabulary below is the register's, one
 class per line there. Ownership column:

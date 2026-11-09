@@ -4,7 +4,7 @@ Date: 2026-08-11 · Status: **measured**
 
 > **Status (2026-09-12):** the numbers here are the 2026-08 measurements at
 > pin `0c5e80e` over the 2026-08 fixture (10,190 inputs, 98,930 prefix
-> rows). The committed `fixtures/w4/oracle-candidates.txt` now carries
+> rows). The committed [archived oracle candidates source](https://github.com/shenghaoc/oxpinyin/blob/928345a9c0b2ee193b1c89b435f642ddea619114/fixtures/w4/oracle-candidates.txt) now carries
 > 10,465 inputs (10,312 distinct, 10,037 with candidates, 97,442 triples);
 > the sentence surface re-froze at 491/396/390 on 2026-09-04; the gate test
 > named below (`real_tables_session_reports_parity`) was deleted in
@@ -35,12 +35,12 @@ to structure cost, pushing more correct single-phrase rankings into top-1.
 Changed the constant `UNIGRAM_TIEBREAK_SCALE` in `crates/oxpinyin-data/src/lm/mod.rs`
 and re-ran the portable parity test for each value:
 
-```bash
-cargo test --release -p pinyin-oracle --test real_tables_integration -- --nocapture
+```text
+recorded pinyin-oracle invocation (retired package): --release  --test real_tables_integration -- --nocapture
 ```
 
 Metric: `real_tables_session_reports_parity` over the W2 corpus (10,190 inputs
-with oracle candidates) against `fixtures/w4/oracle-candidates.txt` via
+with oracle candidates) against [archived oracle candidates source](https://github.com/shenghaoc/oxpinyin/blob/928345a9c0b2ee193b1c89b435f642ddea619114/fixtures/w4/oracle-candidates.txt) via
 `/tmp/oxpinyin-export`. Each run ~10 min.
 
 ## Results

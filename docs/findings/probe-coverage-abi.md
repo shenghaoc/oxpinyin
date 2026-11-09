@@ -22,7 +22,7 @@ whole observable surface: return status, out-params and the data they
 point to, written lengths, and handle state. This document is the
 coverage matrix the rule's consequence 3 calls for, the description of
 the whole-surface probe (`tools/bisection/abi-probe-diff.c` +
-`run-abi-probe-diff.sh`), and the record of its oracle runs.
+[archived run abi probe diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-abi-probe-diff.sh)), and the record of its oracle runs.
 
 ## Name correction
 
@@ -44,14 +44,14 @@ is `pinyin_get_pinyin_offset`.
   own.
 - **Void destructors** (`pinyin_fini`, `pinyin_free_instance`) are
   COVERED when both hold: the leak gates are clean (valgrind
-  `run-bisect.sh` mode 2; the alloc-pairing LSan harness of
-  `tools/abi/check-alloc-pairing.sh`), and every runner completes
+  [archived run bisect source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-bisect.sh) mode 2; the alloc-pairing LSan harness of
+  `just abi alloc-pairing`), and every runner completes
   without a crash. Both hold for the runs recorded here
   (maintainer ruling 2026-09-17).
 - A call made only as setup counts as **UNCOVERED**.
 - A symbol covered only by `bisect.c` stays **PARTIAL** — bisect's
-  differential mode cannot run today: `run-bisect.sh`, like
-  `run-dynamic-adjust-diff.sh` and `run-train-diff.sh`, still resolves
+  differential mode cannot run today: [archived run bisect source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-bisect.sh), like
+  [archived run dynamic adjust diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-dynamic-adjust-diff.sh) and [archived run train diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-train-diff.sh), still resolves
   the capi data to the pre-split flat `fixtures/w3` root and exits 1
   (`missing file: … pinyin_index.bin` / `fatal: redb tables not
   found`) since the fixture moved to per-backend subdirectories.
@@ -81,10 +81,10 @@ counts, handle state, and every iterator predicate result. Row 0 of
 log): 0x1e is the parity word every other differential passes, 0x1c
 and 0x14 are ibus-libpinyin's presets (0x1c the GSettings default),
 0x1f the third preset, 0x16 fcitx-libpinyin's phrase-length word, 0
-the raw word fcitx5-oxpinyin passes. `run-abi-probe-diff.sh` drives
+the raw word fcitx5-oxpinyin passes. [archived run abi probe diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-abi-probe-diff.sh) drives
 the binary into oxpinyin-capi and the pin and diffs the logs
 (0 = identical, 1 = build/run failure, 2 = divergence), env-gated on
-the pin oracle and resolving its system dir through `system-dir.sh`.
+the pin oracle and resolving its system dir through [archived system dir source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/system-dir.sh).
 
 Oracle caller contracts honoured, with the pin's assert landmines the
 probe documents in-source (each found by crashing exactly once):
@@ -199,7 +199,7 @@ it confers no coverage; every symbol's class rests on the D set.
 | 69 | `pinyin_get_n_phrase` | COVERED | phrase-surface | — |
 | 70 | `pinyin_get_phrase_token` | COVERED | phrase-surface | — |
 | 71 | `pinyin_get_pinyin_is_incomplete` | COVERED | key-surface | — |
-| 72 | `pinyin_set_full_pinyin_scheme` | COVERED | fullpin scheme 1 (run-scheme-diff.sh full): ret + scheme effects, IDENTICAL | — |
+| 72 | `pinyin_set_full_pinyin_scheme` | COVERED | fullpin scheme 1 ([archived run scheme diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-scheme-diff.sh) full): ret + scheme effects, IDENTICAL | — |
 | 73 | `pinyin_token_get_phrase` | COVERED | dict-surface: per-token reads | — |
 | 74 | `pinyin_token_get_n_pronunciation` | COVERED | dict-surface | — |
 | 75 | `pinyin_token_get_nth_pronunciation` | COVERED | dict-surface | — |
@@ -399,7 +399,7 @@ a train with a live sentence result and NO recorded selection — is
 exactly the widened arm, on both sides, with no store writes.
 
 The **zhuyin** surface has no differential. Checked 2026-09-20:
-`tools/bisection/run-zhuyin-diff.sh` exists, and
+[archived run zhuyin diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-zhuyin-diff.sh) exists, and
 `tools/bisection/zhuyin-diff.c` contains **no train call** — the only
 occurrences of the letters "train" in it are the word "constrains" in
 two comments (`:227`, `:287`); no other driver calls `zhuyin_train`.
@@ -430,7 +430,7 @@ ruled REVERT TARGET as row 35; B/C/D by maintainer ruling). No
 shipped-crate behaviour change in this amendment. Pin cites are from the checkout
 at `074a2219` (blob tree read 2026-09-19). Mechanism probe:
 `tools/bisection/residue-mechanism-diff.c` +
-`run-residue-mechanism-diff.sh`. Measurement environment:
+[archived run residue mechanism diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-residue-mechanism-diff.sh). Measurement environment:
 `debian:testing` container
 `fd969584d8c60edcdfbc22fea20a0682aa4db90874ce35915b8b14866ed0e8a1`,
 image
@@ -472,7 +472,7 @@ deliberate class-(a)/(b) exception: it is a missing guard that
 export stays empty through two `train(0)` calls. Capi records
 `你好世界|ni'hao'shi'jie|138` after the first train and `|414` after
 the second — the export's stored-count×2 rendering of seeds 69 then
-138 (`run-train-diff.sh` header; `user-store.md` §2.1). Logs:
+138 ([archived run train diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-train-diff.sh) header; `user-store.md` §2.1). Logs:
 `same-dir/{oracle,capi}.log`.
 
 **User-visible consequence.** After N sessions of the same whole-row
@@ -521,7 +521,7 @@ env-gated `stderr` dump inside `get_nbest_match`; its stdout is
 byte-identical to the unpatched pin's — the runner checks), oxpinyin
 rows from `crates/oxpinyin-runtime/examples/nbest_tail_probe` (nats =
 `cost / 1000 · ln 2`). Runner:
-`tools/bisection/run-residue-a-tail-diff.sh` with
+[archived run residue a tail diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-residue-a-tail-diff.sh) with
 `RESIDUE_A_SAME_DIR=1 RESIDUE_A_DUMP_PREFIX=… RESIDUE_A_PROBE=1`.
 
 | rank | pin tail: `m_poss`, `m_last_step`, result tokens | ox row: text, cost, nats |
@@ -583,7 +583,7 @@ exists, the span is searched, the token is returned. The entry dies in
 0x07000002)` answers `NbestStepCosts { unigram: None, blended: None }`,
 so neither branch pushes a value. That answer is
 `BigramLanguageModel::nbest_step_costs_with_user_delta`
-(`crates/oxpinyin-data/src/lm/mod.rs:532-548`): its first gate
+(`crates/oxpinyin-data/src/lm/mod.rs`): its first gate
 (`:540-543`) destructures `self.unigram_count(token)` and returns the
 default when it is `None`, and `unigram_count` (`:340`;
 `PhraseLibraries::unigram_count`, `phrase_libraries.rs:179`) reads the
@@ -675,7 +675,7 @@ rows: 你好世界 at `surprisal(0.6873010 × 27, 51051882)` = 21392
 millibits (14.8278 nats), 你好世界 (the system pair, 19.644), 你好时节
 (24.715) — the candidate windows then dedup the second to `n = 128`.
 
-**Pre-registered differential.** `run-residue-a-tail-diff.sh` same-dir
+**Pre-registered differential.** [archived run residue a tail diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-residue-a-tail-diff.sh) same-dir
 on the pin's `data/`: phase A IDENTICAL — `sentence[0..2]` = 你好世界 /
 你好世界 / 你好时节, `A-1e:n=128`, NBEST ranks 0 and 2; phase X
 IDENTICAL — `clear_constraint(0)=true`, the 你好时节 row at nbest
@@ -871,7 +871,7 @@ pin oracle tkrzw at `/inputs/oracle-tkrzw/prefix`; logs
 `0d2a49d9…dcc849` against the baseline `846d0614…36ab` — probe run,
 patch reverted). Baseline: `04-baseline/`. Command:
 `RESIDUE_A_CAPI_SO=target/cf/debug/libpinyin_capi.so
-RESIDUE_A_SAME_DIR=1 RESIDUE_A_OUT=… run-residue-a-tail-diff.sh`, then
+RESIDUE_A_SAME_DIR=1 RESIDUE_A_OUT=… [archived run residue a tail diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-residue-a-tail-diff.sh)`, then
 `target/cf/debug/examples/nbest_tail_probe <data> <tmp>`.
 
 **Result.**
@@ -1036,7 +1036,7 @@ probe (choose 你 from the offset-0 window after 你好 was chosen: pin
 cursor 2, constraint 你@0..2 replacing 你好) is to be added as a phase
 E3 when the fix lands.
 
-**Pre-registered differential.** `run-residue-a-tail-diff.sh` phase E,
+**Pre-registered differential.** [archived run residue a tail diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-residue-a-tail-diff.sh) phase E,
 same-dir on the pin's `data/`, must match the pin at **every row of
 the E1/E2 table** — after the whole-composition choose: `(0, 0x1e)`
 `n=128` with NBEST ranks 0 and 2, `(0, 0x1f)` `n=127` with `cand[0]`
@@ -1174,9 +1174,9 @@ present on both.
 
 | Runner | Would have caught B? | Would have caught D? |
 |---|---|---|
-| `run-train-diff.sh` | **No.** Drives NORMAL chooses of 你 then 好 (installs OneStep); `train_result3` trains on both sides. Never exercises whole-row NBEST choose. | **No.** No `token_get_unigram_frequency` of a fresh system token. |
-| `run-bisect.sh` | **Unreliable.** Chooses candidate[0] after guess and trains, but does not export the user bigram; a whole-row empty-train would look like success (`train: true`). | **No.** |
-| `run-dynamic-adjust-diff.sh` | **No.** Compares post-choose candidate windows under DYNAMIC_ADJUST, not the bigram export after a constraint-free train. | **No.** |
+| [archived run train diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-train-diff.sh) | **No.** Drives NORMAL chooses of 你 then 好 (installs OneStep); `train_result3` trains on both sides. Never exercises whole-row NBEST choose. | **No.** No `token_get_unigram_frequency` of a fresh system token. |
+| [archived run bisect source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-bisect.sh) | **Unreliable.** Chooses candidate[0] after guess and trains, but does not export the user bigram; a whole-row empty-train would look like success (`train: true`). | **No.** |
+| [archived run dynamic adjust diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-dynamic-adjust-diff.sh) | **No.** Compares post-choose candidate windows under DYNAMIC_ADJUST, not the bigram export after a constraint-free train. | **No.** |
 
 Repairing the three runners' pre-split `fixtures/w3` paths remains
 useful for their own gates; it is **not** higher priority for B or D

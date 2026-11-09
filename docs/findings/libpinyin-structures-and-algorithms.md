@@ -36,8 +36,8 @@ they write, and the offline tools whose output is promised identical
 to the pin's (`oxpinyin-datagen`'s system files).
 
 A row is a survey result, not a proof of equivalence. Rows whose
-behaviour is unverified, and the open gaps, are listed at the end and
-tracked by `docs/specs/oxidation-record/`.
+behaviour is unverified, and the open gaps, are listed at the end (§11);
+the [roadmap](../../ROADMAP.md) tracks the work that closes them.
 
 ## 0. Components and modularisation
 
@@ -125,12 +125,7 @@ methods — `replace_raw` and its variants for parse, `guess_sentence`
 and `candidates_at` for guess, `select` and `clear_constraint` for
 select, `prepare_training` and its `observe` plan, `phrase_segment` — with save on
 `ContextCore::save_user` (`oxpinyin-facade`). Both C ABIs drive only
-these. The same type also carries a key-driven layer from the first
-design — `KeyInput`, `process_key`, `type_pinyin`, `Preedit`, `commit`
-— which no C-ABI path calls; the oracle tools and tests use it. For the
-bug-for-bug build the operations are the Rust surface that matters; the
-key-driven layer belongs in an optional adapter on top of them, not in
-the same type (`docs/specs/oxidation-record/` task 9).
+these.
 
 ### How oxpinyin divides it
 
@@ -312,8 +307,8 @@ first use decodes and caches it. Bulk save/mask operations may materialize all c
 previous loader did at init. The extra private view shares clean file pages;
 MODIFY dirties private pages as the pin does, without writing the system file.
 
-For libpinyin sessions, `SessionValues::Memory`
-(`oxpinyin-user/src/session_values.rs`) owns separate logical tables:
+In the recorded in-memory implementation, `SessionValues::Memory`
+([archived session values source](https://github.com/shenghaoc/oxpinyin/blob/ae62a2ba7f1269d35a814157eefcd3e3f9ed8d69/crates/oxpinyin-user/src/session_values.rs)) owned separate logical tables:
 `Tables = BTreeMap<String, Rows>`, with
 `Rows = BTreeMap<Vec<u8>, Vec<u8>>`. Table names select maps instead of
 being prepended to every key. Keys and values are owned, and scans borrow
@@ -517,7 +512,7 @@ To reproduce, use the [native setup](../runbooks/setup.md) and the
 `PINYIN_MODEL_DIR`, `PINYIN_EXPORT_DIR` (complete model20 tkrzw export),
 `TMPDIR` (ext4), and the healthy tkrzw prefix's `PATH`, `PKG_CONFIG_PATH`
 and `LD_LIBRARY_PATH`. On the measurement host, run the following inside
-the exclusive hold (`just heavy -- bash` held its sole slot). Set `BENCH`
+the exclusive hold (`bash` held its sole slot). Set `BENCH`
 to Cargo's printed executable and repeat the collection command for each
 `CASE`/`API` pair above, using a distinct `PROFILE` file:
 
@@ -660,8 +655,7 @@ per-token map and requires no new per-item storage.
 ## 9. Constants
 
 Two inventories: the pin's coefficients and limits, which oxpinyin
-takes at the pin's value (converted to oxpinyin's scale where it
-appears there, never fitted), and oxpinyin's own limits and weights,
+takes at the pin's value (never fitted), and oxpinyin's own limits and weights,
 which have no pin counterpart and are classified by call path. The
 second inventory was taken by searching the runtime crates for numeric
 constants on 2026-10-16 UTC; it is not yet proven complete (§11).
@@ -705,7 +699,6 @@ source derivation and supersession.
 | --- | --- | --- | --- |
 | `SCAN_EXPANSION_LIMIT = 4096` (`oxpinyin-engine/src/session/mod.rs`) — chosen by measuring the W2 corpus | (1) the window scan's expansion in `scan_parsed_paths` (`session/lookup.rs`), taken only when the dictionary does not handle partial keys; the runtime's does. (2) `lookup_finds_token` (`nbest.rs`), the constraint revalidation fallback for a dictionary that keeps no phrase items (the test doubles); the runtime's dictionaries read their items instead. (3) `oxpinyin-engine/src/char_offset.rs`, behind `pinyin_get_character_offset`, which expands one key at a time, so the product never approaches the cap. Until #828 it was also reached through `span_finds_token` in constraint revalidation (§11) | (1) no; (2) no; (3) yes, cap unreachable | off path or unreachable since #828 |
 | `MAX_INPUT_BYTES = 32767` (`session/mod.rs`), `MAX_GRAPH_INPUT = 65535` (`oxpinyin-core/src/graph.rs`) | input clamps | removed (#1501) | the first was the pin's `gint16` parse steps, a language artefact ([record](1501-gint16-input-cap.md)); the second had no pin counterpart |
-| `UNIGRAM_TIEBREAK_SCALE = 16` (`oxpinyin-data/src/lm/mod.rs`) | `LanguageModel::score`'s unigram term | no — see §11 | fitted |
 | `COUNT_MEMO_MAX_ENTRIES = 8192` (`oxpinyin-user/src/store.rs`) | size of a count cache | no output effect | cache bound only |
 
 ## 10. Where oxpinyin keeps the pin's code shape
@@ -716,7 +709,6 @@ far where oxpinyin keeps C-shaped code:
 
 | Place | Why | Needed for behaviour? |
 | --- | --- | --- |
-| Hand-written libstdc++ `push_heap` / `pop_heap` / `make_heap` (`heap_push`, `heap_adjust`, `heap_pop`, `heap_make` in `oxpinyin-engine/src/nbest.rs`) and GLib's merge sort (`glib_merge_sort`, shared with the candidate and predicted sorts) | the comparator is cyclic, so the pin's result is defined by the exact sequence of swaps | yes |
 | `SingleGram` operations over raw bytes (`oxpinyin-core/src/single_gram.rs`), including libstdc++'s `lower_bound` on unsorted arrays | the byte layout is the on-disk format, and the unsorted-array result reaches output | yes |
 | The pin's `SEARCH_*` / `ERROR_*` integer codes in the user phrase table (`oxpinyin-user/src/phrase_table.rs`) | carried over from the pin's interface | no — they are read only inside `oxpinyin-user` (`store.rs`) and never cross the C ABI; a candidate for an enum or `Result` |
 
@@ -748,15 +740,15 @@ rows that carry distance 1 are listed in §9.
   (`tools/bisection/option-sweep.c`; the spellings are in
   `option-sweep-tables.h`, whose generator over the pin's table is in
   its header comment). Run as
-  `PINYIN_ORACLE_PREFIX=<bdb oracle prefix> tools/bisection/run-option-sweep.sh`
+  `PINYIN_ORACLE_PREFIX=<bdb oracle prefix> [archived run option sweep source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-option-sweep.sh)`
   (exit 0 identical, 2 divergence). Before the fix, 291 of 253,344
   strings differed under every correction bit (`0x1fe00188`), all
   `PINYIN_CORRECT_ON_ONG` splits, and 223 of 22,219 under that bit
   alone; with it, every pair sweep and option case is identical.
 
-**Sentence scoring: gfloat and libm, which Rust can follow.** The class (a)
-entry treats the pin's `gfloat` log accumulation as platform arithmetic
-oxpinyin cannot follow. It is two things, both of which Rust can follow:
+**Sentence scoring: gfloat and libm, which Rust can follow.** Register row 11
+classes the demonstrated std-maths precision differences as (a).
+The pin's `gfloat` log accumulation is two things, both of which Rust can follow:
 
 - *The float types and conversion points.* `gfloat` and `gdouble` are
   IEEE binary32 and binary64, as Rust's `f32` and `f64` are, and on
@@ -797,9 +789,11 @@ oxpinyin's shipping build, that `f64::ln` resolves to the same `log`
 rather than being folded, inlined or replaced. Matching types,
 conversion points and operation order is necessary, not sufficient: a
 difference that remains after that is investigated and attributed, not
-classified as a host difference by default. oxpinyin's fixed-point
-scale (`oxpinyin-core/src/cost.rs`) was a design choice for
-cross-platform determinism, not a language limit.
+classified as a host difference by default. Since #1378 the decoder follows these types and
+conversion points in `f32` and `f64` (`expand_one`, `nbest.rs`;
+`nbest_step_costs_using`, `oxpinyin-data/src/lm/mod.rs`).
+No production code calls the integer helpers in `oxpinyin-core/src/cost.rs`.
+The `Cost` type stays as the type of `Candidate::cost` and `NbestRow::cost`; every production row carries 0.
 
 **Constraint revalidation and the expansion cap — fixed in #828.**
 
@@ -822,11 +816,11 @@ cross-platform determinism, not a language limit.
   `Dictionary::phrase_item_pronunciations`, carrying the last item read
   across a pass as the pin's single `PhraseItem` does.
 - *Verified (#828, reference cell bdb, hash-pinned oracle, full
-  model20).* Cases in `tools/bisection/contract-diff.py`:
+  model20).* Cases in [archived contract diff source](https://github.com/shenghaoc/oxpinyin/blob/1b91c898795b6edd8b92dd1fecf65ec6f4d1a434/tools/bisection/contract-diff.py):
   `constraint-survives-{zhonghuarenmin,zhonghuarm,zhhrenmin,zhonghrm,zhhrm,zhhrmghg}`,
   `constraint-survives-reconcile-{juezhonghuarm,juezhhrm}` and
   `constraint-stale-item-{keeps-nini,drops-nihao}`, run as
-  `tools/bisection/run-contract-diff.sh bdb <oracle prefix> <libpinyin_capi.so> -- --cases <names>`;
+  `[archived run contract diff source](https://github.com/shenghaoc/oxpinyin/blob/32beb0b0aab68c9807868f566a8620bfd03abff9/tools/bisection/run-contract-diff.sh) bdb <oracle prefix> <libpinyin_capi.so> -- --cases <names>`;
   with `--expect-parent` against the parent build, the over-cap and
   `keeps-nini` cases differ and the controls match. All match with the
   fix.

@@ -28,7 +28,7 @@ check_tkrzw = runpy.run_path(str(pathlib.Path(__file__).resolve().parents[1] / '
 
 def observe(library, data, word, cases):
     """Observe parse, sentence and every ordered (type, UTF-8, nbest) row."""
-    check_tkrzw("auto", "transformed-options-sweep.py", "subject", library)
+    check_tkrzw("auto", "python -m tools.oracle.transformed_options_sweep", "subject", library)
     lib = c.CDLL(library)
     ptr, u32, size, boolean = c.c_void_p, c.c_uint32, c.c_size_t, c.c_bool
 
@@ -157,7 +157,7 @@ def cursor_observations_agree(pin, subject):
 
 def observe_cursors(library, data, word, cases, family):
     """All original-input byte offsets, including the terminal position."""
-    check_tkrzw("auto", "transformed-options-sweep.py", "subject", library)
+    check_tkrzw("auto", "python -m tools.oracle.transformed_options_sweep", "subject", library)
     lib = c.CDLL(library)
     ptr, size, boolean = c.c_void_p, c.c_size_t, c.c_bool
     key_name = "pinyin" if family == "pinyin" else "zhuyin"
@@ -245,7 +245,7 @@ def encoded(value):
 
 
 def main():
-    parser = argparse.ArgumentParser(prog="transformed-options-sweep.py", description=__doc__)
+    parser = argparse.ArgumentParser(prog="python -m tools.oracle.transformed_options_sweep", description=__doc__)
     parser.add_argument("--oracle", required=True)
     parser.add_argument("--subject", required=True)
     parser.add_argument("--data", required=True)
@@ -258,7 +258,7 @@ def main():
                         help="check #585/#626 using existing transformed cases")
     args = parser.parse_args()
     for side, library in (("pin", args.oracle), ("subject", args.subject)):
-        check_tkrzw("auto", "transformed-options-sweep.py", side, library)
+        check_tkrzw("auto", "python -m tools.oracle.transformed_options_sweep", side, library)
     if args.cursor_family:
         cases = [case for case in CASES if case[0] in ("luoma", "secondary")]
         for word in (0x2, 0x20, 0x28):

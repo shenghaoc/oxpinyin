@@ -49,6 +49,7 @@ For each subsystem:
 5. Record each policy-approved departure.
 
 Keep the algorithm record current for work that predates this ruling too.
+Update it in the same PR that changes a recorded structure or algorithm.
 Use the pin's values for every coefficient.
 These include seeds, factors, ceilings, thresholds, beam widths, store widths, epsilons, penalties and discounts.
 Record each value with its pin citation in the algorithm record.
@@ -379,6 +380,7 @@ Derive behaviour by reading the pin, never by running experiments:
 Do not use exploratory probes, throwaway drivers or tests to discover a pin return value.
 Do not tune code against the oracle until outputs match.
 A differential verifies behaviour already derived from source.
+When a differential contradicts the derivation, read the source again.
 Use the pin's I/O call if reading cannot prove a Rust operation equivalent.
 Stop if surrounding pin behaviour remains unsettled.
 Report what you read and where reading stopped resolving the question.
@@ -393,10 +395,22 @@ A mapping change must preserve the pin's external call under the 2026-10-28 ruli
 
 ### Stage 3
 
+Stage 3 starts after the Stage 2 exit gate, the third bug-for-bug sweep in the [roadmap](../ROADMAP.md).
+
 Put each intentional departure behind an opt-in cargo feature, off by default.
 Examples include new language models, different candidate behaviour and incompatible data formats.
+State whether each departure changes observable output, files, the ABI or more than one of these.
+
 Keep the default build bug-for-bug compatible under the recorded exceptions.
-Do not claim libpinyin's binary identity for a build that breaks its ABI or data formats.
+Each default-build differential keeps its Stage 2 disposition: `MATCH`, `POLICY-ACCEPTED` or `HOST-DEPENDENT`.
+Default-build files do not change.
+
+Do not claim libpinyin's binary identity for a build that breaks its ABI or data formats, unless a maintainer ruling permits it.
+That identity is SONAME `libpinyin.so.15`, `libpinyin.pc` and the `libpinyin-<version>` header directory.
+A departure that changes only output states the departure in its build metadata.
+
+A departure uses only libpinyin's three backends, one for each build.
+It does not add a backend.
 
 ## Pinned behaviour and oxpinyin improvements
 

@@ -1,10 +1,10 @@
 # F1: split `process_key` / `type_pinyin` accept sets for oracle parity
 
-Date: 2026-08-11 · Status: **landed — top-1 63%→64%, absent 177→70 on fixtures/w4/oracle-candidates.txt (10,190 inputs)**
+Date: 2026-08-11 · Status: **landed — top-1 63%→64%, absent 177→70 on [archived oracle candidates source](https://github.com/shenghaoc/oxpinyin/blob/928345a9c0b2ee193b1c89b435f642ddea619114/fixtures/w4/oracle-candidates.txt) (10,190 inputs)**
 
 > **Status (2026-09-12):** the numbers here are the 2026-08 measurements at
 > pin `0c5e80e` over the 2026-08 fixture (10,190 inputs, 98,930 prefix
-> rows). The committed `fixtures/w4/oracle-candidates.txt` now carries
+> rows). The committed [archived oracle candidates source](https://github.com/shenghaoc/oxpinyin/blob/928345a9c0b2ee193b1c89b435f642ddea619114/fixtures/w4/oracle-candidates.txt) now carries
 > 10,465 inputs (10,312 distinct, 10,037 with candidates, 97,442 triples);
 > the sentence surface re-froze at 491/396/390 on 2026-09-04; the gate test these
 > numbers came from, `real_tables_session_reports_parity` in the
@@ -23,7 +23,7 @@ Date: 2026-08-11 · Status: **landed — top-1 63%→64%, absent 177→70 on fix
 
 ## Observed oracle behaviour (fixture only)
 
-From `fixtures/w4/oracle-candidates.txt` (rank-1 lines, verbatim):
+From [archived oracle candidates source](https://github.com/shenghaoc/oxpinyin/blob/928345a9c0b2ee193b1c89b435f642ddea619114/fixtures/w4/oracle-candidates.txt) (rank-1 lines, verbatim):
 
 | Input | Oracle rank 1 | Reads as |
 |---|---|---|
@@ -96,7 +96,7 @@ Do not “fix” the divergence by making the two paths agree on junk; that woul
 - Measured on this tree:
 
 ```text
-cargo test --release -p pinyin-oracle --test real_tables_integration -- --nocapture
+recorded pinyin-oracle invocation (retired package): --release  --test real_tables_integration -- --nocapture
 
 compared                10190
 top-1                     6525  64%

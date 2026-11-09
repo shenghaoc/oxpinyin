@@ -79,8 +79,8 @@ it is the remaining difference between "works with a warning" and "byte
 -identical interface".
 
 > **Closed 2026-09-14 — the relink step landed.**
-> `tools/packaging/relink-versioned.sh` (run by
-> `tools/packaging/install.sh` on Linux, after `cargo cinstall`) links
+> `just packaging relink-versioned` (run by
+> `just packaging install` on Linux, after `cargo cinstall`) links
 > the installed object from the staticlib with
 > `-Wl,-soname,libpinyin.so.15 -Wl,--version-script=libpinyin.ver` and
 > the whole-archive staticlib, verifies the export set against the `.ver`

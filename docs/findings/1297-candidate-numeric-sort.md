@@ -159,14 +159,14 @@ fmt and diff checks pass. The original dependent-crate gate and case-module
 harnesses passed before this correction; no unrelated workspace sweep is
 repeated. Reproduction uses the maintained recipes:
 
-```sh
-just heavy -- cargo test --locked -p oxpinyin-engine -p oxpinyin-capi
-just heavy -- cargo clippy --locked -p oxpinyin-engine -p oxpinyin-capi --all-targets -- -D warnings
+```text
+cargo test --locked -p oxpinyin-engine -p oxpinyin-capi
+cargo clippy --locked -p oxpinyin-engine -p oxpinyin-capi --all-targets -- -D warnings
 just fmt -- --check
 git diff --check
 # For each registered cell, build debug facades with just cell-artifacts,
-# derive the exact ID union above from contract-diff.py --list-tags, then:
-just heavy -- just runner contract-diff "$CELL" "$PIN" "$DEBUG_PINYIN" "$DEBUG_ZHUYIN" -- --cases "$CASES"
+# derive the exact ID union above from [archived contract diff source](https://github.com/shenghaoc/oxpinyin/blob/1b91c898795b6edd8b92dd1fecf65ec6f4d1a434/tools/bisection/contract-diff.py) --list-tags, then:
+the recorded runner contract-diff "$CELL" "$PIN" "$DEBUG_PINYIN" "$DEBUG_ZHUYIN" -- --cases "$CASES"
 ```
 
 ## Representation choice and measurements
@@ -262,7 +262,7 @@ wall-time or heap measurement claim. Every count above is from the same
 correction campaign, never a baseline taken from the prior comparator run.
 
 Reproduce policy generation and shipping installation using
-[packaging regeneration](../packaging.md#regeneration). Reproduce the two
+[packaging regeneration](../packaging.md#function-layout). Reproduce the two
 measurements with the runbook's
 [`just measure-callgrind-differential` sentence/typing commands](../runbooks/benches.md#sentence-and-typing-sequence-callgrind-campaign),
 passing base's policy explicitly for `main/pinyin` and `mctl/pinyin`,

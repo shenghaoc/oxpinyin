@@ -300,7 +300,7 @@ user `.dbin` that is a directory.
 ## Cases and dispositions
 
 `*` is `pinyin` and `zhuyin`. All are `sigabrt=True` cases of the existing
-`contract-diff.py` driver.
+[archived contract diff source](https://github.com/shenghaoc/oxpinyin/blob/1b91c898795b6edd8b92dd1fecf65ec6f4d1a434/tools/bisection/contract-diff.py) driver.
 
 | Row | Cases | Disposition |
 |---|---|---|
