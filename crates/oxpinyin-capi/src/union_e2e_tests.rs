@@ -213,7 +213,7 @@ fn chosen_addon_candidate_is_promoted_into_default_nibble_5() {
         .iter()
         .map(|k| oxpinyin_core::SyllableKey::from_index(usize::from(*k)).expect("stored key"))
         .collect();
-    let lookup = store.lookup().expect("build lookup");
+    let lookup = store.lookup();
     assert!(
         lookup
             .lookup(&keys)

@@ -106,7 +106,6 @@ impl LanguageModel for Silent {
 
 fn session() -> Session<Silent, Silent> {
     Session::new(SessionSettings::default(), Silent, Silent)
-        .expect("opening a session cannot fail yet")
 }
 
 fn type_text(session: &mut Session<Silent, Silent>, text: &str) {
@@ -292,8 +291,7 @@ fn a_longer_row_surfaces_when_bit_2_clear_and_vanishes_when_set() {
         SessionSettings::default(),
         FixtureDictionary::parse(LONGER_VOCAB).expect("authored fixture"),
         FrequencyFixtureModel::parse(LONGER_VOCAB, "").expect("authored fixture"),
-    )
-    .expect("the fixtures open");
+    );
     session.replace_raw("fang").expect("typing cannot fail");
     session
         .set_sort_options(SORT_IBUS_DEFAULT)
@@ -340,8 +338,7 @@ fn longer_session(defer: bool) -> Session<FixtureDictionary, FrequencyFixtureMod
         SessionSettings::default(),
         FixtureDictionary::parse(LONGER_VOCAB).expect("authored fixture"),
         FrequencyFixtureModel::parse(LONGER_VOCAB, "").expect("authored fixture"),
-    )
-    .expect("the fixtures open");
+    );
     session.set_defer_list_builds(defer);
     session
 }
@@ -448,8 +445,7 @@ fn a_failed_deferred_build_stays_stale_and_is_retried() {
                 failures: core::cell::Cell::new(0),
             },
             FrequencyFixtureModel::parse(LONGER_VOCAB, "").expect("authored fixture"),
-        )
-        .expect("the fixtures open");
+        );
         session.set_defer_list_builds(defer);
         session
     };
@@ -486,8 +482,7 @@ fn a_longer_row_rides_an_empty_column_and_the_reserved_slot() {
         SessionSettings::default(),
         FixtureDictionary::parse(LONGER_VOCAB).expect("authored fixture"),
         FrequencyFixtureModel::parse(LONGER_VOCAB, "").expect("authored fixture"),
-    )
-    .expect("the fixtures open");
+    );
     session.replace_raw("fang").expect("typing cannot fail");
     session
         .set_sort_options(SORT_IBUS_DEFAULT)
@@ -538,7 +533,6 @@ fn train_session() -> Session<FixtureDictionary, FixtureLanguageModel> {
         FixtureDictionary::parse(TRAIN_VOCAB).expect("authored fixture"),
         FixtureLanguageModel::parse(TRAIN_VOCAB, "").expect("authored fixture"),
     )
-    .expect("the fixtures open")
 }
 
 /// Trains row `index` through the production path: prepare the checked
@@ -743,8 +737,7 @@ fn train_after_a_reparse_and_a_choose_stops_the_walk_at_the_store_length() {
             blended: 100,
             unigram: 200,
         },
-    )
-    .expect("the fixtures open");
+    );
     let choose = |session: &mut Session<FixtureDictionary, TrellisModel>, offset, token| {
         let window = session.candidates_at(offset).expect("offset in range");
         let index = window
@@ -1487,8 +1480,7 @@ fn dynamic_adjust_run(
             merges: Rc::clone(&merges),
             asked_about: Rc::clone(&asked_about),
         },
-    )
-    .expect("Session::new");
+    );
     // Both arms set the same word apart from the one bit, so nothing
     // else about the parse can differ between them.
     session
@@ -1865,8 +1857,7 @@ fn addon_candidates_rank_on_their_own_amplified_scale() {
             total: 51_051_831,
             addon_total: 25_525_916,
         },
-    )
-    .expect("Session::new");
+    );
     let collected = vec![
         Candidate::new(
             compact_str::CompactString::from("股"),
@@ -1917,8 +1908,7 @@ fn candidate_frequencies_price_a_captured_live_unigram_without_the_model() {
             total: 51_051_831,
             addon_total: 25_525_916,
         },
-    )
-    .expect("Session::new");
+    );
     let row = |text: &str, token: u32, live: Option<u32>| {
         Candidate::new(
             compact_str::CompactString::from(text),
@@ -2001,8 +1991,7 @@ fn a_window_ranked_after_a_training_write_prices_the_rewritten_item() {
             total: 51_051_831,
             addon_total: 1,
         },
-    )
-    .expect("Session::new");
+    );
     session.replace_raw("a").expect("typing cannot fail");
     assert_eq!(
         texts(session.candidates()),
@@ -2061,8 +2050,7 @@ fn window_scan_emits_system_candidates_before_addon_candidates() {
             total: 51_051_831,
             addon_total: 25_525_916,
         },
-    )
-    .expect("Session::new");
+    );
     session.replace_raw("a").expect("typing cannot fail");
     let texts: Vec<&str> = session
         .candidates()
@@ -2243,7 +2231,6 @@ fn trellis_session() -> Session<FixtureDictionary, TrellisModel> {
             unigram: 200,
         },
     )
-    .expect("the fixtures open")
 }
 
 /// Types `text` and selects the candidate carrying `token`.
@@ -3171,7 +3158,6 @@ fn candidates_at_a_divided_split_column_answers_the_split_window() {
             FixtureDictionary::parse(SPLIT_VOCAB).expect("authored fixture"),
             FixtureLanguageModel::parse(SPLIT_VOCAB, "").expect("authored fixture"),
         )
-        .expect("the fixtures open")
     };
 
     let mut session = split_session();
@@ -3616,8 +3602,7 @@ fn choosing_behind_the_composition_moves_the_record_back() {
         SessionSettings::default(),
         FixtureDictionary::parse(VOCAB).expect("authored fixture"),
         FixtureLanguageModel::parse(VOCAB, "").expect("authored fixture"),
-    )
-    .expect("the fixtures open");
+    );
     session.replace_raw("nihao").expect("typing cannot fail");
     let whole = session
         .candidates()
@@ -3698,8 +3683,7 @@ fn typed_tones_keep_only_user_phrases_with_a_matching_stored_tone() {
                 total: 51_051_831,
                 addon_total: 25_525_916,
             },
-        )
-        .expect("Session::new");
+        );
         session
             .set_options(oxpinyin_core::OptionBits::from_bits(0x1aa))
             .expect("options apply");
@@ -3837,8 +3821,7 @@ fn chained_resplit_and_divided_windows_read_the_retained_matrix() {
                 total: 10000,
                 addon_total: 1,
             },
-        )
-        .expect("session");
+        );
         session
             .set_options(OptionBits::from_bits(0x18a))
             .expect("options");
@@ -3867,8 +3850,7 @@ fn changing_sentence_collapse_rebuilds_full_pinyin_split_windows() {
                 total: 10000,
                 addon_total: 1,
             },
-        )
-        .expect("session");
+        );
         session
             .set_options(OptionBits::from_bits(0x18a))
             .expect("options");
@@ -3966,8 +3948,7 @@ fn retained_exact_key_windows_search_the_reserved_end_slot() {
             total: 10000,
             addon_total: 1,
         },
-    )
-    .expect("session");
+    );
     let segments = [
         ExactSegment::new(
             0,
@@ -4470,8 +4451,7 @@ fn wide_abbreviation_session(
             blended: 100,
             unigram: 200,
         },
-    )
-    .expect("the fixtures open");
+    );
     session
         .set_options(
             session
@@ -4590,7 +4570,7 @@ fn candidate_collection_uses_unpriced_system_and_addon_operations() {
             Ok(())
         }
     }
-    let session = Session::new(SessionSettings::default(), CandidateDict, Silent).unwrap();
+    let session = Session::new(SessionSettings::default(), CandidateDict, Silent);
     let (mut system, mut addon, mut entries) = (Vec::new(), Vec::new(), Vec::new());
     assert!(
         session
@@ -4627,8 +4607,7 @@ fn a_searched_row_the_dedup_removes_is_still_a_ranked_row() {
         SessionSettings::default(),
         FixtureDictionary::parse(ONE_PHRASE_VOCAB).expect("authored fixture"),
         FrequencyFixtureModel::parse(ONE_PHRASE_VOCAB, "").expect("authored fixture"),
-    )
-    .expect("the fixtures open");
+    );
     session.replace_raw("ni").expect("typing cannot fail");
     // The decoded sentence, planted as `candidates_ending_at_walks_the_spans_that_end_there`
     // does: one row whose text is the phrase's.

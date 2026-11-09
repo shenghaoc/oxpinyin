@@ -31,13 +31,13 @@ fn open_context(option_word: u32) -> ContextCore {
 
 fn pinyin_instance() -> (ContextCore, InstanceCore) {
     let context = open_context(PINYIN_DEFAULT_OPTION_WORD);
-    let instance = context.alloc_instance().expect("instance");
+    let instance = context.alloc_instance();
     (context, instance)
 }
 
 fn zhuyin_instance() -> (ContextCore, InstanceCore) {
     let context = open_context(ZHUYIN_DEFAULT_OPTION_WORD);
-    let instance = context.alloc_instance().expect("instance");
+    let instance = context.alloc_instance();
     (context, instance)
 }
 
@@ -97,7 +97,7 @@ fn full_pinyin_skips_a_consumed_separator_column() {
 #[test]
 fn abi_key_at_a_separator_reads_the_zero_key_only_for_zhuyin() {
     let context = open_context(0x18a);
-    let mut inst = context.alloc_instance().expect("instance");
+    let mut inst = context.alloc_instance();
     assert_eq!(inst.bind(&context.runtime).parse_full_more("'ni'hao"), 7);
     let mut packed = |zhuyin| {
         inst.bind(&context.runtime)
@@ -364,7 +364,7 @@ fn a_short_start_gram_refuses_the_guess_before_any_training() {
             .expect("user store")
             .has_short_bigram_value_for(SENTENCE_START)
     );
-    let mut inst = context.alloc_instance().expect("instance");
+    let mut inst = context.alloc_instance();
     assert_eq!(inst.bind(&context.runtime).parse_full_more("nihao"), 5);
     let list = inst
         .bind(&context.runtime)
@@ -422,7 +422,7 @@ fn unsorted_gram_reads_and_training_are_deterministic_without_reordering() {
             UserConfLaw::Pinyin,
         )
         .expect("context");
-        let mut inst = context.alloc_instance().expect("instance");
+        let mut inst = context.alloc_instance();
         assert_eq!(inst.bind(&context.runtime).parse_full_more("nihao"), 5);
         let list = inst
             .bind(&context.runtime)
@@ -487,7 +487,7 @@ fn unsorted_gram_reads_and_training_are_deterministic_without_reordering() {
                         .any(|&(item, freq)| item == probe && u64::from(freq) == count)
             );
         }
-        let mut inst = context.alloc_instance().expect("instance");
+        let mut inst = context.alloc_instance();
         assert_eq!(inst.bind(&context.runtime).parse_full_more("nihao"), 5);
         let list = inst
             .bind(&context.runtime)
@@ -571,7 +571,7 @@ fn ni_and_hao(system: &std::path::Path) -> (u32, u32) {
         UserConfLaw::Pinyin,
     )
     .expect("context");
-    let mut inst = context.alloc_instance().expect("instance");
+    let mut inst = context.alloc_instance();
     assert_eq!(inst.bind(&context.runtime).parse_full_more("nihao"), 5);
     let token = |inst: &mut InstanceCore, offset: usize, text: &str| {
         let list = inst
@@ -628,7 +628,7 @@ fn train_two_steps(
         UserConfLaw::Pinyin,
     )
     .expect("context");
-    let mut inst = context.alloc_instance().expect("instance");
+    let mut inst = context.alloc_instance();
     assert_eq!(inst.bind(&context.runtime).parse_full_more("nihao"), 5);
     let list = inst
         .bind(&context.runtime)
@@ -688,7 +688,7 @@ fn a_short_start_gram_leaves_the_parse_and_refuses_the_candidate_guess() {
         UserConfLaw::Pinyin,
     )
     .expect("context");
-    let mut inst = context.alloc_instance().expect("instance");
+    let mut inst = context.alloc_instance();
     assert_eq!(inst.bind(&context.runtime).parse_full_more("nihao"), 5);
     let refusal = Err(EngineError::ShortLookupPredecessor {
         token: SENTENCE_START,

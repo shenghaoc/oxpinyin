@@ -245,9 +245,7 @@ fn sends_and_syncs() {
 #[test]
 fn opens_the_w3_fixture_and_decodes_nihao() {
     let runtime = Runtime::open(&w3_dir(), None).expect("the fixture dir opens");
-    let mut session = runtime
-        .new_session(SessionSettings::default())
-        .expect("session");
+    let mut session = runtime.new_session(SessionSettings::default());
     runtime
         .session(&mut session)
         .replace_raw("nihao")
@@ -328,9 +326,7 @@ fn open_reads_no_records_beyond_the_handles() {
 #[test]
 fn selection_advances_and_reset_clears_the_chosen_text() {
     let runtime = Runtime::open(&w3_dir(), None).expect("open");
-    let mut session = runtime
-        .new_session(SessionSettings::default())
-        .expect("session");
+    let mut session = runtime.new_session(SessionSettings::default());
     runtime
         .session(&mut session)
         .replace_raw("nihao")
@@ -894,7 +890,7 @@ fn a_store_write_between_guesses_reaches_the_second_guess() {
     let tmp = scratch_dir("oxpinyin-guess-memo-");
     let dir = tmp.path().to_path_buf();
     let mut runtime = Runtime::open(&w3_dir(), Some(&dir)).unwrap();
-    let mut session = runtime.new_session(SessionSettings::default()).unwrap();
+    let mut session = runtime.new_session(SessionSettings::default());
     runtime.session(&mut session).replace_raw("nihao").unwrap();
     let mut guess = |runtime: &Runtime| {
         runtime.session(&mut session).guess_sentence().unwrap();

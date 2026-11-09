@@ -37,7 +37,7 @@ fn context_finish_finalizes_failed_attachments_while_an_instance_holds_the_runti
         UserConfLaw::Pinyin,
     )
     .expect("the pin ignores a failed system attach");
-    let instance = context.alloc_instance().expect("instance");
+    let instance = context.alloc_instance();
     {
         let runtime = &context.runtime;
         assert!(runtime.pinyin_attachment_failed());

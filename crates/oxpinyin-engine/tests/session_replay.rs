@@ -50,7 +50,6 @@ fn session() -> Fixtures {
         dictionary,
         FrequencyFixtureModel::parse(VOCAB, BIGRAM).expect("committed fixtures"),
     )
-    .expect("the fixtures open")
 }
 
 /// Candidate and state transitions from the authored F-D scenarios. The

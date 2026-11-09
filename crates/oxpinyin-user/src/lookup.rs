@@ -310,7 +310,7 @@ mod tests {
         store
             .add_phrase_in(NETWORK_DICTIONARY, &"拟".into(), &[ni], Some(5))
             .unwrap();
-        let lookup = store.lookup().unwrap();
+        let lookup = store.lookup();
         let entries = lookup.lookup(&[key("ni")]);
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].text(), "拟");
@@ -338,7 +338,7 @@ mod tests {
         store
             .add_phrase_in(USER_DICTIONARY, &"好好".into(), &[hao, hao], Some(5))
             .unwrap();
-        let lookup = store.lookup().unwrap();
+        let lookup = store.lookup();
         assert!(lookup.lookup(&[key("ni")]).is_empty());
         assert!(!lookup.phrase_prefix_exists(&[key("ni")]));
         assert_eq!(lookup.lookup(&[key("hao"), key("hao")]).len(), 1);
@@ -369,7 +369,7 @@ mod tests {
         store
             .add_phrase_in(USER_DICTIONARY, &"号".into(), &[hao], Some(5))
             .unwrap();
-        let lookup = store.lookup().unwrap();
+        let lookup = store.lookup();
 
         let n_partial =
             SyllableKey::from_text("n").expect("initial-only 'n' is in the incomplete inventory");
@@ -418,7 +418,7 @@ mod tests {
         store
             .add_phrase_in(USER_DICTIONARY, &"礼号".into(), &[li, hao], Some(5))
             .unwrap();
-        let lookup = store.lookup().unwrap();
+        let lookup = store.lookup();
 
         let n_partial =
             SyllableKey::from_text("n").expect("initial-only 'n' is in the incomplete inventory");

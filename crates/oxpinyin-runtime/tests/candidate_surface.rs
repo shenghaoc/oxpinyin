@@ -64,8 +64,7 @@ fn candidates_match_the_frozen_capture_over_the_corpus() {
 
     let dir = contract_data::contract_data_dir();
     let runtime = Runtime::open(&dir, None).expect("the pinned data directory opens");
-    let mut session = Session::new(SessionSettings::default(), runtime.dict(), runtime.lm())
-        .expect("the session opens");
+    let mut session = Session::new(SessionSettings::default(), runtime.dict(), runtime.lm());
 
     let inputs = corpus_inputs();
     let mut rows = 0_usize;

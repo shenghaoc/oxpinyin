@@ -32,8 +32,7 @@ pub extern "C" fn pinyin_alloc_instance(context: *mut PinyinContext) -> *mut Pin
     let ctx = unsafe { context_ref(context) };
     // SAFETY: the public context is live for this serialized allocation call.
     let owner = unsafe { crate::state::context_owner(context) };
-    ctx.alloc_instance(context, owner)
-        .map_or(ptr::null_mut(), box_instance)
+    box_instance(ctx.alloc_instance(context, owner))
 }
 
 /// Get the pinyin context from a pinyin instance.

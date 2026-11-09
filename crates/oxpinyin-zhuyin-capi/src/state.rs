@@ -56,8 +56,8 @@ impl CapiContext {
         })
     }
 
-    pub(crate) fn alloc_instance(&self, owner: ContextOwner) -> Option<CapiInstance> {
-        let mut core = self.core.alloc_instance()?;
+    pub(crate) fn alloc_instance(&self, owner: ContextOwner) -> CapiInstance {
+        let mut core = self.core.alloc_instance();
         // The zhuyin surface's sentence-row display law: upstream fills every
         // BEST_MATCH row from `zhuyin_get_sentence` (always the 1-best), so
         // the observable list carries exactly one sentence row — see
@@ -72,13 +72,13 @@ impl CapiContext {
         // libzhuyin's trellis is `PhoneticLookup<1, 1>` (`zhuyin.cpp:50`),
         // not libpinyin's `<2, 3>`: one value per node, one sentence tail.
         session.set_nbest_shape(oxpinyin_engine::NbestShape::ZHUYIN);
-        Some(CapiInstance {
+        CapiInstance {
             owner,
             core,
             state: CapiInstanceState {
                 candidates: oxpinyin_facade::CandidateSnapshot::new(),
             },
-        })
+        }
     }
 
     pub(crate) fn load_phrase_library(

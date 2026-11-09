@@ -78,17 +78,17 @@ impl CapiContext {
         &self,
         context: *mut PinyinContext,
         owner: ContextOwner,
-    ) -> Option<CapiInstance> {
-        Some(CapiInstance {
+    ) -> CapiInstance {
+        CapiInstance {
             context,
             owner,
-            core: self.core.alloc_instance()?,
+            core: self.core.alloc_instance(),
             state: CapiInstanceState {
                 predicted_lambda: self.predicted_lambda,
                 prefixes: Vec::new(),
                 candidates: CandidateSnapshot::new(),
             },
-        })
+        }
     }
 
     /// `pinyin_unload_phrase_library`'s read side: GBK-only, `true` on

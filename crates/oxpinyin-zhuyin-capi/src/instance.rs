@@ -30,8 +30,7 @@ pub extern "C" fn zhuyin_alloc_instance(context: *mut ZhuyinContext) -> *mut Zhu
     let ctx = unsafe { context_ref(context) };
     // SAFETY: the public context is live for this serialized allocation call.
     let owner = unsafe { crate::state::context_owner(context) };
-    ctx.alloc_instance(owner)
-        .map_or(ptr::null_mut(), box_instance)
+    box_instance(ctx.alloc_instance(owner))
 }
 
 /// Free a zhuyin instance.
