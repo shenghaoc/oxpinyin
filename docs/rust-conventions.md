@@ -16,7 +16,9 @@ In a crate that denies `clippy::undocumented_unsafe_blocks`, Clippy enforces tha
 
 ## Panics and errors
 
-The [constitution](constitution.md) (§4) decides where a panic is permitted: only where its failure is proven unreachable. A reachable pin assert or abort uses `std::process::abort()` in the C adapters and tools, never a panic. These lint conventions apply the rule.
+The [constitution](constitution.md) (§4) decides where a panic is permitted: only where its failure is proven unreachable.
+A reachable pin assert or abort uses `std::process::abort()` in the C adapters and tools, never a panic.
+These lint conventions apply the rule.
 
 Keep the non-test crate-root denials of `clippy::unwrap_used`, `clippy::expect_used`, `clippy::panic` and `clippy::panic_in_result_fn`.
 For a permitted site, use the narrowest scoped `#[expect(..., reason = "...")]`.
@@ -27,7 +29,8 @@ Do not add `arithmetic_side_effects` or `indexing_slicing` restrictions.
 An `#[expect]` proves only that Clippy saw the construct.
 Review must still establish the invariant.
 
-Assertions, including `debug_assert!`, follow §4; a comment calling something an internal invariant is not by itself proof.
+Assertions, including `debug_assert!`, follow §4.
+A comment that calls something an internal invariant is not proof by itself.
 Assertions in tests remain unrestricted.
 
 At a reproduced pin abort, the missing glibc assertion line is `POLICY-ACCEPTED` ([failure behaviour](findings/compatibility-policy.md#failure-behaviour)); do not imitate glibc's assertion format.
@@ -44,14 +47,14 @@ existing lock handling.
 ## Enums and matches
 
 **Enums and matches (maintainer decision 2026-10-30 UTC):**
-`#[non_exhaustive]` is for public APIs that other teams use (Google Rust
-style guide). oxpinyin has no such API, because its Rust interfaces are
-internal ([interface ruling](constitution.md#external-interfaces)). Do not mark an enum or a struct
-`#[non_exhaustive]`. A match on an oxpinyin enum lists every variant and
-has no wildcard arm. Then the compiler flags every in-tree match when a
-variant is added. If only one variant is necessary, use `if let`,
-`let ... else` or `matches!`. A match on literals, ranges, or std or
-foreign types can use `_`.
+`#[non_exhaustive]` is for public APIs that other teams use (Google Rust style guide).
+oxpinyin has no such API, because its Rust interfaces are internal ([interface ruling](constitution.md#external-interfaces)).
+Do not mark an enum or a struct `#[non_exhaustive]`.
+
+A match on an oxpinyin enum lists every variant and has no wildcard arm.
+Then the compiler flags every in-tree match when a variant is added.
+If only one variant is necessary, use `if let`, `let ... else` or `matches!`.
+A match on literals, ranges, or std or foreign types can use `_`.
 
 ## Integer arithmetic
 
@@ -90,6 +93,8 @@ Add a generic parameter, a trait, a wrapper, a macro or a configurable builder o
 
 - The callers in the tree need it, for example two callers that use different types.
 - It removes duplication that is in the tree now.
+
+Test-only callers, and duplication that exists only in tests, do not by themselves justify a production abstraction. The exception is a test that is the only adequate witness of a distinct mechanism that the production path cannot exercise (maintainer ruling, 2026-11-09).
 
 Use a named type, not a Boolean argument, when the Boolean hides behaviour at the call site ([C-CUSTOM-TYPE](https://rust-lang.github.io/api-guidelines/type-safety.html#c-custom-type)).
 Use a struct with named fields, not a tuple, when the tuple hides the meaning of its fields.

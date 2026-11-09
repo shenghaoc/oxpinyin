@@ -1,6 +1,6 @@
-//! The composed decoder, driven through the frozen session API.
+//! The composed decoder, driven through the session API.
 //!
-//! Parse → graph → lookup, behind the signatures W4-T0 froze. The
+//! Parse → graph → lookup, behind the session signatures. The
 //! expectations here are the pin's own candidate lists from
 //! `fixtures/foundation/f-a.txt`, restricted to what the mini vocabulary can
 //! reach.
