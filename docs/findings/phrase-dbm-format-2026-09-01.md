@@ -82,7 +82,7 @@ token array is decoded and returned.
 The walk order is the DBM's physical order — deterministic for a given
 file but backend-dependent and not expressible as a sort key. oxpinyin
 deliberately uses a text-ascending `BTreeMap` order instead (documented
-in `upstream-divergences.md`, "Predicted-candidate tie order").
+in `compatibility-policy.md`, row 12).
 
 For P3, `search_suggestion` is stubbed — the cursor walk requires
 `range_raw` on the store (a larger extension). The existing

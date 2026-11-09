@@ -2,7 +2,7 @@
 
 Status: implemented, 2026-10-31 UTC (member 5b of the stack that retires
 class (c)). Rule: [compatibility policy, class (c)
-retired](compatibility-policy.md#amendment--class-c-retired-pin-aborts-reproduced-2026-10-31-utc).
+retired](compatibility-policy.md#failure-behaviour).
 Rows: 103, and row 62's store-read sub-shape. Pin: libpinyin
 `074a2219c90feaf962d0d24f034514033ece5f99`, read from a `git archive` of
 the pin. The other records of the stack are

@@ -213,7 +213,7 @@ for the strip; both were wrong (corrected 2026-09-03). oxpinyin's
 `parse_chewing_more` carries `USE_TONE` and `ZHUYIN_INCOMPLETE` across the
 seam and does not yet carry `FORCE_TONE`; that is an open implementation
 item on the pinyin facade's chewing batch seam, registered in
-`upstream-divergences.md` (FORCE_TONE entry), not a property of the pin.
+`compatibility-policy.md` (rows 16 and 30), not a property of the pin.
 The libzhuyin facade forwards the whole word through
 `ZhuyinParser::parse_with_options`. Keys recovered by the shuffle/recovery
 rows join the already-documented non-gated full-candidate divergence
@@ -467,8 +467,7 @@ this record.
   apply from this date. The open implementation item — the pinyin
   facade's chewing batch seam does not forward `FORCE_TONE` — stays open
   under the frozen law, carried by its register entry
-  (`docs/findings/upstream-divergences.md`, "pinyin-facade chewing batch
-  seam does not forward `FORCE_TONE`"); W13 work proceeds against this
+  (`docs/findings/compatibility-policy.md`, row 30); W13 work proceeds against this
   SPEC as frozen.
 - **Closure note — 2026-09-14.** The one open implementation item the
   freeze carried is closed, per the fix shape its own record prescribed:

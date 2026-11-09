@@ -16,21 +16,21 @@ In a crate that denies `clippy::undocumented_unsafe_blocks`, Clippy enforces tha
 
 ## Panics and errors
 
-The [constitution](constitution.md) (§4) decides where a panic is permitted: only where the pin asserts or aborts on the corresponding condition. These lint conventions apply it.
+The [constitution](constitution.md) (§4) decides where a panic is permitted: only where its failure is proven unreachable. A reachable pin assert or abort uses `std::process::abort()` in the C adapters and tools, never a panic. These lint conventions apply the rule.
 
 Keep the non-test crate-root denials of `clippy::unwrap_used`, `clippy::expect_used`, `clippy::panic` and `clippy::panic_in_result_fn`.
 For a permitted site, use the narrowest scoped `#[expect(..., reason = "...")]`.
-Cite the pin's exact abort site or an established invariant that makes failure unreachable.
+Cite the established invariant that makes failure unreachable.
 Account for both panic lints if both fire for `panic!` in a `Result`-returning function.
 Do not add broad module suppressions or relax crate-wide denials.
 Do not add `arithmetic_side_effects` or `indexing_slicing` restrictions.
 An `#[expect]` proves only that Clippy saw the construct.
-Review must still establish correspondence with the pin's failure condition.
+Review must still establish the invariant.
 
 Assertions, including `debug_assert!`, follow §4; a comment calling something an internal invariant is not by itself proof.
 Assertions in tests remain unrestricted.
 
-A permitted panic's message can differ from the pin's C assertion message; that is a [language artefact](source-policy.md#internal-language-artefacts), so do not imitate glibc's assertion format.
+At a reproduced pin abort, the missing glibc assertion line is `POLICY-ACCEPTED` ([failure behaviour](findings/compatibility-policy.md#failure-behaviour)); do not imitate glibc's assertion format.
 
 ### Poisoned locks
 

@@ -152,8 +152,8 @@ feature is selected via `--no-default-features --features <peer>`.
 *(Amended 2026-09-27 UTC, #552: the default features now select Berkeley
 DB, so the token is `BerkeleyDB` (`crates/oxpinyin-capi/build.rs:150-165`);
 Kyoto Cabinet and tkrzw are peers, and the LMDB and redb peers were
-removed 2026-09-20. Q1 ruling, `compatibility-policy.md`, "Amendment —
-rulings recorded".)* The variable reads whichever peer the library was
+removed 2026-09-20. `compatibility-policy.md`, "Backends and user
+data".)* The variable reads whichever peer the library was
 compiled against. *(Amended 2026-11-07 UTC: `oxpinyin-store`'s build script
 selects the token once from its backend feature, as the pin's
 `configure.ac:134-135` sets one `DATABASE_FORMAT`, and both `.pc` files

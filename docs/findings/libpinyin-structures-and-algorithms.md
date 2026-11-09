@@ -416,13 +416,13 @@ to check aborts on this path.
 | Instance | `PhoneticLookup<2, 3>` (`pinyin.cpp:55`, `:406`); zhuyin uses `<1, 1>` | `NbestShape` chooses the shape at run time (`oxpinyin-engine/src/session/state.rs`) | different / unverified |
 | Trellis | `ForwardPhoneticTrellis` (`lookup/phonetic_lookup.h:181`): per step a token → node hash table and an array of `trellis_node<nstore>` | `Trellis` (`nbest.rs`): per step a token map plus an explicit insertion order, so iteration never depends on hashing | different / argued (`sentence-surface.md`, lane D) |
 | Node store | `trellis_node::eval_item` (`lookup/phonetic_lookup_heap.h:56`): a fixed heap of `nstore` values whose front is replaced when a newcomer beats it; a separate `<1>` specialisation (`:89`, `:108`) | `Trellis::insert` reproduces the front replacement | same / follows; unverified for `nstore = 1` (§11) |
-| Comparator | `trellis_value_less_than` (`lookup/phonetic_lookup.h:66`) with `LONG_SENTENCE_PENALTY = log(1.2f)` (`:39`) | `node_loses_to` (`nbest.rs`): pinyin orders `cost_add(cost, 263 * length)` with explicit special-cost ordering; zhuyin retains the pin's predicate | different / S1/S2 of the [2026-10-28 amendment](compatibility-policy.md#amendment--witnessed-algorithm-precondition-violations-2026-10-28-utc); node front eviction retained |
-| Beam | `get_top_results` (`:143`), `nbeam = 32` (`:37`), libstdc++ `make_heap` / `pop_heap` | unchanged heap routines in `nbest.rs`; pinyin `selection_loses_to` adds preselection batch position after adjusted cost, independently of physical backtracking slots | different / S1/S2 comparator repair under the same amendment; selection algorithm unchanged |
+| Comparator | `trellis_value_less_than` (`lookup/phonetic_lookup.h:66`) with `LONG_SENTENCE_PENALTY = log(1.2f)` (`:39`) | `node_loses_to` (`nbest.rs`): pinyin orders the adjusted `f32` possibility `poss − length × ln(1.2f)` (`adjusted_poss`), best first with NaN last (`ordered_poss_compare`); zhuyin retains the pin's predicate | different / S1/S2 of the [2026-10-28 amendment](compatibility-policy.md#algorithm-precondition-violations); node front eviction retained |
+| Beam | `get_top_results` (`:143`), `nbeam = 32` (`:37`), libstdc++ `make_heap` / `pop_heap` | `select_top` (`nbest.rs`): `select_nth_unstable_by`, then a sort of the kept prefix, on `selection_compare`; pinyin orders the adjusted `f32` possibility (`adjusted_poss`), then the earlier preselection batch position, independently of physical backtracking slots | different / S1/S2 comparator repair under the same amendment; std selection replaces the heap transcription ([inventory](glib-libc-inventory.md), item B) |
 | Expansion | `get_nbest_match` (`:736`): bigram over every beam value (`search_bigram2`, `:578`), unigram over the beam head only (`search_unigram2`, `:540`) | `nbest_sentences_with_seeds_generation`, `widen_free_span`, `expand_entries` | same / follows |
-| Tails and extraction | heap top-n, `g_ptr_array_sort` with `trellis_value_compare` (`:174`), which truncates the cost difference to `gint`; `extract_result` backtracks (`:370`) | `Trellis::tails` selects as before, then `tail_merge` stably sorts raw Cost with explicit special-cost ordering; `Trellis::extract` backtracks as before | different / S3 of the [2026-10-28 amendment](compatibility-policy.md#amendment--witnessed-algorithm-precondition-violations-2026-10-28-utc); raw possibility descending, equal costs stable, NaN last |
-| Scores | `gfloat` running sum of natural logs: unigram step `:663`, bigram step `:692-693` | integer fixed-point −log₂ × 1000 (`oxpinyin-core/src/cost.rs`); inputs from `nbest_step_costs_using`, `interpolate_ratio`, `raw_blend_cost` (`oxpinyin-data/src/lm/mod.rs`) | different / class (a), registered in `upstream-divergences.md`, but the arithmetic can be followed in Rust once verified (§11) |
+| Tails and extraction | heap top-n, `g_ptr_array_sort` with `trellis_value_compare` (`:174`), which truncates the cost difference to `gint`; `extract_result` backtracks (`:370`) | `Trellis::tails` selects with `select_top`, then `tail_merge` stably sorts by raw `f32` possibility (`ordered_poss_compare`); `Trellis::extract` backtracks as before | different / S3 of the [2026-10-28 amendment](compatibility-policy.md#algorithm-precondition-violations); raw possibility descending, equal possibilities stable, NaN last |
+| Scores | `gfloat` running sum of natural logs: unigram step `:663`, bigram step `:692-693` | `f32` running sum of natural logs: `(f64::from(poss) + probability.ln()) as f32` (`expand_one`, `nbest.rs`); pre-log pieces (`NbestStepCosts`) from `nbest_step_costs_using` (`oxpinyin-data/src/lm/mod.rs`) | same / class (a) — Rust std `ln` (`compatibility-policy.md`, row 11); the artifact checks stay open (§11) |
 | Constraints | `ForwardPhoneticConstraints` (`lookup/phonetic_lookup.cpp:61` onward); skip NOSEARCH, a single search for ONESTEP | `ConstraintStore` (`oxpinyin-engine/src/constraint.rs`) | same / argued — revalidation follows the pin's `validate_constraint` since #828 (`ConstraintSpelling::spells`, §11); its integer drop test is argued for model20 data only (§11) |
-| Phrase segmentation | `PhraseLookup` (`lookup/phrase_lookup.cpp:119`), one value per (step, token), `save_next_step` (`:348`) replaces on strictly better, `final_step` (`:382`) | `phrase_segment`, `Step::relax`, `Step::best` (`oxpinyin-engine/src/phrase.rs`) | same / class (a) — fixed-point scores |
+| Phrase segmentation | `PhraseLookup` (`lookup/phrase_lookup.cpp:119`), one value per (step, token), `save_next_step` (`:348`) replaces on strictly better, `final_step` (`:382`) | `phrase_segment`, `Step::relax`, `Step::best` (`oxpinyin-engine/src/phrase.rs`) | same / class (a) — `f32` scores with Rust std `ln` |
 | Per-keystroke work | trellis rebuilt and bigram rows reloaded and merged for each predecessor and span | trellis rebuilt; merged rows cached per predecessor and step (`NbestStepRow`), parse graph cached | different / unverified — caching only |
 
 ### Guess-local ordinary-item facts
@@ -470,6 +470,8 @@ released.
 The profile predates the 2026-10-28 algorithm-precondition amendment
 (#1347), so it measures the pin's comparator as ported (`loses_to`), not
 the repaired S1/S2 ordering implemented in #1352.
+
+This section is recorded evidence for the measured tree. The current `nbest.rs` has no heap routines and no integer comparator. `select_top` and the `f32` comparators replace them.
 
 All four cases use `nihaozhongguo`. Collection was restricted to the named
 C API call; the averages include calls during Criterion warm-up.
@@ -857,7 +859,7 @@ match, but the argument is not in this record:
   `addon-choose-promotion.md` section 5 (#913);
 - the constraint drop test: oxpinyin's integer zero test against the
   pin's `< FLT_EPSILON` is argued for model20 data in the
-  `validate_constraint` entry of `upstream-divergences.md` (no per-token
+  row 7 of `compatibility-policy.md` (no per-token
   total there reaches 2^23); the general case is not argued, and #828
   did not change it;
 - the node store with `nstore = 1` against the `<1>` specialisation's
