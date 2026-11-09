@@ -5,7 +5,6 @@ Policy: the 2026-10-29 UTC “No ported external-library internals” ruling
 in [Source policy](../source-policy.md), merged in #1402.
 The [inventory](glib-libc-inventory.md#executable-copies-of-external-library-algorithms-2026-10-29-utc) identifies
 stored gram searches as C and carried pinyin entry searches as D.
-Records use the digest format merged in #1400.
 
 ## Contract and derivation
 
@@ -37,8 +36,8 @@ The pin's stored-order interleave and `get_freq` walk
 (`ngram.cpp:231–250,308–349`, `phrase_lookup.cpp:268–290`) miss the boosted
 今天 record. The Rust `partition_point` search reaches it. The pin selects
 今天天气 as one phrase; Rust selects 今天 and 天气 separately. Both segmenters
-return true. All three registered cells (bdb, kc, sound tkrzw) produce the
-pair digested below, including the unchanged final 很 and 好 tokens.
+return true. All three registered cells (bdb, kc, sound tkrzw) show this
+difference, with the final 很 and 好 tokens unchanged.
 
 Both facades reach gram search through merged system/user grams for
 sentence guessing, dynamic adjustment and segmentation. This record
@@ -56,21 +55,8 @@ The facade total remains awaiting ruling.
 
 ## Verification
 
-The existing `just runner contract-diff` driver checks the complete stable
-observation digests below. `just policy-record` records the per-cell digests
-from its `--observations` capture; timings and unrequested file snapshots
-remain outside the stable observation. Only
-`user-gram-unsorted-phrase-segment` gains this record.
-On each registered cell, after sourcing the provisioned environment:
-
-```bash
-just heavy -- just runner contract-diff "$CELL" "$PREFIX" "$SUBJECT_P" "$SUBJECT_Z" \
-  -- --cases user-gram-unsorted-phrase-segment --observations "obs-$CELL.jsonl"
-just policy-record docs/findings/1297-gram-partition-segmentation.md "obs-$CELL.jsonl" \
-  --cases user-gram-unsorted-phrase-segment
-```
-
-`oxpinyin-capi`'s `pinned_data_tests::the_segmenter_reads_an_unsorted_user_gram_as_stored` holds the case.
+Only `user-gram-unsorted-phrase-segment` is accepted under this record.
+The derivation above sets the pin's result; `oxpinyin-capi`'s `pinned_data_tests::the_segmenter_reads_an_unsorted_user_gram_as_stored` holds oxpinyin's side.
 C's original core tests cover sorted duplicates, empty/short headers,
 both-end misses, all partial-tail lengths and stored-order preservation.
 The tests of `oxpinyin-core`'s `single_gram` module and `oxpinyin-capi`'s
@@ -78,5 +64,3 @@ The tests of `oxpinyin-core`'s `single_gram` module and `oxpinyin-capi`'s
 `e2e_tests::user_gram_duplicate_export_lists_every_stored_item` now hold the
 original broader selection, issues 757 and 785. Its unchanged scope and the base/PR/pin comparison are documented in the
 bench runbook. No raw captures or verification logs are committed.
-
-Policy evidence is in [1297-gram-partition-segmentation.json](../../fixtures/contract-policy/1297-gram-partition-segmentation.json).

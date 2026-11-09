@@ -98,7 +98,7 @@ Sealed inputs remain sealed memory files on Linux (including when tests run as r
 
 The macOS notes remain beside their cases: libc error numbers, stdio flushing on abort and page-size-dependent container sizes.
 Architecture-dependent NaN spellings and the three accepted GLib help spellings remain unchanged.
-Policy-accepted cases cite their records, and `fixtures/contract-policy/` holds the pin's own result.
+Policy-accepted cases cite their records, which state the pin's result and its source derivation.
 
 ## Pin bumps and recapture
 

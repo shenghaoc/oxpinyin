@@ -7,8 +7,8 @@
   elements made by libstdc++'s heap schedule is not a product ranking key,
   a transcendental precision difference, a memory-safety refusal or an abort.
 - **Pin:** libpinyin 2.11.92 at `074a2219`; read from the pinned git tree,
-  `phonetic_lookup.h` blob `c092e7610cb0`. Facade: zhuyin. BDB, KC and
-  sound-tkrzw observations below were each verified on that cell.
+  `phonetic_lookup.h` blob `c092e7610cb0`. Facade: zhuyin. Each difference
+  below was verified on BDB, KC and sound-tkrzw.
 - **Pin derivation:** `src/lookup/phonetic_lookup.h:66-91,141-172,331-335`
   compares equal-length raw possibilities without an identity tie key,
   then runs the standard heap algorithms. `src/zhuyin.cpp:50` chooses
@@ -68,13 +68,8 @@ rule. The three additional cases are POLICY-ACCEPTED:
 
 Candidate-prefix/count changes follow the chosen NBEST sentence and the
 pin's existing sentence-over-phrase dedup; candidate-frequency sorting
-itself is unchanged. The complete observations below bind every field.
-
-After #1400 merged, PR B rebased onto `9789880a` and migrated this record
-with `just policy-record --migrate`. Schema 2 binds the digest of every complete
-pin and subject observation, with field digests and bounded divergence text
-for diagnosis. The four cases above are re-recorded on BDB, KC and sound-tkrzw;
-the earlier broad selections are historical evidence, not new rebase runs.
+itself is unchanged. The four cases above are POLICY-ACCEPTED on BDB, KC and
+sound-tkrzw.
 
 ## Candidate-sort amendment (#1297 item A)
 
@@ -87,9 +82,8 @@ Only λ=million retains a new candidate-view difference: cyclic groups use
 stable numeric fallback while consistent groups retain wrapping order.
 Its guard, scope and source proof are in
 [1297-candidate-numeric-sort](1297-candidate-numeric-sort.md). All three
-existing entries are refreshed with `just policy-record` and revalidated
-as POLICY-ACCEPTED on each cell. Pin digests do not move; the changed field
-is subject `result.view`. All four
+cases stay POLICY-ACCEPTED on each cell. The pin's result does not change;
+only oxpinyin's candidate view does. All four
 `row58-signed-{score,duplicate}-{off,on}` cases MATCH on every cell; this
 record never registers them as differences.
 
@@ -100,10 +94,8 @@ amd64 `cvttss2si` imitation (decision-order limb 3 ([source policy](../source-po
 positive-unigram candidate score is negative and now stores 0, so the
 length-1 rows keep their collection order instead of the wrapped-key
 order the amd64 pin produces; the arm64 pin stores 0 too. The three
-λ > 1 entries below are re-recorded on bdb, kc and sound tkrzw on
-2026-10-30 UTC with that subject `result.view`; their pin digests do
-not move. The difference is class (b) in
+λ > 1 cases stay POLICY-ACCEPTED on bdb, kc and sound tkrzw with that
+oxpinyin candidate view (2026-10-30 UTC); the pin's result does not
+change. The difference is class (b) in
 `upstream-divergences.md` ("Zhuyin candidate frequency: negative
 `float`-to-`guint32` store at λ > 1").
-
-Policy evidence is in [1378-zhuyin-selection.json](../../fixtures/contract-policy/1378-zhuyin-selection.json).

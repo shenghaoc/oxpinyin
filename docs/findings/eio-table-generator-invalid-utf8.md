@@ -24,11 +24,12 @@ are backed with zero padding rather than reading outside the allocation.
 This extends #1436's existing pinyin policy to the corresponding zhuyin
 utility. No shipping library, C API or backend data format changes.
 
-`tool-diff` cases `pinyin-invalid-utf8`, `pinyin-invalid-utf8-after-row`,
-`zhuyin-invalid-utf8`, and `zhuyin-invalid-utf8-after-row` bind the complete
-exit, stdout, stderr and file observations below through `just policy-record`.
+The accepted cases are `pinyin-invalid-utf8`, `pinyin-invalid-utf8-after-row`,
+`zhuyin-invalid-utf8`, and `zhuyin-invalid-utf8-after-row`. In each, the pin
+dies with SIGSEGV and writes nothing, while oxpinyin prints the node count,
+writes the rows before the invalid one, refuses on stderr and exits 1. The
+cases in `crates/oxpinyin-utils/tests/gen_pinyin_table.rs` and
+`gen_zhuyin_table.rs` hold oxpinyin's complete exit, stdout, stderr and files.
 Ordinary input, an empty phrase, and a parse-length mismatch are controls.
 An empty phrase with an empty reading is defined: it meets GLib's NULL-array
 precondition in `store_one_item` and is omitted with GLib's critical message.
-
-Policy evidence is in [eio-table-generator-invalid-utf8.json](../../fixtures/contract-policy/eio-table-generator-invalid-utf8.json).

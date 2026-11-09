@@ -15,7 +15,5 @@
 - **Affected inputs:** full-pinyin input, pinyin import readings and `gen_pinyin_table` lines longer than 32767 bytes, on both facades and every scheme.
 - **Tests:** unit tests `oxpinyin_engine::session::tests::input_past_the_pins_gint16_bound_is_kept_and_parsed_whole`, `oxpinyin_engine::session::tests::candidates_come_from_keys_past_the_pins_gint16_bound` and `oxpinyin_capi::boundary_tests::an_import_reading_parses_past_long_separator_runs`. `contract-diff.py` recorded POLICY-ACCEPTED `input-length-boundary-32768`, `input-length-boundary-65536`; MATCH control `input-length-boundary-32767`; `combined-library-sixth-add-long-reading-pinyin` unchanged.
 - **Prior rulings:** none reversed; policy row 59 (#540) is reopened.
-- **Evidence:** `just runner contract-diff <cell> "$PINYIN_ORACLE_PREFIX" <capi.so> <zhuyin.so> -- --cases input-length-boundary-32768,input-length-boundary-65536 --observations obs.jsonl`, then `just policy-record docs/findings/1501-gint16-input-cap.md obs.jsonl`, on bdb, kc and tkrzw.
+- **Evidence:** the pin derivation above. On bdb, kc and tkrzw, `input-length-boundary-32768` parses 32767 bytes at the pin and 32768 in oxpinyin, and `input-length-boundary-65536` parses 32767 and 65536; the unit tests above hold oxpinyin's side.
 - **Conclusion:** accepted. Maintainer decision 2026-11-01 UTC (#1501).
-
-Policy evidence is in [1501-gint16-input-cap.json](../../fixtures/contract-policy/1501-gint16-input-cap.json).

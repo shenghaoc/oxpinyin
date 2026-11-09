@@ -6,7 +6,7 @@ Statuses:
 
 - **frozen / policy / contract / template** — normative; changing one is a STOP (../../CONTRIBUTING.md).
 - **register / living reference** — living lists and references.
-- **policy record / discrepancy record / evidence** — an accepted difference or the evidence behind a rule. Policy records back `contract-diff` cases through `fixtures/contract-policy/`.
+- **policy record / discrepancy record / evidence** — an accepted difference or the evidence behind a rule. A policy record states the pin's and oxpinyin's results and their source derivation; the tests that hold oxpinyin's side name it.
 - **machine-read** — a program or test reads or writes this file.
 - **current reference / record / verified / measured / audit / report / implemented / approved / characterization / design rationale / historical** — a dated record; it describes the tree within the scope the file states.
 - **open** — work still owed.

@@ -51,8 +51,8 @@ mod frozen {
         #[rstest]
         // flexible-ngram-attach-directory: tests/storage/test_flexible_ngram.cpp:25-139;
         // src/storage/flexible_single_gram.h:118-139 at 074a2219.
-        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; the pin's
-        // own result is in fixtures/contract-policy/eio-tool-check-messages.json.
+        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; only the pin
+        // writes the check macro's message.
         // Platform exception, macos: abort() flushes stdio on macOS, so buffered stdout
         // survives; glibc's discards it.
         #[case::flexible_ngram_attach_directory(
@@ -74,8 +74,8 @@ mod frozen {
         )]
         // flexible-ngram-empty-file: tests/storage/test_flexible_ngram.cpp:25-139;
         // src/storage/flexible_single_gram.h:118-139 at 074a2219.
-        // Policy-accepted on kc, tkrzw: docs/findings/eio-tool-check-messages.md; the pin's
-        // own result is in fixtures/contract-policy/eio-tool-check-messages.json.
+        // Policy-accepted on kc, tkrzw: docs/findings/eio-tool-check-messages.md; only the pin
+        // writes the check macro's message.
         // Platform exception, macos: a written DBM container's size and bytes follow the 16
         // KiB page, against 4 KiB on Linux.
         // Platform exception, macos: abort() flushes stdio on macOS, so buffered stdout
@@ -253,8 +253,8 @@ mod frozen {
         #[rstest]
         // ngram-attach-directory: tests/storage/test_ngram.cpp:5-95;
         // src/storage/ngram.cpp:31-271 at 074a2219.
-        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; the pin's
-        // own result is in fixtures/contract-policy/eio-tool-check-messages.json.
+        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; only the pin
+        // writes the check macro's message.
         // Platform exception, macos: abort() flushes stdio on macOS, so buffered stdout
         // survives; glibc's discards it.
         #[case::ngram_attach_directory(
@@ -311,8 +311,8 @@ mod frozen {
         )]
         // ngram-snapshot-directory: tests/storage/test_ngram.cpp:5-95;
         // src/storage/ngram.cpp:31-271 at 074a2219.
-        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; the pin's
-        // own result is in fixtures/contract-policy/eio-tool-check-messages.json.
+        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; only the pin
+        // writes the check macro's message.
         // Platform exception, macos: a written DBM container's size and bytes follow the 16
         // KiB page, against 4 KiB on Linux.
         // Platform exception, macos: abort() flushes stdio on macOS, so buffered stdout
@@ -466,8 +466,8 @@ mod frozen {
         #[rstest]
         // punct-table-attach-directory: tests/storage/test_punct_table.cpp:25-77;
         // src/storage/punct_table.cpp:117-177 at 074a2219.
-        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; the pin's
-        // own result is in fixtures/contract-policy/eio-tool-check-messages.json.
+        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; only the pin
+        // writes the check macro's message.
         #[case::punct_table_attach_directory(
             &[],
             b"",
@@ -518,8 +518,8 @@ mod frozen {
         )]
         // punct-table-snapshot-directory: tests/storage/test_punct_table.cpp:25-77;
         // src/storage/punct_table.cpp:117-177 at 074a2219.
-        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; the pin's
-        // own result is in fixtures/contract-policy/eio-tool-check-messages.json.
+        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; only the pin
+        // writes the check macro's message.
         // Platform exception, macos: a written DBM container's size and bytes follow the 16
         // KiB page, against 4 KiB on Linux.
         // Platform exception, macos: abort() flushes stdio on macOS, so buffered stdout

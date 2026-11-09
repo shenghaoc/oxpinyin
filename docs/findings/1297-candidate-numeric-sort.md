@@ -127,15 +127,16 @@ None is registered as a difference; no full/default suite runs.
 
 Compared with the superseded numeric implementation, only the already
 registered `table-conf-lambda-{one-and-a-half,two,million}-zhuyin` views move.
-The first two now reproduce exactly main's prior complete subject digests
+The first two now reproduce exactly main's prior oxpinyin results
 on every cell: their frequency groups fit across zero inside an interval
 narrower than 2³¹. Their accepted differences remain the independent #1378
 sentence/selection differences. At λ=million, cyclic frequency groups use
 the defined fallback, while consistent length groups restore the wrapping
 order. This is the only case retaining a new candidate-view difference
-against main. All pin digests stay unchanged; only subject `result.view`
-moves. `just policy-record` updates those existing entries, never row58.
-Only the three refreshed entries are rerun after the initial selection.
+against main. The pin's results stay unchanged; only oxpinyin's candidate
+view moves. The three cases stay POLICY-ACCEPTED; no row58 case is
+registered as a difference.
+Only those three cases are rerun after the initial selection.
 
 The new-frequency mechanism is reached at ordinary λ too: the row58 fixtures
 retain λ `0.312699`, import count 1,431,655,631 (unigram 4,294,966,893), then

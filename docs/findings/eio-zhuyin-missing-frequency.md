@@ -15,8 +15,6 @@ The output has not been opened and stdout is empty. With two fields the
 frequency exists: the same `atoi` call precedes `wrong line format:<line>\n`
 and processing continues, matching the pin.
 
-The `zhuyin-missing-frequency` case binds complete observations through
-`just policy-record`; `zhuyin-normal` includes the two-field control.
+The `zhuyin-missing-frequency` case in `crates/oxpinyin-utils/tests/gen_zhuyin_table.rs`
+holds oxpinyin's side; `zhuyin-normal` includes the two-field control.
 No shipping library, C API or backend format changes.
-
-Policy evidence is in [eio-zhuyin-missing-frequency.json](../../fixtures/contract-policy/eio-zhuyin-missing-frequency.json).

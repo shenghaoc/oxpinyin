@@ -162,8 +162,8 @@ mod frozen {
         )]
         // exp-missing-bigram: utils/storage/export_interpolation.cpp at 074a2219: 30-73,
         // 75-143; src/storage/tag_utility.cpp: 362-417.
-        // Policy-accepted on bdb: docs/findings/bdb-failed-handle.md; the pin's own result is
-        // in fixtures/contract-policy/bdb-failed-handle.json.
+        // Policy-accepted on bdb: docs/findings/bdb-failed-handle.md; only the pin writes Berkeley
+        // DB's BDB1565 lines.
         #[case::exp_missing_bigram(
             TempDir::new().unwrap(),
             &[],
@@ -925,9 +925,8 @@ mod frozen {
         // chewing-table-invalid-text: tests/storage/test_chewing_table.cpp;
         // tests/tests_helper.h:51-133; src/storage/phrase_large_table3.cpp:29-139;
         // src/storage/chewing_large_table2.cpp:112-198 at 074a2219.
-        // Class (b), memory safety (docs/findings/compatibility-policy.md,
-        // fixtures/contract-policy/compatibility-policy.json): the pin is not run, and the
-        // expectation is the prescribed result.
+        // Class (b), memory safety (docs/findings/compatibility-policy.md, row 115): the pin is not
+        // run, and the expectation is the prescribed result.
         #[case::chewing_table_invalid_text(
             table_config(),
             &[],
@@ -976,9 +975,8 @@ mod frozen {
         // chewing-table-overlong-query: tests/storage/test_chewing_table.cpp;
         // tests/tests_helper.h:51-133; src/storage/phrase_large_table3.cpp:29-139;
         // src/storage/chewing_large_table2.cpp:112-198 at 074a2219.
-        // Class (b), memory safety (docs/findings/compatibility-policy.md,
-        // fixtures/contract-policy/compatibility-policy.json): the pin is not run, and the
-        // expectation is the prescribed result.
+        // Class (b), memory safety (docs/findings/compatibility-policy.md, row 116): the pin is not
+        // run, and the expectation is the prescribed result.
         #[case::chewing_table_overlong_query(
             tables(),
             &[],
@@ -995,8 +993,8 @@ mod frozen {
         // chewing-table-overlong-toned-first: tests/storage/test_chewing_table.cpp;
         // tests/tests_helper.h:51-133; src/storage/phrase_large_table3.cpp:29-139;
         // src/storage/chewing_large_table2.cpp:112-198 at 074a2219.
-        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; the pin's
-        // own result is in fixtures/contract-policy/eio-tool-check-messages.json.
+        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; only the pin
+        // writes the check macro's message.
         #[case::chewing_table_overlong_toned_first(
             tables(),
             &[],
@@ -1045,8 +1043,8 @@ mod frozen {
         // chewing-table-toned-initial: tests/storage/test_chewing_table.cpp;
         // tests/tests_helper.h:51-133; src/storage/phrase_large_table3.cpp:29-139;
         // src/storage/chewing_large_table2.cpp:112-198 at 074a2219.
-        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; the pin's
-        // own result is in fixtures/contract-policy/eio-tool-check-messages.json.
+        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; only the pin
+        // writes the check macro's message.
         #[case::chewing_table_toned_initial(
             tables(),
             &[],
@@ -1148,8 +1146,8 @@ mod frozen {
         // matrix-chunk-directory: tests/storage/test_matrix.cpp:93-179;
         // src/storage/phonetic_key_matrix.cpp:29-84,226-437; tests/tests_helper.h:24-48 at
         // 074a2219.
-        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; the pin's
-        // own result is in fixtures/contract-policy/eio-tool-check-messages.json.
+        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; only the pin
+        // writes the check macro's message.
         #[case::matrix_chunk_directory(
             missing_chunk(),
             &[],
@@ -1336,8 +1334,8 @@ mod frozen {
         )]
         // memory-chunk-save-directory: tests/include/test_memory_chunk.cpp:5-69;
         // src/include/memory_chunk.h:95-133,290-376,416-557 at 074a2219.
-        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; the pin's
-        // own result is in fixtures/contract-policy/eio-tool-check-messages.json.
+        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; only the pin
+        // writes the check macro's message.
         // Platform exception, macos: abort() flushes stdio on macOS, so buffered stdout
         // survives; glibc's discards it.
         #[case::memory_chunk_save_directory(
@@ -1855,8 +1853,8 @@ mod frozen {
         // phrase-index-wrong-long-length: tests/storage/test_phrase_index.cpp:9-122;
         // tests/tests_helper.h:51-83; src/storage/phrase_index.cpp:56-143,335-389,522-674 at
         // 074a2219.
-        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; the pin's
-        // own result is in fixtures/contract-policy/eio-tool-check-messages.json.
+        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; only the pin
+        // writes the check macro's message.
         // Platform exception, macos: abort() flushes stdio on macOS, so buffered stdout
         // survives; glibc's discards it.
         #[case::phrase_index_wrong_long_length(
@@ -1992,9 +1990,8 @@ mod frozen {
         )]
         // phrase-index-logger-missing: tests/storage/test_phrase_index_logger.cpp:28-30;
         // src/storage/phrase_index.cpp:335-354 at 074a2219.
-        // Class (b), memory safety (docs/findings/compatibility-policy.md,
-        // fixtures/contract-policy/compatibility-policy.json): the pin is not run, and the
-        // expectation is the prescribed result.
+        // Class (b), memory safety (docs/findings/compatibility-policy.md, row 117): the pin is not
+        // run, and the expectation is the prescribed result.
         #[case::phrase_index_logger_missing(
             &[],
             b"",
@@ -2030,8 +2027,8 @@ mod frozen {
         // tests/storage/test_phrase_index_logger.cpp:26-65;
         // src/storage/phrase_index.h:628-634; src/storage/phrase_index.cpp:335-519,624-645 at
         // 074a2219.
-        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; the pin's
-        // own result is in fixtures/contract-policy/eio-tool-check-messages.json.
+        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; only the pin
+        // writes the check macro's message.
         #[case::phrase_index_logger_refused_layout(
             &[],
             b"",
@@ -2069,9 +2066,8 @@ mod frozen {
         )]
         // phrase-index-logger-short: tests/storage/test_phrase_index_logger.cpp:28-30;
         // src/storage/phrase_index.cpp:335-354 at 074a2219.
-        // Class (b), memory safety (docs/findings/compatibility-policy.md,
-        // fixtures/contract-policy/compatibility-policy.json): the pin is not run, and the
-        // expectation is the prescribed result.
+        // Class (b), memory safety (docs/findings/compatibility-policy.md, row 117): the pin is not
+        // run, and the expectation is the prescribed result.
         #[case::phrase_index_logger_short(
             &[],
             b"",
@@ -2168,8 +2164,8 @@ mod frozen {
         // phrase-lookup-chunk-directory: tests/lookup/test_phrase_lookup.cpp:41-137;
         // src/lookup/phrase_lookup.h:131-135; lookup.cpp:31-66; tests/tests_helper.h:24-48 at
         // 074a2219.
-        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; the pin's
-        // own result is in fixtures/contract-policy/eio-tool-check-messages.json.
+        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; only the pin
+        // writes the check macro's message.
         #[case::phrase_lookup_chunk_directory(
             missing_chunk(),
             &[],
@@ -2374,9 +2370,8 @@ mod frozen {
         // phrase-table-invalid-text: tests/storage/test_phrase_table.cpp;
         // tests/tests_helper.h:51-133; src/storage/phrase_large_table3.cpp:29-139;
         // src/storage/chewing_large_table2.cpp:112-198 at 074a2219.
-        // Class (b), memory safety (docs/findings/compatibility-policy.md,
-        // fixtures/contract-policy/compatibility-policy.json): the pin is not run, and the
-        // expectation is the prescribed result.
+        // Class (b), memory safety (docs/findings/compatibility-policy.md, row 115): the pin is not
+        // run, and the expectation is the prescribed result.
         #[case::phrase_table_invalid_text(
             table_config(),
             &[],
@@ -2393,9 +2388,8 @@ mod frozen {
         // phrase-table-invalid-utf8: tests/storage/test_phrase_table.cpp;
         // tests/tests_helper.h:51-133; src/storage/phrase_large_table3.cpp:29-139;
         // src/storage/chewing_large_table2.cpp:112-198 at 074a2219.
-        // Class (b), memory safety (docs/findings/compatibility-policy.md,
-        // fixtures/contract-policy/compatibility-policy.json): the pin is not run, and the
-        // expectation is the prescribed result.
+        // Class (b), memory safety (docs/findings/compatibility-policy.md, row 115): the pin is not
+        // run, and the expectation is the prescribed result.
         #[case::phrase_table_invalid_utf8(
             tables(),
             &[],
@@ -2660,8 +2654,8 @@ mod frozen {
         #[rstest]
         // pinyin-lookup-chunk-directory: tests/lookup/test_pinyin_lookup.cpp:41-153;
         // src/lookup/phonetic_lookup.h; tests/tests_helper.h:24-48 at 074a2219.
-        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; the pin's
-        // own result is in fixtures/contract-policy/eio-tool-check-messages.json.
+        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; only the pin
+        // writes the check macro's message.
         #[case::pinyin_lookup_chunk_directory(
             missing_chunk(),
             &[],
@@ -2895,8 +2889,8 @@ mod frozen {
         )]
         // table-info-save-fails: tests/storage/test_table_info.cpp:26-99;
         // src/storage/table_info.cpp:194-419 at 074a2219.
-        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; the pin's
-        // own result is in fixtures/contract-policy/eio-tool-check-messages.json.
+        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; only the pin
+        // writes the check macro's message.
         // Platform exception, macos: abort() flushes stdio on macOS, so buffered stdout
         // survives; glibc's discards it.
         #[case::table_info_save_fails(
@@ -2945,9 +2939,9 @@ mod frozen {
         )]
         // table-info-zero-versions-pinyin: tests/storage/test_table_info.cpp:26-99;
         // src/storage/table_info.cpp:194-419 at 074a2219.
-        // Class (b), memory safety (docs/findings/compatibility-policy.md,
-        // fixtures/contract-policy/compatibility-policy.json): the pin is not run, and the
-        // expectation is the prescribed result.
+        // Class (b), memory safety (docs/findings/compatibility-policy.md, amendment "fresh
+        // UserTableInfo with zero versions"): the pin is not run, and the expectation is the
+        // prescribed result.
         #[case::table_info_zero_versions_pinyin(
             &[],
             b"",
@@ -2964,9 +2958,9 @@ mod frozen {
         )]
         // table-info-zero-versions-zhuyin: tests/storage/test_table_info.cpp:26-99;
         // src/storage/table_info.cpp:194-419 at 074a2219.
-        // Class (b), memory safety (docs/findings/compatibility-policy.md,
-        // fixtures/contract-policy/compatibility-policy.json): the pin is not run, and the
-        // expectation is the prescribed result.
+        // Class (b), memory safety (docs/findings/compatibility-policy.md, amendment "fresh
+        // UserTableInfo with zero versions"): the pin is not run, and the expectation is the
+        // prescribed result.
         #[case::table_info_zero_versions_zhuyin(
             &[],
             b"",

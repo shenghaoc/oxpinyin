@@ -310,8 +310,8 @@ user `.dbin` that is a directory.
 | 96 controls | `library-directory-guard-{reserved,unloaded}-{save,mask-out}[-zhuyin]` | MATCH |
 | 91 before 96 | `abort-init-log-header-token-later-directory-*` (`userdir=True`), `abort-mask-out-log-header-token-later-directory-*`, both with `stderr=True`; library 2's chunk is missing too, so a subject that reached library 4 first would write its `mmap %s failed!` line | POLICY-ACCEPTED on every filesystem; the pin dies in library 1 before examining library 4, and so does the subject, which walks the rows in the same order. |
 
-`abort-train-unsorted-set-freq-miss-{pinyin,zhuyin}` keep their
-`policy_record` ([1297-gram-partition-training.md](1297-gram-partition-training.md)):
+`abort-train-unsorted-set-freq-miss-{pinyin,zhuyin}` stay POLICY-ACCEPTED
+under [1297-gram-partition-training.md](1297-gram-partition-training.md):
 oxpinyin's `partition_point` search finds the item `insert_freq` added, so
 training answers `true` where the pin's `lower_bound` misses and asserts.
 That difference is the 2026-10-29 UTC "no ported external-library

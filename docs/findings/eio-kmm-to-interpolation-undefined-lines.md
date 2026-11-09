@@ -19,6 +19,6 @@ blob `957765f4`, `src/storage/tag_utility.cpp` blob `232a07dc`).
 oxpinyin makes the pin's calls up to that read, then writes
 `k_mixture_model_to_interpolation: <reason>: <line>\n` on stderr and exits
 1. Stdout and files match. `split_line`'s own critical is not written
-([eio-tool-check-messages](eio-tool-check-messages.md)).
-
-Policy evidence is in [eio-kmm-to-interpolation-undefined-lines.json](../../fixtures/contract-policy/eio-kmm-to-interpolation-undefined-lines.json).
+([eio-tool-check-messages](eio-tool-check-messages.md)). The three cases in
+`crates/oxpinyin-utils/tests/k_mixture_model_to_interpolation.rs` hold
+oxpinyin's side.

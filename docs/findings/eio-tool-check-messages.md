@@ -58,7 +58,11 @@ stops the 17-key query before either out-of-bounds index copy. Both sides
 abort there; only the assertion message differs. The plain 17-key query
 continues to use the source-only row 116 refusal.
 
-Policy evidence is in [eio-tool-check-messages.json](../../fixtures/contract-policy/eio-tool-check-messages.json).
+Each case is accepted on every cell unless its test says otherwise:
+`flexible-ngram-empty-file` on kc and tkrzw, `kmm-gen-existing-empty` on kc,
+and `kmm-prune-existing-empty` on bdb and kc. The frozen utility cases in
+`crates/oxpinyin-utils/tests/` hold oxpinyin's side, name this record and
+state their cells.
 
 ## Config test driver (2026-11-01 UTC)
 
@@ -67,5 +71,6 @@ Policy evidence is in [eio-tool-check-messages.json](../../fixtures/contract-pol
 false (`src/storage/table_info.cpp:377-385` at `074a2219`);
 `check_result` in `tests/storage/test_table_info.cpp:93` then aborts.
 oxpinyin preserves that diagnostic and SIGABRT without imitating the
-assertion text. The complete streams and files are bound in this
-record's schema-2 entry.
+assertion text. The `table_info_save_fails` case in
+`crates/oxpinyin-utils/tests/storage_tools.rs` holds the complete streams
+and files.

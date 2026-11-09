@@ -735,4 +735,8 @@ amd64 command; `oracle-arm64-1132.md` records the arm64 one and the
   depend on libc (they are in the generated code), but the eight crash
   signals may.
 
-Policy evidence is in [arm64-pin-portability-1137.json](../../fixtures/contract-policy/arm64-pin-portability-1137.json).
+Since #1416 (2026-10-30 UTC), `row58-unsigned-score-off` and
+`row58-unsigned-score-on` are POLICY-ACCEPTED on bdb, kc and sound tkrzw
+against the amd64 pin: the amd64 pin lists `甲甲` first, and oxpinyin
+lists it last among the two-character rows, as the arm64 pin does
+([upstream divergences](upstream-divergences.md), class (b)).

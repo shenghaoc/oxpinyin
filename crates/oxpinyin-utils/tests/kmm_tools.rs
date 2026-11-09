@@ -402,8 +402,8 @@ mod frozen {
         )]
         // kmm-estimate-existing-empty: utils/training/estimate_k_mixture_model.cpp:111-153 at
         // 074a2219.
-        // Policy-accepted on bdb: docs/findings/bdb-failed-handle.md; the pin's own result is
-        // in fixtures/contract-policy/bdb-failed-handle.json.
+        // Policy-accepted on bdb: docs/findings/bdb-failed-handle.md; only the pin writes Berkeley
+        // DB's BDB1565 lines.
         // Platform exception, aarch64, x86_64: a default NaN prints nan on aarch64 and -nan on
         // x86_64.
         #[case::kmm_estimate_existing_empty(
@@ -456,8 +456,8 @@ mod frozen {
         )]
         // kmm-estimate-no-models: utils/training/estimate_k_mixture_model.cpp at 074a2219:
         // 98-155, 36-96.
-        // Policy-accepted on bdb: docs/findings/bdb-failed-handle.md; the pin's own result is
-        // in fixtures/contract-policy/bdb-failed-handle.json.
+        // Policy-accepted on bdb: docs/findings/bdb-failed-handle.md; only the pin writes Berkeley
+        // DB's BDB1565 lines.
         // Platform exception, aarch64, x86_64: a default NaN prints nan on aarch64 and -nan on
         // x86_64.
         #[case::kmm_estimate_no_models(
@@ -474,8 +474,8 @@ mod frozen {
         )]
         // kmm-estimate-zero-total: utils/training/estimate_k_mixture_model.cpp at 074a2219:
         // 98-155, 36-96.
-        // Policy-accepted on every cell: docs/findings/eio-kmm-tools.md; the pin's own result
-        // is in fixtures/contract-policy/eio-kmm-tools.json.
+        // Policy-accepted on every cell: docs/findings/eio-kmm-tools.md; only the pin writes the
+        // assertion text before SIGABRT.
         #[case::kmm_estimate_zero_total(
             w3(),
             &["--bigram-file", "k_mixture_model_zero.db", "--deleted-bigram-file", "k_mixture_model.db"],
@@ -550,8 +550,8 @@ mod frozen {
         )]
         // kmm-export-absent-file: utils/training/export_k_mixture_model.cpp at 074a2219:
         // 112-155, 35-110; src/storage/tag_utility.cpp:360-417.
-        // Policy-accepted on bdb: docs/findings/bdb-failed-handle.md; the pin's own result is
-        // in fixtures/contract-policy/bdb-failed-handle.json.
+        // Policy-accepted on bdb: docs/findings/bdb-failed-handle.md; only the pin writes Berkeley
+        // DB's BDB1565 lines.
         #[case::kmm_export_absent_file(
             w3(),
             &["--k-mixture-model-file", "absent.db"],
@@ -580,8 +580,8 @@ mod frozen {
         )]
         // kmm-export-existing-empty: utils/training/export_k_mixture_model.cpp:142-150 at
         // 074a2219.
-        // Policy-accepted on bdb: docs/findings/bdb-failed-handle.md; the pin's own result is
-        // in fixtures/contract-policy/bdb-failed-handle.json.
+        // Policy-accepted on bdb: docs/findings/bdb-failed-handle.md; only the pin writes Berkeley
+        // DB's BDB1565 lines.
         #[case::kmm_export_existing_empty(
             w3(),
             &["--k-mixture-model-file", "empty.db"],
@@ -721,8 +721,8 @@ mod frozen {
         // kmm-gen-existing-empty: utils/training/gen_k_mixture_model.cpp:348-403;
         // src/storage/flexible_ngram_tkrzwdb.h:145-177 at 074a2219;
         // src/storage/flexible_ngram_kyotodb.h:282-308 at 074a2219.
-        // Policy-accepted on kc: docs/findings/eio-tool-check-messages.md; the pin's own
-        // result is in fixtures/contract-policy/eio-tool-check-messages.json.
+        // Policy-accepted on kc: docs/findings/eio-tool-check-messages.md; only the pin writes the
+        // check macro's message.
         // Platform exception, macos: a written DBM container's size and bytes follow the 16
         // KiB page, against 4 KiB on Linux.
         #[case::kmm_gen_existing_empty(
@@ -758,8 +758,8 @@ mod frozen {
         )]
         // kmm-gen-good-document: utils/training/gen_k_mixture_model.cpp at 074a2219: 313-403,
         // 65-311; utils/utils_helper.h:51-95.
-        // Policy-accepted on every cell: docs/findings/eio-kmm-tools.md; the pin's own result
-        // is in fixtures/contract-policy/eio-kmm-tools.json.
+        // Policy-accepted on every cell: docs/findings/eio-kmm-tools.md; only the pin writes the
+        // assertion text before SIGABRT.
         #[case::kmm_gen_good_document(
             w3(),
             &["doc.txt"],
@@ -1111,8 +1111,8 @@ mod frozen {
         )]
         // kmm-merge-no-result-file: utils/training/merge_k_mixture_model.cpp at 074a2219:
         // 210-237, 96-129; src/include/pinyin_utils.h:26-31.
-        // Policy-accepted on every cell: docs/findings/eio-kmm-tools.md; the pin's own result
-        // is in fixtures/contract-policy/eio-kmm-tools.json.
+        // Policy-accepted on every cell: docs/findings/eio-kmm-tools.md; only the pin writes the
+        // assertion text before SIGABRT.
         #[case::kmm_merge_no_result_file(
             w3(),
             &["k_mixture_model.db"],
@@ -1217,8 +1217,9 @@ mod frozen {
         )]
         // kmm-prune-existing-empty: utils/training/prune_k_mixture_model.cpp:125-135 at
         // 074a2219; src/storage/flexible_ngram_kyotodb.h:282-308 at 074a2219.
-        // Policy-accepted on bdb, kc: docs/findings/eio-tool-check-messages.md; the pin's own
-        // result is in fixtures/contract-policy/eio-tool-check-messages.json.
+        // Policy-accepted on bdb, kc: docs/findings/eio-tool-check-messages.md; on bdb only the pin
+        // writes Berkeley DB's BDB1565 lines (docs/findings/compatibility-policy.md, row 113), and
+        // on kc only the pin writes the check macro's message.
         // Platform exception, macos: exit(ENODATA) is 96 on macOS and 61 on Linux.
         #[case::kmm_prune_existing_empty(
             TempDir::new().unwrap(),
@@ -1351,8 +1352,8 @@ mod frozen {
         )]
         // kmm-validate-existing-empty: utils/training/validate_k_mixture_model.cpp:157-170 at
         // 074a2219.
-        // Policy-accepted on bdb: docs/findings/bdb-failed-handle.md; the pin's own result is
-        // in fixtures/contract-policy/bdb-failed-handle.json.
+        // Policy-accepted on bdb: docs/findings/bdb-failed-handle.md; only the pin writes Berkeley
+        // DB's BDB1565 lines.
         // Platform exception, macos: exit(ENODATA) is 96 on macOS and 61 on Linux.
         #[case::kmm_validate_existing_empty(
             TempDir::new().unwrap(),
@@ -1406,8 +1407,8 @@ mod frozen {
         )]
         // kmm-validate-missing-file: utils/training/validate_k_mixture_model.cpp at 074a2219:
         // 141-173, 28-139; src/include/pinyin_utils.h:26-31.
-        // Policy-accepted on bdb: docs/findings/bdb-failed-handle.md; the pin's own result is
-        // in fixtures/contract-policy/bdb-failed-handle.json.
+        // Policy-accepted on bdb: docs/findings/bdb-failed-handle.md; only the pin writes Berkeley
+        // DB's BDB1565 lines.
         // Platform exception, macos: exit(ENODATA) is 96 on macOS and 61 on Linux.
         #[case::kmm_validate_missing_file(
             TempDir::new().unwrap(),
