@@ -17,13 +17,12 @@ name: Store backends
 #     base runs everything.
 #     The other jobs need it and run only when `run` is true; when it is
 #     false they report `skipped`, which still reaches the aggregate.
-#   - store-features is a matrix over all three peer backends. Each child
-#     lints all workspace targets and tests the workspace under exactly ONE peer, on its
-#     own runner, so the sweeps run in PARALLEL (fail-fast: false,
-#     max-parallel: 4) instead of sequentially inside one job. The tkrzw
-#     child repeats the build that ci.yml's Linux test job also runs; the
-#     Berkeley DB and Kyoto Cabinet children are where those non-default
-#     backends' workspace suites run. Every pass
+#   - store-features is a matrix over the two non-default peer backends.
+#     Each child lints all workspace targets and tests the workspace under
+#     exactly ONE peer, on its own runner, so the sweeps run in PARALLEL
+#     (fail-fast: false, max-parallel: 4) instead of sequentially inside one
+#     job. tkrzw is the workspace default, so its workspace suite is the one
+#     ci.yml's `test` job runs; it has no child here. Every pass
 #     decodes real queries through the fixture tables, not just the store's
 #     own unit tests. The matrix value only selects one of the fixed,
 #     repository-controlled cargo invocations (see the case in the test
@@ -176,13 +175,12 @@ jobs:
   store-features:
     needs: changes
     if: needs.changes.outputs.run == 'true' && (needs.changes.outputs.reuse != 'true' || github.event_name == 'push')
-    # One matrix child per backend, each on its own runner:
-    # every such backend is exercised through the whole workspace — a
-    # backend that "passes" only in the store's own unit tests
-    # and never reaches the decode path does not count. The
-    # alternate-backend children name the store's feature with
-    # member/feature syntax because the root manifest is virtual. The
-    # children run in parallel.
+    # One matrix child per non-default backend, each on its own runner:
+    # the backend is exercised through the whole workspace — a backend
+    # that "passes" only in the store's own unit tests and never reaches
+    # the decode path does not count. The children pass the bare backend
+    # name to `--features` at `--workspace` scope; the test step says why
+    # a store-only selector would not do. The children run in parallel.
     name: store backend (${{ matrix.backend }})
     runs-on: *ubuntu
     container:
@@ -201,7 +199,6 @@ jobs:
         backend:
           - bdb
           - kyotocabinet
-          - tkrzw
 
     steps:
       # debian:testing ships a minimal base without bash or git; the
@@ -229,8 +226,6 @@ jobs:
           rustup-components: clippy rustfmt
           rust-cache: 'true'
           rust-cache-key: store-backend-${{ matrix.backend }}
-          # The tkrzw child fetches the system data of the package tests in runtime and data.
-          uv: ${{ needs.changes.outputs.reuse != 'true' }}
 
       - name: Install build dependencies (apt)
         # Every matrix child installs the full set so each lane is
@@ -241,23 +236,13 @@ jobs:
         # Berkeley DB FFI declarations from db.h.
         # libkyotocabinet-dev: the explicit kyotocabinet child links the
         # distro Kyoto Cabinet; its cxx bridge compiles against the headers.
-        # The tkrzw child's library comes from the tkrzw action below.
         run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libdb-dev libkyotocabinet-dev zlib1g-dev libglib2.0-dev
-
-      - name: Provision tkrzw (built at the setup.sh revision and cached)
-        if: matrix.backend == 'tkrzw'
-        uses: ./.github/actions/tkrzw
 
       - name: Clippy for this backend
         if: needs.changes.outputs.reuse != 'true'
         env:
           BACKEND: ${{ matrix.backend }}
-        run: |
-          if [ "$BACKEND" = tkrzw ]; then
-            cargo clippy --locked --workspace --all-targets -- -D warnings
-          else
-            cargo clippy --locked --workspace --all-targets --no-default-features --features "$BACKEND" -- -D warnings
-          fi
+        run: cargo clippy --locked --workspace --all-targets --no-default-features --features "$BACKEND" -- -D warnings
 
       # Rustdoc for this backend, warnings denied, with the backend named
       # explicitly.
@@ -282,9 +267,6 @@ jobs:
       # What stays is everything a backend choice can change: the store
       # itself, the user store, data readers, runtime, engine, facade, both
       # C ABIs, the training package and KMM.
-      - name: Provide the pinned system data
-        if: matrix.backend == 'tkrzw' && needs.changes.outputs.reuse != 'true'
-        uses: ./.github/actions/contract-data
       - name: Test the workspace under this backend
         if: needs.changes.outputs.reuse != 'true'
         id: backend-test
@@ -313,10 +295,6 @@ jobs:
           kyotocabinet)
             echo "--- kyotocabinet (explicit) ---"
             cargo test --locked --workspace --no-default-features --features kyotocabinet
-            ;;
-          tkrzw)
-            echo "--- tkrzw ---"
-            cargo test --locked --workspace
             ;;
           *)
             echo "FAIL: unknown matrix.backend value '$BACKEND'" >&2

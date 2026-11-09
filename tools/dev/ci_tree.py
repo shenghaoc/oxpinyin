@@ -60,16 +60,16 @@ WORKFLOWS: dict[str, Workflow] = {
     "store": Workflow(
         ".github/workflows/store-backends.yml",
         "store backends (kyotocabinet / tkrzw / bdb)",
-        ("store backend (bdb)", "store backend (kyotocabinet)", "store backend (tkrzw)",
+        ("store backend (bdb)", "store backend (kyotocabinet)",
          "tkrzw FFI under address",
          "bdb backend sanitizers", "kc backend sanitizers"),
-        frozenset({"store backend (bdb)", "store backend (kyotocabinet)", "store backend (tkrzw)"}),
-        ("store-features", "store-features", "store-features", "tkrzw-sanitizers",
+        frozenset({"store backend (bdb)", "store backend (kyotocabinet)"}),
+        ("store-features", "store-features", "tkrzw-sanitizers",
          "bdb-sanitizers", "kc-sanitizers"),
         ("store backend (${{ matrix.backend }})",
          "tkrzw FFI under address", "bdb backend sanitizers", "kc backend sanitizers"),
         caller=".github/workflows/ci.yml", job_prefix="store-backends / ",
-        flags=("run",) * 6),
+        flags=("run",) * 5),
 }
 
 
