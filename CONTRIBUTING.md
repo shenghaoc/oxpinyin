@@ -157,6 +157,25 @@ Do not use emulation for work that does not compare against the pin.
 A remote Linux host that meets the [remote Linux requirements](docs/runbooks/cloud.md#host-requirements) supports every gate.
 Provision it with `tools/cloud/setup.sh`.
 
+## Worktrees
+
+More than one contributor or agent can use one clone at the same time.
+Do each piece of work in its own worktree.
+Run `git branch --show-current` first: a branch that you did not create belongs to another workstream.
+Do not switch another workstream's checkout or change its working tree.
+
+1. Base work that has no parent on `origin/main`.
+2. Base a dependent stack member on its current parent.
+3. Create a new branch with `git worktree add -b <branch> /tmp/<name> <base>`.
+4. Use `git worktree add /tmp/<name> <branch>` for an existing branch.
+5. Use `git worktree add --detach /tmp/<name> <commit>` only to read a commit. Do not commit in a detached worktree.
+6. Commit in your worktree.
+7. Remove your worktree with `git worktree remove` when you finish.
+
+Leave the shared checkout as you found it.
+Do not touch or prune another workstream's worktree.
+Two agents that each assumed sole ownership of one checkout caused the `shim.cc` collision.
+
 ## Checkpoints and rebases
 
 Push a `wip/<issue>` branch at each checkpoint.
@@ -184,6 +203,7 @@ A reviewed, formatting-only commit is safe when its diff contains only formattin
 
 ## Stack placement
 
+Revise a stack member in place; each member keeps its own scope.
 Put a fix on the stack member whose change produces the symptom.
 Keep each stack member green when tested alone.
 This preserves bisection and bottom-up merging.
@@ -230,7 +250,7 @@ Do not paste chronological logs, status updates or transcripts.
 When results change, update the existing sections.
 Do not append another report at the end.
 Describe only a stacked PR's own diff.
-Name its direct parent PR.
+Name its direct parent PR by number.
 
 Keep ordinary PRs brief.
 The 150–300 word range is a guide, not a minimum.
