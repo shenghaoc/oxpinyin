@@ -22,6 +22,28 @@ IMPLEMENTATION = 'legacy:tools/oracle/build-oracle.sh'
 COMMAND = ['bash', '{root}/tools/oracle/build-oracle.sh']
 
 
+# cmd.exe reads a batch file in the console code page, so the fake takes the
+# interpreter path from the environment instead of holding it as text.
+FAKE_UV_PYTHON = 'OXPINYIN_FAKE_UV_PYTHON'
+
+
+def write_fake_uv(directory: Path, log: Path) -> None:
+    """Write a fake uv that records its arguments and exits 2."""
+    if sys.platform == 'win32':
+        # Windows runs no shebang script: the fake is a .cmd running Python.
+        (directory / 'uv.py').write_text(
+            'import pathlib, sys\n'
+            f'with pathlib.Path({str(log)!r}).open("a", encoding="utf-8") as stream:\n'
+            '    stream.write(" ".join(sys.argv[1:]) + "\\n")\n'
+            'raise SystemExit(2)\n')
+        (directory / 'uv.cmd').write_text(
+            f'@"%{FAKE_UV_PYTHON}%" "%~dp0uv.py" %*\n@exit /b %ERRORLEVEL%\n')
+        return
+    fake = directory / 'uv'
+    fake.write_text(f'#!/bin/sh\necho "$@" >> {log}\nexit 2\n')
+    fake.chmod(0o755)
+
+
 class RealJustSmokeTests(unittest.TestCase):
     """Use CI's pinned real just and managed Python; no command mocks."""
 
@@ -97,14 +119,12 @@ class RealJustSmokeTests(unittest.TestCase):
             with self.subTest(recipe=name):
                 self.assertIn('python', dependencies.split())
 
-    @unittest.skipIf(sys.platform == 'win32', 'the fake uv executable is a Unix shell script')
     def test_table_recipe_disables_downloads_and_does_not_bootstrap_python(self):
         with tempfile.TemporaryDirectory() as directory:
             log = Path(directory) / 'uv.log'
-            fake = Path(directory) / 'uv'
-            fake.write_text(f'#!/bin/sh\necho "$@" >> {log}\nexit 2\n')
-            fake.chmod(0o755)
-            env = {**os.environ, 'PATH': f'{directory}{os.pathsep}{os.environ["PATH"]}'}
+            write_fake_uv(Path(directory), log)
+            env = {**os.environ, 'PATH': f'{directory}{os.pathsep}{os.environ["PATH"]}',
+                   FAKE_UV_PYTHON: sys.executable}
             result = subprocess.run(
                 ['just', '--justfile', str(ROOT / 'justfile'), 'rust-tables', '--check'],
                 cwd=ROOT, capture_output=True, text=True, timeout=30, env=env)
@@ -113,14 +133,12 @@ class RealJustSmokeTests(unittest.TestCase):
                 'run --offline --no-python-downloads --no-project --managed-python '
                 'python -X lazy_imports=normal -m tools.dev rust-tables --check'])
 
-    @unittest.skipIf(sys.platform == 'win32', 'the fake uv executable is a Unix shell script')
     def test_doctor_without_the_interpreter_names_just_python_and_installs_nothing(self):
         with tempfile.TemporaryDirectory() as directory:
             log = Path(directory) / 'uv.log'
-            fake = Path(directory) / 'uv'
-            fake.write_text(f'#!/bin/sh\necho "$@" >> {log}\nexit 2\n')
-            fake.chmod(0o755)
-            env = {**os.environ, 'PATH': f'{directory}{os.pathsep}{os.environ["PATH"]}'}
+            write_fake_uv(Path(directory), log)
+            env = {**os.environ, 'PATH': f'{directory}{os.pathsep}{os.environ["PATH"]}',
+                   FAKE_UV_PYTHON: sys.executable}
             result = subprocess.run(['just', '--justfile', str(ROOT / 'justfile'), 'doctor'],
                                     cwd=ROOT, capture_output=True, text=True, timeout=30, env=env)
             self.assertNotEqual(result.returncode, 0)
