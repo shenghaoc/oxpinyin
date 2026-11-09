@@ -3,16 +3,13 @@
 //! functions read it. The pin's zhuyin functions read every item of a column
 //! in the character offset (`zhuyin.cpp:2117`) and the left offset (`:2009`),
 //! and the first item of columns the divided step fills in the others
-//! (`:1902`, `:1924`, `:1961`, `:2043-2053`). Register rows 19 and 66.
-
-use std::ptr;
+//! (`:1902`, `:1924`, `:1961`, `:2043-2053`). Register rows 19 and 66. The
+//! pinyin twins hold the first-item reads, which go through the shared
+//! facade code.
 
 use crate::config::{zhuyin_set_chewing_scheme, zhuyin_set_full_pinyin_scheme, zhuyin_set_options};
 use crate::context::zhuyin_fini;
-use crate::cursor::{
-    zhuyin_get_left_zhuyin_offset, zhuyin_get_right_zhuyin_offset, zhuyin_get_zhuyin_key,
-    zhuyin_get_zhuyin_key_rest, zhuyin_get_zhuyin_key_rest_positions, zhuyin_get_zhuyin_offset,
-};
+use crate::cursor::zhuyin_get_left_zhuyin_offset;
 use crate::instance::zhuyin_free_instance;
 use crate::iterators::{
     zhuyin_begin_add_phrases, zhuyin_end_add_phrases, zhuyin_iterator_add_phrase,
@@ -20,7 +17,7 @@ use crate::iterators::{
 use crate::parse::{zhuyin_parse_more_chewings, zhuyin_parse_more_full_pinyins};
 use crate::sentence::zhuyin_get_character_offset;
 use crate::test_support::{TempUserDir, cstr, open_with_user};
-use crate::types::{ChewingKey, ChewingKeyRest, ZhuyinContext, ZhuyinInstance};
+use crate::types::{ZhuyinContext, ZhuyinInstance};
 
 const L_N: u32 = 1 << 15;
 const DIVIDED: u32 = 1 << 7;
@@ -111,51 +108,4 @@ fn the_left_offset_reads_the_divided_column() {
         &raw mut left
     ));
     assert_eq!(left, 2);
-}
-
-#[test]
-fn the_right_offset_reads_the_divided_column() {
-    let fixture = Fixture::luoma_xian("z-right-divided");
-    let mut right = usize::MAX;
-    assert!(zhuyin_get_right_zhuyin_offset(
-        fixture.instance,
-        2,
-        &raw mut right
-    ));
-    assert_eq!(right, 4);
-}
-
-#[test]
-fn the_cursor_offset_stops_at_the_divided_column() {
-    let fixture = Fixture::luoma_xian("z-offset-divided");
-    let mut offset = usize::MAX;
-    assert!(zhuyin_get_zhuyin_offset(
-        fixture.instance,
-        2,
-        &raw mut offset
-    ));
-    assert_eq!(offset, 2);
-}
-
-#[test]
-fn the_key_getters_read_the_divided_column() {
-    let _slots = crate::test_support::key_slot_guard();
-    let fixture = Fixture::luoma_xian("z-key-divided");
-    let mut key: *mut ChewingKey = ptr::null_mut();
-    assert!(zhuyin_get_zhuyin_key(fixture.instance, 2, &raw mut key));
-    assert!(!key.is_null());
-    let mut rest: *mut ChewingKeyRest = ptr::null_mut();
-    assert!(zhuyin_get_zhuyin_key_rest(
-        fixture.instance,
-        2,
-        &raw mut rest
-    ));
-    let (mut begin, mut end) = (0_u16, 0_u16);
-    assert!(zhuyin_get_zhuyin_key_rest_positions(
-        fixture.instance,
-        rest,
-        &raw mut begin,
-        &raw mut end
-    ));
-    assert_eq!((begin, end), (2, 4));
 }

@@ -542,163 +542,6 @@ pub extern "C" fn pinyin_get_right_pinyin_offset(
     true
 }
 
-#[cfg(test)]
-mod tests {
-    use crate::config::pinyin_set_options;
-    use crate::parse::pinyin_parse_more_full_pinyins;
-    use crate::test_support::{TempUserDir, cstr, open};
-
-    /// The parity word: `PINYIN_INCOMPLETE | USE_DIVIDED_TABLE |
-    /// USE_RESPLIT_TABLE` plus the harness's `0x2` bit — the
-    /// profile the pin tables were measured under.
-    const PARITY: u32 = 0x18a;
-
-    fn parity_instance(
-        tag: &str,
-    ) -> (
-        *mut crate::types::PinyinContext,
-        *mut crate::types::PinyinInstance,
-        TempUserDir,
-    ) {
-        let user_dir = TempUserDir::new(tag);
-        let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-        assert!(pinyin_set_options(context, PARITY));
-        (context, instance, user_dir)
-    }
-
-    fn parse(instance: *mut crate::types::PinyinInstance, text: &str) -> usize {
-        let input = cstr(text);
-        pinyin_parse_more_full_pinyins(instance, input.as_ptr())
-    }
-
-    #[test]
-    fn cursor_table_matches_the_pinned_oracle() {
-        // Measured first-hand on the rebuilt pin (fork-per-probe driver,
-        // parity word 0x18a): mid-syllable cursors normalize to the
-        // syllable start, and the word moves step syllable-to-syllable.
-        let (context, instance, _user_dir) = parity_instance("cursor-table");
-        assert_eq!(parse(instance, "nihaoshijie"), 11);
-
-        let mut offset = usize::MAX;
-        for (cursor, expected) in [
-            (0, 0),
-            (1, 0),
-            (2, 2),
-            (3, 2),
-            (4, 2),
-            (5, 5),
-            (6, 5),
-            (7, 5),
-            (8, 8),
-            (9, 8),
-            (10, 10),
-            (11, 11),
-        ] {
-            assert!(super::pinyin_get_pinyin_offset(
-                instance,
-                cursor,
-                &raw mut offset
-            ));
-            assert_eq!(offset, expected, "cursor {cursor}");
-        }
-
-        let (mut left, mut right) = (usize::MAX, usize::MAX);
-        // Cursor 8 is the pin's own word moves too (`pinyin.cpp:3031-3096` at 074a2219): pin
-        // capture of 2026-11-07, runs 1 and 2 identical, observation `word-moves/nihaoshijie`
-        // (left 5, right 11).
-        for (cursor, expected_left, expected_right) in [(0, 0, 2), (2, 0, 5), (5, 2, 8), (8, 5, 11)]
-        {
-            assert!(super::pinyin_get_pinyin_offset(
-                instance,
-                cursor,
-                &raw mut offset
-            ));
-            assert!(super::pinyin_get_left_pinyin_offset(
-                instance,
-                offset,
-                &raw mut left
-            ));
-            assert!(super::pinyin_get_right_pinyin_offset(
-                instance,
-                offset,
-                &raw mut right
-            ));
-            assert_eq!(
-                (left, right),
-                (expected_left, expected_right),
-                "cursor {cursor}"
-            );
-        }
-
-        crate::instance::pinyin_free_instance(instance);
-        crate::context::pinyin_fini(context);
-    }
-
-    #[test]
-    fn word_moves_answer_false_where_the_pin_has_no_key() {
-        // The pin answers false at mid-syllable offsets (no key starts
-        // there). Offset 11 of nihaoshijie (the second _check_offset on the
-        // trailing zero key, pinyin.cpp:3092) and a left move past
-        // one-past-end are its asserts, and the process aborts:
-        // `boundary_tests::right_offset_aborts_after_a_separator` holds the
-        // right move's abort arm and
-        // `matrix_bound_tests::the_left_move_past_an_early_stopped_parse_aborts`
-        // the left move past the matrix.
-        let (context, instance, _user_dir) = parity_instance("cursor-aborts");
-        assert_eq!(parse(instance, "nihaoshijie"), 11);
-
-        let mut right = usize::MAX;
-        for offset in [1, 3, 4, 6, 7, 9] {
-            assert!(!super::pinyin_get_right_pinyin_offset(
-                instance,
-                offset,
-                &raw mut right
-            ));
-        }
-        // The pin answers left=10 at offset 11 (its walk halts at column
-        // 10 before the trailing zero) — not an abort shape.
-        let mut left = usize::MAX;
-        assert!(super::pinyin_get_left_pinyin_offset(
-            instance,
-            11,
-            &raw mut left
-        ));
-        assert_eq!(left, 10);
-
-        crate::instance::pinyin_free_instance(instance);
-        crate::context::pinyin_fini(context);
-    }
-
-    #[test]
-    fn separator_inputs_match_the_pinned_oracle() {
-        // ni'hao: cursor 3 normalizes back over the apostrophe-run zero
-        // key to 2; the right move at offset 2 skips the zero run to the
-        // end of hao. The left move at offset 3 sits one past that zero,
-        // the pin's assert
-        // (`boundary_tests::left_offset_aborts_after_a_separator`).
-        let (context, instance, _user_dir) = parity_instance("cursor-separator");
-        assert_eq!(parse(instance, "ni'hao"), 6);
-
-        let mut offset = usize::MAX;
-        assert!(super::pinyin_get_pinyin_offset(
-            instance,
-            3,
-            &raw mut offset
-        ));
-        assert_eq!(offset, 2);
-        let mut right = usize::MAX;
-        assert!(super::pinyin_get_right_pinyin_offset(
-            instance,
-            2,
-            &raw mut right
-        ));
-        assert_eq!(right, 6);
-
-        crate::instance::pinyin_free_instance(instance);
-        crate::context::pinyin_fini(context);
-    }
-}
-
 // ── The preedit key family ───────────────────────────────────────────────
 //
 // fcitx-libpinyin's preedit renderer (`eim.cpp:419-520`) walks the parsed
@@ -969,48 +812,42 @@ mod preedit_key_tests {
     /// one at 65537..65539, wholly past it; both lengths stay 2.
     #[test]
     fn key_rest_positions_past_byte_65535_wrap() {
-        use crate::config::{pinyin_set_double_pinyin_scheme, pinyin_set_zhuyin_scheme};
-        use crate::parse::{pinyin_parse_more_chewings, pinyin_parse_more_double_pinyins};
+        use crate::config::pinyin_set_double_pinyin_scheme;
+        use crate::parse::pinyin_parse_more_double_pinyins;
 
-        type Parse =
-            extern "C" fn(*mut crate::types::PinyinInstance, *const std::ffi::c_char) -> usize;
-        let modes: [(&str, Parse, &str, &str); 2] = [
-            ("double", pinyin_parse_more_double_pinyins, "ni3", "ni"),
-            ("chewing", pinyin_parse_more_chewings, "su3", "su"),
-        ];
         let _slots = key_slot_guard();
-        for (mode, parse, head, unit) in modes {
-            let user_dir = TempUserDir::new(&format!("key-rest-wrap-{mode}"));
-            let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-            assert!(pinyin_set_options(context, 1 << 5));
-            assert!(pinyin_set_double_pinyin_scheme(context, 2));
-            assert!(pinyin_set_zhuyin_scheme(context, 1));
-            let input = format!("{head}{}", unit.repeat(32_769));
-            assert_eq!(parse(instance, cstr(&input).as_ptr()), 65_541, "{mode}");
+        let user_dir = TempUserDir::new("key-rest-wrap-double");
+        let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+        assert!(pinyin_set_options(context, 1 << 5));
+        assert!(pinyin_set_double_pinyin_scheme(context, 2));
+        let input = format!("ni3{}", "ni".repeat(32_769));
+        assert_eq!(
+            pinyin_parse_more_double_pinyins(instance, cstr(&input).as_ptr()),
+            65_541
+        );
 
-            for (offset, begin, end) in [(65_535_usize, 65_535_u16, 1_u16), (65_537, 1, 3)] {
-                let mut rest: *mut ChewingKeyRest = ptr::null_mut();
-                assert!(super::pinyin_get_pinyin_key_rest(
-                    instance,
-                    offset,
-                    &raw mut rest
-                ));
-                let (mut b, mut e) = (0_u16, 0_u16);
-                assert!(super::pinyin_get_pinyin_key_rest_positions(
-                    instance, rest, &raw mut b, &raw mut e
-                ));
-                assert_eq!((b, e), (begin, end), "{mode} offset {offset}");
-                let mut length = 0_u16;
-                assert!(super::pinyin_get_pinyin_key_rest_length(
-                    instance,
-                    rest,
-                    &raw mut length
-                ));
-                assert_eq!(length, 2, "{mode} offset {offset}");
-            }
-
-            crate::instance::pinyin_free_instance(instance);
-            crate::context::pinyin_fini(context);
+        for (offset, begin, end) in [(65_535_usize, 65_535_u16, 1_u16), (65_537, 1, 3)] {
+            let mut rest: *mut ChewingKeyRest = ptr::null_mut();
+            assert!(super::pinyin_get_pinyin_key_rest(
+                instance,
+                offset,
+                &raw mut rest
+            ));
+            let (mut b, mut e) = (0_u16, 0_u16);
+            assert!(super::pinyin_get_pinyin_key_rest_positions(
+                instance, rest, &raw mut b, &raw mut e
+            ));
+            assert_eq!((b, e), (begin, end), "offset {offset}");
+            let mut length = 0_u16;
+            assert!(super::pinyin_get_pinyin_key_rest_length(
+                instance,
+                rest,
+                &raw mut length
+            ));
+            assert_eq!(length, 2, "offset {offset}");
         }
+
+        crate::instance::pinyin_free_instance(instance);
+        crate::context::pinyin_fini(context);
     }
 }

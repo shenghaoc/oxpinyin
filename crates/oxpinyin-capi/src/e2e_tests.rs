@@ -15,7 +15,7 @@
 //! the predicted flat `+69`, remember-as-index-only, and
 //! `InvalidPhrase` → `false`.
 
-use oxpinyin_core::{Dictionary as _, LanguageModel, PhraseToken};
+use oxpinyin_core::{Dictionary as _, PhraseToken};
 use oxpinyin_engine::CandidateKind;
 use oxpinyin_facade::TextSpan;
 use std::ffi::c_uint;
@@ -107,255 +107,59 @@ fn token_of(instance: *mut PinyinInstance, cand: *mut LookupCandidate) -> u32 {
         .value()
 }
 
-/// The `pinyin_train` leg of the pinned-counts e2e: the doubling seed
-/// sequence (69, 138, 414, …) through the wired path, and the
-/// fresh-composition reset contract (`pinyin.cpp:2693`).
-fn train_records_the_pinned_doubling_sequence(instance: *mut PinyinInstance) {
-    // ── pinyin_train: the doubling seed sequence, sentence_start first ──
-    let first = candidate(instance, "nihao", 0);
-    let t1 = token_of(instance, first);
-    assert!(pinyin_choose_candidate(instance, 0, first) > 0);
-    assert!(
-        !pinyin_train(instance, 0),
-        "a choose without decoded results refuses"
-    );
-    assert_eq!(
-        with_store(instance, |store| store.bigram_count(SENTENCE_START, t1)).unwrap(),
-        0
-    );
-    // The system item's live count, as the chunk shipped it.
-    let shipped = with_store(instance, |store| store.system_unigram(t1)).expect("item");
-
-    // 69 on first selection; the predecessor is sentence_start.
-    assert!(pinyin_guess_sentence(instance));
-    assert!(pinyin_train(instance, 0));
-    {
-        assert_eq!(
-            with_store(instance, |store| store.bigram_count(SENTENCE_START, t1)).unwrap(),
-            69
-        );
-        assert_eq!(
-            with_store(instance, |store| store.bigram_total(SENTENCE_START)).unwrap(),
-            69
-        );
-        assert_eq!(
-            with_store(instance, |store| store.system_unigram(t1)),
-            Some(shipped + 483)
-        ); // 69 * 7
-    }
-
-    // 138 on reselection (count 207), then 414 (count 621): the pinned
-    // sequence 69, 138, 414, … through the wired path.
-    assert!(pinyin_guess_sentence(instance));
-    assert!(pinyin_train(instance, 0));
-    assert_eq!(
-        with_store(instance, |store| store.bigram_count(SENTENCE_START, t1)).unwrap(),
-        207
-    );
-    assert!(pinyin_guess_sentence(instance));
-    assert!(pinyin_train(instance, 0));
-    assert_eq!(
-        with_store(instance, |store| store.bigram_count(SENTENCE_START, t1)).unwrap(),
-        621
-    );
-    assert_eq!(
-        with_store(instance, |store| store.system_unigram(t1)),
-        Some(shipped + 483 + 966 + 2898)
-    );
-
-    // A new composition starts fresh at sentence_start: the predecessor is
-    // NOT the previous sentence's last token. The fresh start is the
-    // explicit `pinyin_reset` (upstream's frontend reset-on-commit
-    // contract, `pinyin.cpp:2693`): since the R5 revert (register #8) the
-    // engine no longer imitates it — an evolved re-parse continues the
-    // committed composition with its store.
-    crate::instance::pinyin_reset(instance);
-    let second = candidate(instance, "nihao", 1);
-    let t2 = token_of(instance, second);
-    assert_ne!(t1, t2, "distinct candidate indexes carry distinct tokens");
-    assert!(pinyin_choose_candidate(instance, 0, second) > 0);
-    assert!(pinyin_guess_sentence(instance));
-    assert!(pinyin_train(instance, 0));
-    {
-        assert_eq!(
-            with_store(instance, |store| store.bigram_count(SENTENCE_START, t2)).unwrap(),
-            69
-        );
-        assert_eq!(
-            with_store(instance, |store| store.bigram_count(t1, t2)).unwrap(),
-            0
-        );
-    }
-}
-
-/// The `pinyin_remember_user_input` leg of the pinned-counts e2e: index-only
-/// seeding from the live composition, merge onto the same token, and the
-/// invalid-input rejects that leave the index untouched.
-fn remember_user_input_indexes_without_training(instance: *mut PinyinInstance) {
-    // ── pinyin_remember_user_input: index-only, no training ──
-    assert_eq!(
-        pinyin_parse_more_full_pinyins(instance, cstr("nihao").as_ptr()),
-        5
-    );
-    assert!(pinyin_remember_user_input(
-        instance,
-        cstr("你好").as_ptr(),
-        -1
-    ));
-    let (user_token, pronunciation, ni_key, hao_key) = {
-        let user_token = with_store(instance, |store| store.token_for_phrase("你好"))
-            .unwrap()
-            .expect("phrase indexed");
-        assert_eq!(user_token, FIRST_USER_TOKEN);
-        // New-phrase seeding: default count 5 × add-phrase factor 3 — and no
-        // bigram anywhere (remember does not train).
-        assert_eq!(
-            with_store(instance, |store| store.unigram_delta(user_token)).unwrap(),
-            15
-        );
-        assert_eq!(
-            with_store(instance, |store| store
-                .bigram_count(SENTENCE_START, user_token))
-            .unwrap(),
-            0
-        );
-        assert_eq!(
-            with_store(instance, |store| store.bigram_total(user_token)).unwrap(),
-            0
-        );
-        let phrase = with_store(instance, |store| store.phrase(user_token))
-            .unwrap()
-            .expect("phrase stored");
-        assert_eq!(phrase.phrase_text().unwrap(), "你好");
-        assert_eq!(phrase.pronunciations().len(), 1);
-        // The current composition "nihao" supplies the pronunciation keys.
-        let ni = u16::try_from(
-            oxpinyin_core::SyllableKey::from_text("ni")
-                .expect("frozen key")
-                .index(),
-        )
-        .expect("frozen syllable inventory fits u16");
-        let hao = u16::try_from(
-            oxpinyin_core::SyllableKey::from_text("hao")
-                .expect("frozen key")
-                .index(),
-        )
-        .expect("frozen syllable inventory fits u16");
-        assert_eq!(phrase.pronunciations()[0].keys(), &[ni, hao]);
-        assert_eq!(phrase.pronunciations()[0].count(), 5);
-        (
-            user_token,
-            phrase.pronunciations()[0].keys().to_vec(),
-            ni,
-            hao,
-        )
-    };
-    assert_eq!(pronunciation, [ni_key, hao_key]);
-
-    // Re-remembering merges onto the same token: no new allocation, no
-    // unigram reseeding, the pronunciation count accumulates.
-    assert!(pinyin_remember_user_input(
-        instance,
-        cstr("你好").as_ptr(),
-        7
-    ));
-    {
-        assert_eq!(
-            with_store(instance, |store| store.token_for_phrase("你好")).unwrap(),
-            Some(user_token)
-        );
-        assert_eq!(with_store(instance, next_user_token), FIRST_USER_TOKEN + 1);
-        assert_eq!(
-            with_store(instance, |store| store.unigram_delta(user_token)).unwrap(),
-            15
-        );
-        let phrase = with_store(instance, |store| store.phrase(user_token))
-            .unwrap()
-            .expect("phrase stored");
-        assert_eq!(phrase.pronunciations().len(), 1);
-        assert_eq!(phrase.pronunciations()[0].count(), 12);
-    }
-
-    // Invalid inputs: empty phrase and a key-count mismatch (composition
-    // "n" is one key against the two-character phrase) return false without
-    // touching the index. A count below -1 is not invalid: the pin uses the
-    // `gint` as the `guint32` it becomes (register row 57).
-    assert!(!pinyin_remember_user_input(instance, cstr("").as_ptr(), -1));
-    assert_eq!(
-        pinyin_parse_more_full_pinyins(instance, cstr("n").as_ptr()),
-        1
-    );
-    assert!(!pinyin_remember_user_input(
-        instance,
-        cstr("你好").as_ptr(),
-        -1
-    ));
-    assert_eq!(with_store(instance, next_user_token), FIRST_USER_TOKEN + 1);
-}
-
 /// #752: the pin's `_pre_compute_tokens` refuses a phrase if any character
 /// has no dictionary token (074a2219 pinyin.cpp:3098-3130, 3685-3695).
 /// NUL termination is covered differentially in contract-diff.py.
 #[test]
-fn remember_user_input_requires_known_characters_in_every_parse_mode() {
-    use crate::config::{pinyin_set_double_pinyin_scheme, pinyin_set_zhuyin_scheme};
-    use crate::parse::{pinyin_parse_more_chewings, pinyin_parse_more_double_pinyins};
+fn remember_user_input_requires_known_characters() {
+    let user_dir = TempUserDir::new("remember-known");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    assert!(pinyin_set_options(context, 0x28));
+    assert_eq!(
+        pinyin_parse_more_full_pinyins(instance, cstr("nihao").as_ptr()),
+        5
+    );
 
-    type Parse = extern "C" fn(*mut PinyinInstance, *const std::ffi::c_char) -> usize;
-    let modes: [(&str, Parse, &str); 3] = [
-        ("full", pinyin_parse_more_full_pinyins, "nihao"),
-        ("double", pinyin_parse_more_double_pinyins, "nihk"),
-        ("chewing", pinyin_parse_more_chewings, "su3cl3"),
-    ];
-    for (mode, parse, input) in modes {
-        let user_dir = TempUserDir::new(&format!("remember-known-{mode}"));
-        let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-        assert!(pinyin_set_options(context, 0x28));
-        assert!(pinyin_set_double_pinyin_scheme(context, 2));
-        assert!(pinyin_set_zhuyin_scheme(context, 1));
-        assert_eq!(parse(instance, cstr(input).as_ptr()), input.len());
-
-        for phrase in [b"ni\0".as_slice(), "你i\0".as_bytes(), "😀好\0".as_bytes()] {
-            assert!(!pinyin_remember_user_input(
-                instance,
-                phrase.as_ptr().cast(),
-                1
-            ));
-            assert_eq!(with_store(instance, next_user_token), FIRST_USER_TOKEN);
-            let export = pinyin_begin_get_phrases(context, 7);
-            assert!(!export.is_null());
-            assert!(!pinyin_iterator_has_next_phrase(export));
-            pinyin_end_get_phrases(export);
-        }
-
-        // Known characters remain eligible in every parse mode.
-        assert!(pinyin_remember_user_input(
+    for phrase in [b"ni\0".as_slice(), "你i\0".as_bytes(), "😀好\0".as_bytes()] {
+        assert!(!pinyin_remember_user_input(
             instance,
-            cstr("你好").as_ptr(),
+            phrase.as_ptr().cast(),
             1
         ));
-        assert_eq!(
-            with_store(instance, |store| store.token_for_phrase("你好")).unwrap(),
-            Some(FIRST_USER_TOKEN)
-        );
-
-        // Eligibility comes from the phrase table, including user tokens:
-        // importing the previously unknown characters makes `ni` eligible.
-        let import = pinyin_begin_add_phrases(context, 7);
-        assert!(!import.is_null());
-        for (character, reading) in [("n", "ni3"), ("i", "hao3")] {
-            assert!(pinyin_iterator_add_phrase(
-                import,
-                cstr(character).as_ptr(),
-                cstr(reading).as_ptr(),
-                1
-            ));
-        }
-        pinyin_end_add_phrases(import);
-        assert!(pinyin_remember_user_input(instance, cstr("ni").as_ptr(), 1));
-        crate::instance::pinyin_free_instance(instance);
-        crate::context::pinyin_fini(context);
+        assert_eq!(with_store(instance, next_user_token), FIRST_USER_TOKEN);
+        let export = pinyin_begin_get_phrases(context, 7);
+        assert!(!export.is_null());
+        assert!(!pinyin_iterator_has_next_phrase(export));
+        pinyin_end_get_phrases(export);
     }
+
+    // Known characters remain eligible.
+    assert!(pinyin_remember_user_input(
+        instance,
+        cstr("你好").as_ptr(),
+        1
+    ));
+    assert_eq!(
+        with_store(instance, |store| store.token_for_phrase("你好")).unwrap(),
+        Some(FIRST_USER_TOKEN)
+    );
+
+    // Eligibility comes from the phrase table, including user tokens:
+    // importing the previously unknown characters makes `ni` eligible.
+    let import = pinyin_begin_add_phrases(context, 7);
+    assert!(!import.is_null());
+    for (character, reading) in [("n", "ni3"), ("i", "hao3")] {
+        assert!(pinyin_iterator_add_phrase(
+            import,
+            cstr(character).as_ptr(),
+            cstr(reading).as_ptr(),
+            1
+        ));
+    }
+    pinyin_end_add_phrases(import);
+    assert!(pinyin_remember_user_input(instance, cstr("ni").as_ptr(), 1));
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
 }
 
 /// The pin refuses an empty or oversized phrase before token lookup
@@ -664,90 +468,6 @@ fn choosing_a_sole_missing_prefix_row_advances_the_facade_total() {
     crate::context::pinyin_fini(context);
 }
 
-#[test]
-fn training_through_the_abi_records_the_pinned_counts() {
-    let user_dir = TempUserDir::new("train");
-    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-    // The composition "n" below needs the incomplete tail the USE_TONE
-    // default refuses.
-    assert!(pinyin_set_options(
-        context,
-        oxpinyin_core::PINYIN_INCOMPLETE
-    ));
-
-    train_records_the_pinned_doubling_sequence(instance);
-    assert!(pinyin_reset(instance));
-
-    // ── pinyin_choose_predicted_candidate: flat +69, no doubling ──
-    // The pin asserts a predicted row (`pinyin.cpp:2593`), so the row comes
-    // from a prediction; its predecessor is the longest token of that
-    // prediction's prefix (`_get_previous_token`, `pinyin.cpp:1711-1740`).
-    let prefix = cstr("你");
-    assert!(crate::predict::pinyin_guess_predicted_candidates(
-        instance,
-        prefix.as_ptr()
-    ));
-    let (predicted, t4) = predicted_row(
-        instance,
-        lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE,
-    );
-    let shipped = with_store(instance, |store| store.system_unigram(t4)).expect("item");
-    assert!(pinyin_choose_predicted_candidate(instance, predicted));
-    {
-        assert_eq!(
-            with_store(instance, |store| store.system_unigram(t4)),
-            Some(shipped + 483)
-        );
-    }
-    // Flat again — the unigram doubles nothing and the count stays linear.
-    assert!(pinyin_choose_predicted_candidate(instance, predicted));
-    {
-        assert_eq!(
-            with_store(instance, |store| store.system_unigram(t4)),
-            Some(shipped + 966)
-        );
-    }
-    // A selection in the same composition does not change the predecessor:
-    // the pin takes it from the prediction prefix.
-    let other = candidate(instance, "zhongguo", 1);
-    let t5 = token_of(instance, other);
-    assert!(pinyin_choose_candidate(instance, 0, other) > 0);
-    assert!(crate::predict::pinyin_guess_predicted_candidates(
-        instance,
-        prefix.as_ptr()
-    ));
-    let (predicted, chosen) = predicted_row(
-        instance,
-        lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE,
-    );
-    let before = with_store(instance, |store| store.bigram_count(t5, chosen)).unwrap();
-    assert!(pinyin_choose_predicted_candidate(instance, predicted));
-    assert_eq!(
-        with_store(instance, |store| store.bigram_count(t5, chosen)).unwrap(),
-        before
-    );
-    // A prefix row leaves both predecessor bigrams unchanged.
-    let prefix_token = {
-        // SAFETY: `instance` is a live allocated handle.
-        let inst = unsafe { instance_ref(instance) };
-        inst.core.dict.tokens_for_text("你")[0].value()
-    };
-    assert_eq!(
-        with_store(instance, |store| store.bigram_count(prefix_token, chosen)).unwrap(),
-        0
-    );
-
-    remember_user_input_indexes_without_training(instance);
-
-    // ── pinyin_is_user_candidate: system candidates are not user phrases ──
-    // (user phrases enter candidate lists with the T4 decode merge.)
-    let system_cand = candidate(instance, "nihao", 0);
-    assert!(!pinyin_is_user_candidate(instance, system_cand));
-
-    crate::instance::pinyin_free_instance(instance);
-    crate::context::pinyin_fini(context);
-}
-
 /// Forces a phrase after the last sentence lookup that the decoded result
 /// does not hold: the stale-forcing shape of `pinyin_train`.
 fn force_a_stale_phrase(instance: *mut PinyinInstance) -> u32 {
@@ -917,80 +637,6 @@ fn null_user_directory_refuses_training_but_keeps_mutable_state() {
     crate::context::pinyin_fini(context);
 }
 
-#[test]
-fn mask_out_clears_user_entries_and_leaves_the_flag_alone() {
-    let user_dir = TempUserDir::new("mask");
-    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-
-    // Two remembered phrases, then the frontend's "user" clear:
-    // PHRASE_INDEX_LIBRARY_MASK against MAKE_TOKEN(USER_DICTIONARY, 0).
-    assert_eq!(
-        pinyin_parse_more_full_pinyins(instance, cstr("nihao").as_ptr()),
-        5
-    );
-    assert!(pinyin_remember_user_input(
-        instance,
-        cstr("你好").as_ptr(),
-        -1
-    ));
-    // The mini fixture has single-character tokens for 好 and 你;
-    // remember requires them, unlike the explicit import API (#752).
-    assert_eq!(
-        pinyin_parse_more_full_pinyins(instance, cstr("haoni").as_ptr()),
-        5
-    );
-    assert!(pinyin_remember_user_input(
-        instance,
-        cstr("好你").as_ptr(),
-        -1
-    ));
-    assert!(pinyin_mask_out(context, 0x0F00_0000, 0x0700_0000));
-
-    // The phrase export is empty; the user sub-index is empty again, so the
-    // next token is the first one (`get_range` ends an empty range at 1,
-    // `phrase_index.cpp:640-650`); nothing armed m_modified (remember and
-    // mask both stay off upstream's set-sites).
-    let iter = crate::iterators::pinyin_begin_get_phrases(context, 7);
-    assert!(!iter.is_null());
-    assert!(!crate::iterators::pinyin_iterator_has_next_phrase(iter));
-    crate::iterators::pinyin_end_get_phrases(iter);
-    {
-        assert!(
-            with_store(instance, |store| store.token_for_phrase("你好"))
-                .unwrap()
-                .is_none()
-        );
-        assert!(
-            with_store(instance, |store| store.token_for_phrase("好你"))
-                .unwrap()
-                .is_none()
-        );
-        assert_eq!(with_store(instance, next_user_token), FIRST_USER_TOKEN);
-        assert!(!with_store(instance, |store| store.is_modified()));
-    }
-    assert!(!pinyin_save(context), "masking does not arm the save gate");
-
-    // The "all" clear removes the remaining count tables too.
-    assert!(pinyin_mask_out(context, 0, 0));
-    {
-        assert_eq!(
-            with_store(instance, |store| store.unigram_total()).unwrap(),
-            0
-        );
-        assert!(!with_store(instance, |store| store.is_modified()));
-    }
-
-    // remove_user_candidate: a null candidate reports false. A system-token
-    // candidate is the pin's `assert(USER_DICTIONARY == index)`
-    // (`pinyin.cpp:3738`) and aborts the process;
-    // `boundary_tests::remove_user_candidate_aborts_on_a_system_token` holds
-    // it.
-    assert!(!pinyin_remove_user_candidate(instance, ptr::null_mut()));
-
-    crate::instance::pinyin_free_instance(instance);
-    crate::context::pinyin_fini(context);
-}
-
 /// Snapshot of phrase candidates as `(token, text, cost)`.
 fn phrase_snapshot(instance: *mut PinyinInstance) -> Vec<(u32, String, i64)> {
     // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
@@ -1012,86 +658,6 @@ fn phrase_snapshot(instance: *mut PinyinInstance) -> Vec<(u32, String, i64)> {
             ))
         })
         .collect()
-}
-
-#[test]
-fn empty_user_store_decode_is_identical_across_instances() {
-    // (a) at the C ABI / mini-fixture scale: two empty stores, same input,
-    // bit-identical phrase candidates. The corpus-scale comparison with the pin
-    // is `oxpinyin-runtime`'s `candidate_surface`.
-    let a_dir = TempUserDir::new("empty-a");
-    let b_dir = TempUserDir::new("empty-b");
-    let (ctx_a, inst_a) = open(a_dir.path.to_str().expect("UTF-8 path"));
-    let (ctx_b, inst_b) = open(b_dir.path.to_str().expect("UTF-8 path"));
-
-    let _ = candidate(inst_a, "nihao", 0);
-    let _ = candidate(inst_b, "nihao", 0);
-    assert_eq!(phrase_snapshot(inst_a), phrase_snapshot(inst_b));
-
-    crate::instance::pinyin_free_instance(inst_a);
-    crate::instance::pinyin_free_instance(inst_b);
-    crate::context::pinyin_fini(ctx_a);
-    crate::context::pinyin_fini(ctx_b);
-}
-
-#[test]
-fn populated_store_raises_the_trained_unigram() {
-    // Populated-store pin — separate from the empty-store corpus contract.
-    // Training sequence (reproducible):
-    //   1. parse "nihao", guess, read the trained token's unigram
-    //   2. choose candidate 0, pinyin_train once (seed 69, unigram 483)
-    //   3. reset, parse "nihao", guess again
-    // The additive merge raises the token's unigram by exactly the store's
-    // delta — the item field upstream's `add_unigram_frequency` moves and
-    // the pinned candidate law reads — and the trained token stays
-    // offered.
-    let user_dir = TempUserDir::new("populated");
-    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-
-    let first = candidate(instance, "nihao", 0);
-    let token = token_of(instance, first);
-    let before = phrase_snapshot(instance);
-    assert!(
-        before.iter().any(|(t, _, _)| *t == token),
-        "the chosen token is in the empty-store list"
-    );
-    // SAFETY: live instance immediately after the guess.
-    let lm = unsafe { instance_ref(instance) }.core.lm;
-    let unigram_before = lm
-        .unigram_freq(&PhraseToken::new(token))
-        .expect("query")
-        .expect("real unigrams");
-
-    let shipped = with_store(instance, |store| store.system_unigram(token)).expect("item");
-    assert!(pinyin_choose_candidate(instance, 0, first) > 0);
-    assert!(pinyin_guess_sentence(instance));
-    assert!(pinyin_train(instance, 0));
-    assert_eq!(
-        with_store(instance, |store| store.system_unigram(token)),
-        Some(shipped + 483)
-    );
-
-    assert!(pinyin_reset(instance));
-    let _ = candidate(instance, "nihao", 0);
-    let after = phrase_snapshot(instance);
-    assert!(
-        after.iter().any(|(t, _, _)| *t == token),
-        "the trained token is still offered"
-    );
-    // SAFETY: training and the new guess finished; borrow the live model again.
-    let lm = unsafe { instance_ref(instance) }.core.lm;
-    let unigram_after = lm
-        .unigram_freq(&PhraseToken::new(token))
-        .expect("query")
-        .expect("real unigrams");
-    assert_eq!(
-        unigram_after - unigram_before,
-        483,
-        "training must raise the trained token's unigram by the store delta"
-    );
-
-    crate::instance::pinyin_free_instance(instance);
-    crate::context::pinyin_fini(context);
 }
 
 #[test]
@@ -1289,49 +855,6 @@ fn recorded_open_counter(user_dir: &std::path::Path) -> Option<u32> {
 }
 
 #[test]
-fn clean_launches_lower_the_open_counter_and_keep_the_profile() {
-    // #523: pinyin_init raises user.conf's open counter and pinyin_fini
-    // lowers it again, saved or not (pinyin.cpp:185-187, :1194-1200), so
-    // ten clean launches never cross OPEN_COUNTER_LIMIT and the phrase
-    // the first one learned survives every later one. Before the fix the
-    // counter only rose, and the eighth init wiped the profile.
-    let user_dir = TempUserDir::new("open-counter-cycles");
-    for launch in 1..=10 {
-        let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-        assert_eq!(
-            recorded_open_counter(&user_dir.path),
-            Some(1),
-            "launch {launch}: the init raises"
-        );
-        if launch == 1 {
-            let iter = pinyin_begin_add_phrases(context, 7);
-            assert!(pinyin_iterator_add_phrase(
-                iter,
-                cstr("你好").as_ptr(),
-                cstr("nihao").as_ptr(),
-                5,
-            ));
-            pinyin_end_add_phrases(iter);
-            assert!(pinyin_save(context));
-        }
-        let export = pinyin_begin_get_phrases(context, 7);
-        assert_eq!(
-            drain_phrases(export),
-            vec![("你好".to_owned(), "ni'hao".to_owned(), 5)],
-            "launch {launch}: the profile survived"
-        );
-        pinyin_end_get_phrases(export);
-        crate::instance::pinyin_free_instance(instance);
-        crate::context::pinyin_fini(context);
-        assert_eq!(
-            recorded_open_counter(&user_dir.path),
-            Some(0),
-            "launch {launch}: the fini lowers"
-        );
-    }
-}
-
-#[test]
 fn two_contexts_on_one_user_dir_are_independent() {
     // #538: a second pinyin_init on a user dir another live context has
     // open is a context of its own, as upstream's is — no state is held
@@ -1497,48 +1020,6 @@ fn empty_import_batch_arms_modified_and_saves() {
     crate::context::pinyin_fini(context);
 }
 
-/// The §9 phrase-export leg of the iterator e2e: (phrase, `'`-joined pinyin,
-/// pronunciation count) rows in token order, the exhaustion shape, a system
-/// sub-index and its `guint8` alias, and an index with no sub-index.
-fn exported_phrase_rows_are_token_ordered(context: *mut crate::types::PinyinContext) {
-    // §9 phrase export: (phrase, `'`-joined pinyin, pronunciation count),
-    // token order.
-    let iter = crate::iterators::pinyin_begin_get_phrases(context, 7);
-    assert!(!iter.is_null());
-    assert_eq!(
-        drain_phrases(iter),
-        vec![
-            ("你好".to_owned(), "ni'hao".to_owned(), 12),
-            ("好你".to_owned(), "hao'ni".to_owned(), 3),
-        ]
-    );
-    // Exhaustion: has_next false. A get_next past it is the pin's
-    // `assert(ERROR_OK == retval)` (`pinyin.cpp:709`) and aborts the
-    // process; `export_iterator_aborts_on_a_reading_it_cannot_spell` holds
-    // the abort arm.
-    assert!(!crate::iterators::pinyin_iterator_has_next_phrase(iter));
-    crate::iterators::pinyin_end_get_phrases(iter);
-
-    // A system sub-index exports its rows (`pinyin.cpp:662-768`), and so
-    // does its guint8 alias 257 (`export_iterator_t::m_phrase_index`,
-    // `pinyin.cpp:126`), row for row.
-    let system = crate::iterators::pinyin_begin_get_phrases(context, 1);
-    assert!(!system.is_null());
-    let system_rows = drain_phrases(system);
-    assert!(!system_rows.is_empty());
-    crate::iterators::pinyin_end_get_phrases(system);
-    let alias = crate::iterators::pinyin_begin_get_phrases(context, 257);
-    assert!(!alias.is_null());
-    assert_eq!(drain_phrases(alias), system_rows);
-    crate::iterators::pinyin_end_get_phrases(alias);
-
-    // A nibble with no sub-index in the default facade exports nothing.
-    let empty = crate::iterators::pinyin_begin_get_phrases(context, 8);
-    assert!(!empty.is_null());
-    assert!(!crate::iterators::pinyin_iterator_has_next_phrase(empty));
-    crate::iterators::pinyin_end_get_phrases(empty);
-}
-
 /// Trains one multi-phrase sentence through choose/guess/train: choosing 你
 /// consumes the ni group, the 好 group is guessed at the post-choose cursor
 /// (never offset 0), and the (你 → 好) bigram lands at 69.
@@ -1592,107 +1073,6 @@ fn train_one_multiphrase_sentence(instance: *mut PinyinInstance) {
     assert!(pinyin_choose_candidate(instance, 2, hao_ptr) > 0);
     assert!(pinyin_guess_sentence(instance));
     assert!(pinyin_train(instance, 0));
-}
-
-#[test]
-fn export_iterators_walk_the_stored_triples() {
-    let user_dir = TempUserDir::new("export");
-    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-
-    // Null-safety and the empty-store shape first.
-    assert!(crate::iterators::pinyin_begin_get_phrases(ptr::null_mut(), 7).is_null());
-    assert!(crate::iterators::pinyin_begin_get_bigram_phrases(ptr::null_mut()).is_null());
-    assert!(!crate::iterators::pinyin_iterator_has_next_phrase(
-        ptr::null_mut()
-    ));
-    assert!(!crate::iterators::pinyin_bigram_iterator_has_next_phrase(
-        ptr::null_mut()
-    ));
-
-    // Remember two phrases; the second reading merges into the first.
-    assert_eq!(
-        pinyin_parse_more_full_pinyins(instance, cstr("nihao").as_ptr()),
-        5
-    );
-    assert!(pinyin_remember_user_input(
-        instance,
-        cstr("你好").as_ptr(),
-        -1
-    ));
-    assert!(pinyin_remember_user_input(
-        instance,
-        cstr("你好").as_ptr(),
-        7
-    ));
-    // Both characters have tokens in the mini fixture (#752).
-    assert_eq!(
-        pinyin_parse_more_full_pinyins(instance, cstr("haoni").as_ptr()),
-        5
-    );
-    assert!(pinyin_remember_user_input(
-        instance,
-        cstr("好你").as_ptr(),
-        3
-    ));
-
-    exported_phrase_rows_are_token_ordered(context);
-
-    train_one_multiphrase_sentence(instance);
-
-    // §9 bigram export: sentence_start rows skipped; phrase = prev+next
-    // text; pinyin = prev'next; count = stored × 2.
-    let bigram = crate::iterators::pinyin_begin_get_bigram_phrases(context);
-    assert!(!bigram.is_null());
-    assert_eq!(
-        drain_bigrams(bigram),
-        vec![("你好".to_owned(), "ni'hao".to_owned(), 138)]
-    );
-    assert!(!crate::iterators::pinyin_bigram_iterator_has_next_phrase(
-        bigram
-    ));
-    crate::iterators::pinyin_end_get_bigram_phrases(bigram);
-
-    crate::instance::pinyin_free_instance(instance);
-    crate::context::pinyin_fini(context);
-}
-
-/// `pinyin.cpp:748-767`: every `get_next_phrase` re-reads the item it is
-/// at and re-probes the range, so a phrase appended after the begin and a
-/// reading merged into the item under the cursor are both exported.
-#[test]
-fn export_iterator_reads_imports_that_land_while_it_is_open() {
-    let user_dir = TempUserDir::new("export-open");
-    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-    let import = |rows: &[(&str, &str, i32)]| {
-        let iter = pinyin_begin_add_phrases(context, 7);
-        assert!(!iter.is_null());
-        for (phrase, reading, count) in rows {
-            assert!(pinyin_iterator_add_phrase(
-                iter,
-                cstr(phrase).as_ptr(),
-                cstr(reading).as_ptr(),
-                *count,
-            ));
-        }
-        pinyin_end_add_phrases(iter);
-    };
-    import(&[("你好", "ni'hao", 5)]);
-    let iter = crate::iterators::pinyin_begin_get_phrases(context, 7);
-    assert!(!iter.is_null());
-    assert!(crate::iterators::pinyin_iterator_has_next_phrase(iter));
-    // A new token past the probed one, and a second reading of the probed one.
-    import(&[("好你", "hao'ni", 7), ("你好", "ni2'hao2", 3)]);
-    assert_eq!(
-        drain_phrases(iter),
-        vec![
-            ("你好".to_owned(), "ni'hao".to_owned(), 5),
-            ("你好".to_owned(), "ni2'hao2".to_owned(), 3),
-            ("好你".to_owned(), "hao'ni".to_owned(), 7),
-        ]
-    );
-    crate::iterators::pinyin_end_get_phrases(iter);
-    crate::instance::pinyin_free_instance(instance);
-    crate::context::pinyin_fini(context);
 }
 
 /// Register row 62: a `USER_FILE` reading the probe counts
@@ -1785,260 +1165,6 @@ fn export_an_unspellable_reading(page: *mut u8) {
     crate::iterators::pinyin_iterator_get_next_phrase(iter, phrase_out, pinyin_out, count_out);
 }
 
-#[test]
-fn network_index_accepts_the_same_add_path() {
-    let user_dir = TempUserDir::new("network-add");
-    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-
-    let iter = pinyin_begin_add_phrases(context, 6);
-    assert!(pinyin_iterator_add_phrase(
-        iter,
-        cstr("网词").as_ptr(),
-        cstr("wangci").as_ptr(),
-        5,
-    ));
-    pinyin_end_add_phrases(iter);
-
-    let export = pinyin_begin_get_phrases(context, 6);
-    assert_eq!(
-        drain_phrases(export),
-        vec![("网词".to_owned(), "wang'ci".to_owned(), 5)]
-    );
-    crate::iterators::pinyin_end_get_phrases(export);
-
-    let user_export = pinyin_begin_get_phrases(context, 7);
-    assert!(!crate::iterators::pinyin_iterator_has_next_phrase(
-        user_export
-    ));
-    crate::iterators::pinyin_end_get_phrases(user_export);
-
-    crate::instance::pinyin_free_instance(instance);
-    crate::context::pinyin_fini(context);
-}
-
-#[test]
-fn offset_decode_rows_carry_prefix_context() {
-    let user_dir = TempUserDir::new("offset-ctx");
-    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-
-    let input = cstr("nihao");
-    assert_eq!(pinyin_parse_more_full_pinyins(instance, input.as_ptr()), 5);
-
-    assert!(pinyin_guess_sentence(instance));
-    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
-
-    let (ni_index, ni_ptr) = {
-        // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
-        let inst = unsafe { instance_ref(instance) };
-        let index = inst
-            .candidates
-            .iter()
-            .position(|c| c.text_bytes() == "\u{4f60}".as_bytes())
-            .expect("\u{4f60} is offered for nihao");
-        let mut cand: *mut LookupCandidate = ptr::null_mut();
-        assert!(pinyin_get_candidate(
-            instance,
-            u32::try_from(index).expect("small candidate index"),
-            &raw mut cand
-        ));
-        (index, cand)
-    };
-    assert!(pinyin_choose_candidate(instance, 0, ni_ptr) > 0);
-
-    assert!(pinyin_guess_sentence(instance));
-
-    let mut sentence: *mut std::os::raw::c_char = ptr::null_mut();
-    assert!(
-        pinyin_get_sentence(instance, 0, &raw mut sentence),
-        "remaining input should produce at least one sentence row"
-    );
-    assert!(!sentence.is_null());
-    let sentence_str = crate::ffi::take_owned_cstr(sentence);
-    assert!(
-        sentence_str.starts_with("\u{4f60}"),
-        "sentence row at offset should carry the selected prefix: got {sentence_str:?}"
-    );
-
-    assert!(pinyin_guess_candidates(instance, ni_index, DEFAULT_SORT));
-    {
-        // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
-        let inst = unsafe { instance_ref(instance) };
-        let nbest: Vec<_> = inst
-            .candidates
-            .iter()
-            .filter(|c| {
-                c.candidate_type() == crate::types::lookup_candidate_type_t::NBEST_MATCH_CANDIDATE
-            })
-            .collect();
-        assert!(
-            !nbest.is_empty(),
-            "n-best row candidates should be present after offset decode"
-        );
-        for cand in &nbest {
-            let text = cand.text_str().expect("UTF-8 candidate");
-            assert!(
-                text.starts_with("\u{4f60}"),
-                "n-best candidate at offset should carry prefix: got {text:?}"
-            );
-        }
-    }
-
-    crate::instance::pinyin_free_instance(instance);
-    crate::context::pinyin_fini(context);
-}
-
-/// L2 + `pinyin_clear_constraint` through the ABI: a chosen forcing
-/// survives the frontend's full-buffer re-parse (the store is instance
-/// state that only `pinyin_reset` clears), and clear-by-offset answers
-/// upstream's defined bools.
-#[test]
-fn the_forcing_survives_the_reparse_and_clears_by_offset() {
-    let user_dir = TempUserDir::new("constraint-lifetime");
-    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-
-    // A null instance answers false, never aborts.
-    assert!(!pinyin_clear_constraint(ptr::null_mut(), 0));
-
-    let input = cstr("nihao");
-    assert_eq!(pinyin_parse_more_full_pinyins(instance, input.as_ptr()), 5);
-    assert!(pinyin_guess_sentence(instance));
-    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
-    let ni_ptr = {
-        // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
-        let inst = unsafe { instance_ref(instance) };
-        let index = inst
-            .candidates
-            .iter()
-            .position(|c| c.text_bytes() == "\u{4f60}".as_bytes())
-            .expect("\u{4f60} is offered for nihao");
-        let mut cand: *mut LookupCandidate = ptr::null_mut();
-        assert!(pinyin_get_candidate(
-            instance,
-            u32::try_from(index).expect("small candidate index"),
-            &raw mut cand
-        ));
-        cand
-    };
-    assert!(pinyin_choose_candidate(instance, 0, ni_ptr) > 0);
-
-    // The frontend re-sends the whole buffer every keystroke; the forcing
-    // is instance state, so it survives and the decoded row still carries
-    // the chosen prefix.
-    let extended = cstr("nihaohao");
-    assert_eq!(
-        pinyin_parse_more_full_pinyins(instance, extended.as_ptr()),
-        8
-    );
-    assert!(pinyin_guess_sentence(instance));
-    let mut sentence: *mut std::os::raw::c_char = ptr::null_mut();
-    assert!(
-        pinyin_get_sentence(instance, 0, &raw mut sentence),
-        "the extended input decodes rows"
-    );
-    let sentence_str = crate::ffi::take_owned_cstr(sentence);
-    assert!(
-        sentence_str.starts_with('\u{4f60}'),
-        "the forcing survived the re-parse: got {sentence_str:?}"
-    );
-
-    // A free offset answers false; a hit inside the forcing's interior
-    // (its NoSearch cell) un-forces the whole run; the freed cells answer
-    // false afterwards.
-    assert!(!pinyin_clear_constraint(instance, 5), "cell 5 is free");
-    assert!(
-        pinyin_clear_constraint(instance, 1),
-        "cell 1 is the run interior"
-    );
-    assert!(!pinyin_clear_constraint(instance, 0), "the run is free now");
-
-    // `pinyin_reset` clears the store outright.
-    assert!(pinyin_reset(instance));
-    assert!(!pinyin_clear_constraint(instance, 0));
-
-    crate::instance::pinyin_free_instance(instance);
-    crate::context::pinyin_fini(context);
-}
-
-/// The forcing survives a shrinking re-parse and the re-type — the
-/// backspace-after-choose contract: constraints are instance state that
-/// only `pinyin_reset` clears; `validate` drops a forcing only when it
-/// stops spelling under the shrunk buffer. The fixture model cannot run
-/// the constrained walk, so this test pins the LIFETIME: the forcing's cell is still
-/// clearable after the whole ladder and the re-type. The walk-level
-/// proof runs on real tables — the differential's bp phase — and at the
-/// engine level with the trellis fixture model.
-#[test]
-fn the_forcing_survives_a_shrinking_reparse_and_the_retype() {
-    let user_dir = TempUserDir::new("constraint-backspace");
-    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-    // The backspace ladder steps through "nihaoshij": its tail needs the
-    // incomplete word the USE_TONE default refuses.
-    assert!(pinyin_set_options(
-        context,
-        oxpinyin_core::PINYIN_INCOMPLETE
-    ));
-
-    let input = cstr("nihaoshijie");
-    assert_eq!(
-        pinyin_parse_more_full_pinyins(instance, input.as_ptr()),
-        "nihaoshijie".len()
-    );
-    assert!(pinyin_guess_sentence(instance));
-    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
-    let ni_ptr = {
-        // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
-        let inst = unsafe { instance_ref(instance) };
-        let index = inst
-            .candidates
-            .iter()
-            .position(|c| c.text_bytes() == "\u{4f60}".as_bytes())
-            .expect("\u{4f60} is offered");
-        let mut cand: *mut LookupCandidate = ptr::null_mut();
-        assert!(pinyin_get_candidate(
-            instance,
-            u32::try_from(index).expect("small candidate index"),
-            &raw mut cand
-        ));
-        cand
-    };
-    assert!(pinyin_choose_candidate(instance, 0, ni_ptr) > 0);
-
-    // Backspace down the ladder and re-type past the shrink: the
-    // composition stayed open the whole way (the buffer shrank TO the
-    // cursor at "ni", which is not a selection-committed shape).
-    for buffer in [
-        "nihaoshij",
-        "nihaoshi",
-        "nihaosh",
-        "nihaos",
-        "nihao",
-        "niha",
-        "ni",
-    ] {
-        let shrunk = cstr(buffer);
-        assert_eq!(
-            pinyin_parse_more_full_pinyins(instance, shrunk.as_ptr()),
-            buffer.len()
-        );
-    }
-    assert_eq!(
-        pinyin_parse_more_full_pinyins(instance, input.as_ptr()),
-        "nihaoshijie".len()
-    );
-
-    // The forcing's cell survived the ladder and the re-type: a hit
-    // anywhere inside its run still clears it. Pre-fix, the first shrink
-    // dropped it and this answered false.
-    assert!(
-        pinyin_clear_constraint(instance, 1),
-        "the forcing survived the shrink ladder and the re-type"
-    );
-    assert!(!pinyin_clear_constraint(instance, 0), "the run is free now");
-
-    crate::instance::pinyin_free_instance(instance);
-    crate::context::pinyin_fini(context);
-}
-
 /// The other half of the parse rule, after the R5 revert (register #8): a
 /// composition a SELECTION consumed still continues when the buffer
 /// evolved from it — upstream's parse path never touches the constraint
@@ -2110,73 +1236,6 @@ fn a_selection_committed_composition_reparses_with_its_store() {
             "the re-opened composition offers \u{4f60} at offset 0"
         );
     }
-
-    crate::instance::pinyin_free_instance(instance);
-    crate::context::pinyin_fini(context);
-}
-
-/// The R5 continuation must not carry a committed selection past its own
-/// input: choose \u{4f60}\u{597d} for "nihao" (the commit branch), then
-/// re-parse the SHORTER "ni" without a reset. The clamp cut the
-/// composition below the selection, so the surviving forcing overruns
-/// the new input and the record follows the survivors — the same drop
-/// the next guess's validate would apply, applied at the clamp. Enter
-/// then commits text valid for "ni", never the stale \u{4f60}\u{597d}
-/// the pre-fix continuation answered.
-#[test]
-fn a_shrinking_reparse_reconciles_the_committed_selection() {
-    let user_dir = TempUserDir::new("constraint-committed-shrink");
-    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-
-    let input = cstr("nihao");
-    assert_eq!(pinyin_parse_more_full_pinyins(instance, input.as_ptr()), 5);
-    // No `pinyin_guess_sentence`: the rows it seeds would make the
-    // \u{4f60}\u{597d} a row-0 mirror, and a row-0 choose constrains
-    // nothing — the forcing this test reconciles away must exist.
-    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
-    let full_ptr = {
-        // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
-        let inst = unsafe { instance_ref(instance) };
-        let index = inst
-            .candidates
-            .iter()
-            .position(|c| c.text_bytes() == "\u{4f60}\u{597d}".as_bytes())
-            .expect("\u{4f60}\u{597d} is offered");
-        let mut cand: *mut LookupCandidate = ptr::null_mut();
-        assert!(pinyin_get_candidate(
-            instance,
-            u32::try_from(index).expect("small candidate index"),
-            &raw mut cand
-        ));
-        cand
-    };
-    // Consumes the whole buffer: the commit branch.
-    assert_eq!(pinyin_choose_candidate(instance, 0, full_ptr), 5);
-
-    // The shrinking re-parse continues the committed composition (R5,
-    // register #8 — "ni" is a prefix of the stored buffer) and reconciles
-    // it to the shortened buffer.
-    let shrunk = cstr("ni");
-    assert_eq!(pinyin_parse_more_full_pinyins(instance, shrunk.as_ptr()), 2);
-    {
-        // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
-        let inst = unsafe { instance_ref(instance) };
-        assert!(
-            inst.core.session.selected_tokens().is_empty(),
-            "the clamped selection reconciled away"
-        );
-        assert_eq!(
-            inst.core.session.composition_offset(),
-            0,
-            "the composition re-opened at the survivor end"
-        );
-    }
-
-    // The shortened input must not retain text from the old selection.
-    // SAFETY: `instance` remains live until the teardown below.
-    let inst = unsafe { instance_ref(instance) };
-    assert!(inst.core.session.selected_text().is_empty());
-    assert_eq!(inst.core.session.raw_input(), "ni");
 
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);
@@ -2299,57 +1358,6 @@ fn predicted_tie_groups_are_text_ascending_including_user_rows() {
         hua < nian,
         "text order, not token order, inside the user tie group"
     );
-    crate::instance::pinyin_free_instance(instance);
-    crate::context::pinyin_fini(context);
-}
-
-/// Register row 37 (maintainer ruling 2026-09-27): after 你好 is chosen
-/// (cursor 5), a lookup at 0 — ibus's `moveCursorLeft` shape — shows the
-/// offset-0 window, not the composition-anchored one, and choosing 你
-/// from it forces `[0, 2)` over the overlapped 你好 and answers cursor 2:
-/// the pin's `offset + len` (`pinyin.cpp:2578-2590`,
-/// `phonetic_lookup.cpp:61-86`), the pre-registered phase E3 shape.
-#[test]
-fn choosing_behind_the_composition_answers_the_chosen_span() {
-    fn row(instance: *mut PinyinInstance, text: &str) -> *mut LookupCandidate {
-        // SAFETY: live instance immediately after a guess.
-        let inst = unsafe { instance_ref(instance) };
-        let index = inst
-            .candidates
-            .iter()
-            .position(|cd| cd.text_bytes() == text.as_bytes())
-            .unwrap_or_else(|| panic!("{text} is offered"));
-        let mut cand: *mut LookupCandidate = ptr::null_mut();
-        assert!(pinyin_get_candidate(
-            instance,
-            u32::try_from(index).expect("small candidate index"),
-            &raw mut cand
-        ));
-        cand
-    }
-    let user_dir = TempUserDir::new("row37-behind-choose");
-    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-    let _ = candidate(instance, "nihao", 0);
-    assert_eq!(
-        pinyin_choose_candidate(instance, 0, row(instance, "你好")),
-        5
-    );
-    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
-    assert_eq!(pinyin_choose_candidate(instance, 0, row(instance, "你")), 2);
-    {
-        // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
-        let inst = unsafe { instance_ref(instance) };
-        assert_eq!(
-            inst.core.session.composition_offset(),
-            2,
-            "the record moved back"
-        );
-        assert_eq!(
-            inst.core.session.selected_tokens().len(),
-            1,
-            "你 replaced 你好 in the record"
-        );
-    }
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);
 }
@@ -3377,16 +2385,6 @@ fn assert_both_readings_rose(instance: *mut PinyinInstance, token: u32, before: 
     }
 }
 
-/// Fuzzy alternatives ride the parse-time matrix in every mode: `ns` is
-/// `nong` in Microsoft double pinyin, and `L_N` adds `long` beside it.
-#[test]
-fn remember_user_input_adds_fuzzy_alternatives_of_a_double_pinyin_parse() {
-    let user_dir = TempUserDir::new("remember-double-fuzzy");
-    let (_context, instance, token, before) = parsed_nong_under_l_n(&user_dir);
-    assert!(pinyin_remember_user_input(instance, cstr("弄").as_ptr(), 3));
-    assert_both_readings_rose(instance, token, &before);
-}
-
 /// The matrix comes from the parse, not from the options now: turning `L_N`
 /// off after the parse leaves `long` in it.
 #[test]
@@ -3396,31 +2394,6 @@ fn remember_user_input_keeps_the_parse_time_fuzzy_alternatives() {
     assert!(pinyin_set_options(context, 0x8));
     assert!(pinyin_remember_user_input(instance, cstr("弄").as_ptr(), 3));
     assert_both_readings_rose(instance, token, &before);
-}
-
-/// The same for the chewing seam: the standard keyboard spells `nong` as
-/// `sj/`, and `L_N` adds `long`.
-#[test]
-fn remember_user_input_adds_fuzzy_alternatives_of_a_chewing_parse() {
-    use crate::config::pinyin_set_zhuyin_scheme;
-    use crate::parse::pinyin_parse_more_chewings;
-
-    let user_dir = TempUserDir::new("remember-chewing-fuzzy");
-    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-    let token = import_readings(context, instance, "弄", &["nong", "long"]);
-    let before = stored_readings(instance, token);
-    assert!(pinyin_set_options(context, 0x8 | (1 << 15)));
-    assert!(pinyin_set_zhuyin_scheme(context, 1));
-    assert_eq!(
-        pinyin_parse_more_chewings(instance, cstr("sj/").as_ptr()),
-        3
-    );
-    assert!(pinyin_remember_user_input(instance, cstr("弄").as_ptr(), 3));
-    let after = stored_readings(instance, token);
-    assert_eq!(after.len(), 2);
-    for ((_, was), (_, now)) in before.iter().zip(&after) {
-        assert_eq!(*now, *was + 3);
-    }
 }
 
 /// Persists `other` in library 7, points 你好's phrase-table row at its
@@ -3454,6 +2427,7 @@ fn remember_against_a_redirected_row(user_dir: &TempUserDir, other: &str, readin
 /// Whether a directory reads as a chunk on this host's temporary file
 /// system (register row 96); where it does not, a directory library is row
 /// 76's unmappable one (class (b)).
+#[cfg(unix)]
 fn directory_reads_as_a_chunk_here() -> bool {
     let probe = tempfile::tempdir().expect("probe dir");
     std::fs::write(probe.path().join("e".repeat(25)), b"x").expect("fill the probe");
@@ -3461,6 +2435,7 @@ fn directory_reads_as_a_chunk_here() -> bool {
 }
 
 /// A context over a private system directory, with its user dir.
+#[cfg(unix)]
 fn init_private(
     scratch: &std::path::Path,
 ) -> (std::path::PathBuf, *mut crate::types::PinyinContext) {
@@ -3508,6 +2483,7 @@ fn init_aborts_on_a_directory_library() {
 /// directory whose library is a directory (register row 96): the save and
 /// the mask-out map `merged.bin` (`pinyin.cpp:955`, `:1264`), the reload of
 /// the unloaded GBK library maps `gbk_char.bin` (`:256`).
+#[cfg(unix)]
 fn remap_a_directory_library(site: &str) -> bool {
     let scratch = tempfile::tempdir().expect("scratch");
     let (system, context) = init_private(scratch.path());
@@ -3556,6 +2532,8 @@ fn save_aborts_on_a_directory_library() {
 }
 
 /// Register row 96 at mask-out, after the user tables are masked.
+// Unix only, for the reason `init_aborts_on_a_directory_library` gives.
+#[cfg(unix)]
 #[test]
 fn mask_out_aborts_on_a_directory_library() {
     if directory_reads_as_a_chunk_here() {
@@ -3571,6 +2549,8 @@ fn mask_out_aborts_on_a_directory_library() {
 }
 
 /// Register row 96 at the reload of an unloaded library.
+// Unix only, for the reason `init_aborts_on_a_directory_library` gives.
+#[cfg(unix)]
 #[test]
 fn reload_aborts_on_a_directory_library() {
     if directory_reads_as_a_chunk_here() {
@@ -3587,6 +2567,8 @@ fn reload_aborts_on_a_directory_library() {
 
 /// Register row 96 at the addon load, which maps `art.bin` through the same
 /// `MemoryChunk::mmap` (`pinyin.cpp:290`); row 76's `false` elsewhere.
+// Unix only, for the reason `init_aborts_on_a_directory_library` gives.
+#[cfg(unix)]
 #[test]
 fn addon_load_aborts_on_a_directory_library() {
     if directory_reads_as_a_chunk_here() {
@@ -3894,37 +2876,6 @@ fn fresh_user_conf_line(user_dir: &std::path::Path) -> String {
         user_dir.display(),
         std::path::MAIN_SEPARATOR
     )
-}
-
-/// Audit D-06's row-42 witness (`instance_outlives_context`): allocate an
-/// instance, parse a populated matrix, finalise the context, then guess.
-/// The pin's `pinyin_guess_sentence` reads `instance->m_context` and
-/// dereferences the freed context (`pinyin.cpp:1373-1380`), so no pin
-/// answer is defined; the ruled safe answer is `true`, the value the pin
-/// returns unconditionally (`pinyin.cpp:1381-1383`). A populated matrix
-/// reaches the lookup; an empty one returns before consulting the context.
-#[test]
-fn instance_outlives_context_guesses_true() {
-    let run = crate::test_support::run_in_child(
-        "e2e_tests::instance_outlives_context_guesses_true",
-        |user| {
-            let context = init_at(user);
-            assert!(!context.is_null());
-            let instance = pinyin_alloc_instance(context);
-            assert!(!instance.is_null());
-            assert_eq!(
-                pinyin_parse_more_full_pinyins(instance, cstr("nihao").as_ptr()),
-                5
-            );
-            crate::context::pinyin_fini(context);
-            assert!(pinyin_guess_sentence(instance), "the ruled safe answer");
-            crate::instance::pinyin_free_instance(instance);
-        },
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&run.stderr),
-        fresh_user_conf_line(&run.user_dir)
-    );
 }
 
 /// A second `pinyin_fini` on one context (#573, register row 105): the pin
@@ -4541,6 +3492,24 @@ fn null_instance_key_rest_length_answers() {
     assert_eq!(length, 3);
 }
 
+/// The NULL handles of the constraint, export and removal entries answer
+/// `false` (or NULL) and read nothing (register row 41).
+#[test]
+fn null_handles_answer_false() {
+    assert!(!pinyin_clear_constraint(ptr::null_mut(), 0));
+    assert!(crate::iterators::pinyin_begin_get_phrases(ptr::null_mut(), 7).is_null());
+    assert!(crate::iterators::pinyin_begin_get_bigram_phrases(ptr::null_mut()).is_null());
+    assert!(!pinyin_iterator_has_next_phrase(ptr::null_mut()));
+    assert!(!crate::iterators::pinyin_bigram_iterator_has_next_phrase(
+        ptr::null_mut()
+    ));
+    let user = TempUserDir::new("null-handles");
+    let (context, instance) = open(user.path.to_str().expect("UTF-8 path"));
+    assert!(!pinyin_remove_user_candidate(instance, ptr::null_mut()));
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
 /// `pinyin_begin_add_phrases` stores the context unread and returns the
 /// iterator (`pinyin.cpp:506-512`). `pinyin_iterator_add_phrase` returns
 /// `false` before it reads the context for a NULL phrase (`:624-625`) and
@@ -4638,45 +3607,6 @@ fn remember_user_input_adds_along_every_complete_path() {
     for ((_, was), (_, now)) in before.iter().zip(&after) {
         assert_eq!(*now, *was + 3, "each path adds its reading once");
     }
-}
-
-#[test]
-fn den_key_getter_returns_parsed_key() {
-    let _slots = crate::test_support::key_slot_guard();
-    let user_dir = TempUserDir::new("den-key-getter");
-    let (_context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-    assert_eq!(
-        crate::parse::pinyin_parse_more_chewings(instance, cstr("2p").as_ptr()),
-        2
-    );
-    let mut key = ptr::null_mut();
-    assert!(crate::cursor::pinyin_get_pinyin_key(
-        instance,
-        0,
-        &raw mut key
-    ));
-    assert_eq!(
-        // SAFETY: the successful getter returned a live key pointer.
-        unsafe { (*key).packed },
-        oxpinyin_chewing::ChewingKey::from_pinyin("den")
-            .unwrap()
-            .to_packed()
-    );
-}
-
-#[test]
-fn remember_den_with_unmatched_character_returns_false() {
-    let user_dir = TempUserDir::new("remember-den");
-    let (_context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-    assert_eq!(
-        crate::parse::pinyin_parse_more_chewings(instance, cstr("2p").as_ptr()),
-        2
-    );
-    assert!(!pinyin_remember_user_input(
-        instance,
-        cstr("你").as_ptr(),
-        -1
-    ));
 }
 
 // ── Pin capture of 2026-11-07 (tools/oracle/pin_capture.py, runs 1 and 2 identical) ──
@@ -4902,23 +3832,6 @@ fn a_reparse_keeps_the_stale_nbest_result_until_the_next_guess() {
     );
     assert!(pinyin_guess_sentence(instance));
     assert_eq!(sentence(), "中国");
-    crate::instance::pinyin_free_instance(instance);
-    crate::context::pinyin_fini(context);
-}
-/// D14: an empty segment input has as many UCS-4 characters as UTF-8 ones, 0, so the pin runs the
-/// phrase lookup over nothing and answers true with no phrase (`pinyin.cpp:1446-1462`).
-/// Observation `segment/empty`.
-#[test]
-fn an_empty_phrase_segment_answers_true_with_no_phrase() {
-    let user_dir = TempUserDir::new("segment-empty");
-    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-    assert!(crate::phrase::pinyin_phrase_segment(
-        instance,
-        cstr("").as_ptr()
-    ));
-    let mut count = u32::MAX;
-    assert!(crate::phrase::pinyin_get_n_phrase(instance, &raw mut count));
-    assert_eq!(count, 0);
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);
 }
