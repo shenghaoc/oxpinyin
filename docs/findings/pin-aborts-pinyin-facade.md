@@ -259,7 +259,7 @@ preconditions. It skips double-pinyin scheme 30 and a predicted row passed
 to `pinyin_choose_candidate` (argument conditions), and asks the library
 before `pinyin_train` (`oxpinyin_train_aborts`: the engine's
 `Session::train_nbest_preflight`, the row lookup and span walk
-`train_nbest` itself runs, through `InstanceCore::train_aborts`) and before
+that `Session::prepare_training` also runs, through `InstanceCore::train_aborts`) and before
 `pinyin_iterator_add_phrase` (`oxpinyin_import_aborts`: `plan_import`, the
 checks the add runs). Both are Rust functions compiled only with
 `fuzz-api` and never into the shipped object. The other converted sites

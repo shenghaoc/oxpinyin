@@ -1902,7 +1902,12 @@ section.
 - **What oxpinyin does instead:** `Session::train`
   (`crates/oxpinyin-engine/src/session/selection.rs:298-339`) falls back
   to the selection record when no OneStep cell is present and seeds
-  `sentence_start → phrase`.
+  `sentence_start → phrase`. **Note (2026-11-09 UTC):** the test-only
+  `Session::train` is removed; production training is
+  `Runtime::train_session` → `Session::prepare_training` →
+  `TrainingPlan::observe`, where a row with spans trains only the spans
+  with a OneStep cell, and a row with empty spans replays the selection
+  history with no OneStep gate. The historical mechanism above is unchanged.
 - **Externally observable:** yes — audit D-05 (#527): after the union
   driver's choose and train, oxpinyin writes `测测→你` (count 138) and
   predicts 你; the pin writes and predicts nothing. Row 20's line is
@@ -2000,6 +2005,12 @@ claim that these refuse arms were closed was wrong.
 The fix adds `Session::train_nbest(index, user)` using each existing row's
 spans (`crates/oxpinyin-engine/src/session/selection.rs:361-376`), retaining
 the pin's OneStep/train-next observation gate in `train_spans` (:379-424).
+**Note (2026-11-09 UTC):** `Session::train_nbest` and `train_spans` were
+test-only and are removed. Production training is `Runtime::train_session`
+→ `Session::prepare_training` → `TrainingPlan::observe`, which keeps the
+same row selection and observation order: a row with spans trains only the
+spans with a OneStep cell, and a row with empty spans replays the selection
+history with no OneStep gate.
 `InstanceCore::train(index)` returns `Result<bool, EngineError>` and leaves
 empty and bounds calls unmodified (`crates/oxpinyin-facade/src/instance.rs:245-259`).
 The pinyin C adapter aborts on a bounds miss, as the pin's assert does

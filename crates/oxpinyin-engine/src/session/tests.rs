@@ -630,6 +630,32 @@ fn train_session() -> Session<FixtureDictionary, FixtureLanguageModel> {
     .expect("the fixtures open")
 }
 
+/// Trains row `index` through the production path: prepare the checked
+/// plan, then observe it.
+fn train_prepared<D, L, U>(
+    session: &Session<D, L>,
+    index: u8,
+    user: &mut U,
+) -> Result<bool, EngineError>
+where
+    D: Dictionary<Syllable = SyllableKey> + Clone,
+    D::Error: std::fmt::Display,
+    L: LanguageModel<Token = PhraseToken> + Clone,
+    L::Error: std::fmt::Display,
+    U: UserModel<Token = PhraseToken>,
+    U::Error: std::fmt::Display,
+{
+    let view = session.read(session.dictionary.clone(), session.model.clone());
+    let Some(plan) = view.prepare_training(index, &mut |history, token| {
+        user.check_step(history, token)
+            .map_err(|error| EngineError::UserModel(error.to_string()))
+    })?
+    else {
+        return Ok(false);
+    };
+    plan.observe(user)
+}
+
 /// Selects the candidate carrying `token` after typing `text` (the
 /// selection must exist: this is the sentence record the training path
 /// walks).
@@ -661,10 +687,21 @@ fn train_observes_each_recorded_token_after_its_prefix() {
         [PhraseToken::new(1), PhraseToken::new(2)]
     );
 
+    // A fallback-model row without spans trains the recorded selection
+    // history (the gate's empty-result rule does not apply to it).
+    session.sentence.rows = vec![crate::nbest::NbestRow {
+        poss: None,
+        text: "\u{4f60}".into(),
+        tokens: Vec::new(),
+        spans: Vec::new(),
+        keys: 1,
+        span: 2,
+        cost: 0,
+    }];
     let mut recorder = Recorder {
         observed: Vec::new(),
     };
-    session.train(&mut recorder).expect("training cannot fail");
+    assert!(train_prepared(&session, 0, &mut recorder).expect("training cannot fail"));
     // First token observes against an empty history (the store maps that
     // to sentence_start); the second observes after the first.
     assert_eq!(
@@ -677,12 +714,12 @@ fn train_observes_each_recorded_token_after_its_prefix() {
 
     // Re-training re-observes the same sentence: upstream has no guard
     // (a second pinyin_train doubles the counts), and neither does this.
-    session.train(&mut recorder).expect("training cannot fail");
+    assert!(train_prepared(&session, 0, &mut recorder).expect("training cannot fail"));
     assert_eq!(recorder.observed.len(), 4);
 }
 
 #[test]
-fn train_nbest_without_results_does_not_observe_selection_history() {
+fn training_without_results_does_not_observe_selection_history() {
     let mut session = train_session();
     type_and_select(&mut session, "ni", 1);
     assert!(!session.selected_tokens().is_empty());
@@ -690,11 +727,7 @@ fn train_nbest_without_results_does_not_observe_selection_history() {
     let mut recorder = Recorder {
         observed: Vec::new(),
     };
-    assert!(
-        !session
-            .train_nbest(0, &mut recorder)
-            .expect("empty results are quiet")
-    );
+    assert!(!train_prepared(&session, 0, &mut recorder).expect("empty results are quiet"));
     assert!(recorder.observed.is_empty());
 }
 
@@ -715,9 +748,7 @@ fn train_after_a_shortening_reparse_refuses_a_span_past_the_matrix() {
     let mut recorder = Recorder {
         observed: Vec::new(),
     };
-    let error = session
-        .train_nbest(0, &mut recorder)
-        .expect_err("the stale span refuses");
+    let error = train_prepared(&session, 0, &mut recorder).expect_err("the stale span refuses");
     assert_eq!(
         error,
         EngineError::StaleTrainingSpan {
@@ -746,9 +777,7 @@ fn train_after_an_apostrophe_reparse_refuses_an_empty_start_column() {
     let mut recorder = Recorder {
         observed: Vec::new(),
     };
-    let error = session
-        .train_nbest(0, &mut recorder)
-        .expect_err("the empty column refuses");
+    let error = train_prepared(&session, 0, &mut recorder).expect_err("the empty column refuses");
     assert_eq!(
         error,
         EngineError::StaleTrainingSpan {
@@ -781,9 +810,7 @@ fn train_after_a_reparse_onto_an_internal_zero_key_column_trains() {
         observed: Vec::new(),
     };
     assert!(
-        session
-            .train_nbest(0, &mut recorder)
-            .expect("the zero-key column trains"),
+        train_prepared(&session, 0, &mut recorder).expect("the zero-key column trains"),
         "the stale row still trains"
     );
 }
@@ -828,9 +855,7 @@ fn train_after_a_reparse_and_a_choose_stops_the_walk_at_the_store_length() {
         observed: Vec::new(),
     };
     assert!(
-        session
-            .train_nbest(0, &mut recorder)
-            .expect("the walk stops at the store length"),
+        train_prepared(&session, 0, &mut recorder).expect("the walk stops at the store length"),
         "the stale row trains"
     );
     assert!(
@@ -856,9 +881,8 @@ fn train_after_a_reparse_onto_an_empty_end_column_refuses() {
     let mut recorder = Recorder {
         observed: Vec::new(),
     };
-    let error = session
-        .train_nbest(0, &mut recorder)
-        .expect_err("the empty end column refuses");
+    let error =
+        train_prepared(&session, 0, &mut recorder).expect_err("the empty end column refuses");
     assert_eq!(
         error,
         EngineError::StaleTrainingSpan {
@@ -902,12 +926,20 @@ fn train_reports_the_earlier_bounds_fault_before_a_later_token_fault() {
             text: "X".into(),
         },
     ];
+    session.sentence.rows = vec![crate::nbest::NbestRow {
+        poss: None,
+        text: "你X".into(),
+        tokens: vec![PhraseToken::new(1), PhraseToken::new(1)],
+        spans,
+        keys: 2,
+        span: 2,
+        cost: 0,
+    }];
     let mut recorder = Recorder {
         observed: Vec::new(),
     };
-    let error = session
-        .train_spans(&spans, &mut recorder)
-        .expect_err("the earlier bounds fault wins");
+    let error =
+        train_prepared(&session, 0, &mut recorder).expect_err("the earlier bounds fault wins");
     assert_eq!(
         error,
         EngineError::StaleTrainingSpan {
@@ -915,6 +947,52 @@ fn train_reports_the_earlier_bounds_fault_before_a_later_token_fault() {
             fault: TrainingSpanFault::PastMatrixEnd,
         }
     );
+    assert!(recorder.observed.is_empty());
+}
+
+/// The walk checks every step before it observes any: a valid forced
+/// phrase before a stale forced token leaves the user model untouched.
+#[test]
+fn training_checks_every_step_before_observing_any() {
+    let mut session = trellis_session();
+    session.replace_raw("nihao").expect("parse");
+    assert!(session.guess_sentence().expect("guess"));
+    session.constraints.resize(6);
+    session
+        .constraints
+        .add(0, 2, PhraseToken::new(1), "你".into());
+    // The later forcing's token differs from the decoded span's token.
+    session
+        .constraints
+        .add(2, 4, PhraseToken::new(9), "X".into());
+    let mut recorder = Recorder {
+        observed: Vec::new(),
+    };
+    let error = train_prepared(&session, 0, &mut recorder).expect_err("the later forcing refuses");
+    assert_eq!(error, EngineError::StaleTrainingConstraint { position: 2 });
+    assert!(
+        recorder.observed.is_empty(),
+        "the refusal precedes every observation"
+    );
+}
+
+/// A forced phrase whose token differs from the decoded row's is the
+/// pin's consistency assert (`phonetic_lookup.h:868`): the training path
+/// answers a stale constraint and observes nothing.
+#[test]
+fn training_refuses_a_stale_forced_token() {
+    let mut session = trellis_session();
+    session.replace_raw("nihao").expect("parse");
+    assert!(session.guess_sentence().expect("guess"));
+    session.constraints.resize(6);
+    session
+        .constraints
+        .add(0, 2, PhraseToken::new(9), "X".into());
+    let mut recorder = Recorder {
+        observed: Vec::new(),
+    };
+    let error = train_prepared(&session, 0, &mut recorder).expect_err("the stale forcing refuses");
+    assert_eq!(error, EngineError::StaleTrainingConstraint { position: 0 });
     assert!(recorder.observed.is_empty());
 }
 
@@ -973,10 +1051,17 @@ fn a_stored_phrase_trains_with_its_stored_length() {
         token: PhraseToken::new(1),
         text,
     }];
+    session.sentence.rows = vec![crate::nbest::NbestRow {
+        poss: None,
+        text: "你".into(),
+        tokens: vec![PhraseToken::new(1)],
+        spans,
+        keys: 1,
+        span: 2,
+        cost: 0,
+    }];
     let mut model = Readings(Vec::new());
-    session
-        .train_spans(&spans, &mut model)
-        .expect("the forced span trains");
+    assert!(train_prepared(&session, 0, &mut model).expect("the forced span trains"));
     assert!(!model.0.is_empty(), "the two-key reading of nihao trains");
     assert!(
         model.0.iter().all(|reading| reading.len() == 2),
@@ -1064,11 +1149,20 @@ fn train_reports_a_failing_user_model() {
 
     let mut session = train_session();
     type_and_select(&mut session, "ni", 1);
+    session.sentence.rows = vec![crate::nbest::NbestRow {
+        poss: None,
+        text: "你".into(),
+        tokens: Vec::new(),
+        spans: Vec::new(),
+        keys: 1,
+        span: 2,
+        cost: 0,
+    }];
     // The engine renders the model's error at the boundary: the failing
     // model reports an `EngineError::UserModel`, so the wrap doubles the
     // prefix — the point is that the failure surfaces, not that the text
     // is pretty.
-    let error = session.train(&mut Failing).expect_err("the model fails");
+    let error = train_prepared(&session, 0, &mut Failing).expect_err("the model fails");
     assert_eq!(
         error.to_string(),
         "user model error: user model error: closed"
@@ -2194,6 +2288,7 @@ fn scan_matrix_tone_rides_fuzzy_and_locks_the_split_tables() {
 
 /// A model whose n-best step costs exist, so the trellis runs: both
 /// branches at a fixed cost, `score` passes the edge through.
+#[derive(Clone)]
 struct TrellisModel {
     blended: Cost,
     unigram: Cost,
@@ -2750,7 +2845,7 @@ fn a_row_zero_choose_trains_nothing_even_with_recorded_tokens() {
     let mut recorder = Recorder {
         observed: Vec::new(),
     };
-    session.train(&mut recorder).expect("train cannot fail");
+    assert!(train_prepared(&session, 0, &mut recorder).expect("train cannot fail"));
     assert!(
         recorder.observed.is_empty(),
         "a result without OneStep trains nothing"
@@ -2771,7 +2866,7 @@ fn a_decoded_continuation_trains_through_the_constraint_walk() {
     let mut recorder = Recorder {
         observed: Vec::new(),
     };
-    session.train(&mut recorder).expect("train cannot fail");
+    assert!(train_prepared(&session, 0, &mut recorder).expect("train cannot fail"));
     assert_eq!(
         recorder.observed,
         vec![

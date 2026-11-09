@@ -80,7 +80,8 @@ where
     /// Check one n-best training operation without retaining a storage reader.
     ///
     /// # Errors
-    /// The same ordered index, constraint, store and span checks as [`Self::train_nbest`].
+    /// The ordered index, constraint, store and span checks of
+    /// [`Self::train_nbest_preflight`], plus the user model's per-step store checks.
     pub fn prepare_training(
         &self,
         index: u8,
@@ -125,102 +126,15 @@ where
         }
     }
 
-    /// Trains the recorded sentence through the user-model seam.
-    ///
-    /// The §3 constraint-aware walk (`train_result3`,
-    /// `phonetic_lookup.h:841-935`): the last sentence lookup's 1-best
-    /// result is walked phrase by phrase against the constraint store — a
-    /// phrase trains when it is user-forced (`OneStep`) or when
-    /// `train_next` is set (the first decoded phrase after each forced
-    /// run, where propagation stops), and the bigram predecessor advances
-    /// over **every** phrase, trained or not. A user who forces 你 for
-    /// "ni" and commits the decoded 好 therefore trains 你→好, not just
-    /// `sentence_start→你` (the L3 surface).
-    ///
-    /// Without a decoded result — the fixture fallback models, or no
-    /// lookup since the last reset — the selection history stands in: one
-    /// [`UserModel::observe`] per pinned token with the preceding tokens
-    /// as context (`docs/findings/user-store.md` §2.1). The C ABI's
-    /// `pinyin_train` is this call; per-candidate selection only records
-    /// the constraint, and the bigram update is deferred to here (§2.2).
-    /// Learning-off callers omit it entirely.
-    ///
-    /// Re-calling without new selections re-observes the same sentence,
-    /// which is the upstream behaviour (a second `pinyin_train` doubles
-    /// the counts — there is no guard upstream either).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`EngineError::UserModel`] when the user model rejects an
-    /// observation. Tokens observed before the failure stay observed: the
-    /// sentence is trained prefix-wise, like the upstream loop.
-    pub fn train<U>(&self, user: &mut U) -> Result<(), EngineError>
-    where
-        U: UserModel<Token = PhraseToken>,
-        U::Error: Display,
-    {
-        if !self.sentence.last_result.is_empty() {
-            return self.train_spans(&self.sentence.last_result, user);
-        }
-        self.train_history(user)
-    }
-
-    fn train_history<U>(&self, user: &mut U) -> Result<(), EngineError>
-    where
-        U: UserModel<Token = PhraseToken>,
-        U::Error: Display,
-    {
-        let history = self.record.history();
-        // Every step is checked before the first is observed, as the
-        // pin's abort leaves nothing behind.
-        for (index, token) in history.iter().enumerate() {
-            user.check_step(&history[..index], token)
-                .map_err(|error| EngineError::UserModel(error.to_string()))?;
-        }
-        for (index, token) in history.iter().enumerate() {
-            user.observe(&history[..index], token)
-                .map_err(|error| EngineError::UserModel(error.to_string()))?;
-        }
-        Ok(())
-    }
-
-    /// Train decoded n-best row `index` using the current constraints.
-    ///
-    /// Returns `Ok(false)` when no decoded results exist, as the pinned
-    /// `pinyin_train`/`zhuyin_train` gate requires. Selection history alone
-    /// does not satisfy this gate. Valid fallback-model rows without spans
-    /// train the recorded selection history, like [`Session::train`].
-    ///
-    /// # Errors
-    ///
-    /// Returns [`EngineError::CandidateIndexOutOfRange`] for an index beyond
-    /// the nonempty decoded results, before observing any user data; returns
-    /// [`EngineError::UserModel`] when an observation fails.
-    pub fn train_nbest<U>(&self, index: u8, user: &mut U) -> Result<bool, EngineError>
-    where
-        U: UserModel<Token = PhraseToken>,
-        U::Error: Display,
-    {
-        let Some(row) = self.nbest_training_row(index)? else {
-            return Ok(false);
-        };
-        if row.spans.is_empty() {
-            self.train_history(user)?;
-        } else {
-            self.train_spans(&row.spans, user)?;
-        }
-        Ok(true)
-    }
-
-    /// The pin's own aborts of [`Session::train_nbest`] for row `index`,
-    /// without the user model: the index past nonempty results
-    /// (`pinyin.cpp:2684`), a stale forced phrase (`phonetic_lookup.h:868`)
-    /// and a span outside the current matrix
-    /// (`storage/phonetic_key_matrix.cpp:661`, `:663`, `:664`), in the
-    /// order `train_nbest` meets them. It runs the same row lookup and span
-    /// walk as `train_nbest`, with the user model's per-step store checks
-    /// left out, and observes nothing. `Ok(())` where `train_nbest` would
-    /// reach none of them (it may still meet a store fault).
+    /// The pin's own aborts of training row `index`, without the user
+    /// model: the index past nonempty results (`pinyin.cpp:2684`), a stale
+    /// forced phrase (`phonetic_lookup.h:868`) and a span outside the
+    /// current matrix (`storage/phonetic_key_matrix.cpp:661`, `:663`,
+    /// `:664`), in the order [`Self::prepare_training`] meets them. It runs
+    /// the same row lookup and span walk as `prepare_training`, with the
+    /// user model's per-step store checks left out, and observes nothing.
+    /// `Ok(())` where `prepare_training` would reach none of them (it may
+    /// still meet a store fault).
     ///
     /// # Errors
     ///
@@ -237,7 +151,7 @@ where
         Ok(())
     }
 
-    /// The decoded row [`Session::train_nbest`] trains: `None` for no
+    /// The decoded row [`Session::prepare_training`] trains: `None` for no
     /// results (the pin's quiet `false`), the bounds error past nonempty
     /// results.
     fn nbest_training_row(
@@ -253,48 +167,6 @@ where
                 len: self.sentence.rows.len(),
             },
         )
-    }
-
-    pub(super) fn train_spans<U>(
-        &self,
-        spans: &[PhraseSpan],
-        user: &mut U,
-    ) -> Result<(), EngineError>
-    where
-        U: UserModel<Token = PhraseToken>,
-        U::Error: Display,
-    {
-        let Some(ends) = self.plan_spans(spans, &mut |prefix, token| {
-            user.check_step(prefix, token)
-                .map_err(|error| EngineError::UserModel(error.to_string()))
-        })?
-        else {
-            return Ok(());
-        };
-        let matrix = &self.retained_parse()?.matrix.columns;
-        let mut context: Vec<PhraseToken> = Vec::with_capacity(spans.len());
-        for (index, span) in spans.iter().enumerate() {
-            if let Some(end) = ends[index] {
-                // :923-927 trains every matching path of this span, as long
-                // as the item's stored length: `get_phrase_item` then
-                // `increase_pronunciation_possibility` (074a2219
-                // phonetic_lookup.h:924-927), which keeps only paths of
-                // `item.get_phrase_length()` keys
-                // (storage/phonetic_key_matrix.cpp:610-620). A stored
-                // phrase's outward text is shorter than that after a zero.
-                let mut readings = training_readings(
-                    matrix,
-                    self.input.as_bytes(),
-                    span.start,
-                    end,
-                    span.text.phrase_length(),
-                );
-                user.observe_with_keys(&context, &span.token, &mut readings)
-                    .map_err(|error| EngineError::UserModel(error.to_string()))?;
-            }
-            context.push(span.token);
-        }
-        Ok(())
     }
 
     /// The training walk's checks over `spans`, in the pin's step order,

@@ -123,7 +123,7 @@ segment (`pinyin_phrase_segment`, `:423`) and save (`pinyin_save`,
 oxpinyin's `Session` (`oxpinyin-engine`) carries the same operations as
 methods — `replace_raw` and its variants for parse, `guess_sentence`
 and `candidates_at` for guess, `select` and `clear_constraint` for
-select, `train` and `train_nbest`, `phrase_segment` — with save on
+select, `prepare_training` and its `observe` plan, `phrase_segment` — with save on
 `ContextCore::save_user` (`oxpinyin-facade`). Both C ABIs drive only
 these. The same type also carries a key-driven layer from the first
 design — `KeyInput`, `process_key`, `type_pinyin`, `Preedit`, `commit`
@@ -566,7 +566,7 @@ neither implementation's output allocation is removed by this guard.
 
 | Item | Pin | oxpinyin | Mark |
 | --- | --- | --- | --- |
-| Online training | `train_result3` (`lookup/phonetic_lookup.h:844`) | `train_spans` (`oxpinyin-engine/src/session/selection.rs`), `trained_gram` and `train_pronunciations` (`oxpinyin-user/src/store.rs`), constants in `oxpinyin-user/src/seed.rs` | same / follows; the C adapters abort where the pin aborts, except on an unsorted user gram, where the pin's `set_freq` misses and aborts and oxpinyin trains and answers `true` (accepted; row 85, [record](1297-gram-partition-training.md)) |
+| Online training | `train_result3` (`lookup/phonetic_lookup.h:844`) | `TrainingPlan::observe` over `Session::prepare_training` (`oxpinyin-engine/src/session/selection.rs`), `trained_gram` and `train_pronunciations` (`oxpinyin-user/src/store.rs`), constants in `oxpinyin-user/src/seed.rs` | same / follows; the C adapters abort where the pin aborts, except on an unsorted user gram, where the pin's `set_freq` misses and aborts and oxpinyin trains and answers `true` (accepted; row 85, [record](1297-gram-partition-training.md)) |
 | Predicted choice | `pinyin_choose_predicted_candidate` (`pinyin.cpp:2591`) | `observe_predicted`, `observe_predicted_prefix` | same / follows |
 | Add phrase | `_add_phrase` (`pinyin.cpp:514`) | `add_phrase_in` (`store.rs`); next token from a cursor row instead of `get_range` | different / unverified |
 | Remember input | `_remember_phrase_recur` (`pinyin.cpp:3578`), recursive matrix walk | `pinyin_remember_user_input` (`oxpinyin-capi/src/user_data.rs`) over `remember_walk` (`oxpinyin-engine/src/char_offset.rs`), the same walk over the parse-time matrix in every parse mode, with the pin's fuzzy alternatives (and, for the index-parsed full pinyin, its resplit and divided additions) built at the parse (register row 93) | same |
