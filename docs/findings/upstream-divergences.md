@@ -2213,11 +2213,12 @@ tkrzw oracles (linux/amd64) against `main` @ `8cd06566`.
   second save. Both print one failure line and answer `true`: distinct
   mixed profiles.
 - **What oxpinyin does:** the same, since lane C PR 15
-  (`persistence::save_with_bigram_reporting`). It had removed what it
+  (`persistence::save_reporting`). It had removed what it
   staged and reported all ten renames, leaving the previous profile whole;
   that was a REVERT TARGET (row 69) for a day and is reverted.
-  `UserStore::save()` keeps its all-or-nothing commit; only the reporting
-  save, which the C `save` entry points use, follows the pin.
+  `UserStore::save_reporting()`, which the C `save` entry points use,
+  follows the pin. The strict Rust-only save that stopped at its first
+  failure was retired (2026-11-09 UTC).
 - **Externally observable:** yes — the stderr lines, the files left in the
   user dir. Closed: `stderr-save-one-tmp-blocked`,
   `stderr-save-one-final-blocked`, `stderr-save-one-tmp-blocked-zhuyin`

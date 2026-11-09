@@ -7,7 +7,7 @@
 //! and phrase table, the user bigram container, the live system items and
 //! the libraries' stored-total offsets — and every value operation —
 //! training, phrase adds, exports, masking — runs against that state.
-//! [`UserStore::save`] then exports the session back through
+//! [`UserStore::save_reporting`] then exports the session back through
 //! [`crate::persistence`] into the pin's files. The durability shape is
 //! therefore the pin's own: in memory between saves, as the pin's
 //! context holds its loaded profile (`pinyin.cpp:326-444` at 074a2219),
@@ -150,7 +150,7 @@ impl UserStore {
     /// Open the user store on a libpinyin user directory: read the
     /// profile ([`crate::persistence::load`]) under `law`, seed an
     /// in-memory session store with its values, and carry the persistence target so
-    /// [`UserStore::save`] writes the pin's files back. Dropping the
+    /// [`UserStore::save_reporting`] writes the pin's files back. Dropping the
     /// returned owner is the facade's fini: it
     /// makes the law's fini-time `user.conf` write
     /// ([`crate::persistence::fini`]).
@@ -656,18 +656,26 @@ fn seed_totals(
     }
 }
 
-/// Reads the session back into the persistence shape — the export half of
-/// the value mapping, [`UserStore::save`]'s — with the live system items
-/// as values, for the tests.
+/// Reads the session's system items back into the persistence shape — the
+/// export half of the value mapping, [`UserStore::save_reporting`]'s — with
+/// the live system items as values, for the tests.
 #[cfg(test)]
 pub fn export_state(
     store: &UserStore,
     originals: &impl crate::persistence::OriginalLibraries,
 ) -> Result<UserState, UserStoreError> {
-    let mut state = export_session_state(store, true)?;
-    state
+    let mut state = export_for_save(store)?;
+    let collected = store
+        .session_target()
+        .phrases()
         .phrase_table
-        .extend(store.session_target().phrases().phrase_table.rows());
+        .for_each_record::<std::convert::Infallible>(|key, value| {
+            state.phrase_table.insert(key.to_vec(), value.to_vec());
+            Ok(())
+        });
+    if let Err(infallible) = collected {
+        match infallible {}
+    }
     // A session's system items are its live buffers: a save diffs them
     // against the file on disk (`persistence`), and only this test-facing
     // export reads them as values.
@@ -681,47 +689,27 @@ pub fn export_state(
     Ok(state)
 }
 
-/// Reads the session back into the persistence shape — the export half of
-/// the value mapping, [`UserStore::save`]'s.
+/// Reads the session's system items back into the persistence shape — the
+/// export half of the value mapping, [`UserStore::save_reporting`]'s.
 pub(crate) fn export_for_save(store: &UserStore) -> Result<UserState, UserStoreError> {
-    export_session_state(store, false)
-}
-
-fn export_session_state(store: &UserStore, user_items: bool) -> Result<UserState, UserStoreError> {
     let mut state = UserState::default();
-    // A session save writes the index and phrase-table arenas directly; the
-    // value model's sets are only needed by the test-facing export. Read
-    // before the phrase guard below: `index_entries` takes it too.
-    if user_items {
-        state.indexed.extend(store.index_entries());
-    }
-    let target = store.session_target();
-    let phrases = target.phrases();
+    // A session save writes the index, the phrase-table arena and the user
+    // libraries directly; the value model carries only system overrides.
+    let phrases = store.session_target().phrases();
     for (&nibble, library) in &phrases.libraries {
+        if !(1..=4).contains(&nibble) {
+            continue;
+        }
         for (slot, view) in library.items() {
-            if !(1..=4).contains(&nibble) && !user_items {
-                continue;
-            }
             let item = oxpinyin_data::chunk_write::decode_phrase_item(view.as_bytes())
                 .map_err(|e| UserStoreError::Persistence(e.to_string()))?;
-            if (1..=4).contains(&nibble) {
-                state
-                    .system_overrides
-                    .entry(nibble)
-                    .or_default()
-                    .insert(slot, Some(item));
-            } else {
-                state
-                    .libraries
-                    .entry(nibble)
-                    .or_default()
-                    .insert(slot, item);
-            }
+            state
+                .system_overrides
+                .entry(nibble)
+                .or_default()
+                .insert(slot, Some(item));
         }
     }
-    state
-        .libraries
-        .retain(|nibble, _| !(1..=4).contains(nibble));
     Ok(state)
 }
 
@@ -1213,7 +1201,7 @@ mod tests {
         let grown = length(&store);
         assert!(grown > 2 * live);
         store.mark_modified();
-        assert!(store.save().unwrap());
+        store.save_reporting().unwrap();
         assert_eq!(length(&store), 8 + 6 + 4 + 17 * 6, "save compacts");
         drop(store);
         std::fs::remove_dir_all(dir).unwrap();
@@ -1237,7 +1225,7 @@ mod tests {
             12
         );
         store.mark_modified();
-        store.save().unwrap();
+        store.save_reporting().unwrap();
         store.unload_user_library(crate::USER_DICTIONARY);
         assert!(store.phrase(token).unwrap().is_none());
         store.load_user_library(crate::USER_DICTIONARY);
@@ -2013,7 +2001,7 @@ mod tests {
                 facade
             );
             store.mark_modified();
-            assert!(store.save().expect("save"));
+            store.save_reporting().expect("save");
             assert_eq!(store.system_unigram(second), Some(expected));
             assert_eq!(store.system_library_total(1), Some(total + 7));
             assert_eq!(
@@ -2113,7 +2101,7 @@ mod tests {
         assert!(store.system_item_removed(second));
         assert_eq!(store.system_library_total(1), total);
         store.mark_modified();
-        assert!(store.save().expect("save"));
+        store.save_reporting().expect("save");
         assert_eq!(store.system_library_total(1), Some(130));
         drop(store);
         let reopened =
@@ -2377,7 +2365,7 @@ mod tests {
         assert!(store.has_system_items());
         // Saved (a clean session writes nothing) and reopened, the session
         // holds the same overrides.
-        store.save().expect("save");
+        store.save_reporting().expect("save");
         drop(store);
         let reopened =
             UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
@@ -3176,7 +3164,7 @@ mod tests {
                     .collect::<Vec<_>>()),
                 Some([169, 200, 300].to_vec())
             );
-            assert!(store.save().expect("save"));
+            store.save_reporting().expect("save");
         }
         {
             let mut store = UserStore::open_libpinyin(
@@ -3207,7 +3195,7 @@ mod tests {
                     .collect::<Vec<_>>()),
                 Some([445, 476, 300].to_vec())
             );
-            assert!(store.save().expect("save"));
+            store.save_reporting().expect("save");
         }
         std::fs::remove_dir_all(dir).expect("cleanup");
     }
@@ -3259,7 +3247,7 @@ mod tests {
                 .add_system_phrase_in(1, Some(token.value()), &"你".into(), &dense(2), Some(7))
                 .expect("import after training");
             assert_eq!(counts(&store), [100, 96]);
-            assert!(store.save().expect("save"));
+            store.save_reporting().expect("save");
         }
         {
             let mut store = UserStore::open_libpinyin(&dir, base, versions(), UserConfLaw::Pinyin)
@@ -3273,7 +3261,7 @@ mod tests {
             )
             .expect("train replay");
             assert_eq!(counts(&store), [100, 234]);
-            assert!(store.save().expect("save again"));
+            store.save_reporting().expect("save again");
         }
         std::fs::remove_dir_all(dir).expect("cleanup");
     }
@@ -3307,7 +3295,7 @@ mod tests {
             .add_system_phrase_in(1, Some(0x0100_0001), &"你".into(), &dense(2), Some(20))
             .expect("saved reading");
         store.mark_modified();
-        assert!(store.save().expect("save"));
+        store.save_reporting().expect("save");
         store
             .add_system_phrase_in(1, Some(0x0100_0001), &"你".into(), &dense(4), Some(30))
             .expect("unsaved reading");
@@ -3394,7 +3382,7 @@ mod tests {
             observe(&store);
             assert_eq!(facade(&store), 174);
             store.mark_modified();
-            assert!(store.save().unwrap());
+            store.save_reporting().unwrap();
             observe(&store);
             assert_eq!(
                 store.system_library_total(1),
@@ -3469,7 +3457,7 @@ mod tests {
             21
         );
         store.mark_modified();
-        assert!(store.save().expect("save"));
+        store.save_reporting().expect("save");
         drop(store);
         let store = UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
             .expect("reopen");
@@ -3526,7 +3514,7 @@ mod tests {
                 .expect("257th");
             assert_eq!(store.user_pronunciation_count(token), Some(1));
             store.mark_modified();
-            assert!(store.save().expect("save"));
+            store.save_reporting().expect("save");
             store.unload_user_library(7);
             assert_eq!(store.user_pronunciation_count(token), None);
             store.load_user_library(7);
@@ -3584,7 +3572,7 @@ mod tests {
             .add_phrase_in(crate::USER_DICTIONARY, &"鱻".into(), &dense(2), Some(20))
             .expect("item");
         store.mark_modified();
-        assert!(store.save().expect("save"));
+        store.save_reporting().expect("save");
         store
             .add_phrase_in(crate::USER_DICTIONARY, &"鱻".into(), &dense(4), Some(30))
             .expect("unsaved reading");
@@ -3612,10 +3600,11 @@ mod tests {
         let dir = tempdir("library-transition-index");
         let ni = ChewingKey::from_pinyin("ni").expect("ni");
         let dense = |tone| packed_to_pinyin_keys(&[ni.with_tone(tone).to_packed()]).expect("dense");
-        let kept = |store: &UserStore| {
-            let mut entries = store.index_entries();
-            entries.sort();
-            entries
+        let kept = |dir: &std::path::Path| {
+            persistence::load(dir, &originals(), &versions(), UserConfLaw::Pinyin)
+                .expect("load")
+                .state
+                .indexed
         };
         let readings = |store: &UserStore| {
             store
@@ -3637,20 +3626,25 @@ mod tests {
         store
             .add_phrase_in(crate::USER_DICTIONARY, &"龘".into(), &dense(2), Some(20))
             .expect("item");
-        let indexed = kept(&store);
-        assert_eq!(indexed.len(), 1);
         // `FacadePhraseIndex::unload` drops only the sub-index
         // (`phrase_index.cpp:261-268`): the item goes, the user pinyin index
         // keeps its entry.
         store.unload_user_library(crate::USER_DICTIONARY);
-        assert_eq!(kept(&store), indexed);
         assert!(readings(&store).is_empty());
-        // Nothing was saved: the load builds an empty sub-index
-        // (`create_sub_phrase`, `pinyin.cpp:316`) and the entry stays.
+        // The unloaded library's chunk is skipped; the index arena is not,
+        // so the saved profile carries the reading with no item behind it.
+        store.mark_modified();
+        store
+            .save_reporting()
+            .expect("the index row is saved, the item's chunk is skipped");
+        let indexed = kept(&dir);
+        assert_eq!(indexed.len(), 1);
+        // The load builds the empty sub-index (`create_sub_phrase`,
+        // `pinyin.cpp:316`) and the index entry stays.
         store.load_user_library(crate::USER_DICTIONARY);
-        assert_eq!(kept(&store), indexed);
         assert!(readings(&store).is_empty());
         drop(store);
+        assert_eq!(kept(&dir), indexed);
         std::fs::remove_dir_all(dir).expect("cleanup");
     }
 
@@ -3671,14 +3665,14 @@ mod tests {
             .add_phrase_in(crate::USER_DICTIONARY, &"龘".into(), &dense(2), Some(20))
             .expect("saved item");
         store.mark_modified();
-        assert!(store.save().expect("save"));
+        store.save_reporting().expect("save");
         let saved_chunk = std::fs::read(&chunk).expect("chunk");
         let unsaved = store
             .add_phrase_in(crate::USER_DICTIONARY, &"鱻".into(), &dense(4), Some(30))
             .expect("unsaved item");
         store.unload_user_library(crate::USER_DICTIONARY);
         store.mark_modified();
-        assert!(store.save().expect("save while unloaded"));
+        store.save_reporting().expect("save while unloaded");
         assert_eq!(std::fs::read(&chunk).expect("chunk"), saved_chunk);
         assert!(
             !dir.join("user.bin.tmp").exists(),
@@ -3689,7 +3683,7 @@ mod tests {
         assert!(store.phrase(unsaved).expect("read").is_none());
         // Loaded again, it is saved again.
         store.mark_modified();
-        assert!(store.save().expect("save"));
+        store.save_reporting().expect("save");
         assert_eq!(std::fs::read(&chunk).expect("chunk"), saved_chunk);
         drop(store);
         std::fs::remove_dir_all(dir).expect("cleanup");
@@ -3773,7 +3767,7 @@ mod tests {
             }
             // `pinyin_end_add_phrases` arms the save (`pinyin.cpp:657-658`).
             store.mark_modified();
-            assert!(store.save().expect("save"));
+            store.save_reporting().expect("save");
         }
         let store = UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
             .expect("reopen");
@@ -3870,7 +3864,7 @@ mod tests {
             assert!(readings_of(&store, token).is_empty());
             assert_eq!(store.unigram_delta(token).expect("unigram"), unigram);
             store.mark_modified();
-            assert!(store.save().expect("save"));
+            store.save_reporting().expect("save");
         }
         {
             let mut store =
@@ -3887,7 +3881,7 @@ mod tests {
                 Some(vec![(vec![readings[256]], 9)])
             );
             store.mark_modified();
-            assert!(store.save().expect("save"));
+            store.save_reporting().expect("save");
         }
         let store = UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
             .expect("reopen");
@@ -3940,7 +3934,7 @@ mod tests {
             assert!(prons_of(&store).is_empty());
             assert_eq!(unigram_of(&store), unigram);
             store.mark_modified();
-            assert!(store.save().expect("a wrapped original saves"));
+            store.save_reporting().expect("a wrapped original saves");
         }
         {
             let mut store =
@@ -3953,7 +3947,7 @@ mod tests {
                 .expect("the 257th reading");
             assert_eq!(prons_of(&store), [(vec![readings[255]], 9)]);
             store.mark_modified();
-            assert!(store.save().expect("save"));
+            store.save_reporting().expect("save");
         }
         let store = UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
             .expect("reopen");
@@ -4016,7 +4010,7 @@ mod tests {
             assert!(readings_of(&store, token).is_empty());
             assert_eq!(store.unigram_delta(token).expect("unigram"), unigram);
             store.mark_modified();
-            assert!(store.save().expect("a wrapped item saves"));
+            store.save_reporting().expect("a wrapped item saves");
         }
         {
             let mut store =
@@ -4034,7 +4028,7 @@ mod tests {
                 .expect("the 257th reading");
             assert_eq!(readings_of(&store, token), [9]);
             store.mark_modified();
-            assert!(store.save().expect("save"));
+            store.save_reporting().expect("save");
         }
         let store = UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
             .expect("reopen");
@@ -4089,7 +4083,7 @@ mod tests {
                     .count(),
                 81
             );
-            assert!(store.save().expect("save"));
+            store.save_reporting().expect("save");
         }
         let store =
             UserStore::open_libpinyin(&dir, base, versions(), UserConfLaw::Pinyin).expect("reopen");
@@ -4165,7 +4159,7 @@ mod tests {
                 2
             );
             store.mark_modified();
-            assert!(store.save().expect("save"));
+            store.save_reporting().expect("save");
         }
         let store = UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
             .expect("reopen");
@@ -4269,7 +4263,7 @@ mod tests {
             // offset or not.
             assert!(!store.system_provenance_recorded(1));
             store.mark_modified();
-            assert!(store.save().expect("save"));
+            store.save_reporting().expect("save");
         }
         // Save output: the diff against the file on disk emits one MODIFY per
         // slot, the aliased pair with identical bytes, then slot 3
@@ -4443,10 +4437,16 @@ mod tests {
 
             // §2.1 training: the seed arithmetic runs in the session
             // store; §4 gating: save only after a modification.
-            assert!(!store.save().expect("save gate"));
+            assert_eq!(
+                store.save_reporting().expect("save gate"),
+                Default::default()
+            );
             store.observe_selection(1, 0x0100_0001).expect("train");
-            assert!(store.save().expect("save"));
-            assert!(!store.save().expect("second save is a no-op"));
+            store.save_reporting().expect("save");
+            assert_eq!(
+                store.save_reporting().expect("second save is a no-op"),
+                Default::default()
+            );
 
             // A user phrase under the user dictionary. `_add_phrase`
             // does not arm the §4 gate (the pin sets `m_modified` only
@@ -4456,9 +4456,12 @@ mod tests {
                 .add_phrase(&"你好".into(), &keys[..], None)
                 .expect("add phrase");
             assert_eq!(token & 0x0F00_0000, 0x0700_0000);
-            assert!(!store.save().expect("gate holds"));
+            assert_eq!(
+                store.save_reporting().expect("gate holds"),
+                Default::default()
+            );
             store.mark_modified();
-            assert!(store.save().expect("save 2"));
+            store.save_reporting().expect("save 2");
         }
 
         // The user dir now holds the pin's files, not user_store.<ext>.
@@ -4504,15 +4507,6 @@ mod tests {
                 ))
             );
             let state = export_state(&store, &originals()).expect("export");
-            let user_items = state.libraries.get(&7).expect("user lib");
-            let item = user_items
-                .get(&(token & crate::phrase::PHRASE_MASK))
-                .expect("item");
-            assert_eq!(
-                item.unigram,
-                u32::try_from(crate::phrase::DEFAULT_PHRASE_COUNT * 3)
-                    .expect("small default count")
-            );
             let overrides = state.system_overrides.get(&1).expect("overrides");
             let modified = overrides
                 .get(&(0x0100_0001 & crate::phrase::PHRASE_MASK))
@@ -4573,14 +4567,14 @@ mod tests {
                 .add_phrase(&"我们".into(), &[id("wo"), id("men")][..], None)
                 .expect("add");
             store.mark_modified();
-            assert!(store.save().expect("save"));
+            store.save_reporting().expect("save");
             store.mask_out(0xffff_ffff, masked).expect("mask");
             assert!(store.remove_user_phrase(removed).expect("remove"));
             store
                 .add_phrase(&"他".into(), &[id("ta")][..], None)
                 .expect("add");
             store.mark_modified();
-            assert!(store.save().expect("save after"));
+            store.save_reporting().expect("save after");
             removed
         };
         let rows = phrase_rows();
@@ -4611,7 +4605,7 @@ mod tests {
                 UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
                     .expect("reopen");
             store.mark_modified();
-            assert!(store.save().expect("save again"));
+            store.save_reporting().expect("save again");
         }
         assert_eq!(phrase_rows(), rows);
         std::fs::remove_dir_all(&dir).expect("cleanup");
@@ -4634,7 +4628,8 @@ mod tests {
             }
         }
         let state = state.index_every_reading();
-        persistence::save(&dir, &state, &originals(), &versions(), 1).expect("native fixture");
+        persistence::save_state_reporting(&dir, &state, &originals(), &versions(), 1)
+            .expect("native fixture");
         for _ in 0..2 {
             let mut store =
                 UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
@@ -4663,10 +4658,8 @@ mod tests {
                     }
                 }
             }
-            let exported = export_state(&store, &originals()).expect("save state");
-            assert_eq!(exported.libraries, state.libraries);
             store.mark_modified();
-            assert!(store.save().expect("save"));
+            store.save_reporting().expect("save");
         }
         std::fs::remove_dir_all(dir).expect("cleanup");
     }
@@ -4706,7 +4699,8 @@ mod tests {
             indexed: std::collections::BTreeSet::new(),
         }
         .index_every_reading();
-        persistence::save(&dir, &state, &originals(), &versions(), 1).expect("save");
+        persistence::save_state_reporting(&dir, &state, &originals(), &versions(), 1)
+            .expect("save");
 
         let store = UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
             .expect("open");
@@ -4758,11 +4752,12 @@ mod tests {
         assert_eq!(first.bigram_count(1, 0x0100_0001).expect("count"), 69);
         assert_eq!(second.bigram_count(1, 0x0100_0001).expect("count"), 0);
 
-        assert!(
-            !second.save().expect("save 2"),
+        assert_eq!(
+            second.save_reporting().expect("save 2"),
+            Default::default(),
             "the second session changed nothing"
         );
-        assert!(first.save().expect("save 1"));
+        first.save_reporting().expect("save 1");
         assert_eq!(
             recorded_counter(&dir),
             Some(1),
@@ -4804,8 +4799,8 @@ mod tests {
             .expect("train 2 again");
         assert_eq!(first.bigram_count(1, 0x0100_0001).expect("count"), 69);
         assert_eq!(second.bigram_count(1, 0x0100_0001).expect("count"), 207);
-        assert!(first.save().expect("save 1"));
-        assert!(second.save().expect("save 2"));
+        first.save_reporting().expect("save 1");
+        second.save_reporting().expect("save 2");
         drop(first);
         drop(second);
 
@@ -4839,12 +4834,12 @@ mod tests {
         // libzhuyin's save writes a fresh counter of 0 (zhuyin.cpp:164-176,
         // :695); libpinyin's writes back its own raised one
         // (pinyin.cpp:1143, :220-232).
-        assert!(zhuyin.save().expect("save zhuyin"));
+        zhuyin.save_reporting().expect("save zhuyin");
         assert_eq!(recorded_counter(&dir), Some(0));
         pinyin
             .observe_selection(1, 0x0100_0001)
             .expect("train pinyin");
-        assert!(pinyin.save().expect("save pinyin"));
+        pinyin.save_reporting().expect("save pinyin");
         assert_eq!(recorded_counter(&dir), Some(1));
 
         // libpinyin's fini lowers its copy (pinyin.cpp:1194-1200);
@@ -4877,11 +4872,11 @@ mod tests {
         zhuyin
             .observe_selection(1, 0x0100_0001)
             .expect("train zhuyin");
-        assert!(pinyin.save().expect("save pinyin"));
+        pinyin.save_reporting().expect("save pinyin");
         assert_eq!(recorded_counter(&dir), Some(1));
         // The later save is libzhuyin's: its fresh 0 replaces libpinyin's
         // raised counter.
-        assert!(zhuyin.save().expect("save zhuyin"));
+        zhuyin.save_reporting().expect("save zhuyin");
         assert_eq!(recorded_counter(&dir), Some(0));
 
         // The finis in the reverse order: libzhuyin's writes nothing, and

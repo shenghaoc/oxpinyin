@@ -1778,33 +1778,6 @@ impl UserStore {
         crate::UserLookup::session(&self.inner.libpinyin.phrases, &self.inner.system_items)
     }
 
-    pub(crate) fn index_entries(&self) -> Vec<(Token, Vec<u16>)> {
-        let phrases = self.inner.libpinyin.phrases();
-        let mut out = Vec::new();
-        for (key, value) in phrases.index.rows() {
-            if value.is_empty() || !key.len().is_multiple_of(2) {
-                continue;
-            }
-            let len = key.len() / 2;
-            if len == 0 || len > crate::phrase::MAX_PHRASE_LENGTH {
-                continue;
-            }
-            let Ok(items) = oxpinyin_data::row_format::pinyin_index::decode_items(&value, len)
-            else {
-                continue;
-            };
-            for item in items {
-                out.push((
-                    item.token,
-                    item.keys.iter().map(|key| key.to_packed()).collect(),
-                ));
-            }
-        }
-        out.sort();
-        out.dedup();
-        out
-    }
-
     /// Add a phrase under `library` (`USER_DICTIONARY` or `NETWORK_DICTIONARY`).
     ///
     /// # Errors
@@ -2146,62 +2119,12 @@ impl UserStore {
         self.inner.libpinyin.dir.is_some()
     }
 
-    /// The `pinyin_save` write side (§4).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`UserStoreError`] when the store cannot be flushed to disk.
-    pub fn save(&mut self) -> Result<bool, UserStoreError> {
-        if !self.is_modified() {
-            return Ok(false);
-        }
-        // Export the session and write the pin's whole file set (`.tmp` +
-        // rename): the durable write is the file set, not the session.
-        let target = Arc::clone(&self.inner.libpinyin);
-        let Some(dir) = target.dir.as_deref() else {
-            return Ok(false);
-        };
-        self.compact_libraries();
-        // Borrowed originals hold every system item (~138k
-        // ChunkItems) and a dirty save must not copy them — both
-        // halves take the Arc by reference.
-        let originals = &self.originals;
-        let state = crate::store_libpinyin::export_for_save(self)?;
-        let bigram_db = self.container();
-        let phrases = target.phrases();
-        let live = self
-            .inner
-            .system_items
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        crate::persistence::save_session(
-            dir,
-            crate::persistence::SaveSource {
-                state: &state,
-                libraries: Some(&phrases),
-                index: &phrases.index,
-                phrase_table: Some(&phrases.phrase_table),
-                compacted: &[],
-                live: Some(&live),
-            },
-            originals,
-            &target.versions,
-            target.open_counter,
-            Some(&*bigram_db),
-        )?;
-        drop(bigram_db);
-        *self.count_cache() = None;
-        self.inner.dirty.store(false, Ordering::Relaxed);
-        Ok(true)
-    }
-
-    /// [`Self::save`] the way the pin saves, with the same directory and
-    /// modified guards: the file set is written and
-    /// renamed and the marker rewritten whatever fails on the way, and the
-    /// failures come back in the [`SaveReport`] instead of ending the save.
-    /// A store with no libpinyin target (no directory to write) reports
-    /// nothing. A completed save leaves the store clean, as after
-    /// [`Self::save`]; a guard return leaves its state unchanged.
+    /// The save the C facades use: the file set is written and renamed and
+    /// the marker rewritten whatever fails on the way, and the failures come
+    /// back in the [`SaveReport`] instead of ending the save. A store with no
+    /// libpinyin target (no directory to write) reports nothing. A completed
+    /// save leaves the store clean; a guard return leaves its state
+    /// unchanged.
     ///
     /// # Errors
     ///
@@ -2270,7 +2193,6 @@ impl UserStore {
                 open_counter: target.open_counter,
                 bigram_db: Some(&*bigram_db),
                 interleaved: target.law == crate::persistence::UserConfLaw::Zhuyin,
-                lenient: true,
                 baseline: baseline
                     .as_mut()
                     .map(|baseline| |nibble| baseline(nibble, originals)),
@@ -3401,7 +3323,7 @@ mod tests {
             let (_dir, mut store) = in_dir(no_originals());
             store.observe_selection(1, 100).unwrap();
             assert_eq!(store.count_delta(Some(1), 100).unwrap().bigram_count, 69);
-            assert!(store.save().unwrap());
+            store.save_reporting().unwrap();
             assert_eq!(store.count_delta(Some(1), 100).unwrap().bigram_count, 69);
         }
 
@@ -3516,27 +3438,27 @@ mod tests {
             let (_dir, mut store) = in_dir(no_originals());
 
             assert!(!store.is_modified());
-            assert!(!store.save().unwrap());
-            assert!(!store.save().unwrap());
+            assert_eq!(store.save_reporting().unwrap(), Default::default());
+            assert_eq!(store.save_reporting().unwrap(), Default::default());
 
             store.observe_selection(SENTENCE_START, 10).unwrap();
             assert!(store.is_modified());
-            assert!(store.save().unwrap());
+            store.save_reporting().unwrap();
             assert!(!store.is_modified());
-            assert!(!store.save().unwrap());
+            assert_eq!(store.save_reporting().unwrap(), Default::default());
 
             store.observe_predicted(10, 20).unwrap();
             assert!(!store.is_modified());
-            assert!(!store.save().unwrap());
+            assert_eq!(store.save_reporting().unwrap(), Default::default());
             store
                 .add_phrase(&"你好".into(), &[key("ni"), key("hao")], None)
                 .unwrap();
             assert!(!store.is_modified());
-            assert!(!store.save().unwrap());
+            assert_eq!(store.save_reporting().unwrap(), Default::default());
 
             store.observe_selection(SENTENCE_START, 10).unwrap();
             assert!(store.is_modified());
-            assert!(store.save().unwrap());
+            store.save_reporting().unwrap();
             assert!(!store.is_modified());
         }
 
@@ -3830,7 +3752,7 @@ mod tests {
         fn mask_out_user_clear_deletes_user_entries_and_keeps_system() {
             let (_dir, mut store, user_a) = mixed_store();
             assert!(store.is_modified());
-            assert!(store.save().unwrap());
+            store.save_reporting().unwrap();
 
             store
                 .mask_out(
@@ -3862,7 +3784,7 @@ mod tests {
             // (`phrase_index.cpp:624-646`) and the next import reuses it.
             assert_eq!(next_user_token(&store), FIRST_USER_TOKEN);
             assert!(!store.is_modified());
-            assert!(!store.save().unwrap());
+            assert_eq!(store.save_reporting().unwrap(), Default::default());
 
             store.mask_out(0x0, 0x0).unwrap();
             assert_eq!(store.bigram_count(SYSTEM_A, SYSTEM_B).unwrap(), 0);
@@ -3916,7 +3838,7 @@ mod tests {
         #[test]
         fn remove_user_phrase_deletes_everywhere_and_rejects_others() {
             let (_dir, mut store, user_a) = mixed_store();
-            assert!(store.save().unwrap());
+            store.save_reporting().unwrap();
 
             assert!(store.remove_user_phrase(user_a).unwrap());
             assert!(store.phrase(user_a).unwrap().is_none());

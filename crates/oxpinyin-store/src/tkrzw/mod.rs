@@ -81,7 +81,7 @@
 //! durability promise is the only reason the call exists. The previous
 //! binding's `compact` also rebuilt the file (`Rebuild`), which the pin
 //! never calls and no caller needs: its one shipping caller,
-//! `UserStore::save`, compacts the in-memory session store, where both
+//! `UserStore::save_reporting`, compacts the in-memory session store, where both
 //! calls do nothing (`tkrzw_dbm_baby.cc:583-596`).
 //!
 //! **The soft/hard split is measured, not assumed.** `hard=true` on every
@@ -92,7 +92,7 @@
 //! from a keystroke. The maintainer chose this split on 2026-09-10.
 //!
 //! `compact` is no longer where `pinyin_save` reaches storage, though.
-//! `UserStore::save` still calls it, but since the libpinyin session moved
+//! `UserStore::save_reporting` still calls it, but since the libpinyin session moved
 //! into memory (#621) the store it compacts is the `BabyDBM` of
 //! [`WriteStore::create_in_memory`], which has no file. The profile
 //! `pinyin_save` writes goes out through `write_user_index` and the user
@@ -1010,8 +1010,8 @@ impl WriteStore for TkrzwStore {
             return Err(StoreError::ReadOnly);
         }
         // A file-backed store's one stable-storage point. It is no
-        // longer where `pinyin_save` reaches storage: `UserStore::save`
-        // still calls this, but on the in-memory session store (#621),
+        // longer where `pinyin_save` reaches storage:
+        // `UserStore::save_reporting` still calls this, but on the in-memory session store (#621),
         // where the synchronize has nothing to do.
         self.db.synchronize(true)
     }

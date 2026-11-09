@@ -97,7 +97,7 @@ fn load_user_conf(filename: &Path) -> Result<Option<UserTableInfo>, PersistenceE
 /// libzhuyin read and write the same marker through the same
 /// `UserTableInfo`, but at different points and with different counters,
 /// so the facade that opens a profile names its law and every write below
-/// follows it ([`load`], [`save`]'s counter, [`fini`]).
+/// follows it ([`load`], the reporting save's counter, [`fini`]).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UserConfLaw {
     /// libpinyin: every `pinyin_init` raises the open counter and writes
@@ -650,7 +650,7 @@ fn library_metadata(libraries: &PhraseLibraries, nibble: u8) -> Option<SystemLib
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct UserState {
     /// The user bigram's rows verbatim, `(key, SingleGram value)` in the
-    /// file's walk order: what [`load`] read and what a [`save`] without a
+    /// file's walk order: what [`load`] read and what a reporting save without a
     /// container writes. A session never fills it — its grams live in the
     /// pin's own container, which its saves write instead.
     pub bigram: Vec<(Vec<u8>, Vec<u8>)>,
@@ -719,7 +719,7 @@ pub enum PersistenceError {
     /// A library chunk's `MemoryChunk::save` header write failed
     /// (`memory_chunk.h:543`/`:547`): the pin `assert`s and dies of
     /// SIGABRT. Carried apart from [`Self::Io`] because a short *payload*
-    /// write is the pin's own soft failure (`save` answers `false` and
+    /// write is the pin's own soft failure (`pinyin_save` answers `false` and
     /// every caller ignores it), not an abort.
     ChunkHeaderWrite {
         /// Which header word the write refused.
@@ -812,7 +812,7 @@ pub struct Loaded {
     pub state: UserState,
     /// The open counter every later `user.conf` write of this session
     /// starts from: under [`UserConfLaw::Pinyin`] the value the load
-    /// raised and wrote, which [`save`] writes back and [`fini`] lowers;
+    /// raised and wrote, which the reporting save writes back and [`fini`] lowers;
     /// under [`UserConfLaw::Zhuyin`] 0, the counter of the fresh
     /// `UserTableInfo` libzhuyin's `mark_version` saves. Upstream's `int`
     /// (`table_info.h:102`), so a negative marker raises to a negative
@@ -1479,15 +1479,15 @@ fn load_user_pinyin_index(
     }
     index.finish_load();
     if !lazy {
-        for (key, value) in index.rows() {
+        let decoded = index.for_each_record::<std::convert::Infallible>(|key, value| {
             if value.is_empty() || !key.len().is_multiple_of(2) {
-                continue;
+                return Ok(());
             }
             let len = key.len() / 2;
             if len == 0 || len > crate::phrase::MAX_PHRASE_LENGTH {
-                continue;
+                return Ok(());
             }
-            if let Ok(items) = oxpinyin_data::row_format::pinyin_index::decode_items(&value, len) {
+            if let Ok(items) = oxpinyin_data::row_format::pinyin_index::decode_items(value, len) {
                 for item in items {
                     loaded.state.indexed.insert((
                         item.token,
@@ -1495,6 +1495,10 @@ fn load_user_pinyin_index(
                     ));
                 }
             }
+            Ok(())
+        });
+        if let Err(infallible) = decoded {
+            match infallible {}
         }
     }
     *overlong = index.overlong_keys();
@@ -2188,55 +2192,31 @@ pub fn system_new_total(
     total
 }
 
-/// Writes the whole profile: `_write_files` (every file to its `.tmp`
-/// sibling) then `_rename_files` (one file after another in the pin's
-/// order: libraries by index, the pinyin index, the phrase index, then
-/// the bigram). A failure before the first rename leaves the old
-/// profile. A failure or crash between renames can leave a mix of old
-/// and new files, as in libpinyin (`pinyin.cpp:1025-1130` at 074a2219).
-///
-/// `user.conf` is `mark_version`'s marker with `open_counter` — the
-/// session's [`Loaded::open_counter`]: libpinyin's save writes back the
-/// value its init raised (`pinyin.cpp:1143`), libzhuyin's a fresh 0
-/// (`zhuyin.cpp:695`). Neither save moves the counter. It is written
-/// after the renames, in place, not staged.
+/// The reporting save for a held [`UserState`], without a session's arenas:
+/// every file of the set is written, renamed and marked whatever fails on the
+/// way, and the failures come back in the [`SaveReport`]. A caller that needs
+/// a profile on disk but not a session (the crate's tests and the facade
+/// fixtures) uses this.
 ///
 /// # Errors
 ///
-/// Returns [`PersistenceError`] on the first write, rename, or marker
-/// failure. Cleanup attempts to remove the remaining staged `.tmp`
-/// files after a write or rename failure; it does not undo completed
-/// renames.
-pub fn save(
+/// As the reporting save.
+pub fn save_state_reporting(
     dir: &Path,
     state: &UserState,
     originals: &impl OriginalLibraries,
     versions: &SystemVersions,
     open_counter: i32,
-) -> Result<(), PersistenceError> {
-    save_with_bigram(dir, state, originals, versions, open_counter, None)
-}
-
-/// [`save`], with the session's in-memory user bigram container: when
-/// given, `user_bigram.db` is that container written the pin's way —
-/// `m_user_bigram->save_db(user_bigram.db.tmp)` (`pinyin.cpp:1014-1018`),
-/// renamed with the rest of the file set — so the file's layout, and
-/// the walk order of the next session's load, are the pin's. Without
-/// one, `state.bigram` is written by key.
-///
-/// # Errors
-///
-/// As [`save`].
-pub fn save_with_bigram(
-    dir: &Path,
-    state: &UserState,
-    originals: &impl OriginalLibraries,
-    versions: &SystemVersions,
-    open_counter: i32,
-    bigram_db: Option<&DefaultUserBigramDb>,
-) -> Result<(), PersistenceError> {
+) -> Result<SaveReport, PersistenceError> {
     let index = UserIndex::from_entries(pinyin_index_entries(&chewing_rows(state, originals)));
-    save_session(
+    let mut reporting = SaveReporting {
+        versions,
+        open_counter,
+        bigram_db: None,
+        interleaved: false,
+        baseline: None::<NoBaseline>,
+    };
+    save_reporting(
         dir,
         SaveSource {
             libraries: None,
@@ -2247,9 +2227,7 @@ pub fn save_with_bigram(
             live: None,
         },
         originals,
-        versions,
-        open_counter,
-        bigram_db,
+        &mut reporting,
     )
 }
 
@@ -2282,45 +2260,11 @@ pub(crate) struct SaveReporting<'a, B> {
     pub(crate) open_counter: i32,
     pub(crate) bigram_db: Option<&'a DefaultUserBigramDb>,
     pub(crate) interleaved: bool,
-    pub(crate) lenient: bool,
     pub(crate) baseline: Option<B>,
 }
 
 /// The baseline hook's type for a save that has none.
 pub(crate) type NoBaseline = fn(u8) -> SaveBaseline;
-
-/// [`save_with_bigram`] for a session, whose `source` carries the index
-/// keys its tables hold.
-///
-/// # Errors
-///
-/// As [`save`].
-pub(crate) fn save_session(
-    dir: &Path,
-    source: SaveSource<'_>,
-    originals: &impl OriginalLibraries,
-    versions: &SystemVersions,
-    open_counter: i32,
-    bigram_db: Option<&DefaultUserBigramDb>,
-) -> Result<(), PersistenceError> {
-    let mut reporting = SaveReporting {
-        versions,
-        open_counter,
-        bigram_db,
-        interleaved: false,
-        lenient: false,
-        baseline: None::<NoBaseline>,
-    };
-    let mut staged = Staged::default();
-    let result = stage_all(dir, source, originals, &mut reporting, &mut staged);
-    finish_save(
-        dir,
-        reporting.versions,
-        reporting.open_counter,
-        &staged.pending,
-        result,
-    )
-}
 
 /// The files of a save in the pin's rename order (`_rename_files`,
 /// `pinyin.cpp:1025-1130`): the libraries by index, then the two indices
@@ -2365,44 +2309,7 @@ fn libraries_in_pin_order(layout: &UserFileLayout) -> Vec<(u8, &FileName, Librar
     libraries
 }
 
-/// [`save_with_bigram`] the way the pin saves: no failure stops it. Each file
-/// is written on its own; a file that cannot be written is a file that
-/// cannot be renamed, a rename that fails is reported and the next one runs,
-/// the marker is written last whatever happened, and the save answers as
-/// having saved (`pinyin_save`'s `_write_files(context) &&
-/// _rename_files(context)` is `true` for both, `pinyin.cpp:1132-1147`). One
-/// failing file therefore leaves the others updated, as the pin does.
-///
-/// # Errors
-///
-/// Returns [`PersistenceError::Codec`] when a record cannot be encoded: an
-/// internal failure the pin has no counterpart for. Returns
-/// [`PersistenceError::ChunkHeaderWrite`] when a chunk file's header write
-/// fails: the pin `assert`s and dies right there, so this is the one
-/// failure the save does not carry past — no rename pass and no marker
-/// follow it, and the caller logs the point.
-#[cfg(all(test, target_os = "linux"))]
-pub(crate) fn save_with_bigram_reporting(
-    dir: &Path,
-    source: SaveSource<'_>,
-    originals: &impl OriginalLibraries,
-    versions: &SystemVersions,
-    open_counter: i32,
-    bigram_db: Option<&DefaultUserBigramDb>,
-    interleaved: bool,
-) -> Result<SaveReport, PersistenceError> {
-    let mut reporting = SaveReporting {
-        versions,
-        open_counter,
-        bigram_db,
-        interleaved,
-        lenient: true,
-        baseline: None::<NoBaseline>,
-    };
-    save_reporting(dir, source, originals, &mut reporting)
-}
-
-/// [`save_with_bigram_reporting`] with the current-on-disk baseline hook.
+/// The save with the current-on-disk baseline hook.
 pub(crate) fn save_reporting<B: FnMut(u8) -> SaveBaseline>(
     dir: &Path,
     source: SaveSource<'_>,
@@ -2457,8 +2364,6 @@ fn report_rename_failed(tmp: &Path, final_path: &Path) {
 /// share ends with the other role's contents.
 #[derive(Default)]
 struct Staged {
-    /// Waiting for the rename pass.
-    pending: Vec<(PathBuf, PathBuf)>,
     /// Rename on the spot (libzhuyin).
     immediate: bool,
     /// The immediate renames that failed.
@@ -2490,16 +2395,15 @@ impl Staged {
     }
 
     fn push(&mut self, (tmp, final_path): (PathBuf, PathBuf)) {
-        if !self.immediate {
-            self.pending.push((tmp, final_path));
-        } else if rename(&tmp, &final_path).is_err() {
+        if self.immediate && rename(&tmp, &final_path).is_err() {
             report_rename_failed(&tmp, &final_path);
             self.failed.push((tmp, final_path));
         }
     }
 }
 
-/// [`save_with_bigram`]'s staging half, shared with the reporting save.
+/// [`save_reporting`]'s staging half: every file of the set, written to its
+/// `.tmp` sibling.
 fn stage_all<B: FnMut(u8) -> SaveBaseline>(
     dir: &Path,
     source: SaveSource<'_>,
@@ -2524,27 +2428,19 @@ fn stage_all<B: FnMut(u8) -> SaveBaseline>(
         // again as the pin's does.
         unlink(&tmp);
         let written = db.save_db(&tmp).map_err(PersistenceError::from);
-        tolerate(reporting.lenient, staged.finish((tmp, final_path), written))?;
+        tolerate(staged.finish((tmp, final_path), written))?;
         return Ok(());
     }
-    tolerate(
-        reporting.lenient,
-        stage_user_bigram(dir, &state.bigram, staged),
-    )?;
+    tolerate(stage_user_bigram(dir, &state.bigram, staged))?;
     Ok(())
 }
 
-/// The reporting save carries on past a file it could not write, as the pin's
-/// `_write_files` does; the strict save stops at the first. A chunk header
-/// write the pin `assert`s on and an encoding failure stop both. `Ok(true)`
-/// when the write succeeded.
-fn tolerate<T>(
-    lenient: bool,
-    result: Result<T, PersistenceError>,
-) -> Result<bool, PersistenceError> {
+/// The save carries on past a file it could not write, as the pin's
+/// `_write_files` does. A chunk header write the pin `assert`s on and an
+/// encoding failure stop it.
+fn tolerate<T>(result: Result<T, PersistenceError>) -> Result<(), PersistenceError> {
     match result {
-        Ok(_) => Ok(true),
-        Err(PersistenceError::Io(_) | PersistenceError::Store(_)) if lenient => Ok(false),
+        Ok(_) | Err(PersistenceError::Io(_) | PersistenceError::Store(_)) => Ok(()),
         Err(error) => Err(error),
     }
 }
@@ -2719,69 +2615,33 @@ fn stage_rest<B: FnMut(u8) -> SaveBaseline>(
                     build_memory_chunk(&payload).map_err(PersistenceError::from)?
                 }
             };
-            tolerate(reporting.lenient, stage_chunk(dir, name, &bytes, staged))?;
+            tolerate(stage_chunk(dir, name, &bytes, staged))?;
         }
 
         // `_write_files` saves the user pinyin index, then the user phrase
         // index (`pinyin.cpp:996-1012`). Both stream from the session's
         // arenas in key order; a value-only save streams the derived index
         // and the held phrase-table map.
-        tolerate(
-            reporting.lenient,
-            stage_dbm(
-                dir,
-                UserDbm::PinyinIndex,
-                |sink| index.for_each_record(|key, value| sink(key, value)),
-                staged,
-            ),
-        )?;
-        tolerate(
-            reporting.lenient,
-            stage_dbm(
-                dir,
-                UserDbm::PhraseIndex,
-                |sink| match phrase_table {
-                    Some(table) => table.for_each_record(|key, value| sink(key, value)),
-                    None => state
-                        .phrase_table
-                        .iter()
-                        .try_for_each(|(key, value)| sink(key, value)),
-                },
-                staged,
-            ),
-        )?;
+        tolerate(stage_dbm(
+            dir,
+            UserDbm::PinyinIndex,
+            |sink| index.for_each_record(|key, value| sink(key, value)),
+            staged,
+        ))?;
+        tolerate(stage_dbm(
+            dir,
+            UserDbm::PhraseIndex,
+            |sink| match phrase_table {
+                Some(table) => table.for_each_record(|key, value| sink(key, value)),
+                None => state
+                    .phrase_table
+                    .iter()
+                    .try_for_each(|(key, value)| sink(key, value)),
+            },
+            staged,
+        ))?;
 
         Ok(())
-    }
-}
-
-/// The strict save's commit: rename each staged `.tmp` over its final in
-/// the pin's order, then write `user.conf`. A failure leaves every staged
-/// `.tmp` in place, as the pin's `_write_files` and `_rename_files` do;
-/// completed renames are not undone. The strict Rust API still answers the
-/// first failure, which the C facades' reporting save does not (they carry
-/// on and print the pin's line).
-fn finish_save(
-    dir: &Path,
-    versions: &SystemVersions,
-    open_counter: i32,
-    staged: &[(PathBuf, PathBuf)],
-    result: Result<(), PersistenceError>,
-) -> Result<(), PersistenceError> {
-    match result {
-        Ok(()) => {
-            for (tmp, final_path) in staged {
-                rename(tmp, final_path).map_err(PersistenceError::from)?;
-            }
-            // `user.conf` last, and in place: `mark_version` runs after
-            // the renames and `fopen`s the marker over the existing file
-            // (`pinyin.cpp:1141-1143`, `zhuyin.cpp:695`), so the file
-            // keeps whatever mode it already had. Its answer is ignored,
-            // as `pinyin_save` ignores it.
-            let _ = write_marker(dir, versions, open_counter);
-            Ok(())
-        }
-        Err(error) => Err(error),
     }
 }
 
@@ -3056,7 +2916,6 @@ mod tests {
             open_counter: 1,
             bigram_db: None,
             interleaved: false,
-            lenient: true,
             baseline: Some(|library| {
                 visited.push(library);
                 SaveBaseline::Unmappable
@@ -3199,7 +3058,6 @@ mod tests {
         let gone_reading = vec![0x12, 0x00, 0x12, 0x00];
         let mut index = UserIndex::new();
         index.push_record(&gone_reading, &[]);
-        index.finish_load();
         let mut saved = state();
         saved.phrase_table.insert(gone.clone(), Vec::new());
         let source = SaveSource {
@@ -3210,7 +3068,14 @@ mod tests {
             compacted: &[],
             live: None,
         };
-        save_session(&dir, source, &originals, &versions(), 1, None).expect("save");
+        let mut reporting = SaveReporting {
+            versions: &versions(),
+            open_counter: 1,
+            bigram_db: None,
+            interleaved: false,
+            baseline: None::<NoBaseline>,
+        };
+        save_reporting(&dir, source, &originals, &mut reporting).expect("save");
 
         let rows = |dbm: UserDbm| {
             let store = DefaultStore::open_user_index(&dir.join(dbm.file_name())).expect("opens");
@@ -3248,7 +3113,16 @@ mod tests {
         };
         let mut actual = loaded.loaded.state;
         actual.indexed = loaded.index.indexed_set();
-        actual.phrase_table = loaded.phrase_table.rows().into_iter().collect();
+        actual.phrase_table.clear();
+        let collected = loaded
+            .phrase_table
+            .for_each_record::<std::convert::Infallible>(|key, value| {
+                actual.phrase_table.insert(key.to_vec(), value.to_vec());
+                Ok(())
+            });
+        if let Err(infallible) = collected {
+            match infallible {}
+        }
         for (nibble, library) in loaded.user_libraries {
             actual.libraries.insert(
                 nibble,
@@ -3283,7 +3157,7 @@ mod tests {
         let originals = originals();
         let state = state();
 
-        save(&dir, &state, &originals, &versions(), 1).expect("save");
+        save_state_reporting(&dir, &state, &originals, &versions(), 1).expect("save");
         // The user dir holds exactly the pin's eleven names — the three
         // DBMs under the backend's own names, the three USER_FILE chunks,
         // the four `.dbin` logs, and `user.conf` — and nothing else. This
@@ -3390,8 +3264,10 @@ mod tests {
             for profile in [&inline_dir, &mapped_dir] {
                 std::fs::create_dir(profile).expect("profile dir");
             }
-            save(&inline_dir, &state, &inline, &versions(), 1).expect("inline save");
-            save(&mapped_dir, &state, &mapped, &versions(), 1).expect("mapped save");
+            save_state_reporting(&inline_dir, &state, &inline, &versions(), 1)
+                .expect("inline save");
+            save_state_reporting(&mapped_dir, &state, &mapped, &versions(), 1)
+                .expect("mapped save");
             for (_, file) in inline.layout().system_logs() {
                 assert_eq!(
                     std::fs::read(build_path(&mapped_dir, file.as_ref())).expect("mapped log"),
@@ -3426,7 +3302,7 @@ mod tests {
             .expect("library")
             .insert(2_u32, None);
 
-        save(&dir, &state, &originals, &versions(), 1).expect("save");
+        save_state_reporting(&dir, &state, &originals, &versions(), 1).expect("save");
         let loaded = load(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
         assert!(loaded.skipped.is_empty(), "{:?}", loaded.skipped);
         assert_eq!(
@@ -3451,7 +3327,8 @@ mod tests {
 
         // Saving the empty state writes the whole inventory, and it
         // loads back empty.
-        save(&dir, &UserState::default(), &originals, &versions(), 1).expect("save");
+        save_state_reporting(&dir, &UserState::default(), &originals, &versions(), 1)
+            .expect("save");
         let reloaded = load(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
         assert!(!reloaded.wiped);
         assert!(reloaded.skipped.is_empty(), "{:?}", reloaded.skipped);
@@ -3498,7 +3375,7 @@ mod tests {
     fn an_unknown_database_format_refuses_the_load_untouched() {
         let dir = tempdir("marker-abort");
         let originals = originals();
-        save(&dir, &state(), &originals, &versions(), 1).expect("save");
+        save_state_reporting(&dir, &state(), &originals, &versions(), 1).expect("save");
 
         let long = format!(
             "binary format version:7\nmodel data version:14\ndatabase format:{}\nopen counter:5\n",
@@ -3550,7 +3427,7 @@ mod tests {
             "model data version:14\nbinary format version:7\ndatabase format:Tkrzw\nopen counter:5\n",
             "binary format version:7x\nmodel data version:14\ndatabase format:Tkrzw\nopen counter:5\n",
         ] {
-            save(&dir, &state(), &originals, &versions(), 1).expect("save");
+            save_state_reporting(&dir, &state(), &originals, &versions(), 1).expect("save");
             assert!(dir.join("user.bin").exists());
             std::fs::write(dir.join(USER_CONF), body).expect("write");
 
@@ -3568,7 +3445,7 @@ mod tests {
             "binary format version:7\nmodel data version:14x\ndatabase format:Tkrzw\nopen counter:5\n",
             "binary format version:7\nmodel data version:14\nopen counter:5\n",
         ] {
-            save(&dir, &state(), &originals, &versions(), 1).expect("save");
+            save_state_reporting(&dir, &state(), &originals, &versions(), 1).expect("save");
             std::fs::write(dir.join(USER_CONF), body).expect("write");
             assert!(
                 matches!(
@@ -3613,7 +3490,7 @@ mod tests {
     fn non_conform_profile_wipes_and_resets() {
         let dir = tempdir("wipe");
         let originals = originals();
-        save(&dir, &state(), &originals, &versions(), 3).expect("save");
+        save_state_reporting(&dir, &state(), &originals, &versions(), 3).expect("save");
         assert!(dir.join("user.bin").exists());
 
         // A cross-backend marker never conforms. `BerkeleyDB` was the
@@ -3698,40 +3575,12 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_strict_save_leaves_the_staged_tmp_files() {
-        let dir = tempdir("leave-tmp");
-        let tmp = build_path(&dir, OsStr::new("user.bin.tmp"));
-        let final_path = build_path(&dir, OsStr::new("user.bin"));
-        std::fs::write(&tmp, b"staged").expect("tmp");
-        std::fs::create_dir(&final_path).expect("block the rename");
-        let staged = [(tmp.clone(), final_path)];
-        assert!(
-            finish_save(&dir, &versions(), 1, &staged, Ok(())).is_err(),
-            "the blocking directory fails the rename"
-        );
-        assert!(tmp.is_file(), "the pin leaves the staged .tmp in place");
-        assert!(
-            finish_save(
-                &dir,
-                &versions(),
-                1,
-                &staged,
-                Err(PersistenceError::Codec("failed write".to_owned())),
-            )
-            .is_err()
-        );
-        assert!(tmp.is_file(), "a failed write leaves the staged .tmp too");
-        std::fs::remove_dir_all(&dir).expect("cleanup");
-    }
-
-    #[test]
     fn the_user_bigram_is_staged_as_a_tmp_sibling() {
         let dir = tempdir("bigram-tmp");
         let mut staged = Staged::default();
         stage_user_bigram(&dir, &[(b"k".to_vec(), b"v".to_vec())], &mut staged).expect("stage");
-        let (tmp, final_path) = &staged.pending[0];
-        assert_eq!(tmp, &build_path(&dir, OsStr::new("user_bigram.db.tmp")));
-        assert_eq!(final_path, &build_path(&dir, OsStr::new("user_bigram.db")));
+        let tmp = build_path(&dir, OsStr::new("user_bigram.db.tmp"));
+        let final_path = build_path(&dir, OsStr::new("user_bigram.db"));
         assert!(tmp.exists(), "save_db wrote the staged name");
         assert!(!final_path.exists(), "the rename has not run yet");
         std::fs::remove_dir_all(&dir).expect("cleanup");
@@ -3741,7 +3590,8 @@ mod tests {
     fn the_tired_counter_wipes_on_the_next_open() {
         let dir = tempdir("tired");
         let originals = originals();
-        save(&dir, &state(), &originals, &versions(), OPEN_COUNTER_LIMIT).expect("save");
+        save_state_reporting(&dir, &state(), &originals, &versions(), OPEN_COUNTER_LIMIT)
+            .expect("save");
         // The limit itself still conforms; one more open crosses it.
         let loaded = load(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
         assert!(!loaded.wiped);
@@ -3760,7 +3610,7 @@ mod tests {
             let split = tempdir("split-parts");
             let originals = originals();
             for dir in [&whole, &split] {
-                save(dir, &state(), &originals, &versions(), 1).expect("save");
+                save_state_reporting(dir, &state(), &originals, &versions(), 1).expect("save");
             }
             let loaded = load(&whole, &originals, &versions(), law).expect("load");
             // The judgement alone already raised the counter and wrote the
@@ -3803,10 +3653,10 @@ mod tests {
             (encode_ucs4_key("丙"), Vec::new()),
             (vec![0xff], vec![0x12]),
         ]);
-        save(&dir, &saved, &originals, &versions(), 1).expect("save");
+        save_state_reporting(&dir, &saved, &originals, &versions(), 1).expect("save");
         let loaded = load(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
         assert_eq!(loaded.state.phrase_table, saved.phrase_table);
-        save(&dir, &loaded.state, &originals, &versions(), 2).expect("save again");
+        save_state_reporting(&dir, &loaded.state, &originals, &versions(), 2).expect("save again");
         let store = DefaultStore::open_user_index(&dir.join(UserDbm::PhraseIndex.file_name()))
             .expect("open index");
         let mut rows = BTreeMap::new();
@@ -3878,7 +3728,8 @@ mod tests {
                     "launch {launch}: the profile survived"
                 );
             }
-            save(&dir, &state(), &originals, &versions(), loaded.open_counter).expect("save");
+            save_state_reporting(&dir, &state(), &originals, &versions(), loaded.open_counter)
+                .expect("save");
             assert_eq!(
                 recorded_counter(&dir),
                 Some(1),
@@ -3905,7 +3756,7 @@ mod tests {
         // first (pinyin.cpp:1194-1200).
         let dir = tempdir("pinyin-fini-unsaved");
         let originals = originals();
-        save(&dir, &state(), &originals, &versions(), 0).expect("seed");
+        save_state_reporting(&dir, &state(), &originals, &versions(), 0).expect("seed");
         let before = std::fs::read(dir.join("user.bin")).expect("user.bin");
         let loaded = load(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
         assert_eq!(recorded_counter(&dir), Some(1));
@@ -3932,7 +3783,7 @@ mod tests {
         // the pin wipes (table_info.cpp:409-410).
         let dir = tempdir("pinyin-crashes");
         let originals = originals();
-        save(&dir, &state(), &originals, &versions(), 0).expect("seed");
+        save_state_reporting(&dir, &state(), &originals, &versions(), 0).expect("seed");
         for launch in 1..=7 {
             let loaded = load(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
             assert!(!loaded.wiped, "killed launch {launch} wiped early");
@@ -3956,7 +3807,8 @@ mod tests {
         // then finishes writes 0 (a 7 reads as 0), not 6.
         let dir = tempdir("pinyin-seven");
         let originals = originals();
-        save(&dir, &state(), &originals, &versions(), OPEN_COUNTER_LIMIT).expect("seed");
+        save_state_reporting(&dir, &state(), &originals, &versions(), OPEN_COUNTER_LIMIT)
+            .expect("seed");
         let loaded = load(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
         assert!(!loaded.wiped);
         assert_eq!(recorded_counter(&dir), Some(OPEN_COUNTER_LIMIT + 1));
@@ -3995,7 +3847,8 @@ mod tests {
             "a zhuyin fini wrote user.conf"
         );
 
-        save(&dir, &state(), &originals, &versions(), fresh.open_counter).expect("save");
+        save_state_reporting(&dir, &state(), &originals, &versions(), fresh.open_counter)
+            .expect("save");
         let marker = std::fs::read(dir.join(USER_CONF)).expect("marker");
         assert_eq!(recorded_counter(&dir), Some(0));
         // Launches that die before fini, and clean ones, leave it alone:
@@ -4030,7 +3883,7 @@ mod tests {
                 let case = format!("{law:?} byte {byte:#04x}");
                 let dir = tempdir("stray-byte");
                 let originals = originals();
-                save(&dir, &state(), &originals, &versions(), 0).expect("seed");
+                save_state_reporting(&dir, &state(), &originals, &versions(), 0).expect("seed");
                 let mut marker = UserTableInfo::conform_to(&versions())
                     .to_text()
                     .into_bytes();
@@ -4108,7 +3961,7 @@ mod tests {
             for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
                 let case = format!("{law:?} {:?}", String::from_utf8_lossy(line));
                 let dir = tempdir("hand-written-counter");
-                save(&dir, &state(), &originals, &versions(), 0).expect("seed");
+                save_state_reporting(&dir, &state(), &originals, &versions(), 0).expect("seed");
                 let mut marker = head.as_bytes().to_vec();
                 marker.extend_from_slice(line);
                 std::fs::write(dir.join(USER_CONF), &marker).expect("hand-written marker");
@@ -4174,7 +4027,7 @@ mod tests {
         // init wipes again until a save rewrites it.
         let dir = tempdir("zhuyin-tired");
         let originals = originals();
-        save(
+        save_state_reporting(
             &dir,
             &state(),
             &originals,
@@ -4196,7 +4049,7 @@ mod tests {
                 .expect("load")
                 .wiped
         );
-        save(
+        save_state_reporting(
             &dir,
             &UserState::default(),
             &originals,
@@ -4234,9 +4087,15 @@ mod tests {
             compacted: &[],
             live: None,
         };
-        let error =
-            save_with_bigram_reporting(&dir, source, &originals, &versions(), 0, None, false)
-                .expect_err("the header write must fail");
+        let mut reporting = SaveReporting {
+            versions: &versions(),
+            open_counter: 0,
+            bigram_db: None,
+            interleaved: false,
+            baseline: None::<NoBaseline>,
+        };
+        let error = save_reporting(&dir, source, &originals, &mut reporting)
+            .expect_err("the header write must fail");
         match error {
             PersistenceError::ChunkHeaderWrite {
                 field: ChunkHeaderField::Length,
@@ -4290,7 +4149,7 @@ mod tests {
         let dir = tempdir("modes");
         let originals = originals();
         let umask = current_umask(&dir);
-        save(&dir, &state(), &originals, &versions(), 0).expect("save");
+        save_state_reporting(&dir, &state(), &originals, &versions(), 0).expect("save");
 
         let dbm_request = match oxpinyin_store::DEFAULT_STORE_DB_FORMAT {
             "BerkeleyDB" => 0o600,
@@ -4313,7 +4172,7 @@ mod tests {
             std::fs::set_permissions(dir.join(name), std::fs::Permissions::from_mode(0o640))
                 .expect("chmod");
         }
-        save(&dir, &state(), &originals, &versions(), 0).expect("save again");
+        save_state_reporting(&dir, &state(), &originals, &versions(), 0).expect("save again");
         assert_eq!(
             mode_of(&dir.join(USER_CONF)),
             0o640,
@@ -4332,14 +4191,14 @@ mod tests {
     fn the_diff_log_is_stable_across_save_cycles() {
         let dir = tempdir("stable");
         let originals = originals();
-        save(&dir, &state(), &originals, &versions(), 1).expect("save");
+        save_state_reporting(&dir, &state(), &originals, &versions(), 1).expect("save");
         let first = std::fs::read(dir.join("gb_char.dbin")).expect("log");
 
         // Load back and save again: the loaded state reproduces the same
         // bytes — the replay recomputes the same overrides the diff
         // emitted.
         let loaded = load(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
-        save(&dir, &loaded.state, &originals, &versions(), 2).expect("save 2");
+        save_state_reporting(&dir, &loaded.state, &originals, &versions(), 2).expect("save 2");
         let second = std::fs::read(dir.join("gb_char.dbin")).expect("log 2");
         assert_eq!(first, second);
 
@@ -5156,7 +5015,7 @@ mod tests {
     fn the_bigram_round_trips_through_the_user_bigram_container() {
         let dir = tempdir("bigram");
         let originals = originals();
-        save(&dir, &state(), &originals, &versions(), 1).expect("save");
+        save_state_reporting(&dir, &state(), &originals, &versions(), 1).expect("save");
 
         // Point-read one gram through the *user-bigram* seam, which is
         // where the container differs by backend: a Kyoto Cabinet
@@ -5236,7 +5095,7 @@ mod tests {
     fn hostile_profile_files_degrade_per_file() {
         let dir = tempdir("hostile");
         let originals = originals();
-        save(&dir, &state(), &originals, &versions(), 1).expect("save");
+        save_state_reporting(&dir, &state(), &originals, &versions(), 1).expect("save");
 
         // A corrupted user.bin checksum and a garbage bigram container.
         let mut chunk = std::fs::read(dir.join("user.bin")).expect("read");
@@ -5310,7 +5169,7 @@ mod tests {
     fn the_saved_records_are_backend_independent() {
         let dir = tempdir("records");
         let (state, originals) = cross_backend_state();
-        save(&dir, &state, &originals, &versions(), 1).expect("save");
+        save_state_reporting(&dir, &state, &originals, &versions(), 1).expect("save");
         let got = dump_user_dir(&dir);
         assert_eq!(
             got.trim_end(),

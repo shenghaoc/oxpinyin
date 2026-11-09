@@ -478,7 +478,7 @@ pub trait WriteStore: RawReadStore {
     /// to fall back to, has not been measured.
     ///
     /// `compact` is no longer where `pinyin_save` reaches storage,
-    /// though. `UserStore::save` still calls it, but since the libpinyin
+    /// though. `UserStore::save_reporting` still calls it, but since the libpinyin
     /// session moved into memory (#621) the store it compacts on that
     /// path is the [`WriteStore::create_in_memory`] one, which has no
     /// file. The profile `pinyin_save` writes goes out through

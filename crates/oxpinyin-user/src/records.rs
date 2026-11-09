@@ -36,14 +36,18 @@ impl RecordArena {
         }
     }
 
-    /// Appends one DBM record. The walk is ascending, so offsets stay
-    /// sorted; [`Self::finish_load`] repairs a walk that is not.
+    /// Appends one DBM record. Every producer appends a key at most once:
+    /// the user index files are key-unique containers and the in-memory
+    /// builders deduplicate by key. Order is not guaranteed; a build or walk
+    /// that did not arrive in key order calls [`Self::finish_load`] before
+    /// the arena is read.
     pub(crate) fn push_record(&mut self, key: &[u8], value: &[u8]) {
         append_record(&mut self.arena, &mut self.offsets, key, value);
     }
 
-    /// Sorts the offset vector after a walk that did not arrive in key
-    /// order.
+    /// Sorts the offset vector after a walk or a builder that did not append
+    /// in key order: an in-memory builder such as `UserIndex::from_entries`
+    /// may pass rows in any order, so the repair stays.
     pub(crate) fn finish_load(&mut self) {
         let arena = &self.arena;
         self.offsets
@@ -134,31 +138,6 @@ impl RecordArena {
         self.arena = arena;
         self.offsets = offsets;
         self.overlay.clear();
-    }
-
-    /// Every record in ascending key order: arena records with the
-    /// overlay's edits applied, plus the keys the overlay created.
-    pub(crate) fn rows(&self) -> Vec<(Vec<u8>, Vec<u8>)> {
-        let mut rows: Vec<(Vec<u8>, Vec<u8>)> = self
-            .offsets
-            .iter()
-            .map(|offset| {
-                let key = key_at(&self.arena, *offset);
-                let value = self
-                    .overlay
-                    .get(key)
-                    .cloned()
-                    .unwrap_or_else(|| value_at(&self.arena, *offset).to_vec());
-                (key.to_vec(), value)
-            })
-            .collect();
-        for (key, value) in &self.overlay {
-            if !self.contains_arena_key(key) {
-                rows.push((key.clone(), value.clone()));
-            }
-        }
-        rows.sort_by(|left, right| left.0.cmp(&right.0));
-        rows
     }
 
     /// Whether the arena, not the overlay, holds `key`.

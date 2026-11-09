@@ -778,7 +778,7 @@ Architecture — a session scratch behind the value engine:
   database guard, then the container, and moves the write generation
   before releasing the database guard. `UserState.bigram` is now the
   raw `(key, value)` rows in file order, filled by `persistence::load`
-  and written by a `persistence::save` that has no container.
+  and written by `persistence::save_state_reporting`, which has no container.
 * **The user bigram's container is backend-specific, and is not the
   system bigram's container** — the fact that produced this section's
   one real defect. On Kyoto Cabinet the *system* `bigram.db` is a

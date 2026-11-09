@@ -115,7 +115,7 @@ fn plant_header_token_log(user: &Path, file: &str) {
 /// (the marker included), so neither law's `check_format` wipes it.
 fn conforming_profile(system: &Path, user: &Path) {
     let conf = oxpinyin_runtime::TableConf::load_from_dir(system).expect("fixture table.conf");
-    persistence::save(
+    persistence::save_state_reporting(
         user,
         &persistence::UserState::default(),
         &oxpinyin_user::SystemOriginals::from(std::collections::BTreeMap::new()),

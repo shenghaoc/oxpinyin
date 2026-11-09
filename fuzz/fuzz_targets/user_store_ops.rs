@@ -356,7 +356,7 @@ fuzz_target!(|data: &[u8]| {
             }
             // save, then the dirty flag is clear
             _ => {
-                store.save().expect("save");
+                store.save_reporting().expect("save");
                 assert!(!store.is_modified(), "save clears the dirty flag");
             }
         }

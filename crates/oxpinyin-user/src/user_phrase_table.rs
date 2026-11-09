@@ -46,13 +46,6 @@ impl UserPhraseTable {
         self.records.contains_key(key)
     }
 
-    /// Every record in ascending key order: arena records with the
-    /// overlay's edits applied, plus the keys the overlay created.
-    #[cfg(test)]
-    pub(crate) fn rows(&self) -> Vec<(Vec<u8>, Vec<u8>)> {
-        self.records.rows()
-    }
-
     /// Visits every record in ascending key order, arena and overlay
     /// merged, without materialising a row vector.
     pub(crate) fn for_each_record<E>(

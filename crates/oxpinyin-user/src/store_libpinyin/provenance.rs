@@ -509,7 +509,7 @@ fn internally_overlapping_slots_survive_same_header_modify_and_reopen() {
     assert!(!removed(&store, 2));
     assert!(!appended(&store, 2));
     store.mark_modified();
-    assert!(store.save().expect("save"));
+    store.save_reporting().expect("save");
     drop(store);
     let reopened = profile.open();
     assert_eq!(reopened.system_unigram(LIBRARY | 1), Some(100));
@@ -588,7 +588,7 @@ fn earlier_modify_presence_wins_over_later_add_after_overlap() {
         );
         if !reopened {
             store.mark_modified();
-            assert!(store.save().expect("save"));
+            store.save_reporting().expect("save");
             drop(store);
             store = profile.open();
         }
