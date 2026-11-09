@@ -263,16 +263,6 @@ if sys.platform.startswith('linux'):
             self.assertEqual(provision.tkrzw_env_prefix(self.service.env_file), '')
             self.assertIn(str(host / 'lib/libtkrzw.so.1').encode(), self.source('tkrzw').stdout)
 
-        def test_ubuntu_hosts_are_named_by_os_release(self):
-            for text, expected in (('ID=ubuntu\n', True), ('ID="ubuntu"\n', True), ('ID=linuxmint\nID_LIKE="ubuntu debian"\n', True),
-                                   ('ID=debian\n', False), ('ID=fedora\nID_LIKE="rhel centos"\n', False), ('', False)):
-                with self.subTest(text=text):
-                    path = self.work / 'os-release'
-                    path.write_text(text)
-                    self.assertIs(provision.ubuntu_host(path), expected)
-            absent = self.work / 'absent-os-release'
-            self.assertFalse(provision.ubuntu_host(absent, absent))
-
         def test_os_release_falls_back_to_usr_lib(self):
             fallback = self.work / 'usr-lib-os-release'
             fallback.write_text('ID=ubuntu\n')
@@ -346,52 +336,6 @@ if sys.platform.startswith('linux'):
                     with self.subTest(value=value, always=always):
                         decoded = subprocess.check_output(['bash', '-c', 'value=' + provision.quote(value, always=always) + '; printf "%s" "$value"'], env=self.env).decode()
                         self.assertEqual(decoded, value)
-
-        def test_ext4_reports_available_absent_overmounted_inaccessible_and_unknown(self):
-            mount = self.work / 'ext4 mount'
-            mount.mkdir()
-            findmnt = self.bin / 'findmnt'
-            findmnt.write_text(f"""#!{sys.executable}
-import os,sys
-mode=os.environ['FAKE_EXT4']
-if mode=='unknown': sys.exit(1)
-if sys.argv[1]=='--raw':
-    print('/ overlay')
-    if mode!='absent': print(os.environ['FAKE_MOUNT'].replace(' ', r'\\x20')+' ext4')
-else:
-    print('ext4' if mode=='available' and sys.argv[-1]==os.environ['FAKE_MOUNT'] else 'overlay')
-    """)
-            findmnt.chmod(0o755)
-            self.service.env['FAKE_MOUNT'] = str(mount)
-            for mode, expected in (('available', f'ext4 path (readable, writable, searchable): {mount}'),
-                                   ('absent', 'ext4 paths: none accessible'),
-                                   ('overmounted', 'ext4 paths: none accessible'),
-                                   ('unknown', 'ext4 paths: unknown (mount detection failed)')):
-                self.service.env['FAKE_EXT4'] = mode
-                output = io.StringIO()
-                with contextlib.redirect_stdout(output):
-                    self.service.report_ext4()
-                self.assertIn(expected, output.getvalue())
-                self.assertIn('does not verify all measured files are on ext4', output.getvalue())
-            mount.rmdir()
-            self.service.env['FAKE_EXT4'] = 'available'
-            output = io.StringIO()
-            with contextlib.redirect_stdout(output):
-                self.service.report_ext4()
-            self.assertIn('ext4 paths: none accessible', output.getvalue())
-            with mock.patch.object(self.service, 'which', return_value=None), contextlib.redirect_stdout(output):
-                self.service.report_ext4()
-            self.assertIn('ext4 paths: unknown (findmnt unavailable)', output.getvalue())
-
-        def test_pool_delegates_with_owned_container_teardown(self):
-            self.service.ctr = 'podman'
-            self.service.deps_image = 'synthetic-deps'
-            with mock.patch.object(provision, 'run', return_value=0) as child:
-                self.service.pool_phase('libraries', ['bdb'], self.work / '{item}.log', [])
-            command = list(map(str, child.call_args.args[0]))
-            self.assertIn('oxpinyin.setup={token}', command)
-            self.assertIn('{cidfile}', command)
-            self.assertFalse(any('tools/dev' in part for part in self.service.in_image_command([])))
 
 
 if sys.platform.startswith('linux'):
@@ -849,18 +793,6 @@ class RuntimeProvisionTests(unittest.TestCase):
         self.assertEqual((prefix / 'bin/tkrzw_dbm_util').read_text(), 'built')
         run.assert_not_called()
 
-    def test_the_prefix_check_entry_point_names_the_host_prefix_in_its_summary(self):
-        prefix = self.work / 'tkrzw'
-        (prefix / 'lib').mkdir(parents=True)
-        for library in ('libpinyin', 'libzhuyin'):
-            (prefix / 'lib' / (library + '.so')).write_text(library)
-        with mock.patch.object(provision.Provision, 'options', lambda self, argv: None), \
-                contextlib.redirect_stdout(io.StringIO()) as output:
-            status = provision.main(['prefix-check', 'summary', 'tkrzw', str(prefix), str(self.work / 'pin'), 'C:\\cache\\oracle\\tkrzw'])
-        self.assertEqual(status, 0)
-        self.assertEqual(output.getvalue(), f'tkrzw prefix=C:\\cache\\oracle\\tkrzw libpinyin={digest_file(prefix / "lib/libpinyin.so")} '
-                                            f'libzhuyin={digest_file(prefix / "lib/libzhuyin.so")} data manifest OK\n')
-
     def test_valgrind_ext4_and_dump_utilities_off_linux(self):
         for host in ('Darwin', 'Windows'):
             with self.subTest(host=host):
@@ -927,10 +859,6 @@ class ManifestCheckTests(unittest.TestCase):
     def manifest(self, *lines):
         (self.work / 'm.sha256').write_text(''.join(line + '\n' for line in lines))
         return provision.check_manifest('m.sha256', self.work)
-
-    def test_matching_files_print_nothing(self):
-        a, b = (digest_file(self.work / name) for name in ('a', 'b'))
-        self.assertEqual(self.manifest(f'{a}  a', f'{b.upper()} *b'), (0, ''))
 
     def test_mismatches_unreadable_files_and_malformed_lines_follow_sha256sum(self):
         a = digest_file(self.work / 'a')

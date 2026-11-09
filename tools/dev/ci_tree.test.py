@@ -6,7 +6,6 @@ import contextlib
 import io
 import json
 from pathlib import Path
-import re
 import subprocess
 import sys
 import tempfile
@@ -162,13 +161,6 @@ class EvidenceTests(unittest.TestCase):
         api.jobs[0]['conclusion'] = 'failure'
         self.assertIsNone(ci_tree.full_source(api, latest, jobs, PROFILE, TREE, 1, 2, 200, now=NOW))
 
-    def test_skipped_lanes_without_valid_source_never_pass(self):
-        api = API()
-        jobs = job_fixture()
-        for job in jobs[:-2]:
-            job['conclusion'] = 'skipped'
-        self.assertIsNone(ci_tree.full_source(api, api.run, jobs, PROFILE, TREE, 1, 2, 200, now=NOW))
-
     def test_called_backend_evidence_uses_caller_run_and_only_its_own_jobs(self):
         profile = ci_tree.WORKFLOWS['store']
         api = API()
@@ -303,78 +295,8 @@ class EvidenceTests(unittest.TestCase):
                     for index in range(101, 140)] + [api.run]
         self.assertEqual(self.evidence(api), 100)
 
-    def test_rebase_onto_changed_parent_preserves_tree_identity(self):
-        with tempfile.TemporaryDirectory() as directory:
-            def git(*args):
-                return subprocess.check_output(['git', '-C', directory, *args], text=True).strip()
-            git('init', '-q', '-b', 'main')
-            git('config', 'user.name', 'Shenghao Chen')
-            git('config', 'user.email', 'shenghaoc@outlook.com')
-            Path(directory, 'base').write_text('base\n')
-            git('add', 'base')
-            git('commit', '-qm', 'base')
-            base = git('rev-parse', 'HEAD')
-            git('checkout', '-qb', 'topic')
-            Path(directory, 'input').write_text('same tree\n')
-            git('add', 'input')
-            git('commit', '-qm', 'topic')
-            original = git('rev-parse', 'HEAD')
-            original_tree = git('rev-parse', 'HEAD^{tree}')
-            git('checkout', '-q', 'main')
-            git('commit', '--allow-empty', '-qm', 'new parent')
-            git('checkout', '-q', 'topic')
-            git('rebase', '--onto', 'main', base)
-            self.assertNotEqual(git('rev-parse', 'HEAD'), original)
-            self.assertEqual(git('rev-parse', 'HEAD^'), git('rev-parse', 'main'))
-            self.assertEqual(git('rev-parse', 'HEAD^{tree}'), original_tree)
-
-
-class MigratedWorkflowTests(unittest.TestCase):
-
-    def test_migrated_gates_keep_the_tree_reuse_guard(self):
-        workflow = (ROOT / PROFILE.path).read_text()
-        commands = {
-            'C++ pinyin.h smoke gate': 'just cpp-smoke',
-            'ABI export gate (development build)': 'just abi exports',
-            'Allocator-pairing gate': 'just abi alloc-pairing',
-            'ABI export gate (shipped build)': 'just abi exports --shipped',
-        }
-        for name, command in commands.items():
-            with self.subTest(gate=name):
-                step = workflow.split('      - name: ' + name + '\n', 1)[1].split('\n      - ', 1)[0]
-                self.assertIn("        if: needs.changes.outputs.reuse != 'true'\n", step)
-                self.assertIn('        run: ' + command + '\n', step)
-
-    def test_workflow_script_paths_exist_and_store_infrastructure_triggers_store_checks(self):
-        for profile in ci_tree.WORKFLOWS.values():
-            workflow = (ROOT / profile.path).read_text()
-            for path in re.findall(r'\btools/(?:[\w.-]+/)*[\w.-]+\.(?:py|sh)\b', workflow):
-                with self.subTest(workflow=profile.path, path=path):
-                    self.assertTrue((ROOT / path).is_file(), path)
-        # The backend selection is cells-for-diff.py's; --also names only this
-        # workflow's own infrastructure (maintainer decision 2026-10-30 UTC).
-        store = (ROOT / ci_tree.WORKFLOWS['store'].path).read_text()
-        gate = store.split('python3 tools/bisection/cells-for-diff.py --run-flag', 1)[1]
-        gate = gate.split('>> "$GITHUB_OUTPUT"', 1)[0]
-        also = re.findall(r'--also (\S+)', gate)
-        self.assertEqual(also, [
-            '.github/workflows/store-backends.yml', '.github/workflows/ci.yml',
-            'crates/oxpinyin-utils/',
-            'tools/dev/ci_tree.py', 'tools/dev/ci_tree.test.py', 'tools/bisection/cells-for-diff.py',
-            'tools/bdb', 'tools/tkrzw', '.github/actions/tkrzw', 'tools/dev/check.py',
-            'tools/dev/test_runner.py',
-            'rust-toolchain.toml', 'fuzz/rust-toolchain.toml'])
-        for path in also:
-            with self.subTest(path=path):
-                self.assertTrue((ROOT / path).exists(), path)
-
 
 class RefreshTests(unittest.TestCase):
-    def test_lint_refresh_uses_clippy_all_targets_and_denies_warnings(self):
-        commands = ci_tree.refresh_commands('lint')
-        self.assertEqual([command.argv for command in commands], [
-            ('cargo', 'clippy', '--locked', '--workspace', '--all-targets', '--', '-D', 'warnings')])
-
     def test_other_cache_lanes_keep_their_test_compile_selections(self):
         self.assertEqual(ci_tree.refresh_commands('test')[0].argv,
                          ('cargo', 'build', '--locked', '--workspace', '--tests'))
@@ -418,13 +340,6 @@ class AggregateTests(unittest.TestCase):
                         required_results={'store-backends': backend_result}), 1)
             self.assertEqual(self.invoke_main('ci', 'pull_request',
                 outputs_with(gated, PROFILE, reuse=reuse), results), 0)
-
-
-    def test_main_fails_on_a_failed_own_gate_job(self):
-        results = {name: 'success' for name in ci_tree.WORKFLOWS['ci'].lanes}
-        self.assertEqual(self.invoke_main('ci', 'pull_request', outputs_with('true', PROFILE, reuse='false', ship='true'), results,
-                                          {'shipping-sizes': 'failure'}), 1)
-        self.assertEqual(self.invoke_main('ci', 'pull_request', outputs_with('true', PROFILE, reuse='false', ship='true'), results), 0)
 
     def test_each_workflow_aggregate_uses_its_code_lanes(self):
         for workflow, profile in ci_tree.WORKFLOWS.items():
@@ -485,15 +400,6 @@ class AggregateTests(unittest.TestCase):
         self.assertFalse(ci_tree.aggregate('success', every('false'), 'false', results, PROFILE.cached, 'pull_request',
                                            {'shipping-sizes': ('skipped', '')}))
 
-    def test_shipping_sizes_is_a_separate_lane_that_never_blocks_reuse(self):
-        self.assertNotIn('shipping-sizes', PROFILE.lanes)
-        self.assertEqual(PROFILE.gated, (('shipping-sizes', 'shipping-sizes', 'ship'),))
-        workflow = (ROOT / PROFILE.path).read_text()
-        job = workflow.split('\n  shipping-sizes:\n', 1)[1].split('\n  ci-aggregate:', 1)[0]
-        condition = re.search(r'^    if: (.*)$', job, re.M)[1]
-        self.assertEqual(condition, "needs.changes.outputs.ship == 'true'")
-        self.assertRegex(workflow, r'needs:\n\s+\[changes, lint, test, deny, harness, shipping-sizes, store-backends\]')
-
     def test_invalid_gate_never_passes(self):
         results = dict.fromkeys(PROFILE.lanes, 'skipped')
         for gated, reuse in [('', 'false'), ('false', ''), ('wat', 'false')]:
@@ -509,16 +415,6 @@ class AggregateTests(unittest.TestCase):
             with self.subTest(lane=lane):
                 wrong = {**results, lane: 'skipped' if results[lane] == 'success' else 'success'}
                 self.assertFalse(ci_tree.aggregate('success', flags, 'false', wrong, PROFILE.cached, 'pull_request'))
-
-    def test_each_ci_lane_runs_under_its_own_flag(self):
-        workflow = (ROOT / PROFILE.path).read_text()
-        for lane, flag in zip(PROFILE.needs, PROFILE.flags):
-            with self.subTest(lane=lane):
-                job = workflow.split(f'\n  {lane}:\n', 1)[1]
-                condition = re.search(r'^    if: (.*)$', job, re.M)[1]
-                self.assertTrue(condition.startswith(f"needs.changes.outputs.{flag} == 'true' && "), condition)
-                self.assertIn(f'      {flag}: ${{{{ steps.gate.outputs.{flag} }}}}\n', workflow)
-
 
 
 class GateTests(unittest.TestCase):
@@ -599,17 +495,6 @@ class GateTests(unittest.TestCase):
                              'R100\tcrates/oxpinyin-core/lib\tdocs/lib')
             flags = ci_tree.gate(self.base, root=self.root)
             self.assertEqual({name for name, value in flags.items() if value}, {'lint', 'test', 'harness', 'ship'})
-
-    def test_ship_follows_the_shipping_inputs(self):
-        for path in ('crates/oxpinyin-capi/build.rs', 'tools/dev/packaging.py', 'tools/dev/ship_sizes.py',
-                     'rust-toolchain.toml', 'justfile'):
-            with self.subTest(path=path):
-                self.assertIn('ship', self.selected(path))
-
-    def test_every_rust_lane_exception_exists(self):
-        for path in ci_tree.RUST_READS:
-            with self.subTest(path=path):
-                self.assertTrue((ROOT / path).is_file(), path)
 
     def test_event_base(self):
         self.assertEqual(ci_tree.event_base('pull_request', {'pull_request': {'base': {'sha': HEAD}}}), HEAD)

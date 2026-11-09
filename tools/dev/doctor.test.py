@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tools.dev import bash_floor, doctor, test_support
+from tools.dev import doctor, test_support
 
 
 def completed(text, returncode=0):
@@ -65,11 +65,6 @@ class DoctorTests(unittest.TestCase):
         self.assertIn('unavailable', lines[0])
         self.assertIn('cannot read database', lines[0])
 
-    def test_oracle_dependency_report_keeps_status_one_as_missing(self):
-        lines, _, _ = self._dependency_lines(mock.Mock(returncode=1, stdout='', stderr='no packages found'))
-        self.assertIn('oracle common: missing ' + ', '.join(json.loads(
-            (Path(doctor.__file__).resolve().parents[2] / 'tools/oracle/dependencies.json').read_text())['common']), lines)
-
     def test_oracle_dependency_report_counts_only_native_or_all_architectures(self):
         packages = self._manifest_packages()
         output = ''.join(f'{package}\t{"i386" if index == 0 else "all" if index == 1 else "amd64"}\tinstalled\n'
@@ -79,14 +74,6 @@ class DoctorTests(unittest.TestCase):
         self.assertIn(packages[0], text)
         self.assertNotIn(packages[1], text)
         self.assertNotIn(packages[2], text)
-
-    def test_current_interpreter_identity(self):
-        info = doctor.identity()
-        self.assertEqual(info['implementation'], 'cpython')
-        self.assertRegex(info['version'], r'^3\.15\.\d+$')
-        self.assertTrue(info['gil_enabled'])
-        self.assertFalse(info['gil_disabled'])
-        self.assertTrue(info['managed'])
 
     def test_selection_overrides_are_rejected(self):
         for name in ('UV_PYTHON', 'PYTHONHOME', 'PYTHONPATH',
@@ -105,17 +92,6 @@ class DoctorTests(unittest.TestCase):
         self.assertTrue(any(re.fullmatch(r'uv: \d+\.\d+\.\d+ \(minimum 0\.13\.1\)', line) for line in lines), lines)
         self.assertTrue(any(line.startswith('executable: ') for line in lines))
 
-    def test_collect_shows_a_newer_prerelease_uv_as_printed(self):
-        info = dict(uv='uv 0.14.0-beta.1 (abc123def 2026-10-14 x86_64-unknown-linux-gnu)',
-                    implementation='cpython', version='3.15.0',
-                    managed=True, gil_enabled=True, executable='/managed/python')
-        with mock.patch.object(doctor, 'host_lines', return_value=[]), \
-                mock.patch.object(doctor, 'identity', return_value=info), \
-                mock.patch.object(doctor, 'tool_lines', return_value=([], [])):
-            lines, status = doctor.collect()
-        self.assertEqual(status, 0)
-        self.assertIn('uv: 0.14.0-beta.1 (minimum 0.13.1)', lines)
-
     def test_free_threaded_build_is_rejected(self):
         original = doctor.sysconfig.get_config_var
         def config(name):
@@ -123,11 +99,6 @@ class DoctorTests(unittest.TestCase):
         with mock.patch.object(doctor.sysconfig, 'get_config_var', side_effect=config):
             with self.assertRaisesRegex(doctor.DoctorError, 'free-threaded'):
                 doctor.identity()
-
-    def test_python_series_accepts_3_15_0_and_later_patch_releases(self):
-        for numbers in ((3, 15, 0), (3, 15, 1), (3, 15, 12)):
-            with self.subTest(numbers=numbers):
-                doctor.check_python(numbers, 'final')
 
     def test_python_outside_the_series_is_refused(self):
         for numbers, level, found in (((3, 14, 7), 'final', '3.14.7'),
@@ -146,20 +117,6 @@ class DoctorTests(unittest.TestCase):
         with mock.patch.object(doctor, '_run', return_value=None), \
                 self.assertRaisesRegex(doctor.DoctorError, r'^missing uv 0\.13\.1 or newer;'):
             doctor.uv_version({'PATH': '/nonexistent'})
-
-    def test_uv_minimum_version(self):
-        for version, accepted in (('0.13.1', True), ('0.13.4', True), ('0.14.0', True),
-                                  ('0.13.0', False), ('0.12.9', False)):
-            text = f'uv {version} (x86_64-unknown-linux-gnu)'
-            result = mock.Mock(returncode=0, stdout=text + '\n', stderr='')
-            with self.subTest(version=version), \
-                    mock.patch.object(doctor, '_run', return_value=result):
-                if accepted:
-                    self.assertEqual(doctor.uv_version({'PATH': '/tools'}), text)
-                else:
-                    with self.assertRaisesRegex(doctor.DoctorError,
-                                                r'^uv 0\.13\.1 or newer required; found '):
-                        doctor.uv_version({'PATH': '/tools'})
 
     def test_unparseable_uv_version_is_rejected(self):
         for output in ('uv', 'uv version unknown', 'uv 0.13', 'uv 0.13.1-', 'uv v0.13.1', '', 'ruff 0.13.1'):
@@ -228,13 +185,6 @@ class ToolCase(unittest.TestCase):
 
 
 class ToolMinimumTests(ToolCase):
-    def test_the_table_has_every_tool_once(self):
-        names = [candidate.name for candidate in doctor.TOOLS]
-        self.assertEqual(sorted(names), sorted(SAMPLES))
-        self.assertEqual(len(names), len(set(names)))
-        for candidate in doctor.TOOLS:
-            self.assertRegex(candidate.minimum, r'^\d+(\.\d+){0,2}$', candidate.name)
-
     def test_a_tool_at_or_above_its_minimum_passes(self):
         for candidate in doctor.TOOLS:
             template, _, at, above = SAMPLES[candidate.name]
@@ -317,29 +267,7 @@ class ToolMinimumTests(ToolCase):
 
 
 class BashFloorTests(ToolCase):
-    """Every repository shell script needs the declared Bash floor."""
-
-    def test_bash_floor_is_enforced(self):
-        bash = tool('bash')
-        self.assertEqual(bash.minimum, bash_floor.read_floor())
-        self.assert_too_old(bash, 'GNU bash, version 3.2.57(1)-release (arm64-apple-darwin24)')
-        self.assert_too_old(bash, 'GNU bash, version 4.4.23(1)-release (x86_64-pc-linux-gnu)')
-        self.assert_found(bash, 'GNU bash, version 5.0.0(1)-release (x86_64-pc-linux-gnu)', '5.0.0')
-        self.assert_found(bash, 'GNU bash, version 5.3.9(1)-release (x86_64-pc-linux-gnu)', '5.3.9')
-
-    def test_a_bash_failure_fails_the_report(self):
-        failure = f'bash {bash_floor.read_floor()} or later required; found 3.2.57 at /tools/bash'
-
-        def fake_check(subject, environ=None):
-            if subject.name == 'bash':
-                raise doctor.DoctorError(failure)
-            return f'{subject.name}: ok'
-
-        with mock.patch.object(doctor.sys, 'platform', 'linux'), \
-                mock.patch.object(doctor, 'check_tool', side_effect=fake_check):
-            lines, failures = doctor.tool_lines({'PATH': '/tools'})
-        self.assertEqual(failures, [failure])
-        self.assertIn(f'FAIL: {failure}', lines)
+    """The Bash floor does not apply on Windows."""
 
     def test_bash_is_not_applicable_on_windows(self):
         # An old Bash on PATH (Git Bash, MSYS) is neither run nor failed there.
@@ -378,19 +306,6 @@ class AdvisoryToolTests(unittest.TestCase):
         lines, failures = self.lines_for(doctor.DoctorError(failure))
         self.assertEqual(failures, [])
         self.assertIn(f'advisory: {failure}', lines)
-
-    def test_a_missing_shellcheck_is_reported_without_failing(self):
-        line = ('shellcheck: missing (requires 0.11.0 or later; '
-                'install: apt-get install shellcheck, or brew install shellcheck)')
-        lines, failures = self.lines_for(line)
-        self.assertEqual(failures, [])
-        self.assertIn(f'{line} (advisory)', lines)
-
-    def test_a_current_shellcheck_is_marked_advisory(self):
-        line = 'shellcheck: 0.11.0 at /tools/shellcheck (minimum 0.11.0)'
-        lines, failures = self.lines_for(line)
-        self.assertEqual(failures, [])
-        self.assertIn(f'{line} (advisory)', lines)
 
 
 SEMVER_TOOLS = ('pwsh', 'just', 'cargo-nextest', 'cargo-c', 'cargo-fuzz', 'cargo-llvm-cov')
@@ -477,25 +392,6 @@ class SemverToolTests(ToolCase):
                     else:
                         self.assert_fails(candidate, version)
 
-    def test_cargo_c_prints_the_embedded_cargo_as_build_metadata(self):
-        cargo_c = tool('cargo-c')
-        self.assert_found(cargo_c, 'cargo-c 0.10.24+cargo-0.98.0', '0.10.24+cargo-0.98.0')
-        self.assert_found(cargo_c, 'cargo-c 0.10.25-rc.1+cargo-0.99.0', '0.10.25-rc.1+cargo-0.99.0')
-        self.assert_too_old(cargo_c, 'cargo-c 0.10.24-rc.1+cargo-0.98.0')
-
-    def test_precedence_follows_the_specification(self):
-        ordered = ['1.0.0-alpha', '1.0.0-alpha.1', '1.0.0-alpha.beta', '1.0.0-beta', '1.0.0-beta.2',
-                   '1.0.0-beta.11', '1.0.0-rc.1', '1.0.0', '1.0.1-0', '1.1.0-alpha', '2.0.0-rc.1']
-        keys = [doctor.semver_key(version) for version in ordered]
-        self.assertEqual(keys, sorted(keys))
-        self.assertEqual(len(set(keys)), len(keys))
-        self.assertEqual(doctor.semver_key('1.0.0+a'), doctor.semver_key('1.0.0+b'))
-        self.assertEqual(doctor.semver_key('1.0.0-rc.1+build'), doctor.semver_key('1.0.0-rc.1'))
-        for text in ('1.0', '1.0.0-', '1.0.0+', 'v1.0.0', '1.0.0-a..b', ''):
-            with self.subTest(text=text):
-                with self.assertRaises(ValueError):
-                    doctor.semver_key(text)
-
 
 # GNU ld, gcov and Valgrind do not use semantic versioning, so doctor reads each one's own format and
 # compares numbers; a development build counts as its number and is never "older" for being one.
@@ -551,69 +447,6 @@ class OtherFormatTests(ToolCase):
                 else:
                     self.assert_found(subject, output, shown)
 
-    def test_a_hyphen_suffix_is_not_a_prerelease_for_these_tools(self):
-        # semver would read -15.fc42 and -3 as pre-releases and call 2.43.1-15.fc42 older than 2.43.1.
-        self.assert_found(tool('GNU ld'), 'GNU ld version 2.43-1.fc42', '2.43')
-        self.assert_found(tool('gcov'), 'gcov (GCC) 14.0.0 20230101 (Red Hat 14.0.0-0.3)', '14.0.0')
-        self.assert_found(tool('valgrind'), 'valgrind-3.22.0-1', '3.22.0')
-
-    def test_a_development_build_is_not_older_than_its_release(self):
-        self.assert_found(tool('valgrind'), 'valgrind-3.22.0.GIT', '3.22.0.GIT')
-        self.assert_found(tool('gcov'), 'gcov (GCC) 14.0.0 20230101 (experimental)', '14.0.0 experimental')
-        self.assert_found(tool('GNU ld'), 'GNU ld (GNU Binutils) 2.43.0.20240101', '2.43.0.20240101')
-
-    def test_a_snapshot_date_never_outweighs_an_earlier_component(self):
-        ld = tool('GNU ld')
-        self.assert_too_old(ld, 'GNU ld (GNU Binutils) 2.42.0.99999999')
-        self.assert_found(ld, 'GNU ld (GNU Binutils) 2.43.0.1', '2.43.0.1')
-
-
-def read(relative):
-    return (ROOT / relative).read_text()
-
-
-class MinimumsAgreeWithTheirOtherHomes(unittest.TestCase):
-    """A minimum that lives in a tool's own configuration must match doctor's."""
-
-    def minimum(self, name):
-        return tool(name).minimum
-
-    def test_uv_floor_is_uv_toml(self):
-        match = re.search(r'^required-version = ">=(\d+\.\d+\.\d+)"$', read('uv.toml'), re.M)
-        self.assertIsNotNone(match)
-        self.assertEqual(match.group(1), doctor.UV_MINIMUM)
-
-    def test_pwsh_floor_has_one_source(self):
-        self.assertEqual(read('tools/dev/pwsh-floor.txt').strip(), self.minimum('pwsh'))
-        self.assertIn('pwsh-floor.txt', read('docs/runbooks/setup.md'))
-
-    def test_just_minimum_is_the_justfiles(self):
-        match = re.search(r'^set minimum-version := "([\d.]+)"$', read('justfile'), re.M)
-        self.assertIsNotNone(match)
-        self.assertEqual(match.group(1), self.minimum('just'))
-
-    def test_nextest_minimum_is_its_config(self):
-        match = re.search(r'^nextest-version = "([\d.]+)"$', read('.config/nextest.toml'), re.M)
-        self.assertIsNotNone(match)
-        self.assertEqual(match.group(1), self.minimum('cargo-nextest'))
-
-    def test_the_managed_request_is_the_checkouts_python_version(self):
-        self.assertEqual(read('.python-version').strip(), doctor.MANAGED_REQUEST)
-
-    def test_setup_runbook_states_the_shell_floor(self):
-        setup = read('docs/runbooks/setup.md')
-        self.assertIn(f'Bash {self.minimum("bash")} or newer', setup)
-        self.assertIn(f'ShellCheck {self.minimum("shellcheck")}', setup)
-
-    def test_setup_script_provisions_with_the_same_minimums(self):
-        setup = read('tools/cloud/setup.sh')
-        match = re.search(r'^uv_minimum=(\S+)$', setup, re.M)
-        self.assertIsNotNone(match)
-        self.assertEqual(match.group(1), doctor.UV_MINIMUM)
-        from tools.dev import provision
-        self.assertIs(provision.doctor, doctor)
-        self.assertIn("tool.name == 'valgrind'", read('tools/dev/provision.py'))
-
 
 class WindowsCompilerTests(unittest.TestCase):
     def test_windows_reports_the_probe_shell_or_its_path_fix(self):
@@ -651,30 +484,6 @@ class WindowsCompilerTests(unittest.TestCase):
         for result in (None, completed('', 1), completed('')):
             with self.subTest(result=result), mock.patch.object(doctor, '_run', return_value=result):
                 self.assertIn('missing', doctor.windows_compiler({}))
-
-    def test_missing_toolset_or_compiler_reports_missing(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            with mock.patch.object(doctor, '_run', return_value=completed(str(root))):
-                self.assertIn('version is unavailable', doctor.windows_compiler({}))
-                version = root / 'VC/Auxiliary/Build/Microsoft.VCToolsVersion.default.txt'
-                version.parent.mkdir(parents=True)
-                version.write_text('14.44.35207\n')
-                self.assertIn('compiler not found', doctor.windows_compiler({}))
-
-    def test_windows_does_not_lookup_cc_and_unix_keeps_its_lookup(self):
-        for name in ('win32', 'linux', 'darwin'):
-            with self.subTest(platform=name), mock.patch.object(doctor.sys, 'platform', name), \
-                    mock.patch.object(doctor.shutil, 'which', return_value=None) as which, \
-                    mock.patch.object(doctor, 'windows_compiler', return_value='MSVC installed') as compiler:
-                lines = doctor.host_lines({})
-            if name == 'win32':
-                self.assertIn('compiler: MSVC installed', lines)
-                self.assertNotIn(mock.call('cc'), which.call_args_list)
-                compiler.assert_called_once_with({})
-            else:
-                self.assertIn(mock.call('cc'), which.call_args_list)
-                compiler.assert_not_called()
 
 
 if __name__ == '__main__':

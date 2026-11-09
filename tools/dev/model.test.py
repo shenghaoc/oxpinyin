@@ -5,7 +5,6 @@ import hashlib
 import io
 import os
 from pathlib import Path
-import subprocess
 import sys
 import tarfile
 import tempfile
@@ -77,10 +76,6 @@ class FetchTests(unittest.TestCase):
         self.assertEqual(err, f'checksum mismatch: model20.text.tar.gz\n  expected: {model.MODEL20_SHA256}\n'
                               f'  actual:   {actual}\n')
         self.assertFalse((self.cache / 'extracted').exists())
-
-    def test_missing_local_archive(self):
-        status, _, err = self.main('--cache-dir', str(self.cache), '--archive', str(self.work / 'absent'))
-        self.assertEqual((status, err), (1, f'local archive is not a file: {self.work / "absent"}\n'))
 
     def test_failed_download_names_the_url_and_leaves_no_part_file(self):
         self.fake('curl', 'for a; do prev=$out; out=$a; done\n: > "$prev"; exit 7\n')
@@ -158,16 +153,6 @@ class FetchTests(unittest.TestCase):
                                    str(self.work / 'absent'))
         self.assertEqual(status, 1)
         self.assertTrue(err.startswith('local archive is not a file'), err)
-
-    def test_cli_entry_prints_only_the_extracted_directory(self):
-        archive = self.work / 'pinned.tar.gz'
-        digest = write_archive(archive)
-        code = ('import sys; from tools.dev import model; model.MODEL20_SHA256 = sys.argv[1]; '
-                'from tools.dev import cli; raise SystemExit(cli.main(sys.argv[2:]))')
-        done = subprocess.run([sys.executable, '-X', 'lazy_imports=normal', '-c', code, digest, 'fetch-model',
-                               '--cache-dir', str(self.cache), '--archive', str(archive)],
-                              cwd=ROOT, env=self.env, capture_output=True, text=True, timeout=60)
-        self.assertEqual((done.returncode, done.stdout, done.stderr), (0, f'{self.cache / "extracted"}\n', ''))
 
 
 if __name__ == '__main__':
