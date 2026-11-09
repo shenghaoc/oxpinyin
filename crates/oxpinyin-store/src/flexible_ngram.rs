@@ -72,8 +72,11 @@
 //! [`FlexibleBigram::get_array_header`] returns
 //! [`StoreError::ShortArrayHeader`]. It does no work before that point, as
 //! the pin's read does none, and the K-mixture tools call
-//! `std::process::abort()` on it. A failing cursor walk in `get_all_items`
-//! prints the pin's
+//! `std::process::abort()` on it. [`FlexibleBigram::load`] returns the same
+//! error for such a value. The pin loads that value and later reads outside
+//! it, and the tools report it as a store error (class (b),
+//! `eio-flexible-bigram-malformed-records.md`). A failing cursor walk in
+//! `get_all_items` prints the pin's
 //! `training db error, exit!` (no newline) to stderr and exits with the
 //! `EIO` status (`flexible_ngram_bdb.h:279-286`) — the error cannot be
 //! recovered in the pin either.
@@ -438,14 +441,36 @@ where
     ///
     /// # Errors
     ///
-    /// Returns [`StoreError`] when the record read fails or the stored
-    /// value is not a whole pin single gram.
+    /// Returns [`StoreError::ShortArrayHeader`] when the stored value is
+    /// shorter than the array header. The pin's `load` succeeds on it and
+    /// reads outside the record later (`flexible_single_gram.h:88-105`,
+    /// `:232-257`, `:300-306`). Returns another [`StoreError`] when the
+    /// record read fails or the value's item tail is not whole.
     pub fn load(&self, token: u32) -> Result<Option<SpecGram<S>>, StoreError> {
         let Some(value) = self.read_gram(&token.to_ne_bytes())? else {
             return Ok(None);
         };
         let (header, items) = decode_value(&value)?;
         Ok(Some(SingleGram::from_parts(header, items)))
+    }
+
+    /// Copy `source`'s stored value of `token` into this container unchanged:
+    /// the pin's `load` of the source followed by `store` of the gram it
+    /// loaded, which writes the loaded bytes back without decoding them
+    /// (`merge_k_mixture_model.cpp:142-146` at 074a2219). This holds for a
+    /// value the gram types cannot decode, such as one shorter than the
+    /// array header. `false` when `source` has no row or no object, or this
+    /// handle is closed or read-only.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the source read or the write fails.
+    pub fn copy_single_gram(&self, token: u32, source: &Self) -> Result<bool, StoreError> {
+        let key = token.to_ne_bytes();
+        let Some(value) = source.read_gram(&key)? else {
+            return Ok(false);
+        };
+        self.write_value(&key, &value)
     }
 
     /// Store one single gram; `false` when the handle is closed or
@@ -758,13 +783,18 @@ fn encode_value<H: FixedRecord, I: FixedRecord>(
 }
 
 /// [`encode_value`]'s inverse, with the pin's length check made explicit so
-/// a truncated record is a `Result` instead of an out-of-bounds read.
+/// a truncated record is a `Result` instead of an out-of-bounds read: a
+/// value shorter than the header is [`StoreError::ShortArrayHeader`], and a
+/// partial item tail is a backend error.
 fn decode_value<H: FixedRecord, I: FixedRecord>(
     value: &[u8],
 ) -> Result<(H, Vec<ArrayItemWithToken<I>>), StoreError> {
     let header_len = H::LEN;
     let item_len = TOKEN_LEN + I::LEN;
-    if value.len() < header_len || !(value.len() - header_len).is_multiple_of(item_len) {
+    if value.len() < header_len {
+        return Err(StoreError::ShortArrayHeader);
+    }
+    if !(value.len() - header_len).is_multiple_of(item_len) {
         return Err(StoreError::Backend(BackendError::from(format!(
             "flexible bigram value is {} bytes: a {header_len}-byte header plus whole \
              {item_len}-byte item records expected",
@@ -1069,9 +1099,21 @@ mod tests {
 
     #[test]
     fn a_truncated_single_gram_is_refused_by_length() {
-        for value in [&[][..], &[0u8; 7][..], &[0u8; 9][..], &[0u8; 24][..]] {
+        for value in [&[][..], &[0u8; 7][..]] {
             assert!(
-                super::decode_value::<Header, Item>(value).is_err(),
+                matches!(
+                    super::decode_value::<Header, Item>(value),
+                    Err(StoreError::ShortArrayHeader)
+                ),
+                "{value:?}"
+            );
+        }
+        for value in [&[0u8; 9][..], &[0u8; 24][..]] {
+            assert!(
+                matches!(
+                    super::decode_value::<Header, Item>(value),
+                    Err(StoreError::Backend(_))
+                ),
                 "{value:?}"
             );
         }
