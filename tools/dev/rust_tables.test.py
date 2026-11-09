@@ -35,7 +35,7 @@ class RustTablesTests(unittest.TestCase):
             for name, content in self.outputs.items():
                 path = root / name
                 path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(content, encoding='utf-8')
+                path.write_text(content, encoding='utf-8', newline='\n')
             path = root / 'crates/oxpinyin-chewing/src/content_table_source.rs'
             original = path.read_text()
             # Named mutation: content-ni-initial changes the packed parser key.
@@ -44,14 +44,16 @@ class RustTablesTests(unittest.TestCase):
             start = original.index('pinyin: "ni",')
             altered = original[:start] + original[start:].replace('initial: 11,', 'initial: 1,', 1)
             self.assertNotEqual(altered, original)
-            path.write_text(altered)
+            path.write_text(altered, newline='\n')
             before = path.stat().st_mtime_ns
             with contextlib.redirect_stderr(io.StringIO()) as errors:
                 self.assertEqual(rust_tables.regenerate(check=True, root=root), 1)
-            self.assertIn(str(path.relative_to(root)), errors.getvalue())
+            key = path.relative_to(root).as_posix()  # the product keys its files with POSIX separators
+            # Only the mutated file differs: no newline difference hides or fakes the drift.
+            self.assertEqual(errors.getvalue().splitlines()[1:], [key])
             self.assertEqual(path.read_text(), altered)
             self.assertEqual(path.stat().st_mtime_ns, before)
-            changed = dict(self.outputs, **{str(path.relative_to(root)): altered})
+            changed = dict(self.outputs, **{key: altered})
             with self.assertRaisesRegex(ValueError, 'CONTENT_TABLE'):
                 rust_tables.verify_acceptance(changed)
 
@@ -73,7 +75,7 @@ class RustTablesTests(unittest.TestCase):
             path = root / 'crates/oxpinyin-chewing/src/content_table_source.rs'
             path.write_text('drift')
             self.assertEqual(rust_tables.regenerate(check=False, root=root), 0)
-            self.assertEqual(path.read_text(), self.outputs[str(path.relative_to(root))])
+            self.assertEqual(path.read_text(), self.outputs[path.relative_to(root).as_posix()])
 
     def test_pin_refresh_requires_explicit_write(self):
         with contextlib.redirect_stderr(io.StringIO()):

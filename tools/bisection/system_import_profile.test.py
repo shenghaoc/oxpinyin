@@ -160,8 +160,8 @@ class SystemImportProfileTests(unittest.TestCase):
                                   'pin heap', 'pin peak heap', 'pin pages', 'pin peak pages',
                                   'ox callgrind', 'ox open', 'ox import', 'ox save', 'ox close', 'ox total',
                                   'ox heap', 'ox peak heap', 'ox pages', 'ox peak pages'])
-        self.assertEqual(checks, [('auto', 'system-import-profile', 'pin', '/pin.so'),
-                                  ('auto', 'system-import-profile', 'ox', '/ox.so')])
+        self.assertEqual(checks, [('auto', 'system-import-profile', 'pin', str(Path('/pin.so'))),
+                                  ('auto', 'system-import-profile', 'ox', str(Path('/ox.so')))])
         self.assertEqual([name for _, _, name, _ in calls], [f'{side}-{mode}-user-1' for side in PROFILE.SIDES
                                                            for mode in PROFILE.MODES])
 

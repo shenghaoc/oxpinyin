@@ -67,7 +67,7 @@ class ContainerTests(unittest.TestCase):
         with patch.object(fixtures.C, 'CDLL', return_value=library) as load:
             with self.assertRaisesRegex(ValueError, 'tkrzw profile read-only open failed: x.bin'):
                 fixtures.index_file_rows('x.bin', cell='tkrzw', library=Path('/anchor/libtkrzw.so.1'))
-            self.assertEqual(load.call_args_list[0].args, ('/anchor/libtkrzw.so.1',))
+            self.assertEqual(load.call_args_list[0].args, (str(Path('/anchor/libtkrzw.so.1')),))
             self.assertEqual(library.tkrzw_dbm_open.call_args.args[2], b'dbm=TreeDBM')
             # Without a certified library, tkrzw resolves through the facade under test.
             load.reset_mock()

@@ -276,7 +276,7 @@ class CampaignTests(unittest.TestCase):
             self.assertEqual(command[:3], ['taskset', '-c', '0'])
             commands.append(command)
             self.assertIn('--toggle-collect=' + sentence.ANCHORS[workload], command)
-            self.assertEqual(command[-5:], ['--perf-' + workload, command[-4], '/data', 'ni', '1'])
+            self.assertEqual(command[-5:], ['--perf-' + workload, command[-4], str(Path('/data')), 'ni', '1'])
             arm = Path(command[-4]).parent.name
             output = Path(next(c.split('=', 1)[1] for c in command if c.startswith('--callgrind-out-file=')))
             count = 101 if varying_control and arm == vary_arm else 100
@@ -285,8 +285,8 @@ class CampaignTests(unittest.TestCase):
                 costs[changed] = 7  # a deterministic main/PR difference, identical in both PR copies
             total = sum(costs.values())
             body = ''.join(f'fn={name}\n1 {cost}\n' for name, cost in costs.items())
-            output.write_text(f'creator: callgrind-3.26\npid: 123\ncmd: {root}/bisect --perf-typing-sequence x\n'
-                              f'events: Ir\nsummary: {total}\nob=/lib.so\n{body}totals: {total}\n')
+            output.write_text(f'creator: callgrind-3.26\npid: 123\ncmd: {root / "bisect"} --perf-typing-sequence x\n'
+                              f'events: Ir\nsummary: {total}\nob=/lib.so\n{body}totals: {total}\n', newline='\n')
             steps = [dict(input=i, parsed=len(i), guess_sentence=True, get_sentence=True, sentence=i,
                           guess_candidates=True, candidates=[])
                      for i in (('n', 'ni') if workload == 'typing-sequence' else ('ni',))]
@@ -373,12 +373,14 @@ class CampaignTests(unittest.TestCase):
         self.assertEqual(controls['pr__'], dict(valid=False, spread=1))
 
     def test_profile_requires_identity_events_positive_and_reconciled_counts(self):
-        raw = b'creator: callgrind-3.26\npid: 123\ncmd: /tmp/bisect --perf-sentence x\nevents: Ir\nsummary: 7\nob=/lib.so\nfn=f\n1 7\ntotals: 7\n'
-        self.assertEqual(sentence.checked_profile(raw, Path('/tmp/bisect'), 123, Path('/lib.so'))['total'], 7)
+        bisect = Path('/tmp/bisect')
+        raw = (f'creator: callgrind-3.26\npid: 123\ncmd: {bisect} --perf-sentence x\n'
+               'events: Ir\nsummary: 7\nob=/lib.so\nfn=f\n1 7\ntotals: 7\n').encode()
+        self.assertEqual(sentence.checked_profile(raw, bisect, 123, Path('/lib.so'))['total'], 7)
         for bad in (raw.replace(b'pid: 123', b'pid: 124'), raw.replace(b'events: Ir', b'events: Ir Dr'),
                     raw.replace(b'1 7', b'1 6'), raw.replace(b'totals: 7', b'totals: 6')):
             with self.subTest(raw=bad), self.assertRaises(ValueError):
-                sentence.checked_profile(bad, Path('/tmp/bisect'), 123, Path('/lib.so'))
+                sentence.checked_profile(bad, bisect, 123, Path('/lib.so'))
 
     def test_wrong_cell_is_refused_before_output_or_workers(self):
         args = types.SimpleNamespace(main=Path('/main'), pr=Path('/pr'), pin=Path('/pin'), cell='bdb')

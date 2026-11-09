@@ -23,7 +23,7 @@ class Stream(io.TextIOWrapper):
     """A text stream with a byte buffer behind it, as the console has: runners.write needs .buffer."""
 
     def __init__(self):
-        super().__init__(io.BytesIO(), encoding='utf-8', write_through=True)
+        super().__init__(io.BytesIO(), encoding='utf-8', newline='\n', write_through=True)
 
     def text(self) -> str:
         self.flush()

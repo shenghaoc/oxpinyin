@@ -20,10 +20,11 @@ from tools.dev import test_runner
 
 class HarnessTests(unittest.TestCase):
     def legacy_files(self, root):
-        found = subprocess.run(['find', 'tools', '-type', 'f', '-name', '*.test.py'],
-                               cwd=root, capture_output=True, check=True)
-        return subprocess.run(['sort'], input=found.stdout, env=dict(os.environ, LC_ALL='C'),
-                              capture_output=True, check=True).stdout.decode().splitlines()
+        """Every regular file named *.test.py under tools, in byte order, as POSIX paths."""
+        found = [Path(directory, name) for directory, _, names in os.walk(root / 'tools')
+                 for name in names if name.endswith('.test.py')]
+        return sorted((path.relative_to(root).as_posix() for path in found
+                       if path.is_file() and not path.is_symlink()), key=os.fsencode)
 
     def test_discovery_includes_hidden_files_but_not_symlinks_or_directories(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -68,6 +69,10 @@ class HarnessTests(unittest.TestCase):
             self.assertIn('not a discovered harness file', err)
 
     def test_directory_errors_report_failure_and_run_later_files(self):
+        with tempfile.TemporaryDirectory() as existing:
+            # The host's own text for the mkdir collision the test provokes below.
+            with self.assertRaises(FileExistsError) as collision:
+                Path(existing).mkdir()
         for phase in ('create', 'tmp', 'locks', 'cleanup'):
             with self.subTest(phase=phase):
                 calls = []
@@ -95,7 +100,7 @@ class HarnessTests(unittest.TestCase):
                 self.assertEqual(len(calls), 2)
                 self.assertIn('tools harness: tools/a.test.py', out)
                 self.assertIn('tools harness: tools/z.test.py\nLAST', out)
-                self.assertIn('File exists' if phase in ('tmp', 'locks') else 'refused', out)
+                self.assertIn(collision.exception.strerror if phase in ('tmp', 'locks') else 'refused', out)
                 self.assertIn('one or more tools/ Python harness tests failed', err)
 
     def test_invalid_changed_base_prints_git_stderr_after_summary(self):

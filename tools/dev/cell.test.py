@@ -78,8 +78,9 @@ class SettingsTests(unittest.TestCase):
 
     def test_loader_entries_keep_tokens_and_caller_spelling(self):
         cwd = Path('/caller root')
+        root = str(cwd)  # the product prints the platform spelling of the caller's directory
         self.assertEqual(library_path('./lib::/absolute:lib:', cwd),
-                         '/caller root/./lib:/caller root:/absolute:/caller root/lib:/caller root')
+                         f'{root}/./lib:{root}:/absolute:{root}/lib:{root}')
         for token in ('$ORIGIN', '${ORIGIN}', '$LIB', '${LIB}', '$PLATFORM', '${PLATFORM}'):
             value = 'prefix/' + token + '/lib'
             self.assertEqual(library_path(value, cwd), value)
