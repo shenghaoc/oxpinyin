@@ -193,7 +193,6 @@ mod frozen {
                     &inputs,
                     dbm_files,
                     &[],
-                    &[],
                     if CELL == "tkrzw" && aborted {
                         unclosed_hash_files
                     } else {
@@ -412,7 +411,6 @@ mod frozen {
                     &inputs,
                     dbm_files,
                     &[],
-                    &[],
                     if CELL == "tkrzw" && aborted {
                         unclosed_hash_files
                     } else {
@@ -608,7 +606,6 @@ mod frozen {
                     directory.path(),
                     &inputs,
                     dbm_files,
-                    &[],
                     &[],
                     if CELL == "tkrzw" && aborted {
                         unclosed_hash_files

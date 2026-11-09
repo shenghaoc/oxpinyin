@@ -152,10 +152,6 @@ fn rows_digest(path: &Path, pinyin_index: bool) -> Result<String, Failure> {
     Ok(sha256(text.as_bytes()))
 }
 
-fn is_sealed_link(path: &Path) -> bool {
-    std::fs::read_link(path).is_ok_and(|target| target.starts_with("/proc/self/fd"))
-}
-
 /// The pre-run tree, keyed by the same relative paths as `inventory()`.
 pub struct Snapshot {
     pub files: BTreeMap<String, Vec<u8>>,
@@ -163,7 +159,6 @@ pub struct Snapshot {
 }
 
 /// Pre-run file bytes and directories.
-/// Follow file links so the sealed-input cases retain their original bytes.
 pub fn snapshot_inputs(root: &Path) -> Snapshot {
     let mut inputs = Snapshot {
         files: BTreeMap::new(),
@@ -199,7 +194,6 @@ pub fn inventory(
     inputs: &Snapshot,
     dbm: &[&str],
     pinyin: &[&str],
-    sealed: &[&str],
     clocks: &[&str],
 ) -> String {
     let mut names = Vec::new();
@@ -211,16 +205,13 @@ pub fn inventory(
         let metadata = std::fs::symlink_metadata(&path).expect("output metadata");
         let line = if metadata.is_dir() {
             format!("{label}/ directory")
-        } else if metadata.is_symlink() && !(sealed.contains(&label) && is_sealed_link(&path)) {
+        } else if metadata.is_symlink() {
             format!(
                 "{label} symlink {}",
                 std::fs::read_link(&path).expect("link").display()
             )
         } else {
-            assert!(
-                metadata.is_file() || metadata.is_symlink(),
-                "unsupported output file kind: {label}"
-            );
+            assert!(metadata.is_file(), "unsupported output file kind: {label}");
             if pinyin.contains(&label) {
                 format!(
                     "{label} rows {}",

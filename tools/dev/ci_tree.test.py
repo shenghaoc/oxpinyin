@@ -474,7 +474,7 @@ class GateTests(unittest.TestCase):
             'crates/oxpinyin-corpus/src/lib.rs': {'lint', 'test', 'harness', 'ship'},
             'crates/oxpinyin-core/src/lib.rs': {'lint', 'test', 'harness', 'ship'},
             'crates/oxpinyin-corpus/Cargo.toml': {'lint', 'test', 'deny', 'harness', 'ship'},
-            'fixtures/w3/fixtures.sha256': {'lint', 'test', 'harness'},
+            'fixtures/w3/tkt/bigram.db': {'lint', 'test', 'harness'},
             'fuzz/Cargo.lock': {'lint', 'deny', 'harness'},
             'fuzz/fuzz_targets/x.rs': {'lint', 'harness'},
             'deny.toml': {'deny', 'harness'},

@@ -231,7 +231,7 @@ mod frozen {
             output.stderr = mask_glib_prefix(&output.stderr);
             check(
                 output,
-                &inventory(directory.path(), &inputs, &[], &[], &[], &[]),
+                &inventory(directory.path(), &inputs, &[], &[], &[]),
                 &inputs,
                 &expected,
             );
@@ -516,14 +516,7 @@ mod frozen {
             output.stderr = mask_glib_prefix(&output.stderr);
             check(
                 output,
-                &inventory(
-                    directory.path(),
-                    &inputs,
-                    row_files.0,
-                    row_files.1,
-                    &[],
-                    &[],
-                ),
+                &inventory(directory.path(), &inputs, row_files.0, row_files.1, &[]),
                 &inputs,
                 &expected,
             );
@@ -751,7 +744,7 @@ mod frozen {
             output.stderr = mask_glib_prefix(&output.stderr);
             check(
                 output,
-                &inventory(directory.path(), &inputs, dbm_files, &[], &[], &[]),
+                &inventory(directory.path(), &inputs, dbm_files, &[], &[]),
                 &inputs,
                 &expected,
             );
@@ -849,7 +842,6 @@ mod frozen {
                     } else {
                         &[]
                     },
-                    &[],
                     &[],
                     &[],
                 ),
@@ -1111,7 +1103,7 @@ mod frozen {
             output.stderr = mask_glib_prefix(&output.stderr);
             check(
                 output,
-                &inventory(directory.path(), &inputs, &[], &[], &[], &[]),
+                &inventory(directory.path(), &inputs, &[], &[], &[]),
                 &inputs,
                 &expected,
             );
@@ -1278,7 +1270,7 @@ mod frozen {
             output.stderr = mask_glib_prefix(&output.stderr);
             check(
                 output,
-                &inventory(directory.path(), &inputs, &[], &[], &[], &[]),
+                &inventory(directory.path(), &inputs, &[], &[], &[]),
                 &inputs,
                 &expected,
             );
@@ -1397,7 +1389,7 @@ mod frozen {
             );
             check(
                 output,
-                &inventory(directory.path(), &inputs, &[], &[], &[], &[]),
+                &inventory(directory.path(), &inputs, &[], &[], &[]),
                 &inputs,
                 &expected,
             );
@@ -1625,7 +1617,7 @@ mod frozen {
             output.stderr = mask_glib_prefix(&output.stderr);
             check(
                 output,
-                &inventory(directory.path(), &inputs, &[], &[], &[], &[]),
+                &inventory(directory.path(), &inputs, &[], &[], &[]),
                 &inputs,
                 &expected,
             );
@@ -1725,7 +1717,6 @@ mod frozen {
                     } else {
                         &[]
                     },
-                    &[],
                     &[],
                     &[],
                 ),
@@ -1911,7 +1902,7 @@ mod frozen {
             output.stderr = mask_glib_prefix(&output.stderr);
             check(
                 output,
-                &inventory(directory.path(), &inputs, &[], &[], &[], &[]),
+                &inventory(directory.path(), &inputs, &[], &[], &[]),
                 &inputs,
                 &expected,
             );
@@ -2127,7 +2118,7 @@ mod frozen {
             );
             check(
                 output,
-                &inventory(directory.path(), &inputs, &[], &[], &[], &[]),
+                &inventory(directory.path(), &inputs, &[], &[], &[]),
                 &inputs,
                 &expected,
             );
@@ -2311,7 +2302,7 @@ mod frozen {
             output.stderr = mask_glib_prefix(&output.stderr);
             check(
                 output,
-                &inventory(directory.path(), &inputs, &[], &[], &[], &[]),
+                &inventory(directory.path(), &inputs, &[], &[], &[]),
                 &inputs,
                 &expected,
             );
@@ -2504,7 +2495,7 @@ mod frozen {
             output.stderr = mask_glib_prefix(&output.stderr);
             check(
                 output,
-                &inventory(directory.path(), &inputs, &[], &[], &[], &[]),
+                &inventory(directory.path(), &inputs, &[], &[], &[]),
                 &inputs,
                 &expected,
             );
@@ -2617,7 +2608,6 @@ mod frozen {
                     } else {
                         &[]
                     },
-                    &[],
                     &[],
                     &[],
                 ),
@@ -2781,7 +2771,7 @@ mod frozen {
             output.stderr = mask_glib_prefix(&output.stderr);
             check(
                 output,
-                &inventory(directory.path(), &inputs, &[], &[], &[], &[]),
+                &inventory(directory.path(), &inputs, &[], &[], &[]),
                 &inputs,
                 &expected,
             );
@@ -3022,7 +3012,7 @@ mod frozen {
             );
             check(
                 output,
-                &inventory(directory.path(), &inputs, &[], &[], &[], &[]),
+                &inventory(directory.path(), &inputs, &[], &[], &[]),
                 &inputs,
                 &expected,
             );
@@ -3122,7 +3112,6 @@ mod frozen {
                     } else {
                         &[]
                     },
-                    &[],
                     &[],
                     &[],
                 ),
