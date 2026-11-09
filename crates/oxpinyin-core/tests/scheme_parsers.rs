@@ -8,19 +8,17 @@
 //! well-formed span of the raw input. The rest is diagnostic output.
 //!
 //! The same invariant, lifted to oxpinyin's public parser seam: every
-//! scheme parser produces ordered, contiguous, non-overlapping spans, and
-//! the canonical spellings they emit are real entries of the frozen
-//! inventories. The alternate-romanization index parsers (`pinyindirect`/
-//! `zhuyindirect` upstream) are exercised through
-//! `parse_full_pinyin_index` over the pinned Luoma and Secondary Zhuyin
-//! indexes. Scheme-setter rejection contracts are covered black-box in
-//! `crates/oxpinyin-capi/tests/abi/contract.rs`; full-pinyin parse
-//! invariants live in `tests/parser_acceptance.rs`.
+//! double-pinyin layout produces ordered, contiguous, non-overlapping spans,
+//! and its full-pinyin projection parses as frozen syllables. The zhuyin
+//! keyboards are checked against the frozen pin in
+//! `tests/zhuyin_parse_parity.rs`, and the alternate-romanization index
+//! parsers in `src/full_pinyin_index.rs`. Scheme-setter rejection contracts
+//! are covered black-box in `crates/oxpinyin-capi/tests/abi/contract.rs`;
+//! full-pinyin parse invariants live in `tests/parser_acceptance.rs`.
 
 use oxpinyin_core::{
     DoublePinyinParser, DoublePinyinScheme, FullPinyinParser, FullPinyinScheme, OptionBits,
-    SyllableKey, ZhuyinParser, ZhuyinScheme, luoma_pinyin_index, parse_full_pinyin_index,
-    secondary_zhuyin_index,
+    SyllableKey, ZhuyinParser, luoma_pinyin_index, secondary_zhuyin_index,
 };
 
 /// All double-pinyin layouts with a compiled table (Customized has none).
@@ -31,18 +29,6 @@ const DOUBLE_SCHEMES: &[DoublePinyinScheme] = &[
     DoublePinyinScheme::Abc,
     DoublePinyinScheme::Pyjj,
     DoublePinyinScheme::Xhe,
-];
-
-/// Every zhuyin keyboard except the `StandardDvorak` abort slot.
-const ZHUYIN_SCHEMES: &[ZhuyinScheme] = &[
-    ZhuyinScheme::Standard,
-    ZhuyinScheme::Hsu,
-    ZhuyinScheme::Ibm,
-    ZhuyinScheme::Ginyieh,
-    ZhuyinScheme::Eten,
-    ZhuyinScheme::Eten26,
-    ZhuyinScheme::HsuDvorak,
-    ZhuyinScheme::DachenCp26,
 ];
 
 fn parser_accepts_spellings(parser: &FullPinyinParser, joined: &str) -> bool {
@@ -104,87 +90,6 @@ fn double_pinyin_output_is_valid_full_pinyin_for_every_scheme() {
 }
 
 #[test]
-fn the_zrm_fallback_table_resolves_two_key_spellings() {
-    // Upstream ZRM carries a two-key fallback ("aa" -> a); the contract
-    // tests exercise it through the ABI, this exercises the parser seam.
-    let mut parser = DoublePinyinParser::new();
-    assert!(parser.set_scheme(DoublePinyinScheme::Zrm));
-    let parse = parser.parse(b"aa", false);
-    assert_eq!(parse.consumed(), 2, "both keystrokes consumed");
-    assert_eq!(parse.keys().len(), 1, "the fallback folds two keys to one");
-    assert_eq!(parse.keys()[0].key().text(), "a");
-    assert_eq!(parse.keys()[0].start(), 0);
-    assert_eq!(parse.keys()[0].end(), 2);
-}
-#[test]
-fn the_customized_slot_is_rejected_at_the_parser_seam() {
-    // Upstream aborts (`pinyin_parser2.cpp:611-612`); oxpinyin reports
-    // false and keeps the live scheme.
-    let mut parser = DoublePinyinParser::new();
-    assert!(!parser.set_scheme(DoublePinyinScheme::Customized));
-    assert_eq!(parser.scheme(), DoublePinyinScheme::Ms, "MS stays live");
-    assert_eq!(parser.parse(b"ni", false).consumed(), 2);
-}
-
-#[test]
-fn every_zhuyin_keyboard_parses_the_dachen_spelling_with_aligned_spans() {
-    // `ma` in the standard (dachen) layout is ㄇㄚ; every implemented
-    // keyboard must map *some* keystrokes to valid keys with the same
-    // span discipline as the double-pinyin parsers.
-    for scheme in ZHUYIN_SCHEMES {
-        let mut parser = ZhuyinParser::new();
-        assert!(parser.set_scheme(*scheme), "{scheme:?} is implemented");
-        let parse = parser.parse(b"ma", false, false);
-        assert!(
-            !parse.keys().is_empty() || parse.consumed() == 0,
-            "{scheme:?}: empty parse must consume nothing"
-        );
-        let mut cursor = 0;
-        for key in parse.keys() {
-            assert!(key.start() >= cursor, "{scheme:?}: span regression");
-            assert!(key.end() > key.start(), "{scheme:?}: empty span");
-            assert!(
-                SyllableKey::from_text(key.key().text()).is_some(),
-                "{scheme:?}: resolved syllable {:?} is frozen inventory",
-                key.key().text()
-            );
-            cursor = key.end();
-        }
-        assert_eq!(
-            parse.consumed(),
-            cursor,
-            "{scheme:?}: consumed length must equal the span coverage"
-        );
-    }
-}
-
-#[test]
-fn the_standard_keyboard_reads_the_dachen_mapping() {
-    // Dachen: v=ㄒ u=ㄧ 0=ㄢ resolves to the single key xian; the tone
-    // digit is consumed under USE_TONE. Pinned by the same expectation as
-    // the black-box exact-scheme ABI tests.
-    let parser = ZhuyinParser::new();
-    let parse = parser.parse(b"vu0", true, false);
-    assert_eq!(parse.consumed(), 3);
-    assert_eq!(parse.keys().len(), 1);
-    assert_eq!(parse.full_pinyin(), "xian");
-    assert_eq!(parse.keys()[0].tone(), 0);
-}
-
-#[test]
-fn incomplete_zhuyin_keystrokes_consume_zero_either_way() {
-    // Pinned parity with the oracle: the zhuyin index's incomplete tier
-    // matches under `ZHUYIN_INCOMPLETE` but the post-match validity mask
-    // still rejects it, so an initial-only keystroke consumes nothing with
-    // or without the option — the same outcome upstream produces.
-    let parser = ZhuyinParser::new();
-    assert_eq!(parser.parse(b"v", true, false).consumed(), 0);
-    assert_eq!(parser.parse(b"v", true, true).consumed(), 0);
-    assert_eq!(parser.parse(b"1", true, false).consumed(), 0);
-    assert_eq!(parser.parse(b"1", true, true).consumed(), 0);
-}
-
-#[test]
 fn parse_with_options_honours_force_tone_like_the_batch_parser() {
     // The pin's `zhuyin_parse_more_chewings` passes `context->m_options`
     // (`zhuyin.cpp:1061`), which `zhuyin_init` seeds `USE_TONE | FORCE_TONE`
@@ -217,66 +122,6 @@ fn parse_with_options_honours_force_tone_like_the_batch_parser() {
     // without FORCE_TONE accepts them) — verifying FORCE_TONE is the gate.
     let li = parser.parse_with_options(b"li", USE_TONE);
     assert_eq!(li.consumed(), 2);
-}
-
-#[test]
-fn hsu_is_a_discrete_keyboard_that_differs_from_dachen() {
-    // The HSU layout is a distinct mapping table: at minimum it must not
-    // reproduce the dachen reading of the same keystrokes, and its
-    // correction bit is forced during parse (upstream
-    // `ZhuyinDiscreteParser2`).
-    let mut hsu = ZhuyinParser::new();
-    assert!(hsu.set_scheme(ZhuyinScheme::Hsu));
-    let hsu_parse = hsu.parse(b"hk", false, false);
-    let standard = ZhuyinParser::new().parse(b"hk", false, false);
-    assert_ne!(
-        hsu_parse.full_pinyin(),
-        standard.full_pinyin(),
-        "HSU must remap dachen keystrokes"
-    );
-    for key in hsu_parse.keys() {
-        assert!(key.start() < key.end());
-    }
-}
-
-#[test]
-fn the_romanization_indexes_parse_with_aligned_spans() {
-    // Upstream `pinyindirect`/`zhuyindirect` parsers: the alternate
-    // romanizations resolve through a pinned spelling index. `jhih` is a
-    // four-letter Luoma spelling; the secondary table's own head entry
-    // `ai` is the secondary sample. Each must parse whole (this test pins
-    // the parse length) as aligned keys resolving to frozen canonical
-    // syllables. `oxpinyin-core`
-    // `full_pinyin_index::tests::luoma_parses_through_the_dp` pins the
-    // syllable `jhih` resolves to.
-    for (name, index, input) in [
-        ("luoma", luoma_pinyin_index(), &b"jhih"[..]),
-        ("secondary", secondary_zhuyin_index(), &b"ai"[..]),
-    ] {
-        let parse = parse_full_pinyin_index(input, false, index);
-        assert_eq!(
-            parse.consumed(),
-            input.len(),
-            "{name}: the whole spelling parses"
-        );
-        assert!(!parse.keys().is_empty(), "{name}: at least one key");
-        let mut cursor = 0;
-        for key in parse.keys() {
-            assert!(key.start() >= cursor, "{name}: span regression");
-            assert!(key.end() > key.start(), "{name}: empty span");
-            assert!(
-                SyllableKey::from_text(key.canonical()).is_some(),
-                "{name}: canonical {:?} must be a frozen syllable",
-                key.canonical()
-            );
-            cursor = key.end();
-        }
-        assert_eq!(
-            cursor,
-            input.len(),
-            "{name}: spans cover the consumed input"
-        );
-    }
 }
 
 #[test]

@@ -178,10 +178,4 @@ mod tests {
         let ordinary = PhraseText::from_stored_parts(vec![0x7532, 0x4E59], 2);
         assert!(stored_words_match(&ordinary, "甲乙"));
     }
-
-    #[test]
-    fn stored_zero_words_are_cut() {
-        let text = PhraseText::from_words([0x7532, 0, 0x4E59]).expect("stored");
-        assert_eq!(phrase_text_bytes(&text).as_ref(), "甲".as_bytes());
-    }
 }

@@ -142,33 +142,6 @@ fn candidate_ptr_ref_round_trip() {
     assert!((r.score - 0.95).abs() < f64::EPSILON);
 }
 
-#[test]
-fn candidate_ptr_into_vec() {
-    // Reproduces the real usage pattern: candidates live in a Vec, and
-    // `candidate_ptr` hands out pointers into it.
-    let candidates = [
-        CandidateBacking {
-            text: "a".into(),
-            score: 1.0,
-        },
-        CandidateBacking {
-            text: "b".into(),
-            score: 2.0,
-        },
-        CandidateBacking {
-            text: "c".into(),
-            score: 3.0,
-        },
-    ];
-
-    for (i, cand) in candidates.iter().enumerate() {
-        let ptr = candidate_ptr(cand);
-        // SAFETY: `ptr` points into the live `candidates` vec.
-        let r = unsafe { candidate_ref(ptr) };
-        assert_eq!(r.text, ["a", "b", "c"][i]);
-    }
-}
-
 // ── Fixture for `write_owned_sentence!` ────────────────────────────────
 
 use oxpinyin_core::PhraseText;

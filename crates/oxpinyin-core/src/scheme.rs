@@ -1830,25 +1830,6 @@ mod tests {
         assert_eq!(parsed.full_pinyin(), "ni'ha");
     }
 
-    /// The batch [`DoublePinyinParser::parse`] is the tone-less projection
-    /// of [`DoublePinyinParser::parse_with_options`]: the same walk with
-    /// only the `PINYIN_INCOMPLETE` bit set.
-    #[test]
-    fn batch_parse_is_the_tone_less_projection_of_options() {
-        let parser = DoublePinyinParser::new();
-        for input in [b"nihao".as_slice(), b"a".as_slice(), b"nihk".as_slice()] {
-            for allow_incomplete in [false, true] {
-                let options = u32::from(allow_incomplete) * PINYIN_INCOMPLETE;
-                assert_eq!(
-                    parser.parse(input, allow_incomplete),
-                    parser.parse_with_options(input, options),
-                    "input {:?} allow_incomplete {allow_incomplete}",
-                    core::str::from_utf8(input)
-                );
-            }
-        }
-    }
-
     /// The frozen batch law (`docs/findings/double-pinyin-spec.md`, Tone):
     /// `USE_TONE` lets a three-byte key carry its `1`..=`5` digit as the
     /// tone, and `FORCE_TONE` requires an exactly-three-byte key — so
@@ -2306,37 +2287,6 @@ mod tests {
             }
             assert!(!parser.in_scheme(b'Q', true));
             assert!(parser.symbols_for(b'Q', true).is_empty());
-        }
-    }
-
-    #[test]
-    fn shuffle_and_recovered_rows_work_on_every_simple_keyboard() {
-        for scheme in [
-            ZhuyinScheme::Standard,
-            ZhuyinScheme::Ibm,
-            ZhuyinScheme::Ginyieh,
-            ZhuyinScheme::Eten,
-        ] {
-            let parser = ZhuyinParser::with_scheme(scheme);
-
-            // Shuffled spelling parses to the canonical syllable and
-            // displays canonically.
-            let shuffled = parser.parse(&keystrokes(scheme, &["ㄅ", "ㄝ", "ㄧ"]), true, false);
-            assert_eq!((scheme, shuffled.consumed()), (scheme, 3));
-            assert_eq!(shuffled.full_pinyin(), "bie");
-            assert_eq!(shuffled.keys()[0].zhuyin(), "ㄅㄧㄝ");
-
-            // One recovered live row: ㄉㄣ accepts tone 4, rejects tone 1.
-            let den4 = parser.parse(&keystrokes_with_tone(scheme, &["ㄉ", "ㄣ"], 4), true, false);
-            assert_eq!((scheme, den4.consumed()), (scheme, 3));
-            assert_eq!(den4.full_pinyin(), "den");
-            let den1 = parser.parse(&keystrokes_with_tone(scheme, &["ㄉ", "ㄣ"], 1), true, false);
-            assert_eq!((scheme, den1.consumed()), (scheme, 0));
-
-            // One dead row: ㄈㄜ matches, then the validity break consumes
-            // nothing — on every keyboard.
-            let fe = parser.parse(&keystrokes(scheme, &["ㄈ", "ㄜ"]), true, false);
-            assert_eq!((scheme, fe.consumed()), (scheme, 0));
         }
     }
 

@@ -12,7 +12,6 @@ mod fixture_doubles;
 mod fixture_provenance;
 mod graph_paths;
 mod merged_rows;
-mod parity_corpus;
 mod parser_acceptance;
 mod scheme_parsers;
 mod zhuyin_parse_parity;

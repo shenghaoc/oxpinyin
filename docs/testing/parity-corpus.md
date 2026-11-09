@@ -159,9 +159,10 @@ byte-identical files, which is the W2-T2 acceptance criterion.
 
 The corpus is frozen input files. Its generator was deleted on 2026-11-06 UTC with
 `pinyin-oracle`, and the digests above stay the byte record.
-`crates/oxpinyin-core/tests/parity_corpus.rs` checks that the directory holds exactly
-the committed strata, that the per-stratum counts match the table above, and that no
-line carries edge whitespace or a control byte.
+`crates/oxpinyin-runtime/tests/candidate_surface.rs` reads every file in the
+directory, checks the count of distinct inputs and compares the candidates of
+each input with the frozen pin capture. It does not check the per-stratum line
+counts or find a duplicate line; the digests above are the byte record.
 
 A corpus change is a deliberate, reviewed act: it moves the W2-T3 divergence
 baseline, so it belongs in its own commit alongside the edited files and

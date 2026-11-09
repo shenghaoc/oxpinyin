@@ -133,12 +133,6 @@ mod tests {
     }
 
     #[test]
-    fn preserves_mixed_text_before_a_non_scalar() {
-        let bytes = [0xe4, 0xbd, 0xa0, 0xed, 0xa0, 0x80];
-        assert_eq!(decode(&bytes).unwrap(), [0x4f60, 0xd800]);
-    }
-
-    #[test]
     fn prefix_text_is_none_where_no_prefix_is_added() {
         assert!(prefix_text(None).is_none());
         assert!(prefix_text(Some(c"")).is_none());

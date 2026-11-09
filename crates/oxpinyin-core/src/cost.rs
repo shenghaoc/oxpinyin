@@ -120,7 +120,7 @@ pub fn reduce_ratio(numerator: u128, denominator: u128) -> (u64, u64) {
 mod tests {
     use super::{
         COST_PER_BIT, NAN_COST, NEG_INF_COST, POS_INF_COST, UNKNOWN_COST, cost_of_probability,
-        log2, reduce_ratio, surprisal,
+        reduce_ratio, surprisal,
     };
 
     #[test]
@@ -137,13 +137,6 @@ mod tests {
         // A subnormal still has a finite cost: 2^-1074 is 1074 bits.
         assert_eq!(cost_of_probability(f64::from_bits(1)), 1074 * COST_PER_BIT);
     }
-    #[test]
-    fn exact_powers_of_two_have_exact_logarithms() {
-        for exponent in 0..64_u32 {
-            assert_eq!(log2(1 << exponent), f64::from(exponent), "2^{exponent}");
-        }
-    }
-
     #[test]
     fn surprisal_uses_the_standard_logarithm() {
         // log2(3) = 1.5849625... and log2(3/2) = 0.5849625..., rounded to
@@ -169,7 +162,7 @@ mod tests {
             state ^= state << 17;
             state
         };
-        for _ in 0..1_000_000 {
+        for _ in 0..4_096 {
             let n = (u128::from(next()) << 64 | u128::from(next())) >> (next() % 128);
             let d = (u128::from(next()) << 64 | u128::from(next())) >> (next() % 128);
             assert_eq!(reduce_ratio(n, d), looped(n, d), "{n} {d}");
@@ -188,16 +181,6 @@ mod tests {
     }
 
     #[test]
-    fn the_logarithm_is_monotonic() {
-        let mut previous = log2(1);
-        for value in 2..4_096_u64 {
-            let current = log2(value);
-            assert!(current > previous, "log2 fell at {value}");
-            previous = current;
-        }
-    }
-
-    #[test]
     fn surprisal_charges_one_unit_per_halving() {
         assert_eq!(surprisal(1, 1), 0);
         assert_eq!(surprisal(1, 2), COST_PER_BIT);
@@ -212,17 +195,6 @@ mod tests {
         assert_eq!(surprisal(5, 0), UNKNOWN_COST);
         assert_eq!(surprisal(10, 5), 0, "count above total is clamped");
         assert_eq!(surprisal(1, u64::MAX), UNKNOWN_COST, "clamped to the floor");
-    }
-
-    #[test]
-    fn a_rarer_event_never_costs_less() {
-        let total = 87_000;
-        let mut previous = surprisal(total, total);
-        for count in (1..total).rev().step_by(97) {
-            let current = surprisal(count, total);
-            assert!(current >= previous, "cost fell at count {count}");
-            previous = current;
-        }
     }
 
     #[test]

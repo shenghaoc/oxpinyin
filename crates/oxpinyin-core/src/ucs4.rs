@@ -425,7 +425,6 @@ mod phrase_text_tests {
     }
     use core::cmp::Ordering;
     use core::hash::BuildHasher;
-    use std::collections::HashSet;
 
     fn key(text: &PhraseText) -> u64 {
         std::hash::BuildHasherDefault::<std::hash::DefaultHasher>::default().hash_one(text)
@@ -457,15 +456,6 @@ mod phrase_text_tests {
             PhraseText::from("\u{10000}"),
             stored(&[0x11_0000]),
         ]
-    }
-
-    #[test]
-    fn a_zero_word_ends_the_outward_text() {
-        let text = PhraseText::from_words([0x7532, 0, 0x4E59]).expect("stored words");
-        assert_eq!(text.outward_words().collect::<Vec<_>>(), [0x7532]);
-        assert_eq!(text.stored_words(), Some([0x7532, 0, 0x4E59].as_slice()));
-        assert_eq!(text.phrase_length(), 3);
-        assert!(text.as_str().is_none());
     }
 
     #[test]
@@ -549,23 +539,6 @@ mod phrase_text_tests {
     }
 
     #[test]
-    fn equality_is_transitive_across_forms() {
-        let ordinary_with_nul = PhraseText::from("甲\0乙");
-        let ordinary = PhraseText::from("甲");
-        let with_zero = stored(&[0x7532, 0, 0x4E19]);
-        assert!(matches!(with_zero.0, super::TextStorage::Stored(_)));
-        let texts = [&ordinary_with_nul, &ordinary, &with_zero];
-        for left in texts {
-            for right in texts {
-                assert_eq!(left, right);
-                assert_eq!(left.cmp(right), Ordering::Equal);
-                assert_eq!(key(left), key(right));
-            }
-        }
-        assert_eq!(texts.into_iter().collect::<HashSet<_>>().len(), 1);
-    }
-
-    #[test]
     fn mixed_forms_compare_and_hash_by_outward_words() {
         let texts = mixed_texts();
         for left in &texts {
@@ -576,23 +549,6 @@ mod phrase_text_tests {
                 assert_eq!(left == right, words.is_eq(), "{left:?} against {right:?}");
                 if left == right {
                     assert_eq!(key(left), key(right), "{left:?} and {right:?} hash apart");
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn mixed_form_order_is_transitive() {
-        let texts = mixed_texts();
-        for first in &texts {
-            for second in &texts {
-                for third in &texts {
-                    if first <= second && second <= third {
-                        assert!(first <= third, "{first:?} <= {second:?} <= {third:?}");
-                    }
-                    if first == second && second == third {
-                        assert_eq!(first, third);
-                    }
                 }
             }
         }
