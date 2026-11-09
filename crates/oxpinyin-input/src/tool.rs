@@ -1437,14 +1437,12 @@ pub mod storage {
         use libc::open;
         #[cfg(windows)]
         use libc::wopen as open;
+        let flags = libc::O_CREAT | libc::O_WRONLY | libc::O_TRUNC | O_BINARY;
+        // Windows only: the CRT descriptor is not inherited by children.
+        #[cfg(windows)]
+        let flags = flags | libc::O_NOINHERIT;
         // SAFETY: `filename` is NUL-terminated and outlives the call.
-        let fd = unsafe {
-            open(
-                filename.as_ptr(),
-                libc::O_CREAT | libc::O_WRONLY | libc::O_TRUNC | O_BINARY,
-                0o644,
-            )
-        };
+        let fd = unsafe { open(filename.as_ptr(), flags, 0o644) };
         if fd < 0 {
             return false;
         }

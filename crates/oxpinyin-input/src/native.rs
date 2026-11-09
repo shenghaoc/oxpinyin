@@ -72,11 +72,13 @@ pub(crate) fn fopen(
     #[cfg(windows)]
     {
         let filename = wide_path(&filename.as_path());
-        let mode: Vec<u16> = mode
-            .to_bytes_with_nul()
+        let mut mode: Vec<u16> = mode
+            .to_bytes()
             .iter()
             .map(|&byte| u16::from(byte))
             .collect();
+        // UCRT "N": the stream is not inherited by child processes.
+        mode.extend([u16::from(b'N'), 0]);
         // SAFETY: the wide filename and ASCII mode are NUL-terminated and
         // live through the call. The caller owns the returned stream.
         NonNull::new(unsafe { _wfopen(filename.as_ptr(), mode.as_ptr()) })
@@ -102,7 +104,12 @@ impl ReadChunk {
             // SAFETY: wide is NUL-terminated and lives through _wopen; without
             // O_CREAT its variadic mode argument is not read. The returned CRT
             // descriptor is owned and closed by ReadChunk.
-            unsafe { libc::wopen(wide.as_ptr(), libc::O_RDONLY | libc::O_BINARY) }
+            unsafe {
+                libc::wopen(
+                    wide.as_ptr(),
+                    libc::O_RDONLY | libc::O_BINARY | libc::O_NOINHERIT,
+                )
+            }
         };
         if fd < 0 {
             Err(std::io::Error::last_os_error())
@@ -728,7 +735,7 @@ pub(crate) fn save_chunk(path: &std::path::Path, bytes: &[u8]) -> ChunkWrite {
     let fd = unsafe {
         libc::wopen(
             path.as_ptr(),
-            libc::O_CREAT | libc::O_WRONLY | libc::O_TRUNC | libc::O_BINARY,
+            libc::O_CREAT | libc::O_WRONLY | libc::O_TRUNC | libc::O_BINARY | libc::O_NOINHERIT,
             0o644,
         )
     };
@@ -776,4 +783,44 @@ pub(crate) fn save_chunk(path: &std::path::Path, bytes: &[u8]) -> ChunkWrite {
         let _ = libc::commit(fd);
     }
     ChunkWrite::Saved
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+    use windows_sys::Win32::Foundation::{GetHandleInformation, HANDLE_FLAG_INHERIT};
+
+    fn inheritable(fd: c_int) -> bool {
+        // SAFETY: fd is an open CRT descriptor owned by the caller.
+        let handle = unsafe { libc::get_osfhandle(fd) };
+        let mut flags = 0_u32;
+        // SAFETY: the handle belongs to the open descriptor and flags is a
+        // live out-parameter.
+        let ok = unsafe { GetHandleInformation(handle as _, &mut flags) };
+        assert_ne!(ok, 0, "GetHandleInformation failed");
+        flags & HANDLE_FLAG_INHERIT != 0
+    }
+
+    #[test]
+    fn fopen_stream_is_not_inheritable() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fopen.bin");
+        std::fs::write(&path, b"x").unwrap();
+        let stream = fopen(path.as_path(), c"r").unwrap();
+        // SAFETY: stream is open and owned here.
+        let fd = unsafe { libc::fileno(stream.as_ptr()) };
+        let result = inheritable(fd);
+        // SAFETY: stream is open and closed once.
+        unsafe { libc::fclose(stream.as_ptr()) };
+        assert!(!result, "fopen stream handle is inheritable");
+    }
+
+    #[test]
+    fn wopen_descriptor_is_not_inheritable() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("wopen.bin");
+        std::fs::write(&path, b"x").unwrap();
+        let chunk = ReadChunk::open(&path).unwrap();
+        assert!(!inheritable(chunk.0), "_wopen handle is inheritable");
+    }
 }
