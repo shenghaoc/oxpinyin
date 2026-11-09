@@ -26,7 +26,6 @@ import os
 import queue
 import secrets
 import shlex
-import shutil
 import signal
 import subprocess
 import sys
@@ -50,7 +49,6 @@ class Task:
     argv: list[str]
     log: Path | None = None
     cleanup: Callable[[], object] | None = None    # run once if the task was started and the pool stopped early
-    remove: Path | None = None          # removed after the task succeeds
     run: Callable[['UnitContext'], object] | None = None    # a unit: run in a worker thread instead of launching ARGV
 
 
@@ -190,8 +188,6 @@ def run_pool(tasks: Sequence[Task], workers: int, launcher, *, cancelled: Callab
                     result.errors[name] = error
                 print(f'{name}: failed with status {status}', file=out, flush=True)
                 _tail(task.log, out)
-            elif task.remove is not None:
-                shutil.rmtree(task.remove, ignore_errors=True)
 
     try:
         while pending or running:
@@ -245,25 +241,6 @@ class Completed(NamedTuple):
     stderr: bytes
 
 
-class StoppableDriver:
-    """A driver as one unit sees it: its own checks, plus the pool's stop request.
-
-    Every other attribute is the shared driver's, so a unit's launches terminate and
-    reap their process groups through the driver's own code.
-    """
-
-    def __init__(self, driver, context: 'UnitContext'):
-        self.driver, self.context = driver, context
-
-    def check_cancelled(self):
-        """Run the driver's check, then raise UnitStopped if the pool has stopped."""
-        self.driver.check_cancelled()
-        self.context.check()
-
-    def __getattr__(self, name):
-        return getattr(self.driver, name)
-
-
 @dataclasses.dataclass
 class UnitContext:
     """What a running unit sees: its stop request, leased CPU and environment."""
@@ -279,10 +256,6 @@ class UnitContext:
             raise UnitStopped(f'{self.name}: the pool stopped')
         if self.cancelled is not None and self.cancelled():
             raise UnitStopped(f'{self.name}: cancelled')
-
-    def driver(self, base) -> StoppableDriver:
-        """Wrap BASE, a driver with check_cancelled, so its checks also see the pool's stop."""
-        return StoppableDriver(base, self)
 
     def launch(self, argv: Sequence[str], *, env: Mapping[str, str] | None = None,
                poll: float = 0.1,
@@ -532,7 +505,7 @@ def build_tasks(args, chosen: Plan, token: str = '', cid_dir: Path | None = None
             cleanup = functools.partial(remove_owned, owned)
         tasks.append(Task(item, [sub(part) for part in args.command],
                           log=Path(sub(args.log)) if args.log else None,
-                          cleanup=cleanup, remove=Path(sub(args.remove)) if args.remove else None))
+                          cleanup=cleanup))
     return tasks
 
 
@@ -572,14 +545,13 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     run = sub.add_parser('run', help='run a command per item, within one CPU budget')
     run.add_argument('--label', default='pool')
     run.add_argument('--items', type=lambda value: [part for part in value.split(',') if part], default=[],
-                     help='comma-separated item names; {item} in the command, log and remove')
+                     help='comma-separated item names; {item} in the command and log')
     run.add_argument('--cpus', type=int, help='cap the CPU budget (default: the allowed CPUs)')
     run.add_argument('--log', help='log file per item; output of a failed item is tailed')
     run.add_argument('--container-runtime', help='container command (shell-quoted); with it, items may use {token} and '
                      '{cidfile}, and a failure or signal removes only the containers this run recorded and labelled')
     run.add_argument('--container-label', default='oxpinyin.pool',
                      help='label key whose value is the run token on each container the command creates')
-    run.add_argument('--remove', help='directory removed per item after it succeeds')
     run.add_argument('command', nargs=argparse.REMAINDER, help='-- COMMAND... ({item}, {jobs}, {workers}, {token}, {cidfile})')
 
 

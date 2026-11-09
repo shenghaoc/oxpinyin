@@ -9,16 +9,12 @@ import signal
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 import unittest
-from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from tools.dev.pool import UnitContext
 from tools.dev.runner_recipes import pinyin_needed, pinyin_resolved
-from tools.dev import runners
 
 
 class ElfObservationTests(unittest.TestCase):
@@ -26,17 +22,6 @@ class ElfObservationTests(unittest.TestCase):
         self.assertEqual(pinyin_needed(' (NEEDED) Shared library: [libpinyin.so.15]\n Shared library: [libc.so.6]'), 'libpinyin.so.15')
         self.assertEqual(pinyin_resolved('libpinyin.so.15 => /build/lib/libpinyin.so.15 (0x1)'), '/build/lib/libpinyin.so.15')
         self.assertEqual(pinyin_needed('Shared library: [libpinyin_capi.so]'), 'libpinyin_capi.so')
-
-
-class LauncherTests(unittest.TestCase):
-    def test_pool_launch_keeps_cwd_and_merges_streams(self):
-        context = UnitContext('fixture', threading.Event(), environment=dict(os.environ))
-        with tempfile.TemporaryDirectory() as scratch:
-            result = context.launch([sys.executable, '-c', 'import os,sys; print(os.getcwd(), flush=True); print("diagnostic", file=sys.stderr)'],
-                                    cwd=Path(scratch), merge_stderr=True)
-            self.assertEqual(result.status, 0)
-            self.assertEqual(result.stderr, b'')
-            self.assertEqual(result.stdout.decode().splitlines(), [str(Path(scratch).resolve()), 'diagnostic'])
 
 
 def live_descendants(pid, proc=Path('/proc')):

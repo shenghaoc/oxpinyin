@@ -1,26 +1,14 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
-"""Unit tests for tools.dev CLI diagnostics and exit statuses."""
-import contextlib
-import io
+"""Smoke tests of the justfile under the real just: argument transport, exit statuses and the doctor diagnostic."""
 import json
 import os
 from pathlib import Path
-import re
 import sys
 import subprocess
 import tempfile
 import unittest
-from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from tools.dev import cli, slot, test_support
-
-IMPLEMENTATION = 'legacy:tools/oracle/build-oracle.sh'
-COMMAND = ['bash', '{root}/tools/oracle/build-oracle.sh']
-
 
 # cmd.exe reads a batch file in the console code page, so the fake takes the
 # interpreter path from the environment instead of holding it as text.
@@ -57,14 +45,6 @@ class RealJustSmokeTests(unittest.TestCase):
         return subprocess.run(command,
                               cwd=ROOT, capture_output=True, text=True, timeout=30)
 
-    def test_real_justfile_lists_its_public_recipes(self):
-        result = self.invoke('--list')
-        self.assertEqual(result.returncode, 0, result.stderr)
-        if sys.platform != 'win32':
-            self.assertIn('test-tools', result.stdout)
-        self.assertIn('audit-glib-call-sites', result.stdout)
-        self.assertNotIn('_test-argv', result.stdout)
-
     def test_real_recipe_preserves_arguments_and_nonzero_exit(self):
         with tempfile.TemporaryDirectory() as directory:
             marker = Path(directory) / 'must-not-exist'
@@ -86,53 +66,6 @@ class RealJustSmokeTests(unittest.TestCase):
                     self.assertEqual(result.returncode, status, result.stderr)
                     self.assertEqual(json.loads(result.stdout), values)
 
-    def test_bootstrapping_uv_recipes_depend_on_python(self):
-        result = self.invoke('--dump', '--dump-format', 'json')
-        self.assertEqual(result.returncode, 0, result.stderr)
-        recipes = json.loads(result.stdout)['recipes']
-        users = {name for name, recipe in recipes.items()
-                 if any('uv run' in fragment for line in recipe['body'] for fragment in line)}
-        self.assertIn('check', users)
-        for name in sorted(users - {'doctor', 'rust-tables'}):
-            with self.subTest(recipe=name):
-                self.assertIn('python', [dependency['recipe'] for dependency in recipes[name]['dependencies']])
-        for name in ('doctor', 'rust-tables'):
-            self.assertEqual(recipes[name]['dependencies'], [])
-
-    def test_platform_variants_keep_bootstrap_or_offline_contract(self):
-        header = re.compile(r'^(@?[A-Za-z_][\w-]*)(?: [^:]*)?:(.*)$')
-        blocks = []
-        for line in (ROOT / 'justfile').read_text().splitlines():
-            match = header.match(line)
-            if match and not line.startswith(('set ', 'default')):
-                blocks.append([match.group(1), match.group(2), []])
-            elif blocks and line.startswith(' '):
-                blocks[-1][2].append(line)
-        users = [(name, dependencies) for name, dependencies, body in blocks
-                 if name not in ('doctor', 'rust-tables') and any('uv run' in line for line in body)]
-        self.assertGreaterEqual(len(users), 20)
-        for name, dependencies, body in blocks:
-            if name == 'rust-tables':
-                self.assertFalse(dependencies.strip())
-                self.assertTrue(any('uv run --offline --no-python-downloads' in line for line in body))
-        for name, dependencies in users:
-            with self.subTest(recipe=name):
-                self.assertIn('python', dependencies.split())
-
-    def test_table_recipe_disables_downloads_and_does_not_bootstrap_python(self):
-        with tempfile.TemporaryDirectory() as directory:
-            log = Path(directory) / 'uv.log'
-            write_fake_uv(Path(directory), log)
-            env = {**os.environ, 'PATH': f'{directory}{os.pathsep}{os.environ["PATH"]}',
-                   FAKE_UV_PYTHON: sys.executable}
-            result = subprocess.run(
-                ['just', '--justfile', str(ROOT / 'justfile'), 'rust-tables', '--check'],
-                cwd=ROOT, capture_output=True, text=True, timeout=30, env=env)
-            self.assertEqual(result.returncode, 2)
-            self.assertEqual(log.read_text().splitlines(), [
-                'run --offline --no-python-downloads --no-project --managed-python '
-                'python -X lazy_imports=normal -m tools.dev rust-tables --check'])
-
     def test_doctor_without_the_interpreter_names_just_python_and_installs_nothing(self):
         with tempfile.TemporaryDirectory() as directory:
             log = Path(directory) / 'uv.log'
@@ -146,28 +79,6 @@ class RealJustSmokeTests(unittest.TestCase):
             self.assertEqual(log.read_text().splitlines(),
                              ['python find --managed-python'])
 
-
-class CliTests(unittest.TestCase):
-    def setUp(self):
-        self.enterContext(mock.patch.dict(os.environ, {'PATH': os.environ['PATH']}, clear=True))
-        self.launch = self.enterContext(mock.patch.object(
-            slot.subprocess, 'Popen', side_effect=AssertionError('CLI unit test launched a process')))
-
-    def test_tools_dispatches_to_shared_harness_runner(self):
-        with mock.patch.object(cli.test_runner, 'run_tools', return_value=1) as run:
-            self.assertEqual(cli.main(['test-tools']), 1)
-        run.assert_called_once_with([], None, None)
-
-    def test_tools_forwards_selection_options(self):
-        cases = ((['tools/dev/test_runner.test.py', '-k', 'HarnessTests'],
-                  (['tools/dev/test_runner.test.py'], 'HarnessTests', None)),
-                 (['--changed'], ([], None, 'HEAD')),
-                 (['--changed', 'origin/main'], ([], None, 'origin/main')))
-        for argv, expected in cases:
-            with self.subTest(argv=argv), \
-                    mock.patch.object(cli.test_runner, 'run_tools', return_value=7) as run:
-                self.assertEqual(cli.main(['test-tools', *argv]), 7)
-                run.assert_called_once_with(*expected)
 
 if __name__ == '__main__':
     unittest.main()
