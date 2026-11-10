@@ -482,25 +482,6 @@ impl PhraseLibrary {
         })
     }
 
-    /// A fixture's empty sub-index after a refused layout: no mapping,
-    /// `total_freq` as read before the check, and `get_range`'s `1..1`.
-    /// A production layout refusal retains its mapping via
-    /// [`Self::open_retaining_layout`].
-    #[must_use]
-    pub fn empty(total_freq: u32) -> Self {
-        Self {
-            file: None,
-            source_path: None,
-            payload: 0..0,
-            total_freq,
-            offsets: 0..0,
-            content: 0..0,
-            layout_failed: true,
-            item_total: std::sync::OnceLock::new(),
-            detached_range_end: None,
-        }
-    }
-
     /// `FacadePhraseIndex::compact` rebuilds the sub-index from its items
     /// (`phrase_index.cpp:648-675`). The layout-failed sub-index has no
     /// items, so its newly built local total is zero; a well-formed
