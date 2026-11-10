@@ -107,8 +107,7 @@ are stored in native byte order — LE on all supported targets.
 - `crates/oxpinyin-data/src/phrase_table.rs` — `PhraseTable`: the Rust
   equivalent of `PhraseLargeTable3`. It holds exact-match search, the
   prefix probe and `search_suggestion`.
-- `crates/oxpinyin-data/src/dict.rs` — `SystemDictionary` and
-  `AddonDictionary` answer `tokens_for_text` and the suggestion tokens
-  through `PhraseTable`.
+- `crates/oxpinyin-data/src/dict.rs` — `SystemDictionary` answers
+  `tokens_for_text` and the suggestion tokens through `PhraseTable`.
 - `PhraseTable` uses the `ChewingDbm` trait and the `RawChewingDbm`
   wrapper from `chewing_table.rs`.

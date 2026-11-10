@@ -306,11 +306,6 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, M: std::borrow::Borrow<AtomicU32>>
             library_mask,
         })
     }
-
-    /// Separate the model tables from phrase storage.
-    pub fn into_parts(self) -> (BigramTables, L, M) {
-        (self.tables, self.libraries, self.library_mask)
-    }
 }
 
 impl<L: std::borrow::Borrow<PhraseLibraries>> BigramLanguageModel<L> {
