@@ -899,7 +899,8 @@ impl<E> PhraseIndexRanges<E> {
     }
 
     /// Every resolved entry, in the walk order of [`Self::iter`].
-    pub fn walk(&self) -> impl Iterator<Item = &E> {
+    #[cfg(test)]
+    fn walk(&self) -> impl Iterator<Item = &E> {
         self.iter().flat_map(|range| self.entries(range))
     }
 
@@ -1546,19 +1547,6 @@ impl Default for NbestStepCosts {
             blended: None,
             unigram: None,
             unigram_lambda: 1.0,
-        }
-    }
-}
-
-impl NbestStepCosts {
-    /// Pre-log probability without pronunciation: blend if present, else
-    /// the weighted unigram. None skips the step entirely.
-    #[must_use]
-    pub fn step(&self) -> Option<f64> {
-        match (self.blended, self.unigram) {
-            (Some(blended), _) => Some(blended),
-            (None, Some(unigram)) => Some(unigram * f64::from(self.unigram_lambda)),
-            (None, None) => None,
         }
     }
 }

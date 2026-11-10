@@ -214,21 +214,6 @@ impl SyllableKey {
             Completeness::Partial
         }
     }
-
-    /// Length in bytes of [`SyllableKey::text`].
-    #[must_use]
-    pub fn len(self) -> usize {
-        self.text().len()
-    }
-
-    /// Always `false`; every key has a non-empty spelling.
-    ///
-    /// Present because clippy asks any type with `len` for an `is_empty`, and a
-    /// constant answer is more honest than omitting it.
-    #[must_use]
-    pub const fn is_empty(self) -> bool {
-        false
-    }
 }
 
 /// The pin's initial and final swaps on the stored key, including invalid
@@ -459,8 +444,7 @@ mod tests {
             let key = SyllableKey::from_index(index).expect("index is in range");
             assert_eq!(key.index(), index);
             assert_eq!(SyllableKey::from_canonical_text(key.text()), Some(key));
-            assert_eq!(key.len(), key.text().len());
-            assert!(!key.is_empty());
+            assert!(!key.text().is_empty());
         }
         assert_eq!(SyllableKey::from_index(SYLLABLE_KEY_COUNT), None);
     }
