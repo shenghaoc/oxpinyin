@@ -41,6 +41,9 @@ These rules apply to the `performance` shell:
 - Recipe outputs default to `/performance/results/<recipe>/`. Explicit
   output overrides stay supported. The harness and scratch builds live under
   `/performance`.
+- Each `callgrind-differential` capture and each `system-import-profile` run needs a new
+  output directory. Both refuse a directory that exists. A second differential capture
+  must set `CG_OUT` to a new path.
 - Prepared pin prefixes also persist under `/performance`. Before reuse, preparation:
   - validates the prefix with `tools.oracle.image.prefix_ok` (pin commits, recipe, cached libraries);
   - requires its `versions.txt` to equal the inventory of the running image, so that the pin and the subject
@@ -52,7 +55,7 @@ These rules apply to the `performance` shell:
 - `--cells` is valid only with `oracle` preparation.
 
 Preparation lives in `tools/dev/measure/prepare.py`, not in image layers.
-Select `callgrind` for the profiled, shipping and allocation Tkrzw arms, or
+Select `callgrind` for the profiled and shipping Tkrzw arms, or
 `oracle --cells tkrzw` for pin data only. Model data stays local.
 Both arms load the packaged libtkrzw of Debian:
 

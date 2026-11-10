@@ -1,5 +1,5 @@
 #!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
-"""Tests for the valgrind recipes: the callgrind differential's eight stages and system-import-profile.
+"""Tests for the valgrind recipes: the callgrind differential's seven stages and system-import-profile.
 
 The differential runs in the fake world (fake_world.py): its stages, banners, files and stopping
 rules are pinned without valgrind, binutils or a PMU, so the file runs on macOS and Linux. The
@@ -189,7 +189,7 @@ class DifferentialTests(World):
         super().setUp()
         self.out = self.root / 'out'
         self.libs = {}
-        for key, base in (('lp', 'pin'), ('ox', 'ox'), ('nodebug', 'nodebug'), ('alloc', 'alloc')):
+        for key, base in (('lp', 'pin'), ('ox', 'ox'), ('nodebug', 'nodebug')):
             library = self.root / base / 'lib/libpinyin.so'
             library.parent.mkdir(parents=True)
             library.write_bytes(base.encode())
@@ -215,7 +215,7 @@ class DifferentialTests(World):
         self.env = {'CG_OUT': str(self.out), 'CG_ROUNDS': '2', 'T_RUNS': '2', 'HW_RUNS': '2', 'PERF_CPU': '1'}
         self.worker_row = {}
 
-    def test_the_eight_stages_run_in_order_and_leave_their_files(self):
+    def test_the_seven_stages_run_in_order_and_leave_their_files(self):
         status, out, err = self.execute(valgrind.callgrind_differential, [], self.env)
         self.assertEqual(status, 0, err)
         stages = [line for line in out.splitlines() if line.startswith(('=== ', '--- '))]
@@ -225,11 +225,10 @@ class DifferentialTests(World):
             '--- objects credited in the profile ---',
             '--- callgrind: libpinyin-tkrzw round 1 ---', '--- callgrind: oxpinyin-tkrzw round 1 ---',
             '--- callgrind: libpinyin-tkrzw round 2 ---', '--- callgrind: oxpinyin-tkrzw round 2 ---',
-            '=== allocations per steady cycle (oxpinyin, alloc-count build) ===',
             '--- timing: 2 alternating runs x 8 cycles x 1 passes ---', f'=== captures written to {self.out} ==='])
         for name in ('environment.txt', 'anchors.txt', 'debuginfo-neutrality.txt', 'malloc-interception.txt',
                      'cg.libpinyin-tkrzw.r1.stdout', 'cg.oxpinyin-tkrzw.r2.stderr', 'hw-instructions.jsonl', 'hw-instructions.md',
-                     'hw.err', 'alloc-count.txt', 'speed.jsonl', 'speed.err', 'timing.md'):
+                     'hw.err', 'speed.jsonl', 'speed.err', 'timing.md'):
             self.assertTrue((self.out / name).exists(), name)
         self.assertEqual((self.out / 'debuginfo-neutrality.txt').read_text(), '=== debug-info neutrality ===\nPASS (a): identical .text\n')
         self.assertEqual((self.out / 'timing.md').read_text(), 'REPORT perf-ci.py\n')
@@ -248,12 +247,12 @@ class DifferentialTests(World):
         self.assertIn(f'--callgrind-out-file={self.out / "callgrind.libpinyin-tkrzw.r1.out"}', cell)
         self.assertEqual((profiled[1][1], profiled[1][3], profiled[1][4]), ('libpinyin-tkrzw', '4', '1'))
         native = [w for w in self.workers_of() if 'valgrind' not in w[6]]
-        # hardware: 2 runs x 2 cells with PERF_HW, the allocation run, then the timing runs
-        self.assertEqual([w[1] for w in native], ['libpinyin-tkrzw', 'oxpinyin-tkrzw'] * 2 + ['oxpinyin-alloccount']
+        # Hardware: 2 runs x 2 cells with PERF_HW, then the timing runs.
+        self.assertEqual([w[1] for w in native], ['libpinyin-tkrzw', 'oxpinyin-tkrzw'] * 2
                          + ['libpinyin-tkrzw', 'oxpinyin-nodebug'] * 2)
         self.assertEqual({w[3] for w in native}, {'8'})
         self.assertEqual(len(self.kinds('hardware')), 4)
-        self.assertEqual([check[2] for check in self.kinds('check')[:4]], ['pin', 'subject', 'subject', 'subject'])
+        self.assertEqual([check[2] for check in self.kinds('check')[:3]], ['pin', 'subject', 'subject'])
 
     def test_a_bad_count_is_named_before_anything_is_made(self):
         for name in ('CG_ROUNDS', 'T_RUNS', 'HW_RUNS'):
@@ -261,6 +260,16 @@ class DifferentialTests(World):
                 status, out, err = self.execute(valgrind.callgrind_differential, [], {**self.env, name: '1.5'})
                 self.assertEqual((status, out, self.out.exists()), (2, '', False))
                 self.assertEqual(err, f"just measure-callgrind-differential: {name} must be a decimal count (got '1.5')\n")
+
+    def test_an_existing_output_directory_is_refused_and_nothing_is_written_to_it(self):
+        self.out.mkdir()
+        with self.assertRaises(FileExistsError) as exists:
+            self.out.mkdir(parents=True)
+        status, out, err = self.execute(valgrind.callgrind_differential, [], self.env)
+        self.assertEqual((status, out), (1, ''))
+        self.assertEqual(err, f"mkdir: cannot create directory '{self.out}': {exists.exception.strerror}\n")
+        self.assertEqual(list(self.out.iterdir()), [])
+        self.assertEqual(self.workers_of(), [])
 
     def test_folded_anchors_stop_after_their_table_is_kept(self):
         self.nm_output = NM.replace('1140 t', '1130 t')

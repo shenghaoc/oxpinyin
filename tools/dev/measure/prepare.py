@@ -2,8 +2,8 @@
 
 `python -m tools.dev.measure.prepare oracle|callgrind` prepares what
 callgrind-differential and system-import-profile read: oracle prepares only the
-selected pin cells; callgrind also builds the profiling, shipping and allocation
-arms over the pin's data. Model data and subject artifacts are runtime working
+selected pin cells; callgrind also builds the profiling and shipping arms over
+the pin's data. Model data and subject artifacts are runtime working
 data, never image layers.
 """
 import argparse
@@ -106,8 +106,7 @@ def prepare(argv, env):
         alias.symlink_to(prefix, target_is_directory=True)
     if args.mode == 'oracle':
         return 0
-    for name, features, debug in (('tkrzw', 'tkrzw', True), ('nodebug', 'tkrzw', False),
-                                  ('alloccount', 'tkrzw,alloc-count', True)):
+    for name, debug in (('tkrzw', True), ('nodebug', False)):
         installed = Path(f'/performance/oxpinyin-{name}')
         installed.mkdir(parents=True, exist_ok=True)
         alias = Path(f'/opt/oxpinyin-{name}')
@@ -119,7 +118,7 @@ def prepare(argv, env):
         else:
             build_env.pop('RUSTFLAGS', None)
         bench.heavy(['cargo', 'cinstall', '--locked', '--release', '-p', 'oxpinyin-capi',
-                     '--no-default-features', '--features', features, f'--destdir={installed / "stage"}',
+                     '--no-default-features', '--features', 'tkrzw', f'--destdir={installed / "stage"}',
                      '--prefix=/usr'], env=build_env)
     harness = SCRATCH / 'bisect'
     bench.run(bench.harness_build(harness, flags=(*bench.STRICT_FLAGS, '-g')))
