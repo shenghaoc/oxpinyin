@@ -144,17 +144,6 @@ pub fn pinyin_choose_candidate(
 ) -> c_int {
     candidates::pinyin_choose_candidate(instance, _offset, candidate)
 }
-/// In-process wrapper for the `pinyin_choose_predicted_candidate` ABI symbol (see the C header).
-pub fn pinyin_choose_predicted_candidate(
-    instance: *mut PinyinInstance,
-    candidate: *mut LookupCandidate,
-) -> bool {
-    candidates::pinyin_choose_predicted_candidate(instance, candidate)
-}
-/// In-process wrapper for the `pinyin_clear_constraint` ABI symbol (see the C header).
-pub fn pinyin_clear_constraint(instance: *mut PinyinInstance, offset: usize) -> bool {
-    candidates::pinyin_clear_constraint(instance, offset)
-}
 /// In-process wrapper for the `pinyin_get_candidate` ABI symbol (see the C header).
 pub fn pinyin_get_candidate(
     instance: *mut PinyinInstance,
@@ -162,14 +151,6 @@ pub fn pinyin_get_candidate(
     candidate: *mut *mut LookupCandidate,
 ) -> bool {
     candidates::pinyin_get_candidate(instance, index, candidate)
-}
-/// In-process wrapper for the `pinyin_get_candidate_nbest_index` ABI symbol (see the C header).
-pub fn pinyin_get_candidate_nbest_index(
-    instance: *mut PinyinInstance,
-    candidate: *mut LookupCandidate,
-    index: *mut u8,
-) -> bool {
-    candidates::pinyin_get_candidate_nbest_index(instance, candidate, index)
 }
 /// In-process wrapper for the `pinyin_get_candidate_string` ABI symbol (see the C header).
 pub fn pinyin_get_candidate_string(
@@ -191,30 +172,12 @@ pub fn pinyin_get_candidate_type(
 pub fn pinyin_get_n_candidate(instance: *mut PinyinInstance, num: *mut GUint) -> bool {
     candidates::pinyin_get_n_candidate(instance, num)
 }
-/// In-process wrapper for the `pinyin_is_user_candidate` ABI symbol (see the C header).
-pub fn pinyin_is_user_candidate(
-    instance: *mut PinyinInstance,
-    candidate: *mut LookupCandidate,
-) -> bool {
-    candidates::pinyin_is_user_candidate(instance, candidate)
-}
-/// In-process wrapper for the `pinyin_remove_user_candidate` ABI symbol (see the C header).
-pub fn pinyin_remove_user_candidate(
-    instance: *mut PinyinInstance,
-    candidate: *mut LookupCandidate,
-) -> bool {
-    candidates::pinyin_remove_user_candidate(instance, candidate)
-}
 /// In-process wrapper for the `pinyin_train` ABI symbol (see the C header).
 pub fn pinyin_train(instance: *mut PinyinInstance, _index: u8) -> bool {
     candidates::pinyin_train(instance, _index)
 }
 
 // ── config ─────────────────────────────────────────────
-/// In-process wrapper for the `pinyin_load_addon_phrase_library` ABI symbol (see the C header).
-pub fn pinyin_load_addon_phrase_library(context: *mut PinyinContext, index: u8) -> bool {
-    config::pinyin_load_addon_phrase_library(context, index)
-}
 /// In-process wrapper for the `pinyin_unload_addon_phrase_library` ABI symbol (see the C header).
 pub fn pinyin_unload_addon_phrase_library(context: *mut PinyinContext, index: u8) -> bool {
     config::pinyin_unload_addon_phrase_library(context, index)
@@ -250,16 +213,6 @@ pub fn oxpinyin_init_for_fixtures(
 ) -> *mut PinyinContext {
     context::oxpinyin_init_for_fixtures(systemdir, userdir)
 }
-/// In-process wrapper for the `oxpinyin_test_set_user_bigram` ABI symbol (see the C header).
-#[cfg(not(feature = "shipped"))]
-pub fn oxpinyin_test_set_user_bigram(
-    context: *mut PinyinContext,
-    prev: *const c_char,
-    cur: *const c_char,
-    count: u64,
-) -> bool {
-    context::oxpinyin_test_set_user_bigram(context, prev, cur, count)
-}
 
 // ── instance ─────────────────────────────────────────────
 /// In-process wrapper for the `pinyin_alloc_instance` ABI symbol (see the C header).
@@ -280,18 +233,6 @@ pub fn pinyin_reset(instance: *mut PinyinInstance) -> bool {
 }
 
 // ── parse ─────────────────────────────────────────────
-/// In-process wrapper for the `pinyin_get_parsed_input_length` ABI symbol (see the C header).
-pub fn pinyin_get_parsed_input_length(instance: *mut PinyinInstance) -> usize {
-    parse::pinyin_get_parsed_input_length(instance)
-}
-/// In-process wrapper for the `pinyin_in_chewing_keyboard` ABI symbol (see the C header).
-pub fn pinyin_in_chewing_keyboard(
-    instance: *mut PinyinInstance,
-    key: c_char,
-    symbols: *mut *mut *mut GChar,
-) -> bool {
-    parse::pinyin_in_chewing_keyboard(instance, key, symbols)
-}
 /// In-process wrapper for the `pinyin_parse_more_chewings` ABI symbol (see the C header).
 pub fn pinyin_parse_more_chewings(instance: *mut PinyinInstance, chewings: *const c_char) -> usize {
     parse::pinyin_parse_more_chewings(instance, chewings)
@@ -514,14 +455,6 @@ pub fn pinyin_get_chewing_auxiliary_text(
 ) -> bool {
     text::pinyin_get_chewing_auxiliary_text(instance, cursor, aux_text)
 }
-/// In-process wrapper for the `pinyin_get_double_pinyin_auxiliary_text` ABI symbol (see the C header).
-pub fn pinyin_get_double_pinyin_auxiliary_text(
-    instance: *mut PinyinInstance,
-    cursor: usize,
-    aux_text: *mut *mut GChar,
-) -> bool {
-    text::pinyin_get_double_pinyin_auxiliary_text(instance, cursor, aux_text)
-}
 /// In-process wrapper for the `pinyin_get_full_pinyin_auxiliary_text` ABI symbol (see the C header).
 pub fn pinyin_get_full_pinyin_auxiliary_text(
     instance: *mut PinyinInstance,
@@ -529,16 +462,6 @@ pub fn pinyin_get_full_pinyin_auxiliary_text(
     aux_text: *mut *mut GChar,
 ) -> bool {
     text::pinyin_get_full_pinyin_auxiliary_text(instance, cursor, aux_text)
-}
-
-// ── user_data ─────────────────────────────────────────────
-/// In-process wrapper for the `pinyin_remember_user_input` ABI symbol (see the C header).
-pub fn pinyin_remember_user_input(
-    instance: *mut PinyinInstance,
-    phrase: *const c_char,
-    count: c_int,
-) -> bool {
-    user_data::pinyin_remember_user_input(instance, phrase, count)
 }
 
 // The ABI-driven black-box suites live in `tests/abi.rs`. These three mods
