@@ -131,12 +131,12 @@ impl UserPhraseTable {
     /// check stops the mask there: it and every later record keep their
     /// bytes, and the error is returned.
     pub(crate) fn mask(&mut self, mask: u32, value: u32) -> Result<(), StoreError> {
-        #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+        #[cfg(not(feature = "bdb"))]
         let mut reused = PhraseTableEntry::default();
         let mut failed = None;
         self.records.rebuild(|_key, bytes, kept| {
             if failed.is_none() {
-                #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+                #[cfg(not(feature = "bdb"))]
                 let masked = reused.set_content(bytes).map(|()| {
                     reused.mask_out(mask, value);
                     reused.as_bytes()
