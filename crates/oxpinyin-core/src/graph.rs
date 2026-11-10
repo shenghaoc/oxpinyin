@@ -155,18 +155,6 @@ impl EdgeKind {
     }
 }
 
-/// Index of an edge in a [`SegmentGraph`].
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct EdgeId(usize);
-
-impl EdgeId {
-    /// The index as a `usize`.
-    #[must_use]
-    pub const fn index(self) -> usize {
-        self.0
-    }
-}
-
 /// One key match spanning a byte range.
 ///
 /// `from` may be one byte before `syllable_start`: a consumed apostrophe
@@ -444,12 +432,6 @@ impl SegmentGraph {
         &self.edges
     }
 
-    /// The edge with this id, or `None` when the id is not from this graph.
-    #[must_use]
-    pub fn edge(&self, id: EdgeId) -> Option<&Edge> {
-        self.edges.get(id.index())
-    }
-
     /// Edges leaving `node`, in the graph's frozen order.
     ///
     /// An out-of-range node has no edges rather than panicking.
@@ -462,18 +444,6 @@ impl SegmentGraph {
             return &[];
         };
         &self.edges[*start..*end]
-    }
-
-    /// Ids of the edges leaving `node`.
-    pub fn outgoing_ids(&self, node: usize) -> impl Iterator<Item = EdgeId> + use<> {
-        let start = self.starts.get(node).copied().unwrap_or(0);
-        let end = self
-            .starts
-            .get(node + 1)
-            .copied()
-            .unwrap_or(start)
-            .max(start);
-        (start..end).map(EdgeId)
     }
 
     /// The furthest node reachable from the start on the full graph.
@@ -569,53 +539,6 @@ impl SegmentGraph {
         }
         path.reverse();
         path
-    }
-}
-
-/// Fewest-keys complete-syllable parse of a pinyin string.
-///
-/// Longest parsed prefix from byte zero, fewest complete keys to reach
-/// it, then least correction distance, first-found ties. Trailing bytes that do not extend the reachable
-/// prefix are ignored. Incomplete initial-only keys are not admitted —
-/// the import ABI and the engine's complete-keys walk share this
-/// selection.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FewestKeys {
-    keys: Vec<SyllableKey>,
-}
-
-impl FewestKeys {
-    /// Parse `pinyin`.
-    ///
-    /// `None` when the input exceeds [`MAX_GRAPH_POSITION`] or no complete-key
-    /// path reaches the furthest reachable node.
-    #[must_use]
-    pub fn parse(pinyin: &str) -> Option<Self> {
-        let graph = SegmentGraph::build(pinyin.as_bytes()).ok()?;
-        let edges = graph.fewest_keys(false);
-        if edges.is_empty() && graph.consumed() > 0 {
-            return None;
-        }
-        Some(Self {
-            keys: edges.iter().map(Edge::key).collect(),
-        })
-    }
-
-    /// The selected keys, in input order.
-    #[must_use]
-    pub fn keys(&self) -> &[SyllableKey] {
-        &self.keys
-    }
-
-    /// `'`-joined syllable spellings (`ni'hao`), matching a stored
-    /// pronunciation row.
-    #[must_use]
-    pub fn canonical(&self) -> String {
-        self.keys
-            .iter()
-            .map(|key| key.text())
-            .collect::<Vec<_>>()
-            .join("'")
     }
 }
 
@@ -765,7 +688,7 @@ fn key_for_spelling(text: &[u8], options: OptionBits) -> Option<(SyllableKey, u8
 
 #[cfg(test)]
 mod tests {
-    use super::{Edge, EdgeKind, FewestKeys, GraphError, SegmentGraph};
+    use super::{Edge, EdgeKind, GraphError, SegmentGraph};
     use crate::{
         OptionBits, PINYIN_CORRECT_GN_NG, PINYIN_CORRECT_IOU_IU, PINYIN_CORRECT_ON_ONG,
         SyllableKey, USE_TONE,
@@ -1272,19 +1195,6 @@ mod tests {
     }
 
     #[test]
-    fn edge_ids_address_the_edges_they_index() {
-        let graph = SegmentGraph::build(b"nihao").expect("valid");
-        for node in 0..graph.node_count() {
-            let by_slice = graph.outgoing(node);
-            let by_id: Vec<_> = graph
-                .outgoing_ids(node)
-                .map(|id| *graph.edge(id).expect("ids come from this graph"))
-                .collect();
-            assert_eq!(by_slice, by_id.as_slice(), "node {node}");
-        }
-    }
-
-    #[test]
     fn an_input_past_the_pins_gint16_steps_is_parsed_whole() {
         // 80000 bytes: past both the pin's 32767-byte `gint16` steps and the
         // old 65535-byte refusal (`docs/findings/1501-gint16-input-cap.md`).
@@ -1469,29 +1379,22 @@ mod tests {
     }
 
     #[test]
-    fn fewest_keys_parse_canonicalizes_unseparated_and_trailing_bytes() {
-        let parsed = FewestKeys::parse("nihaoXYZ").expect("parses");
-        assert_eq!(
-            parsed
-                .keys()
-                .iter()
-                .map(|key| key.text())
-                .collect::<Vec<_>>(),
-            ["ni", "hao"]
-        );
-        assert_eq!(parsed.canonical(), "ni'hao");
-        assert_eq!(
-            FewestKeys::parse("ni'hao").map(|parsed| parsed.canonical()),
-            Some("ni'hao".to_owned())
-        );
-        assert_eq!(FewestKeys::parse("n"), None);
-        assert_eq!(
-            FewestKeys::parse("nih").map(|parsed| parsed.canonical()),
-            Some("ni".to_owned())
-        );
-        assert_eq!(
-            FewestKeys::parse("").map(|parsed| parsed.keys().len()),
-            Some(0)
-        );
+    fn fewest_complete_keys_stop_at_the_reachable_prefix() {
+        for (input, expected) in [
+            ("nihaoXYZ", &["ni", "hao"][..]),
+            ("ni'hao", &["ni", "hao"]),
+            ("n", &[]),
+            ("nih", &["ni"]),
+            ("", &[]),
+        ] {
+            let graph = SegmentGraph::build(input.as_bytes()).expect("valid");
+            let path = graph.fewest_keys(false);
+            assert!(
+                path.iter()
+                    .map(|edge| edge.key().text())
+                    .eq(expected.iter().copied()),
+                "{input:?}"
+            );
+        }
     }
 }
