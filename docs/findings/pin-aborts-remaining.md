@@ -37,7 +37,7 @@ abort: training and predicted training change memory only.
 | `pinyin_remove_user_candidate` | `pinyin.cpp:3766` → the same mask walk | `GenericUserStore::remove_user_phrase` (`arena_remove`) → `ShortUserBigramValue` | `candidates.rs` aborts |
 | `pinyin_guess_predicted_candidates` (and the punctuation variant) | `_compute_predicted_bigram_candidates`, `pinyin.cpp:2321-2341`: the prefixes from last to first, `merge_single_gram` then `get_length`, which reads the total of an item-less merged gram (`ngram.cpp:62-70`) | `predict.rs` `predicted_bigram_items`, at the same step of the walk | aborts in the walk |
 | `pinyin_choose_predicted_candidate` | `pinyin.cpp:2630`, after the unigram add (`:2609-2612`, whose overflow returns `false` first) | `GenericUserStore::update` (`SeedPolicy::Predicted`): the unigram add, then `ShortUserBigramValue` | `candidates.rs` aborts |
-| `pinyin_train`, `zhuyin_train` | `train_result3`: `get_total_freq` (`phonetic_lookup.h:884`), and `check_result(user->set_freq(token, freq + seed))` (`:903`) on an unsorted gram | `check_training_step` → `TrainingFault::{ShortValue, SetFreqMiss}` → `EngineError::{ShortTrainingPredecessor, TrainingSetFreqMiss}`, per step in the pin's order | both `candidates.rs` abort |
+| `pinyin_train`, `zhuyin_train` | `train_result3`: `get_total_freq` (`phonetic_lookup.h:884`), and `check_result(user->set_freq(token, freq + seed))` (`:903`) on an unsorted gram | `check_training_step_with` → `TrainingFault::{ShortValue, SetFreqMiss}` → `EngineError::{ShortTrainingPredecessor, TrainingSetFreqMiss}`, per step in the pin's order | both `candidates.rs` abort |
 | `*_guess_sentence`, `*_guess_sentence_with_prefix`, `*_guess_candidates`, `*_phrase_segment` | `merge_single_gram` reading both totals (`ngram.cpp:303-304`), `SingleGram::search` (`:165`), the `DYNAMIC_ADJUST` term (`pinyin.cpp:1848`, `zhuyin.cpp:1250`) | `EngineError::ShortLookupPredecessor` from the merged-gram reads | `refuse_lookup_gram` (both `sentence.rs`, used by `phrase.rs`) aborts on it |
 | the bigram export iterator | `pinyin_bigram_iterator_has_next_phrase` → `load(…, true)` and `retrieve_all`'s `check_result(get_total_freq)` (`pinyin.cpp:889`, `ngram.cpp:133-141`) | `BigramExportWalk::has_next` → `ShortGramTotal`; `get_next` → `BigramStep::ShortTotal` | `iterators.rs` aborts in `has_next` and `get_next` |
 
@@ -348,7 +348,7 @@ That difference is the 2026-10-29 UTC "no ported external-library
 internals" ruling's, recorded there; the subject never reaches its
 `TrainingSetFreqMiss` on that fixture, so the cases cannot be `sigabrt`.
 A miss that oxpinyin's own search does reach is the abort
-(`check_training_step`, held by the store test).
+(`check_training_step_with`, held by the store test).
 
 The save cases of both facades hold the user directory at the abort. The
 directory library is `merged.bin`, library 4, after libraries 1 to 3.

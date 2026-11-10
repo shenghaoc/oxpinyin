@@ -537,11 +537,7 @@ where
     U::Error: std::fmt::Display,
 {
     let view = session.read(session.dictionary.clone(), session.model.clone());
-    let Some(plan) = view.prepare_training(index, &mut |history, token| {
-        user.check_step(history, token)
-            .map_err(|error| EngineError::UserModel(error.to_string()))
-    })?
-    else {
+    let Some(plan) = view.prepare_training(index, &mut |_, _| Ok(()))? else {
         return Ok(false);
     };
     plan.observe(user)

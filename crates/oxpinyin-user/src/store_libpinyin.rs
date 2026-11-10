@@ -2655,11 +2655,11 @@ mod tests {
         );
         store.plant_raw_bigram(2, &gram);
         let generation = store.generation();
-        store.begin_training_steps();
+        let mut check = crate::TrainingCheck::default();
         store
-            .check_training_step(3, token(1))
+            .check_training_step_with(&mut check, 3, token(1))
             .expect("a clean step");
-        let preflight = store.check_training_step(2, token(5));
+        let preflight = store.check_training_step_with(&mut check, 2, token(5));
         let refused = matches!(preflight, Err(UserStoreError::TrainingSetFreqMiss));
         assert!(preflight.is_ok() || refused);
         assert_eq!(store.generation(), generation, "preflight writes nothing");
@@ -2667,7 +2667,6 @@ mod tests {
         assert_eq!(store.system_unigram(token(1)), Some(100));
         assert_eq!(store.system_unigram(token(5)), None);
         assert!(!store.is_modified());
-        store.begin_training_steps();
         let applied = store.observe_selection(2, token(5));
         assert_eq!(applied.is_ok(), preflight.is_ok());
         if refused {
