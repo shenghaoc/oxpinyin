@@ -361,7 +361,6 @@ fn a_short_start_gram_refuses_the_guess_before_any_training() {
     assert!(
         context
             .user_store()
-            .expect("user store")
             .has_short_bigram_value_for(SENTENCE_START)
     );
     let mut inst = context.alloc_instance();
@@ -379,7 +378,7 @@ fn a_short_start_gram_refuses_the_guess_before_any_training() {
         .session
         .select(index)
         .expect("choose 你");
-    let generation = context.user_store().expect("user store").generation();
+    let generation = context.user_store().generation();
     assert_eq!(
         inst.bind(&context.runtime).session.guess_sentence(),
         Err(EngineError::UnsafeLookupPredecessor {
@@ -387,15 +386,14 @@ fn a_short_start_gram_refuses_the_guess_before_any_training() {
         })
     );
     assert_eq!(
-        context.user_store().expect("user store").generation(),
+        context.user_store().generation(),
         generation,
         "nothing was observed"
     );
-    assert!(!context.user_store().expect("user store").is_modified());
+    assert!(!context.user_store().is_modified());
     assert_eq!(
         context
             .user_store()
-            .expect("user store")
             .bigram_row(SENTENCE_START)
             .expect("row"),
         Some(short)
@@ -454,7 +452,6 @@ fn unsorted_gram_reads_and_training_are_deterministic_without_reordering() {
         for probe in ni - 4..=ni + 2 {
             let row = context
                 .user_store()
-                .expect("user store")
                 .bigram_row(SENTENCE_START)
                 .expect("row")
                 .expect("gram");
@@ -469,13 +466,11 @@ fn unsorted_gram_reads_and_training_are_deterministic_without_reordering() {
             }
             let count = context
                 .user_store()
-                .expect("user store")
                 .bigram_count(SENTENCE_START, probe)
                 .expect("count");
             assert_eq!(
                 context
                     .user_store()
-                    .expect("user store")
                     .bigram_count(SENTENCE_START, probe)
                     .expect("repeat"),
                 count
@@ -508,12 +503,11 @@ fn unsorted_gram_reads_and_training_are_deterministic_without_reordering() {
                 .guess_sentence()
                 .expect("guess")
         );
-        let generation = context.user_store().expect("user store").generation();
-        assert!(!context.user_store().expect("user store").is_modified());
+        let generation = context.user_store().generation();
+        assert!(!context.user_store().is_modified());
         assert_eq!(
             context
                 .user_store()
-                .expect("user store")
                 .bigram_row(SENTENCE_START)
                 .expect("reads preserve bytes"),
             Some(gram.clone())
@@ -521,7 +515,6 @@ fn unsorted_gram_reads_and_training_are_deterministic_without_reordering() {
         let result = context.train(&inst, 0);
         let trained = context
             .user_store()
-            .expect("user store")
             .bigram_row(SENTENCE_START)
             .expect("row")
             .expect("gram");
@@ -538,11 +531,11 @@ fn unsorted_gram_reads_and_training_are_deterministic_without_reordering() {
             Err(EngineError::TrainingSetFreqMiss { token }) => {
                 assert_eq!(*token, SENTENCE_START);
                 assert_eq!(
-                    context.user_store().expect("user store").generation(),
+                    context.user_store().generation(),
                     generation,
                     "refusal is atomic"
                 );
-                assert!(!context.user_store().expect("user store").is_modified());
+                assert!(!context.user_store().is_modified());
                 assert_eq!(trained, gram);
             }
             other => panic!("unexpected training result: {other:?}"),
@@ -643,7 +636,7 @@ fn train_two_steps(
         .session
         .select(index)
         .expect("choose 你");
-    let generation = context.user_store().expect("user store").generation();
+    let generation = context.user_store().generation();
     let result = match inst.bind(&context.runtime).session.guess_sentence() {
         Ok(guessed) => {
             assert!(guessed, "guess");
@@ -657,8 +650,8 @@ fn train_two_steps(
         }
         Err(error) => Err(error),
     };
-    let untouched = context.user_store().expect("user store").generation() == generation
-        && !context.user_store().expect("user store").is_modified();
+    let untouched =
+        context.user_store().generation() == generation && !context.user_store().is_modified();
     drop(inst);
     drop(context);
     let _ = std::fs::remove_dir_all(&user);
@@ -710,7 +703,6 @@ fn a_short_start_gram_leaves_the_parse_and_refuses_the_candidate_guess() {
     assert_eq!(
         context
             .user_store()
-            .expect("user store")
             .bigram_row(SENTENCE_START)
             .expect("row"),
         Some(short)

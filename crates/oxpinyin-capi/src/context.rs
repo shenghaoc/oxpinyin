@@ -97,9 +97,7 @@ pub(crate) fn oxpinyin_test_set_user_bigram(
 
     // SAFETY: `context` is non-null and was produced by `pinyin_init`.
     let ctx = unsafe { context_mut(context) };
-    let Some(user) = ctx.core.user_store_mut() else {
-        return false;
-    };
+    let user = ctx.core.user_store_mut();
     let prev_text =
         oxpinyin_capi_marshal::input::scalar_text(oxpinyin_capi_marshal::borrow_c_string!(prev))
             .unwrap_or_default();

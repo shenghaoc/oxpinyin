@@ -116,7 +116,7 @@ pub struct InstanceView<'a, S, E> {
     /// Composition borrowed with current dictionary and model readers.
     pub session: oxpinyin_engine::Session<RuntimeDict<'a>, RuntimeLm<'a>, E>,
     /// Learning store borrowed for this operation.
-    pub user: Option<&'a UserStore>,
+    pub user: &'a UserStore,
     /// Current dictionary reader.
     pub dict: RuntimeDict<'a>,
     /// Current language-model reader.
@@ -332,11 +332,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
     /// same directory gate. Reads only.
     #[must_use]
     pub fn train_aborts(&self, index: u8) -> bool {
-        if !self
-            .user
-            .as_ref()
-            .is_some_and(|user| user.has_user_directory())
-        {
+        if !self.user.has_user_directory() {
             return false;
         }
         matches!(
@@ -357,10 +353,9 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
             _ if self.dict.is_system_library(nibble as u8) => {
                 self.dict.live_items().effective_unigram(token)
             }
-            5..=7 => self
-                .user
-                .filter(|_| self.dict.library_visible(nibble))
-                .and_then(|store| store.user_unigram_frequency(token).ok().flatten()),
+            5..=7 if self.dict.library_visible(nibble) => {
+                self.user.user_unigram_frequency(token).ok().flatten()
+            }
             _ => None,
         }
     }

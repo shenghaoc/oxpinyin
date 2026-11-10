@@ -338,8 +338,7 @@ pub extern "C" fn pinyin_unload_phrase_library(context: *mut PinyinContext, inde
 /// directly); it does **not** arm `m_modified`, matching upstream's
 /// set-sites (`pinyin_train` and `pinyin_end_add_phrases` only).
 ///
-/// Returns `false` for a null context, a context without a user store, or
-/// a store failure.
+/// Returns `false` for a null context or a store failure.
 ///
 /// The user table's `mask_out` walks every `user_pinyin_index.bin` record
 /// and dies of SIGABRT at the `switch` whose `default` is `abort()` when a

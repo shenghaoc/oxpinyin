@@ -37,8 +37,7 @@ use oxpinyin_facade::plan_add;
 ///
 /// Returns `false` for a null instance, an empty/oversized or invalid UTF-8
 /// phrase, a character with no dictionary token, a walk that completes no
-/// path of the phrase's length, an instance without a user store, or a
-/// store failure. Where the matrix is empty (`get_column_size(0)`,
+/// path of the phrase's length, or a store failure. Where the matrix is empty (`get_column_size(0)`,
 /// `phonetic_key_matrix.h:102`; register row 66) or the phrase table holds
 /// a state `_add_phrase` asserts on for a completed path (`pinyin.cpp:554`,
 /// `:568`, `:571`; register row 93), the process aborts, as the import
@@ -149,15 +148,12 @@ fn add_remembered_path(
         let read = ImportRead {
             index: oxpinyin_user::USER_DICTIONARY,
             user: ctx.core.user_store(),
-            dict: Some(ctx.core.runtime.dict()),
-        };
-        let Some(user) = read.user else {
-            return false;
+            dict: ctx.core.runtime.dict(),
         };
         match plan_add(
             read.index,
-            read.dict.as_ref(),
-            user,
+            &read.dict,
+            read.user,
             phrase.clone(),
             keys.clone(),
         ) {
@@ -166,9 +162,7 @@ fn add_remembered_path(
             ImportPlan::Add { phrase, .. } => phrase,
         }
     };
-    let Some(user) = ctx.core.user_store_mut() else {
-        return false;
-    };
+    let user = ctx.core.user_store_mut();
     // `if (-1 == count) count = default_count;` otherwise the `gint` is
     // used as the `guint32` it becomes (`pinyin.cpp:520-524`, the same
     // `_add_phrase` the import path calls): -2 is 4294967294, so a count

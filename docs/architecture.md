@@ -101,7 +101,7 @@ C facades retain ABI marshalling.
 ## Centralized assembly
 
 Construct decodable engines in exactly one place, `oxpinyin-runtime`.
-It assembles system tables, unigram model, λ, optional user store, addons and punctuation.
+It assembles system tables, unigram model, λ, a persistent or transient user store, addons and punctuation.
 Facades through `oxpinyin-facade`, capi and future adapters consume that assembly.
 Do not assemble equivalents independently.
 This prevents native and C-ABI paths from silently diverging.

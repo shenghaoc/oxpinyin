@@ -59,15 +59,12 @@ pub fn guess_predicted(
 /// Only the prefixes the walk loads are read; a fault under any other token
 /// is never reached.
 fn predicted_bigram_items(
-    user: Option<&UserStore>,
+    user: &UserStore,
     prefixes: &[PhraseToken],
 ) -> Result<Vec<(u32, u32)>, &'static str> {
-    let Some(store) = user else {
-        return Ok(Vec::new());
-    };
     let mut merged = single_gram::new_gram();
     for prev in prefixes.iter().rev() {
-        if let Ok(Some(row)) = store.bigram_row(prev.value()) {
+        if let Ok(Some(row)) = user.bigram_row(prev.value()) {
             single_gram::merge_single_gram(&mut merged, None, Some(&row));
         }
         if single_gram::get_length(&merged) != 0 {
@@ -327,13 +324,10 @@ fn append_predicted_bigrams(
     dict: &SharedDict,
     lm: &SharedLm,
     lambda: f32,
-    user: Option<&UserStore>,
+    user: &UserStore,
     successors: &[(u32, u32)],
     into: &mut Vec<Predicted>,
 ) {
-    let Some(store) = user else {
-        return;
-    };
     let total = predicted_total(lm);
     for length in [2_usize, 1] {
         for (token, count) in successors {
@@ -347,7 +341,7 @@ fn append_predicted_bigrams(
             if !dict.library_visible_token(*token) {
                 continue;
             }
-            let Some(text) = phrase_text(dict, store, *token) else {
+            let Some(text) = phrase_text(dict, user, *token) else {
                 continue;
             };
             let phrase_length = text.phrase_length();
@@ -358,7 +352,7 @@ fn append_predicted_bigrams(
                 phrase_length,
                 // The caller passes null_token to the scorer, so the bigram
                 // term is zero even with DYNAMIC_ADJUST (`pinyin.cpp:2418,2438`).
-                frequency: predicted_frequency(dict, Some(store), *token, total, lambda),
+                frequency: predicted_frequency(dict, user, *token, total, lambda),
                 text,
                 token: *token,
                 candidate_type: lookup_candidate_type_t::PREDICTED_BIGRAM_CANDIDATE,
@@ -412,7 +406,7 @@ fn append_predicted_prefix(
     dict: &SharedDict,
     lm: &SharedLm,
     lambda: f32,
-    user: Option<&UserStore>,
+    user: &UserStore,
     prefix: &PhraseText,
     into: &mut Vec<Predicted>,
 ) -> Option<u32> {
@@ -465,15 +459,12 @@ fn predicted_total(lm: &SharedLm) -> u64 {
 /// and ABI increments share the same live phrase items.
 fn predicted_frequency(
     dict: &SharedDict,
-    user: Option<&UserStore>,
+    user: &UserStore,
     token: u32,
     total: u64,
     lambda: f32,
 ) -> u32 {
-    let store_count = || {
-        user.and_then(|store| store.unigram_delta(token).ok())
-            .unwrap_or(0)
-    };
+    let store_count = || user.unigram_delta(token).unwrap_or(0);
     // Read the system item or the user arena's count.
     let unigram = dict
         .live_items()
@@ -684,7 +675,7 @@ mod tests {
         for (hao_count, zhong_count) in [(1000, 20), (20, 1000)] {
             // SAFETY: the live context has no reader retained across this write.
             let ctx = unsafe { crate::state::context_mut(context) };
-            let store = ctx.core.user_store_mut().expect("a user store");
+            let store = ctx.core.user_store_mut();
             store.set_bigram_count(ni, hao, hao_count).expect("set");
             store.set_bigram_count(ni, zhong, zhong_count).expect("set");
             for dynamic in [0, DYNAMIC_ADJUST] {

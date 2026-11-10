@@ -483,9 +483,7 @@ impl ContextCore {
     /// pin's `g_return_val_if_fail` critical there is not reproduced
     /// (2026-10-31 UTC ruling, `docs/findings/1297-layout-criticals.md`).
     pub fn save_user(&mut self) -> SaveOutcome {
-        let Some(store) = self.user_store() else {
-            return SaveOutcome::NotSaved;
-        };
+        let store = self.user_store();
         if !store.has_user_directory() || !store.is_modified() {
             return SaveOutcome::NotSaved;
         }
@@ -495,9 +493,7 @@ impl ContextCore {
         // becomes zero, while the facade aggregate already excludes it.
         let compacted = self.compact_layout_failed();
         let unloaded = self.runtime.unloaded_libraries();
-        let Some(store) = self.user_store_mut() else {
-            return SaveOutcome::NotSaved;
-        };
+        let store = self.user_store_mut();
         // `_write_files` maps each loaded system library again, in the
         // library loop, to diff it against the live one (`pinyin.cpp:955`,
         // `zhuyin.cpp:588`), after the earlier libraries' files are written.
@@ -582,19 +578,10 @@ impl ContextCore {
     /// pin assertion a log reaches answers [`MaskOutOutcome::Journal`], after
     /// the user tables were masked and the libraries before it reloaded.
     pub fn mask_out(&mut self, mask: u32, value: u32) -> MaskOutOutcome {
-        if self.user_store().is_none() {
-            if self.check_system_libraries(None) {
-                return MaskOutOutcome::ChunkHeaderRead;
-            }
-            return MaskOutOutcome::Done(false);
-        }
         // The user tables come first (`pinyin.cpp:1228-1230`,
         // `zhuyin.cpp:763-765`): their faults precede any system library or
         // journal, so find them before opening one. This changes no state.
-        if let Some(Err(error)) = self
-            .user_store()
-            .map(|store| store.check_mask_out(mask, value))
-        {
+        if let Err(error) = self.user_store().check_mask_out(mask, value) {
             return mask_error_outcome(&error);
         }
         // Then the pin's loop (`pinyin.cpp:1260-1294`): it maps library i,
@@ -605,9 +592,9 @@ impl ContextCore {
         // 96) ends the walk; the replay below then meets it in the recorded
         // order, after the earlier libraries' own merges.
         let mut logs = MaskLogs::default();
-        let mut walk = None;
         let mut stop = None;
-        if let Some(store) = self.runtime.user_store() {
+        let store = self.runtime.user_store();
+        let walk = {
             let runtime = &self.runtime;
             let mut remap = runtime.begin_system_remap();
             while let Some(step) = runtime.remap_next(&mut remap) {
@@ -628,11 +615,9 @@ impl ContextCore {
                     }
                 }
             }
-            walk = Some(remap);
-        }
-        let Some(store) = self.user_store_mut() else {
-            return MaskOutOutcome::Done(false);
+            remap
         };
+        let store = self.user_store_mut();
         // The user tables masked (`pinyin.cpp:1228-1230`, `zhuyin.cpp:763-765`).
         if let Err(error) = store.mask_out(mask, value) {
             return mask_error_outcome(&error);
@@ -648,11 +633,14 @@ impl ContextCore {
         // directory the pin asserts on (`memory_chunk.h:493`, register row
         // 96) ends the loop after the libraries before it were mapped and
         // merged, and a merge of theirs that asserts comes first.
-        if let Some(remap) = walk {
-            let mut originals = self.runtime.finish_system_remap(remap);
-            let replay = self.user_store_mut().map_or(Ok(()), |store| {
-                store.reload_system_libraries_prefetched(&mut originals, mask, value, logs)
-            });
+        {
+            let mut originals = self.runtime.finish_system_remap(walk);
+            let replay = self.user_store_mut().reload_system_libraries_prefetched(
+                &mut originals,
+                mask,
+                value,
+                logs,
+            );
             self.runtime.install_baselines(originals);
             // The replay stops at the first library whose merge asserts, so
             // a fault the walk found comes after the merges before it.
@@ -668,9 +656,7 @@ impl ContextCore {
             // total becomes zero.
             let _compacted = self.compact_layout_failed();
         }
-        if let Some(store) = self.user_store_mut() {
-            store.compact_libraries();
-        }
+        self.user_store_mut().compact_libraries();
         MaskOutOutcome::Done(true)
     }
 
@@ -680,8 +666,7 @@ impl ContextCore {
     /// reached by `pinyin_begin_get_bigram_phrases`.
     #[must_use]
     pub fn has_non_token_bigram_key(&self) -> bool {
-        self.user_store()
-            .is_some_and(UserStore::has_non_token_bigram_key)
+        self.user_store().has_non_token_bigram_key()
     }
 
     /// `pinyin_load_phrase_library`'s body (074a2219 `pinyin.cpp:446-459`,
@@ -758,7 +743,8 @@ impl ContextCore {
         if !user_file && !originals.contains_key(&row_index) {
             return Ok(true);
         }
-        let replay = if let Some(store) = self.user_store_mut() {
+        let store = self.user_store_mut();
+        let replay = {
             if user_file {
                 store.load_user_library(row_index);
                 Ok(())
@@ -770,8 +756,6 @@ impl ContextCore {
                 // to replace.
                 Ok(())
             }
-        } else {
-            Ok(())
         };
         self.runtime.install_baselines(originals);
         replay.map_err(LibraryLoadFault::Journal)?;
@@ -835,7 +819,8 @@ impl ContextCore {
             && runtime.dict().library_visible(u32::from(index));
         let system_file = runtime.dict().library_visible(u32::from(index))
             && runtime.dict().system().libraries().is_loaded(index);
-        if let Some(store) = self.user_store_mut() {
+        {
+            let store = self.user_store_mut();
             if user_file {
                 store.unload_user_library(index);
             } else if system_file {
@@ -847,12 +832,12 @@ impl ContextCore {
 
     /// Borrow the context's user store for one read operation.
     #[must_use]
-    pub fn user_store(&self) -> Option<&UserStore> {
+    pub fn user_store(&self) -> &UserStore {
         self.runtime.user_store()
     }
 
     /// Borrow the sole learning-store owner for a write operation.
-    pub fn user_store_mut(&mut self) -> Option<&mut UserStore> {
+    pub fn user_store_mut(&mut self) -> &mut UserStore {
         self.runtime.user_store_mut()
     }
 
@@ -863,13 +848,11 @@ impl ContextCore {
     }
 
     /// The import iterator's close step: compact each library's total from
-    /// its items and arm the store's modified flag for the next save. Absent
-    /// without a user store.
+    /// its items and arm the store's modified flag for the next save.
     pub fn end_import(&mut self) {
-        if let Some(user) = self.user_store_mut() {
-            user.compact_libraries();
-            user.mark_modified();
-        }
+        let user = self.user_store_mut();
+        user.compact_libraries();
+        user.mark_modified();
     }
 
     /// Train retained composition after re-borrowing the current storage.
@@ -992,10 +975,9 @@ mod library_transition_tests {
         let length = text.char_count().expect("character count");
         let keys = vec![toned_key(syllable, tone).expect("key"); length];
         ctx.user_store_mut()
-            .expect("store")
             .add_system_phrase_in(library, Some(token), text, &keys, Some(7))
             .expect("import");
-        ctx.user_store_mut().expect("store").mark_modified();
+        ctx.user_store_mut().mark_modified();
     }
 
     /// The readings the session holds for `token` beyond the chunk's own.
@@ -1035,7 +1017,6 @@ mod library_transition_tests {
         let key = toned_key(SyllableKey::from_text("ni").unwrap().index(), 3).unwrap();
         let token = ctx
             .user_store_mut()
-            .unwrap()
             .add_phrase(&text, &[key], Some(7))
             .unwrap();
         if journal_first {
@@ -1078,10 +1059,7 @@ mod library_transition_tests {
         } else {
             assert_eq!(result, MaskOutOutcome::Done(true));
             assert_eq!(
-                ctx.user_store()
-                    .unwrap()
-                    .lookup()
-                    .tokens_for_ucs4(&[0x4f60]),
+                ctx.user_store().lookup().tokens_for_ucs4(&[0x4f60]),
                 [token]
             );
         }

@@ -349,7 +349,7 @@ impl ItemRef<'_> {
 struct PhraseExportRead<'a> {
     cursor: &'a mut PhraseExportCursor,
     system: RuntimeDict<'a>,
-    user: Option<&'a UserStore>,
+    user: &'a UserStore,
 }
 
 impl std::ops::Deref for PhraseExportRead<'_> {
@@ -433,9 +433,7 @@ impl PhraseExportRead<'_> {
     /// moved since they were taken: the session answers the range end from
     /// its arena.
     fn refresh(&mut self) {
-        let Some(user) = self.user.as_ref() else {
-            return;
-        };
+        let user = self.user;
         let generation = user.generation();
         if self.memo.generation == Some(generation) {
             return;
@@ -567,9 +565,7 @@ impl PhraseExportRead<'_> {
         token: u32,
         read: impl FnOnce(ItemRef<'_>) -> R,
     ) -> Result<Option<R>, ExportAssert> {
-        let Some(user) = self.user.as_ref() else {
-            return Ok(None);
-        };
+        let user = self.user;
         let mut read = Some(read);
         if let Some(out) = user
             .with_user_item(token, |item| {
@@ -618,9 +614,7 @@ impl ContextCore {
         let user_library_present = matches!(
             index,
             ADDON_DICTIONARY | NETWORK_DICTIONARY | USER_DICTIONARY
-        ) && self
-            .user_store()
-            .is_some_and(|user| user.has_user_library(index));
+        ) && self.user_store().has_user_library(index);
         let mut cursor = PhraseExportCursor {
             index,
             next_token: NULL_TOKEN,
@@ -639,11 +633,11 @@ impl ContextCore {
     /// predecessors in the user bigram container's walk order
     /// (`get_all_items`), taken at begin. Each predecessor's gram is
     /// loaded, and each token rendered, only when the walk reaches it
-    /// (`pinyin.cpp:885-890`), from the live store. `None` without a user
-    /// store.
+    /// (`pinyin.cpp:885-890`), from the live store. `None` when the
+    /// predecessor list cannot be read.
     #[must_use]
     pub fn bigram_export_walk(&self) -> Option<BigramExportWalk> {
-        let store = self.user_store()?;
+        let store = self.user_store();
         let items = store.bigram_predecessors().ok()?;
         Some(BigramExportWalk {
             items: items.into(),
@@ -833,18 +827,11 @@ impl BigramExportWalk {
     /// (`pinyin.cpp:888-889`, `ngram.cpp:133-143`), after the rows before it
     /// were handed out; the walk ends there.
     pub fn has_next(&mut self, context: &ContextCore) -> Result<bool, GramLoadFault> {
-        let source = context.user_store().map(|user| ExportSource {
-            user,
+        let source = ExportSource {
+            user: context.user_store(),
             dict: context.runtime.dict(),
-        });
-        self.advance(
-            |token| {
-                source
-                    .as_ref()
-                    .map_or_else(|| Ok(Vec::new()), |source| source.gram(token))
-            },
-            |token| source.as_ref().and_then(|source| source.render(token)),
-        )
+        };
+        self.advance(|token| source.gram(token), |token| source.render(token))
     }
 
     /// The walk over whatever loads a predecessor's gram and renders a
@@ -1236,7 +1223,7 @@ mod phrase_cursor_tests {
     #[test]
     fn an_empty_bigram_export_stays_empty_after_the_first_write() {
         let mut ctx = open();
-        let store = ctx.user_store_mut().unwrap();
+        let store = ctx.user_store_mut();
         assert_eq!(store.bigram_row(1).unwrap(), None);
         assert_eq!(store.bigram_count(1, 2).unwrap(), 0);
         assert_eq!(store.bigram_total(1).unwrap(), 0);
@@ -1246,15 +1233,9 @@ mod phrase_cursor_tests {
         store.mask_out(u32::MAX, 0x0700_0001).unwrap();
         let mut walk = ctx.bigram_export_walk().unwrap();
         assert!(!walk.has_next(&ctx).unwrap());
-        ctx.user_store_mut()
-            .unwrap()
-            .set_bigram_count(1, 2, 69)
-            .unwrap();
-        assert_eq!(ctx.user_store().unwrap().bigram_count(1, 2).unwrap(), 69);
-        assert_eq!(
-            ctx.user_store().unwrap().bigram_predecessors().unwrap(),
-            [1]
-        );
+        ctx.user_store_mut().set_bigram_count(1, 2, 69).unwrap();
+        assert_eq!(ctx.user_store().bigram_count(1, 2).unwrap(), 69);
+        assert_eq!(ctx.user_store().bigram_predecessors().unwrap(), [1]);
         assert!(!walk.has_next(&ctx).unwrap());
     }
 
@@ -1353,7 +1334,7 @@ mod phrase_cursor_tests {
         let jia = SyllableKey::from_text("jia").expect("syllable").index();
         let past_the_tones = toned_key(jia, MAX_KEY_TONE).expect("key") + (1 << KEY_TONE_SHIFT);
         let mut ctx = open();
-        let store = ctx.user_store_mut().unwrap();
+        let store = ctx.user_store_mut();
         store
             .add_phrase_in(
                 USER_DICTIONARY,
@@ -1437,7 +1418,6 @@ mod phrase_cursor_tests {
         // The same syllables with tone 1: a reading the item does not hold.
         let keys = user_keys(&spellings, 1);
         ctx.user_store_mut()
-            .unwrap()
             .add_system_phrase_in(
                 1,
                 Some(next),
@@ -1469,7 +1449,7 @@ mod phrase_cursor_tests {
     #[test]
     fn a_user_library_import_after_begin_is_exported() {
         let mut ctx = open();
-        let store = ctx.user_store_mut().unwrap();
+        let store = ctx.user_store_mut();
         store
             .add_phrase_in(
                 USER_DICTIONARY,
@@ -1480,7 +1460,7 @@ mod phrase_cursor_tests {
             .expect("first");
         let mut cursor = ctx.phrase_export_cursor(u32::from(USER_DICTIONARY));
         assert!(cursor.has_next());
-        let store = ctx.user_store_mut().unwrap();
+        let store = ctx.user_store_mut();
         store
             .add_phrase_in(
                 USER_DICTIONARY,

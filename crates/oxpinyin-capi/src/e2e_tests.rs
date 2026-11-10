@@ -79,7 +79,7 @@ fn with_store<R>(instance: *mut PinyinInstance, read: impl FnOnce(&UserStore) ->
     // SAFETY: tests call this only with a live instance, between serialized
     // C operations. The closure cannot return a borrow into the store.
     let inst = unsafe { instance_ref(instance) };
-    read(inst.core.user.expect("instance carries a user store"))
+    read(inst.core.user)
 }
 
 fn next_user_token(store: &UserStore) -> u32 {
@@ -365,7 +365,6 @@ fn a_predicted_bigram_trains_from_the_prediction_prefix(#[values(false, true)] f
     unsafe { crate::state::instance_context_mut(instance) }
         .core
         .user_store_mut()
-        .unwrap()
         .set_bigram_count(ni, word, 10)
         .unwrap();
 
@@ -614,7 +613,7 @@ fn directories_with_non_utf8_names_open() {
 
 #[test]
 fn null_user_directory_refuses_training_but_keeps_mutable_state() {
-    // No user store is a NULL user dir. An empty string is a user dir —
+    // A NULL user dir creates transient state. An empty string is a user dir —
     // the working directory, as the pin's is (#619).
     let system = cstr(system_dir().to_str().expect("UTF-8 path"));
     let context = pinyin_init(system.as_ptr(), ptr::null());
@@ -638,7 +637,7 @@ fn null_user_directory_refuses_training_but_keeps_mutable_state() {
     ));
     assert!(pinyin_mask_out(context, 0, 0));
 
-    // Selection still works: recording the constraint needs no store.
+    // Selection still works without a user directory.
     assert!(pinyin_choose_candidate(instance, 0, cand) > 0);
 
     crate::instance::pinyin_free_instance(instance);
@@ -1124,7 +1123,7 @@ fn export_an_unspellable_reading(page: *mut u8) {
         // SAFETY: `context` is a live `pinyin_init` handle, borrowed
         // uniquely for this block.
         let ctx = unsafe { crate::state::context_mut(context) };
-        let store = ctx.core.user_store_mut().expect("the context owns a store");
+        let store = ctx.core.user_store_mut();
         let syllable = |text: &str| {
             oxpinyin_core::SyllableKey::from_text(text)
                 .expect("syllable")
@@ -1318,8 +1317,8 @@ fn predicted_tie_groups_are_text_ascending_including_user_rows() {
                     + inst
                         .core
                         .user
-                        .as_ref()
-                        .and_then(|store| store.unigram_delta(token.value()).ok())
+                        .unigram_delta(token.value())
+                        .ok()
                         .unwrap_or(0)
             });
             (
@@ -2564,7 +2563,7 @@ fn remap_a_directory_library(site: &str) -> bool {
             // SAFETY: `context` is a live `pinyin_init` handle, borrowed
             // uniquely for this statement.
             let ctx = unsafe { crate::state::context_mut(context) };
-            ctx.core.user_store_mut().expect("store").mark_modified();
+            ctx.core.user_store_mut().mark_modified();
             crate::test_support::directory_library(&system, "merged.bin");
             pinyin_save(context)
         }
@@ -3180,7 +3179,6 @@ fn export_walk(tag: &str, items: impl FnOnce(u32, u32, u32) -> Vec<(u32, u32)>) 
         let dalong = inst
             .core
             .user
-            .expect("instance carries a user store")
             .token_for_phrase("龘龘")
             .expect("readable store")
             .expect("the imported phrase has a token");
@@ -3997,7 +3995,6 @@ fn the_bigram_export_crosses_both_items_readings() {
         let inst = unsafe { instance_ref(instance) };
         inst.core
             .user
-            .expect("instance carries a user store")
             .token_for_phrase("龘龘")
             .expect("readable store")
             .expect("the imported phrase has a token")
@@ -4073,12 +4070,7 @@ fn unigram_get_and_add_ignore_the_token_tag() {
         let inst = unsafe { instance_ref(instance) };
         [
             inst.core.dict.tokens_for_text("你")[0].value(),
-            inst.core
-                .user
-                .unwrap()
-                .token_for_phrase("龘龘")
-                .unwrap()
-                .unwrap(),
+            inst.core.user.token_for_phrase("龘龘").unwrap().unwrap(),
         ]
     };
     for token in tokens {
@@ -4178,13 +4170,7 @@ fn bigram_export_reads_a_new_pronunciation_when_the_next_pair_loads() {
         let (user_token, system_token) = {
             // SAFETY: `instance` was just allocated and has not been freed.
             let inst = unsafe { instance_ref(instance) };
-            let predecessor = inst
-                .core
-                .user
-                .unwrap()
-                .token_for_phrase("龘龘")
-                .unwrap()
-                .unwrap();
+            let predecessor = inst.core.user.token_for_phrase("龘龘").unwrap().unwrap();
             (predecessor, inst.core.dict.tokens_for_text("好")[0].value())
         };
         let (predecessor, successor) = if live_successor {

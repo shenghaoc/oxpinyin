@@ -271,9 +271,7 @@ pub extern "C" fn pinyin_remove_user_candidate(
     // SAFETY: the candidate reads are complete and the retained owner is now
     // borrowed exclusively for the store mutation.
     let ctx = unsafe { crate::state::instance_context_mut(instance) };
-    let Some(user) = ctx.core.user_store_mut() else {
-        return false;
-    };
+    let user = ctx.core.user_store_mut();
     match user.remove_user_phrase(token.value()) {
         Ok(true) => true,
         // Class (b), register row 98: the call's `user_bigram->mask_out`
@@ -544,8 +542,7 @@ pub extern "C" fn pinyin_clear_constraint(instance: *mut PinyinInstance, offset:
 /// constraint records it in place of the addon-facade token.
 ///
 /// `None` — leaving a plain selection — when the candidate is not an addon
-/// candidate, the addon item cannot be resolved, there is no user store to
-/// promote into, or the store write fails.
+/// candidate, the addon item cannot be resolved, or the store write fails.
 unsafe fn try_promote_addon(instance: *mut PinyinInstance, index: usize) -> Option<PhraseToken> {
     let item = {
         // SAFETY: the caller supplies a live instance and snapshot index.
@@ -565,7 +562,7 @@ unsafe fn try_promote_addon(instance: *mut PinyinInstance, index: usize) -> Opti
         // context mutation with every other operation on its instances.
         let ctx = unsafe { crate::state::instance_context_mut(instance) };
         ctx.core
-            .user_store_mut()?
+            .user_store_mut()
             .promote_addon_phrase(text, &item.readings, item.unigram)
             .ok()?
     };
@@ -602,7 +599,7 @@ unsafe fn try_promote_addon(instance: *mut PinyinInstance, index: usize) -> Opti
 /// `true`.
 ///
 /// Returns `false` for a candidate the snapshot does not hold, a candidate
-/// without a token, an instance without a user store, or a store failure.
+/// without a token, or a store failure.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_choose_predicted_candidate(
     instance: *mut PinyinInstance,
@@ -668,9 +665,7 @@ pub extern "C" fn pinyin_choose_predicted_candidate(
     // SAFETY: all candidate and prefix reads are complete; the retained owner
     // is exclusively borrowed for the prediction training write.
     let ctx = unsafe { crate::state::instance_context_mut(instance) };
-    let Some(user) = ctx.core.user_store_mut() else {
-        return false;
-    };
+    let user = ctx.core.user_store_mut();
     if prefix {
         user.observe_predicted_prefix(token.value()).is_ok()
     } else {
@@ -936,7 +931,7 @@ mod unloaded_library_tests {
             // SAFETY: a live instance between serialized C operations; the
             // closure returns no borrow into the store.
             let inst = unsafe { instance_ref(self.instance) };
-            read(inst.core.user.expect("the instance carries a user store"))
+            read(inst.core.user)
         }
 
         /// The facade total the model divides by.
@@ -1032,7 +1027,6 @@ mod unloaded_library_tests {
         unsafe { context_mut(open.context) }
             .core
             .user_store_mut()
-            .expect("store")
             .set_bigram_count(ni, gbk, 10)
             .expect("seed");
         assert!(pinyin_guess_predicted_candidates(

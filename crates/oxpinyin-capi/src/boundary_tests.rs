@@ -596,14 +596,7 @@ fn removing_a_user_candidate_keeps_the_instance_owner(#[values(false, true)] fin
     assert!(pinyin_remove_user_candidate(instance, candidate));
     // SAFETY: the instance remains live; the removal's exclusive borrow ended.
     let inst = unsafe { crate::state::instance_ref(instance) };
-    assert!(
-        inst.core
-            .user
-            .expect("user store")
-            .phrase(token)
-            .expect("read")
-            .is_none()
-    );
+    assert!(inst.core.user.phrase(token).expect("read").is_none());
     crate::instance::pinyin_free_instance(instance);
     if !finalized {
         crate::context::pinyin_fini(context);

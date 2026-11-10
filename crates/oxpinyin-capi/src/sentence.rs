@@ -840,7 +840,7 @@ mod prefix_ranking_tests {
         {
             // SAFETY: the preceding reader ended; this test serializes all calls.
             let ctx = unsafe { crate::state::instance_context_mut(instance) };
-            let store = ctx.core.user_store_mut().expect("user store");
+            let store = ctx.core.user_store_mut();
             for (previous, next) in [
                 (oxpinyin_user::SENTENCE_START, hao),
                 (short, hao),

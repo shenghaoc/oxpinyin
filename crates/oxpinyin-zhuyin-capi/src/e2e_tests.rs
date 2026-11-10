@@ -148,7 +148,7 @@ fn unigrams_of(instance: *mut crate::types::ZhuyinInstance, tokens: &[u32]) -> V
 }
 
 /// `zhuyin_train` after `zhuyin_guess_sentence` with no choose trains
-/// nothing, answers true and arms the save; without a user store it refuses.
+/// nothing, answers true and arms the save; without a user directory it refuses.
 ///
 /// At 074a2219, `zhuyin_train` (`zhuyin.cpp:1696-1716`) answers false only
 /// without a user dir or without a sentence result; otherwise it sets
@@ -247,7 +247,10 @@ fn train_without_a_choose_trains_nothing_and_without_a_user_store_refuses() {
     let (context, instance) = open();
     let chosen = candidate(instance, "su3cl3", 0);
     assert!(zhuyin_choose_candidate(instance, 0, chosen) > 0);
-    assert!(!zhuyin_train(instance), "no user store to train into");
+    assert!(
+        !zhuyin_train(instance),
+        "NULL user directory refuses training"
+    );
     close(context, instance);
 }
 
@@ -799,7 +802,7 @@ fn map_a_directory_library(site: &str) -> bool {
             // SAFETY: `context` is a live `zhuyin_init` handle, borrowed
             // uniquely for this statement.
             let ctx = unsafe { crate::state::context_mut(context) };
-            ctx.core.user_store_mut().expect("store").mark_modified();
+            ctx.core.user_store_mut().mark_modified();
             crate::test_support::directory_library(&system, "merged.bin");
             zhuyin_save(context)
         }

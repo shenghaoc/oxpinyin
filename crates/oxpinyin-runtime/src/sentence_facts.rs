@@ -7,7 +7,7 @@ use oxpinyin_data::phrase_library::PhraseItemView;
 
 impl RuntimeDict<'_> {
     fn sentence_token(&self, token: u32, facts: &mut SentenceFacts) -> Option<TokenFacts> {
-        let user = self.user?;
+        let user = self.user;
         if !facts.validate(user.generation()) {
             return None;
         }
@@ -60,7 +60,7 @@ impl RuntimeDict<'_> {
         want_text: bool,
         facts: &mut SentenceFacts,
     ) -> Result<Option<PricedToken>, DictError> {
-        if !facts.validate(self.user.map_or(0, UserStore::generation)) {
+        if !facts.validate(self.user.generation()) {
             return self.priced_on_path(path, token, want_text);
         }
         // The last user entry is path-specific. Never replace it with facts
@@ -98,7 +98,7 @@ impl RuntimeDict<'_> {
             },
             text,
         };
-        if !facts.validate(self.user.map_or(0, UserStore::generation)) {
+        if !facts.validate(self.user.generation()) {
             return self.priced_on_path(path, token, want_text);
         }
         Ok(Some(result))
@@ -112,7 +112,7 @@ impl RuntimeLm<'_> {
         item: Option<(u32, u32)>,
         facts: &mut SentenceFacts,
     ) -> Option<Result<NbestStepCosts, LmError>> {
-        let user = self.user?;
+        let user = self.user;
         if !facts.validate(user.generation()) {
             return None;
         }
@@ -271,7 +271,6 @@ mod tests {
         let before = first.tokens[&token].unwrap().unigram;
         runtime
             .user_store_mut()
-            .unwrap()
             .observe_selection(1, token)
             .unwrap();
         let mut next = SentenceFacts::default();
@@ -324,13 +323,11 @@ mod tests {
         let keys = [oxpinyin_user::toned_key(ni.index(), 0).unwrap()];
         let user = runtime
             .user_store_mut()
-            .unwrap()
             .add_phrase_in(7, &"词".into(), &keys, Some(5))
             .unwrap();
         fallback(&runtime, user);
         let imported = runtime
             .user_store_mut()
-            .unwrap()
             .add_system_phrase_in(1, None, &"龘".into(), &keys, Some(0))
             .unwrap();
         fallback(&runtime, imported);
@@ -342,26 +339,23 @@ mod tests {
         fallback(&runtime, ordinary);
         runtime.library_mask.store(0, Ordering::SeqCst);
         // A session detached from this runtime's system libraries.
-        runtime.user = Some(
-            UserStore::open_transient(
-                oxpinyin_user::SystemOriginals::new(
-                    Default::default(),
-                    oxpinyin_data::user_files::UserFileLayout::stock(),
-                ),
-                oxpinyin_data::user_files::SystemVersions::for_this_build(7, 14),
-                oxpinyin_user::UserConfLaw::Pinyin,
-            )
-            .unwrap(),
-        );
+        runtime.user = UserStore::open_transient(
+            oxpinyin_user::SystemOriginals::new(
+                Default::default(),
+                oxpinyin_data::user_files::UserFileLayout::stock(),
+            ),
+            oxpinyin_data::user_files::SystemVersions::for_this_build(7, 14),
+            oxpinyin_user::UserConfLaw::Pinyin,
+        )
+        .unwrap();
         fallback(&runtime, ordinary);
-        runtime.user = None;
         let (_, libraries) = SystemDictionary::open_with(&fixture(), runtime.table_conf())
             .unwrap()
             .into_parts();
-        runtime.originals = oxpinyin_user::system_originals(
+        runtime.install_baselines(oxpinyin_user::system_originals(
             libraries,
             UserFileLayout::from_conf(runtime.table_conf()),
-        );
+        ));
         assert_eq!(
             runtime
                 .dict()
