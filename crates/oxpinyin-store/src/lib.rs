@@ -149,12 +149,6 @@ impl BackendError {
     pub const fn code(&self) -> Option<i32> {
         self.code
     }
-
-    /// The message text, as displayed.
-    #[must_use]
-    pub fn message(&self) -> &str {
-        &self.message
-    }
 }
 
 impl From<&str> for BackendError {
@@ -1274,7 +1268,7 @@ mod tests {
                     });
                     assert!(matches!(
                         outcome,
-                        Err(StoreError::Backend(ref e)) if e.message() == "visitor failed"
+                        Err(StoreError::Backend(ref e)) if e.message == "visitor failed"
                     ));
                     assert_eq!(visited, 2, "the failing row is the last one visited");
                     drop(store);
