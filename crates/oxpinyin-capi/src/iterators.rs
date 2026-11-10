@@ -623,7 +623,7 @@ pub extern "C" fn pinyin_bigram_iterator_has_next_phrase(iter: *mut BigramExport
     let handle = unsafe { &mut *(iter.cast::<BigramHandle>()) };
     // SAFETY: the iterator retains the allocation; the C caller excludes concurrent mutation.
     let context = unsafe { owner_ref(&handle.owner) };
-    let more = handle.walk.has_next(Some(&context.core));
+    let more = handle.walk.has_next(&context.core);
     if more.is_ok() {
         handle.convert_loaded_pair();
     }
@@ -681,7 +681,7 @@ pub extern "C" fn pinyin_bigram_iterator_get_next_phrase(
     let handle = unsafe { &mut *(iter.cast::<BigramHandle>()) };
     // SAFETY: the iterator retains the allocation; the C caller excludes concurrent mutation.
     let context = unsafe { owner_ref(&handle.owner) };
-    let (row, more) = match handle.walk.get_next(Some(&context.core)) {
+    let (row, more) = match handle.walk.get_next(&context.core) {
         BigramStep::Row(row, more) => (row, more),
         // Register row 62, `pinyin.cpp:902`: the pin asserts and aborts.
         BigramStep::Aborts => std::process::abort(),
