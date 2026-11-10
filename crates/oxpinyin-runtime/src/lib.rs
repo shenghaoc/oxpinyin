@@ -49,7 +49,7 @@ use oxpinyin_core::{
     UserCountDelta,
 };
 pub use oxpinyin_data::phrase_library::{
-    LayoutFault, LibraryError, PhraseItemView, RowFault, directory_reads_as_a_chunk,
+    LibraryError, PhraseItemView, RowFault, directory_reads_as_a_chunk,
 };
 pub use oxpinyin_data::table_info::{FileType, TableConfSite};
 pub use oxpinyin_data::table_info::{TableConf, TableConfError};
@@ -195,9 +195,6 @@ pub enum RemapStep {
 /// (`pinyin.cpp:955`, `zhuyin.cpp:588`).
 #[derive(Debug)]
 pub enum SaveRemapFault {
-    /// The chunk passed the header and checksum, but `SubPhraseIndex::load`
-    /// refuses its layout: the pin diffs against the empty sub-index.
-    Layout(LayoutFault),
     /// `MemoryChunk::mmap` refuses the file: the pin writes
     /// `mmap %s failed!` (row 76, class (b)).
     Unmappable(PathBuf),
