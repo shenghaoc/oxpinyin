@@ -808,12 +808,12 @@ pub struct Loaded {
     /// A non-conform profile was found and its files removed —
     /// `check_format`'s `_clean_user_files`, the ecosystem's own
     /// mechanism for "backend or model change discards user data".
-    /// Read by the tests here; the runtime wiring logs it.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub wiped: bool,
     /// Files whose bytes failed to parse; the profile continues without
     /// them (upstream's own degrade — `chunk->load` failure leaves an
     /// empty library, never a failed init).
+    #[cfg(test)]
     pub skipped: Vec<String>,
     /// The pin assertion a `SYSTEM_FILE` library's `.dbin` replay reached,
     /// in library order: the first library whose log reaches one, after the
@@ -830,6 +830,26 @@ pub struct Loaded {
     /// own total (`phrase_index.cpp:237-248`), so the session prices with
     /// these and not with the items' sum.
     pub(crate) library_totals: BTreeMap<u8, u32>,
+}
+
+impl Loaded {
+    fn skip_notes(&mut self) -> Option<&mut Vec<String>> {
+        #[cfg(test)]
+        return Some(&mut self.skipped);
+        #[cfg(not(test))]
+        None
+    }
+}
+
+/// Preserve diagnostic details for the replay and load tests. Production
+/// callers supply no sink and never format or retain these observations.
+pub(crate) fn record_skip(
+    skipped: &mut Option<&mut Vec<String>>,
+    message: std::fmt::Arguments<'_>,
+) {
+    if let Some(skipped) = skipped {
+        skipped.push(message.to_string());
+    }
 }
 
 /// The private result of a profile parse: the public [`Loaded`] plus
@@ -972,7 +992,7 @@ const fn token_of(nibble: u8, slot: u32) -> u32 {
 /// `database format:` abort point, before any judgement, wipe or write
 /// (see `load_user_conf`). A marker that
 /// cannot be written is not an error, as the pin ignores it; unparsable
-/// profile files degrade per-file (see [`Loaded::skipped`]), as upstream's
+/// profile files degrade per-file, as upstream's
 /// do.
 pub fn load(
     dir: &Path,
@@ -1124,6 +1144,7 @@ pub(crate) fn begin_session_profile(dir: &Path, check: &ProfileCheck) -> LoadedP
     let mut profile = LoadedProfile {
         loaded: Loaded {
             open_counter: check.open_counter,
+            #[cfg(test)]
             wiped: !check.conform,
             ..Loaded::default()
         },
@@ -1141,13 +1162,7 @@ pub(crate) fn begin_session_profile(dir: &Path, check: &ProfileCheck) -> LoadedP
             &mut profile.index,
             true,
         );
-        load_user_phrase_index(
-            dir,
-            &mut profile.loaded.skipped,
-            &mut profile.loaded.state.phrase_table,
-            &mut profile.phrase_table,
-            true,
-        );
+        load_user_phrase_index(dir, &mut profile.loaded, &mut profile.phrase_table, true);
     }
     profile
 }
@@ -1256,6 +1271,7 @@ fn load_checked_impl(
     let mut profile = LoadedProfile {
         loaded: Loaded {
             open_counter: check.open_counter,
+            #[cfg(test)]
             wiped: !check.conform,
             ..Loaded::default()
         },
@@ -1280,13 +1296,7 @@ fn load_checked_impl(
             &mut profile.index,
             lazy,
         );
-        load_user_phrase_index(
-            dir,
-            &mut profile.loaded.skipped,
-            &mut profile.loaded.state.phrase_table,
-            &mut profile.phrase_table,
-            lazy,
-        );
+        load_user_phrase_index(dir, &mut profile.loaded, &mut profile.phrase_table, lazy);
         if lazy {
             profile.loaded.journal_fault = replay_logs(
                 dir,
@@ -1405,9 +1415,10 @@ fn load_bigram_rows(dir: &Path, loaded: &mut Loaded) {
     let store = match DefaultStore::open_user_bigram(&path) {
         Ok(store) => store,
         Err(error) => {
-            loaded
-                .skipped
-                .push(format!("{}: {error}", UserDbm::Bigram.file_name()));
+            record_skip(
+                &mut loaded.skip_notes(),
+                format_args!("{}: {error}", UserDbm::Bigram.file_name()),
+            );
             return;
         }
     };
@@ -1421,9 +1432,10 @@ fn load_bigram_rows(dir: &Path, loaded: &mut Loaded) {
         &mut visit,
     );
     if let Err(error) = walked {
-        loaded
-            .skipped
-            .push(format!("{}: {error}", UserDbm::Bigram.file_name()));
+        record_skip(
+            &mut loaded.skip_notes(),
+            format_args!("{}: {error}", UserDbm::Bigram.file_name()),
+        );
     }
 }
 
@@ -1445,9 +1457,10 @@ fn load_user_pinyin_index(
     let store = match DefaultStore::open_user_index(&path) {
         Ok(store) => store,
         Err(error) => {
-            loaded
-                .skipped
-                .push(format!("{}: {error}", UserDbm::PinyinIndex.file_name()));
+            record_skip(
+                &mut loaded.skip_notes(),
+                format_args!("{}: {error}", UserDbm::PinyinIndex.file_name()),
+            );
             return;
         }
     };
@@ -1460,9 +1473,10 @@ fn load_user_pinyin_index(
         std::ops::Bound::Unbounded,
         &mut visit,
     ) {
-        loaded
-            .skipped
-            .push(format!("{}: {error}", UserDbm::PinyinIndex.file_name()));
+        record_skip(
+            &mut loaded.skip_notes(),
+            format_args!("{}: {error}", UserDbm::PinyinIndex.file_name()),
+        );
     }
     index.finish_load();
     if !lazy {
@@ -1496,8 +1510,7 @@ fn load_user_pinyin_index(
 /// leave the table empty.
 fn load_user_phrase_index(
     dir: &Path,
-    skipped: &mut Vec<String>,
-    table: &mut BTreeMap<Vec<u8>, Vec<u8>>,
+    loaded: &mut Loaded,
     arena: &mut UserPhraseTable,
     lazy: bool,
 ) {
@@ -1508,14 +1521,20 @@ fn load_user_phrase_index(
     let store = match DefaultStore::open_user_index(&path) {
         Ok(store) => store,
         Err(error) => {
-            skipped.push(format!("{}: {error}", UserDbm::PhraseIndex.file_name()));
+            record_skip(
+                &mut loaded.skip_notes(),
+                format_args!("{}: {error}", UserDbm::PhraseIndex.file_name()),
+            );
             return;
         }
     };
     let mut visit = |key: &[u8], value: &[u8]| -> Result<(), StoreError> {
         arena.push_record(key, value);
         if !lazy {
-            table.insert(key.to_vec(), value.to_vec());
+            loaded
+                .state
+                .phrase_table
+                .insert(key.to_vec(), value.to_vec());
         }
         Ok(())
     };
@@ -1524,7 +1543,10 @@ fn load_user_phrase_index(
         std::ops::Bound::Unbounded,
         &mut visit,
     ) {
-        skipped.push(format!("{}: {error}", UserDbm::PhraseIndex.file_name()));
+        record_skip(
+            &mut loaded.skip_notes(),
+            format_args!("{}: {error}", UserDbm::PhraseIndex.file_name()),
+        );
     }
     arena.finish_load();
 }
@@ -1563,13 +1585,11 @@ fn load_libraries(
         let bytes = match load_chunk_payload(&path) {
             Ok(bytes) => bytes,
             // Absent is the normal fresh-profile case. Any other error
-            // is an unreadable *existing* file: loading as if it were
-            // absent would let the next save rebuild it from empty and
-            // destroy the user's data with no record, so it lands in
-            // `skipped` for the caller to see.
+            // is an unreadable existing file. Keep the same empty
+            // sub-index fallback and record details only for tests.
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
             Err(e) => {
-                loaded.skipped.push(format!("{name}: {e}"));
+                record_skip(&mut loaded.skip_notes(), format_args!("{name}: {e}"));
                 continue;
             }
         };
@@ -1600,7 +1620,7 @@ fn load_libraries(
                 }
             }
             Err(error) => {
-                loaded.skipped.push(format!("{name}: {error}"));
+                record_skip(&mut loaded.skip_notes(), format_args!("{name}: {error}"));
                 if let Some(libraries) = libraries.as_deref_mut()
                     && let Ok(headers) = UserLibrary::load_headers_payload(&bytes)
                 {
@@ -1852,7 +1872,7 @@ fn replay_log(
         Ok(bytes) => bytes,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(e) => {
-            loaded.skipped.push(format!("{name}: {e}"));
+            record_skip(&mut loaded.skip_notes(), format_args!("{name}: {e}"));
             return Ok(());
         }
     };
@@ -1898,13 +1918,14 @@ fn replay_log(
                 &mut merge,
                 || log_records(payload),
                 nibble,
-                &mut loaded.skipped,
+                &mut loaded.skip_notes(),
                 &name,
             )?;
             if end == MergeEnd::OverRead {
-                loaded
-                    .skipped
-                    .push(format!("{name}: a record's payload runs past the log"));
+                record_skip(
+                    &mut loaded.skip_notes(),
+                    format_args!("{name}: a record's payload runs past the log"),
+                );
                 // The library keeps its pre-replay content: the applied
                 // records are reversed, not dropped with the buffer.
                 if let Some(replayed) = replayed.as_deref_mut() {
@@ -1918,19 +1939,19 @@ fn replay_log(
                 &mut merge,
                 || records.iter().cloned().map(Ok),
                 nibble,
-                &mut loaded.skipped,
+                &mut loaded.skip_notes(),
                 &name,
             )?;
         }
     }
     let (total, overrides) = if let Some(replayed) = replayed {
-        let (total, overrides, retained) = merge.finish_views(&mut loaded.skipped, &name);
+        let (total, overrides, retained) = merge.finish_views(&mut loaded.skip_notes(), &name);
         if let Some(retained) = retained {
             replayed.insert(nibble, retained);
         }
         (total, overrides)
     } else {
-        merge.finish(&mut loaded.skipped, &name)
+        merge.finish(&mut loaded.skip_notes(), &name)
     };
     if let Some(total) = total {
         loaded.library_totals.insert(nibble, total);
@@ -1967,7 +1988,7 @@ fn merge_log<'a, I>(
     merge: &mut Merge<'_, 'a>,
     records: impl Fn() -> I,
     library: u8,
-    skipped: &mut Vec<String>,
+    skipped: &mut Option<&mut Vec<String>>,
     name: &str,
 ) -> Result<MergeEnd, JournalFault>
 where
@@ -1994,15 +2015,23 @@ where
             }
         });
         if let Err(stop) = outcome {
-            skipped.push(match stop {
+            match stop {
                 Stop::ShortAdd(token) => return Err(JournalFault::ShortAdd { library, token }),
                 Stop::Mismatch("header", _) => {
-                    format!("{name}: replay stopped at a mismatched header")
+                    record_skip(
+                        skipped,
+                        format_args!("{name}: replay stopped at a mismatched header"),
+                    );
                 }
                 Stop::Mismatch(kind, token) => {
-                    format!("{name}: replay stopped at a mismatched {kind} for {token:#010x}")
+                    record_skip(
+                        skipped,
+                        format_args!(
+                            "{name}: replay stopped at a mismatched {kind} for {token:#010x}"
+                        ),
+                    );
                 }
-            });
+            }
             break;
         }
     }

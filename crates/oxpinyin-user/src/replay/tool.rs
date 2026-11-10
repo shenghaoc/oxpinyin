@@ -157,7 +157,7 @@ impl Index {
                 }
             }
         }
-        let (_, _, live) = merge.finish_views(&mut Vec::new(), &"test_phrase_index_logger");
+        let (_, _, live) = merge.finish_views(&mut None, &"test_phrase_index_logger");
         if let Some(live) = live {
             self.live = live;
         }

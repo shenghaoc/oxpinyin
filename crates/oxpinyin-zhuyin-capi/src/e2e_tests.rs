@@ -226,6 +226,10 @@ fn train_without_a_choose_trains_nothing_and_without_a_user_store_refuses() {
     );
     let conf = oxpinyin_data::table_info::TableConf::load_from_dir(&system_dir())
         .expect("fixture table.conf");
+    let marker =
+        oxpinyin_data::user_files::UserTableInfo::load_path(&user_dir.path.join("user.conf"))
+            .expect("saved user.conf");
+    assert!(marker.is_conform(&oxpinyin_data::user_files::SystemVersions::from_conf(&conf)));
     let loaded = oxpinyin_user::persistence::load(
         &user_dir.path,
         &oxpinyin_user::SystemOriginals::from(std::collections::BTreeMap::new()),
@@ -236,7 +240,6 @@ fn train_without_a_choose_trains_nothing_and_without_a_user_store_refuses() {
     // A conforming profile is read, not wiped, so its bigram rows are loaded.
     // The journals are checked above; with no originals given, this read
     // skips them.
-    assert!(!loaded.wiped, "the save wrote a conforming user.conf");
     assert_eq!(loaded.state.bigram, Vec::new(), "no user bigram record");
 
     // No user dir: the corpus driver's shape — training degrades to

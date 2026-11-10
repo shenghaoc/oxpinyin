@@ -1485,7 +1485,7 @@ mod tests {
                 .is_ok()
         );
         let mut skipped = Vec::new();
-        let (_, owned, retained) = merge.finish_views(&mut skipped, &"test");
+        let (_, owned, retained) = merge.finish_views(&mut Some(&mut skipped), &"test");
         assert!(
             owned.is_empty(),
             "ADD must remain a view until rows are seeded"
