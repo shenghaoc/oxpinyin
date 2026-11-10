@@ -31,9 +31,8 @@ SYSTEM_IMPORT = 'system-import-profile'
 LP_ROOT = Path('/opt/libpinyin-tkrzw')
 DATA = LP_ROOT / 'lib/libpinyin/data'
 ANCHOR = 'bisect_perf_steady_unit'
-# Where the image installs the four libraries the differential compares.
-ROOTS = dict(lp=LP_ROOT, ox=Path('/opt/oxpinyin-tkrzw/stage'), nodebug=Path('/opt/oxpinyin-nodebug/stage'),
-             alloc=Path('/opt/oxpinyin-alloccount/stage'))
+# Where the image installs the three libraries the differential uses.
+ROOTS = dict(lp=LP_ROOT, ox=Path('/opt/oxpinyin-tkrzw/stage'), nodebug=Path('/opt/oxpinyin-nodebug/stage'))
 # The tool options of every callgrind run; the output file is added per run.
 CALLGRIND_OPTIONS = ('valgrind', '--tool=callgrind', '--collect-atstart=no', f'--toggle-collect={ANCHOR}',
                      '--cache-sim=yes', '--branch-sim=yes', '--separate-threads=no')
@@ -54,7 +53,7 @@ def lines_of(path: Path, pattern: str, *, ignore_case: bool = False) -> list[str
 
 
 def libraries() -> dict:
-    """The five artifacts the differential needs, checked to exist before anything runs."""
+    """The three libraries the differential needs, checked to exist before anything runs."""
     found = {}
     for key, root in ROOTS.items():
         # `find` on a root that is not there says so and ends the run; on one without the file it prints nothing.
@@ -202,7 +201,7 @@ def callgrind_control(argv: Sequence[str], env: Mapping[str, str]) -> int:
 
 
 def callgrind_differential(argv: Sequence[str], env: Mapping[str, str]) -> int:
-    """Instruction-level differential for the steady keystroke cycle: stages 0 through 7."""
+    """Instruction-level differential for the steady keystroke cycle: stages 0 through 6."""
     if argv:
         from . import sentence
         return sentence.run(argv, env)
@@ -213,27 +212,29 @@ def callgrind_differential(argv: Sequence[str], env: Mapping[str, str]) -> int:
     # Stage 4 and 5 capture size. Callgrind is deterministic, so this is chosen for a workable runtime
     # under a ~50x interpreter, not for noise.
     cg_cycles, cg_repeats = setting(env, 'CG_CYCLES', '4'), setting(env, 'CG_REPEATS', '1')
-    # Stage 7 uses the cross-host record's own protocol, deliberately NOT the callgrind pass's cycle
+    # Stage 6 uses the cross-host record's own protocol, deliberately NOT the callgrind pass's cycle
     # count: the timing ratio has to be comparable to every previous steady-cycle record.
     t_cycles, t_repeats = setting(env, 'T_CYCLES', '8'), setting(env, 'T_REPEATS', '1')
     cg_rounds = bench.count(label, env, 'CG_ROUNDS', '2')
     t_runs = bench.count(label, env, 'T_RUNS', '20')
     hw_runs = bench.count(label, env, 'HW_RUNS', '10')
-    out.mkdir(parents=True, exist_ok=True)
+    try:
+        out.mkdir(parents=True)
+    except OSError as error:
+        fail(f"mkdir: cannot create directory '{out}': {error.strerror}")
 
     found = libraries()
-    lp, ox, nodebug, alloc = (found[key] for key in ('lp', 'ox', 'nodebug', 'alloc'))
+    lp, ox, nodebug = (found[key] for key in ('lp', 'ox', 'nodebug'))
     harness = SCRATCH / 'bisect'
     worker = Bench(label, env, harness, cpu, cell='tkrzw', required=True)
     arms = {'lp': Arm('libpinyin-tkrzw', lp, DATA, lp.parent), 'ox': Arm('oxpinyin-tkrzw', ox, DATA, ox.parent),
-            'nodebug': Arm('oxpinyin-nodebug', nodebug, DATA, nodebug.parent),
-            'alloc': Arm('oxpinyin-alloccount', alloc, DATA, alloc.parent)}
+            'nodebug': Arm('oxpinyin-nodebug', nodebug, DATA, nodebug.parent)}
     for key, arm in arms.items():
         worker.standalone('pin' if key == 'lp' else 'subject', arm)
     pair = [(arms['lp'], 'speed'), (arms['ox'], 'speed')]
 
     # 0. environment
-    bench.tee(out / 'environment.txt', environment_table([lp, ox, nodebug, alloc]))
+    bench.tee(out / 'environment.txt', environment_table([lp, ox, nodebug]))
 
     # 1. collection anchors
     code, text = anchors_table(harness)
@@ -285,23 +286,7 @@ def callgrind_differential(argv: Sequence[str], env: Mapping[str, str]) -> int:
         arm, mode, hardware, out / 'hw.err', t_cycles, repeats=t_repeats, extra={'PERF_HW': 'instructions'}))
     bench.tee(out / 'hw-instructions.md', reports.hardware_instructions(hardware))
 
-    # 6. allocations per cycle. Native, not under valgrind: the counter reports what the client asked
-    # for, which is exactly what the intercepted profile cannot.
-    done = worker.launch(arms['alloc'], 'speed', t_cycles, repeats=t_repeats)
-    write(done.stderr, error=True)
-    lines = ['=== allocations per steady cycle (oxpinyin, alloc-count build) ===']
-    if done.stdout:
-        lines.append(done.stdout.decode(errors='replace').rstrip('\n'))
-    if done.status == 0:
-        lines += ['', 'steady_alloc_count / steady_alloc_cycles = allocating calls per cycle.',
-                  'libpinyin has no counterpart symbol; its comparable figure is the',
-                  'malloc/operator-new CALL COUNT in its stage 4 profile, which is',
-                  'produced symmetrically for both cells by one instrument.']
-    bench.tee(out / 'alloc-count.txt', '\n'.join(lines) + '\n')
-    if done.status:
-        raise Finished(done.status)
-
-    # 7. wall-clock timing, same host, same session. The record's protocol, so this ratio is comparable
+    # 6. wall-clock timing, same host, same session. The record's protocol, so this ratio is comparable
     # to every previous steady-cycle capture: 8 cycles, 20 runs per cell, cells interleaved round-robin,
     # pinned. Serial: a timed sample is only the arm's if nothing runs beside it.
     speed = out / 'speed.jsonl'

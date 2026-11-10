@@ -192,10 +192,9 @@ The gate's failure messages name what failed:
   allocator is on both sides. The gate creates and frees those arrays but
   has nothing to prove about their pairing.
 - **Allocation the C side makes on the library's behalf.** Everything that
-  the backend library allocates internally is outside the Rust
-  `GlobalAlloc` traffic that `alloc_count.rs` measures. By construction it
-  is also outside this gate's per-call window, because the warm pass
-  absorbs it. RSS attribution is the subject of
+  the backend library allocates internally is, by construction, outside
+  this gate's per-call window, because the warm pass absorbs it.
+  RSS attribution is the subject of
   `rss-attribution-2026-09-09`, not of this gate.
 - **Non-Linux hosts.** LeakSanitizer's stop-the-world does not run under
   macOS's sandbox. `--static-only` is the portable half. The C ABIs are

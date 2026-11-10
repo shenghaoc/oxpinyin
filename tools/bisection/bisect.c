@@ -551,53 +551,6 @@ static int dump_malloc_info(const char *dir, const char *tag) {
 #endif
 }
 
-/* The gated Rust counting allocator, when the artifact under test carries
- * it (`--features alloc-count`, never in a shipped build). Absent from
- * libpinyin and from any default oxpinyin artifact, so every field stays
- * -1 there and the JSON shape does not change between cells. Live and
- * peak-live are the RSS-relevant pair: cumulative count and cumulative
- * bytes say nothing about resident memory. */
-struct alloc_counters {
-    long long count;
-    long long bytes;
-    long long live_bytes;
-    long long peak_live_bytes;
-};
-
-typedef uint64_t (*fn_alloc_u64)(void);
-
-typedef void (*fn_alloc_void)(void);
-
-struct alloc_counter_syms {
-    fn_alloc_u64 count;
-    fn_alloc_u64 bytes;
-    fn_alloc_u64 live;
-    fn_alloc_u64 peak;
-    fn_alloc_void reset_peak;
-};
-
-static void resolve_alloc_counters(void *handle, struct alloc_counter_syms *a) {
-    a->count = (fn_alloc_u64)dlsym(handle, "oxpinyin_alloc_count");
-    a->bytes = (fn_alloc_u64)dlsym(handle, "oxpinyin_alloc_bytes");
-    a->live = (fn_alloc_u64)dlsym(handle, "oxpinyin_alloc_live_bytes");
-    a->peak = (fn_alloc_u64)dlsym(handle, "oxpinyin_alloc_peak_live_bytes");
-    a->reset_peak = (fn_alloc_void)dlsym(handle, "oxpinyin_alloc_reset_peak");
-}
-
-static void read_alloc_counters(const struct alloc_counter_syms *a,
-                                struct alloc_counters *c) {
-    c->count = a->count ? (long long)a->count() : -1;
-    c->bytes = a->bytes ? (long long)a->bytes() : -1;
-    c->live_bytes = a->live ? (long long)a->live() : -1;
-    c->peak_live_bytes = a->peak ? (long long)a->peak() : -1;
-}
-
-static void print_alloc_counters(const char *tag, const struct alloc_counters *c) {
-    printf("\"%s\":{\"count\":%lld,\"bytes\":%lld,"
-           "\"live_bytes\":%lld,\"peak_live_bytes\":%lld}",
-           tag, c->count, c->bytes, c->live_bytes, c->peak_live_bytes);
-}
-
 /* One 20-input cycle. For every input the instance is reset, then each
  * accumulated ASCII prefix is parsed and decoded the way the C++ frontend
  * drives the keystroke path: parse, guess candidates, read the count. */
@@ -913,23 +866,9 @@ static int run_perf_mode(int argc, char **argv) {
     struct arena_state arena_init;
 
     read_perf_memory(&after_init);
-    struct alloc_counter_syms alloc_syms;
-    struct alloc_counters alloc_init;
-    struct alloc_counters alloc_cycle;
-
-    resolve_alloc_counters(handle, &alloc_syms);
     if (rss_diag) {
         read_smaps_rollup(&rollup_init);
         read_arena_state(&arena_init);
-        read_alloc_counters(&alloc_syms, &alloc_init);
-        /* Bound the peak to the cycle region. Read initialization's
-         * counters first, then drop the peak to the current live total,
-         * so `alloc_cycle.peak_live_bytes` is the cycles' own high-water
-         * mark and not the larger of the two regions. Absent from
-         * libpinyin and from any default oxpinyin artifact, where the
-         * symbol does not resolve and this is a no-op. */
-        if (alloc_syms.reset_peak)
-            alloc_syms.reset_peak();
         if (diag_dir) {
             (void)dump_proc_text(diag_dir, diag_tag, "maps-init",
                                  "/proc/self/maps");
@@ -959,8 +898,6 @@ static int run_perf_mode(int argc, char **argv) {
         print_smaps_rollup("rollup_init", &rollup_init);
         putchar(',');
         print_arena_state("arena_init", &arena_init);
-        putchar(',');
-        print_alloc_counters("alloc_init", &alloc_init);
     }
 
     if (strcmp(mode, "ram-init") != 0) {
@@ -976,13 +913,7 @@ static int run_perf_mode(int argc, char **argv) {
             return 1;
         }
 
-        /* Snapshot at the boundary the callgrind toggle uses: after the
-         * cold cycle, so the steady deltas below cover exactly the cycles
-         * the Ir differential counts. */
-        struct alloc_counters alloc_steady_start;
-        int alloc_steady_captured = 0;
-
-        /* Same boundary for the hardware instruction counter: cycles
+        /* Callgrind boundary for the hardware instruction counter: cycles
          * 1..n-1, enabled and disabled around the steady anchor call, so
          * the counted region is the one the callgrind toggle collects. */
         int hw_wanted = getenv("PERF_HW") != NULL;
@@ -1005,10 +936,6 @@ static int run_perf_mode(int argc, char **argv) {
 
         for (int i = 0; i < cycles; i++) {
             uint64_t sink_before = perf_sink;
-            if (i == 1 && alloc_syms.count && alloc_syms.bytes) {
-                read_alloc_counters(&alloc_syms, &alloc_steady_start);
-                alloc_steady_captured = 1;
-            }
             if (i > 0 && hw_fd >= 0)
                 (void)ioctl(hw_fd, PERF_EVENT_IOC_ENABLE, 0);
             uint64_t start = now_ns();
@@ -1063,7 +990,6 @@ static int run_perf_mode(int argc, char **argv) {
         if (rss_diag) {
             read_smaps_rollup(&rollup_cycle);
             read_arena_state(&arena_cycle);
-            read_alloc_counters(&alloc_syms, &alloc_cycle);
             if (diag_dir) {
                 (void)dump_proc_text(diag_dir, diag_tag, "maps-cycle",
                                      "/proc/self/maps");
@@ -1102,8 +1028,6 @@ static int run_perf_mode(int argc, char **argv) {
             print_smaps_rollup("rollup_cycle", &rollup_cycle);
             putchar(',');
             print_arena_state("arena_cycle", &arena_cycle);
-            putchar(',');
-            print_alloc_counters("alloc_cycle", &alloc_cycle);
 #if defined(__GLIBC__)
             printf(",\"trim_released\":%d", trim_released);
 #else
@@ -1115,17 +1039,6 @@ static int run_perf_mode(int argc, char **argv) {
             print_smaps_rollup("rollup_trim", &rollup_trim);
             putchar(',');
             print_arena_state("arena_trim", &arena_trim);
-        }
-        if (alloc_steady_captured && cycles > 1) {
-            struct alloc_counters alloc_steady_end;
-
-            read_alloc_counters(&alloc_syms, &alloc_steady_end);
-            printf(",\"steady_alloc_cycles\":%d"
-                   ",\"steady_alloc_count\":%lld"
-                   ",\"steady_alloc_bytes\":%lld",
-                   cycles - 1,
-                   alloc_steady_end.count - alloc_steady_start.count,
-                   alloc_steady_end.bytes - alloc_steady_start.bytes);
         }
         if (hw_fd >= 0) {
             printf(",\"steady_hw_cycles\":%d"
