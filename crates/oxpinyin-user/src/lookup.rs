@@ -99,14 +99,6 @@ impl<'a> UserLookup<'a> {
         }
     }
 
-    /// Whether the user pinyin table holds a record under the key
-    /// a search for `syllables` probes: the complete key, or the initials'
-    /// when any syllable is incomplete.
-    #[must_use]
-    pub fn has_record(&self, syllables: &[SyllableKey]) -> bool {
-        query_keys(syllables).is_some_and(|keys| self.with_index(|index| index.has_record(&keys)))
-    }
-
     /// `SEARCH_CONTINUED` probe over user-file pinyin keys.
     #[must_use]
     pub fn phrase_prefix_exists(&self, syllables: &[SyllableKey]) -> bool {

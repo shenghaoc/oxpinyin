@@ -515,19 +515,6 @@ impl SystemOriginals {
         })
     }
 
-    /// Insert a fixture or newly mapped baseline, transferring ownership.
-    pub fn insert(&mut self, nibble: u8, mut library: SystemLibrary) {
-        self.mapped.unload(nibble);
-        if let Some(mapping) = library.mapped.take() {
-            let path = mapping
-                .source_path()
-                .unwrap_or_else(|| Path::new(""))
-                .to_path_buf();
-            self.mapped.insert_mapping(nibble, path, mapping);
-        }
-        self.libraries.insert(nibble, library);
-    }
-
     /// Install an opened file with its remap path.
     pub fn insert_mapping(
         &mut self,
